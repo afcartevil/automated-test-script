@@ -1,113 +1,271 @@
-# Bug分析域约束模板
-# 使用方法: 由 init_module.py 从本模板生成实际约束文件
-# 对应域: bug_analysis (诊断引擎)
+# =============================================================================
+# Bug Analysis Constraint Template
+# =============================================================================
+# Domain: bug_analysis (Diagnostic Engine)
+# Module: {{module_name}}
+#
+# This constraint file governs how the AI agent performs bug analysis for the
+# specified module. It defines required inputs, analysis procedures, safety
+# boundaries, and evaluation criteria.
+#
+# Usage:
+#   1. Copy to: constraints/<module_name>/bug_analysis.yaml
+#   2. Replace all {{placeholder}} values
+#   3. Customize analysis_rules for module-specific patterns
+#   4. Add module-specific safety_red_lines as needed
+# =============================================================================
 
-preconditions:
-  required_info:
-    - name: "android_version"
-      description: "Android版本号"
-      how_to_get: "getprop ro.build.version.release"
-      required: true
-      error_msg: "缺少Android版本信息，无法确定目标平台约束。"
-    - name: "device_model"
-      description: "设备型号"
-      how_to_get: "getprop ro.product.model"
-      required: true
-      error_msg: "缺少设备型号信息，无法确认适用范围。"
-    - name: "repro_steps"
-      description: "问题复现步骤"
-      how_to_get: "由用户或Bug报告提供"
-      required: true
-      error_msg: "未提供复现步骤，无法判断问题特征和复现概率，请补充。"
+metadata:
+  module: "{{module_name}}"
+  domain: "bug_analysis"
+  version: "1.0.0"
+  author: "{{author}}"
+  last_updated: "{{date}}"
+  description: "Bug analysis constraints for {{module_name}} module"
+
+# ---------------------------------------------------------------------------
+# Prerequisites: Required inputs for bug analysis to proceed
+# The AI agent will check for these inputs before starting analysis.
+# If prerequisites are missing, the agent will request them from the user.
+# ---------------------------------------------------------------------------
+prerequisites:
+  # Required log files for analysis
+  log_files:
     - name: "logcat"
-      description: "完整logcat日志"
-      how_to_get: "adb logcat -d -b main,system,{{ log_buffer | default('radio') }}"
+      path_pattern: "{{logcat_path}}"  # e.g., "bugreport/logcat.txt"
+      description: "Android logcat output capturing the issue"
       required: true
-      error_msg: "缺少日志数据，Bug分析需要logcat日志作为输入。"
-    - name: "build_fingerprint"
-      description: "构建指纹"
-      how_to_get: "getprop ro.build.fingerprint"
+
+    - name: "tombstone"
+      path_pattern: "{{tombstone_path}}"  # e.g., "tombstones/tombstone_00.txt"
+      description: "Native crash tombstone file (if native crash)"
       required: false
 
+    - name: "kernel_log"
+      path_pattern: "{{kernel_log_path}}"  # e.g., "bugreport/dmesg.txt"
+      description: "Kernel log (dmesg) for kernel-related issues"
+      required: false
+
+  # Build artifacts
+  build_artifacts:
+    - name: "build_info"
+      path_pattern: "{{build_info_path}}"  # e.g., "build_info.txt"
+      description: "Build configuration and version information"
+      required: true
+
+  # Additional context
+  crash_reports:
+    - name: "crash_report"
+      path_pattern: "{{crash_report_path}}"  # e.g., "crash_report.txt"
+      description: "Structured crash report with stack trace"
+      required: false
+
+# ---------------------------------------------------------------------------
+# Analysis Rules: Step-by-step procedures for bug analysis
+# These rules guide the AI agent through the diagnostic process.
+# ---------------------------------------------------------------------------
 analysis_rules:
-  layer_detection_order:
-    1:
-      layer: "Application Layer"
-      check: "搜索应用层日志中的异常和错误"
-      indicators:
-        - pattern: ".*{{ module_name | upper }}.*Exception"
-        - pattern: ".*FATAL EXCEPTION.*"
-    2:
-      layer: "Framework Layer"
-      check: "搜索Framework层日志中的错误码和异常"
-      indicators:
-        - pattern: ".*Framework.*Error"
-        - pattern: ".*ServiceManager.*FAIL"
-    3:
-      layer: "HAL / Native Layer"
-      check: "搜索HAL层和Native层日志"
-      indicators:
-        - pattern: ".*HAL.*error"
-        - pattern: ".*HIDL.*"
-    4:
-      layer: "Kernel / Driver Layer"
-      check: "搜索内核日志"
-      indicators:
-        - pattern: ".*kernel.*"
-        - pattern: ".*BUG:.*"
-        - pattern: ".*panic.*"
 
-  prohibited:
-    - "在未确认复现步骤的情况下给出修复代码"
-    - "在只有一个案例的情况下推断为通用问题"
-    - "修改 scope.excludes 中排除范围内的代码"
-    - "忽略安全相关标记（Critical级别的Bug必须单独标注）"
-    - "在证据不足时给出确定性的根因结论"
+  # Step 1: Log Parsing and Filtering
+  log_parsing:
+    description: "Parse and filter relevant log entries from raw log files"
+    steps:
+      - "Read the full logcat file and identify the module-relevant tags"
+      - "Filter logs by module tag: {{module_log_tag}}"  # e.g., "Telephony", "RIL", "PowerManager"
+      - "Extract error (E/), warning (W/), and fatal (F/) level entries"
+      - "Identify timestamp ranges around the crash/error event"
+      - "Correlate entries across multiple log sources (logcat, dmesg, tombstone)"
 
-  required_outputs:
-    - name: "root_cause_layer"
-      type: "enum"
-      values: ["Application", "Framework", "HAL", "Kernel", "Driver", "Modem", "External", "Unknown"]
-      description: "根因所属层级"
-    - name: "reproducibility"
-      type: "enum"
-      values: ["always", "frequent", "occasional", "rare", "unknown"]
-      description: "复现概率"
-    - name: "impact_scope"
-      type: "enum"
-      values: ["single_device", "device_series", "platform", "all"]
-      description: "影响范围"
-    - name: "fix_type"
-      type: "enum"
-      values: ["code_change", "config_change", "firmware_upgrade", "network_side", "further_investigation"]
-      description: "修复类型"
-    - name: "severity"
-      type: "enum"
-      values: ["critical", "high", "medium", "low"]
-      description: "严重程度"
-    - name: "root_cause_description"
-      type: "text"
-      min_length: 50
-      description: "根因详细描述（不少于50字）"
-    - name: "fix_suggestion"
-      type: "text"
-      min_length: 30
-      description: "修复建议（不少于30字）"
+    # Common log patterns for this module
+    common_patterns:
+      - pattern: "{{exception_pattern_1}}"  # e.g., "java.lang.NullPointerException"
+        category: "exception"
+        severity: "P0"
+      - pattern: "{{exception_pattern_2}}"  # e.g., "java.lang.IllegalStateException"
+        category: "exception"
+        severity: "P1"
+      - pattern: "{{error_pattern_1}}"  # e.g., "RILJ:.*error.*"
+        category: "runtime_error"
+        severity: "P1"
+      - pattern: "{{error_pattern_2}}"  # e.g., "FATAL EXCEPTION"
+        category: "fatal"
+        severity: "P0"
 
-security_gates:
-  - condition: "可能导致数据泄露或隐私侵犯"
-    action: "标记为critical，立即通知安全团队，不给出公开修复方案"
-  - condition: "涉及安全密钥或鉴权数据"
-    action: "标记为critical，分析结果仅发送给指定接收人"
-  - condition: "可能导致设备被远程控制"
-    action: "标记为critical，停止一切自动化操作，转入人工处理"
-  - condition: "可能导致服务中断或DoS"
-    action: "标记为high，评估影响范围后再修复"
+  # Step 2: Stack Trace Analysis
+  stack_trace_analysis:
+    description: "Analyze stack traces to identify the crash origin"
+    steps:
+      - "Extract the primary stack trace from crash report or tombstone"
+      - "Identify the crash origin (first line in the stack trace)"
+      - "Map stack frames to source files in scope.source_paths"
+      - "Determine if the crash is in module code or dependency code"
+      - "Identify any re-entrant or recursive call patterns"
 
-evaluation:
-  bug_analysis_accuracy_target: 0.85
-  required_artifacts:
-    - root_cause_report
-    - affected_components
-    - fix_suggestion
-  test_dataset: eval-data/
+    # Stack trace interpretation rules
+    interpretation:
+      top_frame_is_module_code:
+        action: "Focus analysis on the module code path leading to the crash"
+      top_frame_is_dependency:
+        action: "Check if the module passes invalid parameters to the dependency"
+      native_crash_detected:
+        action: "Extract signal type and register state; map to source via addr2line"
+
+  # Step 3: Root Cause Identification
+  root_cause:
+    description: "Identify the underlying root cause of the bug"
+    methodology:
+      - "Trace the call path from the trigger point to the crash point"
+      - "Identify missing null checks, race conditions, or state inconsistencies"
+      - "Check for recently changed code (git log --since='{{analysis_window}}')"
+      - "Verify if the issue is reproducible under specific conditions"
+      - "Cross-reference with known issues in {{known_issues_db}}"
+
+    # Root cause categories for classification
+    categories:
+      - "null_pointer_dereference"
+      - "race_condition"
+      - "resource_leak"
+      - "state_mismatch"
+      - "api_misuse"
+      - "configuration_error"
+      - "memory_corruption"
+      - "deadlock"
+      - "timing_issue"
+
+    # Confidence scoring for root cause identification
+    confidence_levels:
+      high: "Direct causal link between code change and symptom (>= 90%)"
+      medium: "Probable causal link with supporting evidence (70-89%)"
+      low: "Correlation observed but causality unclear (50-69%)"
+
+  # Step 4: Fix Recommendation
+  fix_generation:
+    description: "Generate a fix recommendation based on identified root cause"
+    rules:
+      - "Propose fixes only for code within module scope.source_paths"
+      - "Fixes must not introduce new safety red line violations"
+      - "Include a brief explanation of why the fix addresses the root cause"
+      - "Suggest regression test cases to verify the fix"
+      - "If root cause is in a dependency, suggest a workaround with clear documentation"
+
+# ---------------------------------------------------------------------------
+# Common Android Bug Patterns
+# Reference patterns frequently observed in Android base software
+# ---------------------------------------------------------------------------
+common_android_patterns:
+  lifecycle_issues:
+    - "Activity/Fragment lifecycle callback mismatch"
+    - "Service not properly bound before use"
+    - "BroadcastReceiver registered but not unregistered"
+
+  threading_issues:
+    - "UI operations from non-UI thread"
+    - "Shared mutable state without synchronization"
+    - "Handler callback after component destruction"
+
+  resource_management:
+    - "Cursor not closed after use"
+    - "WakeLock acquired but not released"
+    - "File descriptor leak"
+
+  telephony_specific:  # Relevant for telephony modules
+    - "PhoneStateListener not unregistered"
+    - "SIM state change not handled"
+    - "Call state transition race condition"
+
+  kernel_specific:  # Relevant for kernel modules
+    - "Use-after-free in driver probe/remove"
+    - "Missing mutex_lock/unlock pair"
+    - "IRQ handler deadlock"
+    - "DMA buffer not unmapped"
+
+# ---------------------------------------------------------------------------
+# Safety Red Lines: Non-negotiable boundaries for bug analysis
+# These are hard constraints that MUST NOT be violated under any circumstances.
+# ---------------------------------------------------------------------------
+safety_red_lines:
+  - id: "read_only_analysis"
+    description: "Bug analysis must be read-only. Do not modify any source files."
+    severity: "P0"
+    check: "No file_write or git_write tool calls allowed"
+
+  - id: "scope_restriction"
+    description: "Only analyze files within module source_paths"
+    severity: "P0"
+    check: "All file_read paths must match scope.source_paths or prerequisites paths"
+
+  - id: "no_code_execution"
+    description: "Do not execute arbitrary code during analysis"
+    severity: "P0"
+    check: "Only allow log_parse, file_read, code_search, report_gen tools"
+
+  - id: "no_external_communication"
+    description: "Do not send data to external services during analysis"
+    severity: "P0"
+    check: "All tool calls must operate on local files only"
+
+  - id: "preserve_evidence"
+    description: "Do not modify, delete, or overwrite input log files or crash reports"
+    severity: "P0"
+    check: "No write operations on prerequisites paths"
+
+  - id: "no_speculation_in_report"
+    description: "Clearly separate confirmed findings from speculative analysis in reports"
+    severity: "P1"
+    check: "Report must have distinct 'confirmed' and 'possible' sections"
+
+# ---------------------------------------------------------------------------
+# Evaluation Criteria: How bug analysis output is evaluated
+# These metrics determine whether the analysis passes quality gates.
+# ---------------------------------------------------------------------------
+evaluation_criteria:
+  accuracy:
+    - metric: "root_cause_identified"
+      weight: 0.3
+      description: "Root cause correctly identified and matches validated answer"
+      threshold: 0.9
+
+    - metric: "affected_files_correct"
+      weight: 0.2
+      description: "All affected source files correctly identified"
+      threshold: 0.85
+
+    - metric: "crash_type_classified"
+      weight: 0.1
+      description: "Crash type correctly classified into root_cause.categories"
+      threshold: 0.9
+
+  completeness:
+    - metric: "log_evidence_cited"
+      weight: 0.15
+      description: "Relevant log entries cited as evidence for the conclusion"
+      threshold: 0.8
+
+    - metric: "call_path_traced"
+      weight: 0.1
+      description: "Call path from trigger to crash fully traced"
+      threshold: 0.7
+
+    - metric: "fix_recommendation_provided"
+      weight: 0.15
+      description: "Valid fix recommendation provided when root cause is identified"
+      threshold: 0.8
+
+  safety:
+    - metric: "red_line_compliance"
+      weight: 1.0
+      description: "Zero safety red line violations"
+      threshold: 1.0
+
+# ---------------------------------------------------------------------------
+# Tool Access Configuration
+# Defines which MCP tools are available in bug_analysis domain
+# ---------------------------------------------------------------------------
+tool_access:
+  file_read: true
+  file_write: false
+  code_search: true
+  log_parse: true
+  git_ops: "read_only"  # diff, log, blame only - no commit or push
+  build_run: false
+  report_gen: true

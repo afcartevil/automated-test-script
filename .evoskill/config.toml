@@ -1,22 +1,57 @@
+# TAHP EvoSkill 进化配置
+# 此文件用于配置Skill的进化参数
+
 [evolution]
-mode = "skill_only"
-iterations = 20
+# 最大迭代次数
+max_iterations = 20
+
+# Frontier大小（保留的最优变体数量）
 frontier_size = 3
-concurrency = 4
-no_improvement_limit = 5
+
+# 种群大小（每代个体数量）
+population_size = 10
+
+# 变异率
+mutation_rate = 0.1
+
+# 交叉率
+crossover_rate = 0.7
+
+# 精英率（保留的优秀个体比例）
+elite_ratio = 0.1
+
+# 收敛阈值（连续几代最优适应度变化小于此值时认为收敛）
+convergence_threshold = 0.01
+
+# 检查点保存间隔（每N代保存一次）
+checkpoint_interval = 5
+
+# 并发评估数（同时评估的变体数量）
+parallel_evaluation = 4
 
 [evaluation]
-test_split = "test"
-min_accuracy = 0.80
-min_completeness = 1.0
+# 评估超时时间（秒）
+timeout = 60
 
-[skills]
-base_dir = "skills/.claude/skills"
-output_dir = "skills/.claude/skills"
+# 最低通过率阈值
+min_passing_rate = 0.70
 
-[constraints]
-base_dir = "constraints"
+# 准确率阈值（用于全自动评估）
+full_auto_threshold = 0.95
 
-[logging]
-level = "INFO"
-log_dir = "reports/evolution-reports"
+# 半自动阈值（70-95%需要人工复核）
+semi_auto_threshold = 0.70
+
+[fitness]
+# 适应度权重配置
+[ fitness.weights ]
+accuracy = 0.4
+latency = 0.2
+code_quality = 0.2
+coverage = 0.2
+
+# 适应度目标值
+[fitness.targets]
+accuracy = 0.95
+latency_ms = 100
+coverage = 0.85

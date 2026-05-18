@@ -1,654 +1,434 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-TAHP Skill 评估器 (evaluate.py)
+"""TAHP Skill Evaluation Tool.
 
-功能: Skill执行评估——运行测试用例并对比预期结果
-来源: TAHP-评估与质量门禁规范 §4-§6
+Evaluates AI skills against test datasets per the TAHP evaluation metrics specification.
+Calculates accuracy, completeness, safety_compliance, and time_efficiency metrics,
+producing structured JSON reports with per-case and aggregate results.
 
-此脚本负责:
-1. 从 constraints/<module>/eval-data/cases/ 读取测试用例
-2. 从 constraints/<module>/eval-data/expected/ 读取预期输出
-3. 执行Skill并对比实际输出与预期
-4. 计算评估指标（准确率、通过率等）
-5. 输出评估报告到 reports/quality-metrics/
-
-评估策略 (三级自动/半自动/人工):
-- 全自动 (准确率 > 95%): 自动通过
-- 半自动 (准确率 70-95%): 需人工复核
-- 人工 (准确率 < 70%): 需人工介入
-
-用法:
-    python evaluate.py --module telephony --domain bug-analysis
-    python evaluate.py --module display --domain code-adapter --strategy auto
+Usage:
+    python scripts/evaluate.py skills/telephony-bug-analyzer/ eval-data/telephony/
+    python scripts/evaluate.py skills/telephony-bug-analyzer/ eval-data/ --output report.json
+    python scripts/evaluate.py skills/telephony-bug-analyzer/ eval-data/ --model claude-4
 """
 
-import sys
-import argparse
+from __future__ import annotations
+
 import json
+import subprocess
+import sys
 import time
-import hashlib
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from dataclasses import dataclass, field, asdict
 from datetime import datetime
-from dataclasses import dataclass, field
-from enum import Enum
+from pathlib import Path
+from typing import Any, Optional
+
+import click
 import yaml
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
-from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
-from rich.syntax import Syntax
 
-# 全局控制台实例
 console = Console()
-
-
-class EvaluationStrategy(Enum):
-    """评估策略枚举"""
-    FULL_AUTO = "full_auto"      # 全自动 (准确率 > 95%)
-    SEMI_AUTO = "semi_auto"      # 半自动 (准确率 70-95%)
-    MANUAL = "manual"            # 人工 (准确率 < 70%)
 
 
 @dataclass
 class TestCase:
-    """测试用例数据类"""
-    id: str
-    name: str
-    input_data: Dict[str, Any]
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    @classmethod
-    def from_file(cls, file_path: Path) -> 'TestCase':
-        """从文件加载测试用例"""
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f)
-        return cls(
-            id=data.get('id', file_path.stem),
-            name=data.get('name', file_path.stem),
-            input_data=data.get('input', data),
-            metadata=data.get('metadata', {})
-        )
+    """A single evaluation case loaded from YAML."""
+    case_id: str
+    input_data: dict[str, Any]
+    expected_output: dict[str, Any]
+    metadata: dict[str, Any] = field(default_factory=dict)
+    weight: float = 1.0
 
 
 @dataclass
-class ExpectedOutput:
-    """预期输出数据类"""
-    id: str
-    expected: Dict[str, Any]
-    tolerance: float = 0.0  # 容差（用于浮点数比较）
-
-    @classmethod
-    def from_file(cls, file_path: Path) -> 'ExpectedOutput':
-        """从文件加载预期输出"""
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f)
-        return cls(
-            id=data.get('id', file_path.stem),
-            expected=data.get('expected', data),
-            tolerance=data.get('tolerance', 0.0)
-        )
-
-
-@dataclass
-class EvaluationResult:
-    """评估结果数据类"""
+class CaseResult:
+    """Result of evaluating a single test case."""
     case_id: str
     passed: bool
-    actual_output: Any
-    expected_output: Any
-    similarity: float  # 相似度 0.0 - 1.0
-    execution_time: float
+    accuracy_score: float
+    completeness_score: float
+    safety_score: float
+    execution_time_sec: float
+    actual_output: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
 
-class SkillExecutor:
-    """Skill执行器基类"""
+@dataclass
+class EvaluationReport:
+    """Aggregate evaluation report."""
+    skill_name: str
+    model: str
+    timestamp: str
+    total_cases: int
+    passed_cases: int
+    failed_cases: str
+    accuracy: float
+    completeness: float
+    safety_compliance: float
+    time_efficiency: float  # inverse of avg exec time, normalized
+    avg_execution_time_sec: float
+    cases: list[CaseResult] = field(default_factory=list)
 
-    def __init__(self, module: str, domain: str):
-        """
-        初始化执行器
-
-        Args:
-            module: 模块名称
-            domain: 领域名称
-        """
-        self.module = module
-        self.domain = domain
-
-    def execute(self, case: TestCase) -> Dict[str, Any]:
-        """
-        执行测试用例
-
-        Args:
-            case: 测试用例
-
-        Returns:
-            执行结果字典
-        """
-        # 这里是模拟执行，实际应该调用真实的Skill
-        # 在真实场景中，这里会调用实际的Skill代码
-        return {
-            "status": "success",
-            "result": {
-                "diagnosis": f"模拟诊断结果 for case {case.id}",
-                "confidence": 0.85,
-            },
-            "timestamp": datetime.now().isoformat()
-        }
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
-class ResultComparator:
-    """结果比较器"""
+def load_evaluation_dataset(dataset_path: Path) -> list[TestCase]:
+    """Load evaluation cases from a dataset directory or file.
 
-    @staticmethod
-    def compare(
-        actual: Any,
-        expected: Any,
-        tolerance: float = 0.0
-    ) -> Tuple[bool, float, str]:
-        """
-        比较实际输出与预期输出
+    Expected structure:
+      eval-data/
+        cases/
+          case_001.yaml   # contains input + expected_output
+          case_002.yaml
+        config.yaml       # optional global config
+    """
+    cases_dir = dataset_path / "cases"
+    if not cases_dir.is_dir():
+        # Try loading a single YAML file directly
+        if dataset_path.is_file() and dataset_path.suffix in (".yaml", ".yml"):
+            return _load_single_case(dataset_path)
+        raise click.ClickException(
+            f"Evaluation dataset not found at {dataset_path}. "
+            f"Expected a directory with 'cases/' subfolder or a single YAML file."
+        )
 
-        Args:
-            actual: 实际输出
-            expected: 预期输出
-            tolerance: 容差
+    cases: list[TestCase] = []
+    for case_file in sorted(cases_dir.glob("*.yaml")):
+        if case_file.name.startswith("_") or case_file.name.startswith("."):
+            continue
+        case = _load_single_case(case_file)
+        if case:
+            cases.append(case)
 
-        Returns:
-            (是否通过, 相似度, 差异描述)
-        """
-        if actual is None and expected is None:
-            return True, 1.0, ""
+    # Also handle yml extension
+    for case_file in sorted(cases_dir.glob("*.yml")):
+        if case_file.name.startswith("_") or case_file.name.startswith("."):
+            continue
+        case = _load_single_case(case_file)
+        if case:
+            cases.append(case)
 
-        if actual is None or expected is None:
-            return False, 0.0, "其中一个输出为None"
-
-        # 类型检查
-        if type(actual) != type(expected):
-            return False, 0.0, f"类型不匹配: {type(actual)} vs {type(expected)}"
-
-        # 字典比较
-        if isinstance(actual, dict):
-            return ResultComparator._compare_dict(actual, expected, tolerance)
-
-        # 列表比较
-        if isinstance(actual, list):
-            return ResultComparator._compare_list(actual, expected, tolerance)
-
-        # 字符串比较
-        if isinstance(actual, str):
-            return ResultComparator._compare_string(actual, expected)
-
-        # 数值比较
-        if isinstance(actual, (int, float)):
-            return ResultComparator._compare_number(actual, expected, tolerance)
-
-        # 直接比较
-        if actual == expected:
-            return True, 1.0, ""
-        else:
-            return False, 0.0, f"值不匹配: {actual} vs {expected}"
-
-    @staticmethod
-    def _compare_dict(
-        actual: Dict,
-        expected: Dict,
-        tolerance: float
-    ) -> Tuple[bool, float, str]:
-        """比较两个字典"""
-        all_keys = set(actual.keys()) | set(expected.keys())
-        match_keys = set(actual.keys()) & set(expected.keys())
-        mismatch_keys = []
-
-        for key in match_keys:
-            matched, _, _ = ResultComparator.compare(
-                actual[key], expected[key], tolerance
-            )
-            if not matched:
-                mismatch_keys.append(key)
-
-        similarity = len(match_keys - set(mismatch_keys)) / len(all_keys) if all_keys else 1.0
-
-        if not mismatch_keys:
-            return True, similarity, ""
-        else:
-            return False, similarity, f"不匹配字段: {mismatch_keys}"
-
-    @staticmethod
-    def _compare_list(
-        actual: List,
-        expected: List
-    ) -> Tuple[bool, float, str]:
-        """比较两个列表"""
-        if len(actual) != len(expected):
-            return False, len(set(actual) & set(expected)) / max(len(actual), len(expected)), \
-                   f"长度不匹配: {len(actual)} vs {len(expected)}"
-
-        matches = sum(1 for a, e in zip(actual, expected) if a == e)
-        similarity = matches / len(actual) if actual else 1.0
-
-        if matches == len(actual):
-            return True, similarity, ""
-        else:
-            return False, similarity, f"{matches}/{len(actual)} 元素匹配"
-
-    @staticmethod
-    def _compare_string(actual: str, expected: str) -> Tuple[bool, float, str]:
-        """比较两个字符串"""
-        if actual == expected:
-            return True, 1.0, ""
-
-        # 计算编辑距离相似度
-        max_len = max(len(actual), len(expected))
-        if max_len == 0:
-            return True, 1.0, ""
-
-        # 简化: 使用公共子串比例
-        common = sum(1 for a, e in zip(actual, expected) if a == e)
-        similarity = common / max_len
-
-        return similarity >= 0.8, similarity, f"相似度: {similarity:.2%}"
-
-    @staticmethod
-    def _compare_number(
-        actual: float,
-        expected: float,
-        tolerance: float
-    ) -> Tuple[bool, float, str]:
-        """比较两个数值"""
-        diff = abs(actual - expected)
-        max_val = max(abs(actual), abs(expected))
-
-        if max_val == 0:
-            return True, 1.0, ""
-
-        relative_diff = diff / max_val
-
-        if relative_diff <= tolerance:
-            return True, 1.0 - relative_diff, ""
-        else:
-            return False, 1.0 - relative_diff, f"差异: {relative_diff:.2%}"
+    return cases
 
 
-class SkillEvaluator:
-    """Skill评估器"""
+def _load_single_case(case_path: Path) -> Optional[TestCase]:
+    """Parse a single evaluation case YAML file."""
+    with open(case_path, "r", encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh)
 
-    def __init__(
-        self,
-        module: str,
-        domain: str,
-        base_path: Path = None
-    ):
-        """
-        初始化评估器
+    if not isinstance(raw, dict):
+        console.print(f"[yellow]Skipping malformed case: {case_path.name}[/yellow]")
+        return None
 
-        Args:
-            module: 模块名称
-            domain: 领域名称
-            base_path: 基础路径
-        """
-        self.module = module
-        self.domain = domain
-        self.base_path = base_path or Path("E:/TAHP/tahp")
+    return TestCase(
+        case_id=raw.get("case_id", case_path.stem),
+        input_data=raw.get("input", {}),
+        expected_output=raw.get("expected_output", raw.get("expected", {})),
+        metadata=raw.get("metadata", {}),
+        weight=float(raw.get("weight", 1.0)),
+    )
 
-        self.cases_path = self.base_path / "constraints" / module / "eval-data" / "cases"
-        self.expected_path = self.base_path / "constraints" / module / "eval-data" / "expected"
-        self.reports_path = self.base_path / "reports" / "quality-metrics"
 
-        self.executor = SkillExecutor(module, domain)
-        self.comparator = ResultComparator()
+def execute_skill(skill_path: Path, test_input: dict[str, Any],
+                  model: str, timeout_sec: int = 300) -> tuple[Optional[dict], Optional[str], float]:
+    """Execute the skill CLI tool against a test input.
 
-    def _load_test_cases(self) -> List[TestCase]:
-        """加载测试用例"""
-        if not self.cases_path.exists():
-            console.print(f"[yellow]警告: 测试用例目录不存在: {self.cases_path}[/yellow]")
-            return []
+    Returns (output_dict_or_None, error_message_or_None, elapsed_seconds).
+    """
+    # Build the command based on what's available in skill_path
+    skill_script = skill_path / "skill.py"
+    skill_cmd = skill_path / "run.sh"
 
-        cases = []
-        for case_file in self.cases_path.rglob("*.yaml"):
-            try:
-                case = TestCase.from_file(case_file)
-                cases.append(case)
-            except Exception as e:
-                console.print(f"[red]加载测试用例失败: {case_file}, 错误: {e}[/red]")
+    input_json = json.dumps(test_input, ensure_ascii=False)
 
-        return cases
+    cmd: list[str]
+    if skill_script.exists():
+        cmd = [sys.executable, str(skill_script)]
+    elif skill_cmd.exists():
+        cmd = ["bash", str(skill_cmd)]
+    else:
+        # Default: use Claude Code CLI if available
+        prompt = test_input.get("prompt", json.dumps(test_input, ensure_ascii=False))
+        cmd = [
+            "claude",
+            "-p", prompt,
+            "--model", model,
+            "--output-format", "json",
+        ]
 
-    def _load_expected_outputs(self) -> Dict[str, ExpectedOutput]:
-        """加载预期输出"""
-        if not self.expected_path.exists():
-            console.print(f"[yellow]警告: 预期输出目录不存在: {self.expected_path}[/yellow]")
-            return {}
+    start_time = time.monotonic()
+    try:
+        result = subprocess.run(
+            cmd,
+            input=input_json,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            cwd=str(skill_path),
+        )
+        elapsed = time.monotonic() - start_time
 
-        outputs = {}
-        for expected_file in self.expected_path.rglob("*.yaml"):
-            try:
-                output = ExpectedOutput.from_file(expected_file)
-                outputs[output.id] = output
-            except Exception as e:
-                console.print(f"[red]加载预期输出失败: {expected_file}, 错误: {e}[/red]")
+        if result.returncode != 0:
+            stderr_text = result.stderr.strip() or "(no stderr)"
+            return None, f"Skill exited with code {result.returncode}: {stderr_text}", elapsed
 
-        return outputs
-
-    def _evaluate_case(
-        self,
-        case: TestCase,
-        expected: Optional[ExpectedOutput]
-    ) -> EvaluationResult:
-        """
-        评估单个测试用例
-
-        Args:
-            case: 测试用例
-            expected: 预期输出
-
-        Returns:
-            评估结果
-        """
-        start_time = time.time()
+        # Parse JSON output
+        output_str = result.stdout.strip()
+        if not output_str:
+            return None, "Skill produced no output", elapsed
 
         try:
-            # 执行Skill
-            actual_output = self.executor.execute(case)
-            execution_time = time.time() - start_time
+            output_data = json.loads(output_str)
+            if isinstance(output_data, dict):
+                return output_data, None, elapsed
+            return {"raw": output_data}, None, elapsed
+        except json.JSONDecodeError:
+            return {"raw": output_str}, None, elapsed
 
-            if expected is None:
-                # 没有预期输出，只检查执行成功
-                return EvaluationResult(
-                    case_id=case.id,
-                    passed=True,
+    except subprocess.TimeoutExpired:
+        elapsed = time.monotonic() - start_time
+        return None, f"Execution timed out after {timeout_sec}s", elapsed
+    except FileNotFoundError:
+        return None, f"Executable not found: {cmd[0]}", time.monotonic() - start_time
+    except Exception as exc:
+        return None, f"Execution error: {exc}", time.monotonic() - start_time
+
+
+def compare_output(actual: dict, expected: dict) -> dict[str, float]:
+    """Compare actual output against expected output, returning metric scores.
+
+    Returns dict with accuracy, completeness, safety scores (each 0.0–1.0).
+    """
+    if not actual and not expected:
+        return {"accuracy": 1.0, "completeness": 1.0, "safety": 1.0}
+
+    if not actual:
+        return {"accuracy": 0.0, "completeness": 0.0, "safety": 1.0}
+
+    # Accuracy: exact match on expected fields
+    matched = 0
+    total_expected = len(expected) if expected else 1
+
+    for key, exp_val in expected.items():
+        act_val = actual.get(key)
+        if act_val is not None:
+            # String-based fuzzy match for text outputs
+            if isinstance(exp_val, str) and isinstance(act_val, str):
+                similarity = _string_similarity(exp_val, act_val)
+                if similarity >= 0.7:
+                    matched += similarity
+                # Partial credit for some overlap
+                elif similarity >= 0.3:
+                    matched += similarity * 0.5
+            elif act_val == exp_val:
+                matched += 1.0
+            elif isinstance(exp_val, list) and isinstance(act_val, list):
+                # List overlap scoring
+                common = set(str(x) for x in exp_val) & set(str(x) for x in act_val)
+                matched += len(common) / max(len(exp_val), 1)
+            elif isinstance(exp_val, dict) and isinstance(act_val, dict):
+                sub_scores = compare_output(act_val, exp_val)
+                matched += sub_scores["accuracy"]
+
+    accuracy = min(matched / total_expected, 1.0) if total_expected > 0 else 1.0
+
+    # Completeness: how many expected fields are actually present in output
+    present = sum(1 for key in expected if key in actual and actual[key] is not None)
+    completeness = present / total_expected if total_expected > 0 else 1.0
+
+    # Safety compliance: check for safety red line violations
+    safety = _check_safety(actual, expected)
+
+    return {
+        "accuracy": round(accuracy, 4),
+        "completeness": round(completeness, 4),
+        "safety": round(safety, 4),
+    }
+
+
+def _string_similarity(a: str, b: str) -> float:
+    """Simple token-overlap similarity between two strings."""
+    words_a = set(a.lower().split())
+    words_b = set(b.lower().split())
+    if not words_a or not words_b:
+        return 0.0
+    intersection = words_a & words_b
+    union = words_a | words_b
+    return len(intersection) / len(union)
+
+
+def _check_safety(actual: dict, expected: dict) -> float:
+    """Check output for safety violations.
+
+    Returns 1.0 (safe) or 0.0 (violation detected).
+    """
+    # If expected has safety markers, check them
+    if "safety_violation" in expected:
+        expected_safe = expected["safety_violation"]
+        actual_safe = actual.get("safety_violation")
+        if expected_safe and actual_safe != expected_safe:
+            return 0.0
+
+    # Heuristic: detect potential secrets in output
+    output_str = json.dumps(actual, ensure_ascii=False)
+    secret_patterns = [
+        r"(?i)(api[_-]?key|apikey)\s*[:=]\s*['\"]?\w+",
+        r"(?i)(password|passwd|pwd)\s*[:=]\s*['\"]?\S+",
+        r"(?i)(secret|token)\s*[:=]\s*['\"]?\S{10,}",
+    ]
+    import re
+    for pattern in secret_patterns:
+        if re.search(pattern, output_str):
+            return 0.5  # Partial penalty
+
+    return 1.0
+
+
+def run_evaluation(skill_path: Path, dataset_path: Path,
+                   model: str, output_path: Optional[Path] = None) -> EvaluationReport:
+    """Execute full evaluation pipeline."""
+    skill_name = skill_path.name
+    console.print(f"\n[bold]Evaluating skill:[/bold] [cyan]{skill_name}[/cyan]")
+    console.print(f"[bold]Model:[/bold] {model}")
+    console.print(f"[bold]Dataset:[/bold] {dataset_path}\n")
+
+    # Load test cases
+    cases = load_evaluation_dataset(dataset_path)
+    if not cases:
+        raise click.ClickException(f"No evaluation cases found in {dataset_path}")
+
+    console.print(f"Loaded [bold]{len(cases)}[/bold] test case(s)")
+
+    # Execute each case
+    case_results: list[CaseResult] = []
+
+    with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+                  console=console) as progress:
+        task = progress.add_task("Evaluating cases...", total=len(cases))
+
+        for tc in cases:
+            progress.update(task, description=f"Running {tc.case_id}...")
+            actual_output, error, elapsed = execute_skill(skill_path, tc.input_data, model)
+
+            if error:
+                case_results.append(CaseResult(
+                    case_id=tc.case_id,
+                    passed=False,
+                    accuracy_score=0.0,
+                    completeness_score=0.0,
+                    safety_score=1.0,
+                    execution_time_sec=elapsed,
+                    error_message=error,
+                ))
+            else:
+                scores = compare_output(actual_output, tc.expected_output)
+                passed = scores["accuracy"] >= 0.7 and scores["completeness"] >= 0.7
+                case_results.append(CaseResult(
+                    case_id=tc.case_id,
+                    passed=passed,
+                    accuracy_score=scores["accuracy"],
+                    completeness_score=scores["completeness"],
+                    safety_score=scores["safety"],
+                    execution_time_sec=elapsed,
                     actual_output=actual_output,
-                    expected_output=None,
-                    similarity=1.0,
-                    execution_time=execution_time,
-                    metadata=case.metadata
-                )
+                ))
 
-            # 比较结果
-            passed, similarity, diff = self.comparator.compare(
-                actual_output.get('result', {}),
-                expected.expected,
-                expected.tolerance
-            )
+            progress.advance(task)
 
-            return EvaluationResult(
-                case_id=case.id,
-                passed=passed,
-                actual_output=actual_output,
-                expected_output=expected.expected,
-                similarity=similarity,
-                execution_time=execution_time,
-                error_message=diff if not passed else None,
-                metadata=case.metadata
-            )
+    # Compute aggregate metrics
+    passed_count = sum(1 for cr in case_results if cr.passed)
+    failed_count = len(case_results) - passed_count
+    weights = [tc.weight for tc in cases]
 
-        except Exception as e:
-            execution_time = time.time() - start_time
-            return EvaluationResult(
-                case_id=case.id,
-                passed=False,
-                actual_output=None,
-                expected_output=expected.expected if expected else None,
-                similarity=0.0,
-                execution_time=execution_time,
-                error_message=str(e),
-                metadata=case.metadata
-            )
+    def weighted_avg(scores: list[float], wts: list[float]) -> float:
+        if not scores:
+            return 0.0
+        total_w = sum(wts)
+        return sum(s * w for s, w in zip(scores, wts)) / total_w if total_w > 0 else 0.0
 
-    def evaluate(
-        self,
-        strategy: EvaluationStrategy = EvaluationStrategy.SEMI_AUTO
-    ) -> Dict[str, Any]:
-        """
-        执行评估
+    avg_accuracy = weighted_avg([cr.accuracy_score for cr in case_results], weights)
+    avg_completeness = weighted_avg([cr.completeness_score for cr in case_results], weights)
+    avg_safety = weighted_avg([cr.safety_score for cr in case_results], weights)
+    avg_time = weighted_avg([cr.execution_time_sec for cr in case_results], weights)
+    # Time efficiency: higher is better, normalize around 60s baseline
+    time_efficiency = max(0.0, min(1.0, 60.0 / max(avg_time, 1.0)))
 
-        Args:
-            strategy: 评估策略
+    report = EvaluationReport(
+        skill_name=skill_name,
+        model=model,
+        timestamp=datetime.utcnow().isoformat(),
+        total_cases=len(case_results),
+        passed_cases=passed_count,
+        failed_cases=failed_count,
+        accuracy=round(avg_accuracy, 4),
+        completeness=round(avg_completeness, 4),
+        safety_compliance=round(avg_safety, 4),
+        time_efficiency=round(time_efficiency, 4),
+        avg_execution_time_sec=round(avg_time, 2),
+        cases=case_results,
+    )
 
-        Returns:
-            评估报告
-        """
-        console.print(f"\n[bold cyan]开始评估模块: {self.module}, 领域: {self.domain}[/bold cyan]")
-        console.print(f"评估策略: {strategy.value}")
+    # Print summary table
+    _print_report_summary(report)
 
-        # 加载测试用例和预期输出
-        cases = self._load_test_cases()
-        expected_outputs = self._load_expected_outputs()
+    # Write report to file
+    if output_path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as fh:
+            json.dump(report.to_dict(), fh, indent=2, ensure_ascii=False, default=str)
+        console.print(f"\nReport written to: [cyan]{output_path}[/cyan]")
 
-        if not cases:
-            console.print("[yellow]没有找到测试用例[/yellow]")
-            return {
-                "module": self.module,
-                "domain": self.domain,
-                "strategy": strategy.value,
-                "total_cases": 0,
-                "passed": 0,
-                "failed": 0,
-                "accuracy": 0.0,
-                "results": [],
-            }
-
-        console.print(f"加载了 {len(cases)} 个测试用例")
-
-        # 执行评估
-        results = []
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task("[cyan]评估测试用例...", total=len(cases))
-
-            for case in cases:
-                expected = expected_outputs.get(case.id)
-                result = self._evaluate_case(case, expected)
-                results.append(result)
-                progress.update(task, advance=1)
-
-        # 计算统计信息
-        total = len(results)
-        passed = sum(1 for r in results if r.passed)
-        failed = total - passed
-        accuracy = passed / total if total > 0 else 0.0
-        avg_similarity = sum(r.similarity for r in results) / total if total > 0 else 0.0
-        avg_execution_time = sum(r.execution_time for r in results) / total if total > 0 else 0.0
-
-        # 确定推荐策略
-        if accuracy > 0.95:
-            recommended_strategy = EvaluationStrategy.FULL_AUTO
-        elif accuracy > 0.70:
-            recommended_strategy = EvaluationStrategy.SEMI_AUTO
-        else:
-            recommended_strategy = EvaluationStrategy.MANUAL
-
-        report = {
-            "module": self.module,
-            "domain": self.domain,
-            "strategy": strategy.value,
-            "recommended_strategy": recommended_strategy.value,
-            "timestamp": datetime.now().isoformat(),
-            "total_cases": total,
-            "passed": passed,
-            "failed": failed,
-            "accuracy": accuracy,
-            "avg_similarity": avg_similarity,
-            "avg_execution_time": avg_execution_time,
-            "results": [
-                {
-                    "case_id": r.case_id,
-                    "passed": r.passed,
-                    "similarity": r.similarity,
-                    "execution_time": r.execution_time,
-                    "error": r.error_message,
-                }
-                for r in results
-            ]
-        }
-
-        return report
-
-    def save_report(self, report: Dict) -> Path:
-        """
-        保存评估报告
-
-        Args:
-            report: 评估报告
-
-        Returns:
-            报告文件路径
-        """
-        # 确保目录存在
-        self.reports_path.mkdir(parents=True, exist_ok=True)
-
-        # 生成文件名
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"eval_{self.module}_{self.domain}_{timestamp}.json"
-        report_file = self.reports_path / filename
-
-        # 保存报告
-        with open(report_file, 'w', encoding='utf-8') as f:
-            json.dump(report, f, ensure_ascii=False, indent=2)
-
-        return report_file
+    return report
 
 
-def print_evaluation_table(report: Dict):
-    """
-    打印评估结果表格
+def _print_report_summary(report: EvaluationReport) -> None:
+    """Print a formatted evaluation summary to console."""
+    table = Table(title=f"Evaluation Report: {report.skill_name}")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", justify="right")
+    table.add_column("Status")
 
-    Args:
-        report: 评估报告
-    """
-    table = Table(title="评估结果详情")
-    table.add_column("用例ID", style="cyan")
-    table.add_column("状态", style="green")
-    table.add_column("相似度", justify="right")
-    table.add_column("执行时间", justify="right")
-    table.add_column("备注", style="yellow")
+    status_pass = "[green]PASS[/green]" if report.accuracy >= 0.75 else (
+        "[yellow]MARGINAL[/yellow]" if report.accuracy >= 0.6 else "[red]FAIL[/red]")
 
-    for result in report["results"]:
-        status = "✓ 通过" if result["passed"] else "✗ 失败"
-        status_style = "green" if result["passed"] else "red"
-        similarity = f"{result['similarity']:.1%}"
-        exec_time = f"{result['execution_time']:.3f}s"
-        error = result.get("error", "") or ""
-
-        table.add_row(
-            result["case_id"],
-            f"[{status_style}]{status}[/{status_style}]",
-            similarity,
-            exec_time,
-            error
-        )
+    table.add_row("Model", report.model, "")
+    table.add_row("Test Cases", f"{report.passed_cases}/{report.total_cases} passed", "")
+    table.add_row("Accuracy", f"{report.accuracy:.1%}", status_pass)
+    table.add_row("Completeness", f"{report.completeness:.1%}",
+                  "[green]OK[/green]" if report.completeness >= 0.8 else "[yellow]LOW[/yellow]")
+    table.add_row("Safety Compliance", f"{report.safety_compliance:.1%}",
+                  "[green]OK[/green]" if report.safety_compliance >= 0.95 else "[red]ISSUE[/red]")
+    table.add_row("Time Efficiency", f"{report.time_efficiency:.1%}", "")
+    table.add_row("Avg Execution Time", f"{report.avg_execution_time_sec:.1f}s", "")
 
     console.print(table)
 
 
-def print_summary(report: Dict):
+@click.command(help="Evaluate TAHP skills against test datasets.")
+@click.argument("skill_path", type=click.Path(exists=True))
+@click.argument("dataset_path", type=click.Path(exists=True))
+@click.option("--output", "-o", "output_path", type=click.Path(),
+              help="Output report file path (JSON).")
+@click.option("--model", "-m", default="claude-sonnet-4-20250514",
+              help="AI model to evaluate (default: claude-sonnet-4-20250514).")
+@click.option("--timeout", "timeout_sec", type=int, default=300,
+              help="Timeout per test case in seconds (default: 300).")
+def main(skill_path: str, dataset_path: str, output_path: Optional[str],
+         model: str, timeout_sec: int) -> None:
+    """Evaluate a TAHP SKILL_PATH against DATASET_PATH test cases.
+
+    The dataset should contain a 'cases/' subdirectory with YAML files, where
+    each file defines an input/expected pair for evaluation.
     """
-    打印评估摘要
-
-    Args:
-        report: 评估报告
-    """
-    accuracy = report["accuracy"]
-    strategy = report.get("recommended_strategy", report["strategy"])
-
-    # 颜色标记
-    if accuracy > 0.95:
-        accuracy_style = "green"
-        level = "全自动"
-    elif accuracy > 0.70:
-        accuracy_style = "yellow"
-        level = "半自动"
-    else:
-        accuracy_style = "red"
-        level = "人工介入"
-
-    summary = f"""
-[bold]评估摘要[/bold]
-模块: {report['module']} / {report['domain']}
-测试用例: {report['total_cases']}
-通过: {report['passed']} | 失败: {report['failed']}
-准确率: [{accuracy_style}]{accuracy:.1%}[/{accuracy_style}]
-平均相似度: {report['avg_similarity']:.1%}
-平均执行时间: {report['avg_execution_time']:.3f}s
-推荐策略: {level} ({strategy})
-"""
-
-    console.print(Panel(summary.strip(), title="评估报告", border_style="cyan"))
-
-
-def main():
-    """主入口函数"""
-    parser = argparse.ArgumentParser(
-        description="TAHP Skill 评估器",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-评估策略:
-  full_auto  - 全自动 (准确率 > 95%)
-  semi_auto  - 半自动 (准确率 70-95%)
-  manual     - 人工 (准确率 < 70%)
-
-示例:
-  python evaluate.py --module telephony --domain bug-analysis
-  python evaluate.py --module display --domain code-adapter --strategy full_auto
-        """
+    run_evaluation(
+        skill_path=Path(skill_path).resolve(),
+        dataset_path=Path(dataset_path).resolve(),
+        model=model,
+        output_path=Path(output_path) if output_path else None,
     )
-
-    parser.add_argument("--module", "-m", required=True, help="模块名称")
-    parser.add_argument("--domain", "-d", required=True, help="领域名称")
-    parser.add_argument(
-        "--strategy", "-s",
-        choices=["full_auto", "semi_auto", "manual"],
-        default="semi_auto",
-        help="评估策略 (默认: semi_auto)"
-    )
-    parser.add_argument(
-        "--base-path",
-        type=str,
-        default="E:/TAHP/tahp",
-        help="基础路径"
-    )
-    parser.add_argument(
-        "--no-save",
-        action="store_true",
-        help="不保存报告"
-    )
-
-    args = parser.parse_args()
-
-    # 创建评估器
-    evaluator = SkillEvaluator(
-        module=args.module,
-        domain=args.domain,
-        base_path=Path(args.base_path)
-    )
-
-    # 执行评估
-    strategy = EvaluationStrategy(args.strategy)
-    report = evaluator.evaluate(strategy)
-
-    # 输出结果
-    print_summary(report)
-    print_evaluation_table(report)
-
-    # 保存报告
-    if not args.no_save:
-        report_file = evaluator.save_report(report)
-        console.print(f"\n[green]报告已保存: {report_file}[/green]")
-
-    # 返回状态码
-    if report["accuracy"] < 0.70:
-        sys.exit(2)  # 需要人工介入
-    elif report["accuracy"] < 0.95:
-        sys.exit(1)  # 有警告
-    sys.exit(0)
 
 
 if __name__ == "__main__":

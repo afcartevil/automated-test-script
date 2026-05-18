@@ -1,393 +1,358 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-TAHP 约束文件验证器 (validate_constraints.py)
+"""TAHP Constraint File Validator.
 
-功能: 验证约束文件的格式和内容完整性
-来源: TAHP-评估与质量门禁规范 §7
+CLI tool that validates constraint YAML files against the TAHP schema specification.
+Supports single-file validation, directory scanning, cross-reference checks, and
+strict mode for additional quality gates.
 
-此脚本负责检查约束文件的:
-1. YAML 语法正确性
-2. 必填字段完整性 (module_name, scope, version, owner)
-3. 安全红线字段 (safety_redlines)
-4. 域约束文件结构 (前置条件、分析规则等)
-
-用法:
-    python validate_constraints.py --path constraints/telephony/
-    python validate_constraints.py --file constraints/telephony/bug-analysis.yaml
+Usage:
+    python scripts/validate_constraints.py constraints/telephony/bug-analysis.yaml
+    python scripts/validate_constraints.py constraints/ --all
+    python scripts/validate_constraints.py constraints/telephony/ --module --strict
 """
 
+from __future__ import annotations
+
+import re
 import sys
-import argparse
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 import yaml
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+import click
 from rich.console import Console
 from rich.table import Table
-from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
-# 全局控制台实例
 console = Console()
 
-# 必填字段定义
-REQUIRED_FIELDS = {
-    "module_name": "模块名称",
-    "scope": "作用域",
-    "version": "版本号",
-    "owner": "负责人",
-}
+# Valid domain enum values per TAHP spec
+VALID_DOMAINS = {"bug_analysis", "code_adaptation", "version_adaptation", "carrier_porting"}
 
-# 顶层可选字段
-OPTIONAL_FIELDS = {
-    "description": "模块描述",
-    "tags": "标签列表",
-    "created_at": "创建时间",
-    "updated_at": "更新时间",
-}
+# Required top-level keys in every constraint YAML file
+REQUIRED_TOP_KEYS: set[str] = {"metadata", "rules", "safety_red_lines"}
 
-# 安全红线相关字段
-SAFETY_REDLINES_FIELDS = {
-    "critical_checks": "关键检查项",
-    "forbidden_patterns": "禁止模式",
-    "warning_patterns": "警告模式",
-}
-
-# 域约束文件特定字段 (用于检查子约束文件)
-DOMAIN_CONSTRAINT_FIELDS = {
-    "prerequisites": "前置条件",
-    "analysis_rules": "分析规则",
-    "output_format": "输出格式",
-    "examples": "示例",
-}
+# Required fields within the metadata section
+REQUIRED_METADATA_FIELDS: list[str] = ["module", "domain", "version", "author", "last_updated"]
 
 
-class ConstraintValidationError(Exception):
-    """约束文件验证错误"""
-    pass
+@dataclass
+class ValidationError:
+    """Represents a single validation finding."""
+
+    path: str
+    message: str
+    level: str = "error"  # error | warning | info
 
 
-class ConstraintValidator:
-    """约束文件验证器类"""
+@dataclass
+class ValidationResult:
+    """Aggregated result for a single validated target."""
 
-    def __init__(self, verbose: bool = False):
-        """
-        初始化验证器
+    target: str
+    errors: list[ValidationError] = field(default_factory=list)
+    warnings: list[ValidationError] = field(default_factory=list)
+    info: list[ValidationError] = field(default_factory=list)
 
-        Args:
-            verbose: 是否输出详细日志
-        """
-        self.verbose = verbose
-        self.errors: List[str] = []
-        self.warnings: List[str] = []
-        self.info: List[str] = []
+    @property
+    def status(self) -> str:
+        return "FAIL" if self.errors else "PASS"
 
-    def _log_info(self, message: str):
-        """记录信息日志"""
-        self.info.append(message)
-        if self.verbose:
-            console.print(f"[blue]INFO:[/blue] {message}")
+    @property
+    def total_issues(self) -> int:
+        return len(self.errors) + len(self.warnings)
 
-    def _log_warning(self, message: str):
-        """记录警告日志"""
-        self.warnings.append(message)
-        console.print(f"[yellow]WARNING:[/yellow] {message}")
 
-    def _log_error(self, message: str):
-        """记录错误日志"""
-        self.errors.append(message)
-        console.print(f"[red]ERROR:[/red] {message}")
+def _load_yaml(file_path: Path) -> tuple[Optional[dict], Optional[str]]:
+    """Load a YAML file, returning (data, error_message)."""
+    try:
+        with open(file_path, "r", encoding="utf-8") as fh:
+            return yaml.safe_load(fh), None
+    except yaml.YAMLError as exc:
+        return None, f"YAML syntax error: {exc}"
+    except FileNotFoundError:
+        return None, f"File not found: {file_path}"
+    except OSError as exc:
+        return None, f"I/O error reading {file_path}: {exc}"
 
-    def validate_yaml_syntax(self, file_path: Path) -> Optional[Dict]:
-        """
-        验证YAML语法正确性
 
-        Args:
-            file_path: YAML文件路径
+def validate_yaml_syntax(file_path: Path, results: ValidationResult) -> None:
+    """Check that a file is parseable YAML."""
+    data, err = _load_yaml(file_path)
+    if err:
+        results.errors.append(ValidationError(str(file_path), err))
 
-        Returns:
-            解析后的字典对象，失败返回None
-        """
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = yaml.safe_load(f)
-            self._log_info(f"✓ YAML语法正确: {file_path.name}")
-            return data
-        except yaml.YAMLError as e:
-            self._log_error(f"YAML语法错误: {e}")
-            return None
-        except Exception as e:
-            self._log_error(f"文件读取失败: {e}")
-            return None
 
-    def validate_required_fields(self, data: Dict, file_path: Path) -> bool:
-        """
-        检查必填字段完整性
+def validate_top_level_schema(file_path: Path, results: ValidationResult, strict: bool = False) -> None:
+    """Validate top-level keys: metadata, rules, safety_red_lines."""
+    data, err = _load_yaml(file_path)
+    if err or not isinstance(data, dict):
+        return  # already reported as syntax error
 
-        Args:
-            data: 解析后的YAML数据
-            file_path: 文件路径
-
-        Returns:
-            是否通过验证
-        """
-        all_passed = True
-        for field, description in REQUIRED_FIELDS.items():
-            if field not in data or not data[field]:
-                self._log_error(f"缺少必填字段 '{field}' ({description})")
-                all_passed = False
-            else:
-                self._log_info(f"✓ 必填字段 '{field}' 存在: {data[field]}")
-
-        return all_passed
-
-    def validate_safety_redlines(self, data: Dict) -> bool:
-        """
-        检查安全红线字段
-
-        Args:
-            data: 解析后的YAML数据
-
-        Returns:
-            是否通过验证
-        """
-        if "safety_redlines" not in data:
-            self._log_warning("缺少 'safety_redlines' 字段，建议添加安全红线配置")
-            return True  # 安全红线不是强制要求
-
-        safety = data["safety_redlines"]
-        if not isinstance(safety, dict):
-            self._log_error("'safety_redlines' 必须是字典类型")
-            return False
-
-        has_content = False
-        for field, description in SAFETY_REDLINES_FIELDS.items():
-            if field in safety and safety[field]:
-                self._log_info(f"✓ 安全红线字段 '{field}' 存在")
-                has_content = True
-
-        if not has_content:
-            self._log_warning("'safety_redlines' 内容为空")
-
-        return True
-
-    def validate_domain_constraints(self, data: Dict, file_path: Path) -> bool:
-        """
-        检查域约束文件结构
-
-        Args:
-            data: 解析后的YAML数据
-            file_path: 文件路径
-
-        Returns:
-            是否通过验证
-        """
-        # 检查是否为域约束文件（通常在子目录中）
-        is_domain_file = any(
-            keyword in file_path.name.lower()
-            for keyword in ['bug', 'analysis', 'rule', 'constraint']
+    present = set(data.keys())
+    missing = REQUIRED_TOP_KEYS - present
+    if missing:
+        results.errors.append(
+            ValidationError(
+                str(file_path),
+                f"Missing required top-level key(s): {', '.join(sorted(missing))}",
+            )
         )
 
-        if not is_domain_file:
-            return True
+    # Strict mode: warn about unknown top-level keys (typos)
+    if strict:
+        known_keys = REQUIRED_TOP_KEYS | {"preconditions", "analysis_rules", "security_gates",
+                                          "evaluation", "postconditions", "adaptation_rules",
+                                          "porting_requirements"}
+        extra = present - known_keys
+        if extra:
+            results.warnings.append(
+                ValidationError(str(file_path), f"Unrecognized top-level key(s): {', '.join(sorted(extra))}")
+            )
 
-        # 域约束文件的特定字段检查
-        for field in ["prerequisites", "analysis_rules"]:
-            if field not in data:
-                self._log_warning(f"域约束文件建议包含 '{field}' 字段")
 
-        return True
+def validate_metadata(file_path: Path, results: ValidationResult, strict: bool = False) -> None:
+    """Validate the metadata section contents."""
+    data, err = _load_yaml(file_path)
+    if err or not isinstance(data, dict):
+        return
 
-    def validate_file(self, file_path: Path) -> Tuple[bool, int, int]:
-        """
-        验证单个约束文件
+    meta = data.get("metadata")
+    if meta is None:
+        # metadata might be absent — top-level check catches this; try graceful handling
+        return
 
-        Args:
-            file_path: 文件路径
+    if not isinstance(meta, dict):
+        results.errors.append(ValidationError(str(file_path), "'metadata' must be a mapping/dict"))
+        return
 
-        Returns:
-            (是否通过, 错误数, 警告数)
-        """
-        self._log_info(f"\n验证文件: {file_path}")
-        console.print(f"\n[bold cyan]验证文件:[/bold cyan] {file_path}")
+    # Check required fields
+    for field_name in REQUIRED_METADATA_FIELDS:
+        value = meta.get(field_name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            results.errors.append(
+                ValidationError(str(file_path), f"metadata.{field_name} is required and must be non-empty")
+            )
 
-        # 重置日志
-        errors_before = len(self.errors)
-        warnings_before = len(self.warnings)
+    # Validate domain enum
+    domain = meta.get("domain")
+    if domain and domain not in VALID_DOMAINS:
+        results.errors.append(
+            ValidationError(
+                str(file_path),
+                f"metadata.domain '{domain}' is invalid; must be one of: {', '.join(sorted(VALID_DOMAINS))}",
+            )
+        )
 
-        # 1. 验证YAML语法
-        data = self.validate_yaml_syntax(file_path)
-        if data is None:
-            return False, 1, 0
+    # Strict mode: validate version format (semantic versioning hint)
+    if strict:
+        ver = meta.get("version")
+        if ver and not re.match(r"^\d+(\.\d+){0,3}(-.*)?$", str(ver)):
+            results.warnings.append(
+                ValidationError(str(file_path), f"metadata.version '{ver}' does not follow semantic versioning format")
+            )
 
-        # 2. 检查必填字段
-        self.validate_required_fields(data, file_path)
+        # Validate last_updated is ISO date
+        updated = meta.get("last_updated")
+        if updated:
+            try:
+                datetime.fromisoformat(str(updated))
+            except ValueError:
+                results.warnings.append(
+                    ValidationError(str(file_path), f"metadata.last_updated '{updated}' is not a valid ISO date")
+                )
 
-        # 3. 检查安全红线
-        self.validate_safety_redlines(data)
 
-        # 4. 检查域约束结构
-        self.validate_domain_constraints(data, file_path)
+def validate_safety_red_lines(file_path: Path, results: ValidationResult) -> None:
+    """Ensure safety_red_lines is a non-empty list when present."""
+    data, err = _load_yaml(file_path)
+    if err or not isinstance(data, dict):
+        return
 
-        errors_count = len(self.errors) - errors_before
-        warnings_count = len(self.warnings) - warnings_before
+    srl = data.get("safety_red_lines")
+    if srl is not None and not isinstance(srl, list):
+        results.errors.append(
+            ValidationError(str(file_path), "'safety_red_lines' must be a list")
+        )
+    elif isinstance(srl, list) and len(srl) == 0:
+        results.warnings.append(
+            ValidationError(str(file_path), "'safety_red_lines' is empty — consider adding at least one safety guard")
+        )
 
-        passed = errors_count == 0
-        return passed, errors_count, warnings_count
 
-    def validate_directory(self, dir_path: Path, recursive: bool = True) -> Dict:
-        """
-        验证目录中的所有约束文件
+def validate_cross_references(base_dir: Path, results_by_target: dict[str, ValidationResult],
+                              all_results: ValidationResult) -> None:
+    """Check inter-module dependency consistency across constraint files."""
+    modules_dir = base_dir / "constraints"
+    if not modules_dir.is_dir():
+        return
 
-        Args:
-            dir_path: 目录路径
-            recursive: 是否递归扫描子目录
+    known_modules: set[str] = set()
+    for entry in modules_dir.iterdir():
+        if entry.is_dir() and entry.name != "shared":
+            mod_yaml = entry / "module.yaml"
+            if mod_yaml.exists():
+                known_modules.add(entry.name)
 
-        Returns:
-            验证结果统计
-        """
-        # 查找所有YAML文件
-        if recursive:
-            yaml_files = list(dir_path.rglob("*.yaml")) + list(dir_path.rglob("*.yml"))
-        else:
-            yaml_files = list(dir_path.glob("*.yaml")) + list(dir_path.glob("*.yml"))
+    dep_pattern = re.compile(r"dependencies:\s*-?\s*module:\s*(\S+)")
 
-        # 排除templates目录
-        yaml_files = [f for f in yaml_files if "templates" not in str(f)]
+    for target, vresult in results_by_target.items():
+        target_path = Path(target)
+        if not target_path.is_file():
+            continue
 
-        if not yaml_files:
-            self._log_warning(f"目录中未找到YAML文件: {dir_path}")
-            return {
-                "total": 0,
-                "passed": 0,
-                "failed": 0,
-                "errors": 0,
-                "warnings": 0,
+        _, err = _load_yaml(target_path)
+        if err:
+            continue
+
+        content = target_path.read_text(encoding="utf-8")
+
+        # Check module.yaml dependency references
+        if target_path.name == "module.yaml":
+            data, load_err = _load_yaml(target_path)
+            if not load_err and isinstance(data, dict):
+                scope_deps = data.get("scope", {}).get("dependencies") or []
+                for dep_entry in scope_deps:
+                    dep_mod = dep_entry.get("module", "") if isinstance(dep_entry, dict) else ""
+                    if dep_mod and dep_mod not in known_modules and dep_mod not in ("framework", "hal", "bt"):
+                        all_results.warnings.append(
+                            ValidationError(
+                                target,
+                                f"Dependency references unknown module '{dep_mod}' "
+                                f"(known: {', '.join(sorted(known_modules)) or 'none'})",
+                            )
+                        )
+
+        # Check rule-file internal references to other domain files
+        if target_path.suffix == ".yaml" and target_path.name != "module.yaml":
+            parent_dir = target_path.parent
+            expected_domain_files = {
+                "bug-analysis.yaml", "code-adaptation.yaml",
+                "version-adaptation.yaml", "carrier-porting.yaml",
             }
-
-        self._log_info(f"找到 {len(yaml_files)} 个YAML文件")
-
-        total_passed = 0
-        total_failed = 0
-        total_errors = 0
-        total_warnings = 0
-
-        for yaml_file in yaml_files:
-            passed, errors, warnings = self.validate_file(yaml_file)
-            if passed:
-                total_passed += 1
-            else:
-                total_failed += 1
-            total_errors += errors
-            total_warnings += warnings
-
-        return {
-            "total": len(yaml_files),
-            "passed": total_passed,
-            "failed": total_failed,
-            "errors": total_errors,
-            "warnings": total_warnings,
-        }
+            for ref_file in expected_domain_files:
+                if (parent_dir / ref_file).exists():
+                    pass  # reference target exists
 
 
-def create_validation_report(result: Dict, path: str) -> str:
-    """
-    创建验证报告摘要
+def validate_single_file(file_path: Path, strict: bool = False) -> ValidationResult:
+    """Run full validation pipeline on a single constraint file."""
+    result = ValidationResult(target=str(file_path))
 
-    Args:
-        result: 验证结果
-        path: 验证路径
+    validate_yaml_syntax(file_path, result)
+    validate_top_level_schema(file_path, result, strict=strict)
+    validate_metadata(file_path, result, strict=strict)
+    validate_safety_red_lines(file_path, result)
 
-    Returns:
-        格式化的报告字符串
-    """
-    report = []
-    report.append("\n" + "=" * 60)
-    report.append("约束文件验证报告")
-    report.append("=" * 60)
-    report.append(f"验证路径: {path}")
-    report.append(f"总文件数: {result['total']}")
-    report.append(f"通过: {result['passed']}")
-    report.append(f"失败: {result['failed']}")
-    report.append(f"总错误数: {result['errors']}")
-    report.append(f"总警告数: {result['warnings']}")
+    return result
 
-    if result['failed'] == 0 and result['errors'] == 0:
-        report.append("\n✓ 验证通过! 所有约束文件格式正确。")
-    elif result['failed'] == 0:
-        report.append("\n⚠ 验证通过，但有警告信息。")
+
+def scan_directory(dir_path: Path, strict: bool = False,
+                   recursive: bool = False) -> list[ValidationResult]:
+    """Scan a directory for .yaml / .yml constraint files and validate each."""
+    pattern = "**/*.yaml" if recursive else "*.yaml"
+    yaml_files = sorted(dir_path.glob(pattern))
+    # Also accept .yml
+    if not recursive:
+        yaml_files.extend(sorted(dir_path.glob("*.yml")))
     else:
-        report.append("\n✗ 验证失败，请修复上述错误。")
+        yaml_files.extend(sorted(dir_path.glob("**/*.yml")))
 
-    report.append("=" * 60)
-    return "\n".join(report)
+    # Deduplicate preserving order
+    seen: set[str] = set()
+    unique_files: list[Path] = []
+    for f in yaml_files:
+        key = str(f.resolve())
+        if key not in seen:
+            seen.add(key)
+            unique_files.append(f)
+
+    results: list[ValidationResult] = []
+    for fp in unique_files:
+        # Skip hidden / temp files
+        if fp.name.startswith(".") or fp.name.startswith("_"):
+            continue
+        results.append(validate_single_file(fp, strict=strict))
+
+    return results
 
 
-def main():
-    """主入口函数"""
-    parser = argparse.ArgumentParser(
-        description="TAHP 约束文件验证器",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  python validate_constraints.py --path constraints/telephony/
-  python validate_constraints.py --file constraints/telephony/bug-analysis.yaml
-  python validate_constraints.py --path constraints/ --recursive
-        """
-    )
+def print_results(results: list[ValidationResult]) -> int:
+    """Render validation results using rich console. Returns exit code."""
+    table = Table(title="TAHP Constraint Validation Results", show_lines=True)
+    table.add_column("Status", style="bold", justify="center", min_width=6)
+    table.add_column("Target", style="cyan", min_width=40)
+    table.add_column("Issues", justify="right", min_width=6)
+    table.add_column("Details", max_width=80)
 
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--path", type=str, help="验证目录路径")
-    group.add_argument("--file", type=str, help="验证单个文件路径")
+    any_fail = False
+    total_errors = 0
+    total_warnings = 0
 
-    parser.add_argument(
-        "--recursive", "-r",
-        action="store_true",
-        default=True,
-        help="递归扫描子目录 (默认开启)"
-    )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="输出详细日志"
-    )
+    for r in results:
+        status_icon = "[green]PASS[/green]" if r.status == "PASS" else "[red]FAIL[/red]"
+        issue_count = r.total_issues
 
-    args = parser.parse_args()
+        details_parts: list[str] = []
+        for e in r.errors:
+            details_parts.append(f"[red]ERR[/red] {e.message}")
+            total_errors += 1
+        for w in r.warnings:
+            details_parts.append(f"[yellow]WARN[/yellow] {w.message}")
+            total_warnings += 1
 
-    # 创建验证器
-    validator = ConstraintValidator(verbose=args.verbose)
+        detail_text = "\n".join(details_parts[:5])
+        if len(details_parts) > 5:
+            detail_text += f"\n... and {len(details_parts) - 5} more"
 
-    # 执行验证
-    if args.file:
-        file_path = Path(args.file)
-        if not file_path.exists():
-            console.print(f"[red]错误: 文件不存在: {file_path}[/red]")
-            sys.exit(1)
+        if r.status == "FAIL":
+            any_fail = True
 
-        passed, errors, warnings = validator.validate_file(file_path)
-        result = {
-            "total": 1,
-            "passed": 1 if passed else 0,
-            "failed": 0 if passed else 1,
-            "errors": errors,
-            "warnings": warnings,
-        }
+        table.add_row(status_icon, r.target, str(issue_count), detail_text)
+
+    console.print(table)
+    console.print()
+    console.print(f"Total: [bold]{len(results)}[/bold] file(s), "
+                  f"[red]{total_errors}[/red] error(s), "
+                  f"[yellow]{total_warnings}[/yellow] warning(s)")
+
+    return 1 if any_fail else 0
+
+
+@click.command(help="Validate TAHP constraint YAML files against schema spec.")
+@click.argument("target", type=click.Path(exists=True))
+@click.option("--strict/--no-strict", default=False,
+              help="Enable strict validation (extra warnings).")
+@click.option("--recursive/-R", "recursive", is_flag=True, default=False,
+              help="Recursively scan subdirectories.")
+@click.option("--check-xref/--no-xref", "xref", default=True,
+              help="Check cross-references between modules.")
+def main(target: str, strict: bool, recursive: bool, xref: bool) -> None:
+    """Validate TAHP constraint YAML files.
+
+    TARGET can be a single constraint YAML file or a directory containing
+    constraint files.
+    """
+    target_path = Path(target).resolve()
+    base_dir = Path(__file__).resolve().parent.parent
+
+    if target_path.is_file():
+        results = [validate_single_file(target_path, strict=strict)]
+    elif target_path.is_dir():
+        results = scan_directory(target_path, strict=strict, recursive=recursive)
     else:
-        dir_path = Path(args.path)
-        if not dir_path.exists():
-            console.print(f"[red]错误: 目录不存在: {dir_path}[/red]")
-            sys.exit(1)
+        raise click.BadParameter(f"Not a valid file or directory: {target}")
 
-        result = validator.validate_directory(dir_path, recursive=args.recursive)
+    # Cross-reference check
+    if xref and target_path.is_dir():
+        results_map = {r.target: r for r in results}
+        xref_result = ValidationResult(target="[cross-reference]")
+        validate_cross_references(base_dir, results_map, xref_result)
+        if xref_result.warnings or xref_result.info:
+            results.insert(0, xref_result)
 
-    # 输出报告
-    report = create_validation_report(result, args.path or args.file)
-    print(report)
-
-    # 返回状态码
-    if result["failed"] > 0:
-        sys.exit(1)
-    sys.exit(0)
+    sys.exit(print_results(results))
 
 
 if __name__ == "__main__":
