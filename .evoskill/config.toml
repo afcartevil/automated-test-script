@@ -1,0 +1,22 @@
+[evolution]
+mode = "skill_only"
+iterations = 20
+frontier_size = 3
+concurrency = 4
+no_improvement_limit = 5
+
+[evaluation]
+test_split = "test"
+min_accuracy = 0.80
+min_completeness = 1.0
+
+[skills]
+base_dir = "skills/.claude/skills"
+output_dir = "skills/.claude/skills"
+
+[constraints]
+base_dir = "constraints"
+
+[logging]
+level = "INFO"
+log_dir = "reports/evolution-reports"

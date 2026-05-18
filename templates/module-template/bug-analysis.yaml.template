@@ -1,0 +1,113 @@
+# Bug分析域约束模板
+# 使用方法: 由 init_module.py 从本模板生成实际约束文件
+# 对应域: bug_analysis (诊断引擎)
+
+preconditions:
+  required_info:
+    - name: "android_version"
+      description: "Android版本号"
+      how_to_get: "getprop ro.build.version.release"
+      required: true
+      error_msg: "缺少Android版本信息，无法确定目标平台约束。"
+    - name: "device_model"
+      description: "设备型号"
+      how_to_get: "getprop ro.product.model"
+      required: true
+      error_msg: "缺少设备型号信息，无法确认适用范围。"
+    - name: "repro_steps"
+      description: "问题复现步骤"
+      how_to_get: "由用户或Bug报告提供"
+      required: true
+      error_msg: "未提供复现步骤，无法判断问题特征和复现概率，请补充。"
+    - name: "logcat"
+      description: "完整logcat日志"
+      how_to_get: "adb logcat -d -b main,system,{{ log_buffer | default('radio') }}"
+      required: true
+      error_msg: "缺少日志数据，Bug分析需要logcat日志作为输入。"
+    - name: "build_fingerprint"
+      description: "构建指纹"
+      how_to_get: "getprop ro.build.fingerprint"
+      required: false
+
+analysis_rules:
+  layer_detection_order:
+    1:
+      layer: "Application Layer"
+      check: "搜索应用层日志中的异常和错误"
+      indicators:
+        - pattern: ".*{{ module_name | upper }}.*Exception"
+        - pattern: ".*FATAL EXCEPTION.*"
+    2:
+      layer: "Framework Layer"
+      check: "搜索Framework层日志中的错误码和异常"
+      indicators:
+        - pattern: ".*Framework.*Error"
+        - pattern: ".*ServiceManager.*FAIL"
+    3:
+      layer: "HAL / Native Layer"
+      check: "搜索HAL层和Native层日志"
+      indicators:
+        - pattern: ".*HAL.*error"
+        - pattern: ".*HIDL.*"
+    4:
+      layer: "Kernel / Driver Layer"
+      check: "搜索内核日志"
+      indicators:
+        - pattern: ".*kernel.*"
+        - pattern: ".*BUG:.*"
+        - pattern: ".*panic.*"
+
+  prohibited:
+    - "在未确认复现步骤的情况下给出修复代码"
+    - "在只有一个案例的情况下推断为通用问题"
+    - "修改 scope.excludes 中排除范围内的代码"
+    - "忽略安全相关标记（Critical级别的Bug必须单独标注）"
+    - "在证据不足时给出确定性的根因结论"
+
+  required_outputs:
+    - name: "root_cause_layer"
+      type: "enum"
+      values: ["Application", "Framework", "HAL", "Kernel", "Driver", "Modem", "External", "Unknown"]
+      description: "根因所属层级"
+    - name: "reproducibility"
+      type: "enum"
+      values: ["always", "frequent", "occasional", "rare", "unknown"]
+      description: "复现概率"
+    - name: "impact_scope"
+      type: "enum"
+      values: ["single_device", "device_series", "platform", "all"]
+      description: "影响范围"
+    - name: "fix_type"
+      type: "enum"
+      values: ["code_change", "config_change", "firmware_upgrade", "network_side", "further_investigation"]
+      description: "修复类型"
+    - name: "severity"
+      type: "enum"
+      values: ["critical", "high", "medium", "low"]
+      description: "严重程度"
+    - name: "root_cause_description"
+      type: "text"
+      min_length: 50
+      description: "根因详细描述（不少于50字）"
+    - name: "fix_suggestion"
+      type: "text"
+      min_length: 30
+      description: "修复建议（不少于30字）"
+
+security_gates:
+  - condition: "可能导致数据泄露或隐私侵犯"
+    action: "标记为critical，立即通知安全团队，不给出公开修复方案"
+  - condition: "涉及安全密钥或鉴权数据"
+    action: "标记为critical，分析结果仅发送给指定接收人"
+  - condition: "可能导致设备被远程控制"
+    action: "标记为critical，停止一切自动化操作，转入人工处理"
+  - condition: "可能导致服务中断或DoS"
+    action: "标记为high，评估影响范围后再修复"
+
+evaluation:
+  bug_analysis_accuracy_target: 0.85
+  required_artifacts:
+    - root_cause_report
+    - affected_components
+    - fix_suggestion
+  test_dataset: eval-data/

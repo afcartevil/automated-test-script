@@ -1,0 +1,29 @@
+module:
+  name: kernel-driver
+  display_name: "内核驱动模块"
+  domain: android-kernel-driver
+  owner: ""
+  team: kernel-integration
+  version: "1.0"
+  created: "2026-05-18"
+  updated: "2026-05-18"
+
+scope:
+  includes:
+    - component: "Kernel Drivers"
+      path: "kernel/drivers/"
+      description: "内核驱动代码"
+    - component: "ARM64 Architecture"
+      path: "kernel/arch/arm64/"
+      description: "ARM64架构相关代码"
+    - component: "Device Tree"
+      path: "kernel/arch/arm64/boot/dts/"
+      description: "设备树文件"
+  excludes:
+    - "kernel/drivers/gpu/"
+    - "kernel/drivers/staging/"
+    - "vendor/mediatek/"
+  dependencies:
+    - module: power-mgmt
+      type: "runtime"
+      description: "驱动功耗管理依赖PM框架"

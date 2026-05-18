@@ -1,0 +1,36 @@
+build_rules:
+  build_system: "Kernel Make"
+  build_command: "make ARCH=arm64 {defconfig} && make -j$(nproc)"
+  pre_build_checks:
+    - command: "scripts/checkpatch.pl --no-tree {patch_file}"
+      must_pass: true
+      error_msg: "补丁未通过checkpatch检查。"
+  post_build_checks:
+    - command: "make dtbs_compile -j$(nproc)"
+      must_pass: true
+      description: "设备树编译验证"
+
+modification_rules:
+  allowed_paths:
+    - "kernel/drivers/"
+    - "kernel/arch/arm64/"
+    - "kernel/include/"
+  forbidden_paths:
+    - "kernel/drivers/gpu/"
+    - "kernel/drivers/staging/"
+    - "kernel/mm/"
+  style_rules:
+    kernel:
+      - "遵循Documentation/process/coding-style.rst"
+      - "必须通过checkpatch.pl（零warning）"
+      - "缩进使用Tab"
+
+quality_gates:
+  critical:
+    - "不允许引入编译错误"
+    - "不允许修改与目标芯片平台无关的公共代码"
+    - "设备树修改不能影响其他平台配置"
+    - "不允许移除已有的错误处理逻辑"
+  warning:
+    - "不允许新增编译警告"
+    - "新增Kconfig选项必须有默认值"

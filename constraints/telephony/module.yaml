@@ -1,0 +1,42 @@
+module:
+  name: telephony
+  display_name: "通信模块"
+  domain: android-telephony
+  owner: ""
+  team: comm-integration
+  version: "1.0"
+  created: "2026-05-18"
+  updated: "2026-05-18"
+
+scope:
+  includes:
+    - component: "Telephony Framework"
+      path: "frameworks/opt/telephony/"
+      description: "Java层电话框架（通话/短信/数据连接）"
+    - component: "RILJ (Radio Interface Layer Java)"
+      path: "frameworks/base/telephony/"
+      description: "RIL Java接口层"
+    - component: "Telephony Service"
+      path: "packages/services/Telephony/"
+      description: "电话服务应用"
+    - component: "Telecom Framework"
+      path: "frameworks/base/telecom/"
+      description: "通话管理框架"
+    - component: "RILC (Radio Interface Layer C/HIDL)"
+      path: "hardware/interfaces/ril/"
+      description: "RIL C/HIDL层（只读分析）"
+  excludes:
+    - "frameworks/base/core/java/android/app/"
+    - "system/core/init/"
+    - "vendor/google/tools/"
+    - "vendor/mediatek/proprietary/"
+  dependencies:
+    - module: kernel-driver
+      type: "runtime"
+      description: "RILC依赖内核驱动提供字符设备节点"
+    - module: power-mgmt
+      type: "analysis"
+      description: "通话功耗与基带电源管理相关"
+    - module: framework
+      type: "compile-time"
+      description: "Telephony Framework依赖Android Framework核心API"

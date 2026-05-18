@@ -1,0 +1,27 @@
+name: 跨模块协作Pipeline
+version: "1.0"
+description: "跨模块任务的编排和协调"
+trigger: "任务涉及多个模块协作"
+
+steps:
+  - id: task-decompose
+    agent: coordinator
+    action: "分解跨模块任务为子任务，确定执行顺序和依赖"
+    output: sub_tasks
+  - id: parallel-execute
+    parallel:
+      - id: task-group-1
+        agent: module-agent-1
+        action: "执行子任务组1"
+        input: [sub_tasks.group1]
+        output: result1
+      - id: task-group-2
+        agent: module-agent-2
+        action: "执行子任务组2"
+        input: [sub_tasks.group2]
+        output: result2
+  - id: integrate
+    agent: coordinator
+    action: "整合结果，检查跨模块一致性，生成统一报告"
+    input: [result1, result2]
+    output: integrated_report

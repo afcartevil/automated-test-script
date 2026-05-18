@@ -1,0 +1,109 @@
+preconditions:
+  required_info:
+    - name: "modem_firmware_version"
+      description: "Modem固件版本"
+      how_to_get: "getprop gsm.version.baseband"
+      required: true
+      error_msg: "无法在未确认Modem固件版本的情况下进行RIL层分析，请先提供固件版本信息。"
+    - name: "android_version"
+      description: "Android版本"
+      how_to_get: "getprop ro.build.version.release"
+      required: true
+    - name: "device_model"
+      description: "设备型号"
+      how_to_get: "getprop ro.product.model"
+      required: false
+    - name: "repro_steps"
+      description: "复现步骤"
+      how_to_get: "由用户/Bug报告提供"
+      required: true
+      error_msg: "未提供复现步骤，无法判断是必现还是偶发问题，请补充复现步骤后再分析。"
+    - name: "logcat"
+      description: "完整logcat日志"
+      how_to_get: "adb logcat -d -b radio,main,system"
+      required: true
+      error_msg: "缺少日志数据，Bug分析需要logcat日志作为输入，请提供完整日志。"
+    - name: "sim_operator"
+      description: "SIM卡运营商"
+      how_to_get: "getprop gsm.sim.operator.numeric"
+      required: false
+
+analysis_rules:
+  layer_detection_order:
+    1:
+      layer: "Framework (Java)"
+      check: "搜索logcat中 TelephonyFramework, PhoneInterfaceManager 相关异常"
+      indicators:
+        - pattern: ".*TelephonyFramework.*Exception"
+        - pattern: ".*PhoneInterfaceManager.*Error"
+        - pattern: ".*CallManager.*FAIL"
+    2:
+      layer: "RILJ (Java RIL)"
+      check: "搜索RILJ层日志中的错误码和异常"
+      indicators:
+        - pattern: ".*RILJ.*error"
+        - pattern: ".*RIL.*RILConstants"
+        - pattern: ".*GsmCdmaPhone.*"
+    3:
+      layer: "RILC (C/HIDL)"
+      check: "搜索RILC层日志，需结合AT命令日志"
+      indicators:
+        - pattern: ".*RILC.*"
+        - pattern: ".*RILD.*"
+    4:
+      layer: "Modem"
+      check: "Modem侧日志分析"
+      indicators:
+        - pattern: ".*ATCMD.*"
+        - pattern: ".*MODEM.*"
+  prohibited:
+    - "在未确认Modem固件版本的情况下给出RIL层Bug结论"
+    - "在未确认复现步骤的情况下给出修复代码"
+    - "在只有一个案例的情况下推断为通用问题"
+    - "修改排除范围内的代码"
+    - "忽略安全相关标记（Critical级别的Bug必须单独标注）"
+  required_outputs:
+    - name: "root_cause_layer"
+      type: "enum"
+      values: ["Framework", "RILJ", "RILC", "Modem", "Network", "Unknown"]
+      description: "根因所属层级"
+    - name: "reproducibility"
+      type: "enum"
+      values: ["always", "frequent", "occasional", "rare", "unknown"]
+      description: "复现概率"
+    - name: "impact_scope"
+      type: "enum"
+      values: ["single_device", "device_series", "platform", "all"]
+      description: "影响范围"
+    - name: "fix_type"
+      type: "enum"
+      values: ["code_change", "config_change", "firmware_upgrade", "network_side", "further_investigation"]
+      description: "修复类型"
+    - name: "severity"
+      type: "enum"
+      values: ["critical", "high", "medium", "low"]
+      description: "严重程度"
+    - name: "root_cause_description"
+      type: "text"
+      min_length: 50
+      description: "根因详细描述（不少于50字）"
+    - name: "fix_suggestion"
+      type: "text"
+      min_length: 30
+      description: "修复建议（不少于30字）"
+
+security_gates:
+  - condition: "通话可能被窃听"
+    action: "标记为critical，立即通知安全团队，不给出公开修复方案"
+  - condition: "涉及SIM卡密钥或鉴权数据"
+    action: "标记为critical，分析结果仅发送给指定接收人"
+  - condition: "可能导致网络拥塞或DoS"
+    action: "标记为high，评估影响范围后再修复"
+
+evaluation:
+  bug_analysis_accuracy_target: 0.85
+  required_artifacts:
+    - root_cause_report
+    - affected_components
+    - fix_suggestion
+  test_dataset: eval-data/

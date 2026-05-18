@@ -1,0 +1,24 @@
+platform_constraints:
+  api_level:
+    min_sdk: 26
+    target_sdk: 35
+    compile_sdk: 36
+  build_system:
+    type: "Android Soong/Make"
+    note: "优先使用Soong（Android.bp），遗留模块使用Make（Android.mk）"
+  security:
+    - "不使用明文HTTP（必须HTTPS）"
+    - "不使用不安全的加密算法（MD5/SHA1/DES）"
+    - "Content Provider必须设置权限"
+    - "Broadcast Receiver必须设置exported=false（除非明确需要跨进程）"
+    - "不使用 Runtime.exec() 执行未验证的命令"
+  compatibility:
+    - "必须通过CTS (Compatibility Test Suite) 基础测试"
+    - "必须通过GTS (Google Mobile Services Test)"
+    - "必须通过VTS (Vendor Test Suite)"
+    - "设备配置不能影响CTS/GTS/VTS通过率"
+  logging:
+    - "使用 Android标准日志级别（Verbose/Debug/Info/Warn/Error）"
+    - "Release版本不输出 Debug/Verbose 级别日志"
+    - "日志Tag使用类名或模块名"
+    - "敏感信息（IMEI/IMSI/手机号）必须脱敏后才能输出到日志"

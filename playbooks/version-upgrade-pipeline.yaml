@@ -1,0 +1,60 @@
+name: 版本升级适配Pipeline
+version: "1.0"
+description: "Android大版本升级批量适配全流程"
+trigger: "新Android版本发布 / Owner更新version-adaptation.yaml"
+
+steps:
+  - id: load-version-constraints
+    agent: adaptation-coordinator
+    action: "加载版本适配约束文件和API迁移规则库"
+    output: version_constraints
+  - id: aosp-diff-analysis
+    agent: adaptation-coordinator
+    tool: aosp-diff-analyzer
+    action: "对比source/target版本的AOSP framework差异"
+    input: [version_constraints]
+    output: aosp_change_list
+  - id: code-impact-scan
+    agent: adaptation-coordinator
+    tool: aosp-diff-analyzer
+    action: "将AOSP变更与定制代码交叉比对"
+    input: [aosp_change_list, version_constraints]
+    output: impact_report
+  - id: strategy-classify
+    agent: adaptation-coordinator
+    action: "对受影响代码点分类: 全自动/半自动/人工"
+    input: [impact_report, version_constraints.api_migration_rules]
+    output: adaptation_plan
+  - id: batch-adapt
+    parallel:
+      - id: auto-adapt
+        agent: code-adapter
+        tool: patch-generator
+        action: "全自动项批量生成patch"
+        output: auto_patches
+      - id: semi-auto-adapt
+        agent: code-adapter
+        tool: patch-generator
+        action: "半自动项生成patch（待审核）"
+        output: review_patches
+      - id: manual-queue
+        agent: coordinator
+        action: "人工项生成任务清单"
+        output: manual_tasks
+  - id: build-verify
+    agent: build-verifier
+    tool: build-verifier
+    action: "编译验证"
+    input: [auto_patches, review_patches]
+    output: build_results
+  - id: regression-test
+    agent: test-runner
+    tool: regression-test-runner
+    action: "冒烟测试 + 功能回归"
+    input: [build_results.passed]
+    output: regression_results
+  - id: generate-report
+    agent: coordinator
+    action: "生成适配报告（完成/审核/人工/失败统计）"
+    input: [auto_patches, review_patches, manual_tasks, build_results, regression_results]
+    output: adaptation_report

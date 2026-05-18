@@ -1,0 +1,17 @@
+name: tahp-dual-engine
+description: "TAHP Dual Engine - Diagnostic + Adaptation"
+version: "0.1.0"
+
+modules:
+  - telephony
+  - kernel-driver
+  - power-mgmt
+
+engines:
+  - diagnostic
+  - adaptation
+
+evolution:
+  enabled: true
+  auto_start: false
+  max_iterations: 20

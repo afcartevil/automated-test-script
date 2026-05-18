@@ -1,0 +1,105 @@
+module:
+  name: telephony
+  display_name: "通信模块"
+  domain: "carrier_porting"
+  owner: ""
+  team: comm-integration
+  version: "1.0"
+  created: "2026-05-18"
+  updated: "2026-05-18"
+
+carrier_info:
+  source_project: "generic"
+  target_carrier: "airtel-india"
+  carrier_display_name: "Airtel India"
+  target_region: "india"
+
+context:
+  codebase_paths:
+    - "frameworks/opt/telephony/"
+    - "packages/services/Telephony/"
+    - "vendor/mediatek/proprietary/packages/telephony/"
+  build_targets:
+    - "TeleService"
+    - "TelephonyProvider"
+  test_targets:
+    - "android.telephony.cts"
+    - "com.android.phone.tests"
+  dependency_modules:
+    - "framework"
+    - "settings"
+
+carrier_specifics:
+  - requirement: "VoWiFi 预置支持"
+    requirement_id: "AIRTEL-REQ-001"
+    code_paths:
+      - "frameworks/opt/telephony/src/java/com/mediatek/ims/vowifi/"
+    config_changes:
+      - "carrier_config_airtel.xml"
+    overlay_files:
+      - "packages/services/Telephony/res/xml/airtel_vowifi_config.xml"
+    auto: true
+    confidence: 0.90
+    note: "基于 Android 标准 Wi-Fi Calling 框架，通过 CarrierConfigManager 配置"
+    dependencies: []
+  - requirement: "Airtel 分钟提醒"
+    requirement_id: "AIRTEL-REQ-002"
+    code_paths:
+      - "packages/services/Telephony/src/com/android/phone/callsettings/"
+    config_changes:
+      - "call_feature_airtel.xml"
+    overlay_files:
+      - "packages/services/Telephony/res/values/airtel_strings.xml"
+    auto: true
+    confidence: 0.85
+    note: "通过 InCallService 扩展实现"
+    dependencies: []
+  - requirement: "Airtel USSD 定制"
+    requirement_id: "AIRTEL-REQ-003"
+    code_paths:
+      - "frameworks/base/telephony/java/android/telephony/USSD.java"
+    config_changes: []
+    overlay_files: []
+    auto: false
+    confidence: 0.60
+    note: "涉及 Modem AT 命令定制，需要确认芯片平台差异，建议人工处理"
+    dependencies: ["AIRTEL-REQ-001"]
+  - requirement: "Airtel SIM Toolkit 增强"
+    requirement_id: "AIRTEL-REQ-004"
+    code_paths:
+      - "packages/apps/Stk/"
+      - "frameworks/base/telephony/java/com/android/internal/telephony/uicc/"
+    config_changes:
+      - "stk_config_airtel.xml"
+    overlay_files: []
+    auto: true
+    confidence: 0.80
+    note: "标准 STK 框架扩展"
+    dependencies: []
+
+compliance_standards:
+  - "GCF CCv3"
+  - "Airtel India RFI requirements v3.2"
+  - "India Telecom Regulatory Authority (TRAI) DND compliance"
+
+adaptation_constraints:
+  - "运营商定制不能影响 generic 基础功能（必须通过 generic_functional_test 回归）"
+  - "Carrier overlay 必须通过 Android 标准机制（CarrierConfigManager / Runtime Resource Overlay）"
+  - "网络配置变更必须通过 AT 命令验证（Modem 侧确认）"
+  - "不能硬编码运营商参数（APN/MCCMNC/号码格式），必须通过 carrier_config 管理"
+  - "USSD / STK 定制必须通过标准 Android 框架扩展，不允许直接修改 Framework 基础类"
+  - "所有运营商定制代码必须有 // CARRIER: airtel-india 注释标记"
+
+acceptance_criteria:
+  compile_pass: true
+  carrier_certification:
+    - "GCF 基础认证测试通过"
+    - "Airtel RFI 需求项全覆盖"
+    - "TRAI DND 合规检查通过"
+  regression_targets:
+    - "generic_functional_test"
+    - "airtel_vowifi_test"
+    - "airtel_call_settings_test"
+    - "airtel_ussd_test"
+    - "airtel_stk_test"
+  regression_pass_rate: 0.95

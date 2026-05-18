@@ -1,0 +1,69 @@
+# 运营商移植域约束模板
+# 使用方法: 由 init_module.py 从本模板生成实际约束文件
+# 对应域: carrier_porting (适配引擎)
+
+operator_info:
+  name: "{{ operator_name }}"
+  region: "{{ region | default('') }}"
+  mcc_mnc: "{{ mcc | default('') }}_{{ mnc | default('') }}"
+  requirements_version: "{{ req_version | default('1.0') }}"
+
+customization_requirements:
+  telephony_config:
+    - category: "VoLTE"
+      requirements:
+        - "{{ volte_req_1 | default('IMS注册配置') }}"
+        - "{{ volte_req_2 | default('VoLTE开关默认值') }}"
+        - "{{ volte_req_3 | default('Emergency呼叫路由') }}"
+    - category: "Data"
+      requirements:
+        - "{{ data_req_1 | default('默认APN配置') }}"
+        - "{{ data_req_2 | default('数据漫游策略') }}"
+    - category: "SMS"
+      requirements:
+        - "{{ sms_req_1 | default('短信中心号码配置') }}"
+        - "{{ sms_req_2 | default('CBS配置') }}"
+    - category: "Network"
+      requirements:
+        - "{{ net_req_1 | default('PLMN搜索策略') }}"
+        - "{{ net_req_2 | default('频段配置') }}"
+        - "{{ net_req_3 | default('band优先级') }}"
+
+  ui_customization:
+    - "{{ ui_req_1 | default('运营商品牌显示') }}"
+    - "{{ ui_req_2 | default('默认壁纸/主题') }}"
+    - "{{ ui_req_3 | default('运营商应用预装') }}"
+
+  regulatory:
+    - "{{ reg_req_1 | default('紧急呼叫号码配置') }}"
+    - "{{ reg_req_2 | default('区域法规遵从（如欧盟GDPR）') }}"
+    - "{{ reg_req_3 | default('无线电功率限制') }}"
+
+testing_requirements:
+  carrier_specific:
+    - "{{ carrier_test_1 | default('VoLTE注册和通话测试') }}"
+    - "{{ carrier_test_2 | default('数据连接稳定性测试') }}"
+    - "{{ carrier_test_3 | default('SMS/CBS功能测试') }}"
+    - "{{ carrier_test_4 | default('漫游场景测试') }}"
+  field_test:
+    - "{{ field_test_1 | default('运营商实网环境测试') }}"
+  certification:
+    - "{{ cert_test_1 | default('GCF/PTCRB认证（如需要）') }}"
+    - "{{ cert_test_2 | default('运营商入库测试') }}"
+
+safety_redlines:
+  - "不修改紧急呼叫处理逻辑（除非运营商明确要求且有法规依据）"
+  - "不降低网络安全等级或加密强度"
+  - "不修改IMS安全配置"
+  - "所有运营商定制需求必须有书面需求文档"
+  - "不在未经安全评审的情况下修改SIM/USIM相关逻辑"
+  - "确保区域法规遵从（如欧盟、印度、非洲区域法规差异）"
+
+output_format:
+  report_template: |
+    # {{ operator_name }} 移植报告
+    ## 需求概要
+    ## 实现清单
+    ## 测试结果
+    ## 遗留问题
+    ## 运营商验收状态

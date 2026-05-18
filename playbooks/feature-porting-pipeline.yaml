@@ -1,0 +1,26 @@
+name: Feature特性移植Pipeline
+version: "1.0"
+description: "自研Feature跨平台/跨版本移植"
+trigger: "Owner提交Feature移植需求"
+
+steps:
+  - id: dependency-analysis
+    agent: feature-analyzer
+    action: "分析Feature源码依赖链(API/HAL/资源/进程间)"
+    output: dependency_graph
+  - id: compatibility-check
+    agent: feature-analyzer
+    action: "依赖链与目标版本兼容性检查"
+    input: [dependency_graph]
+    output: compatibility_report
+  - id: code-transform
+    agent: code-adapter
+    tool: patch-generator
+    action: "自动执行代码转换(API替换/Import更新/Manifest更新)"
+    input: [compatibility_report]
+    output: porting_patches
+  - id: integration-verify
+    agent: build-verifier
+    action: "编译验证 + 功能测试 + 回归"
+    input: [porting_patches]
+    output: test_results
