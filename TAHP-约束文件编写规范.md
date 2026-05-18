@@ -242,7 +242,7 @@ security_gates:
 
 ### 4.1 评估数据集规范
 
-每个模块必须提供至少 **5个** 历史Bug案例作为评估数据集：
+每个模块必须提供至少 **15个** 历史Bug案例作为评估数据集（建议按 train/val/test = 9/3/3 划分），最低不少于 **5个**（适用于模块接入初期）：
 
 ```yaml
 # eval-data/cases/case-001-volte-drop.yaml
