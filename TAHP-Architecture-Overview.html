@@ -90,9 +90,9 @@
   <h1>TECNO AI Harness Platform</h1>
   <p class="subtitle">System Architecture & Design Specification</p>
   <div class="meta">
-    <span>v2.0</span>
+    <span>v2.1</span>
     <span>2026-05-18</span>
-    <span>Confidential</span>
+    <span>Dual-Engine Architecture</span>
     <span>Android Base SW Integration Dept.</span>
   </div>
 </div>
@@ -103,6 +103,7 @@
     <li><a href="#arch-overview">System Architecture Overview</a></li>
     <li><a href="#harness-layers">Harness 6-Layer Architecture</a></li>
     <li><a href="#evoskill-cycle">EvoSkill Evolution Cycle</a></li>
+    <li><a href="#adaptation-engine">Adaptation Engine (NEW v2.1)</a></li>
     <li><a href="#data-flow">Data Flow & Component Interaction</a></li>
     <li><a href="#repo-structure">Repository Structure</a></li>
     <li><a href="#pipeline">Bug Analysis Pipeline</a></li>
@@ -112,8 +113,8 @@
 </nav>
 
 <!-- ======== 1. System Architecture Overview ======== -->
-<h2 id="arch-overview">1. System Architecture Overview <span class="badge">Core</span></h2>
-<p>TAHP follows the industry-standard <strong>Agent = Model + Harness</strong> paradigm. The system is composed of four core layers, running entirely on local infrastructure with zero server costs.</p>
+<h2 id="arch-overview">1. System Architecture Overview <span class="badge">v2.1 Dual-Engine</span></h2>
+<p>TAHP follows the industry-standard <strong>Agent = Model + Harness</strong> paradigm with a <strong>dual-engine architecture</strong>: a Diagnostic Engine for Bug analysis and an Adaptation Engine for version upgrade/feature porting/carrier porting.</p>
 
 <div class="diagram-container">
 <svg viewBox="0 0 960 520" width="960" xmlns="http://www.w3.org/2000/svg">
@@ -152,14 +153,16 @@
   <!-- Arrow L2 → L3 -->
   <line x1="500" y1="145" x2="540" y2="145" stroke="#534AB7" stroke-width="1.5" marker-end="url(#arrow)"/>
 
-  <!-- Layer 3: Execution Orchestration -->
+  <!-- Layer 3: Execution Orchestration - Dual Engine -->
   <rect x="540" y="70" width="200" height="150" rx="12" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
-  <text x="640" y="94" text-anchor="middle" font-size="14" font-weight="500" fill="#4A1B0C">Execution Layer</text>
-  <text x="640" y="112" text-anchor="middle" font-size="11" fill="#993C1D">Multi-Agent Orchestration</text>
-  <rect x="555" y="124" width="170" height="32" rx="6" fill="#fff" stroke="#993C1D" stroke-width="0.5"/>
-  <text x="640" y="144" text-anchor="middle" font-size="11" fill="#4A1B0C">Bug Analysis Pipeline</text>
-  <rect x="555" y="162" width="170" height="32" rx="6" fill="#fff" stroke="#993C1D" stroke-width="0.5"/>
-  <text x="640" y="182" text-anchor="middle" font-size="11" fill="#4A1B0C">Code Adaptation Pipeline</text>
+  <text x="640" y="88" text-anchor="middle" font-size="13" font-weight="500" fill="#4A1B0C">Execution Layer</text>
+  <text x="640" y="104" text-anchor="middle" font-size="10" fill="#993C1D">Dual-Engine</text>
+  <rect x="555" y="112" width="170" height="26" rx="6" fill="#fff" stroke="#993C1D" stroke-width="0.5"/>
+  <text x="640" y="129" text-anchor="middle" font-size="10" fill="#4A1B0C">Diagnostic: Bug Analysis</text>
+  <rect x="555" y="142" width="170" height="26" rx="6" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="640" y="159" text-anchor="middle" font-size="10" fill="#412402">Adaptation: Version/Feature</text>
+  <rect x="555" y="172" width="170" height="26" rx="6" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="640" y="189" text-anchor="middle" font-size="10" fill="#412402">Adaptation: Carrier Porting</text>
 
   <!-- Arrow L3 → L4 -->
   <line x1="740" y1="145" x2="780" y2="145" stroke="#534AB7" stroke-width="1.5" marker-end="url(#arrow)"/>
@@ -167,15 +170,15 @@
   <!-- Layer 4: Evaluation -->
   <rect x="780" y="70" width="140" height="150" rx="12" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
   <text x="850" y="94" text-anchor="middle" font-size="14" font-weight="500" fill="#173404">Evaluation</text>
-  <text x="850" y="112" text-anchor="middle" font-size="11" fill="#3B6D11">Auto Assessment</text>
+  <text x="850" y="112" text-anchor="middle" font-size="11" fill="#3B6D11">Auto + Gates</text>
   <rect x="795" y="124" width="110" height="32" rx="6" fill="#fff" stroke="#3B6D11" stroke-width="0.5"/>
-  <text x="850" y="144" text-anchor="middle" font-size="11" fill="#173404">Quality Gates</text>
+  <text x="850" y="144" text-anchor="middle" font-size="11" fill="#173404">Compile + Regress</text>
   <rect x="795" y="162" width="110" height="32" rx="6" fill="#fff" stroke="#3B6D11" stroke-width="0.5"/>
-  <text x="850" y="182" text-anchor="middle" font-size="11" fill="#173404">Metrics Track</text>
+  <text x="850" y="182" text-anchor="middle" font-size="11" fill="#173404">EvoSkill Loop</text>
 
   <!-- Feedback loop arrow (Evaluation back to Skill Engine) -->
   <path d="M850 220 L850 250 Q850 265 835 265 L405 265 Q390 265 390 250 L390 220" fill="none" stroke="#534AB7" stroke-width="1.2" stroke-dasharray="6,3" marker-end="url(#arrow)"/>
-  <text x="620" y="280" text-anchor="middle" font-size="11" fill="#534AB7" font-style="italic">Feedback Loop (EvoSkill)</text>
+  <text x="620" y="280" text-anchor="middle" font-size="11" fill="#534AB7" font-style="italic">EvoSkill Feedback (cross-version reuse)</text>
 
   <!-- Bottom: Infrastructure -->
   <rect x="50" y="300" width="870" height="80" rx="12" fill="#F1EFE8" fill-opacity="0.8" stroke="#888780" stroke-width="0.5"/>
@@ -362,8 +365,133 @@
 </svg>
 </div>
 
-<!-- ======== 4. Data Flow ======== -->
-<h2 id="data-flow">4. Data Flow & Component Interaction <span class="badge">Integration</span></h2>
+<!-- ======== 4. Adaptation Engine (v2.1) ======== -->
+<h2 id="adaptation-engine">4. Adaptation Engine <span class="badge" style="background:var(--amber-50);color:var(--amber-600);">NEW v2.1</span></h2>
+<p>The Adaptation Engine automates Android version upgrades (A15→A16→A17...), feature porting, and carrier requirement porting. It leverages an API migration rules library for cross-version experience reuse, enabling progressive automation rates from 40% to 75%+.</p>
+
+<div class="diagram-container">
+<svg viewBox="0 0 960 420" width="960" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow-ad" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="480" y="28" text-anchor="middle" font-size="15" font-weight="500" fill="#412402">Adaptation Engine — Three Pipelines</text>
+
+  <!-- Pipeline 1: Version Upgrade -->
+  <rect x="20" y="50" width="280" height="340" rx="12" fill="#E6F1FB" fill-opacity="0.5" stroke="#185FA5" stroke-width="1"/>
+  <text x="160" y="74" text-anchor="middle" font-size="13" font-weight="500" fill="#042C53">Pipeline 1: Version Upgrade</text>
+  <text x="160" y="90" text-anchor="middle" font-size="10" fill="#185FA5">Android N → N+1</text>
+
+  <!-- Steps -->
+  <rect x="40" y="104" width="240" height="28" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="160" y="122" text-anchor="middle" font-size="10" fill="#042C53">1. AOSP Diff Analysis</text>
+  <line x1="160" y1="132" x2="160" y2="142" stroke="#185FA5" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="40" y="142" width="240" height="28" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="160" y="160" text-anchor="middle" font-size="10" fill="#042C53">2. Code Impact Scanning</text>
+  <line x1="160" y1="170" x2="160" y2="180" stroke="#185FA5" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="40" y="180" width="240" height="28" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="160" y="198" text-anchor="middle" font-size="10" fill="#04342C">3. Match API Migration Rules</text>
+  <line x1="160" y1="208" x2="160" y2="218" stroke="#0F6E56" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="40" y="218" width="240" height="36" rx="6" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="160" y="234" text-anchor="middle" font-size="10" font-weight="500" fill="#412402">4. Strategy Classification</text>
+  <text x="160" y="248" text-anchor="middle" font-size="9" fill="#854F0B">Auto(60%) / Semi(30%) / Manual(10%)</text>
+  <line x1="160" y1="254" x2="160" y2="264" stroke="#854F0B" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="40" y="264" width="240" height="28" rx="6" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+  <text x="160" y="282" text-anchor="middle" font-size="10" fill="#4A1B0C">5. Batch Patch Generation</text>
+  <line x1="160" y1="292" x2="160" y2="302" stroke="#993C1D" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="40" y="302" width="240" height="28" rx="6" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+  <text x="160" y="320" text-anchor="middle" font-size="10" fill="#501313">6. Build + Regression Verify</text>
+  <line x1="160" y1="330" x2="160" y2="340" stroke="#A32D2D" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="40" y="340" width="240" height="28" rx="6" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+  <text x="160" y="358" text-anchor="middle" font-size="10" fill="#173404">7. Adaptation Report</text>
+
+  <!-- Pipeline 2: Feature Porting -->
+  <rect x="340" y="50" width="280" height="340" rx="12" fill="#E1F5EE" fill-opacity="0.5" stroke="#0F6E56" stroke-width="1"/>
+  <text x="480" y="74" text-anchor="middle" font-size="13" font-weight="500" fill="#04342C">Pipeline 2: Feature Porting</text>
+  <text x="480" y="90" text-anchor="middle" font-size="10" fill="#0F6E56">Cross-platform / Cross-version</text>
+
+  <rect x="360" y="104" width="240" height="28" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="480" y="122" text-anchor="middle" font-size="10" fill="#04342C">1. Dependency Analysis</text>
+  <line x1="480" y1="132" x2="480" y2="142" stroke="#0F6E56" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="360" y="142" width="240" height="28" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="480" y="160" text-anchor="middle" font-size="10" fill="#04342C">2. Compatibility Mapping</text>
+  <line x1="480" y1="170" x2="480" y2="180" stroke="#0F6E56" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="360" y="180" width="240" height="28" rx="6" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+  <text x="480" y="198" text-anchor="middle" font-size="10" fill="#4A1B0C">3. Code Transformation</text>
+  <line x1="480" y1="208" x2="480" y2="218" stroke="#993C1D" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="360" y="218" width="240" height="28" rx="6" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+  <text x="480" y="236" text-anchor="middle" font-size="10" fill="#501313">4. Compile Verification</text>
+  <line x1="480" y1="246" x2="480" y2="256" stroke="#A32D2D" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="360" y="256" width="240" height="28" rx="6" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+  <text x="480" y="274" text-anchor="middle" font-size="10" fill="#173404">5. Integration + Regression Test</text>
+  <line x1="480" y1="284" x2="480" y2="294" stroke="#3B6D11" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="360" y="294" width="240" height="28" rx="6" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="480" y="312" text-anchor="middle" font-size="10" fill="#3C3489">6. Feature Validation Report</text>
+
+  <!-- Feature Info Box -->
+  <rect x="370" y="335" width="220" height="44" rx="8" fill="#FAEEDA" fill-opacity="0.4" stroke="#854F0B" stroke-width="0.3" stroke-dasharray="3,3"/>
+  <text x="480" y="353" text-anchor="middle" font-size="9" fill="#854F0B">Typical: 1-2 weeks per feature</text>
+  <text x="480" y="368" text-anchor="middle" font-size="9" fill="#854F0B">Key: API/HAL/Resource dependency chain</text>
+
+  <!-- Pipeline 3: Carrier Porting -->
+  <rect x="660" y="50" width="280" height="340" rx="12" fill="#FAECE7" fill-opacity="0.5" stroke="#993C1D" stroke-width="1"/>
+  <text x="800" y="74" text-anchor="middle" font-size="13" font-weight="500" fill="#4A1B0C">Pipeline 3: Carrier Porting</text>
+  <text x="800" y="90" text-anchor="middle" font-size="10" fill="#993C1D">Operator requirement migration</text>
+
+  <rect x="680" y="104" width="240" height="28" rx="6" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+  <text x="800" y="122" text-anchor="middle" font-size="10" fill="#4A1B0C">1. Requirement Parsing</text>
+  <line x1="800" y1="132" x2="800" y2="142" stroke="#993C1D" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="680" y="142" width="240" height="28" rx="6" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+  <text x="800" y="160" text-anchor="middle" font-size="10" fill="#4A1B0C">2. Source Code Mapping</text>
+  <line x1="800" y1="170" x2="800" y2="180" stroke="#993C1D" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="680" y="180" width="240" height="28" rx="6" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+  <text x="800" y="198" text-anchor="middle" font-size="10" fill="#4A1B0C">3. Diff Generation</text>
+  <line x1="800" y1="208" x2="800" y2="218" stroke="#993C1D" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="680" y="218" width="240" height="28" rx="6" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5"/>
+  <text x="800" y="236" text-anchor="middle" font-size="10" fill="#501313">4. Compliance Check</text>
+  <line x1="800" y1="246" x2="800" y2="256" stroke="#A32D2D" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="680" y="256" width="240" height="28" rx="6" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+  <text x="800" y="274" text-anchor="middle" font-size="10" fill="#173404">5. Generic Regression Test</text>
+  <line x1="800" y1="284" x2="800" y2="294" stroke="#3B6D11" stroke-width="1" marker-end="url(#arrow-ad)"/>
+
+  <rect x="680" y="294" width="240" height="28" rx="6" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="800" y="312" text-anchor="middle" font-size="10" fill="#3C3489">6. Carrier Certification Report</text>
+
+  <!-- Carrier Info Box -->
+  <rect x="690" y="335" width="220" height="44" rx="8" fill="#FAEEDA" fill-opacity="0.4" stroke="#854F0B" stroke-width="0.3" stroke-dasharray="3,3"/>
+  <text x="800" y="353" text-anchor="middle" font-size="9" fill="#854F0B">Typical: 3-5 days per carrier</text>
+  <text x="800" y="368" text-anchor="middle" font-size="9" fill="#854F0B">Key: GCF / RFI compliance standards</text>
+
+  <!-- Shared bottom: API Migration Rules -->
+  <rect x="20" y="400" width="920" height="14" rx="4" fill="#EEEDFE" fill-opacity="0.5" stroke="#534AB7" stroke-width="0.3"/>
+  <text x="480" y="411" text-anchor="middle" font-size="9" fill="#534AB7">Shared Asset: API Migration Rules Library (cross-version reuse) — auto rate grows: 40% → 60% → 75% across upgrade cycles</text>
+</svg>
+</div>
+
+<div class="note-box">
+  <strong>Cross-Version Reuse:</strong> The API migration rules library is the core asset. Rules accumulated during A15→A16 adaptation are directly reusable for A16→A17, progressively increasing the auto-adaptation rate from ~40% (first cycle) to ~75% (after 2+ cycles).
+</div>
+
+<!-- ======== 5. Data Flow ======== -->
+<h2 id="data-flow">5. Data Flow & Component Interaction <span class="badge">Integration</span></h2>
 <p>This diagram shows the complete data flow when a developer submits a Bug analysis request, from input to structured report output with EvoSkill feedback loop.</p>
 
 <div class="diagram-container">
@@ -471,8 +599,8 @@
 </svg>
 </div>
 
-<!-- ======== 5. Repository Structure ======== -->
-<h2 id="repo-structure">5. Repository Structure <span class="badge">Implementation</span></h2>
+<!-- ======== 6. Repository Structure ======== -->
+<h2 id="repo-structure">6. Repository Structure <span class="badge">v2.1</span></h2>
 
 <div class="diagram-container" style="font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12px;">
 <pre style="margin:0; line-height:1.8;">
@@ -484,33 +612,52 @@
 │   ├── <span style="color:#993C1D;">telephony/</span>
 │   │   ├── bug-analysis.yaml         <span style="color:#888;"># Bug analysis constraints</span>
 │   │   ├── code-adaptation.yaml      <span style="color:#888;"># Code adaptation constraints</span>
+│   │   ├── <span style="color:#854F0B;">version-adaptation.yaml</span>   <span style="color:#888;"># Version upgrade constraints <span style="color:#854F0B;font-weight:600;">NEW</span></span>
+│   │   ├── <span style="color:#854F0B;">carrier-porting.yaml</span>      <span style="color:#888;"># Carrier porting constraints <span style="color:#854F0B;font-weight:600;">NEW</span></span>
 │   │   └── eval-data/                <span style="color:#888;"># Test dataset (5-10 cases)</span>
 │   ├── <span style="color:#0F6E56;">kernel-driver/</span>
 │   │   ├── bug-analysis.yaml
 │   │   ├── code-adaptation.yaml
+│   │   ├── <span style="color:#854F0B;">version-adaptation.yaml</span>   <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
 │   │   └── eval-data/
 │   ├── <span style="color:#854F0B;">power/</span>
-│   │   └── bug-analysis.yaml
+│   │   ├── bug-analysis.yaml
+│   │   ├── <span style="color:#854F0B;">version-adaptation.yaml</span>   <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
+│   │   └── eval-data/
 │   └── <span style="color:#888780;">shared/</span>
 │       ├── coding-standards.yaml     <span style="color:#888;"># Shared coding standards</span>
-│       └── android-platform.yaml     <span style="color:#888;"># Android platform rules</span>
+│       ├── android-platform.yaml     <span style="color:#888;"># Android platform rules</span>
+│       └── <span style="color:#854F0B;">api-migration-rules/</span>      <span style="color:#888;"># API migration rules (cross-version) <span style="color:#854F0B;font-weight:600;">NEW</span></span>
+│           ├── telephony-migration.yaml
+│           ├── framework-migration.yaml
+│           └── hal-migration.yaml
 │
 ├── <span style="color:#0F6E56;">skills/</span>                            <span style="color:#888;"># Auto-generated by EvoSkill</span>
 │   ├── .claude/skills/               <span style="color:#888;"># Claude Code format</span>
 │   │   ├── telephony-call-drop/SKILL.md
 │   │   ├── kernel-panic-trace/SKILL.md
-│   │   └── power-leak-detect/SKILL.md
+│   │   ├── power-leak-detect/SKILL.md
+│   │   ├── <span style="color:#854F0B;">telephony-version-adapter/</span> <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
+│   │   └── <span style="color:#854F0B;">carrier-porting-assistant/</span> <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
 │   └── .codex/skills/                <span style="color:#888;"># Codex format (auto-sync)</span>
 │
 ├── <span style="color:#993C1D;">playbooks/</span>                         <span style="color:#888;"># Execution orchestration</span>
 │   ├── bug-analysis-pipeline.yaml
 │   ├── code-adaptation-pipeline.yaml
+│   ├── <span style="color:#854F0B;">version-upgrade-pipeline.yaml</span> <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
+│   ├── <span style="color:#854F0B;">feature-porting-pipeline.yaml</span> <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
+│   ├── <span style="color:#854F0B;">carrier-porting-pipeline.yaml</span> <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
 │   └── cross-module-pipeline.yaml
 │
 ├── <span style="color:#3B6D11;">tools/</span>                             <span style="color:#888;"># MCP tool definitions</span>
 │   ├── android-log-analyzer/
 │   ├── git-operations/
-│   └── build-system/
+│   ├── build-system/
+│   ├── <span style="color:#854F0B;">aosp-diff-analyzer/</span>           <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
+│   ├── <span style="color:#854F0B;">patch-generator/</span>              <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
+│   ├── <span style="color:#854F0B;">api-migration-db/</span>             <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
+│   ├── <span style="color:#854F0B;">regression-test-runner/</span>       <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
+│   └── code-review-checker/
 │
 ├── <span style="color:#854F0B;">docs/</span>                              <span style="color:#888;"># Deep documentation</span>
 │   ├── architecture/
@@ -520,7 +667,9 @@
 ├── <span style="color:#A32D2D;">scripts/</span>                           <span style="color:#888;"># Automation scripts</span>
 │   ├── init-module.sh
 │   ├── run-evolution.sh
-│   └── sync-skills.sh
+│   ├── sync-skills.sh
+│   ├── <span style="color:#854F0B;">run-version-adaptation.sh</span>     <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
+│   └── <span style="color:#854F0B;">run-carrier-porting.sh</span>        <span style="color:#888;"># <span style="color:#854F0B;font-weight:600;">NEW</span></span>
 │
 └── <span style="color:#888780;">reports/</span>                           <span style="color:#888;"># Evaluation output</span>
     ├── evolution-reports/
@@ -528,8 +677,8 @@
 </pre>
 </div>
 
-<!-- ======== 6. Bug Analysis Pipeline ======== -->
-<h2 id="pipeline">6. Bug Analysis Pipeline <span class="badge">Workflow</span></h2>
+<!-- ======== 7. Bug Analysis Pipeline ======== -->
+<h2 id="pipeline">7. Bug Analysis Pipeline <span class="badge">Workflow</span></h2>
 
 <div class="diagram-container">
 <svg viewBox="0 0 960 320" width="960" xmlns="http://www.w3.org/2000/svg">
@@ -618,8 +767,8 @@
 </svg>
 </div>
 
-<!-- ======== 7. Implementation Roadmap ======== -->
-<h2 id="roadmap">7. Implementation Roadmap <span class="badge">Timeline</span></h2>
+<!-- ======== 8. Implementation Roadmap ======== -->
+<h2 id="roadmap">8. Implementation Roadmap <span class="badge">v2.1 Timeline</span></h2>
 
 <div class="diagram-container">
 <svg viewBox="0 0 960 340" width="960" xmlns="http://www.w3.org/2000/svg">
@@ -643,10 +792,10 @@
   <text x="530" y="82" text-anchor="middle" font-size="12" font-weight="500" fill="#04342C">Phase 1: Constraint-Driven MVP</text>
   <text x="530" y="100" text-anchor="middle" font-size="10" fill="#0F6E56">Owner fills constraints + Initial Skills + Test dataset + Baseline metrics</text>
 
-  <!-- Phase 2: Auto Evolution (Week 5-6) -->
+  <!-- Phase 2: Adaptation MVP (Week 5-6) -->
   <rect x="530" y="120" width="300" height="50" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
-  <text x="680" y="142" text-anchor="middle" font-size="12" font-weight="500" fill="#4A1B0C">Phase 2: Auto Evolution</text>
-  <text x="680" y="160" text-anchor="middle" font-size="10" fill="#993C1D">EvoSkill loop + First MCP tool + Bug Pipeline + Quantitative comparison</text>
+  <text x="680" y="142" text-anchor="middle" font-size="12" font-weight="500" fill="#4A1B0C">Phase 2: Adaptation Engine MVP</text>
+  <text x="680" y="160" text-anchor="middle" font-size="10" fill="#993C1D">AOSP diff + Impact scan + API migration rules + Batch patch generation</text>
 
   <!-- Phase 3: Scale (Week 7-8) -->
   <rect x="680" y="180" width="240" height="50" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
@@ -675,8 +824,8 @@
 </svg>
 </div>
 
-<!-- ======== 8. Maturity Model ======== -->
-<h2 id="maturity">8. Harness Maturity Model <span class="badge">Assessment</span></h2>
+<!-- ======== 9. Maturity Model ======== -->
+<h2 id="maturity">9. Harness Maturity Model <span class="badge">Assessment</span></h2>
 
 <div class="diagram-container">
 <svg viewBox="0 0 680 280" width="680" xmlns="http://www.w3.org/2000/svg">
@@ -745,7 +894,7 @@
 </div>
 
 <p style="text-align:center; font-size:12px; color:var(--text-hint); margin-top:48px;">
-  TECNO AI Harness Platform v2.0 | Android Base SW Integration Dept. | 2026-05-18 | Confidential
+  TECNO AI Harness Platform v2.1 — Dual-Engine Architecture | Android Base SW Integration Dept. | 2026-05-18 | Confidential
 </p>
 
 </div>

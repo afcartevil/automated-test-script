@@ -1,15 +1,19 @@
 # 传音Android底软集成部 — AI提效 Harness 系统架构评估与方案设计
 
 > **日期**: 2026-05-18 (Updated)
-> **版本**: v2.0
+> **版本**: v2.1
 > **编制**: Software Architect
 > **状态**: Approved
 >
+> **v2.1 变更**: 新增适配引擎完整设计 — 版本升级适配、Feature特性移植、运营商需求移植三大Pipeline
+>
 > **配套文档**:
 > - [可视化架构总览](TAHP-Architecture-Overview.html) — 8幅专业架构图
+> - [可视化架构总览（中文）](TAHP-Architecture-Overview-CN.html) — 8幅专业架构图（中文版）
 > - [约束文件编写规范](TAHP-约束文件编写规范.md) — Owner编写约束的强制性标准
 > - [AI代码生成约束规范](TAHP-AI代码生成约束规范.md) — 防幻觉、防反复修改的核心规范
 > - [评估与质量门禁规范](TAHP-评估与质量门禁规范.md) — Skill质量评估与代码门禁标准
+> - [版本适配约束规范](TAHP-版本适配约束规范.md) — 版本升级/特性移植/运营商移植约束标准 `NEW`
 
 ---
 
@@ -21,12 +25,13 @@
 4. [Harness范式解读](#4-harness范式解读)
 5. [推荐系统方案](#5-推荐系统方案)
 6. [技术选型与架构设计](#6-技术选型与架构设计)
-7. [系统边界与接口规范](#7-系统边界与接口规范) `NEW`
-8. [数据模型设计](#8-数据模型设计) `NEW`
-9. [安全设计](#9-安全设计) `NEW`
-10. [实施路线图](#10-实施路线图)
-11. [风险与应对](#11-风险与应对)
-12. [附录：参考资源](#12-附录参考资源)
+7. [适配引擎详细设计](#7-适配引擎详细设计) `NEW`
+8. [系统边界与接口规范](#8-系统边界与接口规范)
+9. [数据模型设计](#9-数据模型设计)
+10. [安全设计](#10-安全设计)
+11. [实施路线图](#11-实施路线图)
+12. [风险与应对](#12-风险与应对)
+13. [附录：参考资源](#13-附录参考资源)
 
 ---
 
@@ -35,6 +40,22 @@
 ### 1.1 核心结论
 
 你们部门经理提出的**Harness-based系统**方向**完全正确**，且恰逢其时。2026年业界已形成成熟的方法论 —— **Agent = Model + Harness**，其中Harness就是将状态、工具、反馈、约束和执行环境串联起来的"操作系统"。核心范式转变是：**从"人写SOP→转Skill"升级为"模块出约束→系统自动生成/调用/迭代Skill"**。
+
+### 1.1.1 双引擎定位
+
+TAHP 服务于部门两大核心工作场景：
+
+| 引擎 | 场景 | 现有方案 | TAHP 优化方向 |
+|------|------|---------|-------------|
+| **诊断引擎** | Bug 分析 | 人工排查 + AI 辅助 | 约束驱动 + EvoSkill 自动进化 |
+| **适配引擎** | 版本升级 / 特性移植 / 运营商需求移植 | **各业务自己梳理 SOP → 转 Skill → AI 按Skill执行** | 约束驱动 + Skill 自动生成/进化 + 跨版本经验复用 |
+
+**适配引擎是当前最大的工作量来源**。每次 Android 大版本升级（A15→A16、A16→A17...），各业务模块都要独立梳理适配 SOP、转成 Skill、让 AI 工具执行。TAHP 的核心价值在于：
+
+1. **降低 Owner 门槛**：从写完整适配 SOP 降级到写约束条件（YAML），工作量从数天降到 2-4 小时
+2. **自动 Skill 生成**：系统基于约束自动生成适配 Skill，无需人工编写
+3. **跨版本经验复用**：A15→A16 积累的适配规则和进化 Skill，可直接复用于 A16→A17
+4. **质量统一管控**：所有适配通过统一的质量门禁（编译通过 + 回归验证），而非各模块各自为战
 
 ### 1.2 推荐方案概览
 
@@ -45,11 +66,12 @@
 │  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌────────┐ │
 │  │ 约束管理层 │→│ Skill引擎层 │→│ 执行编排层 │→│ 评估迭代 │ │
 │  │          │  │           │  │           │  │        │ │
-│  │ 各模块    │  │ EvoSkill  │  │ 多Agent   │  │ 自动   │ │
-│  │ 只需输出  │  │ + Agent   │  │ 编排调度   │  │ 评估   │ │
+│  │ 各模块    │  │ EvoSkill  │  │ 诊断Pipeline│ │ 自动   │ │
+│  │ 只需输出  │  │ + Agent   │  │ 适配Pipeline│ │ 评估   │ │
 │  │ 约束条件  │  │ Skills   │  │ + MCP工具  │  │ + 进化 │ │
 │  └──────────┘  └───────────┘  └──────────┘  └────────┘ │
 │                                                          │
+│  双引擎: 诊断引擎(Bug分析) + 适配引擎(版本/特性/运营商)    │
 │  底层: Git + Claude Code/Codex CLI + 本地LLM (可选)      │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -68,11 +90,17 @@
 ### 2.1 当前方案分析
 
 ```
-当前方案流程:
+当前方案流程（诊断）:
 
 业务Owner → [梳理SOP] → [手动转Skill] → [人工测试] → [人工迭代]
      ↑                                              │
      └──────────────── 完全依赖人 ───────────────────┘
+
+当前方案流程（适配 — 已在执行）:
+
+业务Owner → [梳理适配SOP] → [转成Skill] → [AI工具按Skill执行适配]
+     ↑                                              │
+     └────── 每版本重复，经验不积累 ──────────────────┘
 ```
 
 #### 优势
@@ -81,6 +109,7 @@
 | 业务理解深 | Owner对自身模块最了解，SOP质量有保障 |
 | 质量可控 | 人工审核，Skill质量相对可靠 |
 | 风险低 | 不依赖额外基础设施 |
+| **适配已落地** | **各业务已有"SOP→Skill→AI执行"的适配流程在跑** |
 
 #### 核心问题
 
@@ -92,6 +121,8 @@
 | 4 | **缺乏关联调用** | 各模块Skill孤立，无法自动协调跨模块任务 | 🟡 中 |
 | 5 | **知识不可积累** | 一个Owner的经验无法有效传递给另一个模块 | 🟡 中 |
 | 6 | **无量化评估** | 不知道Skill到底提升了多少效率，缺乏数据驱动 | 🟠 中高 |
+| 7 | **适配经验不跨版本复用** | A15→A16积累的适配知识无法直接用于A16→A17 | 🔴 高 |
+| 8 | **适配SOP重复编写** | 每次大版本升级，每个业务都要重新梳理适配SOP | 🔴 高 |
 
 ### 2.2 当前方案的Harness成熟度评估
 
@@ -310,7 +341,7 @@ description: "分析Android telephony模块的Bug，包括通话、短信、数�
   5. Skill版本管理（基于Git分支）
 ```
 
-#### 架构总览
+#### 架构总览 — 双引擎架构
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -330,25 +361,40 @@ description: "分析Android telephony模块的Bug，包括通话、短信、数�
 │  │  │ Android  │ │ Git      │ │ BugTracker│ │ 编译构建 │       │  │
 │  │  │ 日志分析 │ │ 操作     │ │ 工具     │ │ 工具     │       │  │
 │  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │  │
+│  │  │ AOSP     │ │ Patch    │ │ API迁移  │ │ 回归测试 │       │  │
+│  │  │ Diff分析 │ │ 生成器   │ │ 规则库   │ │ 运行器   │       │  │
+│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                               ↓                                    │
 │  ┌─────────────────────────────────────────────────────────────┐  │
-│  │                 L3: 执行编排层                              │  │
-│  │  ┌──────────────────┐  ┌──────────────────┐               │  │
-│  │  │ Bug分析Pipeline   │  │ 代码适配Pipeline │               │  │
-│  │  │ ┌────┐ ┌────┐    │  │ ┌────┐ ┌────┐   │               │  │
-│  │  │ │日志 │→│根因 │→   │  │ │约束 │→│代码 │→  │               │  │
-│  │  │ │收集 │ │定位 │    │  │ │检查 │ │生成 │   │               │  │
-│  │  │ └────┘ └────┘    │  │ └────┘ └────┘   │               │  │
-│  │  └──────────────────┘  └──────────────────┘               │  │
+│  │                    L3: 执行编排层 — 双引擎                  │  │
+│  │                                                              │  │
+│  │  ┌─── 诊断引擎 ───────────────────────────────────────┐     │  │
+│  │  │ Bug分析Pipeline: 日志收集→根因定位→报告              │     │  │
+│  │  │ 单元代码适配Pipeline: 约束检查→代码生成→验证         │     │  │
+│  │  └─────────────────────────────────────────────────────┘     │  │
+│  │                                                              │  │
+│  │  ┌─── 适配引擎 (NEW v2.1) ────────────────────────────┐     │  │
+│  │  │ 版本升级Pipeline: AOSP Diff→影响评估→策略分类→       │     │  │
+│  │  │                    批量适配→编译回归                  │     │  │
+│  │  │ Feature移植Pipeline: 依赖分析→兼容映射→代码转换→     │     │  │
+│  │  │                     集成回归                          │     │  │
+│  │  │ 运营商移植Pipeline: 需求解析→源码映射→差异生成→     │     │  │
+│  │  │                     合规检查                          │     │  │
+│  │  └─────────────────────────────────────────────────────┘     │  │
+│  │                                                              │  │
+│  │  ┌─── 共性问题处理层 ────────────────────────────────┐      │  │
+│  │  │ 安全补丁 / 合规修复 — 跨模块批量同步               │      │  │
+│  │  └─────────────────────────────────────────────────────┘     │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                               ↓                                    │
 │  ┌─────────────────────────────────────────────────────────────┐  │
 │  │              L4+L5+L6: 记忆/评估/恢复层                     │  │
 │  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐        │  │
 │  │  │ EvoSkill     │ │ 评估引擎     │ │ 失败恢复     │        │  │
-│  │  │ 自动进化     │ │ (测试集打分) │ │ (重试/回滚)  │        │  │
-│  │  │ 循环         │ │              │ │              │        │  │
+│  │  │ 自动进化     │ │ (编译+回归   │ │ (重试/回滚)  │        │  │
+│  │  │ 跨版本复用   │ │  + 准确率)   │ │              │        │  │
 │  │  └──────────────┘ └──────────────┘ └──────────────┘        │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                                                                    │
@@ -362,7 +408,18 @@ description: "分析Android telephony模块的Bug，包括通话、短信、数�
 
 #### 模块1：约束管理层（Owner的唯一输入端）
 
-业务Owner**唯一需要做的事**就是为各自模块定义约束文件：
+业务Owner**唯一需要做的事**就是为各自模块定义约束文件。TAHP v2.1 支持以下四种 domain：
+
+| Domain | 用途 | 对应引擎 | 产出 |
+|--------|------|---------|------|
+| `bug_analysis` | Bug 根因分析 | 诊断引擎 | 分析报告 |
+| `code_adaptation` | 单元代码适配（Bug修复等） | 诊断引擎 | 代码 Patch |
+| `version_adaptation` | 大版本升级适配 | **适配引擎** | 批量 Patch 集合 |
+| `carrier_porting` | 运营商需求移植 | **适配引擎** | Carrier Patch + 配置 |
+
+> 详细的约束文件编写规范参见：
+> - [TAHP-约束文件编写规范](TAHP-约束文件编写规范.md) — bug_analysis 和 code_adaptation
+> - [TAHP-版本适配约束规范](TAHP-版本适配约束规范.md) — version_adaptation 和 carrier_porting `NEW`
 
 ```yaml
 # constraints/telephony-bug-analysis.yaml
@@ -599,18 +656,26 @@ tecno-ai-harness/
 ├── constraints/                       # 业务约束（Owner唯一输入端）
 │   ├── telephony/
 │   │   ├── bug-analysis.yaml         # 通信Bug分析约束
-│   │   ├── code-adaptation.yaml      # 通信代码适配约束
+│   │   ├── code-adaptation.yaml      # 通信代码适配约束（Bug修复级）
+│   │   ├── version-adaptation.yaml   # 通信版本升级适配约束 `NEW`
+│   │   ├── carrier-porting.yaml      # 通信运营商需求移植约束 `NEW`
 │   │   └── eval-data/                # 评估测试集
 │   ├── kernel-driver/
 │   │   ├── bug-analysis.yaml
 │   │   ├── code-adaptation.yaml
+│   │   ├── version-adaptation.yaml   # `NEW`
 │   │   └── eval-data/
 │   ├── power/
 │   │   ├── bug-analysis.yaml
+│   │   ├── version-adaptation.yaml   # `NEW`
 │   │   └── eval-data/
 │   └── shared/
 │       ├── coding-standards.yaml     # 共享编码规范
-│       └── android-platform.yaml     # Android平台通用约束
+│       ├── android-platform.yaml     # Android平台通用约束
+│       └── api-migration-rules/      # API迁移规则库（可跨版本复用）`NEW`
+│           ├── telephony-migration.yaml
+│           ├── framework-migration.yaml
+│           └── hal-migration.yaml
 │
 ├── skills/                            # 自动生成的Skills（EvoSkill产出）
 │   ├── .claude/skills/               # Claude Code格式
@@ -620,19 +685,33 @@ tecno-ai-harness/
 │   │   ├── kernel-panic-trace/
 │   │   │   ├── SKILL.md
 │   │   │   └── references/
-│   │   └── power-leak-detect/
-│   │       └── SKILL.md
+│   │   ├── power-leak-detect/
+│   │   │   └── SKILL.md
+│   │   ├── telephony-version-adapter/    # 版本适配Skill `NEW`
+│   │   │   ├── SKILL.md
+│   │   │   └── references/
+│   │   └── carrier-porting-assistant/    # 运营商移植Skill `NEW`
+│   │       ├── SKILL.md
+│   │       └── references/
 │   └── .codex/skills/                # Codex格式（自动同步）
 │
 ├── playbooks/                         # 执行编排剧本
 │   ├── bug-analysis-pipeline.yaml    # Bug分析流水线
 │   ├── code-adaptation-pipeline.yaml # 代码适配流水线
+│   ├── version-upgrade-pipeline.yaml # 版本升级适配流水线 `NEW`
+│   ├── feature-porting-pipeline.yaml # Feature特性移植流水线 `NEW`
+│   ├── carrier-porting-pipeline.yaml # 运营商需求移植流水线 `NEW`
 │   └── cross-module-pipeline.yaml    # 跨模块协作流水线
 │
 ├── tools/                             # MCP工具定义
 │   ├── android-log-analyzer/         # Android日志分析工具
 │   ├── git-operations/               # Git操作工具
-│   └── build-system/                 # 编译构建工具
+│   ├── build-system/                 # 编译构建工具
+│   ├── aosp-diff-analyzer/           # AOSP版本差异分析 `NEW`
+│   ├── patch-generator/              # 适配Patch批量生成 `NEW`
+│   ├── api-migration-db/             # API迁移规则管理 `NEW`
+│   ├── regression-test-runner/       # 回归测试运行 `NEW`
+│   └── code-review-checker/          # 代码审查规则检查
 │
 ├── docs/                              # 深度文档（渐进式披露）
 │   ├── architecture/
@@ -645,7 +724,9 @@ tecno-ai-harness/
 ├── scripts/                           # 自动化脚本
 │   ├── init-module.sh                # 模块初始化脚本
 │   ├── run-evolution.sh              # 启动进化循环
-│   └── sync-skills.sh                # 跨Agent同步Skills
+│   ├── sync-skills.sh                # 跨Agent同步Skills
+│   ├── run-version-adaptation.sh     # 执行版本升级适配 `NEW`
+│   └── run-carrier-porting.sh        # 执行运营商移植 `NEW`
 │
 ├── .claude/
 │   ├── program.yaml                  # EvoSkill程序配置
@@ -671,14 +752,17 @@ Step 1: 复制模板
 Step 2: 填写约束文件（~2-4小时）
   - 编辑 constraints/my-module/bug-analysis.yaml
   - 编辑 constraints/my-module/code-adaptation.yaml
+  - 编辑 constraints/my-module/version-adaptation.yaml    # v2.1 新增
+  - 编辑 constraints/my-module/carrier-porting.yaml       # v2.1 新增（如需）
   - 准备5-10个历史Bug案例放入 eval-data/
+  - 准备上一次版本升级的适配记录放入 eval-data/           # v2.1 新增
 
 Step 3: 提交到Git
   $ git add constraints/my-module/
   $ git commit -m "Add my-module constraints"
 
 Step 4: 系统自动完成（无需Owner参与）
-  - Skill生成器读取约束 → 生成初始SKILL.md
+  - Skill生成器读取约束 → 生成初始SKILL.md（含诊断+适配两类）
   - EvoSkill在测试集上运行 → 收集失败案例
   - 自动启动进化循环 → 迭代优化Skill
   - 评估通过后 → 加入共享Skill仓库
@@ -705,9 +789,40 @@ EvoSkill自动（后台）:
   - 评估后更新Skill库
 ```
 
+#### 工作流3：版本升级适配（TL/开发者视角）`NEW`
+
+```
+场景: Android 16 发布，通信模块需要从 A15 适配到 A16
+
+当前做法（各业务自己干）:
+  通信Owner → [梳理 A15→A16 适配SOP] → [转成Skill] → [AI按Skill执行]
+  驱动Owner → [梳理 A15→A16 适配SOP] → [转成Skill] → [AI按Skill执行]
+  功耗Owner → [梳理 A15→A16 适配SOP] → [转成Skill] → [AI按Skill执行]
+  ...每个模块重复上述流程，每次大版本都要重来
+
+TAHP 优化后:
+  通信Owner → [更新 version-adaptation.yaml 约束（~1小时）]
+  系统自动:
+    1. aosp-diff-analyzer 分析 A15→A16 framework 差异
+    2. code-impact-scanner 定位受影响的定制代码点
+    3. 匹配 api-migration-rules 中的已知迁移模式
+    4. 适配策略分类: 全自动(~60%) / 半自动(~30%) / 人工(~10%)
+    5. patch-generator 对全自动项批量生成 patch
+    6. build-verifier 编译验证
+    7. regression-test-runner 回归测试
+    8. 输出适配报告: 完成/待审核/人工处理 清单
+
+  EvoSkill 进化（跨版本复用）:
+    - 本次适配经验 → 更新 api-migration-rules
+    - 进化的 Skill → 下次 A16→A17 直接复用
+    - 新发现的适配模式 → 同步到其他模块
+```
+
 ### 6.4 MCP工具链设计
 
 针对Android底软场景，建议优先实现以下MCP工具：
+
+#### 诊断引擎工具
 
 | 工具名 | 功能 | 优先级 |
 |--------|------|--------|
@@ -717,14 +832,444 @@ EvoSkill自动（后台）:
 | `kernel-config-checker` | 检查内核配置合规性 | P1 |
 | `device-tree-validator` | 设备树校验 | P1 |
 | `power-profile-analyzer` | 功耗数据解析 | P1 |
+
+#### 适配引擎工具（v2.1 新增）
+
+| 工具名 | 功能 | 优先级 |
+|--------|------|--------|
+| `aosp-diff-analyzer` | 对比两个 Android 版本的 framework diff，提取 API/接口/行为变更清单 | **P0** |
+| `code-impact-scanner` | 扫描定制代码，定位受 AOSP 变更影响的代码点 | **P0** |
+| `patch-generator` | 根据适配规则和迁移表批量生成代码 patch | **P0** |
+| `build-verifier` | 触发编译验证，检查 patch 集合能否编译通过 | **P0** |
+| `api-migration-db` | 管理 API 迁移规则库（增删改查），支持跨版本积累 | **P1** |
+| `regression-test-runner` | 运行冒烟测试 + 功能回归测试 | **P1** |
+| `carrier-config-manager` | 管理运营商配置差异和 carrier overlay | **P2** |
+
+#### 通用工具
+
+| 工具名 | 功能 | 优先级 |
+|--------|------|--------|
 | `android-build-helper` | 编译构建辅助 | P2 |
 | `code-review-checker` | 代码审查规则检查 | P2 |
 
 ---
 
-## 7. 系统边界与接口规范
+## 7. 适配引擎详细设计
 
-### 7.1 系统边界定义
+### 7.1 设计背景：现有适配流程与优化方向
+
+#### 7.1.1 现有适配流程（已验证可行）
+
+部门内各业务模块当前已建立了适配工作流：
+
+```
+现有流程:
+  Android N 发布
+       ↓
+  各业务 Owner 各自梳理适配 SOP（3-7天/模块）
+       ↓
+  将 SOP 转换为 Skill
+       ↓
+  AI 工具根据 Skill 执行代码适配
+       ↓
+  人工验证编译 + 回归
+```
+
+**这套流程已经在跑了，关键问题在于：**
+
+| 痛点 | 具体表现 |
+|------|---------|
+| SOP 编写成本高 | 每个模块每次大版本都要从零梳理，3-7天/模块 |
+| 经验不跨版本复用 | A15→A16 梳理的 SOP，A16→A17 基本要从头来 |
+| 经验不跨模块共享 | 通信模块踩过的坑，驱动模块可能再踩一遍 |
+| SOP→Skill 转换依赖人 | Owner 的 Skill 编写能力参差不齐 |
+| 适配质量评估缺失 | 不知道全自动/半自动/人工各占多少比例 |
+
+#### 7.1.2 TAHP 优化后的适配流程
+
+```
+TAHP 优化后:
+  Android N+1 发布
+       ↓
+  各业务 Owner 更新约束文件（1-2小时/模块）
+  - 更新 api-migration-rules（如有新发现的迁移模式）
+  - 更新 version-adaptation.yaml（源/目标版本）
+  - 补充 eval-data（上一次适配的案例）
+       ↓
+  系统自动:
+    1. AOSP Diff 分析 → 提取变更清单
+    2. 影响面评估 → 定位受影响代码
+    3. 匹配迁移规则 → 分类适配策略
+    4. 批量生成 Patch → 全自动项直接完成
+    5. 编译验证 → 门禁硬性要求
+    6. 回归测试 → 冒烟+核心功能
+    7. 输出适配报告
+       ↓
+  EvoSkill 进化:
+    - 适配经验 → 更新 api-migration-rules
+    - 失败案例 → 进化适配 Skill
+    - 新模式 → 同步到其他模块
+    - 下次 A(N+1)→A(N+2) 直接复用
+```
+
+**核心改进**：Owner 从"写完整 SOP"降级到"更新约束条件"，系统自动完成 SOP→Skill→执行→进化的全链路。
+
+### 7.2 适配场景分类
+
+TAHP 适配引擎覆盖以下四大场景：
+
+| 场景 | 触发时机 | 特点 | 典型工作量 |
+|------|---------|------|-----------|
+| **大版本升级适配** | Android N → N+1 发布 | 批量、可预测、有 AOSP Diff 参考 | 持续 2-3 个月，涉及所有模块 |
+| **Feature 特性移植** | 自研 Feature 迁移到新平台/新版本 | 依赖链长、需兼容性映射 | 单 Feature 1-2 周 |
+| **运营商需求移植** | 运营商定制需求跨项目迁移 | 需求文档→代码映射、合规检查 | 单运营商 3-5 天 |
+| **共性问题处理** | 安全补丁、合规修复 | 跨模块同步、模式统一 | 单补丁 1-2 天 |
+
+### 7.3 Pipeline 1：版本升级适配
+
+#### 7.3.1 详细流程
+
+```yaml
+# playbooks/version-upgrade-pipeline.yaml
+name: 版本升级适配 Pipeline
+trigger: "新 Android 版本发布 / Owner 更新 version-adaptation.yaml"
+
+steps:
+  - id: diff-analysis
+    agent: adaptation-coordinator
+    tool: aosp-diff-analyzer
+    action: |
+      对比 source_version 和 target_version 的 AOSP framework 差异
+      输出: 变更清单（API变更/接口变更/行为变更/废弃API）
+    output: aosp_change_list
+
+  - id: impact-assessment
+    agent: adaptation-coordinator
+    tool: code-impact-scanner
+    action: |
+      将 AOSP 变更清单与定制代码交叉比对
+      输出: 受影响代码文件清单 + 影响类型标注
+    input: [aosp_change_list, module_constraints]
+    output: impact_report
+
+  - id: strategy-classification
+    agent: adaptation-coordinator
+    action: |
+      对每个受影响代码点进行适配策略分类:
+      - 全自动(auto): 已知迁移模式 + 置信度>95%
+      - 半自动(semi-auto): AI生成patch + 人工审核
+      - 人工(manual): 新场景 / 低置信度
+    input: [impact_report, api_migration_rules]
+    output: adaptation_plan
+
+  - id: batch-adaptation
+    parallel:
+      - id: auto-adapt
+        agent: code-adapter
+        condition: "strategy == 'auto'"
+        tool: patch-generator
+        action: "根据迁移规则自动生成 patch"
+        output: auto_patches
+
+      - id: semi-auto-adapt
+        agent: code-adapter
+        condition: "strategy == 'semi-auto'"
+        tool: patch-generator
+        action: "AI生成 patch（标记为待审核）"
+        output: review_patches
+
+      - id: manual-queue
+        agent: coordinator
+        condition: "strategy == 'manual'"
+        action: "生成交付给Owner的适配任务清单"
+        output: manual_tasks
+
+  - id: build-verification
+    agent: build-verifier
+    tool: build-verifier
+    action: |
+      对 auto_patches 执行编译验证
+      对 review_patches 执行编译验证（编译通过后才提交人工审核）
+    input: [auto_patches, review_patches]
+    output: build_results
+
+  - id: regression-test
+    agent: test-runner
+    tool: regression-test-runner
+    action: |
+      编译通过的 patch 运行冒烟测试 + 功能回归
+    input: [build_results.passed]
+    output: regression_results
+
+  - id: report-generation
+    agent: coordinator
+    action: |
+      生成适配报告:
+      - 全自动完成: N 项
+      - 待人工审核: N 项（附带 patch diff）
+      - 需人工处理: N 项（附带原因和参考）
+      - 编译/回归失败: N 项（附带错误日志）
+    output: adaptation_report
+```
+
+#### 7.3.2 适配策略分类标准
+
+| 策略 | 判定条件 | 处理方式 | 审核要求 |
+|------|---------|---------|---------|
+| 🟢 全自动 | 已知迁移模式 + API 迁移规则匹配 + 置信度 > 95% | 直接生成 patch → 编译 → 回归 | 系统自动审核 |
+| 🟡 半自动 | 部分匹配迁移规则 / 置信度 70-95% / 涉及多文件联动 | AI 生成 patch → 编译 → **人工审核** → 回归 | Owner 审核通过 |
+| 🔴 人工 | 全新 API / 无匹配规则 / 置信度 < 70% / 涉及架构变更 | 生成适配任务清单 + 参考建议 | Owner 手动适配 |
+
+#### 7.3.3 版本升级约束文件示例
+
+```yaml
+# constraints/telephony/version-adaptation.yaml
+module:
+  name: telephony
+  domain: version-adaptation
+  owner: zhangsan
+  version: "1.0"
+
+source_version: "android-15.0.0_r1"
+target_version: "android-16.0.0_r1"
+
+# 信息边界
+context:
+  codebase_paths:
+    - frameworks/opt/telephony/
+    - frameworks/base/telephony/
+    - packages/services/Telephony/
+  build_targets:
+    - TeleService
+    - TelephonyProvider
+  test_targets:
+    - android.telephony.cts
+    - com.android.phone.tests
+
+# API 迁移规则（可逐步积累，跨版本复用）
+api_migration_rules:
+  - old_api: "TelephonyManager.getDataNetworkType()"
+    new_api: "TelephonyManager.getServiceState().getDataNetworkType()"
+    change_type: "method_signature"
+    auto: true
+    confidence: 0.98
+    note: "Android 16 将 getDataNetworkType() 标记为 @Deprecated"
+
+  - old_api: "PhoneFactory.getPhones()"
+    new_api: "PhoneFactory.getPhoneList()"
+    change_type: "method_rename"
+    auto: true
+    confidence: 0.92
+    note: "返回类型从 Phone[] 改为 List<Phone>"
+
+  - old_api: "IccCardConstants.INTENT_VALUE_ICC_ABSENT"
+    new_api: "TelephonyManager.SIM_STATE_ABSENT"
+    change_type: "constant_moved"
+    auto: false
+    confidence: 0.75
+    note: "常量从 IccCardConstants 迁移到 TelephonyManager，需要检查上下文"
+
+# 适配约束（红线）
+adaptation_constraints:
+  - "不能因为适配而删除传音自研的业务逻辑"
+  - "新增的 Android 16 API 调用必须有 @RequiresApi(16) 注解"
+  - "HIDL/AIDL 接口变更必须同步更新接口定义和实现"
+  - "废弃 API 的迁移必须检查所有调用点，不能遗漏"
+  - "不能引入新的编译警告"
+
+# 验收标准
+acceptance_criteria:
+  compile_pass: true                    # 必须100%编译通过
+  smoke_test_targets:                   # 冒烟测试目标
+    - call_functional_smoke
+    - sms_functional_smoke
+    - data_connection_smoke
+  regression_targets:                   # 功能回归目标
+    - call_functional_test
+    - sms_functional_test
+    - data_connection_test
+    - sim_hot_swap_test
+  regression_pass_rate: 0.95            # 回归通过率 ≥ 95%
+
+# 评估数据集（上一次适配记录）
+eval_dataset: eval-data/telephony-a15-to-a16/
+```
+
+### 7.4 Pipeline 2：Feature 特性移植
+
+#### 7.4.1 适用场景
+
+- 传音自研 Feature（双卡定制、VoWiFi 增强、来电归属地等）迁移到新版本
+- Feature 从一个芯片平台迁移到另一个芯片平台
+- Feature 从 A 项目移植到 B 项目
+
+#### 7.4.2 流程
+
+```yaml
+# playbooks/feature-porting-pipeline.yaml
+name: Feature 特性移植 Pipeline
+trigger: "Owner 提交 Feature 移植需求"
+
+steps:
+  - id: dependency-analysis
+    agent: feature-analyzer
+    action: |
+      分析 Feature 源码，提取依赖链:
+      - API 依赖（调用了哪些 framework API）
+      - HAL 依赖（依赖哪些 HAL 接口）
+      - 资源依赖（layout/string/drawable）
+      - 进程间依赖（ContentProvider/Broadcast/AIDL Service）
+    output: dependency_graph
+
+  - id: compatibility-mapping
+    agent: feature-analyzer
+    action: |
+      将依赖链与目标版本/平台进行兼容性检查:
+      - API 兼容: 直接复用
+      - API 变更: 需要 migration
+      - API 移除: 需要替代方案
+      - HAL 变更: 需要适配层
+    input: [dependency_graph, api_migration_rules]
+    output: compatibility_report
+
+  - id: code-transformation
+    agent: code-adapter
+    tool: patch-generator
+    action: |
+      根据兼容性报告自动执行代码转换:
+      - API 调用替换
+      - Import 语句更新
+      - Manifest 声明更新
+      - 资源文件调整
+    input: [compatibility_report]
+    output: porting_patches
+
+  - id: integration-test
+    agent: test-runner
+    tool: regression-test-runner
+    action: |
+      编译验证 + Feature 功能测试 + 回归测试
+    input: [porting_patches]
+    output: test_results
+```
+
+### 7.5 Pipeline 3：运营商需求移植
+
+#### 7.5.1 适用场景
+
+- Airtel / Vodafone / MTN 等运营商定制需求从一个项目移植到另一个项目
+- 运营商更新需求（新版 RFI）的增量适配
+- Generic 项目增加运营商 Flavor
+
+#### 7.5.2 约束文件示例
+
+```yaml
+# constraints/telephony/carrier-porting.yaml
+module:
+  name: telephony
+  domain: carrier-porting
+  owner: zhangsan
+  version: "1.0"
+
+source_project: "generic"
+target_carrier: "airtel-india"
+
+# 运营商定制需求清单
+carrier_specifics:
+  - requirement: "VoWiFi 预置支持"
+    code_paths:
+      - frameworks/opt/telephony/src/java/com/mediatek/ims/vowifi/
+    config_changes:
+      - "carrier_config_airtel.xml"
+    auto: true
+    confidence: 0.90
+
+  - requirement: "Airtel 分钟提醒"
+    code_paths:
+      - packages/services/Telephony/src/com/android/phone/callsettings/
+    config_changes:
+      - "call_feature_airtel.xml"
+    auto: true
+    confidence: 0.85
+
+  - requirement: "Airtel USSD 定制"
+    code_paths:
+      - frameworks/base/telephony/java/android/telephony/USSD.java
+    auto: false
+    confidence: 0.60
+    note: "涉及 Modem AT 命令定制，需要确认芯片平台差异"
+
+# 合规标准
+compliance_standards:
+  - "GCF CCv3"
+  - "Airtel India RFI requirements v3.2"
+
+# 适配约束
+adaptation_constraints:
+  - "运营商定制不能影响 generic 基础功能"
+  - "Carrier overlay 必须通过 Android 标准机制（CarrierConfigManager）"
+  - "网络配置变更必须通过 AT 命令验证"
+  - "不能硬编码运营商参数，必须通过 carrier_config 管理"
+
+# 验收标准
+acceptance_criteria:
+  compile_pass: true
+  carrier_certification:
+    - "GCF 基础认证测试通过"
+    - "Airtel RFI 需求项全覆盖"
+  regression_targets:
+    - generic_functional_test      # 确保 generic 不受影响
+    - airtel_specific_test         # 运营商定制功能测试
+```
+
+### 7.6 API 迁移规则库（跨版本复用的核心）
+
+API 迁移规则库是适配引擎**跨版本复用的核心资产**。每次版本升级积累的迁移规则，直接复用于下一次升级。
+
+#### 存储结构
+
+```
+constraints/shared/api-migration-rules/
+├── telephony-migration.yaml        # 通信模块迁移规则
+├── framework-migration.yaml        # Framework 层迁移规则
+├── hal-migration.yaml              # HAL 层迁移规则
+├── kernel-migration.yaml           # 内核接口迁移规则
+└── media-migration.yaml            # 多媒体迁移规则
+```
+
+#### 规则积累机制
+
+```
+版本升级适配过程中:
+  1. aosp-diff-analyzer 提取变更清单
+  2. code-impact-scanner 定位受影响代码
+  3. 人工/半自动适配完成后 → 提取成功的适配模式
+  4. 写入 api-migration-rules/（含置信度和适用版本范围）
+  5. 下次升级时 → 规则库直接复用，全自动比例逐步提升
+
+预期效果:
+  A15→A16: 全自动 40%, 半自动 40%, 人工 20%（首次）
+  A16→A17: 全自动 60%, 半自动 30%, 人工 10%（积累一次后）
+  A17→A18: 全自动 75%, 半自动 20%, 人工 5%（积累两次后）
+```
+
+### 7.7 适配引擎评估指标
+
+| 指标 | 目标 | 度量方式 |
+|------|------|---------|
+| 全自动适配率 | ≥ 60%（首次），逐步提升到 ≥ 75% | 全自动适配项数 / 总适配项数 |
+| 半自动适配率 | ~ 30% | 半自动适配项数 / 总适配项数 |
+| 人工适配率 | ≤ 10% | 人工适配项数 / 总适配项数 |
+| 编译通过率 | 100% | P0 门禁，编译不通过直接 BLOCK |
+| 回归通过率 | ≥ 95% | 冒烟+核心功能回归通过数 / 总回归数 |
+| Owner 工作量 | 从 3-7 天/模块降到 1-2 小时/模块 | Owner 实际投入时间 |
+| 适配周期缩短 | ≥ 50% | 对比纯人工适配周期 |
+
+---
+
+## 8. 系统边界与接口规范
+
+### 8.1 系统边界定义
 
 > 详细的架构图参见 [TAHP-Architecture-Overview.html](TAHP-Architecture-Overview.html)
 
@@ -750,7 +1295,7 @@ EvoSkill自动（后台）:
 
 ### 7.2 接口规范
 
-#### 7.2.1 Owner → TAHP 接口
+#### 8.2.1 Owner → TAHP 接口
 
 **唯一输入接口**: YAML约束文件
 
@@ -760,7 +1305,7 @@ EvoSkill自动（后台）:
 反馈: 约束文件质量评分（完整性/可验证性/具体性/最小性/评估集质量）
 ```
 
-#### 7.2.2 TAHP → AI Agent 接口
+#### 8.2.2 TAHP → AI Agent 接口
 
 ```
 加载: AGENTS.md → 引导Agent读取约束文件和Skills
@@ -769,7 +1314,7 @@ Scope控制: 通过L1信息边界层控制Agent的可访问范围
 工具分发: 通过MCP协议按需分发工具
 ```
 
-#### 7.2.3 AI Agent → TAHP 接口
+#### 8.2.3 AI Agent → TAHP 接口
 
 ```
 产出格式: 遵循 TAHP-AI代码生成约束规范 第5节定义的输出格式
@@ -777,7 +1322,7 @@ Scope控制: 通过L1信息边界层控制Agent的可访问范围
 反馈记录: 执行轨迹记录到 feedback_history.md，供EvoSkill分析
 ```
 
-#### 7.2.4 TAHP → 开发者 接口
+#### 8.2.4 TAHP → 开发者 接口
 
 ```
 分析报告: 结构化Markdown，包含完整证据链和修复建议
@@ -785,7 +1330,7 @@ Scope控制: 通过L1信息边界层控制Agent的可访问范围
 交互方式: Claude Code CLI交互 / 预生成的报告文件
 ```
 
-### 7.3 MCP工具接口标准
+### 8.3 MCP工具接口标准
 
 所有MCP工具必须实现以下标准接口：
 
@@ -809,9 +1354,9 @@ interface MCPTool {
 
 ---
 
-## 8. 数据模型设计
+## 9. 数据模型设计
 
-### 8.1 核心数据实体
+### 9.1 核心数据实体
 
 #### 约束文件 (Constraint)
 
@@ -819,7 +1364,7 @@ interface MCPTool {
 Constraint
 ├── id: string (module/domain 格式)
 ├── module: Module
-├── domain: enum [bug_analysis, code_adaptation, test_generation]
+├── domain: enum [bug_analysis, code_adaptation, test_generation, version_adaptation, carrier_porting]
 ├── version: semver
 ├── content: YAML
 ├── preconditions: Precondition[]     // 前置条件列表
@@ -872,7 +1417,7 @@ Evaluation
 └── evolution_iteration: int          // 进化轮次（如果是EvoSkill产生的）
 ```
 
-### 8.2 数据流转图
+### 9.2 数据流转图
 
 ```
 [Owner] ──YAML约束──→ [Constraint Store] ──→ [Skill Generator]
@@ -893,7 +1438,7 @@ Evaluation
                                             [Quality Dashboard]
 ```
 
-### 8.3 存储方案
+### 9.3 存储方案
 
 | 数据类型 | 存储方式 | 版本管理 | 备份 |
 |---------|---------|---------|------|
@@ -907,9 +1452,9 @@ Evaluation
 
 ---
 
-## 9. 安全设计
+## 10. 安全设计
 
-### 9.1 威胁模型
+### 10.1 威胁模型
 
 | 威胁 | 概率 | 影响 | 缓解措施 |
 |------|------|------|---------|
@@ -919,9 +1464,9 @@ Evaluation
 | 敏感日志泄露 | 中 | 中 | 脱敏规则 + 访问控制 + 日志保留策略 |
 | LLM Prompt注入 | 中 | 中 | 输入校验 + 系统Prompt隔离 |
 
-### 9.2 安全架构
+### 10.2 安全架构
 
-#### 9.2.1 Scope隔离（L1信息边界）
+#### 10.2.1 Scope隔离（L1信息边界）
 
 ```
 安全原则: 最小权限原则（Principle of Least Privilege）
@@ -938,7 +1483,7 @@ Agent不能访问:
   ✗ 用户的个人信息和凭证
 ```
 
-#### 9.2.2 代码安全门禁
+#### 10.2.2 代码安全门禁
 
 ```
 安全红线检查（P0级，任一失败即BLOCK）:
@@ -961,7 +1506,7 @@ Agent不能访问:
    - 不允许动态加载未签名的DEX/SO文件
 ```
 
-#### 9.2.3 敏感信息处理
+#### 10.2.3 敏感信息处理
 
 ```
 日志脱敏规则:
@@ -976,7 +1521,7 @@ Agent不能访问:
   - 进化用日志: 匿名化后存储，不关联设备信息
 ```
 
-### 9.3 访问控制
+### 10.3 访问控制
 
 | 角色 | 权限 | 说明 |
 |------|------|------|
@@ -988,62 +1533,68 @@ Agent不能访问:
 
 ---
 
-## 10. 实施路线图
+## 11. 实施路线图
 
-### 10.1 分阶段实施（8周MVP → 持续演进）
+### 11.1 分阶段实施（10周MVP → 持续演进）`UPDATED`
 
 ```
 Phase 0: 基础搭建 (第1-2周)
 ├── 搭建Git仓库和目录结构
 ├── 安装Claude Code + EvoSkill
 ├── 编写AGENTS.md全局导航
-├── 设计约束文件模板
-└── 选择1-2个试点模块（建议: telephony + kernel-driver）
+├── 设计约束文件模板（含4种domain）
+├── 选择1-2个试点模块（建议: telephony）
+└── 设计API迁移规则库初始结构
 
-Phase 1: 约束驱动MVP (第3-4周)
-├── 试点模块Owner填写约束文件
-├── 基于约束生成初始Skills
+Phase 1: 诊断引擎MVP (第3-4周)
+├── 试点模块Owner填写 bug-analysis + code-adaptation 约束
+├── 基于约束生成初始诊断 Skills
 ├── 准备评估测试集（每个模块5-10个案例）
 ├── 手动验证Skill效果
 └── 建立效果度量基线
 
-Phase 2: 自动进化 (第5-6周)
-├── 启动EvoSkill进化循环
-├── 观察Skill自动进化效果
-├── 实现第一个MCP工具（android-log-parser）
-├── 建立Bug分析Pipeline
-└── 量化效果对比（VS人工分析）
+Phase 2: 适配引擎MVP (第5-6周) — v2.1 重点
+├── 试点模块Owner填写 version-adaptation 约束
+├── 实现 aosp-diff-analyzer MCP工具
+├── 实现 code-impact-scanner MCP工具
+├── 实现 patch-generator MCP工具
+├── 建立 API 迁移规则库初始数据
+├── 用上一次版本升级数据做回溯验证
+└── 量化适配效果（全自动率/编译通过率/回归通过率）
 
-Phase 3: 规模化推广 (第7-8周)
+Phase 3: 自动进化 + 规模化 (第7-8周)
+├── 启动EvoSkill进化循环（诊断+适配双引擎）
+├── 实现 build-verifier + regression-test-runner
 ├── 总结试点经验，完善模板
-├── 向power等其他模块推广
-├── 实现跨模块协作Pipeline
-├── 建立Skill共享机制
+├── 向 power/kernel-driver 等模块推广
+├── 建立跨模块 Skill 共享机制
 └── 编写部门级使用文档
 
 Phase 4: 持续优化 (第9周+)
 ├── 定期Skill质量评审
-├── 根据评估报告申请服务器资源（如需）
+├── 每次版本升级后更新API迁移规则库
+├── 量化全自动适配率提升曲线
 ├── 探索本地LLM降低API成本
 ├── 建立Skill贡献和评分机制
 └── 对标业界Level 3-4成熟度
 ```
 
-### 10.2 关键里程碑
+### 11.2 关键里程碑
 
 | 里程碑 | 时间 | 标准 | 成功标志 |
 |--------|------|------|---------|
 | M0: 基础就绪 | 第2周末 | 仓库结构完整，工具安装完毕 | `evoskill init` 成功运行 |
-| M1: 约束MVP | 第4周末 | 试点模块约束文件完成 | 初始Skill能正确分析测试集 |
-| M2: 自动进化 | 第6周末 | EvoSkill进化循环稳定 | Skill准确率提升≥10pp |
-| M3: 规模推广 | 第8周末 | ≥3个模块接入 | 开发者主动使用，反馈积极 |
-| M4: 效果量化 | 第12周末 | 有完整的对比数据 | 人力投入降低≥30% |
+| M1: 诊断MVP | 第4周末 | 试点模块 Bug 分析约束完成 | 初始 Skill 能正确分析测试集 |
+| M2: 适配MVP | 第6周末 | 试点模块版本适配约束完成 + 核心 MCP 工具就绪 | 用历史数据回溯验证，全自动率 ≥ 40% |
+| M3: 双引擎进化 | 第8周末 | EvoSkill 双引擎进化循环稳定 | Skill 准确率提升 ≥ 10pp；适配全自动率 ≥ 50% |
+| M4: 规模推广 | 第10周末 | ≥ 3 个模块接入双引擎 | 开发者主动使用，反馈积极 |
+| M5: 效果量化 | 第14周末 | 有完整的对比数据 | 人力投入降低 ≥ 40%；适配周期缩短 ≥ 50% |
 
 ---
 
-## 11. 风险与应对
+## 12. 风险与应对
 
-### 11.1 技术风险
+### 12.1 技术风险
 
 | 风险 | 概率 | 影响 | 应对策略 |
 |------|------|------|---------|
@@ -1051,8 +1602,10 @@ Phase 4: 持续优化 (第9周+)
 | EvoSkill进化不收敛 | 低 | 中 | 设置no_improvement_limit；人工干预调整约束 |
 | MCP工具实现复杂 | 中 | 中 | 从最简单的工具开始（日志解析）；Python脚本即可 |
 | Git版本管理混乱 | 低 | 中 | EvoSkill自带分支管理；制定分支策略规范 |
+| AOSP Diff 过大导致分析超时 | 中 | 中 | 分模块分阶段分析；增加 diff 缓存和增量分析 |
+| API迁移规则库质量不足 | 中 | 高 | 人工审核首批规则；置信度阈值动态调整 |
 
-### 11.2 组织风险
+### 12.2 组织风险
 
 | 风险 | 概率 | 影响 | 应对策略 |
 |------|------|------|---------|
@@ -1060,24 +1613,25 @@ Phase 4: 持续优化 (第9周+)
 | 团队不信任AI分析结果 | 中 | 中 | 先做辅助工具定位，不做替代；保留人工审核环节 |
 | 评估测试集质量差 | 中 | 高 | 由Owner提供历史真实案例；建立测试集评审机制 |
 | 效果短期不明显导致放弃 | 中 | 高 | 2周MVP验证；选择最痛的模块做试点；小赢积累信心 |
+| 适配引擎引入代码质量风险 | 中 | 高 | 编译门禁+回归门禁+人工审核三级保障；全自动项必须有历史案例支撑 |
 
-### 11.3 成本预估
+### 12.3 成本预估
 
 | 项目 | 初始投入 | 月度成本 | 说明 |
 |------|---------|---------|------|
-| Claude API | ~$200/月 | ~$200-500/月 | 按使用量计费，EvoSkill迭代会消耗较多 |
+| Claude API | ~$300/月 | ~$300-800/月 | 适配引擎批量操作消耗更多API调用 |
 | EvoSkill | 免费 | 免费 | Apache 2.0开源 |
 | Git仓库 | 免费 | 免费 | 可用GitHub/GitLab免费版 |
-| 人力（初期） | ~2人×2周 | ~0.5人×月 | 试点阶段需要工程师投入搭建 |
-| **总初始成本** | **~$200 + 2人周** | **~$200-500/月** | |
+| 人力（初期） | ~3人×2周 | ~1人×月 | 适配引擎MCP工具开发需要额外投入 |
+| **总初始成本** | **~$300 + 3人周** | **~$300-800/月** | |
 
-> **对比当前方案成本**：当前方案每个Owner写SOP至少2天，6个模块 = 12人天 + 持续维护。新方案初始Owner投入2-4小时/模块 = 约2人天。
+> **对比当前方案成本**：当前方案每次大版本升级，每个Owner梳理SOP 3-7天，6个模块 = 18-42人天。新方案Owner更新约束 1-2小时/模块 = 约1人天。每次升级节省 17-41人天。
 
 ---
 
-## 12. 附录：参考资源
+## 13. 附录：参考资源
 
-### 12.1 必读文章
+### 13.1 必读文章
 
 | 标题 | 链接 | 重要性 |
 |------|------|--------|
@@ -1089,7 +1643,7 @@ Phase 4: 持续优化 (第9周+)
 | AI自进化: EvoSkill从失败中学习 | https://www.36kr.com/p/3728164375231362 | ⭐⭐⭐⭐ |
 | Multi-Agent框架对比: LangGraph/CrewAI/AutoGen | https://langcopilot.com/posts/2025-11-01-top-multi-agent-ai-frameworks-2024-guide | ⭐⭐⭐ |
 
-### 12.2 开源项目
+### 13.2 开源项目
 
 | 项目 | GitHub | 许可证 | 用途 |
 |------|--------|--------|------|
@@ -1098,7 +1652,7 @@ Phase 4: 持续优化 (第9周+)
 | Dify | https://github.com/langgenius/dify | Apache 2.0 | 可选可视化平台 |
 | MCP协议 | https://modelcontextprotocol.io | MIT | 工具接入标准 |
 
-### 12.3 论文
+### 13.3 论文
 
 | 标题 | 链接 |
 |------|------|
@@ -1110,26 +1664,29 @@ Phase 4: 持续优化 (第9周+)
 ## ADR-001: 采用Harness+约束驱动方案替代手动SOP转Skill
 
 ### Status
-Approved (v2.0)
+Approved (v2.1)
 
 ### Context
-当前方案要求各业务Owner手动编写SOP并转为Skill，存在规模化瓶颈、质量不一致、迭代成本高等问题。部门经理提议搭建基于Harness规范的自动化系统。
+当前方案要求各业务Owner手动编写SOP并转为Skill，存在规模化瓶颈、质量不一致、迭代成本高等问题。部门经理提议搭建基于Harness规范的自动化系统。适配场景（版本升级/特性移植/运营商需求移植）占部门工作量的大头，每个模块每次大版本都要重新梳理适配SOP。
 
 ### Decision
-采用 **Agent = Model + Harness** 范式，结合 **EvoSkill** 自动Skill发现和 **AgentSkills** 开放标准，搭建TECNO AI Harness Platform (TAHP)：
-1. 各模块只需输出约束条件（YAML格式），系统自动生成Skill
-2. 通过EvoSkill从执行失败中自动进化和优化Skill
-3. 基于Git版本控制和AgentSkills标准实现Skill共享
-4. 纯本地运行，零服务器成本
-5. **通过AI代码生成约束规范严格管控AI行为**（v2.0新增）
-6. **通过评估与质量门禁规范量化Skill效果**（v2.0新增）
+采用 **Agent = Model + Harness** 范式，结合 **EvoSkill** 自动Skill发现和 **AgentSkills** 开放标准，搭建 TECNO AI Harness Platform (TAHP) **双引擎架构**：
+1. 各模块只需输出约束条件（YAML格式），系统自动生成 Skill（诊断+适配）
+2. 通过 EvoSkill 从执行失败中自动进化和优化 Skill
+3. **适配经验通过 API 迁移规则库跨版本复用**（v2.1 核心）
+4. 基于 Git 版本控制和 AgentSkills 标准实现 Skill 共享
+5. 纯本地运行，零服务器成本
+6. **通过 AI 代码生成约束规范严格管控 AI 行为**
+7. **通过评估与质量门禁规范量化 Skill 效果**
+8. **通过版本适配约束规范统一适配流程**（v2.1 新增）
 
 ### Consequences
-- **变得更容易**: Owner工作量从数天SOP降低到2-4小时约束编写；新模块接入标准化
-- **变得更容易**: Skill质量评估量化，效果可衡量可追踪
-- **变得更容易**: AI行为通过约束规范严格管控，减少幻觉和无效输出
-- **变得更难**: 初期需要2周搭建期；团队需要学习约束编写思维
-- **风险**: EvoSkill对中文/Android领域的效果需验证；LLM API有持续成本
+- **变得更容易**: Owner 工作量从数天 SOP 降低到 2-4 小时约束编写；新模块接入标准化
+- **变得更容易**: Skill 质量评估量化，效果可衡量可追踪
+- **变得更容易**: AI 行为通过约束规范严格管控，减少幻觉和无效输出
+- **变得更容易**: **适配经验跨版本复用，每次升级全自动率逐步提升**
+- **变得更难**: 初期需要 3 周搭建期（含适配 MCP 工具）；团队需要学习约束编写思维
+- **风险**: EvoSkill 对中文/Android 领域的效果需验证；LLM API 有持续成本；适配引擎代码质量风险需三级门禁保障
 
 ---
 
@@ -1149,6 +1706,28 @@ Approved
 - **劣势**: 复杂查询能力有限、大规模并发写入性能受限
 - **缓解**: 评估脚本提供结构化查询能力；单用户使用场景下并发不是问题
 
+## ADR-003: 适配引擎采用"约束+规则库+批量验证"三段式设计 `NEW`
+
+### Status
+Approved (v2.1)
+
+### Context
+部门适配工作量（版本升级/特性移植/运营商移植）远大于诊断工作量。现有各业务已有"SOP→Skill→AI执行"的适配流程在跑，但存在 SOP 重复编写、经验不跨版本复用、质量评估缺失等问题。
+
+### Decision
+适配引擎采用三段式设计：
+1. **约束段**：Owner 通过 YAML 定义适配约束（版本范围、API 迁移规则、红线、验收标准）
+2. **规则库段**：API 迁移规则库作为跨版本复用的核心资产，每次升级积累，逐步提升全自动比例
+3. **验证段**：编译通过 + 回归测试双门禁，全自动项系统审核，半自动项人工审核
+
+适配策略分三级：全自动（已知模式，置信度>95%）/ 半自动（AI生成+人工审核）/ 人工（新场景）。
+
+### Consequences
+- **优势**: 首次升级全自动率 ~40%，积累后逐步提升到 ~75%；Owner 工作量从 3-7 天降到 1-2 小时
+- **优势**: API 迁移规则库跨版本复用，知识不会丢失
+- **风险**: 规则库质量依赖首批人工输入；全自动适配的代码质量需要严格门禁保障
+- **缓解**: 首批规则人工审核 + 置信度阈值 + 编译门禁 + 回归门禁 + 人工审核
+
 ---
 
-> **下一步行动建议**: 选择1-2个痛点最明显的模块（建议telephony Bug分析），用2周时间跑通MVP，用数据说话决定是否全面推广。参照 [TAHP-约束文件编写规范](TAHP-约束文件编写规范.md) 开始编写约束文件。
+> **下一步行动建议**: 选择通信模块（telephony）作为试点，用最近的版本升级数据做回溯验证。参照 [TAHP-版本适配约束规范](TAHP-版本适配约束规范.md) 开始编写适配约束文件。
