@@ -1,9 +1,11 @@
 # 传音Android底软集成部 — AI提效 Harness 系统架构评估与方案设计
 
 > **日期**: 2026-05-18 (Updated)
-> **版本**: v2.1
+> **版本**: v3.0
 > **编制**: Software Architect
-> **状态**: Approved
+> **状态**: Draft
+>
+> **v3.0 变更**: 新增知识库(Knowledge Base)系统设计 — 知识自动沉淀、文档投喂、约束自动提取、Skill自动生成
 >
 > **v2.1 变更**: 新增适配引擎完整设计 — 版本升级适配、Feature特性移植、运营商需求移植三大Pipeline
 >
@@ -13,7 +15,7 @@
 > - [约束文件编写规范](TAHP-约束文件编写规范.md) — Owner编写约束的强制性标准
 > - [AI代码生成约束规范](TAHP-AI代码生成约束规范.md) — 防幻觉、防反复修改的核心规范
 > - [评估与质量门禁规范](TAHP-评估与质量门禁规范.md) — Skill质量评估与代码门禁标准
-> - [版本适配约束规范](TAHP-版本适配约束规范.md) — 版本升级/特性移植/运营商移植约束标准 `NEW`
+> - [版本适配约束规范](TAHP-版本适配约束规范.md) — 版本升级/特性移植/运营商移植约束标准
 
 ---
 
@@ -25,13 +27,14 @@
 4. [Harness范式解读](#4-harness范式解读)
 5. [推荐系统方案](#5-推荐系统方案)
 6. [技术选型与架构设计](#6-技术选型与架构设计)
-7. [适配引擎详细设计](#7-适配引擎详细设计) `NEW`
-8. [系统边界与接口规范](#8-系统边界与接口规范)
-9. [数据模型设计](#9-数据模型设计)
-10. [安全设计](#10-安全设计)
-11. [实施路线图](#11-实施路线图)
-12. [风险与应对](#12-风险与应对)
-13. [附录：参考资源](#13-附录参考资源)
+7. [适配引擎详细设计](#7-适配引擎详细设计)
+8. [知识库系统设计](#8-知识库系统设计) `NEW v3.0`
+9. [系统边界与接口规范](#9-系统边界与接口规范)
+10. [数据模型设计](#10-数据模型设计)
+11. [安全设计](#11-安全设计)
+12. [实施路线图](#12-实施路线图)
+13. [风险与应对](#13-风险与应对)
+14. [附录：参考资源](#14-附录参考资源)
 
 ---
 
@@ -41,14 +44,21 @@
 
 你们部门经理提出的**Harness-based系统**方向**完全正确**，且恰逢其时。2026年业界已形成成熟的方法论 —— **Agent = Model + Harness**，其中Harness就是将状态、工具、反馈、约束和执行环境串联起来的"操作系统"。核心范式转变是：**从"人写SOP→转Skill"升级为"模块出约束→系统自动生成/调用/迭代Skill"**。
 
-### 1.1.1 双引擎定位
+### 1.1.1 双引擎 + 知识库定位
 
-TAHP 服务于部门两大核心工作场景：
+TAHP 服务于部门两大核心工作场景，并配备统一的知识库系统实现知识沉淀与复用：
 
 | 引擎 | 场景 | 现有方案 | TAHP 优化方向 |
 |------|------|---------|-------------|
 | **诊断引擎** | Bug 分析 | 人工排查 + AI 辅助 | 约束驱动 + EvoSkill 自动进化 |
 | **适配引擎** | 版本升级 / 特性移植 / 运营商需求移植 | **各业务自己梳理 SOP → 转 Skill → AI 按Skill执行** | 约束驱动 + Skill 自动生成/进化 + 跨版本经验复用 |
+| **知识库** | 知识沉淀与复用 | 口头传授 / 文档散落各处 | 自动沉淀 + 文档投喂 + 约束自动提取 + Skill 自动生成 |
+
+**知识库是双引擎的基础设施（v3.0 新增）**：
+- 分析问题后自动生成经验案例，沉淀到知识库
+- 纠正错误后自动记录纠正过程，沉淀到知识库
+- 投喂新的技术文档和经验案例，自动入库
+- 新业务模块只需投喂文档，系统自动生成 Skill
 
 **适配引擎是当前最大的工作量来源**。每次 Android 大版本升级（A15→A16、A16→A17...），各业务模块都要独立梳理适配 SOP、转成 Skill、让 AI 工具执行。TAHP 的核心价值在于：
 
@@ -67,9 +77,17 @@ TAHP 服务于部门两大核心工作场景：
 │  │ 约束管理层 │→│ Skill引擎层 │→│ 执行编排层 │→│ 评估迭代 │ │
 │  │          │  │           │  │           │  │        │ │
 │  │ 各模块    │  │ EvoSkill  │  │ 诊断Pipeline│ │ 自动   │ │
-│  │ 只需输出  │  │ + Agent   │  │ 适配Pipeline│ │ 评估   │ │
-│  │ 约束条件  │  │ Skills   │  │ + MCP工具  │  │ + 进化 │ │
-│  └──────────┘  └───────────┘  └──────────┘  └────────┘ │
+│  │ 约束自动  │  │ + Agent   │  │ 适配Pipeline│ │ 评估   │ │
+│  │ 提取生成  │  │ Skills   │  │ + MCP工具  │  │ + 进化 │ │
+│  └────┬─────┘  └───────────┘  └──────────┘  └───┬────┘ │
+│       ↑                                       ↓        │
+│  ┌────┴────────────────────────────────────────────┐   │
+│  │              知识库 (Knowledge Base) v3.0         │   │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐         │   │
+│  │  │ 技术文档  │ │ 经验案例  │ │ 分析记录  │         │   │
+│  │  │ 投喂入库  │ │ 自动沉淀  │ │ 错误纠正  │         │   │
+│  │  └──────────┘ └──────────┘ └──────────┘         │   │
+│  └───────────────────────────────────────────────────┘   │
 │                                                          │
 │  双引擎: 诊断引擎(Bug分析) + 适配引擎(版本/特性/运营商)    │
 │  底层: Git + Claude Code/Codex CLI + 本地LLM (可选)      │
@@ -78,7 +96,8 @@ TAHP 服务于部门两大核心工作场景：
 
 **关键优势**：
 - **零服务器成本**：纯本地运行，基于Git版本控制
-- **低入门门槛**：业务模块只需写约束条件（YAML/Markdown）
+- **极低入门门槛**：业务模块只需投喂技术文档和经验案例，系统自动生成约束和 Skill（v3.0）
+- **自动知识沉淀**：分析问题和纠正错误后自动生成经验案例，持续积累知识资产（v3.0）
 - **自动Skill生成**：基于EvoSkill自动从失败案例中发现和进化Skill
 - **跨模块复用**：Skill遵循AgentSkills开放标准，可跨Agent/跨模块共享
 - **渐进式成熟**：可从Level 1逐步演进到Level 4
@@ -314,12 +333,13 @@ description: "分析Android telephony模块的Bug，包括通话、短信、数�
 
 | 维度 | 当前方案 | 部门经理Harness愿景 | 本报告推荐方案 |
 |------|---------|-------------------|--------------|
-| Skill来源 | Owner手写SOP转Skill | 系统自动生成 | **约束+自动发现双引擎** |
-| 入门门槛 | 高（需写完整SOP） | 中（需写约束） | **低（YAML/Markdown约束）** |
+| Skill来源 | Owner手写SOP转Skill | 系统自动生成 | **知识库驱动 + 约束自动提取 + 自动发现三引擎** |
+| 入门门槛 | 高（需写完整SOP） | 中（需写约束） | **极低（投喂文档即可）** |
+| 知识沉淀 | 无 | 未定义 | **自动沉淀 + 文档投喂 + 跨模块共享** |
 | 迭代方式 | 人工更新 | 系统自动 | **EvoSkill自动进化循环** |
 | 关联调用 | 无 | 愿景中 | **AgentSkills标准+MCP工具链** |
 | 评估机制 | 无 | 未定义 | **自动评估+Frontier追踪** |
-| 跨模块复用 | 无 | 愿景中 | **开放Skill仓库+跨Agent兼容** |
+| 跨模块复用 | 无 | 愿景中 | **知识库+开放Skill仓库+跨Agent兼容** |
 | 服务器需求 | 无 | 可能需要 | **零服务器，纯本地Git** |
 | 预算 | 人力成本 | 未知 | **仅需LLM API调用费** |
 
@@ -329,16 +349,19 @@ description: "分析Android telephony模块的Bug，包括通话、短信、数�
 
 ```
 业务Owner只需要提供:
-  1. 模块约束条件（代码规范、接口协议、测试标准）
-  2. 历史Bug案例（作为评估数据集）
-  3. 代码适配的输入输出对（作为评估数据集）
+  1. 技术文档（模块架构文档、API文档、协议文档等）
+  2. 经验案例（历史Bug案例、适配记录、问题处理经验等）
+     （投喂即可，无需转格式、无需写约束）
 
 系统自动完成:
-  1. Skill初始生成（基于约束条件）
-  2. Skill自动进化（基于执行失败分析）
-  3. 关联Skill调用编排（基于任务类型）
-  4. Skill质量评估（基于测试集打分）
-  5. Skill版本管理（基于Git分支）
+  0. 文档解析与知识入库
+  1. 从知识中自动提取约束条件（生成YAML）
+  2. Skill初始生成（基于约束条件）
+  3. Skill自动进化（基于执行失败分析）
+  4. 关联Skill调用编排（基于任务类型）
+  5. Skill质量评估（基于测试集打分）
+  6. Skill版本管理（基于Git分支）
+  7. 经验案例自动沉淀（分析/纠正后自动生成）
 ```
 
 #### 架构总览 — 双引擎架构
@@ -406,9 +429,57 @@ description: "分析Android telephony模块的Bug，包括通话、短信、数�
 
 ### 5.3 核心模块详解
 
-#### 模块1：约束管理层（Owner的唯一输入端）
+#### 模块1：约束管理层（文档投喂 → 自动提取）`v3.0 重设计`
 
-业务Owner**唯一需要做的事**就是为各自模块定义约束文件。TAHP v2.1 支持以下四种 domain：
+**v3.0 核心变化**：Owner 不再需要手动编写 YAML 约束文件。改为投喂技术文档和经验案例，系统自动提取约束条件并生成 Skill。
+
+```
+v2.1 流程:
+  Owner → [手动写YAML约束(~2-4h)] → [系统生成Skill]
+
+v3.0 流程:
+  Owner → [投喂文档+案例] → [AI自动解析] → [自动提取约束] → [系统生成Skill]
+                                                         ↑
+                                              Owner 可选审核/微调（~30min）
+```
+
+**文档投喂支持格式**：
+| 格式 | 示例 | 解析方式 |
+|------|------|---------|
+| 技术文档 (Markdown/PDF/Word) | 模块架构文档、API说明文档 | AI 解析提取模块信息 |
+| 经验案例 (Markdown/纯文本) | Bug分析记录、适配经验总结 | AI 解析提取模式和规则 |
+| 代码差异 (Git diff/patch) | 版本升级的代码变更记录 | 差异分析提取迁移规则 |
+| 日志样本 (logcat/tombstone) | 历史Bug的日志文件 | 日志分析提取错误模式 |
+
+**自动提取约束的工作原理**：
+
+```yaml
+# 系统自动从文档中提取以下信息，生成约束文件
+
+# 1. 模块基础信息（从技术文档提取）
+module:
+  name: telephony  # 从文档标题/内容识别
+  domain: android-telephony  # 从技术关键词分类
+  owner: zhangsan  # 由Owner在投喂时指定
+
+# 2. 信息边界（从技术文档的架构章节提取）
+context:
+  codebase_paths: [...]  # 从文档中的路径引用提取
+  key_components: [...]  # 从文档中的架构图/组件列表提取
+
+# 3. 架构约束（从文档中的规范/规则章节提取）
+architectural_rules:
+  - "..."  # 从文档中的"禁止"/"必须"/"不允许"等规则提取
+
+# 4. 质量红线（从文档中的安全/合规章节提取）
+quality_gates: [...]
+
+# 5. 评估标准（从经验案例自动生成测试集）
+evaluation:
+  test_dataset: auto-generated from experience-cases/
+```
+
+**Owner工作量评估**：每个模块初次投喂约 **30分钟-1小时**（准备和上传文档），可选审核微调约 **30分钟**，远低于 v2.1 的 2-4 小时。
 
 | Domain | 用途 | 对应引擎 | 产出 |
 |--------|------|---------|------|
@@ -419,7 +490,9 @@ description: "分析Android telephony模块的Bug，包括通话、短信、数�
 
 > 详细的约束文件编写规范参见：
 > - [TAHP-约束文件编写规范](TAHP-约束文件编写规范.md) — bug_analysis 和 code_adaptation
-> - [TAHP-版本适配约束规范](TAHP-版本适配约束规范.md) — version_adaptation 和 carrier_porting `NEW`
+> - [TAHP-版本适配约束规范](TAHP-版本适配约束规范.md) — version_adaptation 和 carrier_porting
+
+**注意**：以上约束文件在 v3.0 中由系统从投喂文档自动生成，Owner 可在生成后审核微调。手动编写约束仍作为高级选项保留（详见知识库章节 §8）。
 
 ```yaml
 # constraints/telephony-bug-analysis.yaml
@@ -650,125 +723,140 @@ no_improvement_limit = 5
 
 ```
 tecno-ai-harness/
-├── AGENTS.md                          # 全局导航（~100行）
-├── CLAUDE.md                          # Claude Code配置
++-- AGENTS.md                          # 全局导航（~100行）
++-- CLAUDE.md                          # Claude Code配置
+|
++-- knowledge-base/                    # 知识库（v3.0 新增，知识底座）
+|   +-- {module}/                      # 按模块组织
+|   |   +-- docs/                      # 技术文档（投喂入库）
+|   |   +-- cases/                     # 经验案例（投喂/自动沉淀）
+|   |   +-- auto/                      # 自动沉淀（分析记录/纠正记录/错误模式）
+|   |   +-- index.yaml                 # 模块知识索引
+|   +-- shared/                        # 跨模块共享知识
+|   +-- config.yaml                    # 知识库全局配置
+|
++-- constraints/                       # 业务约束（知识库自动提取+Owner审核）
+|   +-- telephony/
+|   |   +-- bug-analysis.yaml
+|   |   +-- code-adaptation.yaml
+|   |   +-- version-adaptation.yaml
+|   |   +-- carrier-porting.yaml
+|   |   +-- eval-data/                # 评估测试集（从案例自动生成）
+|   +-- kernel-driver/
+|   +-- power/
+|   +-- shared/
+|       +-- coding-standards.yaml
+|       +-- android-platform.yaml
+|       +-- api-migration-rules/
 │
-├── constraints/                       # 业务约束（Owner唯一输入端）
-│   ├── telephony/
-│   │   ├── bug-analysis.yaml         # 通信Bug分析约束
-│   │   ├── code-adaptation.yaml      # 通信代码适配约束（Bug修复级）
-│   │   ├── version-adaptation.yaml   # 通信版本升级适配约束 `NEW`
-│   │   ├── carrier-porting.yaml      # 通信运营商需求移植约束 `NEW`
-│   │   └── eval-data/                # 评估测试集
-│   ├── kernel-driver/
-│   │   ├── bug-analysis.yaml
-│   │   ├── code-adaptation.yaml
-│   │   ├── version-adaptation.yaml   # `NEW`
-│   │   └── eval-data/
-│   ├── power/
-│   │   ├── bug-analysis.yaml
-│   │   ├── version-adaptation.yaml   # `NEW`
-│   │   └── eval-data/
-│   └── shared/
-│       ├── coding-standards.yaml     # 共享编码规范
-│       ├── android-platform.yaml     # Android平台通用约束
-│       └── api-migration-rules/      # API迁移规则库（可跨版本复用）`NEW`
-│           ├── telephony-migration.yaml
-│           ├── framework-migration.yaml
-│           └── hal-migration.yaml
-│
-├── skills/                            # 自动生成的Skills（EvoSkill产出）
-│   ├── .claude/skills/               # Claude Code格式
-│   │   ├── telephony-call-drop/      # 自动发现的Skill
-│   │   │   ├── SKILL.md
-│   │   │   └── references/
-│   │   ├── kernel-panic-trace/
-│   │   │   ├── SKILL.md
-│   │   │   └── references/
-│   │   ├── power-leak-detect/
-│   │   │   └── SKILL.md
-│   │   ├── telephony-version-adapter/    # 版本适配Skill `NEW`
-│   │   │   ├── SKILL.md
-│   │   │   └── references/
-│   │   └── carrier-porting-assistant/    # 运营商移植Skill `NEW`
-│   │       ├── SKILL.md
-│   │       └── references/
-│   └── .codex/skills/                # Codex格式（自动同步）
-│
-├── playbooks/                         # 执行编排剧本
-│   ├── bug-analysis-pipeline.yaml    # Bug分析流水线
-│   ├── code-adaptation-pipeline.yaml # 代码适配流水线
-│   ├── version-upgrade-pipeline.yaml # 版本升级适配流水线 `NEW`
-│   ├── feature-porting-pipeline.yaml # Feature特性移植流水线 `NEW`
-│   ├── carrier-porting-pipeline.yaml # 运营商需求移植流水线 `NEW`
-│   └── cross-module-pipeline.yaml    # 跨模块协作流水线
-│
-├── tools/                             # MCP工具定义
-│   ├── android-log-analyzer/         # Android日志分析工具
-│   ├── git-operations/               # Git操作工具
-│   ├── build-system/                 # 编译构建工具
-│   ├── aosp-diff-analyzer/           # AOSP版本差异分析 `NEW`
-│   ├── patch-generator/              # 适配Patch批量生成 `NEW`
-│   ├── api-migration-db/             # API迁移规则管理 `NEW`
-│   ├── regression-test-runner/       # 回归测试运行 `NEW`
-│   └── code-review-checker/          # 代码审查规则检查
-│
-├── docs/                              # 深度文档（渐进式披露）
-│   ├── architecture/
-│   │   └── system-overview.md
-│   ├── design/
-│   │   └── constraint-specification-guide.md
-│   └── quality/
-│       └── evaluation-metrics.md
-│
-├── scripts/                           # 自动化脚本
-│   ├── init-module.sh                # 模块初始化脚本
-│   ├── run-evolution.sh              # 启动进化循环
-│   ├── sync-skills.sh                # 跨Agent同步Skills
-│   ├── run-version-adaptation.sh     # 执行版本升级适配 `NEW`
-│   └── run-carrier-porting.sh        # 执行运营商移植 `NEW`
-│
-├── .claude/
-│   ├── program.yaml                  # EvoSkill程序配置
-│   └── feedback_history.md           # 进化反馈历史
-│
-├── .evoskill/
-│   ├── config.toml                   # EvoSkill配置
-│   └── task.md                       # 任务描述
-│
-└── reports/                           # 评估报告输出
-    ├── evolution-reports/
-    └── quality-metrics/
++-- skills/                            # 自动生成的Skills（EvoSkill产出）
+|   +-- .claude/skills/               # Claude Code格式
+|   |   +-- telephony-call-drop/      # 自动发现的Skill
+|   |   +-- kernel-panic-trace/
+|   |   +-- power-leak-detect/
+|   |   +-- telephony-version-adapter/    # 版本适配Skill
+|   |   +-- carrier-porting-assistant/    # 运营商移植Skill
+|   +-- .codex/skills/                # Codex格式（自动同步）
+|
++-- playbooks/                         # 执行编排剧本
+|   +-- bug-analysis-pipeline.yaml
+|   +-- code-adaptation-pipeline.yaml
+|   +-- version-upgrade-pipeline.yaml
+|   +-- feature-porting-pipeline.yaml
+|   +-- carrier-porting-pipeline.yaml
+|   +-- knowledge-to-skill-pipeline.yaml  # v3.0 新增
+|   +-- cross-module-pipeline.yaml
+|
++-- tools/                             # MCP工具定义
+|   +-- android-log-analyzer/
+|   +-- git-operations/
+|   +-- build-system/
+|   +-- aosp-diff-analyzer/
+|   +-- patch-generator/
+|   +-- api-migration-db/
+|   +-- regression-test-runner/
+|   +-- code-review-checker/
+|   +-- knowledge-indexer/            # v3.0 新增
+|
++-- docs/                              # 深度文档
+|   +-- architecture/
+|   +-- design/
+|   +-- quality/
+|
++-- scripts/                           # 自动化脚本
+|   +-- feed_knowledge.py             # 知识投喂脚本 (v3.0 新增)
+|   +-- query_knowledge.py            # 知识查询脚本 (v3.0 新增)
+|   +-- knowledge_stats.py            # 知识库统计脚本 (v3.0 新增)
+|   +-- extract_constraints.py        # 知识到约束提取脚本 (v3.0 新增)
+|   +-- capture_experience.py         # 自动沉淀脚本 (v3.0 新增)
+|   +-- init_module.sh
+|   +-- run-evolution.sh
+|   +-- sync-skills.sh
+|
++-- .claude/
+|   +-- program.yaml
+|   +-- feedback_history.md
+|
++-- .evoskill/
+|   +-- config.toml
+|   +-- task.md
+|
++-- reports/                           # 评估报告输出
+    +-- evolution-reports/
+    +-- quality-metrics/
 ```
 
 ### 6.3 关键工作流
 
-#### 工作流1：新模块接入（Owner视角）
+#### 工作流1：新模块接入（Owner视角）`v3.0 重设计`
 
 ```
-Step 1: 复制模板
-  $ cp -r templates/module-template/ constraints/my-module/
+Step 1: 投喂文档（~30分钟-1小时）
+  $ python scripts/feed_knowledge.py \
+      --module wifi \
+      --owner lisi \
+      --docs docs/wifi-architecture.md,docs/wifi-api-spec.pdf \
+      --cases cases/wifi-bug-history.md,cases/wifi-adaptation-notes.md
 
-Step 2: 填写约束文件（~2-4小时）
-  - 编辑 constraints/my-module/bug-analysis.yaml
-  - 编辑 constraints/my-module/code-adaptation.yaml
-  - 编辑 constraints/my-module/version-adaptation.yaml    # v2.1 新增
-  - 编辑 constraints/my-module/carrier-porting.yaml       # v2.1 新增（如需）
-  - 准备5-10个历史Bug案例放入 eval-data/
-  - 准备上一次版本升级的适配记录放入 eval-data/           # v2.1 新增
+  系统自动:
+  - 解析文档 → 提取模块信息、架构、规则
+  - 解析案例 → 提取模式、经验、规则
+  - 入库到 knowledge-base/wifi/
 
-Step 3: 提交到Git
-  $ git add constraints/my-module/
-  $ git commit -m "Add my-module constraints"
+Step 2: 系统自动提取约束（无需Owner参与）
+  - 从知识库提取模块基础信息 → module.yaml
+  - 从文档提取架构规则 → architectural_rules
+  - 从案例提取质量红线 → quality_gates
+  - 从案例自动生成测试集 → eval-data/
+  - 输出: constraints/wifi/*.yaml（自动生成）
 
-Step 4: 系统自动完成（无需Owner参与）
-  - Skill生成器读取约束 → 生成初始SKILL.md（含诊断+适配两类）
+Step 3: Owner 可选审核（~30分钟）
+  $ python scripts/review_constraints.py --module wifi
+  - 查看自动生成的约束文件
+  - 补充/修正不满意的部分（可选）
+  - 确认提交
+
+Step 4: 系统自动生成 Skill（无需Owner参与）
+  - Skill生成器读取约束 → 生成初始SKILL.md
   - EvoSkill在测试集上运行 → 收集失败案例
   - 自动启动进化循环 → 迭代优化Skill
   - 评估通过后 → 加入共享Skill仓库
 
 Done! Owner的工作到此结束。
+总投入: ~1-1.5小时（投喂 + 可选审核）
+对比v2.1: ~2-4小时（手写约束）
+对比传统: ~3-7天（写完整SOP）
 ```
+
+**对比各版本的新模块接入工作量**：
+
+| 步骤 | 传统方式 | v2.1 | v3.0 |
+|------|---------|------|------|
+| 准备输入 | 梳理完整SOP（3-7天） | 编写YAML约束（2-4小时） | 投喂文档+案例（30min-1h） |
+| 生成约束 | — | 手动编写 | **AI自动提取** |
+| 审核微调 | — | — | 可选（~30min） |
+| 生成Skill | 手动转换SOP→Skill | 系统自动 | 系统自动 |
+| **总投入** | **3-7天** | **2-4小时** | **1-1.5小时** |
 
 #### 工作流2：Bug分析（开发者视角）
 
@@ -1267,9 +1355,419 @@ constraints/shared/api-migration-rules/
 
 ---
 
-## 8. 系统边界与接口规范
+## 8. 知识库系统设计 `NEW v3.0`
 
-### 8.1 系统边界定义
+### 8.1 设计动机
+
+**经理反馈的两个核心诉求**：
+
+| 诉求 | 问题 | 解决方案 |
+|------|------|---------|
+| 知识不积累 | 分析过的Bug、纠正过的错误，经验随人走、无法沉淀 | 自动沉淀机制 |
+| 接入门槛高 | 新模块需要人工写约束条件，Owner不懂约束规范也能用 | 文档投喂 → 自动生成 |
+
+这两个诉求本质上是同一个闭环：**知识沉淀 → 知识驱动 Skill 生成 → 执行产生新知识 → 继续沉淀**。
+
+### 8.2 知识库在架构中的位置
+
+```
+知识库位于约束管理层之下，是整个系统的知识底座：
+
++---------------------------------------------------------+
+|  约束管理层 (constraints/)                               |
+|  - 从知识库自动提取生成                                   |
+|  - Owner 可选审核微调                                     |
++---------------------------------------------------------+
+|  * 知识库 (knowledge-base/) *                            |
+|  - 技术文档（投喂）                                        |
+|  - 经验案例（投喂 / 自动沉淀）                             |
+|  - 分析记录（自动沉淀）                                    |
+|  - 纠正记录（自动沉淀）                                    |
++---------------------------------------------------------+
+|  Skill引擎层 + 执行编排层 + 评估迭代层                     |
+|  - 执行结果 -> 回流知识库（自动沉淀）                        |
++---------------------------------------------------------+
+```
+
+### 8.3 知识分类体系
+
+知识库按以下分类组织：
+
+```
+knowledge-base/
++-- {module}/                       # 按模块组织
+|   +-- docs/                       # 技术文档（投喂入库）
+|   |   +-- architecture/           # 架构文档
+|   |   +-- api-reference/          # API文档
+|   |   +-- protocol/               # 协议文档（RIL/AT/IPC）
+|   |   +-- vendor-guide/           # 厂商指南（芯片/Modem）
+|   |
+|   +-- cases/                      # 经验案例
+|   |   +-- bug-analysis/           # Bug分析经验
+|   |   +-- code-adaptation/        # 代码适配经验
+|   |   +-- version-adaptation/     # 版本升级经验
+|   |   +-- carrier-porting/        # 运营商适配经验
+|   |
+|   +-- auto/                       # 自动沉淀（系统生成，不可手动编辑）
+|   |   +-- analysis-logs/          # 分析记录
+|   |   +-- corrections/            # 纠正记录
+|   |   +-- error-patterns/         # 错误模式（EvoSkill提取）
+|   |
+|   +-- index.yaml                  # 模块知识索引
+|
++-- shared/                         # 跨模块共享知识
+|   +-- android-platform/           # Android平台通用知识
+|   +-- coding-patterns/            # 通用编码模式
+|   +-- error-catalog/              # 错误模式目录
+|
++-- config.yaml                     # 知识库全局配置
+```
+
+### 8.4 知识条目数据结构
+
+每条知识遵循统一的 YAML frontmatter 格式：
+
+```yaml
+---
+id: kb-telephony-20260518-001
+module: telephony
+type: experience-case          # 类型：tech-doc | experience-case | analysis-log | correction
+category: bug-analysis          # 分类：bug-analysis | code-adaptation | version-adaptation | carrier-porting
+source: auto-captured           # 来源：manual-feed | auto-captured | evoskill-extracted
+created_at: 2026-05-18T14:30:00
+author: system                  # 作者：owner-name | system
+tags: [wificalling, crash, ims, null-pointer]
+confidence: 0.92                # 置信度（自动沉淀的知识有置信度）
+referenced_by:                  # 被哪些Skill引用
+  - telephony-bug-analyzer
+  - ims-service-debugger
+---
+
+# WiFi Calling 崩溃 -- IMS 空指针分析案例
+
+## 问题描述
+某机型在 Vodafone IN 网络下，飞行模式切换后 WiFi Calling 崩溃。
+
+## 根因
+ImsService.java:1247 -- mImsConfig 在未初始化时被访问。
+
+## 关键日志
+05-18 14:20:01.234 E/IMS    : NullPointerException at ImsService.getConfig()
+05-18 14:20:01.235 E/Phone  : WiFi Calling service crashed
+
+## 修复方案
+在访问 mImsConfig 前添加 null 检查。
+
+## 经验规则
+- IMS 服务相关操作前必须检查服务初始化状态
+- 飞行模式切换会触发 IMS 服务重建，存在时序窗口
+
+## 关联文件
+- packages/services/Telephony/src/com/android/ims/ImsService.java
+```
+
+### 8.5 自动沉淀机制
+
+知识自动沉淀是 v3.0 的核心特性，有以下四个触发点：
+
+#### 触发点 1：Bug 分析完成后自动沉淀
+
+```
+Agent 完成一次 Bug 分析
+        |
+        v
+分析结果通过质量门禁（P1/P2级别）
+        |
+        v
+自动生成经验案例 -> knowledge-base/{module}/cases/bug-analysis/
+        |
+        v
+提取错误模式 -> knowledge-base/{module}/auto/error-patterns/
+        |
+        v
+更新知识索引 index.yaml
+```
+
+**自动生成的内容**：
+- 问题摘要和根因（从分析报告提取）
+- 关键日志模式（从分析过程中提取）
+- 修复建议和经验规则（从分析报告提取）
+- 置信度评分（基于分析结果的门禁结果）
+
+#### 触发点 2：错误纠正后自动沉淀
+
+```
+AI 输出被人工纠正（分析错误 / 代码修改错误）
+        |
+        v
+记录原始输出 vs 纠正后结果
+        |
+        v
+AI 分析错误原因 -> 生成纠正案例
+        |
+        v
+自动沉淀到 knowledge-base/{module}/auto/corrections/
+        |
+        v
+EvoSkill 读取纠正案例 -> 改进 Skill
+```
+
+**纠正案例价值**：这是最宝贵的知识，因为它直接告诉系统"什么不能做"。
+
+#### 触发点 3：适配完成后自动沉淀
+
+```
+版本升级/特性移植/运营商移植完成
+        |
+        v
+编译通过 + 回归通过
+        |
+        v
+提取成功的适配模式 -> knowledge-base/{module}/cases/version-adaptation/
+        |
+        v
+更新 API 迁移规则库（如果是版本升级）
+        |
+        v
+EvoSkill 基于成功案例进化适配 Skill
+```
+
+#### 触发点 4：EvoSkill 进化后自动沉淀
+
+```
+EvoSkill 进化循环产生新的 Skill 变体
+        |
+        v
+评估通过 -> 保留到 Frontier
+        |
+        v
+提取新发现的模式和规则 -> knowledge-base/{module}/auto/error-patterns/
+        |
+        v
+同步到共享知识库（如果跨模块有价值）
+```
+
+### 8.6 文档投喂机制
+
+#### 投喂流程
+
+```
+Owner 准备文档
+     |
+     v
+python scripts/feed_knowledge.py \
+  --module wifi \
+  --docs ./my-docs/*.md,./my-docs/*.pdf \
+  --cases ./my-cases/*.md
+     |
+     v
+AI 文档解析器
+  - 识别文档类型（架构/API/协议/案例/规范）
+  - 提取结构化信息
+  - 生成知识条目
+     |
+     v
+知识入库
+  - docs/ -> 技术文档
+  - cases/ -> 经验案例
+  - 更新 index.yaml
+     |
+     v
+触发约束提取
+  - knowledge-to-constraint Pipeline
+  - 生成 constraints/{module}/*.yaml
+  - 生成 eval-data/ 测试集
+     |
+     v
+触发 Skill 生成
+  - 基于约束生成初始 Skill
+  - 启动 EvoSkill 进化
+```
+
+#### 投喂脚本使用示例
+
+```bash
+# 基础用法：投喂文档和案例
+python scripts/feed_knowledge.py \
+  --module wifi \
+  --owner lisi \
+  --docs docs/wifi-architecture.md \
+  --docs docs/wifi-hal-spec.pdf \
+  --cases cases/wifi-bug-history.md
+
+# 增量投喂：追加新经验
+python scripts/feed_knowledge.py \
+  --module wifi \
+  --cases cases/new-wifi-fix-20260518.md \
+  --incremental
+
+# 批量投喂：整个目录
+python scripts/feed_knowledge.py \
+  --module wifi \
+  --dir ./knowledge-feed/wifi/
+```
+
+### 8.7 知识到约束自动提取 Pipeline
+
+这是 v3.0 的核心技术链路，将非结构化知识转化为结构化约束：
+
+```yaml
+# playbooks/knowledge-to-skill-pipeline.yaml
+name: 知识到Skill自动生成 Pipeline
+trigger: "文档投喂完成 / 知识库更新"
+
+steps:
+  - id: knowledge-indexing
+    agent: knowledge-indexer
+    action: |
+      扫描 knowledge-base/{module}/ 下所有知识条目
+      构建知识图谱（关键词索引 + 交叉引用）
+      输出: 结构化知识索引
+    output: knowledge_index
+
+  - id: constraint-extraction
+    agent: constraint-extractor
+    action: |
+      从知识条目中自动提取约束条件:
+      - 模块信息 -> module.yaml（名称、负责人、代码路径）
+      - 架构规则 -> architectural_rules（从文档中的规范提取）
+      - 质量红线 -> quality_gates（从文档中的安全/合规章节提取）
+      - 评估标准 -> evaluation（从经验案例自动生成测试集）
+    input: [knowledge_index]
+    output: draft_constraints
+
+  - id: constraint-validation
+    agent: constraint-validator
+    action: |
+      验证提取的约束质量:
+      - 完整性检查（是否覆盖4种domain）
+      - 一致性检查（规则之间是否有矛盾）
+      - 具体性检查（规则是否足够具体可执行）
+      - 生成质量评分报告
+    input: [draft_constraints]
+    output: validated_constraints
+
+  - id: skill-generation
+    agent: skill-generator
+    action: |
+      基于验证通过的约束生成 Skill:
+      - 诊断 Skill（bug-analysis + code-adaptation）
+      - 适配 Skill（version-adaptation + carrier-porting）
+      - 从经验案例生成 examples/
+    input: [validated_constraints, knowledge_index]
+    output: initial_skills
+
+  - id: owner-review-gate
+    agent: system
+    action: |
+      通知 Owner 审核自动生成的约束和 Skill
+      Owner 可以:
+      - 直接确认（使用自动生成版本）
+      - 微调后确认（编辑约束文件）
+      - 补充信息后重新生成
+    output: review_result
+
+  - id: evolution-start
+    agent: evoskill-runner
+    condition: "review_result == 'approved'"
+    action: |
+      启动 EvoSkill 进化循环
+      在经验案例测试集上运行并迭代优化 Skill
+    input: [initial_skills, knowledge_index]
+    output: evolved_skills
+```
+
+### 8.8 知识检索与复用
+
+#### 按需检索
+
+Agent 在执行任务时，自动检索相关知识：
+
+```python
+# Agent 执行 Bug 分析时的知识检索流程
+def retrieve_knowledge(module, task_type, keywords):
+    """
+    1. 检索模块知识库中匹配的案例
+    2. 检索共享知识库中的通用知识
+    3. 按相关性和置信度排序
+    4. 将 Top-K 知识注入 Agent 上下文
+    """
+    # 模块专属知识（权重高）
+    module_cases = search(module_cases_db, keywords, top_k=5)
+    # 共享知识（权重中）
+    shared_patterns = search(shared_patterns_db, keywords, top_k=3)
+    # 错误模式（高价值）
+    error_patterns = search(error_patterns_db, keywords, top_k=2)
+
+    return rank_and_merge(module_cases, shared_patterns, error_patterns)
+```
+
+#### 跨模块知识共享
+
+```
+通信模块发现一个 RIL 空指针模式
+        |
+        v
+提取为通用错误模式
+        |
+        v
+同步到 knowledge-base/shared/error-catalog/
+        |
+        v
+其他模块下次遇到类似问题时自动匹配
+```
+
+### 8.9 知识库与现有模块的关系
+
+```
+知识库 (v3.0 新增) 连接了所有现有模块:
+
+知识库 --自动提取--> constraints/  (约束文件，原来是Owner手写)
+知识库 --注入上下文--> skills/     (Skill执行时加载相关知识)
+知识库 --生成测试集--> eval-data/  (从经验案例自动生成)
+知识库 --更新规则--> api-migration-rules/  (适配经验自动更新)
+知识库 <--自动沉淀-- 执行结果 (分析报告、纠正记录、适配记录)
+```
+
+### 8.10 知识库配置
+
+```yaml
+# knowledge-base/config.yaml
+version: "1.0"
+
+# 知识来源
+sources:
+  manual_feed: true              # 允许手动投喂
+  auto_capture: true             # 允许自动沉淀
+  cross_module_sync: true        # 允许跨模块共享
+
+# 自动沉淀触发条件
+auto_capture:
+  bug_analysis:
+    min_confidence: 0.80         # 分析置信度 >= 80% 才自动沉淀
+    gate_result: [PASS, WARNING] # P1/P2 级别自动沉淀，P0 不沉淀（需纠正后）
+  corrections:
+    always: true                 # 所有纠正记录都自动沉淀
+  adaptation:
+    compile_pass: true           # 编译通过的适配才沉淀
+    regression_pass_rate: 0.95   # 回归通过率 >= 95% 才沉淀
+
+# 约束自动提取
+constraint_extraction:
+  confidence_threshold: 0.75     # 提取置信度 >= 75% 才输出
+  require_owner_review: true     # 生成的约束需要 Owner 审核
+  auto_generate_eval: true      # 自动从案例生成评估测试集
+
+# 知识检索
+retrieval:
+  max_results: 10                # 单次检索最大返回数
+  min_relevance: 0.5             # 最低相关性阈值
+  boost_recent: true             # 近期知识加权
+```
+
+## 9. 系统边界与接口规范
+
+### 9.1 系统边界定义
 
 > 详细的架构图参见 [TAHP-Architecture-Overview.html](TAHP-Architecture-Overview.html)
 
@@ -1277,7 +1775,8 @@ constraints/shared/api-migration-rules/
 
 | 组件 | 职责 | 管理方式 |
 |------|------|---------|
-| 约束文件 (constraints/) | 模块规则定义 | Owner编写 + Git版本控制 |
+| 知识库 (knowledge-base/) | 知识沉淀与复用 | 投喂+自动沉淀+Git版本控制 `v3.0` |
+| 约束文件 (constraints/) | 模块规则定义 | 知识自动提取+Owner审核+Git版本控制 |
 | Skill仓库 (skills/) | 自动生成的Agent能力 | EvoSkill产出 + Git版本控制 |
 | MCP工具链 (tools/) | 标准化工具接口 | 工程师开发 + 测试验证 |
 | 评估引擎 (scripts/) | 质量评估与门禁 | 自动化脚本 + CI集成 |
@@ -1295,9 +1794,17 @@ constraints/shared/api-migration-rules/
 
 ### 7.2 接口规范
 
-#### 8.2.1 Owner → TAHP 接口
+#### 9.2.1 Owner → TAHP 接口
 
-**唯一输入接口**: YAML约束文件
+**输入接口 1：文档投喂（v3.0 主推）**
+
+```
+输入: python scripts/feed_knowledge.py --module {module} --docs --cases
+验证: 系统自动验证文档格式和内容质量
+反馈: 知识入库报告（解析了多少文档、提取了多少约束、生成了多少测试用例）
+```
+
+**输入接口 2：YAML约束文件（v2.1 保留，作为高级选项）**
 
 ```
 输入: constraints/{module}/{domain}.yaml
@@ -1305,32 +1812,55 @@ constraints/shared/api-migration-rules/
 反馈: 约束文件质量评分（完整性/可验证性/具体性/最小性/评估集质量）
 ```
 
-#### 8.2.2 TAHP → AI Agent 接口
+#### 9.2.2 TAHP → AI Agent 接口
 
 ```
-加载: AGENTS.md → 引导Agent读取约束文件和Skills
+加载: AGENTS.md -> 引导Agent读取约束文件和Skills
+知识注入: 执行任务时自动检索知识库，将相关知识注入上下文 (v3.0)
 约束注入: 约束文件内容作为System Prompt的一部分
 Scope控制: 通过L1信息边界层控制Agent的可访问范围
 工具分发: 通过MCP协议按需分发工具
 ```
 
-#### 8.2.3 AI Agent → TAHP 接口
+#### 9.2.3 AI Agent → TAHP 接口
 
 ```
 产出格式: 遵循 TAHP-AI代码生成约束规范 第5节定义的输出格式
 质量门禁: 所有代码修改必须通过 P0/P1/P2 三级门禁
 反馈记录: 执行轨迹记录到 feedback_history.md，供EvoSkill分析
+知识沉淀: 分析完成/纠正完成后自动沉淀到知识库 (v3.0)
 ```
 
-#### 8.2.4 TAHP → 开发者 接口
+#### 9.2.4 TAHP → 开发者 接口
 
 ```
 分析报告: 结构化Markdown，包含完整证据链和修复建议
 代码修改: Git patch格式，附带门禁检查结果
 交互方式: Claude Code CLI交互 / 预生成的报告文件
+知识查询: python scripts/query_knowledge.py --module {module} --keywords (v3.0)
 ```
 
-### 8.3 MCP工具接口标准
+#### 9.2.5 知识库接口（v3.0 新增）
+
+```
+# 投喂知识
+POST: python scripts/feed_knowledge.py
+参数: --module, --docs[], --cases[], --incremental
+
+# 查询知识
+GET:  python scripts/query_knowledge.py
+参数: --module, --keywords[], --type, --limit
+
+# 自动沉淀（系统内部触发，无需手动调用）
+INTERNAL: 自动从分析结果/纠正记录/适配记录生成知识条目
+
+# 知识统计
+GET:  python scripts/knowledge_stats.py
+参数: --module (可选)
+输出: 知识库统计报告（条目数/分类分布/最近更新）
+```
+
+### 9.3 MCP工具接口标准
 
 所有MCP工具必须实现以下标准接口：
 
@@ -1354,9 +1884,32 @@ interface MCPTool {
 
 ---
 
-## 9. 数据模型设计
+## 10. 数据模型设计
 
-### 9.1 核心数据实体
+### 10.1 核心数据实体
+
+#### 知识条目 (KnowledgeEntry) `NEW v3.0`
+
+```
+KnowledgeEntry
++-- id: string (kb-{module}-{date}-{seq})
++-- module: string (关联的模块)
++-- type: enum [tech_doc, experience_case, analysis_log, correction, error_pattern]
++-- category: enum [bug_analysis, code_adaptation, version_adaptation, carrier_porting]
++-- source: enum [manual_feed, auto_captured, evoskill_extracted]
++-- content: Markdown (YAML frontmatter + 正文)
++-- tags: string[] (关键词标签)
++-- confidence: float (0-1，自动沉淀的知识有置信度)
++-- referenced_by: string[] (被哪些Skill引用)
++-- created_at: datetime
++-- author: string (owner-name 或 system)
++-- metadata:
+|   +-- file_count: int (关联文件数)
+|   +-- log_samples: string[] (关联日志样本)
+|   +-- related_bugs: string[] (关联Bug ID)
++-- version: int (条目版本号，每次更新+1)
++-- status: enum [active, superseded, archived]
+```
 
 #### 约束文件 (Constraint)
 
@@ -1417,31 +1970,32 @@ Evaluation
 └── evolution_iteration: int          // 进化轮次（如果是EvoSkill产生的）
 ```
 
-### 9.2 数据流转图
+### 10.2 数据流转图
 
 ```
-[Owner] ──YAML约束──→ [Constraint Store] ──→ [Skill Generator]
-                                                  │
-                                            [EvoSkill Engine]
-                                                  │
-                                            [Skill Store] ──→ [Agent Runtime]
-                                                  │                        │
-                                                  │                   [Bug Analysis]
-                                                  │                   [Code Adaptation]
-                                                  │                        │
-                                                  ↓                        ↓
-                                            [Evaluation Engine] ←── [Feedback Logger]
-                                                  │
-                                            [Metrics Store]
-                                                  │
-                                                  ↓
-                                            [Quality Dashboard]
+[Owner] --投喂文档/案例--> [Knowledge Base] --自动提取--> [Constraint Store] --生成--> [Skill Generator]
+                              ^       |                           |
+                              |       |                     [EvoSkill Engine]
+                              |       |                           |
+                         [自动沉淀]   |                     [Skill Store] --> [Agent Runtime]
+                              |       |                           |                        |
+                         执行结果     |                      [Bug Analysis]             |
+                         纠正记录     |                      [Code Adaptation]          |
+                         适配记录     v                              v
+                                    [知识索引]               [Evaluation Engine] <-- [Feedback Logger]
+                                                              |
+                                                        [Metrics Store]
+                                                              |
+                                                              v
+                                                        [Quality Dashboard]
 ```
 
-### 9.3 存储方案
+### 10.3 存储方案
 
 | 数据类型 | 存储方式 | 版本管理 | 备份 |
 |---------|---------|---------|------|
+| 知识条目 | Git (Markdown+YAML) `v3.0` | Git branch + tag | Git remote |
+| 知识索引 | Git (YAML) `v3.0` | Git branch | Git remote |
 | 约束文件 | Git (YAML) | Git branch + tag | Git remote |
 | Skills | Git (Markdown) | Git branch + tag | Git remote |
 | 评估结果 | JSON文件 | Git (按日期归档) | Git remote |
@@ -1452,7 +2006,7 @@ Evaluation
 
 ---
 
-## 10. 安全设计
+## 11. 安全设计
 
 ### 10.1 威胁模型
 
@@ -1533,66 +2087,68 @@ Agent不能访问:
 
 ---
 
-## 11. 实施路线图
+## 12. 实施路线图
 
-### 11.1 分阶段实施（10周MVP → 持续演进）`UPDATED`
+### 12.1 分阶段实施（14周MVP → 持续演进）`UPDATED v3.0`
 
 ```
-Phase 0: 基础搭建 (第1-2周)
-├── 搭建Git仓库和目录结构
-├── 安装Claude Code + EvoSkill
-├── 编写AGENTS.md全局导航
-├── 设计约束文件模板（含4种domain）
-├── 选择1-2个试点模块（建议: telephony）
-└── 设计API迁移规则库初始结构
+Phase 0: 基础搭建 (第1-2周) [已完成]
++-- 搭建Git仓库和目录结构
++-- 安装Claude Code + EvoSkill
++-- 编写AGENTS.md全局导航
++-- 设计约束文件模板（含4种domain）
++-- 选择1-2个试点模块（建议: telephony）
++-- 设计API迁移规则库初始结构
 
 Phase 1: 诊断引擎MVP (第3-4周)
-├── 试点模块Owner填写 bug-analysis + code-adaptation 约束
-├── 基于约束生成初始诊断 Skills
-├── 准备评估测试集（每个模块5-10个案例）
-├── 手动验证Skill效果
-└── 建立效果度量基线
++-- 试点模块投喂文档+案例，自动生成约束 (v3.0)
++-- 基于约束生成初始诊断 Skills
++-- 自动从案例生成评估测试集 (v3.0)
++-- 手动验证Skill效果
++-- 建立效果度量基线
 
-Phase 2: 适配引擎MVP (第5-6周) — v2.1 重点
-├── 试点模块Owner填写 version-adaptation 约束
-├── 实现 aosp-diff-analyzer MCP工具
-├── 实现 code-impact-scanner MCP工具
-├── 实现 patch-generator MCP工具
-├── 建立 API 迁移规则库初始数据
-├── 用上一次版本升级数据做回溯验证
-└── 量化适配效果（全自动率/编译通过率/回归通过率）
+Phase 2: 适配引擎MVP (第5-6周) -- v2.1 重点
++-- 试点模块投喂适配文档和升级记录 (v3.0)
++-- 实现 aosp-diff-analyzer MCP工具
++-- 实现 code-impact-scanner MCP工具
++-- 实现 patch-generator MCP工具
++-- 建立 API 迁移规则库初始数据
++-- 用上一次版本升级数据做回溯验证
++-- 量化适配效果（全自动率/编译通过率/回归通过率）
 
-Phase 3: 自动进化 + 规模化 (第7-8周)
-├── 启动EvoSkill进化循环（诊断+适配双引擎）
-├── 实现 build-verifier + regression-test-runner
-├── 总结试点经验，完善模板
-├── 向 power/kernel-driver 等模块推广
-├── 建立跨模块 Skill 共享机制
-└── 编写部门级使用文档
+Phase 3: 知识库 + 自动进化 (第7-9周) -- v3.0 重点
++-- 实现知识库核心（文档解析、入库、索引）
++-- 实现自动沉淀机制（分析/纠正/适配后自动生成案例）
++-- 实现知识到约束自动提取 Pipeline
++-- 实现知识检索（Agent执行时按需加载知识）
++-- 启动EvoSkill进化循环（诊断+适配双引擎）
++-- 实现 build-verifier + regression-test-runner
++-- 向 power/kernel-driver 等模块推广
 
-Phase 4: 持续优化 (第9周+)
-├── 定期Skill质量评审
-├── 每次版本升级后更新API迁移规则库
-├── 量化全自动适配率提升曲线
-├── 探索本地LLM降低API成本
-├── 建立Skill贡献和评分机制
-└── 对标业界Level 3-4成熟度
+Phase 4: 持续优化 (第10周+)
++-- 定期Skill质量评审
++-- 知识库持续积累，跨模块共享 (v3.0)
++-- 每次版本升级后更新API迁移规则库
++-- 量化全自动适配率提升曲线
++-- 探索本地LLM降低API成本
++-- 建立Skill贡献和评分机制
++-- 对标业界Level 3-4成熟度
 ```
 
-### 11.2 关键里程碑
+### 12.2 关键里程碑
 
 | 里程碑 | 时间 | 标准 | 成功标志 |
 |--------|------|------|---------|
-| M0: 基础就绪 | 第2周末 | 仓库结构完整，工具安装完毕 | `evoskill init` 成功运行 |
-| M1: 诊断MVP | 第4周末 | 试点模块 Bug 分析约束完成 | 初始 Skill 能正确分析测试集 |
-| M2: 适配MVP | 第6周末 | 试点模块版本适配约束完成 + 核心 MCP 工具就绪 | 用历史数据回溯验证，全自动率 ≥ 40% |
-| M3: 双引擎进化 | 第8周末 | EvoSkill 双引擎进化循环稳定 | Skill 准确率提升 ≥ 10pp；适配全自动率 ≥ 50% |
-| M4: 规模推广 | 第10周末 | ≥ 3 个模块接入双引擎 | 开发者主动使用，反馈积极 |
-| M5: 效果量化 | 第14周末 | 有完整的对比数据 | 人力投入降低 ≥ 40%；适配周期缩短 ≥ 50% |
+| M0: 基础就绪 | 第2周末 | 仓库结构完整，工具安装完毕 | `evoskill init` 成功运行 **[已完成]** |
+| M1: 诊断MVP | 第4周末 | 试点模块文档投喂，约束自动生成 | 初始 Skill 能正确分析测试集 |
+| M2: 适配MVP | 第6周末 | 试点模块适配文档投喂 + 核心 MCP 工具就绪 | 用历史数据回溯验证，全自动率 >= 40% |
+| M3: 知识库闭环 | 第9周末 | 知识沉淀+自动提取+进化循环稳定 | 分析/纠正后自动沉淀成功率 >= 80% |
+| M4: 规模推广 | 第12周末 | >= 3 个模块通过文档投喂接入 | 开发者主动使用，反馈积极 |
+| M5: 效果量化 | 第16周末 | 有完整的对比数据 | 人力投入降低 >= 50%；适配周期缩短 >= 50% |
 
 ---
 
-## 12. 风险与应对
+## 13. 风险与应对
 
 ### 12.1 技术风险
 
@@ -1604,12 +2160,13 @@ Phase 4: 持续优化 (第9周+)
 | Git版本管理混乱 | 低 | 中 | EvoSkill自带分支管理；制定分支策略规范 |
 | AOSP Diff 过大导致分析超时 | 中 | 中 | 分模块分阶段分析；增加 diff 缓存和增量分析 |
 | API迁移规则库质量不足 | 中 | 高 | 人工审核首批规则；置信度阈值动态调整 |
+| 知识库自动提取约束质量不够 | 中 | 高 | Owner审核机制；置信度阈值；渐进式积累 |
 
 ### 12.2 组织风险
 
 | 风险 | 概率 | 影响 | 应对策略 |
 |------|------|------|---------|
-| Owner不愿写约束文件 | 中 | 高 | 约束模板化，提供示例；Demo展示效果；管理层推动 |
+| Owner不愿写约束文件 | 低 | 高 | v3.0 改为投喂文档，无需写约束 |
 | 团队不信任AI分析结果 | 中 | 中 | 先做辅助工具定位，不做替代；保留人工审核环节 |
 | 评估测试集质量差 | 中 | 高 | 由Owner提供历史真实案例；建立测试集评审机制 |
 | 效果短期不明显导致放弃 | 中 | 高 | 2周MVP验证；选择最痛的模块做试点；小赢积累信心 |
@@ -1629,7 +2186,7 @@ Phase 4: 持续优化 (第9周+)
 
 ---
 
-## 13. 附录：参考资源
+## 14. 附录：参考资源
 
 ### 13.1 必读文章
 
@@ -1730,4 +2287,31 @@ Approved (v2.1)
 
 ---
 
-> **下一步行动建议**: 选择通信模块（telephony）作为试点，用最近的版本升级数据做回溯验证。参照 [TAHP-版本适配约束规范](TAHP-版本适配约束规范.md) 开始编写适配约束文件。
+> **下一步行动建议**: 选择通信模块（telephony）作为试点，收集模块技术文档和历史Bug案例，通过 `feed_knowledge.py` 投喂到知识库，验证文档到 Skill 的自动生成链路。参照 [TAHP-版本适配约束规范](TAHP-版本适配约束规范.md) 了解适配约束的自动提取逻辑。
+
+## ADR-004: 新增知识库系统，实现知识沉淀与文档投喂驱动 `NEW v3.0`
+
+### Status
+Draft
+
+### Context
+经理在 v2.1 方案评审中提出两点反馈：
+1. 缺少知识库：分析过的Bug、纠正过的错误，经验随人走无法沉淀；新的技术文档和经验案例也没有统一的管理入口
+2. 接入门槛高：新业务模块需要人工写约束条件，Owner不懂约束规范时很难使用
+
+### Decision
+在 TAHP 架构中新增**知识库（Knowledge Base）**系统，作为约束管理层的基础设施：
+
+1. **知识自动沉淀**：4个触发点——Bug分析完成、错误被纠正、适配完成、EvoSkill进化后——自动生成知识条目入库
+2. **文档投喂驱动**：Owner 投喂技术文档和经验案例（Markdown/PDF/Word/日志），AI 自动解析并生成知识条目
+3. **知识到约束自动提取**：从知识库自动提取约束条件（YAML），生成评估测试集，无需 Owner 手动编写
+4. **知识检索与复用**：Agent 执行任务时自动检索相关知识注入上下文；支持跨模块知识共享
+5. **保留高级选项**：Owner 仍可直接编写/修改约束文件（YAML），作为高级用法保留
+
+### Consequences
+- **变得更容易**: Owner 从"写约束2-4小时"降到"投喂文档30min-1小时"，新模块接入门槛大幅降低
+- **变得更容易**: 知识不再随人走，自动沉淀机制确保经验持续积累
+- **变得更容易**: 跨模块知识共享，一个模块踩过的坑自动惠及其他模块
+- **变得更难**: 需要实现文档解析器、知识索引、约束提取器等新组件（约增加2-3周开发量）
+- **风险**: 自动提取约束的质量可能不如人工编写，需要 Owner 审核机制兜底
+- **缓解**: 置信度阈值 + Owner 审核门禁 + 渐进式积累（知识越多，提取质量越高）
