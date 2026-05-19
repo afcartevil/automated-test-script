@@ -1,0 +1,35 @@
+version: "1.0"
+database:
+  type: sqlite-onnx    # SQLite 持久化 + ONNX 语义嵌入（纯 Python，零 C++ 依赖）
+  persist_dir: .knowledge_db/
+  embedding_model: default  # onnxruntime + all-MiniLM-L6-v2 (384d)
+  # 注：all-MiniLM-L6-v2 以英文为主，中英跨语言相似度偏低（0.1-0.3），
+  #     后续可替换为 paraphrase-multilingual-MiniLM-L12-v2 提升中文支持
+
+sources:
+  manual_feed: true
+  auto_capture: true
+  cross_module_sync: true
+
+auto_capture:
+  bug_analysis:
+    min_confidence: 0.80
+    gate_result: [PASS, WARNING]
+  corrections:
+    always: true
+  adaptation:
+    compile_pass: true
+    regression_pass: true
+  evoskill:
+    min_score_improvement: 0.05
+
+retrieval:
+  default_top_k: 5
+  min_confidence: 0.05      # 低阈值以支持跨语言检索（英文模型查中文内容）
+  cross_module_top_k: 3
+  rerank: false
+
+constraint_extraction:
+  auto_trigger: true
+  owner_review_required: true
+  confidence_threshold: 0.75

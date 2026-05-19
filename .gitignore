@@ -15,3 +15,7 @@ reports/quality-metrics/*
 .env
 *.key
 *.pem
+
+# 知识库数据库持久化数据
+.knowledge_db/
+.chroma_db/
