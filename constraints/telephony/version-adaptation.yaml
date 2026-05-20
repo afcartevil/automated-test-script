@@ -1,115 +1,124 @@
-module:
-  name: telephony
-  display_name: "通信模块"
-  domain: "version_adaptation"
-  owner: ""
-  team: comm-integration
+metadata:
+  module: telephony
+  domain: version_adaptation
   version: "1.0"
-  created: "2026-05-18"
-  updated: "2026-05-18"
+  author: "comm-team"
+  last_updated: "2026-05-20"
+  changelog:
+    - version: "1.0"
+      date: "2026-05-20"
+      author: "comm-team"
+      reason: "初始版本，定义Android 15→16电话网API迁移规则"
 
-adaptation_type:
-  type: version_upgrade
-
-version_info:
-  source_version: "android-15.0.0_r1"
-  target_version: "android-16.0.0_r1"
-
-context:
-  codebase_paths:
-    - "frameworks/opt/telephony/"
-    - "frameworks/base/telephony/"
-    - "packages/services/Telephony/"
-    - "frameworks/base/core/java/android/telephony/"
-  build_targets:
-    - "TeleService"
-    - "TelephonyProvider"
-    - "Telecom"
-  test_targets:
-    - "android.telephony.cts"
-    - "com.android.phone.tests"
-    - "com.android.server.telecom.tests"
-  dependency_modules:
-    - "framework"
-    - "connectivity"
-    - "media"
-  excluded_paths:
-    - "vendor/mediatek/proprietary/**"
-    - "device/*/ril/**"
-
-api_migration_rules:
-  shared_rule_files:
-    - "shared/api-migration-rules/telephony-migration.yaml"
-    - "shared/api-migration-rules/framework-migration.yaml"
-  inline_rules:
-    - old_api: "TelephonyManager.getDataNetworkType()"
-      new_api: "TelephonyManager.getServiceState().getDataNetworkType()"
-      change_type: "method_signature"
-      auto: true
-      confidence: 0.98
-      note: "Android 16 将 getDataNetworkType() 标记为 @Deprecated"
-    - old_api: "PhoneFactory.getPhones()"
-      new_api: "PhoneFactory.getPhoneList()"
-      change_type: "method_rename"
-      auto: true
-      confidence: 0.92
-      note: "返回类型从 Phone[] 改为 List<Phone>"
-    - old_api: "IccCardConstants.INTENT_VALUE_ICC_ABSENT"
-      new_api: "TelephonyManager.SIM_STATE_ABSENT"
-      change_type: "constant_moved"
-      auto: false
-      confidence: 0.75
-      note: "常量从 IccCardConstants 迁移到 TelephonyManager，需要检查上下文"
-    - old_api: "ServiceState.getState()"
-      new_api: "ServiceState.getVoiceRegState()"
-      change_type: "method_rename"
-      auto: true
-      confidence: 0.88
-      note: "区分语音注册状态和数据注册状态"
-
-adaptation_constraints:
+safety_red_lines:
+  - "不修改 scope.excludes 中列出的任何文件"
+  - "不在未验证API存在性的情况下生成代码"
+  - "不硬编码密钥/Token/设备标识"
   - "不能因为适配而删除传音自研的业务逻辑"
-  - "新增的 Android 16 API 调用必须有 @RequiresApi(VERSION_CODES.VANILLA_ICE_CREAM) 注解"
-  - "HIDL/AIDL 接口变更必须同步更新接口定义文件和实现类"
-  - "废弃 API 的迁移必须检查所有调用点（grep确认零残留），不能遗漏"
-  - "不能引入新的编译警告（-Werror 编译通过）"
-  - "PhoneInternalInterface 的回调方法签名变更必须同步更新所有实现类"
-  - "RILJ/RILC 接口变更需要同时确认 Modem 固件兼容性"
+  - "所有代码修改必须在编译门禁中通过"
 
-exclusion_rules:
-  paths:
-    - "vendor/mediatek/proprietary/**"
-    - "device/*/ril/**"
-  api_patterns:
-    - "com.mediatek.internal.*"
-  reasons:
-    - "MTK proprietary 代码不参与 AOSP 适配，由 MTK BSP 团队独立适配"
+rules:
+  adaptation_type:
+    type: version_upgrade
+  version_info:
+    source_version: "android-15.0.0_r1"
+    target_version: "android-16.0.0_r1"
 
-strategy_preferences:
-  auto_confidence_threshold: 0.95
-  semi_auto_min_confidence: 0.70
-  batch_size: 50
-  parallel_agents: 4
+  context:
+    codebase_paths:
+      - "frameworks/opt/telephony/"
+      - "frameworks/base/telephony/"
+      - "packages/services/Telephony/"
+      - "frameworks/base/core/java/android/telephony/"
+    build_targets:
+      - "TeleService"
+      - "TelephonyProvider"
+      - "Telecom"
+    test_targets:
+      - "android.telephony.cts"
+      - "com.android.phone.tests"
+      - "com.android.server.telecom.tests"
+    dependency_modules:
+      - "framework"
+      - "connectivity"
+      - "media"
+    excluded_paths:
+      - "vendor/mediatek/proprietary/**"
+      - "device/*/ril/**"
 
-acceptance_criteria:
-  compile_pass: true
-  smoke_test_targets:
-    - "call_functional_smoke"
-    - "sms_functional_smoke"
-    - "data_connection_smoke"
-    - "sim_hot_swap_smoke"
-  regression_targets:
-    - "call_functional_test"
-    - "sms_functional_test"
-    - "data_connection_test"
-    - "sim_hot_swap_test"
-    - "volte_functional_test"
-    - "vonr_functional_test"
-  regression_pass_rate: 0.95
-  custom_checks:
-    - name: "无废弃API残留"
-      command: "grep -rn 'getDataNetworkType()' frameworks/opt/telephony/ | grep -v '@Deprecated'"
-      expected: "(空输出，无匹配)"
+  api_migration_rules:
+    shared_rule_files:
+      - "shared/api-migration-rules/telephony-migration.yaml"
+      - "shared/api-migration-rules/framework-migration.yaml"
+    inline_rules:
+      - old_api: "TelephonyManager.getDataNetworkType()"
+        new_api: "TelephonyManager.getServiceState().getDataNetworkType()"
+        change_type: "method_signature"
+        auto: true
+        confidence: 0.98
+        note: "Android 16 将 getDataNetworkType() 标记为 @Deprecated"
+      - old_api: "PhoneFactory.getPhones()"
+        new_api: "PhoneFactory.getPhoneList()"
+        change_type: "method_rename"
+        auto: true
+        confidence: 0.92
+        note: "返回类型从 Phone[] 改为 List<Phone>"
+      - old_api: "IccCardConstants.INTENT_VALUE_ICC_ABSENT"
+        new_api: "TelephonyManager.SIM_STATE_ABSENT"
+        change_type: "constant_moved"
+        auto: false
+        confidence: 0.75
+        note: "常量从 IccCardConstants 迁移到 TelephonyManager，需要检查上下文"
+      - old_api: "ServiceState.getState()"
+        new_api: "ServiceState.getVoiceRegState()"
+        change_type: "method_rename"
+        auto: true
+        confidence: 0.88
+        note: "区分语音注册状态和数据注册状态"
+
+  adaptation_constraints:
+    - "不能因为适配而删除传音自研的业务逻辑"
+    - "新增的 Android 16 API 调用必须有 @RequiresApi(VERSION_CODES.VANILLA_ICE_CREAM) 注解"
+    - "HIDL/AIDL 接口变更必须同步更新接口定义文件和实现类"
+    - "废弃 API 的迁移必须检查所有调用点（grep确认零残留），不能遗漏"
+    - "不能引入新的编译警告（-Werror 编译通过）"
+    - "PhoneInternalInterface 的回调方法签名变更必须同步更新所有实现类"
+    - "RILJ/RILC 接口变更需要同时确认 Modem 固件兼容性"
+
+  exclusion_rules:
+    paths:
+      - "vendor/mediatek/proprietary/**"
+      - "device/*/ril/**"
+    api_patterns:
+      - "com.mediatek.internal.*"
+    reasons:
+      - "MTK proprietary 代码不参与 AOSP 适配，由 MTK BSP 团队独立适配"
+
+  strategy_preferences:
+    auto_confidence_threshold: 0.95
+    semi_auto_min_confidence: 0.70
+    batch_size: 50
+    parallel_agents: 4
+
+  acceptance_criteria:
+    compile_pass: true
+    smoke_test_targets:
+      - "call_functional_smoke"
+      - "sms_functional_smoke"
+      - "data_connection_smoke"
+      - "sim_hot_swap_smoke"
+    regression_targets:
+      - "call_functional_test"
+      - "sms_functional_test"
+      - "data_connection_test"
+      - "sim_hot_swap_test"
+      - "volte_functional_test"
+      - "vonr_functional_test"
+    regression_pass_rate: 0.95
+    custom_checks:
+      - name: "无废弃API残留"
+        command: "grep -rn 'getDataNetworkType()' frameworks/opt/telephony/ | grep -v '@Deprecated'"
+        expected: "(空输出，无匹配)"
 
 eval_dataset:
   path: "eval-data/telephony-a15-to-a16/"

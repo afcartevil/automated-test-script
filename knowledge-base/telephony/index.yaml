@@ -1,0 +1,24 @@
+# Telephony 模块知识库索引
+# 由 feed_knowledge.py 和 auto_capture 维护
+
+module: telephony
+version: "1.0"
+last_updated: "2026-05-20"
+total_entries: 3
+
+entries:
+  - title: "RILJ GENERIC_FAILURE 错误分析"
+    file: docs/rilj-common-errors.yaml
+    category: error_pattern
+    confidence: 0.9
+    tags: [RILJ, GENERIC_FAILURE, 数据通话]
+  - title: "PhoneInterfaceManager Phone对象生命周期"
+    file: docs/rilj-common-errors.yaml
+    category: api_usage
+    confidence: 0.85
+    tags: [Framework, PhoneInterfaceManager, 初始化]
+  - title: "RILJ SETUP_DATA_CALL 流程分析"
+    file: docs/rilj-common-errors.yaml
+    category: process_flow
+    confidence: 0.95
+    tags: [RILJ, 数据通话, 流程分析]

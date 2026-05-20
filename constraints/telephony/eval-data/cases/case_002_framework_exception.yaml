@@ -1,0 +1,24 @@
+case_id: case_002_framework_exception
+description: "TelephonyFramework异常导致通话崩溃"
+input:
+  prompt: "分析TelephonyFramework崩溃日志"
+  log_content: |
+    05-19 11:00:00.100 TelephonyFramework: PhoneInterfaceManager registerForSubscription
+    05-19 11:00:01.200 TelephonyFramework: java.lang.IllegalStateException: Phone not created
+    05-19 11:00:01.201 TelephonyFramework: at com.android.internal.telephony.PhoneFactory.getDefaultPhone
+    05-19 11:00:02.300 FATAL EXCEPTION: main
+    05-19 11:00:02.301 Process: com.android.phone, PID: 12345
+  metadata:
+    issue_type: "应用崩溃"
+    android_version: "14"
+expected_output:
+  root_cause_layer: "Framework"
+  reproducibility: "always"
+  impact_scope: "device_series"
+  fix_type: "code_change"
+  severity: "critical"
+  root_cause_description: "TelephonyFramework层Phone对象未创建时发生IllegalStateException，导致com.android.phone进程崩溃"
+  fix_suggestion: "在PhoneFactory.getDefaultPhone调用前增加Phone对象创建状态检查，防止空指针异常"
+weight: 1.0
+metadata:
+  difficulty: "hard"

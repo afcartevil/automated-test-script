@@ -2,7 +2,7 @@ module:
   name: telephony
   display_name: "通信模块"
   domain: android-telephony
-  owner: ""
+  owner: "comm-integration"
   team: comm-integration
   version: "1.0"
   created: "2026-05-18"

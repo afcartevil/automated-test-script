@@ -1,59 +1,79 @@
-preconditions:
-  required_info:
-    - name: "battery_history"
-      description: "Battery Historian数据"
-      how_to_get: "adb shell dumpsys batterystats > batterystats.txt"
-      required: true
-      error_msg: "缺少batterystats数据，功耗分析需要电池历史记录。"
-    - name: "bugreport"
-      description: "完整Bugreport"
-      how_to_get: "adb bugreport bugreport.zip"
-      required: false
-    - name: "repro_steps"
-      description: "复现步骤"
-      how_to_get: "由用户/Bug报告提供"
-      required: true
+metadata:
+  module: power-mgmt
+  domain: bug_analysis
+  version: "1.0"
+  author: "power-integration"
+  last_updated: "2026-05-20"
+  changelog:
+    - version: "1.0"
+      date: "2026-05-20"
+      author: "power-integration"
+      reason: "初始版本，定义功耗管理Bug分析三层检测规则"
 
-analysis_rules:
-  layer_detection_order:
-    1:
-      layer: "Application"
-      check: "检查应用层WakeLock持有"
-      indicators:
-        - pattern: ".*WakeLock.*acquired.*"
-        - pattern: ".*PARTIAL_WAKE_LOCK.*"
-    2:
-      layer: "Framework"
-      check: "检查系统服务异常功耗"
-      indicators:
-        - pattern: ".*PowerManagerService.*"
-        - pattern: ".*BatteryService.*"
-    3:
-      layer: "HAL/Kernel"
-      check: "检查底层功耗问题"
-      indicators:
-        - pattern: ".*powerHAL.*"
-        - pattern: ".*suspend.*"
-  prohibited:
-    - "在未获取batterystats数据的情况下给出功耗分析结论"
-    - "将正常业务功耗误判为Bug"
-    - "修改排除范围内的代码"
-  required_outputs:
-    - name: "root_cause_layer"
-      type: "enum"
-      values: ["Application", "Framework", "HAL", "Kernel", "Hardware", "Unknown"]
-    - name: "fix_type"
-      type: "enum"
-      values: ["code_change", "config_change", "parameter_tuning", "further_investigation"]
-    - name: "severity"
-      type: "enum"
-      values: ["critical", "high", "medium", "low"]
-    - name: "root_cause_description"
-      type: "text"
-      min_length: 50
-    - name: "fix_suggestion"
-      type: "text"
-      min_length: 30
+safety_red_lines:
+  - "不修改 scope.excludes 中列出的任何文件"
+  - "不在未验证API存在性的情况下生成代码"
+  - "不硬编码密钥/Token/设备标识"
+  - "涉及安全相关的Bug必须标记为Critical"
+  - "所有代码修改必须在编译门禁中通过"
+
+rules:
+  preconditions:
+    required_info:
+      - name: "battery_history"
+        description: "Battery Historian数据"
+        how_to_get: "adb shell dumpsys batterystats > batterystats.txt"
+        required: true
+        error_msg: "缺少batterystats数据，功耗分析需要电池历史记录。"
+      - name: "bugreport"
+        description: "完整Bugreport"
+        how_to_get: "adb bugreport bugreport.zip"
+        required: false
+      - name: "repro_steps"
+        description: "复现步骤"
+        how_to_get: "由用户/Bug报告提供"
+        required: true
+
+  analysis_rules:
+    layer_detection_order:
+      1:
+        layer: "Application"
+        check: "检查应用层WakeLock持有"
+        indicators:
+          - pattern: ".*WakeLock.*acquired.*"
+          - pattern: ".*PARTIAL_WAKE_LOCK.*"
+      2:
+        layer: "Framework"
+        check: "检查系统服务异常功耗"
+        indicators:
+          - pattern: ".*PowerManagerService.*"
+          - pattern: ".*BatteryService.*"
+      3:
+        layer: "HAL/Kernel"
+        check: "检查底层功耗问题"
+        indicators:
+          - pattern: ".*powerHAL.*"
+          - pattern: ".*suspend.*"
+    prohibited:
+      - "在未获取batterystats数据的情况下给出功耗分析结论"
+      - "将正常业务功耗误判为Bug"
+      - "修改排除范围内的代码"
+    required_outputs:
+      - name: "root_cause_layer"
+        type: "enum"
+        values: ["Application", "Framework", "HAL", "Kernel", "Hardware", "Unknown"]
+      - name: "fix_type"
+        type: "enum"
+        values: ["code_change", "config_change", "parameter_tuning", "further_investigation"]
+      - name: "severity"
+        type: "enum"
+        values: ["critical", "high", "medium", "low"]
+      - name: "root_cause_description"
+        type: "text"
+        min_length: 50
+      - name: "fix_suggestion"
+        type: "text"
+        min_length: 30
 
 evaluation:
   bug_analysis_accuracy_target: 0.80

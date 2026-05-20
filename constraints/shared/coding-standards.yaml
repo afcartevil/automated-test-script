@@ -1,22 +1,40 @@
-standards:
-  version_control:
-    commit_message_format: "[{module}] {type}: {description}"
-    type_values: ["fix", "feat", "refactor", "test", "docs", "chore", "adapt"]
-    branch_naming: "{type}/{module}/{ticket-id}"
-  code_review:
-    required_reviewers: 1
-    auto_review_checks:
-      - "编译通过"
-      - "单元测试通过"
-      - "checkpatch.pl零warning"
-      - "无新增lint错误"
-  documentation:
-    - "新增公开方法必须有Javadoc/Doxygen注释"
-    - "复杂算法必须有内联注释说明思路"
-    - "Bug修复的commit message必须关联Bug ID"
-    - "适配变更的commit message必须标注适配类型和目标版本"
-  android_specific:
-    - "新增API必须有 @hide 或 @SystemApi 注解（如需隐藏）"
-    - "使用 @RequiresApi 注解标注版本依赖"
-    - "资源文件命名使用 snake_case"
-    - "布局文件ID使用 camelCase"
+metadata:
+  module: shared
+  domain: code_adaptation
+  version: "1.0"
+  author: "arch-team"
+  last_updated: "2026-05-20"
+  changelog:
+    - version: "1.0"
+      date: "2026-05-20"
+      author: "arch-team"
+      reason: "初始版本，定义编码规范与代码评审标准"
+
+safety_red_lines:
+  - "不修改 scope.excludes 中列出的任何文件"
+  - "不在未验证API存在性的情况下生成代码"
+  - "不硬编码密钥/Token/设备标识"
+
+rules:
+  standards:
+    version_control:
+      commit_message_format: "[{module}] {type}: {description}"
+      type_values: ["fix", "feat", "refactor", "test", "docs", "chore", "adapt"]
+      branch_naming: "{type}/{module}/{ticket-id}"
+    code_review:
+      required_reviewers: 1
+      auto_review_checks:
+        - "编译通过"
+        - "单元测试通过"
+        - "checkpatch.pl零warning"
+        - "无新增lint错误"
+    documentation:
+      - "新增公开方法必须有Javadoc/Doxygen注释"
+      - "复杂算法必须有内联注释说明思路"
+      - "Bug修复的commit message必须关联Bug ID"
+      - "适配变更的commit message必须标注适配类型和目标版本"
+    android_specific:
+      - "新增API必须有 @hide 或 @SystemApi 注解（如需隐藏）"
+      - "使用 @RequiresApi 注解标注版本依赖"
+      - "资源文件命名使用 snake_case"
+      - "布局文件ID使用 camelCase"

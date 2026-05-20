@@ -1,0 +1,24 @@
+case_id: case_001_rilj_error
+description: "RILJ层错误导致的通话断连"
+input:
+  prompt: "分析logcat日志中的通话断连问题"
+  log_content: |
+    05-19 10:00:00.123 RILJ: setupDataCall for radioTech=14
+    05-19 10:00:01.456 RILJ: [UNSL]< UNSOL_RESPONSE_VOICE_NETWORK_STATE_CHANGED
+    05-19 10:00:02.789 RILJ: error processing response. Request=SETUP_DATA_CALL
+    05-19 10:00:03.012 RILJ: GENERIC_FAILURE
+    05-19 10:00:04.555 RILJ: setupDataCall failed, ret=GENERIC_FAILURE
+  metadata:
+    issue_type: "通话断连"
+    android_version: "14"
+expected_output:
+  root_cause_layer: "RILJ"
+  reproducibility: "frequent"
+  impact_scope: "device_series"
+  fix_type: "code_change"
+  severity: "high"
+  root_cause_description: "RILJ层SETUP_DATA_CALL请求返回GENERIC_FAILURE，导致数据通话建立失败"
+  fix_suggestion: "检查RILJ层响应处理逻辑，确认GENERIC_FAILURE错误码对应的重试机制是否正确"
+weight: 1.0
+metadata:
+  difficulty: "medium"

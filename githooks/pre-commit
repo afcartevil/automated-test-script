@@ -1,0 +1,32 @@
+#!/bin/bash
+# TAHP pre-commit hook: 约束文件变更必须更新 changelog
+#
+# 安装方式:
+#   git config core.hooksPath githooks
+#   或在 .git/hooks/ 下创建到此文件的符号链接
+
+CHANGED_CONSTRAINTS=$(git diff --cached --name-only | grep -E '^constraints/.*\.ya?ml$' | grep -v 'module.yaml')
+
+if [ -z "$CHANGED_CONSTRAINTS" ]; then
+    exit 0
+fi
+
+HAS_ERROR=0
+
+for FILE in $CHANGED_CONSTRAINTS; do
+    if git diff --cached "$FILE" | grep -q 'changelog'; then
+        continue
+    fi
+    echo "ERROR: $FILE 变更但未更新 metadata.changelog 字段"
+    echo "  请在 metadata 段中添加 changelog 条目，记录变更原因、日期和作者。"
+    echo ""
+    HAS_ERROR=1
+done
+
+if [ $HAS_ERROR -eq 1 ]; then
+    echo "---"
+    echo "提示：如果这是首次创建或批量修复文件，可以使用 --no-verify 跳过本次检查。"
+    exit 1
+fi
+
+exit 0

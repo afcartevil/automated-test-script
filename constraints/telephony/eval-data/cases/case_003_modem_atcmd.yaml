@@ -1,0 +1,24 @@
+case_id: case_003_modem_atcmd
+description: "Modem侧AT命令超时导致网络注册失败"
+input:
+  prompt: "分析Modem日志中的ATCMD超时问题"
+  log_content: |
+    05-19 12:00:00.000 ATCMD: AT+CREG? sent
+    05-19 12:00:05.000 ATCMD: AT+CREG? timeout after 5000ms
+    05-19 12:00:06.000 MODEM: Network registration failed, retry count=3
+    05-19 12:00:07.000 ATCMD: AT+COPS=0 sent
+    05-19 12:00:12.000 ATCMD: AT+COPS=0 timeout after 5000ms
+  metadata:
+    issue_type: "网络注册失败"
+    android_version: "14"
+expected_output:
+  root_cause_layer: "Modem"
+  reproducibility: "occasional"
+  impact_scope: "platform"
+  fix_type: "further_investigation"
+  severity: "high"
+  root_cause_description: "Modem侧AT命令多次超时，CREG和COPS命令均无响应，怀疑Modem固件与基带版本不兼容或射频链路异常"
+  fix_suggestion: "需进一步确认Modem固件版本与基带兼容性，同步检查射频天线通路是否正常"
+weight: 1.0
+metadata:
+  difficulty: "hard"

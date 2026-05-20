@@ -240,6 +240,11 @@ def validate_single_file(file_path: Path, strict: bool = False) -> ValidationRes
     """Run full validation pipeline on a single constraint file."""
     result = ValidationResult(target=str(file_path))
 
+    # module.yaml is a module registry, not a domain constraint file — skip schema validation
+    # eval-data files are test fixtures, not constraint files — skip schema validation
+    if file_path.name == "module.yaml" or "eval-data" in file_path.parts:
+        return result
+
     validate_yaml_syntax(file_path, result)
     validate_top_level_schema(file_path, result, strict=strict)
     validate_metadata(file_path, result, strict=strict)

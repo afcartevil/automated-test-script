@@ -2,7 +2,7 @@ module:
   name: power-mgmt
   display_name: "功耗管理模块"
   domain: android-power-management
-  owner: ""
+  owner: "power-integration"
   team: power-integration
   version: "1.0"
   created: "2026-05-18"

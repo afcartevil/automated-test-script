@@ -1,0 +1,9 @@
+case_id: case_003_modem_atcmd
+expected:
+  root_cause_layer: "Modem"
+  reproducibility: "occasional"
+  impact_scope: "platform"
+  fix_type: "further_investigation"
+  severity: "high"
+  root_cause_description_contains: ["Modem", "AT命令", "超时", "CREG", "COPS"]
+  fix_suggestion_contains: ["固件版本", "基带兼容", "射频"]

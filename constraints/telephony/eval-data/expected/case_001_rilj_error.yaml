@@ -1,0 +1,9 @@
+case_id: case_001_rilj_error
+expected:
+  root_cause_layer: "RILJ"
+  reproducibility: "frequent"
+  impact_scope: "device_series"
+  fix_type: "code_change"
+  severity: "high"
+  root_cause_description_contains: ["RILJ", "GENERIC_FAILURE", "SETUP_DATA_CALL"]
+  fix_suggestion_contains: ["重试机制", "响应处理"]

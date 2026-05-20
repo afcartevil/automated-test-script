@@ -1,0 +1,35 @@
+# Telephony 模块知识条目 — RILJ 常见错误模式
+# 由人工维护，用于 AI Agent 在 Bug 分析时参考
+
+entries:
+  - title: "RILJ GENERIC_FAILURE 错误分析"
+    content: >
+      GENERIC_FAILURE是RILJ层最常见的错误码之一，通常由RILC层或Modem层处理异常导致。
+      常见于SETUP_DATA_CALL、DIAL等请求场景。
+      排查方向：
+      1.检查RILC日志确认请求是否到达底层
+      2.对比Modem版本与基带兼容性
+      3.确认射频状态正常。
+    category: "error_pattern"
+    confidence: 0.9
+    tags: ["RILJ", "GENERIC_FAILURE", "数据通话"]
+
+  - title: "PhoneInterfaceManager Phone对象生命周期"
+    content: >
+      PhoneInterfaceManager在registerForSubscription时可能因PhoneFactory未完成初始化
+      而抛出IllegalStateException。需要在调用前检查isPhoneCreated状态，并在catch中增加重试逻辑。
+    category: "api_usage"
+    confidence: 0.85
+    tags: ["Framework", "PhoneInterfaceManager", "初始化"]
+
+  - title: "RILJ SETUP_DATA_CALL 流程分析"
+    content: >
+      setupDataCall请求经过RILJ→RILC→Modem三层。
+      每层的失败表现为不同错误码：
+      RILJ层返回GENERIC_FAILURE、
+      RILC层返回RADIO_NOT_AVAILABLE、
+      Modem层通过ATCMD返回CME ERROR。
+      分析时需逐层排查。
+    category: "process_flow"
+    confidence: 0.95
+    tags: ["RILJ", "数据通话", "流程分析"]

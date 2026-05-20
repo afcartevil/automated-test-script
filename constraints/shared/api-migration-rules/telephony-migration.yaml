@@ -1,56 +1,68 @@
 metadata:
-  module: "telephony"
-  maintainers: []
-  last_update: "2026-05-18"
-  total_rules: 3
+  module: shared
+  domain: code_adaptation
+  version: "1.0"
+  author: "comm-team"
+  last_updated: "2026-05-20"
+  changelog:
+    - version: "1.0"
+      date: "2026-05-20"
+      author: "comm-team"
+      reason: "初始版本，电话网API迁移规则（Android 15→16）"
+
+safety_red_lines:
+  - "不在未验证API存在性的情况下生成代码"
+  - "所有API迁移必须保留原有功能的语义等价性"
+  - "迁移涉及的代码必须通过编译门禁"
 
 rules:
-  - id: "TEL-001"
-    old_api: "TelephonyManager.getDataNetworkType()"
-    new_api: "TelephonyManager.getServiceState().getDataNetworkType()"
-    change_type: "method_signature"
-    introduced_in: "android-16.0.0_r1"
-    deprecated_in: "android-15.0.0_r1"
-    auto: true
-    confidence: 0.98
-    scope: "framework"
-    affected_files_pattern: "**/telephony/**/*.java"
-    migration_steps:
-      - "查找所有 getDataNetworkType() 调用点"
-      - "替换为 getServiceState().getDataNetworkType()"
-      - "添加 null check（getServiceState() 可能返回 null）"
-      - "更新相关 import 语句"
-    verified_in:
-      - "android-16.0.0_r1"
-    note: "Android 16 将 getDataNetworkType() 标记为 @Deprecated"
-  - id: "TEL-002"
-    old_api: "PhoneFactory.getPhones()"
-    new_api: "PhoneFactory.getPhoneList()"
-    change_type: "method_rename"
-    introduced_in: "android-16.0.0_r1"
-    auto: true
-    confidence: 0.92
-    scope: "framework"
-    affected_files_pattern: "**/telephony/**/*.java"
-    migration_steps:
-      - "将 getPhones() 替换为 getPhoneList()"
-      - "返回类型从 Phone[] 改为 List<Phone>，需要调整下游代码"
-      - "检查是否有 .length 调用需要改为 .size()"
-    verified_in:
-      - "android-16.0.0_r1"
-    note: "返回类型从 Phone[] 改为 List<Phone>"
-  - id: "TEL-003"
-    old_api: "IccCardConstants.INTENT_VALUE_ICC_ABSENT"
-    new_api: "TelephonyManager.SIM_STATE_ABSENT"
-    change_type: "constant_moved"
-    introduced_in: "android-16.0.0_r1"
-    auto: false
-    confidence: 0.75
-    scope: "framework"
-    affected_files_pattern: "**/telephony/**/*.java"
-    migration_steps:
-      - "查找所有 IccCardConstants.INTENT_VALUE_ICC_ABSENT 引用"
-      - "评估上下文：是否可以直接替换"
-      - "有些场景 IccCardConstants 和 TelephonyManager 的语义可能不同"
-    verified_in: []
-    note: "常量从 IccCardConstants 迁移到 TelephonyManager，需要检查上下文语义"
+  migrations:
+    - id: "TEL-001"
+      old_api: "TelephonyManager.getDataNetworkType()"
+      new_api: "TelephonyManager.getServiceState().getDataNetworkType()"
+      change_type: "method_signature"
+      introduced_in: "android-16.0.0_r1"
+      deprecated_in: "android-15.0.0_r1"
+      auto: true
+      confidence: 0.98
+      scope: "framework"
+      affected_files_pattern: "**/telephony/**/*.java"
+      migration_steps:
+        - "查找所有 getDataNetworkType() 调用点"
+        - "替换为 getServiceState().getDataNetworkType()"
+        - "添加 null check（getServiceState() 可能返回 null）"
+        - "更新相关 import 语句"
+      verified_in:
+        - "android-16.0.0_r1"
+      note: "Android 16 将 getDataNetworkType() 标记为 @Deprecated"
+    - id: "TEL-002"
+      old_api: "PhoneFactory.getPhones()"
+      new_api: "PhoneFactory.getPhoneList()"
+      change_type: "method_rename"
+      introduced_in: "android-16.0.0_r1"
+      auto: true
+      confidence: 0.92
+      scope: "framework"
+      affected_files_pattern: "**/telephony/**/*.java"
+      migration_steps:
+        - "将 getPhones() 替换为 getPhoneList()"
+        - "返回类型从 Phone[] 改为 List<Phone>，需要调整下游代码"
+        - "检查是否有 .length 调用需要改为 .size()"
+      verified_in:
+        - "android-16.0.0_r1"
+      note: "返回类型从 Phone[] 改为 List<Phone>"
+    - id: "TEL-003"
+      old_api: "IccCardConstants.INTENT_VALUE_ICC_ABSENT"
+      new_api: "TelephonyManager.SIM_STATE_ABSENT"
+      change_type: "constant_moved"
+      introduced_in: "android-16.0.0_r1"
+      auto: false
+      confidence: 0.75
+      scope: "framework"
+      affected_files_pattern: "**/telephony/**/*.java"
+      migration_steps:
+        - "查找所有 IccCardConstants.INTENT_VALUE_ICC_ABSENT 引用"
+        - "评估上下文：是否可以直接替换"
+        - "有些场景 IccCardConstants 和 TelephonyManager 的语义可能不同"
+      verified_in: []
+      note: "常量从 IccCardConstants 迁移到 TelephonyManager，需要检查上下文语义"

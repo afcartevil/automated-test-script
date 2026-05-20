@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "tahp-mcp-server"
+version = "0.1.0"
+description = "TAHP MCP Server - Expose TAHP capabilities as MCP tools for AI agent orchestration"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.9.0",
+    "pyyaml>=6.0",
+    "click>=8.1",
+    "rich>=13.0",
+]
+
+[project.scripts]
+tahp-mcp-server = "tahp_mcp_server.server:main"

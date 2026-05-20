@@ -2,7 +2,7 @@ module:
   name: kernel-driver
   display_name: "内核驱动模块"
   domain: android-kernel-driver
-  owner: ""
+  owner: "kernel-integration"
   team: kernel-integration
   version: "1.0"
   created: "2026-05-18"

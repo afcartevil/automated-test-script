@@ -1,0 +1,9 @@
+case_id: case_002_framework_exception
+expected:
+  root_cause_layer: "Framework"
+  reproducibility: "always"
+  impact_scope: "device_series"
+  fix_type: "code_change"
+  severity: "critical"
+  root_cause_description_contains: ["TelephonyFramework", "IllegalStateException", "Phone"]
+  fix_suggestion_contains: ["状态检查", "空指针"]
