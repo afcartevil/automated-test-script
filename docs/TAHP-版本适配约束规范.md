@@ -1,8 +1,9 @@
 # TAHP 版本适配约束规范
 
-> **版本**: v2.0 | **日期**: 2026-05-19 | **适用范围**: 适配引擎（version_adaptation + carrier_porting）
+> **版本**: v3.0 | **日期**: 2026-05-20 | **适用范围**: 适配引擎（version_adaptation + carrier_porting）
 > **状态**: Approved
 > **前置文档**: [TAHP-约束文件编写规范](TAHP-约束文件编写规范.md)
+> **v3.0 变更**: 对齐方案设计v3.0 — 新增knowledge-to-skill Pipeline闭环、capture_experience.py/knowledge_stats.py引用、版本历史
 > **v2.0 变更**: 适配知识库体系 — 适配经验自动沉淀到知识库，适配经验跨版本复用，新模块支持文档投喂自动生成适配约束
 
 ---
@@ -840,7 +841,6 @@ python scripts/feed_knowledge.py --module {module} --cases ./auto/adaptation-{ve
 # 查看模块适配知识积累
 python scripts/query_knowledge.py --module {module} --stats
 ```
-```
 
 ---
 
@@ -984,6 +984,27 @@ A16→A17 适配前 → 自动检索 A15→A16 经验 → 注入适配上下文 
 A16→A17 完成 → 新经验入库 → 覆盖/补充旧经验 → 知识库持续增长
 ```
 
+### 10.4 Knowledge-to-Skill Pipeline 闭环 (v3.0)
+
+v3.0 完整的适配经验闭环流程：
+
+```
+投喂文档 → 知识入库 → 约束提取 → Skill生成 → EvoSkill进化 → 执行适配 → 经验沉淀
+    ↑                                                          ↓
+    └──────────────── 知识库持续增长 ←───────────────────────────┘
+```
+
+对应 Playbook：`playbooks/knowledge-to-skill-pipeline.yaml`
+
+关键命令：
+```bash
+# 适配完成后触发经验沉淀
+python scripts/capture_experience.py --module {module} --from-task {adaptation_task_id} --validate
+
+# 查看模块知识积累情况
+python scripts/knowledge_stats.py --module {module}
+```
+
 ---
 
 ## 11. 附录
@@ -1014,5 +1035,6 @@ A16→A17 完成 → 新经验入库 → 覆盖/补充旧经验 → 知识库持
 
 | 版本 | 日期 | 变更内容 |
 |------|------|---------|
+| v3.0 | 2026-05-20 | 对齐方案设计v3.0 — 新增knowledge-to-skill Pipeline闭环(§10.4)、capture_experience.py/knowledge_stats.py引用、修复stray code fence、版本历史 |
 | v2.0 | 2026-05-19 | 适配知识库体系 — 适配经验自动沉淀到知识库，适配经验跨版本复用，新模块支持文档投喂自动生成适配约束 |
 | v1.0 | 2026-05-18 | 初始版本，覆盖 version_adaptation + carrier_porting 两大场景 |

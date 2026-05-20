@@ -1,7 +1,8 @@
 # TAHP 约束文件编写规范
 
-> **版本**: v2.0 | **日期**: 2026-05-19 | **适用范围**: 所有业务模块Owner
+> **版本**: v3.0 | **日期**: 2026-05-20 | **适用范围**: 所有业务模块Owner
 > **状态**: Approved
+> **v3.0 变更**: 对齐方案设计v3.0 — 新增v3.0脚本引用表、knowledge-to-skill-pipeline.yaml Playbook引用、版本历史
 > **v2.0 变更**: 适配知识库体系 — 约束文件可由系统从知识库自动提取生成，Owner 可选审核微调
 
 ---
@@ -495,6 +496,32 @@ v3.0 知识库引入后，约束文件的生命周期变为：
 - Owner 审核是必选项（config.yaml 中 `owner_review_required: true`）
 - 约束文件的置信度记录在知识库元数据中（`confidence` 字段）
 - 低于阈值（默认 0.75）的约束自动标记为 `draft` 状态
+
+---
+
+## 10. v3.0 脚本与 Playbook 引用
+
+以下脚本在 v3.0 知识库系统中可用，与约束文件生命周期直接相关：
+
+| 脚本 | 用途 | 触发方式 |
+|------|------|---------|
+| `feed_knowledge.py` | 投喂文档/案例到知识库 | Owner 手动触发或 Playbook 自动调用 |
+| `extract_constraints.py` | 从知识库自动提取约束文件 | `feed_knowledge.py` 自动链式调用 |
+| `query_knowledge.py` | 检索知识库中的相关经验 | Agent 执行前自动调用 |
+| `capture_experience.py` | 执行完成后自动沉淀经验 | 任务完成时系统自动调用 |
+| `knowledge_stats.py` | 知识库健康度统计与评估 | 定期检查或 Owner 手动触发 |
+
+配套 Playbook：`playbooks/knowledge-to-skill-pipeline.yaml` — 完整的"文档投喂→知识入库→约束提取→Skill生成→EvoSkill进化→执行→经验沉淀"闭环流程。详见[方案设计 §8 知识库系统设计](TECNO-AI-Harness-Platform-方案设计.md#8-知识库系统设计)。
+
+---
+
+## 11. 版本历史
+
+| 版本 | 日期 | 变更内容 |
+|------|------|---------|
+| v3.0 | 2026-05-20 | 对齐方案设计v3.0 — 新增v3.0脚本引用表、knowledge-to-skill-pipeline.yaml Playbook引用、版本历史 |
+| v2.0 | 2026-05-19 | 适配知识库体系 — 约束文件可由系统从知识库自动提取生成，Owner 可选审核微调 |
+| v1.0 | 2026-05-18 | 初始版本 |
 
 ---
 
