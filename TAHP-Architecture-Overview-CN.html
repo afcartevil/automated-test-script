@@ -90,8 +90,8 @@
   <h1>TECNO AI Harness Platform</h1>
   <p class="subtitle">系统架构与设计规范</p>
   <div class="meta">
-    <span>v2.1</span>
-    <span>2026-05-18</span>
+    <span>v3.2</span>
+    <span>2026-05-20</span>
     <span>双引擎架构</span>
     <span>Android 底软集成部</span>
   </div>
@@ -103,7 +103,7 @@
     <li><a href="#arch-overview">系统架构总览</a></li>
     <li><a href="#harness-layers">Harness 六层架构</a></li>
     <li><a href="#evoskill-cycle">EvoSkill 演化周期</a></li>
-    <li><a href="#adaptation-engine">适配引擎（v2.1 新增）</a></li>
+    <li><a href="#adaptation-engine">适配引擎</a></li>
     <li><a href="#data-flow">数据流与组件交互</a></li>
     <li><a href="#repo-structure">仓库目录结构</a></li>
     <li><a href="#pipeline">Bug 分析流水线</a></li>
@@ -113,11 +113,11 @@
 </nav>
 
 <!-- ======== 1. 系统架构总览 ======== -->
-<h2 id="arch-overview">1. 系统架构总览 <span class="badge">v2.1 双引擎</span></h2>
-<p>TAHP 遵循业界标准的 <strong>Agent = Model + Harness</strong> 范式，采用<strong>双引擎架构</strong>：诊断引擎负责 Bug 分析，适配引擎负责版本升级/特性移植/运营商移植。</p>
+<h2 id="arch-overview">1. 系统架构总览 <span class="badge">v3.2 双引擎</span></h2>
+<p>TAHP 遵循业界标准的 <strong>Agent = Model + Harness</strong> 范式，采用<strong>双引擎架构</strong>：诊断引擎负责 Bug 分析，适配引擎负责版本升级/特性移植/运营商移植。<strong>知识库</strong>（v3.0 新增）作为双引擎的基础设施，实现知识自动沉淀、文档投喂、约束自动提取和跨模块知识复用。</p>
 
 <div class="diagram-container">
-<svg viewBox="0 0 960 520" width="960" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 960 600" width="960" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -125,7 +125,7 @@
   </defs>
 
   <!-- 外层容器 -->
-  <rect x="20" y="20" width="920" height="480" rx="20" fill="#EEEDFE" fill-opacity="0.5" stroke="#534AB7" stroke-width="1" stroke-dasharray="4,4"/>
+  <rect x="20" y="20" width="920" height="560" rx="20" fill="#EEEDFE" fill-opacity="0.5" stroke="#534AB7" stroke-width="1" stroke-dasharray="4,4"/>
   <text x="480" y="52" text-anchor="middle" font-size="16" font-weight="500" fill="#3C3489">TECNO AI Harness Platform (TAHP)</text>
 
   <!-- 第一层：约束管理层 -->
@@ -180,36 +180,76 @@
   <path d="M850 220 L850 250 Q850 265 835 265 L405 265 Q390 265 390 250 L390 220" fill="none" stroke="#534AB7" stroke-width="1.2" stroke-dasharray="6,3" marker-end="url(#arrow)"/>
   <text x="620" y="280" text-anchor="middle" font-size="11" fill="#534AB7" font-style="italic">EvoSkill 反馈（跨版本经验复用）</text>
 
+  <!-- ===== 知识库层（v3.0 新增） ===== -->
+  <rect x="50" y="300" width="870" height="90" rx="12" fill="#FAEEDA" fill-opacity="0.6" stroke="#854F0B" stroke-width="1"/>
+  <rect x="50" y="300" width="6" height="90" rx="3" fill="#854F0B"/>
+  <text x="80" y="322" font-size="14" font-weight="500" fill="#412402">知识库（Knowledge Base）</text>
+  <text x="340" y="322" font-size="10" fill="#854F0B">v3.0 双引擎基础设施</text>
+
+  <rect x="70" y="334" width="130" height="46" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="135" y="353" text-anchor="middle" font-size="10" font-weight="500" fill="#412402">技术文档</text>
+  <text x="135" y="369" text-anchor="middle" font-size="9" fill="#854F0B">Owner 投喂入库</text>
+
+  <rect x="215" y="334" width="130" height="46" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="280" y="353" text-anchor="middle" font-size="10" font-weight="500" fill="#412402">经验案例</text>
+  <text x="280" y="369" text-anchor="middle" font-size="9" fill="#854F0B">自动沉淀 + 投喂</text>
+
+  <rect x="360" y="334" width="130" height="46" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="425" y="353" text-anchor="middle" font-size="10" font-weight="500" fill="#412402">错误模式</text>
+  <text x="425" y="369" text-anchor="middle" font-size="9" fill="#854F0B">自动沉淀 + 跨模块</text>
+
+  <rect x="505" y="334" width="130" height="46" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="570" y="353" text-anchor="middle" font-size="10" font-weight="500" fill="#412402">ChromaDB 向量</text>
+  <text x="570" y="369" text-anchor="middle" font-size="9" fill="#854F0B">语义检索 384d</text>
+
+  <rect x="650" y="334" width="130" height="46" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="715" y="353" text-anchor="middle" font-size="10" font-weight="500" fill="#412402">知识查询 MCP</text>
+  <text x="715" y="369" text-anchor="middle" font-size="9" fill="#854F0B">tahp_query_knowledge</text>
+
+  <rect x="795" y="334" width="105" height="46" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="848" y="353" text-anchor="middle" font-size="10" font-weight="500" fill="#412402">约束自动提取</text>
+  <text x="848" y="369" text-anchor="middle" font-size="9" fill="#854F0B">YAML 生成</text>
+
+  <!-- 知识库 → 约束层（自动提取） -->
+  <path d="M150 300 L150 290 Q150 285 145 285 L148 230" fill="none" stroke="#185FA5" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <text x="108" y="268" font-size="9" fill="#185FA5">自动提取</text>
+
+  <!-- 知识库 → Skill 引擎（注入上下文） -->
+  <path d="M395 300 L395 290 Q395 285 395 230" fill="none" stroke="#0F6E56" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <text x="400" y="268" font-size="9" fill="#0F6E56">注入上下文</text>
+
+  <!-- 执行结果 → 知识库（自动沉淀） -->
+  <path d="M640 220 L640 230 Q640 240 640 248 L640 295" fill="none" stroke="#993C1D" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <text x="648" y="268" font-size="9" fill="#993C1D">自动沉淀</text>
+
   <!-- 底部：基础设施 -->
-  <rect x="50" y="300" width="870" height="80" rx="12" fill="#F1EFE8" fill-opacity="0.8" stroke="#888780" stroke-width="0.5"/>
-  <text x="485" y="325" text-anchor="middle" font-size="13" font-weight="500" fill="#444441">基础设施层（零服务器成本）</text>
+  <rect x="50" y="400" width="870" height="80" rx="12" fill="#F1EFE8" fill-opacity="0.8" stroke="#888780" stroke-width="0.5"/>
+  <text x="485" y="425" text-anchor="middle" font-size="13" font-weight="500" fill="#444441">基础设施层（零服务器成本）</text>
   <!-- 基础设施条目 -->
-  <rect x="70" y="340" width="130" height="30" rx="6" fill="#fff" stroke="#888780" stroke-width="0.5"/>
-  <text x="135" y="360" text-anchor="middle" font-size="11" fill="#444441">Git 仓库</text>
-  <rect x="215" y="340" width="130" height="30" rx="6" fill="#fff" stroke="#888780" stroke-width="0.5"/>
-  <text x="280" y="360" text-anchor="middle" font-size="11" fill="#444441">Claude Code CLI</text>
-  <rect x="360" y="340" width="130" height="30" rx="6" fill="#fff" stroke="#888780" stroke-width="0.5"/>
-  <text x="425" y="360" text-anchor="middle" font-size="11" fill="#444441">EvoSkill 引擎</text>
-  <rect x="505" y="340" width="130" height="30" rx="6" fill="#fff" stroke="#888780" stroke-width="0.5"/>
-  <text x="570" y="360" text-anchor="middle" font-size="11" fill="#444441">MCP 工具链</text>
-  <rect x="650" y="340" width="130" height="30" rx="6" fill="#fff" stroke="#888780" stroke-width="0.5"/>
-  <text x="715" y="360" text-anchor="middle" font-size="11" fill="#444441">Python 3.12+</text>
-  <rect x="795" y="340" width="100" height="30" rx="6" fill="#fff" stroke="#888780" stroke-width="0.5"/>
-  <text x="845" y="360" text-anchor="middle" font-size="11" fill="#444441">本地 LLM</text>
+  <rect x="70" y="440" width="130" height="30" rx="6" fill="#fff" stroke="#888780" stroke-width="0.5"/>
+  <text x="135" y="460" text-anchor="middle" font-size="11" fill="#444441">Git 仓库</text>
+  <rect x="215" y="440" width="130" height="30" rx="6" fill="#fff" stroke="#888780" stroke-width="0.5"/>
+  <text x="280" y="460" text-anchor="middle" font-size="11" fill="#444441">Claude Code CLI</text>
+  <rect x="360" y="440" width="130" height="30" rx="6" fill="#fff" stroke="#888780" stroke-width="0.5"/>
+  <text x="425" y="460" text-anchor="middle" font-size="11" fill="#444441">EvoSkill 引擎</text>
+  <rect x="505" y="440" width="130" height="30" rx="6" fill="#fff" stroke="#888780" stroke-width="0.5"/>
+  <text x="570" y="460" text-anchor="middle" font-size="11" fill="#444441">MCP 工具链</text>
+  <rect x="650" y="440" width="130" height="30" rx="6" fill="#fff" stroke="#888780" stroke-width="0.5"/>
+  <text x="715" y="460" text-anchor="middle" font-size="11" fill="#444441">Python 3.12+</text>
+  <rect x="795" y="440" width="100" height="30" rx="6" fill="#fff" stroke="#888780" stroke-width="0.5"/>
+  <text x="845" y="460" text-anchor="middle" font-size="11" fill="#444441">本地 LLM</text>
 
   <!-- 底部：模块域 -->
-  <rect x="50" y="400" width="870" height="80" rx="12" fill="#FAEEDA" fill-opacity="0.5" stroke="#854F0B" stroke-width="0.5" stroke-dasharray="4,4"/>
-  <text x="485" y="425" text-anchor="middle" font-size="13" font-weight="500" fill="#412402">模块域（业务负责人约束输入）</text>
-  <rect x="70" y="438" width="140" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
-  <text x="140" y="456" text-anchor="middle" font-size="11" fill="#412402">通信（Telephony）</text>
-  <rect x="225" y="438" width="140" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
-  <text x="295" y="456" text-anchor="middle" font-size="11" fill="#412402">内核驱动</text>
-  <rect x="380" y="438" width="140" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
-  <text x="450" y="456" text-anchor="middle" font-size="11" fill="#412402">功耗管理</text>
-  <rect x="535" y="438" width="140" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
-  <text x="605" y="456" text-anchor="middle" font-size="11" fill="#412402"> connectivity</text>
-  <rect x="690" y="438" width="140" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
-  <text x="760" y="456" text-anchor="middle" font-size="11" fill="#412402">+ 更多模块</text>
+  <rect x="50" y="495" width="870" height="80" rx="12" fill="#FAEEDA" fill-opacity="0.5" stroke="#854F0B" stroke-width="0.5" stroke-dasharray="4,4"/>
+  <text x="485" y="520" text-anchor="middle" font-size="13" font-weight="500" fill="#412402">模块域（业务负责人约束输入）</text>
+  <rect x="70" y="533" width="140" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="140" y="551" text-anchor="middle" font-size="11" fill="#412402">通信（Telephony）</text>
+  <rect x="225" y="533" width="140" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="295" y="551" text-anchor="middle" font-size="11" fill="#412402">内核驱动</text>
+  <rect x="380" y="533" width="140" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="450" y="551" text-anchor="middle" font-size="11" fill="#412402">功耗管理</text>
+  <rect x="535" y="533" width="140" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="605" y="551" text-anchor="middle" font-size="11" fill="#412402">+ 扩展模块</text>
 </svg>
 </div>
 
@@ -247,9 +287,10 @@
   <!-- L4：记忆与状态 -->
   <rect x="40" y="164" width="600" height="56" rx="10" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
   <rect x="40" y="164" width="6" height="56" rx="3" fill="#854F0B"/>
-  <text x="70" y="188" font-size="13" font-weight="500" fill="#412402">L4：记忆与状态管理</text>
-  <text x="70" y="206" font-size="11" fill="#854F0B">会话持久化、中间结果、上下文窗口管理</text>
-  <text x="590" y="196" text-anchor="end" font-size="11" fill="#888">P1</text>
+  <text x="70" y="183" font-size="13" font-weight="500" fill="#412402">L4：记忆与状态管理</text>
+  <text x="70" y="200" font-size="11" fill="#854F0B">会话持久化、中间结果、上下文窗口管理</text>
+  <text x="70" y="215" font-size="10" fill="#854F0B">└ 知识库（v3.0）：自动沉淀 + 语义检索 + 跨模块复用</text>
+  <text x="590" y="196" text-anchor="end" font-size="10" fill="#854F0B">v3.0</text>
 
   <line x1="340" y1="220" x2="340" y2="236" stroke="#888" stroke-width="1" marker-end="url(#arrow2)"/>
 
@@ -266,7 +307,7 @@
   <rect x="40" y="308" width="600" height="56" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
   <rect x="40" y="308" width="6" height="56" rx="3" fill="#0F6E56"/>
   <text x="70" y="332" font-size="13" font-weight="500" fill="#04342C">L2：工具系统（MCP 协议）</text>
-  <text x="70" y="350" font-size="11" fill="#0F6E56">Android 日志解析、BugTracker、Git 操作、构建工具、代码审查</text>
+  <text x="70" y="350" font-size="11" fill="#0F6E56">日志解析 / AOSP差异 / API迁移 / 代码审查 / Patch / 构建 / 回归</text>
   <text x="590" y="340" text-anchor="end" font-size="11" font-weight="500" fill="#0F6E56">P0</text>
 
   <line x1="340" y1="364" x2="340" y2="380" stroke="#888" stroke-width="1" marker-end="url(#arrow2)"/>
@@ -293,7 +334,7 @@
 <p>EvoSkill 引擎通过五阶段自动化循环驱动持续 Skill 改进，从 Agent 执行失败中学习。</p>
 
 <div class="diagram-container">
-<svg viewBox="0 0 680 380" width="680" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 680 440" width="680" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <marker id="arrow3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -350,7 +391,7 @@
   <text x="130" y="183" text-anchor="middle" font-size="12" font-weight="500" fill="#412402">演化指标</text>
   <text x="60" y="203" font-size="10" fill="#854F0B">迭代次数：20（可配置）</text>
   <text x="60" y="218" font-size="10" fill="#854F0B">前沿容量：3（可配置）</text>
-  <text x="60" y="233" font-size="10" fill="#854F0B">并发度：4 个并行 Agent</text>
+  <text x="60" y="233" font-size="10" fill="#854F0B">并行度：4 个 Agent / 收敛阈值 0.01</text>
   <text x="60" y="248" font-size="10" fill="#854F0B">停止条件：连续5轮无改进</text>
 
   <!-- 性能条 -->
@@ -362,15 +403,38 @@
   <path d="M40 65 Q20 65 20 120 L20 340 Q20 360 40 360 L340 360" fill="none" stroke="#185FA5" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow3)"/>
   <rect x="140" y="340" width="200" height="30" rx="6" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
   <text x="240" y="360" text-anchor="middle" font-size="11" fill="#042C53">YAML 约束文件（业务负责人输入）</text>
+
+  <!-- ===== 知识库交互（v3.0） ===== -->
+  <rect x="380" y="340" width="280" height="70" rx="10" fill="#FAEEDA" fill-opacity="0.6" stroke="#854F0B" stroke-width="1"/>
+  <rect x="380" y="340" width="5" height="70" rx="3" fill="#854F0B"/>
+  <text x="400" y="362" font-size="12" font-weight="500" fill="#412402">知识库（v3.0）</text>
+  <text x="400" y="380" font-size="10" fill="#854F0B">经验案例自动沉淀 + 跨模块知识复用</text>
+  <text x="400" y="398" font-size="9" fill="#854F0B">向量化语义检索 → 注入 Skill 生成上下文</text>
+
+  <!-- 知识库 → 生成阶段（注入上下文） -->
+  <path d="M495 340 L495 310 Q495 295 495 280 L495 100" fill="none" stroke="#0F6E56" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow3)"/>
+  <text x="503" y="290" font-size="9" fill="#0F6E56">注入上下文</text>
+
+  <!-- 演化反馈 → 知识库（自动沉淀） -->
+  <path d="M220 250 Q220 330 380 365" fill="none" stroke="#854F0B" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow3)"/>
+  <text x="265" y="310" font-size="9" fill="#854F0B">自动沉淀</text>
+
+  <!-- 知识库 → 约束输入（辅助提取） -->
+  <path d="M380 370 L340 370" fill="none" stroke="#185FA5" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow3)"/>
+  <text x="360" y="386" font-size="9" fill="#185FA5">约束辅助</text>
+
+  <!-- 底部说明 -->
+  <rect x="40" y="418" width="620" height="16" rx="4" fill="#F1EFE8" fill-opacity="0.5" stroke="#888780" stroke-width="0.3"/>
+  <text x="350" y="430" text-anchor="middle" font-size="9" fill="#888780">v3.0 新增：演化经验自动沉淀至知识库 → 跨模块检索 → 注入 Skill 生成阶段，形成知识驱动的演化闭环</text>
 </svg>
 </div>
 
-<!-- ======== 4. 适配引擎（v2.1 新增） ======== -->
-<h2 id="adaptation-engine">4. 适配引擎 <span class="badge" style="background:var(--amber-50);color:var(--amber-600);">v2.1 新增</span></h2>
-<p>适配引擎自动化处理 Android 版本升级（A15→A16→A17...）、特性移植和运营商需求移植。通过 API 迁移规则库实现跨版本经验复用，自动化率从 40% 逐步提升至 75%+。</p>
+<!-- ======== 4. 适配引擎 ======== -->
+<h2 id="adaptation-engine">4. 适配引擎 <span class="badge" style="background:var(--amber-50);color:var(--amber-600);">双引擎</span></h2>
+<p>适配引擎自动化处理 Android 版本升级（A15→A16→A17...）、特性移植和运营商需求移植。通过 API 迁移规则库实现跨版本经验复用，<strong>知识库</strong>（v3.0）为规则库提供自动更新和经验沉淀能力，自动化率从 40% 逐步提升至 75%+。</p>
 
 <div class="diagram-container">
-<svg viewBox="0 0 960 420" width="960" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 960 480" width="960" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <marker id="arrow-ad" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -447,8 +511,24 @@
   <rect x="690" y="335" width="220" height="44" rx="8" fill="#FAEEDA" fill-opacity="0.4" stroke="#854F0B" stroke-width="0.3" stroke-dasharray="3,3"/>
   <text x="800" y="353" text-anchor="middle" font-size="9" fill="#854F0B">典型周期：每个运营商 3-5 天</text>
   <text x="800" y="368" text-anchor="middle" font-size="9" fill="#854F0B">关键：GCF / RFI 合规标准</text>
+  <!-- 共享资产 + 知识库底层 -->
   <rect x="20" y="400" width="920" height="14" rx="4" fill="#EEEDFE" fill-opacity="0.5" stroke="#534AB7" stroke-width="0.3"/>
   <text x="480" y="411" text-anchor="middle" font-size="9" fill="#534AB7">共享资产：API 迁移规则库（跨版本复用）— 自动化率逐轮提升：40% → 60% → 75%</text>
+
+  <!-- 知识库底层（v3.0） -->
+  <rect x="20" y="420" width="920" height="50" rx="8" fill="#FAEEDA" fill-opacity="0.5" stroke="#854F0B" stroke-width="0.5" stroke-dasharray="4,3"/>
+  <text x="40" y="440" font-size="10" font-weight="500" fill="#412402">知识库（v3.0）</text>
+  <rect x="130" y="428" width="155" height="28" rx="5" fill="#fff" stroke="#854F0B" stroke-width="0.4"/>
+  <text x="207" y="446" text-anchor="middle" font-size="9" fill="#412402">适配经验自动沉淀</text>
+  <rect x="300" y="428" width="155" height="28" rx="5" fill="#fff" stroke="#854F0B" stroke-width="0.4"/>
+  <text x="377" y="446" text-anchor="middle" font-size="9" fill="#412402">API 规则自动更新</text>
+  <rect x="470" y="428" width="155" height="28" rx="5" fill="#fff" stroke="#854F0B" stroke-width="0.4"/>
+  <text x="547" y="446" text-anchor="middle" font-size="9" fill="#412402">跨模块知识复用</text>
+  <rect x="640" y="428" width="155" height="28" rx="5" fill="#fff" stroke="#854F0B" stroke-width="0.4"/>
+  <text x="717" y="446" text-anchor="middle" font-size="9" fill="#412402">错误模式跨版本迁移</text>
+
+  <!-- 知识库 → API规则库 -->
+  <path d="M377 428 L377 414" fill="none" stroke="#534AB7" stroke-width="0.8" stroke-dasharray="3,2" marker-end="url(#arrow-ad)"/>
 </svg>
 </div>
 
@@ -458,10 +538,10 @@
 
 <!-- ======== 5. 数据流 ======== -->
 <h2 id="data-flow">5. 数据流与组件交互 <span class="badge">集成</span></h2>
-<p>此图展示了开发者提交 Bug 分析请求时的完整数据流：从输入到结构化报告输出，以及 EvoSkill 反馈循环。</p>
+<p>此图展示了开发者提交 Bug 分析请求时的完整数据流：从输入到结构化报告输出，以及 EvoSkill 反馈循环和<strong>知识库</strong>（v3.0）交互。</p>
 
 <div class="diagram-container">
-<svg viewBox="0 0 960 400" width="960" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 960 460" width="960" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <marker id="arrow4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -509,7 +589,7 @@
   <!-- MCP 工具 -->
   <rect x="380" y="210" width="150" height="55" rx="8" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
   <text x="455" y="232" text-anchor="middle" font-size="11" font-weight="500" fill="#444441">MCP 工具链</text>
-  <text x="455" y="248" text-anchor="middle" font-size="10" fill="#888780">日志解析 / Git / 构建</text>
+  <text x="455" y="248" text-anchor="middle" font-size="10" fill="#888780">日志解析 / 代码审查 / API迁移</text>
 
   <!-- 分析器到 MCP 的虚线 -->
   <line x1="455" y1="85" x2="455" y2="210" stroke="#888" stroke-width="0.5" stroke-dasharray="3,3"/>
@@ -544,79 +624,165 @@
   <text x="855" y="203" text-anchor="middle" font-size="10" fill="#3B6D11">结构化输出：</text>
   <text x="855" y="218" text-anchor="middle" font-size="10" fill="#3B6D11">根因 + 修复方案</text>
 
-  <!-- EvoSkill 反馈（底部） -->
+  <!-- EvoSkill 反馈循环 + 知识库（v3.0） -->
   <rect x="180" y="290" width="600" height="80" rx="10" fill="#FAEEDA" fill-opacity="0.4" stroke="#854F0B" stroke-width="0.5" stroke-dasharray="4,3"/>
-  <text x="480" y="315" text-anchor="middle" font-size="12" font-weight="500" fill="#412402">EvoSkill 反馈循环（后台运行）</text>
+  <text x="480" y="308" text-anchor="middle" font-size="11" font-weight="500" fill="#412402">EvoSkill 反馈循环 + 知识库交互（v3.0）</text>
 
-  <rect x="200" y="328" width="120" height="30" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
-  <text x="260" y="348" text-anchor="middle" font-size="10" fill="#412402">记录执行过程</text>
-  <line x1="320" y1="343" x2="340" y2="343" stroke="#854F0B" stroke-width="1" marker-end="url(#arrow4)"/>
-  <rect x="340" y="328" width="120" height="30" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
-  <text x="400" y="348" text-anchor="middle" font-size="10" fill="#412402">检测失败模式</text>
-  <line x1="460" y1="343" x2="480" y2="343" stroke="#854F0B" stroke-width="1" marker-end="url(#arrow4)"/>
-  <rect x="480" y="328" width="120" height="30" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
-  <text x="540" y="348" text-anchor="middle" font-size="10" fill="#412402">演化 Skills</text>
-  <line x1="600" y1="343" x2="620" y2="343" stroke="#854F0B" stroke-width="1" marker-end="url(#arrow4)"/>
-  <rect x="620" y="328" width="120" height="30" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
-  <text x="680" y="348" text-anchor="middle" font-size="10" fill="#412402">更新 Skill 仓库</text>
+  <rect x="200" y="318" width="100" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="250" y="336" text-anchor="middle" font-size="10" fill="#412402">记录执行过程</text>
+  <line x1="300" y1="332" x2="316" y2="332" stroke="#854F0B" stroke-width="1" marker-end="url(#arrow4)"/>
+  <rect x="316" y="318" width="100" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="366" y="336" text-anchor="middle" font-size="10" fill="#412402">检测失败模式</text>
+  <line x1="416" y1="332" x2="432" y2="332" stroke="#854F0B" stroke-width="1" marker-end="url(#arrow4)"/>
+  <rect x="432" y="318" width="100" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="482" y="336" text-anchor="middle" font-size="10" fill="#412402">演化 Skills</text>
+  <line x1="532" y1="332" x2="548" y2="332" stroke="#854F0B" stroke-width="1" marker-end="url(#arrow4)"/>
+  <rect x="548" y="318" width="100" height="28" rx="6" fill="#fff" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="598" y="336" text-anchor="middle" font-size="10" fill="#412402">更新 Skill 仓库</text>
 
-  <!-- 主流程到反馈的虚线 -->
-  <path d="M660 220 Q660 260 480 290" fill="none" stroke="#854F0B" stroke-width="1" stroke-dasharray="4,3"/>
+  <!-- 知识库节点 -->
+  <rect x="660" y="318" width="110" height="46" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="1"/>
+  <rect x="660" y="318" width="4" height="46" rx="2" fill="#854F0B"/>
+  <text x="715" y="337" text-anchor="middle" font-size="10" font-weight="500" fill="#412402">知识库</text>
+  <text x="715" y="353" text-anchor="middle" font-size="9" fill="#854F0B">v3.0 自动沉淀</text>
+
+  <!-- Skill仓库 → 知识库 -->
+  <line x1="648" y1="332" x2="660" y2="332" stroke="#854F0B" stroke-width="1" marker-end="url(#arrow4)"/>
+
+  <!-- ===== 知识库与主流程的交互（v3.0） ===== -->
+
+  <!-- 知识库 → Agent（注入上下文） -->
+  <path d="M455 30 L455 10 Q455 0 465 0 L780 0 Q790 0 790 10 L790 310 Q790 318 780 318 L770 318" fill="none" stroke="#0F6E56" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow4)"/>
+  <text x="800" y="160" font-size="9" fill="#0F6E56" transform="rotate(90,800,160)">注入上下文</text>
+
+  <!-- 执行结果 → 知识库（自动沉淀） -->
+  <path d="M855 230 L855 248 Q855 258 855 268 L855 290 Q855 310 845 318 L835 332" fill="none" stroke="#854F0B" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow4)"/>
+  <text x="862" y="280" font-size="9" fill="#854F0B">自动沉淀</text>
+
+  <!-- 底部说明 -->
+  <rect x="180" y="380" width="600" height="16" rx="4" fill="#F1EFE8" fill-opacity="0.5" stroke="#888780" stroke-width="0.3"/>
+  <text x="480" y="392" text-anchor="middle" font-size="9" fill="#888780">v3.0 新增：执行结果自动沉淀至知识库 → 语义检索注入 Agent 上下文，形成知识驱动闭环</text>
 </svg>
 </div>
 
 <!-- ======== 5. 仓库目录结构 ======== -->
-<h2 id="repo-structure">6. 仓库目录结构 <span class="badge">v2.1</span></h2>
+<h2 id="repo-structure">6. 仓库目录结构 <span class="badge">v3.2</span></h2>
 
 <div class="diagram-container" style="font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 12px;">
 <pre style="margin:0; line-height:1.8;">
-<span style="color:#534AB7;">tecno-ai-harness/</span>
-├── <span style="color:#185FA5;">AGENTS.md</span>                          <span style="color:#888;"># 全局导航文件（约100行）</span>
-├── <span style="color:#185FA5;">CLAUDE.md</span>                          <span style="color:#888;"># Claude Code Agent 配置</span>
+<span style="color:#534AB7;">tahp/</span>
+├── <span style="color:#185FA5;">AGENTS.md</span>                          <span style="color:#888;"># 全局导航文件（70行）</span>
+├── <span style="color:#185FA5;">CLAUDE.md</span>                          <span style="color:#888;"># Claude Code Agent 配置（125行）</span>
 │
-├── <span style="color:#534AB7;">constraints/</span>                       <span style="color:#888;"># 业务负责人唯一输入目录</span>
+├── <span style="color:#534AB7;">tahp-mcp-server/</span>               <span style="color:#888;"># MCP 服务器（核心运行时）</span>
+│   ├── server.py                 <span style="color:#888;"># MCP SDK + ToolDispatcher（9个MCP工具）</span>
+│   ├── config.py                 <span style="color:#888;"># 服务器配置（模块/路径/版本）</span>
+│   ├── tracing.py                <span style="color:#888;"># MCP交互追踪日志（JSONL）</span>
+│   ├── handlers/                 <span style="color:#888;"># 6个核心Handler处理器</span>
+│   │   ├── execute_handler.py
+│   │   ├── status_handler.py
+│   │   ├── correct_handler.py
+│   │   ├── gate_check_handler.py
+│   │   ├── list_tasks_handler.py
+│   │   └── query_knowledge_handler.py
+│   ├── adapters/                 <span style="color:#888;"># 工具适配器（动态加载7个tools/工具）</span>
+│   ├── core/                     <span style="color:#888;"># 核心工具逻辑（execute/status/correct/gate_check/list/query）</span>
+│   ├── progress/                 <span style="color:#888;"># 任务进度追踪 + SSE通知</span>
+│   ├── test_server.py            <span style="color:#888;"># 13个MCP异步pytest测试</span>
+│   ├── pyproject.toml
+│   └── requirements.txt
+│
+├── <span style="color:#534AB7;">db/</span>                                <span style="color:#888;"># 知识库数据库（Python ORM）</span>
+│   ├── models.py                 <span style="color:#888;"># 数据模型（KnowledgeEntry等）</span>
+│   ├── knowledge_db.py           <span style="color:#888;"># ChromaDB向量嵌入</span>
+│   └── config.py                 <span style="color:#888;"># 数据库配置</span>
+│
+├── <span style="color:#185FA5;">knowledge-base/</span>                  <span style="color:#888;"># 知识库文件存储（ChromaDB向量嵌入）</span>
 │   ├── <span style="color:#993C1D;">telephony/</span>
-│   │   ├── bug-analysis.yaml         <span style="color:#888;"># Bug 分析约束</span>
-│   │   ├── code-adaptation.yaml      <span style="color:#888;"># 代码适配约束</span>
-│   │   └── eval-data/                <span style="color:#888;"># 测试数据集（5-10 个用例）</span>
+│   │   ├── docs/                 <span style="color:#888;"># rilj-common-errors.yaml</span>
+│   │   └── index.yaml
 │   ├── <span style="color:#0F6E56;">kernel-driver/</span>
+│   │   ├── docs/
+│   │   ├── cases/
+│   │   ├── auto/
+│   │   └── index.yaml
+│   ├── <span style="color:#888780;">shared/</span>
+│   │   └── index.yaml
+│   └── config.yaml
+│
+├── <span style="color:#534AB7;">constraints/</span>                       <span style="color:#888;"># 业务约束（Owner输入端）</span>
+│   ├── <span style="color:#993C1D;">telephony/</span>
+│   │   ├── module.yaml           <span style="color:#888;"># 模块注册信息</span>
+│   │   ├── bug-analysis.yaml
+│   │   ├── code-adaptation.yaml
+│   │   ├── version-adaptation.yaml
+│   │   ├── carrier-porting.yaml
+│   │   └── eval-data/            <span style="color:#888;"># cases/ + expected/</span>
+│   ├── <span style="color:#0F6E56;">kernel-driver/</span>
+│   │   ├── module.yaml
 │   │   ├── bug-analysis.yaml
 │   │   ├── code-adaptation.yaml
 │   │   └── eval-data/
-│   ├── <span style="color:#854F0B;">power/</span>
-│   │   └── bug-analysis.yaml
+│   ├── <span style="color:#854F0B;">power-mgmt/</span>
+│   │   ├── module.yaml
+│   │   ├── bug-analysis.yaml
+│   │   └── eval-data/
 │   └── <span style="color:#888780;">shared/</span>
-│       ├── coding-standards.yaml     <span style="color:#888;"># 共享编码规范</span>
-│       └── android-platform.yaml     <span style="color:#888;"># Android 平台规则</span>
+│       ├── coding-standards.yaml
+│       ├── android-platform.yaml
+│       └── api-migration-rules/ <span style="color:#888;"># framework/hal/telephony</span>
 │
-├── <span style="color:#0F6E56;">skills/</span>                            <span style="color:#888;"># EvoSkill 自动生成</span>
-│   ├── .claude/skills/               <span style="color:#888;"># Claude Code 格式</span>
-│   │   ├── telephony-call-drop/SKILL.md
-│   │   ├── kernel-panic-trace/SKILL.md
-│   │   └── power-leak-detect/SKILL.md
-│   └── .codex/skills/                <span style="color:#888;"># Codex 格式（自动同步）</span>
+├── <span style="color:#0F6E56;">skills/</span>                            <span style="color:#888;"># AI Skills（EvoSkill产出）</span>
+│   ├── .claude/skills/           <span style="color:#888;"># Claude Code格式（5个Skill）</span>
+│   │   ├── carrier-porting-assistant/
+│   │   ├── kernel-panic-tracer/
+│   │   ├── power-leak-detector/
+│   │   ├── telephony-bug-analyzer/
+│   │   └── telephony-version-adapter/
+│   └── .codex/skills/            <span style="color:#888;"># Codex格式（自动同步）</span>
 │
-├── <span style="color:#993C1D;">playbooks/</span>                         <span style="color:#888;"># 执行编排</span>
+├── <span style="color:#993C1D;">playbooks/</span>                         <span style="color:#888;"># 执行编排（6个Pipeline）</span>
 │   ├── bug-analysis-pipeline.yaml
 │   ├── code-adaptation-pipeline.yaml
+│   ├── version-upgrade-pipeline.yaml
+│   ├── feature-porting-pipeline.yaml
+│   ├── carrier-porting-pipeline.yaml
 │   └── cross-module-pipeline.yaml
 │
-├── <span style="color:#3B6D11;">tools/</span>                             <span style="color:#888;"># MCP 工具定义</span>
+├── <span style="color:#3B6D11;">tools/</span>                             <span style="color:#888;"># MCP工具接口（7个工具）</span>
 │   ├── android-log-analyzer/
-│   ├── git-operations/
-│   └── build-system/
+│   ├── aosp-diff-analyzer/
+│   ├── api-migration-db/
+│   ├── build-verifier/
+│   ├── code-review-checker/
+│   ├── patch-generator/
+│   └── regression-test-runner/
 │
 ├── <span style="color:#854F0B;">docs/</span>                              <span style="color:#888;"># 深度文档</span>
 │   ├── architecture/
-│   ├── design/
 │   └── quality/
 │
 ├── <span style="color:#A32D2D;">scripts/</span>                           <span style="color:#888;"># 自动化脚本</span>
-│   ├── init-module.sh
-│   ├── run-evolution.sh
-│   └── sync-skills.sh
+│   ├── validate_constraints.py   <span style="color:#888;"># 约束校验（21个YAML，0错误）</span>
+│   ├── gate_check.py             <span style="color:#888;"># P0/P1/P2质量门禁</span>
+│   ├── evaluate.py               <span style="color:#888;"># Skill评估</span>
+│   ├── run_evolution.py          <span style="color:#888;"># EvoSkill进化</span>
+│   ├── feed_knowledge.py         <span style="color:#888;"># 知识投喂</span>
+│   ├── query_knowledge.py        <span style="color:#888;"># 知识查询</span>
+│   ├── init_module.py            <span style="color:#888;"># 新模块初始化</span>
+│   ├── init_knowledge_base.py    <span style="color:#888;"># 知识库初始化</span>
+│   └── tests/                    <span style="color:#888;"># pytest测试（31个总计）</span>
+│       ├── test_validate_constraints.py  <span style="color:#888;"># 8个约束校验测试</span>
+│       └── test_gate_check.py            <span style="color:#888;"># 10个门禁测试</span>
 │
-└── <span style="color:#888780;">reports/</span>                           <span style="color:#888;"># 评估输出</span>
+├── <span style="color:#534AB7;">templates/</span>                        <span style="color:#888;"># 模块初始化模板</span>
+│   └── module-template/
+│
+├── <span style="color:#A32D2D;">githooks/</span>                          <span style="color:#888;"># Git Hooks（pre-commit）</span>
+│   ├── pre-commit
+│   └── pre-commit.ps1
+│
+└── <span style="color:#888780;">reports/</span>                           <span style="color:#888;"># 评估报告输出</span>
     ├── evolution-reports/
     └── quality-metrics/
 </pre>
@@ -626,7 +792,7 @@
 <h2 id="pipeline">7. Bug 分析流水线 <span class="badge">工作流</span></h2>
 
 <div class="diagram-container">
-<svg viewBox="0 0 960 320" width="960" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 960 380" width="960" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <marker id="arrow5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -709,11 +875,31 @@
   <rect x="820" y="260" width="145" height="44" rx="8" fill="#EAF3DE" stroke="#3B6D11" stroke-width="1"/>
   <text x="892" y="280" text-anchor="middle" font-size="11" font-weight="500" fill="#173404">报告输出</text>
   <text x="892" y="295" text-anchor="middle" font-size="10" fill="#3B6D11">根因 + 修复方案</text>
+
+  <!-- ===== 知识库交互（v3.0） ===== -->
+  <rect x="20" y="325" width="920" height="45" rx="8" fill="#FAEEDA" fill-opacity="0.5" stroke="#854F0B" stroke-width="0.5" stroke-dasharray="4,3"/>
+  <text x="40" y="347" font-size="11" font-weight="500" fill="#412402">知识库（v3.0）</text>
+  <rect x="140" y="335" width="160" height="24" rx="5" fill="#fff" stroke="#854F0B" stroke-width="0.4"/>
+  <text x="220" y="351" text-anchor="middle" font-size="9" fill="#412402">历史案例检索 → Agent</text>
+  <rect x="315" y="335" width="160" height="24" rx="5" fill="#fff" stroke="#854F0B" stroke-width="0.4"/>
+  <text x="395" y="351" text-anchor="middle" font-size="9" fill="#412402">错误模式匹配 → 根因分析</text>
+  <rect x="490" y="335" width="160" height="24" rx="5" fill="#fff" stroke="#854F0B" stroke-width="0.4"/>
+  <text x="570" y="351" text-anchor="middle" font-size="9" fill="#412402">约束自动提取 → 模块识别</text>
+  <rect x="665" y="335" width="160" height="24" rx="5" fill="#fff" stroke="#854F0B" stroke-width="0.4"/>
+  <text x="745" y="351" text-anchor="middle" font-size="9" fill="#412402">分析结果自动沉淀 ← 报告</text>
+
+  <!-- 知识库 → Agent（注入上下文） -->
+  <path d="M300 335 L300 310 Q300 300 290 290 L290 195" fill="none" stroke="#0F6E56" stroke-width="0.8" stroke-dasharray="4,3" marker-end="url(#arrow5)"/>
+  <text x="275" y="270" font-size="8" fill="#0F6E56">注入</text>
+
+  <!-- 报告输出 → 知识库（自动沉淀） -->
+  <path d="M892 304 L892 325" fill="none" stroke="#854F0B" stroke-width="0.8" stroke-dasharray="4,3" marker-end="url(#arrow5)"/>
+  <text x="900" y="318" font-size="8" fill="#854F0B">沉淀</text>
 </svg>
 </div>
 
 <!-- ======== 7. 实施路线图 ======== -->
-<h2 id="roadmap">8. 实施路线图 <span class="badge">v2.1 时间线</span></h2>
+<h2 id="roadmap">8. 实施路线图 <span class="badge">v3.2 时间线</span></h2>
 
 <div class="diagram-container">
 <svg viewBox="0 0 960 340" width="960" xmlns="http://www.w3.org/2000/svg">
@@ -728,19 +914,19 @@
   <text x="920" y="40" font-size="10" fill="#888" text-anchor="middle">第12周</text>
 
   <!-- 阶段0：基础（第1-2周） -->
-  <rect x="80" y="60" width="300" height="50" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
-  <text x="230" y="82" text-anchor="middle" font-size="12" font-weight="500" fill="#042C53">阶段 0：基础搭建</text>
+  <rect x="80" y="60" width="300" height="50" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="1"/>
+  <text x="230" y="82" text-anchor="middle" font-size="12" font-weight="500" fill="#042C53">阶段 0：基础搭建 ✅</text>
   <text x="230" y="100" text-anchor="middle" font-size="10" fill="#185FA5">Git 仓库 + Claude Code + EvoSkill + AGENTS.md + 模板设计</text>
 
   <!-- 阶段1：MVP（第3-4周） -->
-  <rect x="380" y="60" width="300" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
-  <text x="530" y="82" text-anchor="middle" font-size="12" font-weight="500" fill="#04342C">阶段 1：约束驱动 MVP</text>
+  <rect x="380" y="60" width="300" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1"/>
+  <text x="530" y="82" text-anchor="middle" font-size="12" font-weight="500" fill="#04342C">阶段 1：约束驱动 MVP ✅</text>
   <text x="530" y="100" text-anchor="middle" font-size="10" fill="#0F6E56">负责人填写约束 + 初始 Skills + 测试数据集 + 基线指标</text>
 
   <!-- 阶段2：自动演化（第5-6周） -->
-  <rect x="530" y="120" width="300" height="50" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
-  <text x="680" y="142" text-anchor="middle" font-size="12" font-weight="500" fill="#4A1B0C">阶段 2：自动演化</text>
-  <text x="680" y="160" text-anchor="middle" font-size="10" fill="#993C1D">EvoSkill 循环 + 首个 MCP 工具 + Bug 流水线 + 定量对比</text>
+  <rect x="530" y="120" width="300" height="50" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="1"/>
+  <text x="680" y="142" text-anchor="middle" font-size="12" font-weight="500" fill="#4A1B0C">阶段 2：自动演化 🔧</text>
+  <text x="680" y="160" text-anchor="middle" font-size="10" fill="#993C1D">EvoSkill 循环 + 9个MCP工具 + Bug流水线 + 知识库（v3.0）</text>
 
   <!-- 阶段3：规模化（第7-8周） -->
   <rect x="680" y="180" width="240" height="50" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
@@ -754,9 +940,9 @@
 
   <!-- 里程碑 -->
   <rect x="80" y="310" width="840" height="24" rx="4" fill="#F1EFE8" stroke="#888780" stroke-width="0.3"/>
-  <text x="160" y="326" text-anchor="middle" font-size="10" fill="#185FA5">M0: 仓库就绪</text>
-  <text x="380" y="326" text-anchor="middle" font-size="10" fill="#0F6E56">M1: MVP 验证通过</text>
-  <text x="600" y="326" text-anchor="middle" font-size="10" fill="#993C1D">M2: 准确率 +10pp</text>
+  <text x="160" y="326" text-anchor="middle" font-size="10" fill="#185FA5">M0: 仓库就绪 ✅</text>
+  <text x="380" y="326" text-anchor="middle" font-size="10" fill="#0F6E56">M1: MVP 验证通过 ✅</text>
+  <text x="600" y="326" text-anchor="middle" font-size="10" fill="#993C1D">M2: 准确率 +10pp + 知识库上线</text>
   <text x="800" y="326" text-anchor="middle" font-size="10" fill="#854F0B">M3: 3+ 模块上线</text>
   <text x="900" y="326" text-anchor="middle" font-size="10" fill="#534AB7">M4: 工时 -30%</text>
 
@@ -773,7 +959,7 @@
 <h2 id="maturity">9. Harness 成熟度模型 <span class="badge">评估</span></h2>
 
 <div class="diagram-container">
-<svg viewBox="0 0 680 280" width="680" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 680 290" width="680" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <marker id="arrow6" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
       <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -792,7 +978,7 @@
   <rect x="190" y="20" width="120" height="60" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="1"/>
   <text x="250" y="42" text-anchor="middle" font-size="11" font-weight="500" fill="#042C53">等级 1</text>
   <text x="250" y="58" text-anchor="middle" font-size="10" fill="#185FA5">AGENTS.md</text>
-  <text x="250" y="72" text-anchor="middle" font-size="9" fill="#185FA5">您在这里</text>
+  <text x="250" y="72" text-anchor="middle" font-size="9" fill="#185FA5">已完成</text>
 
   <line x1="310" y1="50" x2="340" y2="50" stroke="#888" stroke-width="1" marker-end="url(#arrow6)"/>
 
@@ -800,7 +986,7 @@
   <rect x="340" y="20" width="120" height="60" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
   <text x="400" y="42" text-anchor="middle" font-size="11" font-weight="500" fill="#04342C">等级 2</text>
   <text x="400" y="58" text-anchor="middle" font-size="10" fill="#0F6E56">CI/CD + 自动测试</text>
-  <text x="400" y="72" text-anchor="middle" font-size="9" fill="#0F6E56">目标：第4周</text>
+  <text x="400" y="72" text-anchor="middle" font-size="9" fill="#0F6E56">已完成：第4周</text>
 
   <line x1="460" y1="50" x2="490" y2="50" stroke="#888" stroke-width="1" marker-end="url(#arrow6)"/>
 
@@ -818,28 +1004,31 @@
   <text x="650" y="58" text-anchor="middle" font-size="9" fill="#534AB7">全自动</text>
 
   <!-- 成熟度描述 -->
-  <rect x="40" y="100" width="630" height="160" rx="10" fill="#FAEEDA" fill-opacity="0.3" stroke="#854F0B" stroke-width="0.3"/>
+  <rect x="40" y="100" width="630" height="170" rx="10" fill="#FAEEDA" fill-opacity="0.3" stroke="#854F0B" stroke-width="0.3"/>
   <text x="60" y="122" font-size="11" font-weight="500" fill="#412402">能力矩阵</text>
 
-  <text x="60" y="148" font-size="10" fill="#185FA5">L1（当前）：</text>
-  <text x="160" y="148" font-size="10" fill="#444441">AGENTS.md + 基础检查器 + 手动测试</text>
+  <text x="60" y="148" font-size="10" fill="#185FA5">L1（已完成）：</text>
+  <text x="160" y="148" font-size="10" fill="#444441">AGENTS.md + 约束校验 + validate_constraints.py (21个YAML 0错误)</text>
 
-  <text x="60" y="168" font-size="10" fill="#0F6E56">L2（第4周）：</text>
-  <text x="160" y="168" font-size="10" fill="#444441">CI/CD 集成 + 自动化测试 + 进度追踪 + EvoSkill 初始化</text>
+  <text x="60" y="168" font-size="10" fill="#0F6E56">L2（已完成）：</text>
+  <text x="160" y="168" font-size="10" fill="#444441">CI/CD 集成 + pytest自动化测试(31个) + ToolDispatcher(9个MCP工具) + 追踪日志</text>
 
-  <text x="60" y="188" font-size="10" fill="#993C1D">L3（第8周）：</text>
-  <text x="160" y="188" font-size="10" fill="#444441">多 Agent 编排 + 分层上下文 + 持久化记忆 + MCP 工具</text>
+  <text x="60" y="188" font-size="10" fill="#993C1D">L3（进行中）：</text>
+  <text x="160" y="188" font-size="10" fill="#444441">多 Agent 编排 + 6个Pipeline + 分层上下文 + 持久化记忆 + MCP 工具</text>
 
-  <text x="60" y="208" font-size="10" fill="#534AB7">L4（愿景）：</text>
-  <text x="160" y="208" font-size="10" fill="#444441">无人值守并行执行 + 自动清理 + 自修复 + 本地 LLM 兜底</text>
+  <text x="60" y="210" font-size="10" fill="#854F0B">L3+（v3.0 新增）：</text>
+  <text x="175" y="210" font-size="10" fill="#444441">知识库：自动沉淀 + 语义检索 + 跨模块复用 + 约束自动提取 + API规则更新</text>
 
-  <text x="60" y="240" font-size="10" fill="#888">关键转折点：</text>
-  <text x="160" y="240" font-size="10" fill="#444441">L1 → L2 = 负责人编写约束，系统生成 Skills，自动评估</text>
+  <text x="60" y="232" font-size="10" fill="#534AB7">L4（愿景）：</text>
+  <text x="160" y="232" font-size="10" fill="#444441">无人值守并行执行 + 自动清理 + 自修复 + 本地 LLM 兜底</text>
+
+  <text x="60" y="258" font-size="10" fill="#888">关键转折点：</text>
+  <text x="160" y="258" font-size="10" fill="#444441">L1 → L2 = 负责人编写约束，系统生成 Skills，自动评估</text>
 </svg>
 </div>
 
 <p style="text-align:center; font-size:12px; color:var(--text-hint); margin-top:48px;">
-  TECNO AI Harness Platform v2.1 — 双引擎架构 | Android 底软集成部 | 2026-05-18 | 内部机密
+  TECNO AI Harness Platform v3.2 — 双引擎架构 | Android 底软集成部 | 2026-05-20 | 内部机密
 </p>
 
 </div>

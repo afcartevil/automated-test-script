@@ -1,7 +1,7 @@
 # TAHP 版本适配约束规范
 
-> **版本**: v1.0 | **日期**: 2026-05-18 | **适用范围**: 适配引擎（version_adaptation + carrier_porting）
-> **状态**: Approved
+> **版本**: v1.1 | **日期**: 2026-05-20 | **适用范围**: 适配引擎（version_adaptation + carrier_porting）
+> **状态**: Approved | **变更**: 同步工程目录结构；修正脚本名引用
 > **前置文档**: [TAHP-约束文件编写规范](TAHP-约束文件编写规范.md)
 
 ---

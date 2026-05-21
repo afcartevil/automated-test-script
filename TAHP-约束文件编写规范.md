@@ -1,7 +1,7 @@
 # TAHP 约束文件编写规范
 
-> **版本**: v1.0 | **日期**: 2026-05-18 | **适用范围**: 所有业务模块Owner
-> **状态**: Approved
+> **版本**: v1.1 | **日期**: 2026-05-20 | **适用范围**: 所有业务模块Owner
+> **状态**: Approved | **变更**: 新增init_module.py初始化脚本；更新eval-data目录结构匹配实际
 
 ---
 
@@ -415,7 +415,10 @@ Owner编写 → 自动格式检查 → AI辅助审核 → Owner确认 → Git提
 系统提供标准模板，Owner只需复制并填写：
 
 ```bash
-# 初始化新模块
+# 方式一：使用初始化脚本（推荐）
+$ python scripts/init_module.py --module my-module --owner your-name
+
+# 方式二：手动复制模板
 $ cp -r templates/module-template/ constraints/my-module/
 $ cd constraints/my-module/
 # 编辑以下文件:

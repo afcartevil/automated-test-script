@@ -1,7 +1,7 @@
 # TAHP 评估与质量门禁规范
 
-> **版本**: v1.0 | **日期**: 2026-05-18 | **适用范围**: 所有Skill评估、代码质量检查、系统效果度量
-> **状态**: Approved
+> **版本**: v1.1 | **日期**: 2026-05-20 | **适用范围**: 所有Skill评估、代码质量检查、系统效果度量
+> **状态**: Approved | **变更**: 同步脚本名（gate_check.py, run_evolution.py）；更新CI配置匹配实际流水线
 
 ---
 
@@ -325,39 +325,37 @@ python scripts/evaluate.py --module telephony --split test
 python scripts/evaluate.py --all-modules
 
 # 运行EvoSkill进化
-python scripts/run-evolution.py --module telephony --iterations 20
+python scripts/run_evolution.py --module telephony --iterations 20
 
 # 生成周报
 python scripts/weekly-report.py --week {N}
 
 # 检查门禁
-python scripts/gate-check.py --module telephony --level P0
+python scripts/gate_check.py --module telephony --level P0
 ```
 
 ### 7.2 CI集成（Phase 2目标）
 
 ```yaml
-# .github/workflows/tahp-eval.yml
-name: TAHP Skill Evaluation
+# .github/workflows/ci.yml (已实现)
+name: TAHP Quality Gate & Skill Evaluation
 on:
   push:
-    paths: ['skills/**', 'constraints/**']
+    paths: ['skills/**', 'constraints/**', 'scripts/**', 'tahp-mcp-server/**']
   schedule:
     - cron: '0 2 * * 1'  # 每周一凌晨2点
 
 jobs:
-  evaluate:
+  validate-constraints:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Evaluate Skills
-        run: |
-          pip install -r requirements.txt
-          python scripts/evaluate.py --all-modules --split test
-      - name: Quality Gate
-        run: python scripts/gate-check.py --all-modules --level P0
-      - name: Generate Report
-        run: python scripts/weekly-report.py --auto
+      - name: Validate Constraints
+        run: python scripts/validate_constraints.py
+      - name: Quality Gate (P0)
+        run: python scripts/gate_check.py --all-modules --level P0
+      - name: Run Tests
+        run: pytest scripts/tests/ tahp-mcp-server/test_server.py -v
 ```
 
 ---
