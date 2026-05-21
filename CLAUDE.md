@@ -80,6 +80,37 @@ powershell -File scripts/pre-commit-check.ps1
 
 ## 扩展指南
 
+### tahp-console 可视化控制台
+
+同事可用的 Web 控制台，基于 Hermes Web UI 叠加 TAHP 业务面板。
+
+```bash
+# 首次安装
+cd tahp-console
+npm install
+npm run setup          # 检查 Python 3 + mcp/pyyaml 依赖
+
+# 开发模式（自动热更新）
+npm run dev            # client:5173, server:8650
+
+# 生产启动
+npm run build
+npm run start          # http://localhost:8650
+node bin/tahp-console.mjs start
+
+# 管理
+node bin/tahp-console.mjs status
+node bin/tahp-console.mjs stop
+```
+
+环境变量（`.env` 或 shell export）：
+- `TAHP_PROJECT_ROOT` — TAHP 主仓目录，默认自动探测（向上找 `tahp-mcp-server/server.py`）
+- `TAHP_PYTHON` — Python 可执行路径，默认 `python`
+- `PORT` — 端口，默认 8650
+- `AUTH_DISABLED=1` — 默认开启，内网免鉴权；设为 `0` 或设 `AUTH_TOKEN` 启用令牌验证
+
+控制台面板：仪表盘 / 启动任务（实时流） / 任务列表 / 模块矩阵 / 约束编辑器 / 质量门禁 / 知识库 / Playbooks / 工具箱 / 报告
+
 ### 如何新增 MCP 工具
 1. 在 `tahp-mcp-server/handlers/` 下创建新 Handler 文件，实现 `IToolHandler` 协议
 2. 在 `tahp-mcp-server/server.py` 的 `_list_tools()` 中添加工具定义

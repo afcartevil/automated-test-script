@@ -29,6 +29,8 @@ playbooks/       ← 执行编排（Pipeline定义）
 tools/           ← MCP工具接口定义
 scripts/         ← 自动化脚本
 templates/       ← 模块初始化模板
+tahp-mcp-server/ ← MCP Server（Claude Code 集成入口）
+tahp-console/    ← 可视化 Web 控制台（同事使用入口，见 docs/tahp-console.md）
 docs/            → 深度文档
 reports/         → 评估报告输出
 ```
