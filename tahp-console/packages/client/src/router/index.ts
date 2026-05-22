@@ -74,39 +74,9 @@ const router = createRouter({
       component: () => import('@/views/hermes/HistoryView.vue'),
     },
     {
-      path: '/hermes/jobs',
-      name: 'hermes.jobs',
-      component: () => import('@/views/hermes/JobsView.vue'),
-    },
-    {
-      path: '/hermes/kanban',
-      name: 'hermes.kanban',
-      component: () => import('@/views/hermes/KanbanView.vue'),
-    },
-    {
       path: '/hermes/models',
       name: 'hermes.models',
       component: () => import('@/views/hermes/ModelsView.vue'),
-    },
-    {
-      path: '/hermes/profiles',
-      name: 'hermes.profiles',
-      component: () => import('@/views/hermes/ProfilesView.vue'),
-    },
-    {
-      path: '/hermes/logs',
-      name: 'hermes.logs',
-      component: () => import('@/views/hermes/LogsView.vue'),
-    },
-    {
-      path: '/hermes/usage',
-      name: 'hermes.usage',
-      component: () => import('@/views/hermes/UsageView.vue'),
-    },
-    {
-      path: '/hermes/skills-usage',
-      name: 'hermes.skillsUsage',
-      component: () => import('@/views/hermes/SkillsUsageView.vue'),
     },
     {
       path: '/hermes/skills',
@@ -114,14 +84,9 @@ const router = createRouter({
       component: () => import('@/views/hermes/SkillsView.vue'),
     },
     {
-      path: '/hermes/plugins',
-      name: 'hermes.plugins',
-      component: () => import('@/views/hermes/PluginsView.vue'),
-    },
-    {
-      path: '/hermes/memory',
-      name: 'hermes.memory',
-      component: () => import('@/views/hermes/MemoryView.vue'),
+      path: '/hermes/logs',
+      name: 'hermes.logs',
+      component: () => import('@/views/hermes/LogsView.vue'),
     },
     {
       path: '/hermes/settings',
@@ -137,11 +102,6 @@ const router = createRouter({
       path: '/hermes/terminal',
       name: 'hermes.terminal',
       component: () => import('@/views/hermes/TerminalView.vue'),
-    },
-    {
-      path: '/hermes/group-chat',
-      name: 'hermes.groupChat',
-      component: () => import('@/views/hermes/GroupChatView.vue'),
     },
     {
       path: '/hermes/files',

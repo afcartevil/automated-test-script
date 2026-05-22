@@ -151,15 +151,6 @@ function openChangelog() {
             </svg>
             <span>{{ t("sidebar.history") }}</span>
           </button>
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.groupChat' }" @click="handleNav('hermes.groupChat')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-              <circle cx="9" cy="7" r="4" />
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-            </svg>
-            <span>{{ t("sidebar.groupChat") }}<span class="beta-tag">(beta)</span></span>
-          </button>
           <button class="nav-item" @click="openSessionSearch">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="7" />
@@ -167,44 +158,26 @@ function openChangelog() {
             </svg>
             <span>{{ t("sidebar.search") }}</span>
           </button>
-          <a class="nav-item fun-link" href="https://apikey.fun/register?aff=LIBAPI" target="_blank" rel="noopener noreferrer">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-            <span>{{ t('sidebar.apiRelay') }}</span>
-          </a>
         </div>
       </div>
 
-      <!-- Agent -->
+      <!-- 配置与模型 -->
       <div class="nav-group">
-        <div class="nav-group-label" @click="toggleGroup('agent')">
-          <span>{{ groupLabel("Agent") }}</span>
-          <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('agent') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <div class="nav-group-label" @click="toggleGroup('config')">
+          <span>配置与模型</span>
+          <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('config') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('agent')" class="nav-group-items">
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.jobs' }" @click="handleNav('hermes.jobs')">
+        <div v-show="!isGroupCollapsed('config')" class="nav-group-items">
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.models' }" @click="handleNav('hermes.models')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-              <line x1="16" y1="2" x2="16" y2="6" />
-              <line x1="8" y1="2" x2="8" y2="6" />
-              <line x1="3" y1="10" x2="21" y2="10" />
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 1v4" /><path d="M12 19v4" /><path d="M1 12h4" /><path d="M19 12h4" />
+              <path d="M4.22 4.22l2.83 2.83" /><path d="M16.95 16.95l2.83 2.83" />
+              <path d="M4.22 19.78l2.83-2.83" /><path d="M16.95 7.05l2.83-2.83" />
             </svg>
-            <span>{{ t("sidebar.jobs") }}</span>
-          </button>
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.kanban' }" @click="handleNav('hermes.kanban')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="5" height="18" rx="1" />
-              <rect x="10" y="3" width="5" height="12" rx="1" />
-              <rect x="17" y="3" width="5" height="18" rx="1" />
-            </svg>
-            <span>{{ t("sidebar.kanban") }}</span>
-          </button>
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.channels' }" @click="handleNav('hermes.channels')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-            </svg>
-            <span>{{ t("sidebar.channels") }}</span>
+            <span>{{ t("sidebar.models") }}</span>
           </button>
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.skills' }" @click="handleNav('hermes.skills')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -214,47 +187,24 @@ function openChangelog() {
             </svg>
             <span>{{ t("sidebar.skills") }}</span>
           </button>
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.plugins' }" @click="handleNav('hermes.plugins')">
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.channels' }" @click="handleNav('hermes.channels')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l2.1-2.1a4 4 0 0 1-5.3 5.3l-7.8 7.8a2.1 2.1 0 0 1-3-3l7.8-7.8a4 4 0 0 1 5.3-5.3l-2.1 2.1z" />
-              <path d="M5 19l1-1" />
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
             </svg>
-            <span>{{ t("sidebar.plugins") }}</span>
-          </button>
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.memory' }" @click="handleNav('hermes.memory')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 18h6" />
-              <path d="M10 22h4" />
-              <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" />
-            </svg>
-            <span>{{ t("sidebar.memory") }}</span>
-          </button>
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.models' }" @click="handleNav('hermes.models')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M12 1v4" />
-              <path d="M12 19v4" />
-              <path d="M1 12h4" />
-              <path d="M19 12h4" />
-              <path d="M4.22 4.22l2.83 2.83" />
-              <path d="M16.95 16.95l2.83 2.83" />
-              <path d="M4.22 19.78l2.83-2.83" />
-              <path d="M16.95 7.05l2.83-2.83" />
-            </svg>
-            <span>{{ t("sidebar.models") }}</span>
+            <span>{{ t("sidebar.channels") }}</span>
           </button>
         </div>
       </div>
 
-      <!-- Monitoring -->
+      <!-- 系统与运维 -->
       <div class="nav-group">
-        <div class="nav-group-label" @click="toggleGroup('monitoring')">
-          <span>{{ groupLabel("Monitoring") }}</span>
-          <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('monitoring') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <div class="nav-group-label" @click="toggleGroup('system')">
+          <span>{{ groupLabel("System") }}</span>
+          <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('system') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </div>
-        <div v-show="!isGroupCollapsed('monitoring')" class="nav-group-items">
+        <div v-show="!isGroupCollapsed('system')" class="nav-group-items">
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.logs' }" @click="handleNav('hermes.logs')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -265,38 +215,18 @@ function openChangelog() {
             </svg>
             <span>{{ t("sidebar.logs") }}</span>
           </button>
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.usage' }" @click="handleNav('hermes.usage')">
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.terminal' }" @click="handleNav('hermes.terminal')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="12" width="4" height="9" rx="1" />
-              <rect x="10" y="7" width="4" height="14" rx="1" />
-              <rect x="17" y="3" width="4" height="18" rx="1" />
+              <polyline points="4 17 10 11 4 5" />
+              <line x1="12" y1="19" x2="20" y2="19" />
             </svg>
-            <span>{{ t("sidebar.usage") }}</span>
+            <span>{{ t("sidebar.terminal") }}</span>
           </button>
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.skillsUsage' }" @click="handleNav('hermes.skillsUsage')">
+          <button class="nav-item" :class="{ active: selectedKey === 'hermes.files' }" @click="handleNav('hermes.files')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
             </svg>
-            <span>{{ t("sidebar.skillsUsage") }}</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- System -->
-      <div class="nav-group">
-        <div class="nav-group-label" @click="toggleGroup('system')">
-          <span>{{ groupLabel("System") }}</span>
-          <svg class="nav-group-arrow" :class="{ collapsed: isGroupCollapsed('system') }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </div>
-        <div v-show="!isGroupCollapsed('system')" class="nav-group-items">
-          <button class="nav-item" :class="{ active: selectedKey === 'hermes.profiles' }" @click="handleNav('hermes.profiles')">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
-            </svg>
-            <span>{{ t("sidebar.profiles") }}</span>
+            <span>{{ t("sidebar.files") }}</span>
           </button>
           <button class="nav-item" :class="{ active: selectedKey === 'hermes.settings' }" @click="handleNav('hermes.settings')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">

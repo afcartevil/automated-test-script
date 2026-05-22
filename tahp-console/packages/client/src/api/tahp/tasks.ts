@@ -8,6 +8,10 @@ export interface ExecuteTaskRequest {
   module: TahpModule
   domain: TahpDomain
   constraints_extra?: string[]
+  /** 内容模式：直接传入文档文本，服务端写临时文件后执行 */
+  document_content?: string
+  /** 补充给 Pipeline 的额外上下文说明 */
+  extra_context?: string
 }
 
 export interface TaskInfo {
