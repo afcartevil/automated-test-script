@@ -1,24 +1,12 @@
-import { spawn } from 'child_process'
-import { getActiveProfileDir } from './hermes-profile'
+/**
+ * gateway-runner stub — Gateway Runner removed from TAHP.
+ */
 
-export function startGatewayRunManaged(
-  hermesBin: string,
-  opts: { profileDir?: string } = {},
-): { pid: number | null; reused: boolean } {
-  const profileDir = opts.profileDir || getActiveProfileDir()
-  const child = spawn(hermesBin, ['gateway', 'run', '--replace'], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-    env: {
-      ...process.env,
-      HERMES_HOME: profileDir,
-    },
-  })
-  // Silently swallow ENOENT — hermes CLI is not required for tahp-console operation
-  child.on('error', () => {})
-  child.unref()
+export type GatewayRunResult = {
+  pid?: number
+}
 
-  const pid = child.pid ?? null
-  return { pid, reused: false }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function startGatewayRunManaged(_hermesBin: string, _options?: Record<string, unknown>): GatewayRunResult {
+  return {}
 }

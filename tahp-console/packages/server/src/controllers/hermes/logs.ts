@@ -1,7 +1,6 @@
 import { existsSync, statSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import * as hermesCli from '../../services/hermes/hermes-cli'
 import { config } from '../../config'
 
 const WEBUI_LOG_FILE = join(config.appHome, 'logs', 'server.log')
@@ -50,7 +49,8 @@ function parseLine(line: string): LogEntry {
 }
 
 export async function list(ctx: any) {
-  const files = await hermesCli.listLogFiles()
+  // TAHP only exposes its own log files (no Hermes CLI log files)
+  const files: Array<{ name: string; size: string; modified: string }> = []
   if (existsSync(WEBUI_LOG_FILE)) {
     try {
       const stat = statSync(WEBUI_LOG_FILE)
@@ -73,9 +73,6 @@ export async function list(ctx: any) {
 export async function read(ctx: any) {
   const logName = ctx.params.name
   const lines = ctx.query.lines ? parseInt(ctx.query.lines as string, 10) : 100
-  const level = (ctx.query.level as string) || undefined
-  const session = (ctx.query.session as string) || undefined
-  const since = (ctx.query.since as string) || undefined
 
   if (logName === 'webui') {
     try {
@@ -107,16 +104,6 @@ export async function read(ctx: any) {
     return
   }
 
-  try {
-    const content = await hermesCli.readLogs(logName, lines, level, session, since)
-    const rawLines = content.split('\n')
-    const entries: (LogEntry | null)[] = []
-    for (const line of rawLines) {
-      if (line.startsWith('---') || line.trim() === '') continue
-      entries.push(parseLine(line))
-    }
-    ctx.body = { entries: entries.reverse() }
-  } catch (err: any) {
-    ctx.status = 500; ctx.body = { error: err.message }
-  }
+  // Unknown log name — TAHP does not have Hermes CLI agent logs
+  ctx.body = { entries: [] }
 }

@@ -24,6 +24,9 @@
 - [config.yaml (knowledge-base)](file://knowledge-base/config.yaml)
 - [requirements.txt](file://requirements.txt)
 - [system-overview.md](file://docs/architecture/system-overview.md)
+- [openapi.json](file://tahp-console/docs/openapi.json)
+- [tahp-console.mjs](file://tahp-console/bin/tahp-console.mjs)
+- [package.json](file://tahp-console/package.json)
 </cite>
 
 ## 更新摘要
@@ -35,6 +38,8 @@
 - 更新API接口文档，包含所有11个工具的详细说明
 - 新增处理器架构与分发机制说明
 - 完善性能监控与追踪系统介绍
+- 新增控制台API接口、WebSocket连接、实时任务监控功能说明
+- 新增tahp-console Web控制台系统集成章节
 
 ## 目录
 1. [引言](#引言)
@@ -42,11 +47,12 @@
 3. [核心组件](#核心组件)
 4. [架构总览](#架构总览)
 5. [详细组件分析](#详细组件分析)
-6. [依赖分析](#依赖分析)
-7. [性能考虑](#性能考虑)
-8. [故障排除指南](#故障排除指南)
-9. [结论](#结论)
-10. [附录](#附录)
+6. [控制台集成系统](#控制台集成系统)
+7. [依赖分析](#依赖分析)
+8. [性能考虑](#性能考虑)
+9. [故障排除指南](#故障排除指南)
+10. [结论](#结论)
+11. [附录](#附录)
 
 ## 引言
 本文件为 TAHP（TECNO AI Harness Platform）MCP（Model Context Protocol）服务器系统的全面技术文档。系统通过 MCP 标准协议，将 TAHP 的约束驱动开发能力封装为可被 AI Agent（如 Claude Code）调用的工具集合，覆盖诊断引擎与适配引擎两大核心场景。本文档重点阐述：
@@ -60,6 +66,7 @@
 - 错误处理策略与性能优化方案
 - 处理器架构与分发机制
 - 性能监控与追踪系统
+- **新增**：tahp-console Web控制台集成与实时监控功能
 
 ## 项目结构
 MCP 服务器位于 tahp-mcp-server 目录，采用"按功能分层"的组织方式：
@@ -72,6 +79,8 @@ MCP 服务器位于 tahp-mcp-server 目录，采用"按功能分层"的组织方
 - handlers/：工具处理器架构，实现基于协议的处理器模式
 - tracing.py：交互追踪日志系统
 - test_server.py：功能验证脚本（演示工具调用与结果解析）
+
+**新增**：tahp-console 控制台系统位于独立目录，提供Web界面、WebSocket实时监控和API管理功能。
 
 ```mermaid
 graph TB
@@ -92,6 +101,11 @@ QKH["handlers/query_knowledge_handler.py<br/>知识库处理器"]
 TRACE["tracing.py<br/>交互追踪系统"]
 TEST["test_server.py<br/>功能验证脚本"]
 end
+subgraph "tahp-console控制台系统"
+OPENAPI["openapi.json<br/>API接口定义"]
+CLI["tahp-console.mjs<br/>控制台CLI管理"]
+PKG["package.json<br/>依赖配置"]
+end
 S --> CORE
 S --> ADP
 S --> C
@@ -109,6 +123,8 @@ CORE --> EMIT
 ADP --> |"动态导入"| TOOLS["tools/<tool>/tool.py"]
 TEST --> S
 TRACE --> S
+CLI --> OPENAPI
+CLI --> PKG
 ```
 
 **图表来源**
@@ -127,6 +143,9 @@ TRACE --> S
 - [handlers/query_knowledge_handler.py:1-34](file://tahp-mcp-server/handlers/query_knowledge_handler.py#L1-L34)
 - [tracing.py:1-160](file://tahp-mcp-server/tracing.py#L1-L160)
 - [test_server.py:1-203](file://tahp-mcp-server/test_server.py#L1-L203)
+- [openapi.json:1-3307](file://tahp-console/docs/openapi.json#L1-L3307)
+- [tahp-console.mjs:1-431](file://tahp-console/bin/tahp-console.mjs#L1-L431)
+- [package.json:1-108](file://tahp-console/package.json#L1-L108)
 
 **章节来源**
 - [server.py:1-449](file://tahp-mcp-server/server.py#L1-L449)
@@ -168,6 +187,12 @@ TaskTracker（线程安全）和 ProgressEmitter（MCP 日志通知）实现任�
 ### 性能监控系统
 InteractionTracer 提供工具调用追踪日志，支持调试、性能分析和使用模式统计。
 
+**新增**：tahp-console 控制台系统
+- OpenAPI接口定义：提供完整的RESTful API规范，支持认证、会话管理、作业调度等功能
+- CLI管理工具：提供启动、停止、重启、状态查询等命令行操作
+- WebSocket实时监控：支持实时任务状态推送和日志流
+- Web界面集成：提供用户友好的图形化界面
+
 **章节来源**
 - [server.py:138-139](file://tahp-mcp-server/server.py#L138-L139)
 - [config.py:36-176](file://tahp-mcp-server/config.py#L36-L176)
@@ -177,9 +202,14 @@ InteractionTracer 提供工具调用追踪日志，支持调试、性能分析�
 - [progress/emitter.py:33-194](file://tahp-mcp-server/progress/emitter.py#L33-L194)
 - [handlers/__init__.py:17-72](file://tahp-mcp-server/handlers/__init__.py#L17-L72)
 - [tracing.py:47-160](file://tahp-mcp-server/tracing.py#L47-L160)
+- [openapi.json:1-3307](file://tahp-console/docs/openapi.json#L1-L3307)
+- [tahp-console.mjs:1-431](file://tahp-console/bin/tahp-console.mjs#L1-L431)
+- [package.json:1-108](file://tahp-console/package.json#L1-L108)
 
 ## 架构总览
 MCP 服务器通过 STDIO 通道与客户端（如 Claude Code）通信，遵循 MCP 协议的消息格式。服务器启动后注册工具清单，客户端发起工具调用时，通过 ToolDispatcher 将请求路由到对应处理器，处理器再调用核心工具实现，期间通过 ProgressEmitter 将进度事件推送至客户端。
+
+**新增**：tahp-console 控制台系统通过HTTP API和WebSocket提供实时监控功能，支持多用户并发访问和任务状态实时推送。
 
 ```mermaid
 sequenceDiagram
@@ -203,14 +233,11 @@ Core-->>Handler : "执行结果"
 Handler-->>Dispatcher : "处理结果"
 Dispatcher-->>Server : "分发结果"
 Server-->>Client : "TextContent(JSON字符串)"
-Client->>Server : "call_tool(tahp_status, {task_id})"
-Server->>Dispatcher : "dispatch(name, arguments)"
-Dispatcher->>Handler : "StatusHandler.handle()"
-Handler->>Core : "get_tahp_status(task_id)"
-Core-->>Handler : "任务详情"
-Handler-->>Dispatcher : "处理结果"
-Dispatcher-->>Server : "分发结果"
-Server-->>Client : "TextContent(JSON字符串)"
+Note over Server,Client : "新增：tahp-console实时监控"
+Client->>Server : "WebSocket连接建立"
+Server-->>Client : "实时任务状态推送"
+Client->>Server : "HTTP API请求"
+Server-->>Client : "RESTful响应"
 ```
 
 **图表来源**
@@ -601,9 +628,17 @@ stateDiagram-v2
 - 工具调用：call_tool 接收 name 与 arguments，返回 TextContent（JSON 字符串）
 - 进度推送：ProgressEmitter 通过 server.request_context.session.send_log_message 发送 info/warning 级日志，客户端可实时显示进度
 
+**新增**：tahp-console 控制台通信协议
+- HTTP API：基于OpenAPI规范，提供RESTful接口
+- WebSocket：实时双向通信，支持任务状态推送和日志流
+- 认证机制：支持JWT令牌和基本认证
+- CORS支持：跨域资源共享，支持Web界面访问
+
 **章节来源**
 - [server.py:367-407](file://tahp-mcp-server/server.py#L367-L407)
 - [progress/emitter.py:47-130](file://tahp-mcp-server/progress/emitter.py#L47-L130)
+- [openapi.json:1-3307](file://tahp-console/docs/openapi.json#L1-L3307)
+- [tahp-console.mjs:1-431](file://tahp-console/bin/tahp-console.mjs#L1-L431)
 
 ### 错误处理策略
 - 参数校验：对必填字段缺失与非法值抛出 ValueError，并返回 JSON 错误信息
@@ -627,10 +662,51 @@ stateDiagram-v2
 **章节来源**
 - [tracing.py:47-160](file://tahp-mcp-server/tracing.py#L47-L160)
 
+## 控制台集成系统
+
+### OpenAPI接口定义
+tahp-console 提供完整的RESTful API规范，涵盖认证、配置管理、会话管理、作业调度、文件管理、日志访问、终端访问等功能。API文档包含详细的请求参数、响应格式、错误码说明和使用示例。
+
+**章节来源**
+- [openapi.json:1-3307](file://tahp-console/docs/openapi.json#L1-L3307)
+
+### CLI管理工具
+tahp-console.mjs 提供完整的命令行接口，支持以下操作：
+- 启动服务：支持自定义端口、数据目录、认证配置
+- 停止服务：优雅关闭，支持强制终止
+- 重启服务：平滑重启，保持服务连续性
+- 状态查询：查看进程状态、日志位置、配置信息
+- 健康检查：自动检测服务可用性
+
+**章节来源**
+- [tahp-console.mjs:1-431](file://tahp-console/bin/tahp-console.mjs#L1-L431)
+
+### WebSocket实时监控
+系统支持WebSocket连接，提供以下实时功能：
+- 任务状态推送：任务进度、阶段变更、错误信息
+- 日志流：实时输出任务执行日志
+- 会话同步：多用户并发访问时的状态同步
+- 心跳检测：自动保活机制，断线重连
+
+**章节来源**
+- [package.json:42-49](file://tahp-console/package.json#L42-L49)
+
+### Web界面集成
+tahp-console提供用户友好的Web界面，集成功能包括：
+- 仪表板：任务统计、系统状态、资源使用情况
+- 任务管理：任务列表、状态筛选、批量操作
+- 实时监控：WebSocket连接的可视化展示
+- 配置管理：系统配置、用户管理、权限控制
+- 日志查看：实时日志流、历史日志查询
+
+**章节来源**
+- [package.json:1-108](file://tahp-console/package.json#L1-L108)
+
 ## 依赖分析
 - 外部依赖：mcp>=1.9.0、pyyaml>=6.0、click>=8.1、rich>=13.0
 - 内部依赖：config、progress.tracker、progress.emitter、core、adapters、handlers
 - 工具依赖：tools/<tool>/tool.py（动态导入），scripts/gate_check.py（门禁检查）
+- **新增**：tahp-console依赖：socket.io、socket.io-client、eventsource等WebSocket相关库
 
 ```mermaid
 graph TB
@@ -653,16 +729,23 @@ HDLS --> CH["handlers/correct_handler.py"]
 HDLS --> GCH["handlers/gate_check_handler.py"]
 HDLS --> LTH["handlers/list_tasks_handler.py"]
 HDLS --> QKH["handlers/query_knowledge_handler.py"]
+subgraph "tahp-console依赖"
+SOCKETIO["socket.io<br/>WebSocket服务器"]
+SOCKETCLIENT["socket.io-client<br/>WebSocket客户端"]
+EVENTSOURCE["eventsource<br/>Server-Sent Events"]
+END
 ```
 
 **图表来源**
 - [pyproject.toml:1-19](file://tahp-mcp-server/pyproject.toml#L1-L19)
 - [server.py:61-83](file://tahp-mcp-server/server.py#L61-L83)
 - [adapters/__init__.py:42-65](file://tahp-mcp-server/adapters/__init__.py#L42-L65)
+- [package.json:42-49](file://tahp-console/package.json#L42-L49)
 
 **章节来源**
 - [pyproject.toml:1-19](file://tahp-mcp-server/pyproject.toml#L1-L19)
 - [requirements.txt:1-9](file://requirements.txt#L1-L9)
+- [package.json:1-108](file://tahp-console/package.json#L1-L108)
 
 ## 性能考虑
 - 并发控制：MCPServerConfig.max_concurrent_tasks 控制最大并发任务数
@@ -672,6 +755,9 @@ HDLS --> QKH["handlers/query_knowledge_handler.py"]
 - 任务清理：TaskTracker 在达到上限时清理最早完成的任务，避免内存膨胀
 - 处理器缓存：ToolDispatcher 缓存已注册的处理器，提高分发效率
 - 日志优化：TraceRecord 自动过滤敏感信息，减少日志开销
+- **新增**：WebSocket连接池：tahp-console使用连接池管理WebSocket连接，支持高并发实时监控
+- **新增**：API限流：OpenAPI接口支持请求频率限制，防止滥用和DoS攻击
+- **新增**：缓存机制：常用配置和任务状态使用内存缓存，提高响应速度
 
 **章节来源**
 - [config.py:52-56](file://tahp-mcp-server/config.py#L52-L56)
@@ -688,6 +774,9 @@ HDLS --> QKH["handlers/query_knowledge_handler.py"]
 - 处理器注册错误：检查 ToolDispatcher.register 是否重复注册相同工具名
 - 配置加载失败：确认 YAML 配置文件格式正确，路径存在且可读
 - 追踪日志写入失败：检查 reports/traces/ 目录权限，磁盘空间充足
+- **新增**：WebSocket连接失败：检查端口占用、防火墙设置、SSL证书配置
+- **新增**：API接口错误：查看OpenAPI文档，确认请求格式和认证信息
+- **新增**：控制台启动失败：检查Node.js版本、依赖安装、端口权限
 
 **章节来源**
 - [adapters/__init__.py:218-234](file://tahp-mcp-server/adapters/__init__.py#L218-L234)
@@ -707,7 +796,14 @@ MCP 服务器系统通过清晰的分层架构与标准化的 MCP 协议，将 T
 - 稳健的错误处理与性能保障
 - 全面的性能监控与追踪系统
 
-该系统为诊断引擎与适配引擎提供了统一的执行与编排平台，支撑 TAHP 平台在双引擎场景下的自动化与智能化演进。
+**新增**：tahp-console 控制台系统进一步增强了系统的可用性和可维护性，提供：
+- 完整的Web界面和实时监控功能
+- 基于OpenAPI的RESTful API接口
+- WebSocket双向通信支持
+- CLI命令行管理工具
+- 用户友好的图形化界面
+
+该系统为诊断引擎与适配引擎提供了统一的执行与编排平台，支撑 TAHP 平台在双引擎场景下的自动化与智能化演进，同时通过控制台系统实现了更好的用户体验和运维便利性。
 
 ## 附录
 - 系统架构概览与四域约束体系参见 [system-overview.md:1-420](file://docs/architecture/system-overview.md#L1-L420)
@@ -716,3 +812,7 @@ MCP 服务器系统通过清晰的分层架构与标准化的 MCP 协议，将 T
   - [config.yaml (knowledge-base):1-36](file://knowledge-base/config.yaml#L1-L36)
 - 测试用例参考：[test_server.py:1-203](file://tahp-mcp-server/test_server.py#L1-L203)
 - 项目配置参考：[pyproject.toml:1-19](file://tahp-mcp-server/pyproject.toml#L1-L19)
+- **新增**：控制台系统配置参考：
+  - [openapi.json:1-3307](file://tahp-console/docs/openapi.json#L1-L3307)
+  - [tahp-console.mjs:1-431](file://tahp-console/bin/tahp-console.mjs#L1-L431)
+  - [package.json:1-108](file://tahp-console/package.json#L1-L108)

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# FC 检查脚本示例。复制为 run.sh 并按场景修改。
+set -euo pipefail
+
+echo "=== FC check: <scenario> ==="
+
+if ! adb get-state >/dev/null 2>&1; then
+  echo "FAIL: adb device not connected"
+  exit 1
+fi
+
+# 示例：执行检查命令并判断
+OUTPUT=$(adb shell "your-check-command-here" 2>&1) || true
+echo "$OUTPUT"
+
+if echo "$OUTPUT" | grep -qiE "expected-pattern"; then
+  echo "RESULT: PASS"
+  exit 0
+fi
+
+echo "RESULT: FAIL"
+exit 1

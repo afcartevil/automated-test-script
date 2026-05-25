@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { getThemeOverrides } from '@/styles/theme'
 import { useTheme } from '@/composables/useTheme'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
+import AppTopMenu from '@/components/layout/AppTopMenu.vue'
 import { useKeyboard } from '@/composables/useKeyboard'
 import { useAppStore } from '@/stores/hermes/app'
 import SessionSearchModal from '@/components/hermes/chat/SessionSearchModal.vue'
@@ -66,9 +67,12 @@ useKeyboard()
             </button>
             <div v-if="!isLoginPage && appStore.sidebarOpen" class="mobile-backdrop" @click="appStore.closeSidebar" />
             <AppSidebar v-if="!isLoginPage" />
-            <main class="app-main">
-              <router-view />
-            </main>
+            <div class="app-right">
+              <AppTopMenu v-if="!isLoginPage" />
+              <main class="app-main">
+                <router-view />
+              </main>
+            </div>
           </div>
           <SessionSearchModal />
         </NNotificationProvider>
@@ -89,6 +93,14 @@ useKeyboard()
   &.no-sidebar {
     display: block;
   }
+}
+
+.app-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .app-main {

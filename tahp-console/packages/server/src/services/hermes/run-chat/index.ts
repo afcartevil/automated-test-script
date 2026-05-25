@@ -14,7 +14,7 @@ import { getSystemPrompt } from '../../../lib/llm-prompt'
 import { getSession } from '../../../db/hermes/session-store'
 import { getActiveProfileName, getProfileDir, listProfileNamesFromDisk } from '../hermes-profile'
 import { AgentBridgeClient } from '../agent-bridge'
-import { handleApiRun, resolveRunSource, loadSessionStateFromDb } from './handle-api-run'
+import { handleApiRun, resolveRunSource, resolveRunSourceAsync, loadSessionStateFromDb } from './handle-api-run'
 import { handleBridgeRun } from './handle-bridge-run'
 import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
@@ -82,57 +82,57 @@ export class ChatRunSocket {
       profile?: string
     }) => {
       const runProfile = resolveRunProfile(data.session_id, data.profile)
-      if (data.session_id) {
-        const state = getOrCreateSession(this.sessionMap, data.session_id)
-        const source = resolveRunSource(data.source, data.session_id)
-        const command = parseSessionCommand(data.input)
-        if (command && source === 'cli') {
-          try {
-            await handleSessionCommand(data.session_id, command, {
-              nsp: this.nsp,
-              socket,
-              sessionMap: this.sessionMap,
-              bridge: this.bridge,
-              profile: runProfile,
-              model: data.model,
-              instructions: data.instructions,
-              runQueuedItem: this.runQueuedItem.bind(this),
-            })
-          } catch (err) {
-            this.emitToSession(socket, data.session_id, 'session.command', {
-              event: 'session.command',
-              command: command.rawName,
-              ok: false,
-              action: 'error',
-              message: err instanceof Error ? err.message : String(err),
-            })
-          }
-          return
-        }
-        if (state.isWorking) {
-          state.queue.push({
-            queue_id: data.queue_id || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-            input: data.input,
-            model: data.model,
-            provider: data.provider,
-            model_groups: data.model_groups,
-            instructions: data.instructions,
-            profile: runProfile,
-            source,
-          })
-          this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
-            event: 'run.queued',
-            session_id: data.session_id,
-            queue_length: state.queue.length,
-          })
-          logger.info('[chat-run-socket] queued run for session %s (queue: %d)', data.session_id, state.queue.length)
-          return
-        }
-        state.isWorking = true
-        state.profile = runProfile
-        state.source = source
-      }
       try {
+        if (data.session_id) {
+          const state = getOrCreateSession(this.sessionMap, data.session_id)
+          const source = await resolveRunSourceAsync(data.source, data.session_id)
+          const command = parseSessionCommand(data.input)
+          if (command && source === 'cli') {
+            try {
+              await handleSessionCommand(data.session_id, command, {
+                nsp: this.nsp,
+                socket,
+                sessionMap: this.sessionMap,
+                bridge: this.bridge,
+                profile: runProfile,
+                model: data.model,
+                instructions: data.instructions,
+                runQueuedItem: this.runQueuedItem.bind(this),
+              })
+            } catch (err) {
+              this.emitToSession(socket, data.session_id, 'session.command', {
+                event: 'session.command',
+                command: command.rawName,
+                ok: false,
+                action: 'error',
+                message: err instanceof Error ? err.message : String(err),
+              })
+            }
+            return
+          }
+          if (state.isWorking) {
+            state.queue.push({
+              queue_id: data.queue_id || `queue_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+              input: data.input,
+              model: data.model,
+              provider: data.provider,
+              model_groups: data.model_groups,
+              instructions: data.instructions,
+              profile: runProfile,
+              source,
+            })
+            this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
+              event: 'run.queued',
+              session_id: data.session_id,
+              queue_length: state.queue.length,
+            })
+            logger.info('[chat-run-socket] queued run for session %s (queue: %d)', data.session_id, state.queue.length)
+            return
+          }
+          state.isWorking = true
+          state.profile = runProfile
+          state.source = source
+        }
         await this.handleRun(socket, data, runProfile)
       } catch (err) {
         if (data.session_id) {
@@ -217,7 +217,7 @@ export class ChatRunSocket {
     profile: string,
     skipUserMessage = false,
   ) {
-    const source = resolveRunSource(data.source, data.session_id)
+    const source = await resolveRunSourceAsync(data.source, data.session_id)
     if (data.session_id && source === 'cli' && isSessionCommand(data.input)) return
 
     if (source === 'cli') {

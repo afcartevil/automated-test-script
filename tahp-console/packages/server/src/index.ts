@@ -7,21 +7,18 @@ import os from 'os'
 import { resolve } from 'path'
 import { mkdir } from 'fs/promises'
 import { readFileSync } from 'fs'
+import { Server as SocketIOServer } from 'socket.io'
 import { config } from './config'
 import { getToken, requireAuth } from './services/auth'
 import { initLoginLimiter } from './services/login-limiter'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
-import { setupKanbanEventsWebSocket } from './routes/hermes/kanban-events'
 import { startVersionCheck } from './routes/health'
 import { registerRoutes } from './routes'
-import { setGroupChatServer } from './routes/hermes/group-chat'
 import { setChatRunServer } from './routes/hermes/chat-run'
-import { GroupChatServer } from './services/hermes/group-chat'
 import { ChatRunSocket } from './services/hermes/run-chat'
 import { startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
-import { ensureProfileGatewaysRunning } from './services/hermes/gateway-autostart'
 import { logger } from './services/logger'
 
 // TAHP 桥接
@@ -107,16 +104,6 @@ export async function bootstrap() {
   }
 
   try {
-    await ensureProfileGatewaysRunning()
-    console.log('[bootstrap] profile gateways checked')
-  } catch (err) {
-    logger.warn(err, '[bootstrap] failed to ensure profile gateways')
-    console.warn('[bootstrap] failed to ensure profile gateways:', err instanceof Error ? err.message : err)
-  }
-
-  const app = new Koa()
-
-  try {
     agentBridgeManager = await startAgentBridgeManager()
     console.log('[bootstrap] agent bridge started')
   } catch (err) {
@@ -131,8 +118,9 @@ export async function bootstrap() {
   await new Promise(resolve => setTimeout(resolve, 1000))
   console.log('[bootstrap] all stores initialized')
 
+  const app = new Koa()
   app.use(cors({ origin: config.corsOrigins }))
-  app.use(bodyParser())
+  app.use(bodyParser({ encoding: 'utf-8', jsonLimit: '20mb' }))
   console.log('[bootstrap] cors + bodyParser registered')
 
   // Register all routes (handles auth internally)
@@ -165,21 +153,22 @@ export async function bootstrap() {
   console.log('[bootstrap] app.listen called')
 
   setupTerminalWebSocket(servers)
-  setupKanbanEventsWebSocket(servers)
-  console.log('[bootstrap] terminal + kanban websocket setup')
+  console.log('[bootstrap] terminal websocket setup')
 
-  // Group chat Socket.IO (must be after server is created)
-  const groupChatServer = new GroupChatServer(servers)
-  setGroupChatServer(groupChatServer)
+  // Socket.IO — create a single shared server instance for /chat-run and /tahp-run namespaces
+  const io = new SocketIOServer(servers[0], {
+    cors: { origin: config.corsOrigins, methods: ['GET', 'POST'] },
+    path: '/socket.io/',
+  })
 
-  // Chat run Socket.IO — shares the same Server instance, just adds /chat-run namespace
-  chatRunServer = new ChatRunSocket(groupChatServer.getIO())
+  // Chat run Socket.IO — /chat-run namespace
+  chatRunServer = new ChatRunSocket(io)
   setChatRunServer(chatRunServer)
   chatRunServer.init()
 
-  // TAHP Socket.IO — /tahp-run 命名空间 (复用同一个 Server)
+  // TAHP Socket.IO — /tahp-run 命名空间
   try {
-    setupTahpRunSocket(groupChatServer.getIO())
+    setupTahpRunSocket(io)
   } catch (err) {
     logger.warn({ err }, '[bootstrap] tahp-run socket setup failed')
   }
@@ -200,7 +189,7 @@ export async function bootstrap() {
   servers.forEach((httpServer) => {
     httpServer.on('upgrade', (req: any, socket: any) => {
       const url = new URL(req.url || '', `http://${req.headers.host}`)
-      if (url.pathname !== '/api/hermes/terminal' && url.pathname !== '/api/hermes/kanban/events' && !url.pathname.startsWith('/socket.io/')) {
+      if (url.pathname !== '/api/hermes/terminal' && !url.pathname.startsWith('/socket.io/')) {
         socket.destroy()
       }
     })
@@ -212,9 +201,6 @@ export async function bootstrap() {
   console.log(`Log: ${config.appHome}/logs/server.log`)
   logger.info('Server: http://localhost:%d (LAN: http://%s:%d)', config.port, localIp, config.port)
 
-  // Restore group chat agents after server is ready.
-  groupChatServer.restoreWhenReady()
-
   servers.forEach((httpServer) => {
     httpServer.on('error', (err: any) => {
       console.error('[bootstrap] server error:', err.code || err.message)
@@ -222,7 +208,7 @@ export async function bootstrap() {
     })
   })
 
-  bindShutdown(servers, groupChatServer, chatRunServer, agentBridgeManager)
+  bindShutdown(servers, undefined, chatRunServer, agentBridgeManager)
   startVersionCheck()
 }
 

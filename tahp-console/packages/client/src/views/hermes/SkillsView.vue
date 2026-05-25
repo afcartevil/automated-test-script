@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import SkillList from '@/components/hermes/skills/SkillList.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
+import SkillImportModal from '@/components/hermes/skills/SkillImportModal.vue'
 import { fetchSkills, type SkillCategory, type SkillSource, type SkillInfo } from '@/api/hermes/skills'
 
 type SourceFilter = SkillSource | 'modified'
@@ -19,6 +20,7 @@ const searchQuery = ref('')
 const showSidebar = ref(true)
 const sourceFilter = ref<SourceFilter | null>(null)
 const recommendations = ref('')
+const showImportModal = ref(false)
 let mobileQuery: MediaQueryList | null = null
 let recommendationsRequestSeq = 0
 
@@ -102,6 +104,11 @@ function handleSelect(category: string, skill: string) {
   }
 }
 
+function handleImported(_names: string[]) {
+  // 重新加载技能列表以显示新导入的技能
+  loadSkills()
+}
+
 function handlePinToggled(name: string, pinned: boolean) {
   // Update local state so the pin icon updates immediately
   if (selectedCategory.value === '.archive') {
@@ -125,19 +132,18 @@ function handlePinToggled(name: string, pinned: boolean) {
         </button>
       </div>
       <div class="source-legend">
-        <button class="legend-item" :class="{ active: sourceFilter === 'builtin' }" @click="toggleFilter('builtin')">
-          <span class="legend-dot dot-builtin" />{{ t('skills.source.builtin') }}
-        </button>
-        <button class="legend-item" :class="{ active: sourceFilter === 'hub' }" @click="toggleFilter('hub')">
-          <span class="legend-dot dot-hub" />{{ t('skills.source.hub') }}
-        </button>
-        <button class="legend-item" :class="{ active: sourceFilter === 'local' }" @click="toggleFilter('local')">
-          <span class="legend-dot dot-local" />{{ t('skills.source.local') }}
-        </button>
-        <button class="legend-item" :class="{ active: sourceFilter === 'modified' }" @click="toggleFilter('modified')">
-          <span class="modified-icon">✎</span>{{ t('skills.modified') }}
-        </button>
+        <span class="legend-item static">
+          <span class="legend-dot dot-tahp" />{{ t('skills.source.tahp') }}
+        </span>
       </div>
+      <button class="import-btn" @click="showImportModal = true">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        {{ t('skills.import.button') }}
+      </button>
       <NInput
         v-model:value="searchQuery"
         :placeholder="t('skills.searchPlaceholder')"
@@ -146,6 +152,13 @@ function handlePinToggled(name: string, pinned: boolean) {
         style="width: 160px"
       />
     </header>
+
+    <!-- 批量导入模态框 -->
+    <SkillImportModal
+      v-if="showImportModal"
+      @close="showImportModal = false"
+      @imported="handleImported"
+    />
 
     <div class="skills-content">
       <div v-if="loading && categories.length === 0" class="skills-loading">{{ t('common.loading') }}</div>
@@ -232,6 +245,14 @@ function handlePinToggled(name: string, pinned: boolean) {
     border-color: $border-color;
     background: rgba(var(--accent-primary-rgb), 0.08);
   }
+
+  &.static {
+    cursor: default;
+    &:hover {
+      color: $text-muted;
+      background: none;
+    }
+  }
 }
 
 .legend-dot {
@@ -242,6 +263,7 @@ function handlePinToggled(name: string, pinned: boolean) {
   flex-shrink: 0;
 }
 
+.legend-dot.dot-tahp { background: #ff9800; }
 .legend-dot.dot-builtin { background: #888; }
 .legend-dot.dot-hub { background: #4a90d9; }
 .legend-dot.dot-local { background: #66bb6a; }
@@ -255,6 +277,27 @@ function handlePinToggled(name: string, pinned: boolean) {
 @media (max-width: $breakpoint-mobile) {
   .source-legend {
     display: none;
+  }
+}
+
+.import-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid $border-color;
+  border-radius: $radius-sm;
+  background: none;
+  color: $text-secondary;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all $transition-fast;
+
+  &:hover {
+    color: $text-primary;
+    background: rgba(var(--accent-primary-rgb), 0.06);
+    border-color: rgba(var(--accent-primary-rgb), 0.3);
   }
 }
 

@@ -1,16 +1,9 @@
 import en from './locales/en'
 import zh from './locales/zh'
-import zhTW from './locales/zh-TW'
-import ja from './locales/ja'
-import ko from './locales/ko'
-import fr from './locales/fr'
-import es from './locales/es'
-import de from './locales/de'
-import pt from './locales/pt'
 
 export type LocaleMessages = Record<string, any>
 
-export const supportedLocales = ['en', 'zh', 'zh-TW', 'ja', 'ko', 'fr', 'es', 'de', 'pt'] as const
+export const supportedLocales = ['en', 'zh'] as const
 export type SupportedLocale = (typeof supportedLocales)[number]
 
 function isPlainObject(value: unknown): value is LocaleMessages {
@@ -33,7 +26,7 @@ export function mergeMessagesWithFallback(
   return merged
 }
 
-const rawMessages: Record<string, LocaleMessages> = { en, zh, 'zh-TW': zhTW, ja, ko, fr, es, de, pt }
+const rawMessages: Record<string, LocaleMessages> = { en, zh }
 
 export const messages: Record<string, LocaleMessages> = {}
 for (const [locale, msg] of Object.entries(rawMessages)) {

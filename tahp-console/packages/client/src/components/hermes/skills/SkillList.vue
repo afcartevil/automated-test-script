@@ -289,6 +289,10 @@ async function handleToggle(category: string, skillName: string, newEnabled: boo
     background: #66bb6a;
 }
 
+.dot-tahp {
+    background: #ff9800;
+}
+
 .skill-info {
     flex: 1;
     min-width: 0;

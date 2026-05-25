@@ -17,12 +17,6 @@ export function useKeyboard() {
       return
     }
 
-    if (mod && e.key === 'j') {
-      e.preventDefault()
-      router.push({ name: 'hermes.jobs' })
-      return
-    }
-
     if (mod && e.key.toLowerCase() === 'k') {
       if (router.currentRoute.value.name === 'login') return
       e.preventDefault()

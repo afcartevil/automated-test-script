@@ -1,6 +1,6 @@
 import { request } from '../client'
 
-export type SkillSource = 'builtin' | 'hub' | 'local'
+export type SkillSource = 'builtin' | 'hub' | 'local' | 'tahp'
 
 export interface SkillInfo {
   name: string
@@ -123,5 +123,93 @@ export async function pinSkillApi(name: string, pinned: boolean): Promise<void> 
   await request('/api/hermes/skills/pin', {
     method: 'PUT',
     body: JSON.stringify({ name, pinned }),
+  })
+}
+
+// ── ZIP 批量导入 ──────────────────────────────────────────────────────────────
+
+export interface SkillPreviewItem {
+  name: string
+  description: string
+  zipPrefix: string
+  exists: boolean
+}
+
+export interface PreviewImportResult {
+  skills: SkillPreviewItem[]
+}
+
+export interface ImportSkillsResult {
+  imported: string[]
+  skipped: string[]
+  errors: { name: string; error: string }[]
+}
+
+/** 将 File 对象读取为 base64 字符串 */
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      // data:application/zip;base64,<data> — 去掉前缀
+      const base64 = result.includes(',') ? result.split(',')[1] : result
+      resolve(base64)
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+/** 预览 ZIP 中包含的 skill 列表（不写磁盘） */
+export async function previewImport(zipData: string, zipFilename: string): Promise<PreviewImportResult> {
+  return request<PreviewImportResult>('/api/hermes/skills/preview-import', {
+    method: 'POST',
+    body: JSON.stringify({ zipData, zipFilename }),
+  })
+}
+
+/** 执行导入（写磁盘），overwrite=true 时覆盖已存在的 skill */
+export async function importSkills(
+  zipData: string,
+  zipFilename: string,
+  overwrite: boolean,
+): Promise<ImportSkillsResult> {
+  return request<ImportSkillsResult>('/api/hermes/skills/import', {
+    method: 'POST',
+    body: JSON.stringify({ zipData, zipFilename, overwrite }),
+  })
+}
+
+// ── 本地路径扫描导入 ──────────────────────────────────────────────────────────
+
+export interface PathScanItem {
+  name: string
+  description: string
+  sourcePath: string
+  category: string   // 相对于扫描根的父路径，空=根级别
+  exists: boolean
+}
+
+export interface PathScanResult {
+  skills: PathScanItem[]
+  message?: string
+}
+
+/** 扫描本地目录，返回检测到的技能列表（不写磁盘） */
+export async function scanPath(sourcePath: string): Promise<PathScanResult> {
+  return request<PathScanResult>('/api/hermes/skills/scan-path', {
+    method: 'POST',
+    body: JSON.stringify({ sourcePath }),
+  })
+}
+
+/** 从本地路径导入技能（服务器直接拷贝目录，无需传输文件内容） */
+export async function importFromPath(
+  skills: { name: string; sourcePath: string }[],
+  overwrite: boolean,
+): Promise<ImportSkillsResult> {
+  return request<ImportSkillsResult>('/api/hermes/skills/import-from-path', {
+    method: 'POST',
+    body: JSON.stringify({ skills, overwrite }),
   })
 }

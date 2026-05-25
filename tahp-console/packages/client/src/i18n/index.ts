@@ -11,14 +11,7 @@ function resolveLocale(saved: string | null): SupportedLocale {
 
   function normalize(tag: string): SupportedLocale | null {
     const lower = tag.toLowerCase()
-    if (lower.startsWith('zh')) {
-      const isTraditional =
-        lower.includes('hant') ||
-        lower.includes('-tw') ||
-        lower.includes('-hk') ||
-        lower.includes('-mo')
-      return isTraditional ? 'zh-TW' : 'zh'
-    }
+    if (lower.startsWith('zh')) return 'zh'
     const short = tag.slice(0, 2)
     if ((supportedLocales as readonly string[]).includes(tag)) return tag as SupportedLocale
     if ((supportedLocales as readonly string[]).includes(short)) return short as SupportedLocale

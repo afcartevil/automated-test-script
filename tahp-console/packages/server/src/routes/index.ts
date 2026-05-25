@@ -7,30 +7,19 @@ import { uploadRoutes } from './upload'
 import { updateRoutes } from './update'
 import { authPublicRoutes, authProtectedRoutes } from './auth'
 
-// Hermes route modules
+// Hermes route modules (trimmed to TAHP-relevant subset)
 import { sessionRoutes } from './hermes/sessions'
 import { profileRoutes } from './hermes/profiles'
 import { skillRoutes } from './hermes/skills'
 import { pluginRoutes } from './hermes/plugins'
-import { memoryRoutes } from './hermes/memory'
 import { modelRoutes } from './hermes/models'
 import { providerRoutes } from './hermes/providers'
 import { configRoutes } from './hermes/config'
 import { logRoutes } from './hermes/logs'
-import { codexAuthRoutes } from './hermes/codex-auth'
-import { nousAuthRoutes } from './hermes/nous-auth'
-import { copilotAuthRoutes } from './hermes/copilot-auth'
-import { xaiAuthRoutes } from './hermes/xai-auth'
-import { weixinRoutes } from './hermes/weixin'
 import { fileRoutes } from './hermes/files'
 import { downloadRoutes } from './hermes/download'
-import { jobRoutes } from './hermes/jobs'
-import { cronHistoryRoutes } from './hermes/cron-history'
-import { kanbanRoutes } from './hermes/kanban'
-import { ttsRoutes } from './hermes/tts'
 import { mediaRoutes } from './hermes/media'
 import { proxyRoutes, proxyMiddleware } from './hermes/proxy'
-import { groupChatRoutes, setGroupChatServer } from './hermes/group-chat'
 
 // TAHP 路由聚合
 import { registerTahpRoutes } from './tahp'
@@ -45,7 +34,6 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(healthRoutes.routes())
   app.use(webhookRoutes.routes())
   app.use(authPublicRoutes.routes())
-  app.use(ttsRoutes.routes())              // TTS proxy/generation — must be before auth
 
   // --- Auth middleware: all routes below require authentication ---
   app.use(requireAuth)
@@ -58,23 +46,13 @@ export function registerRoutes(app: any, requireAuth: (ctx: Context, next: Next)
   app.use(profileRoutes.routes())
   app.use(skillRoutes.routes())
   app.use(pluginRoutes.routes())
-  app.use(memoryRoutes.routes())
   app.use(modelRoutes.routes())
   app.use(providerRoutes.routes())
   app.use(configRoutes.routes())
   app.use(logRoutes.routes())
-  app.use(codexAuthRoutes.routes())
-  app.use(nousAuthRoutes.routes())
-  app.use(copilotAuthRoutes.routes())
-  app.use(xaiAuthRoutes.routes())
-  app.use(weixinRoutes.routes())
-  app.use(groupChatRoutes.routes())       // Must be before proxy
-  app.use(fileRoutes.routes())              // Must be before proxy (proxy catch-all matches everything)
-  app.use(downloadRoutes.routes())          // Must be before proxy
-  app.use(jobRoutes.routes())               // Must be before proxy
-  app.use(cronHistoryRoutes.routes())        // Must be before proxy
-  app.use(kanbanRoutes.routes())             // Must be before proxy
-  app.use(mediaRoutes.routes())              // Must be before proxy
+  app.use(fileRoutes.routes())             // Must be before proxy
+  app.use(downloadRoutes.routes())         // Must be before proxy
+  app.use(mediaRoutes.routes())            // Must be before proxy
 
   // --- TAHP 路由 (必须在 proxy 之前) ---
   registerTahpRoutes(app)
