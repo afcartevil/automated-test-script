@@ -1,6 +1,8 @@
 ---
 name: power-backlight-camera-video
 description: "相机/视频界面切换亮度异常分析: 打开相机或视频应用时亮度override切换以及退出时亮度恢复过程中出现的异常分析 | 相机/camera/视频/video/override/亮度覆盖/切换亮度/进入相机 | 当用户报告与「相机/视频界面切换亮度异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "功耗"
 ---
 
 # 相机/视频界面切换亮度异常分析

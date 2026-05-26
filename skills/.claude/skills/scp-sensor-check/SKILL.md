@@ -1,6 +1,8 @@
 ---
 name: "scp-sensor-check"
 description: "全面检查 MTK SCP 项目 sensor 配置是否正确生效。验证 project.mk 宏定义与 sensorhub.mk、platform.mk、DTS、库文件的关联完整性。当用户要求检查某项目 sensor 配置、验证 NV/sensor 宏是否生效、排查 sensor 功能缺失时调用。"
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # SCP Sensor 配置验证

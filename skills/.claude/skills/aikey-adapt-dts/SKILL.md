@@ -1,3 +1,7 @@
+---
+funcType: "AI自动化适配"
+category: "驱动"
+---
 ﻿---
 name: aikey-adapt-dts
 description: Guides Transsion/MTK AI physical key (Ai_Key) bring-up in device tree under arch/arm64/boot/dts/mediatek/tp touch dtsi files using gpio-keys with linux,input code and GPIO, plus DWS pin/GPIO checks and optional PMIC key remapping. Use when adapting a new project for AI key, KEY 605 / Ai_Key no event, migrating from a reference *_touch.dtsi, or when the user mentions AI key、Ai_Key、gpio-keys、DWS、linux,code 605 with TP DTS.

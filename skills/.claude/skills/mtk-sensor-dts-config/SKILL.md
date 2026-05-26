@@ -1,6 +1,8 @@
 ---
 name: "mtk-sensor-dts-config"
 description: "根据MTK Sensor 3.0 DTS配置文档，指导新项目完成sensor_cust和irtx_pwm节点的DTS配置。⚠️ MANDATORY: 必须先从用户处获取新/旧项目路径后才能执行。Invoke when 新项目需要完成sensor DTS配置，或从老基线升级sensor DTS配置时调用。"
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK Sensor 3.0 DTS 配置指南

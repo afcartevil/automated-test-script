@@ -1,6 +1,8 @@
 ---
 name: uns-sim-simdetect
 description: "「识卡异常」UNISOC。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # UNS_SIM_SimDetect

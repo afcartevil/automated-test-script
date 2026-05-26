@@ -1,6 +1,8 @@
 ---
 name: android-kerneltne-extract
 description: "Android-KernelTNE提取: 从Jira日志目录提取.tne文件，按异常编码分类解压+KSST64分析 | .tne/decompress/KSST64/0xffffff0c/HANG/HWT/KE/OCP_REBOOT | 当用户要求tne解压、异常编码分类、KSST64提取时使用"
+funcType: "AI故障分析"
+category: "内核"
 ---
 
 # Android Kernel TNE 提取（decompress + KSST64）

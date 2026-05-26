@@ -1,6 +1,8 @@
 ---
 name: power-backlight-app-optimization
 description: "常规App界面切换亮度异常分析: 打开非相机/视频的常规应用时TranAppBrightnessChangeController优化亮度过程中出现的异常分析 | 应用亮度/app亮度/界面切换/app切换/亮度优化/前台切换/应用切换亮度/打开应用 | 当用户报告与「常规App界面切换亮度异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "功耗"
 ---
 
 # 常规App界面切换亮度异常分析

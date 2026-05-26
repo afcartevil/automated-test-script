@@ -7,6 +7,8 @@ description: >-
   factory test, or when the user names `TRAN_BSP_HOLSTER_HALL_SUPPORT` or
   `ProjectConfig.mk` under `transsion/projects`.
 disable-model-invocation: true
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # Transsion：皮套霍尔与 `ProjectConfig.mk`

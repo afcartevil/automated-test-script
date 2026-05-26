@@ -1,6 +1,8 @@
 ---
 name: bug-scenario-power-standby
 description: "Android功耗-待机耗电: 待机/灭屏耗电根因深度分析 | wakelock/AudioMix/suspend/SPM/R12/r13/26M/AlarmManager/待机电流/mA/healthd/电量跳变 | 当用户报告待机耗电快、灭屏电流大、wakelock长持锁、AP无法suspend、频繁唤醒时使用。须在加载本skill后按SOP执行"
+funcType: "AI故障分析"
+category: "功耗"
 ---
 
 # 功耗待机问题分析（Power Standby / SOP2）

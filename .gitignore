@@ -3,6 +3,7 @@ __pycache__/
 *.egg-info/
 .idea/
 .vscode/
+.git/
 *.swp
 .DS_Store
 Thumbs.db

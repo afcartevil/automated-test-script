@@ -1,6 +1,8 @@
 ---
 name: fc-vib-driver
 description: Func-check skill for vibrator/haptic driver probe via adb dmesg. Use when func-check task needs to verify haptic driver loaded on connected device.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: 马达驱动加载检查

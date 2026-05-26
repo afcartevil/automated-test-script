@@ -1,6 +1,8 @@
 ---
 name: sensor-als-first-report
 description: "MTK-Sensor光感-首笔上报: 分析光感首笔上报异常导致的亮屏闪屏、亮屏先暗后亮、先亮后暗等问题 | timesync/sensor enable/首笔光感/HAL收数/亮屏闪屏/先暗后亮 | 当用户报告MTK设备亮屏时先暗后亮、先亮后暗、亮屏闪屏时使用。运行期自动背光异常走sensor-als-autobrightness"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Sensor光感首笔上报问题分析

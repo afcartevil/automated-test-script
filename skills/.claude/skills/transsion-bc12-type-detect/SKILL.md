@@ -1,6 +1,8 @@
 ---
 name: transsion-bc12-type-detect
 description: "Transsion-BC1.2: 分析BC1.2和charger type detect路径，覆盖tc_chg_type_det、usb ready、cdp-block | bc12/usb_ready/cdp_block/port_stat/charger_type/SDP/CDP/DCP | 当用户报告充电类型识别失败、DCP/SDP识别错误、usb_ready长期为0时使用"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Transsion BC1.2 Type Detect

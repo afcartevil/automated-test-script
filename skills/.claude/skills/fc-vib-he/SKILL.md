@@ -1,6 +1,8 @@
 ---
 name: fc-vib-he
 description: Func-check skill for vibrator HE waveform files via adb. Use when func-check task needs to verify .he files exist under /vendor/etc/vibrator/.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: 马达 HE 文件检查

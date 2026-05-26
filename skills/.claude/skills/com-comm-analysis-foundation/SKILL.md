@@ -1,6 +1,8 @@
 ---
 name: com-comm-analysis-foundation
 description: "「通信分析通用基线」COMMON；问题域路由、叶子目录映射(leaf-skill-routing)、统一输出模板、抓 log/升级/术语与跨域协作顺序。问题域未明、需从现象落到具体文件夹、或多 skill 协作时加载。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # 通信分析通用基线（原 comm_skill 精华入口）

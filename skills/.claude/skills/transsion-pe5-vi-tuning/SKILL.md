@@ -1,6 +1,8 @@
 ---
 name: transsion-pe5-vi-tuning
 description: "Transsion-PE5调压调流: PE5协议选型完成后的通用V/I调节骨架，从tc_pe50.dtsi读取参数、TA认证、软启动 | pe5/VTA/ITA/tc_pe50.dtsi/RFC/PPS/QC3 | 当用户报告PE5快充无法进入、V/I调节异常、DTS参数问题时使用。快充选型走transsion-dcp-fastcharge-probe"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # PE5 通用：DTS 参数与调压调流骨架

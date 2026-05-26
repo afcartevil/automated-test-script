@@ -10,6 +10,8 @@ description: >-
   老树独有不同步；**§1.6 扩展无视项**；**§1.7** `ambient_temp`→`pid_chg`；**§1.8** ult-lt→ffc_level 电池表注释；
   禁×3、conversion_ratio 与 bridge 分工。
 disable-model-invocation: true
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # Transsion PE5：`mtk_pe50` → `tc_pe5`（柱 2 · 参数对照与转换策略）

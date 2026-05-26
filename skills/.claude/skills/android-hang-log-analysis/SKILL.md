@@ -1,6 +1,8 @@
 ---
 name: android-hang-log-analysis
 description: "Android-HangDetect: 分析Hang detect场景(关机/重启卡死、system_server/watchdog无响应、运行期阻塞)，定位死锁、IO阻塞、内存压力、硬件超时 | Hang_detect/watchdog/D状态/死锁/IO阻塞/AEE/DEC | 当用户提供Hang日志包、查看watchdog/线程阻塞/系统卡死根因时使用"
+funcType: "AI故障分析"
+category: "内核"
 ---
 
 # Hang 问题分析 Skill

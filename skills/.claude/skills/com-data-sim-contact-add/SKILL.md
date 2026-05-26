@@ -1,6 +1,8 @@
 ---
 name: com-data-sim-contact-add
 description: "SIM卡添加联系人异常分析: 覆盖SIM卡添加联系人全流程：MtkIccProvider插入请求、MtkIccPhoneBookIM更新USIM PB记录、MtkAdnRecordCache查找与更新ADN、MtkRecordLoader写入EF线性记录、MtkAdnRecord构建ADN字符串、EVENT_UPDATE_DONE结果确认等 | 联系人/SIM卡联系人/添加联系人/写入联系人/电话本/PhoneBook/ADN/IccProvider | 当用户报告与「SIM卡添加联系人异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # SIM卡添加联系人异常分析

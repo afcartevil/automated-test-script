@@ -1,6 +1,8 @@
 ---
 name: fc-tp-factory
 description: Func-check skill for TP factory panel test and SELinux node access via adb. Use when func-check task needs to verify /proc/tp_panel_test and proc node permissions.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: TP 工模/容值检查

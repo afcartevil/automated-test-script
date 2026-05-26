@@ -3,6 +3,8 @@ name: transsion-sunmao40-customization-features-adapt
 description: >-
   Customization features adapt：只指导「客制化特性」如何适配。柱 3 **默认在对话里口述**（见 RULE-0「柱 3 口述输入」）；可选参考 **`pillar3-customization-input.md`**（表格挤、不必强填）。特性键 **`RULE-1`～`RULE-4` 与 `SM40-01`～`SM40-33` 均为客制化**。执行者把口述整理成「要做 / 不做 + 参数」后再落盘；分流在 mtk-adapt-template-router。
 disable-model-invocation: true
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # Transsion 榫卯 4.0 客制化（合并版）

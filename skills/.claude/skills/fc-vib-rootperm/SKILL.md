@@ -1,6 +1,8 @@
 ---
 name: fc-vib-rootperm
 description: Func-check skill for Transsion/MTK LRA haptic init.tp.rc node owner via adb ls -l. Verifies chown system system on tppolldrv, aw8697_haptic, aac_richtap_5f, and full vibrator_single sysfs list. Use when func-check needs 马达节点 owner、线性马达 chown、init.tp.rc 权限未生效, or vibrator_single nodes still root:root.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: 马达节点 owner 检查（system system）

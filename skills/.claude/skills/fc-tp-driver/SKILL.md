@@ -1,6 +1,8 @@
 ---
 name: fc-tp-driver
 description: Func-check skill for TP driver probe status via adb dmesg. Use when func-check task needs to verify TP IC driver loaded successfully on connected MTK device.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: TP 驱动加载检查

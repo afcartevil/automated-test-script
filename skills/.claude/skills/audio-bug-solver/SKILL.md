@@ -1,6 +1,8 @@
 ---
 name: audio-bug-solver
 description: Diagnose and fix Android audio issues across App/Framework/HAL/Kernel layers. Trigger for any audio-related problem (recording/playback/call/bluetooth/usb/effects/performance/crash/test). If evidence matches an existing workflow (uplink recording, audio native crash, GMS audio test failure), dispatch to that workflow; otherwise perform expert analysis using general Android audio knowledge and available logs/code.
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Audio Bug Solver

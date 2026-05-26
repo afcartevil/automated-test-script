@@ -1,6 +1,8 @@
 ---
 name: qualcomm-adsp-usb-pd-analysis
 description: "Qualcomm-ADSP-USB/PD: 基于battman/usbtypec架构分析USB Type-C/PD，覆盖TCPC IRQ→LPM(TCPM/PE/PRL)→DPM→PPM→pmic_glink | TCPC/PD/PPS/role_swap/hard_reset/UCSI/ADSP/TypeC插拔 | 当用户报告Qualcomm平台PD协商失败、插拔异常、role swap失败时使用"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Qualcomm ADSP USB-PD 分析

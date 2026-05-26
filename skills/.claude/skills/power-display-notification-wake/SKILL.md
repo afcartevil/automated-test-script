@@ -1,6 +1,8 @@
 ---
 name: power-display-notification-wake
 description: "通知亮屏异常分析: 收到消息通知后亮屏流程中出现的异常分析，包括有效时间判断、口袋模式、唤醒流程等 | 通知亮屏/通知不亮屏/通知唤醒/消息亮屏/notification/来消息不亮/锁屏通知/消息不亮屏 | 当用户报告与「通知亮屏异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "功耗"
 ---
 
 # 通知亮屏异常分析

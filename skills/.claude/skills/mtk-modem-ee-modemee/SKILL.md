@@ -1,6 +1,8 @@
 ---
 name: mtk-modem-ee-modemee
 description: "「MODEM_EE」MTK；MODEM字样弹窗。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # MTK_MODEM_EE_ModemEe

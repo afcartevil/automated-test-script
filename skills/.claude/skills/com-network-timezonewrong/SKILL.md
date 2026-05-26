@@ -1,6 +1,8 @@
 ---
 name: com-network-timezonewrong
 description: "「时区识别错误」COMMON；自动识别时区异常。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # COM_NETWORK_TimezoneWrong

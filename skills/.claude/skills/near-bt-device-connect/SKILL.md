@@ -1,6 +1,8 @@
 ---
 name: near-bt-device-connect
 description: "蓝牙设备连接配对异常分析: 蓝牙设备配对、连接、Profile调度过程中出现的异常分析，包括配对状态机、Profile连接、设备列表刷新等 | 蓝牙配对/蓝牙连接/配对失败/连接失败/bluetooth pairing/bluetooth connect/BT连接/耳机连接 | 当用户报告与「蓝牙设备连接配对异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # 蓝牙设备连接配对异常分析

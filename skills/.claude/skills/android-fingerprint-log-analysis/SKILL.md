@@ -1,6 +1,8 @@
 ---
 name: android-fingerprint-log-analysis
 description: "MTK-指纹: 分析指纹无法录入与OTA后指纹丢失，覆盖tran_fp驱动probe、tran_hal、TEE UUID、spmt校准 | tran_fp/tran_hal/biometrics/fingerprint/spmt/uuid/指纹/录入失败 | 当用户报告MTK设备指纹无法录入、OTA后指纹丢失时使用"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # 指纹问题日志分析（MTK）

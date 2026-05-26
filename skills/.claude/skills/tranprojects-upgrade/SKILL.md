@@ -1,6 +1,8 @@
 ---
 name: "tranprojects-upgrade"
 description: "MTK Sensorhub 3.0 tranprojects 路径升级。将旧基线 tran_projects/device/transsion 下的 sensor 配置迁移到新基线 vendor/transsion/projects。Invoke when upgrading device-vext.mk, ProjectConfig.mk, or sensor_config.json for CLx/ODx projects."
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK Sensorhub 3.0 tranprojects 路径升级

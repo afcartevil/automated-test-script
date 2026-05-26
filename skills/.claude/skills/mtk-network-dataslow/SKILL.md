@@ -1,6 +1,8 @@
 ---
 name: mtk-network-dataslow
 description: "「数据连接速率慢」MTK；视频流加载卡顿添、三方应用内数据加载失败、蜂窝数据吞吐低。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # MTK_NETWORK_DataSlow

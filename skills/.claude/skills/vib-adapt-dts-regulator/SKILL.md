@@ -1,3 +1,7 @@
+---
+funcType: "AI自动化适配"
+category: "驱动"
+---
 ﻿---
 name: vib-adapt-dts-regulator
 description: Adds or adjusts vibrator supply voltage in DTS using the regulator_vibrator naming pattern, placement alongside TP touch dtsi merges, default 3–3 V when unspecified. Use when editing device trees for vibration/LDO/regulator wiring, MTK/Transsion TP or touch dtsi folders, mentions regulator_vibrator, vibrator regulator, min-microvolt/max-microvolt, or haptic power DTS.

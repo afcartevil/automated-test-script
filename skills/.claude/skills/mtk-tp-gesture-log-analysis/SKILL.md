@@ -1,6 +1,8 @@
 ---
 name: mtk-tp-gesture-log-analysis
 description: "MTK-TP手势: 分析TP唤醒和息屏手势失败问题，检查kernel_log/main_log中驱动加载、手势模式切换、手势使能、按键上报 | double-tap/letter/swipe/gesture/双击唤醒/息屏手势/AOD手势 | 当用户报告MTK设备双击唤醒失败、息屏手势失灵、AOD手势异常时使用。触摸失效问题走mtk-tp-touch-log-analysis"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MTK TP 灭屏手势日志分析

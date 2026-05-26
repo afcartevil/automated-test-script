@@ -1,6 +1,8 @@
 ---
 name: mediatek-pd-typec-protocol-6-1
 description: "MTK-PD协议-6.1: 基于6.1内核分析PD IC与Type-C协议路径，覆盖CC_ALERT/ps_change到tcpc事件队列和policy engine | PD协商/role_swap/插拔异常/tcpc协议栈 | 当用户报告MTK 6.1内核设备PD协商失败、Type-C插拔异常时使用。6.12内核走mediatek-pd-typec-protocol-6-12"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MediaTek PD Type-C 协议栈（6.12）

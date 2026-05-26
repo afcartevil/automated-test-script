@@ -2,6 +2,8 @@
 name: vib-adapt-lra-driver
 description: Guides Transsion/MTK LRA haptic driver adaptation—ko_order_table, DTS+DWS pins vs richtap_haptic_hv, lra_fw, and dmesg probe triage. Use for 线性马达驱动适配、LRA port、probe failed、ko表、DWS、lra_fw、haptic_ram.bin、irq/reset-gpio、richtap_haptic_hv；HAL/HE 无振见 vib-log-fault，ERM 见 vib-adapt-rotor-driver。
 disable-model-invocation: false
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # LRA 驱动适配

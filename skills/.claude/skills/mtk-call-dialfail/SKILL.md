@@ -1,6 +1,8 @@
 ---
 name: mtk-call-dialfail
 description: "「拨打电话失败」MTK；通话建立慢、通话自动挂断、无SIM卡紧急呼叫、紧急号码拨打失败、未操作却自动发起通话（误拨/自动拨号）、VoWiFi视频通话连接失败、呼叫转移、呼叫等待。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # MTK_CALL_DialFail

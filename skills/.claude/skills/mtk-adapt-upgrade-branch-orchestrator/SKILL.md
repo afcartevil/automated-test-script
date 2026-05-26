@@ -1,6 +1,8 @@
 ---
 name: mtk-adapt-upgrade-branch-orchestrator
 description: 老分支升级新分支编排器：柱0信源与路径纪律→柱1器件→柱2参数（§5–§13/bridge/tran_battery/pe5-migrate）→柱3特性占位；柱3正文 handoff 至 transsion-sunmao40-customization-features-adapt。handoff 到 mtk-adapt-template-router 与 mtk-adapt-template-*。PE5 须 Read transsion-pe5-migrate-dual-cp-k612。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK 老分支升级新分支：编排器

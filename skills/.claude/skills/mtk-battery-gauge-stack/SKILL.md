@@ -1,6 +1,8 @@
 ---
 name: mtk-battery-gauge-stack
 description: "MTK电池-gauge: 分析power_supply注册与gauge调用链，覆盖battery manager到mt63xx-gauge实现 | battery/SOC/fgauge/power_supply/电量不准/电量跳变/充电百分比异常 | 当用户报告MTK设备SOC跳变、电量不准、fgauge数据异常、battery设备注册问题时使用。充电流程走transsion-charger-orchestrator"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MTK 电量计与电池栈

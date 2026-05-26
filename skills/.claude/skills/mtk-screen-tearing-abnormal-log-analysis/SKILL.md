@@ -1,6 +1,8 @@
 ---
 name: mtk-screen-tearing-abnormal-log-analysis
 description: "MTK显示-花屏撕裂: 分析花屏、撕裂、残影拖影、局部异常问题，覆盖SurfaceFlinger→DRM/DSI链路 | tearing/vsync/te/frame_done/cmdq/dsi_underrun/CMDQ_timeout/wait_TE_timeout/花屏/雪花/撕裂/残影 | 当用户报告MTK设备运行时花屏、画面撕裂、残影、局部花屏时使用。注意: 开机阶段花屏走mtk-panel-load-abnormal-log-analysis，亮灭屏异常走mtk-suspend-resume-abnormal-log-analysis"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MTK 平台 花屏/撕裂/画面异常 分析

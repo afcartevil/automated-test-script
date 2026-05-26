@@ -1,3 +1,7 @@
+---
+funcType: "AI自动化适配"
+category: "驱动"
+---
 ﻿---
 name: tp-adapt-factory-sysfs
 description: >-

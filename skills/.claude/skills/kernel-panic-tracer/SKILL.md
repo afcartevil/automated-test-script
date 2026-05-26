@@ -6,6 +6,8 @@ module: kernel-driver
 engine: diagnostic
 source: manual
 status: active
+funcType: "AI自检工具"
+category: "内核"
 ---
 
 # 内核Panic追踪Skill

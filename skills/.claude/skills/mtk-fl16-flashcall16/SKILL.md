@@ -1,6 +1,8 @@
 ---
 name: mtk-fl16-flashcall16
 description: "「FLASH_CALL_16」MTK；FLASH_CALL失败、FLASH_CALL异常。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # MTK_FL16_FlashCall16

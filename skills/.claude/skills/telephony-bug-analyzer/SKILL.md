@@ -6,6 +6,8 @@ module: telephony
 engine: diagnostic
 source: manual
 status: active
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # 通信模块Bug分析Skill

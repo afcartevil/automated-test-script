@@ -1,6 +1,8 @@
 ---
 name: mtk-adapt-template-device-pd-ic
 description: MTK 项目 PD IC 适配模板，覆盖 kernel dtsi、TCPC/PD 构建开关、ko 打包、dws/pinctrl 以及 bootloader 联动点。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK 器件模板：PD IC

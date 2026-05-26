@@ -1,6 +1,8 @@
 ---
 name: fc-vib-rotor
 description: Func-check skill for MTK ERM rotor vibrator (regulator-vibrator): dmesg probe, /sys/class/leds/vibrator activate and duration nodes. Use when func-check needs 转子马达、regulator-vibrator、regulator_vibrator probe、转子无振动、ERM vibrator 功能验证。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: 转子马达（regulator-vibrator）功能检查

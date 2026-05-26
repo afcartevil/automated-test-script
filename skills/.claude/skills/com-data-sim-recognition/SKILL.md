@@ -1,6 +1,8 @@
 ---
 name: com-data-sim-recognition
 description: "开机SIM卡识别异常分析: 覆盖开机SIM卡识别全流程：UiccController创建与RADIO_AVAILABLE接收、ICC状态获取、UiccCardApplication创建与通知、UiccProfile外部状态设置、ACTION_SIM_STATE_CHANGED广播等 | SIM卡/SIM/识别/无SIM/不识卡/检测不到卡/SIM卡识别/UiccController | 当用户报告与「开机SIM卡识别异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # 开机SIM卡识别异常分析

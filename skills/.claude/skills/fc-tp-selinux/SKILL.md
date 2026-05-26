@@ -1,6 +1,8 @@
 ---
 name: fc-tp-selinux
 description: Func-check skill for Transsion/MTK TP proc/sysfs SELinux labels and shell read access via adb. Use when func-check needs TP se节点检查、ls -Z proc context、Permission denied on gesture/tp_panel_test/large_area nodes, or unlabeled TP proc before sepolicy port.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: TP SELinux 节点检查

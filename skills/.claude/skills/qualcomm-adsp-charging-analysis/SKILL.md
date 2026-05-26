@@ -1,6 +1,8 @@
 ---
 name: qualcomm-adsp-charging-analysis
 description: "Qualcomm-ADSP-充电: 基于battman/battmngr/charger架构分析USB插入后充电识别与充电流程 | BC1.2/APSD/QC/HVDCP/UFCS/RFC/TFCP/charge_pump/DVCHG/HL7139A/ICM | 当用户报告Qualcomm平台充电慢、识别异常、DCP/QC分流错误、DPDM握手失败时使用"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Qualcomm ADSP Charging 分析

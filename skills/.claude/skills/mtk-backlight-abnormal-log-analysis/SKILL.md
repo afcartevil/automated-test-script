@@ -1,6 +1,8 @@
 ---
 name: mtk-backlight-abnormal-log-analysis
 description: "MTK显示-背光: 分析背光设置异常、闪屏、黑屏问题，覆盖Framework→Kernel背光链路 | backlight/brightness/aal/lcm_setbacklight_cmdq/LocalDisplayAdapter/ESS/闪高亮/闪黑屏 | 当用户报告MTK设备亮度异常、闪屏、黑屏、背光失效、自动亮度跳变时使用。注意: 背光问题可能伴随亮灭屏异常(mtk-suspend-resume-abnormal-log-analysis)，开机黑屏走mtk-panel-load-abnormal-log-analysis"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MTK 平台 BackLight 设置异常/闪屏/黑屏 分析

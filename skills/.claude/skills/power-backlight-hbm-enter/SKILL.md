@@ -1,6 +1,8 @@
 ---
 name: power-backlight-hbm-enter
 description: "HBM高亮模式进入/退出异常分析: 环境光超过/低于20000lux时进入/退出HBM高亮模式过程中出现的异常分析 | HBM/高亮/high brightness/20000lux/强光/户外亮度/阳光/最大亮度 | 当用户报告与「HBM高亮模式进入/退出异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "功耗"
 ---
 
 # HBM高亮模式进入/退出异常分析

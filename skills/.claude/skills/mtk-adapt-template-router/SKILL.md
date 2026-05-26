@@ -1,6 +1,8 @@
 ---
 name: mtk-adapt-template-router
 description: MTK 适配总路由：器件 / 基本充电能力参数 / 客制化特性三柱分流。柱 3 执行正文指向 transsion-sunmao40-customization-features-adapt；柱 3 **默认接受对话口述**（RULE-0），可选对照 **`pillar3-customization-input.md`**。新分支侧路径纪律、禁止全树反查、强制 Read 索引与升级 handoff 见正文「新分支侧通用纪律」。老→新升级时先经 mtk-adapt-upgrade-branch-orchestrator 柱0～2，再回到本 router 按相同三柱落盘。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK 适配总路由

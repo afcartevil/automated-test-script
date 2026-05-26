@@ -1,6 +1,8 @@
 ---
 name: mtk-adapt-template-basic-charging-capability
 description: MTK 基本充电能力参数适配模板。LK tc_charger_lk.dtsi 强约束、tran_otg 常态保留、`temp_forecast`/`pa_temp_gap` 默认 500 等见正文。老 mediatek `&charger`→`tc,charger` 的 DROP/`single_batt` USER/`dynamic_mivr_vol` 等见 **`transsion-charger-dtsi-driver-bridge`**「老 `&charger`」节。`tc_charger.dtsi`：`ftm_cp_num`（CP 颗数）、`batt_ht/lt`+vote+`kpoc_batt_*`+`*_dis_chg` 模板与电池温区待对齐（TODO）、`&u2port0` 眼图参数从老树同步、`&mt6375_chg` 禁用随器件适配。其余含电压电流阈值、温区策略、满充与保护策略等。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK 模板：基本充电能力参数适配

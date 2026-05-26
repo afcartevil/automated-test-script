@@ -1,6 +1,8 @@
 ---
 name: "scp-upgrade"
 description: "MTK Sensorhub 3.0 SCP code upgrade from OLD project to new baseline. ⚠️ MANDATORY: MUST ask user for confirmation before each step, NEVER proceed without user input. Invoke when upgrading SCP config or migrating sensor configurations between projects."
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK Sensorhub 3.0 SCP 升级调试

@@ -1,3 +1,7 @@
+---
+funcType: "AI故障分析"
+category: "驱动"
+---
 name: transsion-extcon-usb-role-bridge
 description: "Transsion-extcon-USB角色桥: 分析tran_extcon_usb桥接逻辑，TCPC+power_supply事件→extcon+usb_role_switch | tran_extcon_usb/extcon/usb_role/角色错乱/DR_SWAP/Host/Device | 当用户报告extcon角色映射错乱、Host/Device/NONE下发异常时使用"
 ---

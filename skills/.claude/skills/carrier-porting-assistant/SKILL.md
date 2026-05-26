@@ -6,6 +6,8 @@ module: telephony
 engine: adaptation
 source: manual
 status: active
+funcType: "AI自动化适配"
+category: "通信"
 ---
 
 # 运营商需求移植Skill

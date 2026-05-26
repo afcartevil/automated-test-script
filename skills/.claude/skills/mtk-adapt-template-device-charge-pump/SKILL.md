@@ -1,6 +1,8 @@
 ---
 name: mtk-adapt-template-device-charge-pump
 description: MTK 项目 charge pump 适配模板，覆盖 kernel dtsi 参数、构建与打包、dws/pinctrl 映射以及 bootloader 依赖。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK 器件模板：Charge Pump

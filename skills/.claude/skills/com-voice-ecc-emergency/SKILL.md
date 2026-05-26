@@ -1,6 +1,8 @@
 ---
 name: com-voice-ecc-emergency
 description: "紧急拨号ECC异常分析: 覆盖紧急拨号ECC号码识别、云端/本地配置文件更新链路、拦截判定(MTK/QCOM/Unisoc blocker)、版本检查、MCCMNC刷新、BlockList更新等全链路的异常分析 | 紧急拨号/ECC/紧急呼叫/紧急号码/EmergencyNumber/emergency/112/110 | 当用户报告与「紧急拨号ECC异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # 紧急拨号ECC异常分析

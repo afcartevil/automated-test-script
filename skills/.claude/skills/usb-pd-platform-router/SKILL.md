@@ -1,6 +1,8 @@
 ---
 name: usb-pd-platform-router
 description: “USB-PD平台路由: 对USB Type-C/PD问题做平台级入口分流，区分Qualcomm ADSP架构与MediaTek tcpc/pd协议栈 | USB/PD/TypeC/插拔/协商/Qualcomm/MTK | 当用户只描述USB/PD/插拔/协商异常但未明确平台或主域时使用——本skill为路由入口”
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # USB PD 平台入口分流

@@ -1,6 +1,8 @@
 ---
 name: uns-sms-mmssendfail
 description: "「发送彩信失败」UNISOC。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # UNS_SMS_MmsSendFail

@@ -1,6 +1,8 @@
 ---
 name: mtk-suspend-resume-abnormal-log-analysis
 description: "MTK显示-亮灭屏: 分析亮灭屏异常、休眠唤醒失败、按键无响应问题，覆盖PowerManager→DRM→Panel链路 | PowerManagerService/Waking_up/Going_to_sleep/lcm_resume/lcm_suspend/mtk_drm_crtc/screen/wakeup/AOD/亮屏无响应/灭屏未真灭/唤醒黑屏 | 当用户报告MTK设备按电源键不亮/不灭、唤醒失败、灭屏后背光仍亮时使用。注意: 亮灭屏可能伴随背光问题→mtk-backlight-abnormal-log-analysis，唤醒花屏可能关联撕裂→mtk-screen-tearing-abnormal-log-analysis"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MTK 平台 亮灭屏/休眠唤醒 异常 分析

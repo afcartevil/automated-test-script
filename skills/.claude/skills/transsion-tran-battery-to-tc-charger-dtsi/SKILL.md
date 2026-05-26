@@ -9,6 +9,8 @@ description: >-
   在阶段 3/3B 中 Read 后执行；用户也可单独 @ 本 skill 做即席转换。不依赖先读
   transsion-charger-dtsi-driver-bridge。
 disable-model-invocation: true
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # tran_battery → `&charger`（6.12）独立转换 skill

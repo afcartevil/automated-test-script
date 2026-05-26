@@ -1,6 +1,8 @@
 ---
 name: mtk-adapt-template-device-gauge
 description: MTK 项目 gauge 器件配置模板，覆盖 kernel dtsi、构建集成、可选模块打包、按需 dws/pinctrl；LK 中与 gauge 类型相关的 Tran 宏（TRAN_SINGLE_GAUGE / TRAN_DUAL_BATTERY / TRAN_LOW_BATTERY_SUPPORT）语义与核对纪律见 § Bootloader。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK 器件模板：Gauge

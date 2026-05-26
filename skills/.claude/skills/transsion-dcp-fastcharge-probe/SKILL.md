@@ -1,6 +1,8 @@
 ---
 name: transsion-dcp-fastcharge-probe
 description: “Transsion-快充探测: 分析BC1.2得到DCP后快充探测与算法选型，区分tchg_alg五套算法选型 | DCP/pe5/pd/hvdcp20/tc30/pe20/tfcp_adapter/PPS | 当用户报告快充算法选型异常、RFC失败后PD/PPS接管问题、hvdcp20/tc30未起来时使用”
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Transsion DCP 后快充探测

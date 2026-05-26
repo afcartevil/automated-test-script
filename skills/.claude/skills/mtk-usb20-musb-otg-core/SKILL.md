@@ -1,6 +1,8 @@
 ---
 name: mtk-usb20-musb-otg-core
 description: “MTK-USB20-OTG: 分析MUSB的DRD/OTG/Host/Gadget路径，区分未识别OTG与已识别但上层未展示 | musb/otg/DRD/UHC/UDC/OTG识别/USB角色异常 | 当用户报告MTK设备OTG无法识别、USB角色切换失败时使用。Device模式枚举走mtu3-usb-device-core，Host模式xHCI走mediatek-mtu3-xhci-host”
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MTK USB20 MUSB OTG 核心

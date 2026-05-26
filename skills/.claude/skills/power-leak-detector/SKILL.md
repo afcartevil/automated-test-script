@@ -6,6 +6,8 @@ module: power-mgmt
 engine: diagnostic
 source: manual
 status: active
+funcType: "AI故障分析"
+category: "功耗"
 ---
 
 # 功耗泄漏检测Skill

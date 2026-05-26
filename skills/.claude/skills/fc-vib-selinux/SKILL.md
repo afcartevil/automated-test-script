@@ -1,6 +1,8 @@
 ---
 name: fc-vib-selinux
 description: Func-check skill for Transsion/MTK LRA/haptic dev and LED sysfs SELinux labels and shell access via adb. Use when func-check needs 马达 se节点检查、vibrator/richtap/haptic Permission denied、unlabeled haptic nodes on aw8697/aac_richtap or vibrator_single rtp sysfs before sepolicy port.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: 马达 SELinux 节点检查

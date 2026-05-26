@@ -160,7 +160,7 @@ async function doImport() {
     let res: ImportSkillsResult
     if (mode.value === 'path') {
       res = await importFromPath(
-        pathItems.value.map(s => ({ name: s.name, sourcePath: s.sourcePath })),
+        pathItems.value.map(s => ({ name: s.name, sourcePath: s.sourcePath, category: s.category })),
         overwrite.value,
       )
     } else {

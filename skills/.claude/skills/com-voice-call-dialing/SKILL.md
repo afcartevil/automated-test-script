@@ -1,6 +1,8 @@
 ---
 name: com-voice-call-dialing
 description: "通话拨号流程异常分析: 覆盖来电接入、去电发起、通话状态迁移、域选路(IMS/CS)与重拨、来电筛选与重定向、RTT/视频能力协商、会议通话/合并、PhoneInterfaceManager无线电/调制解调器流程的全链路分析 | 通话/拨号/来电/去电/掉话/掉线/call drop/通话中断 | 当用户报告与「通话拨号流程异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # 通话拨号流程异常分析

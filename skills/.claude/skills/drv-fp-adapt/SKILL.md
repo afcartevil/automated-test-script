@@ -2,6 +2,8 @@
 name: drv-fp-adapt
 description: 
   指导 Transsion/MTK Android 升级项目 vendor 侧指纹 P1 适配：归一化与非归一化判定、驱动 compatible、DTS/DWS、工模与 Sensor.json、KO/ProjectConfig/device-vext、ODM TA 与指纹库路径。当用户要进行**指纹 P1 调试**、**榫卯迁移**或**驱动/库适配**，且提供或愿意补充**目标项目代号**（如 LJ8、X6876、X6885、CM5）、**平台/SoC**（如 MT6878、MT6789）、**kernel_device_modules 版本**（如 kernel-6.1、kernel-6.12）、**指纹 IC 厂商与型号**（如 GOODIX GW9598、ANC、Silead）时使用；执行时以用户指定目标项目和升级前代码为落地边界，不因复用机型名或参考案例名修改其他项目目录；主 SOP https://transsioner.feishu.cn/wiki/A74wwMGsLiTCBXkMJjVccUDfnKd；CM5/X6885/归一化榫卯子文档与 EXTENSION_*.md 见 SKILL 正文。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # DRV_FP_Adapt — 升级项目指纹 P1 调试

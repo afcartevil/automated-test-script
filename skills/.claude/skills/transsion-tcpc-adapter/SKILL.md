@@ -1,6 +1,8 @@
 ---
 name: transsion-tcpc-adapter
 description: "Transsion-TCPC适配: 分析tc_tcpc适配层，定位MTK TCP_NOTIFY→TC_TYPEC/TC_PD事件映射 | tc_tcpc/TCP_NOTIFY/TC_TYPEC/TC_PD/DR_SWAP/TypeC事件 | 当用户报告上层收不到正确Type-C/PD事件、DR_SWAP异常时使用。TypeC协议走mediatek-pd-typec-analysis"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Transsion TCPC 适配层

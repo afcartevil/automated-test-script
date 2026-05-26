@@ -1,6 +1,8 @@
 ---
 name: qualcomm-kernel-adsp-bridge
 description: "Qualcomm-Kernel-ADSP桥: 描述msm-kernel上pmic_glink与ADSP固件的交界，双客户端(battery_charger/ucsi)与opcode对应关系 | pmic_glink/opcode/battery_charger/ucsi/ADSP固件/AP不同步 | 当用户报告Qualcomm固件更新后AP不同步，或需同时看UCSI与qti_battery_charger时使用"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Qualcomm Kernel ↔ ADSP（pmic_glink 交界）

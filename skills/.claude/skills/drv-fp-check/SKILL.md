@@ -1,6 +1,8 @@
 ---
 name: drv-fp-check
 description: 检查 Transsion/MTK Android 升级项目指纹与人脸调试项：指纹 rc/xml、DTS/DWS GPIO、tran-keys、驱动 compatible；人脸 Face HAL 开机 log 初始化、adb face-service 进程、算法 st_version。当用户要求检查指纹配置、人脸服务、facehal 初始化、face 算法版本或生物识别调试项时使用；格式和边界参照 DRV_FP_Adapt。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # DRV_FP_Check - 升级项目指纹 / 人脸调试项检查

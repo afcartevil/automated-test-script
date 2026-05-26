@@ -1,6 +1,8 @@
 ---
 name: com-sim-ussdflow
 description: "「USSD流程异常」COMMON；拨号进入运营商菜单失败、drops USSI、drop volte、USSD返回内容未提示/无响应。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # COM_SIM_UssdFlow

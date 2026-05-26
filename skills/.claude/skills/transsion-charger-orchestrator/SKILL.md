@@ -1,3 +1,7 @@
+---
+funcType: "AI故障分析"
+category: "驱动"
+---
 name: transsion-charger-orchestrator
 description: "Transsion-充电主控: 分析tc_charger统一编排流程、vote聚合与主策略线程 | tc_charger/plug_in/vote/charging_disable/hiz/JEITA | 当用户报告充电异常、plug in/out问题、多充电IC编排异常时使用。高温低CV满充走transsion-batt-high-temp-low-cv-eoc"
 ---

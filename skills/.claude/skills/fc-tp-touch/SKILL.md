@@ -1,6 +1,8 @@
 ---
 name: fc-tp-touch
 description: Func-check skill for TP touch event reporting via adb getevent. Use when func-check task needs to verify ABS_MT touch coordinates on connected device.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: TP 触摸上报检查

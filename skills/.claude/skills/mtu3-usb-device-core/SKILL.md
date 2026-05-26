@@ -1,3 +1,7 @@
+---
+funcType: "AI故障分析"
+category: "驱动"
+---
 name: mtu3-usb-device-core
 description: "MTK-MTU3-USB-Device: 分析MTU3 USB device core与DRD行为，覆盖extcon和usb_role_switch进入MTU3后的角色应用、gadget ready与cdp-block清除 | mtu3/ssusb/USB枚举失败/OTG角色切换/dr_mode异常/gadget_ready/cdp_block | 当用户报告MTK设备USB枚举失败、OTG角色切换异常、gadget ready缺失时使用。Host模式xHCI走mediatek-mtu3-xhci-host，OTG基本路径走mtk-usb20-musb-otg-core"
 ---

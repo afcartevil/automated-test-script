@@ -1,6 +1,8 @@
 ---
 name: com-data-datasetupfail
 description: "「数据连接建立失败」COMMON；data call失败、没有发起data call、数据业务无法上网、数据断连。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # COM_DATA_DataSetupFail

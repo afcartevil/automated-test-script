@@ -1,6 +1,8 @@
 ---
 name: mtk-adapt-upgrade-inventory-checklist
 description: 老分支升级柱0信源清单：OLD_TRAN_ROOT 与新侧路径拼凑、DWS 映射与 GPIO 溯源；A.3 柱2节点闸门索引；A.4 柱2映射完成后反填 rg。与编排器三柱模型对齐。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK 升级适配：Inventory 清单

@@ -1,3 +1,7 @@
+---
+funcType: "AI自动化适配"
+category: "驱动"
+---
 ﻿---
 name: tp-adapt-ko-order
 description: Verifies Transsion project ko_order_table.csv entries for touch-panel (TP) modules when debugging shutdown paths where TP .ko must not be loaded or must match a fixed early-load pattern. Guides CSV row checks (odm/ramdisk, BootTime.completed, Recovery), paths under kernel_device_modules touchscreen/transsion, and on-device sanity checks. Use when adapting a new project, merging KO tables, or when JIRA/logs mention shutdown/reboot with TP driver, insmod/modprobe of focaltech/goodix/nvt/chsc adaptive-ts, or ko_order_table.

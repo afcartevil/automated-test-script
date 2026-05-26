@@ -1,6 +1,8 @@
 ---
 name: qualcomm-msm-kernel-charging-supply-analysis
 description: "Qualcomm-MSM-Kernel-充电电源: 基于msm-kernel drivers/power/supply分析Qualcomm充电与电源，覆盖qti_battery_charger/pmic_glink/USB/BATT/WLS psy | psy/uevent/ICL/healthd/battery_charger | 当用户报告Qualcomm充电类型异常、psy uevent、healthd读失败时使用"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Qualcomm msm-kernel Charging / power_supply 分析

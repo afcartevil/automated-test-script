@@ -1,6 +1,8 @@
 ---
 name: mtk-call-incominganswerfail
 description: "「来电接听失败」MTK。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # MTK_CALL_IncomingAnswerFail

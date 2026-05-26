@@ -1,6 +1,8 @@
 ---
 name: transsion-batt-high-temp-low-cv-eoc
 description: "Transsion-高温低CV满充: 分析高温低CV下EOC完成后SOC锁定、高温停充上报、vote停充链路 | CHG_BAT_HT_EOC/EOC/高温停充/不报百/low_CV/满充 | 当用户报告低CV充不到100%、误报/不报高温满充时使用。充电主控走transsion-charger-orchestrator"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Transsion：高温低 CV 满充判定与上报（不报百）

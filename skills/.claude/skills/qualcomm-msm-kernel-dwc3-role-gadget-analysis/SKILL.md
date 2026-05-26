@@ -1,6 +1,8 @@
 ---
 name: qualcomm-msm-kernel-dwc3-role-gadget-analysis
 description: "Qualcomm-MSM-Kernel-DWC3: 基于msm-kernel drivers/usb/dwc3/roles/gadget/udc分析DWC3 DRD/OTG角色切换与设备枚举 | dwc3/role_switch/Host/Device/gadget/UDC/soft_connect | 当用户报告Qualcomm DWC3角色错乱、Host/Device切换失败、gadget不枚举时使用"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Qualcomm msm-kernel DWC3 / Role / Gadget 分析

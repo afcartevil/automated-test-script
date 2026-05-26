@@ -1,6 +1,8 @@
 ---
 name: spd-cpu-feature-check
 description: 指导手机 SPD「CPU / 调度」维度功能检查：覆盖感知调度 3.0（属性、init.svc、enable、Aegean dumpsys 接口与清单人工项）、性能统计 perf log、CPU 调度健康标准、cgroup 分组策略；每项提供独立可执行脚本（adb 连机），输出 PASS/FAIL/BLOCKED 与证据片段。用户提到 SPD CPU、SPD 调度、transched、perf log、tran_health_sched、Aegean cgroup、感知调度 3.0、trans_sched、uias_test_api 检查时使用。
+funcType: "AI自检工具"
+category: "通用"
 ---
 
 # SPD-CPU / 调度 Feature 功能检查

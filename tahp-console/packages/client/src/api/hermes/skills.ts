@@ -5,6 +5,10 @@ export type SkillSource = 'builtin' | 'hub' | 'local' | 'tahp'
 export interface SkillInfo {
   name: string
   description: string
+  group?: string        // 业务模块（内核/驱动/通信/功耗）
+  funcType?: string     // 功能类型（AI故障分析/AI自动化适配/AI自检工具）
+  version?: string      // 版本号（来自 frontmatter）
+  updatedAt?: number    // 最后更新时间戳（ms），用于"最近更新"排序
   enabled?: boolean
   source?: SkillSource
   modified?: boolean
@@ -205,11 +209,57 @@ export async function scanPath(sourcePath: string): Promise<PathScanResult> {
 
 /** 从本地路径导入技能（服务器直接拷贝目录，无需传输文件内容） */
 export async function importFromPath(
-  skills: { name: string; sourcePath: string }[],
+  skills: { name: string; sourcePath: string; category?: string }[],
   overwrite: boolean,
 ): Promise<ImportSkillsResult> {
   return request<ImportSkillsResult>('/api/hermes/skills/import-from-path', {
     method: 'POST',
     body: JSON.stringify({ skills, overwrite }),
   })
+}
+
+export interface BackfillResult {
+  updated: string[]
+  alreadyOk: number
+  unknown: string[]
+  message: string
+}
+
+/** 一键回填所有已导入 skill 的 funcType / category 字段 */
+export async function backfillCategories(): Promise<BackfillResult> {
+  return request<BackfillResult>('/api/hermes/skills/backfill-categories', {
+    method: 'POST',
+  })
+}
+
+// ── 变更历史 ──────────────────────────────────────────────────────────────────
+
+export interface SkillCommit {
+  hash: string
+  shortHash: string
+  date: string     // ISO 8601
+  author: string
+  message: string
+}
+
+export interface SkillHistoryResult {
+  commits: SkillCommit[]
+  message?: string
+}
+
+export interface SkillCommitDetail {
+  hash: string
+  date: string
+  author: string
+  message: string
+  body: string
+  diff: string
+}
+
+export async function fetchSkillHistory(category: string, skill: string): Promise<SkillHistoryResult> {
+  return request<SkillHistoryResult>(`/api/hermes/skills/${category}/${skill}/history`)
+}
+
+export async function fetchSkillCommitDetail(category: string, skill: string, hash: string): Promise<SkillCommitDetail> {
+  return request<SkillCommitDetail>(`/api/hermes/skills/${category}/${skill}/history/${hash}`)
 }

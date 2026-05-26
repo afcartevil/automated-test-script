@@ -1,6 +1,8 @@
 ---
 name: com-data-ddsswitchfail
 description: "「智能双卡切换失败」COMMON。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # COM_DATA_DdsSwitchFail

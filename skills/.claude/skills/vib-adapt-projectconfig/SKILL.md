@@ -1,3 +1,7 @@
+---
+funcType: "AI自动化适配"
+category: "驱动"
+---
 ﻿---
 name: vib-adapt-projectconfig
 description: Guides Transsion/MTK linear vibrator macro adaptation by checking vibrator.mk enablement and adding missing macro controls to the matching projects/<project>/ProjectConfig.mk. Use when adapting or debugging LRA/linear vibrator support, Richtap/TikTap macros, vibrator.mk, ProjectConfig.mk, TRAN_RICHTAP_SUPPORT, TRAN_VIB_LIB_NAME, CUSTOM_KERNEL_VIBRATOR, or ro.vendor.vibrator.support.

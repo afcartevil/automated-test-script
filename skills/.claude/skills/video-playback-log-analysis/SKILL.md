@@ -1,6 +1,8 @@
 ---
 name: android-video-playback-log-analysis
 description: "Android-视频播放: 分析视频播放异常(黑屏/花屏/起播失败/卡住)，覆盖MediaCodec/VPUD/C2MtkVdec解码链路 | MediaCodec/VPUD/C2MtkVdec/decoder/codec/视频播放/黑屏/花屏/起播失败 | 当用户报告Android设备视频播放黑屏、花屏、起播失败、解码失败时使用。第三方视频播放卡走bug-scenario-video-stuck-audio"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Android Video Playback Log Analysis

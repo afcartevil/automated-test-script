@@ -1,6 +1,8 @@
 ---
 name: fc-tp-gesture
 description: Func-check skill for TP gesture proc node via adb. Use when func-check task needs to verify gesture_function node on connected device.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: TP 手势节点检查

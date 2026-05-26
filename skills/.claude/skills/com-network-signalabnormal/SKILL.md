@@ -1,6 +1,8 @@
 ---
 name: com-network-signalabnormal
 description: "「信号异常」COMMON；无信号、信号差、无法驻网、信号不稳定、蜂窝信号弱、信号格数低、网络质量差、网络异常切换、异常驻留5G、G不稳定、频繁掉网、移动网络丢失、驻网丢失、重启后无法驻网/仅紧急呼叫、网络制式显示异常、无服务、…。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # COM_NETWORK_SignalAbnormal

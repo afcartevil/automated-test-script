@@ -1,6 +1,8 @@
 ---
 name: near-bt-opp-transfer
 description: "蓝牙OPP文件传输异常分析: 蓝牙通过OPP协议发送或接收文件过程中出现的异常分析，包括SDP查询、OBEX会话、传输链路、文件路径解析等 | 蓝牙传输/蓝牙发送/蓝牙接收/文件传输/蓝牙分享/bluetooth transfer/OPP/OBEX | 当用户报告与「蓝牙OPP文件传输异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # 蓝牙OPP文件传输异常分析

@@ -1,6 +1,8 @@
 ---
 name: mediatek-mtu3-xhci-host
 description: "MTK-MTU3-xHCI-Host: 分析SSUSB/MTU3在OTG下切USB Host(xHCI)路径及xhci驱动probe初始化顺序 | xhci/MTU3/ssusb_host_init/clk_mgr/Host模式/切Host无枚举 | 当用户报告MTK设备Host模式无xHCI、无枚举、xhci反复register时使用。Device模式走mtu3-usb-device-core，OTG走mtk-usb20-musb-otg-core"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MTU3 → xHCI Host：切换与初始化

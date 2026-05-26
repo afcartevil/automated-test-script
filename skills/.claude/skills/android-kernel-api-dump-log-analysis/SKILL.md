@@ -1,6 +1,8 @@
 ---
 name: android-kernel-api-dump-log-analysis
 description: "MTK-KernelAPI-dump: 分析Kernel API dump(EMI MPU Violation)，通过Plat_Parser_mpu/smpu完成master/region owner双向校验 | EMI_MPU/MPU_Violation/CRDISPATCH/SYS_KERNEL_LOG/violation_address | 当用户提供KernelAPI dump DB、EMI MPU violation分析时使用"
+funcType: "AI故障分析"
+category: "内核"
 ---
 
 # Kernel API Dump 问题分析 Skill

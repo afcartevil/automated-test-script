@@ -1,3 +1,7 @@
+---
+funcType: "AI自动化适配"
+category: "驱动"
+---
 ﻿---
 name: tp-adapt-dws-pin
 description: Aligns and audits Mediatek/Transsion touch-panel DWS pins against TP GPIO lines in DTS (RST/INT/AVDD/VDDI modes and pulls), and enforces identical DWS across all project copies. Use when modifying or checking TP DWS, GPIO mismatch with *_touch.dtsi, TP bring-up, or porting touch under arch/arm64/boot/dts/mediatek/tp.

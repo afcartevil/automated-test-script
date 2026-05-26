@@ -2,6 +2,8 @@
 name: vib-adapt-rotor-driver
 description: Guides Transsion/MTK ERM rotor vibrator driver adaptation via regulator-vibrator.c—DWS PMIC/LDO, DTS in *_touch.dtsi, and KO/ProjectConfig. Use when adapting 转子马达驱动、ERM、regulator-vibrator、vib-supply、min-volt/max-volt、probe failed、port 参考机型；上电验证用 fc-vib-rotor。
 disable-model-invocation: false
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # 转子马达驱动适配

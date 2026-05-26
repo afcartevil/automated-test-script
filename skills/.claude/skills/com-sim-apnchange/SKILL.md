@@ -1,6 +1,8 @@
 ---
 name: com-sim-apnchange
 description: "「APN配置变更」COMMON；APN启用/禁用开关或配置项的异常、APN参数显示异常、APN界面显示异常。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # COM_SIM_ApnChange

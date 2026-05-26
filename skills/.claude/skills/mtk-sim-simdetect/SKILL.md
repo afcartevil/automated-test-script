@@ -1,6 +1,8 @@
 ---
 name: mtk-sim-simdetect
 description: "「识卡异常」MTK；无法识别到sim卡、状态栏不显示信号塔、SIM卡状态更新不及时、SIM卡状态异常。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # MTK_SIM_SimDetect

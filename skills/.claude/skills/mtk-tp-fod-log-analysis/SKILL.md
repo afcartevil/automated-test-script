@@ -1,6 +1,8 @@
 ---
 name: mtk-tp-fod-log-analysis
 description: "MTK-TP屏下指纹: 分析TP侧FOD录入失败问题，检查kernel_log中fingerprint_status写入、TP模式切换、fod finger down/up上报 | FOD/fingerprint/finger_status/屏下指纹/指纹录入失败/指纹唤醒 | 当用户报告MTK设备屏下指纹录入失败、FOD唤醒失败、FOD按压事件丢失时使用。TP触摸问题走mtk-tp-touch-log-analysis"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MTK TP FOD 异常日志分析

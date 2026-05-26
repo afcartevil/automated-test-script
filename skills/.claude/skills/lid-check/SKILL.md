@@ -1,6 +1,8 @@
 ---
 name: "lid-check"
 description: "检查 MTK 项目 cgen/inc 下 Custom_NvRam_LID.h 枚举与 CFG_file_info_custom.h 数组中的 LID 是否一一对应、顺序一致、无缺漏。当用户要求检查 LID 缺失、NV 标志位偏移、cgen LID 对应关系时调用。"
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # LID 缺失检查

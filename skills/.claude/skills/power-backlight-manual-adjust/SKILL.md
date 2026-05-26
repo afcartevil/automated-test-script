@@ -1,6 +1,8 @@
 ---
 name: power-backlight-manual-adjust
 description: "手动背光调节异常分析: 用户手动拖动亮度条调节亮度过程中出现的异常分析 | 手动亮度/手动背光/manual brightness/拖动亮度/亮度条/手动调节/亮度滑块 | 当用户报告与「手动背光调节异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "功耗"
 ---
 
 # 手动背光调节异常分析

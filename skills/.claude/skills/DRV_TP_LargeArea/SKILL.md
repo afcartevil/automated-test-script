@@ -1,6 +1,8 @@
 ---
 name: "DRV_TP_LargeArea"
 description: "针对MTK平台锁屏界面TP大面积灭屏（口袋模式防误触）功能失效问题（包含大面积灭屏失效、大面积不灭屏、铜柱测试概率不灭屏等场景），通过分析kernel_log中TP驱动加载、口袋模式节点写入、大面积键值上报，以及main_log/sys_log中framework接收上层按键处理，定位问题根因并输出分析结论。当用户提供包含touch/fts/cts/gtp/nvt/chsc/ilitek/tcm/large area/KeyguardGesture/keycode等关键字的日志，且JIRA问题模块为(Drv) TP并涉及锁屏大面积灭屏失效时使用。"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MTK锁屏界面TP大面积灭屏失效问题分析

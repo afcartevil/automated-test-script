@@ -1,6 +1,8 @@
 ---
 name: drv-audio-adapt
 description: 协助开发者完成 MTK 平台 Audio P1 升级移植（DRV_Audio_Adapt），覆盖 vnd12 非榫卯 → vnd16 榫卯 与 vnd14 非榫卯 → vnd14 榫卯 两种场景；按 SOP 分阶段配置 ProjectConfig.mk 音频宏控、移植 PA（AW87xxx / FS1599N / FS1589N / OCA72xxx）固件/参数/aurisys_config、移植平台aurisys_config、移植 audio_device.xml、audiotest 音源、DTS（tran_audio_controller / tran_pa_type / typec switch）、DWS GPIO（preloader / tools/dct / proprietary/custom）与工模 factory.ini。触发词：DRV_Audio_Adapt、DRV Audio Adapt、Audio bringup、Audio P1 调试 / 升级 / 移植、vnd 升级、vnd12 vnd14 vnd16、榫卯 / sunmao / 非榫卯、ProjectConfig.mk 音频宏控、PA 移植、AW87xxx、FS1599N、FS1589N、OCA72xxx、aurisys_config / aurisys_config_rv / aurisys_config_hifi3、audio_device.xml 移植、tran_audio_controller、tran_pa_type、tran_typec_type、HL1280、DIO1520、DWS GPIO、factory.ini bringup。仅限 MTK 平台、仅限升级移植场景。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # DRV_Audio_Adapt

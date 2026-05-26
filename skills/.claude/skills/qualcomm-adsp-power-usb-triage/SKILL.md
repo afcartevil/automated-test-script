@@ -1,6 +1,8 @@
 ---
 name: qualcomm-adsp-power-usb-triage
 description: "Qualcomm-ADSP-Power/USB分诊: 在ADSP battman域内对Type-C/PD协议栈与充电识别(ICM)做首次分诊，路由到对应skill | dpm/pmic_glink/UCSI/TypeC/PD/充电 | 当用户报告Qualcomm平台USB/PD/充电跨模块问题时使用——本skill为路由入口"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Qualcomm ADSP Power/USB 分诊（仅高通）

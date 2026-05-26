@@ -1,6 +1,8 @@
 ---
 name: fc-aikey-event
 description: Func-check skill for AI key event reporting via adb getevent. Use when func-check task needs to verify KEY_F26/605 key events on connected device.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: AI Key 按键上报检查

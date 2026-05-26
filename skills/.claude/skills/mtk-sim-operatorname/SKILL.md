@@ -1,6 +1,8 @@
 ---
 name: mtk-sim-operatorname
 description: "「状态栏运营商名称显示异常」MTK；SIM卡设置页运营商名称显示异常、设置中运营商名称/运营商信息显示异常。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # MTK_SIM_OperatorName

@@ -1,3 +1,7 @@
+---
+funcType: "AI自动化适配"
+category: "驱动"
+---
 ﻿---
 name: vib-adapt-haptic-rc
 description: Guides debugging and porting of LRA/haptic sysfs and devnode permissions in Transsion tp/init.tp.rc using chmod/chown to system, plus PRODUCT_COPY_FILES in device-vext.mk to ship rc to odm/etc/init. Covers single vibrator_single and dual linear vibrator_l/vibrator_r sysfs trees. Use when adapting马达节点权限 root→system, RichTap/AW8697 permission denied, dual LRA init.tp.rc, device-vext.mk ODM copy line, init.tp.rc merge across projects, or vendor.haptic.calibrate.done flow.

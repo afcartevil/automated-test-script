@@ -1,6 +1,8 @@
 ---
 name: android-unisoc-kernel-crash-log-analysis
 description: 针对展锐（Unisoc）平台内核死机与整机重启 dump 问题（含 KE-Oops/Panic、watchdog_timeout 等），通过分析 dump_report.txt、extend_last_kmsg、extend_ylog_buf、last_kmsg.log、last_kmsg.txt 等中的 reason、exception_reboot_reason、backtrace、watchdog 等关键信息完成归类、时间线、符号映射与根因判断。当用户提供展锐平台重启 dump、内核异常日志且需按 SOP 输出分析结论或整理 Jira 证据时使用。
+funcType: "AI故障分析"
+category: "内核"
 ---
 
 # 展锐平台内核死机问题分析（日志）

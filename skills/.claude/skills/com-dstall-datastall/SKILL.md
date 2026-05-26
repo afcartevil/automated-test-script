@@ -1,6 +1,8 @@
 ---
 name: com-dstall-datastall
 description: "「DATA_STALL」COMMON；DATA_STALL触发异常、WIFI和数据切换异常。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # COM_DSTALL_DataStall

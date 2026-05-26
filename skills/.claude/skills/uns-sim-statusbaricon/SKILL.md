@@ -1,6 +1,8 @@
 ---
 name: uns-sim-statusbaricon
 description: "「状态栏图标显示异常」UNISOC。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # UNS_SIM_StatusBarIcon

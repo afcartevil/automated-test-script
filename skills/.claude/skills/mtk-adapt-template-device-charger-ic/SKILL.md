@@ -1,6 +1,8 @@
 ---
 name: mtk-adapt-template-device-charger-ic
 description: MTK 项目 charger IC 适配模板，覆盖 kernel dtsi、内核构建与打包、dws/pinctrl 以及 bootloader（lk/preloader）联动点。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK 器件模板：Charger IC

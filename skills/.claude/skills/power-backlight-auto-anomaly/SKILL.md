@@ -1,6 +1,8 @@
 ---
 name: power-backlight-auto-anomaly
 description: "自动背光异常分析: 自动亮度调节过程中出现的亮度计算、环境光采样、动画过渡等异常分析 | 自动亮度/自动背光/auto brightness/光感/环境光/lux/亮度跳变/亮度不变 | 当用户报告与「自动背光异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "功耗"
 ---
 
 # 自动背光异常分析

@@ -1,6 +1,8 @@
 ---
 name: sensor-als-autobrightness
 description: "MTK-Sensor光感-自动背光: 分析光感运行期间自动背光异常，按候选观察窗口验证光感值与背光值对应关系 | AutomaticBrightnessController/lux/g_data/brightness_val/光感/自动亮度/忽明忽暗/偏亮偏暗 | 当用户报告MTK设备自动亮度忽明忽暗、偏亮偏暗、反应迟钝、不响应环境光时使用。首笔上报异常走sensor-als-first-report"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Sensor光感运行期间自动背光问题分析

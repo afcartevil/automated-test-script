@@ -1,6 +1,8 @@
 ---
 name: tp-adapt-power-sequence
 description: Adapts Transsion/MTK TP/LCM power timing in DTS, three DWS copies, panel/LK, and TP vendor drivers when the user reports a specific rail timing fault (OLED DVDD/VCI/VDDIO, LCD AVDD/AVEE, or TP vtouch/RST/INT). Use when a voltage is wrong order/too early/late on screen-off-on or gesture-on vs gesture-off, and config changes are needed—not for oscilloscope test procedures.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # TP / LCM 时序配置适配

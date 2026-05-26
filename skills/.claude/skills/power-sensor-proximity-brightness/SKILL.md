@@ -1,6 +1,8 @@
 ---
 name: power-sensor-proximity-brightness
 description: "电话场景遮挡Sensor亮度异常分析: 电话场景下接近传感器遮挡后灭屏或移开后亮屏过程中出现的异常分析 | 遮挡/proximity/sensor/接近/电话亮度/通话亮度/靠近灭屏/移开亮屏 | 当用户报告与「电话场景遮挡Sensor亮度异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "功耗"
 ---
 
 # 电话场景遮挡Sensor亮度异常分析

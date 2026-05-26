@@ -1,6 +1,8 @@
 ---
 name: com-comm-sop-source-archive
 description: "「通信原始SOP与资料存档」COMMON；海外培训SOP全文、PLMN等source-text、Skill技术设计与modem自动化方案文档。需对照原文、引用培训段落或核查设计背景时加载。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # 通信原始 SOP 与资料存档

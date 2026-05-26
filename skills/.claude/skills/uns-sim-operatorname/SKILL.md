@@ -1,6 +1,8 @@
 ---
 name: uns-sim-operatorname
 description: "「状态栏运营商名称显示异常」UNISOC。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # UNS_SIM_OperatorName

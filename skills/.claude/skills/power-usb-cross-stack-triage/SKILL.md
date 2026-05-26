@@ -1,3 +1,7 @@
+---
+funcType: "AI故障分析"
+category: "驱动"
+---
 name: power-usb-cross-stack-triage
 description: “MTK-Transsion-Power/USB跨模块分诊: 对Power/USB跨模块问题做总分诊与分流，自动路由到PD-TypeC/TCPC/BC1.2/charger/extcon/MTU3/battery-gauge/xHCI等skill | USB/PD/充电/插拔/TypeC/OTG | 当用户报告现象跨域、根因不清的Power/USB联调问题时使用——本skill为路由入口，不深入单域分析”
 ---

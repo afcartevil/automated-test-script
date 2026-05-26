@@ -1,6 +1,8 @@
 ---
 name: com-network-roamingstate
 description: "「漫游状态异常」COMMON；漫游状态判断异常。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # COM_NETWORK_RoamingState

@@ -1,6 +1,8 @@
 ---
 name: power-display-power-key-screen
 description: "Power键亮灭屏异常分析: Power键按下后亮屏或灭屏过程中出现的异常分析 | power/电源键/亮屏/灭屏/黑屏/无法亮屏/无法灭屏/屏幕不亮 | 当用户报告与「Power键亮灭屏异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "功耗"
 ---
 
 # Power键亮灭屏异常分析

@@ -1,6 +1,8 @@
 ---
 name: com-data-dataunstable
 description: "「数据连接不稳定」COMMON；数据频繁断开、数据不稳定、数据关闭失败、数据异常断开。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # COM_DATA_DataUnstable

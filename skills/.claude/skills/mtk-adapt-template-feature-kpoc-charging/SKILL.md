@@ -3,6 +3,8 @@ name: mtk-adapt-template-feature-kpoc-charging
 description: >-
   索引：KPOC 关机充电动画适配规则已迁至 transsion-sunmao40-customization-features-adapt 的 RULE-2（可与 SM40-16 交叉）。
   分流仍在 mtk-adapt-template-router；本 skill 仅保留名称兼容。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK 客制化特性：关机充电动画 KPOC（索引）

@@ -1,6 +1,8 @@
 ---
 name: "DRV_Vibrator_VibrationFault"
 description: "针对MTK平台线性马达部分场景无振动或波形返回错误问题（包含全场景无振动、单场景无振动有波形返回、有振动但无波形返回/波形错误等场景），通过分析kernel_log中haptic/richtap马达驱动是否正常工作、sys_log中应用是否通过TranVibratorManagerInternal下发HE文件及HAL层RichTapVibratorService服务状态、main_log中HE文件是否存在及安卓原生振动链路佐证日志（如LED trigger、SystemVibratorManager vibrate），定位问题根因（HAL层异常/HE文件缺失/应用未适配）并输出分析结论。当用户提供包含vib/haptic/richtap/TranVibratorManagerInternal/RichTapVibratorService/LED trigger等关键字的日志，且JIRA问题模块为(Drv) Vibrator并涉及线性马达无振动或波形返回错误时使用。"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MTK 线性马达无振动或波形返回错误日志分析

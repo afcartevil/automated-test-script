@@ -2,6 +2,8 @@
 name: audio-self-check
 description: 执行音频升级自检SOP，覆盖宏控、DTS、Dolby、铃声资源与PA参数路径检查。用户提到音频自检、SOP巡检、A15升级对比、铃声检查、PA参数路径时使用。
 disable-model-invocation: true
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # Audio Self Check SOP

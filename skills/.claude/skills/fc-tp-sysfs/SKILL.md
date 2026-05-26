@@ -1,6 +1,8 @@
 ---
 name: fc-tp-sysfs
 description: Func-check skill for TP firmware version and vendor sysfs nodes via adb. Use when func-check task needs to verify tp_firmware_version and tp_vendor on connected device.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: TP sysfs 信息检查

@@ -1,6 +1,8 @@
 ---
 name: mtk-call-emergencynumber
 description: "「紧急通话号码识别异常」MTK；紧急号码识别。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # MTK_CALL_EmergencyNumber

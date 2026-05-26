@@ -1,6 +1,8 @@
 ---
 name: qualcomm-msm-kernel-usb-ucsi-analysis
 description: "Qualcomm-MSM-Kernel-UCSI: 基于msm-kernel drivers/usb/typec/ucsi分析UCSI，覆盖ucsi.c/ucsi_glink.c(pmic_glink)/psy/typec connector | UCSI/CCI/connector状态/命令超时/PPM | 当用户报告Qualcomm UCSI不同步、connector异常、UCSI命令超时时使用"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Qualcomm msm-kernel UCSI 分析

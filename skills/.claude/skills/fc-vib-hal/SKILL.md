@@ -1,6 +1,8 @@
 ---
 name: fc-vib-hal
 description: Func-check skill for RichTap vibrator HAL service process via adb. Use when func-check task needs to verify RichTapVibratorService is running.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: 马达 HAL 服务检查

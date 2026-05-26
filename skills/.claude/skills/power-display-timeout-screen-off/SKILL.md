@@ -1,6 +1,8 @@
 ---
 name: power-display-timeout-screen-off
 description: "超时灭屏异常分析: 超过自动息屏时间后灭屏过程中出现的异常分析 | 超时灭屏/自动灭屏/timeout/自动息屏/屏幕超时/不灭屏/无法灭屏/息屏时间 | 当用户报告与「超时灭屏异常分析」相关的日志分析需求时使用"
+funcType: "AI故障分析"
+category: "功耗"
 ---
 
 # 超时灭屏异常分析

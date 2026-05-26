@@ -1,6 +1,8 @@
 ---
 name: android-kerneldb-extract
 description: "Android-KernelDB提取: 从Jira日志目录提取.dbg内核异常包，使用aee_extract解压+KSST64离线分析 | aee_extract/.dbg/.dbg.DEC/KSST64/SpOfflineDebugSuite | 当用户要求解压.dbg、生成.dbg.DEC、跑KSST64离线分析时使用"
+funcType: "AI故障分析"
+category: "内核"
 ---
 
 # Android Kernel DB（.dbg）解压与 KSST64 提取

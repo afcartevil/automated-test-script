@@ -1,6 +1,8 @@
 ---
 name: mtk-panel-load-abnormal-log-analysis
 description: "MTK显示-Panel加载: 分析开机黑屏、卡Logo、Panel上电/加载失败问题，覆盖LK+Kernel双阶段 | lcm/panel/drm/dsi/islcmfound/lcm_probe/Waiting for bridge/Cannot find disp pinctrl/开机黑屏/卡logo | 当用户报告MTK设备开机黑屏、Boot Logo不显示、进Kernel黑屏/花屏时使用。注意: 进系统后的花屏撕裂走mtk-screen-tearing-abnormal-log-analysis，背光问题走mtk-backlight-abnormal-log-analysis"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MTK 平台 Panel 加载失败/黑屏/卡Logo 分析

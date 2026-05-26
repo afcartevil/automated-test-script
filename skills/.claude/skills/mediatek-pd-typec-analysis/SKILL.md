@@ -1,6 +1,8 @@
 ---
 name: mediatek-pd-typec-analysis
 description: "MTK-TypeC/PD: 分析Type-C/PD插拔行为与协议栈路径 | CC_ALERT/ps_change/PD协商/tcpc/TypeC附着/解附着 | 当用户报告MTK设备Type-C插拔异常、PD协商失败时使用。协议细节走mediatek-pd-typec-protocol-6-1或6-12，TCPC适配走transsion-tcpc-adapter"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MediaTek PD Type-C 分析（6.12）

@@ -1,6 +1,8 @@
 ---
 name: fc-tp-factory-info
 description: Func-check skill for Transsion/MTK factory midtest TP IC name, module vendor string, and firmware/BV display via sysfs (tp_vendor, tp_firmware_version, tp_name). Use when func-check needs 工模 TP IC/固件信息是否正确、midtest 触摸信息页 UNKNOWN/空白/版本不符、或 port 后核对 supplier 与固件串。
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: 工模 TP IC / 固件信息显示检查

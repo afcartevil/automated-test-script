@@ -1,6 +1,8 @@
 ---
 name: fc-vib-cali
 description: Func-check skill for LRA factory calibration properties via adb getprop. Use when func-check task needs to verify ro.vendor.tran.midtest.lra.cali.min/max on connected device.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: 马达工模校准属性检查

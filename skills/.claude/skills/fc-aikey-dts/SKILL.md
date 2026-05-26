@@ -1,6 +1,8 @@
 ---
 name: fc-aikey-dts
 description: Func-check skill for AI key DTS node, IRQ and gpio-keys device via adb. Use when func-check task needs to verify linux,code 605 and gpio-keys registration.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: AI Key DTS/设备节点检查

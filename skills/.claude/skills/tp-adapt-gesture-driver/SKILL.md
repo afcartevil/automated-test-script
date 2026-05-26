@@ -1,3 +1,7 @@
+---
+funcType: "AI自动化适配"
+category: "驱动"
+---
 ﻿---
 name: tp-adapt-gesture-driver
 description: Guides Transsion TP gesture stack adaptation and kernel-side debugging using transsion core (tran_ts_controller, vendor_gesture_map, state machine), transsion_gesture proc/sysfs nodes, and vendor suspend/resume hooks. Use when bring-up or migrating Goodix/Focaltech/Chipone/etc. under drivers/input/touchscreen/transsion, or when debugging gesture ID mapping, gesture_flag, doze/gesture suspend, KEY_F26/KEY_FINGER reporting, or proc node writes (gesture_function, gesture_flag).

@@ -1,6 +1,8 @@
 ---
 name: mtk-sms-mmsrecvfail
 description: "「接收彩信失败」MTK。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # MTK_SMS_MmsRecvFail

@@ -1,6 +1,8 @@
 ---
 name: android-bootup-issue-log-analysis
 description: "Android-不开机: 分析Bootup Issue(不开机/卡Logo/开机循环重启)，按启动阶段(Preloader/LK/Kernel/init-Framework/Recovery)完成阶段判定 | dm-verity/fs_mgr_mount_all/reboot_longkey/卡logo/不开机/bootup | 当用户报告Android设备不开机、卡Logo、开机循环重启时使用"
+funcType: "AI故障分析"
+category: "内核"
 ---
 
 # Bootup Issue 问题分析 Skill

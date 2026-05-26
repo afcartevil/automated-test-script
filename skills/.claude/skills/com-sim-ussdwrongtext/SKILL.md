@@ -1,6 +1,8 @@
 ---
 name: com-sim-ussdwrongtext
 description: "「USSD显示错误提示文案」COMMON；拨号USSD返回内容不显示/不弹出、USSD弹出内容异常。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # COM_SIM_UssdWrongText

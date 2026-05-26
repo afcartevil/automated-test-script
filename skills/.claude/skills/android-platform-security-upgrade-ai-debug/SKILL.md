@@ -2,6 +2,8 @@
 name: android-platform-security-upgrade-ai-debug
 description: 针对手机大版本升级中平台安全相关功能移植与核对，覆盖 DA 动态防回滚、BROM 端口禁用、软件防回滚（preloader/lk2 宏与 anti_ver.json）、AVB 在线签名（TRAN_AVB_REMOTE_SIGN_SUPPORT）、实体 RPMB（dts/preloader/project）。在用户给出升级前与升级后代码基线及项目名、平台名时，按项目配置优先于平台配置的规则读取升级前目标值，在升级后对齐项目侧（及 SOP 要求的 dts、anti_ver.json、ProjectConfig）并输出修改文件与功能配置摘要。当用户引用飞书安全 AI 调试 SOP 或进行 MTK+Tran 树安全移植排查时使用。
 disable-model-invocation: true
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # 平台安全升级 AI 调试（飞书 SOP 对齐）

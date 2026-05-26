@@ -1,6 +1,8 @@
 ---
 name: transsion-wireless-bypass-fan
 description: "Transsion-无线旁路风扇: 分析无线旁路(磁吸风扇)路径，定位旁路电流目标与不掉电判据 | magnetism_fan/无线旁路/磁吸风扇/旁路电流 | 当用户报告无线旁路触发失败、触发后不生效、与有线快充冲突时使用"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Transsion 无线旁路（磁吸风扇）分析

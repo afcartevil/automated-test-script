@@ -1,6 +1,8 @@
 ---
 name: "cpu-info-adapt-sop"
 description: "检查升级前后TRAN_CUSTOMER_SOC_INFO宏控值是否一致，不一致时自动修复。保持文件原有格式。"
+funcType: "AI自动化适配"
+category: "内核"
 ---
 
 # CPU信息适配SOP

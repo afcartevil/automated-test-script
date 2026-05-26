@@ -1,3 +1,7 @@
+---
+funcType: "AI自动化适配"
+category: "驱动"
+---
 ﻿---
 name: vib-adapt-factory-cali
 description: 检查并适配 Transsion/MTK 线性马达工模校准属性导入链路：确认公共 vibrator.mk 是否包含 ro.vendor.tran.midtest.lra.cali.min/max，并确认目标 projects/<project>/ProjectConfig.mk 是否开启 LRA 相关宏控。Use when 处理线性马达/LRA 工模校准、midtest 校准范围、ro.vendor.tran.midtest.lra.cali.min/max、TRAN_RICHTAP_SUPPORT、TRAN_VIB_LIB_NAME、vibrator.mk 或 ProjectConfig.mk 导入问题。

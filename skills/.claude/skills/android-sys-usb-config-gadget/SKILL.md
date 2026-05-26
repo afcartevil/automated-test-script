@@ -1,6 +1,8 @@
 ---
 name: android-sys-usb-config-gadget
 description: "Android-USB-configfs: 分析sys.usb.config/configfs gadget/adbd/sys.usb.ffs.ready与UDC绑定链路 | configfs/gadget/adbd/ffs_ready/UDC/cdp_block/usb_ready | 当用户报告无UDC、ffs.ready未置位、soft-connect without gadget driver时使用"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # Android sys.usb.config 与 Gadget/ADB 链路

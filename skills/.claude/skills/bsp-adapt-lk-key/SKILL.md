@@ -5,6 +5,8 @@ description: >-
   including Tran macros TRAN_RECOVERY_KEY_CUSTOM and TRAN_FACTORY_KEY_CUSTOM, DTS mediatek,kp properties, and boot_mode_check ordering in mt_boot.
   Use when troubleshooting lk2 bootloader combo keys, recovery entry, factory/engineering mode keys, keypad DTS on MTK Tran branches, or macros in target/*/rules.mk versus project *.mk.
 disable-model-invocation: true
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # MTK LK2：组合键进入 Recovery / 关机工模（FACTORY）

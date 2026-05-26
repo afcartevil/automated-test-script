@@ -1,6 +1,8 @@
 ---
 name: android-ke-log-analysis
 description: "Android-KernelException: 分析KE及其衍生重启(ATF_CRASH/HWT/HWR/Hang_detect/OCP)，完成异常分型、证据提取、符号映射 | KE/ATF_CRASH/HWT/HWR/Hang_detect/OCP/DB/DEC/重启根因 | 当用户提供KE日志包、DB/DEC、需内核异常重启根因分析时使用"
+funcType: "AI故障分析"
+category: "内核"
 ---
 
 # KE (Kernel Exception) 问题分析 Skill

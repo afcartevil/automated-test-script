@@ -1,6 +1,8 @@
 ---
 name: android-hwr-hwt-log-analysis
 description: "Android-HWR/HWT: 分析HWR(HW reboot)与HWT升级复位，通过WDT喂狗链路、CPU栈、总线超时定位根因 | HWR/HWT/wdt/timeout/lastpc/systracker/硬复位 | 当用户提供HWR/HWT日志包、hw_reboot/wdt_timeout分析时使用"
+funcType: "AI故障分析"
+category: "内核"
 ---
 
 # HWR/HWT 问题分析 Skill

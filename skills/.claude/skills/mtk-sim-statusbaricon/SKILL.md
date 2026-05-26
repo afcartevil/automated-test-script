@@ -1,6 +1,8 @@
 ---
 name: mtk-sim-statusbaricon
 description: "「状态栏图标显示异常」MTK；状态栏volte图标、状态栏vowifi图标、状态栏HD图标、状态栏vonr图标、状态栏网络制式图标。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # MTK_SIM_StatusBarIcon

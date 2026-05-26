@@ -1,3 +1,7 @@
+---
+funcType: "AI自动化适配"
+category: "通信"
+---
 # MODEM大版本升级主控技能 (Master Skill)
 
 ## 基本信息

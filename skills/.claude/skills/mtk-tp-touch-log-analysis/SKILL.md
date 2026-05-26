@@ -1,6 +1,8 @@
 ---
 name: mtk-tp-touch-log-analysis
 description: "MTK-TP触摸: 分析TP触摸失效问题，检查kernel_log中TP驱动初始化、IC匹配、触摸上报、失败签名 | tpd_probe/match_tp_controller/fts_input_report/TP无触摸/开机触摸失效/亮灭屏无触摸/误触 | 当用户报告MTK设备触摸失效、开机无触摸、亮灭屏后触摸丢失、TP误触时使用。手势唤醒问题走mtk-tp-gesture-log-analysis，屏下指纹走mtk-tp-fod-log-analysis"
+funcType: "AI故障分析"
+category: "驱动"
 ---
 
 # MTK TP 触摸异常日志分析

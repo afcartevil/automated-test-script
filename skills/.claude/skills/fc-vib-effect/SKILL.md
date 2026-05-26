@@ -1,6 +1,8 @@
 ---
 name: fc-vib-effect
 description: Func-check skill for vibrator effect trigger via adb cmd vibrator. Use when func-check task needs to verify device can vibrate on connected device.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC: 马达振动触发检查

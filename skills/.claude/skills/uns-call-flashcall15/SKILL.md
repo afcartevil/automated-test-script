@@ -1,6 +1,8 @@
 ---
 name: uns-call-flashcall15
 description: "「FLASH_CALL_15.XX失败」UNISOC。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # UNS_CALL_FlashCall15

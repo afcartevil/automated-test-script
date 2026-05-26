@@ -1,6 +1,8 @@
 ---
 name: com-sms-smsappui
 description: "「短信应用UI显示异常」COMMON；UI控件调整、字符串翻译调整、用户操作不方便。拉 main/system/radio 对 patterns 出结论。"
+funcType: "AI故障分析"
+category: "通信"
 ---
 
 # COM_SMS_SmsAppUi

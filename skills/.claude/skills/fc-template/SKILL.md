@@ -1,6 +1,8 @@
 ---
 name: fc-template
 description: Template for creating new func-check skills. Copy this directory to fc-<domain>-<scenario>, fill in check steps and optional scripts, then register in func-check-registry.md. Do not invoke directly in production.
+funcType: "AI自动化适配"
+category: "驱动"
 ---
 
 # FC 模板：功能检查 skill
