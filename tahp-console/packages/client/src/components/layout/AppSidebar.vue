@@ -89,8 +89,8 @@ function handleReloadClient() {
   <aside class="sidebar" :class="{ open: appStore.sidebarOpen, collapsed: appStore.sidebarCollapsed }">
     <!-- Logo -->
     <div class="sidebar-logo" @click="router.push('/tahp/dashboard')">
-      <img :src="logoPath" alt="TAHP" class="logo-img" />
-      <span class="logo-text">TAHP</span>
+      <img :src="logoPath" alt="EasyAdapter" class="logo-img" />
+      <span class="logo-text">EasyAdapter</span>
     </div>
 
     <!-- 折叠按钮 -->

@@ -13,7 +13,7 @@ function nav(name: string) {
 const groups = [
   {
     key: 'tahp',
-    label: 'TAHP',
+    label: 'EasyAdapter',
     items: [
       { name: 'tahp.dashboard', label: '仪表盘', icon: 'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z' },
       { name: 'tahp.tasks',     label: '任务列表', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11' },

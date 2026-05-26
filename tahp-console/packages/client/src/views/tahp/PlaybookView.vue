@@ -107,7 +107,7 @@ function confirmLaunch() {
   <div class="tahp-playbook">
     <div class="page-header">
       <h1>Playbooks</h1>
-      <p class="subtitle">查看和管理 TAHP Pipeline 编排文件</p>
+      <p class="subtitle">查看和管理 EasyAdapter Pipeline 编排文件</p>
     </div>
 
     <div class="playbook-layout">

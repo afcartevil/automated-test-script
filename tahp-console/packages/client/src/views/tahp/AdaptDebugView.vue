@@ -403,7 +403,7 @@ function buildDocContent(): string {
   })
   doc += `\n### 关联 Skills\n`
   d.relatedSkills.forEach(s => { doc += `- ${s}\n` })
-  doc += `\n---\n_由 TAHP Console AI 适配调试面板自动生成_\n`
+  doc += `\n---\n_由 EasyAdapter Console AI 适配调试面板自动生成_\n`
   return doc
 }
 
@@ -752,7 +752,7 @@ function openSkill(skillName: string) {
             <line x1="12" y1="16" x2="12.01" y2="16"/>
           </svg>
           <p class="ms-hint">任务启动失败</p>
-          <p class="ms-sub">请在"模型管理"中配置 API Key，或设置 TAHP_LLM_UPSTREAM 环境变量</p>
+          <p class="ms-sub">请在"模型管理"中配置 API Key，或设置 EASY_ADAPTER_LLM_UPSTREAM 环境变量</p>
           <div style="display:flex;gap:8px;margin-top:4px;">
             <NButton type="primary" @click="backToForm">返回重新配置</NButton>
             <NButton @click="launchTask" :loading="launching">重试</NButton>

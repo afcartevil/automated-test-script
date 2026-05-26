@@ -493,7 +493,7 @@ async function submitKbSave() {
     <!-- TAHP 适配调试模式横幅 -->
     <div v-if="tahpCtx" class="tahp-ctx-banner">
       <div class="tahp-banner-left">
-        <span class="tahp-badge">TAHP</span>
+        <span class="tahp-badge">EasyAdapter</span>
         <span class="tahp-banner-text">
           <strong>{{ tahpCtx.domainLabel }}</strong> 适配调试 ·
           {{ tahpCtx.project.soc }} / {{ tahpCtx.project.kernelVersion }} ·
@@ -740,7 +740,7 @@ async function submitKbSave() {
     <NModal
       v-model:show="showKbModal"
       preset="card"
-      title="提炼至 TAHP 知识库"
+      title="提炼至 EasyAdapter 知识库"
       style="width: 600px"
       :mask-closable="true"
     >

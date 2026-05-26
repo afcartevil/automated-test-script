@@ -275,7 +275,7 @@ async function runLLMAdaptTask(
     emit('task.phase', { phase: 'GENERATING_PLAN', progress: 25, message: '正在连接大模型...' })
     const gwConfig = resolveGatewayUpstream('default')
     if (!gwConfig.apiKey && gwConfig.upstream.includes('127.0.0.1:8642')) {
-      throw new Error('未配置大模型 API。请在"模型管理"页面配置 API Key，或设置环境变量 TAHP_LLM_UPSTREAM 和 TAHP_API_KEY')
+      throw new Error('未配置大模型 API。请在"模型管理"页面配置 API Key，或设置环境变量 EASY_ADAPTER_LLM_UPSTREAM 和 EASY_ADAPTER_API_KEY')
     }
     emit('task.message', { level: 'info', text: `使用模型: ${gwConfig.defaultModel || '默认'} (${gwConfig.providerType})` })
     emit('task.step', { step_id: 'generate-plan', status: 'completed', message: `已连接 ${gwConfig.providerType} 上游` })
@@ -288,7 +288,7 @@ async function runLLMAdaptTask(
     })
 
     // 系统提示：明确要求输出文件修改块
-    const systemPrompt = `你是 TAHP（TECNO AI Harness Platform）的 Android BSP 适配 AI 助手，专注于 TECNO 传音设备的底软模块适配。
+    const systemPrompt = `你是 EasyAdapter 的 Android BSP 适配 AI 助手，专注于 TECNO 传音设备的底软模块适配。
 
 ## 核心执行要求 — 文件修改输出格式
 如果任务涉及修改文件，你**必须**使用以下 XML 格式输出完整的修改后内容，系统将自动将其写入磁盘：

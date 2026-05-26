@@ -93,7 +93,7 @@ function gotoExecutor(moduleName?: string, domain?: string) {
   <div class="tahp-dashboard">
     <div class="page-header">
       <div class="header-left">
-        <h1>TAHP 控制台</h1>
+        <h1>EasyAdapter 控制台</h1>
         <p class="subtitle">传音 Android 底软集成部 · 双引擎 AI 平台</p>
       </div>
       <NButton type="primary" @click="gotoExecutor()">

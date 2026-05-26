@@ -149,7 +149,7 @@ async function runMigration() {
   <div class="tahp-tools">
     <div class="page-header">
       <h1>工具箱</h1>
-      <p class="subtitle">单步调用 TAHP 底层工具，无需启动完整 Pipeline</p>
+      <p class="subtitle">单步调用 EasyAdapter 底层工具，无需启动完整 Pipeline</p>
     </div>
 
     <NCard :bordered="false">

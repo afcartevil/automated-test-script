@@ -183,7 +183,7 @@ const columns = computed<DataTableColumns<TaskInfo>>(() => [
   <div class="tahp-tasks">
     <div class="page-header">
       <h1>任务列表</h1>
-      <p class="subtitle">所有 TAHP 执行任务的历史与状态（双击行查看详情）</p>
+      <p class="subtitle">所有 EasyAdapter 执行任务的历史与状态（双击行查看详情）</p>
     </div>
 
     <NCard :bordered="false">
