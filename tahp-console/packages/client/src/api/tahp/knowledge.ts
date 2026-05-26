@@ -42,6 +42,20 @@ export function queryKnowledge(req: KnowledgeQueryRequest): Promise<KnowledgeRes
   return tahpPost<KnowledgeResult>('/api/tahp/knowledge/query', req)
 }
 
+export interface KbSaveRequest {
+  title: string
+  content: string
+  module: string
+  domain?: string
+  tags?: string[]
+  author?: string
+  category?: string
+}
+
+export function saveKnowledgeFromChat(req: KbSaveRequest): Promise<{ id: string; file: string }> {
+  return tahpPost<{ id: string; file: string }>('/api/tahp/knowledge/save', req)
+}
+
 export function addKnowledgeEntry(entry: KnowledgeEntry): Promise<{ id: string }> {
   return tahpPost<{ id: string }>('/api/tahp/knowledge/entries', entry)
 }

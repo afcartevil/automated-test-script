@@ -113,6 +113,8 @@ async def execute_tahp_task(
     module: str,
     domain: str,
     constraints_extra: list[str] | None = None,
+    document_content_inline: str | None = None,
+    extra_context: str | None = None,
 ) -> dict[str, Any]:
     """执行 TAHP 开发任务
 
@@ -159,7 +161,14 @@ async def execute_tahp_task(
         tracker.update_task_phase(task_id, TaskPhase.ANALYZING_DOCUMENT, "正在分析设计文档")
         await emitter.emit_progress(task)
 
-        document_content = _read_document(document_path, config.project_root)
+        # 内联模式：直接使用传入的文档内容，不从磁盘读取
+        if document_path == "__inline__" and document_content_inline:
+            document_content = document_content_inline
+            if extra_context:
+                document_content = f"<!-- 附加上下文: {extra_context} -->\n\n{document_content}"
+        else:
+            document_content = _read_document(document_path, config.project_root)
+
         if document_content is None:
             tracker.fail_task(task_id, f"设计文档不存在: {document_path}")
             await emitter.emit_progress(task)

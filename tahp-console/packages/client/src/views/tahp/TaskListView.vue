@@ -47,9 +47,15 @@ function openCorrect(taskId: string) {
 async function submitCorrect() {
   if (!correctTarget.value || !correctFeedback.value.trim()) return
   try {
-    await tasksStore.correct(correctTarget.value, correctFeedback.value)
-    message.success('纠偏指令已下发')
+    const newTask = await tasksStore.correct(correctTarget.value, correctFeedback.value)
     showCorrect.value = false
+    if (newTask) {
+      // 自动切换到新的纠偏任务详情
+      selectedTask.value = newTask
+      message.success('纠偏任务已启动，正在重新执行...')
+    } else {
+      message.success('纠偏指令已下发')
+    }
   } catch (err) {
     message.error((err as Error).message)
   }
@@ -61,9 +67,26 @@ const selectedTaskStream = computed(() => {
 })
 
 function statusType(task: TaskInfo): 'success' | 'error' | 'warning' | 'info' | 'default' {
-  if (task.status === 'completed' || task.phase === 'COMPLETED') return 'success'
-  if (task.status === 'failed' || task.phase === 'FAILED') return 'error'
-  return 'info'
+  const s = task.status?.toLowerCase() || ''
+  const p = task.phase?.toUpperCase() || ''
+  if (s === 'completed' || p === 'COMPLETED') return 'success'
+  if (s === 'failed'    || p === 'FAILED')    return 'error'
+  if (s === 'running'   || s === 'starting')  return 'info'
+  return 'default'
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  starting: '启动中', running: '执行中', completed: '已完成',
+  failed: '失败', COMPLETED: '已完成', FAILED: '失败',
+  LOADING_CONSTRAINTS: '加载约束', ANALYZING_DOCUMENT: '分析文档',
+  GENERATING_PLAN: '生成计划', EXECUTING_PIPELINE: '执行中',
+  RUNNING_GATE_CHECK: '门禁检查',
+}
+
+function statusLabel(task: TaskInfo): string {
+  const p = task.phase || ''
+  const s = task.status || ''
+  return STATUS_LABEL[p] || STATUS_LABEL[s] || p || s || '-'
 }
 
 function isRunning(task: TaskInfo) {
@@ -72,6 +95,20 @@ function isRunning(task: TaskInfo) {
 
 function formatTs(ts: number): string {
   return new Date(ts).toLocaleTimeString()
+}
+
+function formatTime(iso?: string): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  return `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`
+}
+
+function formatDuration(task: TaskInfo): string {
+  if (!task.started_at || !task.completed_at) return '-'
+  const ms = new Date(task.completed_at).getTime() - new Date(task.started_at).getTime()
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms/1000).toFixed(1)}s`
+  return `${Math.floor(ms/60000)}m${Math.floor((ms%60000)/1000)}s`
 }
 
 function eventColor(type: string): 'default' | 'success' | 'error' | 'warning' | 'info' {
@@ -91,57 +128,50 @@ const columns = computed<DataTableColumns<TaskInfo>>(() => [
   {
     title: 'Task ID',
     key: 'task_id',
-    render: r => (r.task_id || r.taskId || '-') as string,
-    width: 200,
+    width: 160,
     ellipsis: { tooltip: true },
+    render: r => (r.task_id || r.taskId || '-') as string,
   },
-  { title: '模块', key: 'module', width: 120 },
+  { title: '模块', key: 'module', width: 80 },
   {
-    title: '域',
-    key: 'domain',
-    width: 130,
+    title: '域', key: 'domain', width: 100,
     render: r => (DOMAIN_LABELS[r.domain || ''] || r.domain || '-') as string,
   },
-  { title: '设计文档', key: 'document_path', ellipsis: { tooltip: true } },
   {
-    title: '状态',
-    key: 'phase',
-    width: 140,
-    render: r => h(NTag, { size: 'small', type: statusType(r) }, () => r.phase || r.status || '-'),
+    title: '状态', key: 'phase', width: 100,
+    render: r => h(NTag, { size: 'small', type: statusType(r) }, () => statusLabel(r)),
   },
   {
-    title: '进度',
-    key: 'progress',
-    width: 110,
+    title: '进度', key: 'progress', width: 100,
     render: r => {
-      const pct = typeof r.progress === 'number' ? Math.round((r.progress as number) * 100) : null
-      if (pct === null) return '-'
-      return h(NProgress, {
-        type: 'line',
-        percentage: pct,
-        height: 8,
-        borderRadius: 4,
-        status: statusType(r) === 'success' ? 'success' : statusType(r) === 'error' ? 'error' : 'default',
-      })
+      const st = statusType(r)
+      if (st === 'success') return h(NProgress, { type: 'line', percentage: 100, height: 8, borderRadius: 4, status: 'success', showIndicator: false })
+      if (st === 'error')   return h(NProgress, { type: 'line', percentage: 100, height: 8, borderRadius: 4, status: 'error',   showIndicator: false })
+      const pct = typeof r.progress === 'number' ? Math.min(100, Math.round(r.progress)) : 0
+      if (!pct) return h('span', { style: 'color:#bbb;font-size:12px' }, '-')
+      return h(NProgress, { type: 'line', percentage: pct, height: 8, borderRadius: 4, showIndicator: false })
     },
   },
   {
-    title: '操作',
-    key: 'actions',
-    width: 200,
+    title: '启动时间', key: 'started_at', width: 110,
+    render: r => h('span', { style: 'font-size:12px;color:#888' }, formatTime(r.started_at as string)),
+  },
+  {
+    title: '耗时', key: 'duration', width: 70,
+    render: r => h('span', { style: 'font-size:12px;color:#888' }, formatDuration(r)),
+  },
+  {
+    title: '操作', key: 'actions', width: 180,
     render: r => {
       const tid = (r.task_id || r.taskId) as string | undefined
       if (!tid) return h('span', '-')
       return h(NSpace, { size: 'small' }, () => [
         h(NButton, { size: 'small', onClick: () => openDetail(r) }, () => '详情'),
+        h(NButton, { size: 'small', type: 'warning', onClick: () => openCorrect(tid) }, () => '纠偏'),
         h(NButton, {
-          size: 'small', type: 'warning',
-          disabled: !isRunning(r),
-          onClick: () => openCorrect(tid),
-        }, () => '纠偏'),
-        h(NButton, {
-          size: 'small',
-          onClick: () => router.push({ name: 'tahp.reports' }),
+          size: 'small', type: 'primary', ghost: true,
+          disabled: statusType(r) !== 'success',
+          onClick: () => router.push({ name: 'tahp.reports', query: { task_id: tid } }),
         }, () => '报告'),
       ])
     },
@@ -194,15 +224,21 @@ const columns = computed<DataTableColumns<TaskInfo>>(() => [
             <NProgress
               v-if="typeof selectedTask.progress === 'number'"
               type="line"
-              :percentage="Math.round((selectedTask.progress as number) * 100)"
+              :percentage="Math.min(100, Math.round(selectedTask.progress as number))"
               :status="statusType(selectedTask) === 'success' ? 'success' : statusType(selectedTask) === 'error' ? 'error' : 'default'"
             />
             <span v-else>-</span>
           </NDescriptionsItem>
+          <NDescriptionsItem label="启动时间">{{ formatTime(selectedTask.started_at as string) }}</NDescriptionsItem>
+          <NDescriptionsItem label="完成时间">{{ formatTime(selectedTask.completed_at as string) }}</NDescriptionsItem>
+          <NDescriptionsItem label="耗时">{{ formatDuration(selectedTask) }}</NDescriptionsItem>
+          <NDescriptionsItem v-if="selectedTask.files_modified?.length" label="已修改文件">
+            <div v-for="f in (selectedTask.files_modified as string[])" :key="f"
+              style="font-size:11px;font-family:monospace;color:#10b981">{{ f }}</div>
+          </NDescriptionsItem>
           <NDescriptionsItem v-if="selectedTask.error" label="错误">
             <span style="color:#d03050">{{ selectedTask.error }}</span>
           </NDescriptionsItem>
-          <NDescriptionsItem v-if="selectedTask.created_at" label="创建时间">{{ selectedTask.created_at }}</NDescriptionsItem>
         </NDescriptions>
 
         <NDivider style="margin:16px 0 12px">执行事件流 ({{ selectedTaskStream.length }})</NDivider>
@@ -227,11 +263,14 @@ const columns = computed<DataTableColumns<TaskInfo>>(() => [
             @click="router.push({ name: 'tahp.executor', query: { module: selectedTask.module, domain: selectedTask.domain } })">
             以相同参数重新执行
           </NButton>
-          <NButton type="warning" size="small" :disabled="!isRunning(selectedTask)"
+          <NButton type="warning" size="small"
             @click="openCorrect((selectedTask.task_id || selectedTask.taskId) as string)">
             发送纠偏
           </NButton>
-          <NButton size="small" @click="router.push({ name: 'tahp.reports' })">查看报告</NButton>
+          <NButton size="small" type="primary" ghost
+            @click="router.push({ name: 'tahp.reports', query: { task_id: selectedTask.task_id || selectedTask.taskId } })">
+            查看报告
+          </NButton>
         </NSpace>
       </NDrawerContent>
     </NDrawer>

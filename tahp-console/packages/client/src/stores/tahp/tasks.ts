@@ -27,12 +27,51 @@ export const useTahpTasksStore = defineStore('tahp-tasks', () => {
     const handler = (ev: TahpEvent) => {
       const tid = ev.task_id
       if (!tid) return
-      const arr = taskStreams.value[tid] || []
+
+      // ── 更新事件流 ────────────────────────────────────────────────────
+      const arr = taskStreams.value[tid] ? [...taskStreams.value[tid]] : []
       arr.push({ type: ev.type, payload: ev.payload, ts: ev.ts })
-      // 保留最近 500 条
       if (arr.length > 500) arr.splice(0, arr.length - 500)
       taskStreams.value = { ...taskStreams.value, [tid]: arr }
+
+      // ── 同步更新任务列表中的任务状态 ───────────────────────────────────
+      const idx = tasks.value.findIndex(t => (t.task_id || t.taskId) === tid)
+      if (idx === -1) return
+      const task = { ...tasks.value[idx] }
+
+      switch (ev.type) {
+        case 'task.started':
+          task.status = 'running'
+          task.started_at = new Date(ev.ts).toISOString()
+          break
+        case 'task.phase':
+          task.phase = ev.payload?.phase as string
+          if (typeof ev.payload?.progress === 'number') {
+            task.progress = ev.payload.progress as number
+          }
+          break
+        case 'task.step':
+          // 步骤完成时轻微推进进度感知（不改变 phase progress）
+          break
+        case 'task.completed':
+          task.status = 'completed'
+          task.phase = 'COMPLETED'
+          task.progress = 100
+          task.completed_at = new Date(ev.ts).toISOString()
+          if (ev.payload?.response)      task.llm_response    = ev.payload.response as string
+          if (ev.payload?.filesModified) task.files_modified  = ev.payload.filesModified as string[]
+          break
+        case 'task.failed':
+          task.status = 'failed'
+          task.phase = 'FAILED'
+          task.completed_at = new Date(ev.ts).toISOString()
+          task.error = ev.payload?.error as string
+          break
+      }
+
+      tasks.value = tasks.value.map((t, i) => i === idx ? task : t)
     }
+
     const events = [
       'task.started', 'task.phase', 'task.step', 'task.message',
       'task.completed', 'task.failed', 'task.correction', 'task.progress',
@@ -80,8 +119,19 @@ export const useTahpTasksStore = defineStore('tahp-tasks', () => {
     return getTaskStatus(taskId)
   }
 
-  async function correct(taskId: string, feedback: string): Promise<void> {
-    await correctTask(taskId, feedback)
+  async function correct(taskId: string, feedback: string): Promise<TaskInfo | null> {
+    ensureSocket()
+    // tahpPost already unwraps the { success, data } envelope — result is data directly
+    const info = await correctTask(taskId, feedback) as TaskInfo | null
+    if (info) {
+      const tid = (info.task_id || info.taskId) as string | undefined
+      if (tid) {
+        activeTaskId.value = tid
+        if (!taskStreams.value[tid]) taskStreams.value[tid] = []
+      }
+      tasks.value = [info, ...tasks.value]
+    }
+    return info ?? null
   }
 
   const recent = computed(() => tasks.value.slice(0, 5))

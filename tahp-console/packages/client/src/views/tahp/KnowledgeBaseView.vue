@@ -19,6 +19,13 @@ import {
   type KnowledgeEntry,
   type KnowledgeStats,
 } from '@/api/tahp/knowledge'
+import {
+  createAdaptSkill,
+  listAdaptSkills,
+  deleteAdaptSkill,
+  type SkillInfo,
+  type AdaptFieldDef,
+} from '@/api/tahp/skills'
 import { useTahpModulesStore } from '@/stores/tahp/modules'
 
 const message = useMessage()
@@ -196,6 +203,122 @@ function onTabChange(tab: string) {
   activeTab.value = tab
   if (tab === 'manage' && !entries.value.length) loadEntries()
   if (tab === 'stats') loadStats()
+  if (tab === 'skills') loadSkills()
+}
+
+// ─── 技能创建 ─────────────────────────────────────────────────────────────────
+const skillsLoading  = ref(false)
+const skillsList     = ref<SkillInfo[]>([])
+const skillCreating  = ref(false)
+
+const PRESET_COLORS = [
+  '#388bfd','#10b981','#f59e0b','#d03050',
+  '#7c3aed','#0ea5e9','#f97316','#84cc16',
+]
+
+const FIXED_MODULES = ['telephony','kernel-driver','power-mgmt','shared']
+const skillModuleOptions = computed(() => [
+  ...FIXED_MODULES.map(m => ({ label: m, value: m })),
+  { label: '自定义…', value: 'custom' },
+])
+
+const newSkill = ref({
+  skillId:     '',
+  domainLabel: '',
+  domainId:    '',
+  module:      'kernel-driver',
+  customModule:'',
+  icon:        '',
+  color:       '#388bfd',
+  content:     '',
+  description: '',
+})
+
+const newSkillFields = ref<AdaptFieldDef[]>([
+  { name: 'issue_desc', label: '问题描述', type: 'textarea', required: true, placeholder: '描述需要适配的具体问题' },
+])
+
+function addField() {
+  newSkillFields.value.push({ name: '', label: '', type: 'text', required: false, placeholder: '' })
+}
+
+function removeField(idx: number) {
+  newSkillFields.value.splice(idx, 1)
+}
+
+const fieldTypeOptions = [
+  { label: '单行文本', value: 'text' },
+  { label: '多行文本', value: 'textarea' },
+  { label: '下拉选择', value: 'select' },
+]
+
+async function loadSkills() {
+  skillsLoading.value = true
+  try {
+    const res = await listAdaptSkills()
+    skillsList.value = res.skills || []
+  } catch (err) {
+    message.error((err as Error).message)
+  } finally {
+    skillsLoading.value = false
+  }
+}
+
+async function submitCreateSkill() {
+  const s = newSkill.value
+  if (!s.skillId.trim()) { message.warning('请填写技能 ID'); return }
+  if (!/^[a-zA-Z0-9_-]+$/.test(s.skillId.trim())) { message.warning('技能 ID 只能包含字母、数字、连字符、下划线'); return }
+  if (!s.domainLabel.trim()) { message.warning('请填写域显示名'); return }
+
+  const validFields = newSkillFields.value.filter(f => f.name.trim() && f.label.trim())
+  if (!validFields.length) { message.warning('至少添加一个有效的前置条件字段'); return }
+
+  const resolvedModule = s.module === 'custom' ? (s.customModule.trim() || 'shared') : s.module
+
+  skillCreating.value = true
+  try {
+    const result = await createAdaptSkill({
+      skillId:     s.skillId.trim(),
+      domainLabel: s.domainLabel.trim(),
+      domainId:    s.domainId.trim() || s.skillId.trim(),
+      module:      resolvedModule,
+      icon:        s.icon.trim() || s.skillId.slice(0, 4).toUpperCase(),
+      color:       s.color,
+      adaptFields: validFields,
+      content:     s.content.trim() || '',
+      description: s.description.trim() || s.domainLabel.trim(),
+    })
+    message.success(`技能 "${result.domainLabel}" 创建成功，AI适配调试页面会自动出现新业务域`)
+    // 重置表单
+    Object.assign(newSkill.value, {
+      skillId: '', domainLabel: '', domainId: '', module: 'kernel-driver',
+      customModule: '', icon: '', color: '#388bfd', content: '', description: '',
+    })
+    newSkillFields.value = [{ name: 'issue_desc', label: '问题描述', type: 'textarea', required: true, placeholder: '' }]
+    loadSkills()
+  } catch (err) {
+    message.error(`创建失败: ${(err as Error).message}`)
+  } finally {
+    skillCreating.value = false
+  }
+}
+
+function confirmDeleteSkill(skillId: string, label: string) {
+  dialog.warning({
+    title: '确认删除技能',
+    content: `删除「${label}」技能后，AI适配调试页面的对应域将消失，无法恢复。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await deleteAdaptSkill(skillId)
+        message.success('技能已删除')
+        loadSkills()
+      } catch (err) {
+        message.error((err as Error).message)
+      }
+    },
+  })
 }
 </script>
 
@@ -333,6 +456,160 @@ function onTabChange(tab: string) {
           <NButton type="primary" :loading="importing" @click="doImport">导入</NButton>
         </NCard>
       </NTabPane>
+
+      <!-- 技能创建 Tab ─────────────────────────────────────────── -->
+      <NTabPane name="skills" tab="⚡ 创建适配技能">
+        <div class="skill-create-layout">
+
+          <!-- 左：创建表单 -->
+          <NCard :bordered="false" class="skill-form-card" title="新建适配技能">
+            <template #header-extra>
+              <span style="font-size:12px;color:#888;">技能创建后会立即出现在"AI 适配调试"页面的业务域列表中</span>
+            </template>
+            <NForm label-placement="left" label-width="90" size="small">
+
+              <!-- 基本信息 -->
+              <NDivider title-placement="left" style="margin:0 0 12px">基本信息</NDivider>
+              <NFormItem label="技能 ID" required>
+                <NInput
+                  v-model:value="newSkill.skillId"
+                  placeholder="仅英文/数字/连字符，如 audio-test-adapt"
+                />
+              </NFormItem>
+              <NFormItem label="域显示名" required>
+                <NInput v-model:value="newSkill.domainLabel" placeholder="如：Audio 测试适配" />
+              </NFormItem>
+              <NFormItem label="域 ID">
+                <NInput v-model:value="newSkill.domainId" placeholder="留空则与技能 ID 相同" />
+              </NFormItem>
+              <NFormItem label="所属模块" required>
+                <NSelect
+                  v-model:value="newSkill.module"
+                  :options="skillModuleOptions"
+                  style="width: 200px"
+                />
+                <NInput
+                  v-if="newSkill.module === 'custom'"
+                  v-model:value="newSkill.customModule"
+                  placeholder="自定义模块名"
+                  style="margin-left: 8px; flex: 1"
+                />
+              </NFormItem>
+              <NFormItem label="徽章图标">
+                <NInput v-model:value="newSkill.icon" placeholder="2-4 字符，如 AUD" style="width: 100px" />
+              </NFormItem>
+              <NFormItem label="主题颜色">
+                <NSpace>
+                  <button
+                    v-for="c in PRESET_COLORS" :key="c"
+                    class="color-swatch"
+                    :style="{ background: c, outline: newSkill.color === c ? `2px solid ${c}` : 'none', outlineOffset: '2px' }"
+                    @click="newSkill.color = c"
+                  />
+                  <NInput v-model:value="newSkill.color" style="width: 100px; font-family: monospace" />
+                </NSpace>
+              </NFormItem>
+              <NFormItem label="简介">
+                <NInput v-model:value="newSkill.description" placeholder="一行简介（可选）" />
+              </NFormItem>
+
+              <!-- 前置条件字段 -->
+              <NDivider title-placement="left" style="margin:16px 0 12px">前置条件字段</NDivider>
+              <p style="font-size:12px;color:#888;margin:0 0 12px;">
+                定义用户在启动适配时需要填写的信息项（前置条件表单）
+              </p>
+              <div class="fields-builder">
+                <div
+                  v-for="(f, idx) in newSkillFields"
+                  :key="idx"
+                  class="field-row"
+                >
+                  <NInput v-model:value="f.name"  placeholder="字段key" style="width: 120px" />
+                  <NInput v-model:value="f.label" placeholder="显示名" style="width: 120px" />
+                  <NSelect v-model:value="f.type" :options="fieldTypeOptions" style="width: 110px" />
+                  <NInput v-model:value="f.placeholder" placeholder="提示文字（可选）" style="flex:1" />
+                  <NCheckbox v-model:checked="f.required">必填</NCheckbox>
+                  <NButton
+                    size="tiny"
+                    type="error"
+                    ghost
+                    :disabled="newSkillFields.length <= 1"
+                    @click="removeField(idx)"
+                  >删除</NButton>
+                </div>
+              </div>
+              <NButton size="small" dashed style="margin-top:8px" @click="addField">
+                + 添加字段
+              </NButton>
+
+              <!-- 技能内容 -->
+              <NDivider title-placement="left" style="margin:16px 0 12px">技能说明（Markdown）</NDivider>
+              <NFormItem label="">
+                <NInput
+                  v-model:value="newSkill.content"
+                  type="textarea"
+                  placeholder="描述该技能的执行流程、注意事项、关键约束等（支持 Markdown）"
+                  :autosize="{ minRows: 6, maxRows: 16 }"
+                  style="font-family: monospace; font-size: 12px"
+                />
+              </NFormItem>
+
+              <NButton
+                type="primary"
+                :loading="skillCreating"
+                style="margin-top: 8px"
+                @click="submitCreateSkill"
+              >
+                <template #icon>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                </template>
+                创建技能并发布到 AI 适配调试
+              </NButton>
+            </NForm>
+          </NCard>
+
+          <!-- 右：已创建技能列表 -->
+          <NCard :bordered="false" class="skill-list-card" title="已创建的适配技能">
+            <template #header-extra>
+              <NButton size="small" @click="loadSkills">刷新</NButton>
+            </template>
+            <NSpin :show="skillsLoading">
+              <NEmpty v-if="!skillsList.length && !skillsLoading" description="暂无自定义技能" />
+              <div v-else class="skill-cards">
+                <div
+                  v-for="s in skillsList"
+                  :key="s.skillId"
+                  class="skill-card"
+                >
+                  <div class="sc-head">
+                    <span class="sc-icon" :style="{ background: s.color }">{{ s.icon }}</span>
+                    <div class="sc-info">
+                      <div class="sc-label">{{ s.domainLabel }}</div>
+                      <div class="sc-id">{{ s.skillId }} · {{ s.module }}</div>
+                    </div>
+                    <NButton
+                      size="tiny"
+                      type="error"
+                      ghost
+                      @click="confirmDeleteSkill(s.skillId, s.domainLabel)"
+                    >删除</NButton>
+                  </div>
+                  <div v-if="s.adaptFields?.length" class="sc-fields">
+                    <NTag
+                      v-for="f in s.adaptFields.slice(0, 4)"
+                      :key="f.name"
+                      size="tiny"
+                      :type="f.required ? 'warning' : 'default'"
+                      style="margin: 2px"
+                    >{{ f.label }}</NTag>
+                  </div>
+                  <div v-if="s.description" class="sc-desc">{{ s.description }}</div>
+                </div>
+              </div>
+            </NSpin>
+          </NCard>
+        </div>
+      </NTabPane>
     </NTabs>
 
     <!-- 新增条目弹窗 -->
@@ -379,4 +656,75 @@ function onTabChange(tab: string) {
 .result-source { color: #888; font-size: 12px; margin-bottom: 8px; font-family: monospace; }
 .result-content { margin: 0; white-space: pre-wrap; font-size: 13px; line-height: 1.6; }
 code { background: rgba(0,0,0,.06); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+
+/* ── 技能创建 Tab ─────────────────────────────────────────────── */
+.skill-create-layout {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 16px;
+  margin-top: 8px;
+  align-items: start;
+}
+
+.skill-form-card,
+.skill-list-card { min-height: 200px; }
+
+/* 颜色色块按钮 */
+.color-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: transform .15s;
+}
+.color-swatch:hover { transform: scale(1.15); }
+
+/* 字段构建器 */
+.fields-builder { display: flex; flex-direction: column; gap: 8px; }
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: rgba(0,0,0,.03);
+  border-radius: 6px;
+  flex-wrap: wrap;
+}
+
+/* 已创建技能卡片列表 */
+.skill-cards { display: flex; flex-direction: column; gap: 10px; }
+.skill-card {
+  padding: 10px 12px;
+  border: 1px solid rgba(0,0,0,.08);
+  border-radius: 8px;
+  background: var(--n-color-modal, rgba(255,255,255,.6));
+  transition: box-shadow .15s;
+}
+.skill-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+
+.sc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sc-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  letter-spacing: .5px;
+}
+.sc-info { flex: 1; min-width: 0; }
+.sc-label { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-id { font-size: 11px; color: #888; margin-top: 2px; }
+.sc-desc { font-size: 12px; color: #999; margin-top: 6px; line-height: 1.4; }
+.sc-fields { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 6px; }
 </style>

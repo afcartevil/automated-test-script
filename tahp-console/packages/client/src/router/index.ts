@@ -62,6 +62,11 @@ const router = createRouter({
       name: 'tahp.reports',
       component: () => import('@/views/tahp/ReportsView.vue'),
     },
+    {
+      path: '/tahp/adapt-debug',
+      name: 'tahp.adapt-debug',
+      component: () => import('@/views/tahp/AdaptDebugView.vue'),
+    },
     // ===== Hermes 原生视图 (通用 LLM Chat / 周边能力) =====
     {
       path: '/hermes/chat',

@@ -24,6 +24,8 @@ class ExecuteHandler:
         document_path = arguments.get("document_path", "")
         module = arguments.get("module", "")
         domain = arguments.get("domain", "")
+        document_content = arguments.get("document_content")  # 内联文档内容（adapt-debug 场景）
+        extra_context = arguments.get("extra_context")        # 附加上下文说明
 
         if not document_path:
             raise ValueError("document_path is required")
@@ -31,10 +33,21 @@ class ExecuteHandler:
             raise ValueError("module is required")
         if not domain:
             raise ValueError("domain is required")
-        if not self._config.validate_module(module):
-            raise ValueError(f"Invalid module: {module}. Valid: {self._config.modules}")
-        if not self._config.validate_domain(domain):
-            raise ValueError(f"Invalid domain: {domain}. Valid: {self._config.domains}")
+
+        # 对于内联模式（document_path='__inline__'），跳过模块和域的严格校验
+        # 允许动态域和自定义业务模块也能执行
+        is_inline = document_path == "__inline__"
+        if not is_inline:
+            if not self._config.validate_module(module):
+                raise ValueError(f"Invalid module: {module}. Valid: {self._config.modules}")
+            if not self._config.validate_domain(domain):
+                raise ValueError(f"Invalid domain: {domain}. Valid: {self._config.domains}")
+        else:
+            # 内联模式：尽量将模块映射到已知的可用模块，保证约束能正常加载
+            if not self._config.validate_module(module):
+                module = "shared"  # 回退到共享模块
+            if not self._config.validate_domain(domain):
+                domain = "code_adaptation"  # 回退到通用适配域
 
         return await self._execute_fn(
             config=self._config,
@@ -42,4 +55,6 @@ class ExecuteHandler:
             module=module,
             domain=domain,
             constraints_extra=arguments.get("constraints_extra"),
+            document_content_inline=document_content,
+            extra_context=extra_context,
         )

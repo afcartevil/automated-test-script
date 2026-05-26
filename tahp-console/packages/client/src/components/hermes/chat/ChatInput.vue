@@ -5,10 +5,11 @@ import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchContextLength } from '@/api/hermes/sessions'
 import { setModelContext } from '@/api/hermes/model-context'
-import { NButton, NTooltip, NSwitch, NModal, NInputNumber, useMessage } from 'naive-ui'
+import { NButton, NTooltip, NSwitch, NModal, NInputNumber, NInput, NForm, NFormItem, NTag, useMessage } from 'naive-ui'
 import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
+import { saveKnowledgeFromChat } from '@/api/tahp/knowledge'
 
 const chatStore = useChatStore()
 const { t } = useI18n()
@@ -88,6 +89,21 @@ onMounted(() => {
     autoPlaySpeech.value = saved === 'true'
     // 同步到 chat store
     chatStore.setAutoPlaySpeech(autoPlaySpeech.value)
+  }
+
+  // 读取来自 TAHP 适配调试页面的预填内容
+  const tahpDraft = sessionStorage.getItem('tahp_chat_draft')
+  if (tahpDraft) {
+    inputText.value = tahpDraft
+    sessionStorage.removeItem('tahp_chat_draft')
+    nextTick(() => textareaRef.value?.focus())
+  }
+
+  // 读取 TAHP 适配调试模式元数据（用于 TAHP 横幅 + 知识库沉淀）
+  const ctxRaw = sessionStorage.getItem('tahp_chat_context')
+  if (ctxRaw) {
+    try { tahpCtx.value = JSON.parse(ctxRaw) } catch { /* ignore */ }
+    // 保留在 sessionStorage，直到用户手动保存或关闭横幅
   }
 })
 
@@ -406,10 +422,109 @@ function formatSize(bytes: number): string {
 function isImage(type: string): boolean {
   return type.startsWith('image/')
 }
+
+// ─── TAHP 适配调试模式 ─────────────────────────────────────────────────────────
+interface TahpChatContext {
+  domain: string
+  domainLabel: string
+  module: string
+  relatedSkills: string[]
+  project: { projectCode: string; soc: string; kernelVersion: string; preVendor: string; postVendor: string }
+  taskId: string | null
+}
+
+const tahpCtx        = ref<TahpChatContext | null>(null)
+const showKbModal    = ref(false)
+const kbSaving       = ref(false)
+const kbTitle        = ref('')
+const kbContent      = ref('')
+const kbTags         = ref('')
+
+// 是否有 AI 回复（用于启用"提炼"按钮）
+const hasAssistantReply = computed(() =>
+  chatStore.messages.some(m => m.role === 'assistant' && !m.isStreaming)
+)
+
+function openKbSaveDialog() {
+  if (!tahpCtx.value) return
+  const ctx = tahpCtx.value
+  // 自动生成标题和内容模板
+  kbTitle.value   = `${ctx.domainLabel} BSP 适配调试经验 — ${ctx.project.soc}`
+  // 从当前对话中提取内容摘要
+  const turns = chatStore.messages
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .slice(-10)  // 最近10条
+    .map(m => `**[${m.role === 'user' ? '问' : '答'}]** ${m.content?.slice(0, 300) ?? ''}`)
+    .join('\n\n')
+  kbContent.value = `## 适配上下文\n\n- 项目: ${ctx.project.projectCode}\n- SoC: ${ctx.project.soc}\n- Kernel: ${ctx.project.kernelVersion}\n- 升级路径: ${ctx.project.preVendor} → ${ctx.project.postVendor}\n\n## 关键对话摘要\n\n${turns}\n`
+  kbTags.value    = [ctx.module, ctx.domain, 'adapt-debug', ...ctx.relatedSkills.slice(0, 3)].join(', ')
+  showKbModal.value = true
+}
+
+async function submitKbSave() {
+  if (!tahpCtx.value || !kbTitle.value.trim() || !kbContent.value.trim()) return
+  kbSaving.value = true
+  try {
+    const result = await saveKnowledgeFromChat({
+      title:   kbTitle.value.trim(),
+      content: kbContent.value.trim(),
+      module:  tahpCtx.value.module,
+      domain:  tahpCtx.value.domain,
+      tags:    kbTags.value.split(',').map(t => t.trim()).filter(Boolean),
+      category: 'practice_note',
+      author: 'user',
+    })
+    message.success(`已沉淀至知识库: ${result.file}`)
+    showKbModal.value = false
+    // 标记已保存，避免重复提示
+    tahpCtx.value = null
+    sessionStorage.removeItem('tahp_chat_context')
+  } catch (err) {
+    message.error(`保存失败: ${(err as Error).message}`)
+  } finally {
+    kbSaving.value = false
+  }
+}
 </script>
 
 <template>
   <div class="chat-input-area">
+
+    <!-- TAHP 适配调试模式横幅 -->
+    <div v-if="tahpCtx" class="tahp-ctx-banner">
+      <div class="tahp-banner-left">
+        <span class="tahp-badge">TAHP</span>
+        <span class="tahp-banner-text">
+          <strong>{{ tahpCtx.domainLabel }}</strong> 适配调试 ·
+          {{ tahpCtx.project.soc }} / {{ tahpCtx.project.kernelVersion }} ·
+          {{ tahpCtx.project.preVendor }} → {{ tahpCtx.project.postVendor }}
+        </span>
+        <NTag
+          v-for="sk in tahpCtx.relatedSkills.slice(0, 3)"
+          :key="sk"
+          size="tiny"
+          class="tahp-skill-tag"
+        >{{ sk }}</NTag>
+      </div>
+      <div class="tahp-banner-right">
+        <NButton
+          size="tiny"
+          type="primary"
+          :disabled="!hasAssistantReply"
+          @click="openKbSaveDialog"
+          class="tahp-kb-btn"
+        >
+          <template #icon>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          </template>
+          提炼至知识库
+        </NButton>
+        <button class="tahp-banner-close" @click="tahpCtx = null; sessionStorage.removeItem('tahp_chat_context')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
+
     <!-- Top bar: attach + auto play speech + context info -->
     <div class="input-top-bar">
       <NTooltip trigger="hover">
@@ -617,6 +732,48 @@ function isImage(type: string): boolean {
           <NButton type="primary" @click="saveContextLimit" :loading="isSavingContextLimit">
             {{ t('chat.contextEditSave') }}
           </NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <!-- TAHP 知识库沉淀对话框 -->
+    <NModal
+      v-model:show="showKbModal"
+      preset="card"
+      title="提炼至 TAHP 知识库"
+      style="width: 600px"
+      :mask-closable="true"
+    >
+      <NForm label-placement="left" label-width="70" size="small">
+        <NFormItem label="标题">
+          <NInput v-model:value="kbTitle" placeholder="知识点标题" clearable />
+        </NFormItem>
+        <NFormItem label="标签">
+          <NInput v-model:value="kbTags" placeholder="逗号分隔，如 telephony, audio, adapt-debug" />
+        </NFormItem>
+        <NFormItem label="内容">
+          <NInput
+            v-model:value="kbContent"
+            type="textarea"
+            placeholder="描述本次调试的关键发现、解决方案和复现步骤..."
+            :autosize="{ minRows: 8, maxRows: 20 }"
+            style="font-family: monospace; font-size: 12px;"
+          />
+        </NFormItem>
+      </NForm>
+      <div class="kb-modal-hint">
+        内容将以 Markdown 格式写入 <code>knowledge-base/{{ tahpCtx?.module }}/docs/</code>，
+        并自动更新模块索引，下次 AI 查询时可直接召回。
+      </div>
+      <template #footer>
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <NButton @click="showKbModal = false" :disabled="kbSaving">取消</NButton>
+          <NButton
+            type="primary"
+            :loading="kbSaving"
+            :disabled="!kbTitle.trim() || !kbContent.trim()"
+            @click="submitKbSave"
+          >保存至知识库</NButton>
         </div>
       </template>
     </NModal>
@@ -964,5 +1121,97 @@ function isImage(type: string): boolean {
   border-color: var(--accent-info);
   border-style: dashed;
   background-color: rgba(var(--accent-info-rgb), 0.04);
+}
+
+// ─── TAHP 适配调试模式横幅 ─────────────────────────────────────────────────────
+.tahp-ctx-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 14px;
+  background: linear-gradient(90deg, rgba(56, 139, 253, 0.08) 0%, rgba(56, 139, 253, 0.04) 100%);
+  border-bottom: 1px solid rgba(56, 139, 253, 0.2);
+  border-top: 1px solid rgba(56, 139, 253, 0.12);
+  font-size: 12px;
+}
+
+.tahp-banner-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.tahp-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #388bfd;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.tahp-banner-text {
+  color: $text-secondary;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  strong { color: $text-primary; }
+}
+
+.tahp-skill-tag {
+  opacity: 0.75;
+}
+
+.tahp-banner-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.tahp-kb-btn {
+  font-size: 11px;
+}
+
+.tahp-banner-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  color: $text-muted;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: background 0.15s;
+  &:hover { background: rgba(0,0,0,.06); color: $text-primary; }
+}
+
+// ─── 知识库沉淀弹窗提示 ────────────────────────────────────────────────────────
+.kb-modal-hint {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: rgba(56, 139, 253, 0.06);
+  border: 1px solid rgba(56, 139, 253, 0.2);
+  border-radius: 6px;
+  font-size: 11px;
+  color: $text-muted;
+  line-height: 1.6;
+  code {
+    font-family: monospace;
+    background: rgba(56, 139, 253, 0.1);
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #388bfd;
+  }
 }
 </style>

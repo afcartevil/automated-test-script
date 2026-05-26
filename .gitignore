@@ -4,6 +4,7 @@ __pycache__/
 .idea/
 .vscode/
 .git/
+.qoder/
 *.swp
 .DS_Store
 Thumbs.db

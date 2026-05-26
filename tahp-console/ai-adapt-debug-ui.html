@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 适配调试 — TAHP Console</title>
+<style>
+  :root {
+    --bg-base:       #0d1117;
+    --bg-surface:    #161b22;
+    --bg-card:       #1c2230;
+    --bg-input:      #0d1117;
+    --border:        rgba(255,255,255,0.08);
+    --border-hover:  rgba(88,166,255,0.35);
+    --text-p:        #e6edf3;
+    --text-s:        #8b949e;
+    --text-m:        #4a5568;
+    --accent:        #388bfd;
+    --accent-glow:   rgba(56,139,253,0.18);
+    --accent-green:  #3fb950;
+    --accent-yellow: #d29922;
+    --accent-orange: #f0883e;
+    --accent-purple: #a371f7;
+    --accent-red:    #f85149;
+    --accent-cyan:   #39c5cf;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    color-scheme: dark;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body { font-family: var(--font); background: var(--bg-base); color: var(--text-p); font-size: 13px; }
+
+  /* ── scrollbar ─────────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 4px; }
+
+  /* ── layout ────────────────────────────────────────────────────── */
+  .app { display: flex; height: 100vh; overflow: hidden; }
+
+  /* ── LEFT SIDEBAR ───────────────────────────────────────────────── */
+  .sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-header {
+    padding: 16px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .logo-row {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 2px;
+  }
+  .logo-badge {
+    width: 26px; height: 26px; border-radius: 7px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 800; color: #fff;
+  }
+  .logo-text { font-size: 13px; font-weight: 700; color: var(--text-p); }
+  .logo-sub  { font-size: 10px; color: var(--text-s); margin-top: 1px; }
+
+  .sidebar-scroll { flex: 1; overflow-y: auto; padding: 8px 8px 12px; }
+  .sidebar-section-label {
+    font-size: 10px; font-weight: 600; color: var(--text-m);
+    text-transform: uppercase; letter-spacing: .7px;
+    padding: 10px 8px 5px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 10px; border-radius: var(--radius-sm);
+    cursor: pointer; transition: all .15s;
+    position: relative; border: 1px solid transparent;
+    margin-bottom: 2px;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.04); border-color: var(--border); }
+  .nav-item.active {
+    background: var(--accent-glow);
+    border-color: rgba(56,139,253,0.35);
+  }
+  .nav-item.active .nav-label { color: #58a6ff; }
+  .nav-icon {
+    width: 28px; height: 28px; border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; flex-shrink: 0;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    transition: all .15s;
+  }
+  .nav-item.active .nav-icon { border-color: rgba(56,139,253,0.35); background: var(--accent-glow); }
+  .nav-label { flex: 1; font-size: 12.5px; color: var(--text-s); font-weight: 500; }
+  .nav-badge {
+    font-size: 10px; font-weight: 600; color: var(--text-m);
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 10px; min-width: 20px; text-align: center;
+  }
+  .nav-item.active .nav-badge { color: #58a6ff; background: var(--accent-glow); border-color: rgba(56,139,253,0.3); }
+
+  /* status dot on nav icon */
+  .nav-dot {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    width: 6px; height: 6px; border-radius: 50%;
+  }
+  .dot-done   { background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green); }
+  .dot-active { background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: pulse 1.5s ease-in-out infinite; }
+  .dot-warn   { background: var(--accent-yellow); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  /* ── MAIN AREA ──────────────────────────────────────────────────── */
+  .main {
+    flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0;
+  }
+  .topbar {
+    padding: 0 20px;
+    height: 52px; flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px;
+    background: var(--bg-surface);
+  }
+  .topbar-title {
+    font-size: 14px; font-weight: 600; color: var(--text-p);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .topbar-badge-domain {
+    font-size: 10px; font-weight: 600; padding: 2px 8px;
+    border-radius: 12px;
+    background: var(--accent-glow); color: #58a6ff;
+    border: 1px solid rgba(56,139,253,0.3);
+  }
+  .topbar-spacer { flex: 1; }
+
+  /* project context bar */
+  .ctx-bar {
+    padding: 0 20px;
+    height: 46px; flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+    background: rgba(22,27,34,0.7);
+    display: flex; align-items: center; gap: 12px;
+    backdrop-filter: blur(8px);
+  }
+  .ctx-label { font-size: 10.5px; color: var(--text-m); font-weight: 600; letter-spacing: .5px; white-space: nowrap; }
+  .ctx-chip {
+    display: flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 20px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    cursor: pointer; transition: all .15s; white-space: nowrap;
+  }
+  .ctx-chip:hover { border-color: var(--border-hover); }
+  .ctx-chip-key { font-size: 10px; color: var(--text-m); }
+  .ctx-chip-val { font-size: 11.5px; font-weight: 600; color: var(--text-p); font-family: var(--font-mono); }
+  .ctx-chip-val.placeholder { color: var(--text-m); font-family: var(--font); font-weight: 400; font-style: italic; }
+  .ctx-divider { width: 1px; height: 18px; background: var(--border); }
+  .ctx-branch {
+    display: flex; align-items: center; gap: 5px; margin-left: auto;
+  }
+
+  /* content layout */
+  .content { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+  .center-panel { flex: 1; overflow-y: auto; padding: 20px; min-width: 0; }
+  .right-panel {
+    width: 300px; flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    background: var(--bg-surface);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  /* ── SECTION CARDS ──────────────────────────────────────────────── */
+  .section-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: 16px;
+    overflow: hidden;
+    transition: border-color .15s;
+  }
+  .section-card:hover { border-color: rgba(255,255,255,0.12); }
+  .section-card-header {
+    padding: 14px 18px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,0.015);
+  }
+  .section-card-icon {
+    width: 32px; height: 32px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0;
+  }
+  .icon-blue   { background: rgba(56,139,253,0.15); border: 1px solid rgba(56,139,253,0.3); }
+  .icon-green  { background: rgba(63,185,80,0.15);  border: 1px solid rgba(63,185,80,0.3); }
+  .icon-yellow { background: rgba(210,153,34,0.15); border: 1px solid rgba(210,153,34,0.3); }
+  .icon-purple { background: rgba(163,113,247,0.15);border: 1px solid rgba(163,113,247,0.3); }
+  .icon-orange { background: rgba(240,136,62,0.15); border: 1px solid rgba(240,136,62,0.3); }
+  .icon-cyan   { background: rgba(57,197,207,0.15); border: 1px solid rgba(57,197,207,0.3); }
+  .icon-red    { background: rgba(248,81,73,0.15);  border: 1px solid rgba(248,81,73,0.3); }
+
+  .section-card-title { font-size: 13px; font-weight: 600; color: var(--text-p); flex: 1; }
+  .section-card-sub   { font-size: 11px; color: var(--text-s); margin-top: 2px; }
+  .section-card-body  { padding: 16px 18px; }
+
+  /* ── STEP INDICATOR ─────────────────────────────────────────────── */
+  .step-nav {
+    display: flex; gap: 0; margin-bottom: 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 4px;
+  }
+  .step-btn {
+    flex: 1; padding: 6px 4px; border-radius: 7px;
+    text-align: center; cursor: pointer; transition: all .15s;
+    font-size: 11px; font-weight: 500; color: var(--text-m);
+    position: relative;
+  }
+  .step-btn.active { background: var(--accent-glow); color: #58a6ff; border: 1px solid rgba(56,139,253,0.3); }
+  .step-btn.done   { color: var(--accent-green); }
+  .step-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 50%; font-size: 10px; font-weight: 700;
+    background: var(--bg-surface); border: 1px solid var(--border);
+    margin-right: 4px; vertical-align: middle;
+  }
+  .step-btn.active .step-num { background: #1c6fe8; border-color: #388bfd; color: #fff; }
+  .step-btn.done   .step-num { background: rgba(63,185,80,0.2); border-color: var(--accent-green); color: var(--accent-green); }
+
+  /* ── FORM FIELDS ────────────────────────────────────────────────── */
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .field-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .field-full { grid-column: 1 / -1; }
+  .field-label {
+    font-size: 11px; font-weight: 600; color: var(--text-s);
+    display: flex; align-items: center; gap: 5px;
+    margin-bottom: 5px;
+  }
+  .field-req { color: var(--accent-red); font-size: 10px; }
+  .field-input, .field-select {
+    width: 100%; height: 32px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-p);
+    padding: 0 10px;
+    font-size: 12px; font-family: var(--font);
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+    appearance: none;
+  }
+  .field-input::placeholder { color: var(--text-m); }
+  .field-input:focus, .field-select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(56,139,253,0.12);
+  }
+  .field-select { cursor: pointer; }
+  .field-select option { background: #1c2230; }
+  .field-textarea {
+    width: 100%; min-height: 72px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-p); padding: 8px 10px;
+    font-size: 12px; font-family: var(--font-mono);
+    outline: none; resize: vertical; line-height: 1.5;
+    transition: border-color .15s;
+  }
+  .field-textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(56,139,253,0.12); }
+  .field-hint { font-size: 10.5px; color: var(--text-m); margin-top: 4px; line-height: 1.4; }
+  .field-path-row { display: flex; gap: 6px; }
+  .field-path-row .field-input { flex: 1; }
+  .btn-browse {
+    height: 32px; padding: 0 10px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text-s);
+    font-size: 11px; cursor: pointer; white-space: nowrap;
+    transition: all .15s;
+  }
+  .btn-browse:hover { border-color: var(--border-hover); color: var(--text-p); }
+
+  /* ── SKILLS TAG LIST ─────────────────────────────────────────────── */
+  .skills-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .skill-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 500;
+    border: 1px solid; cursor: pointer; transition: all .15s;
+  }
+  .skill-tag-blue   { background: rgba(56,139,253,0.1);  color: #58a6ff; border-color: rgba(56,139,253,0.25); }
+  .skill-tag-green  { background: rgba(63,185,80,0.1);   color: #3fb950; border-color: rgba(63,185,80,0.25); }
+  .skill-tag-purple { background: rgba(163,113,247,0.1); color: #a371f7; border-color: rgba(163,113,247,0.25); }
+  .skill-tag-yellow { background: rgba(210,153,34,0.1);  color: #e3b341; border-color: rgba(210,153,34,0.25); }
+  .skill-tag-orange { background: rgba(240,136,62,0.1);  color: #f0883e; border-color: rgba(240,136,62,0.25); }
+  .skill-tag-cyan   { background: rgba(57,197,207,0.1);  color: #39c5cf; border-color: rgba(57,197,207,0.25); }
+  .skill-tag-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+  /* ── CHECKLIST ───────────────────────────────────────────────────── */
+  .checklist { display: flex; flex-direction: column; gap: 8px; }
+  .check-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-radius: var(--radius-sm);
+    background: var(--bg-card); border: 1px solid var(--border);
+    transition: all .15s;
+  }
+  .check-item:hover { border-color: rgba(255,255,255,0.12); }
+  .check-box {
+    width: 18px; height: 18px; border-radius: 5px; flex-shrink: 0;
+    border: 1.5px solid;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; cursor: pointer;
+  }
+  .check-box.done  { background: rgba(63,185,80,0.15); border-color: var(--accent-green); color: var(--accent-green); }
+  .check-box.warn  { background: rgba(210,153,34,0.15); border-color: var(--accent-yellow); color: var(--accent-yellow); }
+  .check-box.todo  { border-color: var(--border); }
+  .check-text { flex: 1; font-size: 12px; color: var(--text-s); }
+  .check-text strong { color: var(--text-p); font-weight: 600; }
+  .check-status {
+    font-size: 10px; padding: 2px 7px; border-radius: 10px;
+    font-weight: 600;
+  }
+  .status-ready   { background: rgba(63,185,80,0.15); color: var(--accent-green); border: 1px solid rgba(63,185,80,0.3); }
+  .status-pending { background: rgba(56,139,253,0.1); color: #58a6ff; border: 1px solid rgba(56,139,253,0.25); }
+  .status-wait    { background: rgba(255,255,255,0.04); color: var(--text-m); border: 1px solid var(--border); }
+
+  /* ── BUTTONS ────────────────────────────────────────────────────── */
+  .btn-row { display: flex; align-items: center; gap: 10px; margin-top: 18px; }
+  .btn-primary {
+    height: 36px; padding: 0 20px; border-radius: var(--radius-sm);
+    background: var(--accent); border: none;
+    color: #fff; font-size: 13px; font-weight: 600;
+    cursor: pointer; transition: all .15s; display: flex; align-items: center; gap: 6px;
+  }
+  .btn-primary:hover { background: #1a7fe8; box-shadow: 0 0 16px rgba(56,139,253,0.4); }
+  .btn-secondary {
+    height: 36px; padding: 0 16px; border-radius: var(--radius-sm);
+    background: var(--bg-card); border: 1px solid var(--border);
+    color: var(--text-s); font-size: 12px; font-weight: 500;
+    cursor: pointer; transition: all .15s;
+  }
+  .btn-secondary:hover { border-color: var(--border-hover); color: var(--text-p); }
+  .btn-ai {
+    height: 36px; padding: 0 18px; border-radius: var(--radius-sm);
+    background: linear-gradient(135deg, rgba(56,139,253,0.15), rgba(163,113,247,0.15));
+    border: 1px solid rgba(163,113,247,0.3);
+    color: #a371f7; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all .15s; display: flex; align-items: center; gap: 6px;
+  }
+  .btn-ai:hover { background: linear-gradient(135deg, rgba(56,139,253,0.25), rgba(163,113,247,0.25)); box-shadow: 0 0 14px rgba(163,113,247,0.25); }
+
+  /* ── INLINE ALERT ───────────────────────────────────────────────── */
+  .alert-info {
+    background: rgba(56,139,253,0.08); border: 1px solid rgba(56,139,253,0.25);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px; font-size: 11.5px; color: #58a6ff;
+    display: flex; align-items: flex-start; gap: 8px; line-height: 1.5;
+    margin-bottom: 14px;
+  }
+  .alert-info svg { flex-shrink: 0; margin-top: 2px; }
+  .alert-warn {
+    background: rgba(210,153,34,0.08); border: 1px solid rgba(210,153,34,0.25);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px; font-size: 11.5px; color: #e3b341;
+    display: flex; align-items: flex-start; gap: 8px; line-height: 1.5;
+    margin-bottom: 14px;
+  }
+
+  /* ── RIGHT PANEL ────────────────────────────────────────────────── */
+  .rp-section-header {
+    padding: 13px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px; font-weight: 600; color: var(--text-s);
+    text-transform: uppercase; letter-spacing: .6px;
+    flex-shrink: 0;
+  }
+  .rp-body { flex: 1; overflow-y: auto; padding: 12px; }
+
+  .progress-task {
+    padding: 10px 12px; border-radius: var(--radius-sm);
+    background: var(--bg-card); border: 1px solid var(--border);
+    margin-bottom: 8px; cursor: pointer; transition: all .15s;
+  }
+  .progress-task:hover { border-color: rgba(255,255,255,0.12); }
+  .pt-header { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+  .pt-icon { font-size: 13px; }
+  .pt-name { font-size: 12px; font-weight: 600; color: var(--text-p); flex: 1; }
+  .pt-time { font-size: 10px; color: var(--text-m); }
+  .pt-desc { font-size: 11px; color: var(--text-s); line-height: 1.5; margin-bottom: 8px; }
+  .pt-bar-track {
+    height: 3px; border-radius: 2px;
+    background: rgba(255,255,255,0.07); overflow: hidden;
+  }
+  .pt-bar-fill { height: 100%; border-radius: 2px; transition: width .4s; }
+  .bar-green  { background: var(--accent-green); }
+  .bar-blue   { background: var(--accent); }
+  .bar-yellow { background: var(--accent-yellow); }
+  .pt-meta { display: flex; justify-content: space-between; margin-top: 5px; }
+  .pt-meta-step { font-size: 10px; color: var(--text-m); }
+  .pt-status-tag {
+    font-size: 9.5px; font-weight: 600; padding: 1px 6px;
+    border-radius: 10px;
+  }
+  .tag-running  { background: rgba(56,139,253,0.15); color: #58a6ff; }
+  .tag-done     { background: rgba(63,185,80,0.15); color: var(--accent-green); }
+  .tag-blocked  { background: rgba(210,153,34,0.15); color: #e3b341; }
+
+  /* stats row */
+  .stats-row {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 8px; margin-bottom: 14px;
+  }
+  .stat-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 10px 12px;
+    text-align: center;
+  }
+  .stat-val { font-size: 20px; font-weight: 700; color: var(--text-p); line-height: 1; }
+  .stat-val.accent { color: var(--accent); }
+  .stat-val.green  { color: var(--accent-green); }
+  .stat-val.yellow { color: var(--accent-yellow); }
+  .stat-key { font-size: 10px; color: var(--text-m); margin-top: 3px; }
+
+  /* radio-group */
+  .radio-group { display: flex; gap: 6px; flex-wrap: wrap; }
+  .radio-btn {
+    padding: 5px 12px; border-radius: 20px;
+    font-size: 11.5px; font-weight: 500;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-s); cursor: pointer;
+    transition: all .15s;
+  }
+  .radio-btn.selected {
+    border-color: var(--accent); color: #58a6ff;
+    background: var(--accent-glow);
+  }
+  .radio-btn:hover:not(.selected) { border-color: rgba(255,255,255,0.15); color: var(--text-p); }
+
+  /* tag row with remove */
+  .tag-editable {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; border-radius: 4px;
+    font-size: 11px; font-family: var(--font-mono);
+    background: rgba(56,139,253,0.1); color: #58a6ff;
+    border: 1px solid rgba(56,139,253,0.25);
+  }
+  .tag-editable span { cursor: pointer; opacity: .6; }
+  .tag-editable span:hover { opacity: 1; }
+
+  /* GPIO row */
+  .gpio-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .gpio-item {}
+  .gpio-label {
+    font-size: 10px; font-weight: 700; color: var(--text-m);
+    text-transform: uppercase; letter-spacing: .5px;
+    margin-bottom: 4px; display: flex; align-items: center; gap: 4px;
+  }
+  .gpio-pin-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .pin-rst  { background: var(--accent-red); }
+  .pin-int  { background: var(--accent-green); }
+  .pin-avdd { background: var(--accent-yellow); }
+  .pin-vddi { background: var(--accent-purple); }
+
+  /* section divider */
+  .divider {
+    height: 1px; background: var(--border);
+    margin: 16px 0;
+  }
+
+  /* topbar btn */
+  .topbar-btn {
+    height: 30px; padding: 0 12px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text-s);
+    font-size: 11.5px; cursor: pointer; display: flex; align-items: center; gap: 5px;
+    transition: all .15s;
+  }
+  .topbar-btn:hover { border-color: var(--border-hover); color: var(--text-p); }
+  .topbar-btn.primary-sm {
+    background: rgba(56,139,253,0.12); border-color: rgba(56,139,253,0.3);
+    color: #58a6ff;
+  }
+  .topbar-btn.primary-sm:hover { background: rgba(56,139,253,0.2); box-shadow: 0 0 10px rgba(56,139,253,0.2); }
+
+  /* dws path cards */
+  .dws-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .dws-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px; border-radius: var(--radius-sm);
+    background: var(--bg-card); border: 1px solid var(--border);
+  }
+  .dws-num {
+    width: 20px; height: 20px; border-radius: 50%;
+    background: rgba(56,139,253,0.15); color: #58a6ff;
+    font-size: 10px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .dws-path { font-size: 11px; font-family: var(--font-mono); color: var(--text-s); flex: 1; word-break: break-all; }
+  .dws-status { font-size: 10px; }
+  .dws-ok  { color: var(--accent-green); }
+  .dws-err { color: var(--accent-red); }
+  .dws-na  { color: var(--text-m); }
+
+  /* KO table mini */
+  .ko-table { width: 100%; border-collapse: collapse; }
+  .ko-table th, .ko-table td {
+    padding: 6px 10px; font-size: 11px; text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .ko-table th { color: var(--text-m); font-weight: 600; background: rgba(255,255,255,0.02); }
+  .ko-table td { color: var(--text-s); font-family: var(--font-mono); }
+  .ko-table tr:last-child td { border-bottom: none; }
+  .ko-badge {
+    font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;
+    background: rgba(63,185,80,0.12); color: var(--accent-green);
+  }
+
+  /* history item */
+  .hist-item {
+    padding: 9px 12px; border-radius: var(--radius-sm);
+    background: var(--bg-card); border: 1px solid var(--border);
+    margin-bottom: 6px; display: flex; align-items: center; gap: 8px;
+    cursor: pointer; transition: all .15s;
+  }
+  .hist-item:hover { border-color: rgba(255,255,255,0.12); }
+  .hist-icon { font-size: 14px; }
+  .hist-info { flex: 1; min-width: 0; }
+  .hist-name { font-size: 11.5px; font-weight: 500; color: var(--text-p); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hist-meta { font-size: 10px; color: var(--text-m); margin-top: 2px; }
+  .hist-status { font-size: 9.5px; }
+
+  /* scrollable section */
+  .scroll-section { overflow-y: auto; flex: 1; min-height: 0; }
+
+  /* gradient header strip */
+  .domain-hero {
+    background: linear-gradient(135deg, rgba(56,139,253,0.08) 0%, rgba(163,113,247,0.06) 100%);
+    border: 1px solid rgba(56,139,253,0.15);
+    border-radius: var(--radius-lg);
+    padding: 18px 20px;
+    margin-bottom: 16px;
+    display: flex; align-items: flex-start; gap: 16px;
+  }
+  .domain-hero-icon {
+    width: 48px; height: 48px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; flex-shrink: 0;
+    background: rgba(56,139,253,0.12);
+    border: 1px solid rgba(56,139,253,0.3);
+  }
+  .domain-hero-title { font-size: 17px; font-weight: 700; color: var(--text-p); }
+  .domain-hero-desc  { font-size: 12px; color: var(--text-s); margin-top: 4px; line-height: 1.6; }
+  .domain-hero-tags  { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .hero-tag {
+    font-size: 10.5px; padding: 3px 9px; border-radius: 4px;
+    background: rgba(255,255,255,0.05); color: var(--text-s);
+    border: 1px solid var(--border);
+  }
+
+  /* empty msg */
+  .empty-hint {
+    text-align: center; padding: 40px 20px;
+    color: var(--text-m); font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── LEFT SIDEBAR ─────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo-row">
+        <div class="logo-badge">AI</div>
+        <div>
+          <div class="logo-text">TAHP Console</div>
+          <div class="logo-sub">AI 适配调试平台</div>
+        </div>
+      </div>
+    </div>
+    <div class="sidebar-scroll">
+      <div class="sidebar-section-label">适配模块</div>
+
+      <div class="nav-item active">
+        <div class="nav-icon">🖐️</div>
+        <span class="nav-label">TP 触摸屏</span>
+        <span class="nav-badge">15</span>
+        <span class="nav-dot dot-active"></span>
+      </div>
+      <div class="nav-item">
+        <div class="nav-icon">📳</div>
+        <span class="nav-label">振动马达</span>
+        <span class="nav-badge">14</span>
+        <span class="nav-dot dot-done"></span>
+      </div>
+      <div class="nav-item">
+        <div class="nav-icon">🔏</div>
+        <span class="nav-label">指纹识别</span>
+        <span class="nav-badge">3</span>
+      </div>
+      <div class="nav-item">
+        <div class="nav-icon">🔊</div>
+        <span class="nav-label">音频</span>
+        <span class="nav-badge">2</span>
+        <span class="nav-dot dot-warn"></span>
+      </div>
+      <div class="nav-item">
+        <div class="nav-icon">⚡</div>
+        <span class="nav-label">充电</span>
+        <span class="nav-badge">8</span>
+      </div>
+      <div class="nav-item">
+        <div class="nav-icon">📡</div>
+        <span class="nav-label">通信 Modem</span>
+        <span class="nav-badge">3</span>
+      </div>
+      <div class="nav-item">
+        <div class="nav-icon">🐧</div>
+        <span class="nav-label">内核 / CPU</span>
+        <span class="nav-badge">2</span>
+      </div>
+      <div class="nav-item">
+        <div class="nav-icon">💡</div>
+        <span class="nav-label">SCP 传感器</span>
+        <span class="nav-badge">2</span>
+      </div>
+      <div class="nav-item">
+        <div class="nav-icon">🤖</div>
+        <span class="nav-label">AI 按键</span>
+        <span class="nav-badge">4</span>
+      </div>
+
+      <div class="sidebar-section-label" style="margin-top:8px;">平台升级</div>
+      <div class="nav-item">
+        <div class="nav-icon">🔄</div>
+        <span class="nav-label">分支升级编排</span>
+        <span class="nav-badge">3</span>
+      </div>
+      <div class="nav-item">
+        <div class="nav-icon">📋</div>
+        <span class="nav-label">安全补丁升级</span>
+        <span class="nav-badge">1</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── MAIN ─────────────────────────────────────────────────── -->
+  <div class="main">
+
+    <!-- top bar -->
+    <header class="topbar">
+      <div class="topbar-title">
+        AI 适配调试
+        <span class="topbar-badge-domain">TP 触摸屏</span>
+      </div>
+      <div class="topbar-spacer"></div>
+      <button class="topbar-btn">📋 适配进度报告</button>
+      <button class="topbar-btn">⏱ 历史记录</button>
+      <button class="topbar-btn primary-sm">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="13 2 13 9 20 9"/><path d="M3 15a9 9 0 1 0 9-9h-1"/><polyline points="7 15 3 15 3 11"/></svg>
+        重新检查前置
+      </button>
+    </header>
+
+    <!-- context / project info bar -->
+    <div class="ctx-bar">
+      <span class="ctx-label">项目</span>
+      <div class="ctx-chip">
+        <span class="ctx-chip-key">代号</span>
+        <span class="ctx-chip-val">X6876_H786</span>
+      </div>
+      <div class="ctx-chip">
+        <span class="ctx-chip-key">SoC</span>
+        <span class="ctx-chip-val">MT6878</span>
+      </div>
+      <div class="ctx-chip">
+        <span class="ctx-chip-key">Kernel</span>
+        <span class="ctx-chip-val">6.1</span>
+      </div>
+      <div class="ctx-divider"></div>
+      <div class="ctx-chip">
+        <span class="ctx-chip-key">升级前</span>
+        <span class="ctx-chip-val">vendor14</span>
+      </div>
+      <div class="ctx-chip">
+        <span class="ctx-chip-key">升级后</span>
+        <span class="ctx-chip-val">vendor16</span>
+      </div>
+      <div class="ctx-divider"></div>
+      <div class="ctx-chip" style="border-color: rgba(63,185,80,0.3); background: rgba(63,185,80,0.06);">
+        <span style="color: var(--accent-green); font-size: 10px;">●</span>
+        <span class="ctx-chip-val" style="color: var(--accent-green); font-size: 10.5px;">前置条件已完整</span>
+      </div>
+      <div style="margin-left: auto;">
+        <button class="topbar-btn" style="height:26px; font-size:10.5px;">✏️ 修改项目信息</button>
+      </div>
+    </div>
+
+    <!-- content -->
+    <div class="content">
+      <div class="center-panel">
+
+        <!-- DOMAIN HERO -->
+        <div class="domain-hero">
+          <div class="domain-hero-icon">🖐️</div>
+          <div style="flex:1;">
+            <div class="domain-hero-title">TP 触摸屏 P1 适配</div>
+            <div class="domain-hero-desc">
+              覆盖 DWS 引脚配置、ko_order_table 配置、驱动 probe 验证、selinux 权限、出厂测试节点等全流程。
+              当前模块包含 <strong style="color:var(--text-p)">15 个 Skill</strong>，分为「适配」和「验证」两类。
+            </div>
+            <div class="domain-hero-tags">
+              <span class="hero-tag">Goodix · Focal · Synaptics · ILITEK</span>
+              <span class="hero-tag">MTK / Unisoc</span>
+              <span class="hero-tag">A15→A16 升级</span>
+              <span class="hero-tag">DWS · DTS · ko_order</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- STEP NAV -->
+        <div class="step-nav">
+          <div class="step-btn done">
+            <span class="step-num">✓</span> 通用项目信息
+          </div>
+          <div class="step-btn active">
+            <span class="step-num">2</span> TP 前置条件
+          </div>
+          <div class="step-btn">
+            <span class="step-num">3</span> DWS / DTS 路径
+          </div>
+          <div class="step-btn">
+            <span class="step-num">4</span> KO 配置
+          </div>
+          <div class="step-btn">
+            <span class="step-num">5</span> 验证启动
+          </div>
+        </div>
+
+        <!-- SECTION 1: TP基本信息 -->
+        <div class="section-card">
+          <div class="section-card-header">
+            <div class="section-card-icon icon-blue">🖐️</div>
+            <div>
+              <div class="section-card-title">TP 基本信息</div>
+              <div class="section-card-sub">IC 厂商、接口、项目 DTS 位置</div>
+            </div>
+            <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+              <span class="check-status status-ready">✓ 已填写</span>
+            </div>
+          </div>
+          <div class="section-card-body">
+            <div class="field-grid" style="margin-bottom:14px;">
+              <div>
+                <div class="field-label">Touch IC 厂商 <span class="field-req">*</span></div>
+                <select class="field-select">
+                  <option selected>Goodix</option>
+                  <option>Focal</option>
+                  <option>Synaptics</option>
+                  <option>ILITEK</option>
+                  <option>Himax</option>
+                </select>
+              </div>
+              <div>
+                <div class="field-label">Touch IC 型号 <span class="field-req">*</span></div>
+                <input class="field-input" value="GT9896S" placeholder="如 GT9896S, FT3519">
+              </div>
+              <div>
+                <div class="field-label">接口类型 <span class="field-req">*</span></div>
+                <div class="radio-group">
+                  <div class="radio-btn selected">I2C</div>
+                  <div class="radio-btn">SPI</div>
+                </div>
+              </div>
+              <div>
+                <div class="field-label">I2C 通道 &amp; 地址</div>
+                <input class="field-input" placeholder="如 i2c3 0x14" value="i2c3  0x14">
+              </div>
+            </div>
+            <div class="field-grid">
+              <div>
+                <div class="field-label">DTS / Touch DTSI 路径 <span class="field-req">*</span></div>
+                <div class="field-path-row">
+                  <input class="field-input" value="arch/arm64/boot/dts/mediatek/tp/x6876_h786_touch.dtsi">
+                  <button class="btn-browse">📁 浏览</button>
+                </div>
+                <div class="field-hint">通常在 mediatek/tp/ 下，或由板级 dts include</div>
+              </div>
+              <div>
+                <div class="field-label">屏幕尺寸 / 分辨率</div>
+                <input class="field-input" placeholder="如 6.78 寸 / 1080×2400">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SECTION 2: GPIO引脚配置 -->
+        <div class="section-card">
+          <div class="section-card-header">
+            <div class="section-card-icon icon-purple">⚡</div>
+            <div>
+              <div class="section-card-title">GPIO 引脚配置</div>
+              <div class="section-card-sub">RST / INT / AVDD / VDDI — 用于 DWS 核对与 DTS 对齐</div>
+            </div>
+            <div style="margin-left:auto;">
+              <span class="check-status status-ready">✓ 已填写</span>
+            </div>
+          </div>
+          <div class="section-card-body">
+            <div class="alert-info">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              RST/AVDD/VDDI 须为 <strong>下拉低电平输出</strong>；INT 须为 <strong>EINT 上拉输入</strong>。三处 DWS 必须与 DTS 保持一致。
+            </div>
+            <div class="gpio-grid">
+              <div class="gpio-item">
+                <div class="gpio-label">
+                  <span class="gpio-pin-dot pin-rst"></span>TP RST
+                  <span style="color:var(--text-m); font-size:9.5px; margin-left:2px;">(输出低+下拉)</span>
+                </div>
+                <input class="field-input" value="&pio 22" style="font-family: var(--font-mono); font-size:12px;">
+              </div>
+              <div class="gpio-item">
+                <div class="gpio-label">
+                  <span class="gpio-pin-dot pin-int"></span>TP INT
+                  <span style="color:var(--text-m); font-size:9.5px; margin-left:2px;">(EINT 上拉)</span>
+                </div>
+                <input class="field-input" value="&pio 4" style="font-family: var(--font-mono); font-size:12px;">
+              </div>
+              <div class="gpio-item">
+                <div class="gpio-label">
+                  <span class="gpio-pin-dot pin-avdd"></span>TP AVDD
+                  <span style="color:var(--text-m); font-size:9.5px; margin-left:2px;">(下拉低)</span>
+                </div>
+                <input class="field-input" placeholder="如 &pio 123 / PMIC LDO" style="font-family: var(--font-mono); font-size:12px;" value="PMIC LDO2">
+              </div>
+              <div class="gpio-item">
+                <div class="gpio-label">
+                  <span class="gpio-pin-dot pin-vddi"></span>TP VDDI
+                  <span style="color:var(--text-m); font-size:9.5px; margin-left:2px;">(下拉低)</span>
+                </div>
+                <input class="field-input" placeholder="如 &pio 124 / PMIC LDO" style="font-family: var(--font-mono); font-size:12px;" value="PMIC LDO3">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SECTION 3: DWS 三处路径 -->
+        <div class="section-card">
+          <div class="section-card-header">
+            <div class="section-card-icon icon-yellow">📐</div>
+            <div>
+              <div class="section-card-title">DWS 三处路径核对</div>
+              <div class="section-card-sub">三份 DWS 须完全一致，工具 / Preloader / Kernel DCT 缺一不可</div>
+            </div>
+            <div style="margin-left:auto; display:flex; gap:6px;">
+              <button class="topbar-btn" style="height:26px; font-size:10.5px;">🔍 自动检测</button>
+              <span class="check-status status-pending">待验证</span>
+            </div>
+          </div>
+          <div class="section-card-body">
+            <div class="dws-grid">
+              <div class="dws-row">
+                <div class="dws-num">1</div>
+                <div style="flex:1">
+                  <div class="field-label" style="margin-bottom:4px;">DCT Tools DWS</div>
+                  <div class="field-path-row">
+                    <input class="field-input" value="vendor/mediatek/proprietary/tools/dct/dws/mt6878/x6876_h786.dws" style="font-size:11px; font-family: var(--font-mono);">
+                    <button class="btn-browse">📁</button>
+                  </div>
+                </div>
+                <span class="dws-ok">● 已找到</span>
+              </div>
+              <div class="dws-row">
+                <div class="dws-num">2</div>
+                <div style="flex:1">
+                  <div class="field-label" style="margin-bottom:4px;">Preloader custom DWS</div>
+                  <div class="field-path-row">
+                    <input class="field-input" value="vendor/mediatek/proprietary/bootable/bootloader/preloader/custom/x6876_h786/dct/dws/codegen.dws" style="font-size:11px; font-family: var(--font-mono);">
+                    <button class="btn-browse">📁</button>
+                  </div>
+                </div>
+                <span class="dws-ok">● 已找到</span>
+              </div>
+              <div class="dws-row">
+                <div class="dws-num">3</div>
+                <div style="flex:1">
+                  <div class="field-label" style="margin-bottom:4px;">Preloader kernel DCT</div>
+                  <div class="field-path-row">
+                    <input class="field-input" placeholder="vendor/mediatek/.../custom/<proj>/kernel/dct/dct/codegen.dws" style="font-size:11px; font-family: var(--font-mono);">
+                    <button class="btn-browse">📁</button>
+                  </div>
+                </div>
+                <span class="dws-na">— 未配置</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SECTION 4: KO Order 配置 -->
+        <div class="section-card">
+          <div class="section-card-header">
+            <div class="section-card-icon icon-green">⚙️</div>
+            <div>
+              <div class="section-card-title">KO Order 配置</div>
+              <div class="section-card-sub">ko_order_table.csv 中 TP 相关模块的加载配置</div>
+            </div>
+            <div style="margin-left:auto; display:flex; gap:6px; align-items:center;">
+              <button class="topbar-btn" style="height:26px; font-size:10.5px;">📥 从文件导入</button>
+              <span class="check-status status-ready">✓ 已配置</span>
+            </div>
+          </div>
+          <div class="section-card-body">
+            <div class="field-grid" style="margin-bottom:14px;">
+              <div>
+                <div class="field-label">ko_order_table.csv 路径</div>
+                <div class="field-path-row">
+                  <input class="field-input" value="vendor/transsion/projects/x6876_h786/ko_order_table.csv" style="font-size:11px; font-family:var(--font-mono);">
+                  <button class="btn-browse">📁</button>
+                </div>
+              </div>
+              <div>
+                <div class="field-label">kernel_device_modules 目录</div>
+                <input class="field-input" value="kernel_device_modules-6.1" style="font-family:var(--font-mono);">
+              </div>
+            </div>
+            <table class="ko-table">
+              <thead>
+                <tr><th>KO 路径</th><th>加载分区</th><th>Boot Time</th><th>状态</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>drivers/input/touchscreen/gt9896s/gt9896s.ko</td>
+                  <td>odm</td>
+                  <td><span class="ko-badge">Y</span></td>
+                  <td><span class="dws-ok" style="font-size:11px;">✓ 正确</span></td>
+                </tr>
+                <tr>
+                  <td>drivers/input/touchscreen/tran_tp_manager.ko</td>
+                  <td>odm</td>
+                  <td><span class="ko-badge">Y</span></td>
+                  <td><span class="dws-ok" style="font-size:11px;">✓ 正确</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- SECTION 5: 关联 Skills & 执行 -->
+        <div class="section-card">
+          <div class="section-card-header">
+            <div class="section-card-icon icon-cyan">🤖</div>
+            <div>
+              <div class="section-card-title">关联 Skills 与执行计划</div>
+              <div class="section-card-sub">基于前置条件，以下 skill 将依序被调用</div>
+            </div>
+          </div>
+          <div class="section-card-body">
+            <div class="checklist">
+              <div class="check-item">
+                <div class="check-box done">✓</div>
+                <div class="check-text"><strong>tp-adapt-dws-pin</strong> — DWS 引脚配置与三处一致性检查</div>
+                <span class="check-status status-ready">就绪</span>
+              </div>
+              <div class="check-item">
+                <div class="check-box done">✓</div>
+                <div class="check-text"><strong>tp-adapt-ko-order</strong> — ko_order_table 加载顺序配置</div>
+                <span class="check-status status-ready">就绪</span>
+              </div>
+              <div class="check-item">
+                <div class="check-box done">✓</div>
+                <div class="check-text"><strong>tp-adapt-power-sequence</strong> — 上电时序与 reset 极性核对</div>
+                <span class="check-status status-ready">就绪</span>
+              </div>
+              <div class="check-item">
+                <div class="check-box warn">!</div>
+                <div class="check-text"><strong>tp-adapt-gesture-driver</strong> — 手势驱动节点配置</div>
+                <span class="check-status status-pending">需确认手势功能是否启用</span>
+              </div>
+              <div class="check-item">
+                <div class="check-box todo"></div>
+                <div class="check-text"><strong>tp-adapt-selinux</strong> — SELinux 节点权限（在验证阶段）</div>
+                <span class="check-status status-wait">待 probe 通过后</span>
+              </div>
+              <div class="check-item">
+                <div class="check-box todo"></div>
+                <div class="check-text"><strong>fc-tp-driver · fc-tp-touch · fc-tp-gesture</strong> — 验证三件套</div>
+                <span class="check-status status-wait">待 probe 通过后</span>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div style="margin-bottom:10px; font-size:11px; color:var(--text-s);">关联 Skill 快速入口：</div>
+            <div class="skills-row">
+              <span class="skill-tag skill-tag-blue"><span class="skill-tag-dot"></span>tp-adapt-dws-pin</span>
+              <span class="skill-tag skill-tag-blue"><span class="skill-tag-dot"></span>tp-adapt-ko-order</span>
+              <span class="skill-tag skill-tag-blue"><span class="skill-tag-dot"></span>tp-adapt-power-sequence</span>
+              <span class="skill-tag skill-tag-yellow"><span class="skill-tag-dot"></span>tp-adapt-gesture-driver</span>
+              <span class="skill-tag skill-tag-green"><span class="skill-tag-dot"></span>fc-tp-driver</span>
+              <span class="skill-tag skill-tag-green"><span class="skill-tag-dot"></span>fc-tp-touch</span>
+              <span class="skill-tag skill-tag-green"><span class="skill-tag-dot"></span>fc-tp-gesture</span>
+              <span class="skill-tag skill-tag-purple"><span class="skill-tag-dot"></span>tp-adapt-selinux</span>
+              <span class="skill-tag skill-tag-purple"><span class="skill-tag-dot"></span>fc-tp-selinux</span>
+              <span class="skill-tag skill-tag-cyan"><span class="skill-tag-dot"></span>tp-adapt-factory-sysfs</span>
+              <span class="skill-tag skill-tag-cyan"><span class="skill-tag-dot"></span>fc-tp-factory</span>
+            </div>
+
+            <div class="btn-row">
+              <button class="btn-primary">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                启动 AI 适配调试
+              </button>
+              <button class="btn-ai">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M8.46 8.46a5 5 0 0 0 0 7.07"/></svg>
+                AI 对话模式调试
+              </button>
+              <button class="btn-secondary">💾 保存配置</button>
+              <div style="margin-left:auto; font-size:11px; color:var(--text-m);">
+                3 项前置已满足 · 1 项待确认
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /center-panel -->
+
+      <!-- ── RIGHT PANEL ──────────────────────────────────────── -->
+      <div class="right-panel">
+        <!-- stats -->
+        <div class="rp-section-header">本项目适配总览</div>
+        <div style="padding:12px;">
+          <div class="stats-row">
+            <div class="stat-card">
+              <div class="stat-val accent">9</div>
+              <div class="stat-key">适配模块</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-val green">3</div>
+              <div class="stat-key">已完成</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-val yellow">2</div>
+              <div class="stat-key">进行中</div>
+            </div>
+          </div>
+
+          <!-- overall progress -->
+          <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px; margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+              <span style="font-size:11px; font-weight:600; color:var(--text-s);">整体适配进度</span>
+              <span style="font-size:11px; color:var(--accent-green); font-weight:700;">62%</span>
+            </div>
+            <div class="pt-bar-track">
+              <div class="pt-bar-fill bar-green" style="width:62%;"></div>
+            </div>
+            <div style="margin-top:8px; display:grid; grid-template-columns:1fr 1fr; gap:4px;">
+              <div style="font-size:10px; color:var(--text-m);">✓ TP · 振动 · 指纹基础</div>
+              <div style="font-size:10px; color:var(--text-m);">⏳ 音频 · 充电 · 通信</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- active tasks -->
+        <div class="rp-section-header">当前任务</div>
+        <div class="scroll-section" style="padding:12px 12px 0;">
+
+          <div class="progress-task" style="border-color: rgba(56,139,253,0.3); background: rgba(56,139,253,0.04);">
+            <div class="pt-header">
+              <span class="pt-icon">🖐️</span>
+              <span class="pt-name">TP DWS 核对</span>
+              <span class="pt-status-tag tag-running">运行中</span>
+            </div>
+            <div class="pt-desc">正在对比三处 DWS 文件中 TP_RST / TP_INT / TP_AVDD / TP_VDDI 与 DTS 配置一致性…</div>
+            <div class="pt-bar-track">
+              <div class="pt-bar-fill bar-blue" style="width:70%;"></div>
+            </div>
+            <div class="pt-meta">
+              <span class="pt-meta-step">步骤 3/4 — DWS 比对</span>
+              <span class="pt-meta-step">70%</span>
+            </div>
+          </div>
+
+          <div class="progress-task">
+            <div class="pt-header">
+              <span class="pt-icon">🔊</span>
+              <span class="pt-name">音频 Codec 适配</span>
+              <span class="pt-status-tag tag-blocked">阻塞</span>
+            </div>
+            <div class="pt-desc">等待工程师提供 Audio Codec 型号及 I2C 地址</div>
+            <div class="pt-bar-track">
+              <div class="pt-bar-fill bar-yellow" style="width:20%;"></div>
+            </div>
+            <div class="pt-meta">
+              <span class="pt-meta-step">步骤 1/5 — 前置信息缺失</span>
+              <span class="pt-meta-step">20%</span>
+            </div>
+          </div>
+
+          <div class="progress-task">
+            <div class="pt-header">
+              <span class="pt-icon">📳</span>
+              <span class="pt-name">LRA 振动马达适配</span>
+              <span class="pt-status-tag tag-done">已完成</span>
+            </div>
+            <div class="pt-desc">AW8692x 驱动 · DWS · ko_order · lra_fw 全部通过验证</div>
+            <div class="pt-bar-track">
+              <div class="pt-bar-fill bar-green" style="width:100%;"></div>
+            </div>
+            <div class="pt-meta">
+              <span class="pt-meta-step">全部 6 步完成</span>
+              <span class="pt-meta-step">100%</span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- recent history -->
+        <div class="rp-section-header" style="margin-top:4px;">历史记录</div>
+        <div class="scroll-section" style="padding:12px; flex:1;">
+          <div class="hist-item">
+            <span class="hist-icon">✅</span>
+            <div class="hist-info">
+              <div class="hist-name">fc-vib-effect 验证通过</div>
+              <div class="hist-meta">振动马达 · 2小时前</div>
+            </div>
+          </div>
+          <div class="hist-item">
+            <span class="hist-icon">✅</span>
+            <div class="hist-info">
+              <div class="hist-name">vib-adapt-lra-driver</div>
+              <div class="hist-meta">振动马达 · 3小时前</div>
+            </div>
+          </div>
+          <div class="hist-item">
+            <span class="hist-icon">⚠️</span>
+            <div class="hist-info">
+              <div class="hist-name">tp-adapt-dws-pin: ③路径缺失</div>
+              <div class="hist-meta">TP 触摸屏 · 刚刚</div>
+            </div>
+          </div>
+          <div class="hist-item">
+            <span class="hist-icon">✅</span>
+            <div class="hist-info">
+              <div class="hist-name">drv-fp-adapt 归一化判定</div>
+              <div class="hist-meta">指纹 · 昨天</div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /right-panel -->
+    </div><!-- /content -->
+  </div><!-- /main -->
+
+</div><!-- /app -->
+
+<script>
+// Simple tab switching
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+    item.classList.add('active');
+    const label = item.querySelector('.nav-label').textContent.trim();
+    document.querySelector('.topbar-badge-domain').textContent = label;
+    document.querySelector('.domain-hero-title').textContent = label + ' P1 适配';
+  });
+});
+document.querySelectorAll('.step-btn').forEach((btn, idx) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.step-btn').forEach((b, i) => {
+      b.classList.remove('active');
+      if (i < idx) b.classList.add('done'); else b.classList.remove('done');
+    });
+    btn.classList.add('active');
+  });
+});
+document.querySelectorAll('.radio-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const grp = btn.closest('.radio-group');
+    if (grp) grp.querySelectorAll('.radio-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+  });
+});
+</script>
+</body>
+</html>

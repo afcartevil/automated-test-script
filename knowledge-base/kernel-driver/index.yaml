@@ -1,7 +1,9 @@
 entries:
   auto: []
   cases: []
-  docs: []
+  docs:
+    - id: kb-kernel-driver-20260526-3557
+      title: TP触摸屏 BSP 适配调试经验 — MT6878
 module: kernel-driver
-updated: '2026-05-19'
+updated: '20260526'
 version: '1.0'

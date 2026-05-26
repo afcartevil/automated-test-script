@@ -10,6 +10,8 @@ import { tahpGateRoutes } from './gate'
 import { tahpToolsRoutes } from './tools'
 import { tahpReportsRoutes } from './reports'
 import { tahpPipelineRoutes } from './pipelines'
+import { tahpAdaptRoutes } from './adapt'
+import { tahpSkillsRoutes } from './skills'
 
 export function registerTahpRoutes(app: Koa) {
   app.use(tahpTaskRoutes.routes())
@@ -20,4 +22,6 @@ export function registerTahpRoutes(app: Koa) {
   app.use(tahpToolsRoutes.routes())
   app.use(tahpReportsRoutes.routes())
   app.use(tahpPipelineRoutes.routes())
+  app.use(tahpAdaptRoutes.routes())
+  app.use(tahpSkillsRoutes.routes())
 }

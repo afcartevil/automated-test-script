@@ -19,7 +19,7 @@ export interface TaskInfo {
   taskId?: string
   status?: string
   phase?: string
-  progress?: number
+  progress?: number          // 0-100
   module?: string
   domain?: string
   document_path?: string
@@ -27,7 +27,12 @@ export interface TaskInfo {
   gate_result?: { result: string; violations?: unknown[] }
   created_at?: string
   updated_at?: string
+  started_at?: string        // 实际启动时间（task.started 事件）
+  completed_at?: string      // 完成/失败时间
   error?: string
+  llm_response?: string      // 完成后 LLM 全文
+  files_modified?: string[]  // 已写入的文件路径列表
+  correction_of?: string     // 纠偏场景：原始 task_id
   [key: string]: unknown
 }
 

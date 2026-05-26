@@ -27,7 +27,7 @@ const coreItems = [
            <path d="M12 3v18"/>`,
   },
   {
-    name: 'tahp.executor',
+    name: 'tahp.adapt-debug',
     label: 'AI适配调试',
     color: '#2080f0',
     icon: `<polygon points="5 3 19 12 5 21 5 3"/>`,

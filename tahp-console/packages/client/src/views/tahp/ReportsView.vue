@@ -1,132 +1,306 @@
 <script setup lang="ts">
-import { ref, onMounted, shallowRef, onBeforeUnmount } from 'vue'
-import { NCard, NSpace, NButton, NSpin, NEmpty, NList, NListItem, NThing, NTag, NBreadcrumb, NBreadcrumbItem, useMessage } from 'naive-ui'
-import * as monaco from 'monaco-editor'
-import { listReports, readReport, type ReportEntry } from '@/api/tahp/reports'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  NCard, NButton, NSpin, NEmpty, NTag, NBreadcrumb, NBreadcrumbItem,
+  NDescriptions, NDescriptionsItem, NScrollbar, NDivider, NSpace,
+  NGrid, NGridItem, NStatistic, NAlert, useMessage,
+} from 'naive-ui'
+import { listTaskReports, getTaskReport, type TaskReportSummary, type TaskReportDetail } from '@/api/tahp/reports'
 
+const route  = useRoute()
+const router = useRouter()
 const message = useMessage()
-const cwd = ref('')
-const entries = ref<ReportEntry[]>([])
-const loading = ref(false)
-const selectedFile = ref<string | null>(null)
-const loadingContent = ref(false)
-const editorContainer = ref<HTMLDivElement | null>(null)
-const editorInstance = shallowRef<monaco.editor.IStandaloneCodeEditor | null>(null)
 
-onMounted(async () => { initEditor(); await reload() })
-onBeforeUnmount(() => { if (editorInstance.value) editorInstance.value.dispose() })
+// ── 列表模式 ────────────────────────────────────────────────────────────────
+const summaries   = ref<TaskReportSummary[]>([])
+const listLoading = ref(false)
 
-function initEditor() {
-  if (!editorContainer.value) return
-  editorInstance.value = monaco.editor.create(editorContainer.value, {
-    value: '', language: 'plaintext', theme: 'vs-dark',
-    readOnly: true, automaticLayout: true, minimap: { enabled: false },
-    fontSize: 12, scrollBeyondLastLine: false, wordWrap: 'on',
-  })
-}
+// ── 详情模式 ────────────────────────────────────────────────────────────────
+const detail        = ref<TaskReportDetail | null>(null)
+const detailLoading = ref(false)
 
-async function reload() {
-  loading.value = true
-  try { entries.value = await listReports(cwd.value) }
-  catch (err) { message.error((err as Error).message) }
-  finally { loading.value = false }
-}
+const taskId = computed(() => route.query.task_id as string | undefined)
+const mode   = computed<'detail' | 'list'>(() => taskId.value ? 'detail' : 'list')
 
-async function open(entry: ReportEntry) {
-  if (entry.type === 'dir') { cwd.value = entry.path; await reload(); return }
-  selectedFile.value = entry.path
-  loadingContent.value = true
-  try {
-    const data = await readReport(entry.path)
-    const ext = entry.name.split('.').pop()?.toLowerCase() || ''
-    const lang = ext === 'json' || ext === 'jsonl' ? 'json' : ext === 'md' ? 'markdown' : ext === 'yaml' || ext === 'yml' ? 'yaml' : 'plaintext'
-    if (editorInstance.value) {
-      monaco.editor.setModelLanguage(editorInstance.value.getModel()!, lang)
-      editorInstance.value.setValue(data.content)
+onMounted(() => { loadData() })
+watch(taskId, () => { loadData() })
+
+async function loadData() {
+  if (mode.value === 'detail') {
+    detail.value = null
+    detailLoading.value = true
+    try {
+      detail.value = await getTaskReport(taskId.value!)
+    } catch (err) {
+      message.error((err as Error).message)
+    } finally {
+      detailLoading.value = false
     }
-  } catch (err) { message.error((err as Error).message) }
-  finally { loadingContent.value = false }
+  } else {
+    summaries.value = []
+    listLoading.value = true
+    try {
+      summaries.value = await listTaskReports()
+    } catch (err) {
+      message.error((err as Error).message)
+    } finally {
+      listLoading.value = false
+    }
+  }
 }
 
-function up() {
-  if (!cwd.value) return
-  const parts = cwd.value.split('/').filter(Boolean)
-  parts.pop()
-  cwd.value = parts.join('/')
-  reload()
+function openTask(id: string) {
+  router.push({ name: 'tahp.reports', query: { task_id: id } })
 }
 
-function goRoot() { cwd.value = ''; reload() }
+function backToList() {
+  router.push({ name: 'tahp.reports' })
+}
+
+// ── 格式化工具 ───────────────────────────────────────────────────────────────
+const DOMAIN_LABELS: Record<string, string> = {
+  bug_analysis: 'Bug 分析',
+  code_adaptation: '代码适配',
+  version_adaptation: '版本适配',
+  carrier_porting: '运营商移植',
+}
+
+function fmtTime(iso?: string): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  return `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`
+}
+
+function fmtDuration(ms?: number): string {
+  if (!ms && ms !== 0) return '-'
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`
+}
+
+function fmtRelTime(mtime?: number): string {
+  if (!mtime) return '-'
+  const diff = Date.now() - mtime
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} 小时前`
+  return fmtTime(new Date(mtime).toISOString())
+}
 </script>
 
 <template>
   <div class="tahp-reports">
+    <!-- 页头面包屑 -->
     <div class="page-header">
-      <h1>报告</h1>
-      <p class="subtitle">浏览 reports/ 目录下的评测、门禁、trace 等产物</p>
+      <NBreadcrumb>
+        <NBreadcrumbItem @click="backToList" style="cursor:pointer">报告列表</NBreadcrumbItem>
+        <NBreadcrumbItem v-if="mode === 'detail'">
+          <code style="font-size:12px">{{ taskId }}</code>
+        </NBreadcrumbItem>
+      </NBreadcrumb>
+      <div class="header-row">
+        <h1>{{ mode === 'detail' ? '任务报告详情' : '任务报告' }}</h1>
+        <NSpace>
+          <NButton size="small" @click="loadData">刷新</NButton>
+          <NButton v-if="mode === 'detail'" size="small" @click="backToList">← 返回列表</NButton>
+          <NButton v-else size="small" type="primary" @click="router.push({ name: 'tahp.executor' })">启动新任务</NButton>
+        </NSpace>
+      </div>
+      <p class="subtitle">{{ mode === 'detail' ? 'AI 适配执行详情、分析结果与文件修改记录' : '所有已完成任务的执行报告汇总' }}</p>
     </div>
-    <div class="layout">
-      <NCard title="目录" :bordered="false" class="side">
-        <template #header-extra>
-          <NSpace>
-            <NButton size="tiny" @click="reload">刷新</NButton>
-            <NButton size="tiny" :disabled="!cwd" @click="up">..上级</NButton>
-          </NSpace>
-        </template>
-        <NBreadcrumb v-if="cwd">
-          <NBreadcrumbItem @click="goRoot">reports</NBreadcrumbItem>
-          <NBreadcrumbItem>{{ cwd }}</NBreadcrumbItem>
-        </NBreadcrumb>
-        <NSpin :show="loading">
-          <NEmpty v-if="!entries.length" description="reports/ 为空或不存在" />
-          <NList v-else>
-            <NListItem
-              v-for="e in entries"
-              :key="e.path"
-              class="list-item"
-              :class="{ active: selectedFile === e.path }"
-              @click="open(e)"
+
+    <!-- ── 列表模式 ─────────────────────────────────────────────────────── -->
+    <template v-if="mode === 'list'">
+      <NSpin :show="listLoading">
+        <NEmpty v-if="!listLoading && !summaries.length"
+          description="暂无报告。执行任务后，报告将自动生成并显示在此处。"
+          style="margin-top: 60px"
+        >
+          <template #extra>
+            <NButton type="primary" @click="router.push({ name: 'tahp.executor' })">启动第一个任务</NButton>
+          </template>
+        </NEmpty>
+        <NGrid v-else :cols="3" :x-gap="16" :y-gap="16" responsive="screen" item-responsive>
+          <NGridItem
+            v-for="s in summaries"
+            :key="s.task_id"
+            span="3 m:1"
+          >
+            <NCard
+              hoverable
+              class="report-card"
+              @click="openTask(s.task_id)"
             >
-              <NThing>
-                <template #header>
-                  {{ e.type === 'dir' ? '📁' : '📄' }} {{ e.name }}
-                </template>
-                <template #description>
-                  <NSpace>
-                    <NTag v-if="e.size !== undefined" size="tiny">{{ e.size }} B</NTag>
-                    <NTag v-if="e.mtime" size="tiny" type="info">
-                      {{ new Date(e.mtime).toLocaleString() }}
-                    </NTag>
-                  </NSpace>
-                </template>
-              </NThing>
-            </NListItem>
-          </NList>
-        </NSpin>
-      </NCard>
-      <NCard
-        :title="selectedFile || '请在左侧选择文件'"
-        :bordered="false"
-        class="main"
-        content-style="padding: 0"
-      >
-        <NSpin :show="loadingContent">
-          <div ref="editorContainer" class="editor-host" />
-        </NSpin>
-      </NCard>
-    </div>
+              <template #header>
+                <div class="card-header">
+                  <div class="card-title">
+                    <NTag size="small" type="success">已完成</NTag>
+                    <span class="module-tag">{{ s.module || '-' }}</span>
+                  </div>
+                  <span class="card-time">{{ fmtRelTime(s.mtime) }}</span>
+                </div>
+              </template>
+              <div class="card-task-id"><code>{{ s.task_id }}</code></div>
+              <div class="card-stats">
+                <div class="stat-item">
+                  <span class="stat-label">域</span>
+                  <span class="stat-value">{{ DOMAIN_LABELS[s.domain || ''] || s.domain || '-' }}</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">耗时</span>
+                  <span class="stat-value">{{ fmtDuration(s.duration_ms) }}</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">修改文件</span>
+                  <span class="stat-value" :class="s.files_modified > 0 ? 'highlight' : ''">
+                    {{ s.files_modified }} 个
+                  </span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">完成时间</span>
+                  <span class="stat-value small">{{ fmtTime(s.completed_at) }}</span>
+                </div>
+              </div>
+            </NCard>
+          </NGridItem>
+        </NGrid>
+      </NSpin>
+    </template>
+
+    <!-- ── 详情模式 ─────────────────────────────────────────────────────── -->
+    <template v-else>
+      <NSpin :show="detailLoading">
+        <div v-if="!detailLoading && !detail">
+          <NAlert type="error" title="报告不存在">
+            未找到任务 <code>{{ taskId }}</code> 的报告。可能该任务尚未完成，或报告文件不存在。
+          </NAlert>
+          <NButton style="margin-top:16px" @click="backToList">返回列表</NButton>
+        </div>
+
+        <div v-if="detail" class="detail-layout">
+          <!-- 任务元信息 -->
+          <NCard title="任务信息" :bordered="false" class="detail-card">
+            <NGrid :cols="4" :x-gap="16" :y-gap="8" responsive="screen" item-responsive>
+              <NGridItem span="4 m:1">
+                <NStatistic label="模块" :value="detail.module || '-'" />
+              </NGridItem>
+              <NGridItem span="4 m:1">
+                <NStatistic label="域" :value="DOMAIN_LABELS[detail.domain || ''] || detail.domain || '-'" />
+              </NGridItem>
+              <NGridItem span="4 m:1">
+                <NStatistic label="耗时" :value="fmtDuration(detail.duration_ms)" />
+              </NGridItem>
+              <NGridItem span="4 m:1">
+                <NStatistic label="修改文件数" :value="String(detail.files_modified?.length ?? 0)" />
+              </NGridItem>
+            </NGrid>
+
+            <NDivider style="margin: 16px 0 12px" />
+            <NDescriptions :column="2" label-placement="left" size="small" bordered>
+              <NDescriptionsItem label="Task ID" :span="2">
+                <code style="font-size:11px;word-break:break-all">{{ detail.task_id }}</code>
+              </NDescriptionsItem>
+              <NDescriptionsItem label="启动时间">{{ fmtTime(detail.started_at) }}</NDescriptionsItem>
+              <NDescriptionsItem label="完成时间">{{ fmtTime(detail.completed_at) }}</NDescriptionsItem>
+              <NDescriptionsItem v-if="detail.correction_of" label="纠偏自" :span="2">
+                <code style="font-size:11px">{{ detail.correction_of }}</code>
+                <NButton size="tiny" style="margin-left:8px" @click="openTask(detail.correction_of!)">查看原任务</NButton>
+              </NDescriptionsItem>
+            </NDescriptions>
+          </NCard>
+
+          <!-- 附加上下文 -->
+          <NCard v-if="detail.extra_context" title="附加上下文" :bordered="false" class="detail-card">
+            <pre class="content-pre">{{ detail.extra_context }}</pre>
+          </NCard>
+
+          <!-- 已修改文件 -->
+          <NCard v-if="detail.files_modified?.length" title="已修改文件" :bordered="false" class="detail-card">
+            <div v-for="f in detail.files_modified" :key="f" class="file-path">
+              <span class="file-icon">✅</span>
+              <code>{{ f }}</code>
+            </div>
+          </NCard>
+          <NCard v-else title="已修改文件" :bordered="false" class="detail-card">
+            <NEmpty size="small" description="本次任务未修改任何文件（纯分析结果）" />
+          </NCard>
+
+          <!-- 输入文档摘要 -->
+          <NCard v-if="detail.document_content" title="输入文档（摘要）" :bordered="false" class="detail-card">
+            <NScrollbar style="max-height:200px">
+              <pre class="content-pre">{{ detail.document_content }}</pre>
+            </NScrollbar>
+          </NCard>
+
+          <!-- AI 分析结果 -->
+          <NCard title="AI 分析结果" :bordered="false" class="detail-card llm-card">
+            <template #header-extra>
+              <NTag size="small" type="info">{{ detail.llm_response ? detail.llm_response.length + ' 字' : '无' }}</NTag>
+            </template>
+            <NEmpty v-if="!detail.llm_response" size="small" description="无 AI 输出内容" />
+            <NScrollbar v-else style="max-height:600px">
+              <pre class="content-pre llm-pre">{{ detail.llm_response }}</pre>
+            </NScrollbar>
+          </NCard>
+
+          <!-- 操作按钮 -->
+          <NSpace style="margin-top:8px">
+            <NButton type="primary"
+              @click="router.push({ name: 'tahp.executor', query: { module: detail.module, domain: detail.domain } })">
+              以相同参数重新执行
+            </NButton>
+            <NButton @click="router.push({ name: 'tahp.tasks', query: { task_id: detail.task_id } })">
+              在任务列表中查看
+            </NButton>
+            <NButton @click="backToList">返回报告列表</NButton>
+          </NSpace>
+        </div>
+      </NSpin>
+    </template>
   </div>
 </template>
 
 <style scoped>
 .tahp-reports { padding: 24px; max-width: 1400px; margin: 0 auto; }
-.page-header { margin-bottom: 16px; }
-.page-header h1 { margin: 0 0 6px; font-size: 24px; }
-.subtitle { color: #888; margin: 0; }
-.layout { display: grid; grid-template-columns: 360px 1fr; gap: 16px; }
-@media (max-width: 1024px) { .layout { grid-template-columns: 1fr; } }
-.list-item { cursor: pointer; padding: 8px; border-radius: 6px; }
-.list-item:hover { background: var(--n-action-color); }
-.list-item.active { background: var(--n-primary-color-suppl); }
-.editor-host { height: calc(100vh - 240px); min-height: 480px; }
+
+.page-header { margin-bottom: 20px; }
+.header-row { display: flex; align-items: center; justify-content: space-between; margin: 6px 0 2px; }
+.header-row h1 { margin: 0; font-size: 22px; font-weight: 600; }
+.subtitle { color: #888; margin: 0; font-size: 13px; }
+
+/* ── 列表卡片 ── */
+.report-card { cursor: pointer; transition: box-shadow .15s; }
+.report-card:hover { box-shadow: 0 4px 18px rgba(0,0,0,.12); }
+.card-header { display: flex; align-items: center; justify-content: space-between; }
+.card-title { display: flex; align-items: center; gap: 8px; }
+.module-tag { font-size: 12px; font-weight: 600; color: var(--n-text-color-3, #888); }
+.card-time { font-size: 11px; color: #aaa; }
+.card-task-id { font-size: 11px; color: #888; margin-bottom: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
+.stat-item { display: flex; flex-direction: column; gap: 2px; }
+.stat-label { font-size: 11px; color: #aaa; }
+.stat-value { font-size: 13px; font-weight: 500; color: var(--n-text-color, #333); }
+.stat-value.small { font-size: 11px; font-weight: 400; }
+.stat-value.highlight { color: #18a058; font-weight: 600; }
+
+/* ── 详情布局 ── */
+.detail-layout { display: flex; flex-direction: column; gap: 16px; }
+.detail-card { border-radius: 8px; }
+.llm-card { border-left: 3px solid #2080f0; }
+.file-path { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--n-border-color, #eee); }
+.file-path:last-child { border-bottom: none; }
+.file-icon { flex-shrink: 0; }
+.file-path code { font-size: 12px; color: #10b981; word-break: break-all; }
+
+.content-pre {
+  margin: 0;
+  font-size: 12px;
+  font-family: 'Consolas', 'Menlo', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.6;
+  color: var(--n-text-color, #333);
+}
+.llm-pre { font-size: 13px; line-height: 1.7; }
 </style>
