@@ -1,0 +1,25 @@
+{
+  "id": "kb-c36eb613",
+  "content": "*#9646633#-->Debug&LOG-->YLog-->Settings-->Log\u0001Setting\u0001-->Modem\u0001log\u0001Setting--\n>ModemReset\u0001关闭\u0001\n*#9646633#-->Debug&LOG-->YLog-->Settings-->Log\u0001Setting\u0001-->Modem\u0001log\u0001Setting--\n>ModemSaveDump\u0001打开\u0001\n然后开始抓取\u0001log，进行问题复现，完成后导出\u0001log\u0001即可，只要发生\u0001modem\u0001crash,默认\n在/data/ylog/modem/目录下,会生成.dmp\u0001后缀的\u0001dump\u0001文件\u0001",
+  "category": "错误模式",
+  "module": "telephony",
+  "func_type": "bug_analysis",
+  "keywords": [
+    "关闭",
+    "打开",
+    "然后开始抓取",
+    "进行问题复现",
+    "完成后导出",
+    "Debug",
+    "LOG",
+    "YLog"
+  ],
+  "confidence_score": 0.7,
+  "source_file": "稳定性问题分析指导SOP（Modem）.pdf",
+  "source_document_id": "doc-80b28165",
+  "created_at": "2026-05-28T01:55:55.823Z",
+  "updated_at": "2026-05-28T01:55:55.823Z",
+  "status": "pending_review",
+  "is_verified": false,
+  "usage_count": 0
+}

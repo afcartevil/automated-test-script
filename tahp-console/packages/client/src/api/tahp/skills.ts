@@ -28,7 +28,8 @@ export interface CreateSkillRequest {
   skillId:      string
   domainLabel:  string
   domainId?:    string
-  module:       string
+  module:       string          // 必选：驱动、通信、内核、功耗温升、自定义
+  funcType:     string          // 必选：Bug分析、代码适配、版本适配、运营商移植等
   icon?:        string
   color?:       string
   adaptFields?: AdaptFieldDef[]

@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EasyAdapter 业务流（水平版）</title>
+<style>
+  body {
+    font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  h1 { color: #58a6ff; margin-bottom: 6px; font-size: 20px; }
+  .subtitle { color: #8b949e; font-size: 12px; margin-bottom: 20px; }
+  svg { max-width: 1200px; width: 100%; }
+</style>
+</head>
+<body>
+
+<svg viewBox="0 0 960 280" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ah" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+      <polygon points="0 0, 7 2.5, 0 5" fill="#484f58"/>
+    </marker>
+    <marker id="ah-b" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+      <polygon points="0 0, 7 2.5, 0 5" fill="#58a6ff"/>
+    </marker>
+    <marker id="ah-g" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+      <polygon points="0 0, 7 2.5, 0 5" fill="#3fb950"/>
+    </marker>
+    <marker id="ah-o" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+      <polygon points="0 0, 7 2.5, 0 5" fill="#f0883e"/>
+    </marker>
+    <marker id="ah-c" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+      <polygon points="0 0, 7 2.5, 0 5" fill="#79c0ff"/>
+    </marker>
+  </defs>
+
+  <!-- 标题 -->
+  <text x="480" y="18" text-anchor="middle" fill="#58a6ff" font-size="16" font-weight="700">EasyAdapter 业务流</text>
+
+  <!-- ═════ 列1: 输入 ═════ -->
+  <rect x="20" y="35" width="130" height="230" rx="6" fill="#1f3a5f" fill-opacity="0.3" stroke="#58a6ff" stroke-opacity="0.4"/>
+  <text x="75" y="50" text-anchor="middle" fill="#58a6ff" font-size="11" font-weight="700">输入端</text>
+
+  <rect x="30" y="58" width="110" height="35" rx="4" fill="#161b22" stroke="#f0883e"/>
+  <text x="85" y="78" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">分析报告+日志</text>
+
+  <rect x="30" y="100" width="110" height="35" rx="4" fill="#161b22" stroke="#f0883e"/>
+  <text x="85" y="120" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">分析结果</text>
+
+  <rect x="30" y="142" width="110" height="35" rx="4" fill="#161b22" stroke="#79c0ff"/>
+  <text x="85" y="162" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">版本约束</text>
+
+  <rect x="30" y="184" width="110" height="35" rx="4" fill="#161b22" stroke="#79c0ff"/>
+  <text x="85" y="204" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">Feature源码</text>
+
+  <rect x="30" y="226" width="110" height="35" rx="4" fill="#161b22" stroke="#79c0ff"/>
+  <text x="85" y="246" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">运营商需求</text>
+
+  <!-- ═════ 列2: 预处理 ═════ -->
+  <rect x="165" y="35" width="120" height="230" rx="6" fill="#1c1232" fill-opacity="0.3" stroke="#a371f7" stroke-opacity="0.4"/>
+  <text x="225" y="50" text-anchor="middle" fill="#a371f7" font-size="11" font-weight="700">预处理</text>
+
+  <rect x="175" y="58" width="100" height="35" rx="4" fill="#161b22" stroke="#a371f7" stroke-opacity="0.5"/>
+  <text x="225" y="78" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">约束加载</text>
+
+  <rect x="175" y="100" width="100" height="35" rx="4" fill="#161b22" stroke="#a371f7" stroke-opacity="0.5"/>
+  <text x="225" y="120" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">知识库注入</text>
+
+  <rect x="175" y="142" width="100" height="35" rx="4" fill="#161b22" stroke="#a371f7" stroke-opacity="0.5"/>
+  <text x="225" y="162" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">安全红线</text>
+
+  <rect x="175" y="184" width="100" height="35" rx="4" fill="#161b22" stroke="#a371f7" stroke-opacity="0.5"/>
+  <text x="225" y="204" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">模块识别</text>
+
+  <!-- 输入→预处理 箭头 -->
+  <path d="M140,75 L165,75" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ah-b)" opacity="0.6"/>
+  <path d="M140,117 L165,117" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ah-b)" opacity="0.6"/>
+  <path d="M140,159 L165,159" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ah-b)" opacity="0.6"/>
+  <path d="M140,201 L165,201" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ah-b)" opacity="0.6"/>
+  <path d="M140,243 L165,243" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ah-b)" opacity="0.6"/>
+
+  <!-- ═════ 列3: 诊断引擎 ═════ -->
+  <rect x="300" y="35" width="240" height="105" rx="6" fill="#1a150d" fill-opacity="0.3" stroke="#f0883e" stroke-opacity="0.3"/>
+  <text x="420" y="50" text-anchor="middle" fill="#f0883e" font-size="11" font-weight="700">🩺 诊断引擎</text>
+
+  <!-- Bug分析 -->
+  <rect x="310" y="58" width="220" height="35" rx="4" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.3"/>
+  <text x="325" y="78" fill="#f0883e" font-size="9" font-weight="600">问题分析</text>
+  <rect x="395" y="62" width="60" height="22" rx="3" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.4"/>
+  <text x="425" y="76" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">输入收集</text>
+  <path d="M455,73 L465,73" stroke="#f0883e" stroke-width="1" marker-end="url(#ah-o)" opacity="0.4"/>
+  <rect x="470" y="62" width="60" height="22" rx="3" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.4"/>
+  <text x="500" y="76" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">Agent分析</text>
+
+  <!-- 代码适配 -->
+  <rect x="310" y="98" width="220" height="35" rx="4" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.3"/>
+  <text x="325" y="118" fill="#f0883e" font-size="9" font-weight="600">代码适配</text>
+  <rect x="395" y="102" width="60" height="22" rx="3" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.4"/>
+  <text x="425" y="116" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">加载分析</text>
+  <path d="M455,113 L465,113" stroke="#f0883e" stroke-width="1" marker-end="url(#ah-o)" opacity="0.4"/>
+  <rect x="470" y="102" width="60" height="22" rx="3" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.4"/>
+  <text x="500" y="116" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">自动修复</text>
+
+  <!-- 预处理→诊断 箭头 -->
+  <path d="M285,75 L300,75" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ah-b)" opacity="0.6"/>
+  <path d="M285,117 L300,117" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ah-b)" opacity="0.6"/>
+
+  <!-- ═════ 列4: 适配引擎 ═════ -->
+  <rect x="300" y="155" width="240" height="110" rx="6" fill="#0d1520" fill-opacity="0.3" stroke="#79c0ff" stroke-opacity="0.3"/>
+  <text x="420" y="170" text-anchor="middle" fill="#79c0ff" font-size="11" font-weight="700">⚙️ 适配引擎</text>
+
+  <!-- 版本升级 -->
+  <rect x="310" y="178" width="220" height="28" rx="4" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.3"/>
+  <text x="325" y="195" fill="#79c0ff" font-size="9" font-weight="600">版本升级</text>
+  <rect x="395" y="181" width="55" height="20" rx="3" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.4"/>
+  <text x="422" y="194" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">AOSP Diff</text>
+  <path d="M450,191 L460,191" stroke="#79c0ff" stroke-width="1" marker-end="url(#ah-c)" opacity="0.4"/>
+  <rect x="465" y="181" width="55" height="20" rx="3" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.4"/>
+  <text x="492" y="194" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">自动适配</text>
+
+  <!-- Feature移植 -->
+  <rect x="310" y="210" width="220" height="28" rx="4" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.3"/>
+  <text x="325" y="227" fill="#79c0ff" font-size="9" font-weight="600">Feature移植</text>
+  <rect x="395" y="213" width="55" height="20" rx="3" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.4"/>
+  <text x="422" y="226" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">依赖分析</text>
+  <path d="M450,223 L460,223" stroke="#79c0ff" stroke-width="1" marker-end="url(#ah-c)" opacity="0.4"/>
+  <rect x="465" y="213" width="55" height="20" rx="3" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.4"/>
+  <text x="492" y="226" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">自动转换</text>
+
+  <!-- 运营商移植 -->
+  <rect x="310" y="242" width="220" height="28" rx="4" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.3"/>
+  <text x="325" y="259" fill="#79c0ff" font-size="9" font-weight="600">运营商移植</text>
+  <rect x="395" y="245" width="55" height="20" rx="3" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.4"/>
+  <text x="422" y="258" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">需求解析</text>
+  <path d="M450,255 L460,255" stroke="#79c0ff" stroke-width="1" marker-end="url(#ah-c)" opacity="0.4"/>
+  <rect x="465" y="245" width="55" height="20" rx="3" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.4"/>
+  <text x="492" y="258" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">自动适配</text>
+
+  <!-- 预处理→适配 箭头 -->
+  <path d="M285,159 L295,159 L295,178 L300,178" stroke="#58a6ff" stroke-width="1.5" fill="none" marker-end="url(#ah-b)" opacity="0.6"/>
+  <path d="M285,201 L295,201 L295,210 L300,210" stroke="#58a6ff" stroke-width="1.5" fill="none" marker-end="url(#ah-b)" opacity="0.6"/>
+  <path d="M285,243 L295,243 L295,242 L300,242" stroke="#58a6ff" stroke-width="1.5" fill="none" marker-end="url(#ah-b)" opacity="0.6"/>
+
+  <!-- ═════ 列5: 质量门禁 ═════ -->
+  <rect x="555" y="35" width="80" height="230" rx="6" fill="#1c1208" fill-opacity="0.4" stroke="#f0883e" stroke-opacity="0.3"/>
+  <text x="595" y="50" text-anchor="middle" fill="#f0883e" font-size="11" font-weight="700">门禁</text>
+
+  <rect x="565" y="58" width="60" height="35" rx="4" fill="#1c1208" stroke="#da3633" stroke-opacity="0.5"/>
+  <text x="595" y="78" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">P0 BLOCK</text>
+
+  <rect x="565" y="100" width="60" height="35" rx="4" fill="#1c1208" stroke="#d29922" stroke-opacity="0.5"/>
+  <text x="595" y="120" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">P1 WARN</text>
+
+  <rect x="565" y="142" width="60" height="35" rx="4" fill="#1c1208" stroke="#3fb950" stroke-opacity="0.5"/>
+  <text x="595" y="162" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">P2 记录</text>
+
+  <!-- 处理→门禁 箭头 -->
+  <path d="M540,75 L555,75" stroke="#f0883e" stroke-width="1.5" marker-end="url(#ah-o)" opacity="0.6"/>
+  <path d="M540,117 L555,117" stroke="#f0883e" stroke-width="1.5" marker-end="url(#ah-o)" opacity="0.6"/>
+  <path d="M540,159 L555,159" stroke="#79c0ff" stroke-width="1.5" marker-end="url(#ah-c)" opacity="0.6"/>
+  <path d="M540,201 L555,201" stroke="#79c0ff" stroke-width="1.5" marker-end="url(#ah-c)" opacity="0.6"/>
+  <path d="M540,243 L555,243" stroke="#79c0ff" stroke-width="1.5" marker-end="url(#ah-c)" opacity="0.6"/>
+
+  <!-- ═════ 列6: 输出 ═════ -->
+  <rect x="660" y="35" width="140" height="230" rx="6" fill="#1e3a2f" fill-opacity="0.3" stroke="#3fb950" stroke-opacity="0.4"/>
+  <text x="730" y="50" text-anchor="middle" fill="#3fb950" font-size="11" font-weight="700">输出端</text>
+
+  <rect x="670" y="58" width="120" height="35" rx="4" fill="#161b22" stroke="#f0883e"/>
+  <text x="730" y="78" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">根因报告</text>
+
+  <rect x="670" y="100" width="120" height="35" rx="4" fill="#161b22" stroke="#f0883e"/>
+  <text x="730" y="120" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">自动修复代码</text>
+
+  <rect x="670" y="142" width="120" height="35" rx="4" fill="#161b22" stroke="#79c0ff"/>
+  <text x="730" y="162" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">自动适配代码</text>
+
+  <rect x="670" y="184" width="120" height="35" rx="4" fill="#161b22" stroke="#79c0ff"/>
+  <text x="730" y="204" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">自动移植代码</text>
+
+  <rect x="670" y="226" width="120" height="35" rx="4" fill="#161b22" stroke="#79c0ff"/>
+  <text x="730" y="246" text-anchor="middle" fill="#e6edf3" font-size="9" font-weight="600">运营商定制代码</text>
+
+  <!-- 门禁→输出 箭头 -->
+  <path d="M635,75 L660,75" stroke="#3fb950" stroke-width="1.5" marker-end="url(#ah-g)" opacity="0.6"/>
+  <path d="M635,117 L660,117" stroke="#3fb950" stroke-width="1.5" marker-end="url(#ah-g)" opacity="0.6"/>
+  <path d="M635,159 L660,159" stroke="#3fb950" stroke-width="1.5" marker-end="url(#ah-g)" opacity="0.6"/>
+  <path d="M635,201 L660,201" stroke="#3fb950" stroke-width="1.5" marker-end="url(#ah-g)" opacity="0.6"/>
+  <path d="M635,243 L660,243" stroke="#3fb950" stroke-width="1.5" marker-end="url(#ah-g)" opacity="0.6"/>
+
+  <!-- ═════ 列7: 横切 ═════ -->
+  <rect x="830" y="35" width="100" height="230" rx="6" fill="#1a0d2e" fill-opacity="0.3" stroke="#a371f7" stroke-opacity="0.3"/>
+  <text x="880" y="50" text-anchor="middle" fill="#a371f7" font-size="11" font-weight="700">持续增强</text>
+
+  <rect x="840" y="58" width="80" height="35" rx="4" fill="#1c1232" stroke="#3fb950" stroke-opacity="0.4"/>
+  <text x="880" y="78" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">知识库沉淀</text>
+
+  <rect x="840" y="100" width="80" height="35" rx="4" fill="#1c1232" stroke="#d2a8ff" stroke-opacity="0.4"/>
+  <text x="880" y="120" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">EvoSkill反馈</text>
+
+  <rect x="840" y="142" width="80" height="35" rx="4" fill="#1c1232" stroke="#a371f7" stroke-opacity="0.4"/>
+  <text x="880" y="162" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">约束驱动</text>
+
+  <rect x="840" y="184" width="80" height="35" rx="4" fill="#1c1232" stroke="#79c0ff" stroke-opacity="0.4"/>
+  <text x="880" y="204" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">跨模块协作</text>
+
+  <rect x="840" y="226" width="80" height="35" rx="4" fill="#1c1232" stroke="#f0883e" stroke-opacity="0.4"/>
+  <text x="880" y="246" text-anchor="middle" fill="#e6edf3" font-size="8" font-weight="600">质量门禁</text>
+
+  <!-- 输出→横切 箭头 -->
+  <path d="M800,75 L830,75" stroke="#a371f7" stroke-width="1.5" marker-end="url(#ah)" opacity="0.4"/>
+  <path d="M800,117 L830,117" stroke="#a371f7" stroke-width="1.5" marker-end="url(#ah)" opacity="0.4"/>
+  <path d="M800,159 L830,159" stroke="#a371f7" stroke-width="1.5" marker-end="url(#ah)" opacity="0.4"/>
+  <path d="M800,201 L830,201" stroke="#a371f7" stroke-width="1.5" marker-end="url(#ah)" opacity="0.4"/>
+  <path d="M800,243 L830,243" stroke="#a371f7" stroke-width="1.5" marker-end="url(#ah)" opacity="0.4"/>
+
+</svg>
+
+</body>
+</html>
