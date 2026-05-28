@@ -1,0 +1,64 @@
+{
+  "id": "sd-a40e2974",
+  "skill_id": "kb-skill-telephony-bug-analysis-mppitn28",
+  "skill_name": "Telephony Bug 分析 Skill",
+  "domain_label": "telephony — bug_analysis",
+  "module": "telephony",
+  "func_type": "bug_analysis",
+  "content": "# Modem EE 问题分析与处理\n\n## 适用场景\n- 适用模块：通信模块\n- 适用业务类型：Bug 分析\n- 典型触发条件：\n  1. 手机出现掉网、不识卡、IMEI 显示异常、基带版本显示为 Unknown 等与 Modem 相关的稳定性问题\n  2. 日志中出现 `Modem exception`、`[ASSERT]`、`[Fatal error]` 等关键字，指向 Modem 子系统异常崩溃\n  3. 需要分析和处理由 FANSAEE、MonkeyAEE 测试、大数据监控或市场客诉上报的 Modem 崩溃问题\n\n## ⚠️ 不适用情况（请人工补充）\n- 非 Modem 子系统导致的崩溃，例如 Application Not Responding (ANR)、Kernel Panic、Java Crash 等纯 AP 侧问题（待人工确认）\n- 由物理硬件损坏（如摔落、进水导致的射频电路故障）而非软件或配置引发的 Modem 问题（待人工确认）\n\n## 核心处理方法\n1.  **问题确认与复现**\n    a.  **排除外部因素**：更换 SIM 卡或在不同的网络环境下测试，确认问题是否可复现，以排除运营商网络故障或 SIM 卡损坏。\n    b.  **记录复现路径**：详细记录触发问题的操作步骤，确保问题可以被稳定复现，方便后续验证。\n\n2.  **日志抓取**\n    a.  **配置 Log**：通过拨号盘 `*#9646633#` 进入工程模式，在 `Debug&LOG -> YLog -> Settings -> Log Setting -> Modem log Setting` 中，**关闭** `ModemReset` 并 **打开** `ModemSaveDump`。\n    b.  **抓取全量日志**：按照复现路径操作以触发 Modem EE。问题复现后，使用日志导出工具抓取全量日志包。\n    c.  **确认核心日志**：确保导出的日志中包含 `_EE_INVALID` dump 目录、`main_log`、`modem log`、`__exp_main.txt` 等关键文件。若发生 crash，dump 文件（`.dmp` 后缀）默认会生成在 `/data/ylog/modem/` 目录下。\n\n3.  **日志分析**\n    a.  **定位关键信息**：核心搜索关键词为 `ccci_mdinit`、`Modem exception`、`[ASSERT]`、`[Fatal error`。优先在主日志、`__exp_main.txt` 和 dump log 中查找。\n    b.  **提取特征参数**：找到 `[ASSERT]` 的详细打印，精确提取出以下特征参数：\n        -   报错文件名 (file)\n        -   行号 (line)\n        -   参数 P1、P2、P3\n    c.  **初步判断问题模块**：根据报错的文件路径进行初步定位：\n        -   路径中包含 `rf_check`，通常为 RF 配置错误。\n        -   路径中包含 `mml1/`，大概率是物理层或射频相关的问题。\n\n4.  **问题处理**\n    a.  **比对已知问题**：利用提取到的`报错文件名`、`行号`、`P1/P2/P3` 在内部 Jira、MTK Online 等平台搜索是否为已知问题，已有解决方案的直接应用。\n    b.  **请求平台分析（未知问题）**：若为非已知问题，需提取当前版本对应的 Modem ELF 文件和 DbgInfo 全量文件，连同日志一起提交给芯片平台（如 MTK、Sprd）进行分析。提交时需要提供版本对应的符号表。\n    c.  **处理非常规 EE**：对于因 IO 负载过高、OTA 升级过程被打断等特殊场景造成的 Modem EE，需要结合具体的系统状态和操作上下文进行分析。\n\n## 示例\n\n### 正例\n**场景：手机突然没信号，10秒后自动恢复，日志中发现 Modem EE 报告**\n\n日志分析步骤：\n1.  在 `main_log` 中搜索 `Modem exception` 或 `[ASSERT]`。\n2.  查找到关键 Assert 信息如下：\n    ```\n    [ASSERT] file: mcu/l1/mml1/mml1_rf/src/mmrf/gen99/mml1_rf_error_check.c line: 156 p1: 0x00000003 p2: 0x0000000b p3: 0x00000007\n    ```\n3.  根据文件路径 `mml1/`，初步判断为 Modem 物理层/射频相关问题。\n4.  在线 Jira 或 MTK Online 上，使用文件名 `mml1_rf_error_check.c`，行号 `156`，参数 `0x00000003, 0x0000000b, 0x00000007` 作为关键字进行搜索。\n5.  如果找到匹配的已知问题及其修复补丁，则直接应用。\n6.  如果是新问题，则准备该版本的 Modem ELF 和 DbgInfo 文件，提交 CR 给平台分析。\n\n### ⚠️ 反例（请人工补充）\n待人工补充：一些看似是 Modem EE 的问题，实际可能是由于 AP 侧不当的操作（如错误的 AT 命令下发时序）间接引起的，需要通过检查 AP 与 BP 的交互日志来区分。\n\n## ⚠️ 版本与平台约束（请确认）\n- Android 版本范围：待确认\n- 芯片平台：MTK、展讯（SPRD）、高通（Qualcomm）全系列（基于条目信息）\n- AOSP 分支：待确认\n\n## 注意事项\n-   Modem EE 有时会发生在日志系统响应之前，导致关键 Assert 信息未被记录下来。如果遇到此类情况，可以尝试手动触发 dump 模式来抓取 dump log 以确认 EE 点。\n-   问题定位时，看到报错文件路径在本地代码库中不存在是正常现象，因为这些文件可能属于 Modem 侧闭源代码。此时应直接在 Jira 或芯片平台支持门户上进行搜索。\n-   大数据 USIC 监控捕获到的 EE，需要使用特定的 TNE 解析工具进行分析。如果要获取更详细的信息，可能需要根据大数据平台捞取对应的 minidump 文件。\n-   Modem log 的抓取配置（`ModemReset` 关闭，`ModemSaveDump` 打开）是成功获取有效 dump 文件的关键前提，问题复现前必须确保配置正确。\n\n## 维护信息\n- 维护人：待指定\n- 生成来源：知识库 6 条条目\n- 模板版本：v1.0\n\n---",
+  "generated_from_entries": [
+    "kb-61c0c843",
+    "kb-632fd9ca",
+    "kb-86f855e4",
+    "kb-a86866c6",
+    "kb-c36eb613",
+    "kb-dceb8985"
+  ],
+  "generated_at": "2026-05-28T13:20:38.973Z",
+  "generated_by": "user",
+  "status": "draft",
+  "eval_cases": [
+    {
+      "id": "ec-e5236987",
+      "title": "射频配置错误EE分析",
+      "input": "用户反馈手机掉网，主日志中有 `[ASSERT]` 打印：`file: .../rf/rf_error_check.c line: 89 p1: 0x01 p2: 0x02 p3: 0x03`。",
+      "expected_output": "识别为已知问题或RF配置错误场景。处理步骤：1. 定位到 `rf_error_check.c`；2. 判断为RF配置问题；3. 用文件名、行号、参数在Jira/Online搜索已知方案；4. 非已知问题则准备ELF和DbgInfo提交平台。",
+      "judgment_criteria": "输出中包含RF配置错误的判断依据，并给出搜索已知方案或提交平台的具体操作步骤。",
+      "source": "ai_generated",
+      "status": "draft"
+    },
+    {
+      "id": "ec-470b1100",
+      "title": "不识卡EE排查",
+      "input": "测试发现每次开机都提示不识卡，设置中基带版本为Unknown。需要指导如何抓取有效日志进行分析。",
+      "expected_output": "提供日志抓取步骤：1. 拨号盘 `*#9646633#` 进入工程菜单；2. 关闭ModemReset、开启ModemSaveDump；3. 复现问题后导出日志；4. 确认收集到 `_EE_INVALID` 目录及各类log。",
+      "judgment_criteria": "输出中包含通过拨号盘配置Modem Dump并抓取全量日志的完整步骤。",
+      "source": "ai_generated",
+      "status": "draft"
+    },
+    {
+      "id": "ec-d12ae57c",
+      "title": "未知Modem EE提报",
+      "input": "分析一个信号消失后恢复的EE问题，ASSERT文件为`mcu/l1/xxx.c`，在Jira和MTK Online上均未搜索到，需要向芯片平台提报。",
+      "expected_output": "指导提取该问题版本对应的Modem ELF文件和DbgInfo全量文件，连同问题日志（含ASSERT详情）一并提交CR给平台分析。",
+      "judgment_criteria": "输出明确指出需准备Modem ELF、DbgInfo文件和符号表，作为未知问题提交平台的标准流程。",
+      "source": "ai_generated",
+      "status": "draft"
+    }
+  ],
+  "template_version": "v1.0",
+  "conflicts": [],
+  "quality_score": {
+    "total": 40,
+    "structure": 20,
+    "exclusions": 0,
+    "version_range": 0,
+    "eval_cases": 10,
+    "no_conflict": 10,
+    "owner": 0,
+    "pass_gate": false,
+    "blocking_reasons": [
+      "版本范围未填写（必填）"
+    ]
+  }
+}

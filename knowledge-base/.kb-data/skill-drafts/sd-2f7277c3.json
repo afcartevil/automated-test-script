@@ -1,0 +1,52 @@
+{
+  "id": "sd-2f7277c3",
+  "skill_id": "kb-skill-telephony-bug-analysis-mppi8591",
+  "skill_name": "Telephony Bug 分析 Skill",
+  "domain_label": "telephony — bug_analysis",
+  "module": "telephony",
+  "func_type": "bug_analysis",
+  "content": "# Telephony Bug 分析 Skill\n\n## 适用场景\n- 适用模块：telephony\n- 适用业务类型：bug_analysis\n- [请基于知识条目补充具体触发条件]\n\n## ⚠️ 不适用情况（请人工补充）\n- [待人工确认 1]\n- [待人工确认 2]\n\n## 核心处理方法\n[基于以下 6 条知识条目，请整理核心处理步骤]\n\n### 参考条目 1\nfile:mcu/\nl1/mml1\n/mml1_r\nf/src/m\nmrf/gen\n99/mml1\n_rf_erro\nr_check.\nc\u0001\nline:156\u0001\np1:0x00\n000003\u0001\n\u0001\np2:0x00\n00000b\u0001\np3:0x00\n000007\u0001\n3.不能访问就到\u0001\nJIRA/onlie上搜\n索报错文件，看\n看是否已知问题\u0001\n4.提交CR，给平\n台分析，需要提\n供版本对应符号\n表\u0001\n4.问题处理步骤\u0001\nModem\u0001EE问题处理流程\u0001\n4.1\u0001EE原因获取\u0001\nmodem\u0001log\u0001dump获取：\u0001\n\u0001\u0001\u0001\u0001一般情况，modem\u0001EE会自动触发日志打包，modem\u0001log里会有_EE_INVALID的目录，里面记录了\nmodem\u0001EE时的日志\u0001\n\n### 参考条目 2\n稳定性问题分析指导SOP（Modem）\u0001\n1.文档概述\u0001\n1.1\u0001文档目的\u0001\n本文档旨在解决手机Modem子系统异常崩溃（Modem\u0001EE）引发的各类问题，包括但不限于蜂窝数据\n掉网、SIM卡不识卡、IMEI丢失/显示异常、信号短时间消失后自动恢复等场景，提供标准化的问题定\n位、分析和处理流程。\n1.2\u0001适用范围\u0001\n•\n适用问题现象：掉网、不识卡、IMEI显示异常、基带版本显示为Unknown、信号消失10s左右自动\n恢复、弹出modem\u0001crash提示\u0001\n•\n适用芯片平台：MTK、展锐（SPRD）、高通全系列手机平台\u0001\n•\n适用场景：项目测试问题、大数据监控异常、市场客诉Modem相关问题\u0001\n2.问题分析地图\u0001\n2.1\u0001核心问题分类\u0001\nModem\u0001EE问题可细分为5类具体子场景：\u0001\n1.基带版本号未知/不识卡类EE\u0001\n2.信号消失后恢复/弹出modem\u0001crash界面类EE\u0001\n3.FAN\n\n### 参考条目 3\nb.提取报错的文件名、行号以及P1/P2/P3参数，在内部Jira、MTK\u0001online平台搜索是否为已知问\n题\u0001\nc.未知问题需提取对应版本的Modem\u0001ELF文件、DbgInfo全量文件，提交给芯片平台分析\u0001\n问题\n定位\u0001\n关键特\n征\u0001\n核心关注\n点\u0001\n可能原因\u0001分析步骤\u0001log文件\u0001keywor\nd\u0001\n案例参考\u0001\nMOD\nEM\u0001\nEE\u0001\n基带版\n本号未\n知/不识\n卡\u0001\nModem\n启动进程\u0001\nimg加载\u0001\nNV校验\u0001\nModem\n状态检查\u0001\n1.配置错误\u0001\n2.patch\u0001依赖漏\n合\u0001\n3.平台修改引入\u0001\n4.单机硬件问题\u0001\n具体错误模块大\n致定位看报错c\n文件；例如：rf\u0001\ncheck\u0001目录下这\n类大多是RF配\n置错误；mml1/\n目录下的大致定\n位射频相关\u0001\n1.检查ap\u0001log是\n否记录到EE打印\u0001\n2.EE挂死在log\n打印前，可手动\n触发dump模式\n抓取dump确认\nEE\n\n### 参考条目 4\nr_check.\nc\u0001\nline:156\u0001\np1:0x00\n000003\u0001\n\u0001\np2:0x00\n00000b\u0001\np3:0x00\n000007\u0001\nFANSAE\nE/\u0001\nMonkey\nAEE\u0001\nExceptio\nn\u0001Class:\u0001\nExternal\u0001\n(EE)\u0001\n同上\u00011.__exp_main.t\nxt中确认EE点\u0001\n2.粉丝日志系统\n中捞取对应的\ntaglog\u0001\n3.若无对应\ntaglog，需发起\n采集申请\u0001\n1.__exp_ma\nin.txt\u0001\n2.SYS_KERN\nEL_LOG\u0001\n3.taglog\u0001\n1.Mode\nm\u0001\nexceptio\nn\u0001\n2.\n[ASSERT\n]\u0001\n3.[Fatal\u0001\nerror\u0001\n大数据\nUSIC\u0001\nExceptio\nn\u0001Class:\u0001\nExternal\u0001\n(EE)\u0001\n同上\u00011.TNE解析工具\n解析日志\u0001\n2.如需dump，\n需根据大数据捞\n取modem\u0001\ndum\n\n### 参考条目 5\n*#9646633#-->Debug&LOG-->YLog-->Settings-->Log\u0001Setting\u0001-->Modem\u0001log\u0001Setting--\n>ModemReset\u0001关闭\u0001\n*#9646633#-->Debug&LOG-->YLog-->Settings-->Log\u0001Setting\u0001-->Modem\u0001log\u0001Setting--\n>ModemSaveDump\u0001打开\u0001\n然后开始抓取\u0001log，进行问题复现，完成后导出\u0001log\u0001即可，只要发生\u0001modem\u0001crash,默认\n在/data/ylog/modem/目录下,会生成.dmp\u0001后缀的\u0001dump\u0001文件\u0001\n\n## 示例\n\n### 正例\n[请人工补充典型正例]\n\n### ⚠️ 反例（待补充）\n[待人工补充]\n\n## ⚠️ 版本与平台约束（待确认）\n- Android 版本范围：[待确认]\n- 芯片平台：[待确认]\n\n## 注意事项\n[请基于知识条目补充注意事项]\n\n## 维护信息\n- 维护人：[待指定]\n- 生成来源：知识库 6 条条目\n- 模板版本：v1.0",
+  "generated_from_entries": [
+    "kb-61c0c843",
+    "kb-632fd9ca",
+    "kb-86f855e4",
+    "kb-a86866c6",
+    "kb-c36eb613",
+    "kb-dceb8985"
+  ],
+  "generated_at": "2026-05-28T13:03:56.120Z",
+  "generated_by": "user",
+  "status": "draft",
+  "eval_cases": [],
+  "template_version": "v1.0",
+  "conflicts": [
+    {
+      "conflicting_skill_id": "kb-skill-telephony-bug-analysis-mpp8j0io",
+      "conflicting_skill_name": "kb-skill-telephony-bug-analysis-mpp8j0io",
+      "overlap_type": "keyword",
+      "similarity_score": 1,
+      "suggestion": "关键词高度重叠，请确认两者处理的问题是否不同"
+    },
+    {
+      "conflicting_skill_id": "kb-skill-telephony-bug-analysis-mppbcdzt",
+      "conflicting_skill_name": "kb-skill-telephony-bug-analysis-mppbcdzt",
+      "overlap_type": "keyword",
+      "similarity_score": 1,
+      "suggestion": "关键词高度重叠，请确认两者处理的问题是否不同"
+    }
+  ],
+  "quality_score": {
+    "total": 20,
+    "structure": 20,
+    "exclusions": 0,
+    "version_range": 0,
+    "eval_cases": 0,
+    "no_conflict": 0,
+    "owner": 0,
+    "pass_gate": false,
+    "blocking_reasons": [
+      "版本范围未填写（必填）",
+      "至少需要 2 个 eval 用例（必填）"
+    ]
+  }
+}

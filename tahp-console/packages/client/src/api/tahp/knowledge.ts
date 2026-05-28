@@ -27,6 +27,55 @@ export interface KnowledgeEntry {
   usage_count?: number
 }
 
+export interface EvalCase {
+  id: string
+  title: string
+  input: string
+  expected_output: string
+  judgment_criteria: string
+  source: 'ai_generated' | 'human'
+  status: 'draft' | 'confirmed'
+}
+
+export interface QualityScore {
+  total: number
+  structure: number
+  exclusions: number
+  version_range: number
+  eval_cases: number
+  no_conflict: number
+  owner: number
+  pass_gate: boolean
+  blocking_reasons: string[]
+}
+
+export interface ConflictResult {
+  conflicting_skill_id: string
+  conflicting_skill_name: string
+  overlap_type: 'function' | 'version' | 'keyword'
+  similarity_score: number
+  suggestion: string
+}
+
+export interface VersionConstraint {
+  android_versions?: string[]
+  chipset_platforms?: string[]
+  aosp_branches?: string[]
+}
+
+export interface SkillSuggestion {
+  module: string
+  func_type: string
+  entry_count: number
+  entry_ids: string[]
+  avg_confidence: number
+  recommended: boolean
+  reason: string
+  suggested_skill_name: string
+  existing_skill_count: number
+  existing_skills: string[]
+}
+
 export interface SkillDraft {
   id?: string
   skill_id: string
@@ -44,6 +93,14 @@ export interface SkillDraft {
   review_notes?: string
   activated_at?: string
   activated_skill_path?: string
+  // ─── Phase 4 新增字段 ──────────────────────────────────────────
+  eval_cases?: EvalCase[]
+  quality_score?: QualityScore
+  conflicts?: ConflictResult[]
+  template_version?: string
+  maintenance_owner?: string
+  exclusion_cases?: string[]
+  version_constraints?: VersionConstraint
 }
 
 export interface KnowledgeStats {
@@ -347,4 +404,120 @@ export function startScanFolder(
     folder_path: folderPath,
     recursive: recursive ?? false,
   })
+}
+
+// ─── Phase 4 API Functions (Skill 工坊) ──────────────────────────────────────
+
+/** GET /api/tahp/knowledge/skill-suggestions — 分组推荐生成 Skill */
+export function getSkillSuggestions(): Promise<{
+  suggestions: SkillSuggestion[]
+  total_groups: number
+  recommended_count: number
+}> {
+  return tahpGet<{ suggestions: SkillSuggestion[]; total_groups: number; recommended_count: number }>(
+    '/api/tahp/knowledge/skill-suggestions',
+  )
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/check-similarity — 生成前相似 Skill 检索 */
+export interface SimilarSkillItem {
+  /** 草稿时为 draft.id，已激活时为 skillId */
+  id: string
+  /** 来源类型 */
+  type: 'draft' | 'activated'
+  /** 展示名称 */
+  display_name: string
+  module: string
+  func_type: string
+  description: string
+  /** Jaccard 相似度 0-1 */
+  jaccard_score: number
+  /** 三档分级 */
+  tier: 'exact' | 'partial' | 'structural'
+  reasons: string[]
+  /** @deprecated 兼容旧字段，等同于 id */
+  skill_id?: string
+}
+export function checkSkillSimilarity(params: {
+  module: string
+  func_type: string
+  entry_ids?: string[]
+  skill_name?: string
+  keywords?: string[]
+}): Promise<{ similar: SimilarSkillItem[]; has_exact: boolean; has_partial: boolean; total: number }> {
+  return tahpPost<{ similar: SimilarSkillItem[]; has_exact: boolean; has_partial: boolean; total: number }>(
+    '/api/tahp/knowledge/skill-drafts/check-similarity',
+    params,
+  )
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/:draftId/merge — LLM 精准增量融合 */
+export function mergeIntoSkill(
+  draftId: string,
+  entryIds: string[],
+): Promise<{ draft: SkillDraft; merged_count: number; message: string; llm_error?: string }> {
+  return tahpPost<{ draft: SkillDraft; merged_count: number; message: string; llm_error?: string }>(
+    `/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}/merge`,
+    { entry_ids: entryIds },
+  )
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/generate — LLM 生成 Skill 草稿 */
+export function generateSkillDraft(params: {
+  module: string
+  func_type: string
+  entry_ids?: string[]
+  skill_name?: string
+  generated_by?: string
+}): Promise<{ draft: SkillDraft; llm_error?: string; message?: string }> {
+  return tahpPost<{ draft: SkillDraft; llm_error?: string; message?: string }>(
+    '/api/tahp/knowledge/skill-drafts/generate',
+    params,
+  )
+}
+
+/** GET /api/tahp/knowledge/skill-drafts/:draftId — 获取单个草稿详情 */
+export function getSkillDraft(draftId: string): Promise<SkillDraft> {
+  return tahpGet<SkillDraft>(`/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}`)
+}
+
+/** PUT /api/tahp/knowledge/skill-drafts/:draftId — 更新草稿内容 */
+export function updateSkillDraft(draftId: string, updates: {
+  content?: string
+  skill_name?: string
+  domain_label?: string
+  maintenance_owner?: string
+  exclusion_cases?: string[]
+  version_constraints?: VersionConstraint
+  eval_cases?: EvalCase[]
+}): Promise<SkillDraft> {
+  return tahpRequest<SkillDraft>(`/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  })
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/:draftId/eval-cases — 添加/更新 eval 用例 */
+export function upsertEvalCase(draftId: string, evalCase: Partial<EvalCase> & { title: string }): Promise<SkillDraft> {
+  return tahpPost<SkillDraft>(
+    `/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}/eval-cases`,
+    evalCase,
+  )
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/:draftId/eval-cases/:caseId/confirm — 确认 eval 用例 */
+export function confirmEvalCase(draftId: string, caseId: string): Promise<SkillDraft> {
+  return tahpPost<SkillDraft>(
+    `/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}/eval-cases/${encodeURIComponent(caseId)}/confirm`,
+    {},
+  )
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/:draftId/eval-cases/:caseId/delete — 删除 eval 用例 */
+export function deleteEvalCase(draftId: string, caseId: string): Promise<SkillDraft> {
+  return tahpPost<SkillDraft>(
+    `/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}/eval-cases/${encodeURIComponent(caseId)}/delete`,
+    {},
+  )
 }

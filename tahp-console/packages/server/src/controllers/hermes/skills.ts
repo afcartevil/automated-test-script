@@ -116,6 +116,41 @@ async function batchGetSkillUpdatedAt(tahpDir: string): Promise<Map<string, numb
   return map
 }
 
+// ─── 规范化映射：英文 key → 中文 display（skill 系统内 canonical 值为中文） ──────
+const FUNC_TYPE_NORMALIZE: Record<string, string> = {
+  'bug_analysis':       'AI故障分析',
+  'code_adaptation':    'AI自动化适配',
+  'version_adaptation': 'AI自动化适配',
+  'carrier_porting':    'AI自动化适配',
+  'self_check':         'AI自检工具',
+  'ai_self_check':      'AI自检工具',
+  // 以下已是中文 canonical，透传
+  'AI故障分析':    'AI故障分析',
+  'AI自动化适配':  'AI自动化适配',
+  'AI自检工具':    'AI自检工具',
+}
+const MODULE_NORMALIZE: Record<string, string> = {
+  'telephony':     '通信',
+  'kernel-driver': '驱动',
+  'kernel_driver': '驱动',
+  'power-mgmt':    '功耗',
+  'power_mgmt':    '功耗',
+  'shared':        '通用',
+  'common':        '通用',
+  // 以下已是中文 canonical，透传
+  '通信': '通信', '驱动': '驱动', '内核': '内核', '功耗': '功耗', '通用': '通用',
+}
+
+/** 将 funcType 原始值规范化为中文 display 名（不命中则原样返回） */
+export function normalizeFuncType(raw: string): string {
+  return FUNC_TYPE_NORMALIZE[raw.trim()] ?? raw.trim()
+}
+
+/** 将 module/group 原始值规范化为中文 display 名（不命中则原样返回） */
+export function normalizeModule(raw: string): string {
+  return MODULE_NORMALIZE[raw.trim()] ?? raw.trim()
+}
+
 /**
  * 根据 skill 目录名推断 funcType 和 category。
  * 先查精准映射表，再用前缀规则兜底。
@@ -195,7 +230,7 @@ async function scanTahpSkills(): Promise<any[]> {
 
     // ── 3. 分类：frontmatter > 精准映射表 > 前缀规则 ─────────────────────
     let funcType = fm.funcType || fm.func_type || ''
-    let group    = fm.category || fm.group || ''
+    let group    = fm.category || fm.group || fm.module || ''
     if (!funcType || !group) {
       const inferred = inferSkillClassification(entry.name)
       if (inferred) {
@@ -203,6 +238,9 @@ async function scanTahpSkills(): Promise<any[]> {
         if (!group)    group    = inferred.category
       }
     }
+    // normalize 英文 key → 中文 display（统一 canonical 值）
+    if (funcType) funcType = normalizeFuncType(funcType)
+    if (group)    group    = normalizeModule(group)
 
     // ── 4. 时间戳：git 批量结果 > 文件 mtime ─────────────────────────────
     let updatedAt = updatedAtMap.get(entry.name) ?? 0
@@ -458,45 +496,17 @@ async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, str
 }
 
 export async function list(ctx: any) {
-  // TAHP Console 技能按 group (module) 分类展示
+  // TAHP Console 技能统一归入 'tahp-project' 分类（供 SkillDetail 路径解析），
+  // group / funcType 字段供客户端侧边栏分组展示
   try {
     const tahpSkills = await scanTahpSkills()
 
-    // 按 group 分组
-    const groupMap = new Map<string, any[]>()
-    const groupLabels: Record<string, string> = {
-      'telephony':     '通信',
-      'kernel-driver': '驱动',
-      'power-mgmt':    '功耗温升',
-      'shared':        '共享',
-    }
-
-    for (const skill of tahpSkills) {
-      const grp = skill.group || 'shared'
-      if (!groupMap.has(grp)) groupMap.set(grp, [])
-      groupMap.get(grp)!.push(skill)
-    }
-
-    // 按固定顺序排序分组，最后是其他
-    const categoryOrder = ['telephony', 'kernel-driver', 'power-mgmt', 'shared']
-    const categories = categoryOrder
-      .filter(g => groupMap.has(g))
-      .map(g => ({
-        name: g,
-        description: groupLabels[g] || g,
-        skills: groupMap.get(g)!.sort((a: any, b: any) => a.name.localeCompare(b.name))
-      }))
-
-    // 其他未分类的
-    for (const [grp, skills] of groupMap) {
-      if (!categoryOrder.includes(grp)) {
-        categories.push({
-          name: grp,
-          description: grp,
-          skills: skills.sort((a: any, b: any) => a.name.localeCompare(b.name))
-        })
-      }
-    }
+    // 所有 TAHP 技能统一放在 tahp-project category 下，保证 readFile_ 路径正确
+    const categories = tahpSkills.length > 0 ? [{
+      name: 'tahp-project',
+      description: 'TAHP 工程技能',
+      skills: tahpSkills,
+    }] : []
 
     ctx.body = { categories, archived: [] }
   } catch (err: any) {

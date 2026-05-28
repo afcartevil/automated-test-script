@@ -26,12 +26,27 @@ import {
   getDocument,
   deleteDocument,
   getDocumentChunks,
+  // Phase 4
+  getSkillSuggestions,
+  generateSkillDraft,
+  updateSkillDraft,
+  upsertEvalCase,
+  confirmEvalCase,
+  deleteEvalCase,
+  getSkillDraft,
   type KnowledgeEntry,
   type SkillDraft,
   type KnowledgeStats,
   type SemanticSearchResult,
   type ExtractedEntry,
   type KnowledgeDocument,
+  type SkillSuggestion,
+  type QualityScore,
+  type EvalCase,
+  type VersionConstraint,
+  checkSkillSimilarity,
+  mergeIntoSkill,
+  type SimilarSkillItem,
 } from '@/api/tahp/knowledge'
 import { useTahpModulesStore } from '@/stores/tahp/modules'
 
@@ -450,8 +465,19 @@ async function submitReview() {
   if (!reviewingDraft.value) return
   submittingReview.value = true
   try {
-    await reviewSkillDraft(reviewingDraft.value.id || '', reviewAction.value, 'admin', reviewNotes.value)
-    message.success(`草稿已${reviewAction.value === 'approve' ? '批准并激活' : '拒绝'}`)
+    const result = await reviewSkillDraft(reviewingDraft.value.id || '', reviewAction.value, 'admin', reviewNotes.value)
+    if (reviewAction.value === 'approve') {
+      // 检测系统附加的质量警告
+      const hasQualityWarning = result.review_notes?.includes('[系统警告]')
+      if (hasQualityWarning) {
+        message.success('已批准并激活 Skill', { duration: 3000 })
+        message.warning('质量评分偏低，建议后续在 Skill 工坊中完善版本约束和 Eval 用例', { duration: 8000 })
+      } else {
+        message.success('已批准并激活 Skill ✓')
+      }
+    } else {
+      message.info('草稿已拒绝')
+    }
     showReviewDrawer.value = false
     await loadDrafts()
     await loadStats()
@@ -464,9 +490,10 @@ async function submitReview() {
 
 function onTabChange(tab: string) {
   activeTab.value = tab
-  if (tab === 'entries')   loadEntries()
-  if (tab === 'drafts')    loadDrafts()
-  if (tab === 'documents') loadDocuments()
+  if (tab === 'entries')        loadEntries()
+  if (tab === 'drafts')         loadDrafts()
+  if (tab === 'documents')      loadDocuments()
+  if (tab === 'skill-workshop') loadSkillSuggestions()
 }
 
 // ─── Phase 2: Document Import ─────────────────────────────────────────────────
@@ -808,12 +835,353 @@ async function saveSelectedEntries() {
     await loadStats()
     await loadDocuments()   // refresh document layer
     resetImport()
+    // Phase 4: 检查是否有新的 Skill 推荐
+    checkSkillRecommendations()
   } catch (err) {
     message.error((err as Error).message)
   } finally {
     savingImport.value = false
   }
 }
+
+// ─── Phase 4: Skill 工坊 ─────────────────────────────────────────────────────
+
+const skillSuggestions    = ref<SkillSuggestion[]>([])
+const suggestionsLoading  = ref(false)
+const recommendedCount    = ref(0)
+// 保存"刚导入后有推荐"的提示状态
+const importSuggestNotice = ref<{ module: string; func_type: string; count: number } | null>(null)
+
+// Skill 编辑器状态
+const showSkillEditor       = ref(false)
+const editingDraft          = ref<SkillDraft | null>(null)
+const editorContent         = ref('')
+const editorSkillName       = ref('')
+const editorOwner           = ref('')
+const editorExclusions      = ref<string[]>([])
+const editorNewExclusion    = ref('')
+const editorVersions        = ref<string[]>([])
+const editorVersionInput    = ref('')
+const editorPlatforms       = ref<string[]>([])
+const editorPlatformInput   = ref('')
+const editorQuality         = ref<QualityScore | null>(null)
+const savingDraft           = ref(false)
+const generatingSkill       = ref(false)
+const generatingFor         = ref('')  // "module::func_type"
+const checkingSimilarity    = ref(false)
+
+// 相似 Skill 检查弹窗
+const showSimilarModal      = ref(false)
+const similarResults        = ref<SimilarSkillItem[]>([])
+const similarHasExact       = ref(false)
+const similarHasPartial     = ref(false)
+const pendingSuggestion     = ref<SkillSuggestion | null>(null)
+
+// 融合到已有 Skill 草稿
+const mergingSkill          = ref(false)
+const mergingTargetId       = ref('')
+
+// Eval 用例编辑
+const showAddEvalModal      = ref(false)
+const newEvalCase           = reactive({ title: '', input: '', expected_output: '', judgment_criteria: '' })
+const submittingEval        = ref(false)
+
+
+async function loadSkillSuggestions() {
+  suggestionsLoading.value = true
+  try {
+    const res = await getSkillSuggestions()
+    skillSuggestions.value = res.suggestions
+    recommendedCount.value = res.recommended_count
+  } catch (err) {
+    message.error('加载 Skill 推荐失败：' + (err as Error).message)
+  } finally {
+    suggestionsLoading.value = false
+  }
+}
+
+async function checkSkillRecommendations() {
+  try {
+    const res = await getSkillSuggestions()
+    const top = res.suggestions.find(s => s.recommended)
+    if (top) {
+      importSuggestNotice.value = { module: top.module, func_type: top.func_type, count: top.entry_count }
+    }
+  } catch { /* ignore */ }
+}
+
+async function startGenerateSkill(suggestion: SkillSuggestion) {
+  // ── Step 1: 先检索相似 Skill ──────────────────────────────────────────────
+  checkingSimilarity.value = true
+  generatingFor.value = `${suggestion.module}::${suggestion.func_type}`
+  try {
+    const simResult = await checkSkillSimilarity({
+      module: suggestion.module,
+      func_type: suggestion.func_type,
+      entry_ids: suggestion.entry_ids,
+      skill_name: suggestion.suggested_skill_name,
+    })
+    if (simResult.similar.length > 0) {
+      // 有相似 Skill，暂存 suggestion 并弹出相似度弹窗
+      pendingSuggestion.value = suggestion
+      similarResults.value = simResult.similar
+      similarHasExact.value = simResult.has_exact
+      similarHasPartial.value = simResult.has_partial
+      showSimilarModal.value = true
+      return
+    }
+  } catch {
+    // 检索失败不阻断流程，直接生成
+  } finally {
+    checkingSimilarity.value = false
+    if (!showSimilarModal.value) generatingFor.value = ''
+  }
+
+  // ── Step 2: 无相似 Skill，直接生成 ───────────────────────────────────────
+  await doGenerateSkill(suggestion)
+}
+
+/** 实际调用 LLM 生成 Skill 草稿（相似检查通过后调用） */
+async function doGenerateSkill(suggestion: SkillSuggestion) {
+  generatingSkill.value = true
+  generatingFor.value = `${suggestion.module}::${suggestion.func_type}`
+  try {
+    const res = await generateSkillDraft({
+      module: suggestion.module,
+      func_type: suggestion.func_type,
+      entry_ids: suggestion.entry_ids,
+      skill_name: suggestion.suggested_skill_name,
+      generated_by: 'user',
+    })
+    if (res.message) {
+      message.warning(res.message, { duration: 6000 })
+    } else {
+      message.success('Skill 骨架已生成，请在编辑器中完善内容')
+    }
+    openSkillEditor(res.draft)
+    await loadSkillSuggestions()
+    await loadDrafts()
+  } catch (err) {
+    message.error('生成失败：' + (err as Error).message)
+  } finally {
+    generatingSkill.value = false
+    generatingFor.value = ''
+  }
+}
+
+/** 相似弹窗：忽略相似，强制新建 */
+async function confirmCreateAnyway() {
+  showSimilarModal.value = false
+  if (pendingSuggestion.value) {
+    await doGenerateSkill(pendingSuggestion.value)
+    pendingSuggestion.value = null
+  }
+}
+
+/** 相似弹窗：查看已有 Skill（取消生成，让用户自行决定融合） */
+function cancelAndViewSimilar() {
+  showSimilarModal.value = false
+  pendingSuggestion.value = null
+  message.info('已取消生成。建议先在"技能库"中找到对应 Skill，补充相关内容后再决定是否新建。', { duration: 5000 })
+}
+
+/** 相似弹窗：融合新知识到已有草稿（只对 type=draft 有效） */
+async function handleMergeIntoDraft(item: SimilarSkillItem) {
+  if (item.type !== 'draft') {
+    message.warning('已激活的 Skill 暂不支持自动融合，请在技能库中手动编辑')
+    return
+  }
+  if (!pendingSuggestion.value) return
+
+  mergingSkill.value = true
+  mergingTargetId.value = item.id
+  try {
+    const res = await mergeIntoSkill(item.id, pendingSuggestion.value.entry_ids)
+    showSimilarModal.value = false
+    pendingSuggestion.value = null
+    if (res.llm_error) {
+      message.warning(`LLM 融合遇到问题，已返回原内容：${res.llm_error}`, { duration: 6000 })
+    } else {
+      message.success(res.message || `已成功融合 ${res.merged_count} 条知识到 Skill`, { duration: 5000 })
+    }
+    // 打开融合后的草稿编辑器
+    openSkillEditor(res.draft)
+    await loadDrafts()
+    await loadSkillSuggestions()
+  } catch (err) {
+    message.error('融合失败：' + (err as Error).message)
+  } finally {
+    mergingSkill.value = false
+    mergingTargetId.value = ''
+  }
+}
+
+function openSkillEditor(draft: SkillDraft) {
+  editingDraft.value = draft
+  editorContent.value = draft.content || ''
+  editorSkillName.value = draft.skill_name || ''
+  editorOwner.value = draft.maintenance_owner || ''
+  editorExclusions.value = [...(draft.exclusion_cases || [])]
+  editorVersions.value = [...(draft.version_constraints?.android_versions || [])]
+  editorPlatforms.value = [...(draft.version_constraints?.chipset_platforms || [])]
+  editorQuality.value = draft.quality_score || null
+  showSkillEditor.value = true
+}
+
+async function openSkillEditorById(draftId: string) {
+  try {
+    const draft = await getSkillDraft(draftId)
+    openSkillEditor(draft)
+  } catch (err) {
+    message.error('加载草稿失败：' + (err as Error).message)
+  }
+}
+
+async function saveSkillDraft() {
+  if (!editingDraft.value?.id) return
+  savingDraft.value = true
+  try {
+    const updated = await updateSkillDraft(editingDraft.value.id, {
+      content: editorContent.value,
+      skill_name: editorSkillName.value,
+      maintenance_owner: editorOwner.value,
+      exclusion_cases: editorExclusions.value,
+      version_constraints: {
+        android_versions: editorVersions.value,
+        chipset_platforms: editorPlatforms.value,
+      },
+    })
+    editingDraft.value = updated
+    editorQuality.value = updated.quality_score || null
+    message.success('草稿已保存')
+    await loadDrafts()
+  } catch (err) {
+    message.error('保存失败：' + (err as Error).message)
+  } finally {
+    savingDraft.value = false
+  }
+}
+
+async function submitSkillForReview() {
+  if (!editingDraft.value?.id) return
+  // 先保存草稿
+  await saveSkillDraft()
+
+  // 质量不达标 → 引导式对话框，用户自主决定
+  if (!editorQuality.value?.pass_gate) {
+    const score = editorQuality.value?.total ?? 0
+    const reasons = editorQuality.value?.blocking_reasons ?? []
+    dialog.warning({
+      title: `Skill 质量评分偏低（${score}/100）`,
+      content: `当前 Skill 尚有以下待补充项：\n${reasons.map(r => `• ${r}`).join('\n')}\n\n建议先完善后再发布，以确保 AI 执行任务时效果更好。`,
+      positiveText: '仍要提交审核',
+      negativeText: '去完善 Skill',
+      onPositiveClick: () => {
+        // 用户坚持提交，直接打开审核
+        const draft = editingDraft.value!
+        openReviewModal({ ...draft } as SkillDraft, 'approve')
+        showSkillEditor.value = false
+      },
+      onNegativeClick: () => {
+        // 保持在编辑器，让用户完善
+        // 右侧质量面板已高亮阻塞原因，无需额外操作
+      },
+    })
+    return
+  }
+
+  // 质量达标，直接打开审核
+  const draft = editingDraft.value
+  openReviewModal({ ...draft } as SkillDraft, 'approve')
+  showSkillEditor.value = false
+}
+
+function addExclusion() {
+  const t = editorNewExclusion.value.trim()
+  if (t && !editorExclusions.value.includes(t)) {
+    editorExclusions.value.push(t)
+  }
+  editorNewExclusion.value = ''
+}
+
+function removeExclusion(idx: number) {
+  editorExclusions.value.splice(idx, 1)
+}
+
+function addVersion() {
+  const t = editorVersionInput.value.trim()
+  if (t && !editorVersions.value.includes(t)) editorVersions.value.push(t)
+  editorVersionInput.value = ''
+}
+
+function removeVersion(idx: number) {
+  editorVersions.value.splice(idx, 1)
+}
+
+function addPlatform() {
+  const t = editorPlatformInput.value.trim()
+  if (t && !editorPlatforms.value.includes(t)) editorPlatforms.value.push(t)
+  editorPlatformInput.value = ''
+}
+
+function removePlatform(idx: number) {
+  editorPlatforms.value.splice(idx, 1)
+}
+
+async function submitNewEvalCase() {
+  if (!editingDraft.value?.id) return
+  if (!newEvalCase.title.trim()) { message.warning('用例标题不能为空'); return }
+  submittingEval.value = true
+  try {
+    const updated = await upsertEvalCase(editingDraft.value.id, {
+      ...newEvalCase,
+      source: 'human',
+      status: 'confirmed',
+    })
+    editingDraft.value = updated
+    editorQuality.value = updated.quality_score || null
+    Object.assign(newEvalCase, { title: '', input: '', expected_output: '', judgment_criteria: '' })
+    showAddEvalModal.value = false
+    message.success('Eval 用例已添加')
+  } catch (err) {
+    message.error('添加失败：' + (err as Error).message)
+  } finally {
+    submittingEval.value = false
+  }
+}
+
+async function handleConfirmEval(caseId: string) {
+  if (!editingDraft.value?.id) return
+  try {
+    const updated = await confirmEvalCase(editingDraft.value.id, caseId)
+    editingDraft.value = updated
+    editorQuality.value = updated.quality_score || null
+    message.success('已确认')
+  } catch (err) {
+    message.error((err as Error).message)
+  }
+}
+
+async function handleDeleteEval(caseId: string) {
+  if (!editingDraft.value?.id) return
+  try {
+    const updated = await deleteEvalCase(editingDraft.value.id, caseId)
+    editingDraft.value = updated
+    editorQuality.value = updated.quality_score || null
+    message.success('已删除')
+  } catch (err) {
+    message.error((err as Error).message)
+  }
+}
+
+function scoreColor(score: number, max: number): string {
+  const pct = score / max
+  if (pct >= 0.8) return '#18a058'
+  if (pct >= 0.5) return '#f0a020'
+  return '#d03050'
+}
+
+
 </script>
 
 <template>
@@ -1491,6 +1859,135 @@ async function saveSelectedEntries() {
           </div>
         </div>
       </NTabPane>
+
+      <!-- ── Skill 工坊 ──────────────────────────────── -->
+      <NTabPane name="skill-workshop" tab="✨ Skill 工坊">
+        <!-- 导入后推荐提示 -->
+        <div class="skill-import-notice" v-if="importSuggestNotice">
+          <div class="notice-content">
+            <span class="notice-icon">💡</span>
+            <span class="notice-text">
+              刚导入的内容使 <strong>{{ importSuggestNotice.module }} / {{ importSuggestNotice.func_type }}</strong>
+              分组已有 {{ importSuggestNotice.count }} 条知识，建议生成 Skill 以便 AI 执行任务时使用
+            </span>
+            <NButton size="tiny" type="primary" @click="importSuggestNotice = null">知道了</NButton>
+          </div>
+        </div>
+
+        <NSpin :show="suggestionsLoading">
+          <!-- 推荐卡片区 -->
+          <div class="workshop-section" v-if="skillSuggestions.length > 0 || !suggestionsLoading">
+            <div class="workshop-section-hd">
+              <span class="workshop-section-title">推荐生成 Skill</span>
+              <NButton size="tiny" @click="loadSkillSuggestions">刷新</NButton>
+            </div>
+
+            <NEmpty v-if="skillSuggestions.length === 0 && !suggestionsLoading" description="暂无知识条目，请先通过「文档导入」上传文档" style="padding:40px 0" />
+
+            <div class="suggestion-grid" v-else>
+              <div
+                v-for="s in skillSuggestions"
+                :key="`${s.module}::${s.func_type}`"
+                class="suggestion-card"
+                :class="{ 'suggestion-card--recommended': s.recommended, 'suggestion-card--dim': !s.recommended }"
+              >
+                <div class="suggestion-card-header">
+                  <div class="suggestion-mod-badge">
+                    <NTag
+                      size="tiny"
+                      :style="{ '--n-color': (MODULE_COLOR[s.module] || '#722ed1') + '22', '--n-text-color': MODULE_COLOR[s.module] || '#722ed1', '--n-border': 'none', fontWeight: 600 }"
+                    >{{ MODULE_SHORT[s.module] || s.module }}</NTag>
+                    <span class="badge badge-func badge-xs">{{ s.func_type.replace(/_/g, ' ') }}</span>
+                  </div>
+                  <NTag v-if="s.existing_skill_count > 0" size="tiny" type="warning">
+                    已有 {{ s.existing_skill_count }} 个 Skill
+                  </NTag>
+                </div>
+                <div class="suggestion-name">{{ s.suggested_skill_name }}</div>
+                <div class="suggestion-stats">
+                  <span>{{ s.entry_count }} 条知识条目</span>
+                  <span>置信度 {{ Math.round(s.avg_confidence * 100) }}%</span>
+                </div>
+                <div class="suggestion-reason">{{ s.reason }}</div>
+                <NButton
+                  v-if="s.recommended"
+                  type="primary"
+                  size="small"
+                  :loading="(generatingSkill || checkingSimilarity) && generatingFor === `${s.module}::${s.func_type}`"
+                  :disabled="generatingSkill || checkingSimilarity"
+                  @click="startGenerateSkill(s)"
+                  class="suggestion-gen-btn"
+                >
+                  {{ checkingSimilarity && generatingFor === `${s.module}::${s.func_type}` ? '检索相似中…' : '✨ 生成 Skill 草稿' }}
+                </NButton>
+                <span v-else class="suggestion-need-more">需 {{ 3 - s.entry_count + (s.entry_count < 3 ? s.entry_count : 0) }} 条更多条目</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 已有草稿列表 -->
+          <div class="workshop-section" style="margin-top:24px">
+            <div class="workshop-section-hd">
+              <span class="workshop-section-title">Skill 草稿列表</span>
+              <NButton size="tiny" @click="loadDrafts">刷新</NButton>
+            </div>
+            <NSpin :show="draftsLoading">
+              <NEmpty v-if="!drafts.length && !draftsLoading" description="暂无草稿" style="padding:24px 0" />
+              <div v-else class="draft-list">
+                <div
+                  v-for="d in drafts"
+                  :key="d.id"
+                  class="draft-item"
+                  :class="{ 'draft-item--needs-polish': d.quality_score && !d.quality_score.pass_gate }"
+                >
+                  <div class="draft-item-main">
+                    <div class="draft-item-name">{{ d.skill_name }}</div>
+                    <div class="draft-item-meta">
+                      <NTag size="tiny" :style="{ '--n-color': (MODULE_COLOR[d.module] || '#722ed1') + '18', '--n-text-color': MODULE_COLOR[d.module] || '#722ed1', '--n-border': 'none' }">{{ MODULE_SHORT[d.module] || d.module }}</NTag>
+                      <span class="badge badge-func badge-xs">{{ FUNC_TYPE_SHORT[d.func_type] || d.func_type }}</span>
+                      <!-- 质量分 + 待完善提示 -->
+                      <span v-if="d.quality_score" class="quality-badge" :style="{ color: scoreColor(d.quality_score.total, 100) }">
+                        Q{{ d.quality_score.total }}
+                      </span>
+                      <span v-if="d.quality_score && !d.quality_score.pass_gate" class="draft-needs-polish-tag">
+                        ⚠ 待完善
+                      </span>
+                    </div>
+                    <!-- 低质量时展示待完善原因 -->
+                    <div v-if="d.quality_score && !d.quality_score.pass_gate" class="draft-polish-hint">
+                      {{ d.quality_score.blocking_reasons.join('；') }}
+                    </div>
+                  </div>
+                  <NSpace size="small">
+                    <!-- 低质量草稿：优先显示「完善 Skill」，按钮更突出 -->
+                    <NButton
+                      v-if="d.quality_score && !d.quality_score.pass_gate"
+                      size="tiny"
+                      type="warning"
+                      @click="d.id && openSkillEditorById(d.id)"
+                    >
+                      ✏️ 完善 Skill
+                    </NButton>
+                    <NButton
+                      v-else
+                      size="tiny"
+                      type="primary"
+                      ghost
+                      @click="d.id && openSkillEditorById(d.id)"
+                    >
+                      编辑
+                    </NButton>
+                    <NButton size="tiny" type="success" ghost @click="d.id && openReviewModal(d, 'approve')">
+                      发布
+                    </NButton>
+                  </NSpace>
+                </div>
+              </div>
+            </NSpin>
+          </div>
+        </NSpin>
+      </NTabPane>
+
     </NTabs>
 
     <!-- ── 新增/编辑条目弹窗 ──────────────────────────── -->
@@ -1662,6 +2159,421 @@ async function saveSelectedEntries() {
         </div>
       </NDrawerContent>
     </NDrawer>
+    <!-- ── Skill 编辑器 Drawer ─────────────────────────── -->
+    <NDrawer v-model:show="showSkillEditor" :width="1080" placement="right" @after-leave="editingDraft = null">
+      <NDrawerContent :title="`✏️ 编辑 Skill：${editingDraft?.skill_name || ''}`" closable>
+        <div v-if="editingDraft" class="skill-editor-wrap">
+
+          <!-- 左列：内容编辑区 -->
+          <div class="skill-editor-left">
+            <div class="skill-editor-section-hd">Skill 内容 <span class="skill-editor-hint">（Markdown 格式）</span></div>
+            <NInput
+              v-model:value="editorContent"
+              type="textarea"
+              placeholder="编辑 Skill 内容…"
+              :autosize="{ minRows: 28, maxRows: 50 }"
+              style="font-family: 'Courier New', Courier, monospace; font-size: 12px; line-height: 1.7"
+            />
+
+            <!-- 不适用情况 -->
+            <div class="skill-editor-section-hd" style="margin-top:16px">
+              ⚠️ 不适用情况
+            </div>
+            <div class="chip-input-row">
+              <NInput
+                v-model:value="editorNewExclusion"
+                placeholder="输入不适用情况后按 Enter"
+                size="small"
+                style="flex:1"
+                @keyup.enter="addExclusion"
+              />
+              <NButton size="small" @click="addExclusion">+ 添加</NButton>
+            </div>
+            <div class="chip-list" v-if="editorExclusions.length">
+              <NTag
+                v-for="(ex, i) in editorExclusions"
+                :key="i"
+                type="warning"
+                closable
+                size="small"
+                @close="removeExclusion(i)"
+              >{{ ex }}</NTag>
+            </div>
+            <div v-else class="chip-empty">暂无不适用情况</div>
+
+            <!-- 维护人 -->
+            <div class="skill-editor-section-hd" style="margin-top:14px">维护人</div>
+            <NInput v-model:value="editorOwner" placeholder="负责人姓名" size="small" style="max-width:240px" />
+          </div>
+
+          <!-- 右列：质量面板 -->
+          <div class="skill-editor-right">
+
+            <!-- 质量得分卡 -->
+            <div class="quality-panel">
+              <div class="quality-panel-hd">
+                <span class="quality-panel-title">质量评分</span>
+                <span
+                  class="quality-gate-badge"
+                  :class="editorQuality?.pass_gate ? 'gate-pass' : 'gate-fail'"
+                >
+                  {{ editorQuality?.pass_gate ? '✓ 通过门禁' : '✗ 未达标' }}
+                </span>
+              </div>
+
+              <div v-if="editorQuality" class="quality-score-ring-row">
+                <div class="quality-score-ring">
+                  <svg viewBox="0 0 60 60" width="60" height="60">
+                    <circle cx="30" cy="30" r="24" fill="none" stroke="rgba(0,0,0,.08)" stroke-width="6"/>
+                    <circle
+                      cx="30" cy="30" r="24" fill="none"
+                      :stroke="scoreColor(editorQuality.total, 100)"
+                      stroke-width="6"
+                      stroke-linecap="round"
+                      :stroke-dasharray="`${(editorQuality.total / 100) * 150.8} 150.8`"
+                      stroke-dashoffset="0"
+                      transform="rotate(-90 30 30)"
+                    />
+                    <text x="30" y="34" text-anchor="middle" font-size="13" font-weight="700"
+                      :fill="scoreColor(editorQuality.total, 100)">{{ editorQuality.total }}</text>
+                  </svg>
+                </div>
+                <div class="quality-dims">
+                  <div class="quality-dim-item">
+                    <span class="quality-dim-name">结构完整性</span>
+                    <div class="quality-dim-bar-track">
+                      <div class="quality-dim-bar-fill" :style="{ width: (editorQuality.structure / 20 * 100) + '%', background: scoreColor(editorQuality.structure, 20) }"></div>
+                    </div>
+                    <span class="quality-dim-val">{{ editorQuality.structure }}/20</span>
+                  </div>
+                  <div class="quality-dim-item">
+                    <span class="quality-dim-name">不适用情况 <span class="quality-required">必填</span></span>
+                    <div class="quality-dim-bar-track">
+                      <div class="quality-dim-bar-fill" :style="{ width: (editorQuality.exclusions / 15 * 100) + '%', background: scoreColor(editorQuality.exclusions, 15) }"></div>
+                    </div>
+                    <span class="quality-dim-val">{{ editorQuality.exclusions }}/15</span>
+                  </div>
+                  <div class="quality-dim-item">
+                    <span class="quality-dim-name">版本范围 <span class="quality-required">必填</span></span>
+                    <div class="quality-dim-bar-track">
+                      <div class="quality-dim-bar-fill" :style="{ width: (editorQuality.version_range / 20 * 100) + '%', background: scoreColor(editorQuality.version_range, 20) }"></div>
+                    </div>
+                    <span class="quality-dim-val">{{ editorQuality.version_range }}/20</span>
+                  </div>
+                  <div class="quality-dim-item">
+                    <span class="quality-dim-name">Eval 用例 <span class="quality-required">必填</span></span>
+                    <div class="quality-dim-bar-track">
+                      <div class="quality-dim-bar-fill" :style="{ width: (editorQuality.eval_cases / 25 * 100) + '%', background: scoreColor(editorQuality.eval_cases, 25) }"></div>
+                    </div>
+                    <span class="quality-dim-val">{{ editorQuality.eval_cases }}/25</span>
+                  </div>
+                  <div class="quality-dim-item">
+                    <span class="quality-dim-name">无冲突</span>
+                    <div class="quality-dim-bar-track">
+                      <div class="quality-dim-bar-fill" :style="{ width: (editorQuality.no_conflict / 10 * 100) + '%', background: scoreColor(editorQuality.no_conflict, 10) }"></div>
+                    </div>
+                    <span class="quality-dim-val">{{ editorQuality.no_conflict }}/10</span>
+                  </div>
+                  <div class="quality-dim-item">
+                    <span class="quality-dim-name">维护人</span>
+                    <div class="quality-dim-bar-track">
+                      <div class="quality-dim-bar-fill" :style="{ width: (editorQuality.owner / 10 * 100) + '%', background: scoreColor(editorQuality.owner, 10) }"></div>
+                    </div>
+                    <span class="quality-dim-val">{{ editorQuality.owner }}/10</span>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="quality-no-data">保存后计算质量得分</div>
+
+              <!-- 阻塞原因 -->
+              <div v-if="editorQuality && editorQuality.blocking_reasons.length" class="quality-blocks">
+                <div class="quality-block-title">⛔ 提交审核阻塞原因</div>
+                <div v-for="r in editorQuality.blocking_reasons" :key="r" class="quality-block-item">{{ r }}</div>
+              </div>
+            </div>
+
+            <!-- 版本约束 -->
+            <div class="skill-editor-section-hd" style="margin-top:14px">版本约束</div>
+            <div class="version-constraint-form">
+              <div class="version-constraint-row">
+                <span class="version-constraint-label">Android 版本</span>
+                <div class="chip-input-row">
+                  <NInput v-model:value="editorVersionInput" placeholder="如 Android 13" size="small" style="flex:1" @keyup.enter="addVersion" />
+                  <NButton size="small" @click="addVersion">+</NButton>
+                </div>
+                <div class="chip-list" v-if="editorVersions.length">
+                  <NTag v-for="(v,i) in editorVersions" :key="i" type="info" closable size="small" @close="removeVersion(i)">{{ v }}</NTag>
+                </div>
+              </div>
+              <div class="version-constraint-row">
+                <span class="version-constraint-label">芯片平台</span>
+                <div class="chip-input-row">
+                  <NInput v-model:value="editorPlatformInput" placeholder="如 MT6985 / SM8550" size="small" style="flex:1" @keyup.enter="addPlatform" />
+                  <NButton size="small" @click="addPlatform">+</NButton>
+                </div>
+                <div class="chip-list" v-if="editorPlatforms.length">
+                  <NTag v-for="(p,i) in editorPlatforms" :key="i" type="success" closable size="small" @close="removePlatform(i)">{{ p }}</NTag>
+                </div>
+              </div>
+            </div>
+
+            <!-- Eval 用例 -->
+            <div class="skill-editor-section-hd" style="margin-top:14px">
+              Eval 用例
+              <NButton size="tiny" style="margin-left:8px" @click="showAddEvalModal = true">+ 新增</NButton>
+            </div>
+            <div class="eval-case-list" v-if="editingDraft.eval_cases && editingDraft.eval_cases.length">
+              <div
+                v-for="ec in editingDraft.eval_cases"
+                :key="ec.id"
+                class="eval-case-item"
+                :class="{ 'eval-confirmed': ec.status === 'confirmed', 'eval-draft': ec.status === 'draft' }"
+              >
+                <div class="eval-case-header">
+                  <span class="eval-case-title">{{ ec.title }}</span>
+                  <NTag size="tiny" :type="ec.status === 'confirmed' ? 'success' : 'warning'">
+                    {{ ec.status === 'confirmed' ? '✓ 已确认' : 'AI草稿' }}
+                  </NTag>
+                </div>
+                <div class="eval-case-row">
+                  <span class="eval-field-label">输入</span>
+                  <span class="eval-field-val">{{ ec.input }}</span>
+                </div>
+                <div class="eval-case-row">
+                  <span class="eval-field-label">期望输出</span>
+                  <span class="eval-field-val">{{ ec.expected_output }}</span>
+                </div>
+                <div class="eval-case-actions">
+                  <NButton
+                    v-if="ec.status !== 'confirmed'"
+                    size="tiny"
+                    type="success"
+                    ghost
+                    @click="handleConfirmEval(ec.id)"
+                  >✓ 确认</NButton>
+                  <NButton size="tiny" type="error" ghost @click="handleDeleteEval(ec.id)">删除</NButton>
+                </div>
+              </div>
+            </div>
+            <div v-else class="eval-empty">暂无 Eval 用例，点击「+ 新增」添加</div>
+
+          </div><!-- /right -->
+        </div><!-- /skill-editor-wrap -->
+
+        <template #footer>
+          <NSpace justify="end" size="small">
+            <NButton @click="showSkillEditor = false">取消</NButton>
+            <NButton
+              type="primary"
+              ghost
+              :loading="savingDraft"
+              @click="saveSkillDraft"
+            >💾 保存草稿</NButton>
+            <NButton
+              type="success"
+              :loading="savingDraft"
+              @click="submitSkillForReview"
+            >
+              🚀 {{ editorQuality && !editorQuality.pass_gate ? '提交审核（质量偏低）' : '提交审核' }}
+            </NButton>
+          </NSpace>
+        </template>
+      </NDrawerContent>
+    </NDrawer>
+
+    <!-- ── 添加 Eval 用例弹窗 ──────────────────────────── -->
+    <NModal
+      v-model:show="showAddEvalModal"
+      preset="dialog"
+      title="📝 新增 Eval 用例"
+      positive-text="提交"
+      negative-text="取消"
+      style="width: 620px"
+      :loading="submittingEval"
+      @positive-click="submitNewEvalCase"
+    >
+      <NForm label-placement="top" size="medium" style="margin-top: 8px">
+        <NFormItem label="标题" required>
+          <NInput v-model:value="newEvalCase.title" placeholder="简要描述这个测试场景" />
+        </NFormItem>
+        <NFormItem label="输入（Input）" required>
+          <NInput
+            v-model:value="newEvalCase.input"
+            type="textarea"
+            placeholder="用户输入或任务描述"
+            :autosize="{ minRows: 3, maxRows: 6 }"
+          />
+        </NFormItem>
+        <NFormItem label="期望输出（Expected Output）" required>
+          <NInput
+            v-model:value="newEvalCase.expected_output"
+            type="textarea"
+            placeholder="AI 应该给出的正确回答或行为"
+            :autosize="{ minRows: 3, maxRows: 6 }"
+          />
+        </NFormItem>
+        <NFormItem label="判断标准（Judgment Criteria）">
+          <NInput
+            v-model:value="newEvalCase.judgment_criteria"
+            type="textarea"
+            placeholder="如何判断回答是否达标（可选）"
+            :autosize="{ minRows: 2, maxRows: 4 }"
+          />
+        </NFormItem>
+      </NForm>
+    </NModal>
+
+    <!-- ── 相似 Skill 检测弹窗（三档分级 + 融合操作） ──────────────── -->
+    <NModal
+      v-model:show="showSimilarModal"
+      preset="card"
+      style="width: 720px; max-height: 85vh"
+      :title="similarHasExact ? '⚠️ 发现高度重叠 Skill，建议融合' : '🔍 发现相似 Skill'"
+      :segmented="{ content: true, footer: true }"
+    >
+      <div class="similar-modal-body">
+
+        <!-- 精确重叠提示横幅 -->
+        <div v-if="similarHasExact" class="similar-exact-banner">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          检测到 <strong>来源条目高度重叠</strong> 的 Skill，再次生成会产生冗余。
+          建议直接点击"融合到此 Skill"将新知识合入已有 Skill。
+        </div>
+        <div v-else-if="similarHasPartial" class="similar-partial-banner">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          检测到 <strong>部分重叠</strong> 的 Skill，建议先查看是否可以融合补充。
+        </div>
+
+        <!-- EXACT 档 -->
+        <div v-if="similarResults.some(r => r.tier === 'exact')" class="similar-tier-section">
+          <div class="similar-tier-header tier-exact">
+            <span class="tier-dot" />
+            高度重叠（来源条目 ≥70% 相同）
+          </div>
+          <div class="similar-items">
+            <div
+              v-for="item in similarResults.filter(r => r.tier === 'exact')"
+              :key="item.id"
+              class="similar-item similar-item-exact"
+            >
+              <div class="similar-item-top">
+                <span class="similar-name">{{ item.display_name }}</span>
+                <span class="similar-type-badge" :class="item.type === 'draft' ? 'badge-draft' : 'badge-active'">
+                  {{ item.type === 'draft' ? '草稿' : '已激活' }}
+                </span>
+                <span class="similar-score score-exact">{{ Math.round(item.jaccard_score * 100) }}% 重叠</span>
+              </div>
+              <div class="similar-desc">{{ item.description }}</div>
+              <div class="similar-item-footer">
+                <div class="similar-tags">
+                  <NTag size="tiny" :bordered="false" type="info">{{ item.module }}</NTag>
+                  <NTag size="tiny" :bordered="false" type="success">{{ item.func_type }}</NTag>
+                  <span v-for="(r, i) in item.reasons" :key="i" class="similar-reason">{{ r }}</span>
+                </div>
+                <NButton
+                  v-if="item.type === 'draft'"
+                  size="tiny"
+                  type="warning"
+                  :loading="mergingSkill && mergingTargetId === item.id"
+                  :disabled="mergingSkill && mergingTargetId !== item.id"
+                  @click="handleMergeIntoDraft(item)"
+                >融合到此 Skill</NButton>
+                <span v-else class="similar-activated-hint">已激活，请手动编辑</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PARTIAL 档 -->
+        <div v-if="similarResults.some(r => r.tier === 'partial')" class="similar-tier-section">
+          <div class="similar-tier-header tier-partial">
+            <span class="tier-dot" />
+            部分重叠（来源条目 30–70% 相同）
+          </div>
+          <div class="similar-items">
+            <div
+              v-for="item in similarResults.filter(r => r.tier === 'partial')"
+              :key="item.id"
+              class="similar-item similar-item-partial"
+            >
+              <div class="similar-item-top">
+                <span class="similar-name">{{ item.display_name }}</span>
+                <span class="similar-type-badge" :class="item.type === 'draft' ? 'badge-draft' : 'badge-active'">
+                  {{ item.type === 'draft' ? '草稿' : '已激活' }}
+                </span>
+                <span class="similar-score score-partial">{{ Math.round(item.jaccard_score * 100) }}% 重叠</span>
+              </div>
+              <div class="similar-desc">{{ item.description }}</div>
+              <div class="similar-item-footer">
+                <div class="similar-tags">
+                  <NTag size="tiny" :bordered="false" type="info">{{ item.module }}</NTag>
+                  <NTag size="tiny" :bordered="false" type="success">{{ item.func_type }}</NTag>
+                  <span v-for="(r, i) in item.reasons" :key="i" class="similar-reason">{{ r }}</span>
+                </div>
+                <NButton
+                  v-if="item.type === 'draft'"
+                  size="tiny"
+                  type="default"
+                  :loading="mergingSkill && mergingTargetId === item.id"
+                  :disabled="mergingSkill && mergingTargetId !== item.id"
+                  @click="handleMergeIntoDraft(item)"
+                >融合补充</NButton>
+                <span v-else class="similar-activated-hint">已激活，请手动编辑</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- STRUCTURAL 档 -->
+        <div v-if="similarResults.some(r => r.tier === 'structural')" class="similar-tier-section">
+          <div class="similar-tier-header tier-structural">
+            <span class="tier-dot" />
+            同类别（相同功能类型 + 业务模块）
+          </div>
+          <div class="similar-items">
+            <div
+              v-for="item in similarResults.filter(r => r.tier === 'structural')"
+              :key="item.id"
+              class="similar-item similar-item-structural"
+            >
+              <div class="similar-item-top">
+                <span class="similar-name">{{ item.display_name }}</span>
+                <span class="similar-type-badge" :class="item.type === 'draft' ? 'badge-draft' : 'badge-active'">
+                  {{ item.type === 'draft' ? '草稿' : '已激活' }}
+                </span>
+              </div>
+              <div class="similar-desc">{{ item.description }}</div>
+              <div class="similar-item-footer">
+                <div class="similar-tags">
+                  <NTag size="tiny" :bordered="false" type="info">{{ item.module }}</NTag>
+                  <NTag size="tiny" :bordered="false" type="success">{{ item.func_type }}</NTag>
+                  <span v-for="(r, i) in item.reasons" :key="i" class="similar-reason">{{ r }}</span>
+                </div>
+                <span class="similar-structural-hint">同类别，可选择查看</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <p class="similar-note">
+          如果以上 Skill 均不适合融合，可点击"仍要新建"创建独立 Skill，之后再手动合并。
+        </p>
+      </div>
+
+      <template #footer>
+        <div class="similar-modal-footer">
+          <NButton size="small" @click="cancelAndViewSimilar">取消</NButton>
+          <NButton
+            size="small"
+            type="primary"
+            ghost
+            :loading="generatingSkill"
+            @click="confirmCreateAnyway"
+          >仍要新建</NButton>
+        </div>
+      </template>
+    </NModal>
+
   </div>
 </template>
 
@@ -2234,5 +3146,380 @@ async function saveSelectedEntries() {
   background: rgba(0,0,0,.03);
   border-radius: 8px;
   border: 1px solid rgba(0,0,0,.05);
+}
+
+/* ── Phase 4 Skill 工坊 ──────────────────────────────── */
+.skill-import-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(114,46,209,.08) 0%, rgba(32,128,240,.06) 100%);
+  border: 1px solid rgba(114,46,209,.2);
+  border-radius: 10px;
+  margin-bottom: 4px;
+}
+.skill-import-notice-icon { font-size: 20px; flex-shrink: 0; }
+.skill-import-notice-text { flex: 1; font-size: 13px; color: #555; line-height: 1.5; }
+.skill-import-notice-text strong { color: #722ed1; }
+
+.workshop-section { padding: 4px 0; }
+.workshop-section-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.workshop-section-title { font-size: 14px; font-weight: 600; color: var(--n-text-color); }
+
+.suggestion-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.suggestion-card {
+  padding: 16px;
+  border-radius: 12px;
+  border: 1.5px solid rgba(0,0,0,.07);
+  background: var(--n-color-modal, #fafafa);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: box-shadow .2s, border-color .2s;
+}
+.suggestion-card--recommended {
+  border-color: rgba(114,46,209,.25);
+  background: rgba(114,46,209,.03);
+}
+.suggestion-card--recommended:hover {
+  box-shadow: 0 4px 20px rgba(114,46,209,.12);
+  border-color: rgba(114,46,209,.4);
+}
+.suggestion-card--dim { opacity: 0.65; }
+
+.suggestion-card-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.suggestion-mod-badge { display: flex; align-items: center; gap: 6px; }
+.suggestion-name { font-size: 14px; font-weight: 600; color: var(--n-text-color); line-height: 1.4; }
+.suggestion-stats { display: flex; gap: 10px; font-size: 12px; color: #888; }
+.suggestion-reason { font-size: 12px; color: #666; line-height: 1.5; }
+.suggestion-gen-btn { width: 100%; margin-top: 4px; }
+.suggestion-need-more { font-size: 12px; color: #bbb; text-align: center; padding: 6px 0 2px; }
+
+.draft-list { display: flex; flex-direction: column; gap: 8px; }
+.draft-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,.07);
+  background: var(--n-color-modal, #fafafa);
+  transition: border-color .15s;
+}
+.draft-item:hover { border-color: rgba(32,128,240,.3); }
+.draft-item-main { flex: 1; min-width: 0; }
+.draft-item-name { font-size: 13px; font-weight: 600; color: var(--n-text-color); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.draft-item-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.quality-badge {
+  font-size: 11px; font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(0,0,0,.05);
+}
+
+/* ── Skill 编辑器 Drawer ─────────────────────────────── */
+.skill-editor-wrap {
+  display: flex;
+  gap: 20px;
+  height: 100%;
+  min-height: 600px;
+}
+.skill-editor-left {
+  flex: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.skill-editor-right {
+  flex: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 320px;
+  max-width: 420px;
+  overflow-y: auto;
+}
+.skill-editor-section-hd {
+  font-size: 12px;
+  font-weight: 700;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.skill-editor-hint { font-size: 11px; font-weight: 400; color: #bbb; text-transform: none; letter-spacing: 0; }
+
+/* Chip input */
+.chip-input-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.chip-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip-empty { font-size: 12px; color: #bbb; padding: 4px 0; }
+
+/* Quality Panel */
+.quality-panel {
+  background: var(--n-color-modal, #fafafa);
+  border: 1px solid rgba(0,0,0,.07);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.quality-panel-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.quality-panel-title { font-size: 13px; font-weight: 700; color: var(--n-text-color); }
+.quality-gate-badge {
+  font-size: 11px; font-weight: 700;
+  padding: 2px 8px; border-radius: 20px;
+}
+.gate-pass { background: rgba(24,160,88,.12); color: #18a058; }
+.gate-fail { background: rgba(208,48,80,.10); color: #d03050; }
+
+.quality-score-ring-row { display: flex; align-items: flex-start; gap: 14px; }
+.quality-score-ring { flex-shrink: 0; }
+.quality-dims { flex: 1; display: flex; flex-direction: column; gap: 7px; }
+.quality-dim-item { display: flex; align-items: center; gap: 6px; }
+.quality-dim-name { font-size: 11px; color: #666; width: 100px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
+.quality-dim-bar-track { flex: 1; height: 4px; background: rgba(0,0,0,.08); border-radius: 2px; overflow: hidden; }
+.quality-dim-bar-fill { height: 100%; border-radius: 2px; transition: width .4s; }
+.quality-dim-val { font-size: 10px; color: #888; font-family: monospace; width: 30px; text-align: right; flex-shrink: 0; }
+.quality-required { font-size: 9px; color: #d03050; font-weight: 700; background: rgba(208,48,80,.1); padding: 0 3px; border-radius: 3px; }
+.quality-no-data { font-size: 12px; color: #bbb; text-align: center; padding: 12px 0; }
+
+.quality-blocks { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(0,0,0,.06); }
+.quality-block-title { font-size: 11px; font-weight: 700; color: #d03050; margin-bottom: 6px; }
+.quality-block-item { font-size: 12px; color: #666; padding: 4px 0; border-bottom: 1px solid rgba(0,0,0,.04); line-height: 1.5; }
+.quality-block-item:last-child { border-bottom: none; }
+
+/* Version constraints */
+.version-constraint-form {
+  background: var(--n-color-modal, #fafafa);
+  border: 1px solid rgba(0,0,0,.06);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.version-constraint-row { display: flex; flex-direction: column; gap: 6px; }
+.version-constraint-label { font-size: 11px; font-weight: 600; color: #888; }
+
+/* Eval cases */
+.eval-case-list { display: flex; flex-direction: column; gap: 8px; }
+.eval-case-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1.5px solid rgba(0,0,0,.07);
+  background: var(--n-color-modal, #fafafa);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.eval-case-item.eval-confirmed { border-color: rgba(24,160,88,.2); background: rgba(24,160,88,.03); }
+.eval-case-item.eval-draft { border-color: rgba(240,160,32,.2); background: rgba(240,160,32,.02); }
+.eval-case-header { display: flex; align-items: center; justify-content: space-between; }
+.eval-case-title { font-size: 12px; font-weight: 600; color: var(--n-text-color); }
+.eval-case-row { display: flex; gap: 6px; align-items: flex-start; }
+.eval-field-label { font-size: 10px; font-weight: 700; color: #aaa; min-width: 52px; padding-top: 1px; flex-shrink: 0; }
+.eval-field-val { font-size: 11px; color: #555; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.eval-case-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
+.eval-empty { font-size: 12px; color: #bbb; padding: 10px 0; }
+
+/* ── 待完善草稿样式 ───────────────────────────────────── */
+.draft-item--needs-polish {
+  border-color: rgba(240,160,32,.3);
+  background: rgba(240,160,32,.03);
+}
+.draft-item--needs-polish:hover {
+  border-color: rgba(240,160,32,.5);
+  box-shadow: 0 2px 10px rgba(240,160,32,.1);
+}
+.draft-needs-polish-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: #d07020;
+  background: rgba(240,160,32,.12);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.draft-polish-hint {
+  font-size: 11px;
+  color: #d07020;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+/* ── 相似 Skill 弹窗（三档分级 + 融合操作） ─────────────────── */
+.similar-modal-body {
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* 提示横幅 */
+.similar-exact-banner,
+.similar-partial-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.similar-exact-banner {
+  background: rgba(247,129,102,0.12);
+  border: 1px solid rgba(247,129,102,0.3);
+  color: #c0440e;
+  svg { color: #f78166; flex-shrink: 0; margin-top: 1px; }
+}
+.similar-partial-banner {
+  background: rgba(227,179,65,0.12);
+  border: 1px solid rgba(227,179,65,0.3);
+  color: #9a7200;
+  svg { color: #e3b341; flex-shrink: 0; margin-top: 1px; }
+}
+
+/* 分档区块 */
+.similar-tier-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.similar-tier-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 3px 0;
+  .tier-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+}
+.tier-exact   { color: #c04020; .tier-dot { background: #f78166; } }
+.tier-partial { color: #9a6400; .tier-dot { background: #e3b341; } }
+.tier-structural { color: #1060b0; .tier-dot { background: #388bfd; } }
+
+/* 条目卡片 */
+.similar-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.similar-item {
+  border-radius: 7px;
+  padding: 10px 12px;
+  border: 1px solid var(--n-border-color, #e0e0e6);
+  background: var(--n-card-color, #fff);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.similar-item-exact     { border-left: 3px solid #f78166; }
+.similar-item-partial   { border-left: 3px solid #e3b341; }
+.similar-item-structural { border-left: 3px solid #388bfd; }
+
+.similar-item-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.similar-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--n-text-color, #333);
+  font-family: 'Consolas', monospace;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.similar-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.badge-draft  { background: rgba(240,160,32,0.15); color: #c08020; }
+.badge-active { background: rgba(24,160,88,0.15);  color: #18a058; }
+
+.similar-score {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.score-exact   { background: rgba(247,129,102,0.15); color: #d04020; }
+.score-partial { background: rgba(227,179,65,0.15);  color: #9a6400; }
+
+.similar-desc {
+  font-size: 11.5px;
+  color: var(--n-text-color-3, #666);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.similar-item-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.similar-tags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+}
+.similar-reason {
+  font-size: 10px;
+  color: var(--n-text-color-3, #888);
+  background: var(--n-color-embedded, rgba(0,0,0,0.04));
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.similar-activated-hint,
+.similar-structural-hint {
+  font-size: 10.5px;
+  color: var(--n-text-color-3, #aaa);
+  flex-shrink: 0;
+}
+
+.similar-note {
+  margin: 2px 0 4px;
+  font-size: 11.5px;
+  color: var(--n-text-color-3, #999);
+}
+
+/* 弹窗底部按钮行 */
+.similar-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>

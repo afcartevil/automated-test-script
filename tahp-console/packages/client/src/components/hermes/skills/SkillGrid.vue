@@ -77,7 +77,7 @@ const funcTypeCount = computed<number>(() => {
 const filtered = computed<SkillInfo[]>(() => {
   let list = props.skills
   if (props.funcTypeFilter) list = list.filter(s => s.funcType === props.funcTypeFilter)
-  if (props.moduleFilter)   list = list.filter(s => s.group === props.moduleFilter)
+  if (props.moduleFilter)   list = list.filter(s => (s.group || '通用') === props.moduleFilter)
   if (props.searchQuery) {
     const q = props.searchQuery.toLowerCase()
     list = list.filter(s =>
