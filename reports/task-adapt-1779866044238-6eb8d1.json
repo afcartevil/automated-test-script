@@ -1,0 +1,14 @@
+{
+  "task_id": "task-adapt-1779866044238-6eb8d1",
+  "module": "Test",
+  "domain": "code_adaptation",
+  "started_at": "2026-05-27T07:14:04.241Z",
+  "completed_at": "2026-05-27T07:14:15.089Z",
+  "duration_ms": 10848,
+  "extra_context": "AI适配调试 | 域: 数字修改 | 项目: X6876_H786 | SoC: MT6878 | Kernel: 6.1",
+  "document_content": "# AI 适配调试任务 — 数字修改\n\n## 项目信息\n- 项目代码: X6876_H786\n- SoC: MT6878\n- Kernel 版本: 6.1\n- 升级路径: vendor14 → vendor16\n\n## 适配域: 数字修改 (Test)\n\n### 前置条件参数\n- undefined: E:\\temp\\1.txt\n\n### 关联 Skills\n- Test\n\n---\n_由 EasyAdapter Console AI 适配调试面板自动生成_\n",
+  "files_modified": [
+    "E:\\temp\\1.txt"
+  ],
+  "llm_response": "<write_file>\n<path>E:\\temp\\1.txt</path>\n<content>\n462352652222222255425252222222222222\n542526544235232\n1111111111111111111111111111111111\n</content>\n</write_file>"
+}

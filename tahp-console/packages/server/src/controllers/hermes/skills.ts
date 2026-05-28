@@ -458,12 +458,46 @@ async function scanSkillsDir(skillsDir: string, bundledManifest: Map<string, str
 }
 
 export async function list(ctx: any) {
-  // TAHP Console 只展示工程技能（skills/.claude/skills/），不再使用 Hermes ~/.hermes/skills/。
+  // TAHP Console 技能按 group (module) 分类展示
   try {
     const tahpSkills = await scanTahpSkills()
-    const categories = tahpSkills.length > 0
-      ? [{ name: 'tahp-project', description: 'TAHP 工程技能', skills: tahpSkills }]
-      : []
+
+    // 按 group 分组
+    const groupMap = new Map<string, any[]>()
+    const groupLabels: Record<string, string> = {
+      'telephony':     '通信',
+      'kernel-driver': '驱动',
+      'power-mgmt':    '功耗温升',
+      'shared':        '共享',
+    }
+
+    for (const skill of tahpSkills) {
+      const grp = skill.group || 'shared'
+      if (!groupMap.has(grp)) groupMap.set(grp, [])
+      groupMap.get(grp)!.push(skill)
+    }
+
+    // 按固定顺序排序分组，最后是其他
+    const categoryOrder = ['telephony', 'kernel-driver', 'power-mgmt', 'shared']
+    const categories = categoryOrder
+      .filter(g => groupMap.has(g))
+      .map(g => ({
+        name: g,
+        description: groupLabels[g] || g,
+        skills: groupMap.get(g)!.sort((a: any, b: any) => a.name.localeCompare(b.name))
+      }))
+
+    // 其他未分类的
+    for (const [grp, skills] of groupMap) {
+      if (!categoryOrder.includes(grp)) {
+        categories.push({
+          name: grp,
+          description: grp,
+          skills: skills.sort((a: any, b: any) => a.name.localeCompare(b.name))
+        })
+      }
+    }
+
     ctx.body = { categories, archived: [] }
   } catch (err: any) {
     ctx.status = 500

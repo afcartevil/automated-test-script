@@ -114,6 +114,7 @@ tahpSkillsRoutes.post('/api/tahp/skills/create', async (ctx) => {
     domainLabel,  // 中文显示名（如 "TEST 测试适配"）
     domainId,     // 域 ID（如 "test"，用于路由 key）
     module: mod,  // 关联模块（telephony / kernel-driver / power-mgmt / shared / custom）
+    funcType,     // 业务类型（bug_analysis / code_adaptation / version_adaptation / carrier_porting / ai_self_check）
     icon,         // 徽章文字（2-4 字符）
     color,        // 十六进制颜色
     adaptFields,  // 前置条件字段列表
@@ -135,6 +136,11 @@ tahpSkillsRoutes.post('/api/tahp/skills/create', async (ctx) => {
   if (!mod || typeof mod !== 'string') {
     ctx.status = 400
     ctx.body = { success: false, error: '缺少 module' }
+    return
+  }
+  if (!funcType || typeof funcType !== 'string') {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 funcType（业务类型）' }
     return
   }
 
@@ -159,6 +165,7 @@ tahpSkillsRoutes.post('/api/tahp/skills/create', async (ctx) => {
     `domain_label: "${String(domainLabel)}"`,
     `domain_id: "${String(domainId || skillId)}"`,
     `module: ${String(mod)}`,
+    `func_type: ${String(funcType)}`,
     `icon: "${String(icon || skillId.slice(0, 4).toUpperCase())}"`,
     `color: "${String(color || '#7c3aed')}"`,
     `status: active`,
@@ -199,6 +206,7 @@ tahpSkillsRoutes.get('/api/tahp/skills/list', async (ctx) => {
       domainId:    meta.domain_id    || skillId,
       domainLabel: meta.domain_label || skillId,
       module:      meta.module       || 'shared',
+      funcType:    meta.func_type    || 'bug_analysis',
       icon:        meta.icon         || skillId.slice(0, 4).toUpperCase(),
       color:       meta.color        || '#7c3aed',
       status:      meta.status       || 'active',

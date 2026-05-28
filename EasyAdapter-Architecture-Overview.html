@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EasyAdapter 架构原理图</title>
+<style>
+  body {
+    font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  h1 { color: #58a6ff; margin-bottom: 8px; font-size: 22px; }
+  .subtitle { color: #8b949e; font-size: 13px; margin-bottom: 24px; }
+  svg { max-width: 1200px; width: 100%; }
+  .layer-label {
+    font-size: 12px;
+    font-weight: 700;
+    fill: #fff;
+  }
+  .layer-bg {
+    rx: 8;
+    ry: 8;
+    stroke-width: 1.5;
+  }
+  .box {
+    rx: 6;
+    ry: 6;
+    stroke-width: 1.2;
+  }
+  .box-text {
+    font-size: 11.5px;
+    fill: #e6edf3;
+    font-weight: 600;
+  }
+  .box-subtext {
+    font-size: 9.5px;
+    fill: #8b949e;
+  }
+  .arrow {
+    stroke: #484f58;
+    stroke-width: 1.5;
+    fill: none;
+    marker-end: url(#arrowhead);
+  }
+  .arrow-accent {
+    stroke: #58a6ff;
+    stroke-width: 1.8;
+    fill: none;
+    marker-end: url(#arrowhead-blue);
+  }
+  .arrow-green {
+    stroke: #3fb950;
+    stroke-width: 1.8;
+    fill: none;
+    marker-end: url(#arrowhead-green);
+  }
+  .arrow-orange {
+    stroke: #f0883e;
+    stroke-width: 1.8;
+    fill: none;
+    marker-end: url(#arrowhead-orange);
+  }
+  .dashed-arrow {
+    stroke: #484f58;
+    stroke-width: 1.2;
+    stroke-dasharray: 5,3;
+    fill: none;
+    marker-end: url(#arrowhead);
+  }
+  .api-label {
+    font-size: 9.5px;
+    fill: #d2a8ff;
+    font-style: italic;
+    font-weight: 600;
+  }
+  .engine-label {
+    font-size: 13px;
+    fill: #f0883e;
+    font-weight: 700;
+  }
+  .legend-text {
+    font-size: 10px;
+    fill: #8b949e;
+  }
+  .phase-box {
+    rx: 4;
+    ry: 4;
+    stroke-width: 1;
+  }
+  .phase-text {
+    font-size: 9px;
+    fill: #e6edf3;
+    font-weight: 600;
+  }
+  .phase-subtext {
+    font-size: 7.5px;
+    fill: #8b949e;
+  }
+  .connector-label {
+    font-size: 9px;
+    fill: #8b949e;
+    font-weight: 500;
+  }
+</style>
+</head>
+<body>
+
+<h1>EasyAdapter 架构原理图</h1>
+<div class="subtitle">传音 Android 底软 AI 适配平台 — 约束驱动 / 双引擎 / EvoSkill 自动进化 / MCP 工具链</div>
+
+<svg viewBox="0 0 1160 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#484f58"/>
+    </marker>
+    <marker id="arrowhead-blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#58a6ff"/>
+    </marker>
+    <marker id="arrowhead-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#3fb950"/>
+    </marker>
+    <marker id="arrowhead-orange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#f0883e"/>
+    </marker>
+    <marker id="arrowhead-purple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#a371f7"/>
+    </marker>
+    <linearGradient id="grad-l1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1f3a5f" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#1f3a5f" stop-opacity="0.3"/>
+    </linearGradient>
+    <linearGradient id="grad-l2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1e3a2f" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#1e3a2f" stop-opacity="0.3"/>
+    </linearGradient>
+    <linearGradient id="grad-l3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2d1f5e" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#2d1f5e" stop-opacity="0.3"/>
+    </linearGradient>
+    <linearGradient id="grad-l4" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3d2a1a" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#3d2a1a" stop-opacity="0.3"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ===== L1: 用户交互层 ===== -->
+  <rect class="layer-bg" x="20" y="30" width="1120" height="100" fill="url(#grad-l1)" stroke="#58a6ff" stroke-opacity="0.5"/>
+  <text class="layer-label" x="36" y="52" fill="#58a6ff">L1  用户交互层（多入口）</text>
+
+  <!-- Web Console -->
+  <rect class="box" x="40" y="62" width="190" height="52" fill="#161b22" stroke="#58a6ff"/>
+  <text class="box-text" x="135" y="82" text-anchor="middle">Web Console</text>
+  <text class="box-subtext" x="135" y="100" text-anchor="middle">Vue3 + Naive UI + Socket.IO</text>
+
+  <!-- Claude Code CLI -->
+  <rect class="box" x="250" y="62" width="160" height="52" fill="#161b22" stroke="#58a6ff"/>
+  <text class="box-text" x="330" y="82" text-anchor="middle">Claude Code CLI</text>
+  <text class="box-subtext" x="330" y="100" text-anchor="middle">开发者终端入口</text>
+
+  <!-- Chat (Chainlit) -->
+  <rect class="box" x="430" y="62" width="150" height="52" fill="#161b22" stroke="#58a6ff"/>
+  <text class="box-text" x="505" y="82" text-anchor="middle">Chat 界面</text>
+  <text class="box-subtext" x="505" y="100" text-anchor="middle">Chainlit 对话式交互</text>
+
+  <!-- 页面模块 -->
+  <rect class="box" x="600" y="62" width="200" height="52" fill="#161b22" stroke="#58a6ff"/>
+  <text class="box-text" x="700" y="82" text-anchor="middle">功能页面</text>
+  <text class="box-subtext" x="700" y="100" text-anchor="middle">仪表盘 / 任务 / 模块 / Playbooks</text>
+
+  <!-- Tools 单步工具箱 -->
+  <rect class="box" x="820" y="62" width="300" height="52" fill="#161b22" stroke="#58a6ff"/>
+  <text class="box-text" x="970" y="82" text-anchor="middle">工具箱页面</text>
+  <text class="box-subtext" x="970" y="100" text-anchor="middle">日志分析 / Diff / API迁移 / 审查 / Patch / 构建 / 回归</text>
+
+  <!-- ===== L2: 应用服务层 ===== -->
+  <rect class="layer-bg" x="20" y="145" width="540" height="100" fill="url(#grad-l2)" stroke="#3fb950" stroke-opacity="0.5"/>
+  <text class="layer-label" x="36" y="167" fill="#3fb950">L2  应用服务层（BFF + 桥接）</text>
+
+  <!-- Koa BFF Server -->
+  <rect class="box" x="40" y="177" width="200" height="50" fill="#0d1f17" stroke="#3fb950"/>
+  <text class="box-text" x="140" y="198" text-anchor="middle">Koa BFF Server</text>
+  <text class="box-subtext" x="140" y="214" text-anchor="middle">路由 / 认证 / 文件服务</text>
+
+  <!-- Socket.IO -->
+  <rect class="box" x="260" y="177" width="140" height="50" fill="#0d1f17" stroke="#3fb950"/>
+  <text class="box-text" x="330" y="198" text-anchor="middle">Socket.IO</text>
+  <text class="box-subtext" x="330" y="214" text-anchor="middle">实时状态推送</text>
+
+  <!-- TAHP Bridge -->
+  <rect class="box" x="420" y="177" width="120" height="50" fill="#0d1f17" stroke="#3fb950"/>
+  <text class="box-text" x="480" y="198" text-anchor="middle">Easy Bridge</text>
+  <text class="box-subtext" x="480" y="214" text-anchor="middle">MCP 桥接适配</text>
+
+  <!-- MCP Server (右侧大块) -->
+  <rect class="layer-bg" x="580" y="145" width="560" height="100" fill="url(#grad-l2)" stroke="#3fb950" stroke-opacity="0.4"/>
+  <text class="layer-label" x="596" y="167" fill="#3fb950">MCP Server（核心运行时）</text>
+
+  <!-- Server.py -->
+  <rect class="box" x="600" y="177" width="140" height="50" fill="#0d1f17" stroke="#3fb950"/>
+  <text class="box-text" x="670" y="198" text-anchor="middle">MCP SDK Server</text>
+  <text class="box-subtext" x="670" y="214" text-anchor="middle">stdio 协议入口</text>
+
+  <!-- ToolDispatcher -->
+  <rect class="box" x="760" y="177" width="150" height="50" fill="#0d1f17" stroke="#3fb950"/>
+  <text class="box-text" x="835" y="198" text-anchor="middle">ToolDispatcher</text>
+  <text class="box-subtext" x="835" y="214" text-anchor="middle">Handler 注册 + 分发</text>
+
+  <!-- Progress Tracker -->
+  <rect class="box" x="930" y="177" width="190" height="50" fill="#0d1f17" stroke="#3fb950"/>
+  <text class="box-text" x="1025" y="198" text-anchor="middle">Progress Tracker</text>
+  <text class="box-subtext" x="1025" y="214" text-anchor="middle">任务追踪 + SSE 通知</text>
+
+  <!-- Arrow L1 → L2 -->
+  <path class="arrow-accent" d="M135,114 L135,125 L140,177"/>
+  <path class="arrow-accent" d="M330,114 L330,125 L330,177"/>
+  <path class="arrow-accent" d="M505,114 L505,125 L480,177"/>
+
+  <!-- Arrow L1 → MCP Server -->
+  <path class="arrow-accent" d="M330,114 L330,130 L670,177"/>
+  <text class="connector-label" x="450" y="130" fill="#58a6ff">MCP 协议（stdio）</text>
+
+  <!-- ===== L3: 工具调度层 ===== -->
+  <rect class="layer-bg" x="20" y="260" width="1120" height="110" fill="url(#grad-l3)" stroke="#a371f7" stroke-opacity="0.5"/>
+  <text class="layer-label" x="36" y="282" fill="#a371f7">L3  策略层</text>
+
+  <!-- Core Handlers (6个) -->
+  <rect class="box" x="40" y="296" width="110" height="52" fill="#1c1232" stroke="#a371f7"/>
+  <text class="box-text" x="95" y="316" text-anchor="middle">execute</text>
+  <text class="box-subtext" x="95" y="333" text-anchor="middle">Pipeline 执行</text>
+
+  <rect class="box" x="160" y="296" width="100" height="52" fill="#1c1232" stroke="#a371f7"/>
+  <text class="box-text" x="210" y="316" text-anchor="middle">status</text>
+  <text class="box-subtext" x="210" y="333" text-anchor="middle">状态查询</text>
+
+  <rect class="box" x="270" y="296" width="100" height="52" fill="#1c1232" stroke="#a371f7"/>
+  <text class="box-text" x="320" y="316" text-anchor="middle">correct</text>
+  <text class="box-subtext" x="320" y="333" text-anchor="middle">任务纠偏</text>
+
+  <rect class="box" x="380" y="296" width="110" height="52" fill="#1c1232" stroke="#a371f7"/>
+  <text class="box-text" x="435" y="316" text-anchor="middle">gate_check</text>
+  <text class="box-subtext" x="435" y="333" text-anchor="middle">质量门禁 P0/P1/P2</text>
+
+  <rect class="box" x="500" y="296" width="110" height="52" fill="#1c1232" stroke="#a371f7"/>
+  <text class="box-text" x="555" y="316" text-anchor="middle">list_tasks</text>
+  <text class="box-subtext" x="555" y="333" text-anchor="middle">任务列表</text>
+
+  <rect class="box" x="620" y="296" width="130" height="52" fill="#1c1232" stroke="#a371f7"/>
+  <text class="box-text" x="685" y="316" text-anchor="middle">query_knowledge</text>
+  <text class="box-subtext" x="685" y="333" text-anchor="middle">语义检索知识库</text>
+
+  <!-- Adapter-based 工具 (3个) -->
+  <rect class="box" x="770" y="296" width="110" height="52" fill="#1c1232" stroke="#d2a8ff" stroke-dasharray="4,2"/>
+  <text class="box-text" x="825" y="316" text-anchor="middle">analyze_log</text>
+  <text class="box-subtext" x="825" y="333" text-anchor="middle">Android 日志解析</text>
+
+  <rect class="box" x="890" y="296" width="110" height="52" fill="#1c1232" stroke="#d2a8ff" stroke-dasharray="4,2"/>
+  <text class="box-text" x="945" y="316" text-anchor="middle">code_review</text>
+  <text class="box-subtext" x="945" y="333" text-anchor="middle">自动化代码审查</text>
+
+  <rect class="box" x="1010" y="296" width="110" height="52" fill="#1c1232" stroke="#d2a8ff" stroke-dasharray="4,2"/>
+  <text class="box-text" x="1065" y="316" text-anchor="middle">api_migration</text>
+  <text class="box-subtext" x="1065" y="333" text-anchor="middle">API 迁移规则库</text>
+
+  <!-- Adapter 注解 -->
+  <text class="api-label" x="825" y="358" text-anchor="middle">«adapter» 动态加载</text>
+  <text class="api-label" x="95" y="358" text-anchor="middle">«handler» 核心处理器</text>
+
+  <!-- Arrow L2 → L3 -->
+  <path class="dashed-arrow" d="M835,227 L835,260 L825,296"/>
+  <path class="dashed-arrow" d="M670,227 L670,260 L435,296"/>
+
+  <!-- ===== L4: 核心引擎层 — 双引擎 ===== -->
+  <rect class="layer-bg" x="20" y="385" width="1120" height="260" fill="url(#grad-l4)" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="layer-label" x="36" y="407" fill="#f0883e">L4  核心引擎层 — 双引擎 </text>
+
+  <!-- 诊断引擎（左侧） -->
+  <rect class="box" x="40" y="420" width="540" height="210" fill="#1a150d" stroke="#f0883e" stroke-width="2"/>
+  <text class="engine-label" x="310" y="445" text-anchor="middle">🩺 诊断引擎 — 分析Pipeline</text>
+
+  <!-- Bug Analysis Pipeline -->
+  <rect class="phase-box" x="60" y="458" width="90" height="40" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.6"/>
+  <text class="phase-text" x="105" y="474" text-anchor="middle">输入收集</text>
+  <text class="phase-subtext" x="105" y="488" text-anchor="middle">Bug+Log+设备</text>
+
+  <rect class="phase-box" x="160" y="458" width="90" height="40" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.6"/>
+  <text class="phase-text" x="205" y="474" text-anchor="middle">模块识别</text>
+  <text class="phase-subtext" x="205" y="488" text-anchor="middle">分类+约束</text>
+
+  <rect class="phase-box" x="260" y="458" width="90" height="40" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.6"/>
+  <text class="phase-text" x="305" y="474" text-anchor="middle">Agent 分析</text>
+  <text class="phase-subtext" x="305" y="488" text-anchor="middle">并行调度</text>
+
+  <rect class="phase-box" x="360" y="458" width="90" height="40" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.6"/>
+  <text class="phase-text" x="405" y="474" text-anchor="middle">根因归因</text>
+  <text class="phase-subtext" x="405" y="488" text-anchor="middle">合并+归因</text>
+
+  <rect class="phase-box" x="460" y="458" width="100" height="40" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.6"/>
+  <text class="phase-text" x="510" y="474" text-anchor="middle">门禁+报告</text>
+  <text class="phase-subtext" x="510" y="488" text-anchor="middle">校验输出</text>
+
+  <!-- Phase flow arrows -->
+  <path d="M150,478 L160,478" stroke="#f0883e" stroke-width="1" marker-end="url(#arrowhead-orange)" opacity="0.6"/>
+  <path d="M250,478 L260,478" stroke="#f0883e" stroke-width="1" marker-end="url(#arrowhead-orange)" opacity="0.6"/>
+  <path d="M350,478 L360,478" stroke="#f0883e" stroke-width="1" marker-end="url(#arrowhead-orange)" opacity="0.6"/>
+  <path d="M450,478 L460,478" stroke="#f0883e" stroke-width="1" marker-end="url(#arrowhead-orange)" opacity="0.6"/>
+
+  <!-- 并行Agent子模块 -->
+  <rect class="box" x="60" y="512" width="120" height="40" fill="#261e12" stroke="#f0883e" stroke-opacity="0.7"/>
+  <text class="box-text" x="120" y="530" text-anchor="middle">通信 Agent</text>
+  <text class="box-subtext" x="120" y="544" text-anchor="middle">RIL/Modem</text>
+
+  <rect class="box" x="190" y="512" width="120" height="40" fill="#261e12" stroke="#f0883e" stroke-opacity="0.7"/>
+  <text class="box-text" x="250" y="530" text-anchor="middle">内核 Agent</text>
+  <text class="box-subtext" x="250" y="544" text-anchor="middle">驱动/内核</text>
+
+  <rect class="box" x="320" y="512" width="120" height="40" fill="#261e12" stroke="#f0883e" stroke-opacity="0.7"/>
+  <text class="box-text" x="380" y="530" text-anchor="middle">功耗 Agent</text>
+  <text class="box-subtext" x="380" y="544" text-anchor="middle">功耗/温控</text>
+
+  <rect class="box" x="450" y="512" width="110" height="40" fill="#261e12" stroke="#f0883e" stroke-opacity="0.7"/>
+  <text class="box-text" x="505" y="530" text-anchor="middle">跨模块协调</text>
+  <text class="box-subtext" x="505" y="544" text-anchor="middle">DAG 编排</text>
+
+  <!-- 知识库注入箭头 -->
+  <rect class="box" x="60" y="565" width="510" height="44" fill="#261e12" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="box-text" x="315" y="583" text-anchor="middle">知识库注入 → Agent 上下文 + 约束自动提取 + 错误模式匹配</text>
+  <text class="box-subtext" x="315" y="598" text-anchor="middle">ChromaDB 语义检索（384d）+ 历史案例 + 跨模块复用</text>
+
+  <!-- 适配引擎（右侧） -->
+  <rect class="box" x="600" y="420" width="520" height="210" fill="#0d1520" stroke="#79c0ff" stroke-width="2"/>
+  <text class="engine-label" x="860" y="445" text-anchor="middle">⚙️ 适配引擎 — 功能\特性\运营商Pipeline</text>
+
+  <!-- Pipeline 1: 版本升级 -->
+  <rect class="box" x="620" y="458" width="160" height="110" fill="#0c1926" stroke="#79c0ff"/>
+  <text class="box-text" x="700" y="476" text-anchor="middle">功能适配</text>
+  <text class="box-subtext" x="700" y="492" text-anchor="middle">Android N → N+1</text>
+  <rect class="phase-box" x="630" y="500" width="140" height="20" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-subtext" x="700" y="513" text-anchor="middle">AOSP Diff → API 迁移 → Patch</text>
+  <rect class="phase-box" x="630" y="525" width="140" height="20" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-subtext" x="700" y="538" text-anchor="middle">编译验证 → 回归 → 报告</text>
+  <text class="phase-subtext" x="700" y="558" text-anchor="middle">自动化率 40% → 75%</text>
+
+  <!-- Pipeline 2: Feature移植 -->
+  <rect class="box" x="800" y="458" width="150" height="110" fill="#0c1926" stroke="#79c0ff"/>
+  <text class="box-text" x="875" y="476" text-anchor="middle">特性适配</text>
+  <text class="box-subtext" x="875" y="492" text-anchor="middle">跨平台/跨版本</text>
+  <rect class="phase-box" x="810" y="500" width="130" height="20" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-subtext" x="875" y="513" text-anchor="middle">依赖链 → 兼容映射 → 转换</text>
+  <rect class="phase-box" x="810" y="525" width="130" height="20" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-subtext" x="875" y="538" text-anchor="middle">集成验证 → 回归 → 报告</text>
+
+  <!-- Pipeline 3: 运营商 -->
+  <rect class="box" x="965" y="458" width="145" height="110" fill="#0c1926" stroke="#79c0ff"/>
+  <text class="box-text" x="1037" y="476" text-anchor="middle">运营商适配</text>
+  <text class="box-subtext" x="1037" y="492" text-anchor="middle">定制需求迁移</text>
+  <rect class="phase-box" x="975" y="500" width="125" height="20" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-subtext" x="1037" y="513" text-anchor="middle">需求解析 → 源码映射</text>
+  <rect class="phase-box" x="975" y="525" width="125" height="20" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-subtext" x="1037" y="538" text-anchor="middle">合规检查 → 认证报告</text>
+
+  <!-- 适配引擎共享资产 -->
+  <rect class="box" x="620" y="578" width="490" height="44" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="box-text" x="865" y="596" text-anchor="middle">共享资产：API 迁移规则库 + 知识库经验复用</text>
+  <text class="box-subtext" x="865" y="612" text-anchor="middle">跨版本复用 → 自动化率逐轮提升</text>
+
+  <!-- Arrow L3 → L4 -->
+  <path class="arrow-orange" d="M435,370 L435,385 L310,420"/>
+  <path class="arrow-orange" d="M555,370 L555,385 L510,458"/>
+  <path class="arrow-orange" d="M685,370 L685,385 L860,420"/>
+  <path class="arrow-orange" d="M825,370 L825,385 L700,458"/>
+
+  <!-- ===== Cross-Cutting: 约束驱动 + 知识库 ===== -->
+  <rect class="layer-bg" x="20" y="665" width="560" height="150" fill="#1a0d2e" fill-opacity="0.6" stroke="#a371f7" stroke-opacity="0.5"/>
+  <text class="layer-label" x="36" y="687" fill="#a371f7">EvoSkill + 知识库</text>
+
+  <!-- 约束层 -->
+  <rect class="box" x="40" y="700" width="250" height="48" fill="#1c1232" stroke="#a371f7"/>
+  <text class="box-text" x="165" y="720" text-anchor="middle">YAML 约束文件（Owner 唯一输入）</text>
+  <text class="box-subtext" x="165" y="738" text-anchor="middle">module / bug-analysis / code-adaptation / version / carrier</text>
+
+
+
+  <!-- 知识库 -->
+  <rect class="box" x="310" y="700" width="250" height="48" fill="#1c1232" stroke="#3fb950"/>
+  <text class="box-text" x="435" y="720" text-anchor="middle">知识库（Knowledge Base）</text>
+  <text class="box-subtext" x="435" y="738" text-anchor="middle">v3.0 双引擎基础设施</text>
+
+ 
+
+  <!-- EvoSkill + Skills -->
+  <rect class="box" x="40" y="758" width="250" height="44" fill="#1c1232" stroke="#d2a8ff" stroke-opacity="0.7"/>
+  <text class="box-text" x="165" y="776" text-anchor="middle">EvoSkill 演化引擎</text>
+  <text class="box-subtext" x="165" y="792" text-anchor="middle">执行 → 提案 → 生成 → 评估 → 前沿筛选</text>
+
+  <rect class="box" x="310" y="758" width="250" height="44" fill="#1c1232" stroke="#d2a8ff" stroke-opacity="0.7"/>
+  <text class="box-text" x="435" y="776" text-anchor="middle">Skill 仓库</text>
+  <text class="box-subtext" x="435" y="792" text-anchor="middle">160+ Skills 覆盖通信/驱动/内核/功耗</text>
+
+  <!-- 知识库 → 诊断引擎 -->
+  <path class="dashed-arrow" d="M435,700 L435,665 L315,625"/>
+  <text class="connector-label" x="380" y="648" fill="#3fb950">注入上下文</text>
+
+  <!-- 知识库 → 适配引擎 -->
+  <path class="dashed-arrow" d="M435,700 L435,665 L865,625"/>
+  <text class="connector-label" x="650" y="648" fill="#79c0ff">经验复用</text>
+
+  <!-- 约束 → L3 工具 -->
+  <path class="dashed-arrow" d="M165,700 L165,665 L685,370"/>
+  <text class="connector-label" x="100" y="648" fill="#a371f7">约束校验</text>
+
+  <!-- ===== Cross-Cutting: 基础设施 ===== -->
+  <rect class="layer-bg" x="600" y="665" width="540" height="150" fill="#0d1a1a" fill-opacity="0.6" stroke="#39d353" stroke-opacity="0.4"/>
+  <text class="layer-label" x="616" y="687" fill="#39d353">工具集</text>
+
+  <!-- Playbooks -->
+  <rect class="box" x="620" y="700" width="120" height="48" fill="#0d1a14" stroke="#39d353" stroke-opacity="0.6"/>
+  <text class="box-text" x="680" y="720" text-anchor="middle">Playbooks</text>
+  <text class="box-subtext" x="680" y="738" text-anchor="middle">6 Pipeline YAML</text>
+
+  <!-- 工具接口 -->
+  <rect class="box" x="750" y="700" width="120" height="48" fill="#0d1a14" stroke="#39d353" stroke-opacity="0.6"/>
+  <text class="box-text" x="810" y="720" text-anchor="middle">工具接口定义</text>
+  <text class="box-subtext" x="810" y="738" text-anchor="middle">tools/ 7 模块</text>
+
+  <!-- 脚本 -->
+  <rect class="box" x="880" y="700" width="120" height="48" fill="#0d1a14" stroke="#39d353" stroke-opacity="0.6"/>
+  <text class="box-text" x="940" y="720" text-anchor="middle">自动化脚本</text>
+  <text class="box-subtext" x="940" y="738" text-anchor="middle">validate / gate</text>
+
+  <!-- 数据库 -->
+  <rect class="box" x="1010" y="700" width="110" height="48" fill="#0d1a14" stroke="#39d353" stroke-opacity="0.6"/>
+  <text class="box-text" x="1065" y="720" text-anchor="middle">db/ ORM</text>
+  <text class="box-subtext" x="1065" y="738" text-anchor="middle">KnowledgeEntry</text>
+
+  <!-- Git + CI -->
+  <rect class="box" x="620" y="758" width="120" height="44" fill="#0d1a14" stroke="#39d353" stroke-opacity="0.6"/>
+  <text class="box-text" x="680" y="776" text-anchor="middle">Git + CI/CD</text>
+  <text class="box-subtext" x="680" y="792" text-anchor="middle">pre-commit Hook</text>
+
+  <!-- Python -->
+  <rect class="box" x="750" y="758" width="120" height="44" fill="#0d1a14" stroke="#39d353" stroke-opacity="0.6"/>
+  <text class="box-text" x="810" y="776" text-anchor="middle">Python 3.12+</text>
+  <text class="box-subtext" x="810" y="792" text-anchor="middle">MCP SDK + ORM</text>
+
+  <!-- LLM -->
+  <rect class="box" x="880" y="758" width="120" height="44" fill="#0d1a14" stroke="#39d353" stroke-opacity="0.6"/>
+  <text class="box-text" x="940" y="776" text-anchor="middle">LLM Provider</text>
+  <text class="box-subtext" x="940" y="792" text-anchor="middle">多模型路由</text>
+
+
+
+
+  <!-- Arrows L4 → Infrastructure -->
+  <path class="dashed-arrow" d="M310,630 L310,665 L680,700"/>
+  <path class="dashed-arrow" d="M860,630 L860,665 L810,700"/>
+
+  <!-- ===== 反馈闭环箭头 ===== -->
+  <!-- 诊断引擎执行结果 → 知识库（自动沉淀） -->
+  <path d="M310,625 L310,655 L435,665" fill="none" stroke="#3fb950" stroke-width="1.2" stroke-dasharray="6,3" marker-end="url(#arrowhead-green)"/>
+  <text class="connector-label" x="310" y="650" fill="#3fb950">自动沉淀</text>
+
+  <!-- 适配引擎执行结果 → 知识库 -->
+  <path d="M865,625 L865,655 L520,700" fill="none" stroke="#79c0ff" stroke-width="1.2" stroke-dasharray="6,3" marker-end="url(#arrowhead-blue)"/>
+  <text class="connector-label" x="750" y="650" fill="#79c0ff">经验沉淀</text>
+
+  <!-- EvoSkill 反馈循环 -->
+  <path d="M165,820 L165,645 L310,420" fill="none" stroke="#d2a8ff" stroke-width="1.2" stroke-dasharray="6,3" marker-end="url(#arrowhead-purple)"/>
+  <text class="connector-label" x="40" y="640" fill="#d2a8ff">Skill 反馈注入</text>
+
+
+
+</svg>
+
+</body>
+</html>

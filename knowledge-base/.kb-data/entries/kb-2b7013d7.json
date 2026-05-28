@@ -1,0 +1,25 @@
+{
+  "id": "kb-2b7013d7",
+  "content": "②.dmp\u0001文件解析后的.ass\u0001文件，文本形式打开，可查看到具体版本及\u0001Crash\u0001原因\u0001\n③minidump\u0001文件打开，可查看\u0001Crash\u0001原因\u0001\n由于部分内容不开源，本地初步分析后，提交\u0001CQ\u0001给到平台方进一步分析，需要提供以下资\u0001料：\u0001\n\u0001A.\u0001Dump\u0001log(包含\u0001dmp\u0001和\u0001minidump\u0001文件的\u0001log)\u0001\u0001\nB.\u0001问题出现版本信息(Modem\u0001版本号等)\u0001\nC.\u0001Modem\u0001版本对应符号表(.axf\u0001文件)\u0001\u0001\nD.\u0001初步分析结论\u0001",
+  "category": "错误模式",
+  "module": "telephony",
+  "func_type": "bug_analysis",
+  "keywords": [
+    "文件解析后的",
+    "文件",
+    "文本形式打开",
+    "可查看到具体",
+    "版本及",
+    "Crash",
+    "Dump",
+    "Modem"
+  ],
+  "confidence_score": 0.7,
+  "source_file": "稳定性问题分析指导SOP（Modem）.pdf",
+  "source_document_id": "doc-80b28165",
+  "created_at": "2026-05-28T01:55:55.823Z",
+  "updated_at": "2026-05-28T02:01:36.111Z",
+  "status": "archived",
+  "is_verified": false,
+  "usage_count": 0
+}

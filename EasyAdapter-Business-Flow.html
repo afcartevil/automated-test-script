@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EasyAdapter 业务流架构图</title>
+<style>
+  body {
+    font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    margin: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  h1 { color: #58a6ff; margin-bottom: 8px; font-size: 22px; }
+  .subtitle { color: #8b949e; font-size: 13px; margin-bottom: 24px; }
+  svg { max-width: 1200px; width: 100%; }
+  .layer-label {
+    font-size: 12px;
+    font-weight: 700;
+    fill: #fff;
+  }
+  .layer-bg {
+    rx: 8;
+    ry: 8;
+    stroke-width: 1.5;
+  }
+  .box {
+    rx: 6;
+    ry: 6;
+    stroke-width: 1.2;
+  }
+  .box-text {
+    font-size: 11.5px;
+    fill: #e6edf3;
+    font-weight: 600;
+  }
+  .box-subtext {
+    font-size: 9.5px;
+    fill: #8b949e;
+  }
+  .arrow {
+    stroke: #484f58;
+    stroke-width: 1.5;
+    fill: none;
+    marker-end: url(#arrowhead);
+  }
+  .arrow-accent {
+    stroke: #58a6ff;
+    stroke-width: 1.8;
+    fill: none;
+    marker-end: url(#arrowhead-blue);
+  }
+  .arrow-green {
+    stroke: #3fb950;
+    stroke-width: 1.8;
+    fill: none;
+    marker-end: url(#arrowhead-green);
+  }
+  .arrow-orange {
+    stroke: #f0883e;
+    stroke-width: 1.5;
+    fill: none;
+    marker-end: url(#arrowhead-orange);
+  }
+  .arrow-cyan {
+    stroke: #79c0ff;
+    stroke-width: 1.5;
+    fill: none;
+    marker-end: url(#arrowhead-cyan);
+  }
+  .dashed-arrow {
+    stroke: #484f58;
+    stroke-width: 1.2;
+    stroke-dasharray: 5,3;
+    fill: none;
+    marker-end: url(#arrowhead);
+  }
+  .api-label {
+    font-size: 9px;
+    fill: #d2a8ff;
+    font-style: italic;
+    font-weight: 600;
+  }
+  .engine-label {
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .connector-label {
+    font-size: 9px;
+    fill: #8b949e;
+    font-weight: 500;
+  }
+  .phase-box {
+    rx: 4;
+    ry: 4;
+    stroke-width: 1;
+  }
+  .phase-text {
+    font-size: 9.5px;
+    fill: #e6edf3;
+    font-weight: 600;
+  }
+  .phase-subtext {
+    font-size: 8px;
+    fill: #8b949e;
+  }
+  .pipeline-title {
+    font-size: 10.5px;
+    fill: #e6edf3;
+    font-weight: 700;
+  }
+  .trigger-text {
+    font-size: 8.5px;
+    fill: #8b949e;
+    font-style: italic;
+  }
+  .flow-label {
+    font-size: 11px;
+    fill: #58a6ff;
+    font-weight: 700;
+  }
+  .flow-label-green {
+    font-size: 11px;
+    fill: #3fb950;
+    font-weight: 700;
+  }
+  .gate-text {
+    font-size: 10px;
+    fill: #e6edf3;
+    font-weight: 700;
+  }
+  .gate-sub {
+    font-size: 8.5px;
+    fill: #8b949e;
+  }
+</style>
+</head>
+<body>
+
+<h1>EasyAdapter 业务流架构图</h1>
+<div class="subtitle">传音 Android 底软 AI 自动适配平台 — 输入 → AI自动适配调试 → 输出 · 全链路业务流</div>
+
+<svg viewBox="0 0 1200 1000" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#484f58"/>
+    </marker>
+    <marker id="arrowhead-blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#58a6ff"/>
+    </marker>
+    <marker id="arrowhead-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#3fb950"/>
+    </marker>
+    <marker id="arrowhead-orange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#f0883e"/>
+    </marker>
+    <marker id="arrowhead-cyan" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#79c0ff"/>
+    </marker>
+    <marker id="arrowhead-purple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#a371f7"/>
+    </marker>
+    <linearGradient id="grad-input" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1f3a5f" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#1f3a5f" stop-opacity="0.25"/>
+    </linearGradient>
+    <linearGradient id="grad-output" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1e3a2f" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#1e3a2f" stop-opacity="0.25"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ===== Title ===== -->
+  <text x="600" y="28" text-anchor="middle" fill="#58a6ff" font-size="18" font-weight="700">EasyAdapter 业务流架构图</text>
+  <text x="600" y="46" text-anchor="middle" fill="#8b949e" font-size="11">输入 → AI 自动适配调试 → 输出 · 五条业务 Pipeline 全链路</text>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- ===== ZONE 1: 输入端 ===== -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <rect class="layer-bg" x="20" y="58" width="1160" height="118" fill="url(#grad-input)" stroke="#58a6ff" stroke-opacity="0.5"/>
+  <text class="layer-label" x="36" y="78" fill="#58a6ff">输入端 — 业务输入</text>
+
+  <!-- 引擎分组标签 -->
+  <text class="engine-label" x="200" y="93" fill="#f0883e">🩺 诊断引擎输入</text>
+  <text class="engine-label" x="820" y="93" fill="#79c0ff">⚙️ 适配引擎输入</text>
+
+  <!-- 诊断输入 Box 1 -->
+  <rect class="box" x="40" y="100" width="215" height="62" fill="#161b22" stroke="#f0883e"/>
+  <text class="box-text" x="147" y="120" text-anchor="middle">Bug 报告 + 日志</text>
+  <text class="box-subtext" x="147" y="135" text-anchor="middle">logcat / radio / hwr / kernel</text>
+  <text class="box-subtext" x="147" y="150" text-anchor="middle">设备信息 + 复现步骤</text>
+
+  <!-- 诊断输入 Box 2 -->
+  <rect class="box" x="265" y="100" width="215" height="62" fill="#161b22" stroke="#f0883e"/>
+  <text class="box-text" x="372" y="120" text-anchor="middle">Bug 分析结果 + 约束</text>
+  <text class="box-subtext" x="372" y="135" text-anchor="middle">fix_type = code_change</text>
+  <text class="box-subtext" x="372" y="150" text-anchor="middle">scope.includes / excludes</text>
+
+  <!-- 分隔线 -->
+  <line x1="495" y1="100" x2="495" y2="162" stroke="#30363d" stroke-width="1" stroke-dasharray="3,3"/>
+
+  <!-- 适配输入 Box 3 -->
+  <rect class="box" x="510" y="100" width="200" height="62" fill="#161b22" stroke="#79c0ff"/>
+  <text class="box-text" x="610" y="120" text-anchor="middle">版本约束 + API 迁移规则</text>
+  <text class="box-subtext" x="610" y="135" text-anchor="middle">Android N → N+1</text>
+  <text class="box-subtext" x="610" y="150" text-anchor="middle">api_migration_rules</text>
+
+  <!-- 适配输入 Box 4 -->
+  <rect class="box" x="720" y="100" width="200" height="62" fill="#161b22" stroke="#79c0ff"/>
+  <text class="box-text" x="820" y="120" text-anchor="middle">Feature 源码 + 依赖链</text>
+  <text class="box-subtext" x="820" y="135" text-anchor="middle">跨平台 / 跨版本</text>
+  <text class="box-subtext" x="820" y="150" text-anchor="middle">dependency_graph</text>
+
+  <!-- 适配输入 Box 5 -->
+  <rect class="box" x="930" y="100" width="220" height="62" fill="#161b22" stroke="#79c0ff"/>
+  <text class="box-text" x="1040" y="120" text-anchor="middle">运营商需求 + 合规标准</text>
+  <text class="box-subtext" x="1040" y="135" text-anchor="middle">carrier-porting.yaml</text>
+  <text class="box-subtext" x="1040" y="150" text-anchor="middle">GCF / RFI / TRAI</text>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- ===== 大箭头: 输入 → 处理 ===== -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <path class="arrow-accent" d="M147,162 L147,175 L200,190"/>
+  <path class="arrow-accent" d="M372,162 L372,175 L300,190"/>
+  <path class="arrow-accent" d="M610,162 L610,175 L610,190"/>
+  <path class="arrow-accent" d="M820,162 L820,175 L850,190"/>
+  <path class="arrow-accent" d="M1040,162 L1040,175 L1000,190"/>
+  <!-- 流向标签 -->
+  <text class="flow-label" x="600" y="185" text-anchor="middle">▼</text>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- ===== ZONE 2: AI 适配调试处理 ===== -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <rect class="layer-bg" x="20" y="190" width="1160" height="580" fill="#161b22" fill-opacity="0.6" stroke="#30363d" stroke-opacity="0.6"/>
+  <text class="layer-label" x="36" y="210" fill="#c9d1d9">AI 适配调试处理</text>
+
+  <!-- ── 共享预处理层 ── -->
+  <rect x="35" y="220" width="1130" height="40" rx="6" fill="#1c1232" fill-opacity="0.7" stroke="#a371f7" stroke-opacity="0.4"/>
+  <text class="connector-label" x="50" y="235" fill="#a371f7">共享预处理</text>
+
+  <rect class="phase-box" x="145" y="225" width="220" height="28" fill="#1c1232" stroke="#a371f7" stroke-opacity="0.6"/>
+  <text class="phase-text" x="255" y="240" text-anchor="middle">约束自动加载</text>
+
+  <rect class="phase-box" x="380" y="225" width="220" height="28" fill="#1c1232" stroke="#3fb950" stroke-opacity="0.6"/>
+  <text class="phase-text" x="490" y="240" text-anchor="middle">知识库语义注入</text>
+
+  <rect class="phase-box" x="615" y="225" width="220" height="28" fill="#1c1232" stroke="#f0883e" stroke-opacity="0.6"/>
+  <text class="phase-text" x="725" y="240" text-anchor="middle">安全红线校验</text>
+
+  <rect class="phase-box" x="850" y="225" width="220" height="28" fill="#1c1232" stroke="#79c0ff" stroke-opacity="0.6"/>
+  <text class="phase-text" x="960" y="240" text-anchor="middle">模块识别 + Pipeline 路由</text>
+
+  <!-- ════════════════ 诊断引擎 ════════════════ -->
+  <rect x="35" y="270" width="1130" height="178" rx="6" fill="#1a150d" fill-opacity="0.5" stroke="#f0883e" stroke-opacity="0.4"/>
+  <text class="engine-label" x="50" y="288" fill="#f0883e">🩺 诊断引擎 — 分析 Pipeline</text>
+
+  <!-- ── Pipeline 1: Bug 分析 ── -->
+  <rect x="45" y="298" width="1110" height="66" rx="5" fill="#1c1208" fill-opacity="0.6" stroke="#f0883e" stroke-opacity="0.3"/>
+  <text class="pipeline-title" x="60" y="314" fill="#f0883e">Bug 分析</text>
+  <text class="trigger-text" x="60" y="326" fill="#8b949e">触发: Bug报告涉及通信/驱动/功耗</text>
+
+  <!-- Steps -->
+  <rect class="phase-box" x="225" y="303" width="120" height="30" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="phase-text" x="285" y="318" text-anchor="middle">输入收集</text>
+  <text class="phase-subtext" x="285" y="329" text-anchor="middle">Bug+Log+设备</text>
+
+  <path d="M345,318 L360,318" stroke="#f0883e" stroke-width="1" marker-end="url(#arrowhead-orange)" opacity="0.5"/>
+
+  <rect class="phase-box" x="365" y="303" width="110" height="30" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="phase-text" x="420" y="318" text-anchor="middle">模块识别</text>
+  <text class="phase-subtext" x="420" y="329" text-anchor="middle">分类+约束</text>
+
+  <path d="M475,318 L490,318" stroke="#f0883e" stroke-width="1" marker-end="url(#arrowhead-orange)" opacity="0.5"/>
+
+  <rect class="phase-box" x="495" y="303" width="130" height="30" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="phase-text" x="560" y="318" text-anchor="middle">Agent 并行分析</text>
+  <text class="phase-subtext" x="560" y="329" text-anchor="middle">通信/内核/功耗</text>
+  <text class="api-label" x="560" y="345" text-anchor="middle">«analyze_log»</text>
+
+  <path d="M625,318 L640,318" stroke="#f0883e" stroke-width="1" marker-end="url(#arrowhead-orange)" opacity="0.5"/>
+
+  <rect class="phase-box" x="645" y="303" width="110" height="30" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="phase-text" x="700" y="318" text-anchor="middle">根因归因</text>
+  <text class="phase-subtext" x="700" y="329" text-anchor="middle">合并+归因</text>
+
+  <path d="M755,318 L770,318" stroke="#f0883e" stroke-width="1" marker-end="url(#arrowhead-orange)" opacity="0.5"/>
+
+  <rect class="phase-box" x="775" y="303" width="120" height="30" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="phase-text" x="835" y="318" text-anchor="middle">门禁 + 报告</text>
+  <text class="phase-subtext" x="835" y="329" text-anchor="middle">校验输出</text>
+  <text class="api-label" x="835" y="345" text-anchor="middle">«gate_check»</text>
+
+  <!-- Bug分析 → 代码适配 箭头 (fix_type 驱动) -->
+  <path d="M835,333 L835,370" fill="none" stroke="#f0883e" stroke-width="1.2" stroke-dasharray="4,2" marker-end="url(#arrowhead-orange)" opacity="0.6"/>
+  <text class="trigger-text" x="850" y="356" fill="#f0883e">fix_type 驱动 ↓</text>
+
+  <!-- ── Pipeline 2: 代码适配 ── -->
+  <rect x="45" y="372" width="1110" height="66" rx="5" fill="#1c1208" fill-opacity="0.6" stroke="#f0883e" stroke-opacity="0.3"/>
+  <text class="pipeline-title" x="60" y="388" fill="#f0883e">代码适配</text>
+  <text class="trigger-text" x="60" y="400" fill="#8b949e">触发: fix_type = code_change</text>
+
+  <rect class="phase-box" x="225" y="377" width="120" height="30" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="phase-text" x="285" y="392" text-anchor="middle">加载分析</text>
+  <text class="phase-subtext" x="285" y="403" text-anchor="middle">报告+约束</text>
+
+  <path d="M345,392 L360,392" stroke="#f0883e" stroke-width="1" marker-end="url(#arrowhead-orange)" opacity="0.5"/>
+
+  <rect class="phase-box" x="365" y="377" width="110" height="30" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="phase-text" x="420" y="392" text-anchor="middle">Scope 检查</text>
+  <text class="phase-subtext" x="420" y="403" text-anchor="middle">includes/excludes</text>
+
+  <path d="M475,392 L490,392" stroke="#f0883e" stroke-width="1" marker-end="url(#arrowhead-orange)" opacity="0.5"/>
+
+  <rect class="phase-box" x="495" y="377" width="130" height="30" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="phase-text" x="560" y="392" text-anchor="middle">修改计划</text>
+  <text class="phase-subtext" x="560" y="403" text-anchor="middle">文件/位置/风险</text>
+
+  <path d="M625,392 L640,392" stroke="#f0883e" stroke-width="1" marker-end="url(#arrowhead-orange)" opacity="0.5"/>
+
+  <rect class="phase-box" x="645" y="377" width="110" height="30" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="phase-text" x="700" y="392" text-anchor="middle">自动修复</text>
+  <text class="phase-subtext" x="700" y="403" text-anchor="middle">AI直接修改代码</text>
+  <text class="api-label" x="700" y="419" text-anchor="middle">«patch-generator»</text>
+
+  <path d="M755,392 L770,392" stroke="#f0883e" stroke-width="1" marker-end="url(#arrowhead-orange)" opacity="0.5"/>
+
+  <rect class="phase-box" x="775" y="377" width="120" height="30" fill="#1c1208" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="phase-text" x="835" y="392" text-anchor="middle">质量门禁</text>
+  <text class="phase-subtext" x="835" y="403" text-anchor="middle">P0 / P1 / P2</text>
+  <text class="api-label" x="835" y="419" text-anchor="middle">«gate_check»</text>
+
+  <!-- ════════════════ 适配引擎 ════════════════ -->
+  <rect x="35" y="458" width="1130" height="268" rx="6" fill="#0d1520" fill-opacity="0.5" stroke="#79c0ff" stroke-opacity="0.4"/>
+  <text class="engine-label" x="50" y="476" fill="#79c0ff">⚙️ 适配引擎 — 功能 / 特性 / 运营商 Pipeline</text>
+
+  <!-- ── Pipeline 3: 版本升级 ── -->
+  <rect x="45" y="486" width="1110" height="66" rx="5" fill="#0c1926" fill-opacity="0.6" stroke="#79c0ff" stroke-opacity="0.3"/>
+  <text class="pipeline-title" x="60" y="502" fill="#79c0ff">版本升级</text>
+  <text class="trigger-text" x="60" y="514" fill="#8b949e">触发: 新Android版本发布</text>
+
+  <rect class="phase-box" x="225" y="491" width="100" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="275" y="506" text-anchor="middle">AOSP Diff</text>
+  <text class="phase-subtext" x="275" y="517" text-anchor="middle">版本差异</text>
+  <text class="api-label" x="275" y="533" text-anchor="middle">«aosp-diff»</text>
+
+  <path d="M325,506 L338,506" stroke="#79c0ff" stroke-width="1" marker-end="url(#arrowhead-cyan)" opacity="0.5"/>
+
+  <rect class="phase-box" x="343" y="491" width="100" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="393" y="506" text-anchor="middle">影响扫描</text>
+  <text class="phase-subtext" x="393" y="517" text-anchor="middle">交叉比对</text>
+
+  <path d="M443,506 L456,506" stroke="#79c0ff" stroke-width="1" marker-end="url(#arrowhead-cyan)" opacity="0.5"/>
+
+  <rect class="phase-box" x="461" y="491" width="100" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="511" y="506" text-anchor="middle">策略分类</text>
+  <text class="phase-subtext" x="511" y="517" text-anchor="middle">自动/半/人工</text>
+
+  <path d="M561,506 L574,506" stroke="#79c0ff" stroke-width="1" marker-end="url(#arrowhead-cyan)" opacity="0.5"/>
+
+  <rect class="phase-box" x="579" y="491" width="100" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="629" y="506" text-anchor="middle">批量自动适配</text>
+  <text class="phase-subtext" x="629" y="517" text-anchor="middle">并行代码修改</text>
+  <text class="api-label" x="629" y="533" text-anchor="middle">«patch-generator»</text>
+
+  <path d="M679,506 L692,506" stroke="#79c0ff" stroke-width="1" marker-end="url(#arrowhead-cyan)" opacity="0.5"/>
+
+  <rect class="phase-box" x="697" y="491" width="100" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="747" y="506" text-anchor="middle">编译验证</text>
+  <text class="phase-subtext" x="747" y="517" text-anchor="middle">build</text>
+  <text class="api-label" x="747" y="533" text-anchor="middle">«build-verifier»</text>
+
+  <path d="M797,506 L810,506" stroke="#79c0ff" stroke-width="1" marker-end="url(#arrowhead-cyan)" opacity="0.5"/>
+
+  <rect class="phase-box" x="815" y="491" width="100" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="865" y="506" text-anchor="middle">回归测试</text>
+  <text class="phase-subtext" x="865" y="517" text-anchor="middle">冒烟+功能</text>
+  <text class="api-label" x="865" y="533" text-anchor="middle">«regression-runner»</text>
+
+  <!-- 版本升级 阈值标注 -->
+  <text class="trigger-text" x="1000" y="506" fill="#79c0ff">置信度阈值:</text>
+  <text class="trigger-text" x="1000" y="518" fill="#8b949e">全自动 ≥ 0.95</text>
+  <text class="trigger-text" x="1000" y="530" fill="#8b949e">半自动 ≥ 0.70</text>
+
+  <!-- ── Pipeline 4: Feature 移植 ── -->
+  <rect x="45" y="560" width="1110" height="60" rx="5" fill="#0c1926" fill-opacity="0.6" stroke="#79c0ff" stroke-opacity="0.3"/>
+  <text class="pipeline-title" x="60" y="578" fill="#79c0ff">Feature 移植</text>
+  <text class="trigger-text" x="60" y="590" fill="#8b949e">触发: Owner提交Feature移植需求</text>
+
+  <rect class="phase-box" x="225" y="565" width="145" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="297" y="580" text-anchor="middle">依赖链分析</text>
+  <text class="phase-subtext" x="297" y="591" text-anchor="middle">API/HAL/资源</text>
+
+  <path d="M370,580 L385,580" stroke="#79c0ff" stroke-width="1" marker-end="url(#arrowhead-cyan)" opacity="0.5"/>
+
+  <rect class="phase-box" x="390" y="565" width="145" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="462" y="580" text-anchor="middle">兼容性检查</text>
+  <text class="phase-subtext" x="462" y="591" text-anchor="middle">目标版本兼容</text>
+
+  <path d="M535,580 L550,580" stroke="#79c0ff" stroke-width="1" marker-end="url(#arrowhead-cyan)" opacity="0.5"/>
+
+  <rect class="phase-box" x="555" y="565" width="145" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="627" y="580" text-anchor="middle">自动代码转换</text>
+  <text class="phase-subtext" x="627" y="591" text-anchor="middle">API替换/Import更新</text>
+  <text class="api-label" x="627" y="607" text-anchor="middle">«patch-generator»</text>
+
+  <path d="M700,580 L715,580" stroke="#79c0ff" stroke-width="1" marker-end="url(#arrowhead-cyan)" opacity="0.5"/>
+
+  <rect class="phase-box" x="720" y="565" width="145" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="792" y="580" text-anchor="middle">集成验证</text>
+  <text class="phase-subtext" x="792" y="591" text-anchor="middle">编译+功能+回归</text>
+  <text class="api-label" x="792" y="607" text-anchor="middle">«build-verifier»</text>
+
+  <!-- ── Pipeline 5: 运营商移植 ── -->
+  <rect x="45" y="630" width="1110" height="66" rx="5" fill="#0c1926" fill-opacity="0.6" stroke="#79c0ff" stroke-opacity="0.3"/>
+  <text class="pipeline-title" x="60" y="648" fill="#79c0ff">运营商移植</text>
+  <text class="trigger-text" x="60" y="660" fill="#8b949e">触发: Owner提交运营商移植需求</text>
+
+  <rect class="phase-box" x="225" y="640" width="120" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="285" y="655" text-anchor="middle">需求解析</text>
+  <text class="phase-subtext" x="285" y="666" text-anchor="middle">路径/配置/依赖</text>
+
+  <path d="M345,655 L360,655" stroke="#79c0ff" stroke-width="1" marker-end="url(#arrowhead-cyan)" opacity="0.5"/>
+
+  <rect class="phase-box" x="365" y="640" width="110" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="420" y="655" text-anchor="middle">源码映射</text>
+  <text class="phase-subtext" x="420" y="666" text-anchor="middle">依赖关系</text>
+
+  <path d="M475,655 L490,655" stroke="#79c0ff" stroke-width="1" marker-end="url(#arrowhead-cyan)" opacity="0.5"/>
+
+  <rect class="phase-box" x="495" y="640" width="130" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="560" y="655" text-anchor="middle">策略分类</text>
+  <text class="phase-subtext" x="560" y="666" text-anchor="middle">>0.85/>0.70/<0.70</text>
+
+  <path d="M625,655 L640,655" stroke="#79c0ff" stroke-width="1" marker-end="url(#arrowhead-cyan)" opacity="0.5"/>
+
+  <rect class="phase-box" x="645" y="640" width="110" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="700" y="655" text-anchor="middle">批量自动适配</text>
+  <text class="phase-subtext" x="700" y="666" text-anchor="middle">自动+人工审核</text>
+  <text class="api-label" x="700" y="682" text-anchor="middle">«patch-generator»</text>
+
+  <path d="M755,655 L770,655" stroke="#79c0ff" stroke-width="1" marker-end="url(#arrowhead-cyan)" opacity="0.5"/>
+
+  <rect class="phase-box" x="775" y="640" width="120" height="30" fill="#0c1926" stroke="#79c0ff" stroke-opacity="0.5"/>
+  <text class="phase-text" x="835" y="655" text-anchor="middle">合规检查</text>
+  <text class="phase-subtext" x="835" y="666" text-anchor="middle">GCF/RFI/TRAI</text>
+  <text class="api-label" x="835" y="682" text-anchor="middle">«build-verifier»</text>
+
+  <!-- 运营商移植 generic 约束标注 -->
+  <text class="trigger-text" x="1000" y="655" fill="#79c0ff">约束:</text>
+  <text class="trigger-text" x="1000" y="667" fill="#8b949e">定制不能影响 generic</text>
+  <text class="trigger-text" x="1000" y="679" fill="#8b949e">Carrier 标准机制</text>
+
+  <!-- ════════════════ 质量门禁 ════════════════ -->
+  <rect x="35" y="732" width="1130" height="38" rx="6" fill="#1c1208" fill-opacity="0.7" stroke="#f0883e" stroke-opacity="0.5"/>
+  <text class="connector-label" x="50" y="747" fill="#f0883e">质量门禁</text>
+
+  <rect class="phase-box" x="145" y="736" width="320" height="28" fill="#1c1208" stroke="#da3633" stroke-opacity="0.7"/>
+  <text class="gate-text" x="305" y="751" text-anchor="middle">P0 BLOCK</text>
+  <text class="gate-sub" x="305" y="761" text-anchor="middle">编译通过 + Scope合规 + 安全红线 + API真实性</text>
+
+  <rect class="phase-box" x="480" y="736" width="320" height="28" fill="#1c1208" stroke="#d29922" stroke-opacity="0.7"/>
+  <text class="gate-text" x="640" y="751" text-anchor="middle">P1 WARNING</text>
+  <text class="gate-sub" x="640" y="761" text-anchor="middle">编码风格 + Lint + 废弃API + TODO关联</text>
+
+  <rect class="phase-box" x="815" y="736" width="320" height="28" fill="#1c1208" stroke="#3fb950" stroke-opacity="0.7"/>
+  <text class="gate-text" x="975" y="751" text-anchor="middle">P2 记录</text>
+  <text class="gate-sub" x="975" y="761" text-anchor="middle">代码复杂度 + 重复率 + 注释覆盖</text>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- ===== 大箭头: 处理 → 输出 ===== -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <path class="arrow-green" d="M147,770 L147,790 L200,805"/>
+  <path class="arrow-green" d="M372,770 L372,790 L300,805"/>
+  <path class="arrow-green" d="M610,770 L610,790 L610,805"/>
+  <path class="arrow-green" d="M820,770 L820,790 L850,805"/>
+  <path class="arrow-green" d="M1040,770 L1040,790 L1000,805"/>
+  <text class="flow-label-green" x="600" y="800" text-anchor="middle">▼</text>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- ===== ZONE 3: 输出端 ===== -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <rect class="layer-bg" x="20" y="805" width="1160" height="118" fill="url(#grad-output)" stroke="#3fb950" stroke-opacity="0.5"/>
+  <text class="layer-label" x="36" y="825" fill="#3fb950">输出端 — 业务产出</text>
+
+  <text class="engine-label" x="200" y="840" fill="#f0883e">🩺 诊断引擎输出</text>
+  <text class="engine-label" x="820" y="840" fill="#79c0ff">⚙️ 适配引擎输出</text>
+
+  <!-- 诊断输出 Box 1 -->
+  <rect class="box" x="40" y="848" width="215" height="62" fill="#161b22" stroke="#f0883e"/>
+  <text class="box-text" x="147" y="868" text-anchor="middle">根因报告 + 修复建议</text>
+  <text class="box-subtext" x="147" y="883" text-anchor="middle">层级 / 严重度 / 复现概率</text>
+  <text class="box-subtext" x="147" y="898" text-anchor="middle">影响范围 / 修复类型</text>
+
+  <!-- 诊断输出 Box 2 -->
+  <rect class="box" x="265" y="848" width="215" height="62" fill="#161b22" stroke="#f0883e"/>
+  <text class="box-text" x="372" y="868" text-anchor="middle">自动修复代码 + 门禁报告</text>
+  <text class="box-subtext" x="372" y="883" text-anchor="middle">Scope合规 / 编译通过</text>
+  <text class="box-subtext" x="372" y="898" text-anchor="middle">API真实性 / 安全红线</text>
+
+  <line x1="495" y1="848" x2="495" y2="910" stroke="#30363d" stroke-width="1" stroke-dasharray="3,3"/>
+
+  <!-- 适配输出 Box 3 -->
+  <rect class="box" x="510" y="848" width="200" height="62" fill="#161b22" stroke="#79c0ff"/>
+  <text class="box-text" x="610" y="868" text-anchor="middle">自动适配代码 + 适配报告</text>
+  <text class="box-subtext" x="610" y="883" text-anchor="middle">自动/半自动/人工/失败</text>
+  <text class="box-subtext" x="610" y="898" text-anchor="middle">自动化率 40% → 75%</text>
+
+  <!-- 适配输出 Box 4 -->
+  <rect class="box" x="720" y="848" width="200" height="62" fill="#161b22" stroke="#79c0ff"/>
+  <text class="box-text" x="820" y="868" text-anchor="middle">自动移植代码 + 测试报告</text>
+  <text class="box-subtext" x="820" y="883" text-anchor="middle">集成验证 / 回归结果</text>
+  <text class="box-subtext" x="820" y="898" text-anchor="middle">兼容性确认</text>
+
+  <!-- 适配输出 Box 5 -->
+  <rect class="box" x="930" y="848" width="220" height="62" fill="#161b22" stroke="#79c0ff"/>
+  <text class="box-text" x="1040" y="868" text-anchor="middle">运营商定制代码 + 合规报告</text>
+  <text class="box-subtext" x="1040" y="883" text-anchor="middle">GCF / RFI / TRAI 认证</text>
+  <text class="box-subtext" x="1040" y="898" text-anchor="middle">generic 回归通过</text>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- ===== 横切关注点 ===== -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <rect x="20" y="938" width="1160" height="52" rx="8" fill="#1a0d2e" fill-opacity="0.6" stroke="#a371f7" stroke-opacity="0.4"/>
+  <text class="layer-label" x="36" y="956" fill="#a371f7">横切 · 持续增强</text>
+
+  <rect class="phase-box" x="180" y="943" width="230" height="36" fill="#1c1232" stroke="#3fb950" stroke-opacity="0.6"/>
+  <text class="phase-text" x="295" y="960" text-anchor="middle">知识库自动沉淀</text>
+  <text class="phase-subtext" x="295" y="973" text-anchor="middle">执行结果 → ChromaDB 384d</text>
+
+  <rect class="phase-box" x="425" y="943" width="230" height="36" fill="#1c1232" stroke="#d2a8ff" stroke-opacity="0.6"/>
+  <text class="phase-text" x="540" y="960" text-anchor="middle">EvoSkill 反馈闭环</text>
+  <text class="phase-subtext" x="540" y="973" text-anchor="middle">执行 → 提案 → 生成 → 评估</text>
+
+  <rect class="phase-box" x="670" y="943" width="230" height="36" fill="#1c1232" stroke="#a371f7" stroke-opacity="0.6"/>
+  <text class="phase-text" x="785" y="960" text-anchor="middle">约束驱动校验</text>
+  <text class="phase-subtext" x="785" y="973" text-anchor="middle">YAML 约束贯穿全流程</text>
+
+  <rect class="phase-box" x="915" y="943" width="230" height="36" fill="#1c1232" stroke="#79c0ff" stroke-opacity="0.6"/>
+  <text class="phase-text" x="1030" y="960" text-anchor="middle">跨模块协作</text>
+  <text class="phase-subtext" x="1030" y="973" text-anchor="middle">DAG 编排 + 并行调度</text>
+
+  <!-- ===== 反馈闭环箭头 ===== -->
+  <!-- 输出 → 知识库沉淀 -->
+  <path d="M147,910 L147,930 L295,943" fill="none" stroke="#3fb950" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#arrowhead-green)" opacity="0.6"/>
+  <path d="M1040,910 L1040,930 L295,943" fill="none" stroke="#3fb950" stroke-width="1.2" stroke-dasharray="5,3" opacity="0.4"/>
+
+  <!-- EvoSkill → Pipeline -->
+  <path d="M540,943 L540,930 L100,900 L100,350 L45,350" fill="none" stroke="#d2a8ff" stroke-width="1.2" stroke-dasharray="5,3" marker-end="url(#arrowhead-purple)" opacity="0.4"/>
+  <text class="connector-label" x="60" y="920" fill="#d2a8ff" opacity="0.7">Skill 反馈注入</text>
+
+  <!-- 约束 → 预处理 -->
+  <path d="M785,943 L785,935 L400,270 L400,260" fill="none" stroke="#a371f7" stroke-width="1" stroke-dasharray="5,3" opacity="0.3"/>
+
+</svg>
+
+</body>
+</html>

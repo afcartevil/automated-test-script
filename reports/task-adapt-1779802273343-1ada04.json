@@ -1,0 +1,15 @@
+{
+  "task_id": "task-adapt-1779802273343-1ada04",
+  "module": "Test",
+  "domain": "code_adaptation",
+  "started_at": "2026-05-26T13:31:13.345Z",
+  "completed_at": "2026-05-26T13:31:28.401Z",
+  "duration_ms": 15056,
+  "extra_context": "AI适配调试 | 域: 数字修改 | 项目: X6876_H786 | SoC: MT6878 | Kernel: 6.1",
+  "correction_of": "correction",
+  "document_content": "# AI 适配调试任务 — 数字修改\n\n## 项目信息\n- 项目代码: X6876_H786\n- SoC: MT6878\n- Kernel 版本: 6.1\n- 升级路径: vendor14 → vendor16\n\n## 适配域: 数字修改 (Test)\n\n### 前置条件参数\n- undefined: E:\\temp\\1.txt\n\n### 关联 Skills\n- Test\n\n---\n_由 EasyAdapter Console AI 适配调试面板自动生成_\n",
+  "files_modified": [
+    "E:\\temp\\1.txt"
+  ],
+  "llm_response": "我将把文件中所有的数字 `1` 替换为 `2`。\n\n<write_file>\n<path>E:\\temp\\1.txt</path>\n<content>\n462352652222222255425252222222222222\n542526544235232\n525222232626262222222265656565222222222\n22222222222222222222222222222222\n</content>\n</write_file>"
+}
