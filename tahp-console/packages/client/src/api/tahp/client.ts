@@ -18,19 +18,21 @@ export async function tahpRequest<T>(path: string, options: RequestInit = {}): P
   return (res.data as T) ?? (undefined as unknown as T)
 }
 
-export function tahpGet<T>(path: string): Promise<T> {
-  return tahpRequest<T>(path, { method: 'GET' })
+export function tahpGet<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return tahpRequest<T>(path, { ...options, method: 'GET' })
 }
 
-export function tahpPost<T>(path: string, body?: unknown): Promise<T> {
+export function tahpPost<T>(path: string, body?: unknown, options: RequestInit = {}): Promise<T> {
   return tahpRequest<T>(path, {
+    ...options,
     method: 'POST',
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
 }
 
-export function tahpPut<T>(path: string, body?: unknown): Promise<T> {
+export function tahpPut<T>(path: string, body?: unknown, options: RequestInit = {}): Promise<T> {
   return tahpRequest<T>(path, {
+    ...options,
     method: 'PUT',
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })

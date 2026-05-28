@@ -8,6 +8,37 @@ import { getCopilotModelsDetailed, resolveCopilotOAuthToken, type CopilotModelMe
 import { readAppConfig, writeAppConfig, type ModelVisibilityRule } from '../../services/app-config'
 import { getDb } from '../../db'
 import { MODEL_CONTEXT_TABLE } from '../../db/hermes/schemas'
+import { AgentBridgeClient, getAgentBridgeManager } from '../../services/hermes/agent-bridge'
+import { logger } from '../../services/logger'
+
+// Bridge client 用于在切模型/切 provider 后失效缓存的 AIAgent 实例。
+// 单例：避免每次请求都重建 socket 配置；client 内部按需建立短连接。
+const sharedBridgeClient = new AgentBridgeClient()
+
+/**
+ * 通知 hermes_bridge 失效指定 profile 下所有缓存的 AIAgent。
+ *
+ * AgentPool 是按 session_id 缓存 AIAgent 实例的，正在跑（running）的 session
+ * 不会被销毁；空闲 session 会被立即销毁，下次 chat() 自动用最新的 yaml 配置重建。
+ *
+ * 返回字符串描述操作结果，便于回传给前端日志/toast。失败不抛错，避免影响主流程。
+ */
+async function invalidateBridgeForProfile(profile: string): Promise<string> {
+  try {
+    const manager = getAgentBridgeManager()
+    if (!manager?.running) {
+      return 'bridge offline, skipped invalidation'
+    }
+    const resp = await sharedBridgeClient.destroyProfile(profile) as { destroyed?: number }
+    const count = typeof resp?.destroyed === 'number' ? resp.destroyed : 0
+    logger.info('[setConfigModel] bridge sessions invalidated profile=%s destroyed=%d', profile, count)
+    return `bridge sessions invalidated (profile=${profile}, destroyed=${count})`
+  } catch (err) {
+    const msg = (err as Error).message
+    logger.warn({ err: msg, profile }, '[setConfigModel] bridge invalidation failed')
+    return `bridge invalidation failed: ${msg}`
+  }
+}
 
 const PROVIDER_MODEL_CATALOG = buildProviderModelMap()
 
@@ -783,13 +814,23 @@ export async function setConfigModel(ctx: any) {
     return
   }
   try {
+    // 保留 model 同级既有字段（如 base_url / api_key），仅更新 default/provider。
+    // 原实现直接 `config.model = {}` 会丢失这些字段，导致下游 resolveGatewayUpstream
+    // 不再能复用 yaml 上保存的连接配置。
     await updateConfigYaml((config) => {
-      config.model = {}
-      config.model.default = defaultModel
-      if (reqProvider) { config.model.provider = reqProvider }
+      const existing = config.model && typeof config.model === 'object' && !Array.isArray(config.model)
+        ? config.model
+        : {}
+      config.model = { ...existing, default: defaultModel }
+      if (reqProvider) config.model.provider = reqProvider
       return config
     })
-    ctx.body = { success: true }
+
+    // 切模型后通知 bridge 失效该 profile 下缓存的 AIAgent，下次 chat() 自动重建。
+    // bridge 不在线（agent-bridge 启动失败）不影响 yaml 写入成功。
+    const bridgeNotice = await invalidateBridgeForProfile(getActiveProfileName())
+
+    ctx.body = { success: true, bridge: bridgeNotice }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: err.message }

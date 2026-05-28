@@ -19,7 +19,7 @@ const showChangelog = ref(false);
 // 核心功能入口（6项）
 const coreItems = [
   {
-    name: 'tahp.tools',
+    name: 'tahp.bug-analysis',
     label: 'AI Bug分析',
     color: '#d03050',
     icon: `<path d="M12 9c-1.6-.6-3.2-.9-4-.9C5 8.1 3 10 3 12s2 3.9 5 3.9c.8 0 2.4-.3 4-.9"/>

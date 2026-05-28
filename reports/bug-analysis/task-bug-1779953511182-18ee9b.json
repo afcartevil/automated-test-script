@@ -1,0 +1,9 @@
+{
+  "task_id": "task-bug-1779953511182-18ee9b",
+  "jira_key": "TOS1510-64246",
+  "jira_url": "http://jira.transsion.com/browse/TOS1510-64246",
+  "status": "failed",
+  "error": "任务已被用户中断",
+  "started_at": "2026-05-28T07:31:51.182Z",
+  "completed_at": "2026-05-28T07:37:14.376Z"
+}
