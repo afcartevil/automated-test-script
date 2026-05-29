@@ -19,7 +19,7 @@ export interface KnowledgeEntry {
   created_at?: string
   updated_at?: string
   expires_at?: string
-  status?: 'pending_review' | 'approved' | 'rejected' | 'archived'
+  status?: 'pending_review' | 'approved' | 'rejected' | 'archived' | 'deleted'
   is_verified?: boolean
   validation_date?: string
   maintenance_owner?: string
@@ -74,6 +74,8 @@ export interface SkillSuggestion {
   suggested_skill_name: string
   existing_skill_count: number
   existing_skills: string[]
+  has_draft?: boolean
+  source_document_ids?: string[]
 }
 
 export interface SkillDraft {
@@ -87,7 +89,7 @@ export interface SkillDraft {
   generated_from_entries: string[]
   generated_at?: string
   generated_by?: string
-  status?: 'draft' | 'reviewing' | 'approved' | 'rejected'
+  status?: 'draft' | 'reviewing' | 'approved' | 'rejected' | 'deprecated' | 'archived'
   reviewed_by?: string
   reviewed_at?: string
   review_notes?: string
@@ -101,6 +103,24 @@ export interface SkillDraft {
   maintenance_owner?: string
   exclusion_cases?: string[]
   version_constraints?: VersionConstraint
+  // ─── 优化计划新增字段 ───
+  source_document_ids?: string[]
+  content_fingerprint?: string
+  duplicate_decisions?: Array<{
+    decision: 'force_create' | 'view_existing' | 'merge' | 'upgrade_draft'
+    target_id?: string
+    decided_at: string
+  }>
+  func_type_raw?: string
+  module_raw?: string
+  category?: string
+  // ─── 生命周期管控新增字段 ───
+  deprecated_at?: string
+  deprecated_by?: string
+  deprecate_reason?: string
+  archived_at?: string
+  archived_by?: string
+  archived_from_status?: string
 }
 
 export interface KnowledgeStats {
@@ -520,4 +540,264 @@ export function deleteEvalCase(draftId: string, caseId: string): Promise<SkillDr
     `/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}/eval-cases/${encodeURIComponent(caseId)}/delete`,
     {},
   )
+}
+
+// ─── 优化计划新增 API ───────────────────────────────────────────────────────────────────────────────
+
+export interface DuplicateItem {
+  id: string
+  skill_name: string
+  status: string
+  generated_at: string
+  match_type: 'source_document' | 'fingerprint'
+  can_merge: boolean
+  is_activated: boolean
+}
+
+export interface RecommendItem {
+  target_id: string
+  target_name: string
+  target_type: 'draft' | 'activated'
+  match_score: number
+  new_topics: string[]
+  new_topics_count: number
+  common_topics_count: number
+  estimated_quality_delta: number
+  reason: string
+  can_merge: boolean
+  upgrade_hint?: string
+}
+
+export interface SkillGenJobResult {
+  id: string
+  status: 'running' | 'completed' | 'error' | 'cancelled'
+  stage: string
+  progress: number
+  message: string
+  result?: {
+    draft?: SkillDraft
+    duplicate_detected?: boolean
+    duplicate_drafts?: DuplicateItem[]
+    similar_skills?: Array<{
+      id: string
+      type: 'draft' | 'activated'
+      display_name: string
+      jaccard_score: number
+      tier: string
+      reasons: string[]
+    }>
+    llm_error?: string
+    llm_error_detail?: string
+  }
+  created_at: string
+  ttl_expires_at: string
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/check-duplicate — 文档级重复检测 */
+export function checkDuplicateDraft(entryIds: string[]): Promise<{
+  duplicate_detected: boolean
+  duplicates: DuplicateItem[]
+  fingerprint: string
+}> {
+  return tahpPost<{ duplicate_detected: boolean; duplicates: DuplicateItem[]; fingerprint: string }>(
+    '/api/tahp/knowledge/skill-drafts/check-duplicate',
+    { entry_ids: entryIds },
+  )
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/duplicate-decision — 记录用户重复决策 */
+export function recordDuplicateDecision(
+  draftId: string,
+  decision: 'force_create' | 'view_existing' | 'merge' | 'upgrade_draft',
+  targetId?: string,
+): Promise<SkillDraft> {
+  return tahpPost<SkillDraft>('/api/tahp/knowledge/skill-drafts/duplicate-decision', {
+    draft_id: draftId,
+    decision,
+    target_id: targetId,
+  })
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/recommend-merge-target — 融合目标推荐 */
+export function recommendMergeTarget(params: {
+  entry_ids: string[]
+  module: string
+  func_type: string
+}): Promise<{ recommendations: RecommendItem[] }> {
+  return tahpPost<{ recommendations: RecommendItem[] }>(
+    '/api/tahp/knowledge/skill-drafts/recommend-merge-target',
+    params,
+  )
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/upgrade-draft — 已激活 Skill 生成升级草案 */
+export function createUpgradeDraft(skillId: string, entryIds?: string[]): Promise<{ draft: SkillDraft }> {
+  return tahpPost<{ draft: SkillDraft }>('/api/tahp/knowledge/skill-drafts/upgrade-draft', {
+    skill_id: skillId,
+    entry_ids: entryIds || [],
+  })
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/generate-stream — 启动异步生成任务 */
+export function startGenerateStream(params: {
+  module: string
+  func_type: string
+  entry_ids?: string[]
+  skill_name?: string
+  generated_by?: string
+  document_ids?: string[]
+}): Promise<{ job_id: string }> {
+  return tahpPost<{ job_id: string }>('/api/tahp/knowledge/skill-drafts/generate-stream', params)
+}
+
+/** GET /api/tahp/knowledge/skill-drafts/generate-stream/:jobId — SSE 订阅生成进度 */
+export function subscribeSkillGenProgress(jobId: string): EventSource {
+  const base = getBaseUrlValue()
+  return new EventSource(`${base}/api/tahp/knowledge/skill-drafts/generate-stream/${encodeURIComponent(jobId)}`)
+}
+
+/** GET /api/tahp/knowledge/skill-drafts/gen-job/:jobId — 一次性获取任务状态 */
+export function getSkillGenJob(jobId: string): Promise<SkillGenJobResult> {
+  return tahpGet<SkillGenJobResult>(`/api/tahp/knowledge/skill-drafts/gen-job/${encodeURIComponent(jobId)}`)
+}
+
+// ─── 生命周期管控 API ────────────────────────────────────────────────────────
+
+/** DELETE /api/tahp/knowledge/skill-drafts/:draftId — 删除草稿(仅 draft/rejected) */
+export function deleteSkillDraft(draftId: string): Promise<{ deleted: string }> {
+  return tahpRequest<{ deleted: string }>(
+    `/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}`,
+    { method: 'DELETE' },
+  )
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/:draftId/deprecate — 废弃已激活 Skill */
+export function deprecateSkillDraft(draftId: string, reason: string, deprecatedBy?: string): Promise<SkillDraft> {
+  return tahpPost<SkillDraft>(
+    `/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}/deprecate`,
+    { reason, deprecated_by: deprecatedBy },
+  )
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/:draftId/deactivate — 下线 Skill(物理移除) */
+export function deactivateSkill(draftId: string, reason: string, archivedBy?: string): Promise<SkillDraft> {
+  return tahpPost<SkillDraft>(
+    `/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}/deactivate`,
+    { reason, archived_by: archivedBy },
+  )
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/:draftId/archive — 归档草稿 */
+export function archiveSkillDraft(draftId: string): Promise<SkillDraft> {
+  return tahpPost<SkillDraft>(
+    `/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}/archive`,
+    {},
+  )
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/:draftId/restore — 恢复归档草稿 */
+export function restoreSkillDraft(draftId: string): Promise<SkillDraft> {
+  return tahpPost<SkillDraft>(
+    `/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}/restore`,
+    {},
+  )
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/bulk-cleanup — 批量清理 rejected 草稿 */
+export function bulkCleanupDrafts(): Promise<{ cleaned: number }> {
+  return tahpPost<{ cleaned: number }>('/api/tahp/knowledge/skill-drafts/bulk-cleanup', {})
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/bulk-deprecate — 批量废弃已激活 Skill */
+export function bulkDeprecateSkills(draftIds: string[], reason: string): Promise<{ deprecated: number }> {
+  return tahpPost<{ deprecated: number }>('/api/tahp/knowledge/skill-drafts/bulk-deprecate', {
+    draft_ids: draftIds,
+    reason,
+  })
+}
+
+/** DELETE /api/tahp/knowledge/entries/:entryId/hard — 物理删除条目 */
+export function hardDeleteEntry(entryId: string): Promise<{ deleted: string }> {
+  return tahpRequest<{ deleted: string }>(
+    `/api/tahp/knowledge/entries/${encodeURIComponent(entryId)}/hard`,
+    { method: 'DELETE' },
+  )
+}
+
+/** POST /api/tahp/knowledge/entries/bulk-archive — 批量归档条目 */
+export function bulkArchiveEntries(filter?: { module?: string; before?: string; ids?: string[] }): Promise<{ archived: number }> {
+  return tahpPost<{ archived: number }>('/api/tahp/knowledge/entries/bulk-archive', filter || {})
+}
+
+/** POST /api/tahp/knowledge/entries/bulk-delete — 批量物理删除条目 */
+export function bulkDeleteArchived(filter?: { module?: string; ids?: string[] }): Promise<{ deleted: number }> {
+  return tahpPost<{ deleted: number }>('/api/tahp/knowledge/entries/bulk-delete', filter || {})
+}
+
+// ─── 增强统计 + 审计日志 ──────────────────────────────────────────────────
+
+export interface EnhancedStats {
+  entry_by_status: Record<string, number>
+  draft_by_status: Record<string, number>
+  total_entries: number
+  total_drafts: number
+  activated_skills: number
+  expired_entries: number
+  deprecated_skills: number
+}
+
+/** GET /api/tahp/knowledge/stats/enhanced — 增强统计 */
+export function getEnhancedStats(): Promise<EnhancedStats> {
+  return tahpGet<EnhancedStats>('/api/tahp/knowledge/stats/enhanced')
+}
+
+export interface AuditLogEntry {
+  id: string
+  timestamp: string
+  action: string
+  actor: string
+  target_type: string
+  target_id: string
+  target_name?: string
+  details?: Record<string, unknown>
+  reason?: string
+}
+
+/** GET /api/tahp/knowledge/audit-log — 审计日志查询 */
+export function getAuditLog(limit?: number, action?: string): Promise<{ entries: AuditLogEntry[]; total: number }> {
+  const qs = new URLSearchParams()
+  if (limit) qs.append('limit', String(limit))
+  if (action) qs.append('action', action)
+  return tahpGet<{ entries: AuditLogEntry[]; total: number }>(
+    `/api/tahp/knowledge/audit-log${qs.size ? '?' + qs : ''}`,
+  )
+}
+
+// ─── 草稿批量操作 API ─────────────────────────────────────────────────
+
+/** POST /api/tahp/knowledge/skill-drafts/bulk-approve — 批量批准草稿 */
+export function bulkApproveDrafts(draftIds: string[]): Promise<{ approved: number }> {
+  return tahpPost<{ approved: number }>('/api/tahp/knowledge/skill-drafts/bulk-approve', { draft_ids: draftIds })
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/bulk-reject — 批量拒绝草稿 */
+export function bulkRejectDrafts(draftIds: string[], reason?: string): Promise<{ rejected: number }> {
+  return tahpPost<{ rejected: number }>('/api/tahp/knowledge/skill-drafts/bulk-reject', { draft_ids: draftIds, reason })
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/bulk-delete — 批量删除草稿 */
+export function bulkDeleteDrafts(draftIds: string[]): Promise<{ deleted: number }> {
+  return tahpPost<{ deleted: number }>('/api/tahp/knowledge/skill-drafts/bulk-delete', { draft_ids: draftIds })
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/bulk-archive-selected — 批量归档草稿 */
+export function bulkArchiveSelectedDrafts(draftIds: string[]): Promise<{ archived: number }> {
+  return tahpPost<{ archived: number }>('/api/tahp/knowledge/skill-drafts/bulk-archive-selected', { draft_ids: draftIds })
+}
+
+// ─── 文档编辑 API ───────────────────────────────────────────────────────
+
+/** PUT /api/tahp/knowledge/documents/:docId — 更新文档元数据 */
+export function updateDocument(docId: string, data: { title?: string; module?: string }): Promise<KnowledgeDocument> {
+  return tahpPut<KnowledgeDocument>(`/api/tahp/knowledge/documents/${encodeURIComponent(docId)}`, data)
 }

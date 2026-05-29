@@ -1,0 +1,25 @@
+{
+  "id": "kb-cd964d51",
+  "content": "b.提取报错的文件名、行号以及P1/P2/P3参数，在内部Jira、MTK\u0001online平台搜索是否为已知问\n题\u0001\nc.未知问题需提取对应版本的Modem\u0001ELF文件、DbgInfo全量文件，提交给芯片平台分析\u0001\n问题\n定位\u0001\n关键特\n征\u0001\n核心关注\n点\u0001\n可能原因\u0001分析步骤\u0001log文件\u0001keywor\nd\u0001\n案例参考\u0001\nMOD\nEM\u0001\nEE\u0001\n基带版\n本号未\n知/不识\n卡\u0001\nModem\n启动进程\u0001\nimg加载\u0001\nNV校验\u0001\nModem\n状态检查\u0001\n1.配置错误\u0001\n2.patch\u0001依赖漏\n合\u0001\n3.平台修改引入\u0001\n4.单机硬件问题\u0001\n具体错误模块大\n致定位看报错c\n文件；例如：rf\u0001\ncheck\u0001目录下这\n类大多是RF配\n置错误；mml1/\n目录下的大致定\n位射频相关\u0001\n1.检查ap\u0001log是\n否记录到EE打印\u0001\n2.EE挂死在log\n打印前，可手动\n触发dump模式\n抓取dump确认\nEE点\u0001\n1.main_log\u0001\n2.dump\u0001log\u0001\n1.ccci_\nmdinit\u0001\n2.Mode\nm\u0001\nexceptio\nn\u0001\n3.\n[ASSERT\n]\u0001\n4.[Fatal\u0001\nerror\u0001\nhttp://jira.t\nranssion.c\nom/brows\ne/CL8TOS1\n501-1943\u0001\n信号消\n失后恢\n复/mod\nem\u0001\ncrash界\n面\u0001\nEE打印\u0001\n1.[ASSE\nRT]\u0001\nfile:X\nXXXX\nX\u0001\nP1:XXX\u0001\nP2:XXX\u0001\nP3:XXX\u0001\n例如：\u0001\n[ASSERT\n]\u0001\nfile:mcu/\nl1/mml1\n/mml1_r\nf/src/m\nmrf/gen\n99/mml1\n_rf_erro\n同上\u00011.main\u0001log中查\n找modem\u0001\nexception\u0001\n2.找到assert具\n体报错打印，某\n某文件/某某行\u0001\n，para\u00010~2\u0001\n3.查看本地文\n件，报错路径能\n否访问\u0001\n3.不能访问就到\u0001\nJIRA/onlie上搜\n索报错文件，看\n看是否已知问题\u0001\n4.提交CR，给平\n台分析，需要提\n供版本对应符号\n表\u0001\n1.main\u0001log\u0001\n2.modem\u0001\nlog\u0001\n1.Mode\nm\u0001\nexceptio\nn\u0001\n2.\n[ASSERT\n]\u0001\n3.[Fatal\u0001\nerror\u0001\n\u0001\nLI6_v/LI7_\nv\u0001OTA升级\n后不识卡，\nIMEI消失问\n题复盘报\n告\u0001",
+  "category": "错误模式",
+  "module": "telephony",
+  "func_type": "bug_analysis",
+  "keywords": [
+    "提取报错的文",
+    "件名",
+    "行号以及",
+    "参数",
+    "在内部",
+    "Jira",
+    "MTK",
+    "Modem"
+  ],
+  "confidence_score": 0.85,
+  "source_file": "稳定性问题分析指导SOP（Modem）.pdf",
+  "source_document_id": "doc-c5bf3b84",
+  "created_at": "2026-05-29T06:33:40.610Z",
+  "updated_at": "2026-05-29T06:33:40.610Z",
+  "status": "pending_review",
+  "is_verified": false,
+  "usage_count": 0
+}

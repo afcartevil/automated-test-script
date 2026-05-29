@@ -34,7 +34,7 @@
  */
 import Router from '@koa/router'
 import { PassThrough } from 'stream'
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, unlinkSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, unlinkSync, renameSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { spawnSync } from 'child_process'
 import { get as httpGet } from 'http'
@@ -44,21 +44,46 @@ import { tahpPaths } from '../../services/tahp/paths'
 import { safeFileStore } from '../../services/safe-file-store'
 import { logger } from '../../services/logger'
 import { join } from 'path'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import { load as yamlLoad, dump as yamlDump } from 'js-yaml'
 import { callTahpLLM } from '../../services/tahp/llm-caller'
+import { writeAuditLog } from '../../services/tahp/audit-log'
 
-// ── 规范化映射（与 skills.ts 保持一致，英文 key → 中文 display canonical） ────
+// ── 规范化映射：英文 raw key → 中文 display（一对一，保留细分） ────────────────
 const _FUNC_TYPE_MAP: Record<string, string> = {
-  'bug_analysis': 'AI故障分析', 'code_adaptation': 'AI自动化适配',
-  'version_adaptation': 'AI自动化适配', 'carrier_porting': 'AI自动化适配',
-  'self_check': 'AI自检工具', 'ai_self_check': 'AI自检工具',
+  'bug_analysis':       'Bug分析',
+  'code_adaptation':    '代码适配',
+  'version_adaptation': '版本适配',
+  'carrier_porting':    '运营商移植',
+  'self_check':         'AI自检',
+  'ai_self_check':      'AI自检',
+  'other':              '其他',
+  // 中文 canonical 透传
+  'Bug分析': 'Bug分析', '代码适配': '代码适配', '版本适配': '版本适配',
+  '运营商移植': '运营商移植', 'AI自检': 'AI自检', '其他': '其他',
+  // 兼容旧数据（中文大类 → 透传）
+  'AI故障分析': 'AI故障分析', 'AI自动化适配': 'AI自动化适配', 'AI自检工具': 'AI自检工具',
+}
+/** 大类分组映射（用于 Skill 侧边栏分组） */
+const _FUNC_TYPE_CATEGORY_MAP: Record<string, string> = {
+  'bug_analysis': 'AI故障分析', 'Bug分析': 'AI故障分析', 'AI故障分析': 'AI故障分析',
+  'code_adaptation': 'AI自动化适配', '代码适配': 'AI自动化适配',
+  'version_adaptation': 'AI自动化适配', '版本适配': 'AI自动化适配',
+  'carrier_porting': 'AI自动化适配', '运营商移植': 'AI自动化适配',
+  'AI自动化适配': 'AI自动化适配',
+  'self_check': 'AI自检工具', 'ai_self_check': 'AI自检工具', 'AI自检': 'AI自检工具', 'AI自检工具': 'AI自检工具',
+  'other': '其他', '其他': '其他',
 }
 const _MODULE_MAP: Record<string, string> = {
   'telephony': '通信', 'kernel-driver': '驱动', 'kernel_driver': '驱动',
+  'kernel': '内核',
   'power-mgmt': '功耗', 'power_mgmt': '功耗', 'shared': '通用', 'common': '通用',
+  // 中文 canonical 透传
+  '通信': '通信', '驱动': '驱动', '内核': '内核', '功耗': '功耗', '通用': '通用',
 }
 function normFuncType(v: string) { return _FUNC_TYPE_MAP[v?.trim()] ?? v?.trim() ?? '' }
+function normFuncTypeRaw(v: string): string { return v?.trim() ?? '' }
+function getFuncTypeCategory(v: string): string { return _FUNC_TYPE_CATEGORY_MAP[v?.trim()] ?? 'AI自动化适配' }
 function normModule(v: string)   { return _MODULE_MAP[v?.trim()]    ?? v?.trim() ?? '' }
 
 export const tahpKnowledgeRoutes = new Router()
@@ -96,7 +121,7 @@ interface KnowledgeEntry {
   created_at: string
   updated_at: string
   expires_at?: string
-  status: 'pending_review' | 'approved' | 'rejected' | 'archived'
+  status: 'pending_review' | 'approved' | 'rejected' | 'archived' | 'deleted'
   is_verified: boolean
   validation_date?: string
   maintenance_owner?: string
@@ -151,7 +176,7 @@ interface SkillDraft {
   generated_from_entries: string[]
   generated_at: string
   generated_by?: string
-  status: 'draft' | 'reviewing' | 'approved' | 'rejected'
+  status: 'draft' | 'reviewing' | 'approved' | 'rejected' | 'deprecated' | 'archived'
   reviewed_by?: string
   reviewed_at?: string
   review_notes?: string
@@ -165,6 +190,26 @@ interface SkillDraft {
   maintenance_owner?: string
   exclusion_cases?: string[]
   version_constraints?: VersionConstraint
+  // ─── 优化计划新增字段 ────────────────────────────────
+  source_document_ids?: string[]
+  content_fingerprint?: string
+  duplicate_decisions?: Array<{
+    decision: 'force_create' | 'view_existing' | 'merge' | 'upgrade_draft'
+    target_id?: string
+    decided_at: string
+  }>
+  func_type_raw?: string
+  module_raw?: string
+  category?: string
+  // ─── 生命周期管控新增字段 ────────────────────────────────
+  deprecated_at?: string
+  deprecated_by?: string
+  deprecate_reason?: string
+  archived_at?: string
+  archived_by?: string
+  archived_from_status?: string  // 归档前的原始状态
+  updated_at?: string
+  review_action?: 'approve' | 'reject'
 }
 
 // ─── Phase 2 Types ───────────────────────────────────────────────────────────
@@ -215,6 +260,66 @@ function emitJobEvent(jobId: string, update: Partial<ImportJob>): void {
     try { listener(payload) } catch { /* ignore */ }
   }
 }
+
+// ─── SkillGen SSE job store (优化计划 Phase 3) ──────────────────────────────
+
+interface SkillGenJob {
+  id: string
+  status: 'running' | 'completed' | 'error' | 'cancelled'
+  stage: 'init' | 'duplicate_check' | 'similarity_check' | 'llm_generate' | 'eval_extract' | 'quality_score' | 'done' | 'error'
+  progress: number
+  message: string
+  result?: {
+    draft?: SkillDraft
+    duplicate_detected?: boolean
+    duplicate_drafts?: Array<{
+      id: string
+      skill_name: string
+      status: string
+      generated_at: string
+      match_type: 'source_document' | 'fingerprint'
+      can_merge: boolean
+      is_activated: boolean
+    }>
+    similar_skills?: Array<{
+      id: string
+      type: 'draft' | 'activated'
+      display_name: string
+      jaccard_score: number
+      tier: string
+      reasons: string[]
+    }>
+    llm_error?: string
+    llm_error_detail?: string
+  }
+  created_at: string
+  ttl_expires_at: string
+}
+
+const skillGenJobs = new Map<string, SkillGenJob>()
+const skillGenListeners = new Map<string, Array<(data: string) => void>>()
+
+function emitSkillGenEvent(jobId: string, update: Partial<SkillGenJob>): void {
+  const job = skillGenJobs.get(jobId)
+  if (!job) return
+  Object.assign(job, update)
+  const payload = JSON.stringify(job)
+  for (const listener of (skillGenListeners.get(jobId) || [])) {
+    try { listener(payload) } catch { /* ignore */ }
+  }
+}
+
+// TTL 清理：每5分钟清除超过30分钟的 job
+setInterval(() => {
+  const now = Date.now()
+  for (const [id, job] of skillGenJobs) {
+    const ttl = new Date(job.ttl_expires_at).getTime()
+    if (now > ttl) {
+      skillGenJobs.delete(id)
+      skillGenListeners.delete(id)
+    }
+  }
+}, 5 * 60 * 1000).unref()
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
@@ -455,9 +560,104 @@ function inferCategory(content: string): string {
 }
 
 function extractKeywords(content: string): string[] {
-  const chinese = (content.match(/[一-龥]{2,6}/g) || []).slice(0, 5)
+  const chinese = (content.match(/[\u4e00-\u9fff]{2,6}/g) || []).slice(0, 5)
   const english = (content.match(/\b[A-Z][a-zA-Z]{2,}\b/g) || []).slice(0, 5)
   return [...new Set([...chinese, ...english])].slice(0, 8)
+}
+
+/** 计算条目内容指纹（SHA256剀16位） */
+function computeContentFingerprint(entries: KnowledgeEntry[]): string {
+  const combined = entries.map(e => e.content).sort().join('\n')
+  return createHash('sha256').update(combined, 'utf8').digest('hex').slice(0, 16)
+}
+
+/** 文档级重复检测：检查是否有草案已来自相同文档或指纹相同 */
+async function checkDocumentDuplicate(entries: KnowledgeEntry[], fingerprint: string): Promise<Array<{
+  id: string
+  skill_name: string
+  status: string
+  generated_at: string
+  match_type: 'source_document' | 'fingerprint'
+  can_merge: boolean
+  is_activated: boolean
+}>> {
+  const allDrafts = await listSkillDrafts()
+  const sourceDocIds = new Set(
+    entries.map(e => e.source_document_id).filter(Boolean) as string[]
+  )
+  const results: Array<{
+    id: string
+    skill_name: string
+    status: string
+    generated_at: string
+    match_type: 'source_document' | 'fingerprint'
+    can_merge: boolean
+    is_activated: boolean
+  }> = []
+
+  for (const draft of allDrafts) {
+    if (draft.status === 'rejected') continue
+    // 已有 force_create 决策则跳过
+    const hasForceCreate = (draft.duplicate_decisions || []).some(d => d.decision === 'force_create')
+    if (hasForceCreate) continue
+
+    // 第一层：文档源匹配
+    const draftDocIds = new Set(draft.source_document_ids || [])
+    const docOverlap = [...sourceDocIds].some(id => draftDocIds.has(id))
+    if (docOverlap) {
+      results.push({
+        id: draft.id,
+        skill_name: draft.skill_name,
+        status: draft.status,
+        generated_at: draft.generated_at,
+        match_type: 'source_document',
+        can_merge: draft.status === 'draft' || draft.status === 'reviewing',
+        is_activated: false,
+      })
+      continue
+    }
+
+    // 第二层：内容指纹匹配
+    if (draft.content_fingerprint && draft.content_fingerprint === fingerprint) {
+      results.push({
+        id: draft.id,
+        skill_name: draft.skill_name,
+        status: draft.status,
+        generated_at: draft.generated_at,
+        match_type: 'fingerprint',
+        can_merge: draft.status === 'draft' || draft.status === 'reviewing',
+        is_activated: false,
+      })
+    }
+  }
+
+  // 已激活的 Skill 也检查指纹
+  const activatedSkills = getActivatedSkills()
+  for (const sk of activatedSkills) {
+    const skDocIds = new Set<string>()
+    // 尝试从 generatedFromEntries 反查文档ID（屨5条）
+    if (sourceDocIds.size > 0 && sk.generatedFromEntries.length > 0) {
+      // 这里简化处理：如果 entry_ids 内容重叠则认为来源相同
+      const inputEntryIds = new Set(entries.map(e => e.id))
+      const overlap = sk.generatedFromEntries.filter(id => inputEntryIds.has(id)).length
+      const jaccardSk = inputEntryIds.size > 0 ?
+        overlap / Math.max(inputEntryIds.size, sk.generatedFromEntries.length) : 0
+      if (jaccardSk > 0.5) {
+        results.push({
+          id: sk.skillId,
+          skill_name: sk.skillId,
+          status: 'activated',
+          generated_at: '',
+          match_type: 'source_document',
+          can_merge: false,
+          is_activated: true,
+        })
+      }
+    }
+    void skDocIds // suppress unused warning
+  }
+
+  return results
 }
 
 function inferConfidence(content: string): number {
@@ -874,20 +1074,26 @@ function extractTextFromDocxBinary(buffer: Buffer): string {
 
 // ─── Phase 4: Quality Score + Conflict Detection ─────────────────────────────
 
-/** 扫描已激活的 Adapt Skill 列表（从 skills/.claude/skills/ 目录） */
-function getActivatedSkills(): Array<{ skillId: string; module: string; func_type: string; content: string; keywords: string[]; generatedFromEntries: string[] }> {
+/** 扫描已激活的 Adapt Skill 列表（从 skills/.claude/skills/ 目录）
+ * 自动跳过 frontmatter 中 status: deprecated / archived 的 Skill
+ */
+function getActivatedSkills(): Array<{ skillId: string; module: string; func_type: string; content: string; keywords: string[]; generatedFromEntries: string[]; status?: string }> {
   const root = join(tahpPaths.projectRoot, 'skills', '.claude', 'skills')
   if (!existsSync(root)) return []
-  const results: Array<{ skillId: string; module: string; func_type: string; content: string; keywords: string[]; generatedFromEntries: string[] }> = []
+  const results: Array<{ skillId: string; module: string; func_type: string; content: string; keywords: string[]; generatedFromEntries: string[]; status?: string }> = []
   try {
     for (const entry of readdirSync(root, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
       const skillMd = join(root, entry.name, 'SKILL.md')
       if (!existsSync(skillMd)) continue
       try {
         const content = readFileSync(skillMd, 'utf-8')
         const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
         const fmRaw = fmMatch?.[1] || ''
+        // 检查 frontmatter status，跳过已废弃/已归档的 Skill
+        const statusMatch = fmRaw.match(/^status:\s*['"]?(\w+)['"]?\s*$/m)
+        const fmStatus = statusMatch?.[1]?.trim() || ''
+        if (fmStatus === 'deprecated' || fmStatus === 'archived') continue
         const modMatch = fmRaw.match(/^module:\s*(.+)$/m)
         const ftMatch  = fmRaw.match(/^func_type:\s*(.+)$/m)
         // 读取生成来源的 entry_ids（生成时写入 frontmatter）
@@ -903,6 +1109,7 @@ function getActivatedSkills(): Array<{ skillId: string; module: string; func_typ
           content,
           keywords: extractKeywords(content),
           generatedFromEntries,
+          status: fmStatus || 'active',
         })
       } catch { /* skip */ }
     }
@@ -1040,7 +1247,12 @@ function parseEvalCasesFromLLM(text: string): EvalCase[] {
 }
 
 /** Skill 生成 Prompt */
-function buildSkillGenPrompt(entries: KnowledgeEntry[], module: string, funcType: string): { system: string; user: string } {
+function buildSkillGenPrompt(
+  entries: KnowledgeEntry[],
+  module: string,
+  funcType: string,
+  documents?: KnowledgeDocument[],
+): { system: string; user: string } {
   const funcTypeNames: Record<string, string> = {
     bug_analysis: 'Bug 分析', code_adaptation: '代码适配',
     version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: 'AI 自检',
@@ -1049,60 +1261,89 @@ function buildSkillGenPrompt(entries: KnowledgeEntry[], module: string, funcType
     telephony: '通信模块', 'kernel-driver': '内核驱动', 'power-mgmt': '功耗管理', shared: '共享模块',
   }
 
-  const entriesText = entries.slice(0, 20).map((e, i) =>
-    `--- 条目 ${i + 1} ---\n${e.content.slice(0, 800)}`
-  ).join('\n\n')
+  // ── 构建内容来源文本：优先使用完整文档，fallback 到条目拼接 ──────────────
+  let sourceContentText = ''
+  let sourceLabel = ''
+
+  if (documents && documents.length > 0) {
+    // 使用完整文档内容（每个文档截取前 8000 字符）
+    sourceContentText = documents.map((doc, i) => {
+      const content = doc.content.length > 8000
+        ? doc.content.slice(0, 8000) + `\n\n... (文档截断，原文共 ${doc.char_count} 字符)`
+        : doc.content
+      return `--- 文档 ${i + 1}: ${doc.title} (${doc.char_count} 字符) ---\n${content}`
+    }).join('\n\n')
+    const totalChars = documents.reduce((s, d) => s + d.char_count, 0)
+    sourceLabel = `${documents.length} 个源文档（共 ${totalChars} 字符）`
+  } else {
+    // fallback: 使用条目拼接
+    sourceContentText = entries.slice(0, 20).map((e, i) =>
+      `--- 条目 ${i + 1} ---\n${e.content.slice(0, 800)}`
+    ).join('\n\n')
+    sourceLabel = `${entries.length} 条知识条目`
+  }
+
+  // ── 条目元数据（辅助分类） ────────────────────────────────────────────
+  const entriesMeta = entries.slice(0, 20).map((e, i) =>
+    `- 条目 ${i + 1}: 关键词=[${e.keywords.slice(0, 5).join(', ')}], 置信度=${e.confidence_score}, 分类=${e.category}`
+  ).join('\n')
 
   const system = `你是 TAHP 平台的 Skill 生成助手，专注于 Android 底软开发领域的知识整合。
-你的任务是将知识条目提炼为结构化、可执行的 Skill 文档，供 AI Agent 在处理开发任务时参考。
+你的任务是将源文档内容提炼为结构化、可执行的 Skill 文档，供 AI Agent 在处理开发任务时参考。
+请尽量保留源文档中的关键技术细节、代码片段、步骤说明，不要遗漏重要信息。
 请使用中文输出。`
 
   const user = `# 任务：生成 Skill 文档
 
 ## 模块：${moduleNames[module] || module}
 ## 业务类型：${funcTypeNames[funcType] || funcType}
-## 知识条目数量：${entries.length}
+## 数据来源：${sourceLabel}
 
-## 知识条目内容
+## 源文档内容（完整）
 
-${entriesText}
+${sourceContentText}
+
+## 知识条目元数据（辅助分类参考）
+
+${entriesMeta}
 
 ---
 
 请按以下模板生成 Skill 文档（直接输出 Markdown 内容，不要额外解释）：
+注意：请充分利用源文档中的完整内容，保留关键技术细节、代码示例和处理步骤，不要省略重要信息。
 
-# [基于知识条目概括的Skill名称]
+# [基于源文档概括的Skill名称]
 
 ## 适用场景
 - 适用模块：${moduleNames[module] || module}
 - 适用业务类型：${funcTypeNames[funcType] || funcType}
-- [列出2-3个典型触发条件，基于知识条目提炼]
+- [列出2-3个典型触发条件，基于源文档提炼]
 
 ## ⚠️ 不适用情况（请人工补充）
-- [基于知识条目推断，至少写2条，并注明"待人工确认"标记]
+- [基于源文档推断，至少写2条，并注明"待人工确认"标记]
 
 ## 核心处理方法
-[将知识条目中的关键步骤/方法提炼为有序步骤列表，具体可操作]
+[将源文档中的关键步骤/方法提炼为有序步骤列表，具体可操作，保留代码片段]
 
 ## 示例
 
 ### 正例
-[从知识条目中选取最典型的案例，格式化展示]
+[从源文档中选取最典型的案例，格式化展示，保留完整技术细节]
 
 ### ⚠️ 反例（请人工补充）
-[如果知识条目有反例则提取，否则写"待人工补充：[描述补充哪类反例]"]
+[如果源文档有反例则提取，否则写"待人工补充：[描述补充哪类反例]"]
 
 ## ⚠️ 版本与平台约束（请确认）
-- Android 版本范围：[待确认，如知识条目有提及则填入]
+- Android 版本范围：[待确认，如源文档有提及则填入]
 - 芯片平台：[待确认]
 - AOSP 分支：[待确认]
 
 ## 注意事项
-[提炼知识条目中的注意事项、常见陷阱]
+[提炼源文档中的注意事项、常见陷阱]
 
 ## 维护信息
 - 维护人：[待指定]
-- 生成来源：知识库 ${entries.length} 条条目
+- 生成来源：${sourceLabel}
 - 模板版本：v1.0
 
 ---
@@ -1376,16 +1617,23 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts', async (ctx) => {
   }
 })
 
-// GET /api/tahp/knowledge/skill-drafts — 查询待审核 Skill 草稿
+// GET /api/tahp/knowledge/skill-drafts — 查询 Skill 草稿（支持多状态筛选，默认排除 archived）
 tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-drafts', async (ctx) => {
   try {
     await initDirs()
-    const { status = 'draft', limit = '20', offset = '0' } = ctx.query
+    const { status, include_archived, limit = '20', offset = '0' } = ctx.query
 
     let drafts = await listSkillDrafts()
 
-    // 筛选状态
-    if (status) drafts = drafts.filter(d => d.status === status)
+    // 状态筛选：支持逗号分隔多值，默认排除 archived
+    if (status) {
+      const statusList = String(status).split(',').map(s => s.trim()).filter(Boolean)
+      if (statusList.length > 0) {
+        drafts = drafts.filter(d => statusList.includes(d.status))
+      }
+    } else if (include_archived !== 'true') {
+      drafts = drafts.filter(d => d.status !== 'archived')
+    }
 
     // 分页
     const pageLimit = Math.min(parseInt(String(limit)) || 20, 100)
@@ -1562,6 +1810,14 @@ tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-suggestions', async (ctx) => 
     await initDirs()
     const entries = await listEntries()
     const activatedSkills = getActivatedSkills()
+    const allDrafts = await listSkillDrafts()
+
+    // 构建已有草稿索引(module::func_type -> true)
+    const draftIndex: Record<string, boolean> = {}
+    for (const d of allDrafts) {
+      if (d.status === 'archived' || d.status === 'deprecated') continue
+      draftIndex[`${d.module}::${d.func_type}`] = true
+    }
 
     // 按 module × func_type 分组（只统计非归档条目）
     const groups: Record<string, { entries: KnowledgeEntry[]; module: string; func_type: string }> = {}
@@ -1590,6 +1846,9 @@ tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-suggestions', async (ctx) => 
         telephony: 'Telephony', 'kernel-driver': '内核驱动', 'power-mgmt': '功耗管理', shared: '共享',
       }
 
+      // 收集源文档信息
+      const sourceDocIds = [...new Set(g.entries.map(e => e.source_document_id).filter(Boolean) as string[])]
+
       return {
         module: g.module,
         func_type: g.func_type,
@@ -1603,6 +1862,8 @@ tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-suggestions', async (ctx) => 
         suggested_skill_name: `${moduleNames[g.module] || g.module} ${funcTypeNames[g.func_type] || g.func_type} Skill`,
         existing_skill_count: existingSkills.length,
         existing_skills: existingSkills,
+        has_draft: !!draftIndex[`${g.module}::${g.func_type}`],
+        source_document_ids: sourceDocIds,
       }
     }).sort((a, b) => b.entry_count - a.entry_count)
 
@@ -1874,6 +2135,520 @@ ${newContent}
   }
 })
 
+// ─── 异步 Skill 生成流程（Phase 3 核心） ──────────────────────────────────────────────
+async function runSkillGenerationStream(
+  jobId: string,
+  params: {
+    mod: string
+    func_type: string
+    entry_ids?: string[]
+    skill_name?: string
+    generated_by?: string
+    document_ids?: string[]
+  }
+): Promise<void> {
+  const emit = (update: Partial<SkillGenJob>) => emitSkillGenEvent(jobId, update)
+  const { mod, func_type, entry_ids, skill_name, generated_by, document_ids } = params
+
+  // Step 0: 初始化
+  emit({ stage: 'init', progress: 5, message: '加载知识条目...' })
+
+  let entriesToUse: KnowledgeEntry[] = []
+  if (Array.isArray(entry_ids) && entry_ids.length > 0) {
+    for (const id of entry_ids) {
+      const e = await readEntry(id)
+      if (e) entriesToUse.push(e)
+    }
+  } else {
+    const all = await listEntries()
+    entriesToUse = all.filter(e =>
+      e.module === mod && e.func_type === func_type && e.status !== 'archived'
+    )
+  }
+
+  if (entriesToUse.length === 0) {
+    emit({ status: 'error', stage: 'error', progress: 0, message: '没有找到可用的知识条目' })
+    return
+  }
+
+  emit({ stage: 'init', progress: 8, message: `已加载 ${entriesToUse.length} 条知识条目` })
+
+  // ── Step 0.5: 加载源文档（完整内容） ────────────────────────────────
+  let sourceDocuments: KnowledgeDocument[] = []
+  const docIdSet = new Set<string>()
+
+  // 优先使用前端传入的 document_ids
+  if (Array.isArray(document_ids) && document_ids.length > 0) {
+    for (const id of document_ids) docIdSet.add(id)
+  } else {
+    // 从条目的 source_document_id 反查
+    for (const e of entriesToUse) {
+      if (e.source_document_id) docIdSet.add(e.source_document_id)
+    }
+  }
+
+  if (docIdSet.size > 0) {
+    emit({ stage: 'init', progress: 12, message: `正在加载 ${docIdSet.size} 个源文档...` })
+    for (const docId of docIdSet) {
+      const doc = await readDocument(docId)
+      if (doc) sourceDocuments.push(doc)
+    }
+    const totalChars = sourceDocuments.reduce((s, d) => s + d.char_count, 0)
+    if (sourceDocuments.length > 0) {
+      emit({ stage: 'init', progress: 15, message: `已加载 ${sourceDocuments.length} 个源文档，共 ${totalChars} 字符` })
+      logger.info({ jobId, docs: sourceDocuments.length, totalChars }, '[kb] loaded source documents for skill generation')
+    }
+  }
+
+  // Step 1: 文档级重复检测
+  emit({ stage: 'duplicate_check', progress: 20, message: '正在检查文档重复...' })
+  const fingerprint = computeContentFingerprint(entriesToUse)
+  const duplicates = await checkDocumentDuplicate(entriesToUse, fingerprint)
+
+  if (duplicates.length > 0) {
+    emit({
+      status: 'completed',
+      stage: 'done',
+      progress: 100,
+      message: `检测到 ${duplicates.length} 个重复 Skill，请先检查已有草稿`,
+      result: {
+        duplicate_detected: true,
+        duplicate_drafts: duplicates,
+      },
+    })
+    return
+  }
+
+  // Step 2: 内容相似度检索
+  emit({ stage: 'similarity_check', progress: 35, message: '检索相似 Skill...' })
+  const normMod = normModule(mod)
+  const normFt = normFuncType(func_type)
+  // 内容 BM25 token 重叠率增强相似度检测
+  const inputTerms = tokenize(entriesToUse.map(e => e.content).join(' '))
+  const allDraftsForSim = await listSkillDrafts()
+  const simResults: Array<{ id: string; type: 'draft' | 'activated'; display_name: string; jaccard_score: number; tier: string; reasons: string[] }> = []
+  const activatedForSim = getActivatedSkills()
+  for (const sk of activatedForSim) {
+    if (normModule(sk.module) !== normMod && sk.module !== mod) continue
+    if (normFuncType(sk.func_type) !== normFt && sk.func_type !== func_type) continue
+    const skTerms = tokenize(sk.content)
+    const commonTerms = inputTerms.filter(t => skTerms.includes(t)).length
+    const contentSim = inputTerms.length > 0 ? commonTerms / Math.max(inputTerms.length, skTerms.length) : 0
+    if (contentSim > 0.5) {
+      simResults.push({ id: sk.skillId, type: 'activated', display_name: sk.skillId, jaccard_score: contentSim, tier: 'partial', reasons: [`内容相似度 ${Math.round(contentSim * 100)}%`] })
+    }
+  }
+  for (const d of allDraftsForSim) {
+    if (d.status === 'rejected') continue
+    if (normModule(d.module) !== normMod && d.module !== mod) continue
+    if (normFuncType(d.func_type) !== normFt && d.func_type !== func_type) continue
+    const dTerms = tokenize(d.content)
+    const commonTerms = inputTerms.filter(t => dTerms.includes(t)).length
+    const contentSim = inputTerms.length > 0 ? commonTerms / Math.max(inputTerms.length, dTerms.length) : 0
+    if (contentSim > 0.5) {
+      simResults.push({ id: d.id, type: 'draft', display_name: d.skill_name, jaccard_score: contentSim, tier: 'partial', reasons: [`内容相似度 ${Math.round(contentSim * 100)}%`] })
+    }
+  }
+
+  if (simResults.length > 0) {
+    emit({
+      status: 'completed',
+      stage: 'done',
+      progress: 100,
+      message: `发现 ${simResults.length} 个相似 Skill，建议融合而非新建`,
+      result: { similar_skills: simResults },
+    })
+    return
+  }
+
+  // Step 3-5: LLM 生成
+  const sourceInfo = sourceDocuments.length > 0
+    ? `${sourceDocuments.length} 个源文档（共 ${sourceDocuments.reduce((s, d) => s + d.char_count, 0)} 字符）`
+    : `${entriesToUse.length} 条知识条目`
+  emit({ stage: 'llm_generate', progress: 45, message: `正在调用 LLM 生成 Skill 文档（来源: ${sourceInfo}）...` })
+  let generatedContent = ''
+  let evalCases: EvalCase[] = []
+  let llmError: string | undefined
+  let llmErrorDetail: string | undefined
+
+  try {
+    const { system, user } = buildSkillGenPrompt(entriesToUse, mod, func_type, sourceDocuments.length > 0 ? sourceDocuments : undefined)
+    const llmResponse = await callTahpLLM(system, user, { maxTokens: 4096 })
+    emit({ stage: 'llm_generate', progress: 65, message: '解析 LLM 输出...' })
+    const evalStart = llmResponse.indexOf('EVAL_CASE_START')
+    if (evalStart > 0) {
+      generatedContent = llmResponse.slice(0, evalStart).trim()
+      evalCases = parseEvalCasesFromLLM(llmResponse)
+    } else {
+      generatedContent = llmResponse.trim()
+    }
+  } catch (e: unknown) {
+    llmError = (e as Error).message
+    llmErrorDetail = (e as Error).message
+    logger.warn({ llmError }, '[kb] LLM generation failed, using template fallback')
+    const funcTypeNames: Record<string, string> = {
+      bug_analysis: 'Bug 分析', code_adaptation: '代码适配',
+      version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: 'AI 自检',
+    }
+    // 增强 fallback：利用条目关键词和文档信息生成更有价值的骨架
+    const keywordsSummary = [...new Set(entriesToUse.flatMap(e => e.keywords))].slice(0, 15).join(', ')
+    const docInfoLine = sourceDocuments.length > 0
+      ? `- 源文档：${sourceDocuments.map(d => `${d.title} (${d.char_count}字符)`).join(', ')}`
+      : `- 知识条目：${entriesToUse.length} 条`
+    generatedContent = `# ${skill_name || `${mod} ${funcTypeNames[func_type] || func_type} Skill`}\n\n## 适用场景\n- 适用模块：${mod}\n- 适用业务类型：${func_type}\n- 关联关键词：${keywordsSummary}\n${docInfoLine}\n\n## ⚠️ 不适用情况\n- [待人工确认]\n\n## 核心处理方法\n> ⚠️ LLM 生成失败（${llmError}），已使用模板骨架。请基于以下源信息手动完善：\n\n${entriesToUse.slice(0, 8).map((e, i) => `${i + 1}. [${e.category}] ${e.content.slice(0, 200)}`).join('\n')}\n\n## 注意事项\n- 关键词：${keywordsSummary}\n\n## 维护信息\n- 维护人：[待指定]\n- 模板版本：v1.0`
+  }
+
+  // Step 6: 解析 eval 用例
+  emit({ stage: 'eval_extract', progress: 78, message: '解析 eval 用例...' })
+
+  // Step 7: 质量评分
+  emit({ stage: 'quality_score', progress: 90, message: '计算质量评分...' })
+  const ts = Date.now().toString(36)
+  const skillId = `kb-skill-${mod.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${func_type.replace(/_/g, '-')}-${ts}`
+  const activatedSkills = getActivatedSkills()
+  const sourceDocIds = [...new Set(entriesToUse.map(e => e.source_document_id).filter(Boolean) as string[])]
+  const draft: SkillDraft = {
+    id: `sd-${randomUUID().slice(0, 8)}`,
+    skill_id: skillId,
+    skill_name: skill_name || `${mod} ${func_type} Skill`,
+    domain_label: `${mod} — ${func_type}`,
+    module: mod,
+    func_type: normFt,
+    func_type_raw: func_type,
+    module_raw: mod,
+    category: getFuncTypeCategory(func_type),
+    content: generatedContent,
+    generated_from_entries: entriesToUse.map(e => e.id),
+    generated_at: new Date().toISOString(),
+    generated_by: generated_by || undefined,
+    status: 'draft',
+    eval_cases: evalCases,
+    template_version: 'v1.0',
+    conflicts: [],
+    source_document_ids: sourceDocIds,
+    content_fingerprint: fingerprint,
+  }
+  draft.conflicts = detectConflicts(draft, activatedSkills)
+  draft.quality_score = calculateQualityScore(draft, draft.conflicts)
+
+  // Step 8: 持久化
+  emit({ stage: 'quality_score', progress: 98, message: '保存 Skill 草稿...' })
+  await writeSkillDraft(draft)
+  logger.info({ draftId: draft.id, skillId, module: mod, func_type, llmError }, '[kb] skill draft generated via stream')
+
+  // Step 9: 完成
+  emit({
+    status: 'completed',
+    stage: 'done',
+    progress: 100,
+    message: llmError ? `LLM 调用失败，已使用模板骨架` : 'Skill 生成成功',
+    result: { draft, llm_error: llmError, llm_error_detail: llmErrorDetail },
+  })
+}
+
+// POST /api/tahp/knowledge/skill-drafts/check-duplicate — 文档级重复检测
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/check-duplicate', async (ctx) => {
+  try {
+    await initDirs()
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const entryIds: string[] = Array.isArray(body.entry_ids) ? body.entry_ids.map(String) : []
+    if (!entryIds.length) {
+      ctx.status = 400
+      ctx.body = { success: false, error: '缺少 entry_ids' }
+      return
+    }
+    const entries: KnowledgeEntry[] = []
+    for (const id of entryIds) {
+      const e = await readEntry(id)
+      if (e) entries.push(e)
+    }
+    const fingerprint = computeContentFingerprint(entries)
+    const duplicates = await checkDocumentDuplicate(entries, fingerprint)
+    ctx.body = {
+      success: true,
+      data: {
+        duplicate_detected: duplicates.length > 0,
+        duplicates,
+        fingerprint,
+      },
+    }
+  } catch (err) {
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/duplicate-decision — 记录用户重复决策
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/duplicate-decision', async (ctx) => {
+  try {
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const { draft_id, decision, target_id } = body
+    if (!draft_id || !decision) {
+      ctx.status = 400
+      ctx.body = { success: false, error: '缺少 draft_id 或 decision' }
+      return
+    }
+    const draft = await readSkillDraft(String(draft_id))
+    if (!draft) {
+      ctx.status = 404
+      ctx.body = { success: false, error: '草稿不存在' }
+      return
+    }
+    const decisions = draft.duplicate_decisions || []
+    decisions.push({
+      decision: String(decision) as 'force_create' | 'view_existing' | 'merge' | 'upgrade_draft',
+      target_id: target_id ? String(target_id) : undefined,
+      decided_at: new Date().toISOString(),
+    })
+    draft.duplicate_decisions = decisions
+    await writeSkillDraft(draft)
+    ctx.body = { success: true, data: draft }
+  } catch (err) {
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/recommend-merge-target — 智能融合目标推荐
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/recommend-merge-target', async (ctx) => {
+  try {
+    await initDirs()
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const entryIds: string[] = Array.isArray(body.entry_ids) ? body.entry_ids.map(String) : []
+    const inputModule = String(body.module || '')
+    const inputFuncType = String(body.func_type || '')
+
+    // 加载条目获取关键词
+    const entryKeywords: string[] = []
+    for (const id of entryIds) {
+      const e = await readEntry(id)
+      if (e && e.keywords) entryKeywords.push(...e.keywords)
+    }
+    const inputKwSet = new Set(entryKeywords)
+
+    type RecommendItem = {
+      target_id: string
+      target_name: string
+      target_type: 'draft' | 'activated'
+      match_score: number
+      new_topics: string[]
+      new_topics_count: number
+      common_topics_count: number
+      estimated_quality_delta: number
+      reason: string
+      can_merge: boolean
+      upgrade_hint?: string
+    }
+    const recommendations: RecommendItem[] = []
+
+    // 扫描草稿
+    const allDrafts = await listSkillDrafts()
+    for (const d of allDrafts) {
+      if (d.status === 'rejected') continue
+      if (d.module !== inputModule && normModule(d.module) !== normModule(inputModule)) continue
+      if (d.func_type !== inputFuncType &&
+        normFuncType(d.func_type) !== normFuncType(inputFuncType) &&
+        d.func_type_raw !== inputFuncType) continue
+      const draftKws = extractKeywords(d.content)
+      const newTopics = [...inputKwSet].filter(k => !draftKws.includes(k))
+      const commonTopics = [...inputKwSet].filter(k => draftKws.includes(k))
+      const matchScore = (newTopics.length * 0.4 + commonTopics.length * 0.3) / Math.max(inputKwSet.size, 1)
+      if (matchScore < 0.1) continue
+      recommendations.push({
+        target_id: d.id,
+        target_name: d.skill_name,
+        target_type: 'draft',
+        match_score: Math.round(matchScore * 100) / 100,
+        new_topics: newTopics.slice(0, 5),
+        new_topics_count: newTopics.length,
+        common_topics_count: commonTopics.length,
+        estimated_quality_delta: Math.min(30, newTopics.length * 3),
+        reason: `可补充 ${newTopics.length} 个新知识主题，预估质量分提升 ${Math.min(30, newTopics.length * 3)} 分`,
+        can_merge: true,
+      })
+    }
+
+    // 扫描已激活 Skill
+    const activatedSkills = getActivatedSkills()
+    for (const sk of activatedSkills) {
+      if (normModule(sk.module) !== normModule(inputModule) && sk.module !== inputModule) continue
+      if (normFuncType(sk.func_type) !== normFuncType(inputFuncType) && sk.func_type !== inputFuncType) continue
+      const draftKws = sk.keywords
+      const newTopics = [...inputKwSet].filter(k => !draftKws.includes(k))
+      const commonTopics = [...inputKwSet].filter(k => draftKws.includes(k))
+      const matchScore = (newTopics.length * 0.4 + commonTopics.length * 0.3) / Math.max(inputKwSet.size, 1)
+      if (matchScore < 0.1) continue
+      recommendations.push({
+        target_id: sk.skillId,
+        target_name: sk.skillId,
+        target_type: 'activated',
+        match_score: Math.round(matchScore * 100) / 100,
+        new_topics: newTopics.slice(0, 5),
+        new_topics_count: newTopics.length,
+        common_topics_count: commonTopics.length,
+        estimated_quality_delta: Math.min(20, newTopics.length * 2),
+        reason: `已激活的生产 Skill，新建升级草案后融合`,
+        can_merge: false,
+        upgrade_hint: '将以此 Skill 为基础生成升级草案',
+      })
+    }
+
+    recommendations.sort((a, b) => b.match_score - a.match_score)
+    ctx.body = { success: true, data: { recommendations: recommendations.slice(0, 5) } }
+  } catch (err) {
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/upgrade-draft — 已激活 Skill 生成升级草案
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/upgrade-draft', async (ctx) => {
+  try {
+    await initDirs()
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const { skill_id, entry_ids } = body
+    if (!skill_id) {
+      ctx.status = 400
+      ctx.body = { success: false, error: '缺少 skill_id' }
+      return
+    }
+    const skillsRoot = join(tahpPaths.projectRoot, 'skills', '.claude', 'skills')
+    const skillDir = join(skillsRoot, String(skill_id))
+    const skillMd = join(skillDir, 'SKILL.md')
+    if (!existsSync(skillMd)) {
+      ctx.status = 404
+      ctx.body = { success: false, error: `已激活 Skill ${skill_id} 不存在` }
+      return
+    }
+    const originalContent = readFileSync(skillMd, 'utf-8')
+    const bodyPart = originalContent.replace(/^---[\s\S]*?---\n*/, '')
+    const ts = Date.now().toString(36)
+    const newSkillId = `${skill_id}-upgrade-${ts}`
+    const newEntryIds: string[] = Array.isArray(entry_ids) ? entry_ids.map(String) : []
+    const upgradeDraft: SkillDraft = {
+      id: `sd-${randomUUID().slice(0, 8)}`,
+      skill_id: newSkillId,
+      skill_name: `${skill_id} (增强版)`,
+      domain_label: `upgrade:${skill_id}`,
+      module: '',
+      func_type: '',
+      content: bodyPart.trim(),
+      generated_from_entries: newEntryIds,
+      generated_at: new Date().toISOString(),
+      generated_by: 'upgrade',
+      status: 'draft',
+      source_document_ids: [],
+    }
+    await writeSkillDraft(upgradeDraft)
+    ctx.body = { success: true, data: { draft: upgradeDraft } }
+  } catch (err) {
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/generate-stream — 启动异步生成任务
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/generate-stream', async (ctx) => {
+  try {
+    await initDirs()
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const { module: mod, func_type, entry_ids, skill_name, generated_by, document_ids } = body
+    if (!mod || !func_type) {
+      ctx.status = 400
+      ctx.body = { success: false, error: '缺少 module 或 func_type' }
+      return
+    }
+    const jobId = randomUUID()
+    const now = new Date()
+    const ttl = new Date(now.getTime() + 30 * 60 * 1000)
+    const job: SkillGenJob = {
+      id: jobId,
+      status: 'running',
+      stage: 'init',
+      progress: 0,
+      message: '初始化...',
+      created_at: now.toISOString(),
+      ttl_expires_at: ttl.toISOString(),
+    }
+    skillGenJobs.set(jobId, job)
+    ctx.body = { success: true, data: { job_id: jobId } }
+
+    // 异步执行生成流程（不阻塞响应）
+    runSkillGenerationStream(jobId, {
+      mod: String(mod),
+      func_type: String(func_type),
+      entry_ids: Array.isArray(entry_ids) ? entry_ids.map(String) : undefined,
+      skill_name: skill_name ? String(skill_name) : undefined,
+      generated_by: generated_by ? String(generated_by) : undefined,
+      document_ids: Array.isArray(document_ids) ? document_ids.map(String) : undefined,
+    }).catch(err => {
+      emitSkillGenEvent(jobId, {
+        status: 'error',
+        stage: 'error',
+        message: `生成失败：${(err as Error).message}`,
+      })
+    })
+  } catch (err) {
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// GET /api/tahp/knowledge/skill-drafts/generate-stream/:jobId — SSE 订阅生成进度
+tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-drafts/generate-stream/:jobId', async (ctx) => {
+  const { jobId } = ctx.params
+  const job = skillGenJobs.get(jobId)
+  if (!job) {
+    ctx.status = 404
+    ctx.body = { success: false, error: 'Job 不存在' }
+    return
+  }
+  const stream = new PassThrough()
+  ctx.status = 200
+  ctx.set('Content-Type', 'text/event-stream; charset=utf-8')
+  ctx.set('Cache-Control', 'no-cache')
+  ctx.set('Connection', 'keep-alive')
+  ctx.body = stream
+
+  const send = (data: string) => {
+    try {
+      stream.write(`data: ${data}\n\n`)
+    } catch { /* ignore */ }
+  }
+
+  // 立即发送当前状态
+  send(JSON.stringify(job))
+
+  if (job.status === 'completed' || job.status === 'error') {
+    stream.end()
+    return
+  }
+
+  // 注册监听器
+  const listeners = skillGenListeners.get(jobId) || []
+  listeners.push(send)
+  skillGenListeners.set(jobId, listeners)
+
+  // 客户端断开时移除监听器
+  ctx.req.on('close', () => {
+    const ls = skillGenListeners.get(jobId) || []
+    skillGenListeners.set(jobId, ls.filter(l => l !== send))
+    try { stream.end() } catch { /* ignore */ }
+  })
+})
+
+// GET /api/tahp/knowledge/skill-drafts/gen-job/:jobId — 一次性获取任务状态
+tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-drafts/gen-job/:jobId', async (ctx) => {
+  const { jobId } = ctx.params
+  const job = skillGenJobs.get(jobId)
+  if (!job) {
+    ctx.status = 404
+    ctx.body = { success: false, error: 'Job 不存在或已过期' }
+    return
+  }
+  ctx.body = { success: true, data: job }
+})
+
 // POST /api/tahp/knowledge/skill-drafts/generate — LLM 生成 Skill 草稿
 tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/generate', async (ctx) => {
   try {
@@ -2069,9 +2844,12 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/:draftId/review', asy
         const skillDir = join(skillsRoot, updated.skill_id)
         mkdirSync(skillDir, { recursive: true })
 
-        // normalize 为中文 canonical 值
+        // normalize 为中文 canonical 值，同时保留 raw 存储
         const normFT  = normFuncType(updated.func_type)
         const normMod = normModule(updated.module)
+        const rawFT = updated.func_type_raw || updated.func_type
+        const rawMod = updated.module_raw || updated.module
+        const category = getFuncTypeCategory(updated.func_type)
         const entryIdsYaml = JSON.stringify(updated.generated_from_entries ?? [])
         const frontmatter = [
           `tahp_adapt_skill: true`,
@@ -2079,7 +2857,10 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/:draftId/review', asy
           `domain_label: "${updated.domain_label}"`,
           `domain_id: "${updated.skill_id}"`,
           `module: "${normMod}"`,
+          `module_raw: "${rawMod}"`,
           `func_type: "${normFT}"`,
+          `func_type_raw: "${rawFT}"`,
+          `category: "${category}"`,
           // scanner 读取的字段（camelCase）
           `funcType: "${normFT}"`,
           `group: "${normMod}"`,
@@ -2679,6 +3460,429 @@ tahpKnowledgeRoutes.get('/api/tahp/knowledge/documents/:docId/chunks', async (ct
   }
 })
 
+// ─── 生命周期管控路由 (Lifecycle Management) ────────────────────────────────────
+
+// DELETE /api/tahp/knowledge/skill-drafts/:draftId — 删除草稿（仅 draft/rejected）
+tahpKnowledgeRoutes.delete('/api/tahp/knowledge/skill-drafts/:draftId', async (ctx) => {
+  try {
+    const { draftId } = ctx.params
+    const draft = await readSkillDraft(draftId)
+    if (!draft) {
+      ctx.status = 404; ctx.body = { success: false, error: '草稿不存在' }; return
+    }
+    if (draft.status !== 'draft' && draft.status !== 'rejected') {
+      ctx.status = 409; ctx.body = { success: false, error: `仅 draft/rejected 状态可删除，当前状态: ${draft.status}` }; return
+    }
+    try { unlinkSync(getSkillDraftPath(draftId)) } catch { /* already gone */ }
+    writeAuditLog({
+      action: 'skill_draft_deleted',
+      actor: 'admin',
+      target_type: 'skill_draft',
+      target_id: draftId,
+      target_name: draft.skill_name,
+      details: { status: draft.status, module: draft.module, func_type: draft.func_type },
+    })
+    ctx.body = { success: true, data: { deleted: draftId } }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/:draftId/deprecate — 废弃已激活 Skill
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/:draftId/deprecate', async (ctx) => {
+  try {
+    const { draftId } = ctx.params
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const reason = String(body.reason || '').trim()
+    if (!reason) {
+      ctx.status = 400; ctx.body = { success: false, error: '废弃原因为必填' }; return
+    }
+    const draft = await readSkillDraft(draftId)
+    if (!draft) {
+      ctx.status = 404; ctx.body = { success: false, error: '草稿不存在' }; return
+    }
+    if (draft.status !== 'approved') {
+      ctx.status = 409; ctx.body = { success: false, error: `仅 approved 状态可废弃，当前状态: ${draft.status}` }; return
+    }
+    // 修改磁盘 SKILL.md 的 frontmatter status
+    const skillDir = join(tahpPaths.projectRoot, 'skills', '.claude', 'skills', draft.skill_id)
+    const skillMd = join(skillDir, 'SKILL.md')
+    if (existsSync(skillMd)) {
+      let content = readFileSync(skillMd, 'utf-8')
+      const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/)
+      if (fmMatch) {
+        let fmLines = fmMatch[1].split(/\r?\n/)
+        const statusIdx = fmLines.findIndex(l => l.startsWith('status:'))
+        const statusLine = `status: "deprecated"`
+        if (statusIdx >= 0) fmLines[statusIdx] = statusLine
+        else fmLines.push(statusLine)
+        const rest = content.slice(fmMatch[0].length)
+        content = `---\n${fmLines.join('\n')}\n---\n${rest}`
+        writeFileSync(skillMd, content, 'utf-8')
+      }
+    }
+    // 更新草稿状态
+    draft.status = 'deprecated'
+    draft.deprecated_at = new Date().toISOString()
+    draft.deprecated_by = String(body.deprecated_by || 'admin')
+    draft.deprecate_reason = reason
+    await writeSkillDraft(draft)
+    writeAuditLog({
+      action: 'skill_draft_deprecated',
+      actor: draft.deprecated_by,
+      target_type: 'skill_draft',
+      target_id: draftId,
+      target_name: draft.skill_name,
+      reason,
+      details: { skill_id: draft.skill_id, module: draft.module, func_type: draft.func_type },
+    })
+    ctx.body = { success: true, data: draft }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/:draftId/deactivate — 下线(物理移除磁盘文件)
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/:draftId/deactivate', async (ctx) => {
+  try {
+    const { draftId } = ctx.params
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const reason = String(body.reason || '').trim()
+    if (!reason) {
+      ctx.status = 400; ctx.body = { success: false, error: '下线原因为必填' }; return
+    }
+    const draft = await readSkillDraft(draftId)
+    if (!draft) {
+      ctx.status = 404; ctx.body = { success: false, error: '草稿不存在' }; return
+    }
+    if (draft.status !== 'approved' && draft.status !== 'deprecated') {
+      ctx.status = 409; ctx.body = { success: false, error: `仅 approved/deprecated 状态可下线，当前状态: ${draft.status}` }; return
+    }
+    // 移动磁盘文件到 .archive
+    const skillsRoot = join(tahpPaths.projectRoot, 'skills', '.claude', 'skills')
+    const srcDir = join(skillsRoot, draft.skill_id)
+    const archiveDir = join(skillsRoot, '.archive')
+    const destDir = join(archiveDir, draft.skill_id)
+    if (existsSync(srcDir)) {
+      mkdirSync(archiveDir, { recursive: true })
+      if (existsSync(destDir)) rmSync(destDir, { recursive: true, force: true })
+      renameSync(srcDir, destDir)
+    }
+    const originalStatus = draft.status
+    draft.status = 'archived'
+    draft.archived_at = new Date().toISOString()
+    draft.archived_by = String(body.archived_by || 'admin')
+    draft.archived_from_status = originalStatus
+    draft.deprecate_reason = draft.deprecate_reason || reason
+    await writeSkillDraft(draft)
+    writeAuditLog({
+      action: 'skill_draft_deactivated',
+      actor: draft.archived_by,
+      target_type: 'skill_draft',
+      target_id: draftId,
+      target_name: draft.skill_name,
+      reason,
+      details: { skill_id: draft.skill_id, module: draft.module, func_type: draft.func_type, previous_status: originalStatus },
+    })
+    ctx.body = { success: true, data: draft }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/:draftId/archive — 归档草稿
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/:draftId/archive', async (ctx) => {
+  try {
+    const { draftId } = ctx.params
+    const draft = await readSkillDraft(draftId)
+    if (!draft) {
+      ctx.status = 404; ctx.body = { success: false, error: '草稿不存在' }; return
+    }
+    if (draft.status === 'archived') {
+      ctx.status = 409; ctx.body = { success: false, error: '已经是归档状态' }; return
+    }
+    const originalStatus = draft.status
+    draft.status = 'archived'
+    draft.archived_at = new Date().toISOString()
+    draft.archived_by = 'admin'
+    draft.archived_from_status = originalStatus
+    await writeSkillDraft(draft)
+    writeAuditLog({
+      action: 'skill_draft_archived',
+      actor: 'admin',
+      target_type: 'skill_draft',
+      target_id: draftId,
+      target_name: draft.skill_name,
+      details: { previous_status: originalStatus },
+    })
+    ctx.body = { success: true, data: draft }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/:draftId/restore — 恢复归档草稿
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/:draftId/restore', async (ctx) => {
+  try {
+    const { draftId } = ctx.params
+    const draft = await readSkillDraft(draftId)
+    if (!draft) {
+      ctx.status = 404; ctx.body = { success: false, error: '草稿不存在' }; return
+    }
+    if (draft.status !== 'archived') {
+      ctx.status = 409; ctx.body = { success: false, error: `仅 archived 状态可恢复，当前状态: ${draft.status}` }; return
+    }
+    const restoreTo = draft.archived_from_status || 'draft'
+    draft.status = restoreTo as SkillDraft['status']
+    delete draft.archived_at
+    delete draft.archived_by
+    delete draft.archived_from_status
+    // 如果之前下线了磁盘文件，从 .archive 移回
+    if (draft.skill_id) {
+      const skillsRoot = join(tahpPaths.projectRoot, 'skills', '.claude', 'skills')
+      const archiveSrc = join(skillsRoot, '.archive', draft.skill_id)
+      const destDir = join(skillsRoot, draft.skill_id)
+      if (existsSync(archiveSrc) && !existsSync(destDir)) {
+        renameSync(archiveSrc, destDir)
+      }
+    }
+    await writeSkillDraft(draft)
+    writeAuditLog({
+      action: 'skill_draft_restored',
+      actor: 'admin',
+      target_type: 'skill_draft',
+      target_id: draftId,
+      target_name: draft.skill_name,
+      details: { restored_to: restoreTo },
+    })
+    ctx.body = { success: true, data: draft }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/bulk-cleanup — 批量清理 rejected 草稿
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/bulk-cleanup', async (ctx) => {
+  try {
+    await initDirs()
+    const allDrafts = await listSkillDrafts()
+    const rejected = allDrafts.filter(d => d.status === 'rejected')
+    let cleaned = 0
+    for (const d of rejected) {
+      try { unlinkSync(getSkillDraftPath(d.id)); cleaned++ } catch { /* skip */ }
+    }
+    writeAuditLog({
+      action: 'skill_bulk_cleanup',
+      actor: 'admin',
+      target_type: 'skill_draft',
+      target_id: 'bulk',
+      details: { cleaned_count: cleaned, draft_ids: rejected.map(d => d.id) },
+    })
+    ctx.body = { success: true, data: { cleaned } }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/bulk-deprecate — 批量废弃已激活 Skill
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/bulk-deprecate', async (ctx) => {
+  try {
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const draftIds: string[] = Array.isArray(body.draft_ids) ? body.draft_ids.map(String) : []
+    const reason = String(body.reason || '').trim()
+    if (!draftIds.length) {
+      ctx.status = 400; ctx.body = { success: false, error: '缺少 draft_ids' }; return
+    }
+    if (!reason) {
+      ctx.status = 400; ctx.body = { success: false, error: '废弃原因为必填' }; return
+    }
+    let deprecated = 0
+    for (const id of draftIds) {
+      const draft = await readSkillDraft(id)
+      if (!draft || draft.status !== 'approved') continue
+      // 修改 SKILL.md frontmatter
+      const skillMd = join(tahpPaths.projectRoot, 'skills', '.claude', 'skills', draft.skill_id, 'SKILL.md')
+      if (existsSync(skillMd)) {
+        let content = readFileSync(skillMd, 'utf-8')
+        const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/)
+        if (fmMatch) {
+          let fmLines = fmMatch[1].split(/\r?\n/)
+          const statusIdx = fmLines.findIndex(l => l.startsWith('status:'))
+          if (statusIdx >= 0) fmLines[statusIdx] = `status: "deprecated"`
+          else fmLines.push(`status: "deprecated"`)
+          const rest = content.slice(fmMatch[0].length)
+          content = `---\n${fmLines.join('\n')}\n---\n${rest}`
+          writeFileSync(skillMd, content, 'utf-8')
+        }
+      }
+      draft.status = 'deprecated'
+      draft.deprecated_at = new Date().toISOString()
+      draft.deprecated_by = 'admin'
+      draft.deprecate_reason = reason
+      await writeSkillDraft(draft)
+      deprecated++
+    }
+    writeAuditLog({
+      action: 'skill_bulk_deprecate',
+      actor: 'admin',
+      target_type: 'skill_draft',
+      target_id: 'bulk',
+      reason,
+      details: { deprecated_count: deprecated, draft_ids: draftIds },
+    })
+    ctx.body = { success: true, data: { deprecated } }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// ─── 知识条目管理增强路由 ──────────────────────────────────────────────────────
+
+// DELETE /api/tahp/knowledge/entries/:entryId/hard — 物理删除条目
+tahpKnowledgeRoutes.delete('/api/tahp/knowledge/entries/:entryId/hard', async (ctx) => {
+  try {
+    const { entryId } = ctx.params
+    const entry = await readEntry(entryId)
+    if (!entry) {
+      ctx.status = 404; ctx.body = { success: false, error: '条目不存在' }; return
+    }
+    try { unlinkSync(getEntryPath(entryId)) } catch { /* already gone */ }
+    writeAuditLog({
+      action: 'entry_hard_deleted',
+      actor: 'admin',
+      target_type: 'knowledge_entry',
+      target_id: entryId,
+      details: { module: entry.module, func_type: entry.func_type, status: entry.status },
+    })
+    ctx.body = { success: true, data: { deleted: entryId } }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/entries/bulk-archive — 批量归档条目
+// 支持 ids: string[] 精确归档，无 ids 时按 module/before 筛选
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/entries/bulk-archive', async (ctx) => {
+  try {
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : null
+    const filterModule = body.module ? String(body.module) : undefined
+    const filterBefore = body.before ? String(body.before) : undefined
+    const allEntries = await listEntries()
+    let archived = 0
+    for (const entry of allEntries) {
+      if (entry.status === 'archived') continue
+      if (ids) {
+        if (!ids.includes(entry.id)) continue
+      } else {
+        if (filterModule && entry.module !== filterModule) continue
+        if (filterBefore && entry.created_at >= filterBefore) continue
+      }
+      entry.status = 'archived'
+      entry.updated_at = new Date().toISOString()
+      await writeEntry(entry)
+      archived++
+    }
+    writeAuditLog({
+      action: 'entry_bulk_archived',
+      actor: 'admin',
+      target_type: 'knowledge_entry',
+      target_id: ids ? ids.join(',') : 'bulk',
+      details: { archived_count: archived, ids, filter_module: filterModule, filter_before: filterBefore },
+    })
+    ctx.body = { success: true, data: { archived } }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/entries/bulk-delete — 批量物理删除条目
+// 支持 ids: string[] 精确删除，无 ids 时只删除 archived 状态
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/entries/bulk-delete', async (ctx) => {
+  try {
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const ids = Array.isArray(body.ids) ? (body.ids as string[]) : null
+    const filterModule = body.module ? String(body.module) : undefined
+    const allEntries = await listEntries()
+    let deleted = 0
+    for (const entry of allEntries) {
+      if (ids) {
+        if (!ids.includes(entry.id)) continue
+      } else {
+        if (entry.status !== 'archived') continue
+        if (filterModule && entry.module !== filterModule) continue
+      }
+      try { unlinkSync(getEntryPath(entry.id)); deleted++ } catch { /* skip */ }
+    }
+    writeAuditLog({
+      action: 'entry_bulk_deleted',
+      actor: 'admin',
+      target_type: 'knowledge_entry',
+      target_id: ids ? ids.join(',') : 'bulk',
+      details: { deleted_count: deleted, ids, filter_module: filterModule },
+    })
+    ctx.body = { success: true, data: { deleted } }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// GET /api/tahp/knowledge/stats/enhanced — 增强统计
+tahpKnowledgeRoutes.get('/api/tahp/knowledge/stats/enhanced', async (ctx) => {
+  try {
+    await initDirs()
+    const allEntries = await listEntries()
+    const allDrafts = await listSkillDrafts()
+    const activated = getActivatedSkills()
+
+    // 条目状态分布
+    const entryByStatus: Record<string, number> = {}
+    for (const e of allEntries) {
+      entryByStatus[e.status] = (entryByStatus[e.status] || 0) + 1
+    }
+    // 草稿状态分布
+    const draftByStatus: Record<string, number> = {}
+    for (const d of allDrafts) {
+      draftByStatus[d.status] = (draftByStatus[d.status] || 0) + 1
+    }
+    // 过期条目数（expires_at < now）
+    const now = new Date().toISOString()
+    const expiredEntries = allEntries.filter(e => e.expires_at && e.expires_at < now && e.status !== 'archived').length
+    // 废弃 Skill 数
+    const deprecatedSkills = allDrafts.filter(d => d.status === 'deprecated').length
+
+    ctx.body = {
+      success: true,
+      data: {
+        entry_by_status: entryByStatus,
+        draft_by_status: draftByStatus,
+        total_entries: allEntries.length,
+        total_drafts: allDrafts.length,
+        activated_skills: activated.length,
+        expired_entries: expiredEntries,
+        deprecated_skills: deprecatedSkills,
+      },
+    }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// GET /api/tahp/knowledge/audit-log — 审计日志查询
+tahpKnowledgeRoutes.get('/api/tahp/knowledge/audit-log', async (ctx) => {
+  try {
+    const { limit = '100', action } = ctx.query
+    const { readAuditLog } = await import('../../services/tahp/audit-log')
+    const entries = readAuditLog(
+      Math.min(parseInt(String(limit)) || 100, 500),
+      action ? String(action) as any : undefined,
+    )
+    ctx.body = { success: true, data: { entries, total: entries.length } }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
 // ─── Legacy endpoints (kept for backward compatibility) ─────────────────────
 
 // POST /api/tahp/knowledge/save — 保存知识条目（旧接口）
@@ -2775,5 +3979,122 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/query', async (ctx) => {
   } catch (err) {
     ctx.status = 500
     ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// ─── 草稿批量操作路由 ─────────────────────────────────────────────────
+
+// POST /api/tahp/knowledge/skill-drafts/bulk-approve — 批量批准草稿
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/bulk-approve', async (ctx) => {
+  try {
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const ids = Array.isArray(body.draft_ids) ? (body.draft_ids as string[]) : []
+    if (!ids.length) { ctx.status = 400; ctx.body = { success: false, error: 'draft_ids is required' }; return }
+    let approved = 0
+    for (const id of ids) {
+      const draft = await readSkillDraft(id)
+      if (!draft || (draft.status !== 'draft' && draft.status !== 'reviewing')) continue
+      draft.status = 'approved'
+      draft.reviewed_by = 'admin'
+      draft.reviewed_at = new Date().toISOString()
+      draft.review_action = 'approve'
+      draft.updated_at = new Date().toISOString()
+      await writeSkillDraft(draft)
+      approved++
+    }
+    writeAuditLog({ action: 'skill_bulk_approved', actor: 'admin', target_type: 'skill_draft', target_id: ids.join(','), details: { approved_count: approved } })
+    ctx.body = { success: true, data: { approved } }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/bulk-reject — 批量拒绝草稿
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/bulk-reject', async (ctx) => {
+  try {
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const ids = Array.isArray(body.draft_ids) ? (body.draft_ids as string[]) : []
+    const reason = body.reason ? String(body.reason) : ''
+    if (!ids.length) { ctx.status = 400; ctx.body = { success: false, error: 'draft_ids is required' }; return }
+    let rejected = 0
+    for (const id of ids) {
+      const draft = await readSkillDraft(id)
+      if (!draft || (draft.status !== 'draft' && draft.status !== 'reviewing')) continue
+      draft.status = 'rejected'
+      draft.reviewed_by = 'admin'
+      draft.reviewed_at = new Date().toISOString()
+      draft.review_action = 'reject'
+      draft.review_notes = reason
+      draft.updated_at = new Date().toISOString()
+      await writeSkillDraft(draft)
+      rejected++
+    }
+    writeAuditLog({ action: 'skill_bulk_rejected', actor: 'admin', target_type: 'skill_draft', target_id: ids.join(','), details: { rejected_count: rejected, reason } })
+    ctx.body = { success: true, data: { rejected } }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/bulk-delete — 批量删除草稿(仅 draft/rejected)
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/bulk-delete', async (ctx) => {
+  try {
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const ids = Array.isArray(body.draft_ids) ? (body.draft_ids as string[]) : []
+    if (!ids.length) { ctx.status = 400; ctx.body = { success: false, error: 'draft_ids is required' }; return }
+    let deleted = 0
+    for (const id of ids) {
+      const draft = await readSkillDraft(id)
+      if (!draft || (draft.status !== 'draft' && draft.status !== 'rejected')) continue
+      try { unlinkSync(getSkillDraftPath(id)); deleted++ } catch { /* skip */ }
+    }
+    writeAuditLog({ action: 'skill_bulk_deleted', actor: 'admin', target_type: 'skill_draft', target_id: ids.join(','), details: { deleted_count: deleted } })
+    ctx.body = { success: true, data: { deleted } }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-drafts/bulk-archive-selected — 批量归档草稿(approved/deprecated)
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/bulk-archive-selected', async (ctx) => {
+  try {
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const ids = Array.isArray(body.draft_ids) ? (body.draft_ids as string[]) : []
+    if (!ids.length) { ctx.status = 400; ctx.body = { success: false, error: 'draft_ids is required' }; return }
+    let archived = 0
+    for (const id of ids) {
+      const draft = await readSkillDraft(id)
+      if (!draft || (draft.status !== 'approved' && draft.status !== 'deprecated')) continue
+      draft.archived_from_status = draft.status
+      draft.status = 'archived'
+      draft.archived_at = new Date().toISOString()
+      draft.archived_by = 'admin'
+      draft.updated_at = new Date().toISOString()
+      await writeSkillDraft(draft)
+      archived++
+    }
+    writeAuditLog({ action: 'skill_bulk_archived', actor: 'admin', target_type: 'skill_draft', target_id: ids.join(','), details: { archived_count: archived } })
+    ctx.body = { success: true, data: { archived } }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// ─── 文档编辑路由 ─────────────────────────────────────────────────────
+
+// PUT /api/tahp/knowledge/documents/:docId — 更新文档元数据
+tahpKnowledgeRoutes.put('/api/tahp/knowledge/documents/:docId', async (ctx) => {
+  try {
+    const { docId } = ctx.params
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const doc = await readDocument(docId)
+    if (!doc) { ctx.status = 404; ctx.body = { success: false, error: 'Document not found' }; return }
+    if (typeof body.title === 'string' && body.title.trim()) doc.title = body.title.trim()
+    if (typeof body.module === 'string' && body.module.trim()) doc.module = body.module.trim()
+    doc.updated_at = new Date().toISOString()
+    await writeDocument(doc)
+    ctx.body = { success: true, data: doc }
+  } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
   }
 })

@@ -8,7 +8,7 @@ export interface SkillInfo {
   group?: string        // 业务模块（内核/驱动/通信/功耗）
   funcType?: string     // 功能类型（AI故障分析/AI自动化适配/AI自检工具）
   version?: string      // 版本号（来自 frontmatter）
-  updatedAt?: number    // 最后更新时间戳（ms），用于"最近更新"排序
+  updatedAt?: number    // 最后更新时间戳（ms），用于“最近更新”排序
   enabled?: boolean
   source?: SkillSource
   modified?: boolean
@@ -16,6 +16,7 @@ export interface SkillInfo {
   useCount?: number
   viewCount?: number
   pinned?: boolean
+  status?: string       // 'active' | 'deprecated' | 'archived'
 }
 
 export interface SkillCategory {

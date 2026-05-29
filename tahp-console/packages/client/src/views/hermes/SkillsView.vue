@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { NInput, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import SkillSidebar from '@/components/hermes/skills/SkillSidebar.vue'
@@ -8,7 +8,7 @@ import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
 import SkillImportModal from '@/components/hermes/skills/SkillImportModal.vue'
 import { fetchSkills, backfillCategories, type SkillCategory, type SkillInfo } from '@/api/hermes/skills'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const message = useMessage()
 const categories = ref<SkillCategory[]>([])
 const archived = ref<SkillInfo[]>([])

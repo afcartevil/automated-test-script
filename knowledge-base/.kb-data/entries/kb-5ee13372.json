@@ -1,0 +1,24 @@
+{
+  "id": "kb-5ee13372",
+  "content": "07-25 10:53:50.879  1570  1570 D SST     : [0] TDD currentMccEqualsSimMcc \nsimNumeric = 42402, operatorNumeric = 42402\n07-25 10:53:50.884  1570  1570 D SST     : [0] updateSpnDisplay: spnName = e& ,\n mNumeric = 42402\n07-25 10:53:50.885  1570  1570 D SST     : [0] updateSpnDisplay: \nupdateSpnDisplay: changed sending intent, rule=2, showPlmn='true', plmn='e&', \nshowSpn='false', spn='e&', dataSpn='', subId='26'\n07-25 10:53:50.888  1570  1570 D SST     : [0] updateSpnDisplayLegacy-\n•\n核心日志文件\u0001：ServiceStateTracker\u0001\n•\n关键字段\u0001：\u0001\n◦\nnewSpn：客制化显示名称，rawSpn：第三方获取名称\n◦\nupdateSpnDisplay: changed sending intent：最终显示策略汇总\n•\n关键标识\u0001：\u0001\n◦\nSST、updateSpnDisplayLegacy为核心关键字\n◦\n[0]对应\u0001SIM\u0001卡\u00011，[1]对应\u0001SIM\u0001卡\u00012\u0001\n•\n异常判断\u0001：与\u0001MTK\u0001平台逻辑一致，对比配置值与实际显示结果即可定位问题\u0001\n三、高通关键log\u0001\n代码块\u0001\n网络返回运营商名称：\n09-29 13:57:20.674417 radio  4263  4321 D RILJ    : [9500]< OPERATOR {CMCC, \nCMCC, 46000} [PHONE0]\n09-29 13:57:20.674663 radio  4263  5755 D RILJ    : [9505]< OPERATOR {CMCC, \nCMCC, 46000} [PHONE0]\n09-29 13:57:20.675245 radio  4263  5755 D RILJ    : [9511]< OPERATOR {CMCC, \nCMCC, 46000} [PHONE0]\n更新运营商名称显示：\n09-29 13:57:20.686370 radio  4263  4263 D SST     : [0] \ngetCarrierDisplayNameLegacy+\n09-29 13:57:20.691339 radio  4263  4263 D SST     : [0] \nupdateCarrierDisplayName: satellitePlmn=null\n09-29 13:57:20.691536 radio  4263  4263 D SST     : [0] \nupdateCarrierDisplayName: rawPlmn = CMCC\n09-29 13:57:20.691563 radio  4263  4263 D SST     : [0] \nupdateCarrierDisplayName: rawSpn = CMCC\n09-29 13:57:20.691613 radio  4263  4263 D SST     : [0] \ngetCarrierDisplayNameLegacy-\n7\n8\n9\n10\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11",
+  "category": "其他",
+  "module": "telephony",
+  "func_type": "carrier_porting",
+  "keywords": [
+    "核心日志文件",
+    "关键字段",
+    "客制化显示名",
+    "第三方获取名",
+    "最终显示策略",
+    "SST",
+    "TDD"
+  ],
+  "confidence_score": 0.7999999999999999,
+  "source_file": "网络问题分析SOP.pdf",
+  "source_document_id": "doc-0ce82139",
+  "created_at": "2026-05-29T07:55:16.411Z",
+  "updated_at": "2026-05-29T07:55:16.411Z",
+  "status": "pending_review",
+  "is_verified": false,
+  "usage_count": 0
+}

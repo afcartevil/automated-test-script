@@ -161,7 +161,10 @@ async function handleToggle(skill: SkillInfo, val: boolean) {
             {{ getIcon(skill) }}
           </div>
           <div class="card-title-area">
-            <div class="card-name" :title="skill.name">{{ skill.name }}</div>
+            <div class="card-name" :title="skill.name">
+              {{ skill.name }}
+              <span v-if="skill.status === 'deprecated'" class="tag tag-deprecated">已废弃</span>
+            </div>
             <div class="card-tags">
               <span
                 v-if="skill.group"
@@ -358,6 +361,7 @@ async function handleToggle(skill: SkillInfo, val: boolean) {
 .tag-power   { background: rgba(247,129,102,0.12); color: #f78166; border-color: rgba(247,129,102,0.25); }
 .tag-general { background: rgba(var(--accent-primary-rgb), 0.06); color: $text-muted; border-color: $border-color; }
 .tag-platform{ background: rgba(163,113,247,0.12); color: #a371f7; border-color: rgba(163,113,247,0.25); }
+.tag-deprecated{ background: rgba(230,81,0,0.12); color: #e65100; border-color: rgba(230,81,0,0.25); font-size:10px; margin-left:6px; vertical-align:middle; }
 
 // ── 描述 ─────────────────────────────────────────────────────────────────────
 

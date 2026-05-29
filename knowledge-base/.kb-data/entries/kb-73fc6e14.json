@@ -1,0 +1,25 @@
+{
+  "id": "kb-73fc6e14",
+  "content": "手动触发\u0001modem\u0001Crash\u0001方法：进入\u0001ylog\u0001应用,点击\u0001Debug\u0001setting\u0001&\u0001tools,\u0001点击\u0001modem\u0001assert\u0001\nmanually,就会手动触发\u0001modem\u0001crash\u0001\n7.2\u0001dump\u0001解析\u0001\n在抓取的\u0001Modem\u0001log\u0001中，会有\u0001minidump\u0001和.dmp\u0001形式的\u0001log\u0001\n.dmp\u0001后缀的\u0001dump\u0001文件需要放到\u0001logel\u0001工具中进行解析：打开\u0001logel\u0001工具，直接将\u0001dmp\u0001文\u0001件拖进去\n即可，工具会出现\u0001Assert\u0001Information\u0001解析界面，直到出现\u0001finish\u0001为解析完成，解析\u0001后会在对应目录\n下的文件夹生成.ass\u0001和.mem\u0001文件\u0001\n7.3\u0001初步分析\u0001\n①ap\u0001-->\u0001android.log\u0001中搜索\u0001MODEM_CTRL,assert,crash\u0001等关键字\u0001可看出\u0001  Modem\u0001Crash\u0001的源文件以\n及原因(.c\u0001文件对我们不开源，需要平台方查询)\u0001",
+  "category": "错误模式",
+  "module": "telephony",
+  "func_type": "bug_analysis",
+  "keywords": [
+    "手动触发",
+    "方法",
+    "进入",
+    "应用",
+    "点击",
+    "Crash",
+    "Debug",
+    "Modem"
+  ],
+  "confidence_score": 0.7,
+  "source_file": "稳定性问题分析指导SOP（Modem）.pdf",
+  "source_document_id": "doc-c5bf3b84",
+  "created_at": "2026-05-29T06:33:40.610Z",
+  "updated_at": "2026-05-29T06:33:40.610Z",
+  "status": "pending_review",
+  "is_verified": false,
+  "usage_count": 0
+}

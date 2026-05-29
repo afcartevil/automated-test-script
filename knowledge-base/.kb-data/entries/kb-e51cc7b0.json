@@ -1,0 +1,25 @@
+{
+  "id": "kb-e51cc7b0",
+  "content": "r_check.\nc\u0001\nline:156\u0001\np1:0x00\n000003\u0001\n\u0001\np2:0x00\n00000b\u0001\np3:0x00\n000007\u0001\nFANSAE\nE/\u0001\nMonkey\nAEE\u0001\nExceptio\nn\u0001Class:\u0001\nExternal\u0001\n(EE)\u0001\n同上\u00011.__exp_main.t\nxt中确认EE点\u0001\n2.粉丝日志系统\n中捞取对应的\ntaglog\u0001\n3.若无对应\ntaglog，需发起\n采集申请\u0001\n1.__exp_ma\nin.txt\u0001\n2.SYS_KERN\nEL_LOG\u0001\n3.taglog\u0001\n1.Mode\nm\u0001\nexceptio\nn\u0001\n2.\n[ASSERT\n]\u0001\n3.[Fatal\u0001\nerror\u0001\n大数据\nUSIC\u0001\nExceptio\nn\u0001Class:\u0001\nExternal\u0001\n(EE)\u0001\n同上\u00011.TNE解析工具\n解析日志\u0001\n2.如需dump，\n需根据大数据捞\n取modem\u0001\ndump\u0001\n1.main\u0001log\u0001\n2.minidump\u0001\n1.Mode\nm\u0001\nexceptio\nn\u0001\n2.\n[ASSERT\n]\u0001\n3.[Fatal\u0001\nerror\u0001\n非常规\nEE\u0001\n1.[ASSE\nRT]\u0001\nfile:X\nXXXX\nX\u0001\nP1:XXX\u0001\nP2:XXX\u0001\nP3:XXX\u0001\n例如：\u0001\n[ASSERT\n]\u0001\n1.IO\u0001loading\n负载导致\nmodem\u0001EE\u0001\n2.OTA过程中\n强行打断\u0001\n1.main\u0001log中查\n找modem\u0001\nexception\u0001\n2.找到assert具\n体报错打印，某\n某文件/某某行\u0001\n，para\u00010~2\u0001\n3.查看本地文\n件，报错路径能\n否访问\u0001\n1.main\u0001log\u0001\n2.modem\u0001\nlog\u0001\n1.Mode\nm\u0001\nexceptio\nn\u0001\n2.\n[ASSERT\n]\u0001\n3.[Fatal\u0001\nerror\u0001\n\u0001\nIO_LOADI\nNG负载导\n致Modem\u0001\nEE\u0001\u0001",
+  "category": "错误模式",
+  "module": "telephony",
+  "func_type": "bug_analysis",
+  "keywords": [
+    "同上",
+    "中确认",
+    "粉丝日志系统",
+    "中捞取对应的",
+    "若无对应",
+    "FANSAE",
+    "Monkey",
+    "AEE"
+  ],
+  "confidence_score": 0.85,
+  "source_file": "稳定性问题分析指导SOP（Modem）.pdf",
+  "source_document_id": "doc-c5bf3b84",
+  "created_at": "2026-05-29T06:33:40.610Z",
+  "updated_at": "2026-05-29T06:33:40.610Z",
+  "status": "pending_review",
+  "is_verified": false,
+  "usage_count": 0
+}

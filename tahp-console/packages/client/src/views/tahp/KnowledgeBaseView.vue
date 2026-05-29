@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, h, reactive, computed } from 'vue'
+import { ref, onMounted, h, reactive } from 'vue'
 import {
-  NCard, NForm, NFormItem, NInput, NSelect, NInputNumber,
+  NForm, NFormItem, NInput, NSelect, NInputNumber,
   NButton, NSpace, NTag, NSpin, NEmpty, NTabs, NTabPane,
-  NDataTable, NModal, NStatistic, NTooltip,
+  NDataTable, NModal,
   NDrawer, NDrawerContent, useMessage, useDialog,
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -28,7 +28,6 @@ import {
   getDocumentChunks,
   // Phase 4
   getSkillSuggestions,
-  generateSkillDraft,
   updateSkillDraft,
   upsertEvalCase,
   confirmEvalCase,
@@ -42,11 +41,34 @@ import {
   type KnowledgeDocument,
   type SkillSuggestion,
   type QualityScore,
-  type EvalCase,
-  type VersionConstraint,
   checkSkillSimilarity,
   mergeIntoSkill,
   type SimilarSkillItem,
+  // 优化计划新增
+  createUpgradeDraft,
+  startGenerateStream,
+  subscribeSkillGenProgress,
+  getSkillGenJob,
+  type DuplicateItem,
+  type RecommendItem,
+  type SkillGenJobResult,
+  // 生命周期管控
+  deleteSkillDraft,
+  deprecateSkillDraft,
+  deactivateSkill,
+  archiveSkillDraft,
+  restoreSkillDraft,
+  bulkCleanupDrafts,
+  hardDeleteEntry,
+  bulkArchiveEntries,
+  bulkDeleteArchived,
+  // 草稿批量操作
+  bulkApproveDrafts,
+  bulkRejectDrafts,
+  bulkDeleteDrafts,
+  bulkArchiveSelectedDrafts,
+  // 文档编辑
+  updateDocument,
 } from '@/api/tahp/knowledge'
 import { useTahpModulesStore } from '@/stores/tahp/modules'
 
@@ -100,6 +122,33 @@ const reviewAction = ref<'approve' | 'reject'>('approve')
 const reviewNotes = ref('')
 const submittingDraft = ref(false)
 const submittingReview = ref(false)
+// ─── 生命周期管控 ──────────────────────────────────────────────────────
+const draftStatusFilter = ref('')  // 空=默认排除archived，逗号分隔多值
+const showDeleteConfirmModal = ref(false)
+const deletingDraft = ref<SkillDraft | null>(null)
+const showDeprecateModal = ref(false)
+const deprecatingDraft = ref<SkillDraft | null>(null)
+const deprecateReason = ref('')
+const showDeactivateModal = ref(false)
+const deactivatingDraft = ref<SkillDraft | null>(null)
+const deactivateReason = ref('')
+const bulkCleanupLoading = ref(false)
+const rejectedCount = ref(0)
+const bulkArchiveLoading = ref(false)
+const bulkDeleteLoading = ref(false)
+// 行选择状态
+const checkedEntryKeys = ref<string[]>([])
+const checkedDraftKeys = ref<string[]>([])
+// 草稿批量操作
+const bulkDraftLoading = ref(false)
+const showBulkRejectModal = ref(false)
+const bulkRejectReason = ref('')
+// 文档编辑
+const showEditDocModal = ref(false)
+const editingDoc = ref<KnowledgeDocument | null>(null)
+const editDocTitle = ref('')
+const editDocModule = ref('')
+const submittingDoc = ref(false)
 
 const newDraft = reactive({
   skill_id: '',
@@ -114,15 +163,16 @@ const newDraft = reactive({
 // ─── Options ──────────────────────────────────────────────────────────────
 const MODULE_OPTIONS = [
   { label: '通信 (Telephony)', value: 'telephony' },
-  { label: '驱动 (Kernel)', value: 'kernel-driver' },
+  { label: '驱动 (Kernel-Driver)', value: 'kernel-driver' },
+  { label: '内核 (Kernel)', value: 'kernel' },
   { label: '功耗温升 (Power)', value: 'power-mgmt' },
   { label: '共享 (Shared)', value: 'shared' },
 ]
 const MODULE_SHORT: Record<string, string> = {
-  telephony: '通信', 'kernel-driver': '驱动', 'power-mgmt': '功耗', shared: '共享',
+  telephony: '通信', 'kernel-driver': '驱动', kernel: '内核', 'power-mgmt': '功耗', shared: '共享',
 }
 const MODULE_COLOR: Record<string, string> = {
-  telephony: '#2080f0', 'kernel-driver': '#18a058', 'power-mgmt': '#f0a020', shared: '#722ed1',
+  telephony: '#2080f0', 'kernel-driver': '#18a058', kernel: '#36ad6a', 'power-mgmt': '#f0a020', shared: '#722ed1',
 }
 
 const FUNC_TYPE_OPTIONS = [
@@ -135,6 +185,10 @@ const FUNC_TYPE_OPTIONS = [
 const FUNC_TYPE_SHORT: Record<string, string> = {
   bug_analysis: 'Bug分析', code_adaptation: '代码适配',
   version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: 'AI自检',
+  // 兑容旧数据（中文大类）
+  'AI故障分析': 'AI故障分析', 'AI自动化适配': 'AI适配', 'AI自检工具': 'AI自检',
+  // 中文细分透传
+  'Bug分析': 'Bug分析', '代码适配': '代码适配', '版本适配': '版本适配', '运营商移植': '运营商移植', 'AI自检': 'AI自检',
 }
 
 const STATUS_OPTIONS = [
@@ -143,12 +197,13 @@ const STATUS_OPTIONS = [
   { label: '已批准', value: 'approved' },
   { label: '已拒绝', value: 'rejected' },
   { label: '已归档', value: 'archived' },
+  { label: '已删除', value: 'deleted' },
 ]
 const STATUS_TYPE: Record<string, 'default' | 'success' | 'error' | 'warning' | 'info'> = {
-  pending_review: 'warning', approved: 'success', rejected: 'error', archived: 'default',
+  pending_review: 'warning', approved: 'success', rejected: 'error', archived: 'default', deleted: 'error',
 }
 const STATUS_LABEL: Record<string, string> = {
-  pending_review: '待审核', approved: '已批准', rejected: '已拒绝', archived: '已归档',
+  pending_review: '待审核', approved: '已批准', rejected: '已拒绝', archived: '已归档', deleted: '已删除',
 }
 
 const CATEGORY_OPTIONS = [
@@ -160,12 +215,9 @@ const CATEGORY_OPTIONS = [
   { label: '其他', value: '其他' },
 ]
 
-// ─── Computed ─────────────────────────────────────────────────────────────
-const pendingCount = computed(() => drafts.value.length)
-const activeEntryCount = computed(() => entries.value.filter(e => e.status === 'approved').length)
-
 // ─── Table columns ────────────────────────────────────────────────────────
 const entryColumns: DataTableColumns<KnowledgeEntry> = [
+  { type: 'selection' },
   {
     title: '知识内容',
     key: 'content',
@@ -224,16 +276,24 @@ const entryColumns: DataTableColumns<KnowledgeEntry> = [
   {
     title: '操作',
     key: 'actions',
-    width: 110,
+    width: 140,
     align: 'center',
-    render: (r) => h(NSpace, { size: 4 }, () => [
-      h(NButton, { size: 'tiny', type: 'primary', ghost: true, onClick: () => editEntry(r) }, () => '编辑'),
-      h(NButton, { size: 'tiny', type: 'error', ghost: true, onClick: () => confirmDeleteEntry(r) }, () => '归档'),
-    ]),
+    render: (r) => {
+      const btns: any[] = [
+        h(NButton, { size: 'tiny', type: 'primary', ghost: true, onClick: () => editEntry(r) }, () => '编辑'),
+      ]
+      if (r.status === 'archived') {
+        btns.push(h(NButton, { size: 'tiny', type: 'error', ghost: true, onClick: () => confirmHardDeleteEntry(r) }, () => '物理删除'))
+      } else {
+        btns.push(h(NButton, { size: 'tiny', type: 'error', ghost: true, onClick: () => confirmDeleteEntry(r) }, () => '归档'))
+      }
+      return h(NSpace, { size: 4 }, () => btns)
+    },
   },
 ]
 
 const draftColumns: DataTableColumns<SkillDraft> = [
+  { type: 'selection' },
   {
     title: 'Skill 标识',
     key: 'skill_id',
@@ -268,29 +328,51 @@ const draftColumns: DataTableColumns<SkillDraft> = [
   {
     title: '状态',
     key: 'status',
-    width: 80,
+    width: 90,
     align: 'center',
     render: (r) => {
-      const map: Record<string, 'warning'|'success'|'error'|'default'> = {
+      const map: Record<string, 'warning'|'success'|'error'|'default'|'info'> = {
         draft: 'warning', reviewing: 'info', approved: 'success', rejected: 'error',
+        deprecated: 'warning', archived: 'default',
       } as any
-      const label: Record<string, string> = { draft: '草稿', reviewing: '审核中', approved: '已批准', rejected: '已拒绝' }
-      return h(NTag, { size: 'small', type: map[r.status || 'draft'] }, () => label[r.status || 'draft'] || r.status)
+      const label: Record<string, string> = {
+        draft: '草稿', reviewing: '审核中', approved: '已激活', rejected: '已拒绝',
+        deprecated: '已废弃', archived: '已归档',
+      }
+      const statusType = map[r.status || 'draft'] || 'default'
+      const statusLabel = label[r.status || 'draft'] || r.status
+      const style = r.status === 'deprecated' ? { '--n-color': '#fff3e022', '--n-text-color': '#e65100', '--n-border': 'none' } : {}
+      return h(NTag, { size: 'small', type: statusType, style }, () => statusLabel)
     },
   },
   {
     title: '操作',
     key: 'actions',
-    width: 130,
+    width: 200,
     align: 'center',
-    render: (r) => h(NSpace, { size: 4 }, () => [
-      h(NButton, {
-        size: 'tiny', type: 'success', onClick: () => openReviewModal(r, 'approve'),
-      }, () => '✓ 批准'),
-      h(NButton, {
-        size: 'tiny', type: 'error', ghost: true, onClick: () => openReviewModal(r, 'reject'),
-      }, () => '✗ 拒绝'),
-    ]),
+    render: (r) => {
+      const btns: any[] = []
+      const s = r.status || 'draft'
+      if (s === 'draft' || s === 'reviewing') {
+        btns.push(h(NButton, { size: 'tiny', type: 'success', onClick: () => openReviewModal(r, 'approve') }, () => '✓ 批准'))
+        btns.push(h(NButton, { size: 'tiny', type: 'error', ghost: true, onClick: () => openReviewModal(r, 'reject') }, () => '✗ 拒绝'))
+      }
+      if (s === 'draft' || s === 'rejected') {
+        btns.push(h(NButton, { size: 'tiny', type: 'error', quaternary: true, onClick: () => confirmDeleteDraft(r) }, () => '删除'))
+      }
+      if (s === 'approved') {
+        btns.push(h(NButton, { size: 'tiny', type: 'warning', ghost: true, onClick: () => openDeprecateModal(r) }, () => '废弃'))
+        btns.push(h(NButton, { size: 'tiny', quaternary: true, onClick: () => doArchiveDraft(r) }, () => '归档'))
+      }
+      if (s === 'deprecated') {
+        btns.push(h(NButton, { size: 'tiny', type: 'error', ghost: true, onClick: () => openDeactivateModal(r) }, () => '下线'))
+        btns.push(h(NButton, { size: 'tiny', quaternary: true, onClick: () => doArchiveDraft(r) }, () => '归档'))
+      }
+      if (s === 'archived') {
+        btns.push(h(NButton, { size: 'tiny', type: 'info', ghost: true, onClick: () => doRestoreDraft(r) }, () => '恢复'))
+      }
+      return h(NSpace, { size: 4, wrap: true }, () => btns)
+    },
   },
 ]
 
@@ -333,14 +415,147 @@ async function loadEntries() {
 async function loadDrafts() {
   draftsLoading.value = true
   try {
-    const res = await listSkillDrafts({ status: 'draft', limit: 50 })
+    const query: { status?: string; limit?: number } = { limit: 100 }
+    if (draftStatusFilter.value) {
+      query.status = draftStatusFilter.value
+    }
+    const res = await listSkillDrafts(query)
     drafts.value = res.drafts || []
     draftsTotal.value = res.total || 0
+    // 计算 rejected 数量（用于批量清理按钮）
+    rejectedCount.value = drafts.value.filter(d => d.status === 'rejected').length
   } catch (err) {
     message.error((err as Error).message)
   } finally {
     draftsLoading.value = false
   }
+}
+
+function setDraftStatusFilter(status: string) {
+  draftStatusFilter.value = status
+  loadDrafts()
+}
+
+// ─── 生命周期操作 ───────────────────────────────────────────────────
+function confirmDeleteDraft(draft: SkillDraft) {
+  if (draft.status !== 'draft' && draft.status !== 'rejected') {
+    message.warning('仅 draft/rejected 状态可删除')
+    return
+  }
+  deletingDraft.value = draft
+  showDeleteConfirmModal.value = true
+}
+
+async function doDeleteDraft() {
+  if (!deletingDraft.value) return
+  try {
+    await deleteSkillDraft(deletingDraft.value.id!)
+    message.success(`草稿 ${deletingDraft.value.skill_name} 已删除`)
+    showDeleteConfirmModal.value = false
+    await loadDrafts()
+  } catch (err) {
+    message.error((err as Error).message)
+  }
+}
+
+function openDeprecateModal(draft: SkillDraft) {
+  if (draft.status !== 'approved') {
+    message.warning('仅已激活的 Skill 可废弃')
+    return
+  }
+  deprecatingDraft.value = draft
+  deprecateReason.value = ''
+  showDeprecateModal.value = true
+}
+
+async function doDeprecate() {
+  if (!deprecatingDraft.value || !deprecateReason.value.trim()) {
+    message.warning('废弃原因为必填')
+    return
+  }
+  try {
+    await deprecateSkillDraft(deprecatingDraft.value.id!, deprecateReason.value.trim())
+    message.success(`Skill ${deprecatingDraft.value.skill_name} 已废弃`)
+    showDeprecateModal.value = false
+    await loadDrafts()
+  } catch (err) {
+    message.error((err as Error).message)
+  }
+}
+
+function openDeactivateModal(draft: SkillDraft) {
+  if (draft.status !== 'approved' && draft.status !== 'deprecated') {
+    message.warning('仅 approved/deprecated 状态可下线')
+    return
+  }
+  deactivatingDraft.value = draft
+  deactivateReason.value = ''
+  showDeactivateModal.value = true
+}
+
+async function doDeactivate() {
+  if (!deactivatingDraft.value || !deactivateReason.value.trim()) {
+    message.warning('下线原因为必填')
+    return
+  }
+  try {
+    await deactivateSkill(deactivatingDraft.value.id!, deactivateReason.value.trim())
+    message.success(`Skill ${deactivatingDraft.value.skill_name} 已下线`)
+    showDeactivateModal.value = false
+    await loadDrafts()
+  } catch (err) {
+    message.error((err as Error).message)
+  }
+}
+
+async function doArchiveDraft(draft: SkillDraft) {
+  dialog.warning({
+    title: '归档草稿',
+    content: `确定归档草稿 "${draft.skill_name}"？归档后可恢复。`,
+    positiveText: '确认归档',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await archiveSkillDraft(draft.id!)
+        message.success('已归档')
+        await loadDrafts()
+      } catch (err) {
+        message.error((err as Error).message)
+      }
+    },
+  })
+}
+
+async function doRestoreDraft(draft: SkillDraft) {
+  try {
+    await restoreSkillDraft(draft.id!)
+    message.success(`草稿 ${draft.skill_name} 已恢复`)
+    await loadDrafts()
+  } catch (err) {
+    message.error((err as Error).message)
+  }
+}
+
+async function doBulkCleanup() {
+  if (rejectedCount.value === 0) { message.info('没有可清理的已拒绝草稿'); return }
+  dialog.warning({
+    title: '批量清理',
+    content: `将删除所有 ${rejectedCount.value} 条已拒绝的草稿，此操作不可恢复。`,
+    positiveText: '确认清理',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      bulkCleanupLoading.value = true
+      try {
+        const res = await bulkCleanupDrafts()
+        message.success(`已清理 ${res.cleaned} 条草稿`)
+        await loadDrafts()
+      } catch (err) {
+        message.error((err as Error).message)
+      } finally {
+        bulkCleanupLoading.value = false
+      }
+    },
+  })
 }
 
 // ─── Entry CRUD ───────────────────────────────────────────────────────────
@@ -400,7 +615,7 @@ async function submitEntry() {
 function confirmDeleteEntry(entry: KnowledgeEntry) {
   dialog.warning({
     title: '归档条目',
-    content: `将条目标记为"已归档"，可在筛选中恢复查看，但不会出现在正常列表中。`,
+    content: `将条目标记为“已归档”，可在筛选中恢复查看，但不会出现在正常列表中。`,
     positiveText: '确认归档',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -414,6 +629,178 @@ function confirmDeleteEntry(entry: KnowledgeEntry) {
       }
     },
   })
+}
+
+function confirmHardDeleteEntry(entry: KnowledgeEntry) {
+  dialog.error({
+    title: '物理删除条目',
+    content: `将永久删除条目「${(entry.content || '').slice(0, 50)}...」，此操作不可恢复！`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await hardDeleteEntry(entry.id || '')
+        message.success('已永久删除')
+        await loadEntries()
+        await loadStats()
+      } catch (err) {
+        message.error((err as Error).message)
+      }
+    },
+  })
+}
+
+function doBulkArchiveEntries() {
+  if (!checkedEntryKeys.value.length) { message.warning('请先选择条目'); return }
+  dialog.warning({
+    title: '批量归档',
+    content: `将归档已选的 ${checkedEntryKeys.value.length} 条条目。确定继续？`,
+    positiveText: '确认归档',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      bulkArchiveLoading.value = true
+      try {
+        const res = await bulkArchiveEntries({ ids: checkedEntryKeys.value })
+        message.success(`已归档 ${res.archived} 条`)
+        checkedEntryKeys.value = []
+        await loadEntries()
+        await loadStats()
+      } catch (err) {
+        message.error((err as Error).message)
+      } finally {
+        bulkArchiveLoading.value = false
+      }
+    },
+  })
+}
+
+function doBulkDeleteArchived() {
+  if (!checkedEntryKeys.value.length) { message.warning('请先选择条目'); return }
+  dialog.error({
+    title: '批量物理删除',
+    content: `将永久删除已选的 ${checkedEntryKeys.value.length} 条条目，此操作不可恢复！`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      bulkDeleteLoading.value = true
+      try {
+        const res = await bulkDeleteArchived({ ids: checkedEntryKeys.value })
+        message.success(`已删除 ${res.deleted} 条`)
+        checkedEntryKeys.value = []
+        await loadEntries()
+        await loadStats()
+      } catch (err) {
+        message.error((err as Error).message)
+      } finally {
+        bulkDeleteLoading.value = false
+      }
+    },
+  })
+}
+
+// ─── 草稿批量操作 ──────────────────────────────────────────────────────
+function getSelectedDrafts() {
+  return drafts.value.filter(d => d.id && checkedDraftKeys.value.includes(d.id))
+}
+
+function doBulkApproveDrafts() {
+  const selected = getSelectedDrafts().filter(d => d.status === 'draft' || d.status === 'reviewing')
+  if (!selected.length) { message.warning('没有可批准的草稿'); return }
+  dialog.warning({
+    title: '批量批准',
+    content: `将批准 ${selected.length} 条草稿并激活为 Skill。`,
+    positiveText: '确认批准',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      bulkDraftLoading.value = true
+      try {
+        const res = await bulkApproveDrafts(selected.map(d => d.id!))
+        message.success(`已批准 ${res.approved} 条`)
+        checkedDraftKeys.value = []
+        await loadDrafts()
+      } catch (err) { message.error((err as Error).message) } finally { bulkDraftLoading.value = false }
+    },
+  })
+}
+
+function doBulkRejectDrafts() {
+  const selected = getSelectedDrafts().filter(d => d.status === 'draft' || d.status === 'reviewing')
+  if (!selected.length) { message.warning('没有可拒绝的草稿'); return }
+  bulkRejectReason.value = ''
+  showBulkRejectModal.value = true
+}
+
+async function confirmBulkReject() {
+  const selected = getSelectedDrafts().filter(d => d.status === 'draft' || d.status === 'reviewing')
+  if (!selected.length) return
+  bulkDraftLoading.value = true
+  try {
+    const res = await bulkRejectDrafts(selected.map(d => d.id!), bulkRejectReason.value || undefined)
+    message.success(`已拒绝 ${res.rejected} 条`)
+    showBulkRejectModal.value = false
+    checkedDraftKeys.value = []
+    await loadDrafts()
+  } catch (err) { message.error((err as Error).message) } finally { bulkDraftLoading.value = false }
+}
+
+function doBulkDeleteDrafts() {
+  const selected = getSelectedDrafts().filter(d => d.status === 'draft' || d.status === 'rejected')
+  if (!selected.length) { message.warning('没有可删除的草稿'); return }
+  dialog.error({
+    title: '批量删除',
+    content: `将永久删除 ${selected.length} 条草稿，此操作不可恢复！`,
+    positiveText: '确认删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      bulkDraftLoading.value = true
+      try {
+        const res = await bulkDeleteDrafts(selected.map(d => d.id!))
+        message.success(`已删除 ${res.deleted} 条`)
+        checkedDraftKeys.value = []
+        await loadDrafts()
+      } catch (err) { message.error((err as Error).message) } finally { bulkDraftLoading.value = false }
+    },
+  })
+}
+
+function doBulkArchiveDrafts() {
+  const selected = getSelectedDrafts().filter(d => d.status === 'approved' || d.status === 'deprecated')
+  if (!selected.length) { message.warning('没有可归档的草稿'); return }
+  dialog.warning({
+    title: '批量归档',
+    content: `将归档 ${selected.length} 条草稿，归档后可恢复。`,
+    positiveText: '确认归档',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      bulkDraftLoading.value = true
+      try {
+        const res = await bulkArchiveSelectedDrafts(selected.map(d => d.id!))
+        message.success(`已归档 ${res.archived} 条`)
+        checkedDraftKeys.value = []
+        await loadDrafts()
+      } catch (err) { message.error((err as Error).message) } finally { bulkDraftLoading.value = false }
+    },
+  })
+}
+
+// ─── 文档编辑 ──────────────────────────────────────────────────────────
+function openEditDocModal(doc: KnowledgeDocument) {
+  editingDoc.value = doc
+  editDocTitle.value = doc.title
+  editDocModule.value = doc.module
+  showEditDocModal.value = true
+}
+
+async function submitEditDoc() {
+  if (!editingDoc.value) return
+  if (!editDocTitle.value.trim()) { message.warning('标题不能为空'); return }
+  submittingDoc.value = true
+  try {
+    await updateDocument(editingDoc.value.id, { title: editDocTitle.value.trim(), module: editDocModule.value })
+    message.success('文档已更新')
+    showEditDocModal.value = false
+    await loadDocuments()
+  } catch (err) { message.error((err as Error).message) } finally { submittingDoc.value = false }
 }
 
 // ─── Semantic Search ──────────────────────────────────────────────────────
@@ -881,6 +1268,35 @@ const pendingSuggestion     = ref<SkillSuggestion | null>(null)
 const mergingSkill          = ref(false)
 const mergingTargetId       = ref('')
 
+// ─── 优化计划新增响应式变量 ───
+// 生成进度弹窗
+const showGenProgressModal   = ref(false)
+const genJobId               = ref('')
+const genJobStatus           = ref<SkillGenJobResult | null>(null)
+const genProgressSteps       = ref<Array<{ label: string; status: 'wait' | 'process' | 'finish' | 'error' }>>([
+  { label: '文档重复检测', status: 'wait' },
+  { label: '相似 Skill 检索', status: 'wait' },
+  { label: 'AI 生成骨架', status: 'wait' },
+  { label: '生成 Eval 用例', status: 'wait' },
+  { label: '质量评分计算', status: 'wait' },
+])
+let genSseSource: EventSource | null = null
+let genTimeoutTimer: ReturnType<typeof setTimeout> | null = null
+let genSseRetryCount = 0
+const GEN_SSE_MAX_RETRIES = 3
+
+// 重复检测弹窗
+const showDuplicateModal     = ref(false)
+const duplicateItems         = ref<DuplicateItem[]>([])
+const pendingSuggestionForDup = ref<SkillSuggestion | null>(null)
+// SSE 生成期间暂存当前 suggestion，供重复检测弹窗使用
+let currentGenSuggestion: SkillSuggestion | null = null
+
+// 融合推荐弹窗
+const showMergeRecommendModal = ref(false)
+const mergeRecommendations   = ref<RecommendItem[]>([])
+const mergeRecommendLoading  = ref(false)
+
 // Eval 用例编辑
 const showAddEvalModal      = ref(false)
 const newEvalCase           = reactive({ title: '', input: '', expected_output: '', judgment_criteria: '' })
@@ -937,35 +1353,309 @@ async function startGenerateSkill(suggestion: SkillSuggestion) {
     if (!showSimilarModal.value) generatingFor.value = ''
   }
 
-  // ── Step 2: 无相似 Skill，直接生成 ───────────────────────────────────────
+  // ── Step 2: 无相似 Skill，使用 SSE 流程生成 ──────────────────────────────
   await doGenerateSkill(suggestion)
 }
 
-/** 实际调用 LLM 生成 Skill 草稿（相似检查通过后调用） */
+/** 实际调用 SSE 流式生成 Skill 草稿（相似检查通过后调用） */
 async function doGenerateSkill(suggestion: SkillSuggestion) {
-  generatingSkill.value = true
   generatingFor.value = `${suggestion.module}::${suggestion.func_type}`
+
+  // 暂存 suggestion，供 SSE 完成后的重复检测弹窗使用
+  currentGenSuggestion = suggestion
+
+  // 重置进度弹窗状态
+  genJobId.value = ''
+  genJobStatus.value = null
+  genProgressSteps.value = [
+    { label: '文档重复检测', status: 'wait' },
+    { label: '相似 Skill 检索', status: 'wait' },
+    { label: 'AI 生成骨架', status: 'wait' },
+    { label: '生成 Eval 用例', status: 'wait' },
+    { label: '质量评分计算', status: 'wait' },
+  ]
+  showGenProgressModal.value = true
+  generatingSkill.value = true
+
   try {
-    const res = await generateSkillDraft({
+    const { job_id } = await startGenerateStream({
       module: suggestion.module,
       func_type: suggestion.func_type,
       entry_ids: suggestion.entry_ids,
       skill_name: suggestion.suggested_skill_name,
       generated_by: 'user',
+      document_ids: suggestion.source_document_ids,
     })
-    if (res.message) {
-      message.warning(res.message, { duration: 6000 })
-    } else {
-      message.success('Skill 骨架已生成，请在编辑器中完善内容')
-    }
-    openSkillEditor(res.draft)
-    await loadSkillSuggestions()
-    await loadDrafts()
+    genJobId.value = job_id
+    subscribeGenProgress(job_id)
   } catch (err) {
-    message.error('生成失败：' + (err as Error).message)
-  } finally {
+    message.error('启动生成任务失败：' + (err as Error).message)
     generatingSkill.value = false
     generatingFor.value = ''
+    showGenProgressModal.value = false
+  }
+}
+
+/** 订阅 SSE 生成进度 */
+function subscribeGenProgress(jobId: string) {
+  closeGenSse()
+  genSseRetryCount = 0
+  genSseSource = subscribeSkillGenProgress(jobId)
+
+  genSseSource.onmessage = (e) => {
+    try {
+      const job: SkillGenJobResult = JSON.parse(e.data)
+      genJobStatus.value = job
+      updateGenProgressSteps(job)
+
+      if (job.status === 'completed') {
+        closeGenSse()
+        onGenJobCompleted(job)
+      } else if (job.status === 'error') {
+        closeGenSse()
+        message.error('Skill 生成失败：' + (job.message || '未知错误'), { duration: 8000 })
+        generatingSkill.value = false
+        generatingFor.value = ''
+        // 保持弹窗显示，让用户看到错误状态
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  genSseSource.onerror = () => {
+    // SSE 断开时尝试重试
+    if (genSseRetryCount < GEN_SSE_MAX_RETRIES && genJobId.value && generatingSkill.value) {
+      genSseRetryCount++
+      // 延迟 2s 后重新连接
+      setTimeout(() => {
+        if (genJobId.value && generatingSkill.value) {
+          genSseSource = subscribeSkillGenProgress(genJobId.value)
+          genSseSource.onmessage = (e: MessageEvent) => {
+            try {
+              const job: SkillGenJobResult = JSON.parse(e.data)
+              genJobStatus.value = job
+              updateGenProgressSteps(job)
+              if (job.status === 'completed') {
+                closeGenSse()
+                onGenJobCompleted(job)
+              } else if (job.status === 'error') {
+                closeGenSse()
+                message.error('Skill 生成失败：' + (job.message || '未知错误'), { duration: 8000 })
+                generatingSkill.value = false
+                generatingFor.value = ''
+              }
+            } catch { /* ignore */ }
+          }
+          genSseSource.onerror = () => {
+            // 重试次数用尽，fallback 到轮询
+            closeGenSse()
+            pollJobStatus()
+          }
+        }
+      }, 2000)
+      return
+    }
+    // 重试次数用尽，fallback 到轮询
+    closeGenSse()
+    pollJobStatus()
+  }
+
+  // 3分钟超时保护
+  genTimeoutTimer = setTimeout(() => {
+    closeGenSse()
+    message.warning('生成任务超时，请稍后在草稿列表中查看结果', { duration: 8000 })
+    generatingSkill.value = false
+    generatingFor.value = ''
+  }, 3 * 60 * 1000)
+}
+
+/** SSE 断开后轮询获取任务状态 */
+function pollJobStatus() {
+  if (!genJobId.value) return
+  getSkillGenJob(genJobId.value).then(job => {
+    genJobStatus.value = job
+    updateGenProgressSteps(job)
+    if (job.status === 'completed') {
+      onGenJobCompleted(job)
+    } else if (job.status === 'running') {
+      // 任务仍在运行，延迟 3s 后再次轮询
+      setTimeout(() => pollJobStatus(), 3000)
+    } else {
+      message.error('生成任务异常中断，请重试', { duration: 5000 })
+      generatingSkill.value = false
+      generatingFor.value = ''
+    }
+  }).catch(() => {
+    message.error('SSE 连接中断且无法获取任务状态，请重试', { duration: 5000 })
+    generatingSkill.value = false
+    generatingFor.value = ''
+  })
+}
+
+function closeGenSse() {
+  genSseSource?.close()
+  genSseSource = null
+  if (genTimeoutTimer) {
+    clearTimeout(genTimeoutTimer)
+    genTimeoutTimer = null
+  }
+}
+
+/** 根据 job 状态更新进度步骤 */
+function updateGenProgressSteps(job: SkillGenJobResult) {
+  const stageMap: Record<string, number> = {
+    init: -1,
+    duplicate_check: 0,
+    similarity_check: 1,
+    llm_generate: 2,
+    eval_extract: 3,
+    quality_score: 4,
+    persist: 4,
+    done: 4,
+  }
+  const currentIdx = stageMap[job.stage] ?? -1
+  genProgressSteps.value = genProgressSteps.value.map((step, i) => {
+    if (job.status === 'error') {
+      if (i < currentIdx) return { ...step, status: 'finish' as const }
+      if (i === currentIdx) return { ...step, status: 'error' as const }
+      return { ...step, status: 'wait' as const }
+    }
+    if (i < currentIdx) return { ...step, status: 'finish' as const }
+    if (i === currentIdx) {
+      return { ...step, status: job.status === 'completed' ? 'finish' as const : 'process' as const }
+    }
+    if (job.status === 'completed') return { ...step, status: 'finish' as const }
+    return { ...step, status: 'wait' as const }
+  })
+}
+
+/** 生成任务完成后处理 */
+async function onGenJobCompleted(job: SkillGenJobResult) {
+  generatingSkill.value = false
+  generatingFor.value = ''
+
+  // 检查是否触发重复检测
+  if (job.result?.duplicate_detected && job.result.duplicate_drafts?.length) {
+    pendingSuggestionForDup.value = currentGenSuggestion
+    currentGenSuggestion = null
+    duplicateItems.value = job.result.duplicate_drafts
+    showGenProgressModal.value = false
+    showDuplicateModal.value = true
+    return
+  }
+
+  // 检查是否触发相似度检测
+  if (job.result?.similar_skills?.length) {
+    currentGenSuggestion = null
+    showGenProgressModal.value = false
+    message.info(`发现 ${job.result.similar_skills.length} 个相似 Skill，建议融合而非新建`, { duration: 6000 })
+    await loadDrafts()
+    await loadSkillSuggestions()
+    return
+  }
+
+  // 正常完成，先刷新草稿列表
+  currentGenSuggestion = null
+  await loadDrafts()
+  await loadSkillSuggestions()
+
+  if (job.result?.draft) {
+    // 验证草稿确实存在
+    try {
+      await getSkillDraft(job.result.draft.id!)
+    } catch {
+      // 草稿获取失败，但仍继续显示
+    }
+
+    if (job.result.llm_error) {
+      // LLM 失败：保持弹窗显示错误状态，让用户手动关闭
+      const detail = job.result.llm_error_detail || job.result.llm_error
+      genProgressSteps.value = genProgressSteps.value.map((s, i) =>
+        i === 2 ? { ...s, status: 'error' as const } : s
+      )
+      message.warning(`LLM 未就绪（${detail}），已使用模板骨架，请手动完善`, { duration: 8000 })
+      // 不自动关闭弹窗，让用户手动确认
+      generatingSkill.value = false
+      return
+    } else {
+      message.success('Skill 已基于文档库生成，请在编辑器中完善')
+    }
+
+    // 延迟 1.5s 关闭弹窗，让用户看到完成状态
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    showGenProgressModal.value = false
+    openSkillEditor(job.result.draft)
+
+    // 自动切换到草稿 Tab，清除筛选确保新草稿可见
+    draftStatusFilter.value = ''
+    onTabChange('drafts')
+  } else {
+    message.info('生成完成，请在草稿列表中查看')
+    showGenProgressModal.value = false
+    // 自动切换到草稿 Tab
+    draftStatusFilter.value = ''
+    onTabChange('drafts')
+  }
+}
+
+/** 重复检测弹窗：强制新建（忽略重复） */
+async function handleForceCreate() {
+  showDuplicateModal.value = false
+  if (!pendingSuggestionForDup.value) {
+    // 通过 job result 获取最新 draft，没有 pendingSuggestion 则直接刷新列表
+    await loadDrafts()
+    await loadSkillSuggestions()
+    return
+  }
+  // 重新以相同参数启动生成（后端会跳过重复检测步骤）
+  const suggestion = pendingSuggestionForDup.value
+  pendingSuggestionForDup.value = null
+  generatingFor.value = `${suggestion.module}::${suggestion.func_type}`
+  generatingSkill.value = true
+  showGenProgressModal.value = true
+  genProgressSteps.value = genProgressSteps.value.map(s => ({ ...s, status: 'wait' as const }))
+  try {
+    const { job_id } = await startGenerateStream({
+      module: suggestion.module,
+      func_type: suggestion.func_type,
+      entry_ids: suggestion.entry_ids,
+      skill_name: suggestion.suggested_skill_name,
+      generated_by: 'user',
+      document_ids: suggestion.source_document_ids,
+    })
+    genJobId.value = job_id
+    subscribeGenProgress(job_id)
+  } catch (err) {
+    message.error('启动生成失败：' + (err as Error).message)
+    generatingSkill.value = false
+    generatingFor.value = ''
+    showGenProgressModal.value = false
+  }
+}
+
+/** 重复检测弹窗：打开现有 Skill 查看 */
+function handleViewExisting(item: DuplicateItem) {
+  showDuplicateModal.value = false
+  pendingSuggestionForDup.value = null
+  if (item.is_activated) {
+    message.info(`已激活 Skill「${item.skill_name}」，请在技能库中找到并编辑`, { duration: 5000 })
+  } else {
+    openSkillEditorById(item.id)
+  }
+}
+
+/** 重复检测弹窗：升级草案（为已激活 Skill 创建升级版本） */
+async function handleUpgradeDraft(item: DuplicateItem) {
+  showDuplicateModal.value = false
+  const suggestion = pendingSuggestionForDup.value
+  pendingSuggestionForDup.value = null
+  try {
+    const { draft } = await createUpgradeDraft(item.id, suggestion?.entry_ids)
+    message.success(`已为「${item.skill_name}」创建升级草案，请在编辑器中完善内容`)
+    openSkillEditor(draft)
+    await loadDrafts()
+    await loadSkillSuggestions()
+  } catch (err) {
+    message.error('创建升级草案失败：' + (err as Error).message)
   }
 }
 
@@ -1349,11 +2039,20 @@ function scoreColor(score: number, max: number): string {
             v-else
             :columns="entryColumns"
             :data="entries"
+            :row-key="(r: KnowledgeEntry) => r.id || ''"
+            v-model:checked-row-keys="checkedEntryKeys"
             :pagination="{ pageSize: 15 }"
             :bordered="false"
             size="small"
             class="kb-table"
           />
+          <!-- 条目批量操作栏 -->
+          <div v-if="checkedEntryKeys.length > 0" class="batch-action-bar">
+            <span class="batch-count">已选 {{ checkedEntryKeys.length }} 项</span>
+            <NButton size="small" @click="checkedEntryKeys = []">取消选择</NButton>
+            <NButton size="small" type="warning" :loading="bulkArchiveLoading" @click="doBulkArchiveEntries">批量归档</NButton>
+            <NButton size="small" type="error" :loading="bulkDeleteLoading" @click="doBulkDeleteArchived">批量物理删除</NButton>
+          </div>
         </NSpin>
       </NTabPane>
 
@@ -1445,12 +2144,24 @@ function scoreColor(score: number, max: number): string {
               </template>
               新建草稿
             </NButton>
+            <NButton size="small" type="error" secondary :loading="bulkCleanupLoading" :disabled="rejectedCount === 0" @click="doBulkCleanup">
+              清理已拒绝 ({{ rejectedCount }})
+            </NButton>
           </NSpace>
-          <div class="toolbar-count" v-if="draftsTotal > 0">{{ draftsTotal }} 条待审核</div>
+          <NSpace size="small" style="margin-top:6px">
+            <NButton size="tiny" :type="!draftStatusFilter ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('')">全部(未归档)</NButton>
+            <NButton size="tiny" :type="draftStatusFilter === 'draft' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('draft')">草稿</NButton>
+            <NButton size="tiny" :type="draftStatusFilter === 'reviewing' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('reviewing')">审核中</NButton>
+            <NButton size="tiny" :type="draftStatusFilter === 'approved' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('approved')">已激活</NButton>
+            <NButton size="tiny" :type="draftStatusFilter === 'rejected' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('rejected')">已拒绝</NButton>
+            <NButton size="tiny" :type="draftStatusFilter === 'deprecated' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('deprecated')">已废弃</NButton>
+            <NButton size="tiny" :type="draftStatusFilter === 'archived' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('archived')">已归档</NButton>
+          </NSpace>
+          <div class="toolbar-count" v-if="draftsTotal > 0">{{ draftsTotal }} 条</div>
         </div>
 
         <NSpin :show="draftsLoading">
-          <NEmpty v-if="!drafts.length && !draftsLoading" description="暂无待审核的 Skill 草稿" class="tab-empty">
+          <NEmpty v-if="!drafts.length && !draftsLoading" description="暂无 Skill 草稿" class="tab-empty">
             <template #extra>
               <NButton size="small" type="primary" @click="openCreateDraftModal">创建 Skill 草稿</NButton>
             </template>
@@ -1459,11 +2170,22 @@ function scoreColor(score: number, max: number): string {
             v-else
             :columns="draftColumns"
             :data="drafts"
+            :row-key="(r: SkillDraft) => r.id || ''"
+            v-model:checked-row-keys="checkedDraftKeys"
             :pagination="{ pageSize: 15 }"
             :bordered="false"
             size="small"
             class="kb-table"
           />
+          <!-- 草稿批量操作栏 -->
+          <div v-if="checkedDraftKeys.length > 0" class="batch-action-bar">
+            <span class="batch-count">已选 {{ checkedDraftKeys.length }} 项</span>
+            <NButton size="small" @click="checkedDraftKeys = []">取消选择</NButton>
+            <NButton size="small" type="success" :loading="bulkDraftLoading" @click="doBulkApproveDrafts">批准</NButton>
+            <NButton size="small" type="warning" :loading="bulkDraftLoading" @click="doBulkRejectDrafts">拒绝</NButton>
+            <NButton size="small" type="error" :loading="bulkDraftLoading" @click="doBulkDeleteDrafts">删除</NButton>
+            <NButton size="small" :loading="bulkDraftLoading" @click="doBulkArchiveDrafts">归档</NButton>
+          </div>
         </NSpin>
       </NTabPane>
       <!-- ── Document Library ──────────────────────────── -->
@@ -1485,6 +2207,12 @@ function scoreColor(score: number, max: number): string {
                   <div class="doc-title">{{ doc.title }}</div>
                   <div class="doc-filename">{{ doc.filename }}</div>
                 </div>
+                <NButton
+                  size="tiny"
+                  quaternary
+                  @click.stop="openEditDocModal(doc)"
+                  style="flex-shrink:0"
+                >✏️</NButton>
                 <NButton
                   size="tiny"
                   quaternary
@@ -1902,15 +2630,21 @@ function scoreColor(score: number, max: number): string {
                   <NTag v-if="s.existing_skill_count > 0" size="tiny" type="warning">
                     已有 {{ s.existing_skill_count }} 个 Skill
                   </NTag>
+                  <NTag v-if="s.has_draft" size="tiny" type="info">
+                    草稿已存在
+                  </NTag>
                 </div>
                 <div class="suggestion-name">{{ s.suggested_skill_name }}</div>
                 <div class="suggestion-stats">
                   <span>{{ s.entry_count }} 条知识条目</span>
+                  <span v-if="s.source_document_ids && s.source_document_ids.length > 0" class="suggestion-doc-info">
+                    {{ s.source_document_ids.length }} 个源文档
+                  </span>
                   <span>置信度 {{ Math.round(s.avg_confidence * 100) }}%</span>
                 </div>
                 <div class="suggestion-reason">{{ s.reason }}</div>
                 <NButton
-                  v-if="s.recommended"
+                  v-if="s.recommended && !s.has_draft"
                   type="primary"
                   size="small"
                   :loading="(generatingSkill || checkingSimilarity) && generatingFor === `${s.module}::${s.func_type}`"
@@ -1920,6 +2654,11 @@ function scoreColor(score: number, max: number): string {
                 >
                   {{ checkingSimilarity && generatingFor === `${s.module}::${s.func_type}` ? '检索相似中…' : '✨ 生成 Skill 草稿' }}
                 </NButton>
+                <NButton
+                  v-else-if="s.has_draft"
+                  size="small"
+                  @click="setDraftStatusFilter('draft'); onTabChange('drafts')"
+                >查看草稿</NButton>
                 <span v-else class="suggestion-need-more">需 {{ 3 - s.entry_count + (s.entry_count < 3 ? s.entry_count : 0) }} 条更多条目</span>
               </div>
             </div>
@@ -1980,6 +2719,20 @@ function scoreColor(score: number, max: number): string {
                     <NButton size="tiny" type="success" ghost @click="d.id && openReviewModal(d, 'approve')">
                       发布
                     </NButton>
+                    <NButton
+                      v-if="d.status === 'draft' || d.status === 'rejected'"
+                      size="tiny"
+                      type="error"
+                      quaternary
+                      @click="d.id && confirmDeleteDraft(d)"
+                    >删除</NButton>
+                    <NButton
+                      v-if="d.status === 'approved'"
+                      size="tiny"
+                      type="warning"
+                      ghost
+                      @click="d.id && openDeprecateModal(d)"
+                    >废弃</NButton>
                   </NSpace>
                 </div>
               </div>
@@ -2571,6 +3324,239 @@ function scoreColor(score: number, max: number): string {
             @click="confirmCreateAnyway"
           >仍要新建</NButton>
         </div>
+      </template>
+    </NModal>
+
+    <!-- ── Skill 生成进度弹窗 ──────────────────────────────── -->
+    <NModal
+      v-model:show="showGenProgressModal"
+      preset="card"
+      style="width: 480px"
+      title="✨ Skill 生成中..."
+      :closable="!generatingSkill"
+      :mask-closable="false"
+    >
+      <div class="gen-progress-body">
+        <!-- 进度步骤列表 -->
+        <div class="gen-steps">
+          <div
+            v-for="(step, i) in genProgressSteps"
+            :key="i"
+            class="gen-step"
+            :class="[
+              step.status === 'finish' ? 'step-finish' : '',
+              step.status === 'process' ? 'step-process' : '',
+              step.status === 'error' ? 'step-error' : '',
+              step.status === 'wait' ? 'step-wait' : '',
+            ]"
+          >
+            <div class="step-icon">
+              <span v-if="step.status === 'finish'">&#10003;</span>
+              <span v-else-if="step.status === 'error'">&#10007;</span>
+              <span v-else-if="step.status === 'process'" class="step-spinner">&#9679;</span>
+              <span v-else>{{ i + 1 }}</span>
+            </div>
+            <div class="step-label">{{ step.label }}</div>
+          </div>
+        </div>
+
+        <!-- 当前状态消息 -->
+        <div v-if="genJobStatus" class="gen-status-msg" :class="genJobStatus.status === 'error' ? 'msg-error' : 'msg-info'">
+          {{ genJobStatus.message }}
+        </div>
+        <div v-else class="gen-status-msg msg-info">正在初始化生成任务...</div>
+
+        <!-- 进度条 -->
+        <div class="gen-progress-bar-wrap">
+          <div
+            class="gen-progress-bar"
+            :style="{ width: (genJobStatus?.progress ?? 0) + '%' }"
+            :class="genJobStatus?.status === 'error' ? 'bar-error' : 'bar-normal'"
+          />
+        </div>
+        <div class="gen-progress-pct">{{ genJobStatus?.progress ?? 0 }}%</div>
+      </div>
+
+      <template #footer>
+        <div style="display:flex; justify-content:flex-end; gap:8px">
+          <NButton
+            size="small"
+            :disabled="generatingSkill"
+            @click="showGenProgressModal = false; closeGenSse()"
+          >
+            {{ generatingSkill ? '生成中...' : '关闭' }}
+          </NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <!-- ── 文档重复检测弹窗 ───────────────────────────── -->
+    <NModal
+      v-model:show="showDuplicateModal"
+      preset="card"
+      style="width: 640px; max-height: 80vh"
+      title="⚠️ 检测到重复或相似的 Skill"
+      :segmented="{ content: true, footer: true }"
+    >
+      <div class="dup-modal-body">
+        <div class="dup-banner">
+          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          当前涉及的知识条目源文档与以下 Skill 高度重叠，再次生成会产生冗余。
+        </div>
+        <div class="dup-items">
+          <div
+            v-for="item in duplicateItems"
+            :key="item.id"
+            class="dup-item"
+          >
+            <div class="dup-item-top">
+              <span class="dup-name">{{ item.skill_name }}</span>
+              <span class="dup-badge" :class="item.is_activated ? 'badge-active' : 'badge-draft'">
+                {{ item.is_activated ? '已激活' : '草稿' }}
+              </span>
+              <span class="dup-match-type">
+                {{ item.match_type === 'source_document' ? '来源文档重复' : '内容指纹重复' }}
+              </span>
+            </div>
+            <div class="dup-item-actions">
+              <NButton size="tiny" type="default" @click="handleViewExisting(item)">
+                {{ item.is_activated ? '查看技能库' : '打开编辑' }}
+              </NButton>
+              <NButton
+                v-if="item.is_activated"
+                size="tiny"
+                type="warning"
+                ghost
+                @click="handleUpgradeDraft(item)"
+              >创建升级草案</NButton>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <div style="display:flex; justify-content:flex-end; gap:8px">
+          <NButton size="small" @click="showDuplicateModal = false">取消</NButton>
+          <NButton size="small" type="primary" ghost @click="handleForceCreate">忽略重复，强制新建</NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <!-- ── 融合目标推荐弹窗 ─────────────────────────── -->
+    <NModal
+      v-model:show="showMergeRecommendModal"
+      preset="card"
+      style="width: 680px; max-height: 80vh"
+      title="🔗 融合目标推荐"
+      :segmented="{ content: true, footer: true }"
+    >
+      <NSpin :show="mergeRecommendLoading">
+        <div class="merge-rec-body">
+          <div v-if="!mergeRecommendLoading && mergeRecommendations.length === 0" class="merge-empty">
+            <NEmpty description="暂无合适的融合目标，建议直接新建 Skill" />
+          </div>
+          <div
+            v-for="rec in mergeRecommendations"
+            :key="rec.target_id"
+            class="merge-rec-item"
+          >
+            <div class="merge-rec-top">
+              <span class="merge-rec-name">{{ rec.target_name }}</span>
+              <span class="dup-badge" :class="rec.target_type === 'activated' ? 'badge-active' : 'badge-draft'">
+                {{ rec.target_type === 'activated' ? '已激活' : '草稿' }}
+              </span>
+              <span class="merge-score">{{ Math.round(rec.match_score * 100) }}% 相关</span>
+            </div>
+            <div class="merge-rec-reason">{{ rec.reason }}</div>
+            <div v-if="rec.new_topics.length > 0" class="merge-rec-topics">
+              <span class="topics-label">新增主题：</span>
+              <NTag v-for="t in rec.new_topics" :key="t" size="tiny" :bordered="false" type="info">{{ t }}</NTag>
+            </div>
+            <div class="merge-rec-delta" v-if="rec.estimated_quality_delta > 0">
+              质量预计提升 +{{ rec.estimated_quality_delta }}
+            </div>
+          </div>
+        </div>
+      </NSpin>
+      <template #footer>
+        <div style="display:flex; justify-content:flex-end">
+          <NButton size="small" @click="showMergeRecommendModal = false">关闭</NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <!-- 删除草稿确认弹窗 -->
+    <NModal v-model:show="showDeleteConfirmModal" preset="dialog" type="warning" title="删除草稿"
+      positive-text="确认删除" negative-text="取消" @positive-click="doDeleteDraft">
+      <p v-if="deletingDraft">确定删除草稿 <strong>{{ deletingDraft.skill_name }}</strong>？</p>
+      <p style="color:#d32f2f;font-size:13px">⚠ 此操作不可恢复，草稿 JSON 文件将被永久删除。</p>
+    </NModal>
+
+    <!-- 废弃 Skill 弹窗 -->
+    <NModal v-model:show="showDeprecateModal" preset="card" title="废弃 Skill" style="max-width:480px">
+      <p v-if="deprecatingDraft">将废弃已激活的 Skill <strong>{{ deprecatingDraft.skill_name }}</strong>，文件保留但标记为废弃。</p>
+      <div style="margin-top:12px">
+        <label style="display:block;font-weight:600;margin-bottom:4px">废弃原因 *</label>
+        <NInput v-model:value="deprecateReason" type="textarea" :rows="3" placeholder="请填写废弃原因（必填）" />
+      </div>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showDeprecateModal = false">取消</NButton>
+          <NButton type="warning" :disabled="!deprecateReason.trim()" @click="doDeprecate">确认废弃</NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <!-- 下线 Skill 弹窗 -->
+    <NModal v-model:show="showDeactivateModal" preset="card" title="下线 Skill" style="max-width:480px">
+      <p v-if="deactivatingDraft">将下线 Skill <strong>{{ deactivatingDraft.skill_name }}</strong>，磁盘文件将移到 .archive 目录。</p>
+      <p style="color:#d32f2f;font-size:13px">⚠ 下线后 AI Agent 将无法使用此 Skill。</p>
+      <div style="margin-top:12px">
+        <label style="display:block;font-weight:600;margin-bottom:4px">下线原因 *</label>
+        <NInput v-model:value="deactivateReason" type="textarea" :rows="3" placeholder="请填写下线原因（必填）" />
+      </div>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showDeactivateModal = false">取消</NButton>
+          <NButton type="error" :disabled="!deactivateReason.trim()" @click="doDeactivate">确认下线</NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <!-- 文档编辑弹窗 -->
+    <NModal
+      v-model:show="showEditDocModal"
+      preset="dialog"
+      title="✏️ 编辑文档"
+      positive-text="保存"
+      negative-text="取消"
+      style="width: 480px"
+      :loading="submittingDoc"
+      @positive-click="submitEditDoc"
+    >
+      <NForm label-placement="left" label-width="60" size="medium" style="margin-top: 8px">
+        <NFormItem label="标题" required>
+          <NInput v-model:value="editDocTitle" placeholder="文档标题" />
+        </NFormItem>
+        <NFormItem label="模块">
+          <NSelect v-model:value="editDocModule" :options="MODULE_OPTIONS" placeholder="选择模块" />
+        </NFormItem>
+      </NForm>
+    </NModal>
+
+    <!-- 批量拒绝弹窗 -->
+    <NModal v-model:show="showBulkRejectModal" preset="card" title="批量拒绝草稿" style="max-width:480px">
+      <p>将拒绝已选的草稿，可填写拒绝原因。</p>
+      <div style="margin-top:12px">
+        <label style="display:block;font-weight:600;margin-bottom:4px">拒绝原因</label>
+        <NInput v-model:value="bulkRejectReason" type="textarea" :rows="3" placeholder="填写拒绝原因（可选）" />
+      </div>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showBulkRejectModal = false">取消</NButton>
+          <NButton type="warning" :loading="bulkDraftLoading" @click="confirmBulkReject">确认拒绝</NButton>
+        </NSpace>
       </template>
     </NModal>
 
@@ -3201,6 +4187,7 @@ function scoreColor(score: number, max: number): string {
 .suggestion-mod-badge { display: flex; align-items: center; gap: 6px; }
 .suggestion-name { font-size: 14px; font-weight: 600; color: var(--n-text-color); line-height: 1.4; }
 .suggestion-stats { display: flex; gap: 10px; font-size: 12px; color: #888; }
+.suggestion-doc-info { color: #18a058; font-weight: 500; }
 .suggestion-reason { font-size: 12px; color: #666; line-height: 1.5; }
 .suggestion-gen-btn { width: 100%; margin-top: 4px; }
 .suggestion-need-more { font-size: 12px; color: #bbb; text-align: center; padding: 6px 0 2px; }
@@ -3516,10 +4503,209 @@ function scoreColor(score: number, max: number): string {
   color: var(--n-text-color-3, #999);
 }
 
-/* 弹窗底部按钮行 */
+/* 弹窗底部按鈕行 */
 .similar-modal-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* ── Skill 生成进度弹窗 ──────────────────────────── */
+.gen-progress-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 0;
+}
+.gen-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gen-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+.step-finish { background: rgba(24,160,88,0.08); color: #18a058; }
+.step-process { background: rgba(32,128,240,0.1); color: #2080f0; }
+.step-error   { background: rgba(208,48,80,0.08); color: #d03050; }
+.step-wait    { background: var(--n-color-embedded, rgba(0,0,0,0.03)); color: var(--n-text-color-3, #aaa); }
+.step-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  border: 1.5px solid currentColor;
+}
+.step-spinner {
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.step-label { font-size: 13px; font-weight: 500; }
+.gen-status-msg {
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  line-height: 1.5;
+}
+.msg-info  { background: rgba(32,128,240,0.08); color: #1060b0; }
+.msg-error { background: rgba(208,48,80,0.08); color: #c0203c; }
+.gen-progress-bar-wrap {
+  height: 6px;
+  background: var(--n-border-color, #e8e8ed);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.gen-progress-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.bar-normal { background: linear-gradient(90deg, #2080f0, #18a058); }
+.bar-error  { background: #d03050; }
+.gen-progress-pct {
+  font-size: 11px;
+  text-align: right;
+  color: var(--n-text-color-3, #aaa);
+  margin-top: -6px;
+}
+
+/* ── 重复检测弹窗 ────────────────────────────────── */
+.dup-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+}
+.dup-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(247,129,102,0.1);
+  border: 1px solid rgba(247,129,102,0.3);
+  border-radius: 7px;
+  color: #c0440e;
+  font-size: 12.5px;
+  line-height: 1.5;
+  svg { color: #f78166; flex-shrink: 0; margin-top: 2px; }
+}
+.dup-items { display: flex; flex-direction: column; gap: 8px; }
+.dup-item {
+  padding: 10px 12px;
+  border: 1px solid var(--n-border-color, #e0e0e6);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dup-item-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dup-name { font-size: 13px; font-weight: 600; font-family: 'Consolas', monospace; flex: 1; }
+.dup-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.dup-match-type {
+  font-size: 11px;
+  color: var(--n-text-color-3, #888);
+  background: var(--n-color-embedded, rgba(0,0,0,0.04));
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.dup-item-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ── 融合推荐弹窗 ─────────────────────────────────── */
+.merge-rec-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 80px;
+  font-size: 13px;
+}
+.merge-rec-item {
+  padding: 10px 12px;
+  border: 1px solid var(--n-border-color, #e0e0e6);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.merge-rec-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.merge-rec-name { font-size: 13px; font-weight: 600; font-family: 'Consolas', monospace; flex: 1; }
+.merge-score {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: rgba(24,160,88,0.12);
+  color: #18a058;
+  flex-shrink: 0;
+}
+.merge-rec-reason {
+  font-size: 12px;
+  color: var(--n-text-color-3, #666);
+  line-height: 1.5;
+}
+.merge-rec-topics {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  .topics-label { font-size: 11px; color: var(--n-text-color-3, #888); }
+}
+.merge-rec-delta {
+  font-size: 11px;
+  color: #18a058;
+  font-weight: 600;
+}
+.merge-empty { padding: 24px 0; }
+
+/* ── Batch Action Bar ─────────────────────────────────── */
+.batch-action-bar {
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+  border-top: 1px solid #e8e8e8;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
+  z-index: 10;
+  margin-top: 8px;
+  border-radius: 0 0 8px 8px;
+}
+.batch-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2080f0;
+  margin-right: 8px;
 }
 </style>

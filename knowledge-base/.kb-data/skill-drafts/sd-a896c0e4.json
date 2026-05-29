@@ -16,7 +16,7 @@
   ],
   "generated_at": "2026-05-28T08:32:27.051Z",
   "generated_by": "user",
-  "status": "approved",
+  "status": "archived",
   "eval_cases": [],
   "template_version": "v1.0",
   "conflicts": [],
@@ -38,5 +38,11 @@
   "reviewed_at": "2026-05-28T08:56:45.373Z",
   "review_notes": "[系统警告] 质量评分 30/100，建议后续完善：版本范围未填写（必填）；至少需要 2 个 eval 用例（必填）",
   "activated_at": "2026-05-28T08:56:45.391Z",
-  "activated_skill_path": "skills/.claude/skills/kb-skill-telephony-bug-analysis-mpp8j0io/SKILL.md"
+  "activated_skill_path": "skills/.claude/skills/kb-skill-telephony-bug-analysis-mpp8j0io/SKILL.md",
+  "deprecated_at": "2026-05-29T06:30:03.248Z",
+  "deprecated_by": "admin",
+  "deprecate_reason": "重复",
+  "archived_at": "2026-05-29T06:31:50.009Z",
+  "archived_by": "admin",
+  "archived_from_status": "deprecated"
 }

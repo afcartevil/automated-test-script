@@ -116,23 +116,26 @@ async function batchGetSkillUpdatedAt(tahpDir: string): Promise<Map<string, numb
   return map
 }
 
-// ─── 规范化映射：英文 key → 中文 display（skill 系统内 canonical 值为中文） ──────
+// ─── 规范化映射：英文 key → 中文 display（skill 系统内 canonical 値为中文） ──────
 const FUNC_TYPE_NORMALIZE: Record<string, string> = {
-  'bug_analysis':       'AI故障分析',
-  'code_adaptation':    'AI自动化适配',
-  'version_adaptation': 'AI自动化适配',
-  'carrier_porting':    'AI自动化适配',
-  'self_check':         'AI自检工具',
-  'ai_self_check':      'AI自检工具',
-  // 以下已是中文 canonical，透传
-  'AI故障分析':    'AI故障分析',
-  'AI自动化适配':  'AI自动化适配',
-  'AI自检工具':    'AI自检工具',
+  'bug_analysis':       'Bug分析',
+  'code_adaptation':    '代码适配',
+  'version_adaptation': '版本适配',
+  'carrier_porting':    '运营商移植',
+  'self_check':         'AI自检',
+  'ai_self_check':      'AI自检',
+  'other':              '其他',
+  // 中文 canonical 透传
+  'Bug分析': 'Bug分析', '代码适配': '代码适配', '版本适配': '版本适配',
+  '运营商移植': '运营商移植', 'AI自检': 'AI自检', '其他': '其他',
+  // 兑容旧数据
+  'AI故障分析': 'AI故障分析', 'AI自动化适配': 'AI自动化适配', 'AI自检工具': 'AI自检工具',
 }
 const MODULE_NORMALIZE: Record<string, string> = {
   'telephony':     '通信',
   'kernel-driver': '驱动',
   'kernel_driver': '驱动',
+  'kernel':        '内核',
   'power-mgmt':    '功耗',
   'power_mgmt':    '功耗',
   'shared':        '通用',
@@ -260,6 +263,7 @@ async function scanTahpSkills(): Promise<any[]> {
       updatedAt,
       enabled: true,
       source: 'tahp',
+      status: fm.status || 'active',
     })
   }
 
@@ -508,7 +512,33 @@ export async function list(ctx: any) {
       skills: tahpSkills,
     }] : []
 
-    ctx.body = { categories, archived: [] }
+    // 扫描 .archive 目录获取已下线 Skill
+    const archivedSkills: any[] = []
+    const archiveDir = join(getTahpSkillsDir(), '.archive')
+    if (existsSync(archiveDir)) {
+      try {
+        const archiveEntries = await readdir(archiveDir, { withFileTypes: true })
+        for (const ae of archiveEntries) {
+          if (!ae.isDirectory() || ae.name.startsWith('.')) continue
+          const skillMd = join(archiveDir, ae.name, 'SKILL.md')
+          const content = await safeReadFile(skillMd)
+          const fm = content ? parseFrontmatter(content) : {}
+          archivedSkills.push({
+            name: ae.name,
+            description: content ? (fm.description || extractDescription(content)) : '',
+            funcType: fm.funcType || fm.func_type || '',
+            group: fm.category || fm.group || fm.module || '',
+            version: fm.version || '',
+            updatedAt: 0,
+            enabled: false,
+            source: 'tahp',
+            status: 'archived',
+          })
+        }
+      } catch { /* ignore */ }
+    }
+
+    ctx.body = { categories, archived: archivedSkills }
   } catch (err: any) {
     ctx.status = 500
     ctx.body = { error: `Failed to read TAHP skills: ${err.message}` }
