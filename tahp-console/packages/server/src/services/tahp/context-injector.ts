@@ -223,6 +223,125 @@ function getIndex(): ContextItem[] {
 }
 
 // ---------------------------------------------------------------------------
+// Skill 路径与执行规范（Agent / LLM 系统提示词共用）
+// ---------------------------------------------------------------------------
+
+export type TahpSkillScenario = 'bug_analysis' | 'adapt_debug' | 'chat'
+
+/** TAHP 仓内 Claude Skill 根目录：skills/.claude/skills */
+export function getTahpSkillsRoot(): string {
+  return join(tahpPaths.projectRoot, 'skills', '.claude', 'skills')
+}
+
+export function tahpSkillMdPath(skillId: string): string {
+  return join(getTahpSkillsRoot(), skillId, 'SKILL.md')
+}
+
+/** 从用户消息 / 适配调试 handoff 草稿中解析优先 skill id */
+export function extractPreferredSkillIds(text: string): string[] {
+  const ids = new Set<string>()
+  const patterns = [
+    /\*\*关联\s*Skills\*\*:\s*([^\n]+)/gi,
+    /关联\s*Skills[：:]\s*([^\n]+)/gi,
+    /preferred\s*skills?[：:]\s*([^\n]+)/gi,
+  ]
+  for (const re of patterns) {
+    re.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      for (const part of m[1].split(/[,，、\s]+/)) {
+        const id = part.trim().replace(/^[`'"]+|[`'"]+$/g, '')
+        if (id && /^[\w][\w.-]*$/i.test(id)) ids.add(id)
+      }
+    }
+  }
+  return [...ids]
+}
+
+function inferSkillScenario(text: string): TahpSkillScenario {
+  if (/jira\s*key|bug\s*分析|根因定位|8\s*节报告|tools_invoked|待分析\s*bug/i.test(text)) {
+    return 'bug_analysis'
+  }
+  if (/适配调试|adapt[- ]?debug|前置条件|升级路径|bsp\s*适配|关联\s*skills/i.test(text)) {
+    return 'adapt_debug'
+  }
+  return 'chat'
+}
+
+/**
+ * Skill 按需加载的执行规范（注入 system prompt，指导 Agent Read SKILL.md）。
+ */
+export function buildSkillExecutionDirective(options?: {
+  preferredSkillIds?: string[]
+  scenario?: TahpSkillScenario
+}): string {
+  const skillsDir = getTahpSkillsRoot()
+  const scenario = options?.scenario ?? 'chat'
+  const lines: string[] = [
+    '# TAHP Skill 执行规范（必读）',
+    '',
+    `工程内 Skill 根目录（唯一权威来源）: \`${skillsDir}\``,
+    '每个 Skill 为 `<skillId>/SKILL.md`。**按需**选择 1～3 个相关 Skill，禁止编造不存在的 skillId。',
+    '',
+    '## 如何使用工程内 Skill',
+    '1. 结合下方「已扫描到的 Skills」列表与用户问题，选定 skillId。',
+    '2. **必须先 Read** 对应 `SKILL.md` 全文（或通过 Skill 工具加载），再严格按其中 SOP / 分析步骤执行。',
+    '3. 通信问题域未明：先 Read `com-comm-analysis-foundation` 做路由，再选叶子 Skill。',
+    '4. MTK 充电/器件适配：先 Read `mtk-adapt-template-router`，再下钻具体 adapt Skill。',
+    '5. 须真实调用工具；完成后在回复中列出实际使用的 skill 与 MCP 工具名。',
+    '',
+  ]
+
+  if (scenario === 'bug_analysis') {
+    lines.push('**当前场景**: AI Bug 分析 — 拉取 JIRA 后必须选择并加载匹配的日志/领域分析 Skill。')
+  } else if (scenario === 'adapt_debug') {
+    lines.push('**当前场景**: AI 适配调试 — 优先加载用户指定的关联 Adapt Skill 并按 SOP 排查。')
+  } else {
+    lines.push('**当前场景**: TAHP 对话 — 按问题类型按需加载 Skill，不要一次性 Read 全部 Skill。')
+  }
+  lines.push('')
+
+  const preferred = [...new Set((options?.preferredSkillIds ?? []).filter(Boolean))]
+  if (preferred.length > 0) {
+    lines.push('## 优先 Skill（须最先 Read 并遵循）')
+    for (const id of preferred) {
+      lines.push(`- **${id}**: \`${tahpSkillMdPath(id)}\``)
+    }
+    lines.push('')
+  }
+
+  return lines.join('\n')
+}
+
+/**
+ * 完整 TAHP 系统上下文 = Skill 执行规范 + 工程扫描（skills / 约束 / playbook / 关键词匹配节选）。
+ */
+export function buildFullTahpSystemContext(
+  userInput: string,
+  options?: {
+    preferredSkillIds?: string[]
+    scenario?: TahpSkillScenario
+  },
+): string {
+  if (!hasTahpProject()) return ''
+
+  const preferredSkillIds = [
+    ...new Set([
+      ...(options?.preferredSkillIds ?? []),
+      ...extractPreferredSkillIds(userInput),
+    ]),
+  ]
+  const scenario = options?.scenario ?? inferSkillScenario(userInput)
+
+  const parts = [
+    buildSkillExecutionDirective({ preferredSkillIds, scenario }),
+    buildTahpContext(userInput),
+  ].filter(p => p.trim().length > 0)
+
+  return parts.join('\n\n')
+}
+
+// ---------------------------------------------------------------------------
 // 对外接口
 // ---------------------------------------------------------------------------
 

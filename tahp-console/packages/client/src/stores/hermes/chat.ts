@@ -885,7 +885,11 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function sendMessage(content: string, attachments?: Attachment[]) {
+  async function sendMessage(
+    content: string,
+    attachments?: Attachment[],
+    options?: { instructions?: string },
+  ) {
     if ((!content.trim() && !(attachments && attachments.length > 0))) return
 
     primeCompletionBellIfEnabled()
@@ -973,6 +977,7 @@ export const useChatStore = defineStore('chat', () => {
         })),
         queue_id: userMsg.id,
         source: 'cli' as const,
+        ...(options?.instructions?.trim() ? { instructions: options.instructions.trim() } : {}),
       }
       if (shouldSendInitialSessionConfig && activeSession.value) {
         activeSession.value.messageCount = Math.max(activeSession.value.messageCount || 0, 1)

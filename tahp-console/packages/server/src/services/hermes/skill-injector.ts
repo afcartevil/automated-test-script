@@ -3,6 +3,7 @@ import { existsSync } from 'fs'
 import { join, resolve } from 'path'
 import { getActiveProfileDir } from './hermes-profile'
 import { logger } from '../logger'
+import { tahpPaths, hasTahpProject } from '../tahp/paths'
 
 export interface SkillInjectionResult {
   sourceDir: string
@@ -21,6 +22,11 @@ export class HermesSkillInjector {
   static resolveSourceDir(env: NodeJS.ProcessEnv = process.env, baseDir = __dirname): string {
     const override = env.HERMES_WEB_UI_SKILLS_DIR?.trim()
     if (override) return resolve(override)
+
+    if (hasTahpProject()) {
+      const tahpSkills = join(tahpPaths.projectRoot, 'skills', '.claude', 'skills')
+      if (existsSync(tahpSkills)) return tahpSkills
+    }
 
     const candidates = [
       // Production bundle: dist/server/index.js with dist/skills copied by build.

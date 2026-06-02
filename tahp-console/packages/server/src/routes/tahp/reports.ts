@@ -29,8 +29,15 @@ tahpReportsRoutes.get('/api/tahp/reports/task/:id', async (ctx) => {
     ctx.body = { success: false, error: '缺少 task_id' }
     return
   }
-  const filePath = join(tahpPaths.reportsDir, `${taskId}.json`)
-  if (!existsSync(filePath)) {
+  // 兼容两类任务报告路径：
+  // 1) 传统适配报告: reports/<taskId>.json
+  // 2) Agent 自动适配: reports/adapt-agent/<taskId>.json
+  const candidates = [
+    join(tahpPaths.reportsDir, `${taskId}.json`),
+    join(tahpPaths.reportsDir, 'adapt-agent', `${taskId}.json`),
+  ]
+  const filePath = candidates.find(p => existsSync(p))
+  if (!filePath) {
     ctx.status = 404
     ctx.body = { success: false, error: `报告不存在: ${taskId}` }
     return

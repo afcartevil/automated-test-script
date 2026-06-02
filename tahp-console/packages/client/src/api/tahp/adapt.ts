@@ -1,7 +1,7 @@
 /**
  * TAHP AI 适配调试 API
  */
-import { tahpPost, tahpGet, ApiEnvelope } from './client'
+import { tahpPost, tahpGet } from './client'
 
 export interface AdaptConfig {
   domain: string
@@ -46,4 +46,24 @@ export function saveAdaptConfig(config: AdaptConfig): Promise<{ success: boolean
  */
 export function getAdaptConfig(): Promise<AdaptConfig | null> {
   return tahpGet<AdaptConfig | null>('/api/tahp/adapt/config/get')
+}
+
+export interface AdaptAgentRunRequest {
+  domain_id: string
+  domain_label: string
+  module: string
+  related_skills: string[]
+  project: {
+    projectCode: string
+    soc: string
+    kernelVersion: string
+    preVendor: string
+    postVendor: string
+  }
+  form_data: Record<string, string>
+  user_notes?: string
+}
+
+export function startAdaptAgentRun(req: AdaptAgentRunRequest): Promise<{ task_id: string; status: string; mode: string }> {
+  return tahpPost<{ task_id: string; status: string; mode: string }>('/api/tahp/adapt/agent-run', req)
 }

@@ -75,6 +75,8 @@ export const useTahpTasksStore = defineStore('tahp-tasks', () => {
     const events = [
       'task.started', 'task.phase', 'task.step', 'task.message',
       'task.completed', 'task.failed', 'task.correction', 'task.progress',
+      // Agent 自动适配扩展事件
+      'task.skill_use', 'task.file_change', 'task.plan', 'task.tool_completed',
     ]
     events.forEach(e => s.on(e, handler))
     socketBound = true

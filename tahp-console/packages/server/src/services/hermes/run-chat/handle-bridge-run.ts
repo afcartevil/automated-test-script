@@ -27,6 +27,7 @@ import type { ContentBlock, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta } from './bridge-delta'
+import { buildFullTahpSystemContext, extractInputText, extractPreferredSkillIds } from '../../tahp/context-injector'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 
@@ -70,6 +71,20 @@ export async function handleBridgeRun(
   if (sessionRow?.workspace) {
     const workspaceCtx = `[Current working directory: ${sessionRow.workspace}]`
     fullInstructions = `\n${workspaceCtx}\n${fullInstructions}`
+  }
+
+  try {
+    const inputText = extractInputText(input)
+    const preferredSkillIds = [
+      ...extractPreferredSkillIds(inputText),
+      ...(instructions ? extractPreferredSkillIds(instructions) : []),
+    ]
+    const tahpCtx = buildFullTahpSystemContext(inputText, { preferredSkillIds })
+    if (tahpCtx) {
+      fullInstructions = `${fullInstructions}\n\n${tahpCtx}`
+    }
+  } catch (ctxErr) {
+    logger.warn('[chat-run-bridge] TAHP skill context injection skipped: %s', ctxErr)
   }
 
   const runMarker = `cli_run_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`

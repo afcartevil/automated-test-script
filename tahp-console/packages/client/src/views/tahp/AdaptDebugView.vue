@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import { useTahpTasksStore } from '@/stores/tahp/tasks'
 import type { TahpModule } from '@/api/tahp/tasks'
 import { fetchDynamicDomains } from '@/api/tahp/skills'
+import { startAdaptAgentRun } from '@/api/tahp/adapt'
 
 const message = useMessage()
 const router = useRouter()
@@ -158,9 +159,29 @@ const DOMAINS = reactive<DomainDef[]>([
     status: 'pending',
     relatedSkills: ['MODEM_P1_Adapt', 'com-comm-analysis-foundation', 'carrier-porting-assistant'],
     fields: [
-      { name: 'modem_platform', label: 'Modem平台', type: 'select', required: true, options: [{ label:'MTK', value:'mtk' },{ label:'Qualcomm', value:'qcom' },{ label:'UNISOC', value:'unisoc' }] },
-      { name: 'rf_param_dir',   label: 'RF参数目录', type: 'text',   required: true, placeholder: 'vendor/mediatek/proprietary/modem_1/rf_params' },
-      { name: 'carrier',        label: '运营商',     type: 'text',   required: false, placeholder: '如 CMCC / Vodafone' },
+      { name: 'path_a_pub', label: 'Path_A_Pub（原分支公共仓）', type: 'text', required: true, placeholder: 'D:\\project\\mp_release_10.0\\common\\' },
+      { name: 'path_a_priv', label: 'Path_A_Priv（原分支私有仓）', type: 'text', required: true, placeholder: 'D:\\project\\mp_release_10.0\\private\\' },
+      { name: 'path_b_pub', label: 'Path_B_Pub（目标分支公共仓）', type: 'text', required: true, placeholder: 'D:\\project\\main\\common\\' },
+      { name: 'path_b_priv', label: 'Path_B_Priv（目标分支私有仓）', type: 'text', required: true, placeholder: 'D:\\project\\main\\private\\' },
+      { name: 'bom_name', label: 'BOM_Name（项目 BOM）', type: 'text', required: true, placeholder: 'ae10_h833_a1 / cm7_h781 / x6870_h781_f1' },
+      { name: 'bom_name_target', label: 'BOM_Name_Target（变更后 BOM）', type: 'text', required: true, placeholder: 'x6856_h971_a1' },
+      { name: 'rf_target_location', label: 'RF_TARGET_LOCATION', type: 'select', required: true, options: [{ label: 'public（公共仓）', value: 'public' }, { label: 'private（私有仓）', value: 'private' }] },
+      { name: 'modem_platform', label: 'Modem 平台（补充）', type: 'select', required: false, options: [{ label: 'MTK', value: 'mtk' }, { label: 'Qualcomm', value: 'qcom' }, { label: 'UNISOC', value: 'unisoc' }] },
+      { name: 'rf_param_dir', label: 'RF 参数目录（补充）', type: 'text', required: false, placeholder: 'vendor/mediatek/proprietary/modem_1/rf_params' },
+      { name: 'carrier', label: '运营商（补充）', type: 'text', required: false, placeholder: 'CMCC / Vodafone' },
+      { name: 'user_notes', label: '补充说明', type: 'textarea', required: false, placeholder: '覆盖确认、特殊分支说明等' },
+    ],
+  },
+  {
+    id: 'comm-framework',
+    label: '通信框架',
+    icon: 'CMF',
+    color: '#0ea5e9',
+    status: 'pending',
+    relatedSkills: ['comm-framework-agent-test', 'com-comm-analysis-foundation'],
+    fields: [
+      { name: 'prj_path', label: 'PRJ Path（项目路径）', type: 'text', required: true, placeholder: 'D:\\project\\your_comm_framework\\' },
+      { name: 'user_notes', label: '补充说明', type: 'textarea', required: false, placeholder: '说明要测试的场景、注意事项等' },
     ],
   },
   {
@@ -260,9 +281,12 @@ function setFieldValue(fieldName: string, value: string) {
 // 执行 / 监控状态
 // ─────────────────────────────────────────────────────────────────────────────
 const launching   = ref(false)
+const agentLaunching = ref(false)
 const launchedTaskId = ref<string | null>(null)
 const taskStatus  = ref<string>('')
 const showMonitor = ref(false)
+/** llm = 启动 AI 适配调试；agent = Agent 自动适配 */
+const monitorMode = ref<'llm' | 'agent' | null>(null)
 const eventListEl = ref<HTMLElement | null>(null)
 
 // 任务创建时间，用于显示耗时
@@ -282,7 +306,25 @@ const llmResponse = computed(() =>
 
 // 结构化事件（phase、step、completed、failed）用于侧边栏状态
 const structuredEvents = computed(() =>
-  stream.value.filter(ev => ev.type !== 'task.message')
+  stream.value.filter(ev =>
+    ev.type !== 'task.message' &&
+    ev.type !== 'task.skill_use' &&
+    ev.type !== 'task.file_change' &&
+    ev.type !== 'task.plan' &&
+    ev.type !== 'task.tool_completed',
+  )
+)
+
+const agentSkillEvents = computed(() =>
+  stream.value.filter(ev => ev.type === 'task.skill_use')
+)
+
+const agentFileEvents = computed(() =>
+  stream.value.filter(ev => ev.type === 'task.file_change')
+)
+
+const agentPlanEvents = computed(() =>
+  stream.value.filter(ev => ev.type === 'task.plan' || (ev.type === 'task.message' && ev.payload?.level === 'reasoning'))
 )
 
 const isRunning = computed(() =>
@@ -330,6 +372,7 @@ function mapDomainToModule(id: DomainId): TahpModule {
   }
   // 静态域回退规则
   if (id === 'modem') return 'telephony'
+  if (id === 'comm-framework') return 'telephony'
   return 'kernel-driver'
 }
 
@@ -410,6 +453,53 @@ function buildDocContent(): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // 启动任务（核心修复：真正调用 MCP Pipeline）
 // ─────────────────────────────────────────────────────────────────────────────
+function buildAgentRunPayload() {
+  const d = activeDomain.value
+  return {
+    domain_id: activeDomainId.value,
+    domain_label: d.label,
+    module: mapDomainToModule(activeDomainId.value),
+    related_skills: d.relatedSkills,
+    project: { ...ctx },
+    form_data: { ...currentFormData.value },
+    user_notes: currentFormData.value.user_notes || undefined,
+  }
+}
+
+async function launchAgentAdapt() {
+  if (!isComplete.value) {
+    message.warning('请先完成当前域所需的全部表单参数')
+    return
+  }
+  const allowed = new Set(['modem', 'comm-framework'])
+  if (!allowed.has(activeDomainId.value)) {
+    message.warning('Agent 自动适配当前仅支持「通信 Modem / 通信框架」域')
+    return
+  }
+
+  agentLaunching.value = true
+  monitorMode.value = 'agent'
+  taskStatus.value = 'starting'
+  launchedTaskId.value = null
+  showMonitor.value = true
+  startTime.value = Date.now()
+
+  try {
+    tasksStore.ensureSocket()
+    const data = await startAdaptAgentRun(buildAgentRunPayload())
+    const tid = data.task_id
+    if (tid) {
+      launchedTaskId.value = tid
+      message.success(`Agent 任务已启动: ${tid}`)
+    }
+  } catch (err) {
+    taskStatus.value = 'FAILED'
+    message.error(`Agent 启动失败: ${(err as Error).message}`)
+  } finally {
+    agentLaunching.value = false
+  }
+}
+
 async function launchTask() {
   if (!isComplete.value) {
     message.warning('请先完成所有必填前置条件')
@@ -417,6 +507,7 @@ async function launchTask() {
   }
 
   launching.value   = true
+  monitorMode.value = 'llm'
   taskStatus.value  = 'starting'
   launchedTaskId.value = null
   showMonitor.value = true
@@ -452,6 +543,7 @@ async function launchTask() {
 
 function backToForm() {
   showMonitor.value = false
+  monitorMode.value = null
   // 保留 launchedTaskId，以便用户再次点击"查看进度"
 }
 
@@ -624,6 +716,14 @@ function openSkill(skillName: string) {
         </div>
 
         <!-- 前置条件表单 -->
+        <div v-if="activeDomainId === 'modem' || activeDomainId === 'comm-framework'" class="modem-skill-hint">
+          <template v-if="activeDomainId === 'modem'">
+            以下字段来自 <code>MODEM_P1_Adapt</code> SKILL.md 的必填输入；填完后可用「Agent 自动适配」由桥接 Agent 按 Skill SOP 执行。
+          </template>
+          <template v-else>
+            以下字段来自 <code>comm-framework-agent-test</code> 测试 Skill 输入；点击「Agent 自动适配」后将按 Skill 分步骤在 PRJ Path 下创建并写入测试文件。
+          </template>
+        </div>
         <div class="form-card">
           <div class="form-grid">
             <div
@@ -690,6 +790,15 @@ function openSkill(skillName: string) {
           <NButton size="large" @click="openAIChat">
             AI 对话调试
           </NButton>
+          <NButton
+            size="large"
+            type="warning"
+            :disabled="!isComplete || !['modem', 'comm-framework'].includes(activeDomainId)"
+            :loading="agentLaunching"
+            @click="launchAgentAdapt"
+          >
+            {{ agentLaunching ? 'Agent 启动中...' : 'Agent 自动适配' }}
+          </NButton>
           <!-- 如果已有进行中/完成的任务，显示"查看进度"快捷按钮 -->
           <NButton
             v-if="launchedTaskId"
@@ -719,7 +828,10 @@ function openSkill(skillName: string) {
             </button>
             <span class="mb-sep" />
             <span class="mb-domain-badge" :style="{ background: activeDomain.color }">{{ activeDomain.icon }}</span>
-            <span class="mb-title">{{ activeDomain.label }} — AI 适配执行</span>
+            <span class="mb-title">
+              {{ activeDomain.label }} —
+              {{ monitorMode === 'agent' ? 'Agent 自动适配' : 'AI 适配执行' }}
+            </span>
           </div>
           <div class="mb-right">
             <code v-if="launchedTaskId" class="mb-taskid">{{ launchedTaskId }}</code>
@@ -769,15 +881,40 @@ function openSkill(skillName: string) {
           <code v-if="launchedTaskId" class="ms-taskid">{{ launchedTaskId }}</code>
         </div>
 
-        <!-- ④ 主视图：LLM 回复 + 步骤侧边 -->
-        <div v-else ref="eventListEl" class="llm-monitor-layout">
+        <!-- ④ 主视图 -->
+        <div v-else ref="eventListEl" class="llm-monitor-layout" :class="{ 'agent-monitor-layout': monitorMode === 'agent' }">
+
+          <!-- Agent 模式：Skill / 规划 / 文件变更 面板 -->
+          <div v-if="monitorMode === 'agent'" class="agent-side-panels">
+            <div class="asp-card">
+              <div class="asp-title">任务规划 / 推理</div>
+              <div v-if="!agentPlanEvents.length" class="asp-empty">等待 Agent 输出规划...</div>
+              <pre v-for="(ev, i) in agentPlanEvents.slice(-8)" :key="'plan-' + i" class="asp-item">{{ formatPayload(ev.payload) }}</pre>
+            </div>
+            <div class="asp-card">
+              <div class="asp-title">Skill / 工具调用</div>
+              <div v-if="!agentSkillEvents.length" class="asp-empty">尚未调用工具</div>
+              <div v-for="(ev, i) in agentSkillEvents" :key="'sk-' + i" class="asp-skill-row">
+                <NTag size="tiny" type="info">{{ ev.payload?.skill_id || 'tool' }}</NTag>
+                <span class="asp-skill-msg">{{ ev.payload?.message || formatPayload(ev.payload) }}</span>
+              </div>
+            </div>
+            <div class="asp-card">
+              <div class="asp-title">文件修改</div>
+              <div v-if="!agentFileEvents.length" class="asp-empty">暂无检测到的写文件操作</div>
+              <div v-for="(ev, i) in agentFileEvents" :key="'fc-' + i" class="asp-file-row">
+                <code>{{ ev.payload?.path }}</code>
+                <span class="asp-file-meta">{{ ev.payload?.tool }} · {{ ev.payload?.status || 'modify' }}</span>
+              </div>
+            </div>
+          </div>
 
           <!-- 左：AI 分析内容（流式渲染）-->
           <div class="llm-response-panel">
             <div class="lrp-header">
               <span class="lrp-title">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                AI 适配分析
+                {{ monitorMode === 'agent' ? 'Agent 执行输出' : 'AI 适配分析' }}
               </span>
               <NTag v-if="isRunning" size="tiny" type="info">
                 <span class="pulse-dot" />
@@ -1107,6 +1244,17 @@ function openSkill(skillName: string) {
   &.warn { background: rgba(245,158,11,.1);  color: #f59e0b; border-color: rgba(245,158,11,.3); }
 }
 
+.modem-skill-hint {
+  font-size: 12px;
+  color: $text-muted;
+  margin-bottom: 10px;
+  line-height: 1.5;
+  code {
+    font-size: 11px;
+    color: var(--accent-info, #388bfd);
+  }
+}
+
 .form-card {
   background: $bg-card;
   border: 1px solid $border-color;
@@ -1434,6 +1582,85 @@ function openSkill(skillName: string) {
   grid-template-columns: 1fr 240px;
   gap: 0;
   overflow: hidden;
+}
+
+.agent-monitor-layout {
+  grid-template-columns: 220px 1fr 260px;
+}
+
+.agent-side-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 8px;
+  border-right: 1px solid $border-color;
+}
+
+.asp-card {
+  background: $bg-card;
+  border: 1px solid $border-color;
+  border-radius: $radius-md;
+  padding: 8px 10px;
+  flex-shrink: 0;
+}
+
+.asp-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: $text-primary;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.asp-empty {
+  font-size: 11px;
+  color: $text-muted;
+}
+
+.asp-item {
+  margin: 0 0 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: $text-primary;
+  font-family: $font-code;
+}
+
+.asp-skill-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed $border-color;
+  &:last-child { border-bottom: none; margin-bottom: 0; }
+}
+
+.asp-skill-msg {
+  font-size: 11px;
+  color: $text-muted;
+  line-height: 1.4;
+}
+
+.asp-file-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+  code {
+    font-size: 11px;
+    word-break: break-all;
+    color: var(--accent-info, #388bfd);
+  }
+}
+
+.asp-file-meta {
+  font-size: 10px;
+  color: $text-muted;
 }
 
 .llm-response-panel {

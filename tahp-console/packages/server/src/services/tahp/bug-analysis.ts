@@ -51,6 +51,7 @@ import {
   type JiraIssue, type JiraIssueSummary, type JiraConfig,
 } from './jira'
 import { logBug, appendBugLog } from './bug-analysis-logger'
+import { buildFullTahpSystemContext, getTahpSkillsRoot } from './context-injector'
 
 // ─── Agent Bridge 客户端（单例） ────────────────────────────────────────────
 //
@@ -352,21 +353,12 @@ function findSkillUseHits(text: string, fromIndex = 0): SkillUseHit[] {
   return hits
 }
 
-// ─── 提示词构建（Agent 模式 · 无 BFF 启发式） ───────────────────────────────
+// ─── 提示词构建（Agent 模式 + 工程 Skill 目录注入） ─────────────────────────
 //
-// BFF 不再做任何"提示候选 Skill / 加载约束摘要 / 模块识别"工作。
-// Bug 域识别、Skill 选择、约束 / 上下文加载全部由 Agent 在 Step 1 拿到 JIRA
-// 一手信息后自主完成。
-//
-// Agent 端真实可用（节选，由 Agent 自己列举 ~/.claude/skills/ 或 ~/.agents/skills/ 了解能力清单）：
-//   · jira-mcp / user-jira-mcp  — 拉取 Issue / 附件 / 评论 / JQL
-//   · transsion-harness          — 拉取整机日志 / 版本 / 部署
-//   · com-voice-* / com-data-* / telephony-* — 通信类 BSP 日志分析
-//   · near-bt-*                  — 蓝牙 / Wi-Fi / 内核驱动
-//   · power-backlight-* / power-display-* / power-sensor-* — 功耗 / 亮度
-//   · tones-feature-list         — 特性 / 属性查询
+// BFF 注入：当前工程 skills/.claude/skills 清单 + Skill 按需 Read 规范 + 关键词匹配节选。
+// Bug 域识别与具体 Skill 选择仍由 Agent 在拉取 JIRA 后完成；MCP：jira-mcp / transsion-harness 等。
 
-const AGENT_INSTRUCTIONS = `你是 TAHP（TECNO AI Harness Platform）"AI Bug 分析专家"，运行在传音 Android 底软集成部的 Claude Code Agent 环境中。
+const AGENT_INSTRUCTIONS_BASE = `你是 TAHP（TECNO AI Harness Platform）"AI Bug 分析专家"，运行在传音 Android 底软集成部的 Claude Code Agent 环境中。
 
 # 你的执行原则
 1. **必须真正调用 Skill / MCP 工具**，不要"假装"使用 skill；用户能通过工具调用面板看到你是否真的调用了。
@@ -389,7 +381,8 @@ const AGENT_INSTRUCTIONS = `你是 TAHP（TECNO AI Harness Platform）"AI Bug �
 
 ## Step 2：自主判断 Bug 域 + 选择对应分析 Skill（必做）
 基于 Step 1 拉到的 Issue Summary / Description / Components，**自主判断**属于哪类 Bug，然后挑选对应的分析 Skill。
-若不熟悉可用 Skill 清单，请先列出 \`~/.claude/skills/\` 或 \`~/.agents/skills/\` 目录了解能力。
+Skill 清单与路径见系统提示词末尾「TAHP 工程上下文」；根目录为 \`__TAHP_SKILLS_DIR__\`。
+选定 skillId 后 **必须 Read** 对应 \`<skillId>/SKILL.md\` 全文再按 SOP 分析（通信域未明时先 Read \`com-comm-analysis-foundation\`）。
 
 ## Step 3：日志获取（如有附件或现场需要）
 - 使用 \`transsion-harness\` 拉取整机 log / kernel log / aplog / dumpsys
@@ -449,6 +442,13 @@ const AGENT_INSTRUCTIONS = `你是 TAHP（TECNO AI Harness Platform）"AI Bug �
 - 不要写"如果有访问权限"之类回避用语
 `
 
+function buildBugAnalysisInstructions(userMessage: string): string {
+  const skillsDir = getTahpSkillsRoot()
+  const base = AGENT_INSTRUCTIONS_BASE.replace(/__TAHP_SKILLS_DIR__/g, skillsDir)
+  const tahpCtx = buildFullTahpSystemContext(userMessage, { scenario: 'bug_analysis' })
+  return tahpCtx ? `${base}\n\n${tahpCtx}` : base
+}
+
 function buildAgentUserMessage(ctx: BugAnalysisTaskCtx, correction?: string): string {
   const blocks: string[] = []
   blocks.push(`# 待分析 Bug`)
@@ -506,12 +506,12 @@ async function runSingleBugAnalysis(
   taskRuntime.set(taskId, { sessionId: agentSessionId, interruptRequested: false })
 
   try {
-    // ── Phase 1: 准备提示词（无 BFF 启发式，纯组装上下文） ─────────────────
-    const instructions = AGENT_INSTRUCTIONS
+    // ── Phase 1: 准备提示词（注入工程 Skill 目录 + 按需加载规范） ───────────
     const userMessage = buildAgentUserMessage(ctx, correction)
+    const instructions = buildBugAnalysisInstructions(userMessage)
     emit(taskId, 'task.phase', {
       phase: 'PREPARING', progress: 5,
-      message: '准备提交给 Agent（BFF 不做模块识别 / Skill 候选 / 约束加载）...',
+      message: '准备提交给 Agent（已注入工程 skills 目录与匹配节选）...',
     })
 
     // ── Phase 2: 检查 Agent Bridge 状态 ────────────────────────────────────

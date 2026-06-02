@@ -32,7 +32,7 @@ import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
 import { getProfileDir, getActiveEnvPath, getActiveConfigPath } from '../../hermes/hermes-profile'
 import type { ContentBlock, SessionState, ChatRunSource } from './types'
-import { buildTahpContext, extractInputText } from '../../tahp/context-injector'
+import { buildFullTahpSystemContext, extractInputText, extractPreferredSkillIds } from '../../tahp/context-injector'
 
 // ---------------------------------------------------------------------------
 // Bridge availability probe (cached, TTL = 10 s)
@@ -714,12 +714,14 @@ export async function handleApiRun(
     }
   }
 
-  // ── 注入 TAHP 工程上下文（skills / 知识库 / 约束 / playbooks）─────────────
-  // 根据用户输入做关键词匹配，将相关工程内容注入 system prompt，
-  // 让 LLM 能"看到"工程结构和配置，不再只能回答通用问题。
+  // ── 注入 TAHP 工程上下文（Skill 按需加载规范 + skills / 约束 / playbooks）──
   try {
     const inputText = extractInputText(input)
-    const tahpCtx = buildTahpContext(inputText)
+    const preferredSkillIds = [
+      ...extractPreferredSkillIds(inputText),
+      ...(instructions ? extractPreferredSkillIds(instructions) : []),
+    ]
+    const tahpCtx = buildFullTahpSystemContext(inputText, { preferredSkillIds })
     if (tahpCtx) {
       fullInstructions = `${fullInstructions}\n\n${tahpCtx}`
     }

@@ -318,7 +318,12 @@ function handleSend() {
   const text = inputText.value.trim()
   if (!text && attachments.value.length === 0) return
 
-  chatStore.sendMessage(text, attachments.value.length > 0 ? attachments.value : undefined)
+  const tahpInstructions = tahpCtx.value ? buildTahpHandoffInstructions(tahpCtx.value) : undefined
+  chatStore.sendMessage(
+    text,
+    attachments.value.length > 0 ? attachments.value : undefined,
+    tahpInstructions ? { instructions: tahpInstructions } : undefined,
+  )
   inputText.value = ''
   attachments.value = []
   slashActive.value = false
@@ -434,6 +439,19 @@ interface TahpChatContext {
 }
 
 const tahpCtx        = ref<TahpChatContext | null>(null)
+
+/** 首条消息附带：让 BFF 在 system prompt 中注入优先 Skill 路径 */
+function buildTahpHandoffInstructions(ctx: TahpChatContext): string {
+  const skills = ctx.relatedSkills.filter(Boolean)
+  const lines = [
+    `TAHP handoff: scenario=adapt_debug domain=${ctx.domain} module=${ctx.module}.`,
+    `项目: ${ctx.project.projectCode} / ${ctx.project.soc} / ${ctx.project.kernelVersion}.`,
+  ]
+  if (skills.length) {
+    lines.push(`**关联 Skills**: ${skills.join(', ')}`)
+  }
+  return lines.join('\n')
+}
 const showKbModal    = ref(false)
 const kbSaving       = ref(false)
 const kbTitle        = ref('')

@@ -9,6 +9,7 @@ import { logger } from '../../services/logger'
 import { safeFileStore } from '../../services/safe-file-store'
 import { tahpPaths } from '../../services/tahp/paths'
 import { join } from 'path'
+import { startAdaptAgentRun, getAdaptAgentTask, readAdaptAgentReport } from '../../services/tahp/adapt-agent'
 
 export const tahpAdaptRoutes = new Router()
 
@@ -116,6 +117,66 @@ tahpAdaptRoutes.post('/api/tahp/adapt/config/save', async (ctx) => {
     ctx.status = 500
     ctx.body = { success: false, error: (err as Error).message }
   }
+})
+
+// POST /api/tahp/adapt/agent-run — Agent Bridge 自动适配（实时事件走 /tahp-run）
+tahpAdaptRoutes.post('/api/tahp/adapt/agent-run', async (ctx) => {
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const domainId = String(body.domain_id || body.domainId || '').trim()
+  const domainLabel = String(body.domain_label || body.domainLabel || domainId).trim()
+  const module = String(body.module || 'telephony').trim()
+  const relatedSkills = Array.isArray(body.related_skills)
+    ? body.related_skills.map(s => String(s).trim()).filter(Boolean)
+    : Array.isArray(body.relatedSkills)
+      ? body.relatedSkills.map(s => String(s).trim()).filter(Boolean)
+      : []
+  const project = (body.project || {}) as Record<string, string>
+  const formData = (body.form_data || body.formData || {}) as Record<string, string>
+  const userNotes = typeof body.user_notes === 'string' ? body.user_notes
+    : typeof body.userNotes === 'string' ? body.userNotes : undefined
+
+  if (!domainId) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 domain_id' }
+    return
+  }
+
+  const result = startAdaptAgentRun({
+    domainId,
+    domainLabel,
+    module,
+    relatedSkills,
+    project: {
+      projectCode: String(project.projectCode || ''),
+      soc: String(project.soc || ''),
+      kernelVersion: String(project.kernelVersion || ''),
+      preVendor: String(project.preVendor || ''),
+      postVendor: String(project.postVendor || ''),
+    },
+    formData,
+    userNotes,
+  })
+
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+
+  ctx.body = { success: true, data: { task_id: result.taskId, status: 'starting', mode: 'agent' } }
+})
+
+// GET /api/tahp/adapt/agent-run/:taskId — 任务快照
+tahpAdaptRoutes.get('/api/tahp/adapt/agent-run/:taskId', async (ctx) => {
+  const { taskId } = ctx.params
+  const live = getAdaptAgentTask(taskId)
+  const report = readAdaptAgentReport(taskId)
+  if (!live && !report) {
+    ctx.status = 404
+    ctx.body = { success: false, error: '任务不存在' }
+    return
+  }
+  ctx.body = { success: true, data: { live, report } }
 })
 
 // GET /api/tahp/adapt/config/get — 获取已保存的配置
