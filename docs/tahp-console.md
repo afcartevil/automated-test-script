@@ -34,11 +34,8 @@ BFF (Koa 2, port 8650)
 ### 前置要求
 
 - Node.js >= 20
-- Python 3.8+，pip 安装 `mcp` 和 `pyyaml`
-
-```bash
-pip install mcp pyyaml
-```
+- Python **3.11+**（`hermes-agent-main` 与 `tahp-mcp-server` 共用，可用 `TAHP_PYTHON` 指定）
+- 仓库根目录包含 **`hermes-agent-main/`**（完整 hermes-agent 源码，含 `run_agent.py`）
 
 ### 安装与启动
 
@@ -46,10 +43,39 @@ pip install mcp pyyaml
 # 在 tahp 主仓根目录下执行
 cd tahp-console
 
-# 安装依赖（含 Python 环境检查）
+# 安装依赖（含 MCP + 内置 hermes-agent venv 初始化）
 npm install
 npm run setup
+```
 
+首次 `setup` / `dev` / `start` 会自动：
+
+1. 在 `hermes-agent-main/.venv` 创建虚拟环境并 `pip install -e .`
+2. 写入 `tahp-console/.tahp/agent-paths.json` 与 `.env` 中的 `HERMES_AGENT_ROOT` 等变量
+3. 在终端打印进度（拷贝到新电脑后同样执行一次即可）
+
+可选完整依赖（较慢）：`npm run setup:agent -- --full`
+
+**首次启动** 在安装 venv 后会**非阻塞**完成：
+
+1. 若 `config.yaml` 无 `terminal.backend`，自动写入默认值 `local`
+2. 在终端打印一次性提示（API Key 请用 Web「模型管理」配置）
+
+**注意：** 请勿跨电脑拷贝 `hermes-agent-main/.venv`（会指向旧机器的 Python 路径）。新电脑应删除 `.venv` 后让脚本自动重建，或执行 `npm run setup:agent -- --force`。
+
+Agent 安装失败时，`npm run dev` **仍会启动 Web UI**（`--optional`）；Bridge / Bug 分析需 Agent 就绪后才可用。
+
+不阻塞启动。跳过提示：`TAHP_SKIP_HERMES_SETUP_WIZARD=1`  
+强制重装 Agent venv：`npm run setup:agent -- --force`
+
+```bash
+# tahp-mcp-server 的 Python 依赖（若 setup 提示未就绪）
+pip install mcp pyyaml
+```
+
+### 开发 / 生产启动
+
+```bash
 # 开发模式（热更新）
 npm run dev
 # → client: http://localhost:5173
@@ -78,6 +104,10 @@ node bin/tahp-console.mjs restart  # 重启
 | `AUTH_TOKEN` | — | 设置后自动启用令牌模式 |
 | `TAHP_PROJECT_ROOT` | 自动探测 | TAHP 主仓目录（含 `tahp-mcp-server/`） |
 | `TAHP_PYTHON` | `python` | Python 可执行路径 |
+| `HERMES_AGENT_ROOT` | 自动（见 `.tahp/agent-paths.json`） | 内置 `hermes-agent-main` 路径 |
+| `HERMES_AGENT_BRIDGE_PYTHON` | 自动 | Bridge 使用的 venv Python |
+| `HERMES_BIN` | 自动 | venv 内 `hermes` CLI |
+| `TAHP_SKIP_AGENT_SETUP` | — | 设为 `1` 可跳过 `predev`/`prestart` 的 Agent 初始化 |
 | `LOG_LEVEL` | `info` | 日志级别 (debug/info/warn/error) |
 
 `TAHP_PROJECT_ROOT` 自动探测逻辑：从 `tahp-console/` 向上遍历父目录，找到含 `tahp-mcp-server/server.py` 的目录。

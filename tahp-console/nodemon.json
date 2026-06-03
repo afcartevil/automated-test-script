@@ -10,7 +10,7 @@
     "AUTH_DISABLED": "1",
     "PORT": "8650"
   },
-  "exec": "node -r ts-node/register packages/server/src/index.ts",
+  "exec": "node scripts/dev-server.mjs",
   "nodeArgs": ["--no-warnings"],
   "delay": "1000"
 }

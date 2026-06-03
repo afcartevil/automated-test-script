@@ -4,6 +4,7 @@ import { createServer } from 'net'
 import { dirname, isAbsolute, join, resolve } from 'path'
 import { logger } from '../../logger'
 import { detectHermesHome, getHermesBin } from '../hermes-path'
+import { getBundledAgentRootForBridge } from '../bundled-agent'
 import { DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
 
 const DEFAULT_AGENT_BRIDGE_STARTUP_TIMEOUT_MS = 120000
@@ -153,6 +154,7 @@ function resolveAgentRoot(explicit?: string, hermesHome = detectHermesHome()): s
   const candidates = [
     explicit,
     process.env.HERMES_AGENT_ROOT,
+    getBundledAgentRootForBridge(),
     join(hermesHome, 'hermes-agent'),
     agentRootFromHermesBin(),
     process.cwd(),

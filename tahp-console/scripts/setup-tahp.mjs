@@ -5,11 +5,14 @@
  *   2. Python 3 可用 (用于 tahp-mcp-server)
  *   3. TAHP 项目根目录可定位
  *   4. tahp-mcp-server 依赖已安装 (尝试导入 mcp)
+ *   5. 仓库内 hermes-agent-main 初始化（venv + Agent 环境变量）
  */
-import { execSync, spawnSync } from 'child_process'
+import { spawnSync } from 'child_process'
 import { existsSync } from 'fs'
-import { resolve, dirname } from 'path'
+import { resolve, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+import { ensureHermesAgent } from './ensure-hermes-agent.mjs'
+import { getBundledHermesAgentDir } from './lib/tahp-paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const consoleDir = resolve(__dirname, '..')
@@ -67,6 +70,20 @@ if (existsSync(mcpServerPath)) {
 // 5. node_modules
 if (existsSync(resolve(consoleDir, 'node_modules'))) pass('node_modules 已安装')
 else warn('node_modules 不存在，请执行: npm install')
+
+// 6. Bundled hermes-agent-main
+console.log('')
+const bundledDir = getBundledHermesAgentDir(projectRoot)
+if (bundledDir) {
+  console.log('Hermes Agent（仓库内置）\n')
+  const agentResult = ensureHermesAgent({ quiet: false })
+  if (agentResult.ok) pass('hermes-agent-main 已就绪')
+  else {
+    fail(agentResult.error || 'hermes-agent-main 初始化失败')
+  }
+} else {
+  warn(`未找到 ${join(projectRoot, 'hermes-agent-main')}，Agent Bridge 功能将不可用`)
+}
 
 console.log('')
 if (ok) {
