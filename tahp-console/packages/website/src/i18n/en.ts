@@ -77,7 +77,7 @@ export default {
   },
   install: {
     title: 'Quick Start',
-    desc: 'Get Hermes Web UI running in under a minute.',
+    desc: 'Get EasyAdapter running in under a minute.',
     npm: {
       title: 'npm',
       cmd1: 'npm install -g hermes-web-ui',
@@ -99,7 +99,7 @@ export default {
     desc: 'Star us on GitHub and join the community.',
   },
   footer: {
-    description: 'Self-hosted AI chat dashboard for Hermes Agent.',
+    description: 'Self-hosted AI chat dashboard for EasyAdapter Agent.',
     license: 'BSL-1.1 License',
     madeWith: 'Built with Vue 3, Naive UI, and TypeScript.',
   },
@@ -113,14 +113,14 @@ export default {
     },
     gettingStarted: {
       title: 'Getting Started',
-      intro: 'Hermes Web UI is a self-hosted web dashboard for managing AI conversations, platform channels, scheduled jobs, and more. It wraps the Hermes Agent CLI and provides a beautiful web interface.',
+      intro: 'EasyAdapter is a self-hosted web dashboard for managing AI conversations, platform channels, scheduled jobs, and more. It wraps the EasyAdapter Agent CLI and provides a beautiful web interface.',
       install: {
         title: 'Installation',
         content: 'Install globally via npm. Node.js 23 or higher is required.',
       },
       firstRun: {
         title: 'First Run',
-        content: 'On first start, Hermes Web UI will automatically generate an auth token, initialize local data, start the Hermes agent bridge, and open the dashboard in your browser.',
+        content: 'On first start, EasyAdapter will automatically generate an auth token, initialize local data, start the EasyAdapter agent bridge, and open the dashboard in your browser.',
       },
       login: {
         title: 'Login',
@@ -129,7 +129,7 @@ export default {
     },
     configuration: {
       title: 'Configuration',
-      intro: 'Hermes Web UI can be configured via environment variables.',
+      intro: 'EasyAdapter can be configured via environment variables.',
       envVars: {
         title: 'Environment Variables',
         rows: [
@@ -144,16 +144,16 @@ export default {
       },
       gateway: {
         title: 'Agent Bridge Runtime',
-        content: 'Chat runs are handled through the Hermes agent bridge, which runs alongside the Web UI server and talks directly to the Hermes Agent runtime. The Web UI no longer starts or manages separate gateway processes.',
+        content: 'Chat runs are handled through the EasyAdapter agent bridge, which runs alongside the Web UI server and talks directly to the EasyAdapter Agent runtime. The Web UI no longer starts or manages separate gateway processes.',
       },
       profiles: {
         title: 'Profiles',
-        content: 'Profiles provide isolated configurations for different use cases. Each profile has its own Hermes config and cache. Create, clone, import, or export profiles from the Profiles page.',
+        content: 'Profiles provide isolated configurations for different use cases. Each profile has its own EasyAdapter config and cache. Create, clone, import, or export profiles from the Profiles page.',
       },
     },
     features: {
       title: 'Features',
-      intro: 'Explore the core features of Hermes Web UI.',
+      intro: 'Explore the core features of EasyAdapter.',
       chat: {
         title: 'AI Chat',
         content: 'Real-time chat streaming over Socket.IO /chat-run. Supports multi-session management, Markdown rendering with syntax highlighting, tool call inspection, file upload/download, and Ctrl+K search across the Web UI local session database.',
@@ -229,14 +229,14 @@ export default {
     },
     api: {
       title: 'API Reference',
-      intro: 'Hermes Web UI provides a local BFF API for the dashboard and Socket.IO endpoints for streaming chat.',
+      intro: 'EasyAdapter provides a local BFF API for the dashboard and Socket.IO endpoints for streaming chat.',
       local: {
         title: 'Local BFF Endpoints',
         content: 'The Koa server handles session management, profile CRUD, config read/write, log access, skill listing, memory operations, and static assets.',
       },
       proxy: {
         title: 'Chat Streaming',
-        content: 'Chat runs use the /chat-run Socket.IO namespace and the Hermes agent bridge. Legacy gateway proxy routes are kept only for compatibility where applicable.',
+        content: 'Chat runs use the /chat-run Socket.IO namespace and the EasyAdapter agent bridge. Legacy gateway proxy routes are kept only for compatibility where applicable.',
       },
       auth: {
         title: 'Authentication',
