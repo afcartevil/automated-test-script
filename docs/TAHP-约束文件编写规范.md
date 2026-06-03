@@ -1,9 +1,7 @@
 # TAHP 约束文件编写规范
 
-> **版本**: v3.0 | **日期**: 2026-05-20 | **适用范围**: 所有业务模块Owner
-> **状态**: Approved
-> **v3.0 变更**: 对齐方案设计v3.0 — 新增v3.0脚本引用表、knowledge-to-skill-pipeline.yaml Playbook引用、版本历史
-> **v2.0 变更**: 适配知识库体系 — 约束文件可由系统从知识库自动提取生成，Owner 可选审核微调
+> **版本**: v1.1 | **日期**: 2026-05-20 | **适用范围**: 所有业务模块Owner
+> **状态**: Approved | **变更**: 新增init_module.py初始化脚本；更新eval-data目录结构匹配实际
 
 ---
 
@@ -17,8 +15,6 @@
 - **质量标准**：怎样才算做好了
 - **历史知识**：过去的Bug/问题长什么样
 
-> **v3.0 变更**: 约束文件不再需要 Owner 从零手写。系统可从知识库自动提取生成约束文件，Owner 仅需审核确认或微调。手动编写仍作为高级选项保留。详见[方案设计 §8 知识库系统设计](TECNO-AI-Harness-Platform-方案设计.md#8-知识库系统设计)。
-
 ### 1.2 编写原则
 
 | # | 原则 | 说明 |
@@ -28,7 +24,6 @@
 | 3 | **具体，不模糊** | "代码要规范"→"必须通过checkpatch.pl检查，零warning"。禁止无量化标准的描述 |
 | 4 | **最小必要** | 只写当前模块特有的约束，通用规则放在 `shared/` 目录，避免重复 |
 | 5 | **版本化** | 每次修改约束文件必须通过Git提交，附带修改说明 |
-| 6 | **知识驱动** | 约束文件可由系统从知识库自动提取生成(v3.0)；手动编写时也应参考知识库中已有的经验案例和错误模式 |
 
 ---
 
@@ -48,34 +43,6 @@ constraints/
 └── shared/
     ├── coding-standards.yaml    # 全局编码规范
     └── android-platform.yaml    # Android平台通用约束
-```
-
-### 2.1.1 知识库自动生成约束 (v3.0)
-
-v3.0 引入知识库后，约束文件可以由系统自动生成：
-
-```
-知识库 (knowledge-base/{module}/)
-  ├── docs/          技术文档
-  ├── cases/         经验案例
-  └── auto/          自动沉淀
-        │
-        ↓ feed_knowledge.py → 知识到约束 Pipeline
-        ↓
-约束文件 (constraints/{module}/)
-  ├── module.yaml            自动提取
-  ├── bug-analysis.yaml      自动提取
-  ├── code-adaptation.yaml   自动提取
-  └── eval-data/             从案例自动生成
-```
-
-使用方法：
-```bash
-# 投喂文档后自动生成约束
-python scripts/feed_knowledge.py --module {module} --docs ./docs/*.md
-
-# 手动触发约束重新提取
-python scripts/extract_constraints.py --module {module}
 ```
 
 ### 2.2 命名规则
@@ -275,7 +242,7 @@ security_gates:
 
 ### 4.1 评估数据集规范
 
-每个模块必须提供至少 **5个** 历史Bug案例作为评估数据集：
+每个模块必须提供至少 **15个** 历史Bug案例作为评估数据集（建议按 train/val/test = 9/3/3 划分），最低不少于 **5个**（适用于模块接入初期）：
 
 ```yaml
 # eval-data/cases/case-001-volte-drop.yaml
@@ -437,10 +404,8 @@ standards:
 ### 7.2 审核流程
 
 ```
-v3.0 约束文件产生方式:
-  方式A(推荐): Owner投喂文档 → [知识库解析] → [AI自动提取约束] → [Owner审核] → Git提交 → 系统生效
-  方式B(传统): Owner编写 → 自动格式检查 → AI辅助审核 → Owner确认 → Git提交 → 系统生效
-               (lint约束文件) (检查字段完整性)  (最终确认)
+Owner编写 → 自动格式检查 → AI辅助审核 → Owner确认 → Git提交 → 系统生效
+           (lint约束文件) (检查字段完整性)  (最终确认)
 ```
 
 ---
@@ -450,7 +415,10 @@ v3.0 约束文件产生方式:
 系统提供标准模板，Owner只需复制并填写：
 
 ```bash
-# 初始化新模块
+# 方式一：使用初始化脚本（推荐）
+$ python scripts/init_module.py --module my-module --owner your-name
+
+# 方式二：手动复制模板
 $ cp -r templates/module-template/ constraints/my-module/
 $ cd constraints/my-module/
 # 编辑以下文件:
@@ -460,68 +428,6 @@ $ cd constraints/my-module/
 #   eval-data/           ← 准备5-10个案例（~1小时）
 # 总计: ~3.5小时
 ```
-
-> **v3.0 提示**: 如果已有技术文档和历史案例，推荐使用文档投喂方式：
-> ```bash
-> python scripts/feed_knowledge.py --module my-module --docs ./my-docs/ --cases ./my-cases/
-> ```
-> 系统会自动解析文档、提取约束、生成初始 Skill，Owner 只需审核确认。
-
----
-
-## 9. 与知识库的关系 (v3.0)
-
-### 9.1 知识库驱动约束生成
-
-v3.0 知识库引入后，约束文件的生命周期变为：
-
-```
-知识入库 → 自动提取约束 → Owner审核 → 约束生效 → Skill生成/进化
-    ↑                                              ↓
-    └──────── 执行结果自动沉淀 ←───────────────────┘
-```
-
-### 9.2 约束文件的双重来源
-
-| 来源 | 流程 | 适用场景 |
-|------|------|---------|
-| 知识库自动提取 | feed_knowledge.py → AI提取 → Owner审核 | 新模块接入、知识丰富时 |
-| Owner手动编写 | 编辑YAML → validate_constraints.py | 知识不足、需要精确控制时 |
-
-两种来源产出的约束文件格式完全相同，可随时互相替代。
-
-### 9.3 约束文件的质量保障
-
-- 自动提取的约束经过 `validate_constraints.py` 验证完整性
-- Owner 审核是必选项（config.yaml 中 `owner_review_required: true`）
-- 约束文件的置信度记录在知识库元数据中（`confidence` 字段）
-- 低于阈值（默认 0.75）的约束自动标记为 `draft` 状态
-
----
-
-## 10. v3.0 脚本与 Playbook 引用
-
-以下脚本在 v3.0 知识库系统中可用，与约束文件生命周期直接相关：
-
-| 脚本 | 用途 | 触发方式 |
-|------|------|---------|
-| `feed_knowledge.py` | 投喂文档/案例到知识库 | Owner 手动触发或 Playbook 自动调用 |
-| `extract_constraints.py` | 从知识库自动提取约束文件 | `feed_knowledge.py` 自动链式调用 |
-| `query_knowledge.py` | 检索知识库中的相关经验 | Agent 执行前自动调用 |
-| `capture_experience.py` | 执行完成后自动沉淀经验 | 任务完成时系统自动调用 |
-| `knowledge_stats.py` | 知识库健康度统计与评估 | 定期检查或 Owner 手动触发 |
-
-配套 Playbook：`playbooks/knowledge-to-skill-pipeline.yaml` — 完整的"文档投喂→知识入库→约束提取→Skill生成→EvoSkill进化→执行→经验沉淀"闭环流程。详见[方案设计 §8 知识库系统设计](TECNO-AI-Harness-Platform-方案设计.md#8-知识库系统设计)。
-
----
-
-## 11. 版本历史
-
-| 版本 | 日期 | 变更内容 |
-|------|------|---------|
-| v3.0 | 2026-05-20 | 对齐方案设计v3.0 — 新增v3.0脚本引用表、knowledge-to-skill-pipeline.yaml Playbook引用、版本历史 |
-| v2.0 | 2026-05-19 | 适配知识库体系 — 约束文件可由系统从知识库自动提取生成，Owner 可选审核微调 |
-| v1.0 | 2026-05-18 | 初始版本 |
 
 ---
 

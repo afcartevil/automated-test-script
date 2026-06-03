@@ -1,9 +1,7 @@
 # TAHP 评估与质量门禁规范
 
-> **版本**: v3.0 | **日期**: 2026-05-20 | **适用范围**: 所有Skill评估、代码质量检查、系统效果度量
-> **状态**: Approved
-> **v3.0 变更**: 对齐方案设计v3.0 — 新增capture_experience.py经验沉淀命令、知识库健康度评估、版本历史
-> **v2.0 变更**: 适配知识库体系 — 新增知识库健康度评估维度，执行结果自动沉淀触发知识库质量检查
+> **版本**: v1.1 | **日期**: 2026-05-20 | **适用范围**: 所有Skill评估、代码质量检查、系统效果度量
+> **状态**: Approved | **变更**: 同步脚本名（gate_check.py, run_evolution.py）；更新CI配置匹配实际流水线
 
 ---
 
@@ -24,23 +22,8 @@
 │  └─────────────┘  └─────────────┘  └─────────────┘    │
 │         ↑                ↑                ↑             │
 │    skills/         constraints/     reports/metrics/    │
-│         ↑                ↑                ↑             │
-│    knowledge-base/   ← 知识底座（v3.0 新增）              │
 └────────────────────────────────────────────────────────┘
 ```
-
-### 1.2 知识库健康度评估 (v3.0 新增)
-
-知识库是整个系统的知识底座，需要定期评估其健康度：
-
-| 维度 | 指标 | 目标值 | 检查方式 |
-|------|------|--------|---------|
-| **覆盖率** | 已接入模块的知识条目数 | ≥20条/模块 | knowledge_stats.py |
-| **增长性** | 本周新增知识条目 vs 上周 | 正增长 | Git log + SQLite KB |
-| **利用率** | 知识条目被引用(检索命中)的比例 | ≥60% | SQLite KB query log |
-| **质量** | 高置信度(≥0.8)条目占比 | ≥70% | 置信度统计 |
-| **时效性** | 最近30天有更新的条目占比 | ≥30% | updated_at 字段 |
-| **沉淀率** | 执行任务后自动沉淀成功率 | ≥80% | 沉淀触发日志 |
 
 ---
 
@@ -342,96 +325,38 @@ python scripts/evaluate.py --module telephony --split test
 python scripts/evaluate.py --all-modules
 
 # 运行EvoSkill进化
-python scripts/run-evolution.py --module telephony --iterations 20
+python scripts/run_evolution.py --module telephony --iterations 20
 
 # 生成周报
 python scripts/weekly-report.py --week {N}
 
 # 检查门禁
-python scripts/gate-check.py --module telephony --level P0
+python scripts/gate_check.py --module telephony --level P0
 ```
 
 ### 7.2 CI集成（Phase 2目标）
 
 ```yaml
-# .github/workflows/tahp-eval.yml
-name: TAHP Skill Evaluation
+# .github/workflows/ci.yml (已实现)
+name: TAHP Quality Gate & Skill Evaluation
 on:
   push:
-    paths: ['skills/**', 'constraints/**']
+    paths: ['skills/**', 'constraints/**', 'scripts/**', 'tahp-mcp-server/**']
   schedule:
     - cron: '0 2 * * 1'  # 每周一凌晨2点
 
 jobs:
-  evaluate:
+  validate-constraints:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Evaluate Skills
-        run: |
-          pip install -r requirements.txt
-          python scripts/evaluate.py --all-modules --split test
-      - name: Quality Gate
-        run: python scripts/gate-check.py --all-modules --level P0
-      - name: Generate Report
-        run: python scripts/weekly-report.py --auto
+      - name: Validate Constraints
+        run: python scripts/validate_constraints.py
+      - name: Quality Gate (P0)
+        run: python scripts/gate_check.py --all-modules --level P0
+      - name: Run Tests
+        run: pytest scripts/tests/ tahp-mcp-server/test_server.py -v
 ```
-
----
-
-> **评估不是为了给AI打分，而是为了持续提升系统对开发者的价值。** 评估数据驱动约束文件的优化和Skill的进化，最终目标是让开发者更高效地解决问题。
-
----
-
-## 8. 知识库质量门禁 (v3.0 新增)
-
-### 8.1 知识沉淀门禁
-
-每次执行任务后，系统自动检查知识沉淀状态：
-
-| 检查项 | 级别 | 条件 | 处理方式 |
-|--------|------|------|---------|
-| 沉淀完整性 | P1 | Bug分析后必须生成案例 | 自动补充缺失字段 |
-| 置信度校验 | P2 | 新沉淀条目置信度 ≥0.6 | 低于阈值标记为 draft |
-| 去重检查 | P2 | 与已有条目相似度 <0.9 | 相似条目合并提示 |
-| 标签完整性 | P2 | 至少有 2 个标签 | 自动补充标签 |
-
-### 8.2 知识提取门禁
-
-从知识库自动提取约束时的质量检查：
-
-| 检查项 | 级别 | 条件 | 处理方式 |
-|--------|------|------|---------|
-| 约束完整性 | P0 | 覆盖4种domain的必填字段 | 不完整则不生成Skill |
-| 约束一致性 | P1 | 规则之间无矛盾 | 标记矛盾并要求Owner处理 |
-| 约束具体性 | P1 | 无模糊描述 | 标记模糊规则 |
-| 提取置信度 | P0 | 整体置信度 ≥0.75 | 低于阈值不自动生效 |
-
-### 8.3 知识库评估命令
-
-```bash
-# 查看知识库统计报告
-python scripts/knowledge_stats.py --module {module}
-
-# 查看全量统计
-python scripts/knowledge_stats.py --all
-
-# 触发知识库健康检查
-python scripts/knowledge_stats.py --health-check
-
-# 执行完成后触发经验沉淀（通常由系统自动调用，也可手动触发）
-python scripts/capture_experience.py --module {module} --from-task {task_id} --validate
-```
-
----
-
-## 9. 版本历史
-
-| 版本 | 日期 | 变更内容 |
-|------|------|---------|
-| v3.0 | 2026-05-20 | 对齐方案设计v3.0 — 新增capture_experience.py经验沉淀命令、知识库健康度评估、版本历史 |
-| v2.0 | 2026-05-19 | 适配知识库体系 — 新增知识库健康度评估维度，执行结果自动沉淀触发知识库质量检查 |
-| v1.0 | 2026-05-18 | 初始版本 |
 
 ---
 

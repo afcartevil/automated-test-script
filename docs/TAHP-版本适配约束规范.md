@@ -1,10 +1,8 @@
 # TAHP 版本适配约束规范
 
-> **版本**: v3.0 | **日期**: 2026-05-20 | **适用范围**: 适配引擎（version_adaptation + carrier_porting）
-> **状态**: Approved
+> **版本**: v1.1 | **日期**: 2026-05-20 | **适用范围**: 适配引擎（version_adaptation + carrier_porting）
+> **状态**: Approved | **变更**: 同步工程目录结构；修正脚本名引用
 > **前置文档**: [TAHP-约束文件编写规范](TAHP-约束文件编写规范.md)
-> **v3.0 变更**: 对齐方案设计v3.0 — 新增knowledge-to-skill Pipeline闭环、capture_experience.py/knowledge_stats.py引用、版本历史
-> **v2.0 变更**: 适配知识库体系 — 适配经验自动沉淀到知识库，适配经验跨版本复用，新模块支持文档投喂自动生成适配约束
 
 ---
 
@@ -33,42 +31,9 @@
 TAHP 优化后:
   Owner → [填写约束条件（1-2小时）] → [系统自动生成Skill] → [AI执行适配] → [自动进化]
                 ↑ 只需描述约束，系统生成执行逻辑
-
-v3.0 知识驱动流程:
-  Owner → [投喂技术文档(30min)] → [系统自动生成约束+Skill] → [AI执行适配] → [经验自动沉淀知识库]
-                ↑ 文档投喂                    ↑ 自动生成               ↑ 自动执行        ↑ 闭环
-  人工投入: 从3-7天降低到30分钟-1小时
 ```
 
-### 1.3 知识库赋能适配 (v3.0 新增)
-
-知识库为适配引擎提供三大核心能力：
-
-| 能力 | 说明 | 价值 |
-|------|------|------|
-| **经验自动沉淀** | 每次适配完成后，成功的适配模式自动入库 | 跨版本复用，避免重复踩坑 |
-| **文档投喂驱动** | 新模块只需投喂技术文档，自动生成适配约束 | 接入门槛从3-7天降到1小时 |
-| **跨版本知识复用** | A15→A16 的适配经验直接可用于 A16→A17 | 每次大版本适配效率递增 |
-
-#### 适配经验沉淀流程
-
-```
-版本升级适配完成（编译通过 + 回归通过）
-        |
-        v
-自动提取适配经验:
-  - 变更的API列表 → 更新 api-migration-rules/
-  - 成功的适配模式 → knowledge-base/{module}/cases/version-adaptation/
-  - 踩坑记录 → knowledge-base/{module}/auto/error-patterns/
-        |
-        v
-跨模块通用经验 → 同步到 knowledge-base/shared/
-        |
-        v
-EvoSkill 基于新经验进化适配 Skill → 下次适配更智能
-```
-
-### 1.4 核心设计原则
+### 1.3 核心设计原则
 
 | # | 原则 | 说明 |
 |---|------|------|
@@ -829,19 +794,6 @@ strategy_preferences:
 - 规则库总规模: N 条
 ```
 
-#### 知识库交互接口 (v3.0 新增)
-
-```bash
-# 适配前检索相关经验
-python scripts/query_knowledge.py --module {module} --query "Android 16 version adaptation {component}"
-
-# 适配完成后触发自动沉淀（通常由系统自动调用）
-python scripts/feed_knowledge.py --module {module} --cases ./auto/adaptation-{version}-result.md
-
-# 查看模块适配知识积累
-python scripts/query_knowledge.py --module {module} --stats
-```
-
 ---
 
 ## 8. 跨版本经验复用机制
@@ -947,69 +899,9 @@ Owner 提交约束文件后，系统自动执行以下检查：
 
 ---
 
-## 10. 知识库与适配引擎集成 (v3.0)
+## 10. 附录
 
-### 10.1 适配约束的知识驱动生成
-
-v3.0 下，版本适配约束和运营商移植约束均可由知识库自动提取：
-
-```bash
-# 投喂模块文档，系统自动生成全部适配约束
-python scripts/feed_knowledge.py --module wifi --docs ./wifi-docs/ --cases ./wifi-history/
-
-# 自动生成:
-#   constraints/wifi/module.yaml
-#   constraints/wifi/version-adaptation.yaml
-#   constraints/wifi/carrier-porting.yaml
-#   constraints/wifi/eval-data/ (从历史案例自动生成)
-```
-
-### 10.2 API 迁移规则的知识驱动更新
-
-每次版本升级适配后，变更的 API 自动沉淀并更新迁移规则：
-
-```
-适配完成 → 提取 API 变更列表 → 更新 constraints/shared/api-migration-rules/
-                                        ↓
-                              下次同版本适配时自动引用
-```
-
-### 10.3 跨版本适配经验复用
-
-```
-A15→A16 适配经验 → knowledge-base/telephony/cases/version-adaptation/
-                        ↓
-A16→A17 适配前 → 自动检索 A15→A16 经验 → 注入适配上下文 → 提高成功率
-                        ↓
-A16→A17 完成 → 新经验入库 → 覆盖/补充旧经验 → 知识库持续增长
-```
-
-### 10.4 Knowledge-to-Skill Pipeline 闭环 (v3.0)
-
-v3.0 完整的适配经验闭环流程：
-
-```
-投喂文档 → 知识入库 → 约束提取 → Skill生成 → EvoSkill进化 → 执行适配 → 经验沉淀
-    ↑                                                          ↓
-    └──────────────── 知识库持续增长 ←───────────────────────────┘
-```
-
-对应 Playbook：`playbooks/knowledge-to-skill-pipeline.yaml`
-
-关键命令：
-```bash
-# 适配完成后触发经验沉淀
-python scripts/capture_experience.py --module {module} --from-task {adaptation_task_id} --validate
-
-# 查看模块知识积累情况
-python scripts/knowledge_stats.py --module {module}
-```
-
----
-
-## 11. 附录
-
-### 11.1 与其他规范的关系
+### 10.1 与其他规范的关系
 
 | 本规范章节 | 关联文档 | 关系 |
 |-----------|---------|------|
@@ -1018,7 +910,7 @@ python scripts/knowledge_stats.py --module {module}
 | 评估与质量门禁 | [TAHP-评估与质量门禁规范](TAHP-评估与质量门禁规范.md) | 适配 Skill 的评估遵循 |
 | 设计文档 | [TECNO-AI-Harness-Platform-方案设计.md](TECNO-AI-Harness-Platform-方案设计.md) 第7章 | 适配引擎详细设计 |
 
-### 11.2 change_type 枚举值定义
+### 10.2 change_type 枚举值定义
 
 | 值 | 说明 | 自动迁移难度 |
 |---|------|------------|
@@ -1031,10 +923,8 @@ python scripts/knowledge_stats.py --module {module}
 | `behavior_changed` | API 行为语义变更 | 高 |
 | `new_replacement` | 新 API 替代旧 API | 中 |
 
-### 11.3 版本历史
+### 10.3 版本历史
 
 | 版本 | 日期 | 变更内容 |
 |------|------|---------|
-| v3.0 | 2026-05-20 | 对齐方案设计v3.0 — 新增knowledge-to-skill Pipeline闭环(§10.4)、capture_experience.py/knowledge_stats.py引用、修复stray code fence、版本历史 |
-| v2.0 | 2026-05-19 | 适配知识库体系 — 适配经验自动沉淀到知识库，适配经验跨版本复用，新模块支持文档投喂自动生成适配约束 |
 | v1.0 | 2026-05-18 | 初始版本，覆盖 version_adaptation + carrier_porting 两大场景 |
