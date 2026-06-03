@@ -8,6 +8,7 @@
  *   - 默认鉴权: 若未设 AUTH_TOKEN/AUTH_DISABLED, 默认走 AUTH_DISABLED=1 (内网团队工具)
  */
 import { spawn, execSync, execFileSync } from 'child_process'
+import { ensureHermesAgent } from '../scripts/ensure-hermes-agent.mjs'
 import { resolve, dirname, join, delimiter } from 'path'
 import { fileURLToPath } from 'url'
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, chmodSync, statSync, existsSync, realpathSync } from 'fs'
@@ -214,6 +215,14 @@ function startDaemon(port) {
     process.exit(1)
   }
 
+  console.log('')
+  const agentReady = ensureHermesAgent({ quiet: false, optional: true })
+  if (!agentReady.ok) {
+    console.log('  ⚠ Hermes Agent 未就绪，Bridge / Bug 分析 / 适配 Agent 可能不可用')
+    console.log('    修复后请重新执行: npm run setup  或  npm run setup:agent')
+  }
+  console.log('')
+
   mkdirSync(PID_DIR, { recursive: true })
   ensureNativeModules()
 
@@ -402,6 +411,7 @@ ${CLI_NAME} v${VERSION}
       break
     default: {
       ensureNativeModules()
+      ensureHermesAgent({ quiet: false, optional: true })
       const port = !isNaN(command) ? parseInt(command) : DEFAULT_PORT
       const serverEnv = { ...process.env, NODE_ENV: 'production', PORT: String(port) }
       if (shouldDisableAuthByDefault()) serverEnv.AUTH_DISABLED = '1'

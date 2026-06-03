@@ -17,6 +17,7 @@ import { startVersionCheck } from './routes/health'
 import { registerRoutes } from './routes'
 import { setChatRunServer } from './routes/hermes/chat-run'
 import { ChatRunSocket } from './services/hermes/run-chat'
+import { applyBundledAgentEnv } from './services/hermes/bundled-agent'
 import { startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { logger } from './services/logger'
@@ -83,6 +84,11 @@ function safeNetworkInterfaces() {
 }
 
 export async function bootstrap() {
+  const bundledAgentEnv = applyBundledAgentEnv()
+  if (bundledAgentEnv.applied) {
+    console.log(`[bootstrap] bundled hermes-agent env from ${bundledAgentEnv.source}`)
+  }
+
   console.log(`hermes-web-ui v${APP_VERSION} starting...`)
   await mkdir(config.uploadDir, { recursive: true })
   await mkdir(config.dataDir, { recursive: true })
