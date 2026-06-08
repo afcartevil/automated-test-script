@@ -280,13 +280,11 @@ function setFieldValue(fieldName: string, value: string) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 执行 / 监控状态
 // ─────────────────────────────────────────────────────────────────────────────
-const launching   = ref(false)
 const agentLaunching = ref(false)
 const launchedTaskId = ref<string | null>(null)
 const taskStatus  = ref<string>('')
 const showMonitor = ref(false)
-/** llm = 启动 AI 适配调试；agent = Agent 自动适配 */
-const monitorMode = ref<'llm' | 'agent' | null>(null)
+const monitorMode = ref<'agent' | null>(null)
 const eventListEl = ref<HTMLElement | null>(null)
 
 // 任务创建时间，用于显示耗时
@@ -426,32 +424,7 @@ async function loadDynamicDomains() {
 onMounted(() => { loadDynamicDomains() })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 构建内联文档内容（传给 MCP Pipeline）
-// ─────────────────────────────────────────────────────────────────────────────
-function buildDocContent(): string {
-  const d    = activeDomain.value
-  const data = currentFormData.value
-
-  let doc = `# AI 适配调试任务 — ${d.label}\n\n`
-  doc += `## 项目信息\n`
-  doc += `- 项目代码: ${ctx.projectCode}\n`
-  doc += `- SoC: ${ctx.soc}\n`
-  doc += `- Kernel 版本: ${ctx.kernelVersion}\n`
-  doc += `- 升级路径: ${ctx.preVendor} → ${ctx.postVendor}\n\n`
-  doc += `## 适配域: ${d.label} (${d.id})\n\n`
-  doc += `### 前置条件参数\n`
-  d.fields.forEach(f => {
-    const val = data[f.name]
-    doc += `- ${f.label}: ${val || '(未填)'}\n`
-  })
-  doc += `\n### 关联 Skills\n`
-  d.relatedSkills.forEach(s => { doc += `- ${s}\n` })
-  doc += `\n---\n_由 EasyAdapter Console AI 适配调试面板自动生成_\n`
-  return doc
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 启动任务（核心修复：真正调用 MCP Pipeline）
+// Agent 自动适配
 // ─────────────────────────────────────────────────────────────────────────────
 function buildAgentRunPayload() {
   const d = activeDomain.value
@@ -500,47 +473,6 @@ async function launchAgentAdapt() {
   }
 }
 
-async function launchTask() {
-  if (!isComplete.value) {
-    message.warning('请先完成所有必填前置条件')
-    return
-  }
-
-  launching.value   = true
-  monitorMode.value = 'llm'
-  taskStatus.value  = 'starting'
-  launchedTaskId.value = null
-  showMonitor.value = true
-  startTime.value   = Date.now()
-
-  try {
-    tasksStore.ensureSocket()
-
-    const info = await tasksStore.start({
-      document_path:    '__inline__',
-      document_content: buildDocContent(),
-      module:           mapDomainToModule(activeDomainId.value),
-      domain:           'code_adaptation',
-      extra_context:    `AI适配调试 | 域: ${activeDomain.value.label} | 项目: ${ctx.projectCode} | SoC: ${ctx.soc} | Kernel: ${ctx.kernelVersion}`,
-    })
-
-    const tid = (info.task_id || info.taskId) as string | undefined
-    if (tid) {
-      launchedTaskId.value = tid
-      message.success(`任务已启动: ${tid}`)
-    } else {
-      message.warning('任务已提交，但服务端未返回 task_id，请检查 MCP 日志')
-    }
-  } catch (err) {
-    const errMsg = (err as Error).message
-    taskStatus.value = 'FAILED'
-    // 保留 showMonitor=true，让用户看到错误信息
-    message.error(`启动失败: ${errMsg}`)
-  } finally {
-    launching.value = false
-  }
-}
-
 function backToForm() {
   showMonitor.value = false
   monitorMode.value = null
@@ -572,53 +504,6 @@ function formatPayload(payload: Record<string, unknown>): string {
 // ─────────────────────────────────────────────────────────────────────────────
 function selectDomain(id: DomainId) {
   activeDomainId.value = id
-}
-
-function openAIChat() {
-  // 将当前域的表单数据和项目上下文序列化为自然语言草稿，
-  // 通过 sessionStorage 传递给 ChatInput，让 AI 对话有具体的上下文可供参考。
-  const d    = activeDomain.value
-  const data = currentFormData.value
-
-  const lines: string[] = [
-    `我正在做 ${d.label} BSP 适配调试，请根据以下上下文帮我排查问题：`,
-    '',
-    `**项目信息**`,
-    `- 项目代码: ${ctx.projectCode}`,
-    `- SoC: ${ctx.soc}`,
-    `- Kernel 版本: ${ctx.kernelVersion}`,
-    `- 升级路径: ${ctx.preVendor} → ${ctx.postVendor}`,
-    '',
-    `**${d.label} 前置条件**`,
-  ]
-
-  d.fields.forEach(f => {
-    const val = data[f.name]
-    if (val) lines.push(`- ${f.label}: ${val}`)
-  })
-
-  if (d.relatedSkills.length) {
-    lines.push('')
-    lines.push(`**关联 Skills**: ${d.relatedSkills.join(', ')}`)
-  }
-
-  lines.push('')
-  lines.push('**问题描述**（请在此补充你遇到的具体问题）：')
-
-  // 主草稿：预填输入框
-  sessionStorage.setItem('tahp_chat_draft', lines.join('\n'))
-
-  // 元数据：供 ChatInput 渲染 TAHP 模式横幅 + 知识库沉淀对话框
-  sessionStorage.setItem('tahp_chat_context', JSON.stringify({
-    domain:        activeDomainId.value,
-    domainLabel:   d.label,
-    module:        mapDomainToModule(activeDomainId.value),
-    relatedSkills: d.relatedSkills,
-    project:       { ...ctx },
-    taskId:        launchedTaskId.value,
-  }))
-
-  router.push({ name: 'hermes.chat' })
 }
 
 function openSkill(skillName: string) {
@@ -779,20 +664,8 @@ function openSkill(skillName: string) {
         <!-- 操作按钮 -->
         <div class="action-row">
           <NButton
+            size="large"
             type="primary"
-            size="large"
-            :disabled="!isComplete"
-            :loading="launching"
-            @click="launchTask"
-          >
-            {{ launching ? '正在启动...' : '启动 AI 适配调试' }}
-          </NButton>
-          <NButton size="large" @click="openAIChat">
-            AI 对话调试
-          </NButton>
-          <NButton
-            size="large"
-            type="warning"
             :disabled="!isComplete || !['modem', 'comm-framework'].includes(activeDomainId)"
             :loading="agentLaunching"
             @click="launchAgentAdapt"
@@ -829,8 +702,7 @@ function openSkill(skillName: string) {
             <span class="mb-sep" />
             <span class="mb-domain-badge" :style="{ background: activeDomain.color }">{{ activeDomain.icon }}</span>
             <span class="mb-title">
-              {{ activeDomain.label }} —
-              {{ monitorMode === 'agent' ? 'Agent 自动适配' : 'AI 适配执行' }}
+              {{ activeDomain.label }} — Agent 自动适配
             </span>
           </div>
           <div class="mb-right">
@@ -841,16 +713,15 @@ function openSkill(skillName: string) {
               </template>
               {{ taskStatus || 'starting' }}
             </NTag>
-            <NButton size="small" type="primary" @click="openAIChat">AI 对话调试</NButton>
             <NButton size="small" @click="router.push({ name: 'tahp.tasks' })">任务列表</NButton>
           </div>
         </div>
 
         <!-- ① 启动中（还未拿到 task_id） -->
-        <div v-if="launching && !launchedTaskId" class="monitor-state">
+        <div v-if="agentLaunching && !launchedTaskId" class="monitor-state">
           <NSpin size="large" />
-          <p class="ms-hint">正在启动 AI 适配任务，请稍候...</p>
-          <p class="ms-sub">大模型分析中，无需 MCP Server</p>
+          <p class="ms-hint">正在启动 Agent 自动适配，请稍候...</p>
+          <p class="ms-sub">Agent Bridge 连接中</p>
         </div>
 
         <!-- ② 启动失败且无事件 -->
@@ -863,21 +734,21 @@ function openSkill(skillName: string) {
             <line x1="12" y1="8" x2="12" y2="12"/>
             <line x1="12" y1="16" x2="12.01" y2="16"/>
           </svg>
-          <p class="ms-hint">任务启动失败</p>
-          <p class="ms-sub">请在"模型管理"中配置 API Key，或设置 EASY_ADAPTER_LLM_UPSTREAM 环境变量</p>
+          <p class="ms-hint">Agent 任务启动失败</p>
+          <p class="ms-sub">请检查 Agent Bridge 配置与关联 Skill 是否可用</p>
           <div style="display:flex;gap:8px;margin-top:4px;">
             <NButton type="primary" @click="backToForm">返回重新配置</NButton>
-            <NButton @click="launchTask" :loading="launching">重试</NButton>
+            <NButton @click="launchAgentAdapt" :loading="agentLaunching">重试</NButton>
           </div>
         </div>
 
         <!-- ③ 已提交但等待第一条事件 -->
         <div
-          v-else-if="!stream.length && !launching"
+          v-else-if="!stream.length && !agentLaunching"
           class="monitor-state"
         >
           <NSpin size="medium" />
-          <p class="ms-hint">任务已提交，等待 AI 分析开始...</p>
+          <p class="ms-hint">任务已提交，等待 Agent 开始执行...</p>
           <code v-if="launchedTaskId" class="ms-taskid">{{ launchedTaskId }}</code>
         </div>
 
@@ -914,7 +785,7 @@ function openSkill(skillName: string) {
             <div class="lrp-header">
               <span class="lrp-title">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                {{ monitorMode === 'agent' ? 'Agent 执行输出' : 'AI 适配分析' }}
+                Agent 执行输出
               </span>
               <NTag v-if="isRunning" size="tiny" type="info">
                 <span class="pulse-dot" />
@@ -959,7 +830,7 @@ function openSkill(skillName: string) {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
           任务执行失败 · 请查看上方错误事件
           <NButton size="small" type="warning" style="margin-left:12px;" @click="backToForm">重新配置</NButton>
-          <NButton size="small" style="margin-left:6px;" :loading="launching" @click="launchTask">重试</NButton>
+          <NButton size="small" style="margin-left:6px;" :loading="agentLaunching" @click="launchAgentAdapt">重试</NButton>
         </div>
 
       </template>
