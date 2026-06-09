@@ -15,7 +15,16 @@ import {
   readAdaptAgentReport,
   buildAdaptAgentPrompts,
   type AdaptAgentRunInput,
+  type AdaptAgentFieldMeta,
 } from '../../services/tahp/adapt-agent'
+import {
+  listAdaptDomainLayouts,
+  getAdaptDomainLayout,
+  saveAdaptDomainConfig,
+  resetAdaptDomainLayout,
+  pullAndMergeAdaptLayouts,
+  forcePushAdaptLayouts,
+} from '../../services/tahp/adapt-layout/service'
 
 export const tahpAdaptRoutes = new Router()
 
@@ -125,6 +134,21 @@ tahpAdaptRoutes.post('/api/tahp/adapt/config/save', async (ctx) => {
   }
 })
 
+function parseFormFields(body: Record<string, unknown>): AdaptAgentFieldMeta[] | undefined {
+  const raw = body.form_fields ?? body.formFields
+  if (!Array.isArray(raw)) return undefined
+  const fields: AdaptAgentFieldMeta[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const f = item as Record<string, unknown>
+    const name = String(f.name || '').trim()
+    const label = String(f.label || name).trim()
+    if (!name) continue
+    fields.push({ name, label, required: f.required === true })
+  }
+  return fields.length ? fields : undefined
+}
+
 function parseAdaptAgentRunBody(body: Record<string, unknown>): AdaptAgentRunInput | { error: string } {
   const domainId = String(body.domain_id || body.domainId || '').trim()
   const domainLabel = String(body.domain_label || body.domainLabel || domainId).trim()
@@ -137,10 +161,86 @@ function parseAdaptAgentRunBody(body: Record<string, unknown>): AdaptAgentRunInp
   const formData = (body.form_data || body.formData || {}) as Record<string, string>
   const userNotes = typeof body.user_notes === 'string' ? body.user_notes
     : typeof body.userNotes === 'string' ? body.userNotes : undefined
+  const formFields = parseFormFields(body)
 
   if (!domainId) return { error: '缺少 domain_id' }
-  return { domainId, domainLabel, module, relatedSkills, formData, userNotes }
+  return { domainId, domainLabel, module, relatedSkills, formData, userNotes, formFields }
 }
+
+const DOMAIN_ID_RE = /^[a-zA-Z0-9_-]+$/
+
+// GET /api/tahp/adapt/layouts — 列出已持久化的域表单布局（启动时合并云端）
+tahpAdaptRoutes.get('/api/tahp/adapt/layouts', async (ctx) => {
+  try {
+    const data = await listAdaptDomainLayouts()
+    ctx.body = { success: true, data }
+  } catch (err) {
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// GET /api/tahp/adapt/layouts/:domainId
+tahpAdaptRoutes.get('/api/tahp/adapt/layouts/:domainId', async (ctx) => {
+  const domainId = ctx.params.domainId
+  if (!DOMAIN_ID_RE.test(domainId)) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '无效的 domainId' }
+    return
+  }
+  const record = await getAdaptDomainLayout(domainId)
+  ctx.body = { success: true, data: record }
+})
+
+// PUT /api/tahp/adapt/layouts/:domainId — 保存布局并尝试同步云端
+tahpAdaptRoutes.put('/api/tahp/adapt/layouts/:domainId', async (ctx) => {
+  const domainId = ctx.params.domainId
+  if (!DOMAIN_ID_RE.test(domainId)) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '无效的 domainId' }
+    return
+  }
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  try {
+    const result = await saveAdaptDomainConfig(domainId, {
+      fields: body.fields,
+      related_skills: body.related_skills ?? body.relatedSkills,
+    })
+    ctx.body = { success: true, data: result }
+  } catch (err) {
+    ctx.status = 400
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// DELETE /api/tahp/adapt/layouts/:domainId — 恢复内置默认字段
+tahpAdaptRoutes.delete('/api/tahp/adapt/layouts/:domainId', async (ctx) => {
+  const domainId = ctx.params.domainId
+  if (!DOMAIN_ID_RE.test(domainId)) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '无效的 domainId' }
+    return
+  }
+  await resetAdaptDomainLayout(domainId)
+  ctx.body = { success: true, data: { deleted: domainId } }
+})
+
+// POST /api/tahp/adapt/layouts/sync/pull — 强制从云端拉取合并
+tahpAdaptRoutes.post('/api/tahp/adapt/layouts/sync/pull', async (ctx) => {
+  const result = await pullAndMergeAdaptLayouts()
+  ctx.body = { success: true, data: result }
+})
+
+// POST /api/tahp/adapt/layouts/sync/push — 强制推送本地 manifest 到云端
+tahpAdaptRoutes.post('/api/tahp/adapt/layouts/sync/push', async (ctx) => {
+  const result = await forcePushAdaptLayouts()
+  if (!result.cloud_pushed && result.cloud_error) {
+    ctx.status = 502
+    ctx.body = { success: false, error: result.cloud_error, data: result }
+    return
+  }
+  ctx.body = { success: true, data: result }
+})
 
 // POST /api/tahp/adapt/agent-prompt-preview — 预览 Agent 系统/用户提示词（不启动任务）
 tahpAdaptRoutes.post('/api/tahp/adapt/agent-prompt-preview', async (ctx) => {

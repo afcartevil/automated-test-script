@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, reactive, watch, nextTick, onMounted } from 'vue'
-import { NButton, NSelect, NInput, NProgress, NTag, NSpin, NModal, NTabs, NTabPane, useMessage } from 'naive-ui'
+import { NButton, NSelect, NInput, NProgress, NTag, NSpin, NModal, NTabs, NTabPane, NForm, NFormItem, NSwitch, useMessage } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { useTahpTasksStore } from '@/stores/tahp/tasks'
 import type { TahpModule } from '@/api/tahp/tasks'
 import { fetchDynamicDomains } from '@/api/tahp/skills'
 import { startAdaptAgentRun, previewAdaptAgentPrompts } from '@/api/tahp/adapt'
+import { fetchSkills, type SkillInfo } from '@/api/hermes/skills'
+import {
+  fetchAdaptLayouts,
+  saveAdaptDomainConfig,
+  type AdaptLayoutFieldDef,
+  type AdaptLayoutSyncMeta,
+} from '@/api/tahp/adapt-layout'
 
 const message = useMessage()
 const router = useRouter()
@@ -199,6 +206,14 @@ const DOMAINS = reactive<DomainDef[]>([
   },
 ])
 
+/** 内置默认字段快照（恢复默认 / 云端未覆盖时使用） */
+const STATIC_DEFAULT_FIELDS: Record<string, FieldDef[]> = Object.fromEntries(
+  DOMAINS.map(d => [d.id, JSON.parse(JSON.stringify(d.fields)) as FieldDef[]]),
+)
+const STATIC_DEFAULT_RELATED_SKILLS: Record<string, string[]> = Object.fromEntries(
+  DOMAINS.map(d => [d.id, [...d.relatedSkills]]),
+)
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 表单状态
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,6 +236,322 @@ function initDomainFormData(domain: DomainDef) {
 
 // 初始化所有静态域的表单数据
 DOMAINS.forEach(domain => initDomainFormData(domain))
+
+function syncFormDataForDomain(domain: DomainDef) {
+  if (!formData[domain.id]) formData[domain.id] = {}
+  const validNames = new Set(domain.fields.map(f => f.name))
+  for (const key of Object.keys(formData[domain.id])) {
+    if (!validNames.has(key)) delete formData[domain.id][key]
+  }
+  domain.fields.forEach(field => {
+    if (formData[domain.id][field.name] === undefined) {
+      formData[domain.id][field.name] = ''
+    }
+  })
+}
+
+function applyFieldsToDomain(domainId: string, fields: FieldDef[]) {
+  const domain = DOMAINS.find(d => d.id === domainId)
+  if (!domain) return
+  domain.fields = fields.map(f => ({ ...f }))
+  syncFormDataForDomain(domain)
+}
+
+function applyRelatedSkillsToDomain(domainId: string, skills: string[]) {
+  const domain = DOMAINS.find(d => d.id === domainId)
+  if (!domain || !skills.length) return
+  domain.relatedSkills = [...skills]
+}
+
+function applyDomainConfigFromRecord(
+  domainId: string,
+  record: { fields?: FieldDef[]; related_skills?: string[] },
+) {
+  if (record.fields?.length) applyFieldsToDomain(domainId, record.fields)
+  if (record.related_skills?.length) applyRelatedSkillsToDomain(domainId, record.related_skills)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 布局持久化（本地 manifest + 可扩展云端同步）
+// ─────────────────────────────────────────────────────────────────────────────
+const layoutSyncMeta = ref<AdaptLayoutSyncMeta | null>(null)
+const layoutManifestPath = ref('')
+const layoutsReady = ref(false)
+const layoutEditMode = ref(false)
+const layoutDraftFields = ref<FieldDef[]>([])
+const layoutDraftRelatedSkills = ref<string[]>([])
+const layoutSaving = ref(false)
+const showSkillSearchModal = ref(false)
+const skillSearchQuery = ref('')
+const allSkillsCatalog = ref<SkillInfo[]>([])
+const skillCatalogLoading = ref(false)
+const showAddFieldModal = ref(false)
+const newFieldDraft = reactive({
+  name: '',
+  label: '',
+  type: 'text' as FieldDef['type'],
+  placeholder: '',
+  required: false,
+  optionsText: '',
+})
+
+let layoutLoadErrorShown = false
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function isRetryableLayoutLoadError(err: unknown): boolean {
+  const msg = String((err as Error)?.message || err || '')
+  return /502|503|504|Failed to fetch|NetworkError|ECONNREFUSED|fetch failed/i.test(msg)
+}
+
+function formatLayoutLoadError(err: unknown): string {
+  const raw = String((err as Error)?.message || err || '未知错误')
+  if (/502|503|504/i.test(raw)) {
+    return '后端服务未就绪（请确认已执行 npm run dev 且 server:8650 已启动），稍后刷新页面'
+  }
+  return raw
+}
+
+/** 从服务端 manifest 恢复域配置；启动时若后端尚未就绪会自动重试 */
+async function loadAdaptLayouts(options: { showError?: boolean } = {}): Promise<boolean> {
+  const showError = options.showError !== false
+  const maxAttempts = 5
+  let lastErr: unknown = null
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetchAdaptLayouts()
+      layoutSyncMeta.value = res.sync
+      layoutManifestPath.value = res.manifest_path || ''
+      for (const [domainId, record] of Object.entries(res.layouts || {})) {
+        if (!record) continue
+        applyDomainConfigFromRecord(domainId, {
+          fields: record.fields as FieldDef[],
+          related_skills: record.related_skills,
+        })
+      }
+      return true
+    } catch (err) {
+      lastErr = err
+      if (attempt < maxAttempts && isRetryableLayoutLoadError(err)) {
+        await sleep(600 * attempt)
+        continue
+      }
+      break
+    }
+  }
+
+  console.error('[adapt-layout] load failed', lastErr)
+  if (showError && !layoutLoadErrorShown) {
+    layoutLoadErrorShown = true
+    message.warning(`域配置加载失败，使用内置默认: ${formatLayoutLoadError(lastErr)}`)
+  }
+  return false
+}
+
+function enterLayoutEdit() {
+  layoutDraftFields.value = activeDomain.value.fields.map(f => ({
+    ...f,
+    options: f.options ? f.options.map(o => ({ ...o })) : undefined,
+  }))
+  layoutDraftRelatedSkills.value = [...activeDomain.value.relatedSkills]
+  layoutEditMode.value = true
+}
+
+function cancelLayoutEdit() {
+  layoutEditMode.value = false
+  layoutDraftFields.value = []
+  layoutDraftRelatedSkills.value = []
+}
+
+async function ensureSkillCatalogLoaded() {
+  if (allSkillsCatalog.value.length) return
+  skillCatalogLoading.value = true
+  try {
+    const data = await fetchSkills()
+    allSkillsCatalog.value = data.categories.flatMap(c => c.skills)
+  } catch (err) {
+    message.error(`Skill 清单加载失败: ${(err as Error).message}`)
+    throw err
+  } finally {
+    skillCatalogLoading.value = false
+  }
+}
+
+async function openSkillSearchModal() {
+  skillSearchQuery.value = ''
+  showSkillSearchModal.value = true
+  try {
+    await ensureSkillCatalogLoaded()
+  } catch {
+    showSkillSearchModal.value = false
+  }
+}
+
+const filteredSkillCandidates = computed(() => {
+  const q = skillSearchQuery.value.trim().toLowerCase()
+  const selected = new Set(layoutDraftRelatedSkills.value)
+  return allSkillsCatalog.value
+    .filter(s => !selected.has(s.name))
+    .filter(s => {
+      if (!q) return true
+      return s.name.toLowerCase().includes(q)
+        || (s.description || '').toLowerCase().includes(q)
+        || (s.group || '').toLowerCase().includes(q)
+    })
+    .slice(0, 80)
+})
+
+function addRelatedSkill(skillName: string) {
+  if (!layoutDraftRelatedSkills.value.includes(skillName)) {
+    layoutDraftRelatedSkills.value.push(skillName)
+  }
+  showSkillSearchModal.value = false
+}
+
+function removeRelatedSkill(index: number) {
+  if (layoutDraftRelatedSkills.value.length <= 1) {
+    message.warning('至少保留一个关联 Skill（第一项为主控）')
+    return
+  }
+  layoutDraftRelatedSkills.value.splice(index, 1)
+}
+
+function openAddFieldModal() {
+  Object.assign(newFieldDraft, {
+    name: '',
+    label: '',
+    type: 'text',
+    placeholder: '',
+    required: false,
+    optionsText: '',
+  })
+  showAddFieldModal.value = true
+}
+
+function parseOptionsText(text: string): { label: string; value: string }[] {
+  return text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const [label, value] = line.split(':').map(s => s.trim())
+      if (value) return { label, value }
+      return { label: line, value: line }
+    })
+}
+
+function confirmAddField(): boolean {
+  const name = newFieldDraft.name.trim()
+  const label = newFieldDraft.label.trim()
+  if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(name)) {
+    message.warning('字段名须以字母开头，仅含字母、数字、下划线')
+    return false
+  }
+  if (!label) {
+    message.warning('请填写显示标签')
+    return false
+  }
+  if (layoutDraftFields.value.some(f => f.name === name)) {
+    message.warning('字段名已存在')
+    return false
+  }
+  const field: FieldDef = {
+    name,
+    label,
+    type: newFieldDraft.type,
+    required: newFieldDraft.required,
+    placeholder: newFieldDraft.placeholder || undefined,
+  }
+  if (newFieldDraft.type === 'select') {
+    const options = parseOptionsText(newFieldDraft.optionsText)
+    if (!options.length) {
+      message.warning('下拉框至少需要一个选项（每行 label:value）')
+      return false
+    }
+    field.options = options
+  }
+  layoutDraftFields.value.push(field)
+  showAddFieldModal.value = false
+  return true
+}
+
+function removeLayoutField(index: number) {
+  layoutDraftFields.value.splice(index, 1)
+}
+
+async function saveLayout() {
+  if (!layoutDraftFields.value.length) {
+    message.warning('至少保留一个表单字段')
+    return
+  }
+  if (!layoutDraftRelatedSkills.value.length) {
+    message.warning('至少保留一个关联 Skill')
+    return
+  }
+  layoutSaving.value = true
+  try {
+    const fields = layoutDraftFields.value as AdaptLayoutFieldDef[]
+    const related_skills = [...layoutDraftRelatedSkills.value]
+    const result = await saveAdaptDomainConfig(activeDomainId.value, { fields, related_skills })
+    applyFieldsToDomain(activeDomainId.value, layoutDraftFields.value)
+    applyRelatedSkillsToDomain(activeDomainId.value, related_skills)
+    layoutEditMode.value = false
+    layoutDraftRelatedSkills.value = []
+    if (result.cloud_pushed) {
+      message.success(`布局已保存并同步云端 (rev ${result.revision})`)
+    } else if (result.cloud_error) {
+      message.warning(`布局已保存本地，云端同步失败: ${result.cloud_error}`)
+    } else {
+      message.success(`布局已保存 (rev ${result.revision})`)
+    }
+    await loadAdaptLayouts()
+  } catch (err) {
+    message.error(`保存失败: ${(err as Error).message}`)
+  } finally {
+    layoutSaving.value = false
+  }
+}
+
+async function restoreBuiltinLayout() {
+  const defaults = STATIC_DEFAULT_FIELDS[activeDomainId.value]
+  const defaultSkills = STATIC_DEFAULT_RELATED_SKILLS[activeDomainId.value]
+  if (!defaults?.length || !defaultSkills?.length) {
+    message.warning('当前域无内置默认配置')
+    return
+  }
+  layoutSaving.value = true
+  try {
+    const fields = JSON.parse(JSON.stringify(defaults)) as AdaptLayoutFieldDef[]
+    const related_skills = [...defaultSkills]
+    await saveAdaptDomainConfig(activeDomainId.value, { fields, related_skills })
+    applyFieldsToDomain(activeDomainId.value, fields)
+    applyRelatedSkillsToDomain(activeDomainId.value, related_skills)
+    layoutDraftFields.value = fields.map(f => ({ ...f }))
+    layoutDraftRelatedSkills.value = [...related_skills]
+    layoutEditMode.value = false
+    message.success('已恢复内置默认配置')
+    await loadAdaptLayouts()
+  } catch (err) {
+    message.error(`恢复失败: ${(err as Error).message}`)
+  } finally {
+    layoutSaving.value = false
+  }
+}
+
+watch(activeDomainId, () => {
+  if (layoutEditMode.value) cancelLayoutEdit()
+})
+
+const formFieldsForAgent = computed(() =>
+  activeDomain.value.fields.map(f => ({
+    name: f.name,
+    label: f.label,
+    required: f.required,
+  })),
+)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 计算属性（表单）
@@ -387,6 +718,8 @@ async function loadDynamicDomains() {
       }
       DOMAINS.push(domainDef)
       initDomainFormData(domainDef)
+      STATIC_DEFAULT_FIELDS[domainDef.id] = JSON.parse(JSON.stringify(domainDef.fields))
+      STATIC_DEFAULT_RELATED_SKILLS[domainDef.id] = [...domainDef.relatedSkills]
     }
   } catch {
     // 动态域加载失败不影响静态域功能
@@ -395,7 +728,14 @@ async function loadDynamicDomains() {
   }
 }
 
-onMounted(() => { loadDynamicDomains() })
+onMounted(async () => {
+  layoutsReady.value = false
+  await loadAdaptLayouts({ showError: true })
+  await loadDynamicDomains()
+  // 动态域加载后再合并一次 manifest（成功则静默刷新，避免重复弹错）
+  await loadAdaptLayouts({ showError: false })
+  layoutsReady.value = true
+})
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Agent 自动适配
@@ -408,6 +748,7 @@ function buildAgentRunPayload() {
     module: mapDomainToModule(activeDomainId.value),
     related_skills: d.relatedSkills,
     form_data: { ...currentFormData.value },
+    form_fields: formFieldsForAgent.value,
     user_notes: currentFormData.value.user_notes || undefined,
   }
 }
@@ -426,12 +767,12 @@ const previewAllText = computed(() =>
 )
 
 async function openPromptPreview() {
-  if (!isComplete.value) {
-    message.warning('请先完成当前域所需的全部表单参数')
+  if (layoutEditMode.value) {
+    message.warning('请先保存或取消布局编辑')
     return
   }
-  if (!['modem', 'comm-framework'].includes(activeDomainId.value)) {
-    message.warning('提示词预览当前仅支持「通信 Modem / 通信框架」域')
+  if (!isComplete.value) {
+    message.warning('请先完成当前域所需的全部表单参数')
     return
   }
 
@@ -470,9 +811,8 @@ async function launchAgentAdapt() {
     message.warning('请先完成当前域所需的全部表单参数')
     return
   }
-  const allowed = new Set(['modem', 'comm-framework'])
-  if (!allowed.has(activeDomainId.value)) {
-    message.warning('Agent 自动适配当前仅支持「通信 Modem / 通信框架」域')
+  if (!activeDomain.value.relatedSkills.length) {
+    message.warning('请至少配置一个关联 Skill（可在「编辑布局」中设置）')
     return
   }
 
@@ -613,8 +953,23 @@ function openSkill(skillName: string) {
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             请完成必填项
           </span>
+          <div class="dh-actions">
+            <NButton
+              v-if="!layoutEditMode"
+              size="small"
+              secondary
+              @click="enterLayoutEdit"
+            >
+              编辑布局
+            </NButton>
+            <NTag v-if="layoutSyncMeta?.cloud_sync_enabled" size="tiny" type="info">云端同步已启用</NTag>
+            <span v-if="layoutManifestPath" class="layout-manifest-hint" :title="layoutManifestPath">本地配置已加载</span>
+          </div>
         </div>
 
+        <NSpin v-if="!layoutsReady" size="small" style="margin: 24px 0;">正在加载域配置…</NSpin>
+
+        <template v-else>
         <!-- 前置条件表单 -->
         <div v-if="activeDomainId === 'modem' || activeDomainId === 'comm-framework'" class="modem-skill-hint">
           <template v-if="activeDomainId === 'modem'">
@@ -624,7 +979,65 @@ function openSkill(skillName: string) {
             以下字段来自 <code>comm-framework-agent-test</code> 测试 Skill 输入；点击「Agent 自动适配」后将按 Skill 分步骤在 PRJ Path 下创建并写入测试文件。
           </template>
         </div>
-        <div class="form-card">
+        <!-- 布局编辑模式 -->
+        <div v-if="layoutEditMode" class="form-card layout-editor-card">
+          <div class="layout-editor-head">
+            <span class="layout-editor-title">域配置编辑</span>
+            <span class="layout-editor-hint">可增删表单字段与关联 Skill；第一项为主控 Skill。保存后写入本地 manifest，重启自动恢复（云端同步接口已预留）。</span>
+          </div>
+          <div class="layout-skills-editor">
+            <span class="layout-skills-label">关联 Skills</span>
+            <div class="layout-skills-tags">
+              <NTag
+                v-for="(skill, sIdx) in layoutDraftRelatedSkills"
+                :key="'draft-skill-' + skill"
+                size="small"
+                closable
+                class="skill-tag"
+                @close="removeRelatedSkill(sIdx)"
+                @click="openSkill(skill)"
+              >
+                {{ sIdx === 0 ? '主控 · ' : '' }}{{ skill }}
+              </NTag>
+            </div>
+            <NButton size="small" @click="openSkillSearchModal">+ 添加 Skill</NButton>
+          </div>
+          <div v-if="!layoutDraftFields.length" class="layout-editor-empty">暂无字段，请添加</div>
+          <div
+            v-for="(field, idx) in layoutDraftFields"
+            :key="'draft-' + field.name"
+            class="layout-field-row"
+          >
+            <div class="lfr-main">
+              <NInput v-model:value="field.label" size="small" placeholder="显示标签" />
+              <code class="lfr-name">{{ field.name }}</code>
+              <NSelect
+                v-model:value="field.type"
+                size="small"
+                :options="[
+                  { label: '文本', value: 'text' },
+                  { label: '多行文本', value: 'textarea' },
+                  { label: '下拉选择', value: 'select' },
+                ]"
+                style="width: 120px;"
+              />
+              <label class="lfr-req">
+                <NSwitch v-model:value="field.required" size="small" />
+                <span>必填</span>
+              </label>
+            </div>
+            <NButton size="tiny" type="error" quaternary @click="removeLayoutField(idx)">删除</NButton>
+          </div>
+          <div class="layout-editor-actions">
+            <NButton size="small" @click="openAddFieldModal">+ 添加字段</NButton>
+            <NButton size="small" type="primary" :loading="layoutSaving" @click="saveLayout">保存布局</NButton>
+            <NButton size="small" @click="cancelLayoutEdit">取消</NButton>
+            <NButton size="small" tertiary :loading="layoutSaving" @click="restoreBuiltinLayout">恢复内置默认</NButton>
+          </div>
+        </div>
+
+        <!-- 填写模式 -->
+        <div v-else class="form-card">
           <div class="form-grid">
             <div
               v-for="field in activeDomain.fields"
@@ -662,17 +1075,18 @@ function openSkill(skillName: string) {
           </div>
         </div>
 
-        <!-- 关联 Skills -->
-        <div class="skills-row">
+        <!-- 关联 Skills（查看模式） -->
+        <div v-if="!layoutEditMode" class="skills-row">
           <span class="skills-title">关联 Skills</span>
           <NTag
-            v-for="skill in activeDomain.relatedSkills"
+            v-for="(skill, sIdx) in activeDomain.relatedSkills"
             :key="skill"
             class="skill-tag"
             size="small"
+            :type="sIdx === 0 ? 'primary' : 'default'"
             @click="openSkill(skill)"
           >
-            {{ skill }}
+            {{ sIdx === 0 ? '主控 · ' : '' }}{{ skill }}
           </NTag>
         </div>
 
@@ -681,7 +1095,7 @@ function openSkill(skillName: string) {
           <NButton
             size="large"
             type="primary"
-            :disabled="!isComplete || !['modem', 'comm-framework'].includes(activeDomainId)"
+            :disabled="layoutEditMode || !isComplete || !activeDomain.relatedSkills.length"
             :loading="agentLaunching"
             @click="launchAgentAdapt"
           >
@@ -690,7 +1104,7 @@ function openSkill(skillName: string) {
           <NButton
             size="large"
             secondary
-            :disabled="!isComplete || !['modem', 'comm-framework'].includes(activeDomainId)"
+            :disabled="layoutEditMode || !isComplete"
             :loading="promptPreviewLoading"
             @click="openPromptPreview"
           >
@@ -710,6 +1124,7 @@ function openSkill(skillName: string) {
             <NTag size="tiny" :type="statusTagType" style="margin-left:6px;">{{ taskStatus }}</NTag>
           </NButton>
         </div>
+        </template>
 
       </template>
 
@@ -910,6 +1325,82 @@ function openSkill(skillName: string) {
       </div>
     </aside>
 
+    <!-- ====== 添加表单字段 ====== -->
+    <NModal
+      v-model:show="showAddFieldModal"
+      preset="dialog"
+      title="添加表单字段"
+      positive-text="添加"
+      negative-text="取消"
+      style="width: 520px;"
+      @positive-click="confirmAddField"
+    >
+      <NForm label-placement="left" label-width="88" size="small">
+        <NFormItem label="字段名" required>
+          <NInput v-model:value="newFieldDraft.name" placeholder="如 ic_model（字母开头）" />
+        </NFormItem>
+        <NFormItem label="显示标签" required>
+          <NInput v-model:value="newFieldDraft.label" placeholder="如 IC型号" />
+        </NFormItem>
+        <NFormItem label="组件类型">
+          <NSelect
+            v-model:value="newFieldDraft.type"
+            :options="[
+              { label: '单行文本', value: 'text' },
+              { label: '多行文本', value: 'textarea' },
+              { label: '下拉选择', value: 'select' },
+            ]"
+          />
+        </NFormItem>
+        <NFormItem label="占位提示">
+          <NInput v-model:value="newFieldDraft.placeholder" placeholder="可选" />
+        </NFormItem>
+        <NFormItem label="必填">
+          <NSwitch v-model:value="newFieldDraft.required" />
+        </NFormItem>
+        <NFormItem v-if="newFieldDraft.type === 'select'" label="下拉选项">
+          <NInput
+            v-model:value="newFieldDraft.optionsText"
+            type="textarea"
+            placeholder="每行一个，格式 label:value&#10;如 GOODIX:goodix"
+            :autosize="{ minRows: 4, maxRows: 8 }"
+          />
+        </NFormItem>
+      </NForm>
+    </NModal>
+
+    <!-- ====== 搜索添加 Skill ====== -->
+    <NModal
+      v-model:show="showSkillSearchModal"
+      preset="card"
+      title="添加关联 Skill"
+      style="width: min(640px, 92vw);"
+    >
+      <NInput
+        v-model:value="skillSearchQuery"
+        placeholder="搜索 Skill 名称、描述或模块…"
+        clearable
+        style="margin-bottom: 12px;"
+      />
+      <NSpin v-if="skillCatalogLoading" size="small" style="padding: 16px 0;" />
+      <div v-else class="skill-search-list">
+        <div v-if="!filteredSkillCandidates.length" class="skill-search-empty">
+          {{ skillSearchQuery ? '无匹配 Skill' : '输入关键词搜索' }}
+        </div>
+        <button
+          v-for="skill in filteredSkillCandidates"
+          :key="skill.name"
+          type="button"
+          class="skill-search-item"
+          @click="addRelatedSkill(skill.name)"
+        >
+          <span class="ssi-name">{{ skill.name }}</span>
+          <span v-if="skill.group" class="ssi-group">{{ skill.group }}</span>
+          <span v-if="skill.description" class="ssi-desc">{{ skill.description }}</span>
+        </button>
+      </div>
+    </NModal>
+
     <!-- ====== Agent 提示词预览 ====== -->
     <NModal
       v-model:show="showPromptPreview"
@@ -1099,7 +1590,8 @@ function openSkill(skillName: string) {
     margin-top: 16px;
   }
 }
-.dh-left   { display: flex; align-items: center; gap: 12px; }
+.dh-left    { display: flex; align-items: center; gap: 12px; }
+.dh-actions { display: flex; align-items: center; gap: 8px; margin-left: 12px; }
 .dh-badge  {
   width: 42px; height: 42px; border-radius: 10px;
   font-size: 11px; font-weight: 800; color: #fff;
@@ -1157,6 +1649,58 @@ function openSkill(skillName: string) {
 }
 
 .action-row { display: flex; gap: 12px; flex-wrap: wrap; }
+
+.layout-editor-card { display: flex; flex-direction: column; gap: 10px; }
+.layout-editor-head { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+.layout-editor-title { font-size: 13px; font-weight: 700; color: $text-primary; }
+.layout-editor-hint { font-size: 11px; color: $text-muted; line-height: 1.45; }
+.layout-editor-empty { font-size: 12px; color: $text-muted; padding: 12px 0; }
+.layout-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid $border-color;
+  border-radius: $radius-md;
+  background: rgba(0, 0, 0, 0.02);
+}
+.lfr-main { display: flex; align-items: center; gap: 8px; flex: 1; flex-wrap: wrap; }
+.lfr-name {
+  font-size: 10px;
+  color: $text-muted;
+  font-family: $font-code;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+}
+.lfr-req { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: $text-muted; }
+.layout-editor-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.layout-skills-editor {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 10px 12px; border-radius: 8px; background: rgba(255,255,255,0.03);
+  border: 1px dashed rgba(255,255,255,0.08);
+}
+.layout-skills-label { font-size: 12px; font-weight: 600; color: $text-secondary; min-width: 72px; }
+.layout-skills-tags { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.layout-manifest-hint { font-size: 10px; color: $text-muted; margin-left: 4px; }
+.skill-search-list {
+  max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;
+}
+.skill-search-empty { font-size: 12px; color: $text-muted; padding: 16px 4px; text-align: center; }
+.skill-search-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; text-align: left; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid transparent; background: rgba(255,255,255,0.02); cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  &:hover { border-color: rgba(56,139,253,0.35); background: rgba(56,139,253,0.06); }
+}
+.ssi-name { font-size: 13px; font-weight: 600; color: $text-primary; }
+.ssi-group { font-size: 10px; color: #388bfd; }
+.ssi-desc {
+  font-size: 11px; color: $text-muted; line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 
 // ── 监控顶栏 ────────────────────────────────────────────────────────────────
 .monitor-bar {

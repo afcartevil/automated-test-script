@@ -48,12 +48,19 @@ export function getAdaptConfig(): Promise<AdaptConfig | null> {
   return tahpGet<AdaptConfig | null>('/api/tahp/adapt/config/get')
 }
 
+export interface AdaptAgentFormFieldMeta {
+  name: string
+  label: string
+  required?: boolean
+}
+
 export interface AdaptAgentRunRequest {
   domain_id: string
   domain_label: string
   module: string
   related_skills: string[]
   form_data: Record<string, string>
+  form_fields?: AdaptAgentFormFieldMeta[]
   user_notes?: string
 }
 

@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "layouts": {
+    "fp": {
+      "schema_version": 1,
+      "domain_id": "fp",
+      "fields": [
+        {
+          "name": "arch_type",
+          "label": "架构类型",
+          "type": "select",
+          "required": true,
+          "options": [
+            {
+              "label": "归一化 (tran_common_v2)",
+              "value": "normalized"
+            },
+            {
+              "label": "非归一化 (tran_common)",
+              "value": "non_normalized"
+            }
+          ]
+        },
+        {
+          "name": "ic_vendor",
+          "label": "IC厂商",
+          "type": "select",
+          "required": true,
+          "options": [
+            {
+              "label": "GOODIX",
+              "value": "goodix"
+            },
+            {
+              "label": "ANC",
+              "value": "anc"
+            },
+            {
+              "label": "Silead",
+              "value": "silead"
+            },
+            {
+              "label": "其他",
+              "value": "other"
+            }
+          ]
+        },
+        {
+          "name": "ic_model",
+          "label": "IC型号",
+          "type": "text",
+          "required": true,
+          "placeholder": "如 GW9598"
+        },
+        {
+          "name": "soc_model",
+          "label": "SoC型号",
+          "type": "text",
+          "required": true,
+          "placeholder": "如 MT6878 / MT6789"
+        },
+        {
+          "name": "ref_project",
+          "label": "参考项目",
+          "type": "text",
+          "required": true,
+          "placeholder": "参考项目代码"
+        }
+      ],
+      "related_skills": [
+        "drv-fp-adapt",
+        "drv-fp-check",
+        "android-fingerprint-log-analysis"
+      ],
+      "revision": 7,
+      "updated_at": "2026-06-09T02:26:34.890Z",
+      "source": "user"
+    }
+  },
+  "sync": {
+    "cloud_sync_enabled": false,
+    "last_local_save": "2026-06-09T02:26:34.891Z"
+  }
+}

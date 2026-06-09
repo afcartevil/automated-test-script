@@ -22,8 +22,15 @@ import {
   tahpSkillMdPath,
 } from './context-injector'
 import { saveAgentPromptLog } from './prompt-log'
+import { resolveFormFieldLabels } from './adapt-layout/service'
 
 const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
+
+export interface AdaptAgentFieldMeta {
+  name: string
+  label: string
+  required?: boolean
+}
 
 export interface AdaptAgentRunInput {
   domainId: string
@@ -31,6 +38,7 @@ export interface AdaptAgentRunInput {
   module: string
   relatedSkills: string[]
   formData: Record<string, string>
+  formFields?: AdaptAgentFieldMeta[]
   userNotes?: string
 }
 
@@ -41,6 +49,7 @@ export interface AdaptAgentTaskCtx {
   module: string
   relatedSkills: string[]
   formData: Record<string, string>
+  formFields?: AdaptAgentFieldMeta[]
   userNotes?: string
   startedAt: string
   status: 'pending' | 'running' | 'completed' | 'failed'
@@ -112,26 +121,40 @@ function extractFilePathFromArgs(args: unknown): string | undefined {
   return undefined
 }
 
-function buildAdaptAgentInstructions(input: AdaptAgentRunInput, userMessage: string): string {
-  const primarySkill = input.relatedSkills[0] || (input.domainId === 'comm-framework' ? 'comm-framework-agent-test' : 'MODEM_P1_Adapt')
-  const skillsDir = getTahpSkillsRoot()
-  const skillPaths = input.relatedSkills
-    .map(id => `- **${id}**: \`${tahpSkillMdPath(id)}\``)
-    .join('\n')
-  const workflowHint = input.domainId === 'comm-framework'
-    ? [
+function buildWorkflowHint(domainId: string, primarySkill: string): string {
+  if (domainId === 'comm-framework') {
+    return [
       '# 主控 Skill 工作流（通信框架测试）',
       '- 校验 `prj_path` 是否有效',
       '- 在 `prj_path` 下创建测试文件',
       '- 按步骤多次写入（步骤、时间、地点、天气）',
       '- 输出最终文件路径与写入结果',
     ].join('\n')
-    : [
+  }
+  if (domainId === 'modem') {
+    return [
       '# 主控 Skill 工作流（MODEM P1 参考）',
       '- 校验 4 个全局路径 + BOM 名称 + 变更后 BOM + RF 目标仓',
       '- 调度 RF 移植子技能 → 获取上下文变量 X、Y',
       '- 调度宏控移植子技能 → 汇总报告',
     ].join('\n')
+  }
+  return [
+    `# 主控 Skill 工作流（${primarySkill}）`,
+    `- 先 Read 主控 Skill：\`${primarySkill}\` 全文，严格按其中 SOP 执行`,
+    '- 用户表单参数已提供则核对后使用，勿重复询问已有项',
+    '- 按主控 Skill 调度下列关联 Skill（顺序执行，必要时 Read 全文）',
+    '- 输出结构化总结与文件修改清单',
+  ].join('\n')
+}
+
+function buildAdaptAgentInstructions(input: AdaptAgentRunInput, userMessage: string): string {
+  const primarySkill = input.relatedSkills[0]
+  const skillsDir = getTahpSkillsRoot()
+  const skillPaths = input.relatedSkills
+    .map((id, idx) => `- ${idx === 0 ? '**主控**' : '关联'} **${id}**: \`${tahpSkillMdPath(id)}\``)
+    .join('\n')
+  const workflowHint = buildWorkflowHint(input.domainId, primarySkill)
 
   const base = `你是 TAHP「AI 适配调试 · Agent 自动适配」专家，负责在传音 Android 底软集成部完成 **${input.domainLabel}** 的适配任务。
 
@@ -171,11 +194,16 @@ function buildAdaptAgentUserMessage(input: AdaptAgentRunInput): string {
     '',
     '## 用户已填写的表单参数（必须使用，勿重复询问已有项）',
   ]
-  for (const [k, v] of Object.entries(input.formData)) {
-    if (v?.trim()) lines.push(`- **${k}**: ${v.trim()}`)
+  const rows = resolveFormFieldLabels(input.formData, input.formFields)
+  for (const row of rows) {
+    lines.push(`- **${row.label}** (\`${row.name}\`): ${row.value}`)
   }
   lines.push('')
   lines.push(`## 关联 Skills（须按主控 Skill 调度）`)
+  lines.push(`**主控 Skill**: ${input.relatedSkills[0]}`)
+  if (input.relatedSkills.length > 1) {
+    lines.push(`**协同 Skill**: ${input.relatedSkills.slice(1).join(', ')}`)
+  }
   lines.push(`**关联 Skills**: ${input.relatedSkills.join(', ')}`)
   if (input.userNotes?.trim()) {
     lines.push('')
@@ -271,14 +299,11 @@ export function startAdaptAgentRun(input: AdaptAgentRunInput): { ok: true; taskI
   if (!input.relatedSkills?.length) {
     return { ok: false, error: '缺少关联 Skill' }
   }
-  const requiredKeysMap: Record<string, string[]> = {
-    modem: ['path_a_pub', 'path_a_priv', 'path_b_pub', 'path_b_priv', 'bom_name', 'bom_name_target', 'rf_target_location'],
-    'comm-framework': ['prj_path'],
-  }
-  const requiredKeys = requiredKeysMap[input.domainId] || []
+  const requiredKeys = (input.formFields || []).filter(f => f.required).map(f => f.name)
   for (const k of requiredKeys) {
     if (!String(input.formData[k] || '').trim()) {
-      return { ok: false, error: `缺少必填参数: ${k}` }
+      const label = input.formFields?.find(f => f.name === k)?.label || k
+      return { ok: false, error: `缺少必填参数: ${label}` }
     }
   }
 
@@ -290,6 +315,7 @@ export function startAdaptAgentRun(input: AdaptAgentRunInput): { ok: true; taskI
     module: input.module,
     relatedSkills: [...input.relatedSkills],
     formData: { ...input.formData },
+    formFields: input.formFields ? [...input.formFields] : undefined,
     userNotes: input.userNotes,
     startedAt: new Date().toISOString(),
     status: 'running',
