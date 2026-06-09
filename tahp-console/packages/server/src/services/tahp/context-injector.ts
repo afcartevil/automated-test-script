@@ -296,7 +296,7 @@ export function buildSkillExecutionDirective(options?: {
   ]
 
   if (scenario === 'bug_analysis') {
-    lines.push('**当前场景**: AI Bug 分析 — 拉取 JIRA 后必须选择并加载匹配的日志/领域分析 Skill。')
+    lines.push('**当前场景**: 智能诊断 — 拉取 JIRA 后必须选择并加载匹配的日志/领域分析 Skill。')
   } else if (scenario === 'adapt_debug') {
     lines.push('**当前场景**: AI 适配调试 — 优先加载用户指定的关联 Adapt Skill 并按 SOP 排查。')
   } else {

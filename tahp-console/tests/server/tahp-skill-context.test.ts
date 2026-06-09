@@ -26,7 +26,7 @@ describe('tahp skill context injector', () => {
     })
     expect(out).toContain('com-voice-call-dialing')
     expect(out).toContain('SKILL.md')
-    expect(out).toContain('AI Bug 分析')
+    expect(out).toContain('智能诊断')
   })
 
   it('buildTahpContext does not inject skill body excerpts', () => {

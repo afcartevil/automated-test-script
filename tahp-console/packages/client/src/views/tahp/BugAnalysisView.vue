@@ -642,7 +642,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
       <div class="ba-header-left">
         <div class="ba-logo-dot" />
         <div>
-          <h1 class="ba-title">AI Bug 分析</h1>
+          <h1 class="ba-title">智能诊断</h1>
           <p class="ba-subtitle">基于 JIRA · 自动调用日志/分析 Skill · 实时可观察的根因定位</p>
         </div>
       </div>
@@ -1270,7 +1270,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
       @positive-click="saveJiraConfig"
     >
       <NAlert type="warning" :show-icon="false" style="margin-bottom: 12px">
-        进入 AI Bug 分析前必须先配置一次 JIRA 凭证（TAHP_JIRA_USERNAME + TAHP_JIRA_PASSWORD）。
+        进入智能诊断前必须先配置一次 JIRA 凭证（TAHP_JIRA_USERNAME + TAHP_JIRA_PASSWORD）。
       </NAlert>
       <NForm label-placement="top">
         <NFormItem label="TAHP_JIRA_USERNAME">

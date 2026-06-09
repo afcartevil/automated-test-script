@@ -265,7 +265,7 @@ async function runAgentChat(
   const manager = getAgentBridgeManager()
   if (!manager.running) {
     throw new Error(
-      'Agent Bridge 未运行。AI Bug 分析必须依赖 Claude Code Agent（含完整 Skill / MCP 工具链），' +
+      'Agent Bridge 未运行。智能诊断必须依赖 Claude Code Agent（含完整 Skill / MCP 工具链），' +
       '请确认 hermes CLI 已正确安装并启动（检查服务端日志中的 [agent-bridge] starting 信息）。',
     )
   }
@@ -359,7 +359,7 @@ function findSkillUseHits(text: string, fromIndex = 0): SkillUseHit[] {
 // BFF 注入：当前工程 skills/.claude/skills 清单 + Skill 按需 Read 规范 + 关键词匹配节选。
 // Bug 域识别与具体 Skill 选择仍由 Agent 在拉取 JIRA 后完成；MCP：jira-mcp / transsion-harness 等。
 
-const AGENT_INSTRUCTIONS_BASE = `你是 TAHP（TECNO AI Harness Platform）"AI Bug 分析专家"，运行在传音 Android 底软集成部的 Claude Code Agent 环境中。
+const AGENT_INSTRUCTIONS_BASE = `你是 TAHP（TECNO AI Harness Platform）"智能诊断专家"，运行在传音 Android 底软集成部的 Claude Code Agent 环境中。
 
 # 你的执行原则
 1. **必须真正调用 Skill / MCP 工具**，不要"假装"使用 skill；用户能通过工具调用面板看到你是否真的调用了。
@@ -522,7 +522,7 @@ async function runSingleBugAnalysis(
     const manager = getAgentBridgeManager()
     if (!manager.running) {
       throw new Error(
-        'Agent Bridge 未运行。AI Bug 分析必须由 Claude Code Agent 执行（含 Skill / MCP 工具链）。' +
+        'Agent Bridge 未运行。智能诊断必须由 Claude Code Agent 执行（含 Skill / MCP 工具链）。' +
         '请检查 hermes CLI 是否已安装、agent-bridge 是否启动（查看服务端日志 [agent-bridge] 行）。',
       )
     }
@@ -807,7 +807,7 @@ export function startSingleBugAnalysis(input: BugAnalysisInput): StartTaskResult
     type: 'single',
     jira_key: key,
     jira_url: ctx.jiraUrl,
-    message: `AI Bug 分析任务已启动: ${key}`,
+    message: `智能诊断任务已启动: ${key}`,
   })
   logBug(taskId, 'info', `task.started single ${key}`)
 
