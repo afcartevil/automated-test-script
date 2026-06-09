@@ -21,23 +21,15 @@ import {
   getTahpSkillsRoot,
   tahpSkillMdPath,
 } from './context-injector'
+import { saveAgentPromptLog } from './prompt-log'
 
 const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
-
-export interface AdaptAgentProjectCtx {
-  projectCode: string
-  soc: string
-  kernelVersion: string
-  preVendor: string
-  postVendor: string
-}
 
 export interface AdaptAgentRunInput {
   domainId: string
   domainLabel: string
   module: string
   relatedSkills: string[]
-  project: AdaptAgentProjectCtx
   formData: Record<string, string>
   userNotes?: string
 }
@@ -48,7 +40,6 @@ export interface AdaptAgentTaskCtx {
   domainLabel: string
   module: string
   relatedSkills: string[]
-  project: AdaptAgentProjectCtx
   formData: Record<string, string>
   userNotes?: string
   startedAt: string
@@ -60,6 +51,7 @@ export interface AdaptAgentTaskCtx {
   fileChanges: Array<{ path: string; action: string; tool: string; at: string }>
   planNotes: string[]
   llmResponse?: string
+  promptLogDir?: string
   completedAt?: string
   error?: string
 }
@@ -173,11 +165,8 @@ function buildAdaptAgentUserMessage(input: AdaptAgentRunInput): string {
   const lines: string[] = [
     `# ${input.domainLabel} — Agent 自动适配任务`,
     '',
-    '## 项目上下文',
-    `- 项目代码: ${input.project.projectCode}`,
-    `- SoC: ${input.project.soc}`,
-    `- Kernel: ${input.project.kernelVersion}`,
-    `- 升级路径: ${input.project.preVendor} → ${input.project.postVendor}`,
+    '## 适配域信息',
+    `- 域 ID: ${input.domainId}`,
     `- TAHP 模块: ${input.module}`,
     '',
     '## 用户已填写的表单参数（必须使用，勿重复询问已有项）',
@@ -196,6 +185,16 @@ function buildAdaptAgentUserMessage(input: AdaptAgentRunInput): string {
   lines.push('')
   lines.push('请立即开始：Read 主控 Skill，输出任务规划，然后按 SOP 执行适配。')
   return lines.join('\n')
+}
+
+/** 构建将发往 Agent Bridge 的最终提示词（不启动任务） */
+export function buildAdaptAgentPrompts(input: AdaptAgentRunInput): {
+  systemPrompt: string
+  userPrompt: string
+} {
+  const userPrompt = buildAdaptAgentUserMessage(input)
+  const systemPrompt = buildAdaptAgentInstructions(input, userPrompt)
+  return { systemPrompt, userPrompt }
 }
 
 async function runAgentChat(
@@ -290,7 +289,6 @@ export function startAdaptAgentRun(input: AdaptAgentRunInput): { ok: true; taskI
     domainLabel: input.domainLabel,
     module: input.module,
     relatedSkills: [...input.relatedSkills],
-    project: { ...input.project },
     formData: { ...input.formData },
     userNotes: input.userNotes,
     startedAt: new Date().toISOString(),
@@ -328,6 +326,8 @@ async function runAdaptAgentTask(taskId: string): Promise<void> {
   try {
     const userMessage = buildAdaptAgentUserMessage(ctx)
     const instructions = buildAdaptAgentInstructions(ctx, userMessage)
+    const promptLog = saveAgentPromptLog(taskId, 'adapt-agent', instructions, userMessage)
+    ctx.promptLogDir = promptLog.promptDir
 
     emit(taskId, 'task.phase', { phase: 'PREPARING', progress: 5, message: '准备 Agent 指令与 Skill 上下文...' })
     emit(taskId, 'task.plan', {

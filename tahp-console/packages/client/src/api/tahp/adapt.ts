@@ -53,17 +53,21 @@ export interface AdaptAgentRunRequest {
   domain_label: string
   module: string
   related_skills: string[]
-  project: {
-    projectCode: string
-    soc: string
-    kernelVersion: string
-    preVendor: string
-    postVendor: string
-  }
   form_data: Record<string, string>
   user_notes?: string
 }
 
 export function startAdaptAgentRun(req: AdaptAgentRunRequest): Promise<{ task_id: string; status: string; mode: string }> {
   return tahpPost<{ task_id: string; status: string; mode: string }>('/api/tahp/adapt/agent-run', req)
+}
+
+export interface AdaptAgentPromptPreview {
+  system_prompt: string
+  user_prompt: string
+  system_prompt_chars: number
+  user_prompt_chars: number
+}
+
+export function previewAdaptAgentPrompts(req: AdaptAgentRunRequest): Promise<AdaptAgentPromptPreview> {
+  return tahpPost<AdaptAgentPromptPreview>('/api/tahp/adapt/agent-prompt-preview', req)
 }

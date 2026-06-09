@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   extractPreferredSkillIds,
   buildSkillExecutionDirective,
+  buildTahpContext,
+  buildFullTahpSystemContext,
 } from '../../packages/server/src/services/tahp/context-injector'
 
 describe('tahp skill context injector', () => {
@@ -25,5 +27,29 @@ describe('tahp skill context injector', () => {
     expect(out).toContain('com-voice-call-dialing')
     expect(out).toContain('SKILL.md')
     expect(out).toContain('AI Bug 分析')
+  })
+
+  it('buildTahpContext does not inject skill body excerpts', () => {
+    const out = buildTahpContext('modem rf 适配', {
+      includeSkillCatalog: true,
+      includeConstraints: false,
+      includePlaybooks: false,
+      includeKnowledge: false,
+    })
+    if (!out) return
+    expect(out).not.toContain('当前问题相关详细内容')
+    expect(out).not.toContain('...(截断)')
+    expect(out).toContain('仅索引')
+  })
+
+  it('buildFullTahpSystemContext adapt_debug skips skill catalog scan', () => {
+    const out = buildFullTahpSystemContext('AI 适配调试 关联 Skills: MODEM_P1_Adapt', {
+      scenario: 'adapt_debug',
+      preferredSkillIds: ['MODEM_P1_Adapt'],
+    })
+    if (!out) return
+    expect(out).toContain('MODEM_P1_Adapt')
+    expect(out).toContain('AI 适配调试')
+    expect(out).not.toContain('已扫描到的 Skills（共')
   })
 })

@@ -52,6 +52,7 @@ import {
 } from './jira'
 import { logBug, appendBugLog } from './bug-analysis-logger'
 import { buildFullTahpSystemContext, getTahpSkillsRoot } from './context-injector'
+import { saveAgentPromptLog } from './prompt-log'
 
 // ─── Agent Bridge 客户端（单例） ────────────────────────────────────────────
 //
@@ -509,9 +510,11 @@ async function runSingleBugAnalysis(
     // ── Phase 1: 准备提示词（注入工程 Skill 目录 + 按需加载规范） ───────────
     const userMessage = buildAgentUserMessage(ctx, correction)
     const instructions = buildBugAnalysisInstructions(userMessage)
+    const promptLog = saveAgentPromptLog(taskId, 'bug-analysis', instructions, userMessage)
+    logBug(taskId, 'info', `Agent 提示词已落盘: ${promptLog.promptDir}`)
     emit(taskId, 'task.phase', {
       phase: 'PREPARING', progress: 5,
-      message: '准备提交给 Agent（已注入工程 skills 目录与匹配节选）...',
+      message: '准备提交给 Agent（Skill 按需 Read，提示词已落盘）...',
     })
 
     // ── Phase 2: 检查 Agent Bridge 状态 ────────────────────────────────────

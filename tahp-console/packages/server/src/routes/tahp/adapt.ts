@@ -9,7 +9,13 @@ import { logger } from '../../services/logger'
 import { safeFileStore } from '../../services/safe-file-store'
 import { tahpPaths } from '../../services/tahp/paths'
 import { join } from 'path'
-import { startAdaptAgentRun, getAdaptAgentTask, readAdaptAgentReport } from '../../services/tahp/adapt-agent'
+import {
+  startAdaptAgentRun,
+  getAdaptAgentTask,
+  readAdaptAgentReport,
+  buildAdaptAgentPrompts,
+  type AdaptAgentRunInput,
+} from '../../services/tahp/adapt-agent'
 
 export const tahpAdaptRoutes = new Router()
 
@@ -119,9 +125,7 @@ tahpAdaptRoutes.post('/api/tahp/adapt/config/save', async (ctx) => {
   }
 })
 
-// POST /api/tahp/adapt/agent-run — Agent Bridge 自动适配（实时事件走 /tahp-run）
-tahpAdaptRoutes.post('/api/tahp/adapt/agent-run', async (ctx) => {
-  const body = (ctx.request.body || {}) as Record<string, unknown>
+function parseAdaptAgentRunBody(body: Record<string, unknown>): AdaptAgentRunInput | { error: string } {
   const domainId = String(body.domain_id || body.domainId || '').trim()
   const domainLabel = String(body.domain_label || body.domainLabel || domainId).trim()
   const module = String(body.module || 'telephony').trim()
@@ -130,32 +134,49 @@ tahpAdaptRoutes.post('/api/tahp/adapt/agent-run', async (ctx) => {
     : Array.isArray(body.relatedSkills)
       ? body.relatedSkills.map(s => String(s).trim()).filter(Boolean)
       : []
-  const project = (body.project || {}) as Record<string, string>
   const formData = (body.form_data || body.formData || {}) as Record<string, string>
   const userNotes = typeof body.user_notes === 'string' ? body.user_notes
     : typeof body.userNotes === 'string' ? body.userNotes : undefined
 
-  if (!domainId) {
+  if (!domainId) return { error: '缺少 domain_id' }
+  return { domainId, domainLabel, module, relatedSkills, formData, userNotes }
+}
+
+// POST /api/tahp/adapt/agent-prompt-preview — 预览 Agent 系统/用户提示词（不启动任务）
+tahpAdaptRoutes.post('/api/tahp/adapt/agent-prompt-preview', async (ctx) => {
+  const parsed = parseAdaptAgentRunBody((ctx.request.body || {}) as Record<string, unknown>)
+  if ('error' in parsed) {
     ctx.status = 400
-    ctx.body = { success: false, error: '缺少 domain_id' }
+    ctx.body = { success: false, error: parsed.error }
+    return
+  }
+  if (!parsed.relatedSkills?.length) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少关联 Skill' }
+    return
+  }
+  const prompts = buildAdaptAgentPrompts(parsed)
+  ctx.body = {
+    success: true,
+    data: {
+      system_prompt: prompts.systemPrompt,
+      user_prompt: prompts.userPrompt,
+      system_prompt_chars: prompts.systemPrompt.length,
+      user_prompt_chars: prompts.userPrompt.length,
+    },
+  }
+})
+
+// POST /api/tahp/adapt/agent-run — Agent Bridge 自动适配（实时事件走 /tahp-run）
+tahpAdaptRoutes.post('/api/tahp/adapt/agent-run', async (ctx) => {
+  const parsed = parseAdaptAgentRunBody((ctx.request.body || {}) as Record<string, unknown>)
+  if ('error' in parsed) {
+    ctx.status = 400
+    ctx.body = { success: false, error: parsed.error }
     return
   }
 
-  const result = startAdaptAgentRun({
-    domainId,
-    domainLabel,
-    module,
-    relatedSkills,
-    project: {
-      projectCode: String(project.projectCode || ''),
-      soc: String(project.soc || ''),
-      kernelVersion: String(project.kernelVersion || ''),
-      preVendor: String(project.preVendor || ''),
-      postVendor: String(project.postVendor || ''),
-    },
-    formData,
-    userNotes,
-  })
+  const result = startAdaptAgentRun(parsed)
 
   if (!result.ok) {
     ctx.status = 400

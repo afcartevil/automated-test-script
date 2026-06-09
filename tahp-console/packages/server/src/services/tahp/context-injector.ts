@@ -21,7 +21,14 @@ interface ContextItem {
   title: string
   summary: string
   keywords: string[]
-  fullContent?: string  // 限制大小，用于详细展示
+}
+
+/** buildTahpContext 可注入的章节（不含 Skill 正文，正文须运行时 Read） */
+export interface BuildTahpContextOptions {
+  includeSkillCatalog?: boolean
+  includeConstraints?: boolean
+  includePlaybooks?: boolean
+  includeKnowledge?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -89,7 +96,6 @@ function buildIndex(): ContextItem[] {
           title: `Skill: ${skillName}`,
           summary: description,
           keywords,
-          fullContent: raw.length > 2500 ? raw.slice(0, 2500) + '\n...(截断)' : raw,
         })
       } catch (err) {
         logger.warn('[context-injector] skill parse error %s: %s', skillName, err)
@@ -118,7 +124,6 @@ function buildIndex(): ContextItem[] {
             ...tokenize(displayName),
             ...components.flatMap(c => tokenize(c)),
           ],
-          fullContent: raw.length > 1500 ? raw.slice(0, 1500) + '\n...(截断)' : raw,
         })
 
         // 扫描同目录下其他 domain yaml
@@ -138,7 +143,6 @@ function buildIndex(): ContextItem[] {
                 ...tokenize(dName),
                 ...tokenize(String(dCfg?.description || '')),
               ],
-              fullContent: dRaw.length > 1200 ? dRaw.slice(0, 1200) + '\n...(截断)' : dRaw,
             })
           } catch { /* skip malformed */ }
         }
@@ -196,7 +200,6 @@ function buildIndex(): ContextItem[] {
             ...tokenize(desc),
             ...tokenize(basename(file, '.yaml')),
           ],
-          fullContent: raw.length > 1000 ? raw.slice(0, 1000) + '\n...(截断)' : raw,
         })
       } catch (err) {
         logger.warn('[context-injector] playbook parse error %s: %s', file, err)
@@ -313,14 +316,45 @@ export function buildSkillExecutionDirective(options?: {
   return lines.join('\n')
 }
 
+function defaultContextOptions(scenario: TahpSkillScenario): BuildTahpContextOptions {
+  switch (scenario) {
+    case 'adapt_debug':
+      // 适配 Agent 已在业务层注入域/表单/关联 Skill 路径；不再扫描全量 Skill 目录
+      return {
+        includeSkillCatalog: false,
+        includeConstraints: false,
+        includePlaybooks: false,
+        includeKnowledge: false,
+      }
+    case 'bug_analysis':
+      // Bug Agent 通过 directive 指定优先 Skill；仅保留约束/playbook/知识库索引
+      return {
+        includeSkillCatalog: false,
+        includeConstraints: true,
+        includePlaybooks: true,
+        includeKnowledge: true,
+      }
+    case 'chat':
+    default:
+      return {
+        includeSkillCatalog: true,
+        includeConstraints: true,
+        includePlaybooks: true,
+        includeKnowledge: true,
+      }
+  }
+}
+
 /**
- * 完整 TAHP 系统上下文 = Skill 执行规范 + 工程扫描（skills / 约束 / playbook / 关键词匹配节选）。
+ * 完整 TAHP 系统上下文 = Skill 执行规范 +（按场景可选）工程扫描摘要。
+ * Skill 正文不注入提示词，须由 Agent 运行时 Read SKILL.md。
  */
 export function buildFullTahpSystemContext(
   userInput: string,
   options?: {
     preferredSkillIds?: string[]
     scenario?: TahpSkillScenario
+    contextOptions?: BuildTahpContextOptions
   },
 ): string {
   if (!hasTahpProject()) return ''
@@ -332,10 +366,11 @@ export function buildFullTahpSystemContext(
     ]),
   ]
   const scenario = options?.scenario ?? inferSkillScenario(userInput)
+  const ctxOpts = { ...defaultContextOptions(scenario), ...options?.contextOptions }
 
   const parts = [
     buildSkillExecutionDirective({ preferredSkillIds, scenario }),
-    buildTahpContext(userInput),
+    buildTahpContext(userInput, ctxOpts),
   ].filter(p => p.trim().length > 0)
 
   return parts.join('\n\n')
@@ -346,115 +381,94 @@ export function buildFullTahpSystemContext(
 // ---------------------------------------------------------------------------
 
 /**
- * 根据用户输入，构造注入到 LLM system prompt 的工程上下文字符串。
+ * 根据用户输入与选项，构造注入到 LLM system prompt 的工程扫描摘要。
  *
- * - 始终包含：项目概览、skill 列表、模块约束摘要、playbook 列表
- * - 按关键词匹配：高相关内容注入详细文本（最多 3 条）
- * - 无匹配时只返回轻量概览（不膨胀 token）
+ * - 仅输出目录/索引级信息（skill 名+description、约束摘要、playbook、知识库标题）
+ * - **不注入** Skill / 约束 / Playbook 正文；正文须 Agent 运行时 Read
+ * - adapt_debug 场景默认跳过本函数（见 defaultContextOptions）
  */
-export function buildTahpContext(userInput: string): string {
+export function buildTahpContext(
+  _userInput: string,
+  options: BuildTahpContextOptions = {},
+): string {
   if (!hasTahpProject()) return ''
 
-  const inputLower = (userInput || '').toLowerCase()
+  const {
+    includeSkillCatalog = true,
+    includeConstraints = true,
+    includePlaybooks = true,
+    includeKnowledge = true,
+  } = options
+
+  if (!includeSkillCatalog && !includeConstraints && !includePlaybooks && !includeKnowledge) {
+    return ''
+  }
+
   const index = getIndex()
   if (index.length === 0) return ''
 
-  // ── 关键词评分 ─────────────────────────────────────────────────────────────
-  const scored = index
-    .map(item => {
-      let score = 0
-      for (const kw of item.keywords) {
-        if (kw.length >= 2 && inputLower.includes(kw)) {
-          score += kw.length  // 越长的关键词权重越高
-        }
-      }
-      return { item, score }
-    })
-    .filter(s => s.score > 0)
-    .sort((a, b) => b.score - a.score)
-
-  // ── 构建输出 ───────────────────────────────────────────────────────────────
   const root = tahpPaths.projectRoot
   const skillsDir = join(root, 'skills', '.claude', 'skills')
   const lines: string[] = []
 
-  // 明确标注：这是实时扫描的真实文件内容
-  lines.push('# TAHP 工程上下文（服务器实时扫描，非模板预设）')
+  lines.push('# TAHP 工程上下文（索引摘要，非 Skill 正文）')
   lines.push('')
-  lines.push('> **重要说明**：以下内容由服务器在处理本次请求时实时扫描工程文件生成。')
-  lines.push('> 如果用户询问某个 skill/文件是否存在，请以下方列表为准，不要推测或假设。')
+  lines.push('> Skill / 约束 / Playbook 正文不在此注入，请按上方「Skill 执行规范」Read 对应 `SKILL.md`。')
   lines.push('')
   lines.push('## 工程根目录')
   lines.push(`  路径: \`${root}\``)
-  lines.push('  目录结构: skills/(AI技能) | knowledge-base/(知识库) | constraints/(模块约束) | playbooks/(执行Pipeline) | tahp-mcp-server/(MCP服务器) | tahp-console/(Web控制台)')
   lines.push('')
 
-  // Skill 列表（含目录路径，便于 LLM 精确引用）
-  const skillItems = index.filter(i => i.type === 'skill')
-  if (skillItems.length > 0) {
-    lines.push(`## 已扫描到的 Skills（共 ${skillItems.length} 个）`)
-    lines.push(`  扫描目录: \`${skillsDir}\``)
-    lines.push('  以下是该目录下实际存在的所有 SKILL.md 文件对应的 skill：')
-    lines.push('')
-    for (const item of skillItems) {
-      const skillName = item.title.replace('Skill: ', '')
-      lines.push(`  - **${skillName}**: ${item.summary}`)
-      lines.push(`    文件路径: \`${join(skillsDir, skillName, 'SKILL.md')}\``)
-    }
-    lines.push('')
-    lines.push(`  ⚠️ 注意：上述 ${skillItems.length} 个是全部已有的 skill，此目录下不存在其他 skill。`)
-    lines.push('  如果用户询问某个 skill 是否存在但不在上述列表中，请明确告知该 skill 当前工程中不存在。')
-    lines.push('')
-  } else {
-    lines.push(`## Skills`)
-    lines.push(`  扫描目录: \`${skillsDir}\`（未找到任何 SKILL.md）`)
-    lines.push('')
-  }
-
-  // 模块约束摘要（只列 module.yaml，不展开 domain）
-  const moduleConstraints = index.filter(i => i.type === 'constraint' && i.title.startsWith('模块约束:'))
-  if (moduleConstraints.length > 0) {
-    lines.push(`## 模块约束（共 ${moduleConstraints.length} 个模块）`)
-    lines.push(`  扫描目录: \`${join(root, 'constraints')}\``)
-    for (const item of moduleConstraints) {
-      lines.push(`  - **${item.title}**: ${item.summary}`)
-    }
-    lines.push('')
-  }
-
-  // Playbook 列表
-  const playbookItems = index.filter(i => i.type === 'playbook')
-  if (playbookItems.length > 0) {
-    lines.push(`## Playbooks（共 ${playbookItems.length} 个）`)
-    lines.push(`  扫描目录: \`${join(root, 'playbooks')}\``)
-    for (const item of playbookItems) {
-      lines.push(`  - **${item.title}**: ${item.summary}`)
-    }
-    lines.push('')
-  }
-
-  // 知识库索引（仅条目标题，不加载全文）
-  const knowledgeItems = index.filter(i => i.type === 'knowledge')
-  if (knowledgeItems.length > 0) {
-    lines.push(`## 知识库索引（共 ${knowledgeItems.length} 条）`)
-    lines.push(`  扫描目录: \`${join(root, 'knowledge-base')}\``)
-    for (const item of knowledgeItems) {
-      lines.push(`  - ${item.summary}`)
-    }
-    lines.push('')
-  }
-
-  // 高相关详细内容（取 top 3，只取有 fullContent 的条目）
-  const detailed = scored.slice(0, 3).filter(s => s.item.fullContent)
-  if (detailed.length > 0) {
-    lines.push('## 当前问题相关详细内容（关键词匹配结果）')
-    for (const { item, score } of detailed) {
-      lines.push(`### ${item.title}`)
-      lines.push(`> 相关度评分: ${score}`)
+  if (includeSkillCatalog) {
+    const skillItems = index.filter(i => i.type === 'skill')
+    if (skillItems.length > 0) {
+      lines.push(`## 已扫描到的 Skills（共 ${skillItems.length} 个，仅索引）`)
+      lines.push(`  扫描目录: \`${skillsDir}\``)
+      for (const item of skillItems) {
+        const skillName = item.title.replace('Skill: ', '')
+        lines.push(`  - **${skillName}**: ${item.summary}`)
+        lines.push(`    文件路径: \`${join(skillsDir, skillName, 'SKILL.md')}\``)
+      }
       lines.push('')
-      lines.push('```')
-      lines.push(item.fullContent!.trim())
-      lines.push('```')
+    } else {
+      lines.push(`## Skills`)
+      lines.push(`  扫描目录: \`${skillsDir}\`（未找到任何 SKILL.md）`)
+      lines.push('')
+    }
+  }
+
+  if (includeConstraints) {
+    const moduleConstraints = index.filter(i => i.type === 'constraint' && i.title.startsWith('模块约束:'))
+    if (moduleConstraints.length > 0) {
+      lines.push(`## 模块约束（共 ${moduleConstraints.length} 个模块）`)
+      lines.push(`  扫描目录: \`${join(root, 'constraints')}\``)
+      for (const item of moduleConstraints) {
+        lines.push(`  - **${item.title}**: ${item.summary}`)
+      }
+      lines.push('')
+    }
+  }
+
+  if (includePlaybooks) {
+    const playbookItems = index.filter(i => i.type === 'playbook')
+    if (playbookItems.length > 0) {
+      lines.push(`## Playbooks（共 ${playbookItems.length} 个）`)
+      lines.push(`  扫描目录: \`${join(root, 'playbooks')}\``)
+      for (const item of playbookItems) {
+        lines.push(`  - **${item.title}**: ${item.summary}`)
+      }
+      lines.push('')
+    }
+  }
+
+  if (includeKnowledge) {
+    const knowledgeItems = index.filter(i => i.type === 'knowledge')
+    if (knowledgeItems.length > 0) {
+      lines.push(`## 知识库索引（共 ${knowledgeItems.length} 条）`)
+      lines.push(`  扫描目录: \`${join(root, 'knowledge-base')}\``)
+      for (const item of knowledgeItems) {
+        lines.push(`  - ${item.summary}`)
+      }
       lines.push('')
     }
   }

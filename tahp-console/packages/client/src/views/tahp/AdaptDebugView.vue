@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, reactive, watch, nextTick, onMounted } from 'vue'
-import { NButton, NSelect, NInput, NProgress, NTag, NSpin, NModal, NForm, NFormItem, useMessage } from 'naive-ui'
+import { NButton, NSelect, NInput, NProgress, NTag, NSpin, NModal, NTabs, NTabPane, useMessage } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { useTahpTasksStore } from '@/stores/tahp/tasks'
 import type { TahpModule } from '@/api/tahp/tasks'
 import { fetchDynamicDomains } from '@/api/tahp/skills'
-import { startAdaptAgentRun } from '@/api/tahp/adapt'
+import { startAdaptAgentRun, previewAdaptAgentPrompts } from '@/api/tahp/adapt'
 
 const message = useMessage()
 const router = useRouter()
@@ -33,32 +33,6 @@ interface DomainDef {
   status: 'active' | 'done' | 'pending' | 'warn'
   fields: FieldDef[]
   relatedSkills: string[]
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 全局上下文 + 编辑状态
-// ─────────────────────────────────────────────────────────────────────────────
-const ctx = reactive({
-  projectCode: 'X6876_H786',
-  soc: 'MT6878',
-  kernelVersion: '6.1',
-  preVendor: 'vendor14',
-  postVendor: 'vendor16',
-})
-
-// 上下文编辑弹窗
-const showCtxEdit = ref(false)
-const ctxEdit = reactive({ ...ctx })   // 编辑副本，取消时不影响 ctx
-
-function openCtxEdit() {
-  Object.assign(ctxEdit, ctx)
-  showCtxEdit.value = true
-}
-
-function saveCtxEdit() {
-  Object.assign(ctx, ctxEdit)
-  showCtxEdit.value = false
-  message.success('项目上下文已更新')
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -433,9 +407,61 @@ function buildAgentRunPayload() {
     domain_label: d.label,
     module: mapDomainToModule(activeDomainId.value),
     related_skills: d.relatedSkills,
-    project: { ...ctx },
     form_data: { ...currentFormData.value },
     user_notes: currentFormData.value.user_notes || undefined,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 提示词预览
+// ─────────────────────────────────────────────────────────────────────────────
+const showPromptPreview = ref(false)
+const promptPreviewLoading = ref(false)
+const promptPreviewTab = ref<'system' | 'user'>('system')
+const previewSystemPrompt = ref('')
+const previewUserPrompt = ref('')
+
+const previewAllText = computed(() =>
+  `# 系统提示词\n\n${previewSystemPrompt.value}\n\n---\n\n# 用户提示词\n\n${previewUserPrompt.value}`,
+)
+
+async function openPromptPreview() {
+  if (!isComplete.value) {
+    message.warning('请先完成当前域所需的全部表单参数')
+    return
+  }
+  if (!['modem', 'comm-framework'].includes(activeDomainId.value)) {
+    message.warning('提示词预览当前仅支持「通信 Modem / 通信框架」域')
+    return
+  }
+
+  promptPreviewLoading.value = true
+  showPromptPreview.value = true
+  previewSystemPrompt.value = ''
+  previewUserPrompt.value = ''
+
+  try {
+    const data = await previewAdaptAgentPrompts(buildAgentRunPayload())
+    previewSystemPrompt.value = data.system_prompt
+    previewUserPrompt.value = data.user_prompt
+  } catch (err) {
+    showPromptPreview.value = false
+    message.error(`预览失败: ${(err as Error).message}`)
+  } finally {
+    promptPreviewLoading.value = false
+  }
+}
+
+async function copyPromptText(text: string, label: string) {
+  if (!text) {
+    message.warning('暂无内容可复制')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(text)
+    message.success(`已复制${label}`)
+  } catch {
+    message.error('复制失败，请手动选择文本复制')
   }
 }
 
@@ -567,19 +593,8 @@ function openSkill(skillName: string) {
       <!-- ───────── 表单阶段 ───────── -->
       <template v-if="!showMonitor">
 
-        <!-- 上下文信息栏 -->
-        <div class="ctx-bar">
-          <div class="ctx-chips">
-            <span class="ctx-chip"><span class="ck">项目</span><span class="cv">{{ ctx.projectCode }}</span></span>
-            <span class="ctx-chip"><span class="ck">SoC</span><span class="cv">{{ ctx.soc }}</span></span>
-            <span class="ctx-chip"><span class="ck">Kernel</span><span class="cv">{{ ctx.kernelVersion }}</span></span>
-            <span class="ctx-chip"><span class="ck">升级路径</span><span class="cv">{{ ctx.preVendor }} → {{ ctx.postVendor }}</span></span>
-          </div>
-          <NButton text type="primary" size="small" @click="openCtxEdit">编辑</NButton>
-        </div>
-
         <!-- 域标题行 -->
-        <div class="domain-head">
+        <div class="domain-head domain-head-first">
           <div class="dh-left">
             <div class="dh-badge" :style="{ background: activeDomain.color }">{{ activeDomain.icon }}</div>
             <div>
@@ -671,6 +686,15 @@ function openSkill(skillName: string) {
             @click="launchAgentAdapt"
           >
             {{ agentLaunching ? 'Agent 启动中...' : 'Agent 自动适配' }}
+          </NButton>
+          <NButton
+            size="large"
+            secondary
+            :disabled="!isComplete || !['modem', 'comm-framework'].includes(activeDomainId)"
+            :loading="promptPreviewLoading"
+            @click="openPromptPreview"
+          >
+            预览提示词
           </NButton>
           <!-- 如果已有进行中/完成的任务，显示"查看进度"快捷按钮 -->
           <NButton
@@ -886,56 +910,47 @@ function openSkill(skillName: string) {
       </div>
     </aside>
 
-    <!-- ====== 上下文编辑弹窗 ====== -->
+    <!-- ====== Agent 提示词预览 ====== -->
     <NModal
-      v-model:show="showCtxEdit"
-      preset="dialog"
-      title="编辑项目上下文"
-      positive-text="保存"
-      negative-text="取消"
-      style="width: 480px;"
-      @positive-click="saveCtxEdit"
-      @negative-click="showCtxEdit = false"
+      v-model:show="showPromptPreview"
+      preset="card"
+      title="Agent 提示词预览"
+      style="width: min(920px, 92vw);"
+      :mask-closable="!promptPreviewLoading"
     >
-      <div class="ctx-edit-body">
-        <NForm label-placement="left" label-width="96" size="small">
-          <NFormItem label="项目代码">
-            <NInput
-              v-model:value="ctxEdit.projectCode"
-              placeholder="如 X6876_H786"
-              clearable
-            />
-          </NFormItem>
-          <NFormItem label="SoC">
-            <NInput
-              v-model:value="ctxEdit.soc"
-              placeholder="如 MT6878"
-              clearable
-            />
-          </NFormItem>
-          <NFormItem label="Kernel 版本">
-            <NInput
-              v-model:value="ctxEdit.kernelVersion"
-              placeholder="如 6.1"
-              clearable
-            />
-          </NFormItem>
-          <NFormItem label="前版本 Vendor">
-            <NInput
-              v-model:value="ctxEdit.preVendor"
-              placeholder="如 vendor14"
-              clearable
-            />
-          </NFormItem>
-          <NFormItem label="目标 Vendor">
-            <NInput
-              v-model:value="ctxEdit.postVendor"
-              placeholder="如 vendor16"
-              clearable
-            />
-          </NFormItem>
-        </NForm>
-        <p class="ctx-edit-hint">上下文信息会用于构建 AI 适配任务的前置约束条件。</p>
+      <div class="prompt-preview-body">
+        <p class="prompt-preview-hint">
+          以下为即将发往 Agent Bridge 的最终提示词（与「Agent 自动适配」启动时一致，Skill 正文不在此预注入）。
+        </p>
+        <div v-if="promptPreviewLoading" class="prompt-preview-loading">
+          <NSpin size="medium" />
+          <span>正在生成提示词...</span>
+        </div>
+        <template v-else>
+          <div class="prompt-preview-actions">
+            <NButton size="small" type="primary" @click="copyPromptText(previewAllText, '全部内容')">
+              复制全部
+            </NButton>
+            <NButton size="small" @click="copyPromptText(previewSystemPrompt, '系统提示词')">
+              复制系统提示词
+            </NButton>
+            <NButton size="small" @click="copyPromptText(previewUserPrompt, '用户提示词')">
+              复制用户提示词
+            </NButton>
+            <span class="prompt-preview-meta">
+              系统 {{ previewSystemPrompt.length.toLocaleString() }} 字 ·
+              用户 {{ previewUserPrompt.length.toLocaleString() }} 字
+            </span>
+          </div>
+          <NTabs v-model:value="promptPreviewTab" type="line" animated>
+            <NTabPane name="system" tab="系统提示词">
+              <pre class="prompt-preview-content">{{ previewSystemPrompt }}</pre>
+            </NTabPane>
+            <NTabPane name="user" tab="用户提示词">
+              <pre class="prompt-preview-content">{{ previewUserPrompt }}</pre>
+            </NTabPane>
+          </NTabs>
+        </template>
       </div>
     </NModal>
 
@@ -1072,31 +1087,17 @@ function openSkill(skillName: string) {
   }
 }
 
-// ── 表单区 (原有样式保留) ─────────────────────────────────────────────────
-.ctx-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 0;
-  border-bottom: 1px solid $border-color;
-  margin: 16px 0 0;
-  flex-shrink: 0;
-}
-.ctx-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.ctx-chip {
-  display: flex; align-items: center; gap: 4px;
-  padding: 3px 8px; border-radius: 20px; font-size: 11px;
-  background: $bg-card; border: 1px solid $border-color;
-}
-.ck { color: $text-muted; font-weight: 600; }
-.cv { color: $text-primary; font-family: $font-code; }
-
+// ── 表单区 ─────────────────────────────────────────────────────────────────
 .domain-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 16px 0 14px;
   flex-shrink: 0;
+
+  &.domain-head-first {
+    margin-top: 16px;
+  }
 }
 .dh-left   { display: flex; align-items: center; gap: 12px; }
 .dh-badge  {
@@ -1434,15 +1435,54 @@ function openSkill(skillName: string) {
   &.dot-pending { background: $border-color; }
 }
 
-// ── 上下文编辑弹窗 ────────────────────────────────────────────────────────────
-.ctx-edit-body {
-  padding: 4px 0;
+// ── 提示词预览弹窗 ────────────────────────────────────────────────────────────
+.prompt-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 360px;
 }
-.ctx-edit-hint {
+.prompt-preview-hint {
+  margin: 0;
+  font-size: 12px;
+  color: $text-muted;
+  line-height: 1.5;
+}
+.prompt-preview-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: $text-muted;
+  font-size: 13px;
+  min-height: 280px;
+}
+.prompt-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.prompt-preview-meta {
+  margin-left: auto;
   font-size: 11px;
   color: $text-muted;
-  margin: 12px 0 0;
-  line-height: 1.5;
+  font-family: $font-code;
+}
+.prompt-preview-content {
+  margin: 0;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid $border-color;
+  border-radius: $radius-md;
+  font-size: 12px;
+  font-family: $font-code;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 // ── LLM 双栏监控布局 ─────────────────────────────────────────────────────────
