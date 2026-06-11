@@ -52,21 +52,18 @@ const DOMAINS = reactive<DomainDef[]>([
     icon: 'TP',
     color: '#388bfd',
     status: 'active',
-    relatedSkills: ['tp-adapt-dws-pin', 'tp-adapt-ko-order', 'tp-adapt-power-sequence', 'fc-tp-driver', 'fc-tp-selinux'],
+    relatedSkills: ['tp-adapt-bringup'],
     fields: [
-      { name: 'ic_vendor',  label: 'IC厂商',              type: 'select', required: true,  options: [{ label:'FocalTech', value:'ft' },{ label:'Goodix', value:'gt' },{ label:'Synaptics', value:'rmi' },{ label:'Ilitek', value:'ili' }] },
-      { name: 'ic_model',   label: 'IC型号',               type: 'text',   required: true,  placeholder: '如 FT8006M' },
-      { name: 'interface',  label: '接口类型',              type: 'select', required: true,  options: [{ label:'I2C', value:'i2c' },{ label:'SPI', value:'spi' }] },
-      { name: 'i2c_addr',  label: 'I2C地址',               type: 'text',   required: true,  placeholder: '如 0x38' },
-      { name: 'rst_gpio',   label: 'RST GPIO',             type: 'text',   required: true,  placeholder: '如 4' },
-      { name: 'int_gpio',   label: 'INT GPIO',             type: 'text',   required: true,  placeholder: '如 10' },
-      { name: 'avdd_gpio',  label: 'AVDD GPIO',            type: 'text',   required: false, placeholder: '如 20' },
-      { name: 'vddi_gpio',  label: 'VDDI GPIO',            type: 'text',   required: false, placeholder: '如 21' },
-      { name: 'dts_path',   label: 'DTS文件路径',           type: 'text',   required: true,  placeholder: 'arch/arm64/boot/dts/mediatek/tp/...' },
-      { name: 'dws_path1',  label: 'DWS路径1 (tools/dct)', type: 'text',   required: true,  placeholder: 'vendor/mediatek/proprietary/tools/dct/dws/...' },
-      { name: 'dws_path2',  label: 'DWS路径2 (preloader)', type: 'text',   required: true,  placeholder: 'bootable/bootloader/preloader/custom/...' },
-      { name: 'dws_path3',  label: 'DWS路径3 (kernel/dct)',type: 'text',   required: true,  placeholder: 'custom/.../kernel/dct/...' },
-      { name: 'ko_table',   label: 'ko_order_table路径',   type: 'text',   required: true,  placeholder: 'vendor/transsion/projects/.../ko_order_table.csv' },
+      { name: 'debug_project', label: '调试项目名', type: 'text', required: true, placeholder: '如 X6876_H786' },
+      { name: 'project_platform', label: '项目平台', type: 'text', required: true, placeholder: '如 MT6878' },
+      { name: 'ic_vendor', label: 'IC厂商', type: 'text', required: true, placeholder: '如 FocalTech / Goodix' },
+      { name: 'ic_model', label: 'IC型号', type: 'text', required: true, placeholder: '如 FT8006M' },
+      { name: 'spi_gpio', label: 'SPI口及GPIO号', type: 'text', required: true, placeholder: 'SPI 口与对应 GPIO 配置' },
+      { name: 'tp_int_rst_gpio', label: 'TP int、rst gpio脚', type: 'text', required: true, placeholder: 'INT / RST GPIO 编号' },
+      { name: 'vddi_avdd_power', label: 'vddi、avdd的LDO或GPIO', type: 'text', required: true, placeholder: '供电 LDO 或 GPIO 配置' },
+      { name: 'old_tp_firmware', label: '升级前TP固件文件', type: 'text', required: true, placeholder: '升级前 TP 固件绝对路径' },
+      { name: 'old_dts', label: '升级前dts文件', type: 'text', required: true, placeholder: '升级前 DTS 文件路径' },
+      { name: 'ref_project_branch', label: '同分支参考项目', type: 'text', required: true, placeholder: '同分支参考项目名或路径' },
     ],
   },
   {
@@ -75,17 +72,38 @@ const DOMAINS = reactive<DomainDef[]>([
     icon: 'VIB',
     color: '#f78166',
     status: 'pending',
-    relatedSkills: ['vib-adapt-lra-driver', 'vib-adapt-dts-regulator', 'vib-adapt-projectconfig', 'fc-vib-driver', 'fc-vib-effect'],
+    relatedSkills: ['vib-adapt-lra-driver', 'vib-adapt-rotor-driver'],
     fields: [
-      { name: 'motor_type',  label: '马达类型',  type: 'select', required: true,  options: [{ label:'LRA (线性)', value:'lra' },{ label:'ERM (旋转)', value:'erm' }] },
-      { name: 'ic_vendor',   label: 'IC厂商',    type: 'select', required: true,  options: [{ label:'Awinic (AW)', value:'aw' },{ label:'AAC', value:'aac' },{ label:'其他', value:'other' }] },
-      { name: 'ic_model',    label: 'IC型号',    type: 'text',   required: true,  placeholder: '如 AW8692x / AW8693x' },
-      { name: 'i2c_channel', label: 'I2C通道',   type: 'text',   required: true,  placeholder: '如 7' },
-      { name: 'i2c_addr',   label: 'I2C地址',   type: 'text',   required: true,  placeholder: '如 0x5A' },
-      { name: 'irq_gpio',    label: 'IRQ GPIO',  type: 'text',   required: true,  placeholder: '如 15' },
-      { name: 'rst_gpio',    label: 'RST GPIO',  type: 'text',   required: true,  placeholder: '如 22' },
-      { name: 'lra_fw_dir',  label: 'LRA固件目录', type: 'text', required: true,  placeholder: 'vendor/transsion/projects/.../lra_fw/' },
-      { name: 'regulator',   label: '调节器类型', type: 'text',  required: false, placeholder: 'regulator_vibrator' },
+      { name: 'motor_type', label: '马达类型', type: 'text', required: true, placeholder: 'LRA / ERM' },
+      { name: 'ic_vendor', label: '控制IC厂商', type: 'text', required: true, placeholder: '如 Awinic / AAC' },
+      { name: 'ic_model', label: '控制IC型号', type: 'text', required: true, placeholder: '如 AW8692x' },
+      { name: 'motor_model', label: '马达型号', type: 'text', required: true, placeholder: '马达型号' },
+      { name: 'i2c_bus', label: 'i2c号', type: 'text', required: true, placeholder: '如 7' },
+      { name: 'i2c_addr', label: 'i2c通讯地址', type: 'text', required: true, placeholder: '如 0x5A' },
+      { name: 'irq_gpio', label: '马达中断gpio', type: 'text', required: true, placeholder: 'IRQ GPIO' },
+      { name: 'rst_gpio', label: '复位gpio', type: 'text', required: true, placeholder: 'RST GPIO' },
+      { name: 'old_motor_firmware', label: '升级前的马达固件', type: 'text', required: true, placeholder: '升级前马达固件路径' },
+      { name: 'old_dts_config', label: '升级前的dts参数配置', type: 'text', required: true, placeholder: '升级前 DTS 参数文件或路径' },
+    ],
+  },
+  {
+    id: 'lcm',
+    label: 'LCM',
+    icon: 'LCM',
+    color: '#58a6ff',
+    status: 'pending',
+    relatedSkills: ['display_analyser'],
+    fields: [
+      { name: 'PROJECT_NAME', label: 'PROJECT_NAME（项目名称）', type: 'text', required: true, placeholder: '项目名称' },
+      { name: 'PLATFORM_NAME', label: 'PLATFORM_NAME（平台名称）', type: 'text', required: true, placeholder: '平台名称' },
+      { name: 'BOARD_NAME', label: 'BOARD_NAME（主板名称）', type: 'text', required: true, placeholder: '主板名称' },
+      { name: 'PANEL_TYPE', label: 'PANEL_TYPE（屏幕类型）', type: 'text', required: true, placeholder: '屏幕类型' },
+      { name: 'KERNEL_VERSION_OLD', label: 'KERNEL_VERSION_OLD（旧项目内核版本）', type: 'text', required: true, placeholder: '如 kernel-5.15' },
+      { name: 'KERNEL_VERSION_NEW', label: 'KERNEL_VERSION_NEW（新项目内核版本）', type: 'text', required: true, placeholder: '如 kernel-6.1' },
+      { name: 'PROJ_FILE_OLD', label: 'PROJ_FILE_OLD（旧项目代码目录）', type: 'text', required: true, placeholder: '旧项目代码绝对路径' },
+      { name: 'PROJ_FILE_NEW', label: 'PROJ_FILE_NEW（新项目代码目录）', type: 'text', required: true, placeholder: '新项目代码绝对路径' },
+      { name: 'AUTHOR_NAME', label: 'AUTHOR_NAME（作者姓名）', type: 'text', required: true, placeholder: '作者姓名' },
+      { name: 'DATE', label: 'DATE（日期）', type: 'text', required: true, placeholder: '如 2026-06-08' },
     ],
   },
   {
@@ -94,14 +112,15 @@ const DOMAINS = reactive<DomainDef[]>([
     icon: 'FP',
     color: '#3fb950',
     status: 'pending',
-    relatedSkills: ['drv-fp-adapt', 'drv-fp-check', 'android-fingerprint-log-analysis'],
+    relatedSkills: ['drv-fp-adapt'],
     fields: [
-      { name: 'arch_type',   label: '架构类型', type: 'select', required: true, options: [{ label:'归一化 (tran_common_v2)', value:'normalized' },{ label:'非归一化 (tran_common)', value:'non_normalized' }] },
-      { name: 'ic_vendor',   label: 'IC厂商',   type: 'select', required: true, options: [{ label:'GOODIX', value:'goodix' },{ label:'ANC', value:'anc' },{ label:'Silead', value:'silead' },{ label:'其他', value:'other' }] },
-      { name: 'ic_model',    label: 'IC型号',   type: 'text',   required: true, placeholder: '如 GW9598' },
-      { name: 'soc_model',   label: 'SoC型号',  type: 'text',   required: true, placeholder: '如 MT6878 / MT6789' },
-      { name: 'ref_project', label: '参考项目',  type: 'text',   required: true, placeholder: '参考项目代码' },
-      { name: 'spi_channel', label: 'SPI通道',  type: 'text',   required: false, placeholder: '如 0' },
+      { name: 'debug_project', label: '调试项目名', type: 'text', required: true, placeholder: '如 LJ8k' },
+      { name: 'project_platform', label: '项目平台', type: 'text', required: true, placeholder: '如 MT6878' },
+      { name: 'kernel_version', label: 'kernel版本', type: 'text', required: true, placeholder: '如 kernel-6.1' },
+      { name: 'fp_vendor', label: '指纹厂商', type: 'text', required: true, placeholder: '如 goodix' },
+      { name: 'fp_ic_model', label: '指纹IC型号', type: 'text', required: true, placeholder: '如 GW9598' },
+      { name: 'code_path_old', label: '升级前代码仓路径', type: 'text', required: true, placeholder: '升级前代码仓绝对路径' },
+      { name: 'code_path_new', label: '升级后代码仓路径', type: 'text', required: true, placeholder: '升级后代码仓绝对路径' },
     ],
   },
   {
@@ -110,12 +129,13 @@ const DOMAINS = reactive<DomainDef[]>([
     icon: 'AUD',
     color: '#e3b341',
     status: 'pending',
-    relatedSkills: ['DRV_Audio_Adapt', 'audio-bug-solver', 'audio-self-check'],
+    relatedSkills: ['DRV_Audio_Adapt'],
     fields: [
-      { name: 'codec_vendor', label: 'Codec厂商', type: 'select', required: true, options: [{ label:'Cirrus', value:'cs' },{ label:'Everest', value:'es' },{ label:'Realtek', value:'rt' },{ label:'其他', value:'other' }] },
-      { name: 'codec_model',  label: 'Codec型号', type: 'text',   required: true, placeholder: '如 CS35L45' },
-      { name: 'i2c_addr',    label: 'I2C地址',   type: 'text',   required: true, placeholder: '如 0x40' },
-      { name: 'audio_topo',   label: '音频拓扑',  type: 'text',   required: false, placeholder: '音频路由配置' },
+      { name: 'vnd_path_old', label: '升级前vnd绝对路径', type: 'text', required: true, placeholder: '升级前 vendor 目录绝对路径' },
+      { name: 'vnd_path_new', label: '升级后vnd绝对路径', type: 'text', required: true, placeholder: '升级后 vendor 目录绝对路径' },
+      { name: 'upgrade_scenario', label: '升级场景', type: 'text', required: true, placeholder: '12解耦前→16解耦后 / 14解耦前→14解耦后' },
+      { name: 'old_build_option', label: '升级前编译选项', type: 'text', required: true, placeholder: '从 spug 查找，如 x6885_h8923_m1' },
+      { name: 'sw_config_screenshot', label: '软件配置表截图', type: 'textarea', required: true, placeholder: '声学配置表说明或截图路径（PA型号/SPK个数/SPK PATH/MIC个数/PHONE_MIC_MODE/HEADSET_MIC_MODE/是否TypeC等）' },
     ],
   },
   {
@@ -124,12 +144,65 @@ const DOMAINS = reactive<DomainDef[]>([
     icon: 'CHG',
     color: '#f78166',
     status: 'pending',
-    relatedSkills: ['mtk-adapt-template-device-charger-ic', 'transsion-charger-orchestrator'],
+    relatedSkills: ['pillar3-customization-input'],
     fields: [
-      { name: 'charger_ic', label: '充电IC型号', type: 'text',   required: true, placeholder: '如 SM5414 / BQ25970' },
-      { name: 'topo_type',  label: '拓扑类型',   type: 'select', required: true, options: [{ label:'PE5 (级联)', value:'pe5' },{ label:'FC (单芯)', value:'fc' },{ label:'Basic (基础)', value:'basic' }] },
-      { name: 'gauge_ic',   label: 'Gauge IC',   type: 'text',   required: false, placeholder: '如 BQ28Z610' },
-      { name: 'pd_ic',      label: 'PD IC',      type: 'text',   required: false, placeholder: '如 TUSB322' },
+      { name: 'charger_ic_model', label: '【Charger IC】型号', type: 'text', required: true, placeholder: 'Charger IC 型号' },
+      { name: 'charger_i2c_bus', label: '【Charger IC】I2C总线号', type: 'text', required: true, placeholder: '如 6' },
+      { name: 'charger_i2c_addr', label: '【Charger IC】I2C地址', type: 'text', required: true, placeholder: '如 0x6B' },
+      { name: 'charger_irq', label: '【Charger IC】IRQ中断引脚号', type: 'text', required: true, placeholder: 'IRQ GPIO' },
+      { name: 'pump_ic_model', label: '【Charge Pump】型号', type: 'text', required: true, placeholder: 'Charge Pump 型号' },
+      { name: 'pump_i2c_bus', label: '【Charge Pump】I2C总线号', type: 'text', required: true, placeholder: '如 7' },
+      { name: 'pump_i2c_addr', label: '【Charge Pump】I2C地址', type: 'text', required: true, placeholder: '如 0x75' },
+      { name: 'pump_irq', label: '【Charge Pump】IRQ中断引脚号', type: 'text', required: true, placeholder: 'IRQ GPIO' },
+      { name: 'pump_extra', label: '【Charge Pump】多颗器件补充', type: 'textarea', required: false, placeholder: '如有多颗 Charge Pump，在此补全型号/I2C/IRQ' },
+      { name: 'pd_ic_model', label: '【PD IC】型号', type: 'text', required: true, placeholder: 'PD IC 型号' },
+      { name: 'pd_i2c_bus', label: '【PD IC】I2C总线号', type: 'text', required: true, placeholder: '如 5' },
+      { name: 'pd_i2c_addr', label: '【PD IC】I2C地址', type: 'text', required: true, placeholder: '如 0x24' },
+      { name: 'pd_irq', label: '【PD IC】IRQ中断引脚号', type: 'text', required: true, placeholder: 'IRQ GPIO' },
+      { name: 'gauge_type', label: '【Gauge】类型', type: 'text', required: true, placeholder: 'Gauge 类型/型号' },
+      { name: 'gauge_i2c_bus', label: '【Gauge】I2C总线号', type: 'text', required: true, placeholder: '如 4' },
+      { name: 'gauge_i2c_addr', label: '【Gauge】I2C地址', type: 'text', required: true, placeholder: '如 0x55' },
+    ],
+  },
+  {
+    id: 'sensor',
+    label: 'Sensor',
+    icon: 'SNS',
+    color: '#a371f7',
+    status: 'pending',
+    relatedSkills: ['DRV_Sensor_Adapt'],
+    fields: [
+      { name: 'old_project_path', label: '旧项目完整路径', type: 'text', required: true, placeholder: '旧项目完整绝对路径' },
+      { name: 'new_baseline_path', label: '新基线完整路径', type: 'text', required: true, placeholder: '新基线完整绝对路径' },
+      { name: 'project_name', label: '项目名', type: 'text', required: true, placeholder: '项目名' },
+      { name: 'new_features', label: '具体新增特性', type: 'textarea', required: true, placeholder: '描述本次 Sensor 适配的具体新增特性' },
+    ],
+  },
+  {
+    id: 'security',
+    label: '安全',
+    icon: 'SEC',
+    color: '#da3633',
+    status: 'pending',
+    relatedSkills: ['android-platform-security-upgrade-ai-debug'],
+    fields: [
+      { name: 'branch_path_old', label: '升级前分支路径', type: 'text', required: true, placeholder: '升级前分支路径（须为非榫卯）' },
+      { name: 'branch_path_new', label: '升级后分支路径', type: 'text', required: true, placeholder: '升级后分支路径（须为榫卯）' },
+      { name: 'project_name', label: '项目名', type: 'text', required: true, placeholder: '项目名' },
+      { name: 'platform_name', label: '平台名', type: 'text', required: true, placeholder: '平台名' },
+    ],
+  },
+  {
+    id: 'mini-system',
+    label: '小系统',
+    icon: 'LK',
+    color: '#e3b341',
+    status: 'pending',
+    relatedSkills: ['KRN_LK_CPU_Ddapt'],
+    fields: [
+      { name: 'lk2_path_old', label: '升级前lk2路径', type: 'text', required: true, placeholder: '升级前 lk2 绝对路径' },
+      { name: 'lk2_path_new', label: '升级后lk2路径', type: 'text', required: true, placeholder: '升级后 lk2 绝对路径' },
+      { name: 'project_name', label: '项目名', type: 'text', required: true, placeholder: '项目名' },
     ],
   },
   {
@@ -163,45 +236,6 @@ const DOMAINS = reactive<DomainDef[]>([
     fields: [
       { name: 'prj_path', label: 'PRJ Path（项目路径）', type: 'text', required: true, placeholder: 'D:\\project\\your_comm_framework\\' },
       { name: 'user_notes', label: '补充说明', type: 'textarea', required: false, placeholder: '说明要测试的场景、注意事项等' },
-    ],
-  },
-  {
-    id: 'kernel',
-    label: '内核CPU',
-    icon: 'KRN',
-    color: '#e3b341',
-    status: 'pending',
-    relatedSkills: ['KRN_LK_CPU_Ddapt', 'kernel-panic-tracer', 'android-ke-log-analysis'],
-    fields: [
-      { name: 'cpu_model',   label: 'CPU型号',                   type: 'text', required: true, placeholder: '如 MT6878' },
-      { name: 'lk_version',  label: 'LK版本',                    type: 'text', required: true, placeholder: '如 5.0.2' },
-      { name: 'kdm_version', label: 'kernel_device_modules版本', type: 'text', required: true, placeholder: '如 5.4-2023' },
-    ],
-  },
-  {
-    id: 'scp',
-    label: 'SCP传感器',
-    icon: 'SCP',
-    color: '#a371f7',
-    status: 'pending',
-    relatedSkills: ['BSP_sensor_ps_anti_touch', 'mtk-sensor-dts-config', 'scp-sensor-check'],
-    fields: [
-      { name: 'sensor_ic',    label: '传感器IC型号', type: 'text',   required: true, placeholder: '如 BMA4xx / ICM' },
-      { name: 'interface',    label: '接口类型',     type: 'select', required: true, options: [{ label:'I2C', value:'i2c' },{ label:'SPI', value:'spi' }] },
-      { name: 'channel_addr', label: '通道/地址',    type: 'text',   required: true, placeholder: '如 0x68 (I2C)' },
-    ],
-  },
-  {
-    id: 'aikey',
-    label: 'AI按键',
-    icon: 'KEY',
-    color: '#a371f7',
-    status: 'pending',
-    relatedSkills: ['aikey-adapt-dts', 'fc-aikey-dts', 'fc-aikey-event', 'bsp-adapt-lk-key'],
-    fields: [
-      { name: 'gpio_config', label: 'GPIO编号',  type: 'text',     required: true, placeholder: '按键使用的GPIO编号' },
-      { name: 'key_mapping', label: '按键映射',  type: 'textarea', required: true, placeholder: '按键到功能的映射配置' },
-      { name: 'hal_version', label: 'HAL版本',   type: 'text',     required: false, placeholder: '如 v1.0' },
     ],
   },
 ])
@@ -685,6 +719,8 @@ function mapDomainToModule(id: DomainId): TahpModule {
 
 // 记录静态域 ID，用于刷新时区分动态域
 const STATIC_DOMAIN_IDS = new Set(DOMAINS.map(d => d.id))
+/** 已下线域 / 测试域，不再从动态技能列表注入 */
+const BLOCKED_DYNAMIC_DOMAIN_IDS = new Set(['Test', 'kernel', 'scp', 'aikey'])
 const loadingDomains = ref(false)
 
 async function loadDynamicDomains() {
@@ -697,8 +733,13 @@ async function loadDynamicDomains() {
     DOMAINS.splice(STATIC_DOMAIN_IDS.size)
 
     for (const dd of dynamicDomains) {
-      // 跳过与静态域 ID 冲突的
-      if (STATIC_DOMAIN_IDS.has(dd.id) || STATIC_DOMAIN_IDS.has(dd.skillId)) continue
+      // 跳过与静态域 ID 冲突的、或已下线的域
+      if (
+        STATIC_DOMAIN_IDS.has(dd.id)
+        || STATIC_DOMAIN_IDS.has(dd.skillId)
+        || BLOCKED_DYNAMIC_DOMAIN_IDS.has(dd.id)
+        || BLOCKED_DYNAMIC_DOMAIN_IDS.has(dd.skillId)
+      ) continue
       const domainDef: DomainDef & { module?: string } = {
         id:            dd.id,
         label:         dd.label,

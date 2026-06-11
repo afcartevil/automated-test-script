@@ -66,14 +66,15 @@ const DOMAIN_LABELS: Record<string, string> = {
   carrier_porting: '运营商移植',
   tp: 'TP触摸屏',
   vib: '振动马达',
+  lcm: 'LCM',
   fp: '指纹',
   audio: '音频',
   charging: '充电',
+  sensor: 'Sensor',
+  security: '安全',
+  'mini-system': '小系统',
   modem: '通信Modem',
   'comm-framework': '通信框架',
-  kernel: '内核CPU',
-  scp: 'SCP传感器',
-  aikey: 'AI按键',
 }
 
 function domainDisplay(detail: TaskReportDetail): string {
