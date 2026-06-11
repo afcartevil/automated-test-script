@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { buildAdaptAgentPrompts } from '../../packages/server/src/services/tahp/adapt-agent'
+import {
+  ADAPT_AUDIT_SKILL_ID,
+  buildAdaptAgentPrompts,
+  extractAdaptAuditReport,
+} from '../../packages/server/src/services/tahp/adapt-agent'
 
 describe('adapt-agent prompts', () => {
   it('buildAdaptAgentPrompts omits legacy project context fields', () => {
@@ -30,6 +34,28 @@ describe('adapt-agent prompts', () => {
     expect(systemPrompt).toContain('主控 Skill 工作流（drv-fp-adapt）')
     expect(userPrompt).toContain('**主控 Skill**: drv-fp-adapt')
     expect(userPrompt).toContain('**协同 Skill**: drv-fp-check')
+  })
+
+  it('requires self-audit skill at end of adapt report', () => {
+    const { systemPrompt, userPrompt } = buildAdaptAgentPrompts({
+      domainId: 'fp',
+      domainLabel: '指纹',
+      module: 'kernel-driver',
+      relatedSkills: ['drv-fp-adapt'],
+      formData: { ic_model: 'GW9598' },
+    })
+    expect(systemPrompt).toContain(ADAPT_AUDIT_SKILL_ID)
+    expect(systemPrompt).toContain('审核结果概览')
+    expect(systemPrompt).toContain('Skill 遵从性自检')
+    expect(systemPrompt).toContain('编码规范审核报告')
+    expect(userPrompt).toContain(ADAPT_AUDIT_SKILL_ID)
+  })
+
+  it('extractAdaptAuditReport pulls trailing audit section', () => {
+    const body = '## 升级/适配结果摘要\nok\n\n## Skill 遵从性自检\n- Read 主控 Skill: pass\n\n# 编码规范审核报告\n## 概览\n- 总体结论：通过'
+    const audit = extractAdaptAuditReport(body)
+    expect(audit).toContain('Skill 遵从性自检')
+    expect(audit).toContain('编码规范审核报告')
   })
 
   it('uses form_fields labels in user prompt', () => {

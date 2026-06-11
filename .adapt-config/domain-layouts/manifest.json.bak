@@ -65,13 +65,6 @@
           "type": "text",
           "required": true,
           "placeholder": "参考项目代码"
-        },
-        {
-          "name": "spi_channel",
-          "label": "SPI通道",
-          "type": "text",
-          "required": false,
-          "placeholder": "如 0"
         }
       ],
       "related_skills": [
@@ -79,13 +72,13 @@
         "drv-fp-check",
         "android-fingerprint-log-analysis"
       ],
-      "revision": 6,
-      "updated_at": "2026-06-09T02:22:05.058Z",
+      "revision": 7,
+      "updated_at": "2026-06-09T02:26:34.890Z",
       "source": "user"
     }
   },
   "sync": {
     "cloud_sync_enabled": false,
-    "last_local_save": "2026-06-09T02:22:05.059Z"
+    "last_local_save": "2026-06-09T02:26:34.891Z"
   }
 }

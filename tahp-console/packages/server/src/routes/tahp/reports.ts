@@ -7,6 +7,10 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { listReports, readReport } from '../../services/tahp/reports-fs'
 import { tahpPaths } from '../../services/tahp/paths'
+import {
+  isAdaptAgentReportRaw,
+  normalizeAdaptAgentReport,
+} from '../../services/tahp/adapt-agent-report'
 
 export const tahpReportsRoutes = new Router()
 
@@ -44,7 +48,8 @@ tahpReportsRoutes.get('/api/tahp/reports/task/:id', async (ctx) => {
   }
   try {
     const text = await readFile(filePath, 'utf-8')
-    const data = JSON.parse(text)
+    const raw = JSON.parse(text) as Record<string, unknown>
+    const data = isAdaptAgentReportRaw(raw) ? normalizeAdaptAgentReport(raw) : raw
     ctx.body = { success: true, data }
   } catch (err) {
     ctx.status = 500
@@ -53,30 +58,77 @@ tahpReportsRoutes.get('/api/tahp/reports/task/:id', async (ctx) => {
 })
 
 // ── 任务报告列表（只返回 task-adapt-*.json 文件）──────────────────────────
+async function buildTaskReportSummary(filePath: string, relPath: string, mtime?: number) {
+  try {
+    const text = await readFile(filePath, 'utf-8')
+    const raw = JSON.parse(text) as Record<string, unknown>
+    const normalized = isAdaptAgentReportRaw(raw) ? normalizeAdaptAgentReport(raw) : null
+    if (normalized) {
+      return {
+        task_id: normalized.task_id,
+        module: normalized.module,
+        domain: normalized.domain,
+        domain_label: normalized.domain_label,
+        started_at: normalized.started_at,
+        completed_at: normalized.completed_at,
+        duration_ms: normalized.duration_ms,
+        files_modified: normalized.files_modified.length,
+        report_type: 'adapt_agent' as const,
+        mtime,
+        path: relPath,
+      }
+    }
+    return {
+      task_id: raw.task_id as string,
+      module: raw.module as string | undefined,
+      domain: (raw.domain ?? raw.domainId) as string | undefined,
+      started_at: (raw.started_at ?? raw.startedAt) as string | undefined,
+      completed_at: (raw.completed_at ?? raw.completedAt) as string | undefined,
+      duration_ms: raw.duration_ms as number | undefined,
+      files_modified: (raw.files_modified as string[] | undefined)?.length ?? 0,
+      mtime,
+      path: relPath,
+    }
+  } catch {
+    return null
+  }
+}
+
 tahpReportsRoutes.get('/api/tahp/reports/tasks', async (ctx) => {
   try {
     const all = await listReports('')
-    // 只保留任务报告 JSON 文件（task-adapt-* 命名）
-    const taskReports = all.filter(e => e.type === 'file' && e.name.startsWith('task-adapt-') && e.name.endsWith('.json'))
-    // 读取每个文件的 summary（只读前512字节，避免全量加载）
-    const summaries = await Promise.all(taskReports.map(async (e) => {
-      try {
-        const text = await readFile(join(tahpPaths.reportsDir, e.name), 'utf-8')
-        const json = JSON.parse(text)
-        return {
-          task_id:      json.task_id,
-          module:       json.module,
-          domain:       json.domain,
-          started_at:   json.started_at,
-          completed_at: json.completed_at,
-          duration_ms:  json.duration_ms,
-          files_modified: (json.files_modified as string[] | undefined)?.length ?? 0,
-          mtime:        e.mtime,
-          path:         e.path,
-        }
-      } catch { return null }
-    }))
-    ctx.body = { success: true, data: summaries.filter(Boolean) }
+    const rootReports = all.filter(e =>
+      e.type === 'file' && e.name.startsWith('task-adapt-') && e.name.endsWith('.json'),
+    )
+    const agentDir = join(tahpPaths.reportsDir, 'adapt-agent')
+    let agentReports: Array<{ name: string; path: string; mtime?: number }> = []
+    if (existsSync(agentDir)) {
+      const agentEntries = await listReports('adapt-agent')
+      agentReports = agentEntries
+        .filter(e => e.type === 'file' && e.name.startsWith('task-adapt-agent-') && e.name.endsWith('.json'))
+        .map(e => ({ name: e.name, path: e.path, mtime: e.mtime }))
+    }
+
+    const summaries = await Promise.all([
+      ...rootReports.map(e => buildTaskReportSummary(
+        join(tahpPaths.reportsDir, e.name),
+        e.path,
+        e.mtime,
+      )),
+      ...agentReports.map(e => buildTaskReportSummary(
+        join(tahpPaths.reportsDir, 'adapt-agent', e.name),
+        e.path,
+        e.mtime,
+      )),
+    ])
+    const merged = summaries
+      .filter(Boolean)
+      .sort((a, b) => {
+        const ta = Date.parse(a!.completed_at || '') || a!.mtime || 0
+        const tb = Date.parse(b!.completed_at || '') || b!.mtime || 0
+        return tb - ta
+      })
+    ctx.body = { success: true, data: merged }
   } catch (err) {
     ctx.status = 500
     ctx.body = { success: false, error: (err as Error).message }

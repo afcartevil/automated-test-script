@@ -6,7 +6,7 @@ import {
   NDescriptions, NDescriptionsItem, NScrollbar, NDivider, NSpace,
   NGrid, NGridItem, NStatistic, NAlert, useMessage,
 } from 'naive-ui'
-import { listTaskReports, getTaskReport, type TaskReportSummary, type TaskReportDetail } from '@/api/tahp/reports'
+import { listTaskReports, getTaskReport, type TaskReportSummary, type TaskReportDetail, type AuditCheckItem } from '@/api/tahp/reports'
 
 const route  = useRoute()
 const router = useRouter()
@@ -64,6 +64,21 @@ const DOMAIN_LABELS: Record<string, string> = {
   code_adaptation: '代码适配',
   version_adaptation: '版本适配',
   carrier_porting: '运营商移植',
+  tp: 'TP触摸屏',
+  vib: '振动马达',
+  fp: '指纹',
+  audio: '音频',
+  charging: '充电',
+  modem: '通信Modem',
+  'comm-framework': '通信框架',
+  kernel: '内核CPU',
+  scp: 'SCP传感器',
+  aikey: 'AI按键',
+}
+
+function domainDisplay(detail: TaskReportDetail): string {
+  if (detail.domain_label) return detail.domain_label
+  return DOMAIN_LABELS[detail.domain || ''] || detail.domain || '-'
 }
 
 function fmtTime(iso?: string): string {
@@ -86,6 +101,24 @@ function fmtRelTime(mtime?: number): string {
   if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`
   if (diff < 86400_000) return `${Math.floor(diff / 3600_000)} 小时前`
   return fmtTime(new Date(mtime).toISOString())
+}
+
+const AUDIT_STATUS_LABEL: Record<AuditCheckItem['status'], string> = {
+  pass: 'PASS',
+  fail: 'FAIL',
+  warn: 'WARN',
+  na: 'N/A',
+  unknown: 'UNKNOWN',
+}
+
+function auditStatusTagType(status: AuditCheckItem['status']): 'success' | 'error' | 'warning' | 'default' | 'info' {
+  switch (status) {
+    case 'pass': return 'success'
+    case 'fail': return 'error'
+    case 'warn': return 'warning'
+    case 'na': return 'info'
+    default: return 'default'
+  }
 }
 </script>
 
@@ -145,7 +178,7 @@ function fmtRelTime(mtime?: number): string {
               <div class="card-stats">
                 <div class="stat-item">
                   <span class="stat-label">域</span>
-                  <span class="stat-value">{{ DOMAIN_LABELS[s.domain || ''] || s.domain || '-' }}</span>
+                  <span class="stat-value">{{ s.domain_label || DOMAIN_LABELS[s.domain || ''] || s.domain || '-' }}</span>
                 </div>
                 <div class="stat-item">
                   <span class="stat-label">耗时</span>
@@ -186,7 +219,7 @@ function fmtRelTime(mtime?: number): string {
                 <NStatistic label="模块" :value="detail.module || '-'" />
               </NGridItem>
               <NGridItem span="4 m:1">
-                <NStatistic label="域" :value="DOMAIN_LABELS[detail.domain || ''] || detail.domain || '-'" />
+                <NStatistic label="域" :value="domainDisplay(detail)" />
               </NGridItem>
               <NGridItem span="4 m:1">
                 <NStatistic label="耗时" :value="fmtDuration(detail.duration_ms)" />
@@ -215,11 +248,32 @@ function fmtRelTime(mtime?: number): string {
             <pre class="content-pre">{{ detail.extra_context }}</pre>
           </NCard>
 
+          <!-- 使用的 Skill（完整路径） -->
+          <NCard
+            v-if="detail.skills_used?.length"
+            title="使用的 Skill"
+            :bordered="false"
+            class="detail-card"
+          >
+            <div v-for="sk in detail.skills_used" :key="sk.skill_id + sk.path" class="skill-ref-row">
+              <NTag size="small" type="info">{{ sk.skill_id }}</NTag>
+              <code class="skill-path">{{ sk.path }}</code>
+              <NTag v-if="sk.source" size="tiny" quaternary>{{ sk.source }}</NTag>
+            </div>
+          </NCard>
+
           <!-- 已修改文件 -->
           <NCard v-if="detail.files_modified?.length" title="已修改文件" :bordered="false" class="detail-card">
-            <div v-for="f in detail.files_modified" :key="f" class="file-path">
-              <span class="file-icon">✅</span>
-              <code>{{ f }}</code>
+            <div
+              v-for="(f, idx) in (detail.file_changes?.length ? detail.file_changes : detail.files_modified!.map(p => ({ path: p, action: 'modify', tool: '' })))"
+              :key="f.path + idx"
+              class="file-path"
+            >
+              <span class="file-icon">{{ f.action === 'create' ? '🆕' : '✅' }}</span>
+              <div class="file-path-main">
+                <code>{{ f.path }}</code>
+                <span v-if="f.tool" class="file-meta">{{ f.action === 'create' ? '新建' : '修改' }} · {{ f.tool }}</span>
+              </div>
             </div>
           </NCard>
           <NCard v-else title="已修改文件" :bordered="false" class="detail-card">
@@ -230,6 +284,50 @@ function fmtRelTime(mtime?: number): string {
           <NCard v-if="detail.document_content" title="输入文档（摘要）" :bordered="false" class="detail-card">
             <NScrollbar style="max-height:200px">
               <pre class="content-pre">{{ detail.document_content }}</pre>
+            </NScrollbar>
+          </NCard>
+
+          <!-- 适配自检审核（报告末尾章节） -->
+          <NCard
+            v-if="detail.audit_report"
+            title="自检审核结果"
+            :bordered="false"
+            class="detail-card llm-card"
+          >
+            <template #header-extra>
+              <NTag v-if="detail.audit_skill" size="small" type="warning">{{ detail.audit_skill }}</NTag>
+              <NTag size="small" type="info" style="margin-left:6px">{{ detail.audit_report.length }} 字</NTag>
+            </template>
+
+            <!-- 审核摘要表 -->
+            <div v-if="detail.audit_summary?.length" class="audit-summary-table-wrap">
+              <table class="audit-summary-table">
+                <thead>
+                  <tr>
+                    <th>检查环节</th>
+                    <th>结果</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in detail.audit_summary" :key="row.key">
+                    <td class="audit-col-label">{{ row.label }}</td>
+                    <td class="audit-col-status">
+                      <NTag size="small" :type="auditStatusTagType(row.status)" :bordered="false">
+                        {{ AUDIT_STATUS_LABEL[row.status] }}
+                      </NTag>
+                    </td>
+                    <td class="audit-col-reason">{{ row.reason }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <NDivider v-if="detail.audit_summary?.length" style="margin: 14px 0 12px" />
+
+            <div class="audit-detail-label">完整审核原文</div>
+            <NScrollbar style="max-height:480px">
+              <pre class="content-pre llm-pre">{{ detail.audit_report }}</pre>
             </NScrollbar>
           </NCard>
 
@@ -288,10 +386,19 @@ function fmtRelTime(mtime?: number): string {
 .detail-layout { display: flex; flex-direction: column; gap: 16px; }
 .detail-card { border-radius: 8px; }
 .llm-card { border-left: 3px solid #2080f0; }
-.file-path { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--n-border-color, #eee); }
+.skill-ref-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 0; border-bottom: 1px solid var(--n-border-color, #eee);
+}
+.skill-ref-row:last-child { border-bottom: none; }
+.skill-path { font-size: 12px; color: #2080f0; word-break: break-all; flex: 1; min-width: 200px; }
+
+.file-path { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--n-border-color, #eee); }
 .file-path:last-child { border-bottom: none; }
-.file-icon { flex-shrink: 0; }
+.file-icon { flex-shrink: 0; margin-top: 2px; }
+.file-path-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .file-path code { font-size: 12px; color: #10b981; word-break: break-all; }
+.file-meta { font-size: 11px; color: #888; }
 
 .content-pre {
   margin: 0;
@@ -303,4 +410,27 @@ function fmtRelTime(mtime?: number): string {
   color: var(--n-text-color, #333);
 }
 .llm-pre { font-size: 13px; line-height: 1.7; }
+
+.audit-summary-table-wrap { overflow-x: auto; margin-bottom: 4px; }
+.audit-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.audit-summary-table th,
+.audit-summary-table td {
+  padding: 10px 12px;
+  border: 1px solid var(--n-border-color, #eee);
+  text-align: left;
+  vertical-align: top;
+}
+.audit-summary-table th {
+  background: var(--n-table-header-color, rgba(0,0,0,.02));
+  font-weight: 600;
+  white-space: nowrap;
+}
+.audit-col-label { width: 168px; font-weight: 500; white-space: nowrap; }
+.audit-col-status { width: 88px; }
+.audit-col-reason { color: var(--n-text-color-2, #666); line-height: 1.5; }
+.audit-detail-label { font-size: 12px; color: #888; margin-bottom: 8px; }
 </style>

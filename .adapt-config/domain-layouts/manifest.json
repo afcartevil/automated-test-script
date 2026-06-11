@@ -75,10 +75,36 @@
       "revision": 7,
       "updated_at": "2026-06-09T02:26:34.890Z",
       "source": "user"
+    },
+    "comm-framework": {
+      "schema_version": 1,
+      "domain_id": "comm-framework",
+      "fields": [
+        {
+          "name": "prj_path",
+          "label": "PRJ Path（项目路径）",
+          "type": "text",
+          "required": true,
+          "placeholder": "D:\\project\\your_comm_framework\\"
+        },
+        {
+          "name": "user_notes",
+          "label": "补充说明",
+          "type": "textarea",
+          "required": false,
+          "placeholder": "说明要测试的场景、注意事项等"
+        }
+      ],
+      "related_skills": [
+        "comm-framework-agent-test"
+      ],
+      "revision": 1,
+      "updated_at": "2026-06-11T02:12:04.772Z",
+      "source": "user"
     }
   },
   "sync": {
     "cloud_sync_enabled": false,
-    "last_local_save": "2026-06-09T02:26:34.891Z"
+    "last_local_save": "2026-06-11T02:12:04.773Z"
   }
 }

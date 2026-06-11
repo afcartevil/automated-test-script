@@ -23,8 +23,21 @@ import {
 } from './context-injector'
 import { saveAgentPromptLog } from './prompt-log'
 import { resolveFormFieldLabels } from './adapt-layout/service'
+import {
+  extractAdaptAgentFileChanges,
+  extractAdaptAgentSkillRefs,
+} from './adapt-agent-report'
 
 const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
+
+/** 适配完成后主 Agent 自检用的编码规范审核 Skill（方案四：Prompt + Skill） */
+export const ADAPT_AUDIT_SKILL_ID = 'transsion-coding-standards-review'
+
+const AUDIT_SECTION_MARKERS = [
+  '## Skill 遵从性自检',
+  '# 编码规范审核报告',
+  '## 编码规范审核报告',
+]
 
 export interface AdaptAgentFieldMeta {
   name: string
@@ -60,6 +73,9 @@ export interface AdaptAgentTaskCtx {
   fileChanges: Array<{ path: string; action: string; tool: string; at: string }>
   planNotes: string[]
   llmResponse?: string
+  /** 从完整输出中切出的自检/审核章节（报告末尾） */
+  auditReport?: string
+  auditSkillId?: string
   promptLogDir?: string
   completedAt?: string
   error?: string
@@ -107,9 +123,11 @@ function summarizeArgs(args: unknown): string {
 }
 
 const FILE_WRITE_TOOLS = new Set([
-  'write', 'edit', 'str_replace', 'str_replace_based_edit_tool', 'apply_patch',
+  'write', 'write_file', 'edit', 'str_replace', 'str_replace_based_edit_tool', 'apply_patch',
   'Write', 'Edit', 'MultiEdit', 'patch',
 ])
+
+const READ_ONLY_TOOLS = new Set(['read_file', 'read', 'Read'])
 
 function extractFilePathFromArgs(args: unknown): string | undefined {
   if (!args || typeof args !== 'object') return undefined
@@ -119,6 +137,21 @@ function extractFilePathFromArgs(args: unknown): string | undefined {
     if (typeof v === 'string' && v.trim()) return v.trim()
   }
   return undefined
+}
+
+/** 从 Agent 完整输出中提取末尾的自检/审核报告（含 Skill 遵从性 + 编码规范两段） */
+export function extractAdaptAuditReport(fullResponse: string): string | undefined {
+  const skillIdx = fullResponse.lastIndexOf('## Skill 遵从性自检')
+  if (skillIdx >= 0) return fullResponse.slice(skillIdx).trim()
+
+  let codingIdx = -1
+  for (const marker of AUDIT_SECTION_MARKERS) {
+    if (marker === '## Skill 遵从性自检') continue
+    const idx = fullResponse.lastIndexOf(marker)
+    if (idx > codingIdx) codingIdx = idx
+  }
+  if (codingIdx < 0) return undefined
+  return fullResponse.slice(codingIdx).trim()
 }
 
 function buildWorkflowHint(domainId: string, primarySkill: string): string {
@@ -154,6 +187,7 @@ function buildAdaptAgentInstructions(input: AdaptAgentRunInput, userMessage: str
   const skillPaths = input.relatedSkills
     .map((id, idx) => `- ${idx === 0 ? '**主控**' : '关联'} **${id}**: \`${tahpSkillMdPath(id)}\``)
     .join('\n')
+  const auditSkillPath = tahpSkillMdPath(ADAPT_AUDIT_SKILL_ID)
   const workflowHint = buildWorkflowHint(input.domainId, primarySkill)
 
   const base = `你是 TAHP「AI 适配调试 · Agent 自动适配」专家，负责在传音 Android 底软集成部完成 **${input.domainLabel}** 的适配任务。
@@ -164,14 +198,32 @@ function buildAdaptAgentInstructions(input: AdaptAgentRunInput, userMessage: str
 ${skillPaths}
 3. **必须真实调用工具**；每完成一个主要阶段，用简短 Markdown 输出「任务规划 / 当前步骤 / 下一步」。
 4. 涉及代码或配置修改时，使用 Write/Edit 等工具；**禁止编造路径**。
-5. 结束时输出结构化总结，必须包含以下章节：
+5. 适配工作全部完成后，输出结构化总结，必须包含以下章节：
    - ## 任务规划回顾
    - ## 已使用的 Skill
    - ## 文件修改清单（路径 + 修改说明；若无修改写「无」）
    - ## 升级/适配结果摘要
    - ## 风险与待用户确认项
+6. **最后一步（不得跳过）— 自检审核**：Read 审核 Skill 全文 \`${auditSkillPath}\`（\`${ADAPT_AUDIT_SKILL_ID}\`），在**全部适配总结之后**追加，且**必须严格按下列顺序与格式**：
+   - **先输出固定概览表** \`## 审核结果概览\`（系统据此解析，禁止省略或改列名）：
+     \`\`\`
+     ## 审核结果概览
+
+     | 检查环节 | 结果 | 说明 |
+     |----------|------|------|
+     | Skill 遵从性自检 | PASS 或 FAIL 或 WARN | 一行精简说明 |
+     | 编码规范审核报告 | PASS 或 FAIL 或 WARN | 一行精简说明 |
+     | AOSP 流程风险评估 | PASS 或 FAIL 或 WARN 或 N/A | 一行精简说明 |
+     \`\`\`
+   - 再输出 \`## Skill 遵从性自检\` 详情（须含 \`**结论**:\` 行，写 PASS/FAIL 及一句总结）
+   - 再输出 \`# 编码规范审核报告\`（含 \`## 概览\` 与 \`**总体结论**:\`，严格按 \`${ADAPT_AUDIT_SKILL_ID}\` 模板）
+7. 最终回复顺序：**适配总结 → 审核结果概览表 → Skill 遵从性自检 → 编码规范审核报告**。
+8. \`## 文件修改清单\` 中每条路径必须用反引号包裹绝对路径（如 \`D:\\\\path\\\\file.txt\`），便于系统收录。
 
 ${workflowHint}
+
+# 审核 Skill（适配完成后必读）
+- **${ADAPT_AUDIT_SKILL_ID}**: \`${auditSkillPath}\`
 
 # 工程 Skill 根目录
 \`${skillsDir}\`
@@ -179,7 +231,7 @@ ${workflowHint}
 
   const tahpCtx = buildFullTahpSystemContext(userMessage, {
     scenario: 'adapt_debug',
-    preferredSkillIds: input.relatedSkills,
+    preferredSkillIds: [...input.relatedSkills, ADAPT_AUDIT_SKILL_ID],
   })
   return tahpCtx ? `${base}\n\n${tahpCtx}` : base
 }
@@ -212,6 +264,7 @@ function buildAdaptAgentUserMessage(input: AdaptAgentRunInput): string {
   }
   lines.push('')
   lines.push('请立即开始：Read 主控 Skill，输出任务规划，然后按 SOP 执行适配。')
+  lines.push(`全部适配完成后，必须 Read \`${ADAPT_AUDIT_SKILL_ID}\`，在报告末尾先输出「## 审核结果概览」三行 PASS/FAIL 表，再写详细审核章节。`)
   return lines.join('\n')
 }
 
@@ -390,13 +443,17 @@ async function runAdaptAgentTask(taskId: string): Promise<void> {
           args: preview,
           message: `🛠 调用: ${toolName}${preview}`,
         })
-        const filePath = extractFilePathFromArgs(args)
-        const isFileTool = FILE_WRITE_TOOLS.has(toolName) || !!filePath
-        if (isFileTool && filePath) {
-          const change = { path: filePath, action: 'modify', tool: toolName, at: new Date().toISOString() }
-          if (!ctx.fileChanges.some(c => c.path === filePath && c.tool === toolName)) {
-            ctx.fileChanges.push(change)
-            emit(taskId, 'task.file_change', { ...change, status: 'started' })
+        if (FILE_WRITE_TOOLS.has(toolName) && !READ_ONLY_TOOLS.has(toolName)) {
+          const filePath = extractFilePathFromArgs(args)
+          if (filePath && !filePath.endsWith('SKILL.md')) {
+            const action = toolName === 'write_file' || toolName === 'write' || toolName === 'Write'
+              ? 'create'
+              : 'modify'
+            const change = { path: filePath, action, tool: toolName, at: new Date().toISOString() }
+            if (!ctx.fileChanges.some(c => c.path === filePath)) {
+              ctx.fileChanges.push(change)
+              emit(taskId, 'task.file_change', { ...change, status: 'started' })
+            }
           }
         }
       },
@@ -418,6 +475,9 @@ async function runAdaptAgentTask(taskId: string): Promise<void> {
       },
     })
 
+    const auditReport = extractAdaptAuditReport(fullResponse)
+    ctx.auditReport = auditReport
+    ctx.auditSkillId = ADAPT_AUDIT_SKILL_ID
     ctx.llmResponse = fullResponse
     ctx.status = 'completed'
     ctx.completedAt = new Date().toISOString()
@@ -427,25 +487,61 @@ async function runAdaptAgentTask(taskId: string): Promise<void> {
       status: 'completed',
       message: `Agent 完成，${fullResponse.length} 字，工具 ${ctx.toolsUsed.length} 次，文件变更 ${ctx.fileChanges.length} 项`,
     })
+    if (auditReport) {
+      emit(taskId, 'task.step', {
+        step_id: 'self-audit',
+        status: 'completed',
+        message: `自检审核已写入报告末尾（${auditReport.length} 字）`,
+      })
+      emit(taskId, 'task.audit_completed', {
+        audit_skill: ADAPT_AUDIT_SKILL_ID,
+        audit_report: auditReport,
+        message: '编码规范与 Skill 遵从性自检已完成',
+      })
+    } else {
+      emit(taskId, 'task.step', {
+        step_id: 'self-audit',
+        status: 'warning',
+        message: '未检测到报告末尾的审核章节（请确认 Agent 已 Read transsion-coding-standards-review）',
+      })
+    }
     emit(taskId, 'task.phase', { phase: 'COMPLETED', progress: 100, message: 'Agent 自动适配完成' })
+    const reportSnapshot = {
+      task_id: taskId,
+      ...ctx,
+      llm_response: fullResponse,
+      audit_report: auditReport,
+      audit_skill: ADAPT_AUDIT_SKILL_ID,
+      duration_ms: Date.now() - startMs,
+    }
+    const normalizedFiles = extractAdaptAgentFileChanges(reportSnapshot as Record<string, unknown>)
+    const normalizedSkills = extractAdaptAgentSkillRefs(reportSnapshot as Record<string, unknown>)
+
     emit(taskId, 'task.completed', {
       status: 'completed',
       mode: 'agent',
       response: fullResponse,
-      skills_used: ctx.skillsUsed,
-      files_modified: ctx.fileChanges.map(c => c.path),
+      audit_report: auditReport,
+      audit_skill: ADAPT_AUDIT_SKILL_ID,
+      skills_used: normalizedSkills,
+      files_modified: normalizedFiles.map(c => c.path),
       duration_ms: Date.now() - startMs,
-      message: 'Agent 自动适配完成',
+      message: auditReport ? 'Agent 自动适配完成（含末尾自检审核）' : 'Agent 自动适配完成',
     })
 
     try {
       writeFileSync(
         join(reportDir(), `${taskId}.json`),
         JSON.stringify({
-          task_id: taskId,
-          ...ctx,
-          llm_response: fullResponse,
-          duration_ms: Date.now() - startMs,
+          ...reportSnapshot,
+          started_at: ctx.startedAt,
+          completed_at: ctx.completedAt,
+          domain: ctx.domainId,
+          domain_label: ctx.domainLabel,
+          files_modified: normalizedFiles.map(c => c.path),
+          file_changes: normalizedFiles,
+          skills_used: normalizedSkills,
+          related_skills: ctx.relatedSkills,
         }, null, 2),
         'utf-8',
       )

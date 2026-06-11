@@ -298,7 +298,7 @@ export function buildSkillExecutionDirective(options?: {
   if (scenario === 'bug_analysis') {
     lines.push('**当前场景**: 智能诊断 — 拉取 JIRA 后必须选择并加载匹配的日志/领域分析 Skill。')
   } else if (scenario === 'adapt_debug') {
-    lines.push('**当前场景**: AI 适配调试 — 优先加载用户指定的关联 Adapt Skill 并按 SOP 排查。')
+    lines.push('**当前场景**: AI 适配调试 — 优先加载用户指定的关联 Adapt Skill 并按 SOP 排查；全部完成后必须 Read `transsion-coding-standards-review` 并在报告末尾输出自检审核。')
   } else {
     lines.push('**当前场景**: TAHP 对话 — 按问题类型按需加载 Skill，不要一次性 Read 全部 Skill。')
   }

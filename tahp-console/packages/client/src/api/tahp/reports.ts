@@ -20,10 +20,34 @@ export function readReport(subPath: string): Promise<ReportContent> {
 
 // ── 任务报告相关 ──────────────────────────────────────────────────────────
 
+export type AuditCheckStatus = 'pass' | 'fail' | 'warn' | 'na' | 'unknown'
+
+export interface AuditCheckItem {
+  key: string
+  label: string
+  status: AuditCheckStatus
+  reason: string
+}
+
+export interface AdaptAgentSkillRef {
+  skill_id: string
+  path: string
+  source?: 'configured' | 'read_file' | 'skill_view'
+}
+
+export interface AdaptAgentFileChange {
+  path: string
+  action: string
+  tool: string
+  at?: string
+}
+
 export interface TaskReportSummary {
   task_id: string
   module?: string
   domain?: string
+  domain_label?: string
+  report_type?: 'adapt_agent' | string
   started_at?: string
   completed_at?: string
   duration_ms?: number
@@ -34,16 +58,27 @@ export interface TaskReportSummary {
 
 export interface TaskReportDetail {
   task_id: string
+  report_type?: 'adapt_agent' | string
   module?: string
   domain?: string
+  domain_id?: string
+  domain_label?: string
   started_at?: string
   completed_at?: string
   duration_ms?: number
+  status?: string
   extra_context?: string
   correction_of?: string
   document_content?: string
   files_modified?: string[]
+  file_changes?: AdaptAgentFileChange[]
+  skills_used?: AdaptAgentSkillRef[]
+  related_skills?: string[]
+  form_data?: Record<string, string>
   llm_response?: string
+  audit_report?: string
+  audit_skill?: string
+  audit_summary?: AuditCheckItem[]
 }
 
 export function listTaskReports(): Promise<TaskReportSummary[]> {
