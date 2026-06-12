@@ -1,13 +1,22 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { NCard, NGrid, NGi, NButton, NStatistic } from 'naive-ui'
 import { useRouter } from 'vue-router'
-import { useTahpTasksStore } from '@/stores/tahp/tasks'
 import { useTahpModulesStore } from '@/stores/tahp/modules'
+import { listBugTasks } from '@/api/tahp/bug-analysis'
+import { listTaskReports } from '@/api/tahp/reports'
 
 const router = useRouter()
-const tasksStore = useTahpTasksStore()
 const modulesStore = useTahpModulesStore()
+
+interface DashTask {
+  task_id: string
+  status: 'completed' | 'failed' | 'running' | 'pending' | 'cancelled'
+  started_at?: string
+}
+
+const dashTasks = ref<DashTask[]>([])
+const loading = ref(false)
 
 const MODULE_LABELS: Record<string, string> = {
   telephony: '通信 (Telephony)',
@@ -31,16 +40,11 @@ const moduleCards = computed(() =>
   }))
 )
 
-const allTasks = computed(() => tasksStore.tasks)
-
 const stats = computed(() => {
-  const total = allTasks.value.length
-  const completed = allTasks.value.filter(t => t.status === 'completed' || t.phase === 'COMPLETED').length
-  const failed = allTasks.value.filter(t => t.status === 'failed' || t.phase === 'FAILED').length
-  const running = allTasks.value.filter(t =>
-    t.status !== 'completed' && t.status !== 'failed' &&
-    t.phase !== 'COMPLETED' && t.phase !== 'FAILED'
-  ).length
+  const total = dashTasks.value.length
+  const completed = dashTasks.value.filter(t => t.status === 'completed').length
+  const failed = dashTasks.value.filter(t => t.status === 'failed').length
+  const running = dashTasks.value.filter(t => t.status === 'running' || t.status === 'pending').length
   const successRate = total > 0 ? Math.round((completed / total) * 100) : 0
   const moduleCount = modulesStore.modules.length
   const domainCount = modulesStore.modules.reduce((acc, m) => acc + m.domains.length, 0)
@@ -56,36 +60,59 @@ const trendData = computed(() => {
     const dateStr = `${d.getMonth() + 1}/${d.getDate()}`
     const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
     const dayEnd = dayStart + 86400000
-    const dayTasks = allTasks.value.filter(t => {
-      const ts = t.created_at
-        ? new Date(t.created_at).getTime()
-        : extractTsFromId(String(t.task_id || t.taskId || ''))
+    const dayTasks = dashTasks.value.filter(t => {
+      const ts = t.started_at ? new Date(t.started_at).getTime() : 0
       return ts >= dayStart && ts < dayEnd
     })
     days.push({
       label: dateStr,
       count: dayTasks.length,
-      completed: dayTasks.filter(t => t.status === 'completed' || t.phase === 'COMPLETED').length,
-      failed: dayTasks.filter(t => t.status === 'failed' || t.phase === 'FAILED').length,
+      completed: dayTasks.filter(t => t.status === 'completed').length,
+      failed: dayTasks.filter(t => t.status === 'failed').length,
     })
   }
   return days
 })
 
-function extractTsFromId(id: string): number {
-  const match = id.match(/(\d{13})/)
-  return match ? parseInt(match[1]) : 0
-}
-
 const trendMax = computed(() => Math.max(...trendData.value.map(d => d.count), 1))
 
+async function refresh() {
+  loading.value = true
+  try {
+    const [bugs, reports] = await Promise.all([listBugTasks(), listTaskReports()])
+    const bugDash: DashTask[] = bugs.map(t => ({
+      task_id: t.task_id,
+      status: t.status === 'cancelled' ? 'failed' : t.status,
+      started_at: t.started_at,
+    }))
+    const reportIds = new Set(bugDash.map(t => t.task_id))
+    const adaptDash: DashTask[] = reports
+      .filter(r => !reportIds.has(r.task_id))
+      .map(r => ({
+        task_id: r.task_id,
+        status: 'completed' as const,
+        started_at: r.started_at,
+      }))
+    dashTasks.value = [...bugDash, ...adaptDash]
+  } finally {
+    loading.value = false
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([modulesStore.refresh(), tasksStore.refresh()])
-  tasksStore.ensureSocket()
+  await Promise.all([modulesStore.refresh(), refresh()])
 })
 
-function gotoExecutor(moduleName?: string, domain?: string) {
-  router.push({ name: 'tahp.executor', query: { module: moduleName, domain } })
+function gotoRoute(moduleName?: string, domain?: string) {
+  if (domain === 'bug_analysis') {
+    router.push({ name: 'tahp.bug-analysis', query: moduleName ? { module: moduleName } : {} })
+    return
+  }
+  if (domain && domain !== 'bug_analysis') {
+    router.push({ name: 'tahp.adapt-debug', query: { module: moduleName, domain } })
+    return
+  }
+  router.push({ name: 'tahp.bug-analysis' })
 }
 </script>
 
@@ -94,17 +121,16 @@ function gotoExecutor(moduleName?: string, domain?: string) {
     <div class="page-header">
       <div class="header-left">
         <h1>EasyAdapter 控制台</h1>
-        <p class="subtitle">传音 Android 底软集成部 · 双引擎 AI 平台</p>
+        <p class="subtitle">传音 Android 底软集成部 · Agent + Skill 平台</p>
       </div>
-      <NButton type="primary" @click="gotoExecutor()">
+      <NButton type="primary" @click="gotoRoute()">
         <template #icon>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         </template>
-        启动新任务
+        智能诊断
       </NButton>
     </div>
 
-    <!-- 统计卡片 -->
     <NGrid :cols="4" :x-gap="16" :y-gap="16" class="stat-grid" responsive="screen" :item-responsive="true">
       <NGi span="1">
         <NCard class="stat-card" :bordered="false">
@@ -120,21 +146,21 @@ function gotoExecutor(moduleName?: string, domain?: string) {
       </NGi>
       <NGi span="1">
         <NCard class="stat-card info-card" :bordered="false">
-          <NStatistic label="已加载模块" :value="stats.moduleCount" />
-          <div class="stat-sub">约束域 <strong>{{ stats.domainCount }}</strong></div>
+          <NStatistic label="业务模块" :value="stats.moduleCount" />
+          <div class="stat-sub">能力域 <strong>{{ stats.domainCount }}</strong></div>
         </NCard>
       </NGi>
       <NGi span="1">
         <NCard class="stat-card warn-card" :bordered="false">
           <NStatistic label="近期失败" :value="stats.failed" />
-          <div class="stat-sub">总任务 <strong>{{ stats.total }}</strong></div>
+          <div class="stat-sub">
+            <NButton text type="primary" size="tiny" @click="router.push({ name: 'tahp.reports' })">查看报告</NButton>
+          </div>
         </NCard>
       </NGi>
     </NGrid>
 
-    <!-- 近 7 天趋势 + 模块矩阵 -->
     <NGrid :cols="5" :x-gap="16" :y-gap="16" style="margin-top: 16px" responsive="screen" :item-responsive="true">
-      <!-- 趋势图 -->
       <NGi span="3">
         <NCard title="近 7 天任务趋势" :bordered="false">
           <div class="trend-chart">
@@ -171,7 +197,6 @@ function gotoExecutor(moduleName?: string, domain?: string) {
         </NCard>
       </NGi>
 
-      <!-- 模块矩阵 -->
       <NGi span="2">
         <NCard title="模块矩阵" :bordered="false">
           <div v-if="!moduleCards.length" class="no-modules">暂无模块数据</div>
@@ -183,7 +208,7 @@ function gotoExecutor(moduleName?: string, domain?: string) {
                   v-for="d in m.domains"
                   :key="d.domain"
                   class="domain-tag"
-                  @click="gotoExecutor(m.name, d.domain)"
+                  @click="gotoRoute(m.name, d.domain)"
                 >{{ DOMAIN_LABELS[d.domain] || d.domain }}</span>
               </div>
             </div>
@@ -205,7 +230,6 @@ function gotoExecutor(moduleName?: string, domain?: string) {
 .stat-card.warn-card { background: linear-gradient(135deg,rgba(240,160,32,.08),rgba(240,160,32,.02)); }
 .stat-sub { margin-top: 6px; font-size: 12px; color: #888; }
 
-/* 趋势图 */
 .trend-chart { display: flex; align-items: flex-end; gap: 10px; padding: 8px 0 0; }
 .trend-col { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1; }
 .bar-stack { display: flex; flex-direction: column-reverse; align-items: center; gap: 1px; min-height: 8px; }
@@ -221,7 +245,6 @@ function gotoExecutor(moduleName?: string, domain?: string) {
 .legend-dot.error { background: #d03050; }
 .legend-dot.info { background: #2080f0; }
 
-/* 模块矩阵 */
 .module-grid { display: flex; flex-direction: column; gap: 10px; }
 .module-cell { padding: 10px 12px; background: var(--n-color-modal, rgba(0,0,0,.03)); border-radius: 6px; }
 .module-name { font-weight: 600; font-size: 13px; margin-bottom: 6px; }

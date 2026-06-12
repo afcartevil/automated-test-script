@@ -33,11 +33,13 @@ const coreItems = [
     icon: `<polygon points="5 3 19 12 5 21 5 3"/>`,
   },
   {
-    name: 'tahp.gate',
-    label: 'AI检测',
+    name: 'tahp.reports',
+    label: '报告',
     color: '#18a058',
-    icon: `<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-           <polyline points="9 12 11 14 15 10"/>`,
+    icon: `<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+           <polyline points="14 2 14 8 20 8"/>
+           <line x1="16" y1="13" x2="8" y2="13"/>
+           <line x1="16" y1="17" x2="8" y2="17"/>`,
   },
   {
     name: 'tahp.knowledge',

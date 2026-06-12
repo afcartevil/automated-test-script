@@ -24,6 +24,6 @@ category: "功耗"
 Step 1: 功耗分类(Application→Framework→HAL/Kernel)
 Step 2: 产出报告(根因层级/修复类型/严重程度/根因描述≥50字/修复建议≥30字)
 
-## 约束文件引用
-- constraints/power-mgmt/module.yaml
-- constraints/power-mgmt/bug-analysis.yaml
+## 知识来源
+- 本 SKILL.md 中的分析协议
+- `knowledge-base/` 中 power-mgmt 相关条目

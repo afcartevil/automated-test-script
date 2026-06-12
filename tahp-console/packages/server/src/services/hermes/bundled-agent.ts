@@ -23,7 +23,12 @@ function deriveTahpProjectRoot(consoleRoot: string): string {
     return resolve(process.env.TAHP_PROJECT_ROOT.trim())
   }
   const parent = resolve(consoleRoot, '..')
-  if (existsSync(join(parent, 'tahp-mcp-server', 'server.py'))) return parent
+  if (
+    existsSync(join(parent, 'skills', '.claude', 'skills')) ||
+    existsSync(join(parent, 'knowledge-base'))
+  ) {
+    return parent
+  }
   return parent
 }
 

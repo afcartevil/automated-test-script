@@ -1,9 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { listModules, type ModuleInfo } from '@/api/tahp/modules'
+import type { ModuleInfo } from '@/constants/tahp-modules'
+import { TAHP_MODULES } from '@/constants/tahp-modules'
 
 export const useTahpModulesStore = defineStore('tahp-modules', () => {
-  const modules = ref<ModuleInfo[]>([])
+  const modules = ref<ModuleInfo[]>([...TAHP_MODULES])
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -11,9 +12,7 @@ export const useTahpModulesStore = defineStore('tahp-modules', () => {
     loading.value = true
     error.value = null
     try {
-      modules.value = await listModules()
-    } catch (err) {
-      error.value = (err as Error).message
+      modules.value = [...TAHP_MODULES]
     } finally {
       loading.value = false
     }

@@ -13,27 +13,6 @@ export interface AdaptConfig {
   formData: Record<string, any>
 }
 
-export interface AdaptTaskResult {
-  taskId: string
-  domain: string
-  status: 'pending' | 'running' | 'success' | 'failed'
-  message?: string
-}
-
-/**
- * 启动 AI 适配调试任务
- */
-export function launchAdaptTask(config: AdaptConfig): Promise<AdaptTaskResult> {
-  return tahpPost<AdaptTaskResult>('/api/tahp/adapt/launch', config)
-}
-
-/**
- * 查询适配任务状态
- */
-export function getAdaptTaskStatus(taskId: string): Promise<AdaptTaskResult> {
-  return tahpGet<AdaptTaskResult>(`/api/tahp/adapt/status/${taskId}`)
-}
-
 /**
  * 保存适配配置
  */

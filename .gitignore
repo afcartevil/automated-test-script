@@ -8,12 +8,6 @@ __pycache__/
 *.swp
 .DS_Store
 Thumbs.db
-reports/evolution-reports/*
-!reports/evolution-reports/.gitkeep
-reports/quality-metrics/*
-!reports/quality-metrics/.gitkeep
-.evoskill/frontier/
-.evoskill/iterations/
 .env
 *.key
 *.pem

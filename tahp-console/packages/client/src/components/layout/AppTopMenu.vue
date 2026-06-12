@@ -16,10 +16,10 @@ const groups = [
     label: 'EasyAdapter',
     items: [
       { name: 'tahp.dashboard', label: '仪表盘', icon: 'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z' },
-      { name: 'tahp.tasks',     label: '任务列表', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11' },
-      { name: 'tahp.modules',   label: '模块矩阵', icon: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z' },
-      { name: 'tahp.playbooks', label: 'Playbooks', icon: 'M22 12l-4-4-8 9-3-3M2 12h4' },
-      { name: 'tahp.reports',   label: '报告', icon: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8' },
+      { name: 'tahp.bug-analysis', label: '智能诊断', icon: 'M12 9c-1.6-.6-3.2-.9-4-.9C5 8.1 3 10 3 12s2 3.9 5 3.9c.8 0 2.4-.3 4-.9M12 9c1.6-.6 3.2-.9 4-.9 3 0 5 1.9 5 3.9s-2 3.9-5 3.9c-.8 0-2.4-.3-4-.9M12 3v18' },
+      { name: 'tahp.adapt-debug', label: 'AI适配调试', icon: 'M5 3l14 9-14 9V3z' },
+      { name: 'tahp.knowledge', label: '知识库', icon: 'M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2zM22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z' },
+      { name: 'tahp.reports', label: '报告', icon: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8' },
     ],
   },
   {

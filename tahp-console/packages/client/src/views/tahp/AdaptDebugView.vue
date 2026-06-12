@@ -3,7 +3,7 @@ import { ref, computed, reactive, watch, nextTick, onMounted } from 'vue'
 import { NButton, NSelect, NInput, NProgress, NTag, NSpin, NModal, NTabs, NTabPane, NForm, NFormItem, NSwitch, useMessage } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { useTahpTasksStore } from '@/stores/tahp/tasks'
-import type { TahpModule } from '@/api/tahp/tasks'
+import type { TahpModule } from '@/constants/tahp-modules'
 import { fetchDynamicDomains } from '@/api/tahp/skills'
 import { startAdaptAgentRun, previewAdaptAgentPrompts } from '@/api/tahp/adapt'
 import { fetchSkills, type SkillInfo } from '@/api/hermes/skills'
@@ -1193,7 +1193,7 @@ function openSkill(skillName: string) {
               </template>
               {{ taskStatus || 'starting' }}
             </NTag>
-            <NButton size="small" @click="router.push({ name: 'tahp.tasks' })">任务列表</NButton>
+            <NButton size="small" @click="router.push({ name: 'tahp.reports' })">报告</NButton>
           </div>
         </div>
 

@@ -45,8 +45,6 @@ telephony bug, 通话异常, 短信失败, 数据连接, VoLTE掉话, VoWiFi问�
 涉及SIM卡密钥/鉴权 → 标记critical，结果仅限指定接收人
 可能导致网络拥塞/DoS → 标记high
 
-## 约束文件引用
-- constraints/telephony/module.yaml
-- constraints/telephony/bug-analysis.yaml
-- constraints/telephony/code-adaptation.yaml
-- constraints/shared/coding-standards.yaml
+## 知识来源
+- 本 SKILL.md 中的分析协议与安全红线
+- `knowledge-base/` 中 telephony 相关条目（通过 Console 知识库检索）

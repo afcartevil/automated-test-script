@@ -1,1 +1,0 @@
-"""Build Verifier MCP Tool"""

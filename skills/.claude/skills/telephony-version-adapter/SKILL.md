@@ -17,7 +17,7 @@ category: "通信"
 
 ## 适配协议
 
-Step 1: 加载约束 — 读取 constraints/telephony/version-adaptation.yaml
+Step 1: 加载本 Skill 适配协议与质量红线
 Step 2: AOSP Diff分析 — 提取API/接口/行为/废弃API变更
 Step 3: 影响面评估 — 定位受影响代码文件
 Step 4: 策略分类 — 全自动(>95%) / 半自动(70-95%) / 人工(<70%)
@@ -30,7 +30,6 @@ Step 6: 验证 — 编译100%通过 + 回归≥95%
 - 废弃API迁移必须grep确认零残留
 - 不能引入新编译警告
 
-## 约束文件引用
-- constraints/telephony/version-adaptation.yaml
-- constraints/shared/api-migration-rules/telephony-migration.yaml
-- constraints/telephony/code-adaptation.yaml
+## 知识来源
+- 本 SKILL.md 中的适配协议与质量红线
+- `knowledge-base/` 中 API 迁移与版本适配条目

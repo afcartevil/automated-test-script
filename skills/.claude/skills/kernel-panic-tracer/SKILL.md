@@ -29,6 +29,6 @@ Step 1: 从panic日志提取PC/LR/Call Trace/寄存器状态
 Step 2: 层级判定(Driver→Subsystem→Core)
 Step 3: 产出报告(根因层级/修复类型/严重程度/根因描述≥50字/修复建议≥30字)
 
-## 约束文件引用
-- constraints/kernel-driver/module.yaml
-- constraints/kernel-driver/bug-analysis.yaml
+## 知识来源
+- 本 SKILL.md 中的分析协议
+- `knowledge-base/` 中 kernel-driver 相关条目

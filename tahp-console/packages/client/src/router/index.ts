@@ -17,45 +17,9 @@ const router = createRouter({
       component: () => import('@/views/tahp/DashboardView.vue'),
     },
     {
-      path: '/tahp/executor',
-      name: 'tahp.executor',
-      component: () => import('@/views/tahp/TaskExecutorView.vue'),
-    },
-    {
-      path: '/tahp/tasks',
-      name: 'tahp.tasks',
-      component: () => import('@/views/tahp/TaskListView.vue'),
-    },
-    {
-      path: '/tahp/modules',
-      name: 'tahp.modules',
-      component: () => import('@/views/tahp/ModuleMatrixView.vue'),
-    },
-    {
-      path: '/tahp/constraints/:module/:file',
-      name: 'tahp.constraint-editor',
-      component: () => import('@/views/tahp/ConstraintEditorView.vue'),
-      props: true,
-    },
-    {
-      path: '/tahp/gate',
-      name: 'tahp.gate',
-      component: () => import('@/views/tahp/GateCheckView.vue'),
-    },
-    {
       path: '/tahp/knowledge',
       name: 'tahp.knowledge',
       component: () => import('@/views/tahp/KnowledgeBaseView.vue'),
-    },
-    {
-      path: '/tahp/playbooks',
-      name: 'tahp.playbooks',
-      component: () => import('@/views/tahp/PlaybookView.vue'),
-    },
-    {
-      path: '/tahp/tools',
-      name: 'tahp.tools',
-      component: () => import('@/views/tahp/ToolsView.vue'),
     },
     {
       path: '/tahp/reports',
@@ -72,7 +36,7 @@ const router = createRouter({
       name: 'tahp.bug-analysis',
       component: () => import('@/views/tahp/BugAnalysisView.vue'),
     },
-    // ===== Hermes 原生视图 (通用 LLM Chat / 周边能力) =====
+    // ===== Hermes 原生视图 =====
     {
       path: '/hermes/chat',
       name: 'hermes.chat',
@@ -116,11 +80,9 @@ const router = createRouter({
   ],
 })
 
-// TAHP 默认入口
 const DEFAULT_LANDING = '/tahp/dashboard'
 
 router.beforeEach((to, _from, next) => {
-  // 内网团队工具默认关闭鉴权 — 可通过 VITE_AUTH_DISABLED=0 重启用
   const authDisabled = (import.meta as any).env?.VITE_AUTH_DISABLED !== '0'
 
   if (to.meta.public) {
@@ -133,7 +95,6 @@ router.beforeEach((to, _from, next) => {
   }
 
   if (authDisabled) {
-    // 预置虚拟 key，让 hasApiKey() 返回 true，避免 models store 等拒绝加载
     if (!hasApiKey()) setApiKey('auth-disabled')
     next()
     return

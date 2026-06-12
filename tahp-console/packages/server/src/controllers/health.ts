@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import * as hermesCli from '../services/hermes/hermes-cli'
+import { getAgentBridgeManager } from '../services/hermes/agent-bridge'
 
 declare const __APP_VERSION__: string
 
@@ -68,11 +69,13 @@ export function startVersionCheck(): void {
 export async function healthCheck(ctx: any) {
   const raw = await hermesCli.getVersion()
   const hermesVersion = raw.split('\n')[0].replace('Hermes Agent ', '') || ''
+  const agentBridge = getAgentBridgeManager().running ? 'running' : 'stopped'
   ctx.body = {
     status: 'ok',
     platform: 'hermes-agent',
     version: hermesVersion,
     gateway: 'running',
+    agent_bridge: agentBridge,
     webui_version: LOCAL_VERSION,
     webui_latest: cachedLatestVersion,
     webui_update_available: Boolean(LOCAL_VERSION && cachedLatestVersion && cachedLatestVersion !== LOCAL_VERSION),

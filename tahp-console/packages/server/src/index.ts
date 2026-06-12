@@ -23,7 +23,6 @@ import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { logger } from './services/logger'
 
 // TAHP 桥接
-import { initTahpBridge } from './services/tahp'
 import { setupTahpRunSocket } from './routes/tahp/tahp-run'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
@@ -109,12 +108,26 @@ export async function bootstrap() {
     console.warn('[bootstrap] failed to inject bundled skills:', err instanceof Error ? err.message : err)
   }
 
+  let agentBridgeReady = false
   try {
     agentBridgeManager = await startAgentBridgeManager()
-    console.log('[bootstrap] agent bridge started')
+    agentBridgeReady = agentBridgeManager.running
+    if (agentBridgeReady) {
+      console.log('[bootstrap] agent bridge started')
+    } else {
+      console.warn('[bootstrap] agent bridge started but not ready')
+    }
   } catch (err) {
     logger.warn(err, '[bootstrap] agent bridge failed to start')
     console.warn('[bootstrap] agent bridge failed to start:', err instanceof Error ? err.message : err)
+  }
+  if (process.env.TAHP_REQUIRE_AGENT === '1' && !agentBridgeReady) {
+    console.error(
+      '[bootstrap] Agent Bridge 未就绪，已中止启动（TAHP_REQUIRE_AGENT=1）。\n' +
+      '  请在本机执行: cd tahp-console && npm run setup:agent -- --force\n' +
+      '  并确认服务端日志中有 [agent-bridge] ready',
+    )
+    process.exit(1)
   }
   await new Promise(resolve => setTimeout(resolve, 1000))
   // Initialize all web-ui SQLite tables
@@ -178,11 +191,6 @@ export async function bootstrap() {
   } catch (err) {
     logger.warn({ err }, '[bootstrap] tahp-run socket setup failed')
   }
-
-  // TAHP MCP bridge — 启动到 tahp-mcp-server 的 stdio 长连
-  initTahpBridge().catch((err) => {
-    logger.warn({ err: (err as Error).message }, '[bootstrap] tahp bridge init failed (TAHP 功能将不可用)')
-  })
 
   // Session deleter — periodically drain pending session deletes
   const { SessionDeleter } = await import('./services/hermes/session-deleter')

@@ -1,1 +1,0 @@
-"""Regression Test Runner MCP Tool"""

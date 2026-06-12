@@ -39,7 +39,6 @@ import { tmpdir } from 'os'
 import { spawnSync } from 'child_process'
 import { get as httpGet } from 'http'
 import { get as httpsGet } from 'https'
-import { getMcpBridge } from '../../services/tahp/mcp-bridge'
 import { tahpPaths } from '../../services/tahp/paths'
 import { safeFileStore } from '../../services/safe-file-store'
 import { logger } from '../../services/logger'
@@ -3953,30 +3952,6 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/save', async (ctx) => {
     ctx.body = { success: true, data: { id: entryId, file: `knowledge-base/${safeModule}/docs/${entryId}.md` } }
   } catch (err) {
     logger.error({ err: (err as Error).message }, '[kb] failed to save entry')
-    ctx.status = 500
-    ctx.body = { success: false, error: (err as Error).message }
-  }
-})
-
-// POST /api/tahp/knowledge/query — 查询知识库（旧接口）
-tahpKnowledgeRoutes.post('/api/tahp/knowledge/query', async (ctx) => {
-  const body = (ctx.request.body || {}) as Record<string, unknown>
-  const query = body.query
-  if (typeof query !== 'string' || !query.trim()) {
-    ctx.status = 400
-    ctx.body = { success: false, error: '缺少 query' }
-    return
-  }
-  const args: Record<string, unknown> = { query }
-  if (body.module) args.module = body.module
-  if (body.cross_module !== undefined) args.cross_module = body.cross_module
-  if (body.top_k !== undefined) args.top_k = body.top_k
-  try {
-    const raw = await getMcpBridge().callTool('tahp_query_knowledge', args)
-    const r = raw as any
-    const unwrapped = r?.content?.[0]?.text ? JSON.parse(r.content[0].text || '') : raw
-    ctx.body = { success: true, data: unwrapped }
-  } catch (err) {
     ctx.status = 500
     ctx.body = { success: false, error: (err as Error).message }
   }

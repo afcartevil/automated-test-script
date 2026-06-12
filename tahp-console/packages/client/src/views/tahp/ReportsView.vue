@@ -138,7 +138,7 @@ function auditStatusTagType(status: AuditCheckItem['status']): 'success' | 'erro
         <NSpace>
           <NButton size="small" @click="loadData">刷新</NButton>
           <NButton v-if="mode === 'detail'" size="small" @click="backToList">← 返回列表</NButton>
-          <NButton v-else size="small" type="primary" @click="router.push({ name: 'tahp.executor' })">启动新任务</NButton>
+          <NButton v-else size="small" type="primary" @click="router.push({ name: 'tahp.adapt-debug' })">启动新任务</NButton>
         </NSpace>
       </div>
       <p class="subtitle">{{ mode === 'detail' ? 'AI 适配执行详情、分析结果与文件修改记录' : '所有已完成任务的执行报告汇总' }}</p>
@@ -152,7 +152,7 @@ function auditStatusTagType(status: AuditCheckItem['status']): 'success' | 'erro
           style="margin-top: 60px"
         >
           <template #extra>
-            <NButton type="primary" @click="router.push({ name: 'tahp.executor' })">启动第一个任务</NButton>
+            <NButton type="primary" @click="router.push({ name: 'tahp.adapt-debug' })">启动第一个任务</NButton>
           </template>
         </NEmpty>
         <NGrid v-else :cols="3" :x-gap="16" :y-gap="16" responsive="screen" item-responsive>
@@ -346,11 +346,8 @@ function auditStatusTagType(status: AuditCheckItem['status']): 'success' | 'erro
           <!-- 操作按钮 -->
           <NSpace style="margin-top:8px">
             <NButton type="primary"
-              @click="router.push({ name: 'tahp.executor', query: { module: detail.module, domain: detail.domain } })">
+              @click="router.push({ name: detail.domain === 'bug_analysis' ? 'tahp.bug-analysis' : 'tahp.adapt-debug', query: { module: detail.module, domain: detail.domain } })">
               以相同参数重新执行
-            </NButton>
-            <NButton @click="router.push({ name: 'tahp.tasks', query: { task_id: detail.task_id } })">
-              在任务列表中查看
             </NButton>
             <NButton @click="backToList">返回报告列表</NButton>
           </NSpace>

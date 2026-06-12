@@ -1,13 +1,13 @@
 /**
  * TAHP 工程上下文注入器
  *
- * 扫描工程的 skills / knowledge-base / constraints / playbooks，
+ * 扫描工程的 skills / knowledge-base，
  * 根据用户输入做关键词匹配，返回注入到 LLM system prompt 的上下文字符串。
  * 让对话模式也能"看到"工程内容，无需 MCP 工具。
  */
 
 import { existsSync, readFileSync, readdirSync } from 'fs'
-import { join, basename } from 'path'
+import { join } from 'path'
 import yaml from 'js-yaml'
 import { tahpPaths, hasTahpProject } from './paths'
 import { logger } from '../logger'
@@ -17,7 +17,7 @@ import { logger } from '../logger'
 // ---------------------------------------------------------------------------
 
 interface ContextItem {
-  type: 'skill' | 'knowledge' | 'constraint' | 'playbook'
+  type: 'skill' | 'knowledge'
   title: string
   summary: string
   keywords: string[]
@@ -26,8 +26,6 @@ interface ContextItem {
 /** buildTahpContext 可注入的章节（不含 Skill 正文，正文须运行时 Read） */
 export interface BuildTahpContextOptions {
   includeSkillCatalog?: boolean
-  includeConstraints?: boolean
-  includePlaybooks?: boolean
   includeKnowledge?: boolean
 }
 
@@ -103,56 +101,7 @@ function buildIndex(): ContextItem[] {
     }
   }
 
-  // ── 2. 模块约束 ────────────────────────────────────────────────────────────
-  const constraintsDir = tahpPaths.constraintsDir
-  if (existsSync(constraintsDir)) {
-    for (const moduleName of safeReadDir(constraintsDir)) {
-      const moduleYamlPath = join(constraintsDir, moduleName, 'module.yaml')
-      if (!existsSync(moduleYamlPath)) continue
-      try {
-        const raw = readFileSync(moduleYamlPath, 'utf-8')
-        const cfg = yaml.load(raw) as Record<string, any>
-        const displayName = String(cfg?.module?.display_name || moduleName)
-        const components: string[] = (cfg?.scope?.includes || []).map((s: any) => String(s.component || s.path || ''))
-        const scope = `包含组件: ${components.filter(Boolean).join(', ')}`
-        items.push({
-          type: 'constraint',
-          title: `模块约束: ${displayName} (${moduleName})`,
-          summary: scope,
-          keywords: [
-            ...tokenize(moduleName),
-            ...tokenize(displayName),
-            ...components.flatMap(c => tokenize(c)),
-          ],
-        })
-
-        // 扫描同目录下其他 domain yaml
-        const domainFiles = safeReadDir(join(constraintsDir, moduleName))
-          .filter(f => f.endsWith('.yaml') && f !== 'module.yaml')
-        for (const domainFile of domainFiles) {
-          try {
-            const dRaw = readFileSync(join(constraintsDir, moduleName, domainFile), 'utf-8')
-            const dCfg = yaml.load(dRaw) as Record<string, any>
-            const dName = basename(domainFile, '.yaml')
-            items.push({
-              type: 'constraint',
-              title: `约束域: ${moduleName}/${dName}`,
-              summary: String(dCfg?.description || dCfg?.name || dName),
-              keywords: [
-                ...tokenize(moduleName),
-                ...tokenize(dName),
-                ...tokenize(String(dCfg?.description || '')),
-              ],
-            })
-          } catch { /* skip malformed */ }
-        }
-      } catch (err) {
-        logger.warn('[context-injector] constraint parse error %s: %s', moduleName, err)
-      }
-    }
-  }
-
-  // ── 3. 知识库 ──────────────────────────────────────────────────────────────
+  // ── 2. 知识库 ──────────────────────────────────────────────────────────────
   const knowledgeDir = tahpPaths.knowledgeDir
   if (existsSync(knowledgeDir)) {
     for (const moduleName of safeReadDir(knowledgeDir)) {
@@ -178,31 +127,6 @@ function buildIndex(): ContextItem[] {
         }
       } catch (err) {
         logger.warn('[context-injector] knowledge parse error %s: %s', moduleName, err)
-      }
-    }
-  }
-
-  // ── 4. Playbooks ──────────────────────────────────────────────────────────
-  const playbooksDir = tahpPaths.playbooksDir
-  if (existsSync(playbooksDir)) {
-    for (const file of safeReadDir(playbooksDir).filter(f => f.endsWith('.yaml'))) {
-      try {
-        const raw = readFileSync(join(playbooksDir, file), 'utf-8')
-        const cfg = yaml.load(raw) as Record<string, any>
-        const name = String(cfg?.name || file)
-        const desc = String(cfg?.description || cfg?.trigger || '')
-        items.push({
-          type: 'playbook',
-          title: `Playbook: ${name}`,
-          summary: desc,
-          keywords: [
-            ...tokenize(name),
-            ...tokenize(desc),
-            ...tokenize(basename(file, '.yaml')),
-          ],
-        })
-      } catch (err) {
-        logger.warn('[context-injector] playbook parse error %s: %s', file, err)
       }
     }
   }
@@ -319,27 +243,19 @@ export function buildSkillExecutionDirective(options?: {
 function defaultContextOptions(scenario: TahpSkillScenario): BuildTahpContextOptions {
   switch (scenario) {
     case 'adapt_debug':
-      // 适配 Agent 已在业务层注入域/表单/关联 Skill 路径；不再扫描全量 Skill 目录
       return {
         includeSkillCatalog: false,
-        includeConstraints: false,
-        includePlaybooks: false,
         includeKnowledge: false,
       }
     case 'bug_analysis':
-      // Bug Agent 通过 directive 指定优先 Skill；仅保留约束/playbook/知识库索引
       return {
         includeSkillCatalog: false,
-        includeConstraints: true,
-        includePlaybooks: true,
         includeKnowledge: true,
       }
     case 'chat':
     default:
       return {
         includeSkillCatalog: true,
-        includeConstraints: true,
-        includePlaybooks: true,
         includeKnowledge: true,
       }
   }
@@ -383,8 +299,8 @@ export function buildFullTahpSystemContext(
 /**
  * 根据用户输入与选项，构造注入到 LLM system prompt 的工程扫描摘要。
  *
- * - 仅输出目录/索引级信息（skill 名+description、约束摘要、playbook、知识库标题）
- * - **不注入** Skill / 约束 / Playbook 正文；正文须 Agent 运行时 Read
+ * - 仅输出目录/索引级信息（skill 名+description、知识库标题）
+ * - **不注入** Skill 正文；正文须 Agent 运行时 Read
  * - adapt_debug 场景默认跳过本函数（见 defaultContextOptions）
  */
 export function buildTahpContext(
@@ -395,12 +311,10 @@ export function buildTahpContext(
 
   const {
     includeSkillCatalog = true,
-    includeConstraints = true,
-    includePlaybooks = true,
     includeKnowledge = true,
   } = options
 
-  if (!includeSkillCatalog && !includeConstraints && !includePlaybooks && !includeKnowledge) {
+  if (!includeSkillCatalog && !includeKnowledge) {
     return ''
   }
 
@@ -413,7 +327,7 @@ export function buildTahpContext(
 
   lines.push('# TAHP 工程上下文（索引摘要，非 Skill 正文）')
   lines.push('')
-  lines.push('> Skill / 约束 / Playbook 正文不在此注入，请按上方「Skill 执行规范」Read 对应 `SKILL.md`。')
+  lines.push('> Skill 正文不在此注入，请按上方「Skill 执行规范」Read 对应 `SKILL.md`。')
   lines.push('')
   lines.push('## 工程根目录')
   lines.push(`  路径: \`${root}\``)
@@ -433,30 +347,6 @@ export function buildTahpContext(
     } else {
       lines.push(`## Skills`)
       lines.push(`  扫描目录: \`${skillsDir}\`（未找到任何 SKILL.md）`)
-      lines.push('')
-    }
-  }
-
-  if (includeConstraints) {
-    const moduleConstraints = index.filter(i => i.type === 'constraint' && i.title.startsWith('模块约束:'))
-    if (moduleConstraints.length > 0) {
-      lines.push(`## 模块约束（共 ${moduleConstraints.length} 个模块）`)
-      lines.push(`  扫描目录: \`${join(root, 'constraints')}\``)
-      for (const item of moduleConstraints) {
-        lines.push(`  - **${item.title}**: ${item.summary}`)
-      }
-      lines.push('')
-    }
-  }
-
-  if (includePlaybooks) {
-    const playbookItems = index.filter(i => i.type === 'playbook')
-    if (playbookItems.length > 0) {
-      lines.push(`## Playbooks（共 ${playbookItems.length} 个）`)
-      lines.push(`  扫描目录: \`${join(root, 'playbooks')}\``)
-      for (const item of playbookItems) {
-        lines.push(`  - **${item.title}**: ${item.summary}`)
-      }
       lines.push('')
     }
   }

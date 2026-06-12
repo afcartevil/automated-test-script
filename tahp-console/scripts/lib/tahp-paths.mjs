@@ -1,6 +1,7 @@
 /**
  * TAHP / tahp-console 路径解析（供 setup 与 ensure-hermes-agent 使用）
  */
+import { spawnSync } from 'child_process'
 import { existsSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
@@ -12,13 +13,20 @@ export function getConsoleRoot(fromDir = __dirname) {
   return resolve(fromDir, '..', '..')
 }
 
-/** TAHP 主仓根（含 tahp-mcp-server、hermes-agent-main） */
+function isTahpProjectRoot(dir) {
+  return (
+    existsSync(join(dir, 'skills', '.claude', 'skills')) ||
+    existsSync(join(dir, 'knowledge-base'))
+  )
+}
+
+/** TAHP 主仓根（含 skills、knowledge-base、hermes-agent-main） */
 export function getTahpProjectRoot(consoleRoot = getConsoleRoot()) {
   if (process.env.TAHP_PROJECT_ROOT?.trim()) {
     return resolve(process.env.TAHP_PROJECT_ROOT.trim())
   }
   const parent = resolve(consoleRoot, '..')
-  if (existsSync(join(parent, 'tahp-mcp-server', 'server.py'))) return parent
+  if (isTahpProjectRoot(parent)) return parent
   return parent
 }
 
@@ -53,7 +61,53 @@ export function getVenvHermesBin(agentDir) {
     : join(agentDir, '.venv', 'bin', 'hermes')
 }
 
+function pythonWorks(cmd) {
+  if (!cmd?.trim()) return false
+  try {
+    const parts = cmd.trim().split(/\s+/).filter(Boolean)
+    const exe = parts[0]
+    const prefixArgs = parts.slice(1)
+    const r = spawnSync(exe, [...prefixArgs, '--version'], { encoding: 'utf-8', windowsHide: true })
+    return r.status === 0
+  } catch {
+    return false
+  }
+}
+
+/** 供 spawnSync / python -m venv 使用的 [command, ...prefixArgs] */
+export function resolvePythonCommand(cmd) {
+  const parts = (cmd || '').trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return { command: 'python', prefixArgs: [] }
+  return { command: parts[0], prefixArgs: parts.slice(1) }
+}
+
+function discoverWindowsPython() {
+  const candidates = [
+    process.env.TAHP_PYTHON?.trim(),
+    'py -3.12',
+    'py -3.11',
+    'py -3',
+    process.env.LOCALAPPDATA
+      ? join(process.env.LOCALAPPDATA, 'Programs', 'Python', 'Python312', 'python.exe')
+      : '',
+    process.env.LOCALAPPDATA
+      ? join(process.env.LOCALAPPDATA, 'Programs', 'Python', 'Python311', 'python.exe')
+      : '',
+    'python',
+    'python3',
+  ].filter(Boolean)
+
+  for (const candidate of candidates) {
+    if (pythonWorks(candidate)) return candidate
+  }
+  return process.platform === 'win32' ? 'python' : 'python3'
+}
+
 export function getSystemPython() {
-  return process.env.TAHP_PYTHON?.trim()
-    || (process.platform === 'win32' ? 'python' : 'python3')
+  if (process.env.TAHP_PYTHON?.trim() && pythonWorks(process.env.TAHP_PYTHON.trim())) {
+    return process.env.TAHP_PYTHON.trim()
+  }
+  if (process.platform === 'win32') return discoverWindowsPython()
+  const fallback = 'python3'
+  return pythonWorks(fallback) ? fallback : 'python'
 }

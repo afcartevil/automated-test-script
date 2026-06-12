@@ -23,6 +23,7 @@ import {
   getTahpProjectRoot,
   getVenvHermesBin,
   getVenvPython,
+  resolvePythonCommand,
 } from './lib/tahp-paths.mjs'
 import {
   detectHermesHome,
@@ -74,8 +75,13 @@ function run(cmd, args, opts = {}) {
   return result
 }
 
+function runPython(pythonSpec, args, opts = {}) {
+  const { command, prefixArgs } = resolvePythonCommand(pythonSpec)
+  return run(command, [...prefixArgs, ...args], opts)
+}
+
 function pythonMeetsMinimum(python) {
-  const r = run(python, ['-c', 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'])
+  const r = runPython(python, ['-c', 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'])
   return r.status === 0
 }
 
@@ -270,7 +276,7 @@ function createVenv(systemPython, agentDir) {
     }
   }
   log(`  → 创建虚拟环境: ${venvDir}`)
-  const r = run(systemPython, ['-m', 'venv', venvDir], { inherit: true, cwd: agentDir })
+  const r = runPython(systemPython, ['-m', 'venv', venvDir], { inherit: true, cwd: agentDir })
   if (r.status !== 0) return false
   const py = getVenvPython(agentDir)
   if (!isVenvPythonUsable(py)) {
@@ -345,7 +351,7 @@ export function ensureHermesAgent(opts = {}) {
 
   const systemPython = getSystemPython()
   if (!opts.quiet) log(`  → 系统 Python: ${systemPython}`)
-  const pyVer = run(systemPython, ['--version'])
+  const pyVer = runPython(systemPython, ['--version'])
   if (pyVer.status !== 0) {
     const msg = `未找到 Python。请安装 Python 3.11+ 并设置 TAHP_PYTHON。`
     fail(`  ✗ ${msg}`)
@@ -358,7 +364,7 @@ export function ensureHermesAgent(opts = {}) {
     return finishOptionalFailure(opts, msg)
   }
 
-  const py314Check = run(systemPython, ['-c', 'import sys; raise SystemExit(0 if sys.version_info < (3, 14) else 1)'])
+  const py314Check = runPython(systemPython, ['-c', 'import sys; raise SystemExit(0 if sys.version_info < (3, 14) else 1)'])
   if (py314Check.status !== 0) {
     warn('  ⚠ 当前为 Python 3.14+，hermes-agent 官方测试以 3.11–3.13 为主；若安装失败请安装 3.12 并设 TAHP_PYTHON')
   }

@@ -281,6 +281,21 @@ npm run build   # 构建输出到 dist/
 
 项目开发规范见：[DEVELOPMENT.md](./DEVELOPMENT.md)。
 
+## EasyAdapter / TAHP 业务面板
+
+本仓库在 Hermes Web UI 上叠加了 TAHP 业务入口（品牌名 EasyAdapter）：
+
+| 路由 | 功能 |
+|------|------|
+| `/tahp/dashboard` | 仪表盘 |
+| `/tahp/bug-analysis` | 智能诊断（Agent + Skill） |
+| `/tahp/adapt-debug` | AI 适配调试 |
+| `/tahp/knowledge` | 知识库 |
+| `/tahp/reports` | 任务报告 |
+
+执行路径：**Console BFF → Hermes Agent Bridge → skills/**，不再依赖 MCP stdio 桥。
+详细说明见仓库根目录 [docs/tahp-console.md](../docs/tahp-console.md)。
+
 ## 架构
 
 ```

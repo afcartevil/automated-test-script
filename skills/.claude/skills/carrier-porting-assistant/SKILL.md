@@ -17,7 +17,7 @@ category: "通信"
 
 ## 移植协议
 
-Step 1: 加载约束 — 读取 constraints/telephony/carrier-porting.yaml
+Step 1: 加载本 Skill 移植协议与质量红线
 Step 2: 需求解析 — 定位源代码/配置/依赖关系
 Step 3: 策略分类 — 自动(>0.85) / 半自动(0.70-0.85) / 人工(<0.70)
 Step 4: 代码移植 — Carrier overlay/carrier_config/CARRIER注释
@@ -29,7 +29,6 @@ Step 5: 合规检查 — 编译/generic回归/定制测试/合规标准
 - 所有定制代码必须有CARRIER注释标记
 - 必须通过CarrierConfigManager标准机制
 
-## 约束文件引用
-- constraints/telephony/carrier-porting.yaml
-- constraints/telephony/code-adaptation.yaml
-- constraints/shared/android-platform.yaml
+## 知识来源
+- 本 SKILL.md 中的移植协议与质量红线
+- `knowledge-base/` 中运营商移植相关条目
