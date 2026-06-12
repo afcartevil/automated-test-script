@@ -7,6 +7,8 @@ import {
   NRadioGroup, NRadioButton, NSpace, NForm, NFormItem,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
+import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
+import { useModelProviderReadiness } from '@/composables/useModelProviderReadiness'
 import { useBugAnalysisStore } from '@/stores/tahp/bug-analysis'
 import {
   startSingle, startBatch, continueAnalysis, distillToKnowledge,
@@ -18,6 +20,13 @@ const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 const store = useBugAnalysisStore()
+const { isReady: modelProviderReady } = useModelProviderReadiness()
+
+function ensureModelProviderOrWarn(): boolean {
+  if (modelProviderReady.value) return true
+  message.warning('请先在「模型管理」中配置模型 Provider 和 API Key')
+  return false
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 表单状态：mode = 'single' | 'batch'
@@ -248,6 +257,7 @@ async function doPreviewJql() {
 // 操作：启动分析
 // ─────────────────────────────────────────────────────────────────────────────
 async function startSingleAnalysis() {
+  if (!ensureModelProviderOrWarn()) return
   const jiraConfig = getJiraConfigOrWarn()
   if (!jiraConfig) return
   if (!singleForm.value.input.trim()) {
@@ -284,6 +294,7 @@ async function startSingleAnalysis() {
 }
 
 async function startBatchAnalysis() {
+  if (!ensureModelProviderOrWarn()) return
   const jiraConfig = getJiraConfigOrWarn()
   if (!jiraConfig) return
   if (!batchForm.value.jql.trim()) {
@@ -449,9 +460,10 @@ function openContinue() {
 }
 
 async function submitContinue() {
-  if (!currentTaskId.value) return
+  if (!ensureModelProviderOrWarn()) return false
+  if (!currentTaskId.value) return false
   const txt = continueText.value.trim()
-  if (!txt) { message.warning('请填写补充信息'); return }
+  if (!txt) { message.warning('请填写补充信息'); return false }
   try {
     const resp = await continueAnalysis(currentTaskId.value, {
       additional_info: txt,
@@ -551,6 +563,7 @@ const currentSkillCalls = computed(() =>
 // （直连 LLM 模式只能"标记" skill；真正的 skill 执行只发生在 Agent 子进程里）
 // ─────────────────────────────────────────────────────────────────────────────
 function handoffToAgent(scope: 'single' | 'batch') {
+  if (!ensureModelProviderOrWarn()) return
   const lines: string[] = []
   if (scope === 'single' && currentTask.value) {
     const t = currentTask.value
@@ -637,6 +650,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
 
 <template>
   <div class="bug-analysis-root">
+    <ModelProviderBanner />
     <!-- ───────── 顶栏 ───────── -->
     <header class="ba-header">
       <div class="ba-header-left">
@@ -777,7 +791,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
             </div>
 
             <div class="action-row">
-              <NButton type="primary" :loading="submitting" :disabled="!singleForm.input.trim()" @click="startSingleAnalysis">
+              <NButton type="primary" :loading="submitting" :disabled="!modelProviderReady || !singleForm.input.trim()" @click="startSingleAnalysis">
                 开始分析
               </NButton>
               <NButton :loading="previewingJira" :disabled="!singleForm.input.trim()" @click="doPreviewJira">
@@ -785,7 +799,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
               </NButton>
               <NTooltip placement="top">
                 <template #trigger>
-                  <NButton tertiary :disabled="!singleForm.input.trim()" @click="handoffToAgent('single')">
+                  <NButton tertiary :disabled="!modelProviderReady || !singleForm.input.trim()" @click="handoffToAgent('single')">
                     <template #icon>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                     </template>
@@ -852,7 +866,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
             </div>
 
             <div class="action-row">
-              <NButton type="primary" :loading="submitting" :disabled="!batchForm.jql.trim()" @click="startBatchAnalysis">
+              <NButton type="primary" :loading="submitting" :disabled="!modelProviderReady || !batchForm.jql.trim()" @click="startBatchAnalysis">
                 批量分析
               </NButton>
               <NButton :loading="previewingJql" :disabled="!batchForm.jql.trim()" @click="doPreviewJql">
@@ -1214,7 +1228,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
                 </div>
               </NPopover>
 
-              <NButton tertiary @click="handoffToAgent('single')">
+              <NButton tertiary :disabled="!modelProviderReady" @click="handoffToAgent('single')">
                 <template #icon>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 </template>
@@ -1232,7 +1246,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
                 {{ isRunning ? '强行中断当前任务' : '取消等待中的任务' }}
               </NButton>
 
-              <NButton :disabled="isRunning || isPending || !currentTaskId" @click="openContinue">
+              <NButton :disabled="!modelProviderReady || isRunning || isPending || !currentTaskId" @click="openContinue">
                 <template #icon>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
                 </template>
@@ -1336,6 +1350,11 @@ function handoffToAgent(scope: 'single' | 'batch') {
   height: 100%;
   min-height: 100%;
   background: linear-gradient(180deg, rgba(56, 139, 253, 0.04) 0%, transparent 220px);
+
+  :deep(.model-provider-banner) {
+    margin: 12px 16px 0;
+    flex-shrink: 0;
+  }
 }
 
 /* ── 顶栏 ── */

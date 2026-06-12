@@ -9,11 +9,13 @@ import { NButton, NTooltip, NSwitch, NModal, NInputNumber, NInput, NForm, NFormI
 import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
+import { useModelProviderReadiness } from '@/composables/useModelProviderReadiness'
 import { saveKnowledgeFromChat } from '@/api/tahp/knowledge'
 
 const chatStore = useChatStore()
 const { t } = useI18n()
 const message = useMessage()
+const { isReady: modelProviderReady } = useModelProviderReadiness()
 const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
 const inputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
@@ -114,7 +116,9 @@ watch(autoPlaySpeech, (value) => {
   chatStore.setAutoPlaySpeech(value)
 })
 
-const canSend = computed(() => inputText.value.trim() || attachments.value.length > 0)
+const canSend = computed(() =>
+  modelProviderReady.value && (inputText.value.trim() || attachments.value.length > 0),
+)
 
 function scrollCommandIntoView() {
   nextTick(() => {
@@ -315,6 +319,10 @@ function handleDrop(e: DragEvent) {
 // --- Send ---
 
 function handleSend() {
+  if (!modelProviderReady.value) {
+    message.warning('请先在「模型管理」中配置模型 Provider 和 API Key')
+    return
+  }
   const text = inputText.value.trim()
   if (!text && attachments.value.length === 0) return
 

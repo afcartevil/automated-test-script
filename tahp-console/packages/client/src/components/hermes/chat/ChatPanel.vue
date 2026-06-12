@@ -25,6 +25,7 @@ import MessageList from "./MessageList.vue";
 import SessionListItem from "./SessionListItem.vue";
 import DrawerPanel from "./DrawerPanel.vue";
 import OutlinePanel from "./OutlinePanel.vue";
+import ModelProviderBanner from "@/components/tahp/ModelProviderBanner.vue";
 
 const chatStore = useChatStore();
 const appStore = useAppStore();
@@ -1126,6 +1127,8 @@ async function handleSessionModelCustomSubmit() {
         </div>
       </header>
 
+      <ModelProviderBanner class="chat-provider-banner" />
+
       <template v-if="currentMode === 'chat'">
         <div class="chat-content-wrapper">
           <div class="chat-main-content">
@@ -1750,6 +1753,11 @@ async function handleSessionModelCustomSubmit() {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+}
+
+.chat-provider-banner {
+  margin: 0 16px 8px;
+  flex-shrink: 0;
 }
 
 .chat-content-wrapper {

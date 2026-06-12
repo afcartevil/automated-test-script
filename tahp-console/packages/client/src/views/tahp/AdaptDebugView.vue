@@ -2,6 +2,8 @@
 import { ref, computed, reactive, watch, nextTick, onMounted } from 'vue'
 import { NButton, NSelect, NInput, NProgress, NTag, NSpin, NModal, NTabs, NTabPane, NForm, NFormItem, NSwitch, useMessage } from 'naive-ui'
 import { useRouter } from 'vue-router'
+import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
+import { useModelProviderReadiness } from '@/composables/useModelProviderReadiness'
 import { useTahpTasksStore } from '@/stores/tahp/tasks'
 import type { TahpModule } from '@/constants/tahp-modules'
 import { fetchDynamicDomains } from '@/api/tahp/skills'
@@ -17,6 +19,7 @@ import {
 const message = useMessage()
 const router = useRouter()
 const tasksStore = useTahpTasksStore()
+const { isReady: modelProviderReady } = useModelProviderReadiness()
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 类型定义
@@ -848,6 +851,10 @@ async function copyPromptText(text: string, label: string) {
 }
 
 async function launchAgentAdapt() {
+  if (!modelProviderReady.value) {
+    message.warning('请先在「模型管理」中配置模型 Provider 和 API Key')
+    return
+  }
   if (!isComplete.value) {
     message.warning('请先完成当前域所需的全部表单参数')
     return
@@ -970,6 +977,7 @@ function openSkill(skillName: string) {
 
     <!-- ====== 主内容区 ====== -->
     <div class="adapt-body" :class="{ 'is-monitor': showMonitor }">
+      <ModelProviderBanner class="adapt-provider-banner" />
 
       <!-- ───────── 表单阶段 ───────── -->
       <template v-if="!showMonitor">
@@ -1136,7 +1144,7 @@ function openSkill(skillName: string) {
           <NButton
             size="large"
             type="primary"
-            :disabled="layoutEditMode || !isComplete || !activeDomain.relatedSkills.length"
+            :disabled="!modelProviderReady || layoutEditMode || !isComplete || !activeDomain.relatedSkills.length"
             :loading="agentLaunching"
             @click="launchAgentAdapt"
           >
@@ -1218,7 +1226,7 @@ function openSkill(skillName: string) {
           <p class="ms-sub">请检查 Agent Bridge 配置与关联 Skill 是否可用</p>
           <div style="display:flex;gap:8px;margin-top:4px;">
             <NButton type="primary" @click="backToForm">返回重新配置</NButton>
-            <NButton @click="launchAgentAdapt" :loading="agentLaunching">重试</NButton>
+            <NButton :disabled="!modelProviderReady" @click="launchAgentAdapt" :loading="agentLaunching">重试</NButton>
           </div>
         </div>
 
@@ -1310,7 +1318,7 @@ function openSkill(skillName: string) {
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
           任务执行失败 · 请查看上方错误事件
           <NButton size="small" type="warning" style="margin-left:12px;" @click="backToForm">重新配置</NButton>
-          <NButton size="small" style="margin-left:6px;" :loading="agentLaunching" @click="launchAgentAdapt">重试</NButton>
+          <NButton size="small" style="margin-left:6px;" :disabled="!modelProviderReady" :loading="agentLaunching" @click="launchAgentAdapt">重试</NButton>
         </div>
 
       </template>
@@ -1604,6 +1612,10 @@ function openSkill(skillName: string) {
 .nf-detail { font-size: 10px; color: $text-muted; margin-top: 6px; }
 
 // ── 主内容 ──────────────────────────────────────────────────────────────────
+.adapt-provider-banner {
+  margin-top: 16px;
+}
+
 .adapt-body {
   flex: 1;
   min-width: 0;
