@@ -109,21 +109,22 @@ async function handlePasswordLogin() {
 
 <template>
   <div class="login-view">
-    <div class="login-card">
+    <div class="ea-card login-card">
       <div class="login-logo">
-        <img src="/logo.png" alt="EasyAdapter" width="80" height="80" />
+        <img src="/logo.png" alt="EasyAdapter" width="72" height="72" />
       </div>
       <h1 class="login-title">{{ t("login.title") }}</h1>
       <p class="login-desc">{{ t("login.description") }}</p>
 
-      <!-- Method toggle -->
       <div v-if="hasPasswordLogin" class="login-method-toggle">
         <button
+          type="button"
           class="toggle-btn"
           :class="{ active: loginMethod === 'password' }"
           @click="loginMethod = 'password'"
         >{{ t("login.passwordLogin") }}</button>
         <button
+          type="button"
           class="toggle-btn"
           :class="{ active: loginMethod === 'token' }"
           @click="loginMethod = 'token'"
@@ -131,37 +132,44 @@ async function handlePasswordLogin() {
       </div>
 
       <form class="login-form" @submit.prevent="handleLogin">
-        <!-- Token login -->
         <template v-if="loginMethod === 'token'">
-          <input
-            v-model="token"
-            type="password"
-            class="login-input"
-            :placeholder="t('login.placeholder')"
-            autofocus
-          />
+          <div class="ea-field ea-mb0">
+            <label>{{ t("login.tokenLogin") }}</label>
+            <input
+              v-model="token"
+              type="password"
+              class="login-input"
+              :placeholder="t('login.placeholder')"
+              autofocus
+            />
+          </div>
         </template>
 
-        <!-- Password login -->
         <template v-if="loginMethod === 'password'">
-          <input
-            v-model="username"
-            type="text"
-            class="login-input"
-            :placeholder="t('login.usernamePlaceholder')"
-            autofocus
-          />
-          <input
-            v-model="password"
-            type="password"
-            class="login-input"
-            :placeholder="t('login.passwordPlaceholder')"
-            @keyup.enter="handleLogin"
-          />
+          <div class="ea-field ea-mb0">
+            <label>{{ t("login.usernamePlaceholder") }}</label>
+            <input
+              v-model="username"
+              type="text"
+              class="login-input"
+              :placeholder="t('login.usernamePlaceholder')"
+              autofocus
+            />
+          </div>
+          <div class="ea-field ea-mb0">
+            <label>{{ t("login.passwordPlaceholder") }}</label>
+            <input
+              v-model="password"
+              type="password"
+              class="login-input"
+              :placeholder="t('login.passwordPlaceholder')"
+              @keyup.enter="handleLogin"
+            />
+          </div>
         </template>
 
         <div v-if="errorMsg" class="login-error">{{ errorMsg }}</div>
-        <button type="submit" class="login-btn" :disabled="loading">
+        <button type="submit" class="ea-btn-primary login-btn" :disabled="loading">
           {{ loading ? "..." : t("login.submit") }}
         </button>
       </form>
@@ -170,72 +178,67 @@ async function handlePasswordLogin() {
 </template>
 
 <style scoped lang="scss">
-@use "@/styles/variables" as *;
-
 .login-view {
   height: calc(100 * var(--vh));
   display: flex;
   align-items: center;
   justify-content: center;
-  background: $bg-primary;
+  background: var(--bg);
+  padding: 24px;
 }
 
 .login-card {
-  width: 480px;
-  max-width: calc(100vw - 32px);
-  padding: 56px;
-  border: 1px solid $border-color;
-  border-radius: $radius-lg;
-  background: $bg-card;
+  width: 440px;
+  max-width: 100%;
   text-align: center;
-
-  @media (max-width: $breakpoint-mobile) {
-    padding: 32px 24px;
-  }
+  padding: 48px 40px;
 }
 
 .login-logo {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .login-title {
   font-size: 26px;
-  font-weight: 600;
-  color: $text-primary;
-  margin: 0 0 10px;
+  font-weight: 800;
+  color: var(--head);
+  margin: 0 0 8px;
+  letter-spacing: -0.02em;
 }
 
 .login-desc {
   font-size: 14px;
-  color: $text-muted;
-  margin: 0 0 32px;
+  color: var(--muted);
+  margin: 0 0 28px;
   line-height: 1.6;
 }
 
 .login-method-toggle {
   display: flex;
-  margin-bottom: 24px;
-  border: 1px solid $border-color;
-  border-radius: $radius-sm;
+  margin-bottom: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   overflow: hidden;
+  background: var(--bg);
 
   .toggle-btn {
     flex: 1;
     padding: 10px;
     border: none;
     background: transparent;
-    color: $text-muted;
+    color: var(--muted);
     font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
-    transition: all $transition-fast;
+    transition: all 0.18s;
 
     &.active {
-      background: $text-primary;
-      color: var(--text-on-accent);
+      background: var(--accent-soft);
+      color: var(--accent);
     }
 
     &:not(.active):hover {
-      background: rgba(var(--accent-primary-rgb), 0.06);
+      color: var(--text);
     }
   }
 }
@@ -244,55 +247,39 @@ async function handlePasswordLogin() {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  text-align: left;
 }
 
 .login-input {
   width: 100%;
-  padding: 14px 16px;
-  border: 1px solid $border-color;
-  border-radius: $radius-sm;
-  font-size: 15px;
-  color: $text-primary;
-  background: $bg-input;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
   outline: none;
-  transition: border-color $transition-fast;
+  transition: border-color 0.18s;
   box-sizing: border-box;
-  font-family: $font-code;
 
   &::placeholder {
-    color: $text-muted;
+    color: var(--muted);
   }
 
   &:focus {
-    border-color: $accent-primary;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(82, 86, 212, 0.12);
   }
 }
 
 .login-error {
   font-size: 13px;
-  color: $error;
-  text-align: left;
+  color: var(--error);
 }
 
 .login-btn {
   width: 100%;
-  padding: 14px;
-  border: none;
-  border-radius: $radius-sm;
-  background: $text-primary;
-  color: var(--text-on-accent);
-  font-size: 15px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: opacity $transition-fast;
-
-  &:hover {
-    opacity: 0.85;
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  justify-content: center;
+  margin-top: 4px;
 }
 </style>

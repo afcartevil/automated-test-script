@@ -14,6 +14,7 @@ import SessionSettings from "@/components/hermes/settings/SessionSettings.vue";
 import PrivacySettings from "@/components/hermes/settings/PrivacySettings.vue";
 import ModelSettings from "@/components/hermes/settings/ModelSettings.vue";
 import AccountSettings from "@/components/hermes/settings/AccountSettings.vue";
+import EaPageHead from "@/components/layout/EaPageHead.vue";
 
 const settingsStore = useSettingsStore();
 const { t } = useI18n();
@@ -24,10 +25,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="settings-view">
-    <header class="page-header">
-      <h2 class="header-title">{{ t("settings.title") }}</h2>
-    </header>
+  <div class="page settings-view">
+    <EaPageHead :title="t('settings.title')" />
 
     <div class="settings-content">
       <NSpin
@@ -70,11 +69,12 @@ onMounted(() => {
   height: calc(100 * var(--vh));
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .settings-content {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  min-height: 0;
 }
 </style>

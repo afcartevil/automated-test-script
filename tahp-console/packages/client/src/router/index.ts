@@ -36,6 +36,11 @@ const router = createRouter({
       name: 'tahp.bug-analysis',
       component: () => import('@/views/tahp/BugAnalysisView.vue'),
     },
+    {
+      path: '/tahp/self-check',
+      name: 'tahp.self-check',
+      component: () => import('@/views/tahp/SelfCheckView.vue'),
+    },
     // ===== Hermes 原生视图 =====
     {
       path: '/hermes/chat',
@@ -58,24 +63,9 @@ const router = createRouter({
       component: () => import('@/views/hermes/SkillsView.vue'),
     },
     {
-      path: '/hermes/logs',
-      name: 'hermes.logs',
-      component: () => import('@/views/hermes/LogsView.vue'),
-    },
-    {
       path: '/hermes/settings',
       name: 'hermes.settings',
       component: () => import('@/views/hermes/SettingsView.vue'),
-    },
-    {
-      path: '/hermes/terminal',
-      name: 'hermes.terminal',
-      component: () => import('@/views/hermes/TerminalView.vue'),
-    },
-    {
-      path: '/hermes/files',
-      name: 'hermes.files',
-      component: () => import('@/views/hermes/FilesView.vue'),
     },
   ],
 })

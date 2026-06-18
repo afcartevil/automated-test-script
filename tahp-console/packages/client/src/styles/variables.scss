@@ -1,187 +1,119 @@
-// 黑白水墨 — Pure Ink
-// 纯黑白灰，无彩色
-// 支持 light / dark / comic 三主题
-
-// ─── CSS Custom Properties ─────────────────────────────────────
+// EasyAdapter V26 Soft Fill — design tokens
 
 :root {
-  // Backgrounds
-  --bg-primary: #fafafa;
-  --bg-secondary: #f0f0f0;
-  --bg-sidebar: #f5f5f5;
-  --bg-card: #ffffff;
-  --bg-card-hover: #fafafa;
-  --bg-input: #ffffff;
+  // V26 core
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #f1f3f7;
+  --text: #232735;
+  --head: #1b1e2b;
+  --muted: #6d7384;
+  --faint: #9aa0b0;
+  --line: #e8eaf0;
+  --line-strong: #dde0e8;
+  --accent: #5256d4;
+  --accent-soft: #ecedfb;
+  --success: #0f7a5a;
+  --success-soft: #e8f4ee;
+  --info: #0b74b8;
+  --info-soft: #e9f3fb;
+  --warn: #b45309;
+  --warn-soft: #fbf1e3;
+  --error: #d33b3b;
+  --error-soft: #fbeaea;
+  --shadow: 0 1px 2px rgba(20, 24, 40, 0.03), 0 10px 26px -18px rgba(20, 24, 40, 0.16);
+  --shadow-lg: 0 16px 40px -24px rgba(20, 24, 40, 0.3);
 
-  // Borders
-  --border-color: #e0e0e0;
-  --border-light: #ebebeb;
+  // Soft fill tones
+  --indigo-bg: #eef0fb;
+  --indigo-fg: #3f43b5;
+  --indigo-ic: #5256d4;
+  --sky-bg: #e9f3fb;
+  --sky-fg: #0c6aa6;
+  --sky-ic: #0b84cf;
+  --emerald-bg: #e8f4ee;
+  --emerald-fg: #0c6b4f;
+  --emerald-ic: #129b71;
+  --amber-bg: #fbf2e2;
+  --amber-fg: #9a5a06;
+  --amber-ic: #d98014;
+  --violet-bg: #f1ecfb;
+  --violet-fg: #6b3fb5;
+  --violet-ic: #8b5cf6;
+  --rose-bg: #fbecef;
+  --rose-fg: #b03351;
+  --rose-ic: #e0567a;
 
-  // Accent
-  --accent-primary: #333333;
-  --accent-hover: #1a1a1a;
-  --accent-muted: #888888;
-
-  // Text
-  --text-primary: #1a1a1a;
-  --text-secondary: #666666;
-  --text-muted: #999999;
-
-  // Status
-  --success: #2e7d32;
-  --error: #c62828;
-  --warning: #f57f17;
-
-  // Message bubbles
-  --msg-user-bg: #f5f5f5;
-  --msg-assistant-bg: #f5f5f5;
-  --msg-system-border: #bdbdbd;
-
-  // Code
-  --code-bg: #f4f4f4;
-
-  // Utility
+  // Legacy aliases (used across existing views)
+  --bg-primary: var(--bg);
+  --bg-secondary: var(--surface-2);
+  --bg-sidebar: var(--surface);
+  --bg-card: var(--surface);
+  --bg-card-hover: var(--surface-2);
+  --bg-input: var(--bg);
+  --border-color: var(--line);
+  --border-light: var(--line-strong);
+  --accent-primary: var(--accent);
+  --accent-hover: #4347c4;
+  --accent-muted: var(--muted);
+  --text-primary: var(--text);
+  --text-secondary: var(--muted);
+  --text-muted: var(--faint);
+  --warning: var(--warn);
+  --msg-user-bg: var(--accent-soft);
+  --msg-assistant-bg: var(--surface-2);
+  --msg-system-border: var(--line-strong);
+  --code-bg: var(--surface-2);
   --text-on-accent: #ffffff;
   --text-on-overlay: #ffffff;
-  --accent-info: #4a90d9;
+  --accent-info: var(--info);
 
-  // RGB components (for rgba() usage)
-  --accent-primary-rgb: 51, 51, 51;
-  --accent-hover-rgb: 26, 26, 26;
-  --text-primary-rgb: 26, 26, 26;
-  --text-muted-rgb: 153, 153, 153;
-  --success-rgb: 46, 125, 50;
-  --error-rgb: 198, 40, 40;
-  --warning-rgb: 245, 127, 23;
-  --accent-info-rgb: 74, 144, 217;
+  --accent-primary-rgb: 82, 86, 212;
+  --accent-hover-rgb: 67, 71, 196;
+  --text-primary-rgb: 35, 39, 53;
+  --text-muted-rgb: 154, 160, 176;
+  --success-rgb: 15, 122, 90;
+  --error-rgb: 211, 59, 59;
+  --warning-rgb: 180, 83, 9;
+  --accent-info-rgb: 11, 116, 184;
+
+  --font-ui: 'Plus Jakarta Sans', system-ui, sans-serif;
 }
 
-.dark {
-  // Backgrounds
-  --bg-primary: #1a1a1a;
-  --bg-secondary: #252525;
-  --bg-sidebar: #202020;
-  --bg-card: #333333;
-  --bg-card-hover: #333333;
-  --bg-input: #2a2a2a;
-
-  // Borders
-  --border-color: #3a3a3a;
-  --border-light: #333333;
-
-  // Accent
-  --accent-primary: #e0e0e0;
-  --accent-hover: #f5f5f5;
-  --accent-muted: #888888;
-
-  // Text
-  --text-primary: #f0f0f0;
-  --text-secondary: #c0c0c0;
-  --text-muted: #888888;
-
-  // Status
-  --success: #66bb6a;
-  --error: #ef5350;
-  --warning: #ffb74d;
-
-  // Message bubbles
-  --msg-user-bg: #252525;
-  --msg-assistant-bg: #252525;
-  --msg-system-border: #555555;
-
-  // Code
-  --code-bg: #1e1e1e;
-
-  // Utility
-  --text-on-accent: #1a1a1a;
-  --text-on-overlay: #ffffff;
-  --accent-info: #6ba3d6;
-
-  // RGB components
-  --accent-primary-rgb: 240, 240, 240;
-  --accent-hover-rgb: 245, 245, 245;
-  --text-primary-rgb: 240, 240, 240;
-  --text-muted-rgb: 136, 136, 136;
-  --success-rgb: 102, 187, 106;
-  --error-rgb: 239, 83, 80;
-  --warning-rgb: 255, 183, 77;
-  --accent-info-rgb: 107, 163, 214;
-}
-
-.comic {
-  // Borders — bold comic outlines
-  --border-color: #1a1a1a;
-  --border-light: #555555;
-  --msg-system-border: #1a1a1a;
-
-  // Comic-specific
-  --font-ui: 'Comic Neue', 'ZCOOL KuaiLe', 'Zen Maru Gothic', 'Gaegu', cursive, sans-serif;
-  --comic-border-width: 2.5px;
-  --comic-shadow: 3px 3px 0px rgba(0, 0, 0, 0.15);
-}
-
-.dark.comic {
-  // Borders — brighter outlines on dark
-  --border-color: #666666;
-  --border-light: #555555;
-  --msg-system-border: #888888;
-
-  --comic-shadow: 3px 3px 0px rgba(255, 255, 255, 0.08);
-}
-
-// ─── SCSS Variables (delegate to CSS custom properties) ────────
-
-// Backgrounds
+// SCSS aliases
 $bg-primary: var(--bg-primary);
 $bg-secondary: var(--bg-secondary);
 $bg-sidebar: var(--bg-sidebar);
 $bg-card: var(--bg-card);
 $bg-card-hover: var(--bg-card-hover);
 $bg-input: var(--bg-input);
-
-// Borders
 $border-color: var(--border-color);
 $border-light: var(--border-light);
-
-// Accent
 $accent-primary: var(--accent-primary);
 $accent-hover: var(--accent-hover);
 $accent-muted: var(--accent-muted);
-
-// Text
 $text-primary: var(--text-primary);
 $text-secondary: var(--text-secondary);
 $text-muted: var(--text-muted);
-
-// Status
 $success: var(--success);
 $error: var(--error);
 $warning: var(--warning);
-$info: $accent-primary;
-
-// Message bubbles
+$info: var(--info);
 $msg-user-bg: var(--msg-user-bg);
 $msg-assistant-bg: var(--msg-assistant-bg);
 $msg-system-border: var(--msg-system-border);
-
-// Code
 $code-bg: var(--code-bg);
+$font-ui: var(--font-ui);
+$font-code: 'JetBrains Mono', ui-monospace, monospace;
 
-// Typography
-$font-ui: var(--font-ui, 'Inter', system-ui, -apple-system, sans-serif);
-$font-code: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-
-// Layout
 $sidebar-width: 240px;
 $sidebar-collapsed-width: 64px;
 $header-height: 60px;
 $breakpoint-mobile: 768px;
 
-// Radius
-$radius-sm: 6px;
-$radius-md: 10px;
-$radius-lg: 14px;
+$radius-sm: 9px;
+$radius-md: 12px;
+$radius-lg: 18px;
 
-// Transition
 $transition-fast: 0.15s ease;
 $transition-normal: 0.25s ease;

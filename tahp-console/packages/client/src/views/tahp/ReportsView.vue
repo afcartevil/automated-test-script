@@ -2,10 +2,13 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  NCard, NButton, NSpin, NEmpty, NTag, NBreadcrumb, NBreadcrumbItem,
-  NDescriptions, NDescriptionsItem, NScrollbar, NDivider, NSpace,
-  NGrid, NGridItem, NStatistic, NAlert, useMessage,
+  NSpin, NEmpty, NDescriptions, NDescriptionsItem, NScrollbar, NDivider,
+  NAlert, useMessage,
 } from 'naive-ui'
+import EaPageHead from '@/components/layout/EaPageHead.vue'
+import EaCard from '@/components/layout/EaCard.vue'
+import EaPill from '@/components/layout/EaPill.vue'
+import EaSectionTitle from '@/components/layout/EaSectionTitle.vue'
 import { listTaskReports, getTaskReport, type TaskReportSummary, type TaskReportDetail, type AuditCheckItem } from '@/api/tahp/reports'
 
 const route  = useRoute()
@@ -112,37 +115,36 @@ const AUDIT_STATUS_LABEL: Record<AuditCheckItem['status'], string> = {
   unknown: 'UNKNOWN',
 }
 
-function auditStatusTagType(status: AuditCheckItem['status']): 'success' | 'error' | 'warning' | 'default' | 'info' {
+function auditPillVariant(status: AuditCheckItem['status']): 'ok' | 'err' | 'warn' | 'muted' | 'info' {
   switch (status) {
-    case 'pass': return 'success'
-    case 'fail': return 'error'
-    case 'warn': return 'warning'
-    case 'na': return 'info'
-    default: return 'default'
+    case 'pass': return 'ok'
+    case 'fail': return 'err'
+    case 'warn': return 'warn'
+    case 'na': return 'muted'
+    default: return 'info'
   }
 }
 </script>
 
 <template>
-  <div class="tahp-reports">
-    <!-- 页头面包屑 -->
-    <div class="page-header">
-      <NBreadcrumb>
-        <NBreadcrumbItem @click="backToList" style="cursor:pointer">报告列表</NBreadcrumbItem>
-        <NBreadcrumbItem v-if="mode === 'detail'">
-          <code style="font-size:12px">{{ taskId }}</code>
-        </NBreadcrumbItem>
-      </NBreadcrumb>
-      <div class="header-row">
-        <h1>{{ mode === 'detail' ? '任务报告详情' : '任务报告' }}</h1>
-        <NSpace>
-          <NButton size="small" @click="loadData">刷新</NButton>
-          <NButton v-if="mode === 'detail'" size="small" @click="backToList">← 返回列表</NButton>
-          <NButton v-else size="small" type="primary" @click="router.push({ name: 'tahp.adapt-debug' })">启动新任务</NButton>
-        </NSpace>
-      </div>
-      <p class="subtitle">{{ mode === 'detail' ? 'AI 适配执行详情、分析结果与文件修改记录' : '所有已完成任务的执行报告汇总' }}</p>
-    </div>
+  <div class="page page-wide">
+    <EaPageHead
+      :title="mode === 'detail' ? '任务报告详情' : '任务报告'"
+      :subtitle="mode === 'detail' ? 'AI 适配执行详情、分析结果与文件修改记录' : '所有已完成任务的执行报告汇总，含文件修改与 AI 自检审核'"
+    >
+      <template v-if="mode === 'detail'" #breadcrumb>
+        <div class="rep-breadcrumb">
+          <a class="rep-crumb-link" @click.prevent="backToList">报告列表</a>
+          <span class="rep-crumb-sep">/</span>
+          <code class="rep-crumb-id">{{ taskId }}</code>
+        </div>
+      </template>
+      <template #actions>
+        <button type="button" class="ea-btn-ghost ea-btn-sm" @click="loadData">刷新</button>
+        <button v-if="mode === 'detail'" type="button" class="ea-btn-ghost ea-btn-sm" @click="backToList">← 返回列表</button>
+        <button v-else type="button" class="ea-btn-primary ea-btn-sm" @click="router.push({ name: 'tahp.adapt-debug' })">启动新任务</button>
+      </template>
+    </EaPageHead>
 
     <!-- ── 列表模式 ─────────────────────────────────────────────────────── -->
     <template v-if="mode === 'list'">
@@ -152,53 +154,45 @@ function auditStatusTagType(status: AuditCheckItem['status']): 'success' | 'erro
           style="margin-top: 60px"
         >
           <template #extra>
-            <NButton type="primary" @click="router.push({ name: 'tahp.adapt-debug' })">启动第一个任务</NButton>
+            <button type="button" class="ea-btn-primary" @click="router.push({ name: 'tahp.adapt-debug' })">启动第一个任务</button>
           </template>
         </NEmpty>
-        <NGrid v-else :cols="3" :x-gap="16" :y-gap="16" responsive="screen" item-responsive>
-          <NGridItem
+        <div v-else class="ea-rep-grid">
+          <EaCard
             v-for="s in summaries"
             :key="s.task_id"
-            span="3 m:1"
+            tag="button"
+            class="ea-rep-card rep-card"
+            @click="openTask(s.task_id)"
           >
-            <NCard
-              hoverable
-              class="report-card"
-              @click="openTask(s.task_id)"
-            >
-              <template #header>
-                <div class="card-header">
-                  <div class="card-title">
-                    <NTag size="small" type="success">已完成</NTag>
-                    <span class="module-tag">{{ s.module || '-' }}</span>
-                  </div>
-                  <span class="card-time">{{ fmtRelTime(s.mtime) }}</span>
-                </div>
-              </template>
-              <div class="card-task-id"><code>{{ s.task_id }}</code></div>
-              <div class="card-stats">
-                <div class="stat-item">
-                  <span class="stat-label">域</span>
-                  <span class="stat-value">{{ s.domain_label || DOMAIN_LABELS[s.domain || ''] || s.domain || '-' }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">耗时</span>
-                  <span class="stat-value">{{ fmtDuration(s.duration_ms) }}</span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">修改文件</span>
-                  <span class="stat-value" :class="s.files_modified > 0 ? 'highlight' : ''">
-                    {{ s.files_modified }} 个
-                  </span>
-                </div>
-                <div class="stat-item">
-                  <span class="stat-label">完成时间</span>
-                  <span class="stat-value small">{{ fmtTime(s.completed_at) }}</span>
-                </div>
+            <div class="rc-top">
+              <div class="ea-row">
+                <EaPill variant="ok">已完成</EaPill>
+                <span class="module-tag">{{ s.module || '-' }}</span>
               </div>
-            </NCard>
-          </NGridItem>
-        </NGrid>
+              <span class="card-time">{{ fmtRelTime(s.mtime) }}</span>
+            </div>
+            <div class="rc-id"><code>{{ s.task_id }}</code></div>
+            <div class="rep-stats">
+              <div class="rs">
+                <span class="rs-k">域</span>
+                <span class="rs-v">{{ s.domain_label || DOMAIN_LABELS[s.domain || ''] || s.domain || '-' }}</span>
+              </div>
+              <div class="rs">
+                <span class="rs-k">耗时</span>
+                <span class="rs-v">{{ fmtDuration(s.duration_ms) }}</span>
+              </div>
+              <div class="rs">
+                <span class="rs-k">修改文件</span>
+                <span class="rs-v" :class="{ hl: s.files_modified > 0 }">{{ s.files_modified }} 个</span>
+              </div>
+              <div class="rs">
+                <span class="rs-k">完成时间</span>
+                <span class="rs-v rs-v-sm">{{ fmtTime(s.completed_at) }}</span>
+              </div>
+            </div>
+          </EaCard>
+        </div>
       </NSpin>
     </template>
 
@@ -209,100 +203,101 @@ function auditStatusTagType(status: AuditCheckItem['status']): 'success' | 'erro
           <NAlert type="error" title="报告不存在">
             未找到任务 <code>{{ taskId }}</code> 的报告。可能该任务尚未完成，或报告文件不存在。
           </NAlert>
-          <NButton style="margin-top:16px" @click="backToList">返回列表</NButton>
+          <button type="button" class="ea-btn-ghost ea-mt16" @click="backToList">返回列表</button>
         </div>
 
         <div v-if="detail" class="detail-layout">
           <!-- 任务元信息 -->
-          <NCard title="任务信息" :bordered="false" class="detail-card">
-            <NGrid :cols="4" :x-gap="16" :y-gap="8" responsive="screen" item-responsive>
-              <NGridItem span="4 m:1">
-                <NStatistic label="模块" :value="detail.module || '-'" />
-              </NGridItem>
-              <NGridItem span="4 m:1">
-                <NStatistic label="域" :value="domainDisplay(detail)" />
-              </NGridItem>
-              <NGridItem span="4 m:1">
-                <NStatistic label="耗时" :value="fmtDuration(detail.duration_ms)" />
-              </NGridItem>
-              <NGridItem span="4 m:1">
-                <NStatistic label="修改文件数" :value="String(detail.files_modified?.length ?? 0)" />
-              </NGridItem>
-            </NGrid>
+          <EaCard class="detail-block">
+            <EaSectionTitle class="ea-mb0">任务信息</EaSectionTitle>
+            <div class="ea-meta-grid ea-mt16">
+              <div class="mg">
+                <div class="mg-k">模块</div>
+                <div class="mg-v mg-v-sm">{{ detail.module || '-' }}</div>
+              </div>
+              <div class="mg">
+                <div class="mg-k">域</div>
+                <div class="mg-v mg-v-sm">{{ domainDisplay(detail) }}</div>
+              </div>
+              <div class="mg">
+                <div class="mg-k">耗时</div>
+                <div class="mg-v mg-v-sm">{{ fmtDuration(detail.duration_ms) }}</div>
+              </div>
+              <div class="mg">
+                <div class="mg-k">修改文件数</div>
+                <div class="mg-v mg-v-sm">{{ detail.files_modified?.length ?? 0 }}</div>
+              </div>
+            </div>
 
             <NDivider style="margin: 16px 0 12px" />
             <NDescriptions :column="2" label-placement="left" size="small" bordered>
               <NDescriptionsItem label="Task ID" :span="2">
-                <code style="font-size:11px;word-break:break-all">{{ detail.task_id }}</code>
+                <code class="mono-sm">{{ detail.task_id }}</code>
               </NDescriptionsItem>
               <NDescriptionsItem label="启动时间">{{ fmtTime(detail.started_at) }}</NDescriptionsItem>
               <NDescriptionsItem label="完成时间">{{ fmtTime(detail.completed_at) }}</NDescriptionsItem>
               <NDescriptionsItem v-if="detail.correction_of" label="纠偏自" :span="2">
-                <code style="font-size:11px">{{ detail.correction_of }}</code>
-                <NButton size="tiny" style="margin-left:8px" @click="openTask(detail.correction_of!)">查看原任务</NButton>
+                <code class="mono-sm">{{ detail.correction_of }}</code>
+                <button type="button" class="ea-btn-ghost ea-btn-sm" style="margin-left:8px" @click="openTask(detail.correction_of!)">查看原任务</button>
               </NDescriptionsItem>
             </NDescriptions>
-          </NCard>
+          </EaCard>
 
           <!-- 附加上下文 -->
-          <NCard v-if="detail.extra_context" title="附加上下文" :bordered="false" class="detail-card">
+          <EaCard v-if="detail.extra_context" class="detail-block">
+            <EaSectionTitle>附加上下文</EaSectionTitle>
             <pre class="content-pre">{{ detail.extra_context }}</pre>
-          </NCard>
+          </EaCard>
 
           <!-- 使用的 Skill（完整路径） -->
-          <NCard
-            v-if="detail.skills_used?.length"
-            title="使用的 Skill"
-            :bordered="false"
-            class="detail-card"
-          >
-            <div v-for="sk in detail.skills_used" :key="sk.skill_id + sk.path" class="skill-ref-row">
-              <NTag size="small" type="info">{{ sk.skill_id }}</NTag>
+          <EaCard v-if="detail.skills_used?.length" class="detail-block">
+            <EaSectionTitle>使用的 Skill</EaSectionTitle>
+            <div v-for="sk in detail.skills_used" :key="sk.skill_id + sk.path" class="file-row">
+              <EaPill variant="info">{{ sk.skill_id }}</EaPill>
               <code class="skill-path">{{ sk.path }}</code>
-              <NTag v-if="sk.source" size="tiny" quaternary>{{ sk.source }}</NTag>
+              <EaPill v-if="sk.source" variant="muted">{{ sk.source }}</EaPill>
             </div>
-          </NCard>
+          </EaCard>
 
           <!-- 已修改文件 -->
-          <NCard v-if="detail.files_modified?.length" title="已修改文件" :bordered="false" class="detail-card">
+          <EaCard v-if="detail.files_modified?.length" class="detail-block">
+            <EaSectionTitle>已修改文件</EaSectionTitle>
             <div
               v-for="(f, idx) in (detail.file_changes?.length ? detail.file_changes : detail.files_modified!.map(p => ({ path: p, action: 'modify', tool: '' })))"
               :key="f.path + idx"
-              class="file-path"
+              class="file-row"
             >
               <span class="file-icon">{{ f.action === 'create' ? '🆕' : '✅' }}</span>
-              <div class="file-path-main">
-                <code>{{ f.path }}</code>
-                <span v-if="f.tool" class="file-meta">{{ f.action === 'create' ? '新建' : '修改' }} · {{ f.tool }}</span>
-              </div>
+              <code>{{ f.path }}</code>
+              <span v-if="f.tool" class="f-meta">{{ f.action === 'create' ? '新建' : '修改' }} · {{ f.tool }}</span>
             </div>
-          </NCard>
-          <NCard v-else title="已修改文件" :bordered="false" class="detail-card">
+          </EaCard>
+          <EaCard v-else class="detail-block">
+            <EaSectionTitle>已修改文件</EaSectionTitle>
             <NEmpty size="small" description="本次任务未修改任何文件（纯分析结果）" />
-          </NCard>
+          </EaCard>
 
           <!-- 输入文档摘要 -->
-          <NCard v-if="detail.document_content" title="输入文档（摘要）" :bordered="false" class="detail-card">
+          <EaCard v-if="detail.document_content" class="detail-block">
+            <EaSectionTitle>输入文档（摘要）</EaSectionTitle>
             <NScrollbar style="max-height:200px">
               <pre class="content-pre">{{ detail.document_content }}</pre>
             </NScrollbar>
-          </NCard>
+          </EaCard>
 
           <!-- 适配自检审核（报告末尾章节） -->
-          <NCard
-            v-if="detail.audit_report"
-            title="自检审核结果"
-            :bordered="false"
-            class="detail-card llm-card"
-          >
-            <template #header-extra>
-              <NTag v-if="detail.audit_skill" size="small" type="warning">{{ detail.audit_skill }}</NTag>
-              <NTag size="small" type="info" style="margin-left:6px">{{ detail.audit_report.length }} 字</NTag>
-            </template>
+          <EaCard v-if="detail.audit_report" class="detail-block llm-card llm-card-warn">
+            <div class="ea-row ea-between">
+              <EaSectionTitle class="ea-mb0">自检审核结果</EaSectionTitle>
+              <div class="ea-row" style="gap:6px">
+                <EaPill v-if="detail.audit_skill" variant="warn">{{ detail.audit_skill }}</EaPill>
+                <EaPill variant="info">{{ detail.audit_report.length }} 字</EaPill>
+              </div>
+            </div>
 
             <!-- 审核摘要表 -->
-            <div v-if="detail.audit_summary?.length" class="audit-summary-table-wrap">
-              <table class="audit-summary-table">
+            <div v-if="detail.audit_summary?.length" class="audit-table-wrap">
+              <table class="audit-table">
                 <thead>
                   <tr>
                     <th>检查环节</th>
@@ -312,13 +307,11 @@ function auditStatusTagType(status: AuditCheckItem['status']): 'success' | 'erro
                 </thead>
                 <tbody>
                   <tr v-for="row in detail.audit_summary" :key="row.key">
-                    <td class="audit-col-label">{{ row.label }}</td>
+                    <td class="audit-col-label"><b>{{ row.label }}</b></td>
                     <td class="audit-col-status">
-                      <NTag size="small" :type="auditStatusTagType(row.status)" :bordered="false">
-                        {{ AUDIT_STATUS_LABEL[row.status] }}
-                      </NTag>
+                      <EaPill :variant="auditPillVariant(row.status)">{{ AUDIT_STATUS_LABEL[row.status] }}</EaPill>
                     </td>
-                    <td class="audit-col-reason">{{ row.reason }}</td>
+                    <td class="audit-col-reason a-reason">{{ row.reason }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -330,105 +323,210 @@ function auditStatusTagType(status: AuditCheckItem['status']): 'success' | 'erro
             <NScrollbar style="max-height:480px">
               <pre class="content-pre llm-pre">{{ detail.audit_report }}</pre>
             </NScrollbar>
-          </NCard>
+          </EaCard>
 
           <!-- AI 分析结果 -->
-          <NCard title="AI 分析结果" :bordered="false" class="detail-card llm-card">
-            <template #header-extra>
-              <NTag size="small" type="info">{{ detail.llm_response ? detail.llm_response.length + ' 字' : '无' }}</NTag>
-            </template>
+          <EaCard class="detail-block llm-card llm-card-accent">
+            <div class="ea-row ea-between">
+              <EaSectionTitle class="ea-mb0">AI 分析结果</EaSectionTitle>
+              <EaPill variant="info">{{ detail.llm_response ? detail.llm_response.length + ' 字' : '无' }}</EaPill>
+            </div>
             <NEmpty v-if="!detail.llm_response" size="small" description="无 AI 输出内容" />
             <NScrollbar v-else style="max-height:600px">
               <pre class="content-pre llm-pre">{{ detail.llm_response }}</pre>
             </NScrollbar>
-          </NCard>
+          </EaCard>
 
           <!-- 操作按钮 -->
-          <NSpace style="margin-top:8px">
-            <NButton type="primary"
-              @click="router.push({ name: detail.domain === 'bug_analysis' ? 'tahp.bug-analysis' : 'tahp.adapt-debug', query: { module: detail.module, domain: detail.domain } })">
+          <div class="ea-row" style="gap:10px;margin-top:8px">
+            <button
+              type="button"
+              class="ea-btn-primary"
+              @click="router.push({ name: detail.domain === 'bug_analysis' ? 'tahp.bug-analysis' : 'tahp.adapt-debug', query: { module: detail.module, domain: detail.domain } })"
+            >
               以相同参数重新执行
-            </NButton>
-            <NButton @click="backToList">返回报告列表</NButton>
-          </NSpace>
+            </button>
+            <button type="button" class="ea-btn-ghost" @click="backToList">返回报告列表</button>
+          </div>
         </div>
       </NSpin>
     </template>
   </div>
 </template>
 
-<style scoped>
-.tahp-reports { padding: 24px; max-width: 1400px; margin: 0 auto; }
-
-.page-header { margin-bottom: 20px; }
-.header-row { display: flex; align-items: center; justify-content: space-between; margin: 6px 0 2px; }
-.header-row h1 { margin: 0; font-size: 22px; font-weight: 600; }
-.subtitle { color: #888; margin: 0; font-size: 13px; }
-
-/* ── 列表卡片 ── */
-.report-card { cursor: pointer; transition: box-shadow .15s; }
-.report-card:hover { box-shadow: 0 4px 18px rgba(0,0,0,.12); }
-.card-header { display: flex; align-items: center; justify-content: space-between; }
-.card-title { display: flex; align-items: center; gap: 8px; }
-.module-tag { font-size: 12px; font-weight: 600; color: var(--n-text-color-3, #888); }
-.card-time { font-size: 11px; color: #aaa; }
-.card-task-id { font-size: 11px; color: #888; margin-bottom: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; }
-.stat-item { display: flex; flex-direction: column; gap: 2px; }
-.stat-label { font-size: 11px; color: #aaa; }
-.stat-value { font-size: 13px; font-weight: 500; color: var(--n-text-color, #333); }
-.stat-value.small { font-size: 11px; font-weight: 400; }
-.stat-value.highlight { color: #18a058; font-weight: 600; }
-
-/* ── 详情布局 ── */
-.detail-layout { display: flex; flex-direction: column; gap: 16px; }
-.detail-card { border-radius: 8px; }
-.llm-card { border-left: 3px solid #2080f0; }
-.skill-ref-row {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 8px 0; border-bottom: 1px solid var(--n-border-color, #eee);
+<style scoped lang="scss">
+.rep-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
 }
-.skill-ref-row:last-child { border-bottom: none; }
-.skill-path { font-size: 12px; color: #2080f0; word-break: break-all; flex: 1; min-width: 200px; }
 
-.file-path { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--n-border-color, #eee); }
-.file-path:last-child { border-bottom: none; }
-.file-icon { flex-shrink: 0; margin-top: 2px; }
-.file-path-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.file-path code { font-size: 12px; color: #10b981; word-break: break-all; }
-.file-meta { font-size: 11px; color: #888; }
+.rep-crumb-link {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+  font-weight: 600;
+
+  &:hover { text-decoration: underline; }
+}
+
+.rep-crumb-sep { color: var(--faint); }
+.rep-crumb-id { font-size: 12px; color: var(--muted); }
+
+.rep-card {
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+}
+
+.rc-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.module-tag {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.card-time {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.rc-id {
+  font-size: 11px;
+  color: var(--faint);
+  margin-bottom: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  code { font-family: var(--font-code, 'JetBrains Mono', monospace); }
+}
+
+.rep-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
+
+.rs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rs-k { font-size: 11px; color: var(--faint); }
+.rs-v { font-size: 13px; font-weight: 600; color: var(--text); }
+.rs-v-sm { font-size: 11px; font-weight: 400; }
+.rs-v.hl { color: var(--success); font-weight: 700; }
+
+.detail-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.detail-block { margin-bottom: 0; }
+
+.mg-v-sm { font-size: 15px !important; }
+
+.mono-sm {
+  font-size: 11px;
+  word-break: break-all;
+  font-family: var(--font-code, 'JetBrains Mono', monospace);
+}
+
+.llm-card { border-left: 3px solid var(--accent); }
+.llm-card-warn { border-left-color: var(--warn); }
+.llm-card-accent { border-left-color: var(--accent); }
+
+.skill-path {
+  font-size: 12px;
+  color: var(--accent);
+  word-break: break-all;
+  flex: 1;
+  min-width: 200px;
+  font-family: var(--font-code, 'JetBrains Mono', monospace);
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+
+  &:last-child { border-bottom: none; }
+
+  code {
+    font-family: var(--font-code, 'JetBrains Mono', monospace);
+    color: var(--success);
+    word-break: break-all;
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+  }
+}
+
+.f-meta {
+  color: var(--muted);
+  font-size: 11px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.file-icon { flex-shrink: 0; }
 
 .content-pre {
   margin: 0;
   font-size: 12px;
-  font-family: 'Consolas', 'Menlo', monospace;
+  font-family: var(--font-code, 'JetBrains Mono', monospace);
   white-space: pre-wrap;
   word-break: break-all;
   line-height: 1.6;
-  color: var(--n-text-color, #333);
+  color: var(--text);
 }
+
 .llm-pre { font-size: 13px; line-height: 1.7; }
 
-.audit-summary-table-wrap { overflow-x: auto; margin-bottom: 4px; }
-.audit-summary-table {
+.audit-table-wrap { overflow-x: auto; margin-top: 8px; }
+
+.audit-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
 }
-.audit-summary-table th,
-.audit-summary-table td {
+
+.audit-table th,
+.audit-table td {
   padding: 10px 12px;
-  border: 1px solid var(--n-border-color, #eee);
+  border: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
 }
-.audit-summary-table th {
-  background: var(--n-table-header-color, rgba(0,0,0,.02));
-  font-weight: 600;
+
+.audit-table th {
+  background: var(--surface-2);
+  font-weight: 700;
   white-space: nowrap;
 }
-.audit-col-label { width: 168px; font-weight: 500; white-space: nowrap; }
+
+.audit-col-label { width: 168px; white-space: nowrap; }
 .audit-col-status { width: 88px; }
-.audit-col-reason { color: var(--n-text-color-2, #666); line-height: 1.5; }
-.audit-detail-label { font-size: 12px; color: #888; margin-bottom: 8px; }
+.a-reason { color: var(--muted); line-height: 1.5; }
+
+.audit-detail-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
 </style>

@@ -3,6 +3,9 @@ import { ref, computed, reactive, watch, nextTick, onMounted } from 'vue'
 import { NButton, NSelect, NInput, NProgress, NTag, NSpin, NModal, NTabs, NTabPane, NForm, NFormItem, NSwitch, useMessage } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
+import EaPageHead from '@/components/layout/EaPageHead.vue'
+import EaCard from '@/components/layout/EaCard.vue'
+import EaPill from '@/components/layout/EaPill.vue'
 import { useModelProviderReadiness } from '@/composables/useModelProviderReadiness'
 import { useTahpTasksStore } from '@/stores/tahp/tasks'
 import type { TahpModule } from '@/constants/tahp-modules'
@@ -644,29 +647,6 @@ const llmResponse = computed(() =>
     .join('')
 )
 
-// 结构化事件（phase、step、completed、failed）用于侧边栏状态
-const structuredEvents = computed(() =>
-  stream.value.filter(ev =>
-    ev.type !== 'task.message' &&
-    ev.type !== 'task.skill_use' &&
-    ev.type !== 'task.file_change' &&
-    ev.type !== 'task.plan' &&
-    ev.type !== 'task.tool_completed',
-  )
-)
-
-const agentSkillEvents = computed(() =>
-  stream.value.filter(ev => ev.type === 'task.skill_use')
-)
-
-const agentFileEvents = computed(() =>
-  stream.value.filter(ev => ev.type === 'task.file_change')
-)
-
-const agentPlanEvents = computed(() =>
-  stream.value.filter(ev => ev.type === 'task.plan' || (ev.type === 'task.message' && ev.payload?.level === 'reasoning'))
-)
-
 const isRunning = computed(() =>
   taskStatus.value !== '' &&
   taskStatus.value !== 'COMPLETED' &&
@@ -674,6 +654,195 @@ const isRunning = computed(() =>
   taskStatus.value !== 'completed' &&
   taskStatus.value !== 'failed'
 )
+
+type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'warning'
+
+interface AdaptExecStep {
+  step_id: string
+  label: string
+  status: StepStatus
+  message?: string
+  ts?: number
+}
+
+interface FileChangeRow {
+  path: string
+  tool?: string
+  status?: string
+  ts?: number
+}
+
+const ADAPT_PIPELINE_STEPS = [
+  { step_id: 'task-start', label: '创建任务' },
+  { step_id: 'prepare', label: '准备指令' },
+  { step_id: 'connect-agent', label: '连接 Agent Bridge' },
+  { step_id: 'read-skill', label: '读取 Skill' },
+  { step_id: 'execute-adapt', label: '执行适配' },
+  { step_id: 'self-audit', label: '自检审核' },
+  { step_id: 'finalize', label: '生成报告' },
+] as const
+
+const ADAPT_PIPELINE_STEP_IDS = ADAPT_PIPELINE_STEPS.map(s => s.step_id)
+
+/** 预编排执行步骤：任务启动即展示，由事件流驱动状态更新 */
+const executionSteps = computed((): AdaptExecStep[] => {
+  const steps: AdaptExecStep[] = ADAPT_PIPELINE_STEPS.map(d => ({
+    ...d,
+    status: 'pending' as StepStatus,
+  }))
+  const byId = Object.fromEntries(steps.map(s => [s.step_id, s])) as Record<string, AdaptExecStep>
+
+  if (!launchedTaskId.value) return steps
+
+  const rank: Record<StepStatus, number> = {
+    pending: 0,
+    running: 1,
+    warning: 2,
+    failed: 3,
+    completed: 4,
+  }
+  const setStep = (id: string, status: StepStatus, message?: string, ts?: number, force = false) => {
+    const s = byId[id]
+    if (!s) return
+    if (force || rank[status] >= rank[s.status] || (status === 'running' && s.status === 'pending')) {
+      s.status = status
+      if (message) s.message = message
+      if (ts) s.ts = ts
+    }
+  }
+
+  if (!stream.value.length) {
+    if (agentLaunching.value || isRunning.value || taskStatus.value === 'starting') {
+      setStep('task-start', 'running', '正在连接 TaskStream...', undefined, true)
+    }
+    return steps
+  }
+
+  let primarySkill = ''
+  for (const ev of stream.value) {
+    if (ev.type === 'task.started') {
+      primarySkill = String((ev.payload?.related_skills as string[] | undefined)?.[0] || '')
+      setStep('task-start', 'completed', String(ev.payload?.message || '任务已创建'), ev.ts, true)
+      setStep('prepare', 'running', '准备 Agent 指令...', ev.ts, true)
+    }
+    if (ev.type === 'task.phase') {
+      const phase = String(ev.payload?.phase || '')
+      const msg = String(ev.payload?.message || '')
+      if (phase === 'PREPARING') setStep('prepare', 'running', msg, ev.ts)
+      if (phase === 'CONNECTING_AGENT') {
+        setStep('prepare', 'completed', undefined, ev.ts, true)
+        setStep('connect-agent', 'running', msg, ev.ts, true)
+      }
+      if (phase === 'EXECUTING') {
+        setStep('connect-agent', 'completed', undefined, ev.ts, true)
+        setStep('read-skill', 'running', primarySkill ? `读取 ${primarySkill}` : '读取主控 Skill', ev.ts, true)
+        setStep('execute-adapt', 'running', msg, ev.ts, true)
+      }
+      if (phase === 'COMPLETED') setStep('finalize', 'running', msg, ev.ts)
+    }
+    if (ev.type === 'task.step') {
+      const sid = String(ev.payload?.step_id || '')
+      const st = (ev.payload?.status as StepStatus) || 'completed'
+      const msg = String(ev.payload?.message || '')
+      if (sid === 'connect-agent') {
+        setStep('connect-agent', st === 'completed' ? 'completed' : st, msg, ev.ts, true)
+      }
+      if (sid === 'agent-run') {
+        setStep('read-skill', 'completed', undefined, ev.ts, true)
+        setStep('execute-adapt', st === 'completed' ? 'completed' : st, msg, ev.ts, true)
+      }
+      if (sid === 'self-audit') setStep('self-audit', st, msg, ev.ts, true)
+    }
+    if (ev.type === 'task.skill_use') {
+      const skill = String(ev.payload?.skill_id || '')
+      if (skill === 'read_file' || skill === 'skill_view' || skill === 'Read') {
+        const args = String(ev.payload?.args || ev.payload?.message || '')
+        if (!primarySkill || args.includes(primarySkill) || args.includes('SKILL.md')) {
+          setStep('read-skill', 'running', String(ev.payload?.message || skill), ev.ts)
+        }
+      }
+      if (byId['execute-adapt']?.status === 'pending') {
+        setStep('connect-agent', 'completed', undefined, ev.ts, true)
+        setStep('execute-adapt', 'running', 'Agent 正在调用工具...', ev.ts, true)
+      }
+    }
+    if (ev.type === 'task.completed') {
+      setStep('execute-adapt', 'completed', undefined, ev.ts, true)
+      if (byId['self-audit']?.status === 'pending') {
+        setStep('self-audit', 'warning', '未检测到审核章节', ev.ts, true)
+      }
+      setStep('finalize', 'completed', String(ev.payload?.message || '报告已生成'), ev.ts, true)
+    }
+    if (ev.type === 'task.failed') {
+      const errMsg = String(ev.payload?.message || ev.payload?.error || '任务失败')
+      for (const s of steps) {
+        if (s.status === 'running') s.status = 'failed'
+      }
+      if (byId['execute-adapt']?.status !== 'completed') {
+        setStep('execute-adapt', 'failed', errMsg, ev.ts, true)
+      } else {
+        setStep('finalize', 'failed', errMsg, ev.ts, true)
+      }
+    }
+  }
+
+  // 已有后续步骤推进时，前面的步骤统一显示为已完成（避免长期灰色/蓝色）
+  let furthest = -1
+  for (let i = 0; i < ADAPT_PIPELINE_STEP_IDS.length; i++) {
+    const st = byId[ADAPT_PIPELINE_STEP_IDS[i]]?.status
+    if (st && st !== 'pending') furthest = i
+  }
+  for (let i = 0; i < furthest; i++) {
+    const s = byId[ADAPT_PIPELINE_STEP_IDS[i]]
+    if (s && (s.status === 'pending' || s.status === 'running')) {
+      s.status = 'completed'
+    }
+  }
+
+  return steps
+})
+
+const agentRunError = computed(() => {
+  const failed = [...stream.value].reverse().find(e => e.type === 'task.failed')
+  if (failed) return String(failed.payload?.message || failed.payload?.error || '')
+  return ''
+})
+
+const agentSkillEvents = computed(() =>
+  stream.value.filter(ev => ev.type === 'task.skill_use')
+)
+
+const agentFileEvents = computed((): FileChangeRow[] => {
+  const byPath = new Map<string, FileChangeRow>()
+  for (const ev of stream.value) {
+    if (ev.type === 'task.file_change') {
+      const p = String(ev.payload?.path || '')
+      if (!p) continue
+      byPath.set(p, {
+        path: p,
+        tool: String(ev.payload?.tool || ''),
+        status: String(ev.payload?.status || ev.payload?.action || 'modify'),
+        ts: ev.ts,
+      })
+    }
+    if (ev.type === 'task.completed') {
+      const files = ev.payload?.files_modified as string[] | undefined
+      if (Array.isArray(files)) {
+        for (const p of files) {
+          if (!p) continue
+          const prev = byPath.get(p)
+          byPath.set(p, {
+            path: p,
+            tool: prev?.tool || 'report',
+            status: 'completed',
+            ts: ev.ts,
+          })
+        }
+      }
+    }
+  }
+  return Array.from(byPath.values()).sort((a, b) => (a.ts || 0) - (b.ts || 0))
+})
 
 const statusTagType = computed<'info' | 'success' | 'error' | 'warning'>(() => {
   const s = taskStatus.value.toUpperCase()
@@ -877,6 +1046,7 @@ async function launchAgentAdapt() {
     const tid = data.task_id
     if (tid) {
       launchedTaskId.value = tid
+      tasksStore.trackTask(tid)
       message.success(`Agent 任务已启动: ${tid}`)
     }
   } catch (err) {
@@ -896,13 +1066,6 @@ function backToForm() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 事件流工具函数
 // ─────────────────────────────────────────────────────────────────────────────
-function eventColor(type: string): 'default' | 'success' | 'error' | 'warning' | 'info' {
-  if (type.endsWith('.failed'))     return 'error'
-  if (type.endsWith('.completed'))  return 'success'
-  if (type.endsWith('.correction')) return 'warning'
-  return 'info'
-}
-
 function formatTs(ts: number): string {
   return new Date(ts).toLocaleTimeString()
 }
@@ -926,453 +1089,462 @@ function openSkill(skillName: string) {
 </script>
 
 <template>
-  <div class="adapt-root">
+  <div class="page page-wide" :class="{ 'adapt-page--monitor': showMonitor }">
 
-    <!-- ====== 左侧导航 ====== -->
-    <aside class="adapt-nav">
-      <div class="nav-header">
-        <div class="nav-title-row">
-          <div class="nav-title">AI 适配调试</div>
-          <button
-            class="nav-refresh-btn"
-            :class="{ spinning: loadingDomains }"
-            title="刷新域列表（创建新技能后点击）"
-            @click="loadDynamicDomains"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <polyline points="23 4 23 10 17 10"/>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-          </button>
-        </div>
-        <div class="nav-sub">选择适配域开始</div>
-      </div>
-
-      <div class="nav-list">
+    <EaPageHead
+      title="AI 适配调试"
+      subtitle="选择适配域 → 补齐前置参数 → 由 Agent 按 Skill SOP 自动产出补丁与自检报告"
+    >
+      <template #actions>
+        <span v-if="layoutSyncMeta?.cloud_sync_enabled" class="ea-pill-info">云端同步已启用</span>
         <button
-          v-for="domain in DOMAINS"
-          :key="domain.id"
-          class="nav-btn"
-          :class="{ active: activeDomainId === domain.id }"
-          @click="selectDomain(domain.id)"
+          type="button"
+          class="ea-btn-ghost ea-btn-sm adapt-refresh-btn"
+          :class="{ spinning: loadingDomains }"
+          title="刷新域列表（创建新技能后点击）"
+          @click="loadDynamicDomains"
         >
-          <span class="nav-icon-badge" :style="{ background: domain.color }">{{ domain.icon }}</span>
-          <span class="nav-label">{{ domain.label }}</span>
-          <span class="nav-dot" :class="`dot-${domain.status}`" />
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+          刷新域
         </button>
-      </div>
+      </template>
+    </EaPageHead>
 
-      <div class="nav-footer">
-        <div class="nf-label">总进度</div>
-        <div class="nf-pct">{{ overallPercent }}%</div>
-        <NProgress
-          :percentage="overallPercent"
-          :show-indicator="false"
-          :height="4"
-          color="#388bfd"
-        />
-        <div class="nf-detail">{{ completedDomains }} / {{ DOMAINS.length }} 域完成</div>
-      </div>
-    </aside>
+    <ModelProviderBanner class="adapt-provider-banner" />
 
-    <!-- ====== 主内容区 ====== -->
-    <div class="adapt-body" :class="{ 'is-monitor': showMonitor }">
-      <ModelProviderBanner class="adapt-provider-banner" />
+    <!-- 顶部域选择条 -->
+    <div class="ea-domain-bar">
+      <button
+        v-for="domain in DOMAINS"
+        :key="domain.id"
+        type="button"
+        class="ea-domain-chip"
+        :class="{ active: activeDomainId === domain.id }"
+        @click="selectDomain(domain.id)"
+      >
+        <span class="ea-domain-badge" :style="{ background: domain.color }">{{ domain.icon }}</span>
+        {{ domain.label }}
+        <span class="adapt-domain-dot" :class="`dot-${domain.status}`" />
+      </button>
+    </div>
 
-      <!-- ───────── 表单阶段 ───────── -->
-      <template v-if="!showMonitor">
-
-        <!-- 域标题行 -->
-        <div class="domain-head domain-head-first">
-          <div class="dh-left">
-            <div class="dh-badge" :style="{ background: activeDomain.color }">{{ activeDomain.icon }}</div>
-            <div>
-              <div class="dh-name">{{ activeDomain.label }}</div>
-              <div class="dh-sub">
-                <template v-if="requiredCount === 0">参考填写，无强制必填项</template>
-                <template v-else>必填项 {{ filledCount }} / {{ requiredCount }} 已完成</template>
+    <!-- ───────── 表单阶段 ───────── -->
+    <template v-if="!showMonitor">
+      <div class="ea-split-3">
+        <!-- 左栏：表单主区 -->
+        <div class="ea-stack">
+          <EaCard>
+            <div class="ea-domain-head">
+              <span class="dh-badge" :style="{ background: activeDomain.color }">{{ activeDomain.icon }}</span>
+              <div class="ea-grow">
+                <h2>{{ activeDomain.label }}</h2>
+                <div class="dh-sub">
+                  <template v-if="requiredCount === 0">参考填写，无强制必填项</template>
+                  <template v-else>必填项 {{ filledCount }} / {{ requiredCount }} 已完成</template>
+                </div>
+              </div>
+              <EaPill v-if="isComplete" variant="ok">前置条件完整</EaPill>
+              <EaPill v-else variant="warn">请完成必填项</EaPill>
+              <div class="ea-head-actions adapt-domain-actions">
+                <NButton
+                  v-if="!layoutEditMode"
+                  size="small"
+                  secondary
+                  @click="enterLayoutEdit"
+                >
+                  编辑布局
+                </NButton>
+                <span v-if="layoutManifestPath" class="layout-manifest-hint" :title="layoutManifestPath">本地配置已加载</span>
               </div>
             </div>
-          </div>
-          <span v-if="isComplete" class="status-badge ok">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-            前置条件完整
-          </span>
-          <span v-else class="status-badge warn">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            请完成必填项
-          </span>
-          <div class="dh-actions">
-            <NButton
-              v-if="!layoutEditMode"
-              size="small"
-              secondary
-              @click="enterLayoutEdit"
-            >
-              编辑布局
-            </NButton>
-            <NTag v-if="layoutSyncMeta?.cloud_sync_enabled" size="tiny" type="info">云端同步已启用</NTag>
-            <span v-if="layoutManifestPath" class="layout-manifest-hint" :title="layoutManifestPath">本地配置已加载</span>
-          </div>
-        </div>
 
-        <NSpin v-if="!layoutsReady" size="small" style="margin: 24px 0;">正在加载域配置…</NSpin>
+            <NSpin v-if="!layoutsReady" size="small" style="margin: 24px 0;">正在加载域配置…</NSpin>
 
-        <template v-else>
-        <!-- 前置条件表单 -->
-        <div v-if="activeDomainId === 'modem' || activeDomainId === 'comm-framework'" class="modem-skill-hint">
-          <template v-if="activeDomainId === 'modem'">
-            以下字段来自 <code>MODEM_P1_Adapt</code> SKILL.md 的必填输入；填完后可用「Agent 自动适配」由桥接 Agent 按 Skill SOP 执行。
-          </template>
-          <template v-else>
-            以下字段来自 <code>comm-framework-agent-test</code> 测试 Skill 输入；点击「Agent 自动适配」后将按 Skill 分步骤在 PRJ Path 下创建并写入测试文件。
-          </template>
-        </div>
-        <!-- 布局编辑模式 -->
-        <div v-if="layoutEditMode" class="form-card layout-editor-card">
-          <div class="layout-editor-head">
-            <span class="layout-editor-title">域配置编辑</span>
-            <span class="layout-editor-hint">可增删表单字段与关联 Skill；第一项为主控 Skill。保存后写入本地 manifest，重启自动恢复（云端同步接口已预留）。</span>
-          </div>
-          <div class="layout-skills-editor">
-            <span class="layout-skills-label">关联 Skills</span>
-            <div class="layout-skills-tags">
-              <NTag
-                v-for="(skill, sIdx) in layoutDraftRelatedSkills"
-                :key="'draft-skill-' + skill"
-                size="small"
-                closable
-                class="skill-tag"
-                @close="removeRelatedSkill(sIdx)"
-                @click="openSkill(skill)"
-              >
-                {{ sIdx === 0 ? '主控 · ' : '' }}{{ skill }}
-              </NTag>
-            </div>
-            <NButton size="small" @click="openSkillSearchModal">+ 添加 Skill</NButton>
-          </div>
-          <div v-if="!layoutDraftFields.length" class="layout-editor-empty">暂无字段，请添加</div>
-          <div
-            v-for="(field, idx) in layoutDraftFields"
-            :key="'draft-' + field.name"
-            class="layout-field-row"
-          >
-            <div class="lfr-main">
-              <NInput v-model:value="field.label" size="small" placeholder="显示标签" />
-              <code class="lfr-name">{{ field.name }}</code>
-              <NSelect
-                v-model:value="field.type"
-                size="small"
-                :options="[
-                  { label: '文本', value: 'text' },
-                  { label: '多行文本', value: 'textarea' },
-                  { label: '下拉选择', value: 'select' },
-                ]"
-                style="width: 120px;"
-              />
-              <label class="lfr-req">
-                <NSwitch v-model:value="field.required" size="small" />
-                <span>必填</span>
-              </label>
-            </div>
-            <NButton size="tiny" type="error" quaternary @click="removeLayoutField(idx)">删除</NButton>
-          </div>
-          <div class="layout-editor-actions">
-            <NButton size="small" @click="openAddFieldModal">+ 添加字段</NButton>
-            <NButton size="small" type="primary" :loading="layoutSaving" @click="saveLayout">保存布局</NButton>
-            <NButton size="small" @click="cancelLayoutEdit">取消</NButton>
-            <NButton size="small" tertiary :loading="layoutSaving" @click="restoreBuiltinLayout">恢复内置默认</NButton>
-          </div>
-        </div>
+            <template v-else>
+              <div v-if="activeDomainId === 'modem' || activeDomainId === 'comm-framework'" class="modem-skill-hint">
+                <template v-if="activeDomainId === 'modem'">
+                  以下字段来自 <code>MODEM_P1_Adapt</code> SKILL.md 的必填输入；填完后可用「Agent 自动适配」由桥接 Agent 按 Skill SOP 执行。
+                </template>
+                <template v-else>
+                  以下字段来自 <code>comm-framework-agent-test</code> 测试 Skill 输入；点击「Agent 自动适配」后将按 Skill 分步骤在 PRJ Path 下创建并写入测试文件。
+                </template>
+              </div>
 
-        <!-- 填写模式 -->
-        <div v-else class="form-card">
-          <div class="form-grid">
-            <div
-              v-for="field in activeDomain.fields"
-              :key="activeDomainId + '-' + field.name"
-              class="field-item"
-            >
-              <label class="field-label">
-                {{ field.label }}
-                <span v-if="field.required" class="req">*</span>
-              </label>
+              <!-- 布局编辑模式 -->
+              <div v-if="layoutEditMode" class="layout-editor">
+                <div class="layout-editor-head">
+                  <span class="layout-editor-title">域配置编辑</span>
+                  <span class="layout-editor-hint">可增删表单字段与关联 Skill；第一项为主控 Skill。保存后写入本地 manifest，重启自动恢复（云端同步接口已预留）。</span>
+                </div>
+                <div class="layout-skills-editor">
+                  <span class="layout-skills-label">关联 Skills</span>
+                  <div class="layout-skills-tags">
+                    <NTag
+                      v-for="(skill, sIdx) in layoutDraftRelatedSkills"
+                      :key="'draft-skill-' + skill"
+                      size="small"
+                      closable
+                      class="skill-tag"
+                      @close="removeRelatedSkill(sIdx)"
+                      @click="openSkill(skill)"
+                    >
+                      {{ sIdx === 0 ? '主控 · ' : '' }}{{ skill }}
+                    </NTag>
+                  </div>
+                  <NButton size="small" @click="openSkillSearchModal">+ 添加 Skill</NButton>
+                </div>
+                <div v-if="!layoutDraftFields.length" class="layout-editor-empty">暂无字段，请添加</div>
+                <div
+                  v-for="(field, idx) in layoutDraftFields"
+                  :key="'draft-' + field.name"
+                  class="layout-field-row"
+                >
+                  <div class="lfr-main">
+                    <NInput v-model:value="field.label" size="small" placeholder="显示标签" />
+                    <code class="lfr-name">{{ field.name }}</code>
+                    <NSelect
+                      v-model:value="field.type"
+                      size="small"
+                      :options="[
+                        { label: '文本', value: 'text' },
+                        { label: '多行文本', value: 'textarea' },
+                        { label: '下拉选择', value: 'select' },
+                      ]"
+                      style="width: 120px;"
+                    />
+                    <label class="lfr-req">
+                      <NSwitch v-model:value="field.required" size="small" />
+                      <span>必填</span>
+                    </label>
+                  </div>
+                  <NButton size="tiny" type="error" quaternary @click="removeLayoutField(idx)">删除</NButton>
+                </div>
+                <div class="layout-editor-actions">
+                  <NButton size="small" @click="openAddFieldModal">+ 添加字段</NButton>
+                  <NButton size="small" type="primary" :loading="layoutSaving" @click="saveLayout">保存布局</NButton>
+                  <NButton size="small" @click="cancelLayoutEdit">取消</NButton>
+                  <NButton size="small" tertiary :loading="layoutSaving" @click="restoreBuiltinLayout">恢复内置默认</NButton>
+                </div>
+              </div>
 
-              <NSelect
-                v-if="field.type === 'select'"
-                :value="getFieldValue(field.name)"
-                :options="field.options"
-                :placeholder="field.placeholder || '请选择'"
-                clearable
-                @update:value="v => setFieldValue(field.name, v ?? '')"
-              />
-              <NInput
-                v-else-if="field.type === 'textarea'"
-                :value="getFieldValue(field.name)"
-                type="textarea"
-                :placeholder="field.placeholder"
-                :autosize="{ minRows: 3, maxRows: 6 }"
-                @update:value="v => setFieldValue(field.name, v)"
-              />
-              <NInput
-                v-else
-                :value="getFieldValue(field.name)"
-                :placeholder="field.placeholder"
-                @update:value="v => setFieldValue(field.name, v)"
-              />
-            </div>
-          </div>
-        </div>
+              <!-- 填写模式 -->
+              <div v-else>
+                <div class="ea-form-grid2">
+                  <div
+                    v-for="field in activeDomain.fields"
+                    :key="activeDomainId + '-' + field.name"
+                    class="ea-field"
+                    :class="{ 'ea-field-full': field.type === 'textarea' }"
+                  >
+                    <label>
+                      {{ field.label }}
+                      <span v-if="field.required" class="req">*</span>
+                    </label>
+                    <NSelect
+                      v-if="field.type === 'select'"
+                      :value="getFieldValue(field.name)"
+                      :options="field.options"
+                      :placeholder="field.placeholder || '请选择'"
+                      clearable
+                      @update:value="v => setFieldValue(field.name, v ?? '')"
+                    />
+                    <NInput
+                      v-else-if="field.type === 'textarea'"
+                      :value="getFieldValue(field.name)"
+                      type="textarea"
+                      :placeholder="field.placeholder"
+                      :autosize="{ minRows: 3, maxRows: 6 }"
+                      @update:value="v => setFieldValue(field.name, v)"
+                    />
+                    <NInput
+                      v-else
+                      :value="getFieldValue(field.name)"
+                      :placeholder="field.placeholder"
+                      @update:value="v => setFieldValue(field.name, v)"
+                    />
+                  </div>
+                </div>
 
-        <!-- 关联 Skills（查看模式） -->
-        <div v-if="!layoutEditMode" class="skills-row">
-          <span class="skills-title">关联 Skills</span>
-          <NTag
-            v-for="(skill, sIdx) in activeDomain.relatedSkills"
-            :key="skill"
-            class="skill-tag"
-            size="small"
-            :type="sIdx === 0 ? 'primary' : 'default'"
-            @click="openSkill(skill)"
-          >
-            {{ sIdx === 0 ? '主控 · ' : '' }}{{ skill }}
-          </NTag>
-        </div>
+                <div v-if="!layoutEditMode" class="skill-row">
+                  <span class="ea-muted" style="font-size:12.5px;font-weight:700">关联 Skills</span>
+                  <span
+                    v-for="(skill, sIdx) in activeDomain.relatedSkills"
+                    :key="skill"
+                    class="ea-skill-tag"
+                    :class="{ lead: sIdx === 0 }"
+                    @click="openSkill(skill)"
+                  >
+                    {{ sIdx === 0 ? '主控 · ' : '' }}{{ skill }}
+                  </span>
+                </div>
 
-        <!-- 操作按钮 -->
-        <div class="action-row">
-          <NButton
-            size="large"
-            type="primary"
-            :disabled="!modelProviderReady || layoutEditMode || !isComplete || !activeDomain.relatedSkills.length"
-            :loading="agentLaunching"
-            @click="launchAgentAdapt"
-          >
-            {{ agentLaunching ? 'Agent 启动中...' : 'Agent 自动适配' }}
-          </NButton>
-          <NButton
-            size="large"
-            secondary
-            :disabled="layoutEditMode || !isComplete"
-            :loading="promptPreviewLoading"
-            @click="openPromptPreview"
-          >
-            预览提示词
-          </NButton>
-          <!-- 如果已有进行中/完成的任务，显示"查看进度"快捷按钮 -->
-          <NButton
-            v-if="launchedTaskId"
-            size="large"
-            secondary
-            @click="showMonitor = true"
-          >
-            <template #icon>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <div class="action-row ea-mt16">
+                  <NButton
+                    size="large"
+                    type="primary"
+                    :disabled="!modelProviderReady || layoutEditMode || !isComplete || !activeDomain.relatedSkills.length"
+                    :loading="agentLaunching"
+                    @click="launchAgentAdapt"
+                  >
+                    {{ agentLaunching ? 'Agent 启动中...' : 'Agent 自动适配' }}
+                  </NButton>
+                  <NButton
+                    size="large"
+                    secondary
+                    :disabled="layoutEditMode || !isComplete"
+                    :loading="promptPreviewLoading"
+                    @click="openPromptPreview"
+                  >
+                    预览提示词
+                  </NButton>
+                  <NButton
+                    v-if="launchedTaskId"
+                    size="large"
+                    secondary
+                    @click="showMonitor = true"
+                  >
+                    <template #icon>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    </template>
+                    查看执行进度
+                    <NTag size="tiny" :type="statusTagType" style="margin-left:6px;">{{ taskStatus }}</NTag>
+                  </NButton>
+                </div>
+              </div>
             </template>
-            查看执行进度
-            <NTag size="tiny" :type="statusTagType" style="margin-left:6px;">{{ taskStatus }}</NTag>
-          </NButton>
+          </EaCard>
         </div>
-        </template>
 
-      </template>
+        <!-- 右栏：进度与域列表 -->
+        <div class="ea-stack">
+          <EaCard>
+            <div class="ea-section-title ea-mb0">适配进度</div>
+            <div class="ea-meta-grid adapt-progress-grid">
+              <div class="mg">
+                <div class="mg-k">总域数</div>
+                <div class="mg-v">{{ DOMAINS.length }}</div>
+              </div>
+              <div class="mg">
+                <div class="mg-k">已完成</div>
+                <div class="mg-v adapt-stat-done">{{ completedDomains }}</div>
+              </div>
+              <div class="mg">
+                <div class="mg-k">进行中</div>
+                <div class="mg-v adapt-stat-active">{{ DOMAINS.filter(d => d.status === 'active').length }}</div>
+              </div>
+              <div class="mg">
+                <div class="mg-k">总进度</div>
+                <div class="mg-v">{{ overallPercent }}%</div>
+              </div>
+            </div>
+            <NProgress
+              :percentage="overallPercent"
+              :show-indicator="false"
+              :height="4"
+              style="margin-top: 12px;"
+            />
+            <div class="adapt-progress-detail">{{ completedDomains }} / {{ DOMAINS.length }} 域完成</div>
+          </EaCard>
 
-      <!-- ───────── 监控阶段 ───────── -->
-      <template v-else>
+          <EaCard v-if="launchedTaskId" class="adapt-task-snap">
+            <div class="ea-section-title ea-mb0">当前任务</div>
+            <div class="snap-row">
+              <span class="snap-k">状态</span>
+              <NTag size="tiny" :type="statusTagType">{{ taskStatus || '-' }}</NTag>
+            </div>
+            <div class="snap-row">
+              <span class="snap-k">事件数</span>
+              <span class="snap-v">{{ stream.length }}</span>
+            </div>
+            <div class="snap-row-id">
+              <span class="snap-k">Task ID</span>
+              <code class="snap-tid">{{ launchedTaskId }}</code>
+            </div>
+            <NButton
+              size="tiny"
+              type="primary"
+              style="margin-top:8px;width:100%;"
+              @click="showMonitor = true"
+            >查看执行详情</NButton>
+          </EaCard>
 
-        <!-- 监控顶栏 -->
-        <div class="monitor-bar">
-          <div class="mb-left">
-            <button class="mb-back" @click="backToForm">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
-              返回表单
+          <EaCard>
+            <div class="ea-section-title">域列表</div>
+            <div class="ea-tasklist">
+              <button
+                v-for="d in DOMAINS"
+                :key="d.id"
+                type="button"
+                class="ea-task-item"
+                :class="{ active: d.id === activeDomainId }"
+                @click="selectDomain(d.id)"
+              >
+                <div class="ti-top">
+                  <span class="ea-row" style="gap:8px">
+                    <span class="ea-domain-badge" :style="{ background: d.color }">{{ d.icon }}</span>
+                    {{ d.label }}
+                  </span>
+                  <span class="adapt-domain-dot" :class="`dot-${d.status}`" />
+                </div>
+              </button>
+            </div>
+          </EaCard>
+        </div>
+      </div>
+    </template>
+
+    <!-- ───────── 监控阶段 ───────── -->
+    <template v-else>
+      <EaCard class="adapt-monitor-card">
+        <div class="ea-row ea-between ea-wrap adapt-monitor-head">
+          <div class="ea-row" style="gap:12px">
+            <button type="button" class="ea-btn-ghost ea-btn-sm" @click="backToForm">
+              ← 返回表单
             </button>
-            <span class="mb-sep" />
-            <span class="mb-domain-badge" :style="{ background: activeDomain.color }">{{ activeDomain.icon }}</span>
-            <span class="mb-title">
-              {{ activeDomain.label }} — Agent 自动适配
-            </span>
+            <span class="dh-badge adapt-monitor-badge" :style="{ background: activeDomain.color }">{{ activeDomain.icon }}</span>
+            <strong class="adapt-monitor-title">{{ activeDomain.label }} — Agent 自动适配</strong>
           </div>
-          <div class="mb-right">
-            <code v-if="launchedTaskId" class="mb-taskid">{{ launchedTaskId }}</code>
-            <NTag size="small" :type="statusTagType" class="mb-status">
-              <template v-if="isRunning">
-                <span class="pulse-dot" />
-              </template>
+          <div class="ea-row" style="gap:10px">
+            <code v-if="launchedTaskId" class="adapt-taskid">{{ launchedTaskId }}</code>
+            <EaPill :variant="statusTagType === 'success' ? 'ok' : statusTagType === 'error' ? 'err' : statusTagType === 'warning' ? 'warn' : 'info'">
+              <span v-if="isRunning" class="ea-dot-live" />
               {{ taskStatus || 'starting' }}
-            </NTag>
+            </EaPill>
             <NButton size="small" @click="router.push({ name: 'tahp.reports' })">报告</NButton>
           </div>
         </div>
 
-        <!-- ① 启动中（还未拿到 task_id） -->
+        <!-- 启动中 -->
         <div v-if="agentLaunching && !launchedTaskId" class="monitor-state">
           <NSpin size="large" />
           <p class="ms-hint">正在启动 Agent 自动适配，请稍候...</p>
           <p class="ms-sub">Agent Bridge 连接中</p>
         </div>
 
-        <!-- ② 启动失败且无事件 -->
+        <!-- 启动失败且无事件 -->
         <div
           v-else-if="taskStatus === 'FAILED' && !stream.length"
           class="monitor-state monitor-error"
         >
-          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#d03050" stroke-width="1.5">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="12" cy="12" r="10"/>
             <line x1="12" y1="8" x2="12" y2="12"/>
             <line x1="12" y1="16" x2="12.01" y2="16"/>
           </svg>
           <p class="ms-hint">Agent 任务启动失败</p>
           <p class="ms-sub">请检查 Agent Bridge 配置与关联 Skill 是否可用</p>
-          <div style="display:flex;gap:8px;margin-top:4px;">
+          <div class="ea-row" style="gap:8px;margin-top:4px;">
             <NButton type="primary" @click="backToForm">返回重新配置</NButton>
             <NButton :disabled="!modelProviderReady" @click="launchAgentAdapt" :loading="agentLaunching">重试</NButton>
           </div>
         </div>
 
-        <!-- ③ 已提交但等待第一条事件 -->
+        <!-- 等待任务 ID（仅启动 API 阶段） -->
         <div
-          v-else-if="!stream.length && !agentLaunching"
+          v-else-if="!launchedTaskId"
           class="monitor-state"
         >
           <NSpin size="medium" />
-          <p class="ms-hint">任务已提交，等待 Agent 开始执行...</p>
-          <code v-if="launchedTaskId" class="ms-taskid">{{ launchedTaskId }}</code>
+          <p class="ms-hint">任务已提交，等待服务端创建任务...</p>
         </div>
 
-        <!-- ④ 主视图 -->
-        <div v-else ref="eventListEl" class="llm-monitor-layout" :class="{ 'agent-monitor-layout': monitorMode === 'agent' }">
-
-          <!-- Agent 模式：Skill / 规划 / 文件变更 面板 -->
-          <div v-if="monitorMode === 'agent'" class="agent-side-panels">
-            <div class="asp-card">
-              <div class="asp-title">任务规划 / 推理</div>
-              <div v-if="!agentPlanEvents.length" class="asp-empty">等待 Agent 输出规划...</div>
-              <pre v-for="(ev, i) in agentPlanEvents.slice(-8)" :key="'plan-' + i" class="asp-item">{{ formatPayload(ev.payload) }}</pre>
+        <!-- 主监控视图：有 taskId 即展示步骤时间线 -->
+        <div v-else class="ea-monitor adapt-monitor-body" :class="{ 'adapt-monitor-agent': monitorMode === 'agent' }">
+          <div v-if="agentRunError" class="adapt-error-banner">
+            <strong>任务失败</strong>
+            <pre class="adapt-error-text">{{ agentRunError }}</pre>
+            <div class="ea-row" style="gap:8px;margin-top:8px;">
+              <NButton size="small" type="warning" @click="router.push({ name: 'hermes.models' })">模型管理</NButton>
+              <NButton size="small" :disabled="!modelProviderReady" :loading="agentLaunching" @click="launchAgentAdapt">重试</NButton>
             </div>
-            <div class="asp-card">
-              <div class="asp-title">Skill / 工具调用</div>
-              <div v-if="!agentSkillEvents.length" class="asp-empty">尚未调用工具</div>
-              <div v-for="(ev, i) in agentSkillEvents" :key="'sk-' + i" class="asp-skill-row">
-                <NTag size="tiny" type="info">{{ ev.payload?.skill_id || 'tool' }}</NTag>
-                <span class="asp-skill-msg">{{ ev.payload?.message || formatPayload(ev.payload) }}</span>
+          </div>
+          <!-- 执行步骤（左侧） -->
+          <div class="ea-mon-panel adapt-steps-panel">
+            <h4>执行步骤</h4>
+            <div ref="eventListEl" class="adapt-steps-list">
+              <div
+                v-for="step in executionSteps"
+                :key="step.step_id"
+                class="adapt-pipeline-step"
+                :class="`step-${step.status}`"
+              >
+                <span class="adapt-step-dot" />
+                <div class="adapt-step-body">
+                  <div class="adapt-step-head">
+                    <span class="adapt-step-label">{{ step.label }}</span>
+                    <span v-if="step.ts" class="adapt-step-ts">{{ formatTs(step.ts) }}</span>
+                  </div>
+                  <div v-if="step.message" class="adapt-step-msg">{{ step.message }}</div>
+                </div>
               </div>
-            </div>
-            <div class="asp-card">
-              <div class="asp-title">文件修改</div>
-              <div v-if="!agentFileEvents.length" class="asp-empty">暂无检测到的写文件操作</div>
-              <div v-for="(ev, i) in agentFileEvents" :key="'fc-' + i" class="asp-file-row">
-                <code>{{ ev.payload?.path }}</code>
-                <span class="asp-file-meta">{{ ev.payload?.tool }} · {{ ev.payload?.status || 'modify' }}</span>
-              </div>
+              <div style="height:8px;" />
             </div>
           </div>
 
-          <!-- 左：AI 分析内容（流式渲染）-->
-          <div class="llm-response-panel">
-            <div class="lrp-header">
-              <span class="lrp-title">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                Agent 执行输出
-              </span>
-              <NTag v-if="isRunning" size="tiny" type="info">
-                <span class="pulse-dot" />
+          <!-- 流式输出（中间） -->
+          <div class="adapt-output-col">
+            <div class="ea-row ea-between adapt-output-head">
+              <span class="ea-section-title ea-mb0">Agent 执行输出</span>
+              <EaPill v-if="isRunning" variant="info">
+                <span class="ea-dot-live" />
                 流式输出中
-              </NTag>
-              <NTag v-else-if="taskStatus === 'COMPLETED'" size="tiny" type="success">已完成</NTag>
+              </EaPill>
+              <EaPill v-else-if="taskStatus === 'COMPLETED'" variant="ok">已完成</EaPill>
             </div>
-            <pre v-if="llmResponse" class="lrp-content">{{ llmResponse }}</pre>
+            <pre v-if="llmResponse" class="ea-mon-output">{{ llmResponse }}</pre>
+            <div v-else-if="agentRunError" class="adapt-run-error">
+              <pre>{{ agentRunError }}</pre>
+            </div>
             <div v-else-if="isRunning" class="lrp-waiting">
               <NSpin size="small" />
-              <span style="margin-left:8px;color:#888;">大模型思考中...</span>
+              <span>大模型思考中...</span>
             </div>
           </div>
 
-          <!-- 右：执行步骤 -->
-          <div class="llm-steps-panel">
-            <div class="lsp-title">执行步骤</div>
-            <div
-              v-for="(ev, idx) in structuredEvents"
-              :key="idx"
-              class="ev-row"
-              :class="`ev-${eventColor(ev.type)}`"
-            >
-              <div class="ev-head">
-                <NTag size="tiny" :type="eventColor(ev.type)" class="ev-type">{{ ev.type }}</NTag>
-                <span class="ev-ts">{{ formatTs(ev.ts) }}</span>
+          <!-- Skill / 文件（右侧） -->
+          <div v-if="monitorMode === 'agent'" class="adapt-sidebar-col">
+            <div class="ea-mon-panel adapt-mon-scroll-panel">
+              <h4>Skill / 工具调用</h4>
+              <div class="adapt-mon-scroll-body">
+                <div v-if="!agentSkillEvents.length" class="mon-empty">尚未调用工具</div>
+                <div v-for="(ev, i) in agentSkillEvents" :key="'sk-' + i" class="mon-skill-row">
+                  <NTag size="tiny" type="info">{{ ev.payload?.skill_id || 'tool' }}</NTag>
+                  <span class="mon-skill-msg">{{ ev.payload?.message || formatPayload(ev.payload) }}</span>
+                </div>
               </div>
-              <pre class="ev-body">{{ formatPayload(ev.payload) }}</pre>
             </div>
-            <div style="height:8px;" />
+            <div class="ea-mon-panel adapt-mon-scroll-panel">
+              <h4>文件修改</h4>
+              <div class="adapt-mon-scroll-body">
+                <div v-if="!agentFileEvents.length" class="mon-empty">暂无检测到的写文件操作</div>
+                <div v-for="(fc, i) in agentFileEvents" :key="'fc-' + i" class="mon-file-row">
+                  <code>{{ fc.path }}</code>
+                  <span class="mon-file-meta">{{ fc.tool }} · {{ fc.status || 'modify' }}</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- 完成 / 失败 横幅（叠加在流底部） -->
+        <!-- 完成 / 失败横幅 -->
         <div v-if="taskStatus === 'COMPLETED'" class="result-banner result-ok">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-          适配任务已完成 · 共 {{ stream.length }} 个执行步骤
+          适配任务已完成
           <NButton size="small" type="primary" style="margin-left:12px;" @click="router.push({ name: 'tahp.reports', query: launchedTaskId ? { task_id: launchedTaskId } : {} })">查看报告</NButton>
           <NButton size="small" style="margin-left:6px;" @click="backToForm">返回表单</NButton>
         </div>
-        <div v-else-if="taskStatus === 'FAILED' && stream.length" class="result-banner result-err">
+        <div v-else-if="taskStatus === 'FAILED'" class="result-banner result-err">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-          任务执行失败 · 请查看上方错误事件
-          <NButton size="small" type="warning" style="margin-left:12px;" @click="backToForm">重新配置</NButton>
+          {{ agentRunError || '任务执行失败' }}
+          <NButton size="small" type="warning" style="margin-left:12px;" @click="router.push({ name: 'hermes.models' })">模型管理</NButton>
+          <NButton size="small" style="margin-left:6px;" @click="backToForm">重新配置</NButton>
           <NButton size="small" style="margin-left:6px;" :disabled="!modelProviderReady" :loading="agentLaunching" @click="launchAgentAdapt">重试</NButton>
         </div>
-
-      </template>
-
-    </div>
-
-    <!-- ====== 右侧统计栏 ====== -->
-    <aside class="adapt-stats">
-      <div class="stat-card">
-        <div class="sc-title">适配进度</div>
-        <div class="sc-row"><span class="sc-k">总域数</span><span class="sc-v">{{ DOMAINS.length }}</span></div>
-        <div class="sc-row"><span class="sc-k">已完成</span><span class="sc-v done">{{ completedDomains }}</span></div>
-        <div class="sc-row"><span class="sc-k">进行中</span><span class="sc-v active">{{ DOMAINS.filter(d => d.status === "active").length }}</span></div>
-      </div>
-
-      <!-- 当有任务运行时，显示任务快照 -->
-      <div v-if="launchedTaskId" class="stat-card task-snap">
-        <div class="sc-title">当前任务</div>
-        <div class="sc-row">
-          <span class="sc-k">状态</span>
-          <NTag size="tiny" :type="statusTagType">{{ taskStatus || '-' }}</NTag>
-        </div>
-        <div class="sc-row">
-          <span class="sc-k">事件数</span>
-          <span class="sc-v">{{ stream.length }}</span>
-        </div>
-        <div class="sc-row-id">
-          <span class="sc-k">Task ID</span>
-          <code class="sc-tid">{{ launchedTaskId }}</code>
-        </div>
-        <NButton
-          v-if="!showMonitor"
-          size="tiny"
-          type="primary"
-          style="margin-top:8px;width:100%;"
-          @click="showMonitor = true"
-        >查看执行详情</NButton>
-      </div>
-
-      <div class="stat-card">
-        <div class="sc-title">域列表</div>
-        <div
-          v-for="d in DOMAINS"
-          :key="d.id"
-          class="domain-item"
-          :class="{ 'domain-item-active': d.id === activeDomainId }"
-          @click="selectDomain(d.id)"
-        >
-          <span class="di-badge" :style="{ background: d.color }">{{ d.icon }}</span>
-          <span class="di-label">{{ d.label }}</span>
-          <span class="di-dot" :class="`dot-${d.status}`" />
-        </div>
-      </div>
-    </aside>
+      </EaCard>
+    </template>
 
     <!-- ====== 添加表单字段 ====== -->
     <NModal
@@ -1498,538 +1670,666 @@ function openSkill(skillName: string) {
 </template>
 
 <style scoped lang="scss">
-@use "@/styles/variables" as *;
+@use '@/styles/variables' as *;
 
-.adapt-root {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  background: $bg-primary;
-  overflow: hidden;
+.adapt-provider-banner {
+  margin-bottom: 4px;
 }
 
-// ── 左侧导航 ────────────────────────────────────────────────────────────────
-.adapt-nav {
-  width: 210px;
+.adapt-refresh-btn.spinning svg {
+  animation: adapt-spin 0.6s linear infinite;
+}
+
+@keyframes adapt-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.adapt-domain-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
   flex-shrink: 0;
-  border-right: 1px solid $border-color;
-  background: $bg-secondary;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
+
+  &.dot-done { background: var(--success); }
+  &.dot-active { background: var(--info); animation: ea-blink 1.5s infinite; }
+  &.dot-warn { background: var(--warn); }
+  &.dot-pending { background: var(--line-strong); }
 }
 
-.nav-header {
-  padding: 16px 14px 12px;
-  border-bottom: 1px solid $border-color;
-  flex-shrink: 0;
-}
-.nav-title-row { display: flex; align-items: center; justify-content: space-between; }
-.nav-title { font-size: 13px; font-weight: 700; color: $text-primary; }
-.nav-sub   { font-size: 11px; color: $text-muted; margin-top: 2px; }
-.nav-refresh-btn {
-  display: flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border-radius: 4px; border: none; cursor: pointer;
-  background: transparent; color: $text-muted; padding: 0;
-  transition: background .15s, color .15s;
-}
-.nav-refresh-btn:hover { background: $border-color; color: $text-primary; }
-@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
-.nav-refresh-btn.spinning svg { animation: spin .6s linear infinite; }
-
-.nav-list {
-  flex: 1;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  overflow-y: auto;
+.adapt-domain-actions {
+  margin-left: auto;
 }
 
-.nav-btn {
+.ea-field-full {
+  grid-column: 1 / -1;
+}
+
+.skill-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: $radius-md;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  transition: all $transition-fast;
-  color: $text-secondary;
-
-  &:hover {
-    background: rgba(56,139,253,0.08);
-    color: $text-primary;
-  }
-  &.active {
-    background: rgba(56,139,253,0.12);
-    border-color: rgba(56,139,253,0.3);
-    color: var(--accent-info);
-  }
-}
-.nav-icon-badge {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  font-size: 9px;
-  font-weight: 700;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  letter-spacing: -0.5px;
-}
-.nav-label {
-  flex: 1;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.nav-dot {
-  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-  &.dot-done    { background: #10b981; }
-  &.dot-active  { background: #388bfd; animation: blink 1.5s infinite; }
-  &.dot-warn    { background: #f59e0b; }
-  &.dot-pending { background: $border-color; }
-}
-@keyframes blink { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
-
-.nav-footer {
-  padding: 12px;
-  border-top: 1px solid $border-color;
-  background: rgba(56,139,253,0.05);
-  flex-shrink: 0;
-}
-.nf-label  { font-size: 10px; font-weight: 600; color: $text-muted; text-transform: uppercase; }
-.nf-pct    { font-size: 22px; font-weight: 700; color: var(--accent-info); margin: 4px 0 6px; }
-.nf-detail { font-size: 10px; color: $text-muted; margin-top: 6px; }
-
-// ── 主内容 ──────────────────────────────────────────────────────────────────
-.adapt-provider-banner {
+  flex-wrap: wrap;
   margin-top: 16px;
 }
 
-.adapt-body {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  padding: 0 24px 32px;
+.action-row {
   display: flex;
-  flex-direction: column;
-
-  // 监控模式：禁止主容器滚动，让事件流自己滚
-  &.is-monitor {
-    overflow: hidden;
-    padding-bottom: 0;
-  }
-}
-
-// ── 表单区 ─────────────────────────────────────────────────────────────────
-.domain-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 0 14px;
-  flex-shrink: 0;
-
-  &.domain-head-first {
-    margin-top: 16px;
-  }
-}
-.dh-left    { display: flex; align-items: center; gap: 12px; }
-.dh-actions { display: flex; align-items: center; gap: 8px; margin-left: 12px; }
-.dh-badge  {
-  width: 42px; height: 42px; border-radius: 10px;
-  font-size: 11px; font-weight: 800; color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  letter-spacing: -0.5px;
-}
-.dh-name   { font-size: 18px; font-weight: 700; color: $text-primary; }
-.dh-sub    { font-size: 11px; color: $text-muted; margin-top: 3px; }
-
-.status-badge {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; border: 1px solid;
-  &.ok   { background: rgba(16,185,129,.1);  color: #10b981; border-color: rgba(16,185,129,.3); }
-  &.warn { background: rgba(245,158,11,.1);  color: #f59e0b; border-color: rgba(245,158,11,.3); }
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .modem-skill-hint {
   font-size: 12px;
-  color: $text-muted;
-  margin-bottom: 10px;
+  color: var(--muted);
+  margin-bottom: 14px;
   line-height: 1.5;
+
   code {
     font-size: 11px;
-    color: var(--accent-info, #388bfd);
+    color: var(--accent);
   }
 }
 
-.form-card {
-  background: $bg-card;
-  border: 1px solid $border-color;
-  border-radius: $radius-lg;
-  padding: 20px;
-  margin-bottom: 20px;
-}
-.form-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-}
-.field-item  { display: flex; flex-direction: column; gap: 6px; }
-.field-label { font-size: 12px; font-weight: 600; color: $text-primary; display: flex; align-items: center; gap: 3px; }
-.req         { color: #ef4444; }
-
-.skills-row {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin-bottom: 20px;
-}
-.skills-title { font-size: 12px; font-weight: 700; color: $text-primary; flex-shrink: 0; }
-.skill-tag {
-  cursor: pointer; font-size: 11px;
-  background: rgba(56,139,253,.08) !important;
-  border-color: rgba(56,139,253,.25) !important;
-  color: var(--accent-info) !important;
-  &:hover { background: rgba(56,139,253,.15) !important; }
+.layout-manifest-hint {
+  font-size: 10px;
+  color: var(--muted);
 }
 
-.action-row { display: flex; gap: 12px; flex-wrap: wrap; }
+// ── 布局编辑 ────────────────────────────────────────────────────────────────
+.layout-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 
-.layout-editor-card { display: flex; flex-direction: column; gap: 10px; }
-.layout-editor-head { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
-.layout-editor-title { font-size: 13px; font-weight: 700; color: $text-primary; }
-.layout-editor-hint { font-size: 11px; color: $text-muted; line-height: 1.45; }
-.layout-editor-empty { font-size: 12px; color: $text-muted; padding: 12px 0; }
+.layout-editor-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.layout-editor-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.layout-editor-hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.layout-editor-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 12px 0;
+}
+
 .layout-field-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
-  border: 1px solid $border-color;
-  border-radius: $radius-md;
-  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
 }
-.lfr-main { display: flex; align-items: center; gap: 8px; flex: 1; flex-wrap: wrap; }
+
+.lfr-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
 .lfr-name {
   font-size: 10px;
-  color: $text-muted;
+  color: var(--muted);
   font-family: $font-code;
   padding: 2px 6px;
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--surface-2);
   border-radius: 4px;
 }
-.lfr-req { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: $text-muted; }
-.layout-editor-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
-.layout-skills-editor {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  padding: 10px 12px; border-radius: 8px; background: rgba(255,255,255,0.03);
-  border: 1px dashed rgba(255,255,255,0.08);
-}
-.layout-skills-label { font-size: 12px; font-weight: 600; color: $text-secondary; min-width: 72px; }
-.layout-skills-tags { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
-.layout-manifest-hint { font-size: 10px; color: $text-muted; margin-left: 4px; }
-.skill-search-list {
-  max-height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;
-}
-.skill-search-empty { font-size: 12px; color: $text-muted; padding: 16px 4px; text-align: center; }
-.skill-search-item {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  width: 100%; text-align: left; padding: 10px 12px; border-radius: 8px;
-  border: 1px solid transparent; background: rgba(255,255,255,0.02); cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
-  &:hover { border-color: rgba(56,139,253,0.35); background: rgba(56,139,253,0.06); }
-}
-.ssi-name { font-size: 13px; font-weight: 600; color: $text-primary; }
-.ssi-group { font-size: 10px; color: #388bfd; }
-.ssi-desc {
-  font-size: 11px; color: $text-muted; line-height: 1.4;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
 
-// ── 监控顶栏 ────────────────────────────────────────────────────────────────
-.monitor-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 0 10px;
-  border-bottom: 1px solid $border-color;
-  margin-top: 16px;
-  flex-shrink: 0;
-  gap: 12px;
-}
-
-.mb-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.mb-back {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
-  border-radius: $radius-md;
-  border: 1px solid $border-color;
-  background: transparent;
-  cursor: pointer;
-  font-size: 12px;
-  color: $text-secondary;
-  white-space: nowrap;
-  flex-shrink: 0;
-  transition: all $transition-fast;
-
-  &:hover {
-    background: rgba(56,139,253,.08);
-    color: var(--accent-info);
-    border-color: rgba(56,139,253,.3);
-  }
-}
-
-.mb-sep {
-  width: 1px; height: 18px;
-  background: $border-color;
-  flex-shrink: 0;
-}
-
-.mb-domain-badge {
-  width: 24px; height: 24px; border-radius: 6px;
-  font-size: 9px; font-weight: 700; color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; letter-spacing: -0.5px;
-}
-
-.mb-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: $text-primary;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.mb-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.mb-taskid {
-  font-size: 10px;
-  font-family: $font-code;
-  background: rgba(0,0,0,.08);
-  padding: 3px 7px;
-  border-radius: 4px;
-  color: $text-muted;
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mb-status {
+.lfr-req {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-}
-
-.pulse-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: currentColor;
-  animation: pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50%       { opacity: 0.4; transform: scale(0.7); }
-}
-
-// ── 监控状态占位 ─────────────────────────────────────────────────────────────
-.monitor-state {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 60px 20px;
-  color: $text-secondary;
-  text-align: center;
-
-  &.monitor-error { color: #d03050; }
-}
-.ms-hint    { font-size: 14px; margin: 0; font-weight: 500; }
-.ms-sub     { font-size: 12px; color: $text-muted; margin: 0; }
-.ms-taskid  {
-  font-size: 11px; font-family: $font-code;
-  background: rgba(0,0,0,.06); padding: 3px 8px; border-radius: 4px;
-  color: $text-muted;
-}
-
-// ── 事件流 ───────────────────────────────────────────────────────────────────
-.event-stream {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 12px 0 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-
-  // 细滚动条
-  &::-webkit-scrollbar { width: 5px; }
-  &::-webkit-scrollbar-track { background: transparent; }
-  &::-webkit-scrollbar-thumb { background: $border-color; border-radius: 3px; }
-}
-
-.ev-row {
-  padding: 8px 12px;
-  border-radius: 6px;
-  background: $bg-card;
-  border: 1px solid $border-color;
-  border-left: 3px solid transparent;
-  flex-shrink: 0;
-  transition: background $transition-fast;
-
-  &.ev-success { border-left-color: #10b981; }
-  &.ev-error   { border-left-color: #d03050; background: rgba(208,48,80,.04); border-color: rgba(208,48,80,.15); }
-  &.ev-warning { border-left-color: #f59e0b; background: rgba(245,158,11,.04); }
-  &.ev-info    { border-left-color: var(--accent-info, #388bfd); }
-}
-
-.ev-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 5px;
-}
-
-.ev-type { font-family: $font-code; }
-
-.ev-ts {
-  color: $text-muted;
+  gap: 4px;
   font-size: 11px;
-  font-family: $font-code;
+  color: var(--muted);
 }
 
-.ev-idx {
-  margin-left: auto;
-  font-size: 10px;
-  color: $text-muted;
-  font-family: $font-code;
-}
-
-.ev-body {
-  margin: 0;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: $text-primary;
-  line-height: 1.55;
-  font-family: $font-code;
-}
-
-// ── 完成/失败横幅 ────────────────────────────────────────────────────────────
-.result-banner {
+.layout-editor-actions {
   display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.layout-skills-editor {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px;
-  border-radius: $radius-md;
-  font-size: 13px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg);
+  border: 1px dashed var(--line-strong);
+}
+
+.layout-skills-label {
+  font-size: 12px;
   font-weight: 600;
-  flex-shrink: 0;
-  margin-top: 8px;
-  margin-bottom: 8px;
-
-  &.result-ok {
-    background: rgba(16,185,129,.08);
-    border: 1px solid rgba(16,185,129,.25);
-    color: #10b981;
-  }
-  &.result-err {
-    background: rgba(208,48,80,.06);
-    border: 1px solid rgba(208,48,80,.2);
-    color: #d03050;
-  }
+  color: var(--text);
+  min-width: 72px;
 }
 
-// ── 右侧统计 ─────────────────────────────────────────────────────────────────
-.adapt-stats {
-  width: 220px;
-  flex-shrink: 0;
-  border-left: 1px solid $border-color;
-  background: $bg-secondary;
-  overflow-y: auto;
-  padding: 16px 12px;
+.layout-skills-tags {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
 }
-.stat-card {
-  background: $bg-card; border: 1px solid $border-color;
-  border-radius: $radius-md; padding: 13px;
 
-  &.task-snap { border-color: rgba(56,139,253,.3); background: rgba(56,139,253,.04); }
+.skill-tag {
+  cursor: pointer;
 }
-.sc-title { font-size: 11px; font-weight: 700; color: $text-primary; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
-.sc-row   { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 12px; }
-.sc-k     { color: $text-muted; }
-.sc-v     { font-weight: 700; color: $text-primary; }
-.sc-v.done   { color: #10b981; }
-.sc-v.active { color: var(--accent-info); }
 
-.sc-row-id {
+// ── 右栏进度 / 任务 ─────────────────────────────────────────────────────────
+.adapt-progress-grid {
+  grid-template-columns: 1fr 1fr;
+  margin-top: 12px;
+}
+
+.adapt-stat-done { color: var(--success); }
+.adapt-stat-active { color: var(--info); }
+
+.adapt-progress-detail {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.adapt-task-snap {
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.snap-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.snap-k { color: var(--muted); }
+.snap-v { font-weight: 700; color: var(--text); }
+
+.snap-row-id {
   display: flex;
   flex-direction: column;
   gap: 3px;
   margin-top: 4px;
   font-size: 11px;
 }
-.sc-tid {
+
+.snap-tid {
   font-family: $font-code;
   font-size: 10px;
   word-break: break-all;
-  color: $text-muted;
-  background: rgba(0,0,0,.06);
+  color: var(--muted);
+  background: var(--surface-2);
   padding: 2px 5px;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 
-.domain-item {
-  display: flex; align-items: center; gap: 7px;
-  padding: 6px; border-radius: $radius-sm; cursor: pointer;
-  transition: background $transition-fast;
-  &:hover { background: rgba(56,139,253,.06); }
-  &.domain-item-active { background: rgba(56,139,253,.1); }
+.ti-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
-.di-badge {
-  width: 20px; height: 20px; border-radius: 4px;
-  font-size: 8px; font-weight: 700; color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; letter-spacing: -0.5px;
+
+// ── 监控 ────────────────────────────────────────────────────────────────────
+.adapt-page--monitor {
+  .adapt-monitor-card {
+    margin-bottom: 16px;
+  }
 }
-.di-label {
-  flex: 1; font-size: 11px; font-weight: 600; color: $text-secondary;
-  .domain-item-active & { color: var(--accent-info); }
+
+.adapt-monitor-head {
+  margin-bottom: 16px;
 }
-.di-dot {
-  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
-  &.dot-done    { background: #10b981; }
-  &.dot-active  { background: #388bfd; }
-  &.dot-warn    { background: #f59e0b; }
-  &.dot-pending { background: $border-color; }
+
+.adapt-monitor-badge {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  font-size: 10px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 800;
+}
+
+.adapt-monitor-title {
+  font-size: 15px;
+  color: var(--head);
+}
+
+.adapt-taskid {
+  font-size: 11px;
+  font-family: $font-code;
+  color: var(--faint);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adapt-monitor-body {
+  min-height: 360px;
+
+  &:not(.adapt-monitor-agent) {
+    grid-template-columns: 1fr 260px;
+  }
+}
+
+$adapt-output-h: 720px;
+$adapt-sidebar-gap: 10px;
+
+.adapt-sidebar-col {
+  display: flex;
+  flex-direction: column;
+  gap: $adapt-sidebar-gap;
+  height: $adapt-output-h;
+  max-height: $adapt-output-h;
+  min-height: 0;
+}
+
+.adapt-mon-scroll-panel {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 10px;
+
+  h4 {
+    flex-shrink: 0;
+    margin-bottom: 8px;
+  }
+}
+
+.adapt-mon-scroll-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.adapt-output-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+
+  .ea-mon-output {
+    height: $adapt-output-h;
+    min-height: $adapt-output-h;
+    max-height: $adapt-output-h;
+    overflow-y: auto;
+    margin: 0;
+  }
+
+  .lrp-waiting {
+    height: $adapt-output-h;
+    min-height: $adapt-output-h;
+    max-height: $adapt-output-h;
+    flex: none;
+  }
+}
+
+.adapt-output-head {
+  flex-shrink: 0;
+}
+
+.adapt-steps-panel {
+  height: $adapt-output-h;
+  max-height: $adapt-output-h;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+
+  h4 {
+    flex-shrink: 0;
+    margin-bottom: 8px;
+  }
+}
+
+.adapt-steps-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.adapt-error-banner {
+  grid-column: 1 / -1;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--error) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
+  color: var(--error);
+}
+
+.adapt-error-text {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  font-family: $font-code;
+}
+
+.adapt-run-error {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--error) 8%, var(--surface-2));
+
+  pre {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text);
+    font-family: $font-code;
+  }
+}
+
+.adapt-pipeline-step {
+  display: flex;
+  gap: 10px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border-subtle);
+
+  &:last-child { border-bottom: none; }
+}
+
+.adapt-step-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex-shrink: 0;
+  background: var(--muted);
+}
+
+.step-pending .adapt-step-dot { background: var(--muted); opacity: 0.5; }
+.step-running .adapt-step-dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.step-completed .adapt-step-dot { background: var(--success); }
+.step-completed .adapt-step-label { color: var(--success); font-weight: 600; }
+.step-warning .adapt-step-dot { background: var(--warning); }
+.step-failed .adapt-step-dot { background: var(--error); }
+
+.adapt-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.adapt-step-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.adapt-step-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.adapt-step-ts {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: $font-code;
+  flex-shrink: 0;
+}
+
+.adapt-step-msg {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.step-running .adapt-step-label { color: var(--accent); }
+.step-failed .adapt-step-label { color: var(--error); }
+
+.monitor-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 20px;
+  color: var(--text);
+  text-align: center;
+
+  &.monitor-error { color: var(--error); }
+}
+
+.ms-hint {
+  font-size: 14px;
+  margin: 0;
+  font-weight: 500;
+}
+
+.ms-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.ms-taskid {
+  font-size: 11px;
+  font-family: $font-code;
+  background: var(--surface-2);
+  padding: 3px 8px;
+  border-radius: 4px;
+  color: var(--muted);
+}
+
+.mon-empty {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mon-pre {
+  margin: 0 0 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  font-family: $font-code;
+}
+
+.mon-skill-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--line);
+
+  &:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+  }
+}
+
+.mon-skill-msg {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.mon-file-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+
+  code {
+    font-size: 11px;
+    word-break: break-all;
+    color: var(--accent);
+  }
+}
+
+.mon-file-meta {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.lrp-waiting {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 20px;
+  color: var(--muted);
+  font-size: 13px;
+  min-height: 200px;
+}
+
+.adapt-evt {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 12px;
+
+  &:last-child { border: none; }
+
+  &.ev-success { border-left: 2px solid var(--success); padding-left: 8px; }
+  &.ev-error { border-left: 2px solid var(--error); padding-left: 8px; }
+  &.ev-warning { border-left: 2px solid var(--warn); padding-left: 8px; }
+  &.ev-info { border-left: 2px solid var(--info); padding-left: 8px; }
+
+  pre {
+    margin: 4px 0 0;
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: $font-code;
+    color: var(--text);
+  }
+}
+
+.adapt-evt-ts {
+  color: var(--faint);
+  font-family: $font-code;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.result-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-top: 14px;
+  flex-wrap: wrap;
+
+  &.result-ok {
+    background: var(--success-soft);
+    border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+    color: var(--success);
+  }
+
+  &.result-err {
+    background: var(--error-soft);
+    border: 1px solid color-mix(in srgb, var(--error) 25%, transparent);
+    color: var(--error);
+  }
+}
+
+// ── Skill 搜索弹窗 ────────────────────────────────────────────────────────────
+.skill-search-list {
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.skill-search-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 16px 4px;
+  text-align: center;
+}
+
+.skill-search-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  color: var(--text);
+
+  &:hover {
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    background: var(--accent-soft);
+  }
+}
+
+.ssi-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ssi-group {
+  font-size: 10px;
+  color: var(--accent);
+}
+
+.ssi-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 // ── 提示词预览弹窗 ────────────────────────────────────────────────────────────
@@ -2039,215 +2339,51 @@ function openSkill(skillName: string) {
   gap: 12px;
   min-height: 360px;
 }
+
 .prompt-preview-hint {
   margin: 0;
   font-size: 12px;
-  color: $text-muted;
+  color: var(--muted);
   line-height: 1.5;
 }
+
 .prompt-preview-loading {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: $text-muted;
+  color: var(--muted);
   font-size: 13px;
   min-height: 280px;
 }
+
 .prompt-preview-actions {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
+
 .prompt-preview-meta {
   margin-left: auto;
   font-size: 11px;
-  color: $text-muted;
+  color: var(--muted);
   font-family: $font-code;
 }
+
 .prompt-preview-content {
   margin: 0;
   max-height: 52vh;
   overflow: auto;
   padding: 12px 14px;
-  background: rgba(0, 0, 0, 0.03);
-  border: 1px solid $border-color;
-  border-radius: $radius-md;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
   font-size: 12px;
   font-family: $font-code;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-// ── LLM 双栏监控布局 ─────────────────────────────────────────────────────────
-.llm-monitor-layout {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: 1fr 240px;
-  gap: 0;
-  overflow: hidden;
-}
-
-.agent-monitor-layout {
-  grid-template-columns: 220px 1fr 260px;
-}
-
-.agent-side-panels {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 8px;
-  border-right: 1px solid $border-color;
-}
-
-.asp-card {
-  background: $bg-card;
-  border: 1px solid $border-color;
-  border-radius: $radius-md;
-  padding: 8px 10px;
-  flex-shrink: 0;
-}
-
-.asp-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: $text-primary;
-  margin-bottom: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
-
-.asp-empty {
-  font-size: 11px;
-  color: $text-muted;
-}
-
-.asp-item {
-  margin: 0 0 6px;
-  font-size: 11px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: $text-primary;
-  font-family: $font-code;
-}
-
-.asp-skill-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px dashed $border-color;
-  &:last-child { border-bottom: none; margin-bottom: 0; }
-}
-
-.asp-skill-msg {
-  font-size: 11px;
-  color: $text-muted;
-  line-height: 1.4;
-}
-
-.asp-file-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-bottom: 8px;
-  code {
-    font-size: 11px;
-    word-break: break-all;
-    color: var(--accent-info, #388bfd);
-  }
-}
-
-.asp-file-meta {
-  font-size: 10px;
-  color: $text-muted;
-}
-
-.llm-response-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  border-right: 1px solid $border-color;
-  padding: 12px 16px 12px 0;
-}
-
-.lrp-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-  flex-shrink: 0;
-}
-
-.lrp-title {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  font-weight: 700;
-  color: $text-primary;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.lrp-content {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  margin: 0;
-  padding: 12px 14px;
-  background: rgba(0,0,0,.025);
-  border: 1px solid $border-color;
-  border-radius: $radius-md;
-  font-size: 13px;
-  font-family: $font-code;
-  line-height: 1.65;
-  color: $text-primary;
-  white-space: pre-wrap;
-  word-break: break-word;
-
-  &::-webkit-scrollbar { width: 5px; }
-  &::-webkit-scrollbar-track { background: transparent; }
-  &::-webkit-scrollbar-thumb { background: $border-color; border-radius: 3px; }
-}
-
-.lrp-waiting {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 20px;
-  color: $text-muted;
-  font-size: 13px;
-}
-
-.llm-steps-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding: 12px 0 12px 16px;
-  overflow-y: auto;
-
-  &::-webkit-scrollbar { width: 4px; }
-  &::-webkit-scrollbar-track { background: transparent; }
-  &::-webkit-scrollbar-thumb { background: $border-color; border-radius: 3px; }
-}
-
-.lsp-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: $text-muted;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 10px;
-  flex-shrink: 0;
 }
 </style>

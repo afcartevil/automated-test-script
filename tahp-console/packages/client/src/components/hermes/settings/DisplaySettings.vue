@@ -1,41 +1,27 @@
 <script setup lang="ts">
-import { NSwitch, NSelect, useMessage } from 'naive-ui'
+import { NSwitch, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useSettingsStore } from '@/stores/hermes/settings'
-import { useTheme, type BrightnessMode } from '@/composables/useTheme'
 import SettingRow from './SettingRow.vue'
 
 const settingsStore = useSettingsStore()
 const message = useMessage()
 const { t } = useI18n()
-const { brightness, setBrightness } = useTheme()
-
-const themeOptions = [
-  { label: t('settings.display.themeLight'), value: 'light' },
-  { label: t('settings.display.themeDark'), value: 'dark' },
-  { label: t('settings.display.themeSystem'), value: 'system' },
-]
 
 async function save(values: Record<string, any>) {
   try {
     await settingsStore.saveSection('display', values)
     message.success(t('settings.saved'))
-  } catch (err: any) {
+  } catch {
     message.error(t('settings.saveFailed'))
   }
-}
-
-function handleThemeChange(val: string) {
-  const m = val as BrightnessMode
-  setBrightness(m)
-  save({ skin: m })
 }
 </script>
 
 <template>
   <section class="settings-section">
-    <SettingRow :label="t('settings.display.theme')" :hint="t('settings.display.themeHint')">
-      <NSelect :value="brightness" :options="themeOptions" size="small" :consistent-menu-width="false" class="input-sm" @update:value="handleThemeChange" />
+    <SettingRow label="界面主题" hint="EasyAdapter V26 Soft Fill 浅色主题（固定）">
+      <span class="theme-fixed">V26 Light</span>
     </SettingRow>
     <SettingRow :label="t('settings.display.streaming')" :hint="t('settings.display.streamingHint')">
       <NSwitch :value="settingsStore.display.streaming" @update:value="v => save({ streaming: v })" />
@@ -66,5 +52,14 @@ function handleThemeChange(val: string) {
 
 .settings-section {
   margin-top: 16px;
+}
+
+.theme-fixed {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 4px 10px;
+  background: var(--accent-soft);
+  border-radius: 999px;
 }
 </style>

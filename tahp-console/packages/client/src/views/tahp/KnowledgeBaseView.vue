@@ -71,12 +71,28 @@ import {
   updateDocument,
 } from '@/api/tahp/knowledge'
 import { useTahpModulesStore } from '@/stores/tahp/modules'
+import EaPageHead from '@/components/layout/EaPageHead.vue'
+import EaInnerTabs from '@/components/layout/EaInnerTabs.vue'
 
 const message = useMessage()
 const dialog = useDialog()
 const modulesStore = useTahpModulesStore()
 
 const activeTab = ref('dashboard')
+const entriesSubTab = ref<'list' | 'search' | 'documents' | 'import'>('list')
+const draftsSubTab = ref<'list' | 'workshop'>('list')
+
+const entriesSubTabs = [
+  { key: 'list', label: '条目列表' },
+  { key: 'search', label: '语义搜索' },
+  { key: 'documents', label: '文档库' },
+  { key: 'import', label: '文档导入' },
+]
+
+const draftsSubTabs = [
+  { key: 'list', label: '草稿列表' },
+  { key: 'workshop', label: 'Skill 工坊' },
+]
 
 // ─── Stats ──────────────────────────────────────────────────────────────
 const statsLoading = ref(false)
@@ -875,12 +891,32 @@ async function submitReview() {
   }
 }
 
+function onEntriesSubTabChange(sub: string) {
+  entriesSubTab.value = sub as typeof entriesSubTab.value
+  if (sub === 'list') loadEntries()
+  if (sub === 'documents') loadDocuments()
+}
+
+function onDraftsSubTabChange(sub: string) {
+  draftsSubTab.value = sub as typeof draftsSubTab.value
+  if (sub === 'list') loadDrafts()
+  if (sub === 'workshop') loadSkillSuggestions()
+}
+
+function goToEntriesSub(sub: typeof entriesSubTab.value) {
+  activeTab.value = 'entries'
+  onEntriesSubTabChange(sub)
+}
+
+function goToDraftsSub(sub: typeof draftsSubTab.value) {
+  activeTab.value = 'drafts'
+  onDraftsSubTabChange(sub)
+}
+
 function onTabChange(tab: string) {
   activeTab.value = tab
-  if (tab === 'entries')        loadEntries()
-  if (tab === 'drafts')         loadDrafts()
-  if (tab === 'documents')      loadDocuments()
-  if (tab === 'skill-workshop') loadSkillSuggestions()
+  if (tab === 'entries') onEntriesSubTabChange(entriesSubTab.value)
+  if (tab === 'drafts') onDraftsSubTabChange(draftsSubTab.value)
 }
 
 // ─── Phase 2: Document Import ─────────────────────────────────────────────────
@@ -1587,13 +1623,13 @@ async function onGenJobCompleted(job: SkillGenJobResult) {
 
     // 自动切换到草稿 Tab，清除筛选确保新草稿可见
     draftStatusFilter.value = ''
-    onTabChange('drafts')
+    goToDraftsSub('list')
   } else {
     message.info('生成完成，请在草稿列表中查看')
     showGenProgressModal.value = false
     // 自动切换到草稿 Tab
     draftStatusFilter.value = ''
-    onTabChange('drafts')
+    goToDraftsSub('list')
   }
 }
 
@@ -1875,121 +1911,95 @@ function scoreColor(score: number, max: number): string {
 </script>
 
 <template>
-  <div class="kb-page">
-    <!-- ── Header ─────────────────────────────────────────── -->
-    <div class="kb-header">
-      <div class="kb-header-left">
-        <div class="kb-icon-wrap">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-            <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/>
-            <path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>
-          </svg>
-        </div>
-        <div>
-          <h1 class="kb-title">知识库管理</h1>
-          <p class="kb-sub">Phase 1 · 知识条目 · 语义搜索 · Skill 草稿审核</p>
-        </div>
-      </div>
-      <NButton type="primary" class="kb-add-btn" @click="openAddEntryModal">
-        <template #icon>
+  <div class="page page-wide kb-view">
+    <EaPageHead title="知识库管理" subtitle="知识条目 · 语义搜索 · 文档库 · Skill 草稿审核">
+      <template #actions>
+        <button type="button" class="ea-btn-primary" @click="openAddEntryModal">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
-        </template>
-        新建条目
-      </NButton>
-    </div>
+          新建条目
+        </button>
+      </template>
+    </EaPageHead>
+
+    <!-- ── Top stats bar ─────────────────────────────────── -->
+    <NSpin :show="statsLoading">
+      <div v-if="stats" class="ea-kb-stats">
+        <div class="ea-kb-stat">
+          <div class="ea-muted" style="font-size:12px;margin-bottom:6px">知识条目</div>
+          <div style="font-size:24px;font-weight:800">{{ stats.total_entries }}</div>
+          <div class="ea-muted" style="font-size:11px;margin-top:4px">{{ stats.approved_entries }} 已批准 · {{ stats.pending_entries }} 待审</div>
+        </div>
+        <div class="ea-kb-stat" style="cursor:pointer" @click="goToEntriesSub('documents')">
+          <div class="ea-muted" style="font-size:12px;margin-bottom:6px">原始文档</div>
+          <div style="font-size:24px;font-weight:800">{{ stats.total_documents ?? docsTotal }}</div>
+          <div class="ea-muted" style="font-size:11px;margin-top:4px">点击查看文档库</div>
+        </div>
+        <div class="ea-kb-stat" style="cursor:pointer" @click="goToDraftsSub('list')">
+          <div class="ea-muted" style="font-size:12px;margin-bottom:6px">Skill 草稿</div>
+          <div style="font-size:24px;font-weight:800">{{ stats.total_skill_drafts }}</div>
+          <div class="ea-muted" style="font-size:11px;margin-top:4px">{{ stats.approved_skill_drafts }} 已激活 · {{ stats.draft_skill_drafts }} 待审核</div>
+        </div>
+        <div class="ea-kb-stat">
+          <div class="ea-muted" style="font-size:12px;margin-bottom:6px">平均置信度</div>
+          <div style="font-size:24px;font-weight:800" :style="{ color: stats.average_confidence >= 0.8 ? 'var(--success)' : 'var(--warn)' }">
+            {{ (stats.average_confidence * 100).toFixed(1) }}%
+          </div>
+          <div class="ea-muted" style="font-size:11px;margin-top:4px">基于 {{ stats.total_entries }} 条数据</div>
+        </div>
+        <div class="ea-kb-stat">
+          <div class="ea-muted" style="font-size:12px;margin-bottom:6px">累计使用次数</div>
+          <div style="font-size:24px;font-weight:800">{{ stats.total_usage_count }}</div>
+          <div class="ea-muted" style="font-size:11px;margin-top:4px">任务引用量</div>
+        </div>
+      </div>
+    </NSpin>
 
     <!-- ── Tabs ───────────────────────────────────────────── -->
-    <NTabs :value="activeTab" @update:value="onTabChange" class="kb-tabs" animated>
+    <NTabs :value="activeTab" @update:value="onTabChange" class="kb-tabs ea-card" animated>
 
       <!-- ── Dashboard ─────────────────────────────────── -->
-      <NTabPane name="dashboard" tab="📊 仪表板">
+      <NTabPane name="dashboard" tab="仪表板">
         <NSpin :show="statsLoading">
           <div class="dash-empty" v-if="!stats && !statsLoading">
             <NEmpty description="暂无统计数据" />
           </div>
-          <template v-else-if="stats">
-            <!-- Row 1: core counters -->
-            <div class="stat-row">
-              <div class="stat-card">
-                <div class="stat-label">知识条目</div>
-                <div class="stat-val">{{ stats.total_entries }}</div>
-                <div class="stat-meta">
-                  <span class="dot dot-ok">{{ stats.approved_entries }} 已批准</span>
-                  <span class="dot dot-warn">{{ stats.pending_entries }} 待审</span>
-                </div>
-              </div>
-              <div class="stat-card" style="cursor:pointer" @click="onTabChange('documents')">
-                <div class="stat-label">原始文档</div>
-                <div class="stat-val">{{ stats.total_documents ?? docsTotal }}</div>
-                <div class="stat-meta">点击查看文档库</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-label">Skill 草稿</div>
-                <div class="stat-val">{{ stats.total_skill_drafts }}</div>
-                <div class="stat-meta">
-                  <span class="dot dot-ok">{{ stats.approved_skill_drafts }} 已激活</span>
-                  <span class="dot dot-warn">{{ stats.draft_skill_drafts }} 待审核</span>
-                </div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-label">平均置信度</div>
-                <div class="stat-val" :class="stats.average_confidence >= 0.8 ? 'val-ok' : 'val-warn'">
-                  {{ (stats.average_confidence * 100).toFixed(1) }}<span class="stat-unit">%</span>
-                </div>
-                <div class="stat-meta">基于 {{ stats.total_entries }} 条数据</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-label">累计使用次数</div>
-                <div class="stat-val">{{ stats.total_usage_count }}</div>
-                <div class="stat-meta">任务引用量</div>
-              </div>
+          <div v-else-if="stats" class="dash-quick">
+            <div class="ea-section-title">快捷入口</div>
+            <div class="dash-quick-grid">
+              <button type="button" class="dash-quick-card" @click="goToEntriesSub('list')">
+                <span class="dash-quick-icon">📚</span>
+                <span class="dash-quick-label">知识条目</span>
+                <span class="dash-quick-desc">浏览、筛选与管理条目</span>
+              </button>
+              <button type="button" class="dash-quick-card" @click="goToEntriesSub('search')">
+                <span class="dash-quick-icon">🔍</span>
+                <span class="dash-quick-label">语义搜索</span>
+                <span class="dash-quick-desc">按关键词检索相关知识</span>
+              </button>
+              <button type="button" class="dash-quick-card" @click="goToEntriesSub('import')">
+                <span class="dash-quick-icon">📥</span>
+                <span class="dash-quick-label">文档导入</span>
+                <span class="dash-quick-desc">上传文件或抓取网页内容</span>
+              </button>
+              <button type="button" class="dash-quick-card" @click="goToDraftsSub('workshop')">
+                <span class="dash-quick-icon">✨</span>
+                <span class="dash-quick-label">Skill 工坊</span>
+                <span class="dash-quick-desc">从知识条目生成 Skill 草稿</span>
+              </button>
             </div>
-            <!-- Row 2: module distribution -->
-            <div class="dist-section">
-              <div class="dist-title">模块分布</div>
-              <div class="dist-row">
-                <div
-                  v-for="(cnt, mod) in stats.by_module"
-                  :key="mod"
-                  class="dist-bar-item"
-                >
-                  <div class="dist-bar-label">
-                    <span class="dist-mod-dot" :style="{ background: MODULE_COLOR[mod] || '#888' }"></span>
-                    {{ MODULE_SHORT[mod] || mod }}
-                  </div>
-                  <div class="dist-bar-track">
-                    <div
-                      class="dist-bar-fill"
-                      :style="{
-                        width: stats.total_entries > 0 ? (cnt / stats.total_entries * 100) + '%' : '0%',
-                        background: MODULE_COLOR[mod] || '#888',
-                      }"
-                    ></div>
-                  </div>
-                  <div class="dist-bar-count">{{ cnt }}</div>
-                </div>
-                <div v-if="!Object.keys(stats.by_module).length" class="dist-empty">暂无数据</div>
-              </div>
-            </div>
-            <!-- Row 3: func_type distribution -->
-            <div class="dist-section">
-              <div class="dist-title">业务类型分布</div>
-              <div class="dist-chips">
-                <div v-for="(cnt, ft) in stats.by_func_type" :key="ft" class="ft-chip">
-                  <span class="ft-name">{{ FUNC_TYPE_SHORT[ft] || ft }}</span>
-                  <span class="ft-cnt">{{ cnt }}</span>
-                </div>
-                <div v-if="!Object.keys(stats.by_func_type).length" style="color:#888;font-size:13px">暂无数据</div>
-              </div>
-            </div>
-          </template>
+            <div class="ea-section-title ea-mt16">数据概览</div>
+            <p class="ea-muted" style="font-size:13px">详细模块与业务类型分布请查看「统计分析」标签页。</p>
+          </div>
         </NSpin>
       </NTabPane>
 
-      <!-- ── Entries ────────────────────────────────────── -->
-      <NTabPane name="entries" tab="📚 知识条目">
+      <!-- ── Entries (with sub-nav) ─────────────────────── -->
+      <NTabPane name="entries" tab="知识条目">
+        <EaInnerTabs :tabs="entriesSubTabs" :model-value="entriesSubTab" @update:model-value="onEntriesSubTabChange" />
+
+        <div v-show="entriesSubTab === 'list'">
         <div class="tab-toolbar">
           <NSpace size="small">
             <NSelect
@@ -2054,10 +2064,9 @@ function scoreColor(score: number, max: number): string {
             <NButton size="small" type="error" :loading="bulkDeleteLoading" @click="doBulkDeleteArchived">批量物理删除</NButton>
           </div>
         </NSpin>
-      </NTabPane>
+        </div>
 
-      <!-- ── Search ─────────────────────────────────────── -->
-      <NTabPane name="search" tab="🔍 语义搜索">
+        <div v-show="entriesSubTab === 'search'">
         <div class="search-bar">
           <NInput
             v-model:value="searchQuery"
@@ -2126,70 +2135,9 @@ function scoreColor(score: number, max: number): string {
             </div>
           </div>
         </NSpin>
-      </NTabPane>
-
-      <!-- ── Skill Drafts ───────────────────────────────── -->
-      <NTabPane name="drafts" tab="🚀 Skill 草稿">
-        <div class="tab-toolbar">
-          <NSpace size="small">
-            <NButton size="small" @click="loadDrafts">
-              <template #icon>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-              </template>
-              刷新
-            </NButton>
-            <NButton size="small" type="primary" @click="openCreateDraftModal">
-              <template #icon>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              </template>
-              新建草稿
-            </NButton>
-            <NButton size="small" type="error" secondary :loading="bulkCleanupLoading" :disabled="rejectedCount === 0" @click="doBulkCleanup">
-              清理已拒绝 ({{ rejectedCount }})
-            </NButton>
-          </NSpace>
-          <NSpace size="small" style="margin-top:6px">
-            <NButton size="tiny" :type="!draftStatusFilter ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('')">全部(未归档)</NButton>
-            <NButton size="tiny" :type="draftStatusFilter === 'draft' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('draft')">草稿</NButton>
-            <NButton size="tiny" :type="draftStatusFilter === 'reviewing' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('reviewing')">审核中</NButton>
-            <NButton size="tiny" :type="draftStatusFilter === 'approved' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('approved')">已激活</NButton>
-            <NButton size="tiny" :type="draftStatusFilter === 'rejected' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('rejected')">已拒绝</NButton>
-            <NButton size="tiny" :type="draftStatusFilter === 'deprecated' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('deprecated')">已废弃</NButton>
-            <NButton size="tiny" :type="draftStatusFilter === 'archived' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('archived')">已归档</NButton>
-          </NSpace>
-          <div class="toolbar-count" v-if="draftsTotal > 0">{{ draftsTotal }} 条</div>
         </div>
 
-        <NSpin :show="draftsLoading">
-          <NEmpty v-if="!drafts.length && !draftsLoading" description="暂无 Skill 草稿" class="tab-empty">
-            <template #extra>
-              <NButton size="small" type="primary" @click="openCreateDraftModal">创建 Skill 草稿</NButton>
-            </template>
-          </NEmpty>
-          <NDataTable
-            v-else
-            :columns="draftColumns"
-            :data="drafts"
-            :row-key="(r: SkillDraft) => r.id || ''"
-            v-model:checked-row-keys="checkedDraftKeys"
-            :pagination="{ pageSize: 15 }"
-            :bordered="false"
-            size="small"
-            class="kb-table"
-          />
-          <!-- 草稿批量操作栏 -->
-          <div v-if="checkedDraftKeys.length > 0" class="batch-action-bar">
-            <span class="batch-count">已选 {{ checkedDraftKeys.length }} 项</span>
-            <NButton size="small" @click="checkedDraftKeys = []">取消选择</NButton>
-            <NButton size="small" type="success" :loading="bulkDraftLoading" @click="doBulkApproveDrafts">批准</NButton>
-            <NButton size="small" type="warning" :loading="bulkDraftLoading" @click="doBulkRejectDrafts">拒绝</NButton>
-            <NButton size="small" type="error" :loading="bulkDraftLoading" @click="doBulkDeleteDrafts">删除</NButton>
-            <NButton size="small" :loading="bulkDraftLoading" @click="doBulkArchiveDrafts">归档</NButton>
-          </div>
-        </NSpin>
-      </NTabPane>
-      <!-- ── Document Library ──────────────────────────── -->
-      <NTabPane name="documents" tab="📂 文档库">
+        <div v-show="entriesSubTab === 'documents'">
         <NSpin :show="docsLoading">
           <NEmpty v-if="!docsLoading && documents.length === 0" description="暂无文档，请通过「文档导入」上传" style="padding:60px 0" />
           <div v-else class="doc-grid">
@@ -2278,10 +2226,9 @@ function scoreColor(score: number, max: number): string {
             </NSpin>
           </NDrawerContent>
         </NDrawer>
-      </NTabPane>
+        </div>
 
-      <!-- ── Document Import ──────────────────────────── -->
-      <NTabPane name="import" tab="📥 文档导入">
+        <div v-show="entriesSubTab === 'import'">
 
         <!-- ① Idle: mode selector + input panel -->
         <div v-if="importStatus === 'idle'" class="import-root">
@@ -2586,10 +2533,73 @@ function scoreColor(score: number, max: number): string {
             </div>
           </div>
         </div>
+        </div>
       </NTabPane>
 
-      <!-- ── Skill 工坊 ──────────────────────────────── -->
-      <NTabPane name="skill-workshop" tab="✨ Skill 工坊">
+      <!-- ── Skill Drafts (with sub-nav) ─────────────────── -->
+      <NTabPane name="drafts" tab="Skill 草稿">
+        <EaInnerTabs :tabs="draftsSubTabs" :model-value="draftsSubTab" @update:model-value="onDraftsSubTabChange" />
+
+        <div v-show="draftsSubTab === 'list'">
+        <div class="tab-toolbar">
+          <NSpace size="small">
+            <NButton size="small" @click="loadDrafts">
+              <template #icon>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              </template>
+              刷新
+            </NButton>
+            <NButton size="small" type="primary" @click="openCreateDraftModal">
+              <template #icon>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </template>
+              新建草稿
+            </NButton>
+            <NButton size="small" type="error" secondary :loading="bulkCleanupLoading" :disabled="rejectedCount === 0" @click="doBulkCleanup">
+              清理已拒绝 ({{ rejectedCount }})
+            </NButton>
+          </NSpace>
+          <NSpace size="small" style="margin-top:6px">
+            <NButton size="tiny" :type="!draftStatusFilter ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('')">全部(未归档)</NButton>
+            <NButton size="tiny" :type="draftStatusFilter === 'draft' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('draft')">草稿</NButton>
+            <NButton size="tiny" :type="draftStatusFilter === 'reviewing' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('reviewing')">审核中</NButton>
+            <NButton size="tiny" :type="draftStatusFilter === 'approved' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('approved')">已激活</NButton>
+            <NButton size="tiny" :type="draftStatusFilter === 'rejected' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('rejected')">已拒绝</NButton>
+            <NButton size="tiny" :type="draftStatusFilter === 'deprecated' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('deprecated')">已废弃</NButton>
+            <NButton size="tiny" :type="draftStatusFilter === 'archived' ? 'primary' : 'default'" secondary @click="setDraftStatusFilter('archived')">已归档</NButton>
+          </NSpace>
+          <div class="toolbar-count" v-if="draftsTotal > 0">{{ draftsTotal }} 条</div>
+        </div>
+
+        <NSpin :show="draftsLoading">
+          <NEmpty v-if="!drafts.length && !draftsLoading" description="暂无 Skill 草稿" class="tab-empty">
+            <template #extra>
+              <NButton size="small" type="primary" @click="openCreateDraftModal">创建 Skill 草稿</NButton>
+            </template>
+          </NEmpty>
+          <NDataTable
+            v-else
+            :columns="draftColumns"
+            :data="drafts"
+            :row-key="(r: SkillDraft) => r.id || ''"
+            v-model:checked-row-keys="checkedDraftKeys"
+            :pagination="{ pageSize: 15 }"
+            :bordered="false"
+            size="small"
+            class="kb-table"
+          />
+          <div v-if="checkedDraftKeys.length > 0" class="batch-action-bar">
+            <span class="batch-count">已选 {{ checkedDraftKeys.length }} 项</span>
+            <NButton size="small" @click="checkedDraftKeys = []">取消选择</NButton>
+            <NButton size="small" type="success" :loading="bulkDraftLoading" @click="doBulkApproveDrafts">批准</NButton>
+            <NButton size="small" type="warning" :loading="bulkDraftLoading" @click="doBulkRejectDrafts">拒绝</NButton>
+            <NButton size="small" type="error" :loading="bulkDraftLoading" @click="doBulkDeleteDrafts">删除</NButton>
+            <NButton size="small" :loading="bulkDraftLoading" @click="doBulkArchiveDrafts">归档</NButton>
+          </div>
+        </NSpin>
+        </div>
+
+        <div v-show="draftsSubTab === 'workshop'">
         <!-- 导入后推荐提示 -->
         <div class="skill-import-notice" v-if="importSuggestNotice">
           <div class="notice-content">
@@ -2657,7 +2667,7 @@ function scoreColor(score: number, max: number): string {
                 <NButton
                   v-else-if="s.has_draft"
                   size="small"
-                  @click="setDraftStatusFilter('draft'); onTabChange('drafts')"
+                  @click="setDraftStatusFilter('draft'); goToDraftsSub('list')"
                 >查看草稿</NButton>
                 <span v-else class="suggestion-need-more">需 {{ 3 - s.entry_count + (s.entry_count < 3 ? s.entry_count : 0) }} 条更多条目</span>
               </div>
@@ -2738,6 +2748,54 @@ function scoreColor(score: number, max: number): string {
               </div>
             </NSpin>
           </div>
+        </NSpin>
+        </div>
+      </NTabPane>
+
+      <!-- ── Analytics ─────────────────────────────────── -->
+      <NTabPane name="analytics" tab="统计分析">
+        <NSpin :show="statsLoading">
+          <div class="dash-empty" v-if="!stats && !statsLoading">
+            <NEmpty description="暂无统计数据" />
+          </div>
+          <template v-else-if="stats">
+            <div class="dist-section">
+              <div class="dist-title">模块分布</div>
+              <div class="dist-row">
+                <div
+                  v-for="(cnt, mod) in stats.by_module"
+                  :key="mod"
+                  class="dist-bar-item"
+                >
+                  <div class="dist-bar-label">
+                    <span class="dist-mod-dot" :style="{ background: MODULE_COLOR[mod] || '#888' }"></span>
+                    {{ MODULE_SHORT[mod] || mod }}
+                  </div>
+                  <div class="dist-bar-track">
+                    <div
+                      class="dist-bar-fill"
+                      :style="{
+                        width: stats.total_entries > 0 ? (cnt / stats.total_entries * 100) + '%' : '0%',
+                        background: MODULE_COLOR[mod] || '#888',
+                      }"
+                    ></div>
+                  </div>
+                  <div class="dist-bar-count">{{ cnt }}</div>
+                </div>
+                <div v-if="!Object.keys(stats.by_module).length" class="dist-empty">暂无数据</div>
+              </div>
+            </div>
+            <div class="dist-section">
+              <div class="dist-title">业务类型分布</div>
+              <div class="dist-chips">
+                <div v-for="(cnt, ft) in stats.by_func_type" :key="ft" class="ft-chip">
+                  <span class="ft-name">{{ FUNC_TYPE_SHORT[ft] || ft }}</span>
+                  <span class="ft-cnt">{{ cnt }}</span>
+                </div>
+                <div v-if="!Object.keys(stats.by_func_type).length" style="color:#888;font-size:13px">暂无数据</div>
+              </div>
+            </div>
+          </template>
         </NSpin>
       </NTabPane>
 
@@ -3565,41 +3623,47 @@ function scoreColor(score: number, max: number): string {
 
 <style scoped>
 /* ── Layout ──────────────────────────────────────────── */
-.kb-page {
-  padding: 20px 28px;
-  max-width: 1320px;
-  margin: 0 auto;
+.kb-view {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding-bottom: 24px;
 }
-
-/* ── Header ──────────────────────────────────────────── */
-.kb-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 18px 24px;
-  background: linear-gradient(135deg, rgba(32,128,240,.08) 0%, rgba(24,160,88,.06) 100%);
-  border: 1px solid rgba(32,128,240,.15);
-  border-radius: 12px;
-}
-.kb-header-left { display: flex; align-items: center; gap: 14px; }
-.kb-icon-wrap {
-  width: 44px; height: 44px;
-  display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, #2080f0 0%, #0ea5e9 100%);
-  border-radius: 10px;
-  color: #fff;
-  flex-shrink: 0;
-  box-shadow: 0 4px 12px rgba(32,128,240,.35);
-}
-.kb-title { margin: 0 0 2px; font-size: 20px; font-weight: 700; letter-spacing: 0.2px; }
-.kb-sub { margin: 0; font-size: 12px; color: #888; }
-.kb-add-btn { border-radius: 8px; font-weight: 600; }
 
 /* ── Tabs ────────────────────────────────────────────── */
-.kb-tabs { background: var(--n-color, #fff); border-radius: 12px; }
+.kb-tabs { padding: 4px 22px 22px; }
+
+/* ── Dashboard quick links ─────────────────────────────── */
+.dash-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.dash-quick-card {
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: 14px;
+  padding: 16px;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text);
+  transition: all 0.18s;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dash-quick-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.dash-quick-icon { font-size: 22px; }
+.dash-quick-label { font-size: 14px; font-weight: 700; }
+.dash-quick-desc { font-size: 12px; color: var(--muted); }
+
+@media (max-width: 900px) {
+  .dash-quick-grid { grid-template-columns: 1fr 1fr; }
+}
 
 /* ── Toolbar ─────────────────────────────────────────── */
 .tab-toolbar {

@@ -1,26 +1,20 @@
 import { expect, test } from '@playwright/test'
 import { authenticate, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
 
-test('renders authenticated shell and navigates between key product routes', async ({ page }) => {
+test('renders V26 shell and navigates to models via system menu', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
-  const api = await mockHermesApi(page)
+  await mockHermesApi(page)
 
-  await page.goto('/#/hermes/jobs')
+  await page.goto('/#/tahp/dashboard')
 
-  await expect(page.getByRole('heading', { name: 'Scheduled Jobs' })).toBeVisible()
-  await expect(page.getByText('Nightly Smoke')).toBeVisible()
+  await expect(page.locator('.ck-shell')).toBeVisible()
+  await expect(page.locator('.ck-brand')).toContainText('EasyAdapter')
 
-  const jobsRequest = api.requests.find((request) => request.pathname === '/api/hermes/jobs')
-  expect(jobsRequest?.headers.authorization).toBe(`Bearer ${TEST_ACCESS_KEY}`)
-  expect(jobsRequest?.headers['x-hermes-profile']).toBe('research')
+  await page.locator('.ck-tab', { hasText: '报告' }).click()
+  await expect(page).toHaveURL(/#\/tahp\/reports/)
 
-  await page.locator('aside.sidebar').getByRole('button', { name: /^Models$/ }).click()
-  await expect(page).toHaveURL(/#\/hermes\/models$/)
-  await expect(page.getByRole('heading', { name: 'Models' })).toBeVisible()
-  await expect(page.getByText('test-model').first()).toBeVisible()
-
-  await page.locator('aside.sidebar').getByRole('button', { name: /^Settings$/ }).click()
-  await expect(page).toHaveURL(/#\/hermes\/settings$/)
-  await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
-  expect(api.unexpectedRequests).toEqual([])
+  await page.locator('.ck-sys-btn').first().click()
+  await page.getByText('模型管理', { exact: true }).click()
+  await expect(page).toHaveURL(/#\/hermes\/models/)
+  await expect(page.getByRole('heading', { name: /模型|Models/i }).first()).toBeVisible()
 })

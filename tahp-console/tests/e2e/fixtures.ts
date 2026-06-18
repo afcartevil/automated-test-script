@@ -63,6 +63,10 @@ function jsonResponse(body: unknown, status = 200) {
   }
 }
 
+function tahpResponse<T>(data: T) {
+  return jsonResponse({ success: true, data })
+}
+
 function recordRequest(request: Request): MockedRequest {
   const url = new URL(request.url())
   return {
@@ -220,6 +224,83 @@ export async function mockHermesApi(page: Page, options: MockHermesApiOptions = 
 
     if (pathname === '/api/cron-history') {
       await route.fulfill(jsonResponse({ runs: [] }))
+      return
+    }
+
+    if (pathname === '/api/hermes/skills') {
+      await route.fulfill(jsonResponse({ categories: [], archived: [] }))
+      return
+    }
+
+    if (pathname === '/api/tahp/bug-analysis/tasks') {
+      await route.fulfill(tahpResponse([]))
+      return
+    }
+
+    if (pathname === '/api/tahp/reports/tasks') {
+      await route.fulfill(tahpResponse([]))
+      return
+    }
+
+    if (pathname === '/api/tahp/self-check') {
+      await route.fulfill(tahpResponse({
+        score: 96,
+        level: '良好',
+        updated: '2026/6/18 10:20',
+        pass: 10,
+        warn: 2,
+        fail: 0,
+        total: 12,
+        categories: [{ title: '运行环境', icon: 'server', items: [{ name: 'Node.js', detail: 'v20', state: 'ok', label: '正常' }] }],
+        history: [{ time: '2026/6/18 10:20', score: 96, note: '2 项告警' }],
+      }))
+      return
+    }
+
+    if (pathname === '/api/tahp/knowledge/stats' || pathname === '/api/tahp/knowledge/stats/enhanced') {
+      await route.fulfill(tahpResponse({
+        total_entries: 0,
+        approved_entries: 0,
+        pending_entries: 0,
+        total_skill_drafts: 0,
+        by_module: {},
+        by_func_type: {},
+      }))
+      return
+    }
+
+    if (pathname === '/api/tahp/knowledge/entries') {
+      await route.fulfill(tahpResponse({ entries: [], total: 0 }))
+      return
+    }
+
+    if (pathname === '/api/tahp/knowledge/skill-drafts') {
+      await route.fulfill(tahpResponse({ drafts: [], total: 0 }))
+      return
+    }
+
+    if (pathname === '/api/tahp/knowledge/documents') {
+      await route.fulfill(tahpResponse({ documents: [], total: 0 }))
+      return
+    }
+
+    if (pathname === '/api/tahp/adapt/domains') {
+      await route.fulfill(tahpResponse({ domains: [] }))
+      return
+    }
+
+    if (pathname === '/api/tahp/adapt/layouts') {
+      await route.fulfill(tahpResponse({ layouts: {} }))
+      return
+    }
+
+    if (pathname.startsWith('/api/tahp/bug-analysis/jira-config')) {
+      await route.fulfill(tahpResponse({ configured: false }))
+      return
+    }
+
+    if (pathname.startsWith('/api/tahp/')) {
+      await route.fulfill(tahpResponse({}))
       return
     }
 

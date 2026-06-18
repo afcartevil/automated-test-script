@@ -1232,7 +1232,14 @@ async function handleSessionModelCustomSubmit() {
 .chat-panel {
   display: flex;
   height: 100%;
+  min-height: 0;
   position: relative;
+  gap: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
 }
 
 .session-model-search {
@@ -1417,7 +1424,8 @@ async function handleSessionModelCustomSubmit() {
 
 .session-list {
   width: 220px;
-  border-right: 1px solid $border-color;
+  border-right: 1px solid var(--line);
+  background: var(--bg);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -1753,6 +1761,7 @@ async function handleSessionModelCustomSubmit() {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  background: var(--surface);
 }
 
 .chat-provider-banner {
@@ -1779,9 +1788,10 @@ async function handleSessionModelCustomSubmit() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 21px 20px;
-  border-bottom: 1px solid $border-color;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
   flex-shrink: 0;
+  background: var(--surface);
 }
 
 .header-left {
@@ -1794,9 +1804,9 @@ async function handleSessionModelCustomSubmit() {
 }
 
 .header-session-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: $text-primary;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--head);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

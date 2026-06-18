@@ -55,7 +55,7 @@ describe('LoginView token login', () => {
       headers: { Authorization: 'Bearer secret-token' },
     })
     expect(mockSetApiKey).toHaveBeenCalledWith('secret-token')
-    expect(mockReplace).toHaveBeenCalledWith('/hermes/chat')
+    expect(mockReplace).toHaveBeenCalledWith('/tahp/dashboard')
   })
 
   it('keeps the existing invalid-token behavior on 401', async () => {

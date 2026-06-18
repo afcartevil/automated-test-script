@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { NSelect, NButton, NSpin, useMessage } from 'naive-ui'
+import { NSelect, NSpin, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { fetchLogFiles, fetchLogs, type LogEntry } from '@/api/hermes/logs'
+import EaPageHead from '@/components/layout/EaPageHead.vue'
 
 const { t } = useI18n()
 const message = useMessage()
@@ -85,39 +86,40 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="logs-view">
-    <header class="page-header">
-      <h2 class="header-title">{{ t('logs.title') }}</h2>
-      <div class="header-actions">
-        <NSelect
-          v-model:value="selectedLog"
-          :options="logOptions"
-          size="small"
-          class="input-md"
-          @update:value="loadLogs"
-        />
-        <NSelect
-          :value="levelFilter"
-          :options="levelOptions"
-          size="small"
-          class="input-sm"
-          @update:value="(v: string) => { levelFilter = v; loadLogs() }"
-        />
-        <NSelect
-          :value="lineCount"
-          :options="lineOptions"
-          size="small"
-          class="input-sm"
-          @update:value="(v: number) => { lineCount = v; loadLogs() }"
-        />
-        <input
-          v-model="searchQuery"
-          class="search-input"
-          :placeholder="t('logs.searchPlaceholder')"
-        />
-        <NButton size="small" :loading="loading" @click="loadLogs">{{ t('logs.refresh') }}</NButton>
-      </div>
-    </header>
+  <div class="page logs-view">
+    <EaPageHead :title="t('logs.title')">
+      <template #actions>
+        <div class="header-actions">
+          <NSelect
+            v-model:value="selectedLog"
+            :options="logOptions"
+            size="small"
+            class="input-md"
+            @update:value="loadLogs"
+          />
+          <NSelect
+            :value="levelFilter"
+            :options="levelOptions"
+            size="small"
+            class="input-sm"
+            @update:value="(v: string) => { levelFilter = v; loadLogs() }"
+          />
+          <NSelect
+            :value="lineCount"
+            :options="lineOptions"
+            size="small"
+            class="input-sm"
+            @update:value="(v: number) => { lineCount = v; loadLogs() }"
+          />
+          <input
+            v-model="searchQuery"
+            class="search-input"
+            :placeholder="t('logs.searchPlaceholder')"
+          />
+          <button type="button" class="ea-btn-ghost ea-btn-sm" :disabled="loading" @click="loadLogs">{{ t('logs.refresh') }}</button>
+        </div>
+      </template>
+    </EaPageHead>
 
     <div class="logs-body">
       <NSpin :show="loading" class="logs-spin">
@@ -156,11 +158,7 @@ onMounted(async () => {
   height: calc(100 * var(--vh));
   display: flex;
   flex-direction: column;
-}
-
-.page-header {
-  gap: 12px;
-  flex-wrap: wrap;
+  overflow: hidden;
 }
 
 .header-actions {
@@ -171,18 +169,19 @@ onMounted(async () => {
 }
 
 .search-input {
-  padding: 4px 10px;
-  border: 1px solid $border-color;
-  border-radius: $radius-sm;
-  background: $bg-input;
-  color: $text-primary;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--text);
   font-size: 13px;
   outline: none;
   width: 160px;
-  transition: border-color $transition-fast;
+  transition: border-color 0.18s;
 
-  &:focus { border-color: $accent-primary; }
-  &::placeholder { color: $text-muted; }
+  &:focus { border-color: var(--accent); }
+
+  &::placeholder { color: var(--muted); }
 }
 
 .logs-body {

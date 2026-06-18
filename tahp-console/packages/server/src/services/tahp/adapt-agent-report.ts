@@ -71,22 +71,34 @@ function parsePreviewSkillName(preview?: string): string | undefined {
   return m?.[1]?.trim()
 }
 
-function extractPathsFromExecuteCodePreview(preview?: string): string[] {
-  if (!preview) return []
+const EXECUTE_CODE_PATH_PATTERNS = [
+  /file_path\s*=\s*r?["']([^"']+)["']/g,
+  /\bpath\s*=\s*r?["']([^"']+)["']/g,
+  /write_file\s*\(\s*r?["']([^"']+)["']/g,
+  /open\s*\(\s*r?["']([^"']+)["']/g,
+  /Path\s*\(\s*r?["']([^"']+)["']/g,
+] as const
+
+/** 从 execute_code 的 code 或 preview 文本中提取可能写入的文件路径 */
+export function extractPathsFromExecuteCode(code?: string): string[] {
+  if (!code?.trim()) return []
   const paths: string[] = []
-  const patterns = [
-    /file_path\s*=\s*r?["']([^"']+)["']/g,
-    /write_file\s*\(\s*r?["']([^"']+)["']/g,
-    /open\s*\(\s*r?["']([^"']+)["']/g,
-  ]
-  for (const re of patterns) {
+  const seen = new Set<string>()
+  for (const re of EXECUTE_CODE_PATH_PATTERNS) {
+    const pattern = new RegExp(re.source, re.flags)
     let m: RegExpExecArray | null
-    while ((m = re.exec(preview)) !== null) {
+    while ((m = pattern.exec(code)) !== null) {
       const p = m[1]?.trim()
-      if (p && !p.endsWith('SKILL.md')) paths.push(p)
+      if (!p || p.endsWith('SKILL.md') || seen.has(p)) continue
+      seen.add(p)
+      paths.push(p)
     }
   }
   return paths
+}
+
+function extractPathsFromExecuteCodePreview(preview?: string): string[] {
+  return extractPathsFromExecuteCode(preview)
 }
 
 /** 从 Agent 正文「文件修改清单」等章节回退提取路径（execute_code 场景） */

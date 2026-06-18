@@ -26,7 +26,9 @@ import { resolveFormFieldLabels } from './adapt-layout/service'
 import {
   extractAdaptAgentFileChanges,
   extractAdaptAgentSkillRefs,
+  extractPathsFromExecuteCode,
 } from './adapt-agent-report'
+import { detectUnhealthyAgentRun, humanizeAgentError } from './adapt-agent-health'
 
 const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
 
@@ -129,6 +131,8 @@ const FILE_WRITE_TOOLS = new Set([
 
 const READ_ONLY_TOOLS = new Set(['read_file', 'read', 'Read'])
 
+const EXECUTE_CODE_TOOLS = new Set(['execute_code', 'run_python', 'python'])
+
 function extractFilePathFromArgs(args: unknown): string | undefined {
   if (!args || typeof args !== 'object') return undefined
   const obj = args as Record<string, unknown>
@@ -137,6 +141,48 @@ function extractFilePathFromArgs(args: unknown): string | undefined {
     if (typeof v === 'string' && v.trim()) return v.trim()
   }
   return undefined
+}
+
+function toolArgsPreview(toolName: string, args: unknown): string {
+  if (args && typeof args === 'object') {
+    const obj = args as Record<string, unknown>
+    if (EXECUTE_CODE_TOOLS.has(toolName) && typeof obj.code === 'string') {
+      return obj.code.slice(0, 4000)
+    }
+  }
+  return summarizeArgs(args)
+}
+
+function pathsFromToolArgs(toolName: string, args: unknown): string[] {
+  const paths: string[] = []
+  if (FILE_WRITE_TOOLS.has(toolName) && !READ_ONLY_TOOLS.has(toolName)) {
+    const p = extractFilePathFromArgs(args)
+    if (p) paths.push(p)
+  }
+  if (EXECUTE_CODE_TOOLS.has(toolName) && args && typeof args === 'object') {
+    const obj = args as Record<string, unknown>
+    const code = typeof obj.code === 'string' ? obj.code : undefined
+    if (code) paths.push(...extractPathsFromExecuteCode(code))
+  }
+  return paths
+}
+
+function recordFileChanges(
+  taskId: string,
+  ctx: AdaptAgentTaskCtx,
+  toolName: string,
+  paths: string[],
+): void {
+  for (const filePath of paths) {
+    if (!filePath?.trim() || filePath.endsWith('SKILL.md')) continue
+    const action = toolName === 'write_file' || toolName === 'write' || toolName === 'Write'
+      ? 'create'
+      : 'modify'
+    if (ctx.fileChanges.some(c => c.path === filePath)) continue
+    const change = { path: filePath, action, tool: toolName, at: new Date().toISOString() }
+    ctx.fileChanges.push(change)
+    emit(taskId, 'task.file_change', { ...change, status: 'started' })
+  }
 }
 
 /** 从 Agent 完整输出中提取末尾的自检/审核报告（含 Skill 遵从性 + 编码规范两段） */
@@ -288,7 +334,7 @@ async function runAgentChat(
     onToolCompleted: (toolName: string, isError: boolean, toolCallId: unknown) => void
     onReasoning?: (text: string) => void
   },
-): Promise<{ fullResponse: string }> {
+): Promise<{ fullResponse: string; bridgeError: string | null }> {
   const manager = getAgentBridgeManager()
   if (!manager.running) {
     throw new Error(
@@ -328,14 +374,19 @@ async function runAgentChat(
       }
     }
     if (chunk.done) {
-      if (chunk.status === 'error') throw new Error(chunk.error || 'Agent 运行出错')
+      if (chunk.status === 'error') {
+        throw new Error(humanizeAgentError(chunk.error || 'Agent 运行出错'))
+      }
       if (chunk.status === 'interrupted') throw new Error('Agent 运行被中断')
       break
     }
   }
 
   if (!lastChunk?.done) throw new Error('Agent 流式输出意外终止')
-  return { fullResponse }
+  if (lastChunk.error) {
+    throw new Error(humanizeAgentError(lastChunk.error))
+  }
+  return { fullResponse, bridgeError: lastChunk.error ?? null }
 }
 
 function reportDir(): string {
@@ -420,42 +471,27 @@ async function runAdaptAgentTask(taskId: string): Promise<void> {
 
     emit(taskId, 'task.phase', { phase: 'EXECUTING', progress: 20, message: 'Agent 按 Skill SOP 执行适配...' })
 
-    const { fullResponse } = await runAgentChat(agentSessionId, instructions, userMessage, {
+    const { fullResponse, bridgeError } = await runAgentChat(agentSessionId, instructions, userMessage, {
       onText: (delta) => {
         ctx.llmResponse = (ctx.llmResponse || '') + delta
         emit(taskId, 'task.message', { level: 'stream', text: delta })
         if (/任务规划|当前步骤|下一步|##\s*\d/i.test(delta)) {
           const note = delta.trim().slice(0, 500)
-          if (note) {
-            ctx.planNotes.push(note)
-            emit(taskId, 'task.plan', { message: note, partial: true })
-          }
+          if (note) ctx.planNotes.push(note)
         }
       },
       onToolStarted: (toolName, args, toolCallId) => {
         if (!ctx.skillsUsed.includes(toolName)) ctx.skillsUsed.push(toolName)
-        const preview = summarizeArgs(args)
+        const preview = toolArgsPreview(toolName, args)
         ctx.toolsUsed.push({ name: toolName, status: 'running', preview })
         emit(taskId, 'task.skill_use', {
           skill_id: toolName,
           source: 'tool_call',
           tool_call_id: toolCallId,
           args: preview,
-          message: `🛠 调用: ${toolName}${preview}`,
+          message: `🛠 调用: ${toolName}${summarizeArgs(args)}`,
         })
-        if (FILE_WRITE_TOOLS.has(toolName) && !READ_ONLY_TOOLS.has(toolName)) {
-          const filePath = extractFilePathFromArgs(args)
-          if (filePath && !filePath.endsWith('SKILL.md')) {
-            const action = toolName === 'write_file' || toolName === 'write' || toolName === 'Write'
-              ? 'create'
-              : 'modify'
-            const change = { path: filePath, action, tool: toolName, at: new Date().toISOString() }
-            if (!ctx.fileChanges.some(c => c.path === filePath)) {
-              ctx.fileChanges.push(change)
-              emit(taskId, 'task.file_change', { ...change, status: 'started' })
-            }
-          }
-        }
+        recordFileChanges(taskId, ctx, toolName, pathsFromToolArgs(toolName, args))
       },
       onToolCompleted: (toolName, isError, toolCallId) => {
         const t = ctx.toolsUsed.find(x => x.name === toolName && x.status === 'running')
@@ -467,13 +503,19 @@ async function runAdaptAgentTask(taskId: string): Promise<void> {
           message: isError ? `✗ 失败: ${toolName}` : `✓ 完成: ${toolName}`,
         })
       },
-      onReasoning: (text) => {
-        if (text?.trim()) {
-          emit(taskId, 'task.message', { level: 'reasoning', text })
-          emit(taskId, 'task.plan', { message: text.trim().slice(0, 800), partial: true, source: 'reasoning' })
-        }
+      onReasoning: () => {
+        // 推理 token 仅用于模型内部思考，不向 UI 推送碎片
       },
     })
+
+    const agentDurationMs = Date.now() - startMs
+    const unhealthy = detectUnhealthyAgentRun({
+      fullResponse,
+      toolsUsedCount: ctx.toolsUsed.length,
+      durationMs: agentDurationMs,
+      bridgeError,
+    })
+    if (unhealthy) throw new Error(unhealthy)
 
     const auditReport = extractAdaptAuditReport(fullResponse)
     ctx.auditReport = auditReport
@@ -517,6 +559,24 @@ async function runAdaptAgentTask(taskId: string): Promise<void> {
     const normalizedFiles = extractAdaptAgentFileChanges(reportSnapshot as Record<string, unknown>)
     const normalizedSkills = extractAdaptAgentSkillRefs(reportSnapshot as Record<string, unknown>)
 
+    for (const fc of normalizedFiles) {
+      const known = ctx.fileChanges.find(c => c.path === fc.path)
+      if (!known) {
+        ctx.fileChanges.push({
+          path: fc.path,
+          action: fc.action || 'modify',
+          tool: fc.tool || 'detected',
+          at: new Date().toISOString(),
+        })
+      }
+      emit(taskId, 'task.file_change', {
+        path: fc.path,
+        tool: fc.tool || known?.tool || 'detected',
+        action: fc.action || known?.action || 'modify',
+        status: 'completed',
+      })
+    }
+
     emit(taskId, 'task.completed', {
       status: 'completed',
       mode: 'agent',
@@ -549,10 +609,10 @@ async function runAdaptAgentTask(taskId: string): Promise<void> {
       logger.warn({ err: (e as Error).message, taskId }, '[adapt-agent] report write failed')
     }
   } catch (err) {
-    const msg = (err as Error).message
+    const msg = humanizeAgentError((err as Error).message)
     ctx.status = 'failed'
     ctx.error = msg
-    emit(taskId, 'task.failed', { error: msg, message: `Agent 自动适配失败: ${msg}` })
+    emit(taskId, 'task.failed', { error: msg, message: msg })
   } finally {
     sharedBridgeClient.destroy(agentSessionId).catch(() => {})
   }

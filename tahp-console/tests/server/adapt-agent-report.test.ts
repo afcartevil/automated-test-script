@@ -3,6 +3,7 @@ import {
   extractAdaptAgentFileChanges,
   extractAdaptAgentSkillRefs,
   extractFilesFromLlmResponse,
+  extractPathsFromExecuteCode,
   normalizeAdaptAgentReport,
 } from '../../packages/server/src/services/tahp/adapt-agent-report'
 
@@ -47,6 +48,25 @@ const CHECKLIST_AUDIT = `## Skill 遵从性自检
 `
 
 describe('adapt-agent-report', () => {
+  it('extractPathsFromExecuteCode parses path= assignments', () => {
+    const code = 'append_content = ""\npath = r"F:\\\\framework\\\\agent-test-output\\\\comm_framework_agent_test.txt"\nwith open(path, "a") as f: f.write(append_content)'
+    const paths = extractPathsFromExecuteCode(code)
+    expect(paths).toHaveLength(1)
+    expect(paths[0]).toContain('comm_framework_agent_test.txt')
+  })
+
+  it('extractAdaptAgentFileChanges includes execute_code path writes', () => {
+    const files = extractAdaptAgentFileChanges({
+      toolsUsed: [
+        { name: 'execute_code', preview: '(code=path = r"F:\\\\AAA_TEMP\\\\out\\\\test.txt")' },
+      ],
+      llm_response: '',
+    })
+    expect(files).toHaveLength(1)
+    expect(files[0].path).toContain('test.txt')
+    expect(files[0].tool).toBe('execute_code')
+  })
+
   it('extractFilesFromLlmResponse parses file modification table', () => {
     const text = `## 文件修改清单\n\n| 路径 | 修改说明 |\n|------|----------|\n| \`D:\\\\AAA_TEMP\\\\agent-test-output\\\\comm_framework_agent_test.txt\` | **新建** — 测试文件 |`
     const files = extractFilesFromLlmResponse(text)

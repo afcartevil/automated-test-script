@@ -11,7 +11,10 @@ import FilePreview from '@/components/hermes/files/FilePreview.vue'
 import FileUploadModal from '@/components/hermes/files/FileUploadModal.vue'
 import FileRenameModal from '@/components/hermes/files/FileRenameModal.vue'
 import type { FileEntry } from '@/api/hermes/files'
+import EaPageHead from '@/components/layout/EaPageHead.vue'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const filesStore = useFilesStore()
 
 const contextMenuRef = ref<InstanceType<typeof FileContextMenu> | null>(null)
@@ -48,7 +51,11 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="files-view">
+  <div class="sys-shell">
+    <div class="page sys-head">
+      <EaPageHead :title="t('files.title')" subtitle="浏览与编辑 Agent 工作区文件" />
+    </div>
+    <div class="files-view sys-body">
     <div class="files-tree-panel">
       <FileTree />
     </div>
@@ -69,10 +76,28 @@ onMounted(() => {
     <FileUploadModal v-model:show="showUpload" />
     <FileRenameModal v-model:show="showRenameModal" :mode="renameMode" :entry="renameEntry" />
   </div>
+  </div>
 </template>
 
 <style scoped lang="scss">
 @use '@/styles/variables' as *;
+
+.sys-shell {
+  height: calc(100 * var(--vh));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sys-head {
+  flex-shrink: 0;
+  padding-bottom: 0;
+}
+
+.sys-body {
+  flex: 1;
+  min-height: 0;
+}
 
 .files-view {
   display: flex;

@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { NInput, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import EaPageHead from '@/components/layout/EaPageHead.vue'
 import SkillSidebar from '@/components/hermes/skills/SkillSidebar.vue'
 import SkillGrid from '@/components/hermes/skills/SkillGrid.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
@@ -20,6 +21,7 @@ const searchQuery = ref('')
 const funcTypeFilter = ref<string | null>(null)
 const moduleFilter = ref<string | null>(null)
 const showImportModal = ref(false)
+const isFullscreen = ref(false)
 let mobileQuery: MediaQueryList | null = null
 
 // ── 所有技能扁平化 ─────────────────────────────────────────────────────────────
@@ -79,8 +81,8 @@ async function loadSkills() {
   loading.value = true
   try {
     const data = await fetchSkills()
-    categories.value = data.categories
-    archived.value = data.archived
+    categories.value = data.categories ?? []
+    archived.value = data.archived ?? []
   } catch (err: any) {
     console.error('Failed to load skills:', err)
   } finally {
@@ -101,9 +103,9 @@ function handleSelect(skillName: string) {
     const found = cat.skills.find(s => s.name === skillName)
     if (found) {
       if (selectedCategory.value === cat.name && selectedSkill.value === skillName) {
-        // Deselect
         selectedCategory.value = ''
         selectedSkill.value = ''
+        isFullscreen.value = false
       } else {
         selectedCategory.value = cat.name
         selectedSkill.value = skillName
@@ -122,6 +124,11 @@ function handleSelect(skillName: string) {
 function handleClose() {
   selectedCategory.value = ''
   selectedSkill.value = ''
+  isFullscreen.value = false
+}
+
+function toggleFullscreen() {
+  isFullscreen.value = !isFullscreen.value
 }
 
 function handleImported(_names: string[]) {
@@ -157,48 +164,30 @@ async function handleBackfill() {
 </script>
 
 <template>
-  <div class="skills-view">
+  <div class="skills-view page page-wide">
 
-    <!-- ── 顶部工具栏 ──────────────────────────────────────────────────────── -->
-    <header class="page-header">
-      <div class="header-left">
-        <h2 class="header-title">{{ t('skills.title') }}</h2>
-      </div>
-
-      <!-- 功能类型 Tab 过滤 -->
-      <div class="func-type-tabs">
+    <EaPageHead
+      :title="t('skills.title')"
+      subtitle="业务规则与执行规范的载体 · 适配 / 诊断 Agent 按 Skill SOP 执行"
+    >
+      <template #actions>
         <button
-          class="func-tab"
-          :class="{ active: funcTypeFilter === null }"
-          @click="setFuncTypeFilter(null)"
+          type="button"
+          class="ea-btn-ghost ea-btn-sm backfill-btn"
+          :disabled="backfilling"
+          :title="backfilling ? '回填中...' : '一键为所有 skill 补充 funcType/category 分类字段'"
+          @click="handleBackfill"
         >
-          全部
-          <span class="tab-badge">{{ allSkills.length }}</span>
-        </button>
-        <button
-          v-for="ft in funcTypes"
-          :key="ft"
-          class="func-tab"
-          :class="{ active: funcTypeFilter === ft }"
-          @click="setFuncTypeFilter(ft)"
-        >
-          {{ ft }}
-          <span class="tab-badge">{{ funcTypeCounts[ft] ?? 0 }}</span>
-        </button>
-      </div>
-
-      <div class="header-right">
-        <button class="import-btn backfill-btn" :disabled="backfilling" :title="backfilling ? '回填中...' : '一键为所有 skill 补充 funcType/category 分类字段'" @click="handleBackfill">
           <svg v-if="!backfilling" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M4 4h6v6H4z"/><path d="M14 4h6v6h-6z"/><path d="M4 14h6v6H4z"/>
             <path d="M17 14v6m-3-3h6"/>
           </svg>
-          <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite">
+          <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon">
             <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
           </svg>
           修复分类
         </button>
-        <button class="import-btn" @click="showImportModal = true">
+        <button type="button" class="ea-btn-primary ea-btn-sm" @click="showImportModal = true">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <polyline points="17 8 12 3 7 8"/>
@@ -206,15 +195,42 @@ async function handleBackfill() {
           </svg>
           {{ t('skills.import.button') }}
         </button>
-        <NInput
-          v-model:value="searchQuery"
-          :placeholder="t('skills.searchPlaceholder')"
-          size="small"
-          clearable
-          style="width: 160px"
-        />
-      </div>
-    </header>
+      </template>
+    </EaPageHead>
+
+    <!-- 功能类型 domain-chip 过滤 -->
+    <div class="ea-domain-bar skills-domain-bar">
+      <button
+        type="button"
+        class="ea-domain-chip"
+        :class="{ active: funcTypeFilter === null }"
+        @click="setFuncTypeFilter(null)"
+      >
+        全部
+        <span class="chip-cnt">{{ allSkills.length }}</span>
+      </button>
+      <button
+        v-for="ft in funcTypes"
+        :key="ft"
+        type="button"
+        class="ea-domain-chip"
+        :class="{ active: funcTypeFilter === ft }"
+        @click="setFuncTypeFilter(ft)"
+      >
+        {{ ft }}
+        <span class="chip-cnt">{{ funcTypeCounts[ft] ?? 0 }}</span>
+      </button>
+    </div>
+
+    <!-- 搜索栏 -->
+    <div class="skill-search">
+      <NInput
+        v-model:value="searchQuery"
+        :placeholder="t('skills.searchPlaceholder')"
+        clearable
+        class="skill-search-input"
+      />
+    </div>
 
     <!-- 批量导入模态框 -->
     <SkillImportModal
@@ -248,18 +264,41 @@ async function handleBackfill() {
           @select="handleSelect"
         />
 
-        <!-- 右侧：技能详情抽屉 -->
+        <!-- 右侧：技能详情预览 / 全屏 -->
         <transition name="drawer">
-          <div v-if="selectedCategory && selectedSkill" class="detail-drawer">
-            <div class="drawer-header">
-              <span class="drawer-title">{{ selectedSkill }}</span>
-              <button class="drawer-close" @click="handleClose" title="关闭">
+          <div
+            v-if="selectedCategory && selectedSkill"
+            class="skill-detail-panel"
+            :class="{ 'is-fullscreen': isFullscreen }"
+          >
+            <div class="panel-header">
+              <span class="panel-title">{{ selectedSkill }}</span>
+              <button
+                type="button"
+                class="panel-action"
+                :title="isFullscreen ? '退出全屏' : '全屏查看'"
+                @click="toggleFullscreen"
+              >
+                <svg v-if="!isFullscreen" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="15 3 21 3 21 9"/>
+                  <polyline points="9 21 3 21 3 15"/>
+                  <line x1="21" y1="3" x2="14" y2="10"/>
+                  <line x1="3" y1="21" x2="10" y2="14"/>
+                </svg>
+                <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="4 14 10 14 10 20"/>
+                  <polyline points="20 10 14 10 14 4"/>
+                  <line x1="14" y1="10" x2="21" y2="3"/>
+                  <line x1="3" y1="21" x2="10" y2="14"/>
+                </svg>
+              </button>
+              <button type="button" class="panel-close" title="关闭" @click="handleClose">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
               </button>
             </div>
-            <div class="drawer-body">
+            <div class="panel-body">
               <SkillDetail
                 :category="selectedCategory"
                 :skill="selectedSkill"
@@ -282,152 +321,62 @@ async function handleBackfill() {
 </template>
 
 <style scoped lang="scss">
-@use '@/styles/variables' as *;
-
 .skills-view {
-  height: calc(100 * var(--vh));
+  height: calc(100 * var(--vh) - 80px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
-// ── 顶部工具栏 ────────────────────────────────────────────────────────────────
-
-.page-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border-bottom: 1px solid $border-color;
+.skills-domain-bar {
   flex-shrink: 0;
+  margin-bottom: 0;
+  padding-bottom: 4px;
 }
 
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.header-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: $text-primary;
-  white-space: nowrap;
-}
-
-// ── 功能类型 Tab ──────────────────────────────────────────────────────────────
-
-.func-type-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  &::-webkit-scrollbar { display: none; }
-}
-
-.func-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 12px;
-  border: 1px solid transparent;
-  border-radius: 20px;
-  background: none;
-  color: $text-secondary;
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all $transition-fast;
-
-  &:hover {
-    color: $text-primary;
-    background: rgba(var(--accent-info-rgb), 0.06);
-    border-color: rgba(var(--accent-info-rgb), 0.15);
-  }
-
-  &.active {
-    color: var(--accent-info);
-    background: rgba(var(--accent-info-rgb), 0.1);
-    border-color: rgba(var(--accent-info-rgb), 0.3);
-    font-weight: 600;
-  }
-}
-
-.tab-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 600;
-  color: inherit;
-  opacity: 0.7;
-  background: rgba(0, 0, 0, 0.06);
-  padding: 0 5px;
-  border-radius: 8px;
+.chip-cnt {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--surface-2);
+  padding: 1px 7px;
+  border-radius: 999px;
   min-width: 18px;
-  height: 16px;
+  text-align: center;
 
-  .active & {
-    background: rgba(var(--accent-info-rgb), 0.15);
-    opacity: 1;
+  .ea-domain-chip.active & {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    color: var(--accent);
   }
 }
 
-// ── 右侧工具 ──────────────────────────────────────────────────────────────────
-
-.header-right {
+.skill-search {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 10px;
+  margin-bottom: 14px;
   flex-shrink: 0;
 }
 
-.import-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border: 1px solid $border-color;
-  border-radius: $radius-sm;
-  background: none;
-  color: $text-secondary;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all $transition-fast;
-
-  &:hover {
-    color: $text-primary;
-    background: rgba(var(--accent-info-rgb), 0.06);
-    border-color: rgba(var(--accent-info-rgb), 0.3);
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: wait;
-  }
+.skill-search-input {
+  flex: 1;
+  max-width: 360px;
 }
 
-.backfill-btn {
-  color: $text-muted;
-  &:hover {
-    color: #3fb950;
-    background: rgba(63, 185, 80, 0.06);
-    border-color: rgba(63, 185, 80, 0.3);
-  }
+.backfill-btn:not(:disabled):hover {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: var(--success-soft);
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
 }
 
 @keyframes spin {
   from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+  to { transform: rotate(360deg); }
 }
-
-// ── 三栏布局 ──────────────────────────────────────────────────────────────────
 
 .skills-body {
   flex: 1;
@@ -435,6 +384,10 @@ async function handleBackfill() {
   overflow: hidden;
   min-height: 0;
   position: relative;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
 
 .skills-loading {
@@ -443,61 +396,166 @@ async function handleBackfill() {
   align-items: center;
   justify-content: center;
   font-size: 13px;
-  color: $text-muted;
+  color: var(--muted);
 }
 
-// ── 右侧详情抽屉 ──────────────────────────────────────────────────────────────
+// ── V26 skill-grid overrides (child component) ───────────────────────────────
 
-.detail-drawer {
-  width: 360px;
-  flex-shrink: 0;
-  border-left: 1px solid $border-color;
-  background: $bg-sidebar;
-  display: flex;
-  flex-direction: column;
+.skills-body :deep(.skill-grid-wrap) {
+  padding: 12px 16px 16px;
+}
+
+.skills-body :deep(.grid-context-bar) {
+  padding: 8px 2px 10px;
+}
+
+.skills-body :deep(.ctx-breadcrumb) {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.skills-body :deep(.ctx-count) {
+  font-size: 11.5px;
+  color: var(--muted);
+
+  b { color: var(--text); font-weight: 700; }
+}
+
+.skills-body :deep(.skill-grid) {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  align-content: start;
+}
+
+.skills-body :deep(.skill-card) {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px;
+  cursor: pointer;
+  transition: all 0.18s;
+  box-shadow: none;
+
+  &:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--line-strong);
+  }
+
+  &.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    transform: none;
+  }
+}
+
+.skills-body :deep(.card-glow-bar) {
+  display: none;
+}
+
+.skills-body :deep(.card-name) {
+  font-family: var(--font-code, 'JetBrains Mono', monospace);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.skills-body :deep(.card-desc) {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.drawer-header {
+.skills-body :deep(.grid-empty) {
+  color: var(--muted);
+}
+
+// ── 右侧详情预览 / 全屏 ──────────────────────────────────────────────────────
+
+.skill-detail-panel {
+  width: 360px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--line);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width 0.22s ease, box-shadow 0.22s ease, border-radius 0.22s ease;
+
+  &.is-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    width: 100%;
+    border-left: none;
+    border-radius: 0;
+    box-shadow: none;
+    background: var(--surface);
+  }
+}
+
+.panel-header {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 12px 16px 10px;
-  border-bottom: 1px solid $border-color;
+  border-bottom: 1px solid var(--line);
   flex-shrink: 0;
-}
+  background: var(--bg);
 
-.drawer-title {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 600;
-  color: $text-primary;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.drawer-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: none;
-  color: $text-muted;
-  cursor: pointer;
-  border-radius: 4px;
-  flex-shrink: 0;
-  transition: all $transition-fast;
-
-  &:hover {
-    color: $text-primary;
-    background: rgba(var(--accent-info-rgb), 0.08);
+  .is-fullscreen & {
+    padding: 16px 24px 12px;
+    max-width: 1080px;
+    width: 100%;
+    margin: 0 auto;
+    box-sizing: border-box;
+    background: transparent;
   }
 }
 
-.drawer-body {
+.panel-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--head);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  .is-fullscreen & {
+    font-size: 15px;
+  }
+}
+
+.panel-action,
+.panel-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.18s;
+
+  &:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+}
+
+.panel-body {
   flex: 1;
   overflow: hidden;
   padding: 0 16px 16px;
@@ -505,17 +563,26 @@ async function handleBackfill() {
   flex-direction: column;
   min-height: 0;
 
-  // SkillDetail 内部顶部标题区在抽屉里隐藏，已由 drawer-header 代替
   :deep(.detail-title) {
     display: none;
   }
-}
 
-// ── 抽屉滑入动画 ──────────────────────────────────────────────────────────────
+  .is-fullscreen & {
+    padding: 0 24px 32px;
+    max-width: 1080px;
+    width: 100%;
+    margin: 0 auto;
+    box-sizing: border-box;
+
+    :deep(.detail-title) {
+      display: flex;
+    }
+  }
+}
 
 .drawer-enter-active,
 .drawer-leave-active {
-  transition: width $transition-fast, opacity $transition-fast;
+  transition: width 0.2s, opacity 0.2s;
   overflow: hidden;
 }
 
@@ -531,18 +598,37 @@ async function handleBackfill() {
   opacity: 1;
 }
 
-// ── 移动端适配 ────────────────────────────────────────────────────────────────
+@media (max-width: 1100px) {
+  .skills-body :deep(.skill-grid) {
+    grid-template-columns: 1fr 1fr;
+  }
+}
 
-@media (max-width: $breakpoint-mobile) {
-  .func-type-tabs { display: none; }
+@media (max-width: 768px) {
+  .skills-domain-bar { display: none; }
 
-  .detail-drawer {
+  .skills-body :deep(.skill-grid) {
+    grid-template-columns: 1fr;
+  }
+
+  .skill-detail-panel {
     position: absolute;
     right: 0;
     top: 0;
     bottom: 0;
     z-index: 20;
-    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.15);
+    box-shadow: var(--shadow-lg);
+
+    &.is-fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      box-shadow: none;
+    }
   }
+}
+
+@media (max-width: 720px) {
+  .skill-search-input { max-width: none; }
 }
 </style>

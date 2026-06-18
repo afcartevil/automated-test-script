@@ -12,6 +12,7 @@ import HistoryMessageList from '@/components/hermes/chat/HistoryMessageList.vue'
 import SessionListItem from '@/components/hermes/chat/SessionListItem.vue'
 import OutlinePanel from '@/components/hermes/chat/OutlinePanel.vue'
 import { deleteSession, fetchHermesSessions, fetchHermesSession, type SessionSummary } from '@/api/hermes/sessions'
+import EaPageHead from '@/components/layout/EaPageHead.vue'
 
 const chatStore = useChatStore()
 const appStore = useAppStore()
@@ -294,7 +295,11 @@ async function handleDeleteSession(id: string) {
 </script>
 
 <template>
-  <div class="history-panel">
+  <div class="sys-shell">
+    <div class="page sys-head">
+      <EaPageHead :title="t('chat.hermesHistory')" :subtitle="t('chat.historyScopeHint')" />
+    </div>
+    <div class="history-panel sys-body">
     <div class="session-backdrop" :class="{ active: showSessions }" @click="showSessions = false" />
     <aside class="session-list" :class="{ collapsed: !showSessions }">
       <div class="session-list-header">
@@ -399,10 +404,28 @@ async function handleDeleteSession(id: string) {
       </div>
     </div>
   </div>
+  </div>
 </template>
 
 <style scoped lang="scss">
 @use '@/styles/variables' as *;
+
+.sys-shell {
+  height: calc(100 * var(--vh));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sys-head {
+  flex-shrink: 0;
+  padding-bottom: 0;
+}
+
+.sys-body {
+  flex: 1;
+  min-height: 0;
+}
 
 .history-panel {
   display: flex;

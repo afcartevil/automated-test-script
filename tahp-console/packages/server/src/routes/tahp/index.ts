@@ -7,6 +7,7 @@ import { tahpReportsRoutes } from './reports'
 import { tahpAdaptRoutes } from './adapt'
 import { tahpSkillsRoutes } from './skills'
 import { tahpBugAnalysisRoutes } from './bug-analysis'
+import { tahpSelfCheckRoutes } from './self-check'
 
 export function registerTahpRoutes(app: Koa) {
   app.use(tahpKnowledgeRoutes.routes())
@@ -14,4 +15,5 @@ export function registerTahpRoutes(app: Koa) {
   app.use(tahpAdaptRoutes.routes())
   app.use(tahpSkillsRoutes.routes())
   app.use(tahpBugAnalysisRoutes.routes())
+  app.use(tahpSelfCheckRoutes.routes())
 }

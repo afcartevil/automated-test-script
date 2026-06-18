@@ -8,6 +8,7 @@ import { getApiKey, getBaseUrlValue } from "@/api/client";
 import { NButton, NPopconfirm, NTooltip, NSelect, useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import type { ITheme } from "@xterm/xterm";
+import EaPageHead from "@/components/layout/EaPageHead.vue";
 
 const { t } = useI18n();
 const message = useMessage();
@@ -575,7 +576,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="terminal-panel">
+  <div class="sys-shell">
+    <div class="page sys-head">
+      <EaPageHead title="终端" subtitle="Web 终端会话，支持多标签与主题切换" />
+    </div>
+    <div class="terminal-panel sys-body">
     <!-- Session backdrop (mobile) -->
     <div
       class="session-backdrop"
@@ -733,10 +738,28 @@ onUnmounted(() => {
       </div>
     </div>
   </div>
+  </div>
 </template>
 
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
+
+.sys-shell {
+  height: calc(100 * var(--vh));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sys-head {
+  flex-shrink: 0;
+  padding-bottom: 0;
+}
+
+.sys-body {
+  flex: 1;
+  min-height: 0;
+}
 
 .terminal-panel {
   display: flex;

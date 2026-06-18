@@ -2,12 +2,16 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  NCard, NTabs, NTabPane, NInput, NButton, NTag, NSpin, NEmpty, NAlert,
+  NInput, NButton, NSpin, NEmpty, NAlert,
   NModal, NScrollbar, NProgress, NPopover, useMessage, NTooltip,
-  NRadioGroup, NRadioButton, NSpace, NForm, NFormItem,
+  NSpace, NForm, NFormItem,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
+import EaPageHead from '@/components/layout/EaPageHead.vue'
+import EaCard from '@/components/layout/EaCard.vue'
+import EaPill from '@/components/layout/EaPill.vue'
+import EaInnerTabs from '@/components/layout/EaInnerTabs.vue'
 import { useModelProviderReadiness } from '@/composables/useModelProviderReadiness'
 import { useBugAnalysisStore } from '@/stores/tahp/bug-analysis'
 import {
@@ -138,17 +142,43 @@ const distillNote = ref('')
 // 阶段名映射 — 用于侧栏显示更友好的标签
 // ─────────────────────────────────────────────────────────────────────────────
 const PHASE_LABELS: Record<string, { label: string; color: string }> = {
-  FETCHING_JIRA:    { label: '拉取 JIRA',      color: '#388bfd' },
-  SKILL_SELECTION:  { label: '匹配 Skill',     color: '#a371f7' },
-  LOADING_CONTEXT:  { label: '加载上下文',     color: '#3fb950' },
-  ANALYZING:        { label: '大模型分析',     color: '#e3b341' },
-  GENERATING_REPORT:{ label: '生成报告',       color: '#388bfd' },
-  COMPLETED:        { label: '已完成',         color: '#10b981' },
-  FAILED:           { label: '失败',           color: '#d03050' },
-  CANCELLED:        { label: '已取消',         color: '#a855f7' },
-  QUEUED:           { label: '等待中',         color: '#f59e0b' },
-  BATCH_RUNNING:    { label: '批量执行中',     color: '#2080f0' },
+  FETCHING_JIRA:    { label: '拉取 JIRA',      color: 'var(--info)' },
+  SKILL_SELECTION:  { label: '匹配 Skill',     color: 'var(--violet-ic)' },
+  LOADING_CONTEXT:  { label: '加载上下文',     color: 'var(--success)' },
+  ANALYZING:        { label: '大模型分析',     color: 'var(--warn)' },
+  GENERATING_REPORT:{ label: '生成报告',       color: 'var(--info)' },
+  COMPLETED:        { label: '已完成',         color: 'var(--success)' },
+  FAILED:           { label: '失败',           color: 'var(--error)' },
+  CANCELLED:        { label: '已取消',         color: 'var(--violet-ic)' },
+  QUEUED:           { label: '等待中',         color: 'var(--warn)' },
+  BATCH_RUNNING:    { label: '批量执行中',     color: 'var(--info)' },
 }
+
+const BUG_STAGE_ORDER = ['FETCHING_JIRA', 'SKILL_SELECTION', 'LOADING_CONTEXT', 'ANALYZING', 'GENERATING_REPORT'] as const
+
+const detailTabs = computed(() => [
+  { key: 'live', label: '实时进展' },
+  {
+    key: 'report',
+    label: '分析报告',
+    disabled: currentTask.value?.status === 'running' && !currentTask.value?.completed_at,
+  },
+  { key: 'jira', label: 'JIRA 详情' },
+  { key: 'log', label: '任务日志' },
+])
+
+const bugStages = computed(() => {
+  const phase = currentTask.value?.phase
+  const status = currentTask.value?.status
+  const idx = phase ? BUG_STAGE_ORDER.indexOf(phase as typeof BUG_STAGE_ORDER[number]) : -1
+  const allDone = status === 'completed' || phase === 'COMPLETED'
+  return BUG_STAGE_ORDER.map((key, i) => ({
+    key,
+    label: PHASE_LABELS[key]?.label || key,
+    done: allDone || (idx >= 0 && i < idx),
+    active: !allDone && phase === key,
+  }))
+})
 
 function phaseLabel(phase?: string): string {
   if (!phase) return '准备中'
@@ -156,29 +186,17 @@ function phaseLabel(phase?: string): string {
 }
 
 function phaseColor(phase?: string): string {
-  if (!phase) return '#888'
-  return PHASE_LABELS[phase]?.color || '#888'
+  if (!phase) return 'var(--faint)'
+  return PHASE_LABELS[phase]?.color || 'var(--faint)'
 }
 
-function statusTagType(status?: string): 'default' | 'info' | 'success' | 'error' | 'warning' {
-  if (status === 'completed') return 'success'
-  if (status === 'failed') return 'error'
-  if (status === 'cancelled') return 'warning'
+function statusPillVariant(status?: string): 'ok' | 'info' | 'warn' | 'err' | 'muted' {
+  if (status === 'completed') return 'ok'
+  if (status === 'failed') return 'err'
+  if (status === 'cancelled') return 'warn'
   if (status === 'running') return 'info'
-  if (status === 'pending') return 'warning'
-  return 'default'
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 事件流颜色 / 格式化
-// ─────────────────────────────────────────────────────────────────────────────
-function eventColor(type: string): 'default' | 'info' | 'success' | 'error' | 'warning' {
-  if (type.endsWith('.failed'))     return 'error'
-  if (type.endsWith('.cancelled'))  return 'warning'
-  if (type.endsWith('.completed'))  return 'success'
-  if (type === 'task.skill_use')    return 'warning'
-  if (type === 'task.phase')        return 'info'
-  return 'default'
+  if (status === 'pending') return 'warn'
+  return 'muted'
 }
 
 function formatTs(ts: number): string {
@@ -649,63 +667,55 @@ function handoffToAgent(scope: 'single' | 'batch') {
 </script>
 
 <template>
-  <div class="bug-analysis-root">
+  <div class="page page-wide bug-analysis-root">
     <ModelProviderBanner />
-    <!-- ───────── 顶栏 ───────── -->
-    <header class="ba-header">
-      <div class="ba-header-left">
-        <div class="ba-logo-dot" />
-        <div>
-          <h1 class="ba-title">智能诊断</h1>
-          <p class="ba-subtitle">基于 JIRA · 自动调用日志/分析 Skill · 实时可观察的根因定位</p>
-        </div>
-      </div>
-      <div class="ba-header-right">
-        <NButton size="small" type="primary" ghost @click="showJiraConfigDialog = true">
-          JIRA配置
-        </NButton>
-        <NTag size="small" :type="jiraConfigReady ? 'success' : 'warning'" :bordered="false">
-          {{ jiraConfigReady ? 'JIRA已配置' : '需配置JIRA' }}
-        </NTag>
-        <NTag size="small" type="info" :bordered="false">
-          <template #icon>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-            </svg>
-          </template>
+
+    <EaPageHead
+      title="智能诊断"
+      subtitle="基于 JIRA · 自动调用日志/分析 Skill · 实时可观察的根因定位"
+    >
+      <template #actions>
+        <button type="button" class="ea-btn-ghost ea-btn-sm" @click="showJiraConfigDialog = true">
+          JIRA 配置
+        </button>
+        <EaPill :variant="jiraConfigReady ? 'ok' : 'warn'">
+          {{ jiraConfigReady ? 'JIRA 已配置' : '需配置 JIRA' }}
+        </EaPill>
+        <EaPill variant="info">
+          <span class="ea-dot-live" />
           实时事件流
-        </NTag>
-        <NButton size="small" tertiary @click="store.refresh">
-          <template #icon>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <polyline points="23 4 23 10 17 10"/>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-          </template>
+        </EaPill>
+        <button type="button" class="ea-btn-ghost ea-btn-sm" @click="store.refresh">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
           刷新
-        </NButton>
-      </div>
-    </header>
+        </button>
+      </template>
+    </EaPageHead>
 
-    <!-- ───────── 主体三栏布局 ───────── -->
-    <div class="ba-layout">
-
-      <!-- ===== 左：输入面板 + 任务列表 ===== -->
-      <aside class="ba-left">
-
-        <!-- ── 模式切换 ── -->
-        <NCard :bordered="false" class="ba-card ba-form-card">
-          <template #header>
-            <div class="form-card-header">
-              <span class="card-title">提交分析任务</span>
-              <NRadioGroup v-model:value="mode" size="small">
-                <NRadioButton value="single">单条 Bug</NRadioButton>
-                <NRadioButton value="batch">JQL 批量</NRadioButton>
-              </NRadioGroup>
+    <div class="ea-split bug-split">
+      <!-- Left: form + task list -->
+      <div class="ea-stack bug-left">
+        <EaCard>
+          <div class="ea-row ea-between ea-mb0" style="margin-bottom: 14px">
+            <strong style="font-size: 14px">提交分析任务</strong>
+            <div class="mode-toggle">
+              <button
+                type="button"
+                class="ea-btn-sm"
+                :class="mode === 'single' ? 'ea-btn-soft' : 'mode-idle'"
+                @click="mode = 'single'"
+              >单条 Bug</button>
+              <button
+                type="button"
+                class="ea-btn-sm"
+                :class="mode === 'batch' ? 'ea-btn-soft' : 'mode-idle'"
+                @click="mode = 'batch'"
+              >JQL 批量</button>
             </div>
-          </template>
-
-          <!-- 执行模式说明（点击展开） -->
+          </div>
           <NPopover trigger="click" placement="bottom-start" style="max-width: 420px">
             <template #trigger>
               <div class="exec-mode-banner agent-mode">
@@ -716,34 +726,34 @@ function handoffToAgent(scope: 'single' | 'batch') {
                 <span class="emb-link">查看说明</span>
               </div>
             </template>
-            <div style="font-size: 12.5px; line-height: 1.7; color: #444;">
-              <div style="font-weight: 600; margin-bottom: 8px;">所有 Bug 分析任务统一走 Agent</div>
-              <div style="margin-bottom: 8px;">
+            <div class="popover-body">
+              <div class="popover-title">所有 Bug 分析任务统一走 Agent</div>
+              <div class="popover-section">
                 <strong>· BFF 零启发式</strong><br>
-                <span style="color: #666;">
+                <span class="popover-muted">
                   BFF 不再做模块推断 / Skill 候选 / 约束加载 / Prompt 拼装。<br>
                   它只负责：解析 JIRA Key、记录任务、把"分析这个 Bug"这一句话原样投递给 Agent，再把 Agent 的事件流转发到前端。
                 </span>
               </div>
-              <div style="margin-bottom: 8px;">
+              <div class="popover-section">
                 <strong>· Agent 自主完成全链路</strong><br>
-                <span style="color: #666;">
+                <span class="popover-muted">
                   Agent 收到任务后，按以下顺序真实调用工具（每次调用都会出现在右侧"Skill 调用"面板）：<br>
                   1. <code>jira-mcp</code> / <code>user-jira-mcp</code> 拉取 Issue 详情 + 附件 + 评论<br>
-                  2. 根据 Issue 内容**自主判断** Bug 域，挑对应 Skill（<code>com-voice-*</code> / <code>near-bt-*</code> / <code>power-*</code> / …）<br>
+                  2. 根据 Issue 内容<strong>自主判断</strong> Bug 域，挑对应 Skill（<code>com-voice-*</code> / <code>near-bt-*</code> / <code>power-*</code> / …）<br>
                   3. <code>transsion-harness</code> 拉日志 / 版本 / 部署<br>
                   4. 综合证据输出 8 节根因报告
                 </span>
               </div>
-              <div style="margin-bottom: 8px;">
+              <div class="popover-section">
                 <strong>· 失败即停止</strong><br>
-                <span style="color: #666;">若 Agent Bridge 未运行 / Agent 调用出错 / Skill 失败，任务会立即标记为 failed 并把错误显示在事件流，<strong>不会降级到直连 LLM</strong>。批量分析下，任一子任务失败会终止后续。</span>
+                <span class="popover-muted">若 Agent Bridge 未运行 / Agent 调用出错 / Skill 失败，任务会立即标记为 failed 并把错误显示在事件流，<strong>不会降级到直连 LLM</strong>。批量分析下，任一子任务失败会终止后续。</span>
               </div>
-              <div style="margin-bottom: 6px;">
+              <div class="popover-section">
                 <strong>· 依赖项</strong><br>
-                <span style="color: #666;">需要 hermes CLI 已安装、agent-bridge 已启动（服务端日志查关键字 <code>[agent-bridge] starting</code>），并已在"模型管理"中配置 Claude / OpenAI 凭证供 Agent 使用。</span>
+                <span class="popover-muted">需要 hermes CLI 已安装、agent-bridge 已启动（服务端日志查关键字 <code>[agent-bridge] starting</code>），并已在"模型管理"中配置 Claude / OpenAI 凭证供 Agent 使用。</span>
               </div>
-              <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; color: #888; font-size: 11px;">
+              <div class="popover-foot">
                 "预览 JIRA" 按钮仍走 BFF 直连（可选 <code>TAHP_JIRA_TOKEN</code> 等环境变量）；正式分析时 Agent 会用自己的 jira-mcp 凭证重新拉取，与 BFF 凭证无关。
               </div>
             </div>
@@ -751,8 +761,8 @@ function handoffToAgent(scope: 'single' | 'batch') {
 
           <!-- 单条模式 -->
           <template v-if="mode === 'single'">
-            <div class="field">
-              <label class="field-label">
+            <div class="ea-field">
+              <label>
                 Bug ID 或 URL <span class="req">*</span>
                 <NTooltip placement="top" trigger="hover">
                   <template #trigger>
@@ -768,11 +778,11 @@ function handoffToAgent(scope: 'single' | 'batch') {
                 placeholder="如 X6873OS162-1079 或 http://jira.transsion.com/browse/X6873OS162-1079"
                 clearable
               />
-              <div v-if="jiraInputHint" class="hint">解析到 Key: <code>{{ jiraInputHint }}</code></div>
+              <div v-if="jiraInputHint" class="field-hint">解析到 Key: <code>{{ jiraInputHint }}</code></div>
             </div>
 
-            <div class="field">
-              <label class="field-label">用户补充描述（可选）</label>
+            <div class="ea-field">
+              <label>用户补充描述（可选）</label>
               <NInput
                 v-model:value="singleForm.user_description"
                 type="textarea"
@@ -781,8 +791,8 @@ function handoffToAgent(scope: 'single' | 'batch') {
               />
             </div>
 
-            <div class="field">
-              <label class="field-label">附加上下文（可选）</label>
+            <div class="ea-field">
+              <label>附加上下文（可选）</label>
               <NInput
                 v-model:value="singleForm.extra_context"
                 placeholder="项目代码 / SoC / 版本 / Carrier 等"
@@ -790,7 +800,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
               />
             </div>
 
-            <div class="action-row">
+            <div class="ea-row ea-wrap action-row">
               <NButton type="primary" :loading="submitting" :disabled="!modelProviderReady || !singleForm.input.trim()" @click="startSingleAnalysis">
                 开始分析
               </NButton>
@@ -813,41 +823,46 @@ function handoffToAgent(scope: 'single' | 'batch') {
             <NAlert v-if="previewError" type="warning" :show-icon="false" style="margin-top: 12px">
               <template v-if="previewError.includes('401') || previewError.toLowerCase().includes('login')">
                 <strong>BFF 端 JIRA 预览鉴权失败（401）</strong>。
-                <div style="margin-top: 4px; color: #555;">
+                <div class="alert-sub">
                   这只影响"预览 JIRA"按钮（用于让你在提交前快速核对 Issue 标题/描述）。
                   正式"开始分析"时会把任务交给 Agent，由 Agent 用自己的 jira-mcp Skill 拉取，不依赖 BFF 凭证，请放心点击"开始分析"。
                 </div>
                 <details style="margin-top: 6px;">
-                  <summary style="cursor: pointer; color: #2080f0;">想让 BFF 也能预览（可选）</summary>
-                  <div style="margin-top: 4px; color: #666;">
+                  <summary class="alert-link">想让 BFF 也能预览（可选）</summary>
+                  <div class="alert-sub" style="margin-top: 4px;">
                     给 BFF 配置任一环境变量后重启服务：<code>TAHP_JIRA_TOKEN</code> / <code>TAHP_JIRA_USERNAME+PASSWORD</code> / <code>TAHP_JIRA_COOKIE</code>。
                   </div>
                 </details>
               </template>
               <template v-else>
                 {{ previewError }}
-                <div style="margin-top: 4px; color: #666;">
+                <div class="alert-sub">
                   不影响"开始分析"——Agent 会用 jira-mcp Skill 重新拉取。
                 </div>
               </template>
             </NAlert>
 
-            <div v-if="jiraPreview" class="preview-block">
-              <div class="preview-row"><span class="pk">Key</span><a :href="jiraPreview.url" target="_blank" class="pv-link">{{ jiraPreview.key }}</a></div>
-              <div class="preview-row"><span class="pk">标题</span><span class="pv">{{ jiraPreview.summary }}</span></div>
-              <div class="preview-grid">
-                <div v-if="jiraPreview.status"><span class="pk">状态</span><NTag size="tiny">{{ jiraPreview.status }}</NTag></div>
-                <div v-if="jiraPreview.priority"><span class="pk">优先级</span><NTag size="tiny" type="warning">{{ jiraPreview.priority }}</NTag></div>
-                <div v-if="jiraPreview.assignee"><span class="pk">经办</span><span class="pv">{{ jiraPreview.assignee }}</span></div>
-                <div v-if="jiraPreview.attachments?.length"><span class="pk">附件</span><NTag size="tiny" type="info">{{ jiraPreview.attachments.length }} 个</NTag></div>
+            <div v-if="jiraPreview" class="ea-info-soft ea-mt16">
+              <div class="ea-row ea-between" style="margin-bottom: 6px">
+                <EaPill variant="info">{{ jiraPreview.key }}</EaPill>
+                <EaPill v-if="jiraPreview.priority" variant="warn">{{ jiraPreview.priority }}</EaPill>
+              </div>
+              <div class="preview-summary">{{ jiraPreview.summary }}</div>
+              <div class="ea-row ea-wrap preview-meta">
+                <span v-if="jiraPreview.status">状态 {{ jiraPreview.status }}</span>
+                <span v-if="jiraPreview.assignee">经办 {{ jiraPreview.assignee }}</span>
+                <span v-if="jiraPreview.attachments?.length">附件 {{ jiraPreview.attachments.length }} 个</span>
+              </div>
+              <div v-if="jiraPreview.url" style="margin-top: 8px">
+                <a :href="jiraPreview.url" target="_blank" class="pv-link">{{ jiraPreview.url }}</a>
               </div>
             </div>
           </template>
 
           <!-- 批量模式 -->
           <template v-else>
-            <div class="field">
-              <label class="field-label">JQL <span class="req">*</span></label>
+            <div class="ea-field">
+              <label>JQL <span class="req">*</span></label>
               <NInput
                 v-model:value="batchForm.jql"
                 type="textarea"
@@ -856,8 +871,8 @@ function handoffToAgent(scope: 'single' | 'batch') {
               />
             </div>
 
-            <div class="field">
-              <label class="field-label">附加上下文（可选）</label>
+            <div class="ea-field">
+              <label>附加上下文（可选）</label>
               <NInput
                 v-model:value="batchForm.extra_context"
                 placeholder="项目代码 / SoC / 版本 / Carrier 等"
@@ -865,7 +880,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
               />
             </div>
 
-            <div class="action-row">
+            <div class="ea-row ea-wrap action-row">
               <NButton type="primary" :loading="submitting" :disabled="!modelProviderReady || !batchForm.jql.trim()" @click="startBatchAnalysis">
                 批量分析
               </NButton>
@@ -878,273 +893,263 @@ function handoffToAgent(scope: 'single' | 'batch') {
               {{ jqlPreviewError }}
             </NAlert>
 
-            <div v-if="jqlPreview" class="preview-block">
+            <div v-if="jqlPreview" class="ea-info-soft ea-mt16">
               <div class="jql-summary">
                 匹配 <strong>{{ jqlPreview.issues.length }}</strong> 单（共 {{ jqlPreview.total }}）
-                <NTag v-if="jqlPreview.truncated" size="tiny" type="warning">已截断</NTag>
+                <EaPill v-if="jqlPreview.truncated" variant="warn">已截断</EaPill>
               </div>
               <NScrollbar style="max-height: 220px">
                 <div v-for="iss in jqlPreview.issues" :key="iss.key" class="jql-item">
                   <a :href="iss.url" target="_blank" class="pv-link">{{ iss.key }}</a>
                   <span class="jql-title">{{ iss.summary }}</span>
-                  <NTag v-if="iss.priority" size="tiny" type="warning">{{ iss.priority }}</NTag>
+                  <EaPill v-if="iss.priority" variant="warn">{{ iss.priority }}</EaPill>
                 </div>
               </NScrollbar>
             </div>
           </template>
-        </NCard>
+        </EaCard>
 
-        <!-- ── 任务列表 ── -->
-        <NCard :bordered="false" class="ba-card ba-tasks-card">
-          <template #header>
-            <div class="form-card-header">
-              <span class="card-title">最近任务</span>
-              <NTag size="tiny" type="info">{{ store.recentTasks.length }} 条</NTag>
-            </div>
-          </template>
+        <EaCard class="bug-tasks-card">
+          <div class="ea-row ea-between" style="margin-bottom: 12px">
+            <strong style="font-size: 14px">最近任务</strong>
+            <EaPill variant="muted">{{ store.recentTasks.length }} 条</EaPill>
+          </div>
 
           <NEmpty v-if="!store.recentTasks.length" size="small" description="还没有任务" />
-          <NScrollbar v-else style="max-height: calc(100vh - 600px); min-height: 240px">
-            <div class="task-list">
+          <NScrollbar v-else class="task-scroll">
+            <div class="ea-tasklist">
               <button
                 v-for="t in store.recentTasks"
                 :key="t.task_id"
-                class="task-item"
+                type="button"
+                class="ea-task-item"
                 :class="{ active: currentTaskId === t.task_id, [`status-${t.status}`]: true }"
                 @click="selectTask(t.task_id)"
               >
                 <div class="ti-top">
-                  <span class="ti-jira">{{ t.jira_key }}</span>
-                  <NTag :type="statusTagType(t.status)" size="tiny">{{ t.status }}</NTag>
+                  <span class="ti-key">{{ t.jira_key }}</span>
+                  <EaPill :variant="statusPillVariant(t.status)">{{ t.status }}</EaPill>
                 </div>
                 <div class="ti-title">{{ t.title || '(等待获取标题)' }}</div>
                 <div class="ti-meta">
-                  <span :style="{ color: phaseColor(t.phase) }">●</span>
-                  <span class="ti-phase">{{ phaseLabel(t.phase) }}</span>
-                  <span v-if="t.skills_used?.length" class="ti-skills">{{ t.skills_used.length }} skill</span>
-                  <span v-if="t.parent_job_id" class="ti-batch">批量</span>
+                  <span
+                    class="ea-dot"
+                    :class="{ 'ea-dot-live': t.status === 'running' }"
+                    :style="t.status !== 'running' ? { background: phaseColor(t.phase) } : undefined"
+                  />
+                  <span>{{ phaseLabel(t.phase) }}</span>
+                  <span v-if="t.skills_used?.length" class="ti-badge">{{ t.skills_used.length }} skill</span>
+                  <span v-if="t.parent_job_id" class="ti-badge ti-batch">批量</span>
                 </div>
               </button>
             </div>
           </NScrollbar>
-        </NCard>
-      </aside>
+        </EaCard>
+      </div>
 
-      <!-- ===== 中：实时分析详情 ===== -->
-      <main class="ba-main">
-        <template v-if="!currentTask && !currentJob">
-          <div class="ba-empty">
-            <div class="ba-empty-illus">
-              <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#aaa" stroke-width="1.2">
-                <circle cx="12" cy="12" r="10"/>
-                <path d="M9 9h.01"/>
-                <path d="M15 9h.01"/>
-                <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-              </svg>
+      <!-- Right: main panel -->
+      <div class="bug-main-wrap">
+        <EaCard v-if="!currentTask && !currentJob" class="bug-main bug-empty">
+          <div class="empty-illus">
+            <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M9 9h.01"/>
+              <path d="M15 9h.01"/>
+              <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+            </svg>
+          </div>
+          <h2>开始你的第一条 Bug 分析</h2>
+          <p>输入 JIRA Key 或 URL，或粘贴 JQL 批量执行；分析过程将在此实时展示。</p>
+          <div class="empty-tips">
+            <div class="tip">
+              <span class="tip-num">1</span>
+              <span>左侧填写 Bug ID / URL（如 X6873OS162-1079）</span>
             </div>
-            <h2>开始你的第一条 Bug 分析</h2>
-            <p>输入 JIRA Key 或 URL，或粘贴 JQL 批量执行；分析过程将在此实时展示。</p>
-            <div class="ba-empty-tips">
-              <div class="tip">
-                <span class="tip-num">1</span>
-                <span>左侧填写 Bug ID / URL（如 X6873OS162-1079）</span>
-              </div>
-              <div class="tip">
-                <span class="tip-num">2</span>
-                <span>可在 "用户补充描述" 中说明 Bug 出现条件、已尝试方案</span>
-              </div>
-              <div class="tip">
-                <span class="tip-num">3</span>
-                <span>点击 "开始分析"，AI 将自动调用日志下载/分析 Skill 完成根因定位</span>
-              </div>
+            <div class="tip">
+              <span class="tip-num">2</span>
+              <span>可在 "用户补充描述" 中说明 Bug 出现条件、已尝试方案</span>
+            </div>
+            <div class="tip">
+              <span class="tip-num">3</span>
+              <span>点击 "开始分析"，AI 将自动调用日志下载/分析 Skill 完成根因定位</span>
             </div>
           </div>
-        </template>
+        </EaCard>
 
-        <template v-else-if="currentJob && !currentTask">
-          <!-- Job 摘要视图 -->
-          <NCard :bordered="false" class="job-summary-card">
-            <template #header>
-              <div class="job-header">
-                <NTag :type="statusTagType(currentJob.status)" size="small">{{ currentJob.status }}</NTag>
-                <code class="job-id">{{ currentJob.job_id }}</code>
-                <NTag size="tiny" type="info">批量 {{ currentJob.total }} 单</NTag>
-              </div>
-            </template>
-            <p class="job-jql"><strong>JQL:</strong> {{ currentJob.jql }}</p>
-            <div class="job-progress">
-              <span class="jp-label">进度</span>
-              <NProgress :percentage="Math.round(((currentJob.completed + currentJob.failed) / currentJob.total) * 100)" :show-indicator="true" />
-              <div class="jp-stats">
-                完成 <strong style="color:#10b981">{{ currentJob.completed }}</strong> /
-                失败 <strong style="color:#d03050">{{ currentJob.failed }}</strong> /
-                总 {{ currentJob.total }}
-              </div>
+        <EaCard v-else-if="currentJob && !currentTask" class="bug-main">
+          <div class="ea-row ea-between" style="margin-bottom: 14px">
+            <div class="ea-row" style="gap: 10px">
+              <EaPill :variant="statusPillVariant(currentJob.status)">{{ currentJob.status }}</EaPill>
+              <code class="mono job-id">{{ currentJob.job_id }}</code>
+              <EaPill variant="info">批量 {{ currentJob.total }} 单</EaPill>
             </div>
-            <p class="job-hint">点击下方任一子任务查看详情：</p>
-            <div class="job-tasks">
-              <button
-                v-for="tid in currentJob.task_ids"
-                :key="tid"
-                class="task-item compact"
-                :class="`status-${store.tasks[tid]?.status || 'unknown'}`"
-                @click="selectTask(tid)"
-              >
-                <div class="ti-top">
-                  <span class="ti-jira">{{ store.tasks[tid]?.jira_key || tid }}</span>
-                  <NTag :type="statusTagType(store.tasks[tid]?.status)" size="tiny">{{ store.tasks[tid]?.status || '-' }}</NTag>
-                </div>
-                <div class="ti-meta">
-                  <span :style="{ color: phaseColor(store.tasks[tid]?.phase) }">●</span>
-                  <span class="ti-phase">{{ phaseLabel(store.tasks[tid]?.phase) }}</span>
-                </div>
-              </button>
+          </div>
+          <p class="job-jql"><strong>JQL:</strong> {{ currentJob.jql }}</p>
+          <div class="job-progress">
+            <span class="ea-muted" style="font-size: 12px">进度</span>
+            <NProgress :percentage="Math.round(((currentJob.completed + currentJob.failed) / currentJob.total) * 100)" :show-indicator="true" />
+            <div class="jp-stats">
+              完成 <strong class="stat-ok">{{ currentJob.completed }}</strong> /
+              失败 <strong class="stat-err">{{ currentJob.failed }}</strong> /
+              总 {{ currentJob.total }}
             </div>
-          </NCard>
-        </template>
+          </div>
+          <p class="ea-muted" style="font-size: 12px; margin: 12px 0 6px">点击下方任一子任务查看详情：</p>
+          <div class="job-tasks">
+            <button
+              v-for="tid in currentJob.task_ids"
+              :key="tid"
+              type="button"
+              class="ea-task-item compact"
+              :class="`status-${store.tasks[tid]?.status || 'unknown'}`"
+              @click="selectTask(tid)"
+            >
+              <div class="ti-top">
+                <span class="ti-key">{{ store.tasks[tid]?.jira_key || tid }}</span>
+                <EaPill :variant="statusPillVariant(store.tasks[tid]?.status)">{{ store.tasks[tid]?.status || '-' }}</EaPill>
+              </div>
+              <div class="ti-meta">
+                <span class="ea-dot" :style="{ background: phaseColor(store.tasks[tid]?.phase) }" />
+                <span>{{ phaseLabel(store.tasks[tid]?.phase) }}</span>
+              </div>
+            </button>
+          </div>
+        </EaCard>
 
-        <template v-else-if="currentTask">
-          <!-- 任务详情顶栏 -->
-          <div class="task-topbar">
-            <div class="tt-left">
-              <NTag :type="statusTagType(currentTask.status)" size="small">
-                <template v-if="isRunning"><span class="pulse-dot" /></template>
+        <EaCard v-else-if="currentTask" class="bug-main bug-detail">
+          <div class="ea-row ea-between task-head">
+            <div class="ea-row task-head-left">
+              <EaPill :variant="statusPillVariant(currentTask.status)">
+                <span v-if="isRunning" class="ea-dot-live" />
                 {{ phaseLabel(currentTask.phase) }}
-              </NTag>
-              <a v-if="currentTask.jira_url" :href="currentTask.jira_url" target="_blank" class="tt-jira">
-                {{ currentTask.jira_key }}
-              </a>
-              <span v-else class="tt-jira">{{ currentTask.jira_key }}</span>
-              <span class="tt-title">{{ currentTask.title || '...' }}</span>
+              </EaPill>
+              <a v-if="currentTask.jira_url" :href="currentTask.jira_url" target="_blank" class="ti-key">{{ currentTask.jira_key }}</a>
+              <span v-else class="ti-key">{{ currentTask.jira_key }}</span>
+              <span class="ea-muted task-title">{{ currentTask.title || '...' }}</span>
             </div>
-            <div class="tt-right">
-              <NTag v-if="currentTask.module" size="tiny">{{ currentTask.module }}</NTag>
-              <code class="tt-tid">{{ currentTask.task_id }}</code>
+            <div class="ea-row">
+              <EaPill v-if="currentTask.module" variant="muted">{{ currentTask.module }}</EaPill>
+              <code class="mono task-id">{{ currentTask.task_id }}</code>
             </div>
           </div>
 
-          <!-- 进度条 -->
           <div v-if="typeof currentTask.progress === 'number'" class="task-progress">
             <NProgress :percentage="currentTask.progress" :show-indicator="false" :height="6" :color="phaseColor(currentTask.phase)" />
-            <span class="tp-text">{{ currentTask.progress }}%</span>
+            <span class="ea-muted tp-text">{{ currentTask.progress }}%</span>
           </div>
 
-          <!-- Tabs：实时进展 / 报告 / JIRA / 日志 -->
-          <NTabs v-model:value="activeReportTab" type="line" animated class="task-tabs">
+          <div class="ea-stage-track" style="margin-bottom: 16px">
+            <template v-for="(s, i) in bugStages" :key="s.key">
+              <div class="ea-stage" :class="{ done: s.done, active: s.active }">
+                <span class="ea-stage-node">
+                  <svg v-if="s.done" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                  <template v-else>{{ i + 1 }}</template>
+                </span>
+                <span class="ea-stage-meta"><strong>{{ s.label }}</strong></span>
+              </div>
+              <span v-if="i < bugStages.length - 1" class="ea-stage-link" />
+            </template>
+          </div>
 
-            <!-- ── 实时进展 ── -->
-            <NTabPane name="live" tab="实时进展">
-              <div class="live-grid">
-                <!-- 左：AI 流式输出 -->
-                <div class="live-llm">
-                  <div class="live-llm-header">
-                    <span class="llh-title">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/>
-                      </svg>
-                      AI 分析（流式）
-                    </span>
-                    <NTag v-if="isRunning" size="tiny" type="info"><span class="pulse-dot" />分析中</NTag>
-                    <NTag v-else-if="currentTask.status === 'completed'" size="tiny" type="success">已完成</NTag>
-                    <NTag v-else-if="currentTask.status === 'failed'" size="tiny" type="error">失败</NTag>
+          <EaInnerTabs v-model="activeReportTab" :tabs="detailTabs" />
+
+          <div class="tab-body">
+            <div v-show="activeReportTab === 'live'" class="tab-pane">
+              <div class="ea-split-3 live-grid">
+                <div class="live-llm-panel">
+                  <div class="ea-row ea-between live-llm-header">
+                    <strong style="font-size: 13px">AI 分析（流式）</strong>
+                    <EaPill v-if="isRunning" variant="info"><span class="ea-dot-live" />分析中</EaPill>
+                    <EaPill v-else-if="currentTask.status === 'completed'" variant="ok">已完成</EaPill>
+                    <EaPill v-else-if="currentTask.status === 'failed'" variant="err">失败</EaPill>
                   </div>
                   <div ref="llmScroller" class="live-llm-body">
                     <MarkdownRenderer v-if="currentLlm" :content="currentLlm" />
                     <div v-else-if="isRunning" class="llm-waiting">
                       <NSpin size="small" />
-                      <span style="margin-left: 8px; color: #888;">等待大模型首条响应...</span>
+                      <span class="ea-muted" style="margin-left: 8px">等待大模型首条响应...</span>
                     </div>
                     <NEmpty v-else size="small" description="暂无输出" />
                   </div>
                 </div>
 
-                <!-- 右：阶段事件 + Skill 列表 -->
-                <div class="live-side">
-                  <div class="side-section">
-                    <div class="ss-title">当前阶段</div>
-                    <div class="ss-current-phase" :style="{ borderColor: phaseColor(currentTask.phase) }">
-                      <span class="cp-dot" :style="{ background: phaseColor(currentTask.phase) }" />
-                      <span class="cp-label">{{ phaseLabel(currentTask.phase) }}</span>
+                <div class="ea-stack live-side">
+                  <div class="ea-mon-panel">
+                    <h4>当前阶段</h4>
+                    <div class="ss-current-phase" :style="{ borderLeftColor: phaseColor(currentTask.phase) }">
+                      <span class="ea-dot" :style="{ background: phaseColor(currentTask.phase) }" />
+                      <span>{{ phaseLabel(currentTask.phase) }}</span>
                     </div>
                   </div>
 
-                  <div class="side-section">
-                    <div class="ss-title">
-                      Agent 工具 / Skill 调用
-                      <NTag v-if="currentSkillCalls.length" size="tiny" type="success" style="margin-left: 6px;">
+                  <div class="ea-mon-panel">
+                    <div class="ea-row" style="margin-bottom: 8px">
+                      <h4 class="ea-mb0">Agent 工具 / Skill 调用</h4>
+                      <EaPill v-if="currentSkillCalls.length" variant="ok" style="margin-left: 6px">
                         {{ currentSkillCalls.filter(c => c.source === 'tool_call').length }} 真实调用
-                      </NTag>
+                      </EaPill>
                     </div>
-                    <div v-if="!currentSkillCalls.length" class="ss-empty">Agent 尚未触发任何工具 / Skill 调用</div>
+                    <div v-if="!currentSkillCalls.length" class="ea-muted" style="font-size: 12px">Agent 尚未触发任何工具 / Skill 调用</div>
                     <div v-else class="skill-call-list">
                       <div
                         v-for="(call, i) in currentSkillCalls"
                         :key="i"
-                        class="skill-call-row"
+                        class="scall"
                         :class="{
-                          'sc-tool': call.source === 'tool_call',
-                          'sc-marker': call.source === 'text_marker',
-                          'sc-running': call.source === 'tool_call' && !call.completed_ts,
-                          'sc-done': call.completed_ts && !call.error,
-                          'sc-error': call.error,
+                          ok: call.completed_ts && !call.error,
+                          run: call.source === 'tool_call' && !call.completed_ts,
+                          err: call.error,
                         }"
                       >
                         <div class="sc-line1">
-                          <span class="sc-icon">
-                            <span v-if="call.source === 'tool_call'" class="sc-emoji">🛠</span>
-                            <span v-else class="sc-emoji">🏷</span>
-                          </span>
                           <span class="sc-name">{{ call.skill_id }}</span>
-                          <NTag v-if="call.source === 'tool_call' && !call.completed_ts" size="tiny" type="info">运行中</NTag>
-                          <NTag v-else-if="call.source === 'tool_call' && call.completed_ts && !call.error" size="tiny" type="success">完成</NTag>
-                          <NTag v-else-if="call.error" size="tiny" type="error">失败</NTag>
-                          <NTag v-else size="tiny" type="default">标记</NTag>
+                          <EaPill v-if="call.source === 'tool_call' && !call.completed_ts" variant="info">运行中</EaPill>
+                          <EaPill v-else-if="call.source === 'tool_call' && call.completed_ts && !call.error" variant="ok">完成</EaPill>
+                          <EaPill v-else-if="call.error" variant="err">失败</EaPill>
+                          <EaPill v-else variant="muted">标记</EaPill>
                         </div>
-                        <div v-if="call.args || call.purpose" class="sc-line2">
-                          <span v-if="call.args" class="sc-args">{{ call.args }}</span>
-                          <span v-else-if="call.purpose" class="sc-purpose">{{ call.purpose }}</span>
+                        <div v-if="call.args || call.purpose" class="sc-args">
+                          {{ call.args || call.purpose }}
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  <div class="side-section flex-fill">
-                    <div class="ss-title">事件流</div>
+                  <div class="ea-mon-panel flex-fill">
+                    <h4>事件流</h4>
                     <div ref="eventsScroller" class="events-scroller">
-                      <div
-                        v-for="(ev, i) in currentEvents"
-                        :key="i"
-                        class="event-row"
-                        :class="`ev-${eventColor(ev.type)}`"
-                      >
-                        <div class="ev-header">
-                          <NTag size="tiny" :type="eventColor(ev.type)">{{ ev.type }}</NTag>
-                          <span class="ev-ts">{{ formatTs(ev.ts) }}</span>
-                        </div>
-                        <div class="ev-msg">{{ formatEventPayload(ev.payload) }}</div>
+                      <div v-for="(ev, i) in currentEvents" :key="i" class="evt">
+                        <span class="evt-ts">{{ formatTs(ev.ts) }}</span>
+                        <span>
+                          <EaPill variant="muted" style="font-size: 10px; margin-right: 6px">{{ ev.type }}</EaPill>
+                          {{ formatEventPayload(ev.payload) }}
+                        </span>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </NTabPane>
+            </div>
 
-            <!-- ── 报告 ── -->
-            <NTabPane name="report" tab="分析报告" :disabled="currentTask.status === 'running' && !currentTask.completed_at">
+            <div v-show="activeReportTab === 'report'" class="tab-pane">
               <NSpin :show="reportLoading">
                 <div v-if="reportDetail" class="report-card">
-                  <div class="report-meta">
-                    <div class="meta-row"><span class="mk">Task</span><code>{{ reportDetail.task_id }}</code></div>
-                    <div class="meta-row"><span class="mk">JIRA</span><a :href="reportDetail.jira_url" target="_blank">{{ reportDetail.jira_key }}</a></div>
-                    <div v-if="reportDetail.module" class="meta-row"><span class="mk">模块</span>{{ reportDetail.module }} <span style="color:#888; margin-left:6px; font-size:11px;">(Agent 自主识别)</span></div>
+                  <div class="ea-meta-grid" style="margin-bottom: 16px">
+                    <div class="mg"><div class="mg-k">Task</div><div class="mg-v" style="font-size: 13px"><code>{{ reportDetail.task_id }}</code></div></div>
+                    <div class="mg"><div class="mg-k">JIRA</div><div class="mg-v" style="font-size: 13px"><a :href="reportDetail.jira_url" target="_blank">{{ reportDetail.jira_key }}</a></div></div>
+                    <div v-if="reportDetail.module" class="mg"><div class="mg-k">模块</div><div class="mg-v" style="font-size: 13px">{{ reportDetail.module }}</div></div>
+                    <div class="mg"><div class="mg-k">耗时</div><div class="mg-v" style="font-size: 13px">{{ fmtDuration(reportDetail.duration_ms) }}</div></div>
+                  </div>
+                  <div class="report-meta-extra">
                     <div class="meta-row"><span class="mk">执行</span>
-                      <NTag size="tiny" type="success">{{ reportDetail.execution_mode === 'agent' ? 'Agent' : (reportDetail.execution_mode || 'agent') }}</NTag>
-                      <span v-if="reportDetail.tool_call_count != null" style="margin-left: 6px; color: #666; font-size: 11.5px;">真实工具调用 {{ reportDetail.tool_call_count }} 次</span>
+                      <EaPill variant="ok">{{ reportDetail.execution_mode === 'agent' ? 'Agent' : (reportDetail.execution_mode || 'agent') }}</EaPill>
+                      <span v-if="reportDetail.tool_call_count != null" class="ea-muted meta-hint">真实工具调用 {{ reportDetail.tool_call_count }} 次</span>
                     </div>
-                    <div class="meta-row"><span class="mk">耗时</span>{{ fmtDuration(reportDetail.duration_ms) }}</div>
                     <div class="meta-row"><span class="mk">Skill</span>
-                      <NTag v-for="s in reportDetail.skills_used || []" :key="s" size="tiny" type="warning" style="margin-right:6px">{{ s }}</NTag>
-                      <span v-if="!(reportDetail.skills_used || []).length" class="ss-empty">无</span>
+                      <EaPill v-for="s in reportDetail.skills_used || []" :key="s" variant="warn" style="margin-right: 6px">{{ s }}</EaPill>
+                      <span v-if="!(reportDetail.skills_used || []).length" class="ea-muted">无</span>
                     </div>
                   </div>
                   <div v-if="reportDetail.corrections && reportDetail.corrections.length" class="report-corrections">
@@ -1160,10 +1165,9 @@ function handoffToAgent(scope: 'single' | 'batch') {
                 </div>
                 <NEmpty v-else-if="!reportLoading" description="尚未生成报告" />
               </NSpin>
-            </NTabPane>
+            </div>
 
-            <!-- ── JIRA 信息 ── -->
-            <NTabPane name="jira" tab="JIRA 详情">
+            <div v-show="activeReportTab === 'jira'" class="tab-pane">
               <NEmpty v-if="!currentTask.issue && !reportDetail?.jira" description="未获取到 JIRA 详情（可能 fetch 失败或正在拉取）" />
               <div v-else class="jira-card">
                 <div class="jira-row"><span class="mk">Key</span><a :href="(currentTask.issue?.url || reportDetail?.jira?.url) || '#'" target="_blank">{{ currentTask.issue?.key || reportDetail?.jira?.key }}</a></div>
@@ -1193,13 +1197,12 @@ function handoffToAgent(scope: 'single' | 'batch') {
                   </a>
                 </div>
               </div>
-            </NTabPane>
+            </div>
 
-            <!-- ── 任务日志 ── -->
-            <NTabPane name="log" tab="任务日志">
+            <div v-show="activeReportTab === 'log'" class="tab-pane">
               <NSpin :show="logLoading">
                 <div class="log-header">
-                  <span class="log-hint">日志文件: <code>{{ currentTaskId }}.log</code>（位于 hermes-web-ui 数据目录）</span>
+                  <span class="ea-muted log-hint">日志文件: <code>{{ currentTaskId }}.log</code>（位于 hermes-web-ui 数据目录）</span>
                   <NSpace size="small">
                     <NButton size="small" @click="loadLog">刷新</NButton>
                     <NButton size="small" type="primary" :disabled="!taskLog" @click="downloadLog">下载日志</NButton>
@@ -1207,10 +1210,9 @@ function handoffToAgent(scope: 'single' | 'batch') {
                 </div>
                 <pre class="log-body">{{ taskLog || '(无日志或未加载)' }}</pre>
               </NSpin>
-            </NTabPane>
-          </NTabs>
+            </div>
+          </div>
 
-          <!-- 底部操作栏 -->
           <footer class="task-footer">
             <NSpace size="small" wrap>
               <NPopover trigger="click" placement="top">
@@ -1257,7 +1259,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/></svg>
                 </template>
                 沉淀为知识库 / Skill
-                <NTag size="tiny" type="warning" style="margin-left: 6px">即将上线</NTag>
+                <EaPill variant="warn" style="margin-left: 6px">即将上线</EaPill>
               </NButton>
               <NButton tertiary @click="router.push({ name: 'tahp.reports' })">
                 <template #icon>
@@ -1267,8 +1269,8 @@ function handoffToAgent(scope: 'single' | 'batch') {
               </NButton>
             </NSpace>
           </footer>
-        </template>
-      </main>
+        </EaCard>
+      </div>
     </div>
 
     <!-- ────── 补充信息继续分析弹窗 ────── -->
@@ -1305,7 +1307,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
       style="width: 580px"
       @positive-click="submitContinue"
     >
-      <div style="margin-bottom: 8px; font-size: 12px; color: #888;">
+      <div class="modal-hint">
         将基于<strong>前次分析的完整上下文 + 你的补充信息</strong>重新生成分析报告，原任务报告会保留。
       </div>
       <NInput
@@ -1330,7 +1332,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
         当前版本仅会<strong>记录沉淀请求</strong>到 <code>logs/bug-analysis/distill-pending.json</code>，
         实际的 Skill / 知识库条目生成将在后续版本上线。
       </NAlert>
-      <div style="margin-bottom: 8px; font-size: 13px; color: #555;">
+      <div class="modal-body-text">
         请简述这条 Bug 分析中值得沉淀为长期知识的核心结论（可选）：
       </div>
       <NInput
@@ -1345,907 +1347,192 @@ function handoffToAgent(scope: 'single' | 'batch') {
 
 <style scoped lang="scss">
 .bug-analysis-root {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 100%;
-  background: linear-gradient(180deg, rgba(56, 139, 253, 0.04) 0%, transparent 220px);
-
-  :deep(.model-provider-banner) {
-    margin: 12px 16px 0;
-    flex-shrink: 0;
-  }
+  :deep(.model-provider-banner) { margin-bottom: 12px; }
 }
 
-/* ── 顶栏 ── */
-.ba-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 28px 14px;
-  flex-shrink: 0;
-}
-.ba-header-left {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-.ba-logo-dot {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #d03050, #f0a020);
-  box-shadow: 0 4px 12px rgba(208, 48, 80, 0.28);
-  position: relative;
-  &::after {
-    content: '';
-    position: absolute;
-    inset: 8px;
-    border-radius: 50%;
-    border: 2px solid #fff;
-    border-top-color: transparent;
-    animation: spin 2.6s linear infinite;
-  }
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-.ba-title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-  background: linear-gradient(135deg, #1f2937, #4b5563);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  .dark & {
-    background: linear-gradient(135deg, #e5e7eb, #9ca3af);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
-}
-.ba-subtitle {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: #888;
-}
-.ba-header-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
+.bug-split { align-items: stretch; min-height: 0; }
+.bug-left { min-height: 0; }
+.bug-tasks-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.task-scroll { max-height: calc(100vh - 520px); min-height: 240px; }
 
-/* ── 主体布局 ── */
-.ba-layout {
-  display: grid;
-  grid-template-columns: 420px 1fr;
-  gap: 16px;
-  padding: 0 24px 24px;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* ── 左侧 ── */
-.ba-left {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-.ba-card {
-  border-radius: 10px;
-  background: var(--n-color, #fff);
-  border: 1px solid var(--n-border-color, rgba(0,0,0,0.06));
-  box-shadow: 0 2px 8px rgba(0,0,0,0.03);
-  :deep(.n-card-header) {
-    padding: 14px 16px 8px;
-  }
-  :deep(.n-card__content) {
-    padding: 6px 16px 16px;
-  }
-}
-.form-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.card-title {
-  font-size: 14px;
-  font-weight: 600;
+.mode-toggle {
+  display: flex; gap: 4px; background: var(--surface-2); padding: 3px; border-radius: 10px;
+  .mode-idle { background: none; border: none; color: var(--muted); cursor: pointer; font-family: inherit; font-weight: 600; }
 }
 
 .exec-mode-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  margin: 0 0 14px;
-  border-radius: 6px;
-  background: linear-gradient(90deg, rgba(56, 139, 253, 0.10), rgba(122, 65, 232, 0.06));
-  border: 1px solid rgba(56, 139, 253, 0.18);
-  cursor: pointer;
-  font-size: 11.5px;
-  color: #444;
-  transition: background 0.18s;
-  &:hover { background: linear-gradient(90deg, rgba(56, 139, 253, 0.16), rgba(122, 65, 232, 0.10)); }
-  .dark & { color: #ddd; }
-
-  &.agent-mode {
-    background: linear-gradient(90deg, rgba(24, 160, 88, 0.10), rgba(56, 139, 253, 0.08));
-    border-color: rgba(24, 160, 88, 0.22);
-    &:hover { background: linear-gradient(90deg, rgba(24, 160, 88, 0.18), rgba(56, 139, 253, 0.14)); }
-    .emb-dot {
-      background: #18a058;
-      box-shadow: 0 0 6px rgba(24, 160, 88, 0.55);
-    }
-  }
-  .emb-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #388bfd;
-    box-shadow: 0 0 6px rgba(56,139,253,0.5);
-    flex-shrink: 0;
-  }
-  .emb-text {
-    flex: 1;
-    code { font-size: 10px; }
-    strong { font-weight: 600; }
-  }
-  .emb-link {
-    color: #2080f0;
-    text-decoration: underline;
-    font-weight: 500;
-    flex-shrink: 0;
-  }
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin: 0 0 14px;
+  border-radius: 10px; cursor: pointer; font-size: 11.5px; color: var(--text);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--success) 10%, transparent), color-mix(in srgb, var(--info) 8%, transparent));
+  border: 1px solid color-mix(in srgb, var(--success) 22%, transparent);
+  &.agent-mode .emb-dot { background: var(--success); box-shadow: 0 0 6px color-mix(in srgb, var(--success) 55%, transparent); }
+  .emb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--info); flex-shrink: 0; }
+  .emb-text { flex: 1; strong { font-weight: 700; } }
+  .emb-link { color: var(--accent); text-decoration: underline; font-weight: 600; flex-shrink: 0; }
 }
 
-.field {
-  margin-bottom: 12px;
-}
-.field-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: #666;
-  margin-bottom: 6px;
-}
-.req {
-  color: #d03050;
-  font-weight: 700;
-}
-.info-icon {
-  color: #aaa;
-  cursor: help;
-}
-.hint {
-  font-size: 11px;
-  color: #888;
-  margin-top: 4px;
-}
-.action-row {
-  display: flex;
-  gap: 8px;
-  margin-top: 4px;
-}
+.field-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.info-icon { color: var(--faint); cursor: help; margin-left: 4px; vertical-align: middle; }
+.action-row { margin-top: 4px; gap: 8px; }
+.alert-sub { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.alert-link { cursor: pointer; color: var(--accent); }
 
-/* JIRA 预览块 */
-.preview-block {
-  margin-top: 14px;
-  padding: 12px;
-  background: rgba(56, 139, 253, 0.06);
-  border-left: 3px solid #388bfd;
-  border-radius: 4px;
-  font-size: 12.5px;
-}
-.preview-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 4px;
-  align-items: baseline;
-}
-.preview-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 12px;
-  margin-top: 6px;
-  > div {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-}
-.pk {
-  color: #777;
-  width: 48px;
-  font-size: 11px;
-  flex-shrink: 0;
-}
-.pv {
-  font-weight: 500;
-}
-.pv-link {
-  color: #2080f0;
-  text-decoration: none;
-  font-weight: 600;
-  &:hover { text-decoration: underline; }
-}
+.preview-summary { font-size: 13px; font-weight: 600; color: var(--text); }
+.preview-meta { gap: 14px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.pv-link { color: var(--accent); text-decoration: none; font-weight: 600; &:hover { text-decoration: underline; } }
 
-.jql-summary {
-  font-size: 12px;
-  margin-bottom: 8px;
-  color: #555;
-}
+.jql-summary { font-size: 12px; margin-bottom: 8px; color: var(--text); }
 .jql-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 0;
-  border-bottom: 1px dashed rgba(0,0,0,0.08);
-  font-size: 12px;
+  display: flex; align-items: center; gap: 10px; padding: 6px 0;
+  border-bottom: 1px dashed var(--line); font-size: 12px;
   &:last-child { border-bottom: none; }
-  .jql-title {
-    flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: #555;
-  }
+  .jql-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 }
 
-/* 任务列表 */
-.ba-tasks-card {
-  flex: 1;
-  min-height: 0;
-  :deep(.n-card__content) {
-    padding: 6px 8px 12px;
-  }
-}
-.task-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 4px 8px;
-}
-.task-item {
-  text-align: left;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  padding: 10px 12px;
-  cursor: pointer;
-  transition: all 0.16s;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  position: relative;
-  &::before {
-    content: '';
-    position: absolute;
-    left: -1px;
-    top: 12px;
-    bottom: 12px;
-    width: 3px;
-    border-radius: 0 3px 3px 0;
-    background: transparent;
-    transition: background 0.16s;
-  }
-  &:hover {
-    background: rgba(0,0,0,0.025);
-    .dark & { background: rgba(255,255,255,0.04); }
-  }
-  &.active {
-    background: rgba(32, 128, 240, 0.10);
-    border-color: rgba(32, 128, 240, 0.25);
-    &::before { background: #2080f0; }
-  }
-  &.status-running::before { background: #2080f0; }
-  &.status-completed::before { background: #10b981; }
-  &.status-failed::before { background: #d03050; }
-  &.compact { padding: 8px 10px; }
-  .ti-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .ti-jira {
-    font-family: ui-monospace, monospace;
-    font-size: 12px;
-    font-weight: 700;
-    color: #2080f0;
-  }
-  .ti-title {
-    font-size: 12px;
-    color: #555;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .ti-meta {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: #888;
-  }
-  .ti-phase {
-    flex: 1;
-  }
-  .ti-skills {
-    background: rgba(240, 160, 32, 0.15);
-    color: #c97c00;
-    padding: 1px 6px;
-    border-radius: 4px;
-  }
-  .ti-batch {
-    background: rgba(122, 65, 232, 0.15);
-    color: #722ed1;
-    padding: 1px 6px;
-    border-radius: 4px;
-  }
-}
+.ti-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ti-key { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 700; color: var(--accent); text-decoration: none; }
+.ti-title { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ti-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--faint); }
+.ti-badge { background: var(--warn-soft); color: var(--warn); padding: 1px 6px; border-radius: 6px; font-weight: 600; &.ti-batch { background: var(--violet-bg); color: var(--violet-fg); } }
 
-/* ── 主区 ── */
-.ba-main {
-  display: flex;
-  flex-direction: column;
-  background: var(--n-color, #fff);
-  border: 1px solid var(--n-border-color, rgba(0,0,0,0.06));
-  border-radius: 10px;
-  min-height: 0;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.03);
-}
+.bug-main-wrap { min-height: 0; display: flex; flex-direction: column; }
+.bug-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.bug-detail { min-height: 520px; }
 
-.ba-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 40px;
-  gap: 16px;
-  text-align: center;
-  .ba-empty-illus {
-    opacity: 0.6;
-  }
-  h2 {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: #444;
-  }
-  p {
-    color: #888;
-    font-size: 13px;
-    margin: 0;
-    max-width: 520px;
-  }
+.bug-empty {
+  align-items: center; text-align: center; padding: 48px 24px;
+  .empty-illus { opacity: 0.45; color: var(--faint); margin-bottom: 8px; }
+  h2 { margin: 0; font-size: 18px; font-weight: 700; color: var(--head); }
+  p { color: var(--muted); font-size: 13px; margin: 8px 0 0; max-width: 520px; }
 }
-.ba-empty-tips {
-  margin-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: 480px;
-  width: 100%;
-}
-.tip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  color: #555;
-  text-align: left;
-}
+.empty-tips { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; max-width: 480px; width: 100%; }
+.tip { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text); text-align: left; }
 .tip-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #2080f0, #722ed1);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  flex-shrink: 0;
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--accent), var(--violet-ic)); color: #fff; font-size: 11px; font-weight: 800;
 }
 
-/* Job summary */
-.job-summary-card {
-  margin: 16px;
-  border-radius: 8px;
-  border: 1px solid rgba(122, 65, 232, 0.25);
-}
-.job-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.job-id {
-  font-family: ui-monospace, monospace;
-  font-size: 11px;
-  color: #888;
-}
-.job-jql {
-  font-size: 12px;
-  color: #555;
-  background: rgba(0,0,0,0.03);
-  padding: 8px 10px;
-  border-radius: 4px;
-  font-family: ui-monospace, monospace;
-  word-break: break-all;
-}
-.job-progress {
-  margin: 16px 0;
-}
-.jp-label {
-  font-size: 12px;
-  color: #777;
-}
-.jp-stats {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #555;
-}
-.job-hint {
-  font-size: 12px;
-  color: #888;
-  margin: 12px 0 6px;
-}
-.job-tasks {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 8px;
-}
+.mono { font-family: ui-monospace, monospace; font-size: 11px; color: var(--faint); }
+.job-jql { font-size: 12px; color: var(--text); background: var(--bg); padding: 8px 10px; border-radius: 10px; word-break: break-all; }
+.job-progress { margin: 16px 0; }
+.jp-stats { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.stat-ok { color: var(--success); }
+.stat-err { color: var(--error); }
+.job-tasks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.ea-task-item.compact { padding: 10px 12px; }
 
-/* Task top bar */
-.task-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 20px 8px;
-  border-bottom: 1px solid var(--n-border-color, rgba(0,0,0,0.06));
-  flex-shrink: 0;
-  gap: 12px;
-}
-.tt-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.tt-jira {
-  font-family: ui-monospace, monospace;
-  font-weight: 700;
-  color: #2080f0;
-  text-decoration: none;
-  font-size: 13px;
-  &:hover { text-decoration: underline; }
-}
-.tt-title {
-  font-size: 13px;
-  color: #555;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 480px;
-}
-.tt-right { display: flex; align-items: center; gap: 8px; }
-.tt-tid {
-  font-family: ui-monospace, monospace;
-  font-size: 10px;
-  color: #aaa;
-  background: rgba(0,0,0,0.03);
-  padding: 2px 6px;
-  border-radius: 4px;
-}
+.task-head { margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
+.task-head-left { min-width: 0; gap: 12px; flex-wrap: wrap; }
+.task-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+.task-id { background: var(--bg); padding: 2px 6px; border-radius: 6px; }
 
-.task-progress {
-  padding: 8px 20px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
-  .tp-text { font-size: 11px; color: #888; min-width: 32px; text-align: right; }
-}
+.task-progress { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-shrink: 0; }
+.tp-text { font-size: 11px; min-width: 32px; text-align: right; }
 
-.task-tabs {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  // 让 naive-ui n-tabs 内部容器把高度逐层传递下去，使最里层 n-tab-pane 可以滚动
-  :deep(.n-tabs) {
-    flex: 1;
-    min-height: 0;
-    display: flex !important;
-    flex-direction: column !important;
-  }
-  :deep(.n-tabs-nav) {
-    padding: 0 20px;
-    flex-shrink: 0;
-  }
-  :deep(.n-tabs-rail) { flex-shrink: 0; }
-  :deep(.n-tabs > .n-tabs-content),
-  :deep(.n-tabs-content) {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  :deep(.n-tabs-pane-wrapper) {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  :deep(.n-tab-pane) {
-    flex: 1;
-    min-height: 0;
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 16px 20px;
-    scrollbar-width: thin;
-  }
-}
+.tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.tab-pane { flex: 1; min-height: 320px; overflow-y: auto; padding-bottom: 8px; scrollbar-width: thin; }
 
-/* Live grid */
-.live-grid {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 16px;
-  height: 100%;
-  min-height: 0;
+.live-grid { min-height: 360px; height: 100%; }
+.live-llm-panel {
+  display: flex; flex-direction: column; min-height: 260px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
 }
-.live-llm {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--n-border-color, rgba(0,0,0,0.06));
-  border-radius: 8px;
-  background: var(--n-color-modal, rgba(0,0,0,0.015));
-  min-height: 0;
-  overflow: hidden;
-}
-.live-llm-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--n-border-color, rgba(0,0,0,0.06));
-  background: var(--n-color, #fff);
-  flex-shrink: 0;
-}
-.llh-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #555;
-}
-.live-llm-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 14px 18px;
-  font-size: 13.5px;
-  line-height: 1.65;
-}
-.llm-waiting {
-  display: flex;
-  align-items: center;
-  padding: 20px;
-  color: #888;
-}
+.live-llm-header { padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.live-llm-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px; font-size: 13.5px; line-height: 1.7; }
+.llm-waiting { display: flex; align-items: center; padding: 20px; }
 
-.live-side {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-height: 0;
-}
-.side-section {
-  background: var(--n-color, #fff);
-  border: 1px solid var(--n-border-color, rgba(0,0,0,0.06));
-  border-radius: 8px;
-  padding: 10px 12px;
-  &.flex-fill { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-}
-.ss-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: #888;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  margin-bottom: 8px;
-}
-.ss-empty { font-size: 12px; color: #aaa; padding: 4px 0; }
-
+.live-side { gap: 12px; min-height: 0; }
+.flex-fill { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .ss-current-phase {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  background: rgba(0,0,0,0.025);
-  border-radius: 6px;
-  border-left: 3px solid #888;
-  font-size: 13px;
-  font-weight: 600;
-  color: #444;
-}
-.cp-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  background: var(--surface); border-radius: 8px; border-left: 3px solid var(--line-strong);
+  font-size: 13px; font-weight: 600; color: var(--text);
 }
 
-.skill-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+.skill-call-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+.scall {
+  border-left: 2px solid var(--line-strong); padding: 6px 10px; border-radius: 0 8px 8px 0;
+  background: var(--bg); font-size: 12px;
+  &.ok { border-left-color: var(--success); }
+  &.run { border-left-color: var(--info); }
+  &.err { border-left-color: var(--error); background: var(--error-soft); }
 }
-.skill-tag { font-size: 11px; }
+.sc-line1 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sc-name { font-family: ui-monospace, monospace; font-weight: 600; flex: 1; word-break: break-all; color: var(--text); }
+.sc-args { color: var(--muted); font-size: 11px; margin-top: 2px; word-break: break-all; font-family: ui-monospace, monospace; }
 
-/* Agent 模式：Skill / 工具调用富展示 */
-.skill-call-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 220px;
-  overflow-y: auto;
-  padding-right: 4px;
-  scrollbar-width: thin;
+.events-scroller { flex: 1; min-height: 0; overflow-y: auto; }
+.evt {
+  display: grid; grid-template-columns: auto 1fr; gap: 8px; padding: 8px 0;
+  border-bottom: 1px dashed var(--line); font-size: 12px; color: var(--text);
+  &:last-child { border: none; }
 }
-.skill-call-row {
-  border-radius: 6px;
-  padding: 6px 8px;
-  font-size: 11.5px;
-  background: rgba(0, 0, 0, 0.03);
-  border-left: 2px solid transparent;
-  .dark & { background: rgba(255, 255, 255, 0.04); }
+.evt-ts { color: var(--faint); font-family: ui-monospace, monospace; font-size: 11px; }
 
-  &.sc-tool { border-left-color: #18a058; }
-  &.sc-marker { border-left-color: #a1a1aa; }
-  &.sc-running { border-left-color: #2080f0; animation: sc-pulse 1.4s ease-in-out infinite; }
-  &.sc-done { border-left-color: #18a058; }
-  &.sc-error { border-left-color: #d03050; background: rgba(208, 48, 80, 0.06); }
-}
-@keyframes sc-pulse {
-  0%, 100% { background: rgba(32, 128, 240, 0.05); }
-  50% { background: rgba(32, 128, 240, 0.15); }
-}
-.sc-line1 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.sc-emoji {
-  font-size: 12px;
-  filter: grayscale(0);
-}
-.sc-name {
-  font-family: ui-monospace, 'JetBrains Mono', monospace;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: #1f2937;
-  flex: 1;
-  word-break: break-all;
-  .dark & { color: #e5e7eb; }
-}
-.sc-line2 {
-  margin-top: 3px;
-  margin-left: 18px;
-  font-size: 10.5px;
-  color: #6b7280;
-  word-break: break-all;
-  .dark & { color: #9ca3af; }
-}
-.sc-args {
-  font-family: ui-monospace, 'JetBrains Mono', monospace;
-}
+.report-meta-extra { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; font-size: 12.5px; }
+.meta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.meta-hint { margin-left: 6px; font-size: 11.5px; }
+.mk { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; font-weight: 700; min-width: 48px; }
 
-.events-scroller {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 4px;
-  scrollbar-width: thin;
-}
-.event-row {
-  padding: 6px 8px;
-  border-radius: 4px;
-  margin-bottom: 4px;
-  font-size: 11.5px;
-  border-left: 2px solid transparent;
-  background: rgba(0,0,0,0.02);
-  .dark & { background: rgba(255,255,255,0.025); }
-  &.ev-info    { border-left-color: #2080f0; }
-  &.ev-success { border-left-color: #10b981; }
-  &.ev-warning { border-left-color: #f0a020; }
-  &.ev-error   { border-left-color: #d03050; background: rgba(208,48,80,0.04); }
-}
-.ev-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 3px;
-}
-.ev-ts { color: #aaa; font-size: 10px; font-family: ui-monospace, monospace; margin-left: auto; }
-.ev-msg {
-  color: #555;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.4;
-}
-
-/* Report tab */
-.report-card {
-  background: var(--n-color, #fff);
-  border-radius: 8px;
-}
-.report-meta {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px 24px;
-  padding: 12px 16px;
-  background: rgba(56, 139, 253, 0.05);
-  border-radius: 6px;
-  margin-bottom: 16px;
-  font-size: 12.5px;
-}
-.meta-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.mk {
-  font-size: 11px;
-  color: #888;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  font-weight: 600;
-  flex-shrink: 0;
-  min-width: 48px;
-}
 .report-corrections {
-  margin-bottom: 16px;
-  padding: 10px 14px;
-  background: rgba(240, 160, 32, 0.08);
-  border-left: 3px solid #f0a020;
-  border-radius: 4px;
+  margin-bottom: 16px; padding: 10px 14px; background: var(--warn-soft);
+  border-left: 3px solid var(--warn); border-radius: 8px;
 }
-.rc-title { font-size: 12px; font-weight: 600; color: #c97c00; margin-bottom: 6px; }
+.rc-title { font-size: 12px; font-weight: 700; color: var(--warn); margin-bottom: 6px; }
 .rc-item { font-size: 12px; padding: 3px 0; }
-.rc-idx { display: inline-block; min-width: 28px; color: #c97c00; font-weight: 600; }
-.rc-text { color: #555; }
+.rc-idx { display: inline-block; min-width: 28px; color: var(--warn); font-weight: 700; }
+.rc-text { color: var(--text); }
+.report-body { font-size: 13.5px; line-height: 1.7; }
 
-.report-body {
-  font-size: 13.5px;
-  line-height: 1.7;
-}
-
-/* JIRA detail */
-.jira-card {
-  font-size: 13px;
-}
+.jira-card { font-size: 13px; }
 .jira-row {
-  display: flex;
-  gap: 12px;
-  padding: 6px 0;
-  border-bottom: 1px dashed rgba(0,0,0,0.06);
-  align-items: center;
-  .mk { min-width: 60px; }
+  display: flex; gap: 12px; padding: 6px 0; border-bottom: 1px dashed var(--line); align-items: center;
+  a { color: var(--accent); }
 }
 .jira-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 8px 16px;
-  padding: 10px 0;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 16px; padding: 10px 0;
   > div { display: flex; gap: 8px; align-items: center; }
 }
-.jira-desc {
-  margin-top: 14px;
-  pre {
-    background: rgba(0,0,0,0.03);
-    padding: 10px 12px;
-    border-radius: 4px;
-    font-size: 12px;
-    line-height: 1.6;
-    max-height: 360px;
-    overflow: auto;
-    margin: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
+.jira-desc pre {
+  background: var(--bg); padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.6;
+  max-height: 360px; overflow: auto; margin: 0; white-space: pre-wrap; word-break: break-word;
 }
-.jira-att {
-  margin-top: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
+.jira-att { margin-top: 14px; display: flex; flex-direction: column; gap: 4px; }
 .att-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #2080f0;
-  text-decoration: none;
-  padding: 4px 8px;
-  border-radius: 4px;
-  background: rgba(32, 128, 240, 0.08);
-  &:hover { background: rgba(32, 128, 240, 0.15); }
-  .att-size { color: #888; font-size: 11px; }
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--accent);
+  text-decoration: none; padding: 4px 8px; border-radius: 8px; background: var(--accent-soft);
+  &:hover { filter: brightness(0.98); }
+  .att-size { color: var(--muted); font-size: 11px; }
 }
 
-/* Log tab */
-.log-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-.log-hint { font-size: 12px; color: #888; code { font-size: 11px; } }
+.log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 12px; flex-wrap: wrap; }
+.log-hint code { font-size: 11px; }
 .log-body {
-  background: #0d1117;
-  color: #c9d1d9;
-  padding: 14px 16px;
-  border-radius: 6px;
-  font-family: 'Consolas', 'Menlo', ui-monospace, monospace;
-  font-size: 12px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 60vh;
-  overflow: auto;
-  margin: 0;
+  background: #1b1e2b; color: #e7e9f2; padding: 14px 16px; border-radius: 14px;
+  font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-all; max-height: 60vh; overflow: auto; margin: 0;
 }
 
-/* Footer */
 .task-footer {
-  padding: 12px 20px;
-  border-top: 1px solid var(--n-border-color, rgba(0,0,0,0.06));
-  flex-shrink: 0;
-  background: var(--n-color, #fff);
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); flex-shrink: 0;
 }
 
-/* Pulse dot for running */
-.pulse-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #2080f0;
-  margin-right: 4px;
-  animation: pulse 1.4s ease-in-out infinite;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 0.5; transform: scale(0.85); }
-  50%      { opacity: 1; transform: scale(1.15); }
-}
+.popover-body { font-size: 12.5px; line-height: 1.7; color: var(--text); max-width: 420px; }
+.popover-title { font-weight: 700; margin-bottom: 8px; }
+.popover-section { margin-bottom: 8px; }
+.popover-muted { color: var(--muted); }
+.popover-foot { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11px; }
 
-/* Code styling */
+.modal-hint { margin-bottom: 8px; font-size: 12px; color: var(--muted); }
+.modal-body-text { margin-bottom: 8px; font-size: 13px; color: var(--text); }
+
 code {
-  background: rgba(0,0,0,0.05);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-size: 0.9em;
-  font-family: ui-monospace, monospace;
+  background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
+  font-size: 0.9em; font-family: ui-monospace, monospace;
 }
 
-/* Responsive */
-@media (max-width: 1280px) {
-  .ba-layout { grid-template-columns: 380px 1fr; }
-  .live-grid { grid-template-columns: 1fr 280px; }
-}
-@media (max-width: 980px) {
-  .ba-layout { grid-template-columns: 1fr; }
-  .live-grid { grid-template-columns: 1fr; }
+@media (max-width: 1100px) {
+  .task-scroll { max-height: 320px; }
+  .task-title { max-width: 100%; }
 }
 </style>

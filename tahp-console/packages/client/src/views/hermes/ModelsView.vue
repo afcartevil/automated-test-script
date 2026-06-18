@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NButton, NSpin } from 'naive-ui'
+import { NSpin } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import ProvidersPanel from '@/components/hermes/models/ProvidersPanel.vue'
 import ProviderFormModal from '@/components/hermes/models/ProviderFormModal.vue'
 import { useModelsStore } from '@/stores/hermes/models'
 import { checkCopilotToken } from '@/api/hermes/copilot-auth'
+import EaPageHead from '@/components/layout/EaPageHead.vue'
 
 const { t } = useI18n()
 const modelsStore = useModelsStore()
@@ -33,16 +34,15 @@ async function handleSaved() {
 </script>
 
 <template>
-  <div class="models-view">
-    <header class="page-header">
-      <h2 class="header-title">{{ t('models.title') }}</h2>
-      <NButton type="primary" size="small" @click="openCreateModal">
-        <template #icon>
+  <div class="page models-view">
+    <EaPageHead :title="t('models.title')">
+      <template #actions>
+        <button type="button" class="ea-btn-primary ea-btn-sm" @click="openCreateModal">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        </template>
-        {{ t('models.addProvider') }}
-      </NButton>
-    </header>
+          {{ t('models.addProvider') }}
+        </button>
+      </template>
+    </EaPageHead>
 
     <div class="models-content">
       <NSpin :show="modelsStore.loading && modelsStore.providers.length === 0">
@@ -65,12 +65,12 @@ async function handleSaved() {
   height: calc(100 * var(--vh));
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
-
 
 .models-content {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  min-height: 0;
 }
 </style>
