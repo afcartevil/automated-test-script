@@ -24,6 +24,7 @@ import {
   getBugJob,
   listBugReports,
   readBugReport,
+  deleteBugReport,
 } from '../../services/tahp/bug-analysis'
 import { searchJQL, parseIssueKey } from '../../services/tahp/jira'
 import type { JiraConfig } from '../../services/tahp/jira'
@@ -368,6 +369,16 @@ tahpBugAnalysisRoutes.get('/reports/:taskId', async (ctx) => {
     return
   }
   ctx.body = { success: true, data: r }
+})
+
+tahpBugAnalysisRoutes.delete('/reports/:taskId', async (ctx) => {
+  const r = await deleteBugReport(ctx.params.taskId)
+  if (!r.ok) {
+    ctx.status = 404
+    ctx.body = { success: false, error: r.error }
+    return
+  }
+  ctx.body = { success: true, data: { deleted: true, task_id: ctx.params.taskId } }
 })
 
 // 任务排查日志（文本）

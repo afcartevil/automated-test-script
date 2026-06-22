@@ -3,7 +3,7 @@
  *
  * 所有响应统一 ApiEnvelope，由 tahpRequest 解包.
  */
-import { tahpGet, tahpPost } from './client'
+import { tahpGet, tahpPost, tahpDelete } from './client'
 
 export interface JiraUserConfig {
   username: string
@@ -147,8 +147,17 @@ export interface BugReport {
   skills_used?: string[]
   tool_call_count?: number
   llm_response?: string
+  /** Step 5 八节报告正文（不含 Agent 过程输出） */
+  report_body?: string
   error?: string
-  jira?: Partial<JiraIssueDetail> & { commentCount?: number; fetchFailed?: boolean; note?: string }
+  jira?: Partial<JiraIssueDetail> & {
+    commentCount?: number
+    attachmentCount?: number
+    fetch_ok?: string
+    skill_used?: string
+    fetchFailed?: boolean
+    note?: string
+  }
 }
 
 export interface BugReportSummary {
@@ -232,6 +241,12 @@ export function listBugReports(): Promise<BugReportSummary[]> {
 
 export function getBugReport(taskId: string): Promise<BugReport> {
   return tahpGet<BugReport>(`/api/tahp/bug-analysis/reports/${encodeURIComponent(taskId)}`)
+}
+
+export function deleteBugReport(taskId: string): Promise<{ deleted: boolean; task_id: string }> {
+  return tahpDelete<{ deleted: boolean; task_id: string }>(
+    `/api/tahp/bug-analysis/reports/${encodeURIComponent(taskId)}`,
+  )
 }
 
 export function getBugLog(taskId: string): Promise<{ task_id: string; content: string }> {

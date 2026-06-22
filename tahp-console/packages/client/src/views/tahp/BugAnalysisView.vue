@@ -17,8 +17,16 @@ import { useBugAnalysisStore } from '@/stores/tahp/bug-analysis'
 import {
   startSingle, startBatch, continueAnalysis, distillToKnowledge,
   previewJira, previewJql, getBugReport, getBugLog, cancelBugTask,
-  type JiraIssueDetail, type JqlPreview, type BugReport, type JiraUserConfig,
+  listBugReports, deleteBugReport,
+  type JiraIssueDetail, type JqlPreview, type BugReport, type BugReportSummary, type JiraUserConfig,
 } from '@/api/tahp/bug-analysis'
+import {
+  extractBugAnalysisReportBody,
+  stripBugStageMarkers,
+  parseHistoryStageDetails,
+  reportToBugTask,
+  type HistoryStageDetail,
+} from '@/utils/bug-analysis-report'
 
 const route = useRoute()
 const router = useRouter()
@@ -108,20 +116,41 @@ function getJiraConfigOrWarn(): JiraUserConfig | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 已启动任务/批次的展示
+// 已启动任务/批次 / 历史任务展示
 // ─────────────────────────────────────────────────────────────────────────────
-const currentTaskId = computed(() => store.selectedTaskId)
-const currentTask = computed(() =>
-  currentTaskId.value ? store.tasks[currentTaskId.value] : null,
+type TaskListMode = 'recent' | 'history'
+const taskListMode = ref<TaskListMode>('recent')
+const historyReports = ref<BugReportSummary[]>([])
+const historyListLoading = ref(false)
+const historySelectedId = ref<string | null>(null)
+const historyTask = ref<import('@/api/tahp/bug-analysis').BugTask | null>(null)
+const historyStageDetails = ref<Record<string, HistoryStageDetail>>({})
+const isHistoryView = computed(() => !!historySelectedId.value)
+
+const currentTaskId = computed(() =>
+  isHistoryView.value ? historySelectedId.value : store.selectedTaskId,
 )
-const currentLlm = computed(() => currentTaskId.value ? store.llmText(currentTaskId.value) : '')
-const currentEvents = computed(() => currentTaskId.value ? store.structuredEvents(currentTaskId.value) : [])
+const currentTask = computed(() => {
+  if (isHistoryView.value) return historyTask.value
+  return currentTaskId.value ? store.tasks[currentTaskId.value] : null
+})
+const currentLlm = computed(() => {
+  if (isHistoryView.value) {
+    const raw = reportDetail.value?.llm_response || historyTask.value?.llm_response || ''
+    return raw ? stripBugStageMarkers(raw) : ''
+  }
+  return currentTaskId.value ? store.llmText(currentTaskId.value) : ''
+})
+const currentReasoning = computed(() => {
+  if (isHistoryView.value) return ''
+  return currentTaskId.value ? store.reasoningText(currentTaskId.value) : ''
+})
 
 const currentJobId = computed(() => store.selectedJobId)
 const currentJob = computed(() => currentJobId.value ? store.jobs[currentJobId.value] : null)
 
-const isRunning = computed(() => currentTask.value?.status === 'running')
-const isPending = computed(() => currentTask.value?.status === 'pending')
+const isRunning = computed(() => !isHistoryView.value && currentTask.value?.status === 'running')
+const isPending = computed(() => !isHistoryView.value && currentTask.value?.status === 'pending')
 
 // 详情 Tab：选择已完成报告时载入
 const activeReportTab = ref<'live' | 'report' | 'jira' | 'log'>('live')
@@ -129,6 +158,12 @@ const reportDetail = ref<BugReport | null>(null)
 const reportLoading = ref(false)
 const taskLog = ref<string>('')
 const logLoading = ref(false)
+
+const reportMarkdown = computed(() => {
+  if (!reportDetail.value) return ''
+  const raw = reportDetail.value.report_body || reportDetail.value.llm_response || ''
+  return extractBugAnalysisReportBody(raw)
+})
 
 // 补充信息弹窗
 const showContinueDialog = ref(false)
@@ -142,26 +177,42 @@ const distillNote = ref('')
 // 阶段名映射 — 用于侧栏显示更友好的标签
 // ─────────────────────────────────────────────────────────────────────────────
 const PHASE_LABELS: Record<string, { label: string; color: string }> = {
-  FETCHING_JIRA:    { label: '拉取 JIRA',      color: 'var(--info)' },
-  SKILL_SELECTION:  { label: '匹配 Skill',     color: 'var(--violet-ic)' },
-  LOADING_CONTEXT:  { label: '加载上下文',     color: 'var(--success)' },
-  ANALYZING:        { label: '大模型分析',     color: 'var(--warn)' },
-  GENERATING_REPORT:{ label: '生成报告',       color: 'var(--info)' },
-  COMPLETED:        { label: '已完成',         color: 'var(--success)' },
-  FAILED:           { label: '失败',           color: 'var(--error)' },
-  CANCELLED:        { label: '已取消',         color: 'var(--violet-ic)' },
-  QUEUED:           { label: '等待中',         color: 'var(--warn)' },
-  BATCH_RUNNING:    { label: '批量执行中',     color: 'var(--info)' },
+  PREPARING:          { label: '准备任务',       color: 'var(--faint)' },
+  CONNECTING_AGENT:   { label: '连接 Agent',     color: 'var(--info)' },
+  STARTING:           { label: '启动中',         color: 'var(--faint)' },
+  FETCH_JIRA_INFO:    { label: '拉取 JIRA 信息', color: 'var(--info)' },
+  DOWNLOAD_JIRA_LOGS: { label: '下载 JIRA 日志', color: 'var(--success)' },
+  MATCH_SKILLS:       { label: '匹配 Skill',     color: 'var(--violet-ic)' },
+  ANALYZING:          { label: '大模型分析',     color: 'var(--warn)' },
+  GENERATING_REPORT:  { label: '生成分析报告',   color: 'var(--info)' },
+  COMPLETED:          { label: '已完成',         color: 'var(--success)' },
+  FAILED:             { label: '失败',           color: 'var(--error)' },
+  CANCELLED:          { label: '已取消',         color: 'var(--violet-ic)' },
+  QUEUED:             { label: '等待中',         color: 'var(--warn)' },
+  BATCH_RUNNING:      { label: '批量执行中',     color: 'var(--info)' },
 }
 
-const BUG_STAGE_ORDER = ['FETCHING_JIRA', 'SKILL_SELECTION', 'LOADING_CONTEXT', 'ANALYZING', 'GENERATING_REPORT'] as const
+const BUG_STAGE_ORDER = [
+  'FETCH_JIRA_INFO', 'DOWNLOAD_JIRA_LOGS', 'MATCH_SKILLS', 'ANALYZING', 'GENERATING_REPORT',
+] as const
+const PREP_PHASES = new Set(['STARTING', 'PREPARING', 'CONNECTING_AGENT', 'QUEUED'])
+
+const PHASE_TO_STEP: Record<string, string> = {
+  FETCH_JIRA_INFO: 'fetch-jira',
+  DOWNLOAD_JIRA_LOGS: 'download-logs',
+  MATCH_SKILLS: 'match-skills',
+  ANALYZING: 'analyze',
+  GENERATING_REPORT: 'generate-report',
+}
 
 const detailTabs = computed(() => [
-  { key: 'live', label: '实时进展' },
+  { key: 'live', label: isHistoryView.value ? '分析过程' : '实时进展' },
   {
     key: 'report',
     label: '分析报告',
-    disabled: currentTask.value?.status === 'running' && !currentTask.value?.completed_at,
+    disabled: !isHistoryView.value
+      && currentTask.value?.status === 'running'
+      && !currentTask.value?.completed_at,
   },
   { key: 'jira', label: 'JIRA 详情' },
   { key: 'log', label: '任务日志' },
@@ -170,7 +221,9 @@ const detailTabs = computed(() => [
 const bugStages = computed(() => {
   const phase = currentTask.value?.phase
   const status = currentTask.value?.status
-  const idx = phase ? BUG_STAGE_ORDER.indexOf(phase as typeof BUG_STAGE_ORDER[number]) : -1
+  const idx = phase && !PREP_PHASES.has(phase)
+    ? BUG_STAGE_ORDER.indexOf(phase as typeof BUG_STAGE_ORDER[number])
+    : -1
   const allDone = status === 'completed' || phase === 'COMPLETED'
   return BUG_STAGE_ORDER.map((key, i) => ({
     key,
@@ -178,6 +231,138 @@ const bugStages = computed(() => {
     done: allDone || (idx >= 0 && i < idx),
     active: !allDone && phase === key,
   }))
+})
+
+type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'warning'
+
+interface BugExecStep {
+  step_id: string
+  label: string
+  status: StepStatus
+  message?: string
+  detailLines?: string[]
+  ts?: number
+}
+
+const BUG_PIPELINE_STEPS = [
+  { step_id: 'fetch-jira', label: '拉取 JIRA 信息' },
+  { step_id: 'download-logs', label: '下载 JIRA 日志' },
+  { step_id: 'match-skills', label: '匹配 Skill' },
+  { step_id: 'analyze', label: '大模型分析' },
+  { step_id: 'generate-report', label: '生成分析报告' },
+] as const
+
+function mapStageStatus(raw?: string): StepStatus {
+  const s = String(raw || '').toLowerCase()
+  if (s === 'failed' || s === 'error') return 'failed'
+  if (s === 'success' || s === 'completed') return 'completed'
+  if (s === 'running' || s === 'in_progress') return 'running'
+  return 'pending'
+}
+
+const agentProgressSteps = computed((): BugExecStep[] => {
+  const steps: BugExecStep[] = BUG_PIPELINE_STEPS.map(d => ({
+    ...d,
+    status: 'pending' as StepStatus,
+    detailLines: [],
+  }))
+  const byId = Object.fromEntries(steps.map(s => [s.step_id, s])) as Record<string, BugExecStep>
+  const tid = currentTaskId.value
+  if (!tid) return steps
+
+  const task = currentTask.value
+  const detailMap = isHistoryView.value
+    ? historyStageDetails.value
+    : store.stageDetailMap(tid)
+  const evs = isHistoryView.value ? [] : store.stream(tid)
+
+  const rank: Record<StepStatus, number> = {
+    pending: 0, running: 1, warning: 2, failed: 3, completed: 4,
+  }
+  const setStep = (
+    id: string,
+    status: StepStatus,
+    message?: string,
+    detailLines?: string[],
+    ts?: number,
+    force = false,
+  ) => {
+    const s = byId[id]
+    if (!s) return
+    if (force || rank[status] >= rank[s.status] || (status === 'running' && s.status === 'pending')) {
+      s.status = status
+      if (message) s.message = message
+      if (detailLines?.length) s.detailLines = detailLines
+      if (ts) s.ts = ts
+    }
+  }
+
+  if (task?.status === 'completed' || task?.phase === 'COMPLETED') {
+    steps.forEach(s => { s.status = 'completed' })
+    return steps
+  }
+
+  for (const step of steps) {
+    const detail = detailMap[step.step_id]
+    if (detail) {
+      setStep(
+        step.step_id,
+        mapStageStatus(detail.status),
+        detail.message,
+        detail.detail_lines,
+        detail.ts,
+        true,
+      )
+    }
+  }
+
+  for (const ev of evs) {
+    if (ev.type === 'task.phase') {
+      const phase = String(ev.payload?.phase || '')
+      const stepId = PHASE_TO_STEP[phase]
+      if (stepId) {
+        const idx = steps.findIndex(s => s.step_id === stepId)
+        for (let i = 0; i < idx; i += 1) {
+          if (steps[i].status === 'running') setStep(steps[i].step_id, 'completed', undefined, undefined, ev.ts, true)
+        }
+        if (byId[stepId]?.status !== 'completed' && byId[stepId]?.status !== 'failed') {
+          setStep(stepId, 'running', String(ev.payload?.message || ''), undefined, ev.ts, true)
+        }
+      }
+    }
+    if (ev.type === 'task.step') {
+      const id = String(ev.payload?.step_id || '')
+      const st = String(ev.payload?.status || 'running')
+      if (id && byId[id]) {
+        setStep(
+          id,
+          st === 'completed' ? 'completed' : st === 'failed' ? 'failed' : 'running',
+          String(ev.payload?.message || '') || undefined,
+          undefined,
+          ev.ts,
+          st === 'completed',
+        )
+      }
+    }
+    if (ev.type === 'task.completed') {
+      steps.forEach(s => { s.status = 'completed' })
+    }
+    if (ev.type === 'task.failed' || ev.type === 'task.cancelled') {
+      const running = steps.find(s => s.status === 'running')
+      if (running) running.status = ev.type === 'task.cancelled' ? 'warning' : 'failed'
+    }
+  }
+
+  if (task?.status === 'failed') {
+    const running = steps.find(s => s.status === 'running')
+    if (running) running.status = 'failed'
+  }
+
+  if ((isRunning.value || isPending.value) && steps.every(s => s.status === 'pending')) {
+    setStep('fetch-jira', 'running', '等待 Agent 开始执行...', undefined, undefined, true)
+  }
+
+  return steps
 })
 
 function phaseLabel(phase?: string): string {
@@ -189,6 +374,98 @@ function phaseColor(phase?: string): string {
   if (!phase) return 'var(--faint)'
   return PHASE_LABELS[phase]?.color || 'var(--faint)'
 }
+
+function pickStr(...vals: Array<string | number | undefined | null>): string | undefined {
+  for (const v of vals) {
+    if (v == null) continue
+    const s = String(v).trim()
+    if (s) return s
+  }
+  return undefined
+}
+
+interface JiraDisplayInfo {
+  key?: string
+  url?: string
+  summary?: string
+  status?: string
+  priority?: string
+  assignee?: string
+  reporter?: string
+  description?: string
+  commentCount?: string
+  attachmentCount?: string
+  fetchOk?: string
+  skillUsed?: string
+  attachments?: Array<{ id: string; filename: string; url: string; size?: number }>
+  hasData: boolean
+}
+
+const jiraDisplayInfo = computed((): JiraDisplayInfo | null => {
+  const task = currentTask.value
+  if (!task) return null
+
+  const tid = currentTaskId.value
+  const fetchFields = tid
+    ? (isHistoryView.value
+      ? historyStageDetails.value['fetch-jira']?.fields
+      : store.stageDetailMap(tid)['fetch-jira']?.fields)
+    : undefined
+  const f = fetchFields || {}
+  const issue = task.issue
+  const reportJira = reportDetail.value?.jira
+  const preview = jiraPreview.value?.key === task.jira_key ? jiraPreview.value : null
+
+  const key = pickStr(task.jira_key, f.jira_key, reportJira?.key, preview?.key)
+  const url = pickStr(task.jira_url, reportJira?.url, preview?.url)
+  const summary = pickStr(issue?.summary, reportJira?.summary, f.issue_summary, preview?.summary, task.title)
+  const status = pickStr(issue?.status, reportJira?.status, f.status, preview?.status)
+  const priority = pickStr(issue?.priority, reportJira?.priority, f.priority, preview?.priority)
+  const assignee = pickStr(issue?.assignee, reportJira?.assignee, f.assignee, preview?.assignee)
+  const reporter = pickStr(issue?.reporter, reportJira?.reporter, f.reporter, preview?.reporter)
+  const description = pickStr(
+    issue?.description,
+    reportJira?.description,
+    f.description,
+    f.description_preview,
+    preview?.description,
+  )
+  const commentCount = pickStr(
+    issue?.comments?.length ? String(issue.comments.length) : undefined,
+    reportJira?.commentCount != null ? String(reportJira.commentCount) : undefined,
+    f.comment_count,
+  )
+  const attachmentCount = pickStr(
+    issue?.attachments?.length ? String(issue.attachments.length) : undefined,
+    reportJira?.attachmentCount != null ? String(reportJira.attachmentCount) : undefined,
+    f.attachment_count,
+  )
+  const fetchOk = pickStr(f.fetch_ok, reportJira?.fetch_ok)
+  const skillUsed = pickStr(f.skill_used, reportJira?.skill_used)
+  const attachments = (issue?.attachments?.length ? issue.attachments : reportJira?.attachments) || []
+
+  const hasData = !!(
+    key || summary || status || priority || assignee || reporter || description
+    || commentCount || attachmentCount || fetchFields || reportJira || preview
+  )
+
+  return {
+    key,
+    url,
+    summary,
+    status,
+    priority,
+    assignee,
+    reporter,
+    description,
+    commentCount,
+    attachmentCount,
+    fetchOk,
+    skillUsed,
+    attachments: attachments.length ? attachments : undefined,
+    hasData,
+  }
+})
 
 function statusPillVariant(status?: string): 'ok' | 'info' | 'warn' | 'err' | 'muted' {
   if (status === 'completed') return 'ok'
@@ -203,12 +480,6 @@ function formatTs(ts: number): string {
   return new Date(ts).toLocaleTimeString()
 }
 
-function formatEventPayload(payload: Record<string, unknown>): string {
-  const msg = payload?.message || payload?.text
-  if (typeof msg === 'string') return msg
-  return JSON.stringify(payload, null, 2)
-}
-
 function fmtDuration(ms?: number): string {
   if (!ms && ms !== 0) return '-'
   if (ms < 1000) return `${ms}ms`
@@ -216,23 +487,22 @@ function fmtDuration(ms?: number): string {
   return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`
 }
 
-// 自动滚动事件流到底部
-const eventsScroller = ref<HTMLElement | null>(null)
-watch(() => currentEvents.value.length, async () => {
-  await nextTick()
-  if (eventsScroller.value) {
-    eventsScroller.value.scrollTop = eventsScroller.value.scrollHeight
-  }
-})
-
 // 自动滚动 LLM 流到底部
 const llmScroller = ref<HTMLElement | null>(null)
-watch(currentLlm, async () => {
+const progressScroller = ref<HTMLElement | null>(null)
+watch([currentLlm, currentReasoning], async () => {
   await nextTick()
   if (llmScroller.value) {
     llmScroller.value.scrollTop = llmScroller.value.scrollHeight
   }
 })
+
+watch(agentProgressSteps, async () => {
+  await nextTick()
+  if (progressScroller.value) {
+    progressScroller.value.scrollTop = progressScroller.value.scrollHeight
+  }
+}, { deep: true })
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 操作：预览 JIRA / JQL
@@ -302,6 +572,7 @@ async function startSingleAnalysis() {
     })
     store.selectTask(resp.task_id)
     store.selectJob(null)
+    clearHistoryView()
     activeReportTab.value = 'live'
     message.success(`分析任务已启动: ${resp.jira_key || ''}`)
   } catch (err) {
@@ -352,6 +623,7 @@ async function startBatchAnalysis() {
     }
     store.selectJob(resp.job_id)
     store.selectTask(resp.tasks[0]?.task_id || null)
+    clearHistoryView()
     activeReportTab.value = 'live'
     message.success(`批量分析已启动: 共 ${resp.total} 单`)
   } catch (err) {
@@ -362,9 +634,73 @@ async function startBatchAnalysis() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 操作：切换任务 / 加载报告
+// 操作：任务列表（最近 / 历史）/ 切换任务 / 加载报告
 // ─────────────────────────────────────────────────────────────────────────────
+async function loadHistoryReports() {
+  historyListLoading.value = true
+  try {
+    historyReports.value = await listBugReports()
+  } catch (err) {
+    message.error((err as Error).message)
+  } finally {
+    historyListLoading.value = false
+  }
+}
+
+function switchTaskListMode(mode: TaskListMode) {
+  taskListMode.value = mode
+  if (mode === 'history') loadHistoryReports()
+}
+
+function clearHistoryView() {
+  historySelectedId.value = null
+  historyTask.value = null
+  historyStageDetails.value = {}
+}
+
+async function selectHistoryTask(taskId: string) {
+  historySelectedId.value = taskId
+  store.selectTask(null)
+  store.selectJob(null)
+  reportDetail.value = null
+  taskLog.value = ''
+  historyTask.value = null
+  historyStageDetails.value = {}
+  activeReportTab.value = 'report'
+  reportLoading.value = true
+  try {
+    const report = await getBugReport(taskId)
+    reportDetail.value = report
+    historyTask.value = reportToBugTask(report)
+    historyStageDetails.value = parseHistoryStageDetails(report.llm_response || '')
+  } catch (err) {
+    message.error((err as Error).message)
+    clearHistoryView()
+  } finally {
+    reportLoading.value = false
+  }
+}
+
+async function deleteHistoryTask(taskId: string, ev?: Event) {
+  ev?.stopPropagation()
+  if (!window.confirm('确定永久删除该历史记录？将删除报告 JSON、提示词目录与任务日志。')) return
+  try {
+    await deleteBugReport(taskId)
+    message.success('历史记录已删除')
+    if (historySelectedId.value === taskId) {
+      clearHistoryView()
+      reportDetail.value = null
+      taskLog.value = ''
+    }
+    if (store.selectedTaskId === taskId) store.selectTask(null)
+    await Promise.all([loadHistoryReports(), store.refresh()])
+  } catch (err) {
+    message.error((err as Error).message)
+  }
+}
+
 function selectTask(taskId: string) {
+  clearHistoryView()
   store.selectTask(taskId)
   reportDetail.value = null
   taskLog.value = ''
@@ -399,7 +735,7 @@ async function loadLog() {
 }
 
 watch(activeReportTab, (tab) => {
-  if (tab === 'report' && currentTaskId.value && !reportDetail.value) loadReport()
+  if ((tab === 'report' || tab === 'jira') && currentTaskId.value && !reportDetail.value) loadReport()
   if (tab === 'log' && currentTaskId.value && !taskLog.value) loadLog()
 })
 
@@ -429,7 +765,7 @@ function saveReportLocally(format: 'json' | 'md') {
       ``,
       `## AI 分析内容`,
       ``,
-      (reportDetail.value?.llm_response || llm || '(无内容)'),
+      (reportMarkdown.value || extractBugAnalysisReportBody(llm) || '(无内容)'),
     ].join('\n')
     blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
     filename = `${tid}.md`
@@ -498,6 +834,7 @@ async function submitContinue() {
       title: currentTask.value?.title,
     })
     store.selectTask(resp.task_id)
+    clearHistoryView()
     activeReportTab.value = 'live'
     showContinueDialog.value = false
     message.success(`补充分析任务已启动: ${resp.task_id}`)
@@ -549,9 +886,15 @@ onMounted(async () => {
   if (!jiraConfigReady.value) showJiraConfigDialog.value = true
   store.ensureSocket()
   await store.refresh()
+  await loadHistoryReports()
   const queryTid = route.query.task_id as string | undefined
-  if (queryTid && store.tasks[queryTid]) {
-    store.selectTask(queryTid)
+  if (queryTid) {
+    if (store.tasks[queryTid]) {
+      selectTask(queryTid)
+    } else if (historyReports.value.some(r => r.task_id === queryTid)) {
+      taskListMode.value = 'history'
+      await selectHistoryTask(queryTid)
+    }
   }
   const queryInput = route.query.input as string | undefined
   if (queryInput) {
@@ -567,103 +910,21 @@ const jiraInputHint = computed(() => {
   return match ? match[1].toUpperCase() : ''
 })
 
-// 当前 Skill 列表（实时）
-const currentSkills = computed<string[]>(() => currentTask.value?.skills_used || [])
-
-// 当前 Skill 调用详情（带状态、参数、来源；Agent 模式下真实工具调用）
 const currentSkillCalls = computed(() =>
   currentTaskId.value ? store.skillCallList(currentTaskId.value) : []
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 「交给 Agent」—— 把 Bug 上下文（JIRA Key/URL/用户描述/已生成的分析）
-// 通过 sessionStorage 投递到 hermes.chat，由 Claude Code Agent 完整调用 Skill
-// （直连 LLM 模式只能"标记" skill；真正的 skill 执行只发生在 Agent 子进程里）
-// ─────────────────────────────────────────────────────────────────────────────
-function handoffToAgent(scope: 'single' | 'batch') {
-  if (!ensureModelProviderOrWarn()) return
-  const lines: string[] = []
-  if (scope === 'single' && currentTask.value) {
-    const t = currentTask.value
-    lines.push(`# 任务：完整 Bug 分析（请调用 Skill）`)
-    lines.push('')
-    lines.push(`## Bug 单`)
-    lines.push(`- Key: ${t.jira_key}`)
-    if (t.jira_url) lines.push(`- URL: ${t.jira_url}`)
-    if (t.title) lines.push(`- 标题: ${t.title}`)
-    if (t.module) lines.push(`- 模块（Agent 已识别）: ${t.module}`)
-    lines.push('')
-    if (singleForm.value.user_description || t.user_description) {
-      lines.push(`## 用户补充描述`)
-      lines.push(t.user_description || singleForm.value.user_description || '')
-      lines.push('')
-    }
-    if (t.extra_context) {
-      lines.push(`## 附加上下文`)
-      lines.push(t.extra_context)
-      lines.push('')
-    }
-    if (currentLlm.value || reportDetail.value?.llm_response) {
-      lines.push(`## 上一轮 Agent 已生成的分析报告（在此基础上继续讨论/补充）`)
-      lines.push('')
-      lines.push((reportDetail.value?.llm_response || currentLlm.value).slice(0, 4000))
-      lines.push('')
-    }
-  } else if (scope === 'batch' && currentJob.value) {
-    lines.push(`# 任务：批量 Bug 分析（请逐条调用 Skill）`)
-    lines.push('')
-    lines.push(`## JQL`)
-    lines.push(currentJob.value.jql || '(无)')
-    lines.push('')
-    lines.push(`## Bug 列表`)
-    for (const tid of currentJob.value.task_ids) {
-      const t = store.tasks[tid]
-      if (!t) continue
-      lines.push(`- ${t.jira_key} : ${t.title || '(待获取标题)'}`)
-    }
-    lines.push('')
-  } else {
-    // 没有上下文也允许跳转
-    if (singleForm.value.input.trim()) {
-      lines.push(`# 任务：完整 Bug 分析`)
-      lines.push('')
-      lines.push(`输入: ${singleForm.value.input.trim()}`)
-      if (singleForm.value.user_description) {
-        lines.push('')
-        lines.push(`补充: ${singleForm.value.user_description}`)
-      }
-    } else {
-      message.warning('暂无可移交的上下文')
-      return
-    }
+const liveStreamHint = computed(() => {
+  if (currentLlm.value || currentReasoning.value) return null
+  if (!isRunning.value) return null
+  const runningTools = currentSkillCalls.value.filter(
+    c => c.source === 'tool_call' && !c.completed_ts,
+  )
+  if (runningTools.length) {
+    return `Agent 正在执行：${runningTools.map(t => t.skill_id).join('、')}`
   }
-
-  lines.push('---')
-  lines.push('## 接下来希望做什么')
-  lines.push('请基于以上上下文与用户对话，可以包括：')
-  lines.push('- 针对某节继续追问 / 让用户补充信息')
-  lines.push('- 重新拉取更详细的日志（用 transsion-harness / jira-mcp）')
-  lines.push('- 写一个修复 patch / 验证脚本')
-  lines.push('- 沉淀为 Skill / 知识库条目')
-
-  sessionStorage.setItem('tahp_chat_draft', lines.join('\n'))
-  sessionStorage.setItem('tahp_chat_context', JSON.stringify({
-    domain: 'bug_analysis',
-    domainLabel: 'Bug 分析（完整 Agent）',
-    module: currentTask.value?.module,
-    relatedSkills: currentSkills.value.length ? currentSkills.value : ['transsion-harness'],
-    project: {
-      projectCode: '-',
-      soc: '-',
-      kernelVersion: '-',
-      preVendor: '-',
-      postVendor: '-',
-    },
-    taskId: currentTask.value?.task_id || null,
-  }))
-
-  router.push({ name: 'hermes.chat' })
-}
+  return '等待 Agent 响应...'
+})
 </script>
 
 <template>
@@ -680,10 +941,6 @@ function handoffToAgent(scope: 'single' | 'batch') {
         </button>
         <EaPill :variant="jiraConfigReady ? 'ok' : 'warn'">
           {{ jiraConfigReady ? 'JIRA 已配置' : '需配置 JIRA' }}
-        </EaPill>
-        <EaPill variant="info">
-          <span class="ea-dot-live" />
-          实时事件流
         </EaPill>
         <button type="button" class="ea-btn-ghost ea-btn-sm" @click="store.refresh">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -716,48 +973,6 @@ function handoffToAgent(scope: 'single' | 'batch') {
               >JQL 批量</button>
             </div>
           </div>
-          <NPopover trigger="click" placement="bottom-start" style="max-width: 420px">
-            <template #trigger>
-              <div class="exec-mode-banner agent-mode">
-                <span class="emb-dot" />
-                <span class="emb-text">
-                  <strong>Agent 模式</strong> · Claude Code + 完整 Skill / MCP 工具链
-                </span>
-                <span class="emb-link">查看说明</span>
-              </div>
-            </template>
-            <div class="popover-body">
-              <div class="popover-title">所有 Bug 分析任务统一走 Agent</div>
-              <div class="popover-section">
-                <strong>· BFF 零启发式</strong><br>
-                <span class="popover-muted">
-                  BFF 不再做模块推断 / Skill 候选 / 约束加载 / Prompt 拼装。<br>
-                  它只负责：解析 JIRA Key、记录任务、把"分析这个 Bug"这一句话原样投递给 Agent，再把 Agent 的事件流转发到前端。
-                </span>
-              </div>
-              <div class="popover-section">
-                <strong>· Agent 自主完成全链路</strong><br>
-                <span class="popover-muted">
-                  Agent 收到任务后，按以下顺序真实调用工具（每次调用都会出现在右侧"Skill 调用"面板）：<br>
-                  1. <code>jira-mcp</code> / <code>user-jira-mcp</code> 拉取 Issue 详情 + 附件 + 评论<br>
-                  2. 根据 Issue 内容<strong>自主判断</strong> Bug 域，挑对应 Skill（<code>com-voice-*</code> / <code>near-bt-*</code> / <code>power-*</code> / …）<br>
-                  3. <code>transsion-harness</code> 拉日志 / 版本 / 部署<br>
-                  4. 综合证据输出 8 节根因报告
-                </span>
-              </div>
-              <div class="popover-section">
-                <strong>· 失败即停止</strong><br>
-                <span class="popover-muted">若 Agent Bridge 未运行 / Agent 调用出错 / Skill 失败，任务会立即标记为 failed 并把错误显示在事件流，<strong>不会降级到直连 LLM</strong>。批量分析下，任一子任务失败会终止后续。</span>
-              </div>
-              <div class="popover-section">
-                <strong>· 依赖项</strong><br>
-                <span class="popover-muted">需要 hermes CLI 已安装、agent-bridge 已启动（服务端日志查关键字 <code>[agent-bridge] starting</code>），并已在"模型管理"中配置 Claude / OpenAI 凭证供 Agent 使用。</span>
-              </div>
-              <div class="popover-foot">
-                "预览 JIRA" 按钮仍走 BFF 直连（可选 <code>TAHP_JIRA_TOKEN</code> 等环境变量）；正式分析时 Agent 会用自己的 jira-mcp 凭证重新拉取，与 BFF 凭证无关。
-              </div>
-            </div>
-          </NPopover>
 
           <!-- 单条模式 -->
           <template v-if="mode === 'single'">
@@ -807,17 +1022,6 @@ function handoffToAgent(scope: 'single' | 'batch') {
               <NButton :loading="previewingJira" :disabled="!singleForm.input.trim()" @click="doPreviewJira">
                 预览 JIRA
               </NButton>
-              <NTooltip placement="top">
-                <template #trigger>
-                  <NButton tertiary :disabled="!modelProviderReady || !singleForm.input.trim()" @click="handoffToAgent('single')">
-                    <template #icon>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                    </template>
-                    在 AI 对话中继续
-                  </NButton>
-                </template>
-                跳转到 AI 对话页，在自由对话上下文里继续追问/调整（同样使用 Agent + 完整 Skill）
-              </NTooltip>
             </div>
 
             <NAlert v-if="previewError" type="warning" :show-icon="false" style="margin-top: 12px">
@@ -910,46 +1114,104 @@ function handoffToAgent(scope: 'single' | 'batch') {
         </EaCard>
 
         <EaCard class="bug-tasks-card">
-          <div class="ea-row ea-between" style="margin-bottom: 12px">
-            <strong style="font-size: 14px">最近任务</strong>
-            <EaPill variant="muted">{{ store.recentTasks.length }} 条</EaPill>
+          <div class="task-list-head ea-row ea-between">
+            <div class="mode-toggle">
+              <button
+                type="button"
+                class="ea-btn-sm"
+                :class="taskListMode === 'recent' ? 'ea-btn-soft' : 'mode-idle'"
+                @click="switchTaskListMode('recent')"
+              >最近任务</button>
+              <button
+                type="button"
+                class="ea-btn-sm"
+                :class="taskListMode === 'history' ? 'ea-btn-soft' : 'mode-idle'"
+                @click="switchTaskListMode('history')"
+              >历史任务</button>
+            </div>
+            <EaPill variant="muted">
+              {{ taskListMode === 'recent' ? store.recentTasks.length : historyReports.length }} 条
+            </EaPill>
           </div>
 
-          <NEmpty v-if="!store.recentTasks.length" size="small" description="还没有任务" />
-          <NScrollbar v-else class="task-scroll">
-            <div class="ea-tasklist">
-              <button
-                v-for="t in store.recentTasks"
-                :key="t.task_id"
-                type="button"
-                class="ea-task-item"
-                :class="{ active: currentTaskId === t.task_id, [`status-${t.status}`]: true }"
-                @click="selectTask(t.task_id)"
-              >
-                <div class="ti-top">
-                  <span class="ti-key">{{ t.jira_key }}</span>
-                  <EaPill :variant="statusPillVariant(t.status)">{{ t.status }}</EaPill>
+          <div class="task-list-body">
+          <template v-if="taskListMode === 'recent'">
+            <NEmpty v-if="!store.recentTasks.length" size="small" description="还没有任务" />
+            <NScrollbar v-else class="task-scroll" trigger="none">
+              <div class="ea-tasklist">
+                <button
+                  v-for="t in store.recentTasks"
+                  :key="t.task_id"
+                  type="button"
+                  class="ea-task-item"
+                  :class="{ active: !isHistoryView && currentTaskId === t.task_id, [`status-${t.status}`]: true }"
+                  @click="selectTask(t.task_id)"
+                >
+                  <div class="ti-top">
+                    <span class="ti-key">{{ t.jira_key }}</span>
+                    <EaPill :variant="statusPillVariant(t.status)">{{ t.status }}</EaPill>
+                  </div>
+                  <div class="ti-title">{{ t.title || '(等待获取标题)' }}</div>
+                  <div class="ti-meta">
+                    <span
+                      class="ea-dot"
+                      :class="{ 'ea-dot-live': t.status === 'running' }"
+                      :style="t.status !== 'running' ? { background: phaseColor(t.phase) } : undefined"
+                    />
+                    <span>{{ phaseLabel(t.phase) }}</span>
+                    <span v-if="t.skills_used?.length" class="ti-badge">{{ t.skills_used.length }} skill</span>
+                    <span v-if="t.parent_job_id" class="ti-badge ti-batch">批量</span>
+                  </div>
+                </button>
+              </div>
+            </NScrollbar>
+          </template>
+
+          <template v-else>
+            <NSpin :show="historyListLoading" class="task-list-spin">
+              <NEmpty v-if="!historyListLoading && !historyReports.length" size="small" description="暂无历史记录" />
+              <NScrollbar v-else class="task-scroll" trigger="none">
+                <div class="ea-tasklist">
+                  <div
+                    v-for="r in historyReports"
+                    :key="r.task_id"
+                    class="history-task-row"
+                  >
+                    <button
+                      type="button"
+                      class="ea-task-item"
+                      :class="{ active: historySelectedId === r.task_id, [`status-${r.status || 'completed'}`]: true }"
+                      @click="selectHistoryTask(r.task_id)"
+                    >
+                      <div class="ti-top">
+                        <span class="ti-key">{{ r.jira_key || r.task_id }}</span>
+                        <EaPill :variant="statusPillVariant(r.status)">{{ r.status || 'completed' }}</EaPill>
+                      </div>
+                      <div class="ti-title">{{ r.title || r.task_id }}</div>
+                      <div class="ti-meta">
+                        <span class="ea-muted">{{ r.completed_at?.slice(0, 16) || r.started_at?.slice(0, 16) || '-' }}</span>
+                        <span v-if="r.skills_used?.length" class="ti-badge">{{ r.skills_used.length }} skill</span>
+                      </div>
+                    </button>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      type="error"
+                      class="history-del-btn"
+                      @click="deleteHistoryTask(r.task_id, $event)"
+                    >删除</NButton>
+                  </div>
                 </div>
-                <div class="ti-title">{{ t.title || '(等待获取标题)' }}</div>
-                <div class="ti-meta">
-                  <span
-                    class="ea-dot"
-                    :class="{ 'ea-dot-live': t.status === 'running' }"
-                    :style="t.status !== 'running' ? { background: phaseColor(t.phase) } : undefined"
-                  />
-                  <span>{{ phaseLabel(t.phase) }}</span>
-                  <span v-if="t.skills_used?.length" class="ti-badge">{{ t.skills_used.length }} skill</span>
-                  <span v-if="t.parent_job_id" class="ti-badge ti-batch">批量</span>
-                </div>
-              </button>
-            </div>
-          </NScrollbar>
+              </NScrollbar>
+            </NSpin>
+          </template>
+          </div>
         </EaCard>
       </div>
 
       <!-- Right: main panel -->
       <div class="bug-main-wrap">
-        <EaCard v-if="!currentTask && !currentJob" class="bug-main bug-empty">
+        <EaCard v-if="!currentTaskId && !currentJob" class="bug-main bug-empty">
           <div class="empty-illus">
             <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
               <circle cx="12" cy="12" r="10"/>
@@ -1019,6 +1281,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
         <EaCard v-else-if="currentTask" class="bug-main bug-detail">
           <div class="ea-row ea-between task-head">
             <div class="ea-row task-head-left">
+              <EaPill v-if="isHistoryView" variant="muted">历史记录</EaPill>
               <EaPill :variant="statusPillVariant(currentTask.status)">
                 <span v-if="isRunning" class="ea-dot-live" />
                 {{ phaseLabel(currentTask.phase) }}
@@ -1056,34 +1319,30 @@ function handoffToAgent(scope: 'single' | 'batch') {
           <EaInnerTabs v-model="activeReportTab" :tabs="detailTabs" />
 
           <div class="tab-body">
-            <div v-show="activeReportTab === 'live'" class="tab-pane">
+            <div v-show="activeReportTab === 'live'" class="tab-pane tab-pane-live">
               <div class="ea-split-3 live-grid">
                 <div class="live-llm-panel">
                   <div class="ea-row ea-between live-llm-header">
                     <strong style="font-size: 13px">AI 分析（流式）</strong>
                     <EaPill v-if="isRunning" variant="info"><span class="ea-dot-live" />分析中</EaPill>
-                    <EaPill v-else-if="currentTask.status === 'completed'" variant="ok">已完成</EaPill>
+                    <EaPill v-else-if="isHistoryView || currentTask.status === 'completed'" variant="ok">已完成</EaPill>
                     <EaPill v-else-if="currentTask.status === 'failed'" variant="err">失败</EaPill>
                   </div>
                   <div ref="llmScroller" class="live-llm-body">
+                    <div v-if="currentReasoning && !currentLlm" class="reasoning-block">
+                      <div class="reasoning-label ea-muted">Agent 推理中</div>
+                      <pre class="reasoning-text">{{ currentReasoning }}</pre>
+                    </div>
                     <MarkdownRenderer v-if="currentLlm" :content="currentLlm" />
-                    <div v-else-if="isRunning" class="llm-waiting">
+                    <div v-else-if="liveStreamHint" class="llm-waiting">
                       <NSpin size="small" />
-                      <span class="ea-muted" style="margin-left: 8px">等待大模型首条响应...</span>
+                      <span class="ea-muted" style="margin-left: 8px">{{ liveStreamHint }}</span>
                     </div>
                     <NEmpty v-else size="small" description="暂无输出" />
                   </div>
                 </div>
 
                 <div class="ea-stack live-side">
-                  <div class="ea-mon-panel">
-                    <h4>当前阶段</h4>
-                    <div class="ss-current-phase" :style="{ borderLeftColor: phaseColor(currentTask.phase) }">
-                      <span class="ea-dot" :style="{ background: phaseColor(currentTask.phase) }" />
-                      <span>{{ phaseLabel(currentTask.phase) }}</span>
-                    </div>
-                  </div>
-
                   <div class="ea-mon-panel">
                     <div class="ea-row" style="margin-bottom: 8px">
                       <h4 class="ea-mb0">Agent 工具 / Skill 调用</h4>
@@ -1118,14 +1377,25 @@ function handoffToAgent(scope: 'single' | 'batch') {
                   </div>
 
                   <div class="ea-mon-panel flex-fill">
-                    <h4>事件流</h4>
-                    <div ref="eventsScroller" class="events-scroller">
-                      <div v-for="(ev, i) in currentEvents" :key="i" class="evt">
-                        <span class="evt-ts">{{ formatTs(ev.ts) }}</span>
-                        <span>
-                          <EaPill variant="muted" style="font-size: 10px; margin-right: 6px">{{ ev.type }}</EaPill>
-                          {{ formatEventPayload(ev.payload) }}
-                        </span>
+                    <h4>Agent 进度</h4>
+                    <div ref="progressScroller" class="bug-progress-scroller">
+                      <div
+                        v-for="step in agentProgressSteps"
+                        :key="step.step_id"
+                        class="bug-pipeline-step"
+                        :class="`step-${step.status}`"
+                      >
+                        <span class="bug-step-dot" />
+                        <div class="bug-step-body">
+                          <div class="bug-step-head">
+                            <span class="bug-step-label">{{ step.label }}</span>
+                            <span v-if="step.ts" class="bug-step-ts">{{ formatTs(step.ts) }}</span>
+                          </div>
+                          <div v-if="step.message" class="bug-step-msg">{{ step.message }}</div>
+                          <ul v-if="step.detailLines?.length" class="bug-step-details">
+                            <li v-for="(line, di) in step.detailLines" :key="di">{{ line }}</li>
+                          </ul>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1133,73 +1403,64 @@ function handoffToAgent(scope: 'single' | 'batch') {
               </div>
             </div>
 
-            <div v-show="activeReportTab === 'report'" class="tab-pane">
-              <NSpin :show="reportLoading">
-                <div v-if="reportDetail" class="report-card">
-                  <div class="ea-meta-grid" style="margin-bottom: 16px">
-                    <div class="mg"><div class="mg-k">Task</div><div class="mg-v" style="font-size: 13px"><code>{{ reportDetail.task_id }}</code></div></div>
-                    <div class="mg"><div class="mg-k">JIRA</div><div class="mg-v" style="font-size: 13px"><a :href="reportDetail.jira_url" target="_blank">{{ reportDetail.jira_key }}</a></div></div>
-                    <div v-if="reportDetail.module" class="mg"><div class="mg-k">模块</div><div class="mg-v" style="font-size: 13px">{{ reportDetail.module }}</div></div>
-                    <div class="mg"><div class="mg-k">耗时</div><div class="mg-v" style="font-size: 13px">{{ fmtDuration(reportDetail.duration_ms) }}</div></div>
+            <div v-show="activeReportTab === 'report'" class="tab-pane tab-pane-report">
+              <NSpin :show="reportLoading" class="report-spin-wrap">
+                <NScrollbar v-if="reportDetail && reportMarkdown" class="report-body-scroll" trigger="none">
+                  <div class="report-markdown-inner">
+                    <MarkdownRenderer :content="reportMarkdown" />
                   </div>
-                  <div class="report-meta-extra">
-                    <div class="meta-row"><span class="mk">执行</span>
-                      <EaPill variant="ok">{{ reportDetail.execution_mode === 'agent' ? 'Agent' : (reportDetail.execution_mode || 'agent') }}</EaPill>
-                      <span v-if="reportDetail.tool_call_count != null" class="ea-muted meta-hint">真实工具调用 {{ reportDetail.tool_call_count }} 次</span>
-                    </div>
-                    <div class="meta-row"><span class="mk">Skill</span>
-                      <EaPill v-for="s in reportDetail.skills_used || []" :key="s" variant="warn" style="margin-right: 6px">{{ s }}</EaPill>
-                      <span v-if="!(reportDetail.skills_used || []).length" class="ea-muted">无</span>
-                    </div>
-                  </div>
-                  <div v-if="reportDetail.corrections && reportDetail.corrections.length" class="report-corrections">
-                    <div class="rc-title">补充信息历史（{{ reportDetail.corrections.length }} 次）</div>
-                    <div v-for="(c, i) in reportDetail.corrections" :key="i" class="rc-item">
-                      <span class="rc-idx">#{{ i + 1 }}</span>
-                      <span class="rc-text">{{ c }}</span>
-                    </div>
-                  </div>
-                  <div class="report-body">
-                    <MarkdownRenderer :content="reportDetail.llm_response || ''" />
-                  </div>
-                </div>
+                </NScrollbar>
                 <NEmpty v-else-if="!reportLoading" description="尚未生成报告" />
               </NSpin>
             </div>
 
-            <div v-show="activeReportTab === 'jira'" class="tab-pane">
-              <NEmpty v-if="!currentTask.issue && !reportDetail?.jira" description="未获取到 JIRA 详情（可能 fetch 失败或正在拉取）" />
-              <div v-else class="jira-card">
-                <div class="jira-row"><span class="mk">Key</span><a :href="(currentTask.issue?.url || reportDetail?.jira?.url) || '#'" target="_blank">{{ currentTask.issue?.key || reportDetail?.jira?.key }}</a></div>
-                <div class="jira-row"><span class="mk">标题</span>{{ currentTask.issue?.summary || reportDetail?.jira?.summary }}</div>
-                <div class="jira-grid">
-                  <div><span class="mk">状态</span>{{ currentTask.issue?.status || reportDetail?.jira?.status || '-' }}</div>
-                  <div><span class="mk">优先级</span>{{ currentTask.issue?.priority || reportDetail?.jira?.priority || '-' }}</div>
-                  <div><span class="mk">经办</span>{{ currentTask.issue?.assignee || reportDetail?.jira?.assignee || '-' }}</div>
-                  <div><span class="mk">报告人</span>{{ currentTask.issue?.reporter || reportDetail?.jira?.reporter || '-' }}</div>
+            <div v-show="activeReportTab === 'jira'" class="tab-pane tab-pane-jira">
+              <NSpin :show="reportLoading && !jiraDisplayInfo?.hasData">
+                <NEmpty v-if="!jiraDisplayInfo?.hasData" description="尚未获取到 JIRA 详情（Agent 拉取中或未开始）" />
+                <div v-else class="jira-card jira-scroll">
+                  <div v-if="jiraDisplayInfo.key" class="jira-row">
+                    <span class="mk">Key</span>
+                    <a v-if="jiraDisplayInfo.url" :href="jiraDisplayInfo.url" target="_blank">{{ jiraDisplayInfo.key }}</a>
+                    <span v-else>{{ jiraDisplayInfo.key }}</span>
+                  </div>
+                  <div v-if="jiraDisplayInfo.summary" class="jira-row">
+                    <span class="mk">标题</span><span>{{ jiraDisplayInfo.summary }}</span>
+                  </div>
+                  <div class="jira-grid">
+                    <div v-if="jiraDisplayInfo.status"><span class="mk">状态</span>{{ jiraDisplayInfo.status }}</div>
+                    <div v-if="jiraDisplayInfo.priority"><span class="mk">优先级</span>{{ jiraDisplayInfo.priority }}</div>
+                    <div v-if="jiraDisplayInfo.assignee"><span class="mk">经办</span>{{ jiraDisplayInfo.assignee }}</div>
+                    <div v-if="jiraDisplayInfo.reporter"><span class="mk">报告人</span>{{ jiraDisplayInfo.reporter }}</div>
+                    <div v-if="jiraDisplayInfo.commentCount"><span class="mk">评论数</span>{{ jiraDisplayInfo.commentCount }}</div>
+                    <div v-if="jiraDisplayInfo.attachmentCount && !jiraDisplayInfo.attachments?.length">
+                      <span class="mk">附件数</span>{{ jiraDisplayInfo.attachmentCount }}
+                    </div>
+                    <div v-if="jiraDisplayInfo.fetchOk"><span class="mk">拉取</span>{{ jiraDisplayInfo.fetchOk === 'true' ? '成功' : jiraDisplayInfo.fetchOk }}</div>
+                    <div v-if="jiraDisplayInfo.skillUsed"><span class="mk">Skill</span>{{ jiraDisplayInfo.skillUsed }}</div>
+                  </div>
+                  <div v-if="jiraDisplayInfo.description" class="jira-desc">
+                    <div class="mk" style="margin-bottom: 6px">描述</div>
+                    <pre>{{ jiraDisplayInfo.description }}</pre>
+                  </div>
+                  <div v-if="jiraDisplayInfo.attachments?.length" class="jira-att">
+                    <div class="mk" style="margin-bottom: 6px">附件</div>
+                    <a
+                      v-for="a in jiraDisplayInfo.attachments"
+                      :key="a.id"
+                      :href="a.url"
+                      target="_blank"
+                      class="att-item"
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                      {{ a.filename }}
+                      <span v-if="a.size" class="att-size">({{ (a.size / 1024).toFixed(1) }} KB)</span>
+                    </a>
+                  </div>
                 </div>
-                <div v-if="(currentTask.issue?.description || reportDetail?.jira?.description)" class="jira-desc">
-                  <div class="mk" style="margin-bottom: 6px">描述</div>
-                  <pre>{{ currentTask.issue?.description || reportDetail?.jira?.description }}</pre>
-                </div>
-                <div v-if="(currentTask.issue?.attachments || reportDetail?.jira?.attachments || []).length" class="jira-att">
-                  <div class="mk" style="margin-bottom: 6px">附件</div>
-                  <a
-                    v-for="a in (currentTask.issue?.attachments || reportDetail?.jira?.attachments || [])"
-                    :key="a.id"
-                    :href="a.url"
-                    target="_blank"
-                    class="att-item"
-                  >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-                    {{ a.filename }}
-                    <span v-if="a.size" class="att-size">({{ (a.size / 1024).toFixed(1) }} KB)</span>
-                  </a>
-                </div>
-              </div>
+              </NSpin>
             </div>
 
-            <div v-show="activeReportTab === 'log'" class="tab-pane">
+            <div v-show="activeReportTab === 'log'" class="tab-pane tab-pane-log">
               <NSpin :show="logLoading">
                 <div class="log-header">
                   <span class="ea-muted log-hint">日志文件: <code>{{ currentTaskId }}.log</code>（位于 hermes-web-ui 数据目录）</span>
@@ -1230,15 +1491,8 @@ function handoffToAgent(scope: 'single' | 'batch') {
                 </div>
               </NPopover>
 
-              <NButton tertiary :disabled="!modelProviderReady" @click="handoffToAgent('single')">
-                <template #icon>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                </template>
-                在 AI 对话中继续讨论
-              </NButton>
-
               <NButton
-                v-if="isRunning || isPending"
+                v-if="!isHistoryView && (isRunning || isPending)"
                 type="warning"
                 @click="stopOrCancelCurrentTask"
               >
@@ -1248,7 +1502,7 @@ function handoffToAgent(scope: 'single' | 'batch') {
                 {{ isRunning ? '强行中断当前任务' : '取消等待中的任务' }}
               </NButton>
 
-              <NButton :disabled="!modelProviderReady || isRunning || isPending || !currentTaskId" @click="openContinue">
+              <NButton v-if="!isHistoryView" :disabled="!modelProviderReady || isRunning || isPending || !currentTaskId" @click="openContinue">
                 <template #icon>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
                 </template>
@@ -1350,25 +1604,67 @@ function handoffToAgent(scope: 'single' | 'batch') {
   :deep(.model-provider-banner) { margin-bottom: 12px; }
 }
 
-.bug-split { align-items: stretch; min-height: 0; }
-.bug-left { min-height: 0; }
-.bug-tasks-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.task-scroll { max-height: calc(100vh - 520px); min-height: 240px; }
+.bug-split {
+  align-items: stretch;
+  min-height: 0;
+}
+
+.bug-left {
+  min-height: 0;
+}
+
+.bug-tasks-card {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* 单条任务卡片约 88px，列表间距 8px → 可见 3 条 */
+  --bug-task-item-height: 88px;
+  --bug-task-list-gap: 8px;
+  --bug-task-list-height: calc(var(--bug-task-item-height) * 3 + var(--bug-task-list-gap) * 2);
+}
+
+.task-list-head {
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+.task-list-body {
+  flex: 0 0 auto;
+  height: var(--bug-task-list-height);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.task-list-spin {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  :deep(.n-spin-container) {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  :deep(.n-spin-content) {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+}
+
+.task-scroll {
+  height: var(--bug-task-list-height);
+  max-height: var(--bug-task-list-height);
+  flex: 0 0 auto;
+}
 
 .mode-toggle {
   display: flex; gap: 4px; background: var(--surface-2); padding: 3px; border-radius: 10px;
   .mode-idle { background: none; border: none; color: var(--muted); cursor: pointer; font-family: inherit; font-weight: 600; }
-}
-
-.exec-mode-banner {
-  display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin: 0 0 14px;
-  border-radius: 10px; cursor: pointer; font-size: 11.5px; color: var(--text);
-  background: linear-gradient(90deg, color-mix(in srgb, var(--success) 10%, transparent), color-mix(in srgb, var(--info) 8%, transparent));
-  border: 1px solid color-mix(in srgb, var(--success) 22%, transparent);
-  &.agent-mode .emb-dot { background: var(--success); box-shadow: 0 0 6px color-mix(in srgb, var(--success) 55%, transparent); }
-  .emb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--info); flex-shrink: 0; }
-  .emb-text { flex: 1; strong { font-weight: 700; } }
-  .emb-link { color: var(--accent); text-decoration: underline; font-weight: 600; flex-shrink: 0; }
 }
 
 .field-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
@@ -1397,7 +1693,25 @@ function handoffToAgent(scope: 'single' | 'batch') {
 
 .bug-main-wrap { min-height: 0; display: flex; flex-direction: column; }
 .bug-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.bug-detail { min-height: 520px; }
+.bug-detail {
+  min-height: 520px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 120px);
+}
+
+.history-task-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin-bottom: 6px;
+  .ea-task-item { flex: 1; min-width: 0; margin-bottom: 0; }
+}
+.history-del-btn {
+  flex-shrink: 0;
+  align-self: center;
+  font-size: 11px;
+}
 
 .bug-empty {
   align-items: center; text-align: center; padding: 48px 24px;
@@ -1430,24 +1744,32 @@ function handoffToAgent(scope: 'single' | 'batch') {
 .tp-text { font-size: 11px; min-width: 32px; text-align: right; }
 
 .tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.tab-pane { flex: 1; min-height: 320px; overflow-y: auto; padding-bottom: 8px; scrollbar-width: thin; }
-
-.live-grid { min-height: 360px; height: 100%; }
-.live-llm-panel {
-  display: flex; flex-direction: column; min-height: 260px; background: var(--bg);
-  border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+.tab-pane {
+  flex: 1; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column; padding-bottom: 8px;
 }
-.live-llm-header { padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
-.live-llm-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px; font-size: 13.5px; line-height: 1.7; }
+.tab-pane-live,
+.tab-pane-report,
+.tab-pane-jira {
+  max-height: min(520px, calc(100vh - 360px));
+}
+
+.live-grid {
+  flex: 1; min-height: 0; height: 100%; max-height: 100%; overflow: hidden;
+}
+.live-llm-panel {
+  display: flex; flex-direction: column; min-height: 0; max-height: 100%;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+}
+.live-llm-header { padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--surface); flex-shrink: 0; }
+.live-llm-body {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px;
+  font-size: 13.5px; line-height: 1.7; scrollbar-width: thin;
+}
 .llm-waiting { display: flex; align-items: center; padding: 20px; }
 
-.live-side { gap: 12px; min-height: 0; }
+.live-side { gap: 12px; min-height: 0; max-height: 100%; overflow-y: auto; scrollbar-width: thin; }
 .flex-fill { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.ss-current-phase {
-  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
-  background: var(--surface); border-radius: 8px; border-left: 3px solid var(--line-strong);
-  font-size: 13px; font-weight: 600; color: var(--text);
-}
 
 .skill-call-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
 .scall {
@@ -1461,13 +1783,41 @@ function handoffToAgent(scope: 'single' | 'batch') {
 .sc-name { font-family: ui-monospace, monospace; font-weight: 600; flex: 1; word-break: break-all; color: var(--text); }
 .sc-args { color: var(--muted); font-size: 11px; margin-top: 2px; word-break: break-all; font-family: ui-monospace, monospace; }
 
-.events-scroller { flex: 1; min-height: 0; overflow-y: auto; }
-.evt {
-  display: grid; grid-template-columns: auto 1fr; gap: 8px; padding: 8px 0;
-  border-bottom: 1px dashed var(--line); font-size: 12px; color: var(--text);
-  &:last-child { border: none; }
+.reasoning-block {
+  margin-bottom: 12px; padding: 10px 12px; background: var(--surface);
+  border: 1px dashed var(--line); border-radius: 10px;
 }
-.evt-ts { color: var(--faint); font-family: ui-monospace, monospace; font-size: 11px; }
+.reasoning-label { font-size: 11px; font-weight: 600; margin-bottom: 6px; }
+.reasoning-text {
+  margin: 0; font-size: 12px; line-height: 1.55; color: var(--muted);
+  white-space: pre-wrap; word-break: break-word; font-family: inherit;
+}
+
+.bug-progress-scroller { flex: 1; min-height: 0; overflow-y: auto; }
+.bug-pipeline-step {
+  display: flex; gap: 10px; padding: 8px 4px;
+  border-bottom: 1px solid var(--line);
+  &:last-child { border-bottom: none; }
+}
+.bug-step-dot {
+  width: 8px; height: 8px; border-radius: 50%; margin-top: 5px;
+  flex-shrink: 0; background: var(--muted);
+}
+.step-pending .bug-step-dot { opacity: 0.5; }
+.step-running .bug-step-dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.step-completed .bug-step-dot { background: var(--success); }
+.step-completed .bug-step-label { color: var(--success); font-weight: 600; }
+.step-warning .bug-step-dot { background: var(--warn); }
+.step-failed .bug-step-dot { background: var(--error); }
+.bug-step-body { flex: 1; min-width: 0; }
+.bug-step-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.bug-step-label { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.bug-step-ts { font-size: 10px; color: var(--faint); font-family: ui-monospace, monospace; flex-shrink: 0; }
+.bug-step-msg { font-size: 11.5px; color: var(--muted); margin-top: 3px; line-height: 1.45; word-break: break-word; }
+.bug-step-details {
+  margin: 6px 0 0; padding-left: 16px; font-size: 11px; color: var(--text); line-height: 1.5;
+  li { margin-bottom: 2px; }
+}
 
 .report-meta-extra { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; font-size: 12.5px; }
 .meta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -1482,9 +1832,43 @@ function handoffToAgent(scope: 'single' | 'batch') {
 .rc-item { font-size: 12px; padding: 3px 0; }
 .rc-idx { display: inline-block; min-width: 28px; color: var(--warn); font-weight: 700; }
 .rc-text { color: var(--text); }
-.report-body { font-size: 13.5px; line-height: 1.7; }
+.report-spin-wrap {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  :deep(.n-spin-container) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  :deep(.n-spin-content) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+}
+.report-body-scroll {
+  flex: 1;
+  min-height: 0;
+  max-height: min(480px, calc(100vh - 400px));
+}
+.report-markdown-inner {
+  padding: 4px 12px 16px 4px;
+  font-size: 13.5px;
+  line-height: 1.7;
+}
 
 .jira-card { font-size: 13px; }
+.jira-scroll {
+  flex: 1; min-height: 0; max-height: 100%; overflow-y: auto; scrollbar-width: thin;
+}
 .jira-row {
   display: flex; gap: 12px; padding: 6px 0; border-bottom: 1px dashed var(--line); align-items: center;
   a { color: var(--accent); }
@@ -1507,21 +1891,33 @@ function handoffToAgent(scope: 'single' | 'batch') {
 
 .log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 12px; flex-wrap: wrap; }
 .log-hint code { font-size: 11px; }
+.tab-pane-log {
+  max-height: min(520px, calc(100vh - 360px));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
 .log-body {
-  background: #1b1e2b; color: #e7e9f2; padding: 14px 16px; border-radius: 14px;
-  font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.55;
-  white-space: pre-wrap; word-break: break-all; max-height: 60vh; overflow: auto; margin: 0;
+  flex: 1;
+  min-height: 0;
+  max-height: min(440px, calc(100vh - 420px));
+  overflow: auto;
+  background: #1b1e2b;
+  color: #e7e9f2;
+  padding: 14px 16px;
+  border-radius: 14px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  scrollbar-width: thin;
 }
 
 .task-footer {
   margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); flex-shrink: 0;
 }
-
-.popover-body { font-size: 12.5px; line-height: 1.7; color: var(--text); max-width: 420px; }
-.popover-title { font-weight: 700; margin-bottom: 8px; }
-.popover-section { margin-bottom: 8px; }
-.popover-muted { color: var(--muted); }
-.popover-foot { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11px; }
 
 .modal-hint { margin-bottom: 8px; font-size: 12px; color: var(--muted); }
 .modal-body-text { margin-bottom: 8px; font-size: 13px; color: var(--text); }
@@ -1532,7 +1928,6 @@ code {
 }
 
 @media (max-width: 1100px) {
-  .task-scroll { max-height: 320px; }
   .task-title { max-width: 100%; }
 }
 </style>

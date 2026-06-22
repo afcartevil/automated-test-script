@@ -100,6 +100,31 @@ export function bugLogDir(): string {
   return LOG_ROOT
 }
 
+/** 删除任务日志文件（删除历史记录时调用） */
+export async function deleteBugLog(taskId: string): Promise<void> {
+  const file = logPathFor(taskId)
+  try {
+    if (existsSync(file)) await import('fs/promises').then(fs => fs.unlink(file))
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, taskId }, '[bug-log] delete failed')
+  }
+}
+
+/** 从 distill 队列移除指定任务记录 */
+export async function removeDistillRequestsForTask(taskId: string): Promise<void> {
+  if (!existsSync(DISTILL_QUEUE_FILE)) return
+  try {
+    const text = await readFile(DISTILL_QUEUE_FILE, 'utf-8')
+    const arr = JSON.parse(text)
+    if (!Array.isArray(arr)) return
+    const next = arr.filter((r: DistillRequestRecord) => r.task_id !== taskId)
+    if (next.length === arr.length) return
+    await writeFile(DISTILL_QUEUE_FILE, JSON.stringify(next, null, 2), 'utf-8')
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, taskId }, '[bug-log] distill remove failed')
+  }
+}
+
 // ─── 知识沉淀按钮（"沉淀为知识库/skill"）——目前只记录请求，等待二阶段实现 ─────
 
 export interface DistillRequestRecord {

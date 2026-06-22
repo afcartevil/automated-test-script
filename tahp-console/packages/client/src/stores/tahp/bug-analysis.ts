@@ -36,11 +36,31 @@ export interface SkillCallRecord {
   error?: boolean
 }
 
+/** Agent TAHP_STAGE 结构化阶段详情（由 BFF 解析后推送） */
+export interface StageDetailRecord {
+  stage_id: string
+  step_id: string
+  phase: string
+  status: 'running' | 'success' | 'failed'
+  skill_used?: string
+  message?: string
+  detail_lines?: string[]
+  fields?: Record<string, string>
+  ts: number
+}
+
+const STAGE_MARKER_STRIP_RE = /=== TAHP_STAGE:(fetch_jira|download_logs|match_skills|analyze|generate_report) ===\r?\n[\s\S]*?=== END_TAHP_STAGE ===/g
+
+function stripStageMarkers(text: string): string {
+  return text.replace(STAGE_MARKER_STRIP_RE, '')
+}
+
 export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
   const tasks = ref<Record<string, BugTask>>({})
   const jobs = ref<Record<string, BugJob>>({})
   const streams = ref<Record<string, StreamEntry[]>>({})
   const skillCalls = ref<Record<string, SkillCallRecord[]>>({})
+  const stageDetails = ref<Record<string, Record<string, StageDetailRecord>>>({})
   const selectedTaskId = ref<string | null>(null)
   const selectedJobId = ref<string | null>(null)
   const loading = ref(false)
@@ -76,6 +96,34 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             t.phase = ev.payload?.phase as string
             if (typeof ev.payload?.progress === 'number') t.progress = ev.payload.progress as number
             break
+          case 'task.stage_detail': {
+            const stepId = String(ev.payload?.step_id || '')
+            if (!stepId) break
+            const statusRaw = String(ev.payload?.status || 'running')
+            const status: StageDetailRecord['status'] = statusRaw === 'failed'
+              ? 'failed'
+              : statusRaw === 'success' ? 'success' : 'running'
+            const rec: StageDetailRecord = {
+              stage_id: String(ev.payload?.stage_id || ''),
+              step_id: stepId,
+              phase: String(ev.payload?.phase || ''),
+              status,
+              skill_used: typeof ev.payload?.skill_used === 'string' ? ev.payload.skill_used : undefined,
+              message: typeof ev.payload?.message === 'string' ? ev.payload.message : undefined,
+              detail_lines: Array.isArray(ev.payload?.detail_lines)
+                ? (ev.payload.detail_lines as string[])
+                : undefined,
+              fields: (ev.payload?.fields as Record<string, string>) || undefined,
+              ts: ev.ts,
+            }
+            const bucket = { ...(stageDetails.value[tid] || {}) }
+            bucket[stepId] = rec
+            stageDetails.value = { ...stageDetails.value, [tid]: bucket }
+            if (stepId === 'fetch-jira' && rec.fields?.issue_summary) {
+              t.title = rec.fields.issue_summary
+            }
+            break
+          }
           case 'task.skill_use':
             if (typeof ev.payload?.skill_id === 'string') {
               const list = t.skills_used || []
@@ -148,7 +196,7 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
       }
     }
     const events = [
-      'task.started', 'task.phase', 'task.step', 'task.message',
+      'task.started', 'task.phase', 'task.step', 'task.message', 'task.stage_detail',
       'task.completed', 'task.failed', 'task.cancelled', 'task.skill_use', 'task.tool_completed', 'task.progress',
     ]
     events.forEach(e => s.on(e, handler))
@@ -201,8 +249,20 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
   }
 
   function llmText(taskId: string): string {
-    return stream(taskId)
+    const raw = stream(taskId)
       .filter(e => e.type === 'task.message' && (e.payload as any)?.level === 'stream')
+      .map(e => String((e.payload as any)?.text ?? ''))
+      .join('')
+    return stripStageMarkers(raw)
+  }
+
+  function stageDetailMap(taskId: string): Record<string, StageDetailRecord> {
+    return stageDetails.value[taskId] || {}
+  }
+
+  function reasoningText(taskId: string): string {
+    return stream(taskId)
+      .filter(e => e.type === 'task.message' && (e.payload as any)?.level === 'reasoning')
       .map(e => String((e.payload as any)?.text ?? ''))
       .join('')
   }
@@ -228,9 +288,9 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
   )
 
   return {
-    tasks, jobs, streams, skillCalls, selectedTaskId, selectedJobId, loading, lastError,
+    tasks, jobs, streams, skillCalls, stageDetails, selectedTaskId, selectedJobId, loading, lastError,
     recentTasks, recentJobs,
     ensureSocket, refresh, refreshTask, registerTask, registerJob,
-    stream, skillCallList, llmText, structuredEvents, selectTask, selectJob,
+    stream, skillCallList, llmText, reasoningText, stageDetailMap, structuredEvents, selectTask, selectJob,
   }
 })

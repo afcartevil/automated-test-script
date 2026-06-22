@@ -21,7 +21,8 @@
  *
  * 事件流（在 task-stream.ts 全局命名空间，前端通过 Socket.IO 订阅 /tahp-run）：
  *   task.started        启动
- *   task.phase          阶段切换（CONNECTING_AGENT / ANALYZING / GENERATING_REPORT）
+ *   task.phase          阶段切换（FETCH_JIRA_INFO / DOWNLOAD_JIRA_LOGS / MATCH_SKILLS / ANALYZING / GENERATING_REPORT）
+ *   task.stage_detail   Agent 输出的 TAHP_STAGE 结构化阶段详情（供 UI 展示）
  *   task.step           子步骤完成
  *   task.message        Agent 流式 chunk（level=stream）或一般日志
  *   task.skill_use      Agent 真实调用了 tool / skill（来自 tool.started 事件）
@@ -34,7 +35,7 @@
  *   批量:  task-bugjob-<ts>-<rand> （父）+ task-bug-* （子）
  */
 import { randomBytes } from 'crypto'
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { logger } from '../logger'
 import { getTaskStream } from './task-stream'
@@ -50,9 +51,16 @@ import {
   fetchIssue, searchJQL, parseIssueKey,
   type JiraIssue, type JiraIssueSummary, type JiraConfig,
 } from './jira'
-import { logBug, appendBugLog } from './bug-analysis-logger'
-import { buildFullTahpSystemContext, getTahpSkillsRoot } from './context-injector'
+import { logBug, appendBugLog, deleteBugLog, removeDistillRequestsForTask, bugLogPath } from './bug-analysis-logger'
+import { buildFullTahpSystemContext, getTahpSkillsRootForPrompt, tahpSkillMdRelativePath } from './context-injector'
 import { saveAgentPromptLog } from './prompt-log'
+import {
+  BUG_UI_PHASE_PROGRESS,
+  findBugStageMarkers,
+  formatStageDetailLines,
+  extractBugAnalysisReportBody,
+  type ParsedBugStageMarker,
+} from './bug-analysis-stages'
 
 // ─── Agent Bridge 客户端（单例） ────────────────────────────────────────────
 //
@@ -83,6 +91,7 @@ export interface BugAnalysisTaskCtx {
   parentJobId?: string            // 批量任务的父 job id
   jiraKey: string
   jiraUrl: string
+  title?: string                  // Agent fetch_jira 回填的 Issue 标题
   rawInput?: string               // 用户原始输入（仅作为 prompt 兜底）
   module?: TahpBugModule          // 可选 · 由 Agent 后续在报告里回填；BFF 不识别
   userDescription?: string
@@ -98,6 +107,8 @@ export interface BugAnalysisTaskCtx {
   llmResponse?: string
   completedAt?: string
   error?: string
+  /** Agent fetch_jira 阶段 TAHP_STAGE 字段快照 */
+  jiraSnapshot?: Record<string, string>
 }
 
 export interface BugAnalysisJobCtx {
@@ -227,6 +238,47 @@ export function listBugReports(): unknown[] {
   return summaries.sort((a, b) => String(b.started_at || '').localeCompare(String(a.started_at || '')))
 }
 
+function promptDirFor(taskId: string): string {
+  return join(tahpPaths.reportsDir, 'bug-analysis', 'prompts', taskId)
+}
+
+function isSafeTaskId(taskId: string): boolean {
+  return !!taskId && !taskId.includes('..') && !/[\\/]/.test(taskId)
+}
+
+/** 永久删除任务的历史落盘数据（报告、提示词、日志）及内存态 */
+export async function deleteBugReport(taskId: string): Promise<{ ok: boolean; error?: string }> {
+  if (!isSafeTaskId(taskId)) return { ok: false, error: '无效的任务 ID' }
+
+  const jsonPath = reportPath(taskId)
+  let deleted = false
+  try {
+    if (existsSync(jsonPath)) {
+      unlinkSync(jsonPath)
+      deleted = true
+    }
+    const promptDir = promptDirFor(taskId)
+    if (existsSync(promptDir)) {
+      rmSync(promptDir, { recursive: true, force: true })
+      deleted = true
+    }
+    if (existsSync(bugLogPath(taskId))) {
+      await deleteBugLog(taskId)
+      deleted = true
+    }
+    await removeDistillRequestsForTask(taskId)
+    if (taskCtx.has(taskId)) {
+      taskCtx.delete(taskId)
+      deleted = true
+    }
+    taskRuntime.delete(taskId)
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+  if (!deleted) return { ok: false, error: `找不到任务记录: ${taskId}` }
+  return { ok: true }
+}
+
 // ─── Agent Bridge 执行 ──────────────────────────────────────────────────────
 //
 // 说明（已移除的 BFF 启发式中间层）：
@@ -287,7 +339,7 @@ async function runAgentChat(
   let fullResponse = ''
 
   let lastChunk: AgentBridgeOutput | null = null
-  for await (const chunk of sharedBridgeClient.streamOutput(started.run_id, { intervalMs: 250 })) {
+  for await (const chunk of sharedBridgeClient.streamOutput(started.run_id, { intervalMs: 100 })) {
     lastChunk = chunk
 
     for (const ev of chunk.events || []) {
@@ -354,98 +406,194 @@ function findSkillUseHits(text: string, fromIndex = 0): SkillUseHit[] {
   return hits
 }
 
-// ─── 提示词构建（Agent 模式 + 工程 Skill 目录注入） ─────────────────────────
-//
-// BFF 注入：当前工程 skills/.claude/skills 清单 + Skill 按需 Read 规范 + 关键词匹配节选。
-// Bug 域识别与具体 Skill 选择仍由 Agent 在拉取 JIRA 后完成；MCP：jira-mcp / transsion-harness 等。
+// ─── 预备阶段（连接 Bridge，不计入 UI 五步进度） ─────────────────────────────
 
-const AGENT_INSTRUCTIONS_BASE = `你是 TAHP（TECNO AI Harness Platform）"智能诊断专家"，运行在传音 Android 底软集成部的 Claude Code Agent 环境中。
+function emitPrepPhase(taskId: string, ctx: BugAnalysisTaskCtx, phase: 'PREPARING' | 'CONNECTING_AGENT', message: string) {
+  const progress = phase === 'PREPARING' ? 5 : 10
+  ctx.phase = phase
+  ctx.progress = progress
+  emit(taskId, 'task.phase', { phase, progress, message })
+}
 
-# 你的执行原则
-1. **必须真正调用 Skill / MCP 工具**，不要"假装"使用 skill；用户能通过工具调用面板看到你是否真的调用了。
-2. **优先用工具拉取一手数据**：JIRA 详情、日志附件、整机日志、特性清单 —— 不要凭印象。
-3. **失败即停止 + 显式上报**：任何 skill / 工具调用失败时，明确指出错误原因和后续依赖，不要"猜测兜底"。
-4. 中文输出。语气专业、结构清晰、可执行。
+function applyParsedStageMarker(
+  taskId: string,
+  ctx: BugAnalysisTaskCtx,
+  marker: ParsedBugStageMarker,
+) {
+  if (marker.markerId === 'fetch_jira') {
+    ctx.jiraSnapshot = { ...(ctx.jiraSnapshot || {}), ...marker.fields }
+    if (marker.fields.issue_summary) ctx.title = marker.fields.issue_summary
+  }
+  ctx.phase = marker.phase
+  ctx.progress = BUG_UI_PHASE_PROGRESS[marker.phase]
+  const message = marker.fields.message || ''
+  emit(taskId, 'task.phase', {
+    phase: marker.phase,
+    progress: BUG_UI_PHASE_PROGRESS[marker.phase],
+    message,
+  })
+  const stepStatus = marker.status === 'success'
+    ? 'completed'
+    : marker.status === 'failed'
+      ? 'failed'
+      : 'running'
+  emit(taskId, 'task.step', {
+    step_id: marker.stepId,
+    status: stepStatus,
+    message,
+  })
+  emit(taskId, 'task.stage_detail', {
+    stage_id: marker.markerId,
+    phase: marker.phase,
+    step_id: marker.stepId,
+    status: marker.status,
+    skill_used: marker.fields.skill_used || '',
+    message,
+    fields: marker.fields,
+    detail_lines: formatStageDetailLines(marker.markerId, marker.fields),
+  })
+}
 
-# 标准工作流（必须按此顺序执行）
+function ingestStageMarkersFromText(
+  taskId: string,
+  ctx: BugAnalysisTaskCtx,
+  fullText: string,
+  state: { lastIndex: number },
+) {
+  const markers = findBugStageMarkers(fullText, state.lastIndex)
+  for (const marker of markers) {
+    state.lastIndex = Math.max(state.lastIndex, marker.startIndex + marker.rawBlock.length)
+    applyParsedStageMarker(taskId, ctx, marker)
+  }
+}
 
-## Step 1：拉取 JIRA Issue 详情（必做）
-使用以下任一可用工具拉取 Issue：
-- 优先：\`user-jira-mcp\` MCP（如可用）
-- 备选：\`mcp__user-jira-mcp__*\` 系列工具
-- 兜底：使用 transsion-harness 的 OpenGrok / JIRA 桥接（如有）
+function buildReportJiraSection(ctx: BugAnalysisTaskCtx): Record<string, unknown> {
+  const snap = ctx.jiraSnapshot || {}
+  const issue = ctx.issue
+  if (issue) {
+    return {
+      key: issue.key,
+      url: issue.url,
+      summary: issue.summary,
+      status: issue.status,
+      priority: issue.priority,
+      assignee: issue.assignee,
+      reporter: issue.reporter,
+      components: issue.components,
+      labels: issue.labels,
+      attachments: issue.attachments,
+      description: issue.description?.slice(0, 5000),
+      commentCount: issue.comments.length,
+    }
+  }
+  const section: Record<string, unknown> = {
+    key: ctx.jiraKey,
+    url: ctx.jiraUrl,
+    summary: snap.issue_summary || ctx.title || ctx.jiraKey,
+  }
+  if (snap.status) section.status = snap.status
+  if (snap.priority) section.priority = snap.priority
+  if (snap.assignee) section.assignee = snap.assignee
+  if (snap.reporter) section.reporter = snap.reporter
+  if (snap.description || snap.description_preview) {
+    section.description = (snap.description || snap.description_preview).slice(0, 5000)
+  }
+  if (snap.fetch_ok) section.fetch_ok = snap.fetch_ok
+  if (snap.skill_used) section.skill_used = snap.skill_used
+  if (snap.comment_count) section.commentCount = Number(snap.comment_count) || snap.comment_count
+  if (snap.attachment_count) section.attachmentCount = Number(snap.attachment_count) || snap.attachment_count
+  if (snap.log_paths) section.log_paths = snap.log_paths
+  if (Object.keys(snap).length === 0) {
+    section.note = 'Agent 尚未回报 JIRA 拉取详情'
+  }
+  return section
+}
 
-拉取目标：
-- Issue Summary / Description / Status / Priority / Assignee
-- 附件清单（log / dump / video）
-- 评论时间线（重点关注 reporter / 测试反馈）
+// ─── 提示词构建（Agent 模式 + 工程 Skill 目录注入，路径均为相对工程根） ─────
 
-## Step 2：自主判断 Bug 域 + 选择对应分析 Skill（必做）
-基于 Step 1 拉到的 Issue Summary / Description / Components，**自主判断**属于哪类 Bug，然后挑选对应的分析 Skill。
-Skill 清单与路径见系统提示词末尾「TAHP 工程上下文」；根目录为 \`__TAHP_SKILLS_DIR__\`。
-选定 skillId 后 **必须 Read** 对应 \`<skillId>/SKILL.md\` 全文再按 SOP 分析（通信域未明时先 Read \`com-comm-analysis-foundation\`）。
+const AGENT_INSTRUCTIONS_BASE = `你是 TAHP（TECNO AI Harness Platform）"智能诊断专家"，运行在传音 Android 底软集成部的 Agent 环境中。
 
-## Step 3：日志获取（如有附件或现场需要）
-- 使用 \`transsion-harness\` 拉取整机 log / kernel log / aplog / dumpsys
-- 解析关键时间戳、关键字、TAG，定位异常窗口
+# 执行原则
+1. **必须真正调用 Skill / 工具**，不要假装使用；用户可在界面核对工具调用记录。
+2. **优先拉取一手数据**：JIRA、附件、日志 —— 不要凭印象编造。
+3. **失败即停止并显式上报**：任何步骤失败须说明原因，不要猜测兜底。
+4. 中文输出，结构清晰、可执行。
 
-## Step 4：根因分析（核心）
-基于 JIRA 信息 + 日志关键证据 + Skill 反馈，给出根因。
+# 强制执行步骤（必须严格按顺序，不得跳步）
 
-## Step 5：输出标准 8 节报告
-必须输出以下完整 Markdown 结构（每节 H2 标题，不要省略）：
+## Step 1 — 拉取 JIRA 信息
+1. **必须先 Read** Skill 文件：\`__JIRA_OPS_SKILL__\`
+2. 严格按 \`jira-ops\` SKILL.md 的 SOP，拉取用户给出的 JIRA Issue 完整信息（标题、描述、状态、评论、附件清单）。
+3. 完成后**立即**输出阶段标记 \`fetch_jira\`（见下文格式），\`status\` 填 \`success\` 或 \`failed\`。
+
+## Step 2 — 下载 JIRA 日志
+1. 继续遵循已 Read 的 \`jira-ops\` SKILL.md。
+2. 从 Step 1 的 Issue 信息与 JIRA 附件中，下载/提取日志包（含描述中的 http(s) / UNC 日志链接）。
+3. 完成后**立即**输出阶段标记 \`download_logs\`；若确无日志可下载，\`logs_downloaded: false\` 并说明原因，仍可 \`success\` 进入下一步。
+
+## Step 3 — 匹配分析 Skill
+1. 结合 JIRA **标题 + 描述 + 评论** 与已下载日志类型，在工程 Skill 根目录 \`__TAHP_SKILLS_REL_ROOT__\` 下**自主匹配** 1～3 个最相关的分析 Skill（参考系统提示词末尾「已扫描到的 Skills」索引，禁止编造 skillId）。
+2. 对每个匹配到的 skillId，**必须 Read** \`__TAHP_SKILLS_REL_ROOT__/<skillId>/SKILL.md\` 全文。
+3. 完成后**立即**输出阶段标记 \`match_skills\`，在 \`matched_skills\` 中列出匹配到的 skillId（逗号分隔）；若未匹配到，\`skills_matched: false\` 并说明原因。
+
+## Step 4 — 大模型分析
+1. 依据 Step 1～3 的 JIRA 信息、日志与已 Read 的 Skill SOP，执行根因分析。
+2. 开始分析时输出 \`analyze\` 标记（\`status: running\`）；分析结论就绪后输出 \`analyze\`（\`status: success\`）。
+
+## Step 5 — 生成分析报告
+1. 输出完整 8 节 Markdown 报告（结构见下文）。
+2. 报告正文开始输出前，先输出 \`generate_report\`（\`status: running\`）；报告全部写完后再输出 \`generate_report\`（\`status: success\`，\`report_ready: true\`）。
+
+# 结构化阶段标记（每步完成后必须输出，供 BFF 解析更新 UI）
+
+**在进入下一步之前**，必须输出一段标记块（可输出在分析报告正文之前，勿嵌入 8 节报告中间）：
+
+\`\`\`
+=== TAHP_STAGE:<stage_id> ===
+status: running|success|failed
+skill_used: <skill-id 或 none>
+message: <一句话说明本步结果>
+# 按阶段填写可选字段：
+# fetch_jira: jira_key, fetch_ok, issue_summary, status, priority, assignee, reporter, description_preview, comment_count, attachment_count
+# download_logs: logs_downloaded, log_paths, attachment_count
+# match_skills: skills_matched, matched_skills, match_note
+# analyze: analysis_started, matched_skills
+# generate_report: report_ready
+=== END_TAHP_STAGE ===
+\`\`\`
+
+\`stage_id\` 必须是：\`fetch_jira\` | \`download_logs\` | \`match_skills\` | \`analyze\` | \`generate_report\`
+
+# 8 节分析报告（Step 5 正文，每节 H2 标题，不要省略）
 
 ### 1. 摘要 / TL;DR
-现象 + 初步判断（≤5 行）。
-
 ### 2. 复现路径
-从 JIRA / 日志中提取的复现步骤；信息不全时明确列出待补充项。
-
 ### 3. 关键日志识别
-- 你实际拉取/分析过的日志文件清单（必填日志来源）
-- 关键关键字 / 时间戳 / TAG / PID
-- 异常窗口对应的代码栈
-
 ### 4. 根因定位（最关键）
-按优先级列出 1~3 个候选根因，每个候选说明：
-- 涉及模块 / 文件 / 函数（必须真实存在，不要编造）
-- 触发条件 / 数据流
-- 证据（直接引用日志 / 评论 / 代码）
-
 ### 5. 影响范围
-机型 / 版本 / 复现概率 / 安全等级（P0/P1/P2/P3）。
-
 ### 6. 修复建议
-- 代码改动方向（函数/位置/思路；**不给完整 patch**）
-- 配置 / 属性 / Carrier 可调项（如有）
-- TAHP 安全红线：不改 scope.excludes、不硬编码密钥、安全相关须标 Critical
-
 ### 7. 验证方案
-回归 / 现场验证步骤；优先列可自动化的 smoke。
-
 ### 8. 风险与遗留问题
-分析阻塞项 + 需要的额外信息。
 
 # 输出末尾（必填）
-在报告**最后一节之后**追加一段"实际使用工具清单"，逐行列出：
 \`\`\`
 === TOOLS_INVOKED ===
 - <工具/Skill 名>: <用途>
-- ...
 === END ===
 \`\`\`
 
 # 红线
-- 不要编造文件 / 函数 / 配置项名 —— 必须来自真实工具输出（JIRA / 日志 / Skill）
+- 不要编造文件 / 函数 / 配置项名
 - 不要给完整 patch，只给修改方向
-- Skill / 工具调用全程必须真实发起（前端可在 Skill 调用面板核对）
-- 工具失败时直接报错并停止该步骤，不要兜底
-- 不要写"如果有访问权限"之类回避用语
+- 工具失败时直接报错并停止该步骤
 `
 
 function buildBugAnalysisInstructions(userMessage: string): string {
-  const skillsDir = getTahpSkillsRoot()
-  const base = AGENT_INSTRUCTIONS_BASE.replace(/__TAHP_SKILLS_DIR__/g, skillsDir)
+  const skillsRel = getTahpSkillsRootForPrompt()
+  const jiraOpsSkill = tahpSkillMdRelativePath('jira-ops')
+  const base = AGENT_INSTRUCTIONS_BASE
+    .replace(/__TAHP_SKILLS_REL_ROOT__/g, skillsRel)
+    .replace(/__JIRA_OPS_SKILL__/g, jiraOpsSkill)
   const tahpCtx = buildFullTahpSystemContext(userMessage, { scenario: 'bug_analysis' })
   return tahpCtx ? `${base}\n\n${tahpCtx}` : base
 }
@@ -480,7 +628,7 @@ function buildAgentUserMessage(ctx: BugAnalysisTaskCtx, correction?: string): st
     blocks.push('请基于上述补充重新生成完整的 8 节分析报告。')
   } else {
     blocks.push('')
-    blocks.push('请按系统提示词的标准工作流开始分析。第一步先用 JIRA Skill 拉 Issue 完整信息（含全部附件 + 评论）。')
+    blocks.push('请严格按系统提示词的五步工作流执行：jira-ops 拉 JIRA → jira-ops 下载日志 → 匹配 Skill → 分析 → 输出 8 节报告；每步完成后输出 TAHP_STAGE 标记。')
   }
 
   return blocks.join('\n')
@@ -506,44 +654,36 @@ async function runSingleBugAnalysis(
   const agentSessionId = `tahp-bug-${taskId}`
   taskRuntime.set(taskId, { sessionId: agentSessionId, interruptRequested: false })
 
+  const stageMarkerState = { lastIndex: 0 }
+
   try {
-    // ── Phase 1: 准备提示词（注入工程 Skill 目录 + 按需加载规范） ───────────
     const userMessage = buildAgentUserMessage(ctx, correction)
     const instructions = buildBugAnalysisInstructions(userMessage)
     const promptLog = saveAgentPromptLog(taskId, 'bug-analysis', instructions, userMessage)
     logBug(taskId, 'info', `Agent 提示词已落盘: ${promptLog.promptDir}`)
-    emit(taskId, 'task.phase', {
-      phase: 'PREPARING', progress: 5,
-      message: '准备提交给 Agent（Skill 按需 Read，提示词已落盘）...',
-    })
+    emitPrepPhase(taskId, ctx, 'PREPARING', '准备提交给 Agent（提示词已落盘）...')
 
-    // ── Phase 2: 检查 Agent Bridge 状态 ────────────────────────────────────
-    emit(taskId, 'task.phase', { phase: 'CONNECTING_AGENT', progress: 15, message: '连接 Claude Code Agent...' })
+    emitPrepPhase(taskId, ctx, 'CONNECTING_AGENT', '连接 Agent Bridge...')
     const manager = getAgentBridgeManager()
     if (!manager.running) {
       throw new Error(
-        'Agent Bridge 未运行。智能诊断必须由 Claude Code Agent 执行（含 Skill / MCP 工具链）。' +
+        'Agent Bridge 未运行。智能诊断必须由 Agent 执行（含 Skill 工具链）。' +
         '请检查 hermes CLI 是否已安装、agent-bridge 是否启动（查看服务端日志 [agent-bridge] 行）。',
       )
     }
-    emit(taskId, 'task.step', { step_id: 'connect-agent', status: 'completed', message: 'Agent Bridge 已就绪，开始下发任务...' })
     logBug(taskId, 'info', `Agent Bridge ready, session=${agentSessionId}`)
-
-    // ── Phase 3: 把任务投递到 Agent，监听 tool.* / 文本 delta ──────────────
-    emit(taskId, 'task.phase', { phase: 'ANALYZING', progress: 25, message: 'Agent 正在分析（可在右侧实时观察 Skill / 工具调用）...' })
 
     let lastSkillHitIdx = 0
     let toolCallCount = 0
-    let textDeltaCount = 0
 
     const { fullResponse } = await runAgentChat(agentSessionId, instructions, userMessage, {
       onText: (delta) => {
-        textDeltaCount += 1
         emit(taskId, 'task.message', { level: 'stream', text: delta })
 
-        // Agent 输出里也可能出现 <skill_use /> 标签（兼容旧产物格式）
         const fullSoFar = (ctx.llmResponse || '') + delta
         ctx.llmResponse = fullSoFar
+        ingestStageMarkersFromText(taskId, ctx, fullSoFar, stageMarkerState)
+
         const hits = findSkillUseHits(fullSoFar, lastSkillHitIdx)
         for (const h of hits) {
           if (!ctx.skillsUsed.includes(h.name)) {
@@ -587,18 +727,20 @@ async function runSingleBugAnalysis(
       },
     })
 
-    // 把最终（filter 后）完整响应回填，覆盖增量过程中暂存的中间值
     ctx.llmResponse = fullResponse
+    ingestStageMarkersFromText(taskId, ctx, fullResponse, stageMarkerState)
 
-    emit(taskId, 'task.step', {
-      step_id: 'analyzing', status: 'completed',
-      message: `Agent 分析完成：${fullResponse.length} 字, 工具调用 ${toolCallCount} 次, 文本分片 ${textDeltaCount}`,
-    })
     logBug(taskId, 'info', `Agent run complete (${fullResponse.length} chars, tools=${toolCallCount}, skills_recorded=${ctx.skillsUsed.join(',') || 'none'})`)
 
-    // ── Phase 4: GENERATING_REPORT ───────────────────────────────────────
-    emit(taskId, 'task.phase', { phase: 'GENERATING_REPORT', progress: 92, message: '生成报告并落盘...' })
-    ctx.llmResponse = fullResponse
+    ctx.phase = 'GENERATING_REPORT'
+    ctx.progress = BUG_UI_PHASE_PROGRESS.GENERATING_REPORT
+    emit(taskId, 'task.phase', {
+      phase: 'GENERATING_REPORT',
+      progress: BUG_UI_PHASE_PROGRESS.GENERATING_REPORT,
+      message: '生成报告并落盘...',
+    })
+    emit(taskId, 'task.step', { step_id: 'generate-report', status: 'running', message: '正在落盘 JSON 报告...' })
+
     ctx.prevResponse = fullResponse
     if (correction) ctx.corrections.push(correction)
 
@@ -607,15 +749,15 @@ async function runSingleBugAnalysis(
     ctx.status = 'completed'
     ctx.completedAt = completedAt
 
-    const issue = ctx.issue || null
+    const reportBody = extractBugAnalysisReportBody(fullResponse)
     const report = {
       task_id: taskId,
       jira_key: ctx.jiraKey,
       jira_url: ctx.jiraUrl,
       module: ctx.module,
-      title: issue?.summary || ctx.rawInput || ctx.jiraKey,
+      title: ctx.jiraSnapshot?.issue_summary || ctx.title || ctx.rawInput || ctx.jiraKey,
       status: 'completed',
-      execution_mode: 'agent', // 明确标识：本任务由 Claude Code Agent 执行
+      execution_mode: 'agent',
       agent_session_id: agentSessionId,
       started_at: ctx.startedAt,
       completed_at: completedAt,
@@ -627,20 +769,8 @@ async function runSingleBugAnalysis(
       skills_used: ctx.skillsUsed,
       tool_call_count: toolCallCount,
       llm_response: fullResponse,
-      jira: issue ? {
-        key: issue.key,
-        url: issue.url,
-        summary: issue.summary,
-        status: issue.status,
-        priority: issue.priority,
-        assignee: issue.assignee,
-        reporter: issue.reporter,
-        components: issue.components,
-        labels: issue.labels,
-        attachments: issue.attachments,
-        description: issue.description?.slice(0, 5000),
-        commentCount: issue.comments.length,
-      } : { key: ctx.jiraKey, url: ctx.jiraUrl, note: '未在 BFF 端预拉取，由 Agent Skill 拉取' },
+      report_body: reportBody,
+      jira: buildReportJiraSection(ctx),
     }
     try {
       writeFileSync(reportPath(taskId), JSON.stringify(report, null, 2), 'utf-8')

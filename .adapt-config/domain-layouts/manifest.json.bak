@@ -1,84 +1,129 @@
 {
   "schema_version": 1,
   "layouts": {
-    "fp": {
+    "comm-framework": {
       "schema_version": 1,
-      "domain_id": "fp",
+      "domain_id": "comm-framework",
       "fields": [
         {
-          "name": "arch_type",
-          "label": "架构类型",
-          "type": "select",
+          "name": "prj_path",
+          "label": "PRJ Path（项目路径）",
+          "type": "text",
           "required": true,
-          "options": [
-            {
-              "label": "归一化 (tran_common_v2)",
-              "value": "normalized"
-            },
-            {
-              "label": "非归一化 (tran_common)",
-              "value": "non_normalized"
-            }
-          ]
+          "placeholder": "D:\\project\\your_comm_framework\\"
+        },
+        {
+          "name": "user_notes",
+          "label": "补充说明",
+          "type": "textarea",
+          "required": false,
+          "placeholder": "说明要测试的场景、注意事项等"
+        },
+        {
+          "name": "addinfo",
+          "label": "addinfo",
+          "type": "text",
+          "required": false
+        }
+      ],
+      "related_skills": [
+        "comm-framework-agent-test"
+      ],
+      "revision": 2,
+      "updated_at": "2026-06-22T02:24:41.686Z",
+      "source": "user"
+    },
+    "tp": {
+      "schema_version": 1,
+      "domain_id": "tp",
+      "fields": [
+        {
+          "name": "debug_project",
+          "label": "调试项目名",
+          "type": "text",
+          "required": true,
+          "placeholder": "如 X6876_H786"
+        },
+        {
+          "name": "project_platform",
+          "label": "项目平台",
+          "type": "text",
+          "required": true,
+          "placeholder": "如 MT6878"
         },
         {
           "name": "ic_vendor",
           "label": "IC厂商",
-          "type": "select",
+          "type": "text",
           "required": true,
-          "options": [
-            {
-              "label": "GOODIX",
-              "value": "goodix"
-            },
-            {
-              "label": "ANC",
-              "value": "anc"
-            },
-            {
-              "label": "Silead",
-              "value": "silead"
-            },
-            {
-              "label": "其他",
-              "value": "other"
-            }
-          ]
+          "placeholder": "如 FocalTech / Goodix"
         },
         {
           "name": "ic_model",
           "label": "IC型号",
           "type": "text",
           "required": true,
-          "placeholder": "如 GW9598"
+          "placeholder": "如 FT8006M"
         },
         {
-          "name": "soc_model",
-          "label": "SoC型号",
+          "name": "spi_gpio",
+          "label": "SPI口及GPIO号",
           "type": "text",
           "required": true,
-          "placeholder": "如 MT6878 / MT6789"
+          "placeholder": "SPI 口与对应 GPIO 配置"
         },
         {
-          "name": "ref_project",
-          "label": "参考项目",
+          "name": "tp_int_rst_gpio",
+          "label": "TP int、rst gpio脚",
           "type": "text",
           "required": true,
-          "placeholder": "参考项目代码"
+          "placeholder": "INT / RST GPIO 编号"
+        },
+        {
+          "name": "vddi_avdd_power",
+          "label": "vddi、avdd的LDO或GPIO",
+          "type": "text",
+          "required": true,
+          "placeholder": "供电 LDO 或 GPIO 配置"
+        },
+        {
+          "name": "old_tp_firmware",
+          "label": "升级前TP固件文件",
+          "type": "text",
+          "required": true,
+          "placeholder": "升级前 TP 固件绝对路径"
+        },
+        {
+          "name": "old_dts",
+          "label": "升级前dts文件",
+          "type": "text",
+          "required": true,
+          "placeholder": "升级前 DTS 文件路径"
+        },
+        {
+          "name": "ref_project_branch",
+          "label": "同分支参考项目",
+          "type": "text",
+          "required": true,
+          "placeholder": "同分支参考项目名或路径"
+        },
+        {
+          "name": "test",
+          "label": "测试字段",
+          "type": "text",
+          "required": false
         }
       ],
       "related_skills": [
-        "drv-fp-adapt",
-        "drv-fp-check",
-        "android-fingerprint-log-analysis"
+        "tp-adapt-bringup"
       ],
-      "revision": 7,
-      "updated_at": "2026-06-09T02:26:34.890Z",
+      "revision": 1,
+      "updated_at": "2026-06-22T02:26:27.956Z",
       "source": "user"
     }
   },
   "sync": {
     "cloud_sync_enabled": false,
-    "last_local_save": "2026-06-09T02:26:34.891Z"
+    "last_local_save": "2026-06-22T02:26:27.957Z"
   }
 }

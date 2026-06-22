@@ -5,6 +5,7 @@
  *   - task.started / task.phase / task.step / task.message
  *   - task.completed / task.failed / task.correction
  *   - task.skill_use / task.file_change / task.plan / task.tool_completed
+ *   - task.stage_detail（智能诊断 Agent TAHP_STAGE 结构化阶段详情）
  */
 import { EventEmitter } from 'events'
 

@@ -155,13 +155,29 @@ function getIndex(): ContextItem[] {
 
 export type TahpSkillScenario = 'bug_analysis' | 'adapt_debug' | 'chat'
 
-/** TAHP 仓内 Claude Skill 根目录：skills/.claude/skills */
+/** TAHP 仓内 Skill 根目录（相对工程根，用于提示词） */
+export const TAHP_SKILLS_REL_ROOT = 'skills/.claude/skills'
+
+/** TAHP 工程根目录在提示词中的相对表示 */
+export const TAHP_PROJECT_REL_ROOT = '.'
+
+/** TAHP 仓内 Claude Skill 根目录（绝对路径，运行时 Read 用） */
 export function getTahpSkillsRoot(): string {
   return join(tahpPaths.projectRoot, 'skills', '.claude', 'skills')
 }
 
+/** 提示词中使用的 Skill 根目录（相对路径，便于工程拷贝到其他主机） */
+export function getTahpSkillsRootForPrompt(): string {
+  return TAHP_SKILLS_REL_ROOT
+}
+
 export function tahpSkillMdPath(skillId: string): string {
   return join(getTahpSkillsRoot(), skillId, 'SKILL.md')
+}
+
+/** 提示词中使用的 Skill.md 相对路径 */
+export function tahpSkillMdRelativePath(skillId: string): string {
+  return `${TAHP_SKILLS_REL_ROOT}/${skillId}/SKILL.md`
 }
 
 /** 从用户消息 / 适配调试 handoff 草稿中解析优先 skill id */
@@ -202,12 +218,12 @@ export function buildSkillExecutionDirective(options?: {
   preferredSkillIds?: string[]
   scenario?: TahpSkillScenario
 }): string {
-  const skillsDir = getTahpSkillsRoot()
+  const skillsDir = getTahpSkillsRootForPrompt()
   const scenario = options?.scenario ?? 'chat'
   const lines: string[] = [
     '# TAHP Skill 执行规范（必读）',
     '',
-    `工程内 Skill 根目录（唯一权威来源）: \`${skillsDir}\``,
+    `工程内 Skill 根目录（唯一权威来源，相对工程根）: \`${skillsDir}\``,
     '每个 Skill 为 `<skillId>/SKILL.md`。**按需**选择 1～3 个相关 Skill，禁止编造不存在的 skillId。',
     '',
     '## 如何使用工程内 Skill',
@@ -232,7 +248,7 @@ export function buildSkillExecutionDirective(options?: {
   if (preferred.length > 0) {
     lines.push('## 优先 Skill（须最先 Read 并遵循）')
     for (const id of preferred) {
-      lines.push(`- **${id}**: \`${tahpSkillMdPath(id)}\``)
+      lines.push(`- **${id}**: \`${tahpSkillMdRelativePath(id)}\``)
     }
     lines.push('')
   }
@@ -249,7 +265,7 @@ function defaultContextOptions(scenario: TahpSkillScenario): BuildTahpContextOpt
       }
     case 'bug_analysis':
       return {
-        includeSkillCatalog: false,
+        includeSkillCatalog: true,
         includeKnowledge: true,
       }
     case 'chat':
@@ -321,8 +337,8 @@ export function buildTahpContext(
   const index = getIndex()
   if (index.length === 0) return ''
 
-  const root = tahpPaths.projectRoot
-  const skillsDir = join(root, 'skills', '.claude', 'skills')
+  const root = TAHP_PROJECT_REL_ROOT
+  const skillsDir = TAHP_SKILLS_REL_ROOT
   const lines: string[] = []
 
   lines.push('# TAHP 工程上下文（索引摘要，非 Skill 正文）')
@@ -330,7 +346,7 @@ export function buildTahpContext(
   lines.push('> Skill 正文不在此注入，请按上方「Skill 执行规范」Read 对应 `SKILL.md`。')
   lines.push('')
   lines.push('## 工程根目录')
-  lines.push(`  路径: \`${root}\``)
+  lines.push(`  路径: \`${root}\`（当前 TAHP 工程根，所有下列路径均相对此目录）`)
   lines.push('')
 
   if (includeSkillCatalog) {
@@ -341,7 +357,7 @@ export function buildTahpContext(
       for (const item of skillItems) {
         const skillName = item.title.replace('Skill: ', '')
         lines.push(`  - **${skillName}**: ${item.summary}`)
-        lines.push(`    文件路径: \`${join(skillsDir, skillName, 'SKILL.md')}\``)
+        lines.push(`    文件路径: \`${skillsDir}/${skillName}/SKILL.md\``)
       }
       lines.push('')
     } else {
@@ -355,7 +371,7 @@ export function buildTahpContext(
     const knowledgeItems = index.filter(i => i.type === 'knowledge')
     if (knowledgeItems.length > 0) {
       lines.push(`## 知识库索引（共 ${knowledgeItems.length} 条）`)
-      lines.push(`  扫描目录: \`${join(root, 'knowledge-base')}\``)
+      lines.push(`  扫描目录: \`knowledge-base\``)
       for (const item of knowledgeItems) {
         lines.push(`  - ${item.summary}`)
       }
