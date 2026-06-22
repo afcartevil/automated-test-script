@@ -197,14 +197,6 @@ const BUG_STAGE_ORDER = [
 ] as const
 const PREP_PHASES = new Set(['STARTING', 'PREPARING', 'CONNECTING_AGENT', 'QUEUED'])
 
-const PHASE_TO_STEP: Record<string, string> = {
-  FETCH_JIRA_INFO: 'fetch-jira',
-  DOWNLOAD_JIRA_LOGS: 'download-logs',
-  MATCH_SKILLS: 'match-skills',
-  ANALYZING: 'analyze',
-  GENERATING_REPORT: 'generate-report',
-}
-
 const detailTabs = computed(() => [
   { key: 'live', label: isHistoryView.value ? '分析过程' : '实时进展' },
   {
@@ -218,13 +210,26 @@ const detailTabs = computed(() => [
   { key: 'log', label: '任务日志' },
 ])
 
+const BUG_STAGE_STEP_IDS = [
+  'fetch-jira', 'download-logs', 'match-skills', 'analyze', 'generate-report',
+] as const
+
+function allStageDetailsSuccess(tid: string): boolean {
+  const detailMap = isHistoryView.value
+    ? historyStageDetails.value
+    : store.stageDetailMap(tid)
+  return BUG_STAGE_STEP_IDS.every(id => detailMap[id]?.status === 'success')
+}
+
 const bugStages = computed(() => {
   const phase = currentTask.value?.phase
   const status = currentTask.value?.status
+  const tid = currentTaskId.value
   const idx = phase && !PREP_PHASES.has(phase)
     ? BUG_STAGE_ORDER.indexOf(phase as typeof BUG_STAGE_ORDER[number])
     : -1
-  const allDone = status === 'completed' || phase === 'COMPLETED'
+  const stagesComplete = tid ? allStageDetailsSuccess(tid) : false
+  const allDone = status === 'completed' || phase === 'COMPLETED' || stagesComplete
   return BUG_STAGE_ORDER.map((key, i) => ({
     key,
     label: PHASE_LABELS[key]?.label || key,
@@ -233,136 +238,12 @@ const bugStages = computed(() => {
   }))
 })
 
-type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'warning'
-
-interface BugExecStep {
-  step_id: string
-  label: string
-  status: StepStatus
-  message?: string
-  detailLines?: string[]
-  ts?: number
-}
-
-const BUG_PIPELINE_STEPS = [
-  { step_id: 'fetch-jira', label: '拉取 JIRA 信息' },
-  { step_id: 'download-logs', label: '下载 JIRA 日志' },
-  { step_id: 'match-skills', label: '匹配 Skill' },
-  { step_id: 'analyze', label: '大模型分析' },
-  { step_id: 'generate-report', label: '生成分析报告' },
-] as const
-
-function mapStageStatus(raw?: string): StepStatus {
-  const s = String(raw || '').toLowerCase()
-  if (s === 'failed' || s === 'error') return 'failed'
-  if (s === 'success' || s === 'completed') return 'completed'
-  if (s === 'running' || s === 'in_progress') return 'running'
-  return 'pending'
-}
-
-const agentProgressSteps = computed((): BugExecStep[] => {
-  const steps: BugExecStep[] = BUG_PIPELINE_STEPS.map(d => ({
-    ...d,
-    status: 'pending' as StepStatus,
-    detailLines: [],
-  }))
-  const byId = Object.fromEntries(steps.map(s => [s.step_id, s])) as Record<string, BugExecStep>
-  const tid = currentTaskId.value
-  if (!tid) return steps
-
+const displayProgress = computed(() => {
   const task = currentTask.value
-  const detailMap = isHistoryView.value
-    ? historyStageDetails.value
-    : store.stageDetailMap(tid)
-  const evs = isHistoryView.value ? [] : store.stream(tid)
-
-  const rank: Record<StepStatus, number> = {
-    pending: 0, running: 1, warning: 2, failed: 3, completed: 4,
-  }
-  const setStep = (
-    id: string,
-    status: StepStatus,
-    message?: string,
-    detailLines?: string[],
-    ts?: number,
-    force = false,
-  ) => {
-    const s = byId[id]
-    if (!s) return
-    if (force || rank[status] >= rank[s.status] || (status === 'running' && s.status === 'pending')) {
-      s.status = status
-      if (message) s.message = message
-      if (detailLines?.length) s.detailLines = detailLines
-      if (ts) s.ts = ts
-    }
-  }
-
-  if (task?.status === 'completed' || task?.phase === 'COMPLETED') {
-    steps.forEach(s => { s.status = 'completed' })
-    return steps
-  }
-
-  for (const step of steps) {
-    const detail = detailMap[step.step_id]
-    if (detail) {
-      setStep(
-        step.step_id,
-        mapStageStatus(detail.status),
-        detail.message,
-        detail.detail_lines,
-        detail.ts,
-        true,
-      )
-    }
-  }
-
-  for (const ev of evs) {
-    if (ev.type === 'task.phase') {
-      const phase = String(ev.payload?.phase || '')
-      const stepId = PHASE_TO_STEP[phase]
-      if (stepId) {
-        const idx = steps.findIndex(s => s.step_id === stepId)
-        for (let i = 0; i < idx; i += 1) {
-          if (steps[i].status === 'running') setStep(steps[i].step_id, 'completed', undefined, undefined, ev.ts, true)
-        }
-        if (byId[stepId]?.status !== 'completed' && byId[stepId]?.status !== 'failed') {
-          setStep(stepId, 'running', String(ev.payload?.message || ''), undefined, ev.ts, true)
-        }
-      }
-    }
-    if (ev.type === 'task.step') {
-      const id = String(ev.payload?.step_id || '')
-      const st = String(ev.payload?.status || 'running')
-      if (id && byId[id]) {
-        setStep(
-          id,
-          st === 'completed' ? 'completed' : st === 'failed' ? 'failed' : 'running',
-          String(ev.payload?.message || '') || undefined,
-          undefined,
-          ev.ts,
-          st === 'completed',
-        )
-      }
-    }
-    if (ev.type === 'task.completed') {
-      steps.forEach(s => { s.status = 'completed' })
-    }
-    if (ev.type === 'task.failed' || ev.type === 'task.cancelled') {
-      const running = steps.find(s => s.status === 'running')
-      if (running) running.status = ev.type === 'task.cancelled' ? 'warning' : 'failed'
-    }
-  }
-
-  if (task?.status === 'failed') {
-    const running = steps.find(s => s.status === 'running')
-    if (running) running.status = 'failed'
-  }
-
-  if ((isRunning.value || isPending.value) && steps.every(s => s.status === 'pending')) {
-    setStep('fetch-jira', 'running', '等待 Agent 开始执行...', undefined, undefined, true)
-  }
-
-  return steps
+  if (!task) return 0
+  if (task.status === 'completed' || task.phase === 'COMPLETED') return 100
+  if (bugStages.value.every(s => s.done)) return 100
+  return typeof task.progress === 'number' ? task.progress : 0
 })
 
 function phaseLabel(phase?: string): string {
@@ -476,10 +357,6 @@ function statusPillVariant(status?: string): 'ok' | 'info' | 'warn' | 'err' | 'm
   return 'muted'
 }
 
-function formatTs(ts: number): string {
-  return new Date(ts).toLocaleTimeString()
-}
-
 function fmtDuration(ms?: number): string {
   if (!ms && ms !== 0) return '-'
   if (ms < 1000) return `${ms}ms`
@@ -489,20 +366,12 @@ function fmtDuration(ms?: number): string {
 
 // 自动滚动 LLM 流到底部
 const llmScroller = ref<HTMLElement | null>(null)
-const progressScroller = ref<HTMLElement | null>(null)
 watch([currentLlm, currentReasoning], async () => {
   await nextTick()
   if (llmScroller.value) {
     llmScroller.value.scrollTop = llmScroller.value.scrollHeight
   }
 })
-
-watch(agentProgressSteps, async () => {
-  await nextTick()
-  if (progressScroller.value) {
-    progressScroller.value.scrollTop = progressScroller.value.scrollHeight
-  }
-}, { deep: true })
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 操作：预览 JIRA / JQL
@@ -910,19 +779,9 @@ const jiraInputHint = computed(() => {
   return match ? match[1].toUpperCase() : ''
 })
 
-const currentSkillCalls = computed(() =>
-  currentTaskId.value ? store.skillCallList(currentTaskId.value) : []
-)
-
 const liveStreamHint = computed(() => {
   if (currentLlm.value || currentReasoning.value) return null
   if (!isRunning.value) return null
-  const runningTools = currentSkillCalls.value.filter(
-    c => c.source === 'tool_call' && !c.completed_ts,
-  )
-  if (runningTools.length) {
-    return `Agent 正在执行：${runningTools.map(t => t.skill_id).join('、')}`
-  }
   return '等待 Agent 响应...'
 })
 </script>
@@ -1296,9 +1155,9 @@ const liveStreamHint = computed(() => {
             </div>
           </div>
 
-          <div v-if="typeof currentTask.progress === 'number'" class="task-progress">
-            <NProgress :percentage="currentTask.progress" :show-indicator="false" :height="6" :color="phaseColor(currentTask.phase)" />
-            <span class="ea-muted tp-text">{{ currentTask.progress }}%</span>
+          <div v-if="currentTask" class="task-progress">
+            <NProgress :percentage="displayProgress" :show-indicator="false" :height="6" :color="phaseColor(currentTask.phase)" />
+            <span class="ea-muted tp-text">{{ displayProgress }}%</span>
           </div>
 
           <div class="ea-stage-track" style="margin-bottom: 16px">
@@ -1320,85 +1179,24 @@ const liveStreamHint = computed(() => {
 
           <div class="tab-body">
             <div v-show="activeReportTab === 'live'" class="tab-pane tab-pane-live">
-              <div class="ea-split-3 live-grid">
-                <div class="live-llm-panel">
-                  <div class="ea-row ea-between live-llm-header">
-                    <strong style="font-size: 13px">AI 分析（流式）</strong>
-                    <EaPill v-if="isRunning" variant="info"><span class="ea-dot-live" />分析中</EaPill>
-                    <EaPill v-else-if="isHistoryView || currentTask.status === 'completed'" variant="ok">已完成</EaPill>
-                    <EaPill v-else-if="currentTask.status === 'failed'" variant="err">失败</EaPill>
-                  </div>
-                  <div ref="llmScroller" class="live-llm-body">
-                    <div v-if="currentReasoning && !currentLlm" class="reasoning-block">
-                      <div class="reasoning-label ea-muted">Agent 推理中</div>
-                      <pre class="reasoning-text">{{ currentReasoning }}</pre>
-                    </div>
-                    <MarkdownRenderer v-if="currentLlm" :content="currentLlm" />
-                    <div v-else-if="liveStreamHint" class="llm-waiting">
-                      <NSpin size="small" />
-                      <span class="ea-muted" style="margin-left: 8px">{{ liveStreamHint }}</span>
-                    </div>
-                    <NEmpty v-else size="small" description="暂无输出" />
-                  </div>
+              <div class="live-llm-panel live-llm-panel-full">
+                <div class="ea-row ea-between live-llm-header">
+                  <strong style="font-size: 13px">AI 分析（流式）</strong>
+                  <EaPill v-if="isRunning" variant="info"><span class="ea-dot-live" />分析中</EaPill>
+                  <EaPill v-else-if="isHistoryView || currentTask.status === 'completed'" variant="ok">已完成</EaPill>
+                  <EaPill v-else-if="currentTask.status === 'failed'" variant="err">失败</EaPill>
                 </div>
-
-                <div class="ea-stack live-side">
-                  <div class="ea-mon-panel">
-                    <div class="ea-row" style="margin-bottom: 8px">
-                      <h4 class="ea-mb0">Agent 工具 / Skill 调用</h4>
-                      <EaPill v-if="currentSkillCalls.length" variant="ok" style="margin-left: 6px">
-                        {{ currentSkillCalls.filter(c => c.source === 'tool_call').length }} 真实调用
-                      </EaPill>
-                    </div>
-                    <div v-if="!currentSkillCalls.length" class="ea-muted" style="font-size: 12px">Agent 尚未触发任何工具 / Skill 调用</div>
-                    <div v-else class="skill-call-list">
-                      <div
-                        v-for="(call, i) in currentSkillCalls"
-                        :key="i"
-                        class="scall"
-                        :class="{
-                          ok: call.completed_ts && !call.error,
-                          run: call.source === 'tool_call' && !call.completed_ts,
-                          err: call.error,
-                        }"
-                      >
-                        <div class="sc-line1">
-                          <span class="sc-name">{{ call.skill_id }}</span>
-                          <EaPill v-if="call.source === 'tool_call' && !call.completed_ts" variant="info">运行中</EaPill>
-                          <EaPill v-else-if="call.source === 'tool_call' && call.completed_ts && !call.error" variant="ok">完成</EaPill>
-                          <EaPill v-else-if="call.error" variant="err">失败</EaPill>
-                          <EaPill v-else variant="muted">标记</EaPill>
-                        </div>
-                        <div v-if="call.args || call.purpose" class="sc-args">
-                          {{ call.args || call.purpose }}
-                        </div>
-                      </div>
-                    </div>
+                <div ref="llmScroller" class="live-llm-body">
+                  <div v-if="currentReasoning && !currentLlm" class="reasoning-block">
+                    <div class="reasoning-label ea-muted">Agent 推理中</div>
+                    <pre class="reasoning-text">{{ currentReasoning }}</pre>
                   </div>
-
-                  <div class="ea-mon-panel flex-fill">
-                    <h4>Agent 进度</h4>
-                    <div ref="progressScroller" class="bug-progress-scroller">
-                      <div
-                        v-for="step in agentProgressSteps"
-                        :key="step.step_id"
-                        class="bug-pipeline-step"
-                        :class="`step-${step.status}`"
-                      >
-                        <span class="bug-step-dot" />
-                        <div class="bug-step-body">
-                          <div class="bug-step-head">
-                            <span class="bug-step-label">{{ step.label }}</span>
-                            <span v-if="step.ts" class="bug-step-ts">{{ formatTs(step.ts) }}</span>
-                          </div>
-                          <div v-if="step.message" class="bug-step-msg">{{ step.message }}</div>
-                          <ul v-if="step.detailLines?.length" class="bug-step-details">
-                            <li v-for="(line, di) in step.detailLines" :key="di">{{ line }}</li>
-                          </ul>
-                        </div>
-                      </div>
-                    </div>
+                  <MarkdownRenderer v-if="currentLlm" :content="currentLlm" />
+                  <div v-else-if="liveStreamHint" class="llm-waiting">
+                    <NSpin size="small" />
+                    <span class="ea-muted" style="margin-left: 8px">{{ liveStreamHint }}</span>
                   </div>
+                  <NEmpty v-else size="small" description="暂无输出" />
                 </div>
               </div>
             </div>
@@ -1754,12 +1552,15 @@ const liveStreamHint = computed(() => {
   max-height: min(520px, calc(100vh - 360px));
 }
 
-.live-grid {
-  flex: 1; min-height: 0; height: 100%; max-height: 100%; overflow: hidden;
-}
 .live-llm-panel {
   display: flex; flex-direction: column; min-height: 0; max-height: 100%;
   background: var(--bg); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+}
+.live-llm-panel-full {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
 }
 .live-llm-header { padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--surface); flex-shrink: 0; }
 .live-llm-body {
@@ -1767,21 +1568,6 @@ const liveStreamHint = computed(() => {
   font-size: 13.5px; line-height: 1.7; scrollbar-width: thin;
 }
 .llm-waiting { display: flex; align-items: center; padding: 20px; }
-
-.live-side { gap: 12px; min-height: 0; max-height: 100%; overflow-y: auto; scrollbar-width: thin; }
-.flex-fill { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-
-.skill-call-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
-.scall {
-  border-left: 2px solid var(--line-strong); padding: 6px 10px; border-radius: 0 8px 8px 0;
-  background: var(--bg); font-size: 12px;
-  &.ok { border-left-color: var(--success); }
-  &.run { border-left-color: var(--info); }
-  &.err { border-left-color: var(--error); background: var(--error-soft); }
-}
-.sc-line1 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.sc-name { font-family: ui-monospace, monospace; font-weight: 600; flex: 1; word-break: break-all; color: var(--text); }
-.sc-args { color: var(--muted); font-size: 11px; margin-top: 2px; word-break: break-all; font-family: ui-monospace, monospace; }
 
 .reasoning-block {
   margin-bottom: 12px; padding: 10px 12px; background: var(--surface);
@@ -1791,32 +1577,6 @@ const liveStreamHint = computed(() => {
 .reasoning-text {
   margin: 0; font-size: 12px; line-height: 1.55; color: var(--muted);
   white-space: pre-wrap; word-break: break-word; font-family: inherit;
-}
-
-.bug-progress-scroller { flex: 1; min-height: 0; overflow-y: auto; }
-.bug-pipeline-step {
-  display: flex; gap: 10px; padding: 8px 4px;
-  border-bottom: 1px solid var(--line);
-  &:last-child { border-bottom: none; }
-}
-.bug-step-dot {
-  width: 8px; height: 8px; border-radius: 50%; margin-top: 5px;
-  flex-shrink: 0; background: var(--muted);
-}
-.step-pending .bug-step-dot { opacity: 0.5; }
-.step-running .bug-step-dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
-.step-completed .bug-step-dot { background: var(--success); }
-.step-completed .bug-step-label { color: var(--success); font-weight: 600; }
-.step-warning .bug-step-dot { background: var(--warn); }
-.step-failed .bug-step-dot { background: var(--error); }
-.bug-step-body { flex: 1; min-width: 0; }
-.bug-step-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
-.bug-step-label { font-size: 12.5px; font-weight: 600; color: var(--text); }
-.bug-step-ts { font-size: 10px; color: var(--faint); font-family: ui-monospace, monospace; flex-shrink: 0; }
-.bug-step-msg { font-size: 11.5px; color: var(--muted); margin-top: 3px; line-height: 1.45; word-break: break-word; }
-.bug-step-details {
-  margin: 6px 0 0; padding-left: 16px; font-size: 11px; color: var(--text); line-height: 1.5;
-  li { margin-bottom: 2px; }
 }
 
 .report-meta-extra { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; font-size: 12.5px; }

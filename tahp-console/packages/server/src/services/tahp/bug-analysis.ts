@@ -425,11 +425,14 @@ function applyParsedStageMarker(
     if (marker.fields.issue_summary) ctx.title = marker.fields.issue_summary
   }
   ctx.phase = marker.phase
-  ctx.progress = BUG_UI_PHASE_PROGRESS[marker.phase]
+  const progress = marker.markerId === 'generate_report' && marker.status === 'success'
+    ? 100
+    : BUG_UI_PHASE_PROGRESS[marker.phase]
+  ctx.progress = progress
   const message = marker.fields.message || ''
   emit(taskId, 'task.phase', {
     phase: marker.phase,
-    progress: BUG_UI_PHASE_PROGRESS[marker.phase],
+    progress,
     message,
   })
   const stepStatus = marker.status === 'success'
@@ -748,6 +751,13 @@ async function runSingleBugAnalysis(
     const durationMs = Date.now() - startMs
     ctx.status = 'completed'
     ctx.completedAt = completedAt
+    ctx.phase = 'COMPLETED'
+    ctx.progress = 100
+    emit(taskId, 'task.phase', {
+      phase: 'COMPLETED',
+      progress: 100,
+      message: 'Bug 分析完成',
+    })
 
     const reportBody = extractBugAnalysisReportBody(fullResponse)
     const report = {
