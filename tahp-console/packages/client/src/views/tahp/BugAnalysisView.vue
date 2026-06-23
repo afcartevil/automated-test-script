@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, reactive, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NInput, NButton, NSpin, NEmpty, NAlert,
   NModal, NScrollbar, NProgress, useMessage, NTooltip,
-  NSpace, NForm, NFormItem, NCheckbox,
+  NSpace, NForm, NFormItem,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
@@ -31,8 +31,11 @@ import {
   skillAssociation,
   mergeIntoSkill,
   createUpgradeDraft,
-  generateSkillDraft,
+  startGenerateStream,
+  subscribeSkillGenProgress,
+  getSkillGenJob,
   type SkillAssociationItem,
+  type SkillGenJobResult,
 } from '@/api/tahp/knowledge'
 
 const route = useRoute()
@@ -178,6 +181,8 @@ const continueText = ref('')
 
 // 知识沉淀弹窗
 const showDistillDialog = ref(false)
+type DistillMode = 'knowledge' | 'skill'
+const distillMode = ref<DistillMode>('knowledge')
 const distillStep = ref<'deposit' | 'skill'>('deposit')
 const distillNote = ref('')
 const distillContent = ref('')
@@ -189,8 +194,181 @@ const distillOverall = ref<'enhance_existing' | 'create_new'>('create_new')
 const distillLoadingAssoc = ref(false)
 const distillSkillBusy = ref('')
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 阶段名映射 — 用于侧栏显示更友好的标签
+type SkillOpStepStatus = 'wait' | 'process' | 'finish' | 'error'
+interface SkillOpStep { label: string; status: SkillOpStepStatus }
+
+const skillOpActive = ref(false)
+const skillOpProgress = ref(0)
+const skillOpMessage = ref('')
+const skillOpSteps = ref<SkillOpStep[]>([])
+const skillOpBlocking = computed(() =>
+  skillOpActive.value && !skillOpSteps.value.some(s => s.status === 'error'),
+)
+let skillGenSse: EventSource | null = null
+let skillOpPumpTimer: ReturnType<typeof setInterval> | null = null
+
+function closeSkillGenSse() {
+  skillGenSse?.close()
+  skillGenSse = null
+}
+
+function stopSkillOpPump() {
+  if (skillOpPumpTimer) {
+    clearInterval(skillOpPumpTimer)
+    skillOpPumpTimer = null
+  }
+}
+
+function resetSkillOp() {
+  stopSkillOpPump()
+  closeSkillGenSse()
+  skillOpActive.value = false
+  skillOpProgress.value = 0
+  skillOpMessage.value = ''
+  skillOpSteps.value = []
+}
+
+function beginSkillOp(stepLabels: string[], message = '准备中...') {
+  skillOpActive.value = true
+  skillOpProgress.value = 5
+  skillOpMessage.value = message
+  skillOpSteps.value = stepLabels.map(label => ({ label, status: 'wait' as SkillOpStepStatus }))
+}
+
+function patchSkillOpStep(
+  index: number,
+  status: SkillOpStepStatus,
+  progress: number,
+  message: string,
+) {
+  skillOpSteps.value = skillOpSteps.value.map((step, i) => {
+    if (status === 'error') {
+      if (i < index) return { ...step, status: 'finish' }
+      if (i === index) return { ...step, status: 'error' }
+      return step
+    }
+    if (i < index) return { ...step, status: 'finish' }
+    if (i === index) return { ...step, status }
+    return step
+  })
+  skillOpProgress.value = progress
+  skillOpMessage.value = message
+}
+
+async function runWithSkillOpPump(
+  stepIndex: number,
+  from: number,
+  to: number,
+  message: string,
+  work: () => Promise<void>,
+) {
+  patchSkillOpStep(stepIndex, 'process', from, message)
+  stopSkillOpPump()
+  let current = from
+  skillOpPumpTimer = setInterval(() => {
+    current = Math.min(to - 4, current + 3)
+    skillOpProgress.value = current
+  }, 700)
+  try {
+    await work()
+    patchSkillOpStep(stepIndex, 'finish', to, message)
+  } catch (err) {
+    patchSkillOpStep(stepIndex, 'error', current, (err as Error).message || '操作失败')
+    throw err
+  } finally {
+    stopSkillOpPump()
+  }
+}
+
+function updateSkillGenSteps(job: SkillGenJobResult) {
+  const stageMap: Record<string, number> = {
+    init: -1,
+    duplicate_check: 0,
+    similarity_check: 1,
+    llm_generate: 2,
+    eval_extract: 3,
+    quality_score: 4,
+    persist: 4,
+    done: 4,
+  }
+  const currentIdx = stageMap[job.stage] ?? -1
+  skillOpSteps.value = skillOpSteps.value.map((step, i) => {
+    if (job.status === 'error') {
+      if (i < currentIdx) return { ...step, status: 'finish' }
+      if (i === currentIdx) return { ...step, status: 'error' }
+      return { ...step, status: 'wait' }
+    }
+    if (i < currentIdx) return { ...step, status: 'finish' }
+    if (i === currentIdx) {
+      return { ...step, status: job.status === 'completed' ? 'finish' : 'process' }
+    }
+    if (job.status === 'completed') return { ...step, status: 'finish' }
+    return { ...step, status: 'wait' }
+  })
+  skillOpProgress.value = job.progress ?? skillOpProgress.value
+  skillOpMessage.value = job.message || skillOpMessage.value
+}
+
+function subscribeSkillGen(jobId: string, onDone: (job: SkillGenJobResult) => void) {
+  closeSkillGenSse()
+  skillGenSse = subscribeSkillGenProgress(jobId)
+  skillGenSse.onmessage = (e) => {
+    try {
+      const job: SkillGenJobResult = JSON.parse(e.data)
+      updateSkillGenSteps(job)
+      if (job.status === 'completed') {
+        closeSkillGenSse()
+        onDone(job)
+      } else if (job.status === 'error') {
+        closeSkillGenSse()
+        patchSkillOpStep(
+          skillOpSteps.value.findIndex(s => s.status === 'process'),
+          'error',
+          job.progress ?? skillOpProgress.value,
+          job.message || 'Skill 生成失败',
+        )
+        message.error('Skill 生成失败：' + (job.message || '未知错误'))
+        distillSkillBusy.value = ''
+      }
+    } catch { /* ignore */ }
+  }
+  skillGenSse.onerror = () => {
+    closeSkillGenSse()
+    getSkillGenJob(jobId).then(job => {
+      updateSkillGenSteps(job)
+      if (job.status === 'completed') onDone(job)
+      else if (job.status === 'running') setTimeout(() => subscribeSkillGen(jobId, onDone), 2000)
+      else {
+        message.error('生成任务异常中断，请重试')
+        distillSkillBusy.value = ''
+      }
+    }).catch(() => {
+      message.error('无法获取生成进度，请重试')
+      distillSkillBusy.value = ''
+    })
+  }
+}
+
+/** 本任务已沉淀的知识条目（避免「知识库」与「Skill」重复写入） */
+const distilledEntryByTaskId = reactive<Record<string, { id: string; module: string; func_type: string }>>({})
+
+function rememberDistilledEntry(taskId: string, entry: { id: string; module: string; func_type: string } | null | undefined) {
+  if (!taskId || !entry?.id) return
+  distilledEntryByTaskId[taskId] = entry
+  distilledEntry.value = entry
+}
+
+const distillDialogTitle = computed(() =>
+  distillStep.value === 'skill'
+    ? '沉淀为 Skill'
+    : distillMode.value === 'knowledge'
+      ? '沉淀为知识库'
+      : '沉淀为 Skill',
+)
+
+const distillCompleted = computed(() =>
+  !isRunning.value && currentTask.value?.status === 'completed',
+)
 // ─────────────────────────────────────────────────────────────────────────────
 const PHASE_LABELS: Record<string, { label: string; color: string }> = {
   PREPARING:          { label: '准备任务',       color: 'var(--faint)' },
@@ -681,16 +859,89 @@ async function submitContinue() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 知识沉淀：① 沉淀为知识条目 ② 关联 / 生成 Skill
 // ─────────────────────────────────────────────────────────────────────────────
-function openDistill() {
+function resetDistillForm(mode: DistillMode) {
+  distillMode.value = mode
   distillStep.value = 'deposit'
   distillNote.value = ''
   distillContent.value = reportMarkdown.value || ''
-  distillLinkSkill.value = true
+  distillLinkSkill.value = mode === 'skill'
   distillSubmitting.value = false
   distilledEntry.value = null
   distillAssociations.value = []
   distillSkillBusy.value = ''
+}
+
+async function ensureReportForDistill(): Promise<boolean> {
+  if (reportMarkdown.value.trim()) return true
+  if (!currentTaskId.value) return false
+  await loadReport()
+  return !!reportMarkdown.value.trim()
+}
+
+/** Skill 流程：跳过沉淀表单，后台复用/准备 entry_id 后直接进入关联检索 */
+async function prepareSkillDistill() {
+  const tid = currentTaskId.value
+  if (!tid) return
+
+  distillStep.value = 'skill'
+  distillAssociations.value = []
+  beginSkillOp(
+    ['加载分析报告', '准备知识条目', '检索相关 Skill'],
+    '正在准备 Skill 关联...',
+  )
+
+  try {
+    patchSkillOpStep(0, 'process', 12, '正在加载分析报告...')
+    const hasReport = await ensureReportForDistill()
+    if (!hasReport) {
+      patchSkillOpStep(0, 'error', 12, '分析报告为空')
+      message.warning('分析报告为空，请先在「分析报告」页确认报告已生成')
+      distillStep.value = 'deposit'
+      distillContent.value = ''
+      resetSkillOp()
+      return
+    }
+    patchSkillOpStep(0, 'finish', 28, '分析报告已就绪')
+
+    const cached = distilledEntryByTaskId[tid]
+    if (cached) {
+      distilledEntry.value = cached
+      patchSkillOpStep(1, 'finish', 45, '已复用本任务知识条目')
+    } else {
+      await runWithSkillOpPump(1, 32, 48, '正在准备知识条目...', async () => {
+        const r = await distillToKnowledge(tid, {
+          content: reportMarkdown.value,
+          to_knowledge: true,
+        })
+        if (!r.entry) throw new Error(r.message || '无法准备 Skill 关联')
+        rememberDistilledEntry(tid, r.entry)
+      })
+    }
+
+    patchSkillOpStep(2, 'process', 55, '正在检索相关 Skill...')
+    await loadDistillAssociations()
+    patchSkillOpStep(2, 'finish', 100, `已找到 ${distillAssociations.value.length} 个候选 Skill`)
+    setTimeout(() => resetSkillOp(), 500)
+  } catch (err) {
+    message.error((err as Error).message)
+    showDistillDialog.value = false
+    resetSkillOp()
+  }
+}
+
+function openDistillKnowledge() {
+  resetDistillForm('knowledge')
+  const tid = currentTaskId.value
+  if (tid && distilledEntryByTaskId[tid]) {
+    distilledEntry.value = distilledEntryByTaskId[tid]
+  }
   showDistillDialog.value = true
+}
+
+async function openDistillSkill() {
+  resetDistillForm('skill')
+  showDistillDialog.value = true
+  await prepareSkillDistill()
 }
 
 async function submitDeposit() {
@@ -703,7 +954,7 @@ async function submitDeposit() {
       content: distillContent.value,
       to_knowledge: true,
     })
-    distilledEntry.value = r.entry
+    rememberDistilledEntry(currentTaskId.value, r.entry)
     if (distillLinkSkill.value && r.entry) {
       distillStep.value = 'skill'
       await loadDistillAssociations()
@@ -726,12 +977,13 @@ async function loadDistillAssociations() {
       entry_ids: [distilledEntry.value.id],
       module: distilledEntry.value.module,
       func_type: distilledEntry.value.func_type,
-      text: currentTask.value?.title || '',
+      text: [reportMarkdown.value, currentTask.value?.title || ''].filter(Boolean).join('\n'),
     })
     distillAssociations.value = r.associations
     distillOverall.value = r.overall_recommendation
   } catch (err) {
     message.error('关联检索失败：' + (err as Error).message)
+    throw err
   } finally {
     distillLoadingAssoc.value = false
   }
@@ -740,18 +992,62 @@ async function loadDistillAssociations() {
 async function distillEnhance(a: SkillAssociationItem) {
   if (!distilledEntry.value) return
   distillSkillBusy.value = a.id
-  try {
-    if (a.type === 'draft' && a.can_merge) {
-      await mergeIntoSkill(a.id, [distilledEntry.value.id])
+  const entryId = distilledEntry.value.id
+
+  if (a.type === 'draft' && a.can_merge) {
+    beginSkillOp(
+      ['加载知识条目', 'AI 精准融合', '保存 Skill 草稿'],
+      `正在补充到「${a.display_name}」...`,
+    )
+    try {
+      patchSkillOpStep(0, 'process', 15, '正在加载知识条目...')
+      await new Promise(r => setTimeout(r, 200))
+      patchSkillOpStep(0, 'finish', 22, '知识条目已就绪')
+
+      await runWithSkillOpPump(
+        1,
+        28,
+        82,
+        `AI 正在将诊断结论融合到「${a.display_name}」...`,
+        async () => {
+          await mergeIntoSkill(a.id, [entryId])
+        },
+      )
+
+      patchSkillOpStep(2, 'finish', 100, 'Skill 草稿已更新')
       message.success(`已补充到草稿「${a.display_name}」`)
-    } else {
-      await createUpgradeDraft(a.id, [distilledEntry.value.id])
-      message.success(`已为「${a.display_name}」生成升级草案，请到 Skill 工坊审核`)
+      distillSkillBusy.value = ''
+      setTimeout(() => {
+        resetSkillOp()
+        showDistillDialog.value = false
+      }, 600)
+    } catch (err) {
+      message.error((err as Error).message)
+      distillSkillBusy.value = ''
     }
-    showDistillDialog.value = false
+    return
+  }
+
+  beginSkillOp(
+    ['读取已激活 Skill', '创建升级草案'],
+    `正在为「${a.display_name}」生成升级草案...`,
+  )
+  try {
+    patchSkillOpStep(0, 'process', 18, '正在读取已激活 Skill 内容...')
+    await new Promise(r => setTimeout(r, 250))
+    patchSkillOpStep(0, 'finish', 32, 'Skill 内容已加载')
+    await runWithSkillOpPump(1, 38, 92, '正在创建升级草案并关联知识条目...', async () => {
+      await createUpgradeDraft(a.id, [entryId])
+    })
+    patchSkillOpStep(1, 'finish', 100, '升级草案已生成')
+    message.success(`已为「${a.display_name}」生成升级草案，请到 Skill 工坊审核`)
+    distillSkillBusy.value = ''
+    setTimeout(() => {
+      resetSkillOp()
+      showDistillDialog.value = false
+    }, 600)
   } catch (err) {
     message.error((err as Error).message)
-  } finally {
     distillSkillBusy.value = ''
   }
 }
@@ -759,27 +1055,50 @@ async function distillEnhance(a: SkillAssociationItem) {
 async function distillCreateNew() {
   if (!distilledEntry.value) return
   distillSkillBusy.value = '__new__'
+  beginSkillOp(
+    ['文档重复检测', '相似 Skill 检索', 'AI 生成骨架', '生成 Eval 用例', '质量评分计算'],
+    '正在启动 Skill 生成任务...',
+  )
   try {
-    const r = await generateSkillDraft({
+    const { job_id } = await startGenerateStream({
       module: distilledEntry.value.module,
       func_type: distilledEntry.value.func_type,
       entry_ids: [distilledEntry.value.id],
       generated_by: 'bug-analysis-distill',
     })
-    if (r.llm_error) message.warning('草稿已创建，但 LLM 生成存在问题：' + r.llm_error)
-    else message.success('已生成新的 Skill 草稿，请到 Skill 工坊审核')
-    showDistillDialog.value = false
+    patchSkillOpStep(0, 'process', 8, '生成任务已启动，等待进度推送...')
+    subscribeSkillGen(job_id, (job) => {
+      if (job.result?.llm_error) {
+        message.warning('草稿已创建，但 LLM 生成存在问题：' + job.result.llm_error)
+      } else {
+        message.success('已生成新的 Skill 草稿，请到 Skill 工坊审核')
+      }
+      distillSkillBusy.value = ''
+      setTimeout(() => {
+        resetSkillOp()
+        showDistillDialog.value = false
+      }, 800)
+    })
   } catch (err) {
     message.error((err as Error).message)
-  } finally {
+    resetSkillOp()
     distillSkillBusy.value = ''
   }
 }
 
 function goToWorkshop() {
   showDistillDialog.value = false
+  resetSkillOp()
   router.push({ name: 'tahp.knowledge' })
 }
+
+watch(showDistillDialog, (open) => {
+  if (!open) resetSkillOp()
+})
+
+onBeforeUnmount(() => {
+  resetSkillOp()
+})
 
 async function stopOrCancelCurrentTask() {
   if (!currentTaskId.value || !currentTask.value) return
@@ -1341,11 +1660,17 @@ const liveStreamHint = computed(() => {
                 </template>
                 补充信息继续分析
               </NButton>
-              <NButton :disabled="isRunning || currentTask.status !== 'completed'" @click="openDistill">
+              <NButton :disabled="!distillCompleted" @click="openDistillKnowledge">
+                <template #icon>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                </template>
+                沉淀为知识库
+              </NButton>
+              <NButton :disabled="!distillCompleted" @click="openDistillSkill">
                 <template #icon>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/></svg>
                 </template>
-                沉淀为知识库 / Skill
+                沉淀为 Skill
               </NButton>
             </NSpace>
           </footer>
@@ -1402,14 +1727,19 @@ const liveStreamHint = computed(() => {
     <NModal
       v-model:show="showDistillDialog"
       preset="card"
-      title="沉淀为知识库 / Skill"
+      :title="distillDialogTitle"
       style="width: 660px"
       :mask-closable="false"
     >
       <!-- Step 1: 沉淀为知识条目 -->
       <div v-if="distillStep === 'deposit'">
         <NAlert type="info" :show-icon="false" style="margin-bottom: 12px">
-          将本次诊断结论沉淀为<strong>知识条目</strong>（状态：待审核），可选择同时关联或生成 Skill。
+          <template v-if="distillMode === 'knowledge'">
+            将本次诊断结论沉淀为<strong>知识条目</strong>（状态：待审核），可在知识库中审核后启用。
+          </template>
+          <template v-else>
+            将先创建知识条目作为 Skill 关联来源，随后检索相关 Skill，支持补充到现有 Skill 或新建草稿。
+          </template>
         </NAlert>
         <div class="modal-body-text">知识条目正文（已自动预填报告，可编辑）：</div>
         <NInput
@@ -1425,58 +1755,96 @@ const liveStreamHint = computed(() => {
           placeholder="如：某场景下 RILJ 异常的固定排查路径..."
           :autosize="{ minRows: 2, maxRows: 5 }"
         />
-        <NSpace align="center" style="margin-top: 14px">
-          <NCheckbox :checked="true" disabled>存入知识库（待审核）</NCheckbox>
-          <NCheckbox v-model:checked="distillLinkSkill">并关联 / 生成 Skill</NCheckbox>
-        </NSpace>
       </div>
 
       <!-- Step 2: 关联 / 生成 Skill -->
       <div v-else>
-        <NSpin :show="distillLoadingAssoc">
-          <NAlert
-            :type="distillOverall === 'enhance_existing' ? 'warning' : 'success'"
-            :show-icon="false"
-            style="margin-bottom: 12px"
-          >
-            <template v-if="distillOverall === 'enhance_existing'">
-              检索到相关 Skill，建议<strong>补充到现有 Skill</strong>，避免重复建设。
-            </template>
-            <template v-else>
-              未发现高度相关的 Skill，建议<strong>新建 Skill 草稿</strong>。
-            </template>
-          </NAlert>
-
-          <div v-if="distillAssociations.length" class="assoc-list">
-            <div v-for="a in distillAssociations" :key="a.id" class="assoc-item">
-              <div class="assoc-head">
-                <span class="assoc-name">{{ a.display_name }}</span>
-                <span class="assoc-badge" :class="a.type">{{ a.type === 'activated' ? '已激活' : '草稿' }}</span>
-                <span class="assoc-score">相关度 {{ Math.round(a.association_score * 100) }}%</span>
-                <span v-if="a.recommendation === 'enhance_existing'" class="assoc-rec">建议增强</span>
-              </div>
-              <div class="assoc-desc">{{ a.description }}</div>
-              <div v-if="a.reasons.length" class="assoc-reasons">{{ a.reasons.join(' · ') }}</div>
-              <NButton
-                size="small"
-                type="primary"
-                ghost
-                :loading="distillSkillBusy === a.id"
-                style="margin-top: 8px"
-                @click="distillEnhance(a)"
-              >
-                {{ a.type === 'activated' ? '生成升级草案' : '补充到此草稿' }}
-              </NButton>
+        <div v-if="skillOpActive" class="skill-op-panel">
+          <div class="skill-op-steps">
+            <div
+              v-for="(step, i) in skillOpSteps"
+              :key="'skill-op-' + i"
+              class="skill-op-step"
+              :class="{
+                'step-finish': step.status === 'finish',
+                'step-process': step.status === 'process',
+                'step-error': step.status === 'error',
+                'step-wait': step.status === 'wait',
+              }"
+            >
+              <span class="skill-op-step-icon">
+                <template v-if="step.status === 'finish'">✓</template>
+                <template v-else-if="step.status === 'error'">✕</template>
+                <template v-else-if="step.status === 'process'">●</template>
+                <template v-else>{{ i + 1 }}</template>
+              </span>
+              <span class="skill-op-step-label">{{ step.label }}</span>
             </div>
           </div>
-          <NEmpty v-else-if="!distillLoadingAssoc" description="未找到相关 Skill" style="padding: 20px 0" />
+          <p class="skill-op-message" :class="{ 'is-error': skillOpSteps.some(s => s.status === 'error') }">
+            {{ skillOpMessage }}
+          </p>
+          <NProgress
+            type="line"
+            :percentage="skillOpProgress"
+            :show-indicator="true"
+            :height="10"
+            :status="skillOpSteps.some(s => s.status === 'error') ? 'error' : skillOpProgress >= 100 ? 'success' : 'default'"
+          />
+        </div>
 
-          <div style="margin-top: 16px; text-align: center">
-            <NButton type="primary" :loading="distillSkillBusy === '__new__'" @click="distillCreateNew">
-              ＋ 新建 Skill 草稿
-            </NButton>
-          </div>
-        </NSpin>
+        <template v-else>
+          <NSpin :show="distillLoadingAssoc">
+            <NAlert
+              :type="distillOverall === 'enhance_existing' ? 'warning' : 'success'"
+              :show-icon="false"
+              style="margin-bottom: 12px"
+            >
+              <template v-if="distillOverall === 'enhance_existing'">
+                检索到相关 Skill，建议<strong>补充到现有 Skill</strong>，避免重复建设。
+              </template>
+              <template v-else>
+                未发现高度相关的 Skill，建议<strong>新建 Skill 草稿</strong>。
+              </template>
+            </NAlert>
+
+            <div v-if="distillAssociations.length" class="assoc-list">
+              <div v-for="a in distillAssociations" :key="a.id" class="assoc-item">
+                <div class="assoc-head">
+                  <span class="assoc-name">{{ a.display_name }}</span>
+                  <span class="assoc-badge" :class="a.type">{{ a.type === 'activated' ? '已激活' : '草稿' }}</span>
+                  <span class="assoc-score">相关度 {{ Math.round(a.association_score * 100) }}%</span>
+                  <span v-if="a.recommendation === 'enhance_existing'" class="assoc-rec">建议增强</span>
+                </div>
+                <div class="assoc-desc">{{ a.description }}</div>
+                <div v-if="a.reasons.length" class="assoc-reasons">{{ a.reasons.join(' · ') }}</div>
+                <NButton
+                  size="small"
+                  type="primary"
+                  ghost
+                  :disabled="!!distillSkillBusy"
+                  :loading="distillSkillBusy === a.id"
+                  style="margin-top: 8px"
+                  @click="distillEnhance(a)"
+                >
+                  {{ a.type === 'activated' ? '生成升级草案' : '补充到此草稿' }}
+                </NButton>
+              </div>
+            </div>
+            <NEmpty v-else-if="!distillLoadingAssoc" description="未找到相关 Skill" style="padding: 20px 0" />
+
+            <div style="margin-top: 16px; text-align: center">
+              <NButton
+                type="primary"
+                :disabled="!!distillSkillBusy"
+                :loading="distillSkillBusy === '__new__'"
+                @click="distillCreateNew"
+              >
+                ＋ 新建 Skill 草稿
+              </NButton>
+            </div>
+          </NSpin>
+        </template>
       </div>
 
       <template #footer>
@@ -1489,12 +1857,12 @@ const liveStreamHint = computed(() => {
               :disabled="!distillContent.trim()"
               @click="submitDeposit"
             >
-              {{ distillLinkSkill ? '沉淀并下一步' : '沉淀为知识条目' }}
+              {{ distillMode === 'skill' ? '沉淀并关联 Skill' : '沉淀为知识条目' }}
             </NButton>
           </template>
           <template v-else>
-            <NButton @click="showDistillDialog = false">完成</NButton>
-            <NButton tertiary @click="goToWorkshop">前往 Skill 工坊</NButton>
+            <NButton :disabled="skillOpBlocking" @click="showDistillDialog = false">完成</NButton>
+            <NButton tertiary :disabled="skillOpBlocking" @click="goToWorkshop">前往 Skill 工坊</NButton>
           </template>
         </NSpace>
       </template>
@@ -1808,6 +2176,47 @@ const liveStreamHint = computed(() => {
 }
 .assoc-desc { font-size: 12px; color: var(--text-2, #888); margin-top: 6px; line-height: 1.5; }
 .assoc-reasons { font-size: 11px; color: #aaa; margin-top: 4px; }
+
+.skill-op-panel {
+  padding: 8px 4px 4px;
+}
+
+.skill-op-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.skill-op-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+
+  &.step-finish { color: var(--success, #18a058); }
+  &.step-process { color: var(--accent, #2080f0); font-weight: 600; }
+  &.step-error { color: var(--error, #d03050); font-weight: 600; }
+}
+
+.skill-op-step-icon {
+  width: 22px;
+  text-align: center;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.skill-op-step-label { line-height: 1.4; }
+
+.skill-op-message {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--text-2, #666);
+  line-height: 1.5;
+
+  &.is-error { color: var(--error, #d03050); }
+}
 
 code {
   background: var(--surface-2); padding: 1px 5px; border-radius: 4px;

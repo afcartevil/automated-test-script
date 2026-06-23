@@ -29,7 +29,7 @@ import {
 import { searchJQL, parseIssueKey } from '../../services/tahp/jira'
 import type { JiraConfig } from '../../services/tahp/jira'
 import { readBugLog, recordDistillRequest, listDistillRequests } from '../../services/tahp/bug-analysis-logger'
-import { depositDistilledEntry, type KnowledgeEntry } from './knowledge'
+import { depositDistilledEntry, findDistilledEntryByTaskId, type KnowledgeEntry } from './knowledge'
 import { logger } from '../../services/logger'
 
 export const tahpBugAnalysisRoutes = new Router({ prefix: '/api/tahp/bug-analysis' })
@@ -192,15 +192,22 @@ tahpBugAnalysisRoutes.post('/:taskId/distill', async (ctx) => {
 
   try {
     let entry: KnowledgeEntry | undefined
+    let reusedEntry = false
     if (toKnowledge && content) {
-      entry = await depositDistilledEntry({
-        content,
-        module: typeof body.module === 'string' ? body.module : report.module,
-        func_type: 'bug_analysis',
-        category: typeof body.category === 'string' ? body.category : undefined,
-        source_task_id: taskId,
-        jira_key: report.jira_key,
-      })
+      const existing = await findDistilledEntryByTaskId(taskId)
+      if (existing) {
+        entry = existing
+        reusedEntry = true
+      } else {
+        entry = await depositDistilledEntry({
+          content,
+          module: typeof body.module === 'string' ? body.module : report.module,
+          func_type: 'bug_analysis',
+          category: typeof body.category === 'string' ? body.category : undefined,
+          source_task_id: taskId,
+          jira_key: report.jira_key,
+        })
+      }
     }
 
     await recordDistillRequest({
@@ -222,7 +229,9 @@ tahpBugAnalysisRoutes.post('/:taskId/distill', async (ctx) => {
         deposited: !!entry,
         entry: entry ? { id: entry.id, module: entry.module, func_type: entry.func_type } : null,
         message: entry
-          ? '已沉淀为知识条目（待审核），可继续关联/生成 Skill'
+          ? reusedEntry
+            ? '已复用本任务的知识条目，继续 Skill 关联'
+            : '已沉淀为知识条目（待审核），可继续关联/生成 Skill'
           : '已记录沉淀请求',
       },
     }

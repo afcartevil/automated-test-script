@@ -1546,6 +1546,17 @@ export async function depositDistilledEntry(params: {
   return entry
 }
 
+/** 同一诊断任务已沉淀过时复用条目，避免重复写入知识库 */
+export async function findDistilledEntryByTaskId(taskId: string): Promise<KnowledgeEntry | null> {
+  if (!taskId) return null
+  await initDirs()
+  const all = await listEntries()
+  const matches = all.filter(e => e.source_task_id === taskId && e.status !== 'archived')
+  if (!matches.length) return null
+  matches.sort((a, b) => Date.parse(b.updated_at || b.created_at) - Date.parse(a.updated_at || a.created_at))
+  return matches[0]
+}
+
 // GET /api/tahp/knowledge/entries — 查询知识库
 tahpKnowledgeRoutes.get('/api/tahp/knowledge/entries', async (ctx) => {
   try {
