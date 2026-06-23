@@ -26,6 +26,7 @@ import {
   getDocument,
   deleteDocument,
   getDocumentChunks,
+  reconvertDocument,
   // Phase 4
   getSkillSuggestions,
   updateSkillDraft,
@@ -69,10 +70,14 @@ import {
   bulkArchiveSelectedDrafts,
   // 文档编辑
   updateDocument,
+  // 治理面板
+  getGovernance,
+  type GovernanceData,
 } from '@/api/tahp/knowledge'
 import { useTahpModulesStore } from '@/stores/tahp/modules'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
 import EaInnerTabs from '@/components/layout/EaInnerTabs.vue'
+import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -97,6 +102,10 @@ const draftsSubTabs = [
 // ─── Stats ──────────────────────────────────────────────────────────────
 const statsLoading = ref(false)
 const stats = ref<KnowledgeStats | null>(null)
+
+// ─── Governance ───────────────────────────────────────────────────────────
+const governance = ref<GovernanceData | null>(null)
+const governanceLoading = ref(false)
 
 // ─── Entries ─────────────────────────────────────────────────────────────
 const entriesLoading = ref(false)
@@ -408,6 +417,41 @@ async function loadStats() {
   } finally {
     statsLoading.value = false
   }
+}
+
+async function loadGovernance() {
+  governanceLoading.value = true
+  try {
+    governance.value = await getGovernance()
+  } catch (err) {
+    message.error((err as Error).message)
+  } finally {
+    governanceLoading.value = false
+  }
+}
+
+/** 治理卡片钻取：跳到条目列表并按状态筛选 */
+function drillToEntries(opts: { status?: string; module?: string; func_type?: string }) {
+  filterStatus.value = opts.status || ''
+  filterModule.value = opts.module || ''
+  filterFuncType.value = opts.func_type || ''
+  activeTab.value = 'entries'
+  entriesSubTab.value = 'list'
+  loadEntries()
+}
+
+/** 治理卡片钻取：跳到文档库 */
+function drillToDocuments() {
+  activeTab.value = 'entries'
+  entriesSubTab.value = 'documents'
+  loadDocuments()
+}
+
+/** 治理：从盲区一键进入 Skill 工坊生成建议 */
+function drillToWorkshop() {
+  activeTab.value = 'drafts'
+  draftsSubTab.value = 'workshop'
+  loadSkillSuggestions()
 }
 
 async function loadEntries() {
@@ -917,6 +961,7 @@ function onTabChange(tab: string) {
   activeTab.value = tab
   if (tab === 'entries') onEntriesSubTabChange(entriesSubTab.value)
   if (tab === 'drafts') onDraftsSubTabChange(draftsSubTab.value)
+  if (tab === 'analytics') loadGovernance()
 }
 
 // ─── Phase 2: Document Import ─────────────────────────────────────────────────
@@ -929,7 +974,7 @@ const fileInputRef      = ref<HTMLInputElement | null>(null)
 const importJobId       = ref('')
 const importStatus      = ref<'idle' | 'processing' | 'done' | 'error'>('idle')
 const importProgress    = ref(0)
-const importStage       = ref<'upload' | 'parse' | 'extract' | 'done' | 'error'>('upload')
+const importStage       = ref<'upload' | 'parse' | 'convert_markdown' | 'extract' | 'done' | 'error'>('upload')
 const importMessage     = ref('')
 const importEntries     = ref<ExtractedEntry[]>([])
 const importError       = ref('')
@@ -949,6 +994,7 @@ const importUrl         = ref('')
 const STAGE_LABELS: Record<string, string> = {
   upload:  '上传',
   parse:   '解析',
+  convert_markdown: 'Markdown',
   extract: '提取',
   done:    '完成',
 }
@@ -966,6 +1012,39 @@ const readerLoading      = ref(false)
 const readerChunks       = ref<KnowledgeEntry[]>([])
 const readerShowChunks   = ref(false)
 const deletingDocId      = ref('')
+const readerShowRaw      = ref(false)        // 切换 Markdown / 原始文本
+const reconverting       = ref(false)        // 文档重新转换中
+
+const CONVERSION_LABEL: Record<string, string> = {
+  done: '✅ 已规范化',
+  failed: '⚠️ 转换失败（显示原文本）',
+  skipped: '⏭ 已跳过转换',
+  pending: '⏳ 待转换',
+}
+
+async function handleReconvert() {
+  if (!readerDoc.value?.id) return
+  reconverting.value = true
+  try {
+    const r = await reconvertDocument(readerDoc.value.id)
+    readerDoc.value = {
+      ...readerDoc.value,
+      content_markdown: r.content_markdown,
+      conversion_status: r.conversion_status,
+      conversion_note: r.conversion_note,
+    }
+    if (r.conversion_status === 'done') {
+      readerShowRaw.value = false
+      message.success('已重新转换为 Markdown')
+    } else {
+      message.warning(r.conversion_note || '转换未成功，仍显示原文本')
+    }
+  } catch (e) {
+    message.error('转换失败：' + (e as Error).message)
+  } finally {
+    reconverting.value = false
+  }
+}
 
 async function loadDocuments() {
   docsLoading.value = true
@@ -984,6 +1063,7 @@ async function openDocReader(doc: KnowledgeDocument) {
   readerDoc.value = null
   readerChunks.value = []
   readerShowChunks.value = false
+  readerShowRaw.value = false
   showDocReader.value = true
   readerLoading.value = true
   try {
@@ -1742,6 +1822,27 @@ async function handleMergeIntoDraft(item: SimilarSkillItem) {
   }
 }
 
+/** 相似弹窗：为已激活 Skill 生成升级草案（把新知识合入并走审核） */
+async function handleUpgradeActivated(item: SimilarSkillItem) {
+  if (!pendingSuggestion.value) return
+  mergingSkill.value = true
+  mergingTargetId.value = item.id
+  try {
+    const res = await createUpgradeDraft(item.id, pendingSuggestion.value.entry_ids)
+    showSimilarModal.value = false
+    pendingSuggestion.value = null
+    message.success(`已为「${item.display_name}」生成升级草案，请在草稿列表审核后激活`, { duration: 5000 })
+    openSkillEditor(res.draft)
+    await loadDrafts()
+    await loadSkillSuggestions()
+  } catch (err) {
+    message.error('生成升级草案失败：' + (err as Error).message)
+  } finally {
+    mergingSkill.value = false
+    mergingTargetId.value = ''
+  }
+}
+
 function openSkillEditor(draft: SkillDraft) {
   editingDraft.value = draft
   editorContent.value = draft.content || ''
@@ -2127,7 +2228,7 @@ function scoreColor(score: number, max: number): string {
                   <span class="relevance-pct">{{ Math.round(r.search_relevance || 0) }}% 匹配</span>
                 </div>
               </div>
-              <div class="result-body">{{ r.content }}</div>
+              <MarkdownRenderer class="result-body" :content="r.content" />
               <div class="result-foot" v-if="r.keywords?.length">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#aaa" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
                 {{ r.keywords.join(' · ') }}
@@ -2194,11 +2295,37 @@ function scoreColor(score: number, max: number): string {
                   <span class="doc-reader-stat">📄 {{ formatCharCount(readerDoc.char_count) }} 字</span>
                   <span class="doc-reader-stat">🔖 {{ readerDoc.chunk_count }} 条检索片段</span>
                   <span class="doc-reader-stat">🗓 {{ formatDocDate(readerDoc.created_at) }}</span>
+                  <span
+                    v-if="readerDoc.conversion_status"
+                    class="doc-reader-stat"
+                    :title="readerDoc.conversion_note || ''"
+                  >{{ CONVERSION_LABEL[readerDoc.conversion_status] || readerDoc.conversion_status }}</span>
                 </div>
 
                 <!-- Full text -->
-                <div class="doc-reader-section-title">📝 文档全文</div>
-                <pre class="doc-fulltext">{{ readerDoc.content }}</pre>
+                <div class="doc-reader-section-title">
+                  <span>📝 文档全文</span>
+                  <NSpace size="small" align="center">
+                    <NButton
+                      v-if="readerDoc.content_markdown"
+                      size="tiny"
+                      tertiary
+                      @click="readerShowRaw = !readerShowRaw"
+                    >{{ readerShowRaw ? '查看 Markdown' : '查看原文本' }}</NButton>
+                    <NButton
+                      size="tiny"
+                      tertiary
+                      :loading="reconverting"
+                      @click="handleReconvert"
+                    >{{ readerDoc.content_markdown ? '重新转换' : '转换为 Markdown' }}</NButton>
+                  </NSpace>
+                </div>
+                <MarkdownRenderer
+                  v-if="readerDoc.content_markdown && !readerShowRaw"
+                  :content="readerDoc.content_markdown"
+                  class="doc-markdown"
+                />
+                <pre v-else class="doc-fulltext">{{ readerDoc.content }}</pre>
 
                 <!-- Chunks toggle -->
                 <NButton
@@ -2422,7 +2549,7 @@ function scoreColor(score: number, max: number): string {
                 class="stage-dot-wrap"
                 :class="{
                   active: importStage === key,
-                  done: importStage !== key && importProgress >= (key === 'upload' ? 10 : key === 'parse' ? 30 : key === 'extract' ? 60 : 100),
+                  done: importStage !== key && importProgress >= (key === 'upload' ? 10 : key === 'parse' ? 30 : key === 'convert_markdown' ? 55 : key === 'extract' ? 80 : 100),
                 }"
               >
                 <div class="stage-dot"></div>
@@ -2702,6 +2829,13 @@ function scoreColor(score: number, max: number): string {
                         ⚠ 待完善
                       </span>
                     </div>
+                    <!-- 血缘：关联来源条目 / 源文档 -->
+                    <div class="draft-lineage">
+                      <span class="draft-lineage-item">🔖 {{ (d.generated_from_entries || []).length }} 条来源条目</span>
+                      <span v-if="d.source_document_ids && d.source_document_ids.length" class="draft-lineage-item">
+                        📄 {{ d.source_document_ids.length }} 个源文档
+                      </span>
+                    </div>
                     <!-- 低质量时展示待完善原因 -->
                     <div v-if="d.quality_score && !d.quality_score.pass_gate" class="draft-polish-hint">
                       {{ d.quality_score.blocking_reasons.join('；') }}
@@ -2753,48 +2887,89 @@ function scoreColor(score: number, max: number): string {
       </NTabPane>
 
       <!-- ── Analytics ─────────────────────────────────── -->
-      <NTabPane name="analytics" tab="统计分析">
-        <NSpin :show="statsLoading">
-          <div class="dash-empty" v-if="!stats && !statsLoading">
-            <NEmpty description="暂无统计数据" />
+      <NTabPane name="analytics" tab="治理面板">
+        <NSpin :show="governanceLoading">
+          <div class="dash-empty" v-if="!governance && !governanceLoading">
+            <NEmpty description="暂无治理数据" />
           </div>
-          <template v-else-if="stats">
-            <div class="dist-section">
-              <div class="dist-title">模块分布</div>
-              <div class="dist-row">
-                <div
-                  v-for="(cnt, mod) in stats.by_module"
-                  :key="mod"
-                  class="dist-bar-item"
-                >
-                  <div class="dist-bar-label">
-                    <span class="dist-mod-dot" :style="{ background: MODULE_COLOR[mod] || '#888' }"></span>
-                    {{ MODULE_SHORT[mod] || mod }}
-                  </div>
-                  <div class="dist-bar-track">
-                    <div
-                      class="dist-bar-fill"
-                      :style="{
-                        width: stats.total_entries > 0 ? (cnt / stats.total_entries * 100) + '%' : '0%',
-                        background: MODULE_COLOR[mod] || '#888',
-                      }"
-                    ></div>
-                  </div>
-                  <div class="dist-bar-count">{{ cnt }}</div>
+          <template v-else-if="governance">
+            <!-- 待办治理卡片：可点击钻取 -->
+            <div class="gov-section-title">待处理事项</div>
+            <div class="gov-grid">
+              <button class="gov-card" :class="{ alert: governance.pending_entries > 0 }" @click="drillToEntries({ status: 'pending_review' })">
+                <div class="gov-num">{{ governance.pending_entries }}</div>
+                <div class="gov-label">待审核条目</div>
+                <div class="gov-hint">点击查看 →</div>
+              </button>
+              <button class="gov-card" :class="{ warn: governance.expired_entries > 0 }" @click="drillToEntries({})">
+                <div class="gov-num">{{ governance.expired_entries }}</div>
+                <div class="gov-label">已过期条目</div>
+                <div class="gov-hint">点击查看 →</div>
+              </button>
+              <button class="gov-card" :class="{ warn: governance.expiring_soon > 0 }" @click="drillToEntries({})">
+                <div class="gov-num">{{ governance.expiring_soon }}</div>
+                <div class="gov-label">30 天内将过期</div>
+                <div class="gov-hint">点击查看 →</div>
+              </button>
+              <button class="gov-card" :class="{ warn: governance.low_confidence > 0 }" @click="drillToEntries({})">
+                <div class="gov-num">{{ governance.low_confidence }}</div>
+                <div class="gov-label">低置信条目 (&lt;0.6)</div>
+                <div class="gov-hint">点击查看 →</div>
+              </button>
+              <button class="gov-card" @click="drillToEntries({})">
+                <div class="gov-num">{{ governance.zero_usage }}</div>
+                <div class="gov-label">零调用条目</div>
+                <div class="gov-hint">点击查看 →</div>
+              </button>
+              <button class="gov-card" :class="{ alert: governance.pending_drafts > 0 }" @click="goToDraftsSub('list')">
+                <div class="gov-num">{{ governance.pending_drafts }}</div>
+                <div class="gov-label">待审 Skill 草稿</div>
+                <div class="gov-hint">点击查看 →</div>
+              </button>
+              <button class="gov-card" :class="{ warn: governance.conversion_failed > 0 }" @click="drillToDocuments()">
+                <div class="gov-num">{{ governance.conversion_failed }}</div>
+                <div class="gov-label">Markdown 转换失败</div>
+                <div class="gov-hint">点击查看 →</div>
+              </button>
+              <button class="gov-card" @click="drillToDocuments()">
+                <div class="gov-num">{{ governance.conversion_skipped }}</div>
+                <div class="gov-label">转换跳过(过大)</div>
+                <div class="gov-hint">点击查看 →</div>
+              </button>
+            </div>
+
+            <!-- Skill 覆盖盲区 -->
+            <div class="gov-section-title" style="margin-top: 20px">
+              Skill 覆盖盲区
+              <span class="gov-section-sub">有 ≥3 条知识但无对应 Skill 的领域</span>
+            </div>
+            <div v-if="governance.blind_spots.length" class="gov-blind-list">
+              <div v-for="bs in governance.blind_spots" :key="bs.module + bs.func_type" class="gov-blind-item">
+                <div class="gov-blind-info">
+                  <NTag size="small" :style="{ '--n-color': (MODULE_COLOR[bs.module] || '#722ed1') + '18', '--n-text-color': MODULE_COLOR[bs.module] || '#722ed1', '--n-border': 'none' }">
+                    {{ MODULE_SHORT[bs.module] || bs.module }}
+                  </NTag>
+                  <span class="badge badge-func badge-xs">{{ FUNC_TYPE_SHORT[bs.func_type] || bs.func_type }}</span>
+                  <span class="gov-blind-count">{{ bs.entry_count }} 条知识未沉淀为 Skill</span>
                 </div>
-                <div v-if="!Object.keys(stats.by_module).length" class="dist-empty">暂无数据</div>
+                <NButton size="tiny" type="primary" ghost @click="drillToWorkshop()">去生成 →</NButton>
               </div>
             </div>
-            <div class="dist-section">
-              <div class="dist-title">业务类型分布</div>
-              <div class="dist-chips">
-                <div v-for="(cnt, ft) in stats.by_func_type" :key="ft" class="ft-chip">
-                  <span class="ft-name">{{ FUNC_TYPE_SHORT[ft] || ft }}</span>
-                  <span class="ft-cnt">{{ cnt }}</span>
-                </div>
-                <div v-if="!Object.keys(stats.by_func_type).length" style="color:#888;font-size:13px">暂无数据</div>
+            <div v-else class="dist-empty">暂无覆盖盲区，知识沉淀情况良好 👍</div>
+
+            <!-- 热门检索 -->
+            <div class="gov-section-title" style="margin-top: 20px">热门知识（按调用次数）</div>
+            <div v-if="governance.top_used.length" class="gov-top-list">
+              <div v-for="(t, i) in governance.top_used" :key="t.id" class="gov-top-item">
+                <span class="gov-top-rank">#{{ i + 1 }}</span>
+                <NTag size="tiny" :style="{ '--n-color': (MODULE_COLOR[t.module] || '#722ed1') + '18', '--n-text-color': MODULE_COLOR[t.module] || '#722ed1', '--n-border': 'none' }">
+                  {{ MODULE_SHORT[t.module] || t.module }}
+                </NTag>
+                <span class="gov-top-text">{{ t.content_preview }}</span>
+                <span class="gov-top-count">{{ t.usage_count }} 次</span>
               </div>
             </div>
+            <div v-else class="dist-empty">暂无调用记录</div>
           </template>
         </NSpin>
       </NTabPane>
@@ -3289,7 +3464,15 @@ function scoreColor(score: number, max: number): string {
                   :disabled="mergingSkill && mergingTargetId !== item.id"
                   @click="handleMergeIntoDraft(item)"
                 >融合到此 Skill</NButton>
-                <span v-else class="similar-activated-hint">已激活，请手动编辑</span>
+                <NButton
+                  v-else
+                  size="tiny"
+                  type="warning"
+                  ghost
+                  :loading="mergingSkill && mergingTargetId === item.id"
+                  :disabled="mergingSkill && mergingTargetId !== item.id"
+                  @click="handleUpgradeActivated(item)"
+                >生成升级草案</NButton>
               </div>
             </div>
           </div>
@@ -3329,7 +3512,15 @@ function scoreColor(score: number, max: number): string {
                   :disabled="mergingSkill && mergingTargetId !== item.id"
                   @click="handleMergeIntoDraft(item)"
                 >融合补充</NButton>
-                <span v-else class="similar-activated-hint">已激活，请手动编辑</span>
+                <NButton
+                  v-else
+                  size="tiny"
+                  type="default"
+                  ghost
+                  :loading="mergingSkill && mergingTargetId === item.id"
+                  :disabled="mergingSkill && mergingTargetId !== item.id"
+                  @click="handleUpgradeActivated(item)"
+                >生成升级草案</NButton>
               </div>
             </div>
           </div>
@@ -3339,7 +3530,7 @@ function scoreColor(score: number, max: number): string {
         <div v-if="similarResults.some(r => r.tier === 'structural')" class="similar-tier-section">
           <div class="similar-tier-header tier-structural">
             <span class="tier-dot" />
-            同类别（相同功能类型 + 业务模块）
+            同类别 / 内容相关（相同模块类型或主题相关）
           </div>
           <div class="similar-items">
             <div
@@ -3360,7 +3551,23 @@ function scoreColor(score: number, max: number): string {
                   <NTag size="tiny" :bordered="false" type="success">{{ item.func_type }}</NTag>
                   <span v-for="(r, i) in item.reasons" :key="i" class="similar-reason">{{ r }}</span>
                 </div>
-                <span class="similar-structural-hint">同类别，可选择查看</span>
+                <NButton
+                  v-if="item.type === 'draft'"
+                  size="tiny"
+                  type="default"
+                  :loading="mergingSkill && mergingTargetId === item.id"
+                  :disabled="mergingSkill && mergingTargetId !== item.id"
+                  @click="handleMergeIntoDraft(item)"
+                >融合补充</NButton>
+                <NButton
+                  v-else
+                  size="tiny"
+                  type="default"
+                  ghost
+                  :loading="mergingSkill && mergingTargetId === item.id"
+                  :disabled="mergingSkill && mergingTargetId !== item.id"
+                  @click="handleUpgradeActivated(item)"
+                >生成升级草案</NButton>
               </div>
             </div>
           </div>
@@ -3735,6 +3942,50 @@ function scoreColor(score: number, max: number): string {
 .dist-bar-count { font-size: 12px; color: #888; width: 24px; text-align: right; font-family: monospace; }
 .dist-empty { font-size: 12px; color: #bbb; }
 
+/* ── 治理面板 ─────────────────────────────────────── */
+.gov-section-title {
+  font-size: 13px; font-weight: 700; color: #555; margin: 6px 0 12px;
+  display: flex; align-items: baseline; gap: 8px;
+}
+.gov-section-sub { font-size: 11px; font-weight: 400; color: #aaa; }
+.gov-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+.gov-card {
+  text-align: left; cursor: pointer;
+  padding: 14px 16px; border-radius: 10px;
+  border: 1px solid rgba(0,0,0,.08);
+  background: rgba(0,0,0,.015);
+  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.gov-card:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,.08); border-color: rgba(32,128,240,.35); }
+.gov-card.alert { border-color: rgba(32,128,240,.4); background: rgba(32,128,240,.05); }
+.gov-card.warn { border-color: rgba(240,160,32,.4); background: rgba(240,160,32,.06); }
+.gov-num { font-size: 26px; font-weight: 700; color: var(--n-text-color, #333); line-height: 1.1; }
+.gov-label { font-size: 12px; color: #777; margin-top: 4px; }
+.gov-hint { font-size: 11px; color: #2080f0; margin-top: 8px; opacity: 0; transition: opacity .15s; }
+.gov-card:hover .gov-hint { opacity: 1; }
+
+.gov-blind-list { display: flex; flex-direction: column; gap: 8px; }
+.gov-blind-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; border-radius: 8px;
+  background: rgba(240,160,32,.06); border: 1px solid rgba(240,160,32,.18);
+}
+.gov-blind-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gov-blind-count { font-size: 12px; color: #999; }
+
+.gov-top-list { display: flex; flex-direction: column; gap: 6px; }
+.gov-top-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border-radius: 6px; background: rgba(0,0,0,.02);
+}
+.gov-top-rank { font-size: 11px; font-weight: 700; color: #2080f0; width: 26px; }
+.gov-top-text { flex: 1; min-width: 0; font-size: 12px; color: var(--n-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gov-top-count { font-size: 12px; color: #888; font-family: monospace; }
+
 .dist-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 12px; }
 .ft-chip {
   display: flex; align-items: center; gap: 6px;
@@ -4046,7 +4297,22 @@ function scoreColor(score: number, max: number): string {
 .doc-reader { display: flex; flex-direction: column; gap: 12px; }
 .doc-reader-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .doc-reader-stat { font-size: 12px; color: #888; }
-.doc-reader-section-title { font-size: 13px; font-weight: 600; color: #555; margin-top: 8px; }
+.doc-reader-section-title {
+  font-size: 13px; font-weight: 600; color: #555; margin-top: 8px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+
+.draft-lineage { display: flex; gap: 12px; margin-top: 4px; }
+.draft-lineage-item { font-size: 11px; color: #999; }
+
+.doc-markdown {
+  background: rgba(0,0,0,.02);
+  border-radius: 8px;
+  padding: 14px 18px;
+  border: 1px solid rgba(0,0,0,.06);
+  max-height: 60vh;
+  overflow-y: auto;
+}
 
 .doc-fulltext {
   white-space: pre-wrap;

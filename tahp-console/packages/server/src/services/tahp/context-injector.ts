@@ -21,6 +21,10 @@ interface ContextItem {
   title: string
   summary: string
   keywords: string[]
+  /** 相对工程根的文件路径（知识条目 JSON 或 SKILL.md 父目录） */
+  path?: string
+  entryId?: string
+  status?: string
 }
 
 /** buildTahpContext 可注入的章节（不含 Skill 正文，正文须运行时 Read） */
@@ -59,8 +63,86 @@ function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[\s，,。？！；:\-\/\n\r\t]+/)
-    .map(s => s.replace(/[()（）\[\]【】]/g, '').trim())
+    .map(s => s.replace(/[()（）\[\]【】#*`]/g, '').trim())
     .filter(s => s.length >= 2)
+}
+
+/** 查询词与条目的相关度（0～1），用于对话上下文筛选 */
+function scoreContextItem(item: ContextItem, queryTokens: string[]): number {
+  if (queryTokens.length === 0) return 0
+  const hay = [
+    item.title,
+    item.summary,
+    ...item.keywords,
+    item.entryId || '',
+  ].join(' ').toLowerCase()
+  let hits = 0
+  for (const qt of queryTokens) {
+    if (hay.includes(qt)) hits++
+  }
+  return hits / queryTokens.length
+}
+
+const KB_DATA_ENTRIES_REL = 'knowledge-base/.kb-data/entries'
+
+function loadKbDataEntryItems(): ContextItem[] {
+  const entriesDir = join(tahpPaths.knowledgeDir, '.kb-data', 'entries')
+  if (!existsSync(entriesDir)) return []
+
+  const items: ContextItem[] = []
+  for (const file of safeReadDir(entriesDir)) {
+    if (!file.endsWith('.json')) continue
+    const fullPath = join(entriesDir, file)
+    try {
+      const raw = readFileSync(fullPath, 'utf-8')
+      const entry = JSON.parse(raw) as {
+        id?: string
+        content?: string
+        module?: string
+        func_type?: string
+        category?: string
+        keywords?: string[]
+        source_file?: string
+        status?: string
+      }
+      const status = String(entry.status || 'pending_review')
+      // 对话检索：排除已拒绝/已删除；**已归档仍参与检索**（归档仅表示管理态，非不可搜）
+      if (status === 'rejected' || status === 'deleted') continue
+
+      const content = String(entry.content || '')
+      const preview = content
+        .replace(/^#{1,6}\s+/gm, '')
+        .replace(/\|/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 200)
+      const entryId = String(entry.id || file.replace(/\.json$/, ''))
+      const title = entry.source_file
+        ? `知识条目: ${entry.source_file}`
+        : `知识条目: ${entryId}`
+
+      items.push({
+        type: 'knowledge',
+        title,
+        summary: `[${entry.module || 'shared'} / ${entry.func_type || '-'} / ${status}] ${preview}`,
+        keywords: [
+          ...tokenize(entryId),
+          ...tokenize(content.slice(0, 4000)),
+          ...tokenize((entry.keywords || []).join(' ')),
+          ...tokenize(entry.source_file || ''),
+          ...tokenize(entry.module || ''),
+          ...tokenize(entry.func_type || ''),
+          ...tokenize(entry.category || ''),
+        ],
+        path: `${KB_DATA_ENTRIES_REL}/${entryId}.json`,
+        entryId,
+        status,
+      })
+    } catch (err) {
+      logger.warn('[context-injector] kb entry parse error %s: %s', file, err)
+    }
+  }
+  return items
 }
 
 // ---------------------------------------------------------------------------
@@ -101,10 +183,11 @@ function buildIndex(): ContextItem[] {
     }
   }
 
-  // ── 2. 知识库 ──────────────────────────────────────────────────────────────
+  // ── 2. 知识库（legacy index.yaml）──────────────────────────────────────────
   const knowledgeDir = tahpPaths.knowledgeDir
   if (existsSync(knowledgeDir)) {
     for (const moduleName of safeReadDir(knowledgeDir)) {
+      if (moduleName.startsWith('.')) continue
       const indexPath = join(knowledgeDir, moduleName, 'index.yaml')
       if (!existsSync(indexPath)) continue
       try {
@@ -123,6 +206,7 @@ function buildIndex(): ContextItem[] {
               ...tokenize(title),
               ...tags.flatMap(t => tokenize(t)),
             ],
+            path: `knowledge-base/${moduleName}/index.yaml`,
           })
         }
       } catch (err) {
@@ -130,6 +214,9 @@ function buildIndex(): ContextItem[] {
       }
     }
   }
+
+  // ── 3. 知识库（Console .kb-data/entries — 智能诊断沉淀、文档导入等）────────
+  items.push(...loadKbDataEntryItems())
 
   return items
 }
@@ -147,6 +234,12 @@ function getIndex(): ContextItem[] {
     }
   }
   return _index
+}
+
+/** 测试或知识库变更后强制刷新索引 */
+export function invalidateContextIndex(): void {
+  _index = null
+  _indexBuiltAt = 0
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +334,7 @@ export function buildSkillExecutionDirective(options?: {
     lines.push('**当前场景**: AI 适配调试 — 优先加载用户指定的关联 Adapt Skill 并按 SOP 排查；全部完成后必须 Read `transsion-coding-standards-review` 并在报告末尾输出自检审核。')
   } else {
     lines.push('**当前场景**: TAHP 对话 — 按问题类型按需加载 Skill，不要一次性 Read 全部 Skill。')
+    lines.push('**知识库**: Console 沉淀的条目在 `knowledge-base/.kb-data/entries/*.json`；若下方「相关知识库条目」有命中，**必须 Read 对应 JSON** 并引用 `content` 字段作答，不要声称知识库无内容。')
   }
   lines.push('')
 
@@ -320,7 +414,7 @@ export function buildFullTahpSystemContext(
  * - adapt_debug 场景默认跳过本函数（见 defaultContextOptions）
  */
 export function buildTahpContext(
-  _userInput: string,
+  userInput: string,
   options: BuildTahpContextOptions = {},
 ): string {
   if (!hasTahpProject()) return ''
@@ -337,6 +431,7 @@ export function buildTahpContext(
   const index = getIndex()
   if (index.length === 0) return ''
 
+  const queryTokens = tokenize(userInput)
   const root = TAHP_PROJECT_REL_ROOT
   const skillsDir = TAHP_SKILLS_REL_ROOT
   const lines: string[] = []
@@ -344,6 +439,7 @@ export function buildTahpContext(
   lines.push('# TAHP 工程上下文（索引摘要，非 Skill 正文）')
   lines.push('')
   lines.push('> Skill 正文不在此注入，请按上方「Skill 执行规范」Read 对应 `SKILL.md`。')
+  lines.push('> 知识库全文在 `knowledge-base/.kb-data/entries/<id>.json` 的 `content` 字段，命中后须 Read 该文件。')
   lines.push('')
   lines.push('## 工程根目录')
   lines.push(`  路径: \`${root}\`（当前 TAHP 工程根，所有下列路径均相对此目录）`)
@@ -369,10 +465,35 @@ export function buildTahpContext(
 
   if (includeKnowledge) {
     const knowledgeItems = index.filter(i => i.type === 'knowledge')
-    if (knowledgeItems.length > 0) {
-      lines.push(`## 知识库索引（共 ${knowledgeItems.length} 条）`)
-      lines.push(`  扫描目录: \`knowledge-base\``)
-      for (const item of knowledgeItems) {
+    const kbDataItems = knowledgeItems.filter(i => i.path?.includes('.kb-data/entries'))
+    const legacyItems = knowledgeItems.filter(i => !i.path?.includes('.kb-data/entries'))
+
+    // 按用户问题筛选相关知识条目（含已归档）
+    const rankedKb = kbDataItems
+      .map(item => ({ item, score: scoreContextItem(item, queryTokens) }))
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+
+    if (rankedKb.length > 0) {
+      lines.push(`## 相关知识库条目（与用户问题匹配，共 ${rankedKb.length} 条，请 Read JSON 获取全文）`)
+      lines.push(`  存储目录: \`${KB_DATA_ENTRIES_REL}/\``)
+      for (const { item, score } of rankedKb) {
+        lines.push(`  - **${item.title}**（相关度 ${Math.round(score * 100)}%）`)
+        lines.push(`    ${item.summary}`)
+        if (item.path) lines.push(`    文件路径: \`${item.path}\`（读取 content 字段）`)
+      }
+      lines.push('')
+    } else if (kbDataItems.length > 0 && queryTokens.length > 0) {
+      lines.push(`## 知识库（.kb-data）`)
+      lines.push(`  已索引 ${kbDataItems.length} 条条目，当前问题未命中关键词；可 Read \`${KB_DATA_ENTRIES_REL}/\` 下 JSON 或让用户提供更具体关键词。`)
+      lines.push('')
+    }
+
+    if (legacyItems.length > 0) {
+      lines.push(`## 知识库索引（legacy index.yaml，共 ${legacyItems.length} 条）`)
+      lines.push(`  扫描目录: \`knowledge-base/<module>/index.yaml\``)
+      for (const item of legacyItems) {
         lines.push(`  - ${item.summary}`)
       }
       lines.push('')

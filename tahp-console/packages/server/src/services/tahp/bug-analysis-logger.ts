@@ -125,7 +125,10 @@ export async function removeDistillRequestsForTask(taskId: string): Promise<void
   }
 }
 
-// ─── 知识沉淀按钮（"沉淀为知识库/skill"）——目前只记录请求，等待二阶段实现 ─────
+// ─── 知识沉淀（"沉淀为知识库/skill"）审计记录 ─────────────────────────────────
+//
+// 自二阶段起，沉淀会真正写入知识库条目；distill-pending.json 仅作审计/重试记录，
+// 并按 task_id 去重（同一任务多次沉淀只保留最新一条）。
 
 export interface DistillRequestRecord {
   task_id: string
@@ -135,9 +138,13 @@ export interface DistillRequestRecord {
   requested_at: string
   note?: string
   source: 'bug-analysis'
+  /** 已沉淀的知识条目 ID（二阶段起） */
+  entry_id?: string
+  /** 处理结果 */
+  result?: 'deposited' | 'recorded' | 'failed'
 }
 
-/** "沉淀为知识库/Skill" 按钮的占位实现 —— 把请求追加到 distill-pending.json. */
+/** 记录一次沉淀请求；按 task_id 去重，保留最新一条。 */
 export async function recordDistillRequest(rec: DistillRequestRecord): Promise<void> {
   await ensureDir()
   let arr: DistillRequestRecord[] = []
@@ -148,6 +155,8 @@ export async function recordDistillRequest(rec: DistillRequestRecord): Promise<v
       if (!Array.isArray(arr)) arr = []
     }
   } catch { arr = [] }
+  // 去重：移除同 task_id 的旧记录
+  arr = arr.filter(r => r.task_id !== rec.task_id)
   arr.push(rec)
   try {
     await writeFile(DISTILL_QUEUE_FILE, JSON.stringify(arr, null, 2), 'utf-8')

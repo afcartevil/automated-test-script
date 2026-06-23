@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   NInput, NButton, NSpin, NEmpty, NAlert,
   NModal, NScrollbar, NProgress, NPopover, useMessage, NTooltip,
-  NSpace, NForm, NFormItem,
+  NSpace, NForm, NFormItem, NCheckbox,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
@@ -27,6 +27,13 @@ import {
   reportToBugTask,
   type HistoryStageDetail,
 } from '@/utils/bug-analysis-report'
+import {
+  skillAssociation,
+  mergeIntoSkill,
+  createUpgradeDraft,
+  generateSkillDraft,
+  type SkillAssociationItem,
+} from '@/api/tahp/knowledge'
 
 const route = useRoute()
 const router = useRouter()
@@ -171,7 +178,16 @@ const continueText = ref('')
 
 // 知识沉淀弹窗
 const showDistillDialog = ref(false)
+const distillStep = ref<'deposit' | 'skill'>('deposit')
 const distillNote = ref('')
+const distillContent = ref('')
+const distillLinkSkill = ref(true)
+const distillSubmitting = ref(false)
+const distilledEntry = ref<{ id: string; module: string; func_type: string } | null>(null)
+const distillAssociations = ref<SkillAssociationItem[]>([])
+const distillOverall = ref<'enhance_existing' | 'create_new'>('create_new')
+const distillLoadingAssoc = ref(false)
+const distillSkillBusy = ref('')
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 阶段名映射 — 用于侧栏显示更友好的标签
@@ -713,22 +729,106 @@ async function submitContinue() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 知识沉淀（占位 — 仅记录请求）
+// 知识沉淀：① 沉淀为知识条目 ② 关联 / 生成 Skill
 // ─────────────────────────────────────────────────────────────────────────────
 function openDistill() {
+  distillStep.value = 'deposit'
   distillNote.value = ''
+  distillContent.value = reportMarkdown.value || ''
+  distillLinkSkill.value = true
+  distillSubmitting.value = false
+  distilledEntry.value = null
+  distillAssociations.value = []
+  distillSkillBusy.value = ''
   showDistillDialog.value = true
 }
 
-async function submitDistill() {
+async function submitDeposit() {
   if (!currentTaskId.value) return
+  if (!distillContent.value.trim()) { message.warning('知识条目正文不能为空'); return }
+  distillSubmitting.value = true
   try {
-    const r = await distillToKnowledge(currentTaskId.value, distillNote.value || undefined)
-    message.success(r.message || '请求已记录')
+    const r = await distillToKnowledge(currentTaskId.value, {
+      note: distillNote.value || undefined,
+      content: distillContent.value,
+      to_knowledge: true,
+    })
+    distilledEntry.value = r.entry
+    if (distillLinkSkill.value && r.entry) {
+      distillStep.value = 'skill'
+      await loadDistillAssociations()
+    } else {
+      message.success(r.message || '已沉淀为知识条目（待审核）')
+      showDistillDialog.value = false
+    }
+  } catch (err) {
+    message.error((err as Error).message)
+  } finally {
+    distillSubmitting.value = false
+  }
+}
+
+async function loadDistillAssociations() {
+  if (!distilledEntry.value) return
+  distillLoadingAssoc.value = true
+  try {
+    const r = await skillAssociation({
+      entry_ids: [distilledEntry.value.id],
+      module: distilledEntry.value.module,
+      func_type: distilledEntry.value.func_type,
+      text: currentTask.value?.title || '',
+    })
+    distillAssociations.value = r.associations
+    distillOverall.value = r.overall_recommendation
+  } catch (err) {
+    message.error('关联检索失败：' + (err as Error).message)
+  } finally {
+    distillLoadingAssoc.value = false
+  }
+}
+
+async function distillEnhance(a: SkillAssociationItem) {
+  if (!distilledEntry.value) return
+  distillSkillBusy.value = a.id
+  try {
+    if (a.type === 'draft' && a.can_merge) {
+      await mergeIntoSkill(a.id, [distilledEntry.value.id])
+      message.success(`已补充到草稿「${a.display_name}」`)
+    } else {
+      await createUpgradeDraft(a.id, [distilledEntry.value.id])
+      message.success(`已为「${a.display_name}」生成升级草案，请到 Skill 工坊审核`)
+    }
     showDistillDialog.value = false
   } catch (err) {
     message.error((err as Error).message)
+  } finally {
+    distillSkillBusy.value = ''
   }
+}
+
+async function distillCreateNew() {
+  if (!distilledEntry.value) return
+  distillSkillBusy.value = '__new__'
+  try {
+    const r = await generateSkillDraft({
+      module: distilledEntry.value.module,
+      func_type: distilledEntry.value.func_type,
+      entry_ids: [distilledEntry.value.id],
+      generated_by: 'bug-analysis-distill',
+    })
+    if (r.llm_error) message.warning('草稿已创建，但 LLM 生成存在问题：' + r.llm_error)
+    else message.success('已生成新的 Skill 草稿，请到 Skill 工坊审核')
+    showDistillDialog.value = false
+  } catch (err) {
+    message.error((err as Error).message)
+  } finally {
+    distillSkillBusy.value = ''
+  }
+}
+
+function goToWorkshop() {
+  showDistillDialog.value = false
+  router.push({ name: 'tahp.knowledge' })
 }
 
 async function stopOrCancelCurrentTask() {
@@ -1311,7 +1411,6 @@ const liveStreamHint = computed(() => {
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/></svg>
                 </template>
                 沉淀为知识库 / Skill
-                <EaPill variant="warn" style="margin-left: 6px">即将上线</EaPill>
               </NButton>
               <NButton tertiary @click="router.push({ name: 'tahp.reports' })">
                 <template #icon>
@@ -1370,29 +1469,106 @@ const liveStreamHint = computed(() => {
       />
     </NModal>
 
-    <!-- ────── 知识沉淀弹窗（占位） ────── -->
+    <!-- ────── 知识沉淀弹窗 ────── -->
     <NModal
       v-model:show="showDistillDialog"
-      preset="dialog"
+      preset="card"
       title="沉淀为知识库 / Skill"
-      positive-text="提交记录"
-      negative-text="取消"
-      style="width: 540px"
-      @positive-click="submitDistill"
+      style="width: 660px"
+      :mask-closable="false"
     >
-      <NAlert type="info" :show-icon="false" style="margin-bottom: 12px">
-        当前版本仅会<strong>记录沉淀请求</strong>到 <code>logs/bug-analysis/distill-pending.json</code>，
-        实际的 Skill / 知识库条目生成将在后续版本上线。
-      </NAlert>
-      <div class="modal-body-text">
-        请简述这条 Bug 分析中值得沉淀为长期知识的核心结论（可选）：
+      <!-- Step 1: 沉淀为知识条目 -->
+      <div v-if="distillStep === 'deposit'">
+        <NAlert type="info" :show-icon="false" style="margin-bottom: 12px">
+          将本次诊断结论沉淀为<strong>知识条目</strong>（状态：待审核），可选择同时关联或生成 Skill。
+        </NAlert>
+        <div class="modal-body-text">知识条目正文（已自动预填报告，可编辑）：</div>
+        <NInput
+          v-model:value="distillContent"
+          type="textarea"
+          placeholder="知识条目正文..."
+          :autosize="{ minRows: 6, maxRows: 14 }"
+        />
+        <div class="modal-body-text" style="margin-top: 10px">人工补充要点（可选）：</div>
+        <NInput
+          v-model:value="distillNote"
+          type="textarea"
+          placeholder="如：某场景下 RILJ 异常的固定排查路径..."
+          :autosize="{ minRows: 2, maxRows: 5 }"
+        />
+        <NSpace align="center" style="margin-top: 14px">
+          <NCheckbox :checked="true" disabled>存入知识库（待审核）</NCheckbox>
+          <NCheckbox v-model:checked="distillLinkSkill">并关联 / 生成 Skill</NCheckbox>
+        </NSpace>
       </div>
-      <NInput
-        v-model:value="distillNote"
-        type="textarea"
-        placeholder="如：某场景下 RILJ 异常的固定排查路径；某类亮度问题的策略影响识别要点..."
-        :autosize="{ minRows: 3, maxRows: 8 }"
-      />
+
+      <!-- Step 2: 关联 / 生成 Skill -->
+      <div v-else>
+        <NSpin :show="distillLoadingAssoc">
+          <NAlert
+            :type="distillOverall === 'enhance_existing' ? 'warning' : 'success'"
+            :show-icon="false"
+            style="margin-bottom: 12px"
+          >
+            <template v-if="distillOverall === 'enhance_existing'">
+              检索到相关 Skill，建议<strong>补充到现有 Skill</strong>，避免重复建设。
+            </template>
+            <template v-else>
+              未发现高度相关的 Skill，建议<strong>新建 Skill 草稿</strong>。
+            </template>
+          </NAlert>
+
+          <div v-if="distillAssociations.length" class="assoc-list">
+            <div v-for="a in distillAssociations" :key="a.id" class="assoc-item">
+              <div class="assoc-head">
+                <span class="assoc-name">{{ a.display_name }}</span>
+                <span class="assoc-badge" :class="a.type">{{ a.type === 'activated' ? '已激活' : '草稿' }}</span>
+                <span class="assoc-score">相关度 {{ Math.round(a.association_score * 100) }}%</span>
+                <span v-if="a.recommendation === 'enhance_existing'" class="assoc-rec">建议增强</span>
+              </div>
+              <div class="assoc-desc">{{ a.description }}</div>
+              <div v-if="a.reasons.length" class="assoc-reasons">{{ a.reasons.join(' · ') }}</div>
+              <NButton
+                size="small"
+                type="primary"
+                ghost
+                :loading="distillSkillBusy === a.id"
+                style="margin-top: 8px"
+                @click="distillEnhance(a)"
+              >
+                {{ a.type === 'activated' ? '生成升级草案' : '补充到此草稿' }}
+              </NButton>
+            </div>
+          </div>
+          <NEmpty v-else-if="!distillLoadingAssoc" description="未找到相关 Skill" style="padding: 20px 0" />
+
+          <div style="margin-top: 16px; text-align: center">
+            <NButton type="primary" :loading="distillSkillBusy === '__new__'" @click="distillCreateNew">
+              ＋ 新建 Skill 草稿
+            </NButton>
+          </div>
+        </NSpin>
+      </div>
+
+      <template #footer>
+        <NSpace justify="end">
+          <template v-if="distillStep === 'deposit'">
+            <NButton @click="showDistillDialog = false">取消</NButton>
+            <NButton
+              type="primary"
+              :loading="distillSubmitting"
+              :disabled="!distillContent.trim()"
+              @click="submitDeposit"
+            >
+              {{ distillLinkSkill ? '沉淀并下一步' : '沉淀为知识条目' }}
+            </NButton>
+          </template>
+          <template v-else>
+            <NButton @click="showDistillDialog = false">完成</NButton>
+            <NButton tertiary @click="goToWorkshop">前往 Skill 工坊</NButton>
+          </template>
+        </NSpace>
+      </template>
     </NModal>
   </div>
 </template>
@@ -1681,6 +1857,28 @@ const liveStreamHint = computed(() => {
 
 .modal-hint { margin-bottom: 8px; font-size: 12px; color: var(--muted); }
 .modal-body-text { margin-bottom: 8px; font-size: 13px; color: var(--text); }
+
+.assoc-list { display: flex; flex-direction: column; gap: 10px; max-height: 360px; overflow-y: auto; }
+.assoc-item {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2, rgba(0,0,0,.02));
+}
+.assoc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.assoc-name { font-weight: 600; font-size: 13px; color: var(--text); }
+.assoc-badge {
+  font-size: 11px; padding: 1px 7px; border-radius: 10px;
+  background: rgba(32,128,240,.12); color: #2080f0;
+}
+.assoc-badge.activated { background: rgba(24,160,88,.14); color: #18a058; }
+.assoc-score { font-size: 11px; color: #888; }
+.assoc-rec {
+  font-size: 11px; padding: 1px 7px; border-radius: 10px;
+  background: rgba(240,160,32,.16); color: #d98c00; font-weight: 600;
+}
+.assoc-desc { font-size: 12px; color: var(--text-2, #888); margin-top: 6px; line-height: 1.5; }
+.assoc-reasons { font-size: 11px; color: #aaa; margin-top: 4px; }
 
 code {
   background: var(--surface-2); padding: 1px 5px; border-radius: 4px;

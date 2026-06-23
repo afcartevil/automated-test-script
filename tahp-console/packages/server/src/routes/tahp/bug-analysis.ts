@@ -29,6 +29,7 @@ import {
 import { searchJQL, parseIssueKey } from '../../services/tahp/jira'
 import type { JiraConfig } from '../../services/tahp/jira'
 import { readBugLog, recordDistillRequest, listDistillRequests } from '../../services/tahp/bug-analysis-logger'
+import { depositDistilledEntry, type KnowledgeEntry } from './knowledge'
 import { logger } from '../../services/logger'
 
 export const tahpBugAnalysisRoutes = new Router({ prefix: '/api/tahp/bug-analysis' })
@@ -155,10 +156,13 @@ tahpBugAnalysisRoutes.post('/:taskId/continue', async (ctx) => {
   }
 })
 
-// ─── 沉淀为知识库/Skill (占位 — 仅记录请求) ──────────────────────────────────
+// ─── 沉淀为知识库/Skill ──────────────────────────────────────────────────────
 //
 // POST /api/tahp/bug-analysis/:taskId/distill
-// Body: { note? }
+// Body: { note?, content?, module?, category?, to_knowledge? }
+//
+// 真正把诊断报告写入知识库（pending_review 条目），返回条目信息供前端继续做
+// Skill 关联（调用 /api/tahp/knowledge/skill-association + merge/generate）。
 tahpBugAnalysisRoutes.post('/:taskId/distill', async (ctx) => {
   const taskId = ctx.params.taskId
   const body = (ctx.request.body || {}) as Record<string, unknown>
@@ -168,25 +172,69 @@ tahpBugAnalysisRoutes.post('/:taskId/distill', async (ctx) => {
     ctx.body = { success: false, error: `找不到任务报告: ${taskId}` }
     return
   }
+
+  const note = typeof body.note === 'string' ? body.note.trim() : ''
+  const toKnowledge = body.to_knowledge !== false   // 默认存入知识库
+
+  // 组装条目正文：优先使用前端传入的可编辑 content，否则从报告组装
+  let content = typeof body.content === 'string' && body.content.trim()
+    ? body.content.trim()
+    : ''
+  if (!content) {
+    const parts: string[] = []
+    if (report.title) parts.push(`# ${report.title}`)
+    if (report.jira_key) parts.push(`> JIRA: ${report.jira_key}`)
+    if (report.report_body) parts.push(String(report.report_body))
+    else if (report.llm_response) parts.push(String(report.llm_response))
+    content = parts.join('\n\n').trim()
+  }
+  if (note) content += `\n\n---\n**人工补充**：${note}`
+
   try {
+    let entry: KnowledgeEntry | undefined
+    if (toKnowledge && content) {
+      entry = await depositDistilledEntry({
+        content,
+        module: typeof body.module === 'string' ? body.module : report.module,
+        func_type: 'bug_analysis',
+        category: typeof body.category === 'string' ? body.category : undefined,
+        source_task_id: taskId,
+        jira_key: report.jira_key,
+      })
+    }
+
     await recordDistillRequest({
       task_id: taskId,
       jira_key: report.jira_key,
       module: report.module,
       title: report.title,
       requested_at: new Date().toISOString(),
-      note: typeof body.note === 'string' ? body.note : undefined,
+      note: note || undefined,
       source: 'bug-analysis',
+      entry_id: entry?.id,
+      result: entry ? 'deposited' : 'recorded',
     })
+
     ctx.body = {
       success: true,
       data: {
         recorded: true,
-        message: '知识沉淀请求已记录（功能将在后续版本上线，暂不会立即生成新 Skill）',
+        deposited: !!entry,
+        entry: entry ? { id: entry.id, module: entry.module, func_type: entry.func_type } : null,
+        message: entry
+          ? '已沉淀为知识条目（待审核），可继续关联/生成 Skill'
+          : '已记录沉淀请求',
       },
     }
   } catch (err) {
-    logger.warn({ err: (err as Error).message }, '[bug-distill] record failed')
+    logger.warn({ err: (err as Error).message }, '[bug-distill] deposit failed')
+    try {
+      await recordDistillRequest({
+        task_id: taskId, jira_key: report.jira_key, module: report.module, title: report.title,
+        requested_at: new Date().toISOString(), note: note || undefined,
+        source: 'bug-analysis', result: 'failed',
+      })
+    } catch { /* ignore */ }
     ctx.status = 500
     ctx.body = { success: false, error: (err as Error).message }
   }
