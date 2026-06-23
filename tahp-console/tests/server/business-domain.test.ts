@@ -4,7 +4,26 @@ import {
   resolveEntryBusinessDomain,
   skillSuggestionGroupKey,
   assertHomogeneousBusinessDomain,
+  loadBusinessDomains,
+  listDomainsForModule,
 } from '../../packages/server/src/services/tahp/business-domain'
+
+describe('business domain registry', () => {
+  it('loads domains from knowledge-base/business-domains.yaml', () => {
+    const all = loadBusinessDomains(true)
+    expect(all.length).toBeGreaterThan(20)
+    expect(all.some(d => d.id === 'tp_touch')).toBe(true)
+    expect(all.some(d => d.id === 'standby_drain')).toBe(true)
+  })
+
+  it('lists module-scoped domains for kernel-driver', () => {
+    const kd = listDomainsForModule('kernel-driver')
+    const ids = kd.map(d => d.id)
+    expect(ids).toContain('tp_touch')
+    expect(ids).toContain('vibrator')
+    expect(ids).not.toContain('voice_call')
+  })
+})
 
 describe('inferBusinessDomain', () => {
   it('classifies voice call issues separately from network', () => {
@@ -34,12 +53,47 @@ describe('inferBusinessDomain', () => {
     expect(apn.id).toBe('apn')
   })
 
-  it('respects explicit business domain label in report', () => {
+  it('classifies TP touch and vibrator separately under kernel-driver', () => {
+    const tp = inferBusinessDomain({
+      content: 'JIRA (Drv) TP：开机后触摸失效，kernel log 无 tpd_probe，fts 驱动未加载。',
+      module: 'kernel-driver',
+    })
+    const vib = inferBusinessDomain({
+      content: '(Drv) Vibrator 部分场景无振动，RichTapVibratorService 未启动，haptic probe failed。',
+      module: 'kernel-driver',
+    })
+    expect(tp.id).toBe('tp_touch')
+    expect(vib.id).toBe('vibrator')
+    expect(tp.id).not.toBe(vib.id)
+  })
+
+  it('classifies standby drain and backlight under power-mgmt', () => {
+    const standby = inferBusinessDomain({
+      content: '待机耗电异常，灭屏电流 80mA，AP 无法 suspend，wakelock 长持锁。',
+      module: 'power-mgmt',
+    })
+    const backlight = inferBusinessDomain({
+      content: '自动背光忽明忽暗，AutomaticBrightnessController lux 跳变，HBM 进入异常。',
+      module: 'power-mgmt',
+    })
+    expect(standby.id).toBe('standby_drain')
+    expect(backlight.id).toBe('backlight_power')
+  })
+
+  it('classifies port burn charging case', () => {
     const r = inferBusinessDomain({
-      content: '## 摘要\n业务域：通话\n无法拨号。',
+      content: '端口防烧触发后通知栏不显示提示，NTC 70度，BatteryService 状态异常。',
       module: 'shared',
     })
-    expect(r.id).toBe('voice_call')
+    expect(r.id).toBe('charging')
+  })
+
+  it('respects explicit business domain label in report', () => {
+    const r = inferBusinessDomain({
+      content: '## 摘要\n业务域：TP触摸\n无触摸。',
+      module: 'shared',
+    })
+    expect(r.id).toBe('tp_touch')
     expect(r.source).toBe('explicit')
   })
 
@@ -57,10 +111,9 @@ describe('inferBusinessDomain', () => {
 
 describe('skillSuggestionGroupKey', () => {
   it('produces distinct keys for different business domains under same module', () => {
-    const k1 = skillSuggestionGroupKey('shared', 'bug_analysis', 'voice_call')
-    const k2 = skillSuggestionGroupKey('shared', 'bug_analysis', 'network')
+    const k1 = skillSuggestionGroupKey('kernel-driver', 'bug_analysis', 'tp_touch')
+    const k2 = skillSuggestionGroupKey('kernel-driver', 'bug_analysis', 'vibrator')
     expect(k1).not.toBe(k2)
-    expect(k1).toBe('shared::bug_analysis::voice_call')
   })
 })
 

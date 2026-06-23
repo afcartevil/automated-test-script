@@ -64,7 +64,10 @@ import {
 import {
   getBusinessDomainLabel,
   inferBusinessDomain,
+  listDomainsForModule,
+  loadBusinessDomains,
   resolveEntryBusinessDomain,
+  resolveAliasToDomainId,
   skillSuggestionGroupKey,
 } from '../../services/tahp/business-domain'
 
@@ -412,6 +415,7 @@ async function initDirs(): Promise<void> {
   mkdirSync(getEntriesDir(), { recursive: true })
   mkdirSync(getSkillDraftsDir(), { recursive: true })
   mkdirSync(getDocumentsDir(), { recursive: true })
+  loadBusinessDomains()
 }
 
 async function readEntry(entryId: string): Promise<KnowledgeEntry | null> {
@@ -576,8 +580,15 @@ function validateEntry(entry: Partial<KnowledgeEntry>): string[] {
 
 const MODULE_KEYWORDS: Record<string, string[]> = {
   telephony:       ['ril', 'volte', 'ims', '通话', '短信', 'sms', 'call', 'network', '网络', 'sim', 'modem', 'signal', '信号', 'telephony'],
-  'kernel-driver': ['kernel', '内核', 'driver', '驱动', 'dts', 'gpio', 'i2c', 'spi', 'uart', 'interrupt', '中断', 'module_init'],
-  'power-mgmt':    ['power', '功耗', 'battery', '电池', 'suspend', '休眠', 'wakeup', '唤醒', 'thermal', '温升', 'cpufreq', 'governor'],
+  'kernel-driver': [
+    'kernel', '内核', 'driver', '驱动', 'dts', 'dws', 'gpio', 'i2c', 'spi', 'uart', '中断',
+    'tp', '触摸', 'touch', 'fts', 'focaltech', 'vibrator', '振动', 'haptic', 'lcm', 'panel',
+    'fingerprint', '指纹', 'sensor', '传感器', 'audio', '音频', 'typec', 'usb', 'charger ic',
+  ],
+  'power-mgmt':    [
+    'power', '功耗', 'battery', '电池', 'suspend', '休眠', 'wakeup', '唤醒', 'thermal', '温升',
+    'cpufreq', 'governor', 'wakelock', '待机', '背光', 'backlight', '亮屏', '灭屏', '充电', '防烧',
+  ],
   shared:          ['api', '接口', 'code', '代码', 'review', 'git', 'build', '编译', 'common', '通用'],
 }
 
@@ -1606,9 +1617,13 @@ export async function depositDistilledEntry(params: {
     .slice(0, 8)
   const mergedTags = [...new Set([...tags, ...symptomTags])].slice(0, 25)
 
+  const resolvedModule = (params.module && params.module !== 'shared')
+    ? params.module
+    : inferModule(params.content)
+
   const inferredBiz = inferBusinessDomain({
     content: params.content,
-    module: params.module,
+    module: resolvedModule,
     tags: mergedTags,
     jira_key: jiraKey,
   })
@@ -1639,7 +1654,7 @@ export async function depositDistilledEntry(params: {
     const updated: KnowledgeEntry = {
       ...existing,
       content: params.content,
-      module: params.module || existing.module || 'shared',
+      module: params.module || existing.module || resolvedModule || 'shared',
       func_type: params.func_type || existing.func_type || 'bug_analysis',
       category: params.category || existing.category || '错误模式',
       keywords: params.keywords?.length ? params.keywords : extractKeywords(params.content),
@@ -1666,7 +1681,7 @@ export async function depositDistilledEntry(params: {
     id: `kb-${randomUUID().slice(0, 8)}`,
     content: params.content,
     category: params.category || '错误模式',
-    module: params.module || 'shared',
+    module: params.module && params.module !== 'shared' ? params.module : resolvedModule,
     func_type: params.func_type || 'bug_analysis',
     keywords: params.keywords?.length ? params.keywords : extractKeywords(params.content),
     confidence_score: 0.8,
@@ -1745,6 +1760,9 @@ function enrichDocChunkEntry(ext: ExtractedEntry, docId: string, now: string): K
   }
   entry.search_blob = buildSearchBlob(entry)
   entry.tags = buildTags(entry)
+  const biz = inferBusinessDomain({ content: entry.content, module: entry.module })
+  entry.business_domain = biz.id
+  entry.business_domain_label = biz.label
   return entry
 }
 
@@ -2169,11 +2187,14 @@ tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-suggestions', async (ctx) => 
         return skillSuggestionGroupKey(d.module, d.func_type, d.business_domain)
       }
       const label = d.domain_label || ''
-      for (const [cn, id] of Object.entries({
-        通话: 'voice_call', 网络: 'network', 数据: 'data', APN: 'apn', SIM: 'sim',
-        短信: 'sms', 状态栏: 'systemui', 运营商: 'carrier_config', 充电: 'charging', 设置: 'settings',
-      })) {
-        if (label.includes(cn)) return skillSuggestionGroupKey(d.module, d.func_type, id)
+      const fromLabel = resolveAliasToDomainId(label.split('—').pop()?.trim() || label)
+      if (fromLabel) {
+        return skillSuggestionGroupKey(d.module, d.func_type, fromLabel)
+      }
+      for (const def of listDomainsForModule(d.module)) {
+        if (label.includes(def.label)) {
+          return skillSuggestionGroupKey(d.module, d.func_type, def.id)
+        }
       }
       return skillSuggestionGroupKey(d.module, d.func_type, 'general')
     }
@@ -2264,6 +2285,30 @@ tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-suggestions', async (ctx) => 
     ctx.body = { success: true, data: { suggestions, total_groups: suggestions.length, recommended_count: recommendedCount } }
   } catch (err) {
     logger.error({ err: (err as Error).message }, '[kb] skill-suggestions failed')
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// GET /api/tahp/knowledge/business-domains — 业务子域分类表（可配置 YAML）
+tahpKnowledgeRoutes.get('/api/tahp/knowledge/business-domains', async (ctx) => {
+  try {
+    const module = typeof ctx.query.module === 'string' ? ctx.query.module.trim() : undefined
+    const domains = listDomainsForModule(module).map(d => ({
+      id: d.id,
+      label: d.label,
+      modules: d.modules,
+      aliases: d.aliases,
+    }))
+    ctx.body = {
+      success: true,
+      data: {
+        domains,
+        total: domains.length,
+        config_path: 'knowledge-base/business-domains.yaml',
+      },
+    }
+  } catch (err) {
     ctx.status = 500
     ctx.body = { success: false, error: (err as Error).message }
   }

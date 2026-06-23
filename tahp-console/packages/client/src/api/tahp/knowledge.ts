@@ -452,6 +452,25 @@ export function startScanFolder(
 
 // ─── Phase 4 API Functions (Skill 工坊) ──────────────────────────────────────
 
+export interface BusinessDomainInfo {
+  id: string
+  label: string
+  modules: string[]
+  aliases: string[]
+}
+
+/** GET /api/tahp/knowledge/business-domains — 可配置业务子域表 */
+export function getBusinessDomains(module?: string): Promise<{
+  domains: BusinessDomainInfo[]
+  total: number
+  config_path: string
+}> {
+  const qs = module ? `?module=${encodeURIComponent(module)}` : ''
+  return tahpGet<{ domains: BusinessDomainInfo[]; total: number; config_path: string }>(
+    `/api/tahp/knowledge/business-domains${qs}`,
+  )
+}
+
 /** GET /api/tahp/knowledge/skill-suggestions — 分组推荐生成 Skill */
 export function getSkillSuggestions(): Promise<{
   suggestions: SkillSuggestion[]

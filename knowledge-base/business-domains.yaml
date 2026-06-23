@@ -1,0 +1,398 @@
+# TAHP 知识库业务子域分类表
+# 用于：沉淀入库 business_domain、Skill 推荐分组、检索 facet
+# 新增子域：在此追加条目后重启 Console 或调用 reload（无需改代码）
+version: 1
+
+domains:
+  # ─── 通信 Telephony ─────────────────────────────────────────
+  - id: voice_call
+    label: 通话
+    modules: [telephony]
+    aliases: [通话, 语音, 来电, 去电]
+    keywords:
+      - 通话
+      - 来电
+      - 去电
+      - 拨号
+      - 掉话
+      - volte
+      - vowifi
+      - vonr
+      - incall
+      - telecom
+      - call drop
+      - flash_call
+      - 紧急拨号
+    jira_hints:
+      - "(?i)\\(com\\)\\s*call"
+      - 通话
+      - "(?i)voice"
+      - "(?i)volte"
+
+  - id: network
+    label: 网络
+    modules: [telephony]
+    aliases: [网络, 驻网, 搜网]
+    keywords:
+      - 驻网
+      - 搜网
+      - 信号
+      - 无服务
+      - plmn
+      - spn
+      - 运营商名称
+      - 漫游
+      - rat
+      - networkscanhelper
+      - data_registration_state
+    jira_hints:
+      - "(?i)\\(com\\)\\s*network"
+      - 网络问题
+      - "(?i)signal"
+      - "(?i)plmn"
+
+  - id: data
+    label: 数据
+    modules: [telephony]
+    aliases: [数据, 上网]
+    keywords:
+      - 数据连接
+      - 无法上网
+      - data call
+      - data stall
+      - data_stall
+      - 移动数据
+      - datasetup
+      - dataunstable
+      - dataslow
+    jira_hints:
+      - "(?i)\\(com\\)\\s*data"
+      - 数据连接
+      - "(?i)data\\s*stall"
+
+  - id: apn
+    label: APN
+    modules: [telephony]
+    aliases: [APN, 接入点]
+    keywords: [apn, 接入点, apn配置, apn变更, apn界面]
+    jira_hints: ["(?i)apn", 接入点]
+
+  - id: sim
+    label: SIM
+    modules: [telephony]
+    aliases: [SIM, 识卡]
+    keywords: [sim, 识卡, 不识卡, uicc, imsi, iccid, ussd, 双卡]
+    jira_hints: ["(?i)\\(com\\)\\s*sim", SIM卡, "(?i)ussd"]
+
+  - id: sms
+    label: 短信彩信
+    modules: [telephony]
+    aliases: [短信, 彩信]
+    keywords: [短信, 彩信, sms, mms, smssend, smsrecv]
+    jira_hints: ["(?i)\\(com\\)\\s*sms", 短信, 彩信]
+
+  - id: systemui
+    label: 状态栏/SystemUI
+    modules: [telephony]
+    aliases: [状态栏, 图标]
+    keywords:
+      - 状态栏
+      - systemui
+      - volte图标
+      - vowifi图标
+      - 网络制式图标
+      - statusbar
+    jira_hints: ["(?i)systemui", 状态栏]
+
+  - id: carrier_config
+    label: 运营商配置
+    modules: [telephony]
+    aliases: [运营商, CarrierConfig]
+    keywords: [carrierconfig, 运营商配置, 运营商定制, mcc, mnc, esim]
+    jira_hints: ["(?i)carrier", 运营商配置]
+
+  - id: settings
+    label: 设置
+    modules: [telephony]
+    aliases: [设置]
+    keywords: [settings, 设置, sim卡设置, 移动网络设置]
+    jira_hints: ["(?i)settings", 设置]
+
+  - id: stability
+    label: 稳定性/Modem
+    modules: [telephony]
+    aliases: [Modem, 基带]
+    keywords: [modem_ee, modem crash, baseband unknown, modem ee]
+    jira_hints: ["(?i)modem", 稳定性]
+
+  # ─── 内核驱动 / 器件 Kernel-Driver ─────────────────────────
+  - id: tp_touch
+    label: TP触摸
+    modules: [kernel-driver]
+    aliases: [TP, 触摸, 触摸屏]
+    keywords:
+      - tp触摸
+      - 触摸失效
+      - 无触摸
+      - tpd_probe
+      - fts_
+      - goodix
+      - focaltech
+      - touch driver
+      - 误触
+    jira_hints:
+      - "(?i)\\(drv\\)\\s*tp"
+      - "(?i)tp"
+      - 触摸
+
+  - id: tp_gesture
+    label: TP手势
+    modules: [kernel-driver]
+    aliases: [手势, 双击亮屏]
+    keywords: [tp手势, 双击唤醒, 息屏手势, gesture, double-tap, 手势亮屏]
+    jira_hints: [手势, "(?i)gesture"]
+
+  - id: tp_fod
+    label: TP屏下指纹触控
+    modules: [kernel-driver]
+    aliases: [FOD, 屏下指纹触控]
+    keywords: [fod, 屏下指纹, fingerprint_status, finger down, tp fod]
+    jira_hints: ["(?i)fod", 屏下指纹]
+
+  - id: vibrator
+    label: 振动马达
+    modules: [kernel-driver]
+    aliases: [振动, 马达, VIB]
+    keywords:
+      - 振动
+      - 马达
+      - haptic
+      - richtap
+      - vibrator
+      - aw869
+      - 无振动
+    jira_hints:
+      - "(?i)\\(drv\\)\\s*vibrat"
+      - "(?i)vibrator"
+      - 振动
+      - 马达
+
+  - id: lcm_panel
+    label: LCM/显示驱动
+    modules: [kernel-driver]
+    aliases: [LCM, 屏幕, 显示, Panel]
+    keywords:
+      - lcm
+      - panel
+      - dsi
+      - drm
+      - 花屏
+      - 撕裂
+      - 开机黑屏
+      - 卡logo
+      - 闪屏
+      - mtk_drm
+    jira_hints:
+      - "(?i)lcm"
+      - "(?i)panel"
+      - 显示
+      - 花屏
+
+  - id: fingerprint
+    label: 指纹
+    modules: [kernel-driver]
+    aliases: [指纹, FP]
+    keywords:
+      - 指纹
+      - fingerprint
+      - tran_fp
+      - goodix
+      - gw95
+      - 录入失败
+      - face hal
+    jira_hints:
+      - "(?i)fingerprint"
+      - 指纹
+      - "(?i)\\(drv\\)\\s*fp"
+
+  - id: audio_driver
+    label: 音频驱动
+    modules: [kernel-driver]
+    aliases: [音频, Audio]
+    keywords:
+      - 音频驱动
+      - aurisys
+      - audio_device.xml
+      - drv_audio
+      - pa移植
+      - aw87
+    jira_hints:
+      - "(?i)audio"
+      - 音频
+      - "(?i)aurisys"
+
+  - id: typec_usb
+    label: TypeC/USB
+    modules: [kernel-driver]
+    aliases: [TypeC, USB, PD]
+    keywords: [typec, type-c, pd协商, tcpc, dwc3, usb host, gadget, udc]
+    jira_hints: ["(?i)typec", "(?i)usb", "(?i)pd"]
+
+  - id: sensor_driver
+    label: 传感器
+    modules: [kernel-driver]
+    aliases: [传感器, Sensor]
+    keywords:
+      - sensorhub
+      - scp
+      - 光感
+      - 距感
+      - proximity
+      - als
+      - 陀螺仪
+      - 加速度
+    jira_hints:
+      - "(?i)sensor"
+      - 传感器
+      - "(?i)\\(bsp\\)\\s*sensor"
+
+  - id: charger_driver
+    label: 充电驱动/器件
+    modules: [kernel-driver, power-mgmt]
+    aliases: [充电IC, Charger, Gauge]
+    keywords:
+      - charger ic
+      - gauge
+      - mt6375
+      - tc_charger
+      - 充电驱动
+      - dtsi充电
+      - bc12
+    jira_hints:
+      - "(?i)\\(drv\\)\\s*charger"
+      - "(?i)charger"
+      - gauge
+
+  - id: kernel_crash
+    label: 内核异常
+    modules: [kernel-driver]
+    aliases: [KE, Panic, 内核崩溃]
+    keywords:
+      - kernel panic
+      - ke-
+      - oops
+      - watchdog
+      - ke分析
+      - 内核死机
+      - aee
+      - tombstone
+    jira_hints:
+      - "(?i)kernel"
+      - 内核
+      - "(?i)panic"
+      - KE
+
+  - id: kernel_driver
+    label: 驱动通用
+    modules: [kernel-driver]
+    aliases: [驱动]
+    keywords: [driver, 驱动, dts, dws, gpio, i2c, spi, uart, 中断]
+    jira_hints: ["(?i)\\(drv\\)", "(?i)driver", 驱动]
+
+  # ─── 功耗 Power-Mgmt ─────────────────────────────────────────
+  - id: standby_drain
+    label: 待机耗电
+    modules: [power-mgmt]
+    aliases: [待机, 灭屏耗电]
+    keywords:
+      - 待机耗电
+      - 灭屏电流
+      - standby
+      - 待机电流
+      - suspend失败
+      - 无法休眠
+    jira_hints: [待机, 功耗, "(?i)standby"]
+
+  - id: wakelock
+    label: Wakelock
+    modules: [power-mgmt]
+    aliases: [唤醒锁]
+    keywords: [wakelock, 持锁, partial wake lock, 唤醒锁, 长持锁]
+    jira_hints: ["(?i)wakelock", 唤醒]
+
+  - id: thermal
+    label: 温升/热
+    modules: [power-mgmt]
+    aliases: [温升, 发热]
+    keywords: [温升, 发热, thermal, 降频, cpu throttling, 烫手]
+    jira_hints: [温升, "(?i)thermal", 发热]
+
+  - id: backlight_power
+    label: 背光/亮度
+    modules: [power-mgmt]
+    aliases: [背光, 亮度]
+    keywords:
+      - 背光
+      - 亮度
+      - backlight
+      - 自动亮度
+      - hbm
+      - 亮度跳变
+      - brightness
+    jira_hints: [背光, 亮度, "(?i)backlight"]
+
+  - id: display_power
+    label: 亮灭屏
+    modules: [power-mgmt]
+    aliases: [亮屏, 灭屏]
+    keywords:
+      - 亮屏
+      - 灭屏
+      - 电源键
+      - power key
+      - 超时灭屏
+      - 通知亮屏
+      - 双击亮屏
+    jira_hints: [亮屏, 灭屏, 亮灭屏]
+
+  - id: charging
+    label: 充电/电池服务
+    modules: [power-mgmt, telephony]
+    aliases: [充电, 电池, 端口防烧]
+    keywords:
+      - 充电
+      - 电池
+      - battery
+      - 端口防烧
+      - 防烧
+      - ntc
+      - 电量跳变
+      - 续航
+      - batteryservice
+      - 快充
+    jira_hints:
+      - 充电
+      - "(?i)battery"
+      - 防烧
+
+  - id: power_mgmt
+    label: 功耗通用
+    modules: [power-mgmt]
+    aliases: [功耗]
+    keywords: [功耗, power, cpufreq, governor, 省电]
+    jira_hints: [功耗, "(?i)power"]
+
+  # ─── 跨模块 / 兜底 ─────────────────────────────────────────
+  - id: boot
+    label: 开机/启动
+    modules: [kernel-driver, power-mgmt]
+    aliases: [不开机, 卡Logo]
+    keywords: [不开机, 卡logo, bootup, 启动失败, preloader, lk启动]
+    jira_hints: [不开机, 卡logo, "(?i)boot"]
+
+  - id: general
+    label: 通用
+    modules: [telephony, kernel-driver, power-mgmt, shared]
+    aliases: [通用, 其他]
+    keywords: []
+    jira_hints: []
