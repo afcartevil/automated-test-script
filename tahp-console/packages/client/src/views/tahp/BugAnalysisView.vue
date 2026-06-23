@@ -1872,16 +1872,23 @@ const liveStreamHint = computed(() => {
 
 <style scoped lang="scss">
 .bug-analysis-root {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
   :deep(.model-provider-banner) { margin-bottom: 12px; }
 }
 
 .bug-split {
   align-items: stretch;
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .bug-left {
   min-height: 0;
+  min-width: 0;
 }
 
 .bug-tasks-card {
@@ -1962,13 +1969,31 @@ const liveStreamHint = computed(() => {
 .ti-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--faint); }
 .ti-badge { background: var(--warn-soft); color: var(--warn); padding: 1px 6px; border-radius: 6px; font-weight: 600; &.ti-batch { background: var(--violet-bg); color: var(--violet-fg); } }
 
-.bug-main-wrap { min-height: 0; display: flex; flex-direction: column; }
-.bug-main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.bug-main-wrap {
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.bug-main {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .bug-detail {
   min-height: 520px;
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   max-height: calc(100vh - 120px);
+  overflow: hidden;
 }
 
 .history-task-row {
@@ -2006,17 +2031,17 @@ const liveStreamHint = computed(() => {
 .job-tasks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
 .ea-task-item.compact { padding: 10px 12px; }
 
-.task-head { margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
-.task-head-left { min-width: 0; gap: 12px; flex-wrap: wrap; }
+.task-head { margin-bottom: 14px; gap: 12px; flex-wrap: wrap; max-width: 100%; min-width: 0; }
+.task-head-left { min-width: 0; gap: 12px; flex-wrap: wrap; flex: 1; }
 .task-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
 .task-id { background: var(--bg); padding: 2px 6px; border-radius: 6px; }
 
 .task-progress { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-shrink: 0; }
 .tp-text { font-size: 11px; min-width: 32px; text-align: right; }
 
-.tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.tab-body { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 .tab-pane {
-  flex: 1; min-height: 0; overflow: hidden;
+  flex: 1; min-height: 0; min-width: 0; overflow: hidden;
   display: flex; flex-direction: column; padding-bottom: 8px;
 }
 .tab-pane-live,
@@ -2026,19 +2051,39 @@ const liveStreamHint = computed(() => {
 }
 
 .live-llm-panel {
-  display: flex; flex-direction: column; min-height: 0; max-height: 100%;
+  display: flex; flex-direction: column; min-height: 0; min-width: 0; max-height: 100%;
   background: var(--bg); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
 }
 .live-llm-panel-full {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   height: 100%;
   max-height: 100%;
 }
 .live-llm-header { padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--surface); flex-shrink: 0; }
 .live-llm-body {
-  flex: 1; min-height: 0; overflow-y: auto; padding: 14px 16px;
+  flex: 1; min-height: 0; min-width: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  padding: 14px 16px;
   font-size: 13.5px; line-height: 1.7; scrollbar-width: thin;
+
+  :deep(.markdown-body) {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  :deep(.hljs-code-block) {
+    max-width: 100%;
+
+    code.hljs {
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-x: auto;
+    }
+  }
 }
 .llm-waiting { display: flex; align-items: center; padding: 20px; }
 
@@ -2090,12 +2135,32 @@ const liveStreamHint = computed(() => {
 .report-body-scroll {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   max-height: min(480px, calc(100vh - 400px));
 }
 .report-markdown-inner {
   padding: 4px 12px 16px 4px;
   font-size: 13.5px;
   line-height: 1.7;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+
+  :deep(.markdown-body) {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  :deep(.hljs-code-block) {
+    max-width: 100%;
+
+    code.hljs {
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-x: auto;
+    }
+  }
 }
 
 .jira-card { font-size: 13px; }
@@ -2148,8 +2213,21 @@ const liveStreamHint = computed(() => {
   scrollbar-width: thin;
 }
 
+.bug-detail :deep(.ea-stage-track) {
+  max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
 .task-footer {
-  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); flex-shrink: 0;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  flex-shrink: 0;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .modal-hint { margin-bottom: 8px; font-size: 12px; color: var(--muted); }
