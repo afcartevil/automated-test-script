@@ -20,7 +20,6 @@ import {
   listBugReports, deleteBugReport, respondBugApproval, submitBugUserInput,
   type JiraIssueDetail, type JqlPreview, type BugReport, type BugReportSummary, type JiraUserConfig,
 } from '@/api/tahp/bug-analysis'
-import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
 import {
   extractBugAnalysisReportBody,
   stripBugStageMarkers,
@@ -28,6 +27,7 @@ import {
   reportToBugTask,
   type HistoryStageDetail,
 } from '@/utils/bug-analysis-report'
+import { prependDistillJiraHeader } from '@/utils/distill-jira-header'
 import {
   skillAssociation,
   mergeIntoSkill,
@@ -914,11 +914,22 @@ async function submitContinue() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 知识沉淀：① 沉淀为知识条目 ② 关联 / 生成 Skill
 // ─────────────────────────────────────────────────────────────────────────────
+function buildDistillContentWithJira(): string {
+  const body = reportMarkdown.value || ''
+  const j = jiraDisplayInfo.value
+  if (!j) return body
+  return prependDistillJiraHeader(body, {
+    key: j.key,
+    summary: j.summary,
+    description: j.description,
+  })
+}
+
 function resetDistillForm(mode: DistillMode) {
   distillMode.value = mode
   distillStep.value = 'deposit'
   distillNote.value = ''
-  distillContent.value = reportMarkdown.value || ''
+  distillContent.value = buildDistillContentWithJira()
   distillLinkSkill.value = mode === 'skill'
   distillSubmitting.value = false
   distilledEntry.value = null
@@ -965,7 +976,7 @@ async function prepareSkillDistill() {
     } else {
       await runWithSkillOpPump(1, 32, 48, '正在准备知识条目...', async () => {
         const r = await distillToKnowledge(tid, {
-          content: reportMarkdown.value,
+          content: buildDistillContentWithJira(),
           to_knowledge: true,
         })
         if (!r.entry) throw new Error(r.message || '无法准备 Skill 关联')

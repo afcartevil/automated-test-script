@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, h, reactive } from 'vue'
+import { ref, onMounted, h, reactive, computed } from 'vue'
 import {
   NForm, NFormItem, NInput, NSelect, NInputNumber,
   NButton, NSpace, NTag, NSpin, NEmpty, NTabs, NTabPane,
@@ -135,6 +135,103 @@ const searchQuery = ref('')
 const searchLoading = ref(false)
 const searchResults = ref<SemanticSearchResult | null>(null)
 const searchModule = ref('')
+const searchExpandedIds = ref<Set<string>>(new Set())
+
+function searchResultKey(r: KnowledgeEntry & { search_relevance?: number }, index: number): string {
+  return r.id || `search-${index}`
+}
+
+function stripMarkdownInline(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/\|/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function extractEntryPreview(content: string): { title: string; summary: string } {
+  const lines = content.split('\n').map(l => l.trim()).filter(Boolean)
+  let title = ''
+  let summary = ''
+
+  const tldrIdx = lines.findIndex(l =>
+    /^(#{1,3}\s*)?(摘要|TL;DR|tl;dr)/i.test(l) ||
+    /^\d+\.\s*(摘要|TL;DR)/i.test(l),
+  )
+
+  if (tldrIdx >= 0) {
+    const raw = lines[tldrIdx]
+      .replace(/^#{1,3}\s*/, '')
+      .replace(/^\d+\.\s*/, '')
+    const afterLabel = raw.replace(/^(摘要\/TL;DR|摘要|TL;DR)[：:\s]*/i, '').trim()
+    if (afterLabel.length > 8) title = afterLabel
+
+    const body: string[] = []
+    for (let i = tldrIdx + 1; i < lines.length; i++) {
+      const line = lines[i]
+      if (/^#{1,3}\s/.test(line)) break
+      if (/^\d+\.\s+/.test(line) && !line.startsWith('|')) break
+      if (line.startsWith('|')) continue
+      body.push(line)
+      if (body.join(' ').length > 160) break
+    }
+    summary = stripMarkdownInline(body.join(' '))
+  }
+
+  if (!title) {
+    const heading = lines.find(l => /^#{1,2}\s+/.test(l) || /^\d+\.\s+\S/.test(l))
+    if (heading) {
+      title = heading.replace(/^#{1,2}\s+/, '').replace(/^\d+\.\s+/, '')
+    }
+  }
+
+  if (!summary) {
+    const para = lines.find(l =>
+      !l.startsWith('#') &&
+      !l.startsWith('|') &&
+      !/^[-*+]\s/.test(l) &&
+      l.length > 16,
+    )
+    summary = stripMarkdownInline(para || content)
+  }
+
+  if (summary.length > 240) summary = summary.slice(0, 240) + '…'
+  return { title, summary }
+}
+
+function isSearchExpanded(key: string): boolean {
+  return searchExpandedIds.value.has(key)
+}
+
+function toggleSearchExpand(key: string) {
+  const next = new Set(searchExpandedIds.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  searchExpandedIds.value = next
+}
+
+function collapseAllSearchResults() {
+  searchExpandedIds.value = new Set()
+}
+
+const searchResultPreviews = computed(() => {
+  const map = new Map<string, { title: string; summary: string }>()
+  if (!searchResults.value) return map
+  searchResults.value.results.forEach((r, idx) => {
+    map.set(searchResultKey(r, idx), extractEntryPreview(r.content))
+  })
+  return map
+})
+
+function getSearchPreview(key: string) {
+  return searchResultPreviews.value.get(key) || { title: '', summary: '' }
+}
 
 // ─── Skill Drafts ─────────────────────────────────────────────────────────
 const draftsLoading = ref(false)
@@ -871,6 +968,7 @@ async function doSearch() {
   searchLoading.value = true
   try {
     searchResults.value = await semanticSearch(searchQuery.value, searchModule.value || undefined)
+    searchExpandedIds.value = new Set()
   } catch (err) {
     message.error((err as Error).message)
   } finally {
@@ -2253,11 +2351,20 @@ function scoreColor(score: number, max: number): string {
             <p>没有找到与"{{ searchQuery }}"相关的条目</p>
           </div>
           <div v-else class="search-results">
-            <div class="search-meta">找到 {{ searchResults.total }} 条相关结果</div>
+            <div class="search-meta-row">
+              <span class="search-meta">找到 {{ searchResults.total }} 条相关结果</span>
+              <button
+                v-if="searchExpandedIds.size > 0"
+                type="button"
+                class="search-collapse-all"
+                @click="collapseAllSearchResults"
+              >全部收起</button>
+            </div>
             <div
-              v-for="r in searchResults.results"
-              :key="r.id"
+              v-for="(r, idx) in searchResults.results"
+              :key="searchResultKey(r, idx)"
               class="result-card"
+              :class="{ expanded: isSearchExpanded(searchResultKey(r, idx)) }"
             >
               <div class="result-head">
                 <NTag
@@ -2278,10 +2385,37 @@ function scoreColor(score: number, max: number): string {
                   <span class="relevance-pct">{{ Math.round(r.search_relevance || 0) }}% 匹配</span>
                 </div>
               </div>
-              <MarkdownRenderer class="result-body" :content="r.content" />
-              <div class="result-foot" v-if="r.keywords?.length">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#aaa" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
-                {{ r.keywords.join(' · ') }}
+
+              <template v-if="!isSearchExpanded(searchResultKey(r, idx))">
+                <div
+                  v-if="getSearchPreview(searchResultKey(r, idx)).title"
+                  class="result-snippet-title"
+                >{{ getSearchPreview(searchResultKey(r, idx)).title }}</div>
+                <p class="result-snippet">{{ getSearchPreview(searchResultKey(r, idx)).summary }}</p>
+              </template>
+
+              <div v-else class="result-full">
+                <MarkdownRenderer class="result-body" :content="r.content" />
+              </div>
+
+              <div class="result-actions">
+                <div class="result-foot" v-if="r.keywords?.length">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#aaa" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                  {{ r.keywords.slice(0, 6).join(' · ') }}
+                </div>
+                <button
+                  type="button"
+                  class="result-toggle"
+                  @click="toggleSearchExpand(searchResultKey(r, idx))"
+                >
+                  {{ isSearchExpanded(searchResultKey(r, idx)) ? '收起' : '展开全文' }}
+                  <svg
+                    width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    :style="{ transform: isSearchExpanded(searchResultKey(r, idx)) ? 'rotate(180deg)' : 'none' }"
+                  >
+                    <polyline points="6 9 12 15 18 9"/>
+                  </svg>
+                </button>
               </div>
             </div>
           </div>
@@ -3209,10 +3343,19 @@ function scoreColor(score: number, max: number): string {
       v-model:show="showSkillPreview"
       preset="card"
       :title="previewDraft ? `Skill 预览：${previewDraft.skill_name}` : 'Skill 预览'"
-      style="width: 92%; max-width: 960px"
+      class="skill-preview-modal"
+      :style="{ width: '92%', maxWidth: '960px' }"
+      :content-style="{
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        flex: '1 1 auto',
+        minHeight: '0',
+        padding: '12px 20px 0',
+      }"
       @after-leave="previewDraft = null"
     >
-      <NSpin :show="previewLoading">
+      <NSpin :show="previewLoading" class="skill-preview-spin">
         <div v-if="previewDraft" class="skill-preview-wrap">
           <div class="skill-preview-meta">
             <div class="skill-preview-meta-row">
@@ -3234,9 +3377,11 @@ function scoreColor(score: number, max: number): string {
               <span v-if="previewDraft.source_document_ids?.length"> · {{ previewDraft.source_document_ids.length }} 个源文档</span>
             </div>
           </div>
-          <NScrollbar style="max-height: 65vh; margin-top: 12px">
-            <MarkdownRenderer class="skill-preview-body" :content="previewDraft.content || '（暂无内容）'" />
-          </NScrollbar>
+          <div class="skill-preview-scroll">
+            <div class="skill-preview-body-inner">
+              <MarkdownRenderer class="skill-preview-body" :content="previewDraft.content || '（暂无内容）'" />
+            </div>
+          </div>
         </div>
         <NEmpty v-else description="暂无预览内容" />
       </NSpin>
@@ -4121,7 +4266,24 @@ function scoreColor(score: number, max: number): string {
   font-size: 13px;
 }
 .search-results { display: flex; flex-direction: column; gap: 10px; }
-.search-meta { font-size: 12px; color: #888; padding: 4px 0 8px; }
+.search-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0 8px;
+}
+.search-meta { font-size: 12px; color: #888; }
+.search-collapse-all {
+  border: none;
+  background: none;
+  font-size: 12px;
+  color: #2080f0;
+  cursor: pointer;
+  padding: 2px 4px;
+  font-family: inherit;
+}
+.search-collapse-all:hover { text-decoration: underline; }
 
 .result-card {
   padding: 14px 16px;
@@ -4129,6 +4291,10 @@ function scoreColor(score: number, max: number): string {
   border: 1px solid rgba(0,0,0,.07);
   background: var(--n-color-modal, #fafafa);
   transition: border-color .15s, box-shadow .15s;
+}
+.result-card.expanded {
+  border-color: rgba(32,128,240,.25);
+  box-shadow: 0 2px 12px rgba(32,128,240,.06);
 }
 .result-card:hover {
   border-color: rgba(32,128,240,.3);
@@ -4148,8 +4314,51 @@ function scoreColor(score: number, max: number): string {
 }
 .relevance-fill { height: 100%; background: linear-gradient(90deg, #2080f0, #0ea5e9); border-radius: 2px; }
 .relevance-pct { font-size: 11px; color: #2080f0; font-weight: 600; white-space: nowrap; }
+.result-snippet-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--n-text-color);
+  margin-bottom: 6px;
+  line-height: 1.45;
+}
+.result-snippet {
+  font-size: 13px;
+  color: var(--n-text-color-2, #666);
+  line-height: 1.65;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.result-full { margin-top: 4px; }
 .result-body { font-size: 13px; color: var(--n-text-color); line-height: 1.6; }
-.result-foot { font-size: 11px; color: #aaa; margin-top: 8px; display: flex; align-items: center; gap: 4px; }
+.result-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0,0,0,.05);
+}
+.result-foot { font-size: 11px; color: #aaa; display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+.result-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2080f0;
+  cursor: pointer;
+  padding: 2px 4px;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+.result-toggle:hover { text-decoration: underline; }
+.result-toggle svg { transition: transform .15s; }
 
 /* ── Review Drawer ───────────────────────────────────── */
 .review-body { display: flex; flex-direction: column; gap: 16px; padding: 4px 0; }
@@ -4652,10 +4861,76 @@ function scoreColor(score: number, max: number): string {
 }
 
 /* ── Skill 预览 Modal ───────────────────────────────── */
-.skill-preview-wrap { display: flex; flex-direction: column; }
+.skill-preview-spin {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+
+  :deep(.n-spin-content) {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+.skill-preview-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: min(62vh, calc(100vh - 260px));
+  max-height: min(62vh, calc(100vh - 260px));
+  overflow: hidden;
+}
+.skill-preview-meta {
+  flex-shrink: 0;
+  padding-bottom: 4px;
+}
 .skill-preview-meta-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .skill-preview-meta-sub { margin-top: 8px; font-size: 12px; color: var(--n-text-color-3); }
-.skill-preview-body { padding: 8px 4px 16px; font-size: 13px; line-height: 1.7; }
+.skill-preview-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  margin-top: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.skill-preview-body-inner {
+  padding: 4px 12px 16px 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+.skill-preview-body {
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.skill-preview-body-inner :deep(.markdown-body) {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.skill-preview-body-inner :deep(table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.skill-preview-body-inner :deep(pre),
+.skill-preview-body-inner :deep(.hljs-code-block) {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.skill-preview-body-inner :deep(.hljs-code-block code.hljs) {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 /* ── Skill 编辑器 Drawer ─────────────────────────────── */
 .skill-editor-wrap {
@@ -5150,5 +5425,21 @@ function scoreColor(score: number, max: number): string {
   font-weight: 600;
   color: #2080f0;
   margin-right: 8px;
+}
+</style>
+
+<style lang="scss">
+/* Skill 预览 Modal：固定卡片高度，避免正文撑开整页 */
+.skill-preview-modal.n-modal .n-card {
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+}
+.skill-preview-modal.n-modal .n-card__content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 </style>

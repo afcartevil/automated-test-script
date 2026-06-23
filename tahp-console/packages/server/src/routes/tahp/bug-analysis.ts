@@ -32,6 +32,10 @@ import { searchJQL, parseIssueKey } from '../../services/tahp/jira'
 import type { JiraConfig } from '../../services/tahp/jira'
 import { readBugLog, recordDistillRequest, listDistillRequests } from '../../services/tahp/bug-analysis-logger'
 import { depositDistilledEntry, type DepositDistilledResult } from './knowledge'
+import {
+  extractJiraFromBugReport,
+  prependDistillJiraHeader,
+} from '../../services/tahp/distill-jira-header'
 import { logger } from '../../services/logger'
 
 export const tahpBugAnalysisRoutes = new Router({ prefix: '/api/tahp/bug-analysis' })
@@ -231,11 +235,12 @@ tahpBugAnalysisRoutes.post('/:taskId/distill', async (ctx) => {
   if (!content) {
     const parts: string[] = []
     if (report.title) parts.push(`# ${report.title}`)
-    if (report.jira_key) parts.push(`> JIRA: ${report.jira_key}`)
     if (report.report_body) parts.push(String(report.report_body))
     else if (report.llm_response) parts.push(String(report.llm_response))
     content = parts.join('\n\n').trim()
   }
+
+  content = prependDistillJiraHeader(content, extractJiraFromBugReport(report as Record<string, unknown>))
   if (note) content += `\n\n---\n**人工补充**：${note}`
 
   try {
