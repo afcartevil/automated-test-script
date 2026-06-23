@@ -11,7 +11,7 @@
  *   - 维护 Bug 分析任务上下文（单条 / JQL 批量）
  *   - 把 Bug 任务投递到 Agent Bridge，监听并转发 tool.started / tool.completed / 文本 delta
  *   - 通过 TaskStream 推送 task.* 事件给前端实时显示
- *   - 支持"补充信息继续分析"（带前次上下文重跑）
+ *   - 支持"补充信息继续分析"（同任务、同 Agent 会话续聊）
  *
  * 报告落盘：
  *   reports/bug-analysis/<task-id>.json
@@ -65,7 +65,7 @@ import {
 // ─── Agent Bridge 客户端（单例） ────────────────────────────────────────────
 //
 // 复用一个 AgentBridgeClient（短连接），交给每个 task 独立的 session_id。
-// 任务结束后会 destroy(session) 释放 Agent Pool 资源。
+// 任务成功结束后保留 session 供「补充信息继续分析」续聊；失败/中断时 destroy。
 //
 // 超时设置较长（30 分钟）：考虑到 Agent 真正会跑日志下载等耗时操作。
 const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
@@ -272,6 +272,8 @@ export async function deleteBugReport(taskId: string): Promise<{ ok: boolean; er
       deleted = true
     }
     taskRuntime.delete(taskId)
+    const agentSessionId = `tahp-bug-${taskId}`
+    sharedBridgeClient.destroy(agentSessionId).catch(() => {})
   } catch (err) {
     return { ok: false, error: (err as Error).message }
   }
@@ -310,9 +312,12 @@ interface AgentRunCallbacks {
 
 async function runAgentChat(
   sessionId: string,
-  instructions: string,
   userMessage: string,
   cb: AgentRunCallbacks,
+  options?: {
+    instructions?: string
+    conversationHistory?: unknown[]
+  },
 ): Promise<{ fullResponse: string; runId: string }> {
   const manager = getAgentBridgeManager()
   if (!manager.running) {
@@ -327,9 +332,9 @@ async function runAgentChat(
     started = await sharedBridgeClient.chat(
       sessionId,
       userMessage,
-      undefined, // conversation_history
-      instructions,
-      'default', // profile
+      options?.conversationHistory,
+      options?.instructions,
+      'default',
     )
   } catch (err) {
     throw new Error(`Agent 启动失败: ${(err as Error).message}`)
@@ -601,7 +606,7 @@ function buildBugAnalysisInstructions(userMessage: string): string {
   return tahpCtx ? `${base}\n\n${tahpCtx}` : base
 }
 
-function buildAgentUserMessage(ctx: BugAnalysisTaskCtx, correction?: string): string {
+function buildAgentUserMessage(ctx: BugAnalysisTaskCtx): string {
   const blocks: string[] = []
   blocks.push(`# 待分析 Bug`)
   blocks.push(`- JIRA Key: **${ctx.jiraKey}**`)
@@ -618,53 +623,160 @@ function buildAgentUserMessage(ctx: BugAnalysisTaskCtx, correction?: string): st
     blocks.push(ctx.extraContext)
   }
 
-  if (ctx.prevResponse) {
-    blocks.push('')
-    blocks.push('## 上一轮 Agent 分析结果（请基于此更新 / 修正）')
-    blocks.push(ctx.prevResponse.slice(0, 4000))
-  }
-  if (correction) {
-    blocks.push('')
-    blocks.push('## 用户本轮补充信息 / 修正意见')
-    blocks.push(correction)
-    blocks.push('')
-    blocks.push('请基于上述补充重新生成完整的 8 节分析报告。')
-  } else {
-    blocks.push('')
-    blocks.push('请严格按系统提示词的五步工作流执行：jira-ops 拉 JIRA → jira-ops 下载日志 → 匹配 Skill → 分析 → 输出 8 节报告；每步完成后输出 TAHP_STAGE 标记。')
-  }
+  blocks.push('')
+  blocks.push('请严格按系统提示词的五步工作流执行：jira-ops 拉 JIRA → jira-ops 下载日志 → 匹配 Skill → 分析 → 输出 8 节报告；每步完成后输出 TAHP_STAGE 标记。')
 
   return blocks.join('\n')
+}
+
+function buildContinueUserMessage(correction: string): string {
+  return [
+    '## 用户补充信息 / 修正意见',
+    correction,
+    '',
+    '请基于我们之前的对话与上述补充，重新生成完整的 8 节分析报告。',
+  ].join('\n')
+}
+
+function loadFirstUserPrompt(taskId: string): string | null {
+  const p = join(promptDirFor(taskId), 'user-prompt.md')
+  if (!existsSync(p)) return null
+  try {
+    return readFileSync(p, 'utf-8')
+  } catch {
+    return null
+  }
+}
+
+interface ConversationRound {
+  user: string
+  assistant: string
+}
+
+async function bridgeSessionAlive(sessionId: string): Promise<boolean> {
+  try {
+    await sharedBridgeClient.getHistory(sessionId)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function buildConversationHistoryFromReport(
+  taskId: string,
+  ctx: BugAnalysisTaskCtx,
+): Array<{ role: string; content: string }> {
+  const report = readBugReport(taskId) as Record<string, unknown> | null
+  const history: Array<{ role: string; content: string }> = []
+  const rounds = report?.conversation_rounds as ConversationRound[] | undefined
+
+  if (Array.isArray(rounds) && rounds.length > 0) {
+    for (const round of rounds) {
+      if (round.user) history.push({ role: 'user', content: round.user })
+      if (round.assistant) history.push({ role: 'assistant', content: round.assistant })
+    }
+    return history
+  }
+
+  const firstUser = loadFirstUserPrompt(taskId) || buildAgentUserMessage(ctx)
+  history.push({ role: 'user', content: firstUser })
+  if (report?.llm_response) {
+    history.push({ role: 'assistant', content: String(report.llm_response) })
+  }
+
+  const pastCorrections = ctx.corrections.slice(0, -1)
+  for (const c of pastCorrections) {
+    history.push({ role: 'user', content: buildContinueUserMessage(c) })
+  }
+
+  return history
+}
+
+function restoreCtxFromReport(taskId: string, report: Record<string, unknown>): BugAnalysisTaskCtx {
+  return {
+    taskId,
+    jiraKey: String(report.jira_key || ''),
+    jiraUrl: String(report.jira_url || ''),
+    module: report.module as TahpBugModule | undefined,
+    title: typeof report.title === 'string' ? report.title : undefined,
+    rawInput: typeof report.jira_key === 'string' ? report.jira_key : undefined,
+    userDescription: typeof report.user_description === 'string' ? report.user_description : undefined,
+    extraContext: typeof report.extra_context === 'string' ? report.extra_context : undefined,
+    startedAt: String(report.started_at || new Date().toISOString()),
+    status: 'completed',
+    phase: 'COMPLETED',
+    progress: 100,
+    corrections: Array.isArray(report.corrections) ? [...report.corrections as string[]] : [],
+    skillsUsed: Array.isArray(report.skills_used) ? [...report.skills_used as string[]] : [],
+    prevResponse: typeof report.llm_response === 'string' ? report.llm_response : undefined,
+    llmResponse: typeof report.llm_response === 'string' ? report.llm_response : undefined,
+    completedAt: typeof report.completed_at === 'string' ? report.completed_at : undefined,
+    jiraSnapshot: (report.jira as Record<string, string> | undefined),
+  }
+}
+
+interface RunBugAnalysisOptions {
+  mode?: 'initial' | 'continue'
 }
 
 // ─── 单条 Bug 分析（核心执行 - Agent 模式） ─────────────────────────────────
 
 async function runSingleBugAnalysis(
   ctx: BugAnalysisTaskCtx,
-  correction?: string,        // 补充信息继续分析时传入
+  correction?: string,
+  options: RunBugAnalysisOptions = {},
 ): Promise<void> {
   const startMs = Date.now()
   const taskId = ctx.taskId
+  const isContinue = options.mode === 'continue'
   if (ctx.status === 'cancelled') return
   ctx.status = 'running'
   ctx.skillsUsed = ctx.skillsUsed || []
   taskCtx.set(taskId, ctx)
   pruneOldTasks()
 
-  logBug(taskId, 'info', `开始 Bug 分析 (Agent 模式) task=${taskId} jira=${ctx.jiraKey}${correction ? ' (continue)' : ''}`)
+  logBug(taskId, 'info', `开始 Bug 分析 (Agent 模式) task=${taskId} jira=${ctx.jiraKey}${isContinue ? ' (continue)' : ''}`)
 
-  // 用于 destroy session 的 sessionId（即使提前 throw 也能回收）
   const agentSessionId = `tahp-bug-${taskId}`
   taskRuntime.set(taskId, { sessionId: agentSessionId, interruptRequested: false })
 
   const stageMarkerState = { lastIndex: 0 }
+  let succeeded = false
 
   try {
-    const userMessage = buildAgentUserMessage(ctx, correction)
-    const instructions = buildBugAnalysisInstructions(userMessage)
-    const promptLog = saveAgentPromptLog(taskId, 'bug-analysis', instructions, userMessage)
-    logBug(taskId, 'info', `Agent 提示词已落盘: ${promptLog.promptDir}`)
-    emitPrepPhase(taskId, ctx, 'PREPARING', '准备提交给 Agent（提示词已落盘）...')
+    let userMessage: string
+    let instructions: string | undefined
+    let conversationHistory: unknown[] | undefined
+
+    if (isContinue && correction) {
+      const roundNum = ctx.corrections.length
+      emit(taskId, 'task.message', {
+        level: 'round_divider',
+        text: `\n\n---\n\n**用户补充（第 ${roundNum} 轮）**\n\n${correction}\n\n`,
+      })
+
+      userMessage = buildContinueUserMessage(correction)
+      const sessionAlive = await bridgeSessionAlive(agentSessionId)
+      if (sessionAlive) {
+        logBug(taskId, 'info', `continue: reusing bridge session ${agentSessionId}`)
+        instructions = undefined
+        conversationHistory = undefined
+      } else {
+        logBug(taskId, 'info', `continue: rebuilding conversation history for ${agentSessionId}`)
+        conversationHistory = buildConversationHistoryFromReport(taskId, ctx)
+        instructions = buildBugAnalysisInstructions(userMessage)
+      }
+
+      ctx.llmResponse = ''
+      saveAgentPromptLog(taskId, 'bug-analysis', instructions || '(session continue — no new system prompt)', userMessage)
+    } else {
+      userMessage = buildAgentUserMessage(ctx)
+      instructions = buildBugAnalysisInstructions(userMessage)
+      const promptLog = saveAgentPromptLog(taskId, 'bug-analysis', instructions, userMessage)
+      logBug(taskId, 'info', `Agent 提示词已落盘: ${promptLog.promptDir}`)
+    }
+
+    emitPrepPhase(taskId, ctx, 'PREPARING', isContinue ? '准备继续 Agent 对话...' : '准备提交给 Agent（提示词已落盘）...')
 
     emitPrepPhase(taskId, ctx, 'CONNECTING_AGENT', '连接 Agent Bridge...')
     const manager = getAgentBridgeManager()
@@ -679,7 +791,7 @@ async function runSingleBugAnalysis(
     let lastSkillHitIdx = 0
     let toolCallCount = 0
 
-    const { fullResponse } = await runAgentChat(agentSessionId, instructions, userMessage, {
+    const { fullResponse } = await runAgentChat(agentSessionId, userMessage, {
       onText: (delta) => {
         emit(taskId, 'task.message', { level: 'stream', text: delta })
 
@@ -728,7 +840,7 @@ async function runSingleBugAnalysis(
       onReasoning: (text) => {
         if (text) emit(taskId, 'task.message', { level: 'reasoning', text })
       },
-    })
+    }, { instructions, conversationHistory })
 
     ctx.llmResponse = fullResponse
     ingestStageMarkersFromText(taskId, ctx, fullResponse, stageMarkerState)
@@ -745,7 +857,6 @@ async function runSingleBugAnalysis(
     emit(taskId, 'task.step', { step_id: 'generate-report', status: 'running', message: '正在落盘 JSON 报告...' })
 
     ctx.prevResponse = fullResponse
-    if (correction) ctx.corrections.push(correction)
 
     const completedAt = new Date().toISOString()
     const durationMs = Date.now() - startMs
@@ -756,10 +867,16 @@ async function runSingleBugAnalysis(
     emit(taskId, 'task.phase', {
       phase: 'COMPLETED',
       progress: 100,
-      message: 'Bug 分析完成',
+      message: isContinue ? `补充分析完成（第 ${ctx.corrections.length} 轮）` : 'Bug 分析完成',
     })
 
     const reportBody = extractBugAnalysisReportBody(fullResponse)
+    const existingReport = readBugReport(taskId) as Record<string, unknown> | null
+    const prevRounds = (existingReport?.conversation_rounds as ConversationRound[] | undefined) || []
+    const conversationRounds: ConversationRound[] = isContinue && correction
+      ? [...prevRounds, { user: userMessage, assistant: fullResponse }]
+      : [{ user: userMessage, assistant: fullResponse }]
+
     const report = {
       task_id: taskId,
       jira_key: ctx.jiraKey,
@@ -769,13 +886,13 @@ async function runSingleBugAnalysis(
       status: 'completed',
       execution_mode: 'agent',
       agent_session_id: agentSessionId,
-      started_at: ctx.startedAt,
+      started_at: (existingReport?.started_at as string) || ctx.startedAt,
       completed_at: completedAt,
       duration_ms: durationMs,
       user_description: ctx.userDescription,
       extra_context: ctx.extraContext,
       corrections: ctx.corrections,
-      correction_of: undefined,
+      conversation_rounds: conversationRounds,
       skills_used: ctx.skillsUsed,
       tool_call_count: toolCallCount,
       llm_response: fullResponse,
@@ -797,8 +914,13 @@ async function runSingleBugAnalysis(
       duration_ms: durationMs,
       skills_used: ctx.skillsUsed,
       response_length: fullResponse.length,
-      message: `Bug 分析完成（${ctx.jiraKey}），使用 Skill: ${ctx.skillsUsed.join(', ') || '无'}`,
+      continue_round: isContinue ? ctx.corrections.length : undefined,
+      message: isContinue
+        ? `补充分析完成（第 ${ctx.corrections.length} 轮，${ctx.jiraKey}）`
+        : `Bug 分析完成（${ctx.jiraKey}），使用 Skill: ${ctx.skillsUsed.join(', ') || '无'}`,
     })
+
+    succeeded = true
 
     // ── 更新父 job 状态 ───────────────────────────────────────────────────
     if (ctx.parentJobId) {
@@ -834,30 +956,44 @@ async function runSingleBugAnalysis(
     ctx.status = interruptedByUser ? 'cancelled' : 'failed'
     ctx.error = msg
     ctx.completedAt = new Date().toISOString()
-    if (interruptedByUser) {
+    if (isContinue && correction) {
+      const idx = ctx.corrections.lastIndexOf(correction)
+      if (idx >= 0) ctx.corrections.splice(idx, 1)
+      ctx.status = 'completed'
+      ctx.phase = 'COMPLETED'
+      ctx.progress = 100
+      emit(taskId, 'task.continue_failed', { error: msg, message: `补充分析失败: ${msg}` })
+      emit(taskId, 'task.phase', {
+        phase: 'COMPLETED',
+        progress: 100,
+        message: '补充分析失败，可再次尝试',
+      })
+    } else if (interruptedByUser) {
       emit(taskId, 'task.cancelled', { error: msg, message: msg })
     } else {
       emit(taskId, 'task.failed', { error: msg, message: `分析失败: ${msg}` })
     }
 
-    // 写入失败报告
-    try {
-      const report = {
-        task_id: taskId,
-        jira_key: ctx.jiraKey,
-        jira_url: ctx.jiraUrl,
-        module: ctx.module,
-        status: 'failed',
-        error: msg,
-        started_at: ctx.startedAt,
-        completed_at: ctx.completedAt,
-        user_description: ctx.userDescription,
-        extra_context: ctx.extraContext,
-      }
-      writeFileSync(reportPath(taskId), JSON.stringify(report, null, 2), 'utf-8')
-    } catch { /* swallow */ }
+    // 写入失败报告（补充继续失败时保留原 completed 报告）
+    if (!isContinue) {
+      try {
+        const report = {
+          task_id: taskId,
+          jira_key: ctx.jiraKey,
+          jira_url: ctx.jiraUrl,
+          module: ctx.module,
+          status: 'failed',
+          error: msg,
+          started_at: ctx.startedAt,
+          completed_at: ctx.completedAt,
+          user_description: ctx.userDescription,
+          extra_context: ctx.extraContext,
+        }
+        writeFileSync(reportPath(taskId), JSON.stringify(report, null, 2), 'utf-8')
+      } catch { /* swallow */ }
+    }
 
-    if (ctx.parentJobId) {
+    if (!isContinue && ctx.parentJobId) {
       const job = jobCtx.get(ctx.parentJobId)
       if (job) {
         job.failed += 1
@@ -873,10 +1009,11 @@ async function runSingleBugAnalysis(
       }
     }
   } finally {
-    // 释放 Agent Pool 中对应的 session（失败/成功都做，幂等）
-    sharedBridgeClient.destroy(agentSessionId).catch((e) => {
-      logBug(taskId, 'warn', `destroy agent session failed: ${(e as Error).message}`)
-    })
+    if (!succeeded) {
+      sharedBridgeClient.destroy(agentSessionId).catch((e) => {
+        logBug(taskId, 'warn', `destroy agent session failed: ${(e as Error).message}`)
+      })
+    }
     taskRuntime.delete(taskId)
     await appendBugLog(taskId, 'info', '── task end ──')
   }
@@ -962,74 +1099,58 @@ export function startSingleBugAnalysis(input: BugAnalysisInput): StartTaskResult
 
 // ─── 公开入口：补充信息继续分析 ─────────────────────────────────────────────
 
-export function continueBugAnalysis(prevTaskId: string, input: ContinueAnalysisInput): StartTaskResult {
-  const prev = taskCtx.get(prevTaskId)
-  if (!prev) {
-    // 尝试从报告恢复（场景：服务重启）
-    const report = readBugReport(prevTaskId) as any
-    if (!report) return { ok: false, error: `找不到原任务 ${prevTaskId}` }
-    const newTaskId = genTaskId()
-    const ctx: BugAnalysisTaskCtx = {
-      taskId: newTaskId,
-      jiraKey: report.jira_key,
-      jiraUrl: report.jira_url,
-      module: report.module as TahpBugModule | undefined,
-      userDescription: report.user_description,
-      extraContext: report.extra_context,
-      startedAt: new Date().toISOString(),
-      status: 'running',
-      corrections: Array.isArray(report.corrections) ? [...report.corrections] : [],
-      skillsUsed: [],
-      prevResponse: report.llm_response,
-    }
-    taskCtx.set(newTaskId, ctx)
-    emit(newTaskId, 'task.started', {
-      type: 'continue',
-      from_task_id: prevTaskId,
-      jira_key: ctx.jiraKey,
-      jira_url: ctx.jiraUrl,
-      message: `补充信息继续分析: ${ctx.jiraKey}（基于报告恢复）`,
-    })
-    setImmediate(() => {
-      runSingleBugAnalysis(ctx, input.additionalInfo).catch(err => {
-        logger.error({ err: (err as Error).message, newTaskId }, '[bug-analysis] continue unhandled')
-      })
-    })
-    return { ok: true, taskId: newTaskId, jiraKey: ctx.jiraKey }
+export function continueBugAnalysis(taskId: string, input: ContinueAnalysisInput): StartTaskResult {
+  const additionalInfo = input.additionalInfo.trim()
+  if (!additionalInfo) return { ok: false, error: '补充信息不能为空' }
+
+  let ctx = taskCtx.get(taskId)
+  const report = readBugReport(taskId) as Record<string, unknown> | null
+
+  if (!ctx && !report) {
+    return { ok: false, error: `找不到任务 ${taskId}` }
   }
 
-  const newTaskId = genTaskId()
-  const ctx: BugAnalysisTaskCtx = {
-    taskId: newTaskId,
-    jiraKey: prev.jiraKey,
-    jiraUrl: prev.jiraUrl,
-    module: prev.module,
-    userDescription: prev.userDescription,
-    extraContext: prev.extraContext,
-    startedAt: new Date().toISOString(),
-    status: 'running',
-    corrections: [...prev.corrections],
-    skillsUsed: [],
-    issue: prev.issue,
-    prevResponse: prev.llmResponse || prev.prevResponse,
+  if (!ctx && report) {
+    ctx = restoreCtxFromReport(taskId, report)
   }
-  taskCtx.set(newTaskId, ctx)
-  emit(newTaskId, 'task.started', {
+
+  if (!ctx) {
+    return { ok: false, error: `找不到任务 ${taskId}` }
+  }
+
+  if (ctx.status === 'running' || ctx.status === 'pending') {
+    return { ok: false, error: '任务正在运行中，请等待完成后再补充' }
+  }
+
+  if (ctx.status !== 'completed') {
+    return { ok: false, error: '仅已完成的分析任务可补充继续' }
+  }
+
+  ctx.corrections = [...ctx.corrections, additionalInfo]
+  ctx.status = 'running'
+  ctx.phase = 'STARTING'
+  ctx.progress = 0
+  ctx.error = undefined
+  ctx.skillsUsed = [...(ctx.skillsUsed || [])]
+  taskCtx.set(taskId, ctx)
+
+  emit(taskId, 'task.continue_started', {
     type: 'continue',
-    from_task_id: prevTaskId,
+    round: ctx.corrections.length,
+    additional_info: additionalInfo,
     jira_key: ctx.jiraKey,
     jira_url: ctx.jiraUrl,
-    message: `补充信息继续分析: ${ctx.jiraKey}`,
+    message: `补充信息继续分析（第 ${ctx.corrections.length} 轮）: ${ctx.jiraKey}`,
   })
-  logBug(newTaskId, 'info', `task.started continue from=${prevTaskId} jira=${ctx.jiraKey}`)
+  logBug(taskId, 'info', `task.continue_started round=${ctx.corrections.length} jira=${ctx.jiraKey}`)
 
   setImmediate(() => {
-    runSingleBugAnalysis(ctx, input.additionalInfo).catch(err => {
-      logger.error({ err: (err as Error).message, newTaskId }, '[bug-analysis] continue unhandled')
+    runSingleBugAnalysis(ctx!, additionalInfo, { mode: 'continue' }).catch(err => {
+      logger.error({ err: (err as Error).message, taskId }, '[bug-analysis] continue unhandled')
     })
   })
 
-  return { ok: true, taskId: newTaskId, jiraKey: ctx.jiraKey }
+  return { ok: true, taskId, jiraKey: ctx.jiraKey }
 }
 
 // ─── 公开入口：JQL 批量分析 ──────────────────────────────────────────────────

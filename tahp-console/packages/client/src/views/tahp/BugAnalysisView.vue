@@ -802,6 +802,16 @@ watch(activeReportTab, (tab) => {
   if (tab === 'log' && currentTaskId.value && !taskLog.value) loadLog()
 })
 
+watch(
+  () => currentTask.value?.status,
+  (status, prev) => {
+    if (isHistoryView.value || !currentTaskId.value) return
+    if (status === 'completed' && prev === 'running') {
+      if (reportDetail.value || activeReportTab.value === 'report') loadReport()
+    }
+  },
+)
+
 function downloadLog() {
   if (!currentTaskId.value || !taskLog.value) {
     message.warning('请先在"任务日志"页加载日志')
@@ -832,7 +842,8 @@ async function submitContinue() {
   const txt = continueText.value.trim()
   if (!txt) { message.warning('请填写补充信息'); return false }
   try {
-    const resp = await continueAnalysis(currentTaskId.value, {
+    const tid = currentTaskId.value
+    const resp = await continueAnalysis(tid, {
       additional_info: txt,
     })
     store.registerTask({
@@ -843,14 +854,13 @@ async function submitContinue() {
       status: 'running',
       phase: 'STARTING',
       progress: 0,
-      started_at: new Date().toISOString(),
+      started_at: currentTask.value?.started_at || new Date().toISOString(),
       title: currentTask.value?.title,
+      skills_used: currentTask.value?.skills_used,
     })
-    store.selectTask(resp.task_id)
-    clearHistoryView()
     activeReportTab.value = 'live'
     showContinueDialog.value = false
-    message.success(`补充分析任务已启动: ${resp.task_id}`)
+    message.success('补充分析已开始，将在当前对话继续输出')
   } catch (err) {
     message.error((err as Error).message)
   }
@@ -1713,7 +1723,7 @@ const liveStreamHint = computed(() => {
       @positive-click="submitContinue"
     >
       <div class="modal-hint">
-        将基于<strong>前次分析的完整上下文 + 你的补充信息</strong>重新生成分析报告，原任务报告会保留。
+        将在<strong>当前任务</strong>中继续 Agent 对话：流式窗口保留此前分析，并在下方追加本轮输出；分析报告 Tab 在完成后更新为最新一版。
       </div>
       <NInput
         v-model:value="continueText"

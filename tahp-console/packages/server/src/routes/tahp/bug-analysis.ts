@@ -140,7 +140,8 @@ tahpBugAnalysisRoutes.post('/:taskId/continue', async (ctx) => {
   }
   const result = continueBugAnalysis(taskId, { additionalInfo })
   if (!result.ok) {
-    ctx.status = 400
+    const isConflict = result.error?.includes('运行中')
+    ctx.status = isConflict ? 409 : 400
     ctx.body = { success: false, error: result.error }
     return
   }
@@ -151,7 +152,6 @@ tahpBugAnalysisRoutes.post('/:taskId/continue', async (ctx) => {
       jira_key: result.jiraKey,
       type: 'continue',
       status: 'running',
-      from_task_id: taskId,
     },
   }
 })

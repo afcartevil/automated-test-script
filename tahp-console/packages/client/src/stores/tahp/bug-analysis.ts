@@ -92,6 +92,19 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             if (ev.payload?.jira_url) t.jira_url = String(ev.payload.jira_url)
             if (ev.payload?.module) t.module = ev.payload.module as BugTask['module']
             break
+          case 'task.continue_started':
+            t.status = 'running'
+            t.phase = 'STARTING'
+            t.progress = 0
+            t.error = undefined
+            if (ev.payload?.jira_key) t.jira_key = String(ev.payload.jira_key)
+            break
+          case 'task.continue_failed':
+            t.status = 'completed'
+            t.phase = 'COMPLETED'
+            t.progress = 100
+            t.error = ev.payload?.error as string
+            break
           case 'task.phase':
             t.phase = ev.payload?.phase as string
             if (typeof ev.payload?.progress === 'number') t.progress = ev.payload.progress as number
@@ -196,7 +209,7 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
       }
     }
     const events = [
-      'task.started', 'task.phase', 'task.step', 'task.message', 'task.stage_detail',
+      'task.started', 'task.continue_started', 'task.continue_failed', 'task.phase', 'task.step', 'task.message', 'task.stage_detail',
       'task.completed', 'task.failed', 'task.cancelled', 'task.skill_use', 'task.tool_completed', 'task.progress',
     ]
     events.forEach(e => s.on(e, handler))
@@ -250,8 +263,12 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
 
   function llmText(taskId: string): string {
     const raw = stream(taskId)
-      .filter(e => e.type === 'task.message' && (e.payload as any)?.level === 'stream')
-      .map(e => String((e.payload as any)?.text ?? ''))
+      .filter(e => {
+        if (e.type !== 'task.message') return false
+        const level = (e.payload as { level?: string })?.level
+        return level === 'stream' || level === 'round_divider'
+      })
+      .map(e => String((e.payload as { text?: string })?.text ?? ''))
       .join('')
     return stripStageMarkers(raw)
   }
