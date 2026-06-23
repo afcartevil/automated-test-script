@@ -143,7 +143,7 @@ async function forceReleaseWindowsGatewayLock(profileDir: string): Promise<void>
   if (lockPid) pids.add(lockPid)
   if (statePid) pids.add(statePid)
 
-  for (const pid of pids) {
+  for (const pid of Array.from(pids)) {
     if (isProcessAlive(pid)) {
       logger.warn('Gateway lock is still held by PID %d; force killing Windows process tree', pid)
       await killWindowsPid(pid)

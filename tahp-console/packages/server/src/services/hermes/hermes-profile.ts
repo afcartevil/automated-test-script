@@ -81,7 +81,7 @@ export function listProfileNamesFromDisk(): string[] {
       }
     }
   } catch {}
-  return [...names].sort((a, b) => {
+  return Array.from(names).sort((a, b) => {
     if (a === 'default') return -1
     if (b === 'default') return 1
     return a.localeCompare(b)

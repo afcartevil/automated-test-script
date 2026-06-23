@@ -30,7 +30,7 @@ const coreCards = [
     tone: 'ea-t-emerald',
     icon: 'shield',
     title: 'AI 自检',
-    summary: '一键体检运行环境、Agent Bridge、Skill、知识库与凭证，确保链路可用。',
+    summary: '周版本、STR4转测版本用例自动化；GMS、稳定性测试AI自规划；gerrit提交code review和测试建议',
   },
 ]
 

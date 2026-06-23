@@ -22,7 +22,12 @@ const child = spawn(
   {
     cwd: consoleRoot,
     stdio: 'inherit',
-    env: { ...process.env, NODE_OPTIONS: '--no-warnings' },
+    env: {
+      ...process.env,
+      NODE_OPTIONS: '--no-warnings',
+      TS_NODE_TRANSPILE_ONLY: 'true',
+      TS_NODE_PROJECT: resolve(consoleRoot, 'packages/server/tsconfig.json'),
+    },
     windowsHide: false,
   },
 )

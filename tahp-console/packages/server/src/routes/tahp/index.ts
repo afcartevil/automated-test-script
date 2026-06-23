@@ -8,6 +8,8 @@ import { tahpAdaptRoutes } from './adapt'
 import { tahpSkillsRoutes } from './skills'
 import { tahpBugAnalysisRoutes } from './bug-analysis'
 import { tahpSelfCheckRoutes } from './self-check'
+import { tahpGerritReviewRoutes } from './gerrit-review'
+import { tahpGerritConfigRoutes } from './gerrit-config'
 
 export function registerTahpRoutes(app: Koa) {
   app.use(tahpKnowledgeRoutes.routes())
@@ -16,4 +18,6 @@ export function registerTahpRoutes(app: Koa) {
   app.use(tahpSkillsRoutes.routes())
   app.use(tahpBugAnalysisRoutes.routes())
   app.use(tahpSelfCheckRoutes.routes())
+  app.use(tahpGerritReviewRoutes.routes())
+  app.use(tahpGerritConfigRoutes.routes())
 }

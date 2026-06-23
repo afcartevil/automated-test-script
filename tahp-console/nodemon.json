@@ -6,6 +6,7 @@
   },
   "env": {
     "TS_NODE_PROJECT": "packages/server/tsconfig.json",
+    "TS_NODE_TRANSPILE_ONLY": "true",
     "HERMES_WEB_UI_STOP_GATEWAYS_ON_SHUTDOWN": "0",
     "AUTH_DISABLED": "1",
     "PORT": "8650"

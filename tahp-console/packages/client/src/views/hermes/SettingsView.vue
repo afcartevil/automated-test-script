@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
+import { useRoute } from "vue-router";
 import {
   NTabs,
   NTabPane,
@@ -14,13 +15,18 @@ import SessionSettings from "@/components/hermes/settings/SessionSettings.vue";
 import PrivacySettings from "@/components/hermes/settings/PrivacySettings.vue";
 import ModelSettings from "@/components/hermes/settings/ModelSettings.vue";
 import AccountSettings from "@/components/hermes/settings/AccountSettings.vue";
+import GerritSettings from "@/components/tahp/settings/GerritSettings.vue";
 import EaPageHead from "@/components/layout/EaPageHead.vue";
 
 const settingsStore = useSettingsStore();
 const { t } = useI18n();
+const route = useRoute();
+const activeTab = ref("account");
 
 onMounted(() => {
   settingsStore.fetchSettings();
+  const tab = String(route.query.tab || "").trim();
+  if (tab) activeTab.value = tab;
 });
 </script>
 
@@ -34,7 +40,7 @@ onMounted(() => {
         size="large"
         :description="t('common.loading')"
       >
-        <NTabs type="line" animated>
+        <NTabs v-model:value="activeTab" type="line" animated>
           <NTabPane name="account" :tab="t('settings.tabs.account')">
             <AccountSettings />
           </NTabPane>
@@ -55,6 +61,9 @@ onMounted(() => {
           </NTabPane>
           <NTabPane name="models" :tab="t('settings.tabs.models')">
             <ModelSettings />
+          </NTabPane>
+          <NTabPane name="gerrit" tab="Gerrit 账号">
+            <GerritSettings />
           </NTabPane>
         </NTabs>
       </NSpin>
