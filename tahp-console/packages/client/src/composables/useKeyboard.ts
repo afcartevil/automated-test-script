@@ -13,7 +13,7 @@ export function useKeyboard() {
 
     if (mod && e.key === 'n') {
       e.preventDefault()
-      chatStore.newChat()
+      void chatStore.newChat()
       return
     }
 

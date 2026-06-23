@@ -4,6 +4,7 @@ import {
   buildSkillExecutionDirective,
   buildTahpContext,
   buildFullTahpSystemContext,
+  invalidateContextIndex,
 } from '../../packages/server/src/services/tahp/context-injector'
 
 describe('tahp skill context injector', () => {
@@ -51,5 +52,18 @@ describe('tahp skill context injector', () => {
     expect(out).toContain('MODEM_P1_Adapt')
     expect(out).toContain('AI 适配调试')
     expect(out).not.toContain('已扫描到的 Skills（共')
+  })
+
+  it('buildTahpContext matches .kb-data entries when indexed', () => {
+    invalidateContextIndex()
+    const out = buildTahpContext('VozWiFi Movistar Colombia 通话界面显示', {
+      includeSkillCatalog: false,
+      includeKnowledge: true,
+    })
+    if (!out) return
+    expect(out).toContain('.kb-data/entries')
+    if (out.includes('相关知识库条目')) {
+      expect(out).toMatch(/vozwifi|VozWIFI|TOS163-37004|Movistar/i)
+    }
   })
 })

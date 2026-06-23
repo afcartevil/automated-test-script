@@ -8,6 +8,15 @@ import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
 import { primeCompletionSound, playCompletionSound } from '@/utils/completion-sound'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
+import {
+  afterToolStarted,
+  createRunAssistState,
+  pickContentTarget,
+  pickReasoningTarget,
+  registerContentMessage,
+  registerReasoningMessage,
+  resetRunAssistState,
+} from '@/utils/run-stream-assistant'
 
 // Re-export ContentBlock for convenience
 export type ContentBlock = ContentBlockImport
@@ -326,6 +335,30 @@ function removeItem(key: string) {
 // Strip the circular `file: File` reference from attachments before caching —
 // File objects don't serialize and we only need name/type/size/url for display.
 
+function resolveProfileDefaultModel(
+  profile: string,
+  profileModelGroups: Array<{
+    profile: string
+    default?: string
+    default_provider?: string
+    groups: Array<{ provider: string; models: string[] }>
+  }>,
+): { provider: string; model: string } {
+  const profileModels = profileModelGroups.find(entry => entry.profile === profile)
+  const groups = profileModels?.groups || []
+  const defaultProvider = profileModels?.default_provider || ''
+  const defaultModel = profileModels?.default || ''
+  const providerGroup = defaultProvider
+    ? groups.find(group => group.provider === defaultProvider)
+    : undefined
+  const fallbackGroup = providerGroup || groups.find(group => group.models.length > 0)
+  const provider = fallbackGroup?.provider || ''
+  const model = fallbackGroup?.models.includes(defaultModel)
+    ? defaultModel
+    : fallbackGroup?.models[0] || ''
+  return { provider, model }
+}
+
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<Session[]>([])
   const activeSessionId = ref<string | null>(null)
@@ -627,14 +660,29 @@ export const useChatStore = defineStore('chat', () => {
     resumeServerWorkingRun(sessionId)
   }
 
-  function newChat(options: { profile?: string; model?: string; provider?: string } = {}) {
+  async function newChat(options: { profile?: string; model?: string; provider?: string } = {}) {
     const appStore = useAppStore()
-    const session = createSession({
-      profile: options.profile,
-      model: options.model || appStore.selectedModel || undefined,
-      provider: options.provider || appStore.selectedProvider || '',
-    })
-    switchSession(session.id)
+    const profilesStore = useProfilesStore()
+
+    if (profilesStore.profiles.length === 0) {
+      try { await profilesStore.fetchProfiles() } catch { /* use default profile */ }
+    }
+    if (appStore.profileModelGroups.length === 0 && appStore.modelGroups.length === 0) {
+      try { await appStore.loadModels() } catch { /* fall back to app defaults */ }
+    }
+
+    const profile = options.profile
+      || profilesStore.activeProfileName
+      || profilesStore.profiles.find(p => p.active)?.name
+      || profilesStore.profiles[0]?.name
+      || 'default'
+
+    const profileDefaults = resolveProfileDefaultModel(profile, appStore.profileModelGroups)
+    const model = options.model || profileDefaults.model || appStore.selectedModel || undefined
+    const provider = options.provider || profileDefaults.provider || appStore.selectedProvider || ''
+
+    const session = createSession({ profile, model, provider })
+    await switchSession(session.id)
   }
 
   async function switchSessionModel(modelId: string, provider?: string, sessionId?: string): Promise<boolean> {
@@ -888,7 +936,11 @@ export const useChatStore = defineStore('chat', () => {
   async function sendMessage(
     content: string,
     attachments?: Attachment[],
-    options?: { instructions?: string },
+    options?: {
+      instructions?: string
+      retrieval_mode?: 'auto' | 'historical' | 'concept' | 'sop' | 'adapt'
+      search_lark?: boolean
+    },
   ) {
     if ((!content.trim() && !(attachments && attachments.length > 0))) return
 
@@ -978,6 +1030,8 @@ export const useChatStore = defineStore('chat', () => {
         queue_id: userMsg.id,
         source: 'cli' as const,
         ...(options?.instructions?.trim() ? { instructions: options.instructions.trim() } : {}),
+        ...(options?.retrieval_mode ? { retrieval_mode: options.retrieval_mode } : {}),
+        ...(options?.search_lark ? { search_lark: true } : {}),
       }
       if (shouldSendInitialSessionConfig && activeSession.value) {
         activeSession.value.messageCount = Math.max(activeSession.value.messageCount || 0, 1)
@@ -1001,7 +1055,7 @@ export const useChatStore = defineStore('chat', () => {
       // Reset on every run.started because one handler may span multiple queued runs.
       let runProducedAssistantText = false
       let runHadToolActivity = false
-      let activeAssistantMessageId: string | null = null
+      const runAssist = createRunAssistState()
 
       const startNextQueuedUser = () => {
         showNextQueuedUserMessage(sid)
@@ -1014,7 +1068,7 @@ export const useChatStore = defineStore('chat', () => {
             updateMessage(sid, m.id, { isStreaming: false })
           }
         })
-        activeAssistantMessageId = null
+        resetRunAssistState(runAssist)
       }
 
       // Send run via Socket.IO and listen to streamed events — all closures capture `sid`
@@ -1109,12 +1163,14 @@ export const useChatStore = defineStore('chat', () => {
               if (!text) break
               runProducedAssistantText = true
               const msgs = getSessionMsgs(sid)
-              const last = activeAssistantMessageId
-                ? msgs.find(m => m.id === activeAssistantMessageId)
-                : null
-              if (last?.role === 'assistant' && last.isStreaming) {
-                last.reasoning = (last.reasoning || '') + text
-                noteReasoningStart(last.id)
+              const target = pickReasoningTarget(msgs, runAssist)
+              if (target) {
+                updateMessage(sid, target.id, {
+                  reasoning: (target.reasoning || '') + text,
+                  isStreaming: true,
+                })
+                registerReasoningMessage(runAssist, target.id)
+                noteReasoningStart(target.id)
               } else {
                 const newId = uid()
                 addMessage(sid, {
@@ -1125,7 +1181,7 @@ export const useChatStore = defineStore('chat', () => {
                   isStreaming: true,
                   reasoning: text,
                 })
-                activeAssistantMessageId = newId
+                registerReasoningMessage(runAssist, newId)
                 noteReasoningStart(newId)
               }
 
@@ -1152,16 +1208,17 @@ export const useChatStore = defineStore('chat', () => {
             case 'message.delta': {
               if (evt.delta) runProducedAssistantText = true
               const msgs = getSessionMsgs(sid)
-              const last = activeAssistantMessageId
-                ? msgs.find(m => m.id === activeAssistantMessageId)
-                : null
-              if (last?.role === 'assistant' && last.isStreaming) {
-                const prev = last.content
+              const target = pickContentTarget(msgs, runAssist)
+              if (target) {
+                const prev = target.content
                 const next = prev + (evt.delta || '')
-                noteThinkingDelta(last.id, prev, next)
-                // 若之前有 reasoning 累积，则 content 到达即视为推理结束。
-                if (last.reasoning) noteReasoningEnd(last.id)
-                last.content = next
+                noteThinkingDelta(target.id, prev, next)
+                if (target.reasoning) noteReasoningEnd(target.id)
+                updateMessage(sid, target.id, {
+                  content: next,
+                  isStreaming: true,
+                })
+                registerContentMessage(runAssist, target.id)
               } else {
                 const newId = uid()
                 const nextContent = evt.delta || ''
@@ -1173,7 +1230,7 @@ export const useChatStore = defineStore('chat', () => {
                   timestamp: Date.now(),
                   isStreaming: true,
                 })
-                activeAssistantMessageId = newId
+                registerContentMessage(runAssist, newId)
               }
 
               break
@@ -1183,13 +1240,15 @@ export const useChatStore = defineStore('chat', () => {
               runHadToolActivity = true
               const msgs = getSessionMsgs(sid)
               const toolCallId = (evt as any).tool_call_id as string | undefined
-              const last = activeAssistantMessageId
-                ? msgs.find(m => m.id === activeAssistantMessageId)
-                : msgs[msgs.length - 1]
-              if (last?.isStreaming) {
+              const last = runAssist.activeAssistantMessageId
+                ? msgs.find(m => m.id === runAssist.activeAssistantMessageId)
+                : runAssist.runReasoningMessageId
+                  ? msgs.find(m => m.id === runAssist.runReasoningMessageId)
+                  : msgs[msgs.length - 1]
+              if (last?.role === 'assistant' && last.isStreaming) {
                 updateMessage(sid, last.id, { isStreaming: false })
               }
-              activeAssistantMessageId = null
+              afterToolStarted(msgs, runAssist)
               const existingTool = toolCallId
                 ? msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
                 : null
@@ -1251,8 +1310,8 @@ export const useChatStore = defineStore('chat', () => {
 
             case 'run.completed': {
               const msgs = getSessionMsgs(sid)
-              const lastMsg = activeAssistantMessageId
-                ? msgs.find(m => m.id === activeAssistantMessageId)
+              const lastMsg = runAssist.activeAssistantMessageId
+                ? msgs.find(m => m.id === runAssist.activeAssistantMessageId)
                 : msgs[msgs.length - 1]
               if (lastMsg?.isStreaming) {
                 updateMessage(sid, lastMsg.id, { isStreaming: false })
@@ -1276,8 +1335,8 @@ export const useChatStore = defineStore('chat', () => {
               if ((evt as any).parsed_content !== undefined) {
                 // Backend has parsed stringified array format, update last assistant message
                 const msgs = getSessionMsgs(sid)
-                const lastAssistant = activeAssistantMessageId
-                  ? msgs.find(m => m.id === activeAssistantMessageId)
+                const lastAssistant = runAssist.activeAssistantMessageId
+                  ? msgs.find(m => m.id === runAssist.activeAssistantMessageId)
                   : [...msgs].reverse().find(m => m.role === 'assistant')
                 if (lastAssistant) {
                   updateMessage(sid, lastAssistant.id, {
@@ -1346,7 +1405,7 @@ export const useChatStore = defineStore('chat', () => {
               } else {
                 cleanup()
               }
-              activeAssistantMessageId = null
+              resetRunAssistState(runAssist)
               updateSessionTitle(sid)
               break
             }
@@ -1429,7 +1488,7 @@ export const useChatStore = defineStore('chat', () => {
     let closed = false
     let runProducedAssistantText = false
     let runHadToolActivity = false
-    let activeAssistantMessageId: string | null = null
+    const runAssist = createRunAssistState()
 
     const cleanup = () => {
       if (closed) return
@@ -1451,7 +1510,7 @@ export const useChatStore = defineStore('chat', () => {
           updateMessage(sid, m.id, { isStreaming: false })
         }
       })
-      activeAssistantMessageId = null
+      resetRunAssistState(runAssist)
     }
 
     // Shared event handler — filters by session_id tag
@@ -1545,12 +1604,14 @@ export const useChatStore = defineStore('chat', () => {
           if (!text) break
           runProducedAssistantText = true
           const msgs = getSessionMsgs(sid)
-          const last = activeAssistantMessageId
-            ? msgs.find(m => m.id === activeAssistantMessageId)
-            : null
-          if (last?.role === 'assistant' && last.isStreaming) {
-            last.reasoning = (last.reasoning || '') + text
-            noteReasoningStart(last.id)
+          const target = pickReasoningTarget(msgs, runAssist)
+          if (target) {
+            updateMessage(sid, target.id, {
+              reasoning: (target.reasoning || '') + text,
+              isStreaming: true,
+            })
+            registerReasoningMessage(runAssist, target.id)
+            noteReasoningStart(target.id)
           } else {
             const newId = uid()
             addMessage(sid, {
@@ -1561,7 +1622,7 @@ export const useChatStore = defineStore('chat', () => {
               isStreaming: true,
               reasoning: text,
             })
-            activeAssistantMessageId = newId
+            registerReasoningMessage(runAssist, newId)
             noteReasoningStart(newId)
           }
 
@@ -1581,15 +1642,17 @@ export const useChatStore = defineStore('chat', () => {
         case 'message.delta': {
           if (evt.delta) runProducedAssistantText = true
           const msgs = getSessionMsgs(sid)
-          const last = activeAssistantMessageId
-            ? msgs.find(m => m.id === activeAssistantMessageId)
-            : null
-          if (last?.role === 'assistant' && last.isStreaming) {
-            const prev = last.content
+          const target = pickContentTarget(msgs, runAssist)
+          if (target) {
+            const prev = target.content
             const next = prev + (evt.delta || '')
-            noteThinkingDelta(last.id, prev, next)
-            if (last.reasoning) noteReasoningEnd(last.id)
-            last.content = next
+            noteThinkingDelta(target.id, prev, next)
+            if (target.reasoning) noteReasoningEnd(target.id)
+            updateMessage(sid, target.id, {
+              content: next,
+              isStreaming: true,
+            })
+            registerContentMessage(runAssist, target.id)
           } else {
             const newId = uid()
             const nextContent = evt.delta || ''
@@ -1601,7 +1664,7 @@ export const useChatStore = defineStore('chat', () => {
               timestamp: Date.now(),
               isStreaming: true,
             })
-            activeAssistantMessageId = newId
+            registerContentMessage(runAssist, newId)
           }
 
           break
@@ -1611,13 +1674,15 @@ export const useChatStore = defineStore('chat', () => {
           runHadToolActivity = true
           const msgs = getSessionMsgs(sid)
           const toolCallId = (evt as any).tool_call_id as string | undefined
-          const last = activeAssistantMessageId
-            ? msgs.find(m => m.id === activeAssistantMessageId)
-            : msgs[msgs.length - 1]
-          if (last?.isStreaming) {
+          const last = runAssist.activeAssistantMessageId
+            ? msgs.find(m => m.id === runAssist.activeAssistantMessageId)
+            : runAssist.runReasoningMessageId
+              ? msgs.find(m => m.id === runAssist.runReasoningMessageId)
+              : msgs[msgs.length - 1]
+          if (last?.role === 'assistant' && last.isStreaming) {
             updateMessage(sid, last.id, { isStreaming: false })
           }
-          activeAssistantMessageId = null
+          afterToolStarted(msgs, runAssist)
           const existingTool = toolCallId
             ? msgs.find(m => m.role === 'tool' && m.toolCallId === toolCallId)
             : null
@@ -1682,8 +1747,8 @@ export const useChatStore = defineStore('chat', () => {
             queueLengths.value.delete(sid)
           }
           const msgs = getSessionMsgs(sid)
-          const lastMsg = activeAssistantMessageId
-            ? msgs.find(m => m.id === activeAssistantMessageId)
+          const lastMsg = runAssist.activeAssistantMessageId
+            ? msgs.find(m => m.id === runAssist.activeAssistantMessageId)
             : msgs[msgs.length - 1]
           if (lastMsg?.isStreaming) {
             updateMessage(sid, lastMsg.id, { isStreaming: false })
@@ -1701,8 +1766,8 @@ export const useChatStore = defineStore('chat', () => {
           if ((evt as any).parsed_content !== undefined) {
             // Backend has parsed stringified array format, update last assistant message
             const msgs = getSessionMsgs(sid)
-            const lastAssistant = activeAssistantMessageId
-              ? msgs.find(m => m.id === activeAssistantMessageId)
+            const lastAssistant = runAssist.activeAssistantMessageId
+              ? msgs.find(m => m.id === runAssist.activeAssistantMessageId)
               : [...msgs].reverse().find(m => m.role === 'assistant')
             if (lastAssistant) {
               updateMessage(sid, lastAssistant.id, {
@@ -1753,10 +1818,10 @@ export const useChatStore = defineStore('chat', () => {
 
           if (!hasQueue) {
             cleanup()
-            activeAssistantMessageId = null
+            resetRunAssistState(runAssist)
           } else {
             // More runs pending — reset for next run but don't cleanup
-            activeAssistantMessageId = null
+            resetRunAssistState(runAssist)
           }
           updateSessionTitle(sid)
           break

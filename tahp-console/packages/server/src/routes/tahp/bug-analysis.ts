@@ -29,7 +29,7 @@ import {
 import { searchJQL, parseIssueKey } from '../../services/tahp/jira'
 import type { JiraConfig } from '../../services/tahp/jira'
 import { readBugLog, recordDistillRequest, listDistillRequests } from '../../services/tahp/bug-analysis-logger'
-import { depositDistilledEntry, findDistilledEntryByTaskId, type KnowledgeEntry } from './knowledge'
+import { depositDistilledEntry, type DepositDistilledResult } from './knowledge'
 import { logger } from '../../services/logger'
 
 export const tahpBugAnalysisRoutes = new Router({ prefix: '/api/tahp/bug-analysis' })
@@ -191,24 +191,18 @@ tahpBugAnalysisRoutes.post('/:taskId/distill', async (ctx) => {
   if (note) content += `\n\n---\n**人工补充**：${note}`
 
   try {
-    let entry: KnowledgeEntry | undefined
-    let reusedEntry = false
+    let depositResult: DepositDistilledResult | undefined
     if (toKnowledge && content) {
-      const existing = await findDistilledEntryByTaskId(taskId)
-      if (existing) {
-        entry = existing
-        reusedEntry = true
-      } else {
-        entry = await depositDistilledEntry({
-          content,
-          module: typeof body.module === 'string' ? body.module : report.module,
-          func_type: 'bug_analysis',
-          category: typeof body.category === 'string' ? body.category : undefined,
-          source_task_id: taskId,
-          jira_key: report.jira_key,
-        })
-      }
+      depositResult = await depositDistilledEntry({
+        content,
+        module: typeof body.module === 'string' ? body.module : report.module,
+        func_type: 'bug_analysis',
+        category: typeof body.category === 'string' ? body.category : undefined,
+        source_task_id: taskId,
+        jira_key: report.jira_key,
+      })
     }
+    const entry = depositResult?.entry
 
     await recordDistillRequest({
       task_id: taskId,
@@ -222,17 +216,24 @@ tahpBugAnalysisRoutes.post('/:taskId/distill', async (ctx) => {
       result: entry ? 'deposited' : 'recorded',
     })
 
+    const action = depositResult?.action
+    let message = '已记录沉淀请求'
+    if (entry && action === 'created') {
+      message = '已沉淀为知识条目（待审核），可继续关联/生成 Skill'
+    } else if (entry && action === 'updated') {
+      message = `已更新已有知识条目（${entry.jira_key || entry.id}），未重复创建`
+    } else if (entry && action === 'unchanged') {
+      message = `知识库中已存在相同案例（${entry.jira_key || entry.id}），未重复创建`
+    }
+
     ctx.body = {
       success: true,
       data: {
         recorded: true,
         deposited: !!entry,
+        dedup_action: action,
         entry: entry ? { id: entry.id, module: entry.module, func_type: entry.func_type } : null,
-        message: entry
-          ? reusedEntry
-            ? '已复用本任务的知识条目，继续 Skill 关联'
-            : '已沉淀为知识条目（待审核），可继续关联/生成 Skill'
-          : '已记录沉淀请求',
+        message,
       },
     }
   } catch (err) {

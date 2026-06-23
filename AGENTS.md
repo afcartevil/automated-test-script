@@ -16,6 +16,7 @@ TAHP 服务于传音 Android 底软集成部，覆盖通信、驱动、内核、
 | 知识库管理 | `knowledge-base/` + `/tahp/knowledge` |
 | Skill 维护 | `skills/.claude/skills/` |
 | 查看报告 | `reports/` + `/tahp/reports` |
+| 对话分场景检索设计 | [docs/tahp-chat-retrieval-design.md](docs/tahp-chat-retrieval-design.md) |
 | 控制台文档 | [docs/tahp-console.md](docs/tahp-console.md) |
 
 ## 仓库结构
