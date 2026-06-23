@@ -46,7 +46,7 @@ export interface BugTask {
   jira_key: string
   jira_url: string
   module?: TahpBugModule         // 可选 · Agent 回填
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  status: 'pending' | 'running' | 'waiting_user_input' | 'completed' | 'failed' | 'cancelled'
   phase?: string
   progress?: number
   started_at: string
@@ -265,4 +265,18 @@ export function getBugLog(taskId: string): Promise<{ task_id: string; content: s
 
 export function cancelBugTask(taskId: string): Promise<{ ok: boolean; action?: 'cancelled_pending' | 'interrupted_running' }> {
   return tahpPost(`/api/tahp/bug-analysis/tasks/${encodeURIComponent(taskId)}/cancel`)
+}
+
+export function respondBugApproval(
+  taskId: string,
+  payload: { approval_id: string; choice: string },
+): Promise<{ approval_id: string; choice: string }> {
+  return tahpPost(`/api/tahp/bug-analysis/${encodeURIComponent(taskId)}/approval`, payload)
+}
+
+export function submitBugUserInput(
+  taskId: string,
+  payload: { request_id: string; values: Record<string, string> },
+): Promise<{ request_id: string }> {
+  return tahpPost(`/api/tahp/bug-analysis/${encodeURIComponent(taskId)}/user-input`, payload)
 }

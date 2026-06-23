@@ -49,10 +49,42 @@ export interface StageDetailRecord {
   ts: number
 }
 
+export interface BugApprovalRequest {
+  approval_id: string
+  command: string
+  description: string
+  choices: string[]
+  allow_permanent?: boolean
+  timeout_ms: number
+  deadline_at: number
+  auto_action?: string
+}
+
+export interface BugUserInputField {
+  name: string
+  label: string
+  type: 'text' | 'textarea' | 'password' | 'number'
+  required?: boolean
+  placeholder?: string
+  default?: string
+  hint?: string
+}
+
+export interface BugUserInputRequest {
+  request_id: string
+  title: string
+  message?: string
+  fields: BugUserInputField[]
+  timeout_sec: number
+  deadline_at: number
+  persist_key?: string
+}
+
 const STAGE_MARKER_STRIP_RE = /=== TAHP_STAGE:(fetch_jira|download_logs|match_skills|analyze|generate_report) ===\r?\n[\s\S]*?=== END_TAHP_STAGE ===/g
+const USER_INPUT_MARKER_STRIP_RE = /=== TAHP_USER_INPUT ===\r?\n[\s\S]*?=== END_TAHP_USER_INPUT ===/g
 
 function stripStageMarkers(text: string): string {
-  return text.replace(STAGE_MARKER_STRIP_RE, '')
+  return text.replace(STAGE_MARKER_STRIP_RE, '').replace(USER_INPUT_MARKER_STRIP_RE, '')
 }
 
 export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
@@ -61,6 +93,8 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
   const streams = ref<Record<string, StreamEntry[]>>({})
   const skillCalls = ref<Record<string, SkillCallRecord[]>>({})
   const stageDetails = ref<Record<string, Record<string, StageDetailRecord>>>({})
+  const pendingApprovals = ref<Record<string, BugApprovalRequest>>({})
+  const pendingUserInputs = ref<Record<string, BugUserInputRequest>>({})
   const selectedTaskId = ref<string | null>(null)
   const selectedJobId = ref<string | null>(null)
   const loading = ref(false)
@@ -105,6 +139,57 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             t.progress = 100
             t.error = ev.payload?.error as string
             break
+          case 'task.approval_requested': {
+            const approvalId = String(ev.payload?.approval_id || '')
+            if (!approvalId) break
+            pendingApprovals.value = {
+              ...pendingApprovals.value,
+              [tid]: {
+                approval_id: approvalId,
+                command: String(ev.payload?.command || ''),
+                description: String(ev.payload?.description || ''),
+                choices: Array.isArray(ev.payload?.choices) ? ev.payload.choices as string[] : ['once', 'deny'],
+                allow_permanent: ev.payload?.allow_permanent !== false,
+                timeout_ms: Number(ev.payload?.timeout_ms) || 60000,
+                deadline_at: Number(ev.payload?.deadline_at) || Date.now() + 60000,
+                auto_action: typeof ev.payload?.auto_action === 'string' ? ev.payload.auto_action : 'once',
+              },
+            }
+            break
+          }
+          case 'task.approval_resolved': {
+            const next = { ...pendingApprovals.value }
+            delete next[tid]
+            pendingApprovals.value = next
+            break
+          }
+          case 'task.user_input_requested': {
+            const requestId = String(ev.payload?.request_id || '')
+            const fields = Array.isArray(ev.payload?.fields) ? ev.payload.fields as BugUserInputField[] : []
+            if (!requestId || fields.length === 0) break
+            t.status = 'waiting_user_input'
+            t.phase = 'WAITING_USER_INPUT'
+            pendingUserInputs.value = {
+              ...pendingUserInputs.value,
+              [tid]: {
+                request_id: requestId,
+                title: String(ev.payload?.title || '配置输入'),
+                message: typeof ev.payload?.message === 'string' ? ev.payload.message : undefined,
+                fields,
+                timeout_sec: Number(ev.payload?.timeout_sec) || 300,
+                deadline_at: Number(ev.payload?.deadline_at) || Date.now() + 300000,
+                persist_key: typeof ev.payload?.persist_key === 'string' ? ev.payload.persist_key : undefined,
+              },
+            }
+            break
+          }
+          case 'task.user_input_submitted': {
+            const next = { ...pendingUserInputs.value }
+            delete next[tid]
+            pendingUserInputs.value = next
+            t.status = 'running'
+            break
+          }
           case 'task.phase':
             t.phase = ev.payload?.phase as string
             if (typeof ev.payload?.progress === 'number') t.progress = ev.payload.progress as number
@@ -183,12 +268,20 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             t.phase = 'FAILED'
             t.completed_at = new Date(ev.ts).toISOString()
             t.error = ev.payload?.error as string
+            delete pendingApprovals.value[tid]
+            delete pendingUserInputs.value[tid]
+            pendingApprovals.value = { ...pendingApprovals.value }
+            pendingUserInputs.value = { ...pendingUserInputs.value }
             break
           case 'task.cancelled':
             t.status = 'cancelled'
             t.phase = 'CANCELLED'
             t.completed_at = new Date(ev.ts).toISOString()
             t.error = ev.payload?.error as string
+            delete pendingApprovals.value[tid]
+            delete pendingUserInputs.value[tid]
+            pendingApprovals.value = { ...pendingApprovals.value }
+            pendingUserInputs.value = { ...pendingUserInputs.value }
             break
         }
         tasks.value = { ...tasks.value, [tid]: t }
@@ -211,6 +304,8 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
     const events = [
       'task.started', 'task.continue_started', 'task.continue_failed', 'task.phase', 'task.step', 'task.message', 'task.stage_detail',
       'task.completed', 'task.failed', 'task.cancelled', 'task.skill_use', 'task.tool_completed', 'task.progress',
+      'task.approval_requested', 'task.approval_resolved',
+      'task.user_input_requested', 'task.user_input_submitted',
     ]
     events.forEach(e => s.on(e, handler))
     socketBound = true
@@ -305,7 +400,8 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
   )
 
   return {
-    tasks, jobs, streams, skillCalls, stageDetails, selectedTaskId, selectedJobId, loading, lastError,
+    tasks, jobs, streams, skillCalls, stageDetails, pendingApprovals, pendingUserInputs,
+    selectedTaskId, selectedJobId, loading, lastError,
     recentTasks, recentJobs,
     ensureSocket, refresh, refreshTask, registerTask, registerJob,
     stream, skillCallList, llmText, reasoningText, stageDetailMap, structuredEvents, selectTask, selectJob,

@@ -61,6 +61,14 @@ import {
   extractBugAnalysisReportBody,
   type ParsedBugStageMarker,
 } from './bug-analysis-stages'
+import {
+  APPROVAL_AUTO_ONCE_MS,
+  findUserInputMarkers,
+  buildUserInputResumeMessage,
+  type ApprovalRequestPayload,
+  type ParsedUserInputRequest,
+  type UserInputResponseRecord,
+} from './bug-analysis-interaction'
 
 // ─── Agent Bridge 客户端（单例） ────────────────────────────────────────────
 //
@@ -97,7 +105,7 @@ export interface BugAnalysisTaskCtx {
   userDescription?: string
   extraContext?: string
   startedAt: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  status: 'pending' | 'running' | 'waiting_user_input' | 'completed' | 'failed' | 'cancelled'
   phase?: string
   progress?: number
   issue?: JiraIssue               // （已废弃 BFF JIRA fetch；保留字段防旧报告兼容）
@@ -126,12 +134,28 @@ export interface BugAnalysisJobCtx {
 interface TaskRuntimeControl {
   sessionId: string
   interruptRequested: boolean
+  userInputPause?: ParsedUserInputRequest
+}
+
+interface PendingApprovalEntry {
+  timer: ReturnType<typeof setTimeout>
+  resolved: boolean
+  payload: ApprovalRequestPayload
+}
+
+interface PendingUserInputEntry {
+  request: ParsedUserInputRequest
+  expiresAt: number
+  timeoutTimer?: ReturnType<typeof setTimeout>
 }
 
 // ─── 内存状态 ────────────────────────────────────────────────────────────────
 const taskCtx = new Map<string, BugAnalysisTaskCtx>()
 const jobCtx = new Map<string, BugAnalysisJobCtx>()
 const taskRuntime = new Map<string, TaskRuntimeControl>()
+const pendingApprovalsByTask = new Map<string, Map<string, PendingApprovalEntry>>()
+const pendingUserInputByTask = new Map<string, PendingUserInputEntry>()
+const seenUserInputRequestIds = new Map<string, Set<string>>()
 
 const MAX_KEEP = 200
 
@@ -308,6 +332,244 @@ interface AgentRunCallbacks {
   onToolStarted: (toolName: string, args: unknown, toolCallId: unknown) => void
   onToolCompleted: (toolName: string, isError: boolean, toolCallId: unknown) => void
   onReasoning?: (text: string) => void
+  onApprovalRequested?: (payload: ApprovalRequestPayload) => void
+}
+
+function getOrCreateApprovalBucket(taskId: string): Map<string, PendingApprovalEntry> {
+  let bucket = pendingApprovalsByTask.get(taskId)
+  if (!bucket) {
+    bucket = new Map()
+    pendingApprovalsByTask.set(taskId, bucket)
+  }
+  return bucket
+}
+
+function clearApprovalTimers(taskId: string) {
+  const bucket = pendingApprovalsByTask.get(taskId)
+  if (!bucket) return
+  for (const entry of bucket.values()) {
+    clearTimeout(entry.timer)
+  }
+  pendingApprovalsByTask.delete(taskId)
+}
+
+function registerApprovalRequest(taskId: string, payload: ApprovalRequestPayload) {
+  const bucket = getOrCreateApprovalBucket(taskId)
+  if (bucket.has(payload.approval_id)) return
+
+  const timeoutMs = payload.timeout_ms && payload.timeout_ms > 0 ? payload.timeout_ms : APPROVAL_AUTO_ONCE_MS
+  const deadline = Date.now() + timeoutMs
+
+  emit(taskId, 'task.approval_requested', {
+    approval_id: payload.approval_id,
+    command: payload.command,
+    description: payload.description,
+    choices: payload.choices,
+    allow_permanent: payload.allow_permanent !== false,
+    timeout_ms: timeoutMs,
+    deadline_at: deadline,
+    auto_action: 'once',
+    message: 'Agent 请求执行危险命令，请在弹窗中确认（60s 无响应将自动同意一次）',
+  })
+  logBug(taskId, 'info', `approval.requested: ${payload.approval_id} cmd=${payload.command.slice(0, 80)}`)
+
+  const timer = setTimeout(() => {
+    void resolveBugApproval(taskId, payload.approval_id, 'once', 'auto')
+  }, timeoutMs)
+
+  bucket.set(payload.approval_id, { timer, resolved: false, payload })
+}
+
+async function resolveBugApproval(
+  taskId: string,
+  approvalId: string,
+  choice: string,
+  source: 'user' | 'auto',
+): Promise<{ ok: boolean; error?: string }> {
+  const bucket = pendingApprovalsByTask.get(taskId)
+  const entry = bucket?.get(approvalId)
+  if (!entry || entry.resolved) {
+    return { ok: false, error: '审批请求不存在或已处理' }
+  }
+  entry.resolved = true
+  clearTimeout(entry.timer)
+  bucket?.delete(approvalId)
+  if (bucket && bucket.size === 0) pendingApprovalsByTask.delete(taskId)
+
+  try {
+    await sharedBridgeClient.approvalRespond(approvalId, choice)
+  } catch (err) {
+    logBug(taskId, 'warn', `approval.respond failed: ${(err as Error).message}`)
+    return { ok: false, error: (err as Error).message }
+  }
+
+  emit(taskId, 'task.approval_resolved', {
+    approval_id: approvalId,
+    choice,
+    source,
+    message: source === 'auto'
+      ? `危险命令审批超时，已自动同意一次（${choice}）`
+      : `危险命令审批：${choice}`,
+  })
+  logBug(taskId, 'info', `approval.resolved: ${approvalId} choice=${choice} source=${source}`)
+  return { ok: true }
+}
+
+export async function respondBugApproval(
+  taskId: string,
+  approvalId: string,
+  choice: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const allowed = new Set(['once', 'session', 'always', 'deny'])
+  const normalized = allowed.has(choice) ? choice : 'deny'
+  return resolveBugApproval(taskId, approvalId, normalized, 'user')
+}
+
+function getSeenUserInputIds(taskId: string): Set<string> {
+  let set = seenUserInputRequestIds.get(taskId)
+  if (!set) {
+    set = new Set()
+    seenUserInputRequestIds.set(taskId, set)
+  }
+  return set
+}
+
+function persistPartialUserInput(taskId: string, record: UserInputResponseRecord) {
+  const existing = readBugReport(taskId) as Record<string, unknown> | null
+  const prev = Array.isArray(existing?.user_input_responses)
+    ? [...existing!.user_input_responses as UserInputResponseRecord[]]
+    : []
+  prev.push(record)
+  const merged = {
+    ...(existing || {}),
+    task_id: taskId,
+    user_input_responses: prev,
+  }
+  try {
+    writeFileSync(reportPath(taskId), JSON.stringify(merged, null, 2), 'utf-8')
+  } catch (err) {
+    logBug(taskId, 'warn', `user input partial persist failed: ${(err as Error).message}`)
+  }
+}
+
+function requestUserInputPause(
+  taskId: string,
+  ctx: BugAnalysisTaskCtx,
+  request: ParsedUserInputRequest,
+  sessionId: string,
+) {
+  const seen = getSeenUserInputIds(taskId)
+  if (seen.has(request.requestId)) return
+  seen.add(request.requestId)
+
+  const expiresAt = Date.now() + request.timeoutSec * 1000
+  const control = taskRuntime.get(taskId) || { sessionId, interruptRequested: false }
+  control.userInputPause = request
+  taskRuntime.set(taskId, control)
+
+  const timeoutTimer = setTimeout(() => {
+    void autoSubmitEmptyUserInput(taskId, request.requestId)
+  }, request.timeoutSec * 1000)
+
+  pendingUserInputByTask.set(taskId, { request, expiresAt, timeoutTimer })
+
+  ctx.status = 'waiting_user_input'
+  ctx.phase = 'WAITING_USER_INPUT'
+  taskCtx.set(taskId, ctx)
+
+  emit(taskId, 'task.user_input_requested', {
+    request_id: request.requestId,
+    title: request.title,
+    message: request.message,
+    fields: request.fields,
+    timeout_sec: request.timeoutSec,
+    deadline_at: expiresAt,
+    persist_key: request.persistKey,
+    message_hint: '请在弹窗中按格式填写配置；超时后将以空值继续（可在弹窗内查看倒计时）',
+  })
+  logBug(taskId, 'info', `user_input.requested: ${request.requestId} fields=${request.fields.map(f => f.name).join(',')}`)
+
+  setImmediate(() => {
+    sharedBridgeClient.interrupt(sessionId, `等待用户配置输入: ${request.title}`).catch((err) => {
+      logBug(taskId, 'warn', `interrupt for user input failed: ${(err as Error).message}`)
+    })
+  })
+}
+
+async function autoSubmitEmptyUserInput(taskId: string, requestId: string) {
+  const pending = pendingUserInputByTask.get(taskId)
+  if (!pending || pending.request.requestId !== requestId) return
+  const emptyValues: Record<string, string> = {}
+  for (const f of pending.request.fields) {
+    emptyValues[f.name] = f.default || ''
+  }
+  await submitBugUserInput(taskId, requestId, emptyValues, 'auto_timeout')
+}
+
+export async function submitBugUserInput(
+  taskId: string,
+  requestId: string,
+  values: Record<string, string>,
+  source: 'user' | 'auto_timeout' = 'user',
+): Promise<{ ok: boolean; error?: string }> {
+  const pending = pendingUserInputByTask.get(taskId)
+  if (!pending || pending.request.requestId !== requestId) {
+    return { ok: false, error: '配置请求不存在或已过期' }
+  }
+
+  for (const field of pending.request.fields) {
+    if (field.required && !String(values[field.name] ?? '').trim()) {
+      return { ok: false, error: `请填写必填项：${field.label}` }
+    }
+  }
+
+  if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer)
+  const request = pending.request
+  pendingUserInputByTask.delete(taskId)
+
+  const record: UserInputResponseRecord = {
+    request_id: requestId,
+    title: request.title,
+    persist_key: request.persistKey,
+    values: { ...values },
+    submitted_at: new Date().toISOString(),
+  }
+  persistPartialUserInput(taskId, record)
+
+  emit(taskId, 'task.user_input_submitted', {
+    request_id: requestId,
+    values,
+    source,
+    message: source === 'auto_timeout' ? '配置输入超时，已以默认值/空值继续' : '用户已提交配置',
+  })
+  logBug(taskId, 'info', `user_input.submitted: ${requestId} source=${source}`)
+
+  let ctx = taskCtx.get(taskId)
+  if (!ctx) {
+    const report = readBugReport(taskId) as Record<string, unknown> | null
+    if (report) ctx = restoreCtxFromReport(taskId, report)
+  }
+  if (!ctx) return { ok: false, error: `找不到任务 ${taskId}` }
+
+  const control = taskRuntime.get(taskId)
+  if (control) control.userInputPause = undefined
+
+  ctx.status = 'running'
+  ctx.phase = 'ANALYZING'
+  ctx.error = undefined
+  taskCtx.set(taskId, ctx)
+
+  setImmediate(() => {
+    runSingleBugAnalysis(ctx!, undefined, {
+      mode: 'user_input_resume',
+      userInputRequest: request,
+      userInputValues: values,
+    }).catch((err) => {
+      logger.error({ err: (err as Error).message, taskId }, '[bug-analysis] user input resume unhandled')
+    })
+  })
+
+  return { ok: true }
 }
 
 async function runAgentChat(
@@ -357,6 +619,15 @@ async function runAgentChat(
         cb.onToolCompleted(toolName, ev.is_error === true, ev.tool_call_id)
       } else if ((evType === 'reasoning.delta' || evType === 'thinking.delta') && cb.onReasoning) {
         cb.onReasoning(String(ev.text || ''))
+      } else if (evType === 'approval.requested' && cb.onApprovalRequested) {
+        cb.onApprovalRequested({
+          approval_id: String(ev.approval_id || ''),
+          command: String(ev.command || ''),
+          description: String(ev.description || ''),
+          choices: Array.isArray(ev.choices) ? ev.choices.map(String) : ['once', 'session', 'deny'],
+          allow_permanent: ev.allow_permanent !== false,
+          timeout_ms: typeof ev.timeout_ms === 'number' ? ev.timeout_ms : APPROVAL_AUTO_ONCE_MS,
+        })
       }
     }
 
@@ -594,6 +865,29 @@ message: <一句话说明本步结果>
 - 不要编造文件 / 函数 / 配置项名
 - 不要给完整 patch，只给修改方向
 - 工具失败时直接报错并停止该步骤
+
+# 人机协同：结构化用户配置输入（需要用户填写路径/凭证等时）
+
+当需要用户在本机提供**无法由 Agent 自行推断**的配置（如日志保存目录、下载路径、环境变量值）时：
+
+1. **先输出**以下标记块（字段按实际场景填写），**然后停止本轮输出**，等待用户提交：
+\`\`\`
+=== TAHP_USER_INPUT ===
+request_id: <唯一 ID，如 log-dir-001>
+title: <弹窗标题>
+message: <向用户说明为何需要这些配置>
+timeout_sec: 300
+persist_key: <可选，持久化键名，如 jira_log_output_dir>
+field.<name>.label: <字段显示名>
+field.<name>.type: text|textarea|password|number
+field.<name>.required: true|false
+field.<name>.placeholder: <占位提示>
+field.<name>.hint: <可选说明>
+=== END_TAHP_USER_INPUT ===
+\`\`\`
+
+2. 用户提交后，BFF 会以「用户已提交配置」消息继续对话；请据此**持久化配置**并继续后续分析步骤。
+3. 同一 \`request_id\` 不要重复请求。
 `
 
 function buildBugAnalysisInstructions(userMessage: string): string {
@@ -716,7 +1010,9 @@ function restoreCtxFromReport(taskId: string, report: Record<string, unknown>): 
 }
 
 interface RunBugAnalysisOptions {
-  mode?: 'initial' | 'continue'
+  mode?: 'initial' | 'continue' | 'user_input_resume'
+  userInputRequest?: ParsedUserInputRequest
+  userInputValues?: Record<string, string>
 }
 
 // ─── 单条 Bug 分析（核心执行 - Agent 模式） ─────────────────────────────────
@@ -729,6 +1025,7 @@ async function runSingleBugAnalysis(
   const startMs = Date.now()
   const taskId = ctx.taskId
   const isContinue = options.mode === 'continue'
+  const isUserInputResume = options.mode === 'user_input_resume'
   if (ctx.status === 'cancelled') return
   ctx.status = 'running'
   ctx.skillsUsed = ctx.skillsUsed || []
@@ -741,14 +1038,32 @@ async function runSingleBugAnalysis(
   taskRuntime.set(taskId, { sessionId: agentSessionId, interruptRequested: false })
 
   const stageMarkerState = { lastIndex: 0 }
+  const userInputMarkerState = { lastIndex: 0 }
   let succeeded = false
+  let pausedForUserInput = false
 
   try {
     let userMessage: string
     let instructions: string | undefined
     let conversationHistory: unknown[] | undefined
 
-    if (isContinue && correction) {
+    if (isUserInputResume && options.userInputRequest && options.userInputValues) {
+      userMessage = buildUserInputResumeMessage(options.userInputRequest, options.userInputValues)
+      const sessionAlive = await bridgeSessionAlive(agentSessionId)
+      if (sessionAlive) {
+        logBug(taskId, 'info', `user_input_resume: reusing bridge session ${agentSessionId}`)
+        instructions = undefined
+        conversationHistory = undefined
+      } else {
+        conversationHistory = buildConversationHistoryFromReport(taskId, ctx)
+        instructions = buildBugAnalysisInstructions(userMessage)
+      }
+      emit(taskId, 'task.message', {
+        level: 'round_divider',
+        text: `\n\n---\n\n**用户配置已提交（${options.userInputRequest.title}）**\n\n`,
+      })
+      saveAgentPromptLog(taskId, 'bug-analysis-user-input', instructions || '(session continue)', userMessage)
+    } else if (isContinue && correction) {
       const roundNum = ctx.corrections.length
       emit(taskId, 'task.message', {
         level: 'round_divider',
@@ -799,6 +1114,12 @@ async function runSingleBugAnalysis(
         ctx.llmResponse = fullSoFar
         ingestStageMarkersFromText(taskId, ctx, fullSoFar, stageMarkerState)
 
+        const inputHits = findUserInputMarkers(fullSoFar, userInputMarkerState.lastIndex)
+        for (const hit of inputHits) {
+          userInputMarkerState.lastIndex = hit.startIndex + hit.rawBlock.length
+          requestUserInputPause(taskId, ctx, hit, agentSessionId)
+        }
+
         const hits = findSkillUseHits(fullSoFar, lastSkillHitIdx)
         for (const h of hits) {
           if (!ctx.skillsUsed.includes(h.name)) {
@@ -840,7 +1161,17 @@ async function runSingleBugAnalysis(
       onReasoning: (text) => {
         if (text) emit(taskId, 'task.message', { level: 'reasoning', text })
       },
+      onApprovalRequested: (payload) => {
+        if (payload.approval_id) registerApprovalRequest(taskId, payload)
+      },
     }, { instructions, conversationHistory })
+
+    const runtimeAfterChat = taskRuntime.get(taskId)
+    if (runtimeAfterChat?.userInputPause) {
+      pausedForUserInput = true
+      logBug(taskId, 'info', `task paused for user input: ${runtimeAfterChat.userInputPause.requestId}`)
+      return
+    }
 
     ctx.llmResponse = fullResponse
     ingestStageMarkersFromText(taskId, ctx, fullResponse, stageMarkerState)
@@ -898,6 +1229,7 @@ async function runSingleBugAnalysis(
       llm_response: fullResponse,
       report_body: reportBody,
       jira: buildReportJiraSection(ctx),
+      user_input_responses: (existingReport?.user_input_responses as UserInputResponseRecord[] | undefined) || undefined,
     }
     try {
       writeFileSync(reportPath(taskId), JSON.stringify(report, null, 2), 'utf-8')
@@ -949,6 +1281,11 @@ async function runSingleBugAnalysis(
 
   } catch (err) {
     const control = taskRuntime.get(taskId)
+    if (control?.userInputPause) {
+      pausedForUserInput = true
+      logBug(taskId, 'info', `task paused for user input (interrupt): ${control.userInputPause.requestId}`)
+      return
+    }
     const interruptedByUser = control?.interruptRequested === true
     const msg = interruptedByUser ? '任务已被用户中断' : (err as Error).message
     logger.warn({ taskId, err: msg }, '[bug-analysis] failed')
@@ -1009,13 +1346,26 @@ async function runSingleBugAnalysis(
       }
     }
   } finally {
-    if (!succeeded) {
+    if (!pausedForUserInput) {
+      clearApprovalTimers(taskId)
+    }
+    if (!succeeded && !pausedForUserInput) {
       sharedBridgeClient.destroy(agentSessionId).catch((e) => {
         logBug(taskId, 'warn', `destroy agent session failed: ${(e as Error).message}`)
       })
+      taskRuntime.delete(taskId)
+    } else if (pausedForUserInput) {
+      const control = taskRuntime.get(taskId)
+      if (control) {
+        control.interruptRequested = false
+        taskRuntime.set(taskId, control)
+      }
+    } else {
+      taskRuntime.delete(taskId)
     }
-    taskRuntime.delete(taskId)
-    await appendBugLog(taskId, 'info', '── task end ──')
+    if (!pausedForUserInput) {
+      await appendBugLog(taskId, 'info', '── task end ──')
+    }
   }
 }
 
@@ -1118,7 +1468,7 @@ export function continueBugAnalysis(taskId: string, input: ContinueAnalysisInput
     return { ok: false, error: `找不到任务 ${taskId}` }
   }
 
-  if (ctx.status === 'running' || ctx.status === 'pending') {
+  if (ctx.status === 'running' || ctx.status === 'pending' || ctx.status === 'waiting_user_input') {
     return { ok: false, error: '任务正在运行中，请等待完成后再补充' }
   }
 
@@ -1329,6 +1679,23 @@ export async function cancelBugTask(taskId: string): Promise<{ ok: boolean; acti
       }
     }
     return { ok: true, action: 'cancelled_pending' }
+  }
+
+  if (ctx.status === 'waiting_user_input') {
+    const pending = pendingUserInputByTask.get(taskId)
+    if (pending?.timeoutTimer) clearTimeout(pending.timeoutTimer)
+    pendingUserInputByTask.delete(taskId)
+    ctx.status = 'failed'
+    ctx.error = '用户取消配置等待'
+    ctx.completedAt = new Date().toISOString()
+    emit(taskId, 'task.failed', { error: ctx.error, message: ctx.error })
+    logBug(taskId, 'warn', 'task cancelled while waiting_user_input')
+    const control = taskRuntime.get(taskId)
+    if (control) {
+      sharedBridgeClient.destroy(control.sessionId).catch(() => {})
+      taskRuntime.delete(taskId)
+    }
+    return { ok: true, action: 'interrupted_running' }
   }
 
   const control = taskRuntime.get(taskId) || { sessionId: `tahp-bug-${taskId}`, interruptRequested: false }

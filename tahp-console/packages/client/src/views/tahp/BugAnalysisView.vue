@@ -17,9 +17,10 @@ import { useBugAnalysisStore } from '@/stores/tahp/bug-analysis'
 import {
   startSingle, startBatch, continueAnalysis, distillToKnowledge,
   previewJira, previewJql, getBugReport, getBugLog, cancelBugTask,
-  listBugReports, deleteBugReport,
+  listBugReports, deleteBugReport, respondBugApproval, submitBugUserInput,
   type JiraIssueDetail, type JqlPreview, type BugReport, type BugReportSummary, type JiraUserConfig,
 } from '@/api/tahp/bug-analysis'
+import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
 import {
   extractBugAnalysisReportBody,
   stripBugStageMarkers,
@@ -161,6 +162,17 @@ const currentJob = computed(() => currentJobId.value ? store.jobs[currentJobId.v
 
 const isRunning = computed(() => !isHistoryView.value && currentTask.value?.status === 'running')
 const isPending = computed(() => !isHistoryView.value && currentTask.value?.status === 'pending')
+const isWaitingUserInput = computed(() => !isHistoryView.value && currentTask.value?.status === 'waiting_user_input')
+
+const currentPendingApproval = computed(() => {
+  const tid = currentTaskId.value
+  return tid ? store.pendingApprovals[tid] || null : null
+})
+const currentPendingUserInput = computed(() => {
+  const tid = currentTaskId.value
+  return tid ? store.pendingUserInputs[tid] || null : null
+})
+const interactionSubmitting = ref(false)
 
 // 详情 Tab：选择已完成报告时载入
 const activeReportTab = ref<'live' | 'report' | 'jira' | 'log'>('live')
@@ -826,6 +838,39 @@ function downloadLog() {
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 人机协同：危险命令审批 + 结构化配置输入
+// ─────────────────────────────────────────────────────────────────────────────
+async function onApprovalRespond(choice: string) {
+  const tid = currentTaskId.value
+  const ap = currentPendingApproval.value
+  if (!tid || !ap) return
+  interactionSubmitting.value = true
+  try {
+    await respondBugApproval(tid, { approval_id: ap.approval_id, choice })
+    message.success(choice === 'deny' ? '已拒绝执行' : '已确认')
+  } catch (err) {
+    message.error((err as Error).message || '审批提交失败')
+  } finally {
+    interactionSubmitting.value = false
+  }
+}
+
+async function onUserInputSubmit(values: Record<string, string>) {
+  const tid = currentTaskId.value
+  const ui = currentPendingUserInput.value
+  if (!tid || !ui) return
+  interactionSubmitting.value = true
+  try {
+    await submitBugUserInput(tid, { request_id: ui.request_id, values })
+    message.success('配置已提交，Agent 继续分析')
+  } catch (err) {
+    message.error((err as Error).message || '配置提交失败')
+  } finally {
+    interactionSubmitting.value = false
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1562,6 +1607,8 @@ const liveStreamHint = computed(() => {
                 <div class="ea-row ea-between live-llm-header">
                   <strong style="font-size: 13px">AI 分析（流式）</strong>
                   <EaPill v-if="isRunning" variant="info"><span class="ea-dot-live" />分析中</EaPill>
+                  <EaPill v-else-if="isWaitingUserInput" variant="warn">等待配置输入</EaPill>
+                  <EaPill v-else-if="currentPendingApproval" variant="warn">等待命令确认</EaPill>
                   <EaPill v-else-if="isHistoryView || currentTask.status === 'completed'" variant="ok">已完成</EaPill>
                   <EaPill v-else-if="currentTask.status === 'failed'" variant="err">失败</EaPill>
                 </div>
@@ -1654,17 +1701,17 @@ const liveStreamHint = computed(() => {
           <footer class="task-footer">
             <NSpace size="small" wrap>
               <NButton
-                v-if="!isHistoryView && (isRunning || isPending)"
+                v-if="!isHistoryView && (isRunning || isPending || isWaitingUserInput)"
                 type="warning"
                 @click="stopOrCancelCurrentTask"
               >
                 <template #icon>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/></svg>
                 </template>
-                {{ isRunning ? '强行中断当前任务' : '取消等待中的任务' }}
+                {{ isRunning ? '强行中断当前任务' : isWaitingUserInput ? '取消等待配置' : '取消等待中的任务' }}
               </NButton>
 
-              <NButton v-if="!isHistoryView" :disabled="!modelProviderReady || isRunning || isPending || !currentTaskId" @click="openContinue">
+              <NButton v-if="!isHistoryView" :disabled="!modelProviderReady || isRunning || isPending || isWaitingUserInput || !currentTaskId" @click="openContinue">
                 <template #icon>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
                 </template>
@@ -1732,6 +1779,14 @@ const liveStreamHint = computed(() => {
         :autosize="{ minRows: 5, maxRows: 12 }"
       />
     </NModal>
+
+    <BugAnalysisInteractionModal
+      :approval="currentPendingApproval"
+      :user-input="currentPendingUserInput"
+      :submitting="interactionSubmitting"
+      @approval="onApprovalRespond"
+      @user-input="onUserInputSubmit"
+    />
 
     <!-- ────── 知识沉淀弹窗 ────── -->
     <NModal

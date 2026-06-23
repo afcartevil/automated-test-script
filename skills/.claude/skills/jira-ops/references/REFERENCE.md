@@ -8,98 +8,88 @@ From skill root (`jira-ops/`):
 python scripts/api_jira.py <command> [options]
 ```
 
+Optional: copy `.env.example` → `.env` for `FEISHU_*` and `NETWORK_SERVERS`.
+
+## Log download channels
+
+| Channel key | Source examples | Download method |
+|-------------|-----------------|-----------------|
+| `box` | `frbox.transsion.com`, `sgbox.transsion.com` | Aliyun PDS API → Playwright fallback |
+| `feishu_file` | `*.feishu.cn/file/<token>` | Feishu OpenAPI (`FEISHU_APP_ID/SECRET`) |
+| `network_share` | `\\10.x.x.x\share\...`, `Path:` lines | `net use` + file/dir copy (`NETWORK_SERVERS`) |
+| `http_direct` | OSS `.zip`, fanslog HTTP | `requests` stream download |
+
+Text scanned: **summary + description + all comments** (auto-export comment lines filtered).
+
 ## Commands
 
-### 1) config show
+### list-log-sources
 
-Show current Jira config with masked password.
-
-```bash
-python scripts/api_jira.py config show
-```
-
-### 2) config set
-
-Set Jira server, username, password.
+Classify URLs without downloading.
 
 ```bash
-python scripts/api_jira.py config set --server "http://jira.transsion.com/" --user "qing.li3" --password "******"
+python scripts/api_jira.py list-log-sources --issue "OS162-37733"
 ```
 
-### 3) get-issue
+`data.urls_by_type` keys: `box`, `feishu_file`, `network_share`, `http_direct`.
 
-Get issue title, description, comments.
+### download-logs
+
+See prior doc. Add `--channels` to limit sources.
+
+### extract-logs
+
+Recursive decompression under one or more directories.
 
 ```bash
-python scripts/api_jira.py get-issue --issue "CM7OS16-418"
+python scripts/api_jira.py extract-logs --input-dir "./jira_workspace/OS162-37733"
+python scripts/api_jira.py extract-logs --input-dir "./a" --input-dir "./b" --no-recursive
 ```
 
-### 4) add-comment
+Formats: zip, tar, tgz, gz, bz2, rar, 7z. RAR/7z need 7-Zip (`SEVEN_ZIP_EXE`).
 
-Add a comment to one issue.
+`data.extracted_dirs` — log root directories after extraction.
+
+### prepare-logs
+
+Download all channels then extract (recommended).
 
 ```bash
-python scripts/api_jira.py add-comment --issue "CM7OS16-418" --comment "comment text"
+python scripts/api_jira.py prepare-logs --issue "OS162-37733"
+python scripts/api_jira.py prepare-logs --issue "OS162-37733" --output-dir "D:/work/OS162-37733"
 ```
 
-### 5) download-attachments
-
-Download issue attachments to local path.
+### setup-check
 
 ```bash
-python scripts/api_jira.py download-attachments --issue "CM7OS16-418" --output-dir "./jira_attachments"
+python scripts/api_jira.py setup-check
 ```
 
-### 6) get-changelog
+Returns `data.ready` and per-item `checks[]` with `required` flag.
 
-Get issue changelog entries.
+### env
 
 ```bash
-python scripts/api_jira.py get-changelog --issue "CM7OS16-418"
+python scripts/api_jira.py env show
+python scripts/api_jira.py env set FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=yyy
+python scripts/api_jira.py env init-from-user --json '{"FEISHU_APP_ID":"cli_xxx"}'
 ```
 
-### 7) list-log-urls-from-description
+`.env` path: `<skill-root>/.env`
 
-Parse log-related `http(s)` URLs and UNC paths from description without downloading.
+### list-log-sources (legacy list-log-urls-from-description)
 
-```bash
-python scripts/api_jira.py list-log-urls-from-description --issue "X6873OS162-1079"
-python scripts/api_jira.py list-log-urls-from-description --issue "X6873OS162-1079" --all-urls
-```
+Same scan as `list-log-sources`; adds `log_http_urls` filter when `--all-urls` not set.
 
-Response `data` fields:
+### copy-log-from-description (legacy)
 
-- `http_urls`: all http(s) links found
-- `log_http_urls`: filtered log-like links (`.zip`, `fanslog`, `TagLog`, etc.; excludes `.jpg`/`.png`)
-- `unc_paths`: `\\server\share\...` paths
+Wraps `download-logs`. `--http-only` / `--unc-only` map to channel subsets.
 
-### 8) copy-log-from-description
+## Other commands
 
-Download log `http(s)` links and/or copy UNC directory contents to local path.
+See prior sections: `config`, `get-issue`, `add-comment`, `download-attachments`, `get-changelog`.
 
-```bash
-# OSS / http log zips (fans feedback style)
-python scripts/api_jira.py copy-log-from-description --issue "X6873OS162-1079" --output-dir "./jira_logs" --http-only
+## Output contract
 
-# Legacy UNC share copy (Windows, share must be reachable)
-python scripts/api_jira.py copy-log-from-description --issue "CM7OS16-418" --output-dir "./jira_logs" --unc-only
-
-# Both when present
-python scripts/api_jira.py copy-log-from-description --issue "CM7OS16-418" --output-dir "./jira_logs"
-```
-
-Options:
-
-| Flag | Meaning |
-|------|---------|
-| `--output-dir` | Target directory (default: `./jira_attachments`) |
-| `--http-only` | Skip UNC copy |
-| `--unc-only` | Skip http download |
-| `--all-urls` | Download all http links, not only log-like |
-| `--timeout` | Per-file http timeout seconds (default 300) |
-
-## Output Contract
-
-- Return command output JSON directly.
-- Success shape: `{"ok": true, "data": ...}`
-- Failure shape: `{"ok": false, "error": {"code": "...", "message": "..."}}`
+- Success: `{"ok": true, "data": ...}`
+- Failure: `{"ok": false, "error": {"code": "...", "message": "..."}}`

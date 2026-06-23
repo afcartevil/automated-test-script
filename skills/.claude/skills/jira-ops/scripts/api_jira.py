@@ -1,16 +1,37 @@
 import argparse
 import json
+import os
 import re
 import shutil
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional, Set
 from urllib.parse import unquote, urlparse
 
 from jira import JIRA
 from jira.exceptions import JIRAError
+
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+_SKILL_ROOT = _SCRIPTS_DIR.parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from log_download.issue_text import build_issue_log_text  # noqa: E402
+from log_download.env_config import (  # noqa: E402
+    run_setup_check,
+    set_env_pairs,
+    show_env,
+    validate_network_servers_json,
+)
+from log_download.orchestrator import (  # noqa: E402
+    ALL_CHANNELS,
+    download_classified_urls,
+    load_optional_env,
+)
+from log_download.recursive_extract import extract_directories  # noqa: E402
+from log_download.url_classifier import extract_and_classify_urls  # noqa: E402
 
 
 CONFIG_PATH = Path.home() / ".jira_cli_config.json"
@@ -24,6 +45,10 @@ DOWNLOAD_USER_AGENT = "jira-ops-cli/1.1"
 
 
 def load_config() -> Dict[str, str]:
+    """Jira credentials: bugtool yaml → ~/.jira_cli_config.json → jira-ops/.env (JIRA_*)."""
+    load_optional_env(_SKILL_ROOT)
+    config: Dict[str, str] = {}
+
     bugtool_yaml = Path.home() / ".integration_bug_tool" / "env.yaml"
     if bugtool_yaml.is_file():
         try:
@@ -33,21 +58,32 @@ def load_config() -> Dict[str, str]:
                 data = yaml.safe_load(f) or {}
             jira = data.get("jira") if isinstance(data, dict) else None
             if isinstance(jira, dict) and jira.get("user") and jira.get("password"):
-                return {
+                config = {
                     "server": str(jira.get("server", "")).strip(),
                     "user": str(jira.get("user", "")).strip(),
                     "password": str(jira.get("password", "")),
                 }
         except Exception:
             pass
-    if not CONFIG_PATH.exists():
-        return {}
-    try:
-        with CONFIG_PATH.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
-        return {}
+
+    if not config and CONFIG_PATH.exists():
+        try:
+            with CONFIG_PATH.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                config = data
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Supplement or fallback from jira-ops/.env (same keys as modem-analysis-local)
+    if not config.get("server") and os.environ.get("JIRA_SERVER"):
+        config["server"] = os.environ.get("JIRA_SERVER", "").strip()
+    if not config.get("user") and os.environ.get("JIRA_USERNAME"):
+        config["user"] = os.environ.get("JIRA_USERNAME", "").strip()
+    if not config.get("password") and os.environ.get("JIRA_PASSWORD"):
+        config["password"] = os.environ.get("JIRA_PASSWORD", "")
+
+    return config
 
 
 def save_config(config: Dict[str, str]) -> None:
@@ -226,23 +262,99 @@ class JiraClient:
 
         return {"issue_id": issue_key, "download_dir": str(save_root.resolve()), "files": files}
 
+    def list_log_sources(self, issue_ref: str) -> Dict[str, Any]:
+        """Classify log URLs/paths from description + comments (modem pipeline parity)."""
+        detail = self.get_issue_detail(issue_ref)
+        issue_key = detail["issue_id"]
+        all_text = build_issue_log_text(detail)
+        urls_by_type = extract_and_classify_urls(all_text)
+        legacy_http = (
+            urls_by_type.get("http_direct", [])
+            + urls_by_type.get("box", [])
+            + urls_by_type.get("feishu_file", [])
+        )
+        return {
+            "issue_id": issue_key,
+            "urls_by_type": urls_by_type,
+            "http_urls": legacy_http,
+            "log_http_urls": legacy_http,
+            "unc_paths": urls_by_type.get("network_share", []),
+        }
+
     def list_log_urls_from_description(
         self, issue_ref: str, all_urls: bool = False
     ) -> Dict[str, Any]:
-        issue_key = normalize_issue_key(issue_ref)
-        issue = self.jira.issue(issue_key, fields="description")
-        description = str(getattr(issue.fields, "description", "") or "")
-        http_urls = extract_http_urls(description)
-        unc_paths = [m.strip() for m in UNC_PATH_PATTERN.findall(description)]
+        data = self.list_log_sources(issue_ref)
         if all_urls:
-            log_urls = http_urls
+            data["log_http_urls"] = data["http_urls"]
         else:
-            log_urls = [u for u in http_urls if is_likely_log_url(u)]
+            data["log_http_urls"] = [u for u in data["http_urls"] if is_likely_log_url(u)]
+        return data
+
+    def download_logs_multi_channel(
+        self,
+        issue_ref: str,
+        output_dir: str,
+        *,
+        channels: Optional[Set[str]] = None,
+        prefer_box_http: bool = True,
+        box_headless: bool = True,
+        box_max_retries: int = 3,
+    ) -> Dict[str, Any]:
+        sources = self.list_log_sources(issue_ref)
+        issue_key = sources["issue_id"]
+        urls_by_type = sources["urls_by_type"]
+        total = sum(len(urls_by_type.get(k) or []) for k in urls_by_type)
+        if total == 0:
+            raise ValueError("工单描述/评论中未找到可下载的日志链接或网络路径")
+
+        save_root = Path(output_dir or DEFAULT_DOWNLOAD_DIR)
+        outcome = download_classified_urls(
+            urls_by_type,
+            str(save_root),
+            channels=channels,
+            prefer_box_http=prefer_box_http,
+            box_headless=box_headless,
+            box_max_retries=box_max_retries,
+        )
+        if not outcome.get("downloaded_any"):
+            errors = [r for r in outcome.get("results", []) if not r.get("success")]
+            raise ValueError(f"全部渠道下载失败: {errors}")
+
+        http_downloaded = []
+        http_errors = []
+        unc_copied = []
+        unc_errors = []
+        for row in outcome.get("results", []):
+            if row.get("success"):
+                if row.get("url_type") == "network_share":
+                    unc_copied.append({"source": row.get("url"), "target": outcome["download_dir"]})
+                else:
+                    for name in row.get("downloaded_files") or []:
+                        http_downloaded.append(
+                            {
+                                "url": row.get("url"),
+                                "name": name,
+                                "path": str((save_root / name).resolve()),
+                                "channel": row.get("url_type"),
+                                "method": row.get("download_method"),
+                            }
+                        )
+            else:
+                if row.get("url_type") == "network_share":
+                    unc_errors.append({"source": row.get("url"), "message": row.get("error") or ""})
+                else:
+                    http_errors.append({"url": row.get("url"), "message": row.get("error") or ""})
+
         return {
             "issue_id": issue_key,
-            "http_urls": http_urls,
-            "log_http_urls": log_urls,
-            "unc_paths": unc_paths,
+            "download_dir": outcome["download_dir"],
+            "urls_by_type": urls_by_type,
+            "results": outcome.get("results", []),
+            "http_downloaded": http_downloaded,
+            "http_errors": http_errors,
+            "unc_copied": unc_copied,
+            "unc_errors": unc_errors,
         }
 
     def copy_log_from_description(
@@ -254,69 +366,12 @@ class JiraClient:
         unc_only: bool = False,
         timeout: int = 300,
     ) -> Dict[str, Any]:
-        issue_key = normalize_issue_key(issue_ref)
-        issue = self.jira.issue(issue_key, fields="description")
-        description = str(getattr(issue.fields, "description", "") or "")
-
-        save_root = Path(output_dir or DEFAULT_DOWNLOAD_DIR)
-        save_root.mkdir(parents=True, exist_ok=True)
-
-        http_urls = extract_http_urls(description)
-        if all_urls:
-            selected_http = http_urls
-        else:
-            selected_http = [u for u in http_urls if is_likely_log_url(u)]
-
-        unc_paths = [m.strip() for m in UNC_PATH_PATTERN.findall(description)]
-        downloaded: List[Dict[str, Any]] = []
-        download_errors: List[Dict[str, str]] = []
-        unc_copied: List[Dict[str, Any]] = []
-        unc_errors: List[Dict[str, str]] = []
-
-        if not http_only:
-            for unc in unc_paths:
-                src_dir = Path(unc)
-                try:
-                    if not src_dir.exists() or not src_dir.is_dir():
-                        raise ValueError(f"网络路径不可访问或不是目录: {src_dir}")
-                    for item in src_dir.iterdir():
-                        dst = save_root / item.name
-                        if item.is_dir():
-                            shutil.copytree(item, dst, dirs_exist_ok=True)
-                        else:
-                            shutil.copy2(item, dst)
-                    unc_copied.append({"source": unc, "target": str(save_root.resolve())})
-                except (OSError, ValueError) as e:
-                    unc_errors.append({"source": unc, "message": str(e)})
-
-        if not unc_only:
-            for url in selected_http:
-                try:
-                    downloaded.append(download_http_file(url, save_root, timeout=timeout))
-                except (urllib.error.URLError, OSError, TimeoutError) as e:
-                    download_errors.append({"url": url, "message": str(e)})
-
-        if not downloaded and not unc_copied:
-            if http_urls or unc_paths:
-                raise ValueError(
-                    "description 中找到了日志相关链接/路径，但全部下载或拷贝失败。"
-                    f" http_errors={download_errors}, unc_errors={unc_errors}"
-                )
-            raise ValueError(
-                "description 中未找到可下载的日志链接（http/https）或 UNC 网络路径"
-            )
-
-        return {
-            "issue_id": issue_key,
-            "download_dir": str(save_root.resolve()),
-            "http_downloaded": downloaded,
-            "http_errors": download_errors,
-            "unc_copied": unc_copied,
-            "unc_errors": unc_errors,
-            "skipped_http_urls": [
-                u for u in http_urls if u not in selected_http and u not in {d["url"] for d in downloaded}
-            ],
-        }
+        channels: Optional[Set[str]] = None
+        if http_only:
+            channels = {"box", "feishu_file", "http_direct"}
+        elif unc_only:
+            channels = {"network_share"}
+        return self.download_logs_multi_channel(issue_ref, output_dir, channels=channels)
 
     def get_changelog(self, issue_ref: str) -> List[Dict[str, Any]]:
         issue_key = normalize_issue_key(issue_ref)
@@ -381,7 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_log_urls = subparsers.add_parser(
         "list-log-urls-from-description",
-        help="解析 description 中的日志 http(s) 链接与 UNC 路径（不下载）",
+        help="解析 description+评论 中的日志链接（兼容旧命令；推荐 list-log-sources）",
     )
     list_log_urls.add_argument("--issue", required=True, help="例如 AAA-123 或完整 issue 链接")
     list_log_urls.add_argument(
@@ -390,9 +445,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="返回全部 http(s) 链接（默认仅返回疑似日志链接）",
     )
 
+    list_sources = subparsers.add_parser(
+        "list-log-sources",
+        help="从 description+评论 提取并分类日志来源（box/feishu/network/http）",
+    )
+    list_sources.add_argument("--issue", required=True, help="例如 AAA-123 或完整 issue 链接")
+
+    download_logs = subparsers.add_parser(
+        "download-logs",
+        help="多渠道下载 Jira 日志（FRBOX/SGBOX、飞书文件、UNC、HTTP 直链）",
+    )
+    download_logs.add_argument("--issue", required=True, help="例如 AAA-123")
+    download_logs.add_argument(
+        "--output-dir",
+        default=str(DEFAULT_DOWNLOAD_DIR),
+        help=f"目标目录，默认: {DEFAULT_DOWNLOAD_DIR}",
+    )
+    download_logs.add_argument(
+        "--channels",
+        default="",
+        help="逗号分隔: box,feishu_file,network_share,http_direct（默认全部）",
+    )
+    download_logs.add_argument(
+        "--no-box-http",
+        action="store_true",
+        help="FRBOX/SGBOX 跳过 PDS HTTP，直接浏览器下载",
+    )
+    download_logs.add_argument(
+        "--headed",
+        action="store_true",
+        help="Box 浏览器下载使用有界面模式（默认 headless）",
+    )
+    download_logs.add_argument(
+        "--box-max-retries",
+        type=int,
+        default=3,
+        help="每个 Box URL 浏览器重试次数",
+    )
+
     copy_log = subparsers.add_parser(
         "copy-log-from-description",
-        help="从 description 下载 http(s) 日志链接，并/或拷贝 UNC 网络路径到本地",
+        help="从工单下载日志（内部调用多渠道 download-logs；兼容旧命令）",
     )
     copy_log.add_argument("--issue", required=True, help="例如 AAA-123")
     copy_log.add_argument(
@@ -425,6 +518,46 @@ def build_parser() -> argparse.ArgumentParser:
     changelog = subparsers.add_parser("get-changelog", help="获取 issue 变更历史")
     changelog.add_argument("--issue", required=True, help="例如 AAA-123 或 issue 链接")
 
+    extract_logs = subparsers.add_parser(
+        "extract-logs",
+        help="递归解压目录中的 zip/tar/gz/rar/7z 等压缩包",
+    )
+    extract_logs.add_argument(
+        "--input-dir",
+        action="append",
+        dest="input_dirs",
+        required=True,
+        help="待解压目录，可重复传入",
+    )
+    extract_logs.add_argument("--output-root", default="", help="统一解压输出目录（默认就地解压）")
+    extract_logs.add_argument("--no-recursive", action="store_true", help="关闭嵌套压缩包递归解压")
+
+    prepare_logs = subparsers.add_parser(
+        "prepare-logs",
+        help="一站式：多渠道下载 + 递归解压（推荐）",
+    )
+    prepare_logs.add_argument("--issue", required=True, help="例如 OS162-37733")
+    prepare_logs.add_argument(
+        "--output-dir",
+        default="",
+        help="工作目录，默认 ./jira_workspace/<ISSUE_KEY>",
+    )
+    prepare_logs.add_argument("--channels", default="", help="逗号分隔渠道，默认全部")
+    prepare_logs.add_argument("--no-box-http", action="store_true")
+    prepare_logs.add_argument("--headed", action="store_true")
+    prepare_logs.add_argument("--box-max-retries", type=int, default=3)
+    prepare_logs.add_argument("--no-recursive", action="store_true", help="解压时不递归嵌套包")
+
+    subparsers.add_parser("setup-check", help="检查依赖、Jira 凭据与 .env 配置是否就绪")
+
+    env_parser = subparsers.add_parser("env", help="管理 jira-ops/.env 持久化配置")
+    env_sub = env_parser.add_subparsers(dest="env_cmd", required=True)
+    env_sub.add_parser("show", help="显示 .env（敏感项脱敏）")
+    env_set = env_sub.add_parser("set", help="写入/更新 .env 键值")
+    env_set.add_argument("pairs", nargs="+", help="KEY=VALUE，可一次传多个")
+    env_init = env_sub.add_parser("init-from-user", help="从 JSON 批量写入 .env（Agent 收集用户输入后用）")
+    env_init.add_argument("--json", required=True, help='JSON 对象，如 {"FEISHU_APP_ID":"cli_xxx",...}')
+
     return parser
 
 
@@ -435,7 +568,15 @@ def command_config_set(args: argparse.Namespace) -> Dict[str, Any]:
         "password": args.password,
     }
     save_config(config)
-    return ok({"config_path": str(CONFIG_PATH.resolve()), "message": "配置已保存"})
+    set_env_pairs(
+        _SKILL_ROOT,
+        {
+            "JIRA_SERVER": config["server"],
+            "JIRA_USERNAME": config["user"],
+            "JIRA_PASSWORD": config["password"],
+        },
+    )
+    return ok({"config_path": str(CONFIG_PATH.resolve()), "message": "配置已保存（已同步到 .env）"})
 
 
 def command_config_show(_: argparse.Namespace) -> Dict[str, Any]:
@@ -471,6 +612,30 @@ def command_get_changelog(args: argparse.Namespace) -> Dict[str, Any]:
     return ok({"issue_id": normalize_issue_key(args.issue), "changes": get_client().get_changelog(args.issue)})
 
 
+def _parse_channels(raw: str) -> Optional[Set[str]]:
+    if not raw or not raw.strip():
+        return None
+    parts = {p.strip() for p in raw.split(",") if p.strip()}
+    return parts
+
+
+def command_list_log_sources(args: argparse.Namespace) -> Dict[str, Any]:
+    return ok(get_client().list_log_sources(args.issue))
+
+
+def command_download_logs(args: argparse.Namespace) -> Dict[str, Any]:
+    return ok(
+        get_client().download_logs_multi_channel(
+            args.issue,
+            args.output_dir,
+            channels=_parse_channels(args.channels),
+            prefer_box_http=not args.no_box_http,
+            box_headless=not args.headed,
+            box_max_retries=args.box_max_retries,
+        )
+    )
+
+
 def command_list_log_urls_from_description(args: argparse.Namespace) -> Dict[str, Any]:
     return ok(
         get_client().list_log_urls_from_description(args.issue, all_urls=args.all_urls)
@@ -492,17 +657,117 @@ def command_copy_log_from_description(args: argparse.Namespace) -> Dict[str, Any
     )
 
 
+def command_extract_logs(args: argparse.Namespace) -> Dict[str, Any]:
+    outcome = extract_directories(
+        args.input_dirs,
+        output_root=args.output_root or None,
+        recursive=not args.no_recursive,
+    )
+    if not outcome.get("extracted_any"):
+        failed = [r for r in outcome.get("results", []) if not r.get("success")]
+        raise ValueError(f"解压失败或无有效目录: {failed}")
+    return ok(outcome)
+
+
+def _default_prepare_dir(issue_ref: str, output_dir: str) -> str:
+    if output_dir and output_dir.strip():
+        return output_dir.strip()
+    issue_key = normalize_issue_key(issue_ref)
+    return str((Path.cwd() / "jira_workspace" / issue_key).resolve())
+
+
+def command_prepare_logs(args: argparse.Namespace) -> Dict[str, Any]:
+    out_dir = _default_prepare_dir(args.issue, args.output_dir)
+    download_data = get_client().download_logs_multi_channel(
+        args.issue,
+        out_dir,
+        channels=_parse_channels(args.channels),
+        prefer_box_http=not args.no_box_http,
+        box_headless=not args.headed,
+        box_max_retries=args.box_max_retries,
+    )
+    extract_data = extract_directories(
+        [download_data["download_dir"]],
+        recursive=not args.no_recursive,
+    )
+    if not extract_data.get("extracted_any"):
+        raise ValueError(
+            f"下载成功但解压失败: download_dir={download_data.get('download_dir')} "
+            f"extract_results={extract_data.get('results')}"
+        )
+    return ok(
+        {
+            "issue_id": download_data.get("issue_id"),
+            "workspace_dir": out_dir,
+            "download": download_data,
+            "extraction": extract_data,
+            "log_root_dirs": extract_data.get("extracted_dirs", []),
+        }
+    )
+
+
+def command_setup_check(_: argparse.Namespace) -> Dict[str, Any]:
+    return ok(run_setup_check(_SKILL_ROOT, load_config()))
+
+
+def _parse_env_pair(token: str) -> tuple[str, str]:
+    if "=" not in token:
+        raise ValueError(f"env set 参数必须是 KEY=VALUE 格式: {token}")
+    key, _, val = token.partition("=")
+    key = key.strip()
+    if not key:
+        raise ValueError(f"空的 env key: {token}")
+    return key, val
+
+
+def command_env_show(_: argparse.Namespace) -> Dict[str, Any]:
+    return ok(show_env(_SKILL_ROOT))
+
+
+def command_env_set(args: argparse.Namespace) -> Dict[str, Any]:
+    pairs: Dict[str, str] = {}
+    for token in args.pairs:
+        key, val = _parse_env_pair(token)
+        pairs[key] = val
+    if "NETWORK_SERVERS" in pairs:
+        ok_json, msg = validate_network_servers_json(pairs["NETWORK_SERVERS"])
+        if not ok_json:
+            raise ValueError(msg)
+    return ok(set_env_pairs(_SKILL_ROOT, pairs))
+
+
+def command_env_init_from_user(args: argparse.Namespace) -> Dict[str, Any]:
+    try:
+        data = json.loads(args.json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"--json 不是合法 JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("--json 必须是 JSON 对象")
+    str_data = {str(k): str(v) for k, v in data.items()}
+    if "NETWORK_SERVERS" in str_data:
+        ok_json, msg = validate_network_servers_json(str_data["NETWORK_SERVERS"])
+        if not ok_json:
+            raise ValueError(msg)
+    return ok(set_env_pairs(_SKILL_ROOT, str_data))
+
+
 COMMANDS: Dict[str, CommandHandler] = {
     "get-issue": command_get_issue,
     "add-comment": command_add_comment,
     "download-attachments": command_download_attachments,
     "get-changelog": command_get_changelog,
+    "list-log-sources": command_list_log_sources,
     "list-log-urls-from-description": command_list_log_urls_from_description,
+    "download-logs": command_download_logs,
     "copy-log-from-description": command_copy_log_from_description,
+    "extract-logs": command_extract_logs,
+    "prepare-logs": command_prepare_logs,
+    "setup-check": command_setup_check,
 }
 
 
 def main() -> int:
+    load_optional_env(_SKILL_ROOT)
     # Force UTF-8 output on Windows terminals to avoid GBK encode failures.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -520,6 +785,15 @@ def main() -> int:
                 result = command_config_show(args)
             else:
                 raise ValueError("不支持的 config 子命令")
+        elif args.command == "env":
+            if args.env_cmd == "show":
+                result = command_env_show(args)
+            elif args.env_cmd == "set":
+                result = command_env_set(args)
+            elif args.env_cmd == "init-from-user":
+                result = command_env_init_from_user(args)
+            else:
+                raise ValueError("不支持的 env 子命令")
         else:
             handler = COMMANDS.get(args.command)
             if not handler:

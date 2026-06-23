@@ -25,6 +25,8 @@ import {
   listBugReports,
   readBugReport,
   deleteBugReport,
+  respondBugApproval,
+  submitBugUserInput,
 } from '../../services/tahp/bug-analysis'
 import { searchJQL, parseIssueKey } from '../../services/tahp/jira'
 import type { JiraConfig } from '../../services/tahp/jira'
@@ -154,6 +156,52 @@ tahpBugAnalysisRoutes.post('/:taskId/continue', async (ctx) => {
       status: 'running',
     },
   }
+})
+
+// ─── 危险命令审批（场景 A）────────────────────────────────────────────────
+//
+// POST /api/tahp/bug-analysis/:taskId/approval
+// Body: { approval_id, choice: once|session|always|deny }
+tahpBugAnalysisRoutes.post('/:taskId/approval', async (ctx) => {
+  const taskId = ctx.params.taskId
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const approvalId = typeof body.approval_id === 'string' ? body.approval_id.trim() : ''
+  const choice = typeof body.choice === 'string' ? body.choice.trim() : ''
+  if (!approvalId || !choice) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 approval_id 或 choice' }
+    return
+  }
+  const result = await respondBugApproval(taskId, approvalId, choice)
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+  ctx.body = { success: true, data: { approval_id: approvalId, choice } }
+})
+
+// ─── 结构化用户配置输入（场景 D）────────────────────────────────────────────
+//
+// POST /api/tahp/bug-analysis/:taskId/user-input
+// Body: { request_id, values: Record<string, string> }
+tahpBugAnalysisRoutes.post('/:taskId/user-input', async (ctx) => {
+  const taskId = ctx.params.taskId
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const requestId = typeof body.request_id === 'string' ? body.request_id.trim() : ''
+  const values = body.values && typeof body.values === 'object' ? body.values as Record<string, string> : null
+  if (!requestId || !values) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 request_id 或 values' }
+    return
+  }
+  const result = await submitBugUserInput(taskId, requestId, values, 'user')
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+  ctx.body = { success: true, data: { request_id: requestId } }
 })
 
 // ─── 沉淀为知识库/Skill ──────────────────────────────────────────────────────

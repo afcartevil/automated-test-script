@@ -816,7 +816,8 @@ class AgentPool:
             try:
                 choice = response_queue.get(timeout=60)
             except queue.Empty:
-                choice = "deny"
+                # 智能诊断（tahp-bug-*）危险命令：60s 无响应自动同意一次
+                choice = "once" if str(session_id).startswith("tahp-bug-") else "deny"
             finally:
                 with self._lock:
                     self._approval_requests.pop(approval_id, None)

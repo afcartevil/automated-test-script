@@ -26,6 +26,12 @@ def validate() -> int:
     checks = [
         ("help", ["--help"]),
         ("config_show", ["config", "show"]),
+        ("list_log_sources_help", ["list-log-sources", "--help"]),
+        ("setup_check_help", ["setup-check", "--help"]),
+        ("extract_logs_help", ["extract-logs", "--help"]),
+        ("prepare_logs_help", ["prepare-logs", "--help"]),
+        ("env_show_help", ["env", "show", "--help"]),
+        ("download_logs_help", ["download-logs", "--help"]),
         ("list_log_urls_help", ["list-log-urls-from-description", "--help"]),
         ("copy_log_help", ["copy-log-from-description", "--help"]),
     ]
