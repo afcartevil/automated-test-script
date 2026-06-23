@@ -32,7 +32,9 @@ import { countTokens, SUMMARY_PREFIX } from '../../../lib/context-compressor'
 import { getCompressionSnapshot } from '../../../db/hermes/compression-snapshot'
 import { getProfileDir, getActiveEnvPath, getActiveConfigPath } from '../../hermes/hermes-profile'
 import type { ContentBlock, SessionState, ChatRunSource } from './types'
-import { buildFullTahpSystemContext, extractInputText, extractPreferredSkillIds } from '../../tahp/context-injector'
+import { buildFullTahpSystemContext, extractInputText, extractPreferredSkillIds, inferSkillScenario } from '../../tahp/context-injector'
+import { buildChatRetrievalContext } from '../../tahp/chat-retrieval'
+import type { RetrievalMode } from '../../tahp/chat-retrieval'
 
 // ---------------------------------------------------------------------------
 // Bridge availability probe (cached, TTL = 10 s)
@@ -694,7 +696,7 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
 export async function handleApiRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; instructions?: string; source?: string },
+  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; instructions?: string; source?: string; retrieval_mode?: RetrievalMode; search_lark?: boolean },
   profile: string,
   sessionMap: Map<string, SessionState>,
   skipUserMessage = false,
@@ -714,14 +716,24 @@ export async function handleApiRun(
     }
   }
 
-  // ── 注入 TAHP 工程上下文（Skill 按需加载规范 + skills / 约束 / playbooks）──
+  // ── 注入 TAHP 工程上下文（对话：分场景检索；其他场景：原 injector）──
   try {
     const inputText = extractInputText(input)
     const preferredSkillIds = [
       ...extractPreferredSkillIds(inputText),
       ...(instructions ? extractPreferredSkillIds(instructions) : []),
     ]
-    const tahpCtx = buildFullTahpSystemContext(inputText, { preferredSkillIds })
+    const scenario = inferSkillScenario(inputText)
+    let tahpCtx = ''
+    if (scenario === 'chat') {
+      tahpCtx = await buildChatRetrievalContext(inputText, {
+        preferred_skill_ids: preferredSkillIds,
+        retrieval_mode: data.retrieval_mode,
+        search_lark: data.search_lark === true,
+      })
+    } else {
+      tahpCtx = buildFullTahpSystemContext(inputText, { preferredSkillIds, scenario })
+    }
     if (tahpCtx) {
       fullInstructions = `${fullInstructions}\n\n${tahpCtx}`
     }

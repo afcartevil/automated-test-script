@@ -27,14 +27,16 @@ import type { ContentBlock, SessionState } from './types'
 import type { ChatMessage } from '../../../lib/context-compressor'
 import { resolveBridgeRunModelConfig, type RunModelGroup } from './model-config'
 import { filterBridgeToolCallMarkupDelta } from './bridge-delta'
-import { buildFullTahpSystemContext, extractInputText, extractPreferredSkillIds } from '../../tahp/context-injector'
+import { buildFullTahpSystemContext, extractInputText, extractPreferredSkillIds, inferSkillScenario } from '../../tahp/context-injector'
+import { buildChatRetrievalContext } from '../../tahp/chat-retrieval'
+import type { RetrievalMode } from '../../tahp/chat-retrieval'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string },
+  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string; retrieval_mode?: RetrievalMode; search_lark?: boolean },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -79,7 +81,17 @@ export async function handleBridgeRun(
       ...extractPreferredSkillIds(inputText),
       ...(instructions ? extractPreferredSkillIds(instructions) : []),
     ]
-    const tahpCtx = buildFullTahpSystemContext(inputText, { preferredSkillIds })
+    const scenario = inferSkillScenario(inputText)
+    let tahpCtx = ''
+    if (scenario === 'chat') {
+      tahpCtx = await buildChatRetrievalContext(inputText, {
+        preferred_skill_ids: preferredSkillIds,
+        retrieval_mode: data.retrieval_mode,
+        search_lark: data.search_lark === true,
+      })
+    } else {
+      tahpCtx = buildFullTahpSystemContext(inputText, { preferredSkillIds, scenario })
+    }
     if (tahpCtx) {
       fullInstructions = `${fullInstructions}\n\n${tahpCtx}`
     }

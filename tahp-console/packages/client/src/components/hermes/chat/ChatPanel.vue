@@ -148,108 +148,9 @@ const headerTitle = computed(() =>
 
 const activeApproval = computed(() => chatStore.activePendingApproval);
 const visibleApproval = computed(() => activeApproval.value);
-const showNewChatModal = ref(false);
-const newChatProfile = ref<string>("default");
-const newChatProvider = ref<string>("");
-const newChatModel = ref<string>("");
-const newChatLoading = ref(false);
 
-function getModelGroupsForProfile(profile: string) {
-  const profileModels = appStore.profileModelGroups.find(
-    (entry) => entry.profile === profile,
-  );
-  return profileModels?.groups || [];
-}
-
-function getDefaultModelForProfile(profile: string) {
-  const groups = getModelGroupsForProfile(profile);
-  const profileModels = appStore.profileModelGroups.find(
-    (entry) => entry.profile === profile,
-  );
-  const defaultProvider = profileModels?.default_provider || "";
-  const defaultModel = profileModels?.default || "";
-  const providerGroup = defaultProvider
-    ? groups.find((group) => group.provider === defaultProvider)
-    : undefined;
-  const fallbackGroup = providerGroup || groups.find((group) => group.models.length > 0);
-  return {
-    provider: fallbackGroup?.provider || "",
-    model: fallbackGroup?.models.includes(defaultModel)
-      ? defaultModel
-      : fallbackGroup?.models[0] || "",
-  };
-}
-
-const newChatProfileOptions = computed(() =>
-  (profilesStore.profiles.length > 0 ? profilesStore.profiles : [{ name: "default" }]).map((profile) => ({
-    label: profile.name,
-    value: profile.name,
-  })),
-);
-
-const newChatModelGroups = computed(() => {
-  return getModelGroupsForProfile(newChatProfile.value);
-});
-
-const newChatProviderOptions = computed(() =>
-  newChatModelGroups.value.map((group) => ({
-    label: group.label || group.provider,
-    value: group.provider,
-  })),
-);
-
-const newChatModelOptions = computed(() => {
-  const group = newChatModelGroups.value.find(
-    (item) => item.provider === newChatProvider.value,
-  );
-  return (group?.models || []).map((model) => ({
-    label: appStore.displayModelName(model, group?.provider),
-    value: model,
-  }));
-});
-
-function syncNewChatModelSelection() {
-  const defaults = getDefaultModelForProfile(newChatProfile.value);
-  newChatProvider.value = defaults.provider;
-  newChatModel.value = defaults.model;
-}
-
-async function openNewChatModal() {
-  showNewChatModal.value = true;
-  newChatLoading.value = true;
-  try {
-    if (profilesStore.profiles.length === 0) await profilesStore.fetchProfiles();
-    if (appStore.modelGroups.length === 0 && appStore.profileModelGroups.length === 0) {
-      await appStore.loadModels();
-    }
-    newChatProfile.value =
-      profilesStore.activeProfileName ||
-      profilesStore.profiles.find((profile) => profile.active)?.name ||
-      profilesStore.profiles[0]?.name ||
-      "default";
-    syncNewChatModelSelection();
-  } finally {
-    newChatLoading.value = false;
-  }
-}
-
-function handleNewChatProfileChange(value: string) {
-  newChatProfile.value = value;
-  syncNewChatModelSelection();
-}
-
-function handleNewChatProviderChange(value: string) {
-  newChatProvider.value = value;
-  newChatModel.value = newChatModelOptions.value[0]?.value || "";
-}
-
-function confirmNewChat() {
-  chatStore.newChat({
-    profile: newChatProfile.value,
-    provider: newChatProvider.value,
-    model: newChatModel.value,
-  });
-  showNewChatModal.value = false;
+function createNewChat() {
+  void chatStore.newChat();
 }
 
 function handleApproval(choice: "once" | "session" | "always" | "deny") {
@@ -743,7 +644,7 @@ async function handleSessionModelCustomSubmit() {
               </svg>
             </template>
           </NButton>
-          <NButton quaternary size="tiny" circle @click="openNewChatModal">
+          <NButton quaternary size="tiny" circle @click="createNewChat">
             <template #icon>
               <svg
                 width="14"
@@ -965,56 +866,6 @@ async function handleSessionModelCustomSubmit() {
       </div>
     </NModal>
 
-    <NModal
-      v-model:show="showNewChatModal"
-      preset="card"
-      :title="t('chat.newChat')"
-      :style="{ width: 'min(440px, calc(100vw - 32px))' }"
-      :mask-closable="true"
-    >
-      <div class="new-chat-form">
-        <label class="new-chat-field">
-          <span class="new-chat-label">{{ t("sidebar.profiles") }}</span>
-          <NSelect
-            :value="newChatProfile"
-            :options="newChatProfileOptions"
-            :loading="newChatLoading || profilesStore.loading"
-            @update:value="handleNewChatProfileChange"
-          />
-        </label>
-        <label class="new-chat-field">
-          <span class="new-chat-label">{{ t("models.provider") }}</span>
-          <NSelect
-            :value="newChatProvider"
-            :options="newChatProviderOptions"
-            :disabled="newChatLoading"
-            @update:value="handleNewChatProviderChange"
-          />
-        </label>
-        <label class="new-chat-field">
-          <span class="new-chat-label">{{ t("models.models") }}</span>
-          <NSelect
-            v-model:value="newChatModel"
-            :options="newChatModelOptions"
-            :disabled="newChatLoading || !newChatProvider"
-            filterable
-          />
-        </label>
-      </div>
-      <template #footer>
-        <div class="new-chat-actions">
-          <NButton @click="showNewChatModal = false">{{ t("common.cancel") }}</NButton>
-          <NButton
-            type="primary"
-            :disabled="!newChatProfile || !newChatProvider || !newChatModel"
-            @click="confirmNewChat"
-          >
-            {{ t("chat.newChat") }}
-          </NButton>
-        </div>
-      </template>
-    </NModal>
-
     <div class="chat-main">
       <header class="chat-header">
         <div class="header-left">
@@ -1107,7 +958,7 @@ async function handleSessionModelCustomSubmit() {
               </template>
               {{ t("chat.copySessionId") }}
             </NTooltip>
-            <NButton size="small" :circle="isMobile" @click="openNewChatModal">
+            <NButton size="small" :circle="isMobile" @click="createNewChat">
               <template #icon>
                 <svg
                   width="14"
@@ -1532,30 +1383,6 @@ async function handleSessionModelCustomSubmit() {
 
 .session-profile-filter {
   margin: 0 8px 10px;
-}
-
-.new-chat-form {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.new-chat-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.new-chat-label {
-  font-size: 12px;
-  color: $text-muted;
-  font-weight: 500;
-}
-
-.new-chat-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .session-group-header {

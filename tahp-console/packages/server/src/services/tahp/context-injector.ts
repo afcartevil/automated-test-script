@@ -10,6 +10,7 @@ import { existsSync, readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
 import yaml from 'js-yaml'
 import { tahpPaths, hasTahpProject } from './paths'
+import { invalidateKbSearchIndex } from './kb-search'
 import { logger } from '../logger'
 
 // ---------------------------------------------------------------------------
@@ -184,8 +185,9 @@ function buildIndex(): ContextItem[] {
   }
 
   // ── 2. 知识库（legacy index.yaml）──────────────────────────────────────────
+  const includeLegacyYaml = process.env.TAHP_CHAT_LEGACY_YAML === '1'
   const knowledgeDir = tahpPaths.knowledgeDir
-  if (existsSync(knowledgeDir)) {
+  if (includeLegacyYaml && existsSync(knowledgeDir)) {
     for (const moduleName of safeReadDir(knowledgeDir)) {
       if (moduleName.startsWith('.')) continue
       const indexPath = join(knowledgeDir, moduleName, 'index.yaml')
@@ -240,6 +242,7 @@ function getIndex(): ContextItem[] {
 export function invalidateContextIndex(): void {
   _index = null
   _indexBuiltAt = 0
+  invalidateKbSearchIndex()
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +297,7 @@ export function extractPreferredSkillIds(text: string): string[] {
   return [...ids]
 }
 
-function inferSkillScenario(text: string): TahpSkillScenario {
+export function inferSkillScenario(text: string): TahpSkillScenario {
   if (/jira\s*key|bug\s*分析|根因定位|8\s*节报告|tools_invoked|待分析\s*bug/i.test(text)) {
     return 'bug_analysis'
   }
@@ -302,6 +305,21 @@ function inferSkillScenario(text: string): TahpSkillScenario {
     return 'adapt_debug'
   }
   return 'chat'
+}
+
+/**
+ * 历史案例模式专用指令：禁止 Agent 转向 Skill 检索。
+ */
+export function buildHistoricalCaseDirective(): string {
+  return [
+    '# TAHP 对话 — 历史案例模式（必读）',
+    '',
+    '**当前为「历史案例」检索模式。**',
+    '- **仅**回答知识库 `bug_distill` 沉淀案例；**禁止**列举、加载或搜索 Skill。',
+    '- **禁止** search_files / grep `skills/`、`harness`、全盘搜工程。',
+    '- 用户问「有哪些 / 列出案例」：只输出精简表格（JIRA | 现象 | 一句话结论），数据必须来自预检索命中。',
+    '- 预检索无命中：说明知识库暂无匹配，建议换关键词；**不要**改用 Skill 列表作答。',
+  ].join('\n')
 }
 
 /**
@@ -320,8 +338,8 @@ export function buildSkillExecutionDirective(options?: {
     '每个 Skill 为 `<skillId>/SKILL.md`。**按需**选择 1～3 个相关 Skill，禁止编造不存在的 skillId。',
     '',
     '## 如何使用工程内 Skill',
-    '1. 结合下方「已扫描到的 Skills」列表与用户问题，选定 skillId。',
-    '2. **必须先 Read** 对应 `SKILL.md` 全文（或通过 Skill 工具加载），再严格按其中 SOP / 分析步骤执行。',
+    '1. 若下方预检索已给出知识库命中，先引用知识库结论；Skill 仅作补充。',
+    '2. 仅当需要执行 SOP 步骤时 Read 对应 `SKILL.md`（1～3 个），禁止编造 skillId。',
     '3. 通信问题域未明：先 Read `com-comm-analysis-foundation` 做路由，再选叶子 Skill。',
     '4. MTK 充电/器件适配：先 Read `mtk-adapt-template-router`，再下钻具体 adapt Skill。',
     '5. 须真实调用工具；完成后在回复中列出实际使用的 skill 与 MCP 工具名。',
@@ -333,8 +351,10 @@ export function buildSkillExecutionDirective(options?: {
   } else if (scenario === 'adapt_debug') {
     lines.push('**当前场景**: AI 适配调试 — 优先加载用户指定的关联 Adapt Skill 并按 SOP 排查；全部完成后必须 Read `transsion-coding-standards-review` 并在报告末尾输出自检审核。')
   } else {
-    lines.push('**当前场景**: TAHP 对话 — 按问题类型按需加载 Skill，不要一次性 Read 全部 Skill。')
-    lines.push('**知识库**: Console 沉淀的条目在 `knowledge-base/.kb-data/entries/*.json`；若下方「相关知识库条目」有命中，**必须 Read 对应 JSON** 并引用 `content` 字段作答，不要声称知识库无内容。')
+    lines.push('**当前场景**: TAHP 对话 — 优先使用下方「预检索结果」作答。')
+    lines.push('**禁止**在未读预检索结果前对 `skills/`、`knowledge-base/`、`harness` 做 search_files/grep 全盘搜索。')
+    lines.push('若预检索「知识库命中」非空：**必须直接引用摘要中的结论与 JIRA**，不要声称知识库无内容，不要从零开始写通用排查框架。')
+    lines.push('仅当预检索无命中或用户追问细节时，才 Read 对应 JSON / SKILL.md。')
   }
   lines.push('')
 
@@ -365,8 +385,8 @@ function defaultContextOptions(scenario: TahpSkillScenario): BuildTahpContextOpt
     case 'chat':
     default:
       return {
-        includeSkillCatalog: true,
-        includeKnowledge: true,
+        includeSkillCatalog: false,
+        includeKnowledge: false,
       }
   }
 }

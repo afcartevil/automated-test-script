@@ -66,6 +66,9 @@ export interface VersionConstraint {
 export interface SkillSuggestion {
   module: string
   func_type: string
+  business_domain: string
+  business_domain_label: string
+  group_key: string
   entry_count: number
   entry_ids: string[]
   avg_confidence: number
@@ -83,6 +86,7 @@ export interface SkillDraft {
   skill_id: string
   skill_name: string
   domain_label: string
+  business_domain?: string
   module: string
   func_type: string
   content: string
@@ -515,6 +519,7 @@ export function checkSkillSimilarity(params: {
   entry_ids?: string[]
   skill_name?: string
   keywords?: string[]
+  business_domain?: string
 }): Promise<{ similar: SimilarSkillItem[]; has_exact: boolean; has_partial: boolean; total: number }> {
   return tahpPost<{ similar: SimilarSkillItem[]; has_exact: boolean; has_partial: boolean; total: number }>(
     '/api/tahp/knowledge/skill-drafts/check-similarity',
@@ -697,6 +702,8 @@ export function startGenerateStream(params: {
   skill_name?: string
   generated_by?: string
   document_ids?: string[]
+  business_domain?: string
+  business_domain_label?: string
 }): Promise<{ job_id: string }> {
   return tahpPost<{ job_id: string }>('/api/tahp/knowledge/skill-drafts/generate-stream', params)
 }

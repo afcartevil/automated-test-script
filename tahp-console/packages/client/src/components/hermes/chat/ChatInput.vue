@@ -5,7 +5,7 @@ import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchContextLength } from '@/api/hermes/sessions'
 import { setModelContext } from '@/api/hermes/model-context'
-import { NButton, NTooltip, NSwitch, NModal, NInputNumber, NInput, NForm, NFormItem, NTag, useMessage } from 'naive-ui'
+import { NButton, NTooltip, NSwitch, NModal, NInputNumber, NInput, NForm, NFormItem, NTag, NSelect, useMessage } from 'naive-ui'
 import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
@@ -84,16 +84,31 @@ function startResize(e: MouseEvent) {
 // 自动播放语音开关
 const autoPlaySpeech = ref(false)
 
-// 从 localStorage 读取设置
+// 对话检索模式（分场景检索）
+type RetrievalModeOption = 'auto' | 'historical' | 'concept' | 'sop' | 'adapt'
+const retrievalMode = ref<RetrievalModeOption>('auto')
+const searchLark = ref(false)
+const retrievalModeOptions = [
+  { label: '自动', value: 'auto' },
+  { label: '历史案例', value: 'historical' },
+  { label: '概念文档', value: 'concept' },
+  { label: '分析 SOP', value: 'sop' },
+  { label: '适配指南', value: 'adapt' },
+]
+
 onMounted(() => {
   const saved = localStorage.getItem('autoPlaySpeech')
   if (saved !== null) {
     autoPlaySpeech.value = saved === 'true'
-    // 同步到 chat store
     chatStore.setAutoPlaySpeech(autoPlaySpeech.value)
   }
+  const savedMode = localStorage.getItem('tahp_retrieval_mode') as RetrievalModeOption | null
+  if (savedMode && retrievalModeOptions.some(o => o.value === savedMode)) {
+    retrievalMode.value = savedMode
+  }
+  const savedLark = localStorage.getItem('tahp_search_lark')
+  if (savedLark !== null) searchLark.value = savedLark === 'true'
 
-  // 读取来自 TAHP 适配调试页面的预填内容
   const tahpDraft = sessionStorage.getItem('tahp_chat_draft')
   if (tahpDraft) {
     inputText.value = tahpDraft
@@ -112,8 +127,15 @@ onMounted(() => {
 // 监听变化并保存
 watch(autoPlaySpeech, (value) => {
   localStorage.setItem('autoPlaySpeech', String(value))
-  // 通知 chat store
   chatStore.setAutoPlaySpeech(value)
+})
+
+watch(retrievalMode, (value) => {
+  localStorage.setItem('tahp_retrieval_mode', value)
+})
+
+watch(searchLark, (value) => {
+  localStorage.setItem('tahp_search_lark', String(value))
 })
 
 const canSend = computed(() =>
@@ -330,7 +352,11 @@ function handleSend() {
   chatStore.sendMessage(
     text,
     attachments.value.length > 0 ? attachments.value : undefined,
-    tahpInstructions ? { instructions: tahpInstructions } : undefined,
+    {
+      ...(tahpInstructions ? { instructions: tahpInstructions } : {}),
+      retrieval_mode: retrievalMode.value,
+      search_lark: searchLark.value,
+    },
   )
   inputText.value = ''
   attachments.value = []
@@ -697,6 +723,19 @@ async function submitKbSave() {
           </div>
         </div>
       </Transition>
+      <div class="retrieval-toolbar">
+        <NSelect
+          v-model:value="retrievalMode"
+          :options="retrievalModeOptions"
+          size="small"
+          class="retrieval-mode-select"
+          placeholder="检索模式"
+        />
+        <label class="lark-toggle">
+          <NSwitch v-model:value="searchLark" size="small" />
+          <span>搜索飞书</span>
+        </label>
+      </div>
       <div class="input-actions">
         <NButton
           v-if="chatStore.isStreaming"
@@ -1064,6 +1103,28 @@ async function submitKbSave() {
     overflow: hidden;
     text-overflow: ellipsis;
   }
+}
+
+.retrieval-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px 0;
+  flex-shrink: 0;
+}
+
+.retrieval-mode-select {
+  width: 120px;
+}
+
+.lark-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: $text-muted;
+  cursor: pointer;
+  user-select: none;
 }
 
 .input-actions {

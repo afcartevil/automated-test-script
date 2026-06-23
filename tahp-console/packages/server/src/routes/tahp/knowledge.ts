@@ -47,6 +47,26 @@ import { randomUUID, createHash } from 'crypto'
 import { load as yamlLoad, dump as yamlDump } from 'js-yaml'
 import { callTahpLLM } from '../../services/tahp/llm-caller'
 import { writeAuditLog } from '../../services/tahp/audit-log'
+import {
+  buildSearchBlob,
+  buildTags,
+  extractTldr,
+  extractSymptomPhrases,
+  upsertIndexRecord,
+} from '../../services/tahp/kb-search'
+import {
+  findDuplicateDistillEntry,
+  isActiveKbEntry,
+  normalizeEntryContent,
+  resolveDistillJiraKey,
+  type DepositDedupAction,
+} from '../../services/tahp/kb-entry-dedup'
+import {
+  getBusinessDomainLabel,
+  inferBusinessDomain,
+  resolveEntryBusinessDomain,
+  skillSuggestionGroupKey,
+} from '../../services/tahp/business-domain'
 
 // ── 规范化映射：英文 raw key → 中文 display（一对一，保留细分） ────────────────
 const _FUNC_TYPE_MAP: Record<string, string> = {
@@ -108,6 +128,8 @@ interface KnowledgeDocument {
   chunk_count: number
 }
 
+export type KbSourceType = 'bug_distill' | 'doc_chunk' | 'doc_summary' | 'manual'
+
 export interface KnowledgeEntry {
   id: string
   content: string
@@ -122,7 +144,16 @@ export interface KnowledgeEntry {
   source_url?: string
   source_document_id?: string  // parent KnowledgeDocument.id
   source_task_id?: string      // 来源诊断任务 ID（智能诊断沉淀）
+  source_type?: KbSourceType
+  jira_key?: string
+  tags?: string[]
+  search_blob?: string
+  symptom_summary?: string
+  related_skill_ids?: string[]
   applicable_versions?: string[]
+  /** 业务子域（通话/网络/数据/APN…），用于 Skill 推荐分组 */
+  business_domain?: string
+  business_domain_label?: string
   created_at: string
   updated_at: string
   expires_at?: string
@@ -175,6 +206,7 @@ interface SkillDraft {
   skill_id: string
   skill_name: string
   domain_label: string
+  business_domain?: string
   module: string
   func_type: string
   content: string
@@ -395,6 +427,11 @@ async function readEntry(entryId: string): Promise<KnowledgeEntry | null> {
 async function writeEntry(entry: KnowledgeEntry): Promise<void> {
   const path = getEntryPath(entry.id)
   await safeFileStore.writeText(path, JSON.stringify(entry, null, 2))
+  try {
+    upsertIndexRecord(entry)
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, id: entry.id }, '[kb] index upsert failed')
+  }
 }
 
 async function readSkillDraft(draftId: string): Promise<SkillDraft | null> {
@@ -1513,19 +1550,119 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/entries', async (ctx) => {
 /**
  * 智能诊断「沉淀为知识库」共享入口：从诊断报告创建一条知识条目（pending_review）。
  * 供 bug-analysis 路由调用，避免重复的写盘逻辑。
+ *
+ * 查重：同 JIRA / 同 source_task_id / 正文完全一致 → 更新已有条目，不新建重复记录。
  */
+async function archiveDuplicateDistillSiblings(
+  canonicalId: string,
+  params: { jira_key?: string; source_task_id?: string; content: string },
+): Promise<number> {
+  const targetJira = resolveDistillJiraKey(params)
+  if (!targetJira && !params.source_task_id) return 0
+
+  const now = new Date().toISOString()
+  let archived = 0
+  for (const e of await listEntries()) {
+    if (e.id === canonicalId || !isActiveKbEntry(e.status) || e.status === 'archived') continue
+    const sameJira = targetJira && resolveDistillJiraKey(e)?.toUpperCase() === targetJira
+    const sameTask = params.source_task_id && e.source_task_id === params.source_task_id
+    if (!sameJira && !sameTask) continue
+    await writeEntry({ ...e, status: 'archived', updated_at: now })
+    archived++
+  }
+  return archived
+}
+
+export interface DepositDistilledResult {
+  entry: KnowledgeEntry
+  action: DepositDedupAction
+}
+
 export async function depositDistilledEntry(params: {
   content: string
   module?: string
   func_type?: string
   category?: string
   keywords?: string[]
+  tags?: string[]
   source_task_id?: string
   jira_key?: string
-}): Promise<KnowledgeEntry> {
+  related_skill_ids?: string[]
+}): Promise<DepositDistilledResult> {
   await initDirs()
   const now = new Date().toISOString()
-  const entry: KnowledgeEntry = {
+  const jiraKey = params.jira_key?.trim() || undefined
+  const symptomSummary = extractTldr(params.content, 200)
+  const tags = params.tags?.length
+    ? params.tags
+    : [...new Set([
+        ...(params.keywords || []),
+        ...(jiraKey ? [jiraKey] : []),
+      ])].filter(Boolean).slice(0, 15)
+
+  const symptomTags = extractSymptomPhrases(params.content, 200)
+    .split(/\s+/)
+    .filter(t => t.length >= 4 && t.length <= 24)
+    .slice(0, 8)
+  const mergedTags = [...new Set([...tags, ...symptomTags])].slice(0, 25)
+
+  const inferredBiz = inferBusinessDomain({
+    content: params.content,
+    module: params.module,
+    tags: mergedTags,
+    jira_key: jiraKey,
+  })
+  const businessDomain = inferredBiz.id
+  const businessDomainLabel = inferredBiz.label
+
+  const existing = findDuplicateDistillEntry(await listEntries(), {
+    jira_key: jiraKey,
+    source_task_id: params.source_task_id,
+    content: params.content,
+  })
+
+  if (existing) {
+    const archivedSiblings = await archiveDuplicateDistillSiblings(existing.id, {
+      jira_key: jiraKey,
+      source_task_id: params.source_task_id,
+      content: params.content,
+    })
+    if (archivedSiblings > 0) {
+      logger.info({ entryId: existing.id, archivedSiblings }, '[kb] archived duplicate distill siblings')
+    }
+
+    if (normalizeEntryContent(existing.content) === normalizeEntryContent(params.content)) {
+      logger.info({ entryId: existing.id, jira: jiraKey, task: params.source_task_id }, '[kb] distill dedup unchanged')
+      return { entry: existing, action: 'unchanged' }
+    }
+
+    const updated: KnowledgeEntry = {
+      ...existing,
+      content: params.content,
+      module: params.module || existing.module || 'shared',
+      func_type: params.func_type || existing.func_type || 'bug_analysis',
+      category: params.category || existing.category || '错误模式',
+      keywords: params.keywords?.length ? params.keywords : extractKeywords(params.content),
+      source_file: jiraKey ? `JIRA ${jiraKey}` : existing.source_file,
+      source_task_id: params.source_task_id || existing.source_task_id,
+      source_type: 'bug_distill',
+      jira_key: jiraKey || existing.jira_key,
+      tags: mergedTags,
+      symptom_summary: symptomSummary,
+      related_skill_ids: params.related_skill_ids ?? existing.related_skill_ids,
+      business_domain: businessDomain,
+      business_domain_label: businessDomainLabel,
+      updated_at: now,
+      status: existing.status === 'archived' ? 'pending_review' : existing.status,
+    }
+    updated.search_blob = buildSearchBlob(updated)
+    updated.tags = buildTags(updated)
+    await writeEntry(updated)
+    logger.info({ entryId: updated.id, jira: jiraKey, task: params.source_task_id }, '[kb] distill dedup updated')
+    return { entry: updated, action: 'updated' }
+  }
+
+  const draft: KnowledgeEntry = {
     id: `kb-${randomUUID().slice(0, 8)}`,
     content: params.content,
     category: params.category || '错误模式',
@@ -1533,16 +1670,81 @@ export async function depositDistilledEntry(params: {
     func_type: params.func_type || 'bug_analysis',
     keywords: params.keywords?.length ? params.keywords : extractKeywords(params.content),
     confidence_score: 0.8,
-    source_file: params.jira_key ? `JIRA ${params.jira_key}` : undefined,
+    source_file: jiraKey ? `JIRA ${jiraKey}` : undefined,
     source_task_id: params.source_task_id,
+    source_type: 'bug_distill',
+    jira_key: jiraKey,
+    tags: mergedTags,
+    symptom_summary: symptomSummary,
+    related_skill_ids: params.related_skill_ids,
+    business_domain: businessDomain,
+    business_domain_label: businessDomainLabel,
     created_at: now,
     updated_at: now,
     status: 'pending_review',
     is_verified: false,
     usage_count: 0,
   }
-  await writeEntry(entry)
-  logger.info({ entryId: entry.id, task: params.source_task_id }, '[kb] distilled entry deposited')
+  draft.search_blob = buildSearchBlob(draft)
+  draft.tags = buildTags(draft)
+  await writeEntry(draft)
+  logger.info({
+    entryId: draft.id,
+    task: params.source_task_id,
+    business_domain: businessDomain,
+  }, '[kb] distilled entry deposited')
+  return { entry: draft, action: 'created' }
+}
+
+/** 为导入文档创建 L1 路由摘要条目，便于概念类检索先命中文档再搜 chunk */
+async function createDocSummaryEntry(doc: KnowledgeDocument, now: string): Promise<KnowledgeEntry> {
+  const preview = (doc.content_markdown || doc.content || '').slice(0, 500)
+  const summary: KnowledgeEntry = {
+    id: `kb-${randomUUID().slice(0, 8)}`,
+    content: `# ${doc.title}\n\n${preview}`,
+    category: doc.category,
+    module: doc.module,
+    func_type: 'other',
+    keywords: extractKeywords(doc.title + ' ' + preview),
+    confidence_score: 0.75,
+    source_file: doc.filename,
+    source_document_id: doc.id,
+    source_type: 'doc_summary',
+    tags: [doc.title, doc.module, doc.category].filter(Boolean),
+    symptom_summary: doc.title,
+    created_at: now,
+    updated_at: now,
+    status: 'pending_review',
+    is_verified: false,
+    usage_count: 0,
+  }
+  summary.search_blob = buildSearchBlob(summary)
+  summary.tags = buildTags(summary)
+  await writeEntry(summary)
+  return summary
+}
+
+function enrichDocChunkEntry(ext: ExtractedEntry, docId: string, now: string): KnowledgeEntry {
+  const entry: KnowledgeEntry = {
+    id: `kb-${randomUUID().slice(0, 8)}`,
+    content: ext.content,
+    category: ext.category,
+    module: ext.module,
+    func_type: ext.func_type,
+    keywords: ext.keywords,
+    confidence_score: ext.confidence_score,
+    source_file: ext.source_file,
+    source_section: ext.source_section,
+    source_document_id: docId,
+    source_type: 'doc_chunk',
+    created_at: now,
+    updated_at: now,
+    status: 'pending_review',
+    is_verified: false,
+    usage_count: 0,
+  }
+  entry.search_blob = buildSearchBlob(entry)
+  entry.tags = buildTags(entry)
   return entry
 }
 
@@ -1954,7 +2156,7 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/:draftId/eval-cases/:
   }
 })
 
-// GET /api/tahp/knowledge/skill-suggestions — 分组推荐生成 Skill
+// GET /api/tahp/knowledge/skill-suggestions — 按 module × func_type × 业务子域 分组推荐生成 Skill
 tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-suggestions', async (ctx) => {
   try {
     await initDirs()
@@ -1962,19 +2164,48 @@ tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-suggestions', async (ctx) => 
     const activatedSkills = getActivatedSkills()
     const allDrafts = await listSkillDrafts()
 
-    // 构建已有草稿索引(module::func_type -> true)
+    function resolveDraftGroupKey(d: SkillDraft): string {
+      if (d.business_domain) {
+        return skillSuggestionGroupKey(d.module, d.func_type, d.business_domain)
+      }
+      const label = d.domain_label || ''
+      for (const [cn, id] of Object.entries({
+        通话: 'voice_call', 网络: 'network', 数据: 'data', APN: 'apn', SIM: 'sim',
+        短信: 'sms', 状态栏: 'systemui', 运营商: 'carrier_config', 充电: 'charging', 设置: 'settings',
+      })) {
+        if (label.includes(cn)) return skillSuggestionGroupKey(d.module, d.func_type, id)
+      }
+      return skillSuggestionGroupKey(d.module, d.func_type, 'general')
+    }
+
+    // 构建已有草稿索引 (module::func_type::business_domain -> true)
     const draftIndex: Record<string, boolean> = {}
     for (const d of allDrafts) {
       if (d.status === 'archived' || d.status === 'deprecated') continue
-      draftIndex[`${d.module}::${d.func_type}`] = true
+      draftIndex[resolveDraftGroupKey(d)] = true
     }
 
-    // 按 module × func_type 分组（只统计非归档条目）
-    const groups: Record<string, { entries: KnowledgeEntry[]; module: string; func_type: string }> = {}
+    // 按 module × func_type × business_domain 分组（只统计非归档条目）
+    const groups: Record<string, {
+      entries: KnowledgeEntry[]
+      module: string
+      func_type: string
+      business_domain: string
+      business_domain_label: string
+    }> = {}
     for (const entry of entries) {
       if (entry.status === 'archived' || entry.status === 'rejected') continue
-      const key = `${entry.module}::${entry.func_type}`
-      if (!groups[key]) groups[key] = { entries: [], module: entry.module, func_type: entry.func_type }
+      const biz = resolveEntryBusinessDomain(entry)
+      const key = skillSuggestionGroupKey(entry.module, entry.func_type, biz.id)
+      if (!groups[key]) {
+        groups[key] = {
+          entries: [],
+          module: entry.module,
+          func_type: entry.func_type,
+          business_domain: biz.id,
+          business_domain_label: biz.label,
+        }
+      }
       groups[key].entries.push(entry)
     }
 
@@ -1983,9 +2214,13 @@ tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-suggestions', async (ctx) => 
       const avgConf = g.entries.reduce((s, e) => s + e.confidence_score, 0) / g.entries.length
       const recommended = g.entries.length >= MIN_ENTRIES_FOR_SUGGESTION
 
-      // 已有的相关 Skill
       const existingSkills = activatedSkills
-        .filter(sk => sk.module === g.module && sk.func_type === g.func_type)
+        .filter(sk => {
+          if (sk.module !== g.module || sk.func_type !== g.func_type) return false
+          const skText = `${sk.skillId} ${sk.content}`.toLowerCase()
+          const domainKw = g.business_domain_label
+          return skText.includes(domainKw) || skText.includes(g.business_domain.replace(/_/g, ' '))
+        })
         .map(sk => sk.skillId)
 
       const funcTypeNames: Record<string, string> = {
@@ -1996,23 +2231,31 @@ tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-suggestions', async (ctx) => 
         telephony: 'Telephony', 'kernel-driver': '内核驱动', 'power-mgmt': '功耗管理', shared: '共享',
       }
 
-      // 收集源文档信息
       const sourceDocIds = [...new Set(g.entries.map(e => e.source_document_id).filter(Boolean) as string[])]
+      const groupKey = skillSuggestionGroupKey(g.module, g.func_type, g.business_domain)
+      const modLabel = moduleNames[g.module] || g.module
+      const funcLabel = funcTypeNames[g.func_type] || g.func_type
+      const domainPart = g.business_domain !== 'general' ? g.business_domain_label : ''
 
       return {
         module: g.module,
         func_type: g.func_type,
+        business_domain: g.business_domain,
+        business_domain_label: g.business_domain_label,
+        group_key: groupKey,
         entry_count: g.entries.length,
         entry_ids: g.entries.map(e => e.id),
         avg_confidence: Math.round(avgConf * 100) / 100,
         recommended,
         reason: recommended
-          ? `${g.entries.length} 条相关知识条目，置信度 ${Math.round(avgConf * 100)}%，建议生成 Skill`
-          : `仅 ${g.entries.length} 条条目（需至少 ${MIN_ENTRIES_FOR_SUGGESTION} 条才推荐）`,
-        suggested_skill_name: `${moduleNames[g.module] || g.module} ${funcTypeNames[g.func_type] || g.func_type} Skill`,
+          ? `${g.entries.length} 条「${g.business_domain_label}」相关知识（${modLabel}·${funcLabel}），置信度 ${Math.round(avgConf * 100)}%，建议生成独立 Skill`
+          : `「${g.business_domain_label}」仅 ${g.entries.length} 条（需至少 ${MIN_ENTRIES_FOR_SUGGESTION} 条才推荐）`,
+        suggested_skill_name: domainPart
+          ? `${modLabel} ${domainPart} ${funcLabel} Skill`
+          : `${modLabel} ${funcLabel} Skill`,
         existing_skill_count: existingSkills.length,
         existing_skills: existingSkills,
-        has_draft: !!draftIndex[`${g.module}::${g.func_type}`],
+        has_draft: !!draftIndex[groupKey],
         source_document_ids: sourceDocIds,
       }
     }).sort((a, b) => b.entry_count - a.entry_count)
@@ -2222,14 +2465,25 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-association', async (ctx) =>
     const inputKeywords = Array.isArray(body.keywords) ? body.keywords.map(String) : []
     const entryIdList   = Array.isArray(body.entry_ids) ? body.entry_ids.map(String) : []
     const docIdList     = Array.isArray(body.document_ids) ? body.document_ids.map(String) : []
+    const inputBusinessDomain = String(body.business_domain || '').trim()
     const inputEntryIds = new Set<string>(entryIdList)
     const inputDocIds   = new Set<string>(docIdList)
 
-    // ── 组装查询 token 集合（条目内容 + 文档标题 + 关键词 + 自由文本 + 名称） ──────
-    const queryParts: string[] = [freeText, skillName, inputKeywords.join(' ')]
+    const loadedEntries: KnowledgeEntry[] = []
     for (const id of entryIdList) {
       const e = await readEntry(id)
-      if (e) queryParts.push(e.content, e.keywords.join(' '))
+      if (e) loadedEntries.push(e)
+    }
+    const entryBizDomains = loadedEntries.map(e => resolveEntryBusinessDomain(e).id)
+    const uniqueBizDomains = [...new Set(entryBizDomains)]
+    const mixedBusinessDomains = uniqueBizDomains.length > 1
+    const effectiveBizDomain = inputBusinessDomain || uniqueBizDomains[0] || ''
+
+    // ── 组装查询 token 集合（条目内容 + 文档标题 + 关键词 + 自由文本 + 名称） ──────
+    const queryParts: string[] = [freeText, skillName, inputKeywords.join(' ')]
+    for (const e of loadedEntries) {
+      if (mixedBusinessDomains && effectiveBizDomain && resolveEntryBusinessDomain(e).id !== effectiveBizDomain) continue
+      queryParts.push(e.content, e.keywords.join(' '))
     }
     for (const id of docIdList) {
       const d = await readDocument(id)
@@ -2272,7 +2526,10 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-association', async (ctx) =>
       const candTokens = new Set(tokenize(bodyText))
       const tokenSim = tokenCosine(queryTokens, candTokens)
       const entryJ = jaccardIds(inputEntryIds, sk.generatedFromEntries)
-      const structMatch = !!(inputFuncType && inputModule && inputFuncType === sk.func_type && inputModule === sk.module)
+      const structMatch = !!(
+        inputFuncType && inputModule && inputFuncType === sk.func_type && inputModule === sk.module
+        && (!effectiveBizDomain || sk.content.toLowerCase().includes(getBusinessDomainLabel(effectiveBizDomain)))
+      )
       let score = Math.min(1, 0.45 * tokenSim + 0.35 * entryJ + (structMatch ? 0.2 : 0))
       if (entryJ >= 0.5) score = Math.max(score, 0.8)
       if (score < 0.12 && !structMatch) continue
@@ -2298,7 +2555,11 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-association', async (ctx) =>
       const entryJ = jaccardIds(inputEntryIds, d.generated_from_entries || [])
       const docOverlap = (d.source_document_ids || []).some(id => inputDocIds.has(id))
       const dMod = normModule(d.module), dFt = normFuncType(d.func_type)
-      const structMatch = !!(inputFuncType && inputModule && inputFuncType === dFt && inputModule === dMod)
+      const structMatch = !!(
+        inputFuncType && inputModule && inputFuncType === dFt && inputModule === dMod
+        && (!effectiveBizDomain || (d.business_domain === effectiveBizDomain)
+          || (d.domain_label || '').includes(getBusinessDomainLabel(effectiveBizDomain)))
+      )
       let score = Math.min(1, 0.45 * tokenSim + 0.35 * entryJ + (structMatch ? 0.2 : 0))
       if (docOverlap) score = Math.max(score, 0.85)
       if (entryJ >= 0.5) score = Math.max(score, 0.8)
@@ -2328,9 +2589,10 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-association', async (ctx) =>
       data: {
         associations: top,
         total: results.length,
-        // 总体建议：存在高相关 Skill 时建议增强，否则建议新建
-        overall_recommendation: bestEnhance ? 'enhance_existing' : 'create_new',
-        best_match: bestEnhance || null,
+        overall_recommendation: mixedBusinessDomains ? 'create_new' : (bestEnhance ? 'enhance_existing' : 'create_new'),
+        best_match: mixedBusinessDomains ? null : (bestEnhance || null),
+        mixed_business_domains: mixedBusinessDomains,
+        business_domains: uniqueBizDomains.map(id => ({ id, label: getBusinessDomainLabel(id) })),
       },
     }
   } catch (err) {
@@ -2454,10 +2716,12 @@ async function runSkillGenerationStream(
     skill_name?: string
     generated_by?: string
     document_ids?: string[]
+    business_domain?: string
+    business_domain_label?: string
   }
 ): Promise<void> {
   const emit = (update: Partial<SkillGenJob>) => emitSkillGenEvent(jobId, update)
-  const { mod, func_type, entry_ids, skill_name, generated_by, document_ids } = params
+  const { mod, func_type, entry_ids, skill_name, generated_by, document_ids, business_domain, business_domain_label } = params
 
   // Step 0: 初始化
   emit({ stage: 'init', progress: 5, message: '加载知识条目...' })
@@ -2480,7 +2744,15 @@ async function runSkillGenerationStream(
     return
   }
 
-  emit({ stage: 'init', progress: 8, message: `已加载 ${entriesToUse.length} 条知识条目` })
+  const dominantBiz = business_domain
+    ? { id: business_domain, label: business_domain_label || getBusinessDomainLabel(business_domain) }
+    : resolveEntryBusinessDomain(entriesToUse[0])
+  const bizIds = new Set(entriesToUse.map(e => resolveEntryBusinessDomain(e).id))
+  if (bizIds.size > 1) {
+    logger.warn({ jobId, bizIds: [...bizIds] }, '[kb] skill generation entries span multiple business domains')
+  }
+
+  emit({ stage: 'init', progress: 8, message: `已加载 ${entriesToUse.length} 条「${dominantBiz.label}」知识条目` })
 
   // ── Step 0.5: 加载源文档（完整内容） ────────────────────────────────
   let sourceDocuments: KnowledgeDocument[] = []
@@ -2613,14 +2885,19 @@ async function runSkillGenerationStream(
   // Step 7: 质量评分
   emit({ stage: 'quality_score', progress: 90, message: '计算质量评分...' })
   const ts = Date.now().toString(36)
-  const skillId = `kb-skill-${mod.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${func_type.replace(/_/g, '-')}-${ts}`
+  const bizSlug = dominantBiz.id.replace(/_/g, '-')
+  const skillId = `kb-skill-${mod.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${bizSlug}-${func_type.replace(/_/g, '-')}-${ts}`
   const activatedSkills = getActivatedSkills()
   const sourceDocIds = [...new Set(entriesToUse.map(e => e.source_document_id).filter(Boolean) as string[])]
+  const moduleNames: Record<string, string> = {
+    telephony: 'Telephony', 'kernel-driver': '内核驱动', 'power-mgmt': '功耗管理', shared: '共享',
+  }
   const draft: SkillDraft = {
     id: `sd-${randomUUID().slice(0, 8)}`,
     skill_id: skillId,
-    skill_name: skill_name || `${mod} ${func_type} Skill`,
-    domain_label: `${mod} — ${func_type}`,
+    skill_name: skill_name || `${moduleNames[mod] || mod} ${dominantBiz.label !== '通用' ? dominantBiz.label + ' ' : ''}${func_type} Skill`,
+    domain_label: `${moduleNames[mod] || mod} — ${dominantBiz.label}`,
+    business_domain: dominantBiz.id,
     module: mod,
     func_type: normFt,
     func_type_raw: func_type,
@@ -2861,7 +3138,7 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/generate-stream', asy
   try {
     await initDirs()
     const body = (ctx.request.body || {}) as Record<string, unknown>
-    const { module: mod, func_type, entry_ids, skill_name, generated_by, document_ids } = body
+    const { module: mod, func_type, entry_ids, skill_name, generated_by, document_ids, business_domain, business_domain_label } = body
     if (!mod || !func_type) {
       ctx.status = 400
       ctx.body = { success: false, error: '缺少 module 或 func_type' }
@@ -2890,6 +3167,8 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/generate-stream', asy
       skill_name: skill_name ? String(skill_name) : undefined,
       generated_by: generated_by ? String(generated_by) : undefined,
       document_ids: Array.isArray(document_ids) ? document_ids.map(String) : undefined,
+      business_domain: business_domain ? String(business_domain) : undefined,
+      business_domain_label: business_domain_label ? String(business_domain_label) : undefined,
     }).catch(err => {
       emitSkillGenEvent(jobId, {
         status: 'error',
@@ -3487,19 +3766,14 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/import/jobs/:jobId/save', async (c
           chunk_count: fileChunks.length,
         }
         for (const ext of fileChunks) {
-          const entry: KnowledgeEntry = {
-            id: `kb-${randomUUID().slice(0, 8)}`, content: ext.content, category: ext.category,
-            module: ext.module, func_type: ext.func_type, keywords: ext.keywords,
-            confidence_score: ext.confidence_score, source_file: ext.source_file,
-            source_section: ext.source_section, source_document_id: docId,
-            created_at: now, updated_at: now, status: 'pending_review', is_verified: false, usage_count: 0,
-          }
+          const entry = enrichDocChunkEntry(ext, docId, now)
           await writeEntry(entry)
           saved.push(entry)
           doc.chunk_ids.push(entry.id)
         }
         doc.chunk_count = doc.chunk_ids.length
         await writeDocument(doc)
+        await createDocSummaryEntry(doc, now)
         createdDocIds.push(docId)
       }
     } else {
@@ -3523,19 +3797,14 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/import/jobs/:jobId/save', async (c
         chunk_count: toSave.length,
       }
       for (const ext of toSave) {
-        const entry: KnowledgeEntry = {
-          id: `kb-${randomUUID().slice(0, 8)}`, content: ext.content, category: ext.category,
-          module: ext.module, func_type: ext.func_type, keywords: ext.keywords,
-          confidence_score: ext.confidence_score, source_file: ext.source_file,
-          source_section: ext.source_section, source_document_id: docId,
-          created_at: now, updated_at: now, status: 'pending_review', is_verified: false, usage_count: 0,
-        }
+        const entry = enrichDocChunkEntry(ext, docId, now)
         await writeEntry(entry)
         saved.push(entry)
         doc.chunk_ids.push(entry.id)
       }
       doc.chunk_count = saved.length
       await writeDocument(doc)
+      await createDocSummaryEntry(doc, now)
       createdDocIds.push(docId)
     }
 

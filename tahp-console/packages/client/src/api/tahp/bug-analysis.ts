@@ -200,6 +200,7 @@ export function continueAnalysis(taskId: string, payload: {
 export interface DistillResult {
   recorded: boolean
   deposited: boolean
+  dedup_action?: 'created' | 'updated' | 'unchanged'
   entry: { id: string; module: string; func_type: string } | null
   message: string
 }

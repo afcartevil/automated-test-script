@@ -373,10 +373,12 @@ const draftColumns: DataTableColumns<SkillDraft> = [
   {
     title: '操作',
     key: 'actions',
-    width: 200,
+    width: 240,
     align: 'center',
     render: (r) => {
-      const btns: any[] = []
+      const btns: any[] = [
+        h(NButton, { size: 'tiny', quaternary: true, onClick: () => openSkillPreview(r) }, () => '预览'),
+      ]
       const s = r.status || 'draft'
       if (s === 'draft' || s === 'reviewing') {
         btns.push(h(NButton, { size: 'tiny', type: 'success', onClick: () => openReviewModal(r, 'approve') }, () => '✓ 批准'))
@@ -1353,7 +1355,16 @@ const skillSuggestions    = ref<SkillSuggestion[]>([])
 const suggestionsLoading  = ref(false)
 const recommendedCount    = ref(0)
 // 保存"刚导入后有推荐"的提示状态
-const importSuggestNotice = ref<{ module: string; func_type: string; count: number } | null>(null)
+const importSuggestNotice = ref<{ module: string; func_type: string; business_domain_label?: string; count: number } | null>(null)
+
+function suggestionGroupKey(s: Pick<SkillSuggestion, 'group_key' | 'module' | 'func_type' | 'business_domain'>): string {
+  return s.group_key || `${s.module}::${s.func_type}::${s.business_domain || 'general'}`
+}
+
+// Skill 预览（只读审核）
+const showSkillPreview     = ref(false)
+const previewDraft         = ref<SkillDraft | null>(null)
+const previewLoading       = ref(false)
 
 // Skill 编辑器状态
 const showSkillEditor       = ref(false)
@@ -1437,7 +1448,12 @@ async function checkSkillRecommendations() {
     const res = await getSkillSuggestions()
     const top = res.suggestions.find(s => s.recommended)
     if (top) {
-      importSuggestNotice.value = { module: top.module, func_type: top.func_type, count: top.entry_count }
+      importSuggestNotice.value = {
+        module: top.module,
+        func_type: top.func_type,
+        business_domain_label: top.business_domain_label,
+        count: top.entry_count,
+      }
     }
   } catch { /* ignore */ }
 }
@@ -1445,13 +1461,14 @@ async function checkSkillRecommendations() {
 async function startGenerateSkill(suggestion: SkillSuggestion) {
   // ── Step 1: 先检索相似 Skill ──────────────────────────────────────────────
   checkingSimilarity.value = true
-  generatingFor.value = `${suggestion.module}::${suggestion.func_type}`
+  generatingFor.value = suggestionGroupKey(suggestion)
   try {
     const simResult = await checkSkillSimilarity({
       module: suggestion.module,
       func_type: suggestion.func_type,
       entry_ids: suggestion.entry_ids,
       skill_name: suggestion.suggested_skill_name,
+      business_domain: suggestion.business_domain,
     })
     if (simResult.similar.length > 0) {
       // 有相似 Skill，暂存 suggestion 并弹出相似度弹窗
@@ -1475,7 +1492,7 @@ async function startGenerateSkill(suggestion: SkillSuggestion) {
 
 /** 实际调用 SSE 流式生成 Skill 草稿（相似检查通过后调用） */
 async function doGenerateSkill(suggestion: SkillSuggestion) {
-  generatingFor.value = `${suggestion.module}::${suggestion.func_type}`
+  generatingFor.value = suggestionGroupKey(suggestion)
 
   // 暂存 suggestion，供 SSE 完成后的重复检测弹窗使用
   currentGenSuggestion = suggestion
@@ -1501,6 +1518,8 @@ async function doGenerateSkill(suggestion: SkillSuggestion) {
       skill_name: suggestion.suggested_skill_name,
       generated_by: 'user',
       document_ids: suggestion.source_document_ids,
+      business_domain: suggestion.business_domain,
+      business_domain_label: suggestion.business_domain_label,
     })
     genJobId.value = job_id
     subscribeGenProgress(job_id)
@@ -1725,7 +1744,7 @@ async function handleForceCreate() {
   // 重新以相同参数启动生成（后端会跳过重复检测步骤）
   const suggestion = pendingSuggestionForDup.value
   pendingSuggestionForDup.value = null
-  generatingFor.value = `${suggestion.module}::${suggestion.func_type}`
+  generatingFor.value = suggestionGroupKey(suggestion)
   generatingSkill.value = true
   showGenProgressModal.value = true
   genProgressSteps.value = genProgressSteps.value.map(s => ({ ...s, status: 'wait' as const }))
@@ -1737,6 +1756,8 @@ async function handleForceCreate() {
       skill_name: suggestion.suggested_skill_name,
       generated_by: 'user',
       document_ids: suggestion.source_document_ids,
+      business_domain: suggestion.business_domain,
+      business_domain_label: suggestion.business_domain_label,
     })
     genJobId.value = job_id
     subscribeGenProgress(job_id)
@@ -1844,6 +1865,7 @@ async function handleUpgradeActivated(item: SimilarSkillItem) {
 }
 
 function openSkillEditor(draft: SkillDraft) {
+  showSkillPreview.value = false
   editingDraft.value = draft
   editorContent.value = draft.content || ''
   editorSkillName.value = draft.skill_name || ''
@@ -1862,6 +1884,34 @@ async function openSkillEditorById(draftId: string) {
   } catch (err) {
     message.error('加载草稿失败：' + (err as Error).message)
   }
+}
+
+function openSkillPreview(draft: SkillDraft) {
+  previewDraft.value = draft
+  showSkillPreview.value = true
+}
+
+async function openSkillPreviewById(draftId: string) {
+  previewLoading.value = true
+  try {
+    const draft = await getSkillDraft(draftId)
+    openSkillPreview(draft)
+  } catch (err) {
+    message.error('加载预览失败：' + (err as Error).message)
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+function previewToEditor() {
+  if (!previewDraft.value) return
+  openSkillEditor(previewDraft.value)
+}
+
+function previewToReview() {
+  if (!previewDraft.value) return
+  openReviewModal(previewDraft.value, 'approve')
+  showSkillPreview.value = false
 }
 
 async function saveSkillDraft() {
@@ -2732,7 +2782,7 @@ function scoreColor(score: number, max: number): string {
           <div class="notice-content">
             <span class="notice-icon">💡</span>
             <span class="notice-text">
-              刚导入的内容使 <strong>{{ importSuggestNotice.module }} / {{ importSuggestNotice.func_type }}</strong>
+              刚导入的内容使 <strong>{{ importSuggestNotice.business_domain_label || importSuggestNotice.module }} / {{ importSuggestNotice.func_type }}</strong>
               分组已有 {{ importSuggestNotice.count }} 条知识，建议生成 Skill 以便 AI 执行任务时使用
             </span>
             <NButton size="tiny" type="primary" @click="importSuggestNotice = null">知道了</NButton>
@@ -2752,7 +2802,7 @@ function scoreColor(score: number, max: number): string {
             <div class="suggestion-grid" v-else>
               <div
                 v-for="s in skillSuggestions"
-                :key="`${s.module}::${s.func_type}`"
+                :key="s.group_key || suggestionGroupKey(s)"
                 class="suggestion-card"
                 :class="{ 'suggestion-card--recommended': s.recommended, 'suggestion-card--dim': !s.recommended }"
               >
@@ -2762,6 +2812,9 @@ function scoreColor(score: number, max: number): string {
                       size="tiny"
                       :style="{ '--n-color': (MODULE_COLOR[s.module] || '#722ed1') + '22', '--n-text-color': MODULE_COLOR[s.module] || '#722ed1', '--n-border': 'none', fontWeight: 600 }"
                     >{{ MODULE_SHORT[s.module] || s.module }}</NTag>
+                    <NTag v-if="s.business_domain_label && s.business_domain !== 'general'" size="tiny" type="success">
+                      {{ s.business_domain_label }}
+                    </NTag>
                     <span class="badge badge-func badge-xs">{{ s.func_type.replace(/_/g, ' ') }}</span>
                   </div>
                   <NTag v-if="s.existing_skill_count > 0" size="tiny" type="warning">
@@ -2784,12 +2837,12 @@ function scoreColor(score: number, max: number): string {
                   v-if="s.recommended && !s.has_draft"
                   type="primary"
                   size="small"
-                  :loading="(generatingSkill || checkingSimilarity) && generatingFor === `${s.module}::${s.func_type}`"
+                  :loading="(generatingSkill || checkingSimilarity) && generatingFor === suggestionGroupKey(s)"
                   :disabled="generatingSkill || checkingSimilarity"
                   @click="startGenerateSkill(s)"
                   class="suggestion-gen-btn"
                 >
-                  {{ checkingSimilarity && generatingFor === `${s.module}::${s.func_type}` ? '检索相似中…' : '✨ 生成 Skill 草稿' }}
+                  {{ checkingSimilarity && generatingFor === suggestionGroupKey(s) ? '检索相似中…' : '✨ 生成 Skill 草稿' }}
                 </NButton>
                 <NButton
                   v-else-if="s.has_draft"
@@ -2842,6 +2895,12 @@ function scoreColor(score: number, max: number): string {
                     </div>
                   </div>
                   <NSpace size="small">
+                    <NButton
+                      size="tiny"
+                      @click="d.id && openSkillPreview(d)"
+                    >
+                      预览
+                    </NButton>
                     <!-- 低质量草稿：优先显示「完善 Skill」，按钮更突出 -->
                     <NButton
                       v-if="d.quality_score && !d.quality_score.pass_gate"
@@ -3145,6 +3204,54 @@ function scoreColor(score: number, max: number): string {
         </div>
       </NDrawerContent>
     </NDrawer>
+    <!-- ── Skill 预览 Modal（只读审核） ─────────────────── -->
+    <NModal
+      v-model:show="showSkillPreview"
+      preset="card"
+      :title="previewDraft ? `Skill 预览：${previewDraft.skill_name}` : 'Skill 预览'"
+      style="width: 92%; max-width: 960px"
+      @after-leave="previewDraft = null"
+    >
+      <NSpin :show="previewLoading">
+        <div v-if="previewDraft" class="skill-preview-wrap">
+          <div class="skill-preview-meta">
+            <div class="skill-preview-meta-row">
+              <code class="cell-code">{{ previewDraft.skill_id }}</code>
+              <NTag size="small" type="info">{{ previewDraft.domain_label }}</NTag>
+              <NTag
+                v-if="previewDraft.business_domain && previewDraft.business_domain !== 'general'"
+                size="small"
+                type="success"
+              >{{ previewDraft.domain_label?.split('—').pop()?.trim() || previewDraft.business_domain }}</NTag>
+              <NTag size="small">{{ MODULE_SHORT[previewDraft.module] || previewDraft.module }}</NTag>
+              <NTag size="small" type="warning">{{ FUNC_TYPE_SHORT[previewDraft.func_type] || previewDraft.func_type }}</NTag>
+              <NTag v-if="previewDraft.quality_score" size="small" :type="previewDraft.quality_score.pass_gate ? 'success' : 'warning'">
+                质量 Q{{ previewDraft.quality_score.total }}
+              </NTag>
+            </div>
+            <div class="skill-preview-meta-sub">
+              来源 {{ (previewDraft.generated_from_entries || []).length }} 条知识条目
+              <span v-if="previewDraft.source_document_ids?.length"> · {{ previewDraft.source_document_ids.length }} 个源文档</span>
+            </div>
+          </div>
+          <NScrollbar style="max-height: 65vh; margin-top: 12px">
+            <MarkdownRenderer class="skill-preview-body" :content="previewDraft.content || '（暂无内容）'" />
+          </NScrollbar>
+        </div>
+        <NEmpty v-else description="暂无预览内容" />
+      </NSpin>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showSkillPreview = false">关闭</NButton>
+          <NButton v-if="previewDraft" @click="previewToEditor">编辑</NButton>
+          <NButton
+            v-if="previewDraft && (previewDraft.status === 'draft' || previewDraft.status === 'reviewing')"
+            type="success"
+            @click="previewToReview"
+          >批准发布</NButton>
+        </NSpace>
+      </template>
+    </NModal>
     <!-- ── Skill 编辑器 Drawer ─────────────────────────── -->
     <NDrawer v-model:show="showSkillEditor" :width="1080" placement="right" @after-leave="editingDraft = null">
       <NDrawerContent :title="`✏️ 编辑 Skill：${editingDraft?.skill_name || ''}`" closable>
@@ -4543,6 +4650,12 @@ function scoreColor(score: number, max: number): string {
   border-radius: 10px;
   background: rgba(0,0,0,.05);
 }
+
+/* ── Skill 预览 Modal ───────────────────────────────── */
+.skill-preview-wrap { display: flex; flex-direction: column; }
+.skill-preview-meta-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.skill-preview-meta-sub { margin-top: 8px; font-size: 12px; color: var(--n-text-color-3); }
+.skill-preview-body { padding: 8px 4px 16px; font-size: 13px; line-height: 1.7; }
 
 /* ── Skill 编辑器 Drawer ─────────────────────────────── */
 .skill-editor-wrap {

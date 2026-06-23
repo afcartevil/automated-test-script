@@ -7,6 +7,7 @@ import thinkingVideoLight from "@/assets/thinking-light.mp4";
 import thinkingVideoDark from "@/assets/thinking-dark.mp4";
 import { useTheme } from "@/composables/useTheme";
 import { useToolTraceVisibility } from "@/composables/useToolTraceVisibility";
+import { shouldHideSupersededReasoningOnlyMessage } from "@/utils/run-stream-assistant";
 
 const chatStore = useChatStore();
 const { t } = useI18n();
@@ -49,7 +50,11 @@ const visibleToolCalls = computed(() =>
 
 const displayMessages = computed(() => {
   const currentToolIds = new Set(currentToolCalls.value.map((tool) => tool.id));
-  return chatStore.messages.filter((m) => {
+  const all = chatStore.messages;
+  return all.filter((m, idx) => {
+    if (shouldHideSupersededReasoningOnlyMessage(all, idx)) {
+      return false;
+    }
     if (m.role === "tool") {
       return toolTraceVisible.value && !!m.toolName && !(chatStore.isRunActive && currentToolIds.has(m.id));
     }
