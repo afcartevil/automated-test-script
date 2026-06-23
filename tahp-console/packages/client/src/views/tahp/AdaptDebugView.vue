@@ -18,6 +18,14 @@ import {
   type AdaptLayoutFieldDef,
   type AdaptLayoutSyncMeta,
 } from '@/api/tahp/adapt-layout'
+import {
+  ADAPT_WORKSPACES,
+  cloneAdaptDomains,
+  defaultActiveDomainId,
+  getAdaptWorkspace,
+  getBuiltinDomainsForWorkspace,
+  type AdaptWorkspaceId,
+} from '@/constants/adapt-domains'
 
 const message = useMessage()
 const router = useRouter()
@@ -49,274 +57,211 @@ interface DomainDef {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 域定义
+// 工作区与子界面（AI适配调试 / 特性适配 / 运营商配置）
 // ─────────────────────────────────────────────────────────────────────────────
-const DOMAINS = reactive<DomainDef[]>([
-  {
-    id: 'tp',
-    label: 'TP触摸屏',
-    icon: 'TP',
-    color: '#388bfd',
-    status: 'active',
-    relatedSkills: ['tp-adapt-bringup'],
-    fields: [
-      { name: 'debug_project', label: '调试项目名', type: 'text', required: true, placeholder: '如 X6876_H786' },
-      { name: 'project_platform', label: '项目平台', type: 'text', required: true, placeholder: '如 MT6878' },
-      { name: 'ic_vendor', label: 'IC厂商', type: 'text', required: true, placeholder: '如 FocalTech / Goodix' },
-      { name: 'ic_model', label: 'IC型号', type: 'text', required: true, placeholder: '如 FT8006M' },
-      { name: 'spi_gpio', label: 'SPI口及GPIO号', type: 'text', required: true, placeholder: 'SPI 口与对应 GPIO 配置' },
-      { name: 'tp_int_rst_gpio', label: 'TP int、rst gpio脚', type: 'text', required: true, placeholder: 'INT / RST GPIO 编号' },
-      { name: 'vddi_avdd_power', label: 'vddi、avdd的LDO或GPIO', type: 'text', required: true, placeholder: '供电 LDO 或 GPIO 配置' },
-      { name: 'old_tp_firmware', label: '升级前TP固件文件', type: 'text', required: true, placeholder: '升级前 TP 固件绝对路径' },
-      { name: 'old_dts', label: '升级前dts文件', type: 'text', required: true, placeholder: '升级前 DTS 文件路径' },
-      { name: 'ref_project_branch', label: '同分支参考项目', type: 'text', required: true, placeholder: '同分支参考项目名或路径' },
-    ],
-  },
-  {
-    id: 'vib',
-    label: '振动马达',
-    icon: 'VIB',
-    color: '#f78166',
-    status: 'pending',
-    relatedSkills: ['vib-adapt-lra-driver', 'vib-adapt-rotor-driver'],
-    fields: [
-      { name: 'motor_type', label: '马达类型', type: 'text', required: true, placeholder: 'LRA / ERM' },
-      { name: 'ic_vendor', label: '控制IC厂商', type: 'text', required: true, placeholder: '如 Awinic / AAC' },
-      { name: 'ic_model', label: '控制IC型号', type: 'text', required: true, placeholder: '如 AW8692x' },
-      { name: 'motor_model', label: '马达型号', type: 'text', required: true, placeholder: '马达型号' },
-      { name: 'i2c_bus', label: 'i2c号', type: 'text', required: true, placeholder: '如 7' },
-      { name: 'i2c_addr', label: 'i2c通讯地址', type: 'text', required: true, placeholder: '如 0x5A' },
-      { name: 'irq_gpio', label: '马达中断gpio', type: 'text', required: true, placeholder: 'IRQ GPIO' },
-      { name: 'rst_gpio', label: '复位gpio', type: 'text', required: true, placeholder: 'RST GPIO' },
-      { name: 'old_motor_firmware', label: '升级前的马达固件', type: 'text', required: true, placeholder: '升级前马达固件路径' },
-      { name: 'old_dts_config', label: '升级前的dts参数配置', type: 'text', required: true, placeholder: '升级前 DTS 参数文件或路径' },
-    ],
-  },
-  {
-    id: 'lcm',
-    label: 'LCM',
-    icon: 'LCM',
-    color: '#58a6ff',
-    status: 'pending',
-    relatedSkills: ['display_analyser'],
-    fields: [
-      { name: 'PROJECT_NAME', label: 'PROJECT_NAME（项目名称）', type: 'text', required: true, placeholder: '项目名称' },
-      { name: 'PLATFORM_NAME', label: 'PLATFORM_NAME（平台名称）', type: 'text', required: true, placeholder: '平台名称' },
-      { name: 'BOARD_NAME', label: 'BOARD_NAME（主板名称）', type: 'text', required: true, placeholder: '主板名称' },
-      { name: 'PANEL_TYPE', label: 'PANEL_TYPE（屏幕类型）', type: 'text', required: true, placeholder: '屏幕类型' },
-      { name: 'KERNEL_VERSION_OLD', label: 'KERNEL_VERSION_OLD（旧项目内核版本）', type: 'text', required: true, placeholder: '如 kernel-5.15' },
-      { name: 'KERNEL_VERSION_NEW', label: 'KERNEL_VERSION_NEW（新项目内核版本）', type: 'text', required: true, placeholder: '如 kernel-6.1' },
-      { name: 'PROJ_FILE_OLD', label: 'PROJ_FILE_OLD（旧项目代码目录）', type: 'text', required: true, placeholder: '旧项目代码绝对路径' },
-      { name: 'PROJ_FILE_NEW', label: 'PROJ_FILE_NEW（新项目代码目录）', type: 'text', required: true, placeholder: '新项目代码绝对路径' },
-      { name: 'AUTHOR_NAME', label: 'AUTHOR_NAME（作者姓名）', type: 'text', required: true, placeholder: '作者姓名' },
-      { name: 'DATE', label: 'DATE（日期）', type: 'text', required: true, placeholder: '如 2026-06-08' },
-    ],
-  },
-  {
-    id: 'fp',
-    label: '指纹',
-    icon: 'FP',
-    color: '#3fb950',
-    status: 'pending',
-    relatedSkills: ['drv-fp-adapt'],
-    fields: [
-      { name: 'debug_project', label: '调试项目名', type: 'text', required: true, placeholder: '如 LJ8k' },
-      { name: 'project_platform', label: '项目平台', type: 'text', required: true, placeholder: '如 MT6878' },
-      { name: 'kernel_version', label: 'kernel版本', type: 'text', required: true, placeholder: '如 kernel-6.1' },
-      { name: 'fp_vendor', label: '指纹厂商', type: 'text', required: true, placeholder: '如 goodix' },
-      { name: 'fp_ic_model', label: '指纹IC型号', type: 'text', required: true, placeholder: '如 GW9598' },
-      { name: 'code_path_old', label: '升级前代码仓路径', type: 'text', required: true, placeholder: '升级前代码仓绝对路径' },
-      { name: 'code_path_new', label: '升级后代码仓路径', type: 'text', required: true, placeholder: '升级后代码仓绝对路径' },
-    ],
-  },
-  {
-    id: 'audio',
-    label: '音频',
-    icon: 'AUD',
-    color: '#e3b341',
-    status: 'pending',
-    relatedSkills: ['DRV_Audio_Adapt'],
-    fields: [
-      { name: 'vnd_path_old', label: '升级前vnd绝对路径', type: 'text', required: true, placeholder: '升级前 vendor 目录绝对路径' },
-      { name: 'vnd_path_new', label: '升级后vnd绝对路径', type: 'text', required: true, placeholder: '升级后 vendor 目录绝对路径' },
-      { name: 'upgrade_scenario', label: '升级场景', type: 'text', required: true, placeholder: '12解耦前→16解耦后 / 14解耦前→14解耦后' },
-      { name: 'old_build_option', label: '升级前编译选项', type: 'text', required: true, placeholder: '从 spug 查找，如 x6885_h8923_m1' },
-      { name: 'sw_config_screenshot', label: '软件配置表截图', type: 'textarea', required: true, placeholder: '声学配置表说明或截图路径（PA型号/SPK个数/SPK PATH/MIC个数/PHONE_MIC_MODE/HEADSET_MIC_MODE/是否TypeC等）' },
-    ],
-  },
-  {
-    id: 'charging',
-    label: '充电',
-    icon: 'CHG',
-    color: '#f78166',
-    status: 'pending',
-    relatedSkills: ['pillar3-customization-input'],
-    fields: [
-      { name: 'charger_ic_model', label: '【Charger IC】型号', type: 'text', required: true, placeholder: 'Charger IC 型号' },
-      { name: 'charger_i2c_bus', label: '【Charger IC】I2C总线号', type: 'text', required: true, placeholder: '如 6' },
-      { name: 'charger_i2c_addr', label: '【Charger IC】I2C地址', type: 'text', required: true, placeholder: '如 0x6B' },
-      { name: 'charger_irq', label: '【Charger IC】IRQ中断引脚号', type: 'text', required: true, placeholder: 'IRQ GPIO' },
-      { name: 'pump_ic_model', label: '【Charge Pump】型号', type: 'text', required: true, placeholder: 'Charge Pump 型号' },
-      { name: 'pump_i2c_bus', label: '【Charge Pump】I2C总线号', type: 'text', required: true, placeholder: '如 7' },
-      { name: 'pump_i2c_addr', label: '【Charge Pump】I2C地址', type: 'text', required: true, placeholder: '如 0x75' },
-      { name: 'pump_irq', label: '【Charge Pump】IRQ中断引脚号', type: 'text', required: true, placeholder: 'IRQ GPIO' },
-      { name: 'pump_extra', label: '【Charge Pump】多颗器件补充', type: 'textarea', required: false, placeholder: '如有多颗 Charge Pump，在此补全型号/I2C/IRQ' },
-      { name: 'pd_ic_model', label: '【PD IC】型号', type: 'text', required: true, placeholder: 'PD IC 型号' },
-      { name: 'pd_i2c_bus', label: '【PD IC】I2C总线号', type: 'text', required: true, placeholder: '如 5' },
-      { name: 'pd_i2c_addr', label: '【PD IC】I2C地址', type: 'text', required: true, placeholder: '如 0x24' },
-      { name: 'pd_irq', label: '【PD IC】IRQ中断引脚号', type: 'text', required: true, placeholder: 'IRQ GPIO' },
-      { name: 'gauge_type', label: '【Gauge】类型', type: 'text', required: true, placeholder: 'Gauge 类型/型号' },
-      { name: 'gauge_i2c_bus', label: '【Gauge】I2C总线号', type: 'text', required: true, placeholder: '如 4' },
-      { name: 'gauge_i2c_addr', label: '【Gauge】I2C地址', type: 'text', required: true, placeholder: '如 0x55' },
-    ],
-  },
-  {
-    id: 'sensor',
-    label: 'Sensor',
-    icon: 'SNS',
-    color: '#a371f7',
-    status: 'pending',
-    relatedSkills: ['DRV_Sensor_Adapt'],
-    fields: [
-      { name: 'old_project_path', label: '旧项目完整路径', type: 'text', required: true, placeholder: '旧项目完整绝对路径' },
-      { name: 'new_baseline_path', label: '新基线完整路径', type: 'text', required: true, placeholder: '新基线完整绝对路径' },
-      { name: 'project_name', label: '项目名', type: 'text', required: true, placeholder: '项目名' },
-      { name: 'new_features', label: '具体新增特性', type: 'textarea', required: true, placeholder: '描述本次 Sensor 适配的具体新增特性' },
-    ],
-  },
-  {
-    id: 'security',
-    label: '安全',
-    icon: 'SEC',
-    color: '#da3633',
-    status: 'pending',
-    relatedSkills: ['android-platform-security-upgrade-ai-debug'],
-    fields: [
-      { name: 'branch_path_old', label: '升级前分支路径', type: 'text', required: true, placeholder: '升级前分支路径（须为非榫卯）' },
-      { name: 'branch_path_new', label: '升级后分支路径', type: 'text', required: true, placeholder: '升级后分支路径（须为榫卯）' },
-      { name: 'project_name', label: '项目名', type: 'text', required: true, placeholder: '项目名' },
-      { name: 'platform_name', label: '平台名', type: 'text', required: true, placeholder: '平台名' },
-    ],
-  },
-  {
-    id: 'mini-system',
-    label: '小系统',
-    icon: 'LK',
-    color: '#e3b341',
-    status: 'pending',
-    relatedSkills: ['KRN_LK_CPU_Ddapt'],
-    fields: [
-      { name: 'lk2_path_old', label: '升级前lk2路径', type: 'text', required: true, placeholder: '升级前 lk2 绝对路径' },
-      { name: 'lk2_path_new', label: '升级后lk2路径', type: 'text', required: true, placeholder: '升级后 lk2 绝对路径' },
-      { name: 'project_name', label: '项目名', type: 'text', required: true, placeholder: '项目名' },
-    ],
-  },
-  {
-    id: 'modem',
-    label: '通信Modem',
-    icon: 'MDM',
-    color: '#388bfd',
-    status: 'pending',
-    relatedSkills: ['MODEM_P1_Adapt', 'com-comm-analysis-foundation', 'carrier-porting-assistant'],
-    fields: [
-      { name: 'path_a_pub', label: 'Path_A_Pub（原分支公共仓）', type: 'text', required: true, placeholder: 'D:\\project\\mp_release_10.0\\common\\' },
-      { name: 'path_a_priv', label: 'Path_A_Priv（原分支私有仓）', type: 'text', required: true, placeholder: 'D:\\project\\mp_release_10.0\\private\\' },
-      { name: 'path_b_pub', label: 'Path_B_Pub（目标分支公共仓）', type: 'text', required: true, placeholder: 'D:\\project\\main\\common\\' },
-      { name: 'path_b_priv', label: 'Path_B_Priv（目标分支私有仓）', type: 'text', required: true, placeholder: 'D:\\project\\main\\private\\' },
-      { name: 'bom_name', label: 'BOM_Name（项目 BOM）', type: 'text', required: true, placeholder: 'ae10_h833_a1 / cm7_h781 / x6870_h781_f1' },
-      { name: 'bom_name_target', label: 'BOM_Name_Target（变更后 BOM）', type: 'text', required: true, placeholder: 'x6856_h971_a1' },
-      { name: 'rf_target_location', label: 'RF_TARGET_LOCATION', type: 'select', required: true, options: [{ label: 'public（公共仓）', value: 'public' }, { label: 'private（私有仓）', value: 'private' }] },
-      { name: 'modem_platform', label: 'Modem 平台（补充）', type: 'select', required: false, options: [{ label: 'MTK', value: 'mtk' }, { label: 'Qualcomm', value: 'qcom' }, { label: 'UNISOC', value: 'unisoc' }] },
-      { name: 'rf_param_dir', label: 'RF 参数目录（补充）', type: 'text', required: false, placeholder: 'vendor/mediatek/proprietary/modem_1/rf_params' },
-      { name: 'carrier', label: '运营商（补充）', type: 'text', required: false, placeholder: 'CMCC / Vodafone' },
-      { name: 'user_notes', label: '补充说明', type: 'textarea', required: false, placeholder: '覆盖确认、特殊分支说明等' },
-    ],
-  },
-  {
-    id: 'comm-framework',
-    label: '通信框架',
-    icon: 'CMF',
-    color: '#0ea5e9',
-    status: 'pending',
-    relatedSkills: ['comm-framework-agent-test', 'com-comm-analysis-foundation'],
-    fields: [
-      { name: 'prj_path', label: 'PRJ Path（项目路径）', type: 'text', required: true, placeholder: 'D:\\project\\your_comm_framework\\' },
-      { name: 'user_notes', label: '补充说明', type: 'textarea', required: false, placeholder: '说明要测试的场景、注意事项等' },
-    ],
-  },
-])
+const WORKSPACE_STORAGE_KEY = 'tahp-adapt-workspace'
 
-/** 内置默认字段快照（恢复默认 / 云端未覆盖时使用） */
-const STATIC_DEFAULT_FIELDS: Record<string, FieldDef[]> = Object.fromEntries(
-  DOMAINS.map(d => [d.id, JSON.parse(JSON.stringify(d.fields)) as FieldDef[]]),
-)
-const STATIC_DEFAULT_RELATED_SKILLS: Record<string, string[]> = Object.fromEntries(
-  DOMAINS.map(d => [d.id, [...d.relatedSkills]]),
-)
+function readStoredWorkspace(): AdaptWorkspaceId {
+  const raw = localStorage.getItem(WORKSPACE_STORAGE_KEY)
+  if (raw && ADAPT_WORKSPACES.some(w => w.id === raw)) return raw as AdaptWorkspaceId
+  return 'adapt-debug'
+}
+
+const activeWorkspaceId = ref<AdaptWorkspaceId>(readStoredWorkspace())
+const activeWorkspace = computed(() => getAdaptWorkspace(activeWorkspaceId.value))
+
+function initDomainsForWorkspace(ws: AdaptWorkspaceId): DomainDef[] {
+  return reactive(cloneAdaptDomains(getBuiltinDomainsForWorkspace(ws))) as DomainDef[]
+}
+
+const workspaceDomains = reactive<Record<AdaptWorkspaceId, DomainDef[]>>({
+  'adapt-debug': initDomainsForWorkspace('adapt-debug'),
+  'feature-adapt': initDomainsForWorkspace('feature-adapt'),
+  'carrier-config': initDomainsForWorkspace('carrier-config'),
+})
+
+const DOMAINS = computed(() => workspaceDomains[activeWorkspaceId.value])
+
+const activeDomainByWorkspace = reactive<Record<AdaptWorkspaceId, string>>({
+  'adapt-debug': defaultActiveDomainId('adapt-debug'),
+  'feature-adapt': defaultActiveDomainId('feature-adapt'),
+  'carrier-config': defaultActiveDomainId('carrier-config'),
+})
+
+const activeDomainId = computed({
+  get: () => activeDomainByWorkspace[activeWorkspaceId.value],
+  set: (v: string) => { activeDomainByWorkspace[activeWorkspaceId.value] = v },
+})
+
+function formScopeKey(domainId: string): string {
+  return `${activeWorkspaceId.value}:${domainId}`
+}
+
+function buildStaticDefaults(ws: AdaptWorkspaceId) {
+  const domains = getBuiltinDomainsForWorkspace(ws)
+  return {
+    fields: Object.fromEntries(
+      domains.map(d => [d.id, JSON.parse(JSON.stringify(d.fields)) as FieldDef[]]),
+    ),
+    skills: Object.fromEntries(domains.map(d => [d.id, [...d.relatedSkills]])),
+  }
+}
+
+const staticDefaultsByWorkspace = reactive<Record<AdaptWorkspaceId, {
+  fields: Record<string, FieldDef[]>
+  skills: Record<string, string[]>
+}>>({
+  'adapt-debug': buildStaticDefaults('adapt-debug'),
+  'feature-adapt': buildStaticDefaults('feature-adapt'),
+  'carrier-config': buildStaticDefaults('carrier-config'),
+})
+
+function currentStaticDefaultFields(): Record<string, FieldDef[]> {
+  return staticDefaultsByWorkspace[activeWorkspaceId.value].fields
+}
+
+function currentStaticDefaultSkills(): Record<string, string[]> {
+  return staticDefaultsByWorkspace[activeWorkspaceId.value].skills
+}
+
+interface WorkspaceRunState {
+  agentLaunching: boolean
+  launchedTaskId: string | null
+  taskStatus: string
+  showMonitor: boolean
+  monitorMode: 'agent' | null
+  startTime: number
+}
+
+function defaultRunState(): WorkspaceRunState {
+  return {
+    agentLaunching: false,
+    launchedTaskId: null,
+    taskStatus: '',
+    showMonitor: false,
+    monitorMode: null,
+    startTime: 0,
+  }
+}
+
+const runStateByWorkspace = reactive<Record<AdaptWorkspaceId, WorkspaceRunState>>({
+  'adapt-debug': defaultRunState(),
+  'feature-adapt': defaultRunState(),
+  'carrier-config': defaultRunState(),
+})
+
+const agentLaunching = computed({
+  get: () => runStateByWorkspace[activeWorkspaceId.value].agentLaunching,
+  set: (v: boolean) => { runStateByWorkspace[activeWorkspaceId.value].agentLaunching = v },
+})
+const launchedTaskId = computed({
+  get: () => runStateByWorkspace[activeWorkspaceId.value].launchedTaskId,
+  set: (v: string | null) => { runStateByWorkspace[activeWorkspaceId.value].launchedTaskId = v },
+})
+const taskStatus = computed({
+  get: () => runStateByWorkspace[activeWorkspaceId.value].taskStatus,
+  set: (v: string) => { runStateByWorkspace[activeWorkspaceId.value].taskStatus = v },
+})
+const showMonitor = computed({
+  get: () => runStateByWorkspace[activeWorkspaceId.value].showMonitor,
+  set: (v: boolean) => { runStateByWorkspace[activeWorkspaceId.value].showMonitor = v },
+})
+const monitorMode = computed({
+  get: () => runStateByWorkspace[activeWorkspaceId.value].monitorMode,
+  set: (v: 'agent' | null) => { runStateByWorkspace[activeWorkspaceId.value].monitorMode = v },
+})
+const startTime = computed({
+  get: () => runStateByWorkspace[activeWorkspaceId.value].startTime,
+  set: (v: number) => { runStateByWorkspace[activeWorkspaceId.value].startTime = v },
+})
+
+const layoutSyncMetaByWorkspace = reactive<Record<AdaptWorkspaceId, AdaptLayoutSyncMeta | null>>({
+  'adapt-debug': null,
+  'feature-adapt': null,
+  'carrier-config': null,
+})
+const layoutManifestPathByWorkspace = reactive<Record<AdaptWorkspaceId, string>>({
+  'adapt-debug': '',
+  'feature-adapt': '',
+  'carrier-config': '',
+})
+const layoutsReadyByWorkspace = reactive<Record<AdaptWorkspaceId, boolean>>({
+  'adapt-debug': false,
+  'feature-adapt': false,
+  'carrier-config': false,
+})
+
+const layoutSyncMeta = computed(() => layoutSyncMetaByWorkspace[activeWorkspaceId.value])
+const layoutManifestPath = computed(() => layoutManifestPathByWorkspace[activeWorkspaceId.value])
+const layoutsReady = computed(() => layoutsReadyByWorkspace[activeWorkspaceId.value])
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 表单状态
+// 域定义（按工作区独立维护，见 constants/adapt-domains）
 // ─────────────────────────────────────────────────────────────────────────────
-const activeDomainId = ref<DomainId>('tp')
 
 // 动态 formData：按需初始化，支持后续加入的自定义域
 const formData = reactive<Record<string, Record<string, string>>>({})
 
 // 为已知静态域初始化 formData
 function initDomainFormData(domain: DomainDef) {
-  if (!formData[domain.id]) {
-    formData[domain.id] = {}
+  const key = formScopeKey(domain.id)
+  if (!formData[key]) {
+    formData[key] = {}
   }
   domain.fields.forEach(field => {
-    if (formData[domain.id][field.name] === undefined) {
-      formData[domain.id][field.name] = ''
+    if (formData[key][field.name] === undefined) {
+      formData[key][field.name] = ''
     }
   })
 }
 
 // 初始化所有静态域的表单数据
-DOMAINS.forEach(domain => initDomainFormData(domain))
+for (const ws of ADAPT_WORKSPACES) {
+  workspaceDomains[ws.id].forEach(domain => initDomainFormData(domain))
+}
 
 function syncFormDataForDomain(domain: DomainDef) {
-  if (!formData[domain.id]) formData[domain.id] = {}
+  const key = formScopeKey(domain.id)
+  if (!formData[key]) formData[key] = {}
   const validNames = new Set(domain.fields.map(f => f.name))
-  for (const key of Object.keys(formData[domain.id])) {
-    if (!validNames.has(key)) delete formData[domain.id][key]
+  for (const k of Object.keys(formData[key])) {
+    if (!validNames.has(k)) delete formData[key][k]
   }
   domain.fields.forEach(field => {
-    if (formData[domain.id][field.name] === undefined) {
-      formData[domain.id][field.name] = ''
+    if (formData[key][field.name] === undefined) {
+      formData[key][field.name] = ''
     }
   })
 }
 
 function applyFieldsToDomain(domainId: string, fields: FieldDef[]) {
-  const domain = DOMAINS.find(d => d.id === domainId)
+  const domain = DOMAINS.value.find(d => d.id === domainId)
   if (!domain) return
   domain.fields = fields.map(f => ({ ...f }))
   syncFormDataForDomain(domain)
 }
 
 function applyRelatedSkillsToDomain(domainId: string, skills: string[]) {
-  const domain = DOMAINS.find(d => d.id === domainId)
+  const domain = DOMAINS.value.find(d => d.id === domainId)
   if (!domain || !skills.length) return
   domain.relatedSkills = [...skills]
 }
 
 function applyDomainConfigFromRecord(
+  workspaceId: AdaptWorkspaceId,
   domainId: string,
   record: { fields?: FieldDef[]; related_skills?: string[] },
 ) {
+  const prevWs = activeWorkspaceId.value
+  activeWorkspaceId.value = workspaceId
   if (record.fields?.length) applyFieldsToDomain(domainId, record.fields)
   if (record.related_skills?.length) applyRelatedSkillsToDomain(domainId, record.related_skills)
+  activeWorkspaceId.value = prevWs
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 布局持久化（本地 manifest + 可扩展云端同步）
+// 布局持久化（按工作区独立 manifest）
 // ─────────────────────────────────────────────────────────────────────────────
-const layoutSyncMeta = ref<AdaptLayoutSyncMeta | null>(null)
-const layoutManifestPath = ref('')
-const layoutsReady = ref(false)
 const layoutEditMode = ref(false)
 const layoutDraftFields = ref<FieldDef[]>([])
 const layoutDraftRelatedSkills = ref<string[]>([])
@@ -355,23 +300,28 @@ function formatLayoutLoadError(err: unknown): string {
 }
 
 /** 从服务端 manifest 恢复域配置；启动时若后端尚未就绪会自动重试 */
-async function loadAdaptLayouts(options: { showError?: boolean } = {}): Promise<boolean> {
+async function loadAdaptLayouts(options: {
+  workspaceId?: AdaptWorkspaceId
+  showError?: boolean
+} = {}): Promise<boolean> {
+  const ws = options.workspaceId ?? activeWorkspaceId.value
   const showError = options.showError !== false
   const maxAttempts = 5
   let lastErr: unknown = null
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const res = await fetchAdaptLayouts()
-      layoutSyncMeta.value = res.sync
-      layoutManifestPath.value = res.manifest_path || ''
+      const res = await fetchAdaptLayouts(ws)
+      layoutSyncMetaByWorkspace[ws] = res.sync
+      layoutManifestPathByWorkspace[ws] = res.manifest_path || ''
       for (const [domainId, record] of Object.entries(res.layouts || {})) {
         if (!record) continue
-        applyDomainConfigFromRecord(domainId, {
+        applyDomainConfigFromRecord(ws, domainId, {
           fields: record.fields as FieldDef[],
           related_skills: record.related_skills,
         })
       }
+      layoutsReadyByWorkspace[ws] = true
       return true
     } catch (err) {
       lastErr = err
@@ -388,7 +338,21 @@ async function loadAdaptLayouts(options: { showError?: boolean } = {}): Promise<
     layoutLoadErrorShown = true
     message.warning(`域配置加载失败，使用内置默认: ${formatLayoutLoadError(lastErr)}`)
   }
+  layoutsReadyByWorkspace[ws] = true
   return false
+}
+
+async function switchAdaptWorkspace(ws: AdaptWorkspaceId) {
+  if (ws === activeWorkspaceId.value) return
+  if (layoutEditMode.value) cancelLayoutEdit()
+  activeWorkspaceId.value = ws
+  localStorage.setItem(WORKSPACE_STORAGE_KEY, ws)
+  if (!layoutsReadyByWorkspace[ws]) {
+    await loadAdaptLayouts({ workspaceId: ws, showError: false })
+    if (getAdaptWorkspace(ws).allowDynamicDomains) {
+      await loadDynamicDomains(ws)
+    }
+  }
 }
 
 function enterLayoutEdit() {
@@ -535,7 +499,7 @@ async function saveLayout() {
   try {
     const fields = layoutDraftFields.value as AdaptLayoutFieldDef[]
     const related_skills = [...layoutDraftRelatedSkills.value]
-    const result = await saveAdaptDomainConfig(activeDomainId.value, { fields, related_skills })
+    const result = await saveAdaptDomainConfig(activeDomainId.value, { fields, related_skills }, activeWorkspaceId.value)
     applyFieldsToDomain(activeDomainId.value, layoutDraftFields.value)
     applyRelatedSkillsToDomain(activeDomainId.value, related_skills)
     layoutEditMode.value = false
@@ -556,8 +520,8 @@ async function saveLayout() {
 }
 
 async function restoreBuiltinLayout() {
-  const defaults = STATIC_DEFAULT_FIELDS[activeDomainId.value]
-  const defaultSkills = STATIC_DEFAULT_RELATED_SKILLS[activeDomainId.value]
+  const defaults = currentStaticDefaultFields()[activeDomainId.value]
+  const defaultSkills = currentStaticDefaultSkills()[activeDomainId.value]
   if (!defaults?.length || !defaultSkills?.length) {
     message.warning('当前域无内置默认配置')
     return
@@ -566,7 +530,7 @@ async function restoreBuiltinLayout() {
   try {
     const fields = JSON.parse(JSON.stringify(defaults)) as AdaptLayoutFieldDef[]
     const related_skills = [...defaultSkills]
-    await saveAdaptDomainConfig(activeDomainId.value, { fields, related_skills })
+    await saveAdaptDomainConfig(activeDomainId.value, { fields, related_skills }, activeWorkspaceId.value)
     applyFieldsToDomain(activeDomainId.value, fields)
     applyRelatedSkillsToDomain(activeDomainId.value, related_skills)
     layoutDraftFields.value = fields.map(f => ({ ...f }))
@@ -597,43 +561,36 @@ const formFieldsForAgent = computed(() =>
 // 计算属性（表单）
 // ─────────────────────────────────────────────────────────────────────────────
 const activeDomain = computed<DomainDef>(() =>
-  DOMAINS.find(d => d.id === activeDomainId.value) ?? DOMAINS[0]
+  DOMAINS.value.find(d => d.id === activeDomainId.value) ?? DOMAINS.value[0]
 )
 
 const currentFormData = computed<Record<string, string>>(() =>
-  formData[activeDomainId.value] ?? {}
+  formData[formScopeKey(activeDomainId.value)] ?? {}
 )
 
 const requiredCount = computed(() => (activeDomain.value?.fields ?? []).filter(f => f.required).length)
 const filledCount = computed(() => (activeDomain.value?.fields ?? []).filter(f => f.required && currentFormData.value[f.name]).length)
 // 没有必填项（requiredCount === 0）时也视为完整，允许启动任务
 const isComplete = computed(() => requiredCount.value === 0 || filledCount.value === requiredCount.value)
-const completedDomains = computed(() => DOMAINS.filter(d => d.status === 'done').length)
-const overallPercent = computed(() => Math.round((completedDomains.value / DOMAINS.length) * 100))
+const completedDomains = computed(() => DOMAINS.value.filter(d => d.status === 'done').length)
+const overallPercent = computed(() => Math.round((completedDomains.value / DOMAINS.value.length) * 100))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Getter / Setter — 避免在 computed 上使用 v-model
 // ─────────────────────────────────────────────────────────────────────────────
 function getFieldValue(fieldName: string): string {
-  return (formData[activeDomainId.value] ?? {})[fieldName] ?? ''
+  return (formData[formScopeKey(activeDomainId.value)] ?? {})[fieldName] ?? ''
 }
 function setFieldValue(fieldName: string, value: string) {
-  if (!formData[activeDomainId.value]) formData[activeDomainId.value] = {}
-  formData[activeDomainId.value][fieldName] = value
+  const key = formScopeKey(activeDomainId.value)
+  if (!formData[key]) formData[key] = {}
+  formData[key][fieldName] = value
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 执行 / 监控状态
+// 执行 / 监控状态（按工作区隔离，见 runStateByWorkspace）
 // ─────────────────────────────────────────────────────────────────────────────
-const agentLaunching = ref(false)
-const launchedTaskId = ref<string | null>(null)
-const taskStatus  = ref<string>('')
-const showMonitor = ref(false)
-const monitorMode = ref<'agent' | null>(null)
 const eventListEl = ref<HTMLElement | null>(null)
-
-// 任务创建时间，用于显示耗时
-const startTime = ref<number>(0)
 
 const stream = computed(() =>
   launchedTaskId.value ? tasksStore.getStream(launchedTaskId.value) : []
@@ -875,7 +832,7 @@ watch(stream, async (evs) => {
 // 适配域 → TAHP 模块映射（优先从动态域 module 字段读取）
 // ─────────────────────────────────────────────────────────────────────────────
 function mapDomainToModule(id: DomainId): TahpModule {
-  const domain = DOMAINS.find(d => d.id === id)
+  const domain = DOMAINS.value.find(d => d.id === id)
   if (domain && (domain as any).module) {
     return (domain as any).module as TahpModule
   }
@@ -889,26 +846,27 @@ function mapDomainToModule(id: DomainId): TahpModule {
 // 加载动态域（用户通过知识库创建的自定义适配技能）
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 记录静态域 ID，用于刷新时区分动态域
-const STATIC_DOMAIN_IDS = new Set(DOMAINS.map(d => d.id))
 /** 已下线域 / 测试域，不再从动态技能列表注入 */
 const BLOCKED_DYNAMIC_DOMAIN_IDS = new Set(['Test', 'kernel', 'scp', 'aikey'])
 const loadingDomains = ref(false)
 
-async function loadDynamicDomains() {
+async function loadDynamicDomains(workspaceId: AdaptWorkspaceId = activeWorkspaceId.value) {
+  if (!getAdaptWorkspace(workspaceId).allowDynamicDomains) return
   loadingDomains.value = true
+  const prevWs = activeWorkspaceId.value
+  activeWorkspaceId.value = workspaceId
   try {
     const res = await fetchDynamicDomains()
     const dynamicDomains = res.domains || []
-
-    // 先移除上一批动态域（保留静态域），静态域始终在数组前段
-    DOMAINS.splice(STATIC_DOMAIN_IDS.size)
+    const staticIds = new Set(getBuiltinDomainsForWorkspace(workspaceId).map(d => d.id))
+    const domains = workspaceDomains[workspaceId]
+    domains.splice(staticIds.size)
+    const defaults = staticDefaultsByWorkspace[workspaceId]
 
     for (const dd of dynamicDomains) {
-      // 跳过与静态域 ID 冲突的、或已下线的域
       if (
-        STATIC_DOMAIN_IDS.has(dd.id)
-        || STATIC_DOMAIN_IDS.has(dd.skillId)
+        staticIds.has(dd.id)
+        || staticIds.has(dd.skillId)
         || BLOCKED_DYNAMIC_DOMAIN_IDS.has(dd.id)
         || BLOCKED_DYNAMIC_DOMAIN_IDS.has(dd.skillId)
       ) continue
@@ -929,25 +887,26 @@ async function loadDynamicDomains() {
         })),
         module:        dd.module,
       }
-      DOMAINS.push(domainDef)
+      domains.push(domainDef)
       initDomainFormData(domainDef)
-      STATIC_DEFAULT_FIELDS[domainDef.id] = JSON.parse(JSON.stringify(domainDef.fields))
-      STATIC_DEFAULT_RELATED_SKILLS[domainDef.id] = [...domainDef.relatedSkills]
+      defaults.fields[domainDef.id] = JSON.parse(JSON.stringify(domainDef.fields))
+      defaults.skills[domainDef.id] = [...domainDef.relatedSkills]
     }
   } catch {
     // 动态域加载失败不影响静态域功能
   } finally {
+    activeWorkspaceId.value = prevWs
     loadingDomains.value = false
   }
 }
 
 onMounted(async () => {
-  layoutsReady.value = false
-  await loadAdaptLayouts({ showError: true })
-  await loadDynamicDomains()
-  // 动态域加载后再合并一次 manifest（成功则静默刷新，避免重复弹错）
-  await loadAdaptLayouts({ showError: false })
-  layoutsReady.value = true
+  const ws = activeWorkspaceId.value
+  layoutsReadyByWorkspace[ws] = false
+  await loadAdaptLayouts({ workspaceId: ws, showError: true })
+  await loadDynamicDomains(ws)
+  await loadAdaptLayouts({ workspaceId: ws, showError: false })
+  layoutsReadyByWorkspace[ws] = true
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -956,6 +915,7 @@ onMounted(async () => {
 function buildAgentRunPayload() {
   const d = activeDomain.value
   return {
+    workspace_id: activeWorkspaceId.value,
     domain_id: activeDomainId.value,
     domain_label: d.label,
     module: mapDomainToModule(activeDomainId.value),
@@ -1093,16 +1053,17 @@ function openSkill(skillName: string) {
 
     <EaPageHead
       title="AI 适配调试"
-      subtitle="选择适配域 → 补齐前置参数 → 由 Agent 按 Skill SOP 自动产出补丁与自检报告"
+      :subtitle="activeWorkspace.subtitle"
     >
       <template #actions>
         <span v-if="layoutSyncMeta?.cloud_sync_enabled" class="ea-pill-info">云端同步已启用</span>
         <button
+          v-if="activeWorkspace.allowDynamicDomains"
           type="button"
           class="ea-btn-ghost ea-btn-sm adapt-refresh-btn"
           :class="{ spinning: loadingDomains }"
           title="刷新域列表（创建新技能后点击）"
-          @click="loadDynamicDomains"
+          @click="loadDynamicDomains()"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
             <polyline points="23 4 23 10 17 10"/>
@@ -1114,6 +1075,22 @@ function openSkill(skillName: string) {
     </EaPageHead>
 
     <ModelProviderBanner class="adapt-provider-banner" />
+
+    <div class="adapt-workspace-bar">
+      <div class="adapt-workspace-toggle">
+        <button
+          v-for="ws in ADAPT_WORKSPACES"
+          :key="ws.id"
+          type="button"
+          class="adapt-workspace-btn"
+          :class="activeWorkspaceId === ws.id ? 'ea-btn-soft' : 'mode-idle'"
+          @click="switchAdaptWorkspace(ws.id)"
+        >
+          {{ ws.label }}
+        </button>
+      </div>
+      <span class="adapt-workspace-hint">各子界面表单与 Skill 配置独立存放，互不影响</span>
+    </div>
 
     <!-- 顶部域选择条 -->
     <div class="ea-domain-bar">
@@ -1164,9 +1141,12 @@ function openSkill(skillName: string) {
             <NSpin v-if="!layoutsReady" size="small" style="margin: 24px 0;">正在加载域配置…</NSpin>
 
             <template v-else>
-              <div v-if="activeDomainId === 'modem' || activeDomainId === 'comm-framework'" class="modem-skill-hint">
+              <div v-if="activeDomainId === 'modem' || activeDomainId === 'comm-framework' || activeDomainId === 'apn-config'" class="modem-skill-hint">
                 <template v-if="activeDomainId === 'modem'">
                   以下字段来自 <code>MODEM_P1_Adapt</code> SKILL.md 的必填输入；填完后可用「Agent 自动适配」由桥接 Agent 按 Skill SOP 执行。
+                </template>
+                <template v-else-if="activeDomainId === 'apn-config'">
+                  填写代码仓库路径与补充信息后，由 <code>apn-edit</code> Skill 按 SOP 定位并修改 APN 配置。
                 </template>
                 <template v-else>
                   以下字段来自 <code>comm-framework-agent-test</code> 测试 Skill 输入；点击「Agent 自动适配」后将按 Skill 分步骤在 PRJ Path 下创建并写入测试文件。
@@ -1674,6 +1654,44 @@ function openSkill(skillName: string) {
 
 .adapt-provider-banner {
   margin-bottom: 4px;
+}
+
+.adapt-workspace-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.adapt-workspace-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+}
+
+.adapt-workspace-btn {
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  border: none;
+}
+
+.adapt-workspace-btn.mode-idle {
+  background: none;
+  color: var(--muted);
+}
+
+.adapt-workspace-hint {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .adapt-refresh-btn.spinning svg {

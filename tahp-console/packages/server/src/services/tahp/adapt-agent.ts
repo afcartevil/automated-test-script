@@ -23,6 +23,7 @@ import {
 } from './context-injector'
 import { saveAgentPromptLog } from './prompt-log'
 import { resolveFormFieldLabels } from './adapt-layout/service'
+import { DEFAULT_ADAPT_WORKSPACE } from './adapt-layout/types'
 import {
   extractAdaptAgentFileChanges,
   extractAdaptAgentSkillRefs,
@@ -55,10 +56,12 @@ export interface AdaptAgentRunInput {
   formData: Record<string, string>
   formFields?: AdaptAgentFieldMeta[]
   userNotes?: string
+  workspaceId?: string
 }
 
 export interface AdaptAgentTaskCtx {
   taskId: string
+  workspaceId: string
   domainId: string
   domainLabel: string
   module: string
@@ -287,6 +290,7 @@ function buildAdaptAgentUserMessage(input: AdaptAgentRunInput): string {
     `# ${input.domainLabel} — Agent 自动适配任务`,
     '',
     '## 适配域信息',
+    `- 工作区: ${input.workspaceId || DEFAULT_ADAPT_WORKSPACE}`,
     `- 域 ID: ${input.domainId}`,
     `- TAHP 模块: ${input.module}`,
     '',
@@ -414,6 +418,7 @@ export function startAdaptAgentRun(input: AdaptAgentRunInput): { ok: true; taskI
   const taskId = genTaskId()
   const ctx: AdaptAgentTaskCtx = {
     taskId,
+    workspaceId: input.workspaceId || DEFAULT_ADAPT_WORKSPACE,
     domainId: input.domainId,
     domainLabel: input.domainLabel,
     module: input.module,
@@ -432,6 +437,7 @@ export function startAdaptAgentRun(input: AdaptAgentRunInput): { ok: true; taskI
 
   emit(taskId, 'task.started', {
     mode: 'agent',
+    workspace_id: ctx.workspaceId,
     domain_id: input.domainId,
     domain_label: input.domainLabel,
     related_skills: input.relatedSkills,
@@ -596,6 +602,7 @@ async function runAdaptAgentTask(taskId: string): Promise<void> {
           ...reportSnapshot,
           started_at: ctx.startedAt,
           completed_at: ctx.completedAt,
+          workspace_id: ctx.workspaceId,
           domain: ctx.domainId,
           domain_label: ctx.domainLabel,
           files_modified: normalizedFiles.map(c => c.path),

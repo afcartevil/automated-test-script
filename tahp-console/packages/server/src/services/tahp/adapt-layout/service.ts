@@ -14,6 +14,7 @@ import {
 import { validateLayoutFields, validateRelatedSkills } from './validate'
 import {
   ADAPT_LAYOUT_SCHEMA_VERSION,
+  DEFAULT_ADAPT_WORKSPACE,
   type AdaptDomainLayoutRecord,
   type AdaptLayoutFieldDef,
   type AdaptLayoutManifest,
@@ -57,33 +58,38 @@ function mergeManifests(
   return { merged, updatedDomains }
 }
 
-async function tryPushCloud(manifest: AdaptLayoutManifest): Promise<{
+async function tryPushCloud(
+  manifest: AdaptLayoutManifest,
+  workspaceId?: string,
+): Promise<{
   pushed: boolean
   cloud_revision?: string
   error?: string
 }> {
   if (!isAdaptLayoutCloudConfigured()) return { pushed: false }
+  if (workspaceId && workspaceId !== DEFAULT_ADAPT_WORKSPACE) return { pushed: false }
   try {
     const { cloud_revision } = await pushCloudLayoutManifest(manifest)
     manifest.sync.last_cloud_push = new Date().toISOString()
     manifest.sync.cloud_revision = cloud_revision
-    await writeLocalLayoutManifest(manifest)
+    await writeLocalLayoutManifest(manifest, workspaceId)
     return { pushed: true, cloud_revision }
   } catch (err) {
     const msg = (err as Error).message
-    logger.warn({ err: msg }, '[adapt-layout] cloud push failed')
+    logger.warn({ err: msg, workspaceId }, '[adapt-layout] cloud push failed')
     return { pushed: false, error: msg }
   }
 }
 
 /** 启动时拉取：云端优先合并到本地（revision 高者胜） */
-export async function pullAndMergeAdaptLayouts(): Promise<AdaptLayoutPullResult> {
+export async function pullAndMergeAdaptLayouts(workspaceId?: string): Promise<AdaptLayoutPullResult> {
+  const ws = workspaceId || DEFAULT_ADAPT_WORKSPACE
   const cloudEnabled = isAdaptLayoutCloudConfigured()
-  const local = await readLocalLayoutManifest()
+  const local = await readLocalLayoutManifest(ws)
   local.sync.cloud_sync_enabled = cloudEnabled
 
-  if (!cloudEnabled) {
-    return { pulled: false, merged_domains: [], error: '云端未配置' }
+  if (!cloudEnabled || ws !== DEFAULT_ADAPT_WORKSPACE) {
+    return { pulled: false, merged_domains: [], error: ws !== DEFAULT_ADAPT_WORKSPACE ? '非默认工作区跳过云端' : '云端未配置' }
   }
 
   try {
@@ -92,7 +98,7 @@ export async function pullAndMergeAdaptLayouts(): Promise<AdaptLayoutPullResult>
       return { pulled: false, merged_domains: [], cloud_revision: local.sync.cloud_revision }
     }
     const { merged, updatedDomains } = mergeManifests(local, remote)
-    await writeLocalLayoutManifest(merged)
+    await writeLocalLayoutManifest(merged, ws)
     return {
       pulled: true,
       merged_domains: updatedDomains,
@@ -103,19 +109,21 @@ export async function pullAndMergeAdaptLayouts(): Promise<AdaptLayoutPullResult>
   }
 }
 
-export async function listAdaptDomainLayouts(): Promise<{
+export async function listAdaptDomainLayouts(workspaceId?: string): Promise<{
+  workspace_id: string
   layouts: Record<string, AdaptDomainLayoutRecord>
   sync: AdaptLayoutManifest['sync']
   manifest_path: string
   domain_ids: string[]
 }> {
-  // 每次列表请求尝试静默拉取云端（未配置或失败不阻塞本地读取）
-  await pullAndMergeAdaptLayouts().catch(() => undefined)
-  const manifest = await readLocalLayoutManifest()
+  const ws = workspaceId || DEFAULT_ADAPT_WORKSPACE
+  await pullAndMergeAdaptLayouts(ws).catch(() => undefined)
+  const manifest = await readLocalLayoutManifest(ws)
   return {
+    workspace_id: ws,
     layouts: manifest.layouts,
     sync: manifest.sync,
-    manifest_path: getAdaptLayoutManifestPath(),
+    manifest_path: getAdaptLayoutManifestPath(ws),
     domain_ids: Object.keys(manifest.layouts),
   }
 }
@@ -124,22 +132,25 @@ export async function listAdaptDomainLayouts(): Promise<{
 export async function saveAdaptDomainLayout(
   domainId: string,
   fieldsInput: unknown,
+  workspaceId?: string,
 ): Promise<AdaptLayoutSaveResult> {
-  return saveAdaptDomainConfig(domainId, { fields: fieldsInput })
+  return saveAdaptDomainConfig(domainId, { fields: fieldsInput }, workspaceId)
 }
 
 export async function getAdaptDomainLayout(
   domainId: string,
+  workspaceId?: string,
 ): Promise<AdaptDomainLayoutRecord | null> {
-  const manifest = await readLocalLayoutManifest()
+  const manifest = await readLocalLayoutManifest(workspaceId)
   return manifest.layouts[domainId] ?? null
 }
 
 export async function saveAdaptDomainConfig(
   domainId: string,
   config: { fields?: unknown; related_skills?: unknown },
+  workspaceId?: string,
 ): Promise<AdaptLayoutSaveResult> {
-  const existing = await getAdaptDomainLayout(domainId)
+  const existing = await getAdaptDomainLayout(domainId, workspaceId)
   const fields = config.fields !== undefined
     ? validateLayoutFields(config.fields)
     : (existing?.fields?.length ? existing.fields : [])
@@ -164,8 +175,8 @@ export async function saveAdaptDomainConfig(
   }
 
   const cloudEnabled = isAdaptLayoutCloudConfigured()
-  const manifest = await upsertLocalDomainLayout(record, cloudEnabled)
-  const push = await tryPushCloud(manifest)
+  const manifest = await upsertLocalDomainLayout(record, cloudEnabled, workspaceId)
+  const push = await tryPushCloud(manifest, workspaceId)
 
   return {
     domain_id: domainId,
@@ -176,16 +187,16 @@ export async function saveAdaptDomainConfig(
   }
 }
 
-export async function resetAdaptDomainLayout(domainId: string): Promise<void> {
-  const manifest = await deleteLocalDomainLayout(domainId)
+export async function resetAdaptDomainLayout(domainId: string, workspaceId?: string): Promise<void> {
+  const manifest = await deleteLocalDomainLayout(domainId, workspaceId)
   manifest.sync.cloud_sync_enabled = isAdaptLayoutCloudConfigured()
-  await tryPushCloud(manifest)
+  await tryPushCloud(manifest, workspaceId)
 }
 
-export async function forcePushAdaptLayouts(): Promise<AdaptLayoutSaveResult & { ok: boolean }> {
-  const manifest = await readLocalLayoutManifest()
+export async function forcePushAdaptLayouts(workspaceId?: string): Promise<AdaptLayoutSaveResult & { ok: boolean }> {
+  const manifest = await readLocalLayoutManifest(workspaceId)
   manifest.sync.cloud_sync_enabled = isAdaptLayoutCloudConfigured()
-  const push = await tryPushCloud(manifest)
+  const push = await tryPushCloud(manifest, workspaceId)
   return {
     ok: push.pushed,
     domain_id: '*',

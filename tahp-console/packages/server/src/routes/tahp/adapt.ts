@@ -3,6 +3,7 @@
  * 处理：Agent 自动适配、布局管理、配置保存
  */
 import Router from '@koa/router'
+import type { Context } from 'koa'
 import { logger } from '../../services/logger'
 import { safeFileStore } from '../../services/safe-file-store'
 import { tahpPaths } from '../../services/tahp/paths'
@@ -23,6 +24,7 @@ import {
   pullAndMergeAdaptLayouts,
   forcePushAdaptLayouts,
 } from '../../services/tahp/adapt-layout/service'
+import { DEFAULT_ADAPT_WORKSPACE, isAdaptWorkspaceId } from '../../services/tahp/adapt-layout/types'
 
 export const tahpAdaptRoutes = new Router()
 
@@ -79,21 +81,61 @@ function parseAdaptAgentRunBody(body: Record<string, unknown>): AdaptAgentRunInp
   const userNotes = typeof body.user_notes === 'string' ? body.user_notes
     : typeof body.userNotes === 'string' ? body.userNotes : undefined
   const formFields = parseFormFields(body)
+  const workspaceId = String(body.workspace_id || body.workspaceId || DEFAULT_ADAPT_WORKSPACE).trim()
 
   if (!domainId) return { error: '缺少 domain_id' }
-  return { domainId, domainLabel, module, relatedSkills, formData, userNotes, formFields }
+  if (!isAdaptWorkspaceId(workspaceId)) return { error: `无效的工作区: ${workspaceId}` }
+  return { domainId, domainLabel, module, relatedSkills, formData, userNotes, formFields, workspaceId }
 }
 
 const DOMAIN_ID_RE = /^[a-zA-Z0-9_-]+$/
+const WORKSPACE_ID_RE = /^[a-zA-Z0-9_-]+$/
 
-tahpAdaptRoutes.get('/api/tahp/adapt/layouts', async (ctx) => {
+function parseWorkspaceId(raw: string | undefined): string | null {
+  const ws = String(raw || DEFAULT_ADAPT_WORKSPACE).trim()
+  if (!WORKSPACE_ID_RE.test(ws)) return null
+  if (!isAdaptWorkspaceId(ws)) return null
+  return ws
+}
+
+async function handleListLayouts(ctx: Context, workspaceId: string) {
   try {
-    const data = await listAdaptDomainLayouts()
+    const data = await listAdaptDomainLayouts(workspaceId)
     ctx.body = { success: true, data }
   } catch (err) {
     ctx.status = 500
     ctx.body = { success: false, error: (err as Error).message }
   }
+}
+
+tahpAdaptRoutes.get('/api/tahp/adapt/workspaces/:workspaceId/layouts', async (ctx) => {
+  const workspaceId = parseWorkspaceId(ctx.params.workspaceId)
+  if (!workspaceId) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '无效的工作区 ID' }
+    return
+  }
+  await handleListLayouts(ctx, workspaceId)
+})
+
+tahpAdaptRoutes.get('/api/tahp/adapt/layouts', async (ctx) => {
+  await handleListLayouts(ctx, DEFAULT_ADAPT_WORKSPACE)
+})
+
+async function handleGetDomainLayout(ctx: Context, workspaceId: string, domainId: string) {
+  const record = await getAdaptDomainLayout(domainId, workspaceId)
+  ctx.body = { success: true, data: record }
+}
+
+tahpAdaptRoutes.get('/api/tahp/adapt/workspaces/:workspaceId/layouts/:domainId', async (ctx) => {
+  const workspaceId = parseWorkspaceId(ctx.params.workspaceId)
+  const domainId = ctx.params.domainId
+  if (!workspaceId || !DOMAIN_ID_RE.test(domainId)) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '无效的 workspaceId 或 domainId' }
+    return
+  }
+  await handleGetDomainLayout(ctx, workspaceId, domainId)
 })
 
 tahpAdaptRoutes.get('/api/tahp/adapt/layouts/:domainId', async (ctx) => {
@@ -103,8 +145,32 @@ tahpAdaptRoutes.get('/api/tahp/adapt/layouts/:domainId', async (ctx) => {
     ctx.body = { success: false, error: '无效的 domainId' }
     return
   }
-  const record = await getAdaptDomainLayout(domainId)
-  ctx.body = { success: true, data: record }
+  await handleGetDomainLayout(ctx, DEFAULT_ADAPT_WORKSPACE, domainId)
+})
+
+async function handleSaveDomainLayout(ctx: Context, workspaceId: string, domainId: string) {
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  try {
+    const result = await saveAdaptDomainConfig(domainId, {
+      fields: body.fields,
+      related_skills: body.related_skills ?? body.relatedSkills,
+    }, workspaceId)
+    ctx.body = { success: true, data: result }
+  } catch (err) {
+    ctx.status = 400
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+}
+
+tahpAdaptRoutes.put('/api/tahp/adapt/workspaces/:workspaceId/layouts/:domainId', async (ctx) => {
+  const workspaceId = parseWorkspaceId(ctx.params.workspaceId)
+  const domainId = ctx.params.domainId
+  if (!workspaceId || !DOMAIN_ID_RE.test(domainId)) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '无效的 workspaceId 或 domainId' }
+    return
+  }
+  await handleSaveDomainLayout(ctx, workspaceId, domainId)
 })
 
 tahpAdaptRoutes.put('/api/tahp/adapt/layouts/:domainId', async (ctx) => {
@@ -114,17 +180,23 @@ tahpAdaptRoutes.put('/api/tahp/adapt/layouts/:domainId', async (ctx) => {
     ctx.body = { success: false, error: '无效的 domainId' }
     return
   }
-  const body = (ctx.request.body || {}) as Record<string, unknown>
-  try {
-    const result = await saveAdaptDomainConfig(domainId, {
-      fields: body.fields,
-      related_skills: body.related_skills ?? body.relatedSkills,
-    })
-    ctx.body = { success: true, data: result }
-  } catch (err) {
+  await handleSaveDomainLayout(ctx, DEFAULT_ADAPT_WORKSPACE, domainId)
+})
+
+async function handleResetDomainLayout(ctx: Context, workspaceId: string, domainId: string) {
+  await resetAdaptDomainLayout(domainId, workspaceId)
+  ctx.body = { success: true, data: { deleted: domainId } }
+}
+
+tahpAdaptRoutes.delete('/api/tahp/adapt/workspaces/:workspaceId/layouts/:domainId', async (ctx) => {
+  const workspaceId = parseWorkspaceId(ctx.params.workspaceId)
+  const domainId = ctx.params.domainId
+  if (!workspaceId || !DOMAIN_ID_RE.test(domainId)) {
     ctx.status = 400
-    ctx.body = { success: false, error: (err as Error).message }
+    ctx.body = { success: false, error: '无效的 workspaceId 或 domainId' }
+    return
   }
+  await handleResetDomainLayout(ctx, workspaceId, domainId)
 })
 
 tahpAdaptRoutes.delete('/api/tahp/adapt/layouts/:domainId', async (ctx) => {
@@ -134,17 +206,43 @@ tahpAdaptRoutes.delete('/api/tahp/adapt/layouts/:domainId', async (ctx) => {
     ctx.body = { success: false, error: '无效的 domainId' }
     return
   }
-  await resetAdaptDomainLayout(domainId)
-  ctx.body = { success: true, data: { deleted: domainId } }
+  await handleResetDomainLayout(ctx, DEFAULT_ADAPT_WORKSPACE, domainId)
+})
+
+tahpAdaptRoutes.post('/api/tahp/adapt/workspaces/:workspaceId/layouts/sync/pull', async (ctx) => {
+  const workspaceId = parseWorkspaceId(ctx.params.workspaceId)
+  if (!workspaceId) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '无效的工作区 ID' }
+    return
+  }
+  const result = await pullAndMergeAdaptLayouts(workspaceId)
+  ctx.body = { success: true, data: result }
+})
+
+tahpAdaptRoutes.post('/api/tahp/adapt/workspaces/:workspaceId/layouts/sync/push', async (ctx) => {
+  const workspaceId = parseWorkspaceId(ctx.params.workspaceId)
+  if (!workspaceId) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '无效的工作区 ID' }
+    return
+  }
+  const result = await forcePushAdaptLayouts(workspaceId)
+  if (!result.cloud_pushed && result.cloud_error) {
+    ctx.status = 502
+    ctx.body = { success: false, error: result.cloud_error, data: result }
+    return
+  }
+  ctx.body = { success: true, data: result }
 })
 
 tahpAdaptRoutes.post('/api/tahp/adapt/layouts/sync/pull', async (ctx) => {
-  const result = await pullAndMergeAdaptLayouts()
+  const result = await pullAndMergeAdaptLayouts(DEFAULT_ADAPT_WORKSPACE)
   ctx.body = { success: true, data: result }
 })
 
 tahpAdaptRoutes.post('/api/tahp/adapt/layouts/sync/push', async (ctx) => {
-  const result = await forcePushAdaptLayouts()
+  const result = await forcePushAdaptLayouts(DEFAULT_ADAPT_WORKSPACE)
   if (!result.cloud_pushed && result.cloud_error) {
     ctx.status = 502
     ctx.body = { success: false, error: result.cloud_error, data: result }

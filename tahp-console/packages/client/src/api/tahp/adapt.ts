@@ -34,6 +34,7 @@ export interface AdaptAgentFormFieldMeta {
 }
 
 export interface AdaptAgentRunRequest {
+  workspace_id?: string
   domain_id: string
   domain_label: string
   module: string

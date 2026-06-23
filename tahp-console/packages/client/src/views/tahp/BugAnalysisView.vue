@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NInput, NButton, NSpin, NEmpty, NAlert,
-  NModal, NScrollbar, NProgress, NPopover, useMessage, NTooltip,
+  NModal, NScrollbar, NProgress, useMessage, NTooltip,
   NSpace, NForm, NFormItem,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
@@ -607,56 +607,6 @@ watch(activeReportTab, (tab) => {
   if ((tab === 'report' || tab === 'jira') && currentTaskId.value && !reportDetail.value) loadReport()
   if (tab === 'log' && currentTaskId.value && !taskLog.value) loadLog()
 })
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 保存报告到本地
-// ─────────────────────────────────────────────────────────────────────────────
-function saveReportLocally(format: 'json' | 'md') {
-  if (!currentTaskId.value) return
-  const tid = currentTaskId.value
-  const task = currentTask.value
-  const llm = currentLlm.value
-  if (!task) { message.warning('当前任务无数据'); return }
-
-  let blob: Blob
-  let filename: string
-  if (format === 'md') {
-    const md = [
-      `# Bug 分析报告 — ${task.jira_key}`,
-      ``,
-      `- Task: ${tid}`,
-      `- JIRA: ${task.jira_url || task.jira_key}`,
-      ...(task.module ? [`- 模块（Agent 识别）: ${task.module}`] : []),
-      `- 状态: ${task.status}`,
-      `- 启动时间: ${task.started_at}`,
-      `- 完成时间: ${task.completed_at || '-'}`,
-      `- 使用 Skill: ${(task.skills_used || []).join(', ') || '-'}`,
-      ``,
-      `## AI 分析内容`,
-      ``,
-      (reportMarkdown.value || extractBugAnalysisReportBody(llm) || '(无内容)'),
-    ].join('\n')
-    blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
-    filename = `${tid}.md`
-  } else {
-    const data = reportDetail.value || {
-      ...task,
-      task_id: tid,
-      llm_response: llm,
-    }
-    blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' })
-    filename = `${tid}.json`
-  }
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-  message.success(`已保存 ${filename}`)
-}
 
 function downloadLog() {
   if (!currentTaskId.value || !taskLog.value) {
@@ -1274,21 +1224,6 @@ const liveStreamHint = computed(() => {
 
           <footer class="task-footer">
             <NSpace size="small" wrap>
-              <NPopover trigger="click" placement="top">
-                <template #trigger>
-                  <NButton type="primary" :disabled="!currentLlm && !reportDetail">
-                    <template #icon>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    </template>
-                    保存到本地
-                  </NButton>
-                </template>
-                <div style="display: flex; flex-direction: column; gap: 6px; min-width: 160px;">
-                  <NButton size="small" block @click="saveReportLocally('md')">保存为 Markdown</NButton>
-                  <NButton size="small" block @click="saveReportLocally('json')">保存为 JSON</NButton>
-                </div>
-              </NPopover>
-
               <NButton
                 v-if="!isHistoryView && (isRunning || isPending)"
                 type="warning"
@@ -1312,12 +1247,6 @@ const liveStreamHint = computed(() => {
                 </template>
                 沉淀为知识库 / Skill
                 <EaPill variant="warn" style="margin-left: 6px">即将上线</EaPill>
-              </NButton>
-              <NButton tertiary @click="router.push({ name: 'tahp.reports' })">
-                <template #icon>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                </template>
-                所有报告
               </NButton>
             </NSpace>
           </footer>

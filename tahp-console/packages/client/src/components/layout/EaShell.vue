@@ -61,11 +61,6 @@ function onSystemSelect(key: string) {
   router.push({ name: key })
 }
 
-function handleLogout() {
-  localStorage.clear()
-  router.replace({ name: 'login' })
-}
-
 async function handleUpdate() {
   const ok = await appStore.doUpdate()
   if (ok) message.success('更新成功', { duration: 5000 })
@@ -124,12 +119,6 @@ async function handleUpdate() {
 
         <button v-if="appStore.updateAvailable" type="button" class="ck-sys-btn update" @click="handleUpdate" title="更新">
           ↑
-        </button>
-
-        <button type="button" class="ck-sys-btn" title="退出" @click="handleLogout">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" />
-          </svg>
         </button>
       </div>
     </header>

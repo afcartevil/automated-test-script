@@ -5,6 +5,17 @@
  */
 export const ADAPT_LAYOUT_SCHEMA_VERSION = 1
 
+/** 默认工作区：兼容历史单 manifest 路径 */
+export const DEFAULT_ADAPT_WORKSPACE = 'adapt-debug' as const
+
+export const ADAPT_WORKSPACE_IDS = ['adapt-debug', 'feature-adapt', 'carrier-config'] as const
+
+export type AdaptWorkspaceId = (typeof ADAPT_WORKSPACE_IDS)[number]
+
+export function isAdaptWorkspaceId(value: string): value is AdaptWorkspaceId {
+  return (ADAPT_WORKSPACE_IDS as readonly string[]).includes(value)
+}
+
 export type AdaptFieldType = 'text' | 'select' | 'textarea'
 
 export interface AdaptLayoutFieldDef {

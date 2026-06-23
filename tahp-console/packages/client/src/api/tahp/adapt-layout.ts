@@ -1,4 +1,6 @@
 import { tahpGet, tahpPost, tahpPut, tahpRequest } from './client'
+import type { AdaptWorkspaceId } from '@/constants/adapt-domains'
+import { DEFAULT_ADAPT_WORKSPACE } from '@/constants/adapt-domains'
 
 export type AdaptFieldType = 'text' | 'select' | 'textarea'
 
@@ -29,6 +31,7 @@ export interface AdaptLayoutSyncMeta {
 }
 
 export interface AdaptLayoutsResponse {
+  workspace_id?: string
   layouts: Record<string, AdaptDomainLayoutRecord>
   sync: AdaptLayoutSyncMeta
   manifest_path: string
@@ -43,44 +46,53 @@ export interface AdaptDomainConfigSaveResult {
   cloud_error?: string
 }
 
-export function fetchAdaptLayouts(): Promise<AdaptLayoutsResponse> {
-  return tahpGet<AdaptLayoutsResponse>('/api/tahp/adapt/layouts')
+function workspaceBase(workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE): string {
+  return `/api/tahp/adapt/workspaces/${encodeURIComponent(workspaceId)}`
+}
+
+export function fetchAdaptLayouts(workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE): Promise<AdaptLayoutsResponse> {
+  return tahpGet<AdaptLayoutsResponse>(`${workspaceBase(workspaceId)}/layouts`)
 }
 
 export function saveAdaptDomainConfig(
   domainId: string,
   config: { fields: AdaptLayoutFieldDef[]; related_skills: string[] },
+  workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE,
 ): Promise<AdaptDomainConfigSaveResult> {
-  return tahpPut(`/api/tahp/adapt/layouts/${encodeURIComponent(domainId)}`, config)
+  return tahpPut(`${workspaceBase(workspaceId)}/layouts/${encodeURIComponent(domainId)}`, config)
 }
 
 /** @deprecated 使用 saveAdaptDomainConfig */
 export function saveAdaptDomainLayout(
   domainId: string,
   fields: AdaptLayoutFieldDef[],
+  workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE,
 ): Promise<AdaptDomainConfigSaveResult> {
-  return tahpPut(`/api/tahp/adapt/layouts/${encodeURIComponent(domainId)}`, { fields })
+  return tahpPut(`${workspaceBase(workspaceId)}/layouts/${encodeURIComponent(domainId)}`, { fields })
 }
 
-export function resetAdaptDomainLayout(domainId: string): Promise<{ deleted: string }> {
-  return tahpRequest(`/api/tahp/adapt/layouts/${encodeURIComponent(domainId)}`, {
+export function resetAdaptDomainLayout(
+  domainId: string,
+  workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE,
+): Promise<{ deleted: string }> {
+  return tahpRequest(`${workspaceBase(workspaceId)}/layouts/${encodeURIComponent(domainId)}`, {
     method: 'DELETE',
   })
 }
 
-export function pullAdaptLayoutsFromCloud(): Promise<{
+export function pullAdaptLayoutsFromCloud(workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE): Promise<{
   pulled: boolean
   merged_domains: string[]
   cloud_revision?: string
   error?: string
 }> {
-  return tahpPost('/api/tahp/adapt/layouts/sync/pull', {})
+  return tahpPost(`${workspaceBase(workspaceId)}/layouts/sync/pull`, {})
 }
 
-export function pushAdaptLayoutsToCloud(): Promise<{
+export function pushAdaptLayoutsToCloud(workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE): Promise<{
   ok: boolean
   cloud_pushed: boolean
   cloud_error?: string
 }> {
-  return tahpPost('/api/tahp/adapt/layouts/sync/push', {})
+  return tahpPost(`${workspaceBase(workspaceId)}/layouts/sync/push`, {})
 }
