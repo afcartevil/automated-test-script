@@ -89,11 +89,16 @@ export const tahpKnowledgeRoutes = new Router()
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+type ConversionStatus = 'pending' | 'done' | 'failed' | 'skipped'
+
 interface KnowledgeDocument {
   id: string
   title: string           // inferred from filename or first heading
   filename: string        // original uploaded filename
-  content: string         // full extracted plain text
+  content: string         // full extracted plain text（保留用于 BM25 检索）
+  content_markdown?: string  // LLM 规范化后的 Markdown 正文（用于阅读渲染）
+  conversion_status?: ConversionStatus  // Markdown 转换状态
+  conversion_note?: string   // 转换失败/跳过原因
   module: string
   category: string
   chunk_ids: string[]     // IDs of KnowledgeEntry records derived from this doc
@@ -103,7 +108,7 @@ interface KnowledgeDocument {
   chunk_count: number
 }
 
-interface KnowledgeEntry {
+export interface KnowledgeEntry {
   id: string
   content: string
   category: string
@@ -116,6 +121,7 @@ interface KnowledgeEntry {
   source_section?: string
   source_url?: string
   source_document_id?: string  // parent KnowledgeDocument.id
+  source_task_id?: string      // 来源诊断任务 ID（智能诊断沉淀）
   applicable_versions?: string[]
   created_at: string
   updated_at: string
@@ -230,13 +236,22 @@ interface ImportJob {
   filename: string
   status: 'processing' | 'done' | 'error'
   progress: number     // 0-100
-  stage: 'upload' | 'parse' | 'extract' | 'done' | 'error'
+  stage: 'upload' | 'parse' | 'convert_markdown' | 'extract' | 'done' | 'error'
   message: string
   entries: ExtractedEntry[]
   full_text?: string   // single-file / URL: full extracted text
+  markdown?: string    // single-file / URL: LLM 规范化 Markdown
+  conversion_status?: ConversionStatus
+  conversion_note?: string
   source_url?: string  // URL import mode
   // Batch (folder) mode: one record per file
-  batch_docs?: Array<{ filename: string; full_text: string }>
+  batch_docs?: Array<{
+    filename: string
+    full_text: string
+    markdown?: string
+    conversion_status?: ConversionStatus
+    conversion_note?: string
+  }>
   total_files?: number
   processed_files?: number
   created_at: string
@@ -252,8 +267,17 @@ function emitJobEvent(jobId: string, update: Partial<ImportJob>): void {
   const job = importJobs.get(jobId)
   if (!job) return
   Object.assign(job, update)
-  // Exclude full_text from SSE payload (can be megabytes; saved at job save time)
-  const { full_text: _ft, ...ssePayload } = job
+  // Exclude full_text / markdown from SSE payload (can be megabytes; saved at job save time)
+  const { full_text: _ft, markdown: _md, batch_docs, ...rest } = job
+  const ssePayload = {
+    ...rest,
+    // batch_docs: keep only lightweight metadata over the wire
+    batch_docs: batch_docs?.map(d => ({
+      filename: d.filename,
+      conversion_status: d.conversion_status,
+      conversion_note: d.conversion_note,
+    })),
+  }
   const payload = JSON.stringify(ssePayload)
   for (const listener of (jobListeners.get(jobId) || [])) {
     try { listener(payload) } catch { /* ignore */ }
@@ -714,6 +738,81 @@ function extractEntriesFromText(text: string, filename: string): ExtractedEntry[
       confidence_score: inferConfidence(content),
       source_file: filename,
     }))
+}
+
+// ─── Markdown 规范化（导入即转 Markdown） ─────────────────────────────────────
+//
+// 把从 PDF / DOCX / 网页中粗抽取的纯文本，用 LLM 清洗/重排成结构清晰的 Markdown，
+// 严格保留原文信息（不概括、不删减、不编造）。失败/超大时降级为原文本。
+
+const MD_SEGMENT_SIZE = 6000          // 单段送入 LLM 的最大字符数
+const MD_MAX_SEGMENTS = 15            // 超过则跳过（避免过量 LLM 调用），可手动重试
+const MD_MAX_TOKENS = 8192
+
+const MARKDOWN_SYSTEM_PROMPT = `你是文档格式整理助手。把用户给出的、从 PDF/DOCX/网页中粗略抽取的纯文本整理成结构清晰、可读性强的 Markdown。
+
+要求：
+1. 严格保留原文的全部信息与措辞，禁止概括、删减、扩写或编造内容。
+2. 识别并还原结构：标题层级（#/##/###）、有序与无序列表、表格、代码块、引用块。
+3. 修复粗抽取常见问题：把被错误换行打断的句子拼回完整段落；去除重复的页眉页脚；删除孤立的页码行。
+4. 不要输出任何前言、说明、结语或"以下是整理结果"之类的话术。
+5. 直接输出整理后的 Markdown 正文本身。`
+
+interface MarkdownConversion {
+  markdown: string
+  status: ConversionStatus
+  note?: string
+}
+
+/** 按段落边界把长文本切成不超过 segSize 的片段 */
+function splitForMarkdown(text: string, segSize: number): string[] {
+  const paras = text.split(/\n{2,}/)
+  const segs: string[] = []
+  let buf = ''
+  for (const p of paras) {
+    if (buf && buf.length + p.length + 2 > segSize) {
+      segs.push(buf)
+      buf = p
+    } else {
+      buf = buf ? buf + '\n\n' + p : p
+    }
+  }
+  if (buf.trim()) segs.push(buf)
+  return segs.length ? segs : [text]
+}
+
+/**
+ * 把粗抽取文本规范化为 Markdown。失败/过大时返回原文本并标记 failed/skipped。
+ */
+async function normalizeToMarkdown(rawText: string, filename: string): Promise<MarkdownConversion> {
+  const text = (rawText || '').trim()
+  if (!text) return { markdown: '', status: 'skipped', note: '空内容' }
+
+  const segs = splitForMarkdown(text, MD_SEGMENT_SIZE)
+  if (segs.length > MD_MAX_SEGMENTS) {
+    return {
+      markdown: rawText,
+      status: 'skipped',
+      note: `文档较大（${text.length} 字符 / ${segs.length} 段），已跳过自动 Markdown 转换，可在文档阅读器手动重试`,
+    }
+  }
+
+  try {
+    const parts: string[] = []
+    for (let i = 0; i < segs.length; i++) {
+      const userContent = segs.length > 1
+        ? `【文档：${filename}｜第 ${i + 1}/${segs.length} 段，仅整理本段，不要补全上下文】\n\n${segs[i]}`
+        : segs[i]
+      const md = await callTahpLLM(MARKDOWN_SYSTEM_PROMPT, userContent, { maxTokens: MD_MAX_TOKENS })
+      parts.push((md || '').trim())
+    }
+    const markdown = parts.join('\n\n').trim()
+    if (!markdown) return { markdown: rawText, status: 'failed', note: 'LLM 返回空内容' }
+    return { markdown, status: 'done' }
+  } catch (err) {
+    logger.warn({ filename, err: (err as Error).message }, '[kb] markdown 规范化失败，降级为原文本')
+    return { markdown: rawText, status: 'failed', note: (err as Error).message }
+  }
 }
 
 /** Pure-JS fallback: extract visible text from a PDF binary using stream markers */
@@ -1411,6 +1510,42 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/entries', async (ctx) => {
   }
 })
 
+/**
+ * 智能诊断「沉淀为知识库」共享入口：从诊断报告创建一条知识条目（pending_review）。
+ * 供 bug-analysis 路由调用，避免重复的写盘逻辑。
+ */
+export async function depositDistilledEntry(params: {
+  content: string
+  module?: string
+  func_type?: string
+  category?: string
+  keywords?: string[]
+  source_task_id?: string
+  jira_key?: string
+}): Promise<KnowledgeEntry> {
+  await initDirs()
+  const now = new Date().toISOString()
+  const entry: KnowledgeEntry = {
+    id: `kb-${randomUUID().slice(0, 8)}`,
+    content: params.content,
+    category: params.category || '错误模式',
+    module: params.module || 'shared',
+    func_type: params.func_type || 'bug_analysis',
+    keywords: params.keywords?.length ? params.keywords : extractKeywords(params.content),
+    confidence_score: 0.8,
+    source_file: params.jira_key ? `JIRA ${params.jira_key}` : undefined,
+    source_task_id: params.source_task_id,
+    created_at: now,
+    updated_at: now,
+    status: 'pending_review',
+    is_verified: false,
+    usage_count: 0,
+  }
+  await writeEntry(entry)
+  logger.info({ entryId: entry.id, task: params.source_task_id }, '[kb] distilled entry deposited')
+  return entry
+}
+
 // GET /api/tahp/knowledge/entries — 查询知识库
 tahpKnowledgeRoutes.get('/api/tahp/knowledge/entries', async (ctx) => {
   try {
@@ -1546,8 +1681,13 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/search/semantic', async (ctx) => {
 
     let entries = await listEntries()
 
-    // 筛选活跃条目
-    entries = entries.filter(e => e.status !== 'archived' && e.status !== 'rejected')
+    // 筛选活跃条目（对话/默认搜索排除 archived；传 include_archived=true 可包含已归档沉淀）
+    const includeArchived = body.include_archived === true || body.include_archived === 'true'
+    entries = entries.filter(e => {
+      if (e.status === 'rejected' || e.status === 'deleted') return false
+      if (!includeArchived && e.status === 'archived') return false
+      return true
+    })
 
     // 按模块筛选
     if (module) entries = entries.filter(e => e.module === module)
@@ -1886,6 +2026,22 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/check-similarity', as
     const inputEntryIds = new Set<string>(
       Array.isArray(body.entry_ids) ? body.entry_ids.map(String) : []
     )
+    const inputKeywords = Array.isArray(body.keywords) ? body.keywords.map(String) : []
+
+    // ── 组装查询内容 token（用于内容相关度匹配，使主题相关的 Skill 也能被检索到） ──
+    const queryTextParts: string[] = [skillName, inputKeywords.join(' ')]
+    for (const id of inputEntryIds) {
+      const e = await readEntry(id)
+      if (e) queryTextParts.push(e.content, e.keywords.join(' '))
+    }
+    const queryTokens = new Set(tokenize(queryTextParts.join(' ')))
+
+    function tokenCosine(a: Set<string>, b: Set<string>): number {
+      if (a.size === 0 || b.size === 0) return 0
+      let inter = 0
+      for (const t of a) if (b.has(t)) inter++
+      return inter / Math.sqrt(a.size * b.size)
+    }
 
     // ── Jaccard 相似度（集合交/并） ─────────────────────────────────────────
     function jaccard(a: Set<string>, b: string[]): number {
@@ -1905,13 +2061,15 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/check-similarity', as
       func_type: string
       entryIds: string[]
       description: string
+      contentText: string  // 用于内容相关度匹配
       draft?: SkillDraft   // 草稿时提供，用于融合
     }
     const candidates: CandidateItem[] = []
 
     const activatedSkills = getActivatedSkills()
     for (const sk of activatedSkills) {
-      const descMatch = sk.content.replace(/^---[\s\S]*?---\n*/m, '').match(/^(.{10,100})/m)
+      const bodyText = sk.content.replace(/^---[\s\S]*?---\n*/m, '')
+      const descMatch = bodyText.match(/^(.{10,100})/m)
       candidates.push({
         id: sk.skillId,
         type: 'activated',
@@ -1920,6 +2078,7 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/check-similarity', as
         func_type: sk.func_type,
         entryIds: sk.generatedFromEntries,
         description: descMatch?.[1]?.replace(/^#+\s*/, '').trim() || '暂无描述',
+        contentText: bodyText,
       })
     }
 
@@ -1935,6 +2094,7 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/check-similarity', as
         func_type: normFuncType(d.func_type),
         entryIds: d.generated_from_entries || [],
         description: d.content?.match(/^#[^#\n]+\n+([^\n#]{10,80})/)?.[1]?.trim() || '草稿待完善',
+        contentText: (d.content || '') + ' ' + (d.skill_name || ''),
         draft: d,
       })
     }
@@ -1983,15 +2143,19 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/check-similarity', as
         if (nameOverlap >= 2) reasons.push(`名称关键词重叠 ${nameOverlap} 个`)
       }
 
+      // ④ 内容相关度（SKILL.md / 草稿正文与查询内容的 token 余弦）
+      const contentSim = tokenCosine(queryTokens, new Set(tokenize(c.contentText)))
+      if (contentSim > 0.08) reasons.push(`内容相关度 ${Math.round(contentSim * 100)}%`)
+
       if (!reasons.length && !structMatch) continue
 
-      // 分档
+      // 分档（entry-id Jaccard 优先，其次内容相关度，再次结构匹配）
       let tier: 'exact' | 'partial' | 'structural'
       if (jaccardScore >= 0.7) {
         tier = 'exact'
-      } else if (jaccardScore >= 0.3) {
+      } else if (jaccardScore >= 0.3 || contentSim >= 0.25) {
         tier = 'partial'
-      } else if (structMatch || reasons.length > 0) {
+      } else if (structMatch || contentSim >= 0.08 || reasons.length > 0) {
         tier = 'structural'
       } else {
         continue
@@ -2025,6 +2189,141 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/check-similarity', as
     }
   } catch (err) {
     logger.error({ err: (err as Error).message }, '[kb] check-similarity failed')
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/skill-association — 关联检索：从文档/条目找出相关已有 Skill 并给出 enhance/new 建议
+//
+// 与 check-similarity 的区别：除了 entry-id / 结构匹配，还会对 SKILL.md 正文做关键词/内容匹配，
+// 因此即使新文档没有 entry 重叠，也能检索到主题相关的现有 Skill（如"数据网络分析"）。
+//
+// Body: { entry_ids?, document_ids?, module?, func_type?, keywords?, text?, skill_name? }
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-association', async (ctx) => {
+  try {
+    await initDirs()
+    const body = (ctx.request.body || {}) as Record<string, unknown>
+    const inputModule   = normModule(String(body.module || ''))
+    const inputFuncType = normFuncType(String(body.func_type || ''))
+    const skillName     = String(body.skill_name || '')
+    const freeText      = String(body.text || '')
+    const inputKeywords = Array.isArray(body.keywords) ? body.keywords.map(String) : []
+    const entryIdList   = Array.isArray(body.entry_ids) ? body.entry_ids.map(String) : []
+    const docIdList     = Array.isArray(body.document_ids) ? body.document_ids.map(String) : []
+    const inputEntryIds = new Set<string>(entryIdList)
+    const inputDocIds   = new Set<string>(docIdList)
+
+    // ── 组装查询 token 集合（条目内容 + 文档标题 + 关键词 + 自由文本 + 名称） ──────
+    const queryParts: string[] = [freeText, skillName, inputKeywords.join(' ')]
+    for (const id of entryIdList) {
+      const e = await readEntry(id)
+      if (e) queryParts.push(e.content, e.keywords.join(' '))
+    }
+    for (const id of docIdList) {
+      const d = await readDocument(id)
+      if (d) queryParts.push(d.title, (d.content || '').slice(0, 2000))
+    }
+    const queryTokens = new Set(tokenize(queryParts.join(' ')))
+
+    function tokenCosine(a: Set<string>, b: Set<string>): number {
+      if (a.size === 0 || b.size === 0) return 0
+      let inter = 0
+      for (const t of a) if (b.has(t)) inter++
+      return inter / Math.sqrt(a.size * b.size)
+    }
+    function jaccardIds(a: Set<string>, b: string[]): number {
+      if (a.size === 0 || b.length === 0) return 0
+      const bSet = new Set(b)
+      const inter = [...a].filter(x => bSet.has(x)).length
+      const union = new Set([...a, ...b]).size
+      return union === 0 ? 0 : inter / union
+    }
+
+    type AssocResult = {
+      id: string
+      type: 'draft' | 'activated'
+      display_name: string
+      module: string
+      func_type: string
+      description: string
+      association_score: number       // 0-1
+      recommendation: 'enhance_existing' | 'create_new'
+      can_merge: boolean              // 草稿可直接 merge
+      needs_upgrade: boolean          // 已激活 Skill 需走 upgrade-draft
+      reasons: string[]
+    }
+    const results: AssocResult[] = []
+
+    // ── 候选 1：已激活 Skill ───────────────────────────────────────────────
+    for (const sk of getActivatedSkills()) {
+      const bodyText = sk.content.replace(/^---[\s\S]*?---\n*/m, '')
+      const candTokens = new Set(tokenize(bodyText))
+      const tokenSim = tokenCosine(queryTokens, candTokens)
+      const entryJ = jaccardIds(inputEntryIds, sk.generatedFromEntries)
+      const structMatch = !!(inputFuncType && inputModule && inputFuncType === sk.func_type && inputModule === sk.module)
+      let score = Math.min(1, 0.45 * tokenSim + 0.35 * entryJ + (structMatch ? 0.2 : 0))
+      if (entryJ >= 0.5) score = Math.max(score, 0.8)
+      if (score < 0.12 && !structMatch) continue
+      const reasons: string[] = []
+      if (tokenSim > 0.05) reasons.push(`内容相关度 ${Math.round(tokenSim * 100)}%`)
+      if (entryJ > 0) reasons.push(`来源条目重叠 ${Math.round(entryJ * 100)}%`)
+      if (structMatch) reasons.push(`模块/类型相同（${inputModule}·${inputFuncType}）`)
+      results.push({
+        id: sk.skillId, type: 'activated', display_name: sk.skillId,
+        module: sk.module, func_type: sk.func_type,
+        description: bodyText.match(/^(.{10,100})/m)?.[1]?.replace(/^#+\s*/, '').trim() || '已激活 Skill',
+        association_score: score,
+        recommendation: score >= 0.5 ? 'enhance_existing' : 'create_new',
+        can_merge: false, needs_upgrade: true, reasons,
+      })
+    }
+
+    // ── 候选 2：草稿（draft / reviewing / approved，排除 rejected/archived） ──
+    for (const d of await listSkillDrafts()) {
+      if (d.status === 'rejected' || d.status === 'archived') continue
+      const candTokens = new Set(tokenize((d.content || '') + ' ' + (d.skill_name || '')))
+      const tokenSim = tokenCosine(queryTokens, candTokens)
+      const entryJ = jaccardIds(inputEntryIds, d.generated_from_entries || [])
+      const docOverlap = (d.source_document_ids || []).some(id => inputDocIds.has(id))
+      const dMod = normModule(d.module), dFt = normFuncType(d.func_type)
+      const structMatch = !!(inputFuncType && inputModule && inputFuncType === dFt && inputModule === dMod)
+      let score = Math.min(1, 0.45 * tokenSim + 0.35 * entryJ + (structMatch ? 0.2 : 0))
+      if (docOverlap) score = Math.max(score, 0.85)
+      if (entryJ >= 0.5) score = Math.max(score, 0.8)
+      if (score < 0.12 && !structMatch && !docOverlap) continue
+      const reasons: string[] = []
+      if (docOverlap) reasons.push('来源文档相同')
+      if (tokenSim > 0.05) reasons.push(`内容相关度 ${Math.round(tokenSim * 100)}%`)
+      if (entryJ > 0) reasons.push(`来源条目重叠 ${Math.round(entryJ * 100)}%`)
+      if (structMatch) reasons.push(`模块/类型相同（${inputModule}·${inputFuncType}）`)
+      const canMerge = d.status === 'draft' || d.status === 'reviewing'
+      results.push({
+        id: d.id!, type: 'draft', display_name: d.skill_name || d.skill_id,
+        module: dMod, func_type: dFt,
+        description: d.content?.match(/^#[^#\n]+\n+([^\n#]{10,80})/)?.[1]?.trim() || '草稿待完善',
+        association_score: score,
+        recommendation: score >= 0.5 ? 'enhance_existing' : 'create_new',
+        can_merge: canMerge, needs_upgrade: !canMerge, reasons,
+      })
+    }
+
+    results.sort((a, b) => b.association_score - a.association_score)
+    const top = results.slice(0, 8)
+    const bestEnhance = top.find(r => r.recommendation === 'enhance_existing')
+
+    ctx.body = {
+      success: true,
+      data: {
+        associations: top,
+        total: results.length,
+        // 总体建议：存在高相关 Skill 时建议增强，否则建议新建
+        overall_recommendation: bestEnhance ? 'enhance_existing' : 'create_new',
+        best_match: bestEnhance || null,
+      },
+    }
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, '[kb] skill-association failed')
     ctx.status = 500
     ctx.body = { success: false, error: (err as Error).message }
   }
@@ -3033,18 +3332,27 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/import/start', async (ctx) => {
           return
         }
 
-        emitJobEvent(jobId, { stage: 'extract', progress: 60, message: '正在智能提取知识条目...' })
+        // 转换为规范 Markdown（失败则降级原文本）
+        emitJobEvent(jobId, { stage: 'convert_markdown', progress: 55, message: '正在转换为规范 Markdown...' })
+        const conv = await normalizeToMarkdown(textContent, filename)
+
+        emitJobEvent(jobId, { stage: 'extract', progress: 80, message: '正在智能提取知识条目...' })
         await new Promise(r => setTimeout(r, 200))
 
-        const entries = extractEntriesFromText(textContent, filename)
+        // 优先用规范化后的 Markdown 切分 chunk（标题边界更清晰）
+        const chunkSource = conv.status === 'done' ? conv.markdown : textContent
+        const entries = extractEntriesFromText(chunkSource, filename)
 
         emitJobEvent(jobId, {
           stage: 'done', progress: 100,
           message: `解析完成，提取 ${entries.length} 条知识条目`,
           status: 'done', entries,
           full_text: textContent,   // preserve for KnowledgeDocument creation on save
+          markdown: conv.markdown,
+          conversion_status: conv.status,
+          conversion_note: conv.note,
         })
-        logger.info({ jobId, filename, count: entries.length }, '[kb] import job done')
+        logger.info({ jobId, filename, count: entries.length, conversion: conv.status }, '[kb] import job done')
       } catch (err) {
         const msg = (err as Error).message
         emitJobEvent(jobId, { status: 'error', stage: 'error', progress: 0, message: msg, error: msg })
@@ -3157,6 +3465,9 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/import/jobs/:jobId/save', async (c
           title: docTitle,
           filename: batchFile.filename,
           content: batchFile.full_text,
+          content_markdown: batchFile.markdown,
+          conversion_status: batchFile.conversion_status,
+          conversion_note: batchFile.conversion_note,
           module: mostFrequent(fileChunks.map(e => e.module), 'shared'),
           category: mostFrequent(fileChunks.map(e => e.category), '其他'),
           chunk_ids: [],
@@ -3190,6 +3501,9 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/import/jobs/:jobId/save', async (c
         title: rawTitle,
         filename: job.source_url || job.filename,
         content: job.full_text || '',
+        content_markdown: job.markdown,
+        conversion_status: job.conversion_status,
+        conversion_note: job.conversion_note,
         module: mostFrequent(toSave.map(e => e.module), 'shared'),
         category: mostFrequent(toSave.map(e => e.category), '其他'),
         chunk_ids: [],
@@ -3260,14 +3574,21 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/import/fetch-url', async (ctx) => 
         return
       }
 
-      emitJobEvent(jobId, { stage: 'extract', progress: 60, message: '正在提取知识条目...' })
+      emitJobEvent(jobId, { stage: 'convert_markdown', progress: 50, message: '正在转换为规范 Markdown...' })
+      const conv = await normalizeToMarkdown(textContent, url)
+
+      emitJobEvent(jobId, { stage: 'extract', progress: 80, message: '正在提取知识条目...' })
       await new Promise(r => setTimeout(r, 100))
-      const entries = extractEntriesFromText(textContent, url)
+      const chunkSource = conv.status === 'done' ? conv.markdown : textContent
+      const entries = extractEntriesFromText(chunkSource, url)
 
       emitJobEvent(jobId, {
         stage: 'done', status: 'done', progress: 100,
         message: `抓取完成，提取 ${entries.length} 条知识条目`,
         entries, full_text: textContent,
+        markdown: conv.markdown,
+        conversion_status: conv.status,
+        conversion_note: conv.note,
       })
     } catch (err) {
       const msg = (err as Error).message
@@ -3327,7 +3648,7 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/import/scan-folder', async (ctx) =
   setImmediate(async () => {
     try {
       const allEntries: ExtractedEntry[] = []
-      const batchDocs: Array<{ filename: string; full_text: string }> = []
+      const batchDocs: NonNullable<ImportJob['batch_docs']> = []
 
       for (let i = 0; i < allFiles.length; i++) {
         const filePath = allFiles[i]
@@ -3355,8 +3676,19 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/import/scan-folder', async (ctx) =
           }
 
           if (textContent.trim() && !isGarbledText(textContent)) {
-            batchDocs.push({ filename, full_text: textContent })
-            allEntries.push(...extractEntriesFromText(textContent, filename))
+            emitJobEvent(jobId, {
+              stage: 'convert_markdown', progress: pct,
+              message: `(${i + 1}/${allFiles.length}) 转换 Markdown: ${filename}`,
+            })
+            const conv = await normalizeToMarkdown(textContent, filename)
+            batchDocs.push({
+              filename, full_text: textContent,
+              markdown: conv.markdown,
+              conversion_status: conv.status,
+              conversion_note: conv.note,
+            })
+            const chunkSource = conv.status === 'done' ? conv.markdown : textContent
+            allEntries.push(...extractEntriesFromText(chunkSource, filename))
           } else if (textContent.trim()) {
             logger.warn({ filename }, '[kb] skipped garbled/unreadable file in batch')
           }
@@ -3453,6 +3785,38 @@ tahpKnowledgeRoutes.get('/api/tahp/knowledge/documents/:docId/chunks', async (ct
       if (entry && entry.status !== 'archived') chunks.push(entry)
     }
     ctx.body = { success: true, data: { chunks, total: chunks.length } }
+  } catch (err) {
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// POST /api/tahp/knowledge/documents/:docId/reconvert — 手动重试 Markdown 规范化
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/documents/:docId/reconvert', async (ctx) => {
+  try {
+    const doc = await readDocument(ctx.params.docId)
+    if (!doc) {
+      ctx.status = 404; ctx.body = { success: false, error: '文档不存在' }; return
+    }
+    if (!doc.content?.trim()) {
+      ctx.status = 400; ctx.body = { success: false, error: '文档无原始文本，无法转换' }; return
+    }
+    const conv = await normalizeToMarkdown(doc.content, doc.filename || doc.title)
+    doc.content_markdown = conv.markdown
+    doc.conversion_status = conv.status
+    doc.conversion_note = conv.note
+    doc.updated_at = new Date().toISOString()
+    await writeDocument(doc)
+    logger.info({ docId: doc.id, conversion: conv.status }, '[kb] document reconvert done')
+    ctx.body = {
+      success: true,
+      data: {
+        id: doc.id,
+        conversion_status: conv.status,
+        conversion_note: conv.note,
+        content_markdown: conv.markdown,
+      },
+    }
   } catch (err) {
     ctx.status = 500
     ctx.body = { success: false, error: (err as Error).message }
@@ -3863,6 +4227,91 @@ tahpKnowledgeRoutes.get('/api/tahp/knowledge/stats/enhanced', async (ctx) => {
       },
     }
   } catch (err) {
+    ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// GET /api/tahp/knowledge/governance — 知识库治理面板（可运营指标 + 钻取数据）
+tahpKnowledgeRoutes.get('/api/tahp/knowledge/governance', async (ctx) => {
+  try {
+    await initDirs()
+    const allEntries = await listEntries()
+    const allDrafts = await listSkillDrafts()
+    const allDocs = await listDocuments()
+    const activated = getActivatedSkills()
+
+    const now = Date.now()
+    const in30d = now + 30 * 24 * 3600 * 1000
+    const live = allEntries.filter(e => e.status !== 'archived' && e.status !== 'deleted' && e.status !== 'rejected')
+
+    const pendingEntries = live.filter(e => e.status === 'pending_review')
+    const expiredEntries = live.filter(e => e.expires_at && new Date(e.expires_at).getTime() < now)
+    const expiringSoon = live.filter(e => e.expires_at && new Date(e.expires_at).getTime() >= now && new Date(e.expires_at).getTime() < in30d)
+    const lowConfidence = live.filter(e => (e.confidence_score ?? 1) < 0.6)
+    const zeroUsage = live.filter(e => (e.usage_count || 0) === 0)
+
+    // 热门检索 TopN（按 usage_count）
+    const topUsed = [...live]
+      .filter(e => (e.usage_count || 0) > 0)
+      .sort((a, b) => (b.usage_count || 0) - (a.usage_count || 0))
+      .slice(0, 8)
+      .map(e => ({
+        id: e.id,
+        content_preview: e.content.slice(0, 60),
+        usage_count: e.usage_count || 0,
+        module: e.module,
+      }))
+
+    // 文档转换失败/跳过
+    const conversionFailed = allDocs.filter(d => d.conversion_status === 'failed')
+    const conversionSkipped = allDocs.filter(d => d.conversion_status === 'skipped')
+
+    // Skill 覆盖盲区：同一 module×func_type 有 ≥3 条 live 条目，但无对应已激活 Skill / 草稿
+    const coveredKeys = new Set<string>()
+    for (const sk of activated) coveredKeys.add(`${normModule(sk.module)}::${normFuncType(sk.func_type)}`)
+    for (const d of allDrafts) {
+      if (d.status === 'rejected' || d.status === 'archived') continue
+      coveredKeys.add(`${normModule(d.module)}::${normFuncType(d.func_type)}`)
+    }
+    const groupMap = new Map<string, { module: string; func_type: string; entry_ids: string[] }>()
+    for (const e of live) {
+      const key = `${normModule(e.module)}::${normFuncType(e.func_type)}`
+      if (!groupMap.has(key)) groupMap.set(key, { module: e.module, func_type: e.func_type, entry_ids: [] })
+      groupMap.get(key)!.entry_ids.push(e.id)
+    }
+    const blindSpots = [...groupMap.entries()]
+      .filter(([key, g]) => g.entry_ids.length >= 3 && !coveredKeys.has(key))
+      .map(([, g]) => ({ module: g.module, func_type: g.func_type, entry_count: g.entry_ids.length, entry_ids: g.entry_ids }))
+      .sort((a, b) => b.entry_count - a.entry_count)
+
+    const pendingDrafts = allDrafts.filter(d => d.status === 'draft' || d.status === 'reviewing').length
+    const deprecatedSkills = allDrafts.filter(d => d.status === 'deprecated').length
+
+    ctx.body = {
+      success: true,
+      data: {
+        totals: {
+          entries: allEntries.length,
+          live_entries: live.length,
+          documents: allDocs.length,
+          drafts: allDrafts.length,
+          activated_skills: activated.length,
+        },
+        pending_entries: pendingEntries.length,
+        expired_entries: expiredEntries.length,
+        expiring_soon: expiringSoon.length,
+        low_confidence: lowConfidence.length,
+        zero_usage: zeroUsage.length,
+        pending_drafts: pendingDrafts,
+        deprecated_skills: deprecatedSkills,
+        conversion_failed: conversionFailed.length,
+        conversion_skipped: conversionSkipped.length,
+        top_used: topUsed,
+        blind_spots: blindSpots.slice(0, 10),
+      },
+    }
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, '[kb] governance failed')
     ctx.status = 500; ctx.body = { success: false, error: (err as Error).message }
   }
 })

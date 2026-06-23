@@ -197,8 +197,18 @@ export function continueAnalysis(taskId: string, payload: {
   return tahpPost<BugAnalysisStartResp>(`/api/tahp/bug-analysis/${encodeURIComponent(taskId)}/continue`, payload)
 }
 
-export function distillToKnowledge(taskId: string, note?: string): Promise<{ recorded: boolean; message: string }> {
-  return tahpPost(`/api/tahp/bug-analysis/${encodeURIComponent(taskId)}/distill`, { note })
+export interface DistillResult {
+  recorded: boolean
+  deposited: boolean
+  entry: { id: string; module: string; func_type: string } | null
+  message: string
+}
+
+export function distillToKnowledge(
+  taskId: string,
+  params?: { note?: string; content?: string; module?: string; category?: string; to_knowledge?: boolean },
+): Promise<DistillResult> {
+  return tahpPost(`/api/tahp/bug-analysis/${encodeURIComponent(taskId)}/distill`, params || {})
 }
 
 // ─── JIRA 预览 ────────────────────────────────────────────────────────────

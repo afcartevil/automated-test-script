@@ -311,14 +311,18 @@ export interface ExtractedEntry {
   source_section?: string
 }
 
+export type ConversionStatus = 'pending' | 'done' | 'failed' | 'skipped'
+
 export interface ImportJob {
   id: string
   filename: string
   status: 'processing' | 'done' | 'error'
   progress: number
-  stage: 'upload' | 'parse' | 'extract' | 'done' | 'error'
+  stage: 'upload' | 'parse' | 'convert_markdown' | 'extract' | 'done' | 'error'
   message: string
   entries: ExtractedEntry[]
+  conversion_status?: ConversionStatus
+  conversion_note?: string
   created_at: string
   error?: string
 }
@@ -367,6 +371,9 @@ export interface KnowledgeDocument {
   title: string
   filename: string
   content?: string       // only present in single-doc GET, omitted in list
+  content_markdown?: string  // LLM 规范化 Markdown（仅单文档 GET）
+  conversion_status?: ConversionStatus
+  conversion_note?: string
   module: string
   category: string
   chunk_ids: string[]
@@ -398,6 +405,19 @@ export function deleteDocument(docId: string): Promise<{ deleted: string; chunks
 export function getDocumentChunks(docId: string): Promise<{ chunks: KnowledgeEntry[]; total: number }> {
   return tahpGet<{ chunks: KnowledgeEntry[]; total: number }>(
     `/api/tahp/knowledge/documents/${encodeURIComponent(docId)}/chunks`,
+  )
+}
+
+/** POST /api/tahp/knowledge/documents/:docId/reconvert — 手动重试 Markdown 规范化 */
+export function reconvertDocument(docId: string): Promise<{
+  id: string
+  conversion_status: ConversionStatus
+  conversion_note?: string
+  content_markdown: string
+}> {
+  return tahpPost<{ id: string; conversion_status: ConversionStatus; conversion_note?: string; content_markdown: string }>(
+    `/api/tahp/knowledge/documents/${encodeURIComponent(docId)}/reconvert`,
+    {},
   )
 }
 
@@ -437,6 +457,37 @@ export function getSkillSuggestions(): Promise<{
   return tahpGet<{ suggestions: SkillSuggestion[]; total_groups: number; recommended_count: number }>(
     '/api/tahp/knowledge/skill-suggestions',
   )
+}
+
+/** POST /api/tahp/knowledge/skill-association — 关联检索：找出相关已有 Skill 并给出 enhance/new 建议 */
+export interface SkillAssociationItem {
+  id: string
+  type: 'draft' | 'activated'
+  display_name: string
+  module: string
+  func_type: string
+  description: string
+  association_score: number
+  recommendation: 'enhance_existing' | 'create_new'
+  can_merge: boolean
+  needs_upgrade: boolean
+  reasons: string[]
+}
+export function skillAssociation(params: {
+  entry_ids?: string[]
+  document_ids?: string[]
+  module?: string
+  func_type?: string
+  keywords?: string[]
+  text?: string
+  skill_name?: string
+}): Promise<{
+  associations: SkillAssociationItem[]
+  total: number
+  overall_recommendation: 'enhance_existing' | 'create_new'
+  best_match: SkillAssociationItem | null
+}> {
+  return tahpPost('/api/tahp/knowledge/skill-association', params)
 }
 
 /** POST /api/tahp/knowledge/skill-drafts/check-similarity — 生成前相似 Skill 检索 */
@@ -749,6 +800,34 @@ export interface EnhancedStats {
 /** GET /api/tahp/knowledge/stats/enhanced — 增强统计 */
 export function getEnhancedStats(): Promise<EnhancedStats> {
   return tahpGet<EnhancedStats>('/api/tahp/knowledge/stats/enhanced')
+}
+
+// ─── 治理面板 ────────────────────────────────────────────────────────────────
+
+export interface GovernanceData {
+  totals: {
+    entries: number
+    live_entries: number
+    documents: number
+    drafts: number
+    activated_skills: number
+  }
+  pending_entries: number
+  expired_entries: number
+  expiring_soon: number
+  low_confidence: number
+  zero_usage: number
+  pending_drafts: number
+  deprecated_skills: number
+  conversion_failed: number
+  conversion_skipped: number
+  top_used: Array<{ id: string; content_preview: string; usage_count: number; module: string }>
+  blind_spots: Array<{ module: string; func_type: string; entry_count: number; entry_ids: string[] }>
+}
+
+/** GET /api/tahp/knowledge/governance — 知识库治理面板数据 */
+export function getGovernance(): Promise<GovernanceData> {
+  return tahpGet<GovernanceData>('/api/tahp/knowledge/governance')
 }
 
 export interface AuditLogEntry {
