@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   NInput, NButton, NSpin, NEmpty, NAlert,
   NModal, NScrollbar, NProgress, useMessage, NTooltip,
-  NSpace, NForm, NFormItem,
+  NSpace, NForm, NFormItem, NCheckbox, NCheckboxGroup,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
@@ -15,9 +15,9 @@ import EaInnerTabs from '@/components/layout/EaInnerTabs.vue'
 import { useModelProviderReadiness } from '@/composables/useModelProviderReadiness'
 import { useBugAnalysisStore } from '@/stores/tahp/bug-analysis'
 import {
-  startSingle, startBatch, continueAnalysis, distillToKnowledge,
+  startSingle, startBatch, startLocal, continueAnalysis, distillToKnowledge,
   previewJira, previewJql, getBugReport, getBugLog, cancelBugTask,
-  listBugReports, deleteBugReport, respondBugApproval, submitBugUserInput,
+  listBugReports, deleteBugReport, respondBugApproval, submitBugUserInput, postJiraComment,
   type JiraIssueDetail, type JqlPreview, type BugReport, type BugReportSummary, type JiraUserConfig,
 } from '@/api/tahp/bug-analysis'
 import {
@@ -25,7 +25,10 @@ import {
   stripBugStageMarkers,
   parseHistoryStageDetails,
   reportToBugTask,
+  splitReportIntoSections,
+  composeReportSections,
   type HistoryStageDetail,
+  type ReportSectionBlock,
 } from '@/utils/bug-analysis-report'
 import { prependDistillJiraHeader } from '@/utils/distill-jira-header'
 import {
@@ -52,12 +55,8 @@ function ensureModelProviderOrWarn(): boolean {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 表单状态：mode = 'single' | 'batch'
-//
-// 注：已删除"模块选择"。Bug 域识别完全交给 Agent —— 它会在 Step 1 用 jira skill
-// 拉到 Issue 详情后自主判断，BFF 不再做任何 keyword-based 启发式。
-// ─────────────────────────────────────────────────────────────────────────────
-const mode = ref<'single' | 'batch'>('single')
+// 表单状态：mode = 'single' | 'batch' | 'local'
+const mode = ref<'single' | 'batch' | 'local'>('single')
 
 const singleForm = ref({
   input: '',
@@ -68,6 +67,11 @@ const singleForm = ref({
 const batchForm = ref({
   jql: '',
   extra_context: '',
+})
+
+const localForm = ref({
+  log_path: '',
+  problem_description: '',
 })
 
 // JIRA 预览（单条）
@@ -381,6 +385,30 @@ const distillDialogTitle = computed(() =>
 const distillCompleted = computed(() =>
   !isRunning.value && currentTask.value?.status === 'completed',
 )
+
+const isLocalAnalysisTask = computed(() => {
+  const t = currentTask.value
+  if (!t) return false
+  if (t.analysis_mode === 'local') return true
+  return (t.jira_key || '').startsWith('LOCAL-')
+})
+
+const canPostJiraComment = computed(() =>
+  distillCompleted.value
+  && !isLocalAnalysisTask.value
+  && !!(currentTask.value?.jira_key && !currentTask.value.jira_key.startsWith('LOCAL-')),
+)
+
+// JIRA 备注结论弹窗
+const showJiraCommentDialog = ref(false)
+const jiraCommentSections = ref<ReportSectionBlock[]>([])
+const jiraCommentSelectedIds = ref<string[]>([])
+const jiraCommentSubmitting = ref(false)
+
+const jiraCommentComposed = computed(() =>
+  composeReportSections(jiraCommentSections.value, jiraCommentSelectedIds.value),
+)
+
 // ─────────────────────────────────────────────────────────────────────────────
 const PHASE_LABELS: Record<string, { label: string; color: string }> = {
   PREPARING:          { label: '准备任务',       color: 'var(--faint)' },
@@ -420,28 +448,90 @@ const BUG_STAGE_STEP_IDS = [
   'fetch-jira', 'download-logs', 'match-skills', 'analyze', 'generate-report',
 ] as const
 
-function allStageDetailsSuccess(tid: string): boolean {
-  const detailMap = isHistoryView.value
+const BUG_PHASE_PROGRESS: Record<string, number> = {
+  FETCH_JIRA_INFO: 15,
+  DOWNLOAD_JIRA_LOGS: 32,
+  MATCH_SKILLS: 48,
+  ANALYZING: 72,
+  GENERATING_REPORT: 92,
+  COMPLETED: 100,
+}
+
+function stageDetailMapForTask(tid: string | null) {
+  if (!tid) return {} as Record<string, HistoryStageDetail>
+  return isHistoryView.value
     ? historyStageDetails.value
-    : store.stageDetailMap(tid)
+    : store.stageDetailMap(tid) as Record<string, HistoryStageDetail>
+}
+
+function allStageDetailsSuccess(tid: string): boolean {
+  const detailMap = stageDetailMapForTask(tid)
   return BUG_STAGE_STEP_IDS.every(id => detailMap[id]?.status === 'success')
 }
 
+/** 结合 phase 与 stage_detail，避免本地模式 phase 回退导致进度条卡在 JIRA 步骤 */
+function deriveEffectiveBugPhase(
+  phase: string | undefined,
+  detailMap: Record<string, HistoryStageDetail>,
+  isLocal: boolean,
+): string | undefined {
+  for (let i = 0; i < BUG_STAGE_STEP_IDS.length; i += 1) {
+    if (detailMap[BUG_STAGE_STEP_IDS[i]]?.status === 'running') {
+      return BUG_STAGE_ORDER[i]
+    }
+  }
+
+  let lastSuccess = -1
+  for (let i = 0; i < BUG_STAGE_STEP_IDS.length; i += 1) {
+    if (detailMap[BUG_STAGE_STEP_IDS[i]]?.status === 'success') lastSuccess = i
+  }
+
+  const phaseIdx = phase && !PREP_PHASES.has(phase)
+    ? BUG_STAGE_ORDER.indexOf(phase as typeof BUG_STAGE_ORDER[number])
+    : -1
+
+  if (lastSuccess >= 0 && lastSuccess < BUG_STAGE_ORDER.length - 1) {
+    const nextIdx = lastSuccess + 1
+    const nextPhase = BUG_STAGE_ORDER[nextIdx]
+    if (phaseIdx < 0) return nextPhase
+    if (isLocal && phaseIdx < nextIdx) return nextPhase
+    if (phaseIdx > nextIdx) return phase
+    return nextPhase
+  }
+
+  if (phaseIdx >= 0) return phase
+  if (isLocal && lastSuccess >= 2) return 'ANALYZING'
+  if (isLocal && lastSuccess >= 1) return 'MATCH_SKILLS'
+  return phase
+}
+
+const effectiveBugPhase = computed(() =>
+  deriveEffectiveBugPhase(
+    currentTask.value?.phase,
+    stageDetailMapForTask(currentTaskId.value),
+    isLocalAnalysisTask.value,
+  ),
+)
+
 const bugStages = computed(() => {
-  const phase = currentTask.value?.phase
+  const phase = effectiveBugPhase.value
   const status = currentTask.value?.status
   const tid = currentTaskId.value
+  const detailMap = stageDetailMapForTask(tid)
   const idx = phase && !PREP_PHASES.has(phase)
     ? BUG_STAGE_ORDER.indexOf(phase as typeof BUG_STAGE_ORDER[number])
     : -1
   const stagesComplete = tid ? allStageDetailsSuccess(tid) : false
-  const allDone = status === 'completed' || phase === 'COMPLETED' || stagesComplete
-  return BUG_STAGE_ORDER.map((key, i) => ({
-    key,
-    label: PHASE_LABELS[key]?.label || key,
-    done: allDone || (idx >= 0 && i < idx),
-    active: !allDone && phase === key,
-  }))
+  const allDone = status === 'completed' || currentTask.value?.phase === 'COMPLETED' || stagesComplete
+  return BUG_STAGE_ORDER.map((key, i) => {
+    const detailDone = detailMap[BUG_STAGE_STEP_IDS[i]]?.status === 'success'
+    return {
+      key,
+      label: PHASE_LABELS[key]?.label || key,
+      done: allDone || detailDone || (idx >= 0 && i < idx),
+      active: !allDone && idx >= 0 && i === idx,
+    }
+  })
 })
 
 const displayProgress = computed(() => {
@@ -449,17 +539,29 @@ const displayProgress = computed(() => {
   if (!task) return 0
   if (task.status === 'completed' || task.phase === 'COMPLETED') return 100
   if (bugStages.value.every(s => s.done)) return 100
+  const eff = effectiveBugPhase.value
+  if (eff && BUG_PHASE_PROGRESS[eff] != null) return BUG_PHASE_PROGRESS[eff]
   return typeof task.progress === 'number' ? task.progress : 0
 })
 
 function phaseLabel(phase?: string): string {
-  if (!phase) return '准备中'
-  return PHASE_LABELS[phase]?.label || phase
+  const p = phase || effectiveBugPhase.value
+  if (!p) return '准备中'
+  if (PREP_PHASES.has(p)) {
+    const eff = effectiveBugPhase.value
+    if (eff && !PREP_PHASES.has(eff)) return PHASE_LABELS[eff]?.label || eff
+  }
+  return PHASE_LABELS[p]?.label || p
 }
 
 function phaseColor(phase?: string): string {
-  if (!phase) return 'var(--faint)'
-  return PHASE_LABELS[phase]?.color || 'var(--faint)'
+  const p = phase || effectiveBugPhase.value
+  if (!p) return 'var(--faint)'
+  if (PREP_PHASES.has(p)) {
+    const eff = effectiveBugPhase.value
+    if (eff && !PREP_PHASES.has(eff)) return PHASE_LABELS[eff]?.color || 'var(--faint)'
+  }
+  return PHASE_LABELS[p]?.color || 'var(--faint)'
 }
 
 function pickStr(...vals: Array<string | number | undefined | null>): string | undefined {
@@ -708,6 +810,49 @@ async function startBatchAnalysis() {
   }
 }
 
+async function startLocalAnalysis() {
+  if (!ensureModelProviderOrWarn()) return
+  if (!localForm.value.log_path.trim()) {
+    message.warning('请填入本地日志路径')
+    return
+  }
+  if (!localForm.value.problem_description.trim()) {
+    message.warning('请填入问题描述')
+    return
+  }
+  submitting.value = true
+  try {
+    store.ensureSocket()
+    const resp = await startLocal({
+      log_path: localForm.value.log_path.trim(),
+      problem_description: localForm.value.problem_description.trim(),
+    })
+    const label = localForm.value.log_path.trim().replace(/[/\\]+$/, '').split(/[/\\]/).pop() || 'local'
+    store.registerTask({
+      task_id: resp.task_id,
+      jira_key: resp.jira_key || `LOCAL-${label}`,
+      jira_url: '',
+      status: 'running',
+      phase: 'ANALYZING',
+      progress: 0,
+      started_at: new Date().toISOString(),
+      title: `本地日志: ${label}`,
+      analysis_mode: 'local',
+      local_log_path: localForm.value.log_path.trim(),
+      user_description: localForm.value.problem_description.trim(),
+    })
+    store.selectTask(resp.task_id)
+    store.selectJob(null)
+    clearHistoryView()
+    activeReportTab.value = 'live'
+    message.success('本地日志分析已启动')
+  } catch (err) {
+    message.error((err as Error).message)
+  } finally {
+    submitting.value = false
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 操作：任务列表（最近 / 历史）/ 切换任务 / 加载报告
 // ─────────────────────────────────────────────────────────────────────────────
@@ -942,6 +1087,54 @@ async function ensureReportForDistill(): Promise<boolean> {
   if (!currentTaskId.value) return false
   await loadReport()
   return !!reportMarkdown.value.trim()
+}
+
+async function openJiraCommentDialog() {
+  if (!canPostJiraComment.value) return
+  const jiraConfig = getJiraConfigOrWarn()
+  if (!jiraConfig) return
+  const ok = await ensureReportForDistill()
+  if (!ok) {
+    message.warning('暂无分析报告，无法备注到 JIRA')
+    return
+  }
+  const body = reportMarkdown.value
+  const sections = splitReportIntoSections(body)
+  if (!sections.length) {
+    message.warning('报告未识别到编号章节（### 1. xxx），无法拆分备注')
+    return
+  }
+  jiraCommentSections.value = sections
+  jiraCommentSelectedIds.value = sections.filter(s => s.defaultSelected).map(s => s.id)
+  showJiraCommentDialog.value = true
+}
+
+async function submitJiraComment() {
+  const tid = currentTaskId.value
+  if (!tid) return false
+  const jiraConfig = getJiraConfigOrWarn()
+  if (!jiraConfig) return false
+  const text = jiraCommentComposed.value.trim()
+  if (!text) {
+    message.warning('请至少勾选一个报告章节')
+    return false
+  }
+  if (!jiraCommentSelectedIds.value.length) {
+    message.warning('请至少勾选一个报告章节')
+    return false
+  }
+  jiraCommentSubmitting.value = true
+  try {
+    await postJiraComment(tid, text, jiraConfig)
+    message.success(`已备注到 JIRA 单 ${currentTask.value?.jira_key || ''}`)
+    showJiraCommentDialog.value = false
+    return true
+  } catch (err) {
+    message.error((err as Error).message)
+    return false
+  } finally {
+    jiraCommentSubmitting.value = false
+  }
 }
 
 /** Skill 流程：跳过沉淀表单，后台复用/准备 entry_id 后直接进入关联检索 */
@@ -1265,6 +1458,12 @@ const liveStreamHint = computed(() => {
                 :class="mode === 'batch' ? 'ea-btn-soft' : 'mode-idle'"
                 @click="mode = 'batch'"
               >JQL 批量</button>
+              <button
+                type="button"
+                class="ea-btn-sm"
+                :class="mode === 'local' ? 'ea-btn-soft' : 'mode-idle'"
+                @click="mode = 'local'"
+              >本地日志分析</button>
             </div>
           </div>
 
@@ -1358,7 +1557,7 @@ const liveStreamHint = computed(() => {
           </template>
 
           <!-- 批量模式 -->
-          <template v-else>
+          <template v-else-if="mode === 'batch'">
             <div class="ea-field">
               <label>JQL <span class="req">*</span></label>
               <NInput
@@ -1403,6 +1602,43 @@ const liveStreamHint = computed(() => {
                   <EaPill v-if="iss.priority" variant="warn">{{ iss.priority }}</EaPill>
                 </div>
               </NScrollbar>
+            </div>
+          </template>
+
+          <!-- 本地日志分析 -->
+          <template v-else>
+            <div class="ea-field">
+              <label>本地日志路径 <span class="req">*</span></label>
+              <NInput
+                v-model:value="localForm.log_path"
+                placeholder="如 D:\logs\modem\issue_001 或 /data/local/tmp/modem_log"
+                clearable
+              />
+            </div>
+
+            <div class="ea-field">
+              <label>问题描述 <span class="req">*</span></label>
+              <NInput
+                v-model:value="localForm.problem_description"
+                type="textarea"
+                placeholder="描述现象、复现条件、关注模块（如 SIM 掉卡、数据不通）..."
+                :autosize="{ minRows: 3, maxRows: 8 }"
+              />
+            </div>
+
+            <NAlert type="info" :show-icon="false" style="margin-bottom: 12px">
+              本地模式跳过 JIRA 拉取与日志下载，进度条从<strong>大模型分析</strong>起步；Agent 仍会按问题描述在 Skills 目录匹配并 Read 分析 Skill。完成后不支持备注到 JIRA。
+            </NAlert>
+
+            <div class="ea-row ea-wrap action-row">
+              <NButton
+                type="primary"
+                :loading="submitting"
+                :disabled="!modelProviderReady || !localForm.log_path.trim() || !localForm.problem_description.trim()"
+                @click="startLocalAnalysis"
+              >
+                开始分析
+              </NButton>
             </div>
           </template>
         </EaCard>
@@ -1740,6 +1976,12 @@ const liveStreamHint = computed(() => {
                 </template>
                 沉淀为 Skill
               </NButton>
+              <NButton v-if="canPostJiraComment" @click="openJiraCommentDialog">
+                <template #icon>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </template>
+                备注结论到 JIRA 单
+              </NButton>
             </NSpace>
           </footer>
         </EaCard>
@@ -1798,6 +2040,51 @@ const liveStreamHint = computed(() => {
       @approval="onApprovalRespond"
       @user-input="onUserInputSubmit"
     />
+
+    <!-- ────── 备注结论到 JIRA 单 ────── -->
+    <NModal
+      v-model:show="showJiraCommentDialog"
+      preset="card"
+      title="备注结论到 JIRA 单"
+      style="width: 640px"
+      :mask-closable="false"
+    >
+      <NAlert type="info" :show-icon="false" style="margin-bottom: 12px">
+        从分析报告中勾选要备注的章节，将组合后写入 JIRA 单
+        <strong>{{ currentTask?.jira_key }}</strong> 的评论。
+      </NAlert>
+      <div class="modal-body-text">选择报告章节：</div>
+      <NCheckboxGroup v-model:value="jiraCommentSelectedIds">
+        <NSpace vertical size="small" style="margin: 8px 0 12px">
+          <NCheckbox
+            v-for="sec in jiraCommentSections"
+            :key="sec.id"
+            :value="sec.id"
+            :label="sec.title"
+          />
+        </NSpace>
+      </NCheckboxGroup>
+      <div class="modal-body-text">预览（将提交到 JIRA 评论）：</div>
+      <NInput
+        :value="jiraCommentComposed"
+        type="textarea"
+        readonly
+        :autosize="{ minRows: 8, maxRows: 16 }"
+      />
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showJiraCommentDialog = false">取消</NButton>
+          <NButton
+            type="primary"
+            :loading="jiraCommentSubmitting"
+            :disabled="!jiraCommentSelectedIds.length"
+            @click="submitJiraComment"
+          >
+            提交
+          </NButton>
+        </NSpace>
+      </template>
+    </NModal>
 
     <!-- ────── 知识沉淀弹窗 ────── -->
     <NModal

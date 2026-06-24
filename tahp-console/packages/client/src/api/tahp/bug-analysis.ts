@@ -25,10 +25,13 @@ function jiraHeaders(jiraConfig?: JiraUserConfig): Record<string, string> {
  */
 export type TahpBugModule = 'telephony' | 'kernel-driver' | 'power-mgmt' | 'shared'
 
+export type BugAnalysisMode = 'jira_single' | 'jira_batch' | 'local'
+
 export interface BugAnalysisStartResp {
   task_id: string
   jira_key?: string
-  type: 'single' | 'continue'
+  type: 'single' | 'continue' | 'local'
+  analysis_mode?: BugAnalysisMode
   status: 'running'
   from_task_id?: string
 }
@@ -47,6 +50,8 @@ export interface BugTask {
   jira_url: string
   module?: TahpBugModule         // 可选 · Agent 回填
   status: 'pending' | 'running' | 'waiting_user_input' | 'completed' | 'failed' | 'cancelled'
+  analysis_mode?: BugAnalysisMode
+  local_log_path?: string
   phase?: string
   progress?: number
   started_at: string
@@ -149,6 +154,8 @@ export interface BugReport {
   llm_response?: string
   /** Step 5 八节报告正文（不含 Agent 过程输出） */
   report_body?: string
+  analysis_mode?: BugAnalysisMode
+  local_log_path?: string
   error?: string
   jira?: Partial<JiraIssueDetail> & {
     commentCount?: number
@@ -189,6 +196,21 @@ export function startBatch(payload: {
   extra_context?: string
 }, jiraConfig?: JiraUserConfig): Promise<BugBatchStartResp> {
   return tahpPost<BugBatchStartResp>('/api/tahp/bug-analysis/batch', payload, { headers: jiraHeaders(jiraConfig) })
+}
+
+export function startLocal(payload: {
+  log_path: string
+  problem_description: string
+}): Promise<BugAnalysisStartResp> {
+  return tahpPost<BugAnalysisStartResp>('/api/tahp/bug-analysis/local', payload)
+}
+
+export function postJiraComment(
+  taskId: string,
+  comment: string,
+  jiraConfig?: JiraUserConfig,
+): Promise<{ comment_id?: string }> {
+  return tahpPost(`/api/tahp/bug-analysis/${encodeURIComponent(taskId)}/jira-comment`, { comment }, { headers: jiraHeaders(jiraConfig) })
 }
 
 export function continueAnalysis(taskId: string, payload: {

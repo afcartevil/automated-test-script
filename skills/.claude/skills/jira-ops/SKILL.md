@@ -183,6 +183,22 @@ python scripts/api_jira.py extract-logs --input-dir "./jira_workspace/OS162-3773
 | `prepare-logs` | 下载 + 解压 |
 | `get-issue` / `add-comment` / `download-attachments` / `get-changelog` | 基础 Jira 操作 |
 
+### 新增 JIRA 评论（Agent / TAHP 备注结论）
+
+在 **cwd = jira-ops/** 下执行：
+
+```bash
+# 单行
+python scripts/api_jira.py add-comment --issue KM9OS151-1622 --comment "【TAHP 智能诊断】根因：..."
+
+# 多行（推荐）
+python scripts/api_jira.py add-comment --issue KM9OS151-1622 --comment-file D:/tmp/tahp-comment.md
+```
+
+返回 JSON：`{"ok":true,"data":{"issue_id":"...","comment_id":"...","body":"..."}}`。凭据走 `config set` / `.env` / integration bug tool（同 get-issue）。
+
+**规则**：备注前须确认 `setup-check` 通过；Issue Key 必须存在；勿在评论中泄露未脱敏密码。
+
 平台包装：`bash scripts/deploy.sh` / `.\scripts\deploy.ps1`（参数与 `api_jira.py` 相同）。
 
 ---

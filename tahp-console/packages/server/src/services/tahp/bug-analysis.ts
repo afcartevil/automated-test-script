@@ -69,6 +69,7 @@ import {
   type ParsedUserInputRequest,
   type UserInputResponseRecord,
 } from './bug-analysis-interaction'
+import { runJiraOpsAddComment } from './jira-ops-runner'
 
 // ─── Agent Bridge 客户端（单例） ────────────────────────────────────────────
 //
@@ -84,10 +85,17 @@ const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
 // 报告中回填的一个标签（可选）。前端不再让用户选择此字段。
 export type TahpBugModule = 'telephony' | 'kernel-driver' | 'power-mgmt' | 'shared'
 
+export type BugAnalysisMode = 'jira_single' | 'jira_batch' | 'local'
+
 export interface BugAnalysisInput {
   rawInput: string                // 用户输入: JIRA key 或 URL
   userDescription?: string        // 用户对 Bug 的补充描述
   extraContext?: string           // 其他附加信息
+}
+
+export interface LocalBugAnalysisInput {
+  logPath: string
+  problemDescription: string
 }
 
 export interface ContinueAnalysisInput {
@@ -117,6 +125,8 @@ export interface BugAnalysisTaskCtx {
   error?: string
   /** Agent fetch_jira 阶段 TAHP_STAGE 字段快照 */
   jiraSnapshot?: Record<string, string>
+  analysisMode?: BugAnalysisMode
+  localLogPath?: string
 }
 
 export interface BugAnalysisJobCtx {
@@ -700,17 +710,25 @@ function applyParsedStageMarker(
     ctx.jiraSnapshot = { ...(ctx.jiraSnapshot || {}), ...marker.fields }
     if (marker.fields.issue_summary) ctx.title = marker.fields.issue_summary
   }
-  ctx.phase = marker.phase
-  const progress = marker.markerId === 'generate_report' && marker.status === 'success'
-    ? 100
-    : BUG_UI_PHASE_PROGRESS[marker.phase]
-  ctx.progress = progress
+
+  // 本地模式：Step 1～2 为 BFF 预置跳过标记，勿将 phase 回退到 JIRA 拉取/下载
+  const isLocalSkipMarker = ctx.analysisMode === 'local'
+    && (marker.markerId === 'fetch_jira' || marker.markerId === 'download_logs')
+
+  if (!isLocalSkipMarker) {
+    ctx.phase = marker.phase
+    const progress = marker.markerId === 'generate_report' && marker.status === 'success'
+      ? 100
+      : BUG_UI_PHASE_PROGRESS[marker.phase]
+    ctx.progress = progress
+    const message = marker.fields.message || ''
+    emit(taskId, 'task.phase', {
+      phase: marker.phase,
+      progress,
+      message,
+    })
+  }
   const message = marker.fields.message || ''
-  emit(taskId, 'task.phase', {
-    phase: marker.phase,
-    progress,
-    message,
-  })
   const stepStatus = marker.status === 'success'
     ? 'completed'
     : marker.status === 'failed'
@@ -890,7 +908,90 @@ field.<name>.hint: <可选说明>
 3. 同一 \`request_id\` 不要重复请求。
 `
 
-function buildBugAnalysisInstructions(userMessage: string): string {
+const AGENT_INSTRUCTIONS_LOCAL = `你是 TAHP「智能诊断专家」，当前为 **本地日志分析模式**（无 JIRA 工单）。
+
+# 执行原则
+1. **不要**拉取 JIRA、不要从 JIRA 下载日志。
+2. 用户已提供**本地日志路径**与**问题描述**。
+3. BFF 已预置跳过 Step 1～2（JIRA / 日志下载）；你须从 **Step 3 匹配 Skill** 开始，再进入分析与报告。
+
+# 强制执行步骤
+
+## Step 1 — 拉取 JIRA 信息（跳过）
+立即输出 \`fetch_jira\` 标记：\`status: success\`，\`message: 本地日志模式跳过 JIRA 拉取\`，\`jira_key: LOCAL\`。
+
+## Step 2 — 下载 JIRA 日志（跳过，使用用户路径）
+立即输出 \`download_logs\` 标记：\`status: success\`，\`logs_downloaded: true\`，\`log_paths\` 填用户给出的本地日志路径。
+
+## Step 3 — 匹配分析 Skill（必做）
+结合**问题描述**与日志类型/路径，在 \`__TAHP_SKILLS_REL_ROOT__\` 下匹配 1～3 个分析 Skill；**Read 匹配到的 SKILL.md 全文**后输出 \`match_skills\` 标记（\`matched_skills\`、\`skills_matched\` 等字段须填写）。
+
+## Step 4 — 大模型分析
+依据已匹配 Skill 的方法论分析本地日志，输出 \`analyze\` 标记。
+
+## Step 5 — 生成分析报告
+输出完整 8 节 Markdown 报告（结构同标准模式），输出 \`generate_report\` 标记。
+
+# 结构化阶段标记、8 节报告、TOOLS_INVOKED、红线
+与标准智能诊断相同（见标准指令）；\`stage_id\` 须完整输出。
+
+# 红线
+- 不要编造日志中不存在的行或符号
+- 日志路径不存在时显式报错并停止
+- **禁止**跳过 Step 3 直接分析（须先完成 Skill 目录匹配与 Read）
+`
+
+function emitLocalPreflightStages(taskId: string, ctx: BugAnalysisTaskCtx) {
+  const logPath = ctx.localLogPath || ''
+  // UI 快进到「大模型分析」；Agent 仍会在 Step 3 真实执行 Skill 匹配
+  ctx.phase = 'ANALYZING'
+  ctx.progress = BUG_UI_PHASE_PROGRESS.ANALYZING
+  ctx.title = ctx.title || '本地日志分析'
+  emit(taskId, 'task.stage_detail', {
+    stage_id: 'fetch_jira',
+    phase: 'FETCH_JIRA_INFO',
+    step_id: 'fetch-jira',
+    status: 'success',
+    message: '本地日志模式已跳过 JIRA 拉取',
+    fields: { status: 'success', message: '本地模式跳过', jira_key: ctx.jiraKey },
+    detail_lines: ['说明: 本地日志模式已跳过 JIRA 拉取'],
+  })
+  emit(taskId, 'task.stage_detail', {
+    stage_id: 'download_logs',
+    phase: 'DOWNLOAD_JIRA_LOGS',
+    step_id: 'download-logs',
+    status: 'success',
+    message: '使用用户提供的本地日志路径',
+    fields: { status: 'success', logs_downloaded: 'true', log_paths: logPath },
+    detail_lines: [`日志路径: ${logPath}`],
+  })
+  emit(taskId, 'task.phase', {
+    phase: 'ANALYZING',
+    progress: BUG_UI_PHASE_PROGRESS.ANALYZING,
+    message: '本地日志模式：匹配 Skill 并分析本地日志',
+  })
+}
+
+function buildLocalAgentUserMessage(ctx: BugAnalysisTaskCtx): string {
+  const blocks: string[] = [
+    '# 本地日志分析任务',
+    `- 本地日志路径: **${ctx.localLogPath}**`,
+    `- 问题描述: ${ctx.userDescription || ''}`,
+    '',
+    '请先输出 fetch_jira 与 download_logs 阶段标记（本地模式跳过，log_paths 使用上述路径），',
+    '然后结合问题描述在 Skills 目录匹配 1～3 个分析 Skill 并 Read 全文，输出 match_skills 标记，',
+    '再分析本地日志并输出 analyze / generate_report 标记，生成完整 8 节报告。',
+  ]
+  return blocks.join('\n')
+}
+
+function buildBugAnalysisInstructions(userMessage: string, ctx: BugAnalysisTaskCtx): string {
+  if (ctx.analysisMode === 'local') {
+    const skillsRel = getTahpSkillsRootForPrompt()
+    const base = AGENT_INSTRUCTIONS_LOCAL.replace(/__TAHP_SKILLS_REL_ROOT__/g, skillsRel)
+    const tahpCtx = buildFullTahpSystemContext(userMessage, { scenario: 'bug_analysis' })
+    return tahpCtx ? `${base}\n\n${tahpCtx}` : base
+  }
   const skillsRel = getTahpSkillsRootForPrompt()
   const jiraOpsSkill = tahpSkillMdRelativePath('jira-ops')
   const base = AGENT_INSTRUCTIONS_BASE
@@ -901,6 +1002,9 @@ function buildBugAnalysisInstructions(userMessage: string): string {
 }
 
 function buildAgentUserMessage(ctx: BugAnalysisTaskCtx): string {
+  if (ctx.analysisMode === 'local') {
+    return buildLocalAgentUserMessage(ctx)
+  }
   const blocks: string[] = []
   blocks.push(`# 待分析 Bug`)
   blocks.push(`- JIRA Key: **${ctx.jiraKey}**`)
@@ -1006,6 +1110,8 @@ function restoreCtxFromReport(taskId: string, report: Record<string, unknown>): 
     llmResponse: typeof report.llm_response === 'string' ? report.llm_response : undefined,
     completedAt: typeof report.completed_at === 'string' ? report.completed_at : undefined,
     jiraSnapshot: (report.jira as Record<string, string> | undefined),
+    analysisMode: report.analysis_mode as BugAnalysisMode | undefined,
+    localLogPath: typeof report.local_log_path === 'string' ? report.local_log_path : undefined,
   }
 }
 
@@ -1056,7 +1162,7 @@ async function runSingleBugAnalysis(
         conversationHistory = undefined
       } else {
         conversationHistory = buildConversationHistoryFromReport(taskId, ctx)
-        instructions = buildBugAnalysisInstructions(userMessage)
+        instructions = buildBugAnalysisInstructions(userMessage, ctx)
       }
       emit(taskId, 'task.message', {
         level: 'round_divider',
@@ -1079,14 +1185,14 @@ async function runSingleBugAnalysis(
       } else {
         logBug(taskId, 'info', `continue: rebuilding conversation history for ${agentSessionId}`)
         conversationHistory = buildConversationHistoryFromReport(taskId, ctx)
-        instructions = buildBugAnalysisInstructions(userMessage)
+        instructions = buildBugAnalysisInstructions(userMessage, ctx)
       }
 
       ctx.llmResponse = ''
       saveAgentPromptLog(taskId, 'bug-analysis', instructions || '(session continue — no new system prompt)', userMessage)
     } else {
       userMessage = buildAgentUserMessage(ctx)
-      instructions = buildBugAnalysisInstructions(userMessage)
+      instructions = buildBugAnalysisInstructions(userMessage, ctx)
       const promptLog = saveAgentPromptLog(taskId, 'bug-analysis', instructions, userMessage)
       logBug(taskId, 'info', `Agent 提示词已落盘: ${promptLog.promptDir}`)
     }
@@ -1094,6 +1200,10 @@ async function runSingleBugAnalysis(
     emitPrepPhase(taskId, ctx, 'PREPARING', isContinue ? '准备继续 Agent 对话...' : '准备提交给 Agent（提示词已落盘）...')
 
     emitPrepPhase(taskId, ctx, 'CONNECTING_AGENT', '连接 Agent Bridge...')
+    // 须在预备阶段之后推送，否则 PREPARING/CONNECTING_AGENT 会覆盖 MATCH_SKILLS
+    if (ctx.analysisMode === 'local' && !isContinue) {
+      emitLocalPreflightStages(taskId, ctx)
+    }
     const manager = getAgentBridgeManager()
     if (!manager.running) {
       throw new Error(
@@ -1216,6 +1326,8 @@ async function runSingleBugAnalysis(
       title: ctx.jiraSnapshot?.issue_summary || ctx.title || ctx.rawInput || ctx.jiraKey,
       status: 'completed',
       execution_mode: 'agent',
+      analysis_mode: ctx.analysisMode || 'jira_single',
+      local_log_path: ctx.localLogPath,
       agent_session_id: agentSessionId,
       started_at: (existingReport?.started_at as string) || ctx.startedAt,
       completed_at: completedAt,
@@ -1423,6 +1535,7 @@ export function startSingleBugAnalysis(input: BugAnalysisInput): StartTaskResult
     rawInput: input.rawInput,
     userDescription: input.userDescription,
     extraContext: input.extraContext,
+    analysisMode: 'jira_single',
     startedAt: new Date().toISOString(),
     status: 'running',
     corrections: [],
@@ -1445,6 +1558,79 @@ export function startSingleBugAnalysis(input: BugAnalysisInput): StartTaskResult
   })
 
   return { ok: true, taskId, jiraKey: key }
+}
+
+export function startLocalLogBugAnalysis(input: LocalBugAnalysisInput): StartTaskResult {
+  const logPath = input.logPath?.trim()
+  const problemDescription = input.problemDescription?.trim()
+  if (!logPath) return { ok: false, error: '本地日志路径不能为空' }
+  if (!problemDescription) return { ok: false, error: '问题描述不能为空' }
+
+  const taskId = genTaskId()
+  const label = logPath.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || 'local'
+  const jiraKey = `LOCAL-${label}`.slice(0, 48)
+
+  const ctx: BugAnalysisTaskCtx = {
+    taskId,
+    jiraKey,
+    jiraUrl: '',
+    rawInput: logPath,
+    userDescription: problemDescription,
+    localLogPath: logPath,
+    analysisMode: 'local',
+    title: `本地日志: ${label}`,
+    startedAt: new Date().toISOString(),
+    status: 'running',
+    corrections: [],
+    skillsUsed: [],
+  }
+  taskCtx.set(taskId, ctx)
+
+  emit(taskId, 'task.started', {
+    type: 'local',
+    analysis_mode: 'local',
+    local_log_path: logPath,
+    jira_key: jiraKey,
+    message: `本地日志分析已启动: ${logPath}`,
+  })
+  logBug(taskId, 'info', `task.started local log=${logPath}`)
+
+  setImmediate(() => {
+    runSingleBugAnalysis(ctx).catch(err => {
+      logger.error({ err: (err as Error).message, taskId }, '[bug-analysis] local unhandled')
+    })
+  })
+
+  return { ok: true, taskId, jiraKey }
+}
+
+export function postBugAnalysisJiraComment(
+  taskId: string,
+  comment: string,
+  jiraCfg: JiraConfig,
+): { ok: boolean; error?: string; comment_id?: string } {
+  const text = comment.trim()
+  if (!text) return { ok: false, error: '评论内容不能为空' }
+
+  const ctx = taskCtx.get(taskId)
+  const report = readBugReport(taskId) as Record<string, unknown> | null
+  const mode = ctx?.analysisMode || (report?.analysis_mode as string)
+  if (mode === 'local') {
+    return { ok: false, error: '本地日志分析任务不支持备注到 JIRA' }
+  }
+
+  const jiraKey = ctx?.jiraKey || String(report?.jira_key || '')
+  if (!jiraKey || jiraKey.startsWith('LOCAL-')) {
+    return { ok: false, error: '无效 JIRA Key，无法备注' }
+  }
+
+  const result = runJiraOpsAddComment(jiraKey, text, jiraCfg)
+  if (!result.ok) return { ok: false, error: result.error }
+  logBug(taskId, 'info', `jira comment posted: ${jiraKey}`)
+  return {
+    ok: true,
+    comment_id: String(result.data?.comment_id || ''),
+  }
 }
 
 // ─── 公开入口：补充信息继续分析 ─────────────────────────────────────────────

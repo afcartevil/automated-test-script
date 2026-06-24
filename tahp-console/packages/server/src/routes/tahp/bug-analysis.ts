@@ -16,6 +16,8 @@ import {
   startSingleBugAnalysis,
   continueBugAnalysis,
   startBatchBugAnalysis,
+  startLocalLogBugAnalysis,
+  postBugAnalysisJiraComment,
   cancelBugTask,
   previewSingleIssue,
   listBugTasks,
@@ -93,6 +95,42 @@ tahpBugAnalysisRoutes.post('/single', async (ctx) => {
       task_id: result.taskId,
       jira_key: result.jiraKey,
       type: 'single',
+      status: 'running',
+    },
+  }
+})
+
+// ─── 本地日志分析（跳过 JIRA，从匹配 Skill 开始）────────────────────────────
+//
+// POST /api/tahp/bug-analysis/local
+// Body: { log_path, problem_description }
+tahpBugAnalysisRoutes.post('/local', async (ctx) => {
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const logPath = typeof body.log_path === 'string' ? body.log_path.trim() : ''
+  const problemDescription = typeof body.problem_description === 'string' ? body.problem_description.trim() : ''
+  if (!logPath) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 log_path' }
+    return
+  }
+  if (!problemDescription) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 problem_description' }
+    return
+  }
+  const result = startLocalLogBugAnalysis({ logPath, problemDescription })
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+  ctx.body = {
+    success: true,
+    data: {
+      task_id: result.taskId,
+      jira_key: result.jiraKey,
+      type: 'local',
+      analysis_mode: 'local',
       status: 'running',
     },
   }
@@ -206,6 +244,30 @@ tahpBugAnalysisRoutes.post('/:taskId/user-input', async (ctx) => {
     return
   }
   ctx.body = { success: true, data: { request_id: requestId } }
+})
+
+// ─── 备注结论到 JIRA 评论 ────────────────────────────────────────────────────
+//
+// POST /api/tahp/bug-analysis/:taskId/jira-comment
+// Body: { comment: string }
+tahpBugAnalysisRoutes.post('/:taskId/jira-comment', async (ctx) => {
+  const jiraCfg = requireJiraUserConfig(ctx)
+  if (!jiraCfg) return
+  const taskId = ctx.params.taskId
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const comment = typeof body.comment === 'string' ? body.comment.trim() : ''
+  if (!comment) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 comment' }
+    return
+  }
+  const result = postBugAnalysisJiraComment(taskId, comment, jiraCfg)
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+  ctx.body = { success: true, data: { comment_id: result.comment_id } }
 })
 
 // ─── 沉淀为知识库/Skill ──────────────────────────────────────────────────────
@@ -361,8 +423,10 @@ tahpBugAnalysisRoutes.get('/tasks', async (ctx) => {
     started_at: t.startedAt,
     completed_at: t.completedAt,
     skills_used: t.skillsUsed,
-    title: t.issue?.summary,
+    title: t.issue?.summary || t.title,
     error: t.error,
+    analysis_mode: t.analysisMode,
+    local_log_path: t.localLogPath,
   }))
   ctx.body = { success: true, data: tasks }
 })
@@ -398,6 +462,9 @@ tahpBugAnalysisRoutes.get('/tasks/:id', async (ctx) => {
     llm_response: t.llmResponse,
     error: t.error,
     issue: t.issue,
+    title: t.issue?.summary || t.title,
+    analysis_mode: t.analysisMode,
+    local_log_path: t.localLogPath,
   } }
 })
 

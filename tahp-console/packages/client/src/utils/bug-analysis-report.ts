@@ -135,6 +135,8 @@ export function reportToBugTask(report: {
   user_description?: string
   extra_context?: string
   corrections?: string[]
+  analysis_mode?: string
+  local_log_path?: string
 }): import('@/api/tahp/bug-analysis').BugTask {
   const failed = report.status === 'failed'
   return {
@@ -154,5 +156,67 @@ export function reportToBugTask(report: {
     user_description: report.user_description,
     extra_context: report.extra_context,
     corrections: report.corrections,
+    analysis_mode: report.analysis_mode as import('@/api/tahp/bug-analysis').BugTask['analysis_mode'],
+    local_log_path: report.local_log_path,
   }
+}
+
+export interface ReportSectionBlock {
+  id: string
+  title: string
+  heading: string
+  content: string
+  defaultSelected: boolean
+}
+
+/** 按报告中的编号标题（### 1. xxx）拆分为可选块 */
+export function splitReportIntoSections(reportMarkdown: string): ReportSectionBlock[] {
+  if (!reportMarkdown?.trim()) return []
+  const lines = reportMarkdown.split(/\r?\n/)
+  const blocks: ReportSectionBlock[] = []
+  let current: ReportSectionBlock | null = null
+
+  const isSectionHeading = (line: string) => /^#{1,3}\s+\d+\.\s+/.test(line.trim())
+
+  const defaultSelected = (title: string) =>
+    /摘要|TL;DR|tl;dr/i.test(title)
+    || /根因/.test(title)
+    || /修复建议/.test(title)
+
+  for (const line of lines) {
+    if (isSectionHeading(line)) {
+      if (current) blocks.push(current)
+      const heading = line.trim()
+      const m = heading.match(/^#{1,3}\s+\d+\.\s+(.+)$/)
+      const title = (m?.[1] || heading).trim()
+      const id = title.replace(/\s+/g, '-').slice(0, 48) || `section-${blocks.length + 1}`
+      current = {
+        id,
+        title,
+        heading,
+        content: `${heading}\n`,
+        defaultSelected: defaultSelected(title),
+      }
+    } else if (current) {
+      current.content += `${line}\n`
+    }
+  }
+  if (current) blocks.push(current)
+  return blocks
+}
+
+export function composeReportSections(
+  sections: ReportSectionBlock[],
+  selectedIds: string[],
+): string {
+  const picked = new Set(selectedIds)
+  const parts = sections
+    .filter(s => picked.has(s.id))
+    .map(s => s.content.trim())
+  const body = parts.join('\n\n')
+  return [
+    '【TAHP 智能诊断结论备注】',
+    '',
+    body,
+  ].join('\n').trim()
 }

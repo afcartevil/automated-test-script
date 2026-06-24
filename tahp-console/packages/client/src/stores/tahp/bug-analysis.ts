@@ -125,6 +125,8 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             if (ev.payload?.jira_key) t.jira_key = String(ev.payload.jira_key)
             if (ev.payload?.jira_url) t.jira_url = String(ev.payload.jira_url)
             if (ev.payload?.module) t.module = ev.payload.module as BugTask['module']
+            if (ev.payload?.analysis_mode) t.analysis_mode = ev.payload.analysis_mode as BugTask['analysis_mode']
+            if (ev.payload?.local_log_path) t.local_log_path = String(ev.payload.local_log_path)
             break
           case 'task.continue_started':
             t.status = 'running'
@@ -219,6 +221,23 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             stageDetails.value = { ...stageDetails.value, [tid]: bucket }
             if (stepId === 'fetch-jira' && rec.fields?.issue_summary) {
               t.title = rec.fields.issue_summary
+            }
+            // 用 stage_detail 向前同步 phase（本地模式跳过标记不回退）
+            const stagePhase = typeof ev.payload?.phase === 'string' ? ev.payload.phase : ''
+            const BUG_PHASE_ORDER = [
+              'FETCH_JIRA_INFO', 'DOWNLOAD_JIRA_LOGS', 'MATCH_SKILLS', 'ANALYZING', 'GENERATING_REPORT',
+            ]
+            const PREP = new Set(['STARTING', 'PREPARING', 'CONNECTING_AGENT', 'QUEUED', 'WAITING_USER_INPUT'])
+            const isLocal = t.analysis_mode === 'local' || (t.jira_key || '').startsWith('LOCAL-')
+            const isSkipStep = stepId === 'fetch-jira' || stepId === 'download-logs'
+            if (stagePhase && BUG_PHASE_ORDER.includes(stagePhase)) {
+              const newIdx = BUG_PHASE_ORDER.indexOf(stagePhase)
+              const curIdx = t.phase && !PREP.has(t.phase) ? BUG_PHASE_ORDER.indexOf(t.phase) : -1
+              if (PREP.has(t.phase || '') || newIdx > curIdx) {
+                if (!(isLocal && isSkipStep && curIdx >= 0 && newIdx < curIdx)) {
+                  t.phase = stagePhase
+                }
+              }
             }
             break
           }

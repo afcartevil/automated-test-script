@@ -424,7 +424,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_comment = subparsers.add_parser("add-comment", help="给单个 Jira ID 新增评论")
     add_comment.add_argument("--issue", required=True, help="例如 AAA-123")
-    add_comment.add_argument("--comment", required=True, help="评论内容")
+    add_comment.add_argument("--comment", default="", help="评论内容（单行；多行请用 --comment-file）")
+    add_comment.add_argument(
+        "--comment-file",
+        default="",
+        help="从 UTF-8 文件读取评论正文（适合 TAHP BFF / 多行备注）",
+    )
 
     download = subparsers.add_parser("download-attachments", help="下载 issue 附件")
     download.add_argument("--issue", required=True, help="例如 AAA-123")
@@ -599,9 +604,15 @@ def command_get_issue(args: argparse.Namespace) -> Dict[str, Any]:
 
 
 def command_add_comment(args: argparse.Namespace) -> Dict[str, Any]:
-    if not args.comment.strip():
-        raise ValueError("comment 不能为空")
-    return ok(get_client().add_comment(args.issue, args.comment))
+    text = str(args.comment or "")
+    if getattr(args, "comment_file", None):
+        cf = Path(str(args.comment_file))
+        if not cf.is_file():
+            raise ValueError(f"comment-file 不存在: {cf}")
+        text = cf.read_text(encoding="utf-8")
+    if not text.strip():
+        raise ValueError("comment 不能为空（使用 --comment 或 --comment-file）")
+    return ok(get_client().add_comment(args.issue, text))
 
 
 def command_download_attachments(args: argparse.Namespace) -> Dict[str, Any]:
