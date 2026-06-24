@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
+import GerritReviewWorkspace from '@/components/tahp/GerritReviewWorkspace.vue'
 import {
   listDevices,
   refreshDevices,
@@ -22,7 +22,8 @@ import {
   type CaseResult
 } from '@/api/tahp/device-self-check'
 
-const router = useRouter()
+const SELF_CHECK_SUBTITLE =
+  '周版本、STR4转测版本用例自动化；GMS、稳定性测试AI自规划；gerrit提交code review和测试建议'
 const devices = ref<DeviceInfo[]>([])
 const selectedDeviceId = ref<string | null>(null)
 const loading = ref(false)
@@ -490,10 +491,10 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
 </script>
 
 <template>
-  <div class="page">
+  <div class="page" :class="{ 'page-wide': !selectedDeviceId }">
     <EaPageHead
       :title="selectedDeviceId ? (selectedDevice?.device.deviceName || '设备详情') : 'AI 自检'"
-      subtitle="多设备并行自动化测试，支持结果复用"
+      :subtitle="selectedDeviceId ? '多设备并行自动化测试，支持结果复用' : SELF_CHECK_SUBTITLE"
     >
       <template #actions>
         <template v-if="selectedDeviceId">
@@ -546,6 +547,9 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
       </div>
 
       <template v-else>
+        <h3 class="section-heading">多设备并行自动化测试</h3>
+        <p class="section-desc ea-muted">支持结果复用，连接 Android 设备后刷新列表</p>
+
         <div v-if="devices.length === 0" class="ea-muted" style="padding: 40px; text-align: center;">
           暂无连接设备，请连接 Android 设备后刷新
         </div>
@@ -603,6 +607,8 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
           </EaCard>
         </div>
       </template>
+
+      <GerritReviewWorkspace />
     </template>
 
     <!-- 设备详情视图 -->
@@ -916,6 +922,17 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
 </template>
 
 <style scoped lang="scss">
+.section-heading {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.section-desc {
+  font-size: 13px;
+  margin: 0 0 16px;
+}
+
 .device-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));

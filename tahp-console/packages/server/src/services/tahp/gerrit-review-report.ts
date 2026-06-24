@@ -7,32 +7,65 @@ export interface P0ExtractionResult {
   rawSection: string
 }
 
-const P0_HEADING_RE = /^#{2,4}\s*P0\s*[-–—]\s*必须测试\s*$/im
+const P0_START_PATTERNS: RegExp[] = [
+  /^#{2,4}\s*P0\s*[-–—]\s*必须测试\s*$/im,
+  /^#{2,4}\s*<span[^>]*>\s*P0\s*<\/span>\s*必须测试\s*$/im,
+  /^\*\*P0\s*[-–—]\s*必须测试\*\*\s*$/im,
+  /^#{2,4}\s*P0\s*[-–—]\s*必须测试/im,
+]
+
 const MERGED_TEST_HEADING_RE = /^#{2,4}\s*合并测试建议\s*$/im
-const SECTION_END_RE = /^#{2,4}\s*(?:P[12]\s*[-–—]|合并测试建议|\d+\.)/m
+
+const SECTION_END_PATTERNS: RegExp[] = [
+  /^#{2,4}\s*P[12]\s*[-–—]/m,
+  /^#{2,4}\s*<span[^>]*>\s*P[12]\s*<\/span>/m,
+  /^\*\*P[12]\s*[-–—]/m,
+  /^#{2,4}\s*合并测试建议/m,
+  /^---\s*$/m,
+  /^\*\*HTML Report\*\*/m,
+  /^#{2,4}\s*5\.\s*查看报告/m,
+]
 
 function parseListItems(section: string): string[] {
   const items: string[] = []
   for (const line of section.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) continue
+    if (/^P[12]\s*[-–—]/i.test(trimmed)) continue
+    if (/^#{1,4}\s/.test(trimmed)) continue
     const numbered = trimmed.match(/^\d+\.\s+(.+)$/)
-    const bulleted = trimmed.match(/^[-*]\s+(.+)$/)
+    const bulleted = trimmed.match(/^[-*•]\s+(.+)$/)
     const text = numbered?.[1] ?? bulleted?.[1]
     if (text) items.push(text.trim())
   }
   return items
 }
 
-function extractSectionAfterHeading(text: string, headingRe: RegExp): string {
-  const match = headingRe.exec(text)
-  if (!match || match.index === undefined) return ''
+function findP0ContentStart(text: string): number {
+  for (const re of P0_START_PATTERNS) {
+    const match = re.exec(text)
+    if (match?.index !== undefined) {
+      return match.index + match[0].length
+    }
+  }
+  return -1
+}
 
-  const start = match.index + match[0].length
-  const rest = text.slice(start)
-  const endMatch = SECTION_END_RE.exec(rest)
-  const section = endMatch ? rest.slice(0, endMatch.index) : rest
-  return section.trim()
+function sliceUntilSectionEnd(rest: string): string {
+  let end = rest.length
+  for (const re of SECTION_END_PATTERNS) {
+    const match = re.exec(rest)
+    if (match?.index !== undefined && match.index < end) {
+      end = match.index
+    }
+  }
+  return rest.slice(0, end).trim()
+}
+
+function extractP0FromText(text: string): string {
+  const start = findP0ContentStart(text)
+  if (start < 0) return ''
+  return sliceUntilSectionEnd(text.slice(start))
 }
 
 /**
@@ -43,13 +76,12 @@ export function extractP0TestSuggestions(markdown: string): P0ExtractionResult {
     return { items: [], rawSection: '' }
   }
 
-  let rawSection = extractSectionAfterHeading(markdown, P0_HEADING_RE)
+  let rawSection = extractP0FromText(markdown)
 
   if (!rawSection) {
     const mergedIdx = MERGED_TEST_HEADING_RE.exec(markdown)
     if (mergedIdx?.index !== undefined) {
-      const afterMerged = markdown.slice(mergedIdx.index)
-      rawSection = extractSectionAfterHeading(afterMerged, P0_HEADING_RE)
+      rawSection = extractP0FromText(markdown.slice(mergedIdx.index))
     }
   }
 

@@ -118,6 +118,30 @@ describe('useGerritReviewStore', () => {
     expect(gerrit.chatMessages.some(m => m.streaming && m.taskId === 'task-gerrit-2')).toBe(true)
   })
 
+  it('extracts P0 client-side when server sends empty p0_items', () => {
+    const gerrit = useGerritReviewStore()
+    const tasks = useTahpTasksStore()
+
+    gerrit.activeTaskId = 'task-gerrit-p0'
+    tasks.taskStreams = {
+      'task-gerrit-p0': [
+        {
+          type: 'task.completed',
+          payload: {
+            llm_response: '### 4. 测试建议\n**P0 - 必须测试**\n* item one\n* item two\n\n**P1 - 强烈建议**\n* other',
+            p0_items: [],
+          },
+          ts: 1,
+        },
+      ],
+    }
+
+    gerrit.processStreamEvents('task-gerrit-p0')
+
+    expect(gerrit.serverP0Items).toEqual(['item one', 'item two'])
+    expect(gerrit.p0Result().items).toHaveLength(2)
+  })
+
   it('recovers stuck running state before next send when completion event exists', async () => {
     const gerrit = useGerritReviewStore()
     const tasks = useTahpTasksStore()

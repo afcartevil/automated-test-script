@@ -109,10 +109,17 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
   }
 
   function applyP0FromPayload(payload: Record<string, unknown>) {
+    const response = String(payload?.llm_response ?? payload?.response ?? '')
     const p0Items = payload?.p0_items
-    if (Array.isArray(p0Items)) {
+    if (Array.isArray(p0Items) && p0Items.length) {
       serverP0Items.value = p0Items.map(String).filter(Boolean)
       serverP0Raw.value = String(payload?.p0_raw_section ?? '')
+      return
+    }
+    if (response) {
+      const extracted = extractP0TestSuggestions(response)
+      serverP0Items.value = extracted.items
+      serverP0Raw.value = extracted.rawSection
     }
   }
 
