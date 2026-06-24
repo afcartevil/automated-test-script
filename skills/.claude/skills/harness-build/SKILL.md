@@ -1,7 +1,7 @@
 ---
 name: harness-build
 description: harness 编译任务路由 skill。只负责把编译请求分流到 harness-build-whole-device（整机/rdtool/拉代码/pack.json/分区组件）或 harness-build-native（Android.bp/Android.mk/tran_build.sh/native 模块），避免一个超长 skill 同时覆盖互斥流程。
-version: 2.1.14
+version: 2.1.17
 ---
 
 # Harness Build 路由子 skill

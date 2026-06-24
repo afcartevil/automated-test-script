@@ -1,7 +1,7 @@
 ---
 name: harness-version-server
 description: harness 整机版本服务器查询子 skill。覆盖 version-server list-projects/list-versions/find-latest/get-pack-json，把用户自然语言（转测/zhuance/TEST/DEV/userdebug/user/iteration/brand）映射到结构化参数。优先用 CLI；当 CLI 的 candidates 已说明目标 OS/variant/分支不存在时直接报告可用组合，不走目录扫描。
-version: 2.1.14
+version: 2.1.17
 ---
 
 # Harness Version Server 子 skill
@@ -52,7 +52,9 @@ harness --json version-server get-pack-json --project KM9 --version-type ALL --t
 
 ## 用户要把 ROM 拉到本地刷机时
 
-把请求路由到 `harness-device` 子 skill，按"拉 ROM 到本地（关键：先问用户路径）"那段处理。复制源优先使用 CLI 返回的 `preferred_download_path`；它是 RTT 驱动的下载路径，不是固定重庆或固定上海。**不要默默 `Copy-Item` 到 `%TEMP%` 或 C:** —— ROM 体积常 ≥ 5 GB，必须先和用户确认目录、检查剩余空间，再开始复制。
+刷机场景先 `find-latest`，不要自动进入 `get-pack-json` 或 `build resource`。先把 `preferred_download_path` / `preferred_download_site` / `release_path` 等版本与下载信息反馈给用户，确认本地落点目录后，再把请求路由到 `harness-device` 子 skill 按"拉 ROM 到本地（关键：先问用户路径）"那段处理。复制源优先使用 CLI 返回的 `preferred_download_path`；它是 RTT 驱动的下载路径，不是固定重庆或固定上海。**不要默默 `Copy-Item` 到 `%TEMP%` 或 C:** —— ROM 体积常 ≥ 5 GB，必须先和用户确认目录、检查剩余空间，再开始复制。
+
+只有明确进入 workspace/rdtool 编译时，才继续 `get-pack-json` -> `build setup`，不要把刷机版本下载误串成编译资源链路。
 
 ## 没命中时
 

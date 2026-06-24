@@ -1,7 +1,7 @@
 ---
 name: harness-build-whole-device
 description: harness 整机/rdtool 编译子 skill。覆盖整机拉代码、workspace setup/repo/build/resource/package/artifacts、pack.json、batch-repo/batch-build，以及分区组件级构建。优先级：harness build CLI > harness remote-runner exec allowlisted action > 用户批准的 Linux fallback。
-version: 2.1.14
+version: 2.1.17
 ---
 
 # Harness Whole-device Build 子 skill
@@ -37,7 +37,7 @@ workspace 是一个**有状态的目录**，状态文件在 `<mapped-root>/<work
 - **不要把 discover 候选当成整机 workspace 父目录**：`remote-runner discover` 返回的是 runner 安装/可达位置和映射根下的已有顶层目录清单，不等于可以新建整机代码的父目录。`workspaces` 数组里的任何目录名都只是现状枚举；即使目录名叫 `projects`、`workspaces`、`ws` 或看起来像项目集合，也不能当作“常见约定”或默认父目录。只有用户在当前对话里明确指定“就在这个相对路径下新建/复用”，才允许在那里 setup/repo/build。
 - **泛化父目录必须带确认参数**：如果用户明确确认的 workspace 路径确实是 `projects/...`、`workspaces/...` 或 `ws/...`，执行 `build setup/repo/build/batch/resource/package` 时必须加 `--confirm-workspace-path`。没有用户确认时不要加这个参数；CLI 会返回 `BUILD_WORKSPACE_PATH_NEEDS_CONFIRMATION` 并生成本地反馈草稿，要求先确认准确路径。
 - **新建整机 workspace 必须二次确认位置**：需要新建目录做 rdtool setup/update 实验时，先向用户确认“在哪个 share 根/整机 workspace 父目录下创建”和“目录名”。默认倾向用户确认的 share 根下的独立新目录；不要把测试目录建进已有配置仓、单仓或项目列表仓。
-- **齐治 bridge 未连接就硬停止**：`build setup/repo/build`、`remote-runner bridge-install/check/exec` 或任何 Linux 命令需要齐治 bridge 但 `bridge.ready` 不是 true 时，只能提示用户在可信本地终端运行并保持 `harness remote-runner bridge-serve`，直到看到 `[bridge] READY` 后再继续。不要由 Agent 自动拉起 bridge，不要追问 `exec.cmd` 路径，不要继续列 pack/setup/build 后续步骤，也不要询问“是否复用现有 workspace / 要新建到哪个目录”。等 bridge READY 后，再从版本查询和 workspace 确认流程继续。
+- **齐治 bridge 未连接就硬停止**：`build setup/repo/build`、`remote-runner bridge-install/check/exec` 或任何 Linux 命令需要齐治 bridge 但 `bridge.ready` 不是 true 时，只能提示用户在可信本地窗口打开并保持 `harness config ui`（配置中心内置齐治 Bridge，Windows 默认入口），直到看到 Bridge READY 后再继续。无 GUI 环境才用 `harness remote-runner bridge-serve`。不要由 Agent 自动拉起 bridge，不要追问 `exec.cmd` 路径，不要继续列 pack/setup/build 后续步骤，也不要询问“是否复用现有 workspace / 要新建到哪个目录”。等 bridge READY 后，再从版本查询和 workspace 确认流程继续。
 - **pack 选择和最终编译 variant 分开处理**：`userdebug/user/root` 这些整机代码通常是同一套，`pack.json` 主要决定项目/OS/分支/组件集合，不必强行找同名 variant 的 pack。最终产物 variant 由 `build build`、`batch-build`、`package` 的 `--variant` 决定。
 - **缺少版本维度时必须确认**：很多项目同时有不同 OS 版本、主干/量产分支和 TEST/DEV/KOM/ASAN 版本类型。用户没有明确说 OS 版本（如 A16/tos16/hios16/16.3.0）、主干/量产（trunk/release）或版本类型（转测/DEV/KOM/ASAN）时，先用 `version-server list-versions/find-latest` 的候选信息整理可选组合并询问用户确认；不要默认替用户选择 A16、主干、量产或 TEST。
 - **`--variant` / `--local` 只在写状态或临时 override 的子命令上有效**。`setup` 可写入默认 variant；`repo` 阶段不要再传 —— `repo` 只按状态拉源码，传了会报 `unrecognized arguments`。
@@ -58,13 +58,13 @@ workspace 是一个**有状态的目录**，状态文件在 `<mapped-root>/<work
 
 0. 先自动发现本机映射路径和 runner：运行 `harness --json remote-runner discover`。如果发现可用 runner 或唯一明确的映射盘候选，且没有 `approved_for_runner: false`、`suspicious_runner_root: true` 或 `REMOTE_RUNNER_MAPPED_ROOT_NOT_APPROVED`，才用该 `<mapped-root>` 继续；只有发现不到、候选不明确或候选被标记为疑似误装时，才问用户“Linux 服务器代码目录在你本机映射成哪个盘或路径？例如 `Z:\` 或 `\server\share`”。不要要求用户理解 `mapped-root` 术语。
    然后确认代码来源：询问用户“是否已有现成的整机代码 workspace 可以复用”。如果有，请用户提供 workspace 名/相对路径，必要时补 Linux 侧 `/work/code/<linux_user>/<project_workspace>`；如果没有，再询问希望在哪个 share 根/整机 workspace 父目录下新建以及目录名。不要为了替用户找代码而扫描用户本机映射盘目录、Linux workspace、`pack.json` 或历史目录。
-1. 再用版本服务拿目标项目/OS/分支对应的 `pack.json`。如果用户没有指定 OS 版本、主干/量产分支或 TEST/DEV/KOM/ASAN 版本类型，先列候选并向用户确认，不要直接默认 `--version-type TEST`、A16、主干或量产。确认后再按目标输出 variant 查询：
+1. 再用版本服务确认版本上下文。先跑 `harness --json version-server find-latest ...` 获取 `version_path`、`source_path`、`release_path`、`preferred_download_path` 等信息，用于向用户解释命中的版本、后续下载来源和站点选择。只有明确进入 workspace/rdtool 编译时，才继续用 `harness --json version-server get-pack-json ... --output <local-pack-json>` 把 pack 落到本地供 `build setup` 使用；刷机场景不要自动串到 `get-pack-json` 或 `build resource`。如果用户没有指定 OS 版本、主干/量产分支或 TEST/DEV/KOM/ASAN 版本类型，先列候选并向用户确认，不要直接默认 `--version-type TEST`、A16、主干或量产。确认后再按目标输出 variant 查询：
    `harness --json version-server get-pack-json --project <project> --version-type <confirmed-type> --tos-version <confirmed-os> --branch-kind <confirmed-branch-kind> --variant <variant> --output <local-pack-json>`。
    只有用户说 A16/tos16/hios16，或已确认该 OS 时，才加 `--tos-version 16`；只有用户说主干/量产，或已确认该分支类型时，才使用 `--version-type ALL --branch-kind trunk|release`。如果返回 `not_found` 但 `candidates` 里同 OS/分支有 `user` 或其它 variant，改用可用 variant（优先 `user`）再取 pack，并在答复里说明“代码相同，最终仍用 `--variant <目标>` 编译”。不要再用 `Get-ChildItem` 或手工 SMB 扫描找 `pack.json`。
    如果用户明确指定 DEV/KOM/ASAN 或特定迭代，再改对应参数；不要手工拼版本服务器路径。
 2. 用第 0 步确定的 `<mapped-root>` 检查 runner。discover 候选只用于定位通信入口，不自动决定整机 workspace 父目录。只有用户已经确认要复用/新建的位置后，才把对应 `<mapped-root>`、`<workspace>` 用于 status/setup/repo/build；不要把 discover 输出里的任何目录名自动用作整机 workspace 根。不要回答“因为 discover 列出了某个目录，所以我选择它作为父目录”；discover 没有这个语义。
 3. 跑 `harness --json remote-runner status --mapped-root <mapped-root>`。如果 `is_available` 不是 true，不要停下来等用户：
-   - 传音构建机默认走齐治时，先看 `harness --json remote-runner discover` 的 `bridge.ready`；如果已经是 `true`，直接跑 `bridge-install`，不要再询问 `exec.cmd` 路径。未 READY 时硬停止当前流程，只提示用户在可信本地终端运行并保持 `harness remote-runner bridge-serve`，直到看到 `[bridge] READY` 后再继续；此时不要列后续 pack/setup/build 计划，不要询问复用现有目录或新建目录。
+   - 传音构建机默认走齐治时，先看 `harness --json remote-runner discover` 的 `bridge.ready`；如果已经是 `true`，直接跑 `bridge-install`，不要再询问 `exec.cmd` 路径。未 READY 时硬停止当前流程，只提示用户在可信本地窗口打开并保持 `harness config ui`（配置中心内置齐治 Bridge；无 GUI 环境才用 `bridge-serve`），直到看到 Bridge READY 后再继续；此时不要列后续 pack/setup/build 计划，不要询问复用现有目录或新建目录。
    - 只在缺少登录凭据、OTP、或无法推导 `<linux-share-root>` 时询问用户补充信息；不要让用户登录 Linux 执行脚本，也不要由 Agent 自动拉起 bridge。
 4. runner 可用后，先判断是否已有可复用整套代码：
    - 若用户明确给了已有 workspace，或 discover/status 显示已有 workspace，先跑 `harness --json build status --mapped-root <mapped-root> --workspace <workspace>`，把项目、分支/版本、variant、已拉组件、缺失组件和明显错误报告给用户确认。

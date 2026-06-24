@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "description": "TAHP 必要 Skill 配置清单。在此增删 skill id 即可调整「必要 Skill 配置」页面左侧列表。",
+  "skills": [
+    {
+      "id": "jira-ops",
+      "label": "Jira 操作与日志下载",
+      "description": "JIRA 凭据、飞书 OpenAPI、UNC 网络共享、7-Zip 等，供工单拉取与多通道日志下载。",
+      "verify": {
+        "type": "script",
+        "command": "python scripts/api_jira.py setup-check",
+        "ready_json_path": "data.ready"
+      }
+    },
+    {
+      "id": "modem-analysis-local",
+      "label": "Modem 故障分析",
+      "description": "工作区路径、JIRA 凭据与 log-pipeline 环境；依赖 jira-ops 的日志能力。",
+      "depends_on": ["jira-ops"],
+      "verify": {
+        "type": "env_files",
+        "files": [".env", "log-pipeline/.env"],
+        "required_keys": ["WORKSPACE_ROOT", "JIRA_SERVER", "JIRA_USERNAME", "JIRA_PASSWORD"]
+      }
+    },
+    {
+      "id": "transsion-harness-install",
+      "label": "Transsion Harness 安装",
+      "description": "按内网 SOP 在当前主机安装并初始化 transsion harness CLI 与 Agent Skill。",
+      "virtual": true,
+      "setup_doc": "\\\\10.205.4.20\\sw_temp\\底软通信开发部\\ai_dev_tool\\docs\\agent-npx-cli-sop.md",
+      "agent_brief": "请按照 \\\\10.205.4.20\\sw_temp\\底软通信开发部\\ai_dev_tool\\docs\\agent-npx-cli-sop.md 安装 transsion harness",
+      "related_skill": "harness-install",
+      "verify": {
+        "type": "command",
+        "command": "harness --json doctor",
+        "expect_exit_code": 0
+      }
+    }
+  ]
+}

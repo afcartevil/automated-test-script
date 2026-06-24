@@ -1,7 +1,7 @@
 ---
 name: transsion-harness
-description: 传音 Android / 整机 / 组件 / 应用仓内的开发任务总入口 skill。把模糊问题路由到 harness-* 子 skill：知识查询走 harness-knowledge；整机版本路径走 harness-version-server；rdtool / native Android 编译走 harness-build；本地刷机 / 设备冒烟 / APK 签名走 harness-device；remote runner / 齐治 bridge 走 harness-runner；OpenGrok 源码取证走 harness-opengrok；Jira issue 读取/搜索走 harness-jira；Gerrit CR 查询/文件列表/提交说明模板走 harness-gerrit；安装诊断 / 配置 / 反馈走 harness-install。
-version: 2.1.14
+description: 传音 Android / 整机 / 组件 / 应用仓内的开发任务总入口 skill。把模糊问题路由到 harness-* 子 skill：知识查询走 harness-knowledge；整机版本路径走 harness-version-server；rdtool / native Android 编译走 harness-build；本地刷机 / 设备冒烟 / APK 签名走 harness-device；remote runner / 齐治 bridge 走 harness-runner；OpenGrok 源码取证走 harness-opengrok；Jira issue 读取/搜索走 harness-jira；Gerrit CR 查询/文件列表/提交说明模板走 harness-gerrit；MTK 自动提单 / sync / pipeline 走 harness-mtk-auto-cr；安装诊断 / 配置 / 反馈走 harness-install。
+version: 2.1.17
 ---
 
 # Transsion Harness 路由总入口
@@ -38,11 +38,12 @@ harness --json doctor
 | OpenGrok 源码搜索 | harness-opengrok | opengrok、源码、cross-reference |
 | Jira issue 读取/搜索 | harness-jira | jira、Jira URL、issue、JQL、USICPRO |
 | Gerrit CR 查询/提交说明 | harness-gerrit | gerrit、CR、Code-Review、repo upload、Change-Id |
+| MTK CR 自动提单、sync、pipeline、offer | harness-mtk-auto-cr | MTK CR、自动提单、sync、链接触发、eService |
 | 安装、诊断、配置、版本发现、反馈 | harness-install | install、doctor、version check、config、feedback |
 
 ## CLI-first 路由原则
 
-用户已经明确要做版本查询、编译、刷机/设备、runner/齐治、OpenGrok、Jira issue 查询/搜索、Gerrit CR 查询/提交说明、安装诊断或配置时，**直接进入对应子 skill 并调用 CLI**，不要先查知识库。知识库只用于下面三类情况：
+用户已经明确要做版本查询、编译、刷机/设备、runner/齐治、OpenGrok、Jira issue 查询/搜索、Gerrit CR 查询/提交说明、MTK 自动提单、安装诊断或配置时，**直接进入对应子 skill 并调用 CLI**，不要先查知识库。知识库只用于下面三类情况：
 
 - 你无法判断该进哪个子 skill；
 - CLI 参数契约不覆盖用户需求，或命令返回的错误需要 SOP/规则解释；

@@ -1,7 +1,7 @@
 ---
 name: harness-opengrok
 description: harness OpenGrok 源码搜索子 skill。覆盖 opengrok search（按 def/ref/full/path/hist 搜索）和 opengrok fetch（按文件路径 + 行范围获取源码）。用于跨版本只读源码取证、定位函数 / 符号 / 历史；不用于改代码。Git Bash 上 `--file-path /xxx` 会被 MSYS 自动转换，CLI 已加自动恢复，但建议传 `//xxx` 或设 `MSYS_NO_PATHCONV=1` 显式避免。
-version: 2.1.14
+version: 2.1.17
 ---
 
 # Harness OpenGrok 子 skill

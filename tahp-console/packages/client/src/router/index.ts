@@ -41,6 +41,11 @@ const router = createRouter({
       name: 'tahp.self-check',
       component: () => import('@/views/tahp/SelfCheckView.vue'),
     },
+    {
+      path: '/tahp/skill-config',
+      name: 'tahp.skill-config',
+      component: () => import('@/views/tahp/SkillConfigView.vue'),
+    },
     // ===== Hermes 原生视图 =====
     {
       path: '/hermes/chat',

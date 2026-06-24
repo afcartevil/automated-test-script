@@ -27,6 +27,7 @@ const secondaryNav = [
 
 const systemNav = [
   { name: 'hermes.models', label: '模型管理' },
+  { name: 'tahp.skill-config', label: '必要 Skill 配置' },
   { name: 'hermes.history', label: '历史记录' },
   { name: 'hermes.settings', label: '设置' },
 ]

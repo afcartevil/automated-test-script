@@ -10,6 +10,7 @@ import { tahpBugAnalysisRoutes } from './bug-analysis'
 import { tahpSelfCheckRoutes } from './self-check'
 import { tahpGerritReviewRoutes } from './gerrit-review'
 import { tahpGerritConfigRoutes } from './gerrit-config'
+import { tahpSkillConfigRoutes } from './skill-config'
 
 export function registerTahpRoutes(app: Koa) {
   app.use(tahpKnowledgeRoutes.routes())
@@ -20,4 +21,5 @@ export function registerTahpRoutes(app: Koa) {
   app.use(tahpSelfCheckRoutes.routes())
   app.use(tahpGerritReviewRoutes.routes())
   app.use(tahpGerritConfigRoutes.routes())
+  app.use(tahpSkillConfigRoutes.routes())
 }

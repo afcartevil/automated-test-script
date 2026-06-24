@@ -1,7 +1,7 @@
 ---
 name: harness-build-native
 description: harness native Android 模块编译子 skill。覆盖 system/tran_build.sh、Android.bp/Android.mk 模块发现、TeleService/telephony-common/framework jar/APK 等单分支 checkout 内模块级 Java/Kotlin/C++ 编译。优先级：已有 CLI/registered action > 用户批准的一次性 Linux fallback。
-version: 2.1.14
+version: 2.1.17
 ---
 
 # Harness Native Android Build 子 skill

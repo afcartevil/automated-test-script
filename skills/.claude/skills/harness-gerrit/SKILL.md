@@ -1,7 +1,7 @@
 ---
 name: harness-gerrit
 description: harness Gerrit 子 skill。覆盖 gerrit parse-url/get/search/files/diff/commit-message；用于查询公司 Gerrit CR、列 changed files、读取具体 diff、生成公司提交说明模板。MTK/QCOM 默认走 gerrit.transsion.com，SPRD/UNISOC 默认走 gerrit-cq.transsion.com；凭据优先 HARNESS_GERRIT_*，未配置时复用 HARNESS_QIZHI_USER / HARNESS_QIZHI_BASTION_PASSWORD。
-version: 2.1.14
+version: 2.1.17
 ---
 
 # Harness Gerrit 子 skill

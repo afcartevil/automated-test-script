@@ -1,7 +1,7 @@
 ---
 name: harness-jira
 description: harness Jira 查询子 skill。覆盖 jira get/search/parse-key 与 config setup-jira；用于读取 Jira issue、从 URL 提取 issue key、用 JQL 搜索，不负责修改 Jira。
-version: 2.1.14
+version: 2.1.17
 ---
 
 # Harness Jira 子 skill

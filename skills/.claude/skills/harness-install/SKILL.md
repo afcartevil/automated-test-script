@@ -1,7 +1,7 @@
 ---
 name: harness-install
-description: harness 安装、诊断、配置、版本发现和反馈子 skill。覆盖 install（自动检测客户端 / 安装 skill）、agent install-skill（强制更新 skill）、version check/update（manifest 驱动的版本发现和升级）、config show/set/path/setup-env（持久化 knowledge URL / token / telemetry 凭据 / qizhi 配置文件）、doctor（环境检查 + diagnostic bundle）、mcp install/show/uninstall（legacy MCP 配置）、feedback create/submit（反馈记录）。
-version: 2.1.14
+description: harness 安装、诊断、配置、版本发现和反馈子 skill。覆盖 install（自动检测客户端 / 安装 skill）、agent install-skill（强制更新 skill）、version check/update（manifest 驱动的版本发现和升级）、config ui/show/set/path/setup-env（本地配置中心与持久化配置文件）、doctor（环境检查 + diagnostic bundle）、mcp install/show/uninstall（legacy MCP 配置）、feedback create/submit（反馈记录）。
+version: 2.1.17
 ---
 
 # Harness Install 子 skill
@@ -47,7 +47,8 @@ harness --json config show --effective
 harness --json config set update.manifest <path-to-manifest.json>
 harness --json config path
 
-# 本地凭据统一在 ~/.tran_harness/env.yaml（齐治 / OpenGrok / Spug / Jira）；也可用 setup-env / setup-jira 写入
+# 本地凭据统一在 ~/.tran_harness/env.yaml（齐治 / OpenGrok / Spug / Jira）；优先打开配置中心，无法打开 UI 时再用 setup-env / setup-jira 写入
+harness config ui
 harness --json config setup-env --non-interactive --qizhi-user <user> --qizhi-target-host <host> --qizhi-target-password <cmdb-password> --qizhi-bastion-password <ldap-password>
 harness --json config setup-jira --non-interactive --jira-username <user> --jira-api-token <ldap-password>
 ```

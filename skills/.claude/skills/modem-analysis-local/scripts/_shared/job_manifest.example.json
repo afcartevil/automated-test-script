@@ -1,0 +1,97 @@
+{
+  "issue_key": "XXX-1234",
+  "workspace_root": "D:/work/XXX-1234",
+  "final_log_root": "",
+  "jira": {
+    "summary": "",
+    "description": "",
+    "comments_text": "",
+    "box_urls": [],
+    "url_roles": {}
+  },
+  "downloads": {
+    "download_root": "",
+    "download_dirs": [],
+    "results": []
+  },
+  "extraction": {
+    "output_root": "",
+    "extracted_dirs": [],
+    "normalized_log_roots": [],
+    "results": [],
+    "filter_results": []
+  },
+  "trace_exports": {
+    "groups": [],
+    "results": [],
+    "aggregated_files": {},
+    "copied_support_files": {}
+  },
+  "analysis": {
+    "analysis_type": "",
+    "evidence": [],
+    "timeline": [],
+    "candidate_causes": [],
+    "l0_baseline": {
+      "validity_gate": {
+        "status": "unknown",
+        "reasons": [],
+        "evidence": []
+      },
+      "should_continue": true,
+      "modem_state": {
+        "status": "unknown",
+        "evidence": [],
+        "route_to_ee": false
+      },
+      "calibration_state": {
+        "status": "unknown",
+        "missing_rats": [],
+        "evidence": [],
+        "details": []
+      },
+      "sim_state": {
+        "status": "unknown",
+        "evidence": [],
+        "hotplug_events": [],
+        "airplane_mode_events": []
+      },
+      "summary": [],
+      "gaps": []
+    },
+    "l1_business": {
+      "primary_domain": "",
+      "secondary_domains": [],
+      "routing_reason": [],
+      "excluded_domains": []
+    },
+    "l2_domains": {
+      "call": {},
+      "data": {},
+      "sim": {}
+    },
+    "l3_conclusion": {
+      "based_on": "",
+      "case_validity": "",
+      "invalid_summary": "",
+      "invalid_reasons": [],
+      "primary_root_cause": "",
+      "secondary_factors": [],
+      "next_actions": [],
+      "confidence": ""
+    },
+    "final_report": ""
+  },
+  "db_cache": {
+    "status": "",
+    "source": "",
+    "checker": {},
+    "writer": {},
+    "write_status": ""
+  },
+  "publish": {
+    "jira_comment_posted": false,
+    "comment_timestamp": "",
+    "comment_preview": ""
+  }
+}

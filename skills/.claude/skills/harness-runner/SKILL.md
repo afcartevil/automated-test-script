@@ -1,7 +1,7 @@
 ---
 name: harness-runner
 description: harness remote runner / 齐治堡垒机 bridge 子 skill。覆盖 remote-runner discover/install/check/status/exec/ssh-install/bridge-install/bridge-serve/bridge-diagnose/bridge-exec 命令。当操作属于 Linux 构建机时（整机编译、Linux workspace repo/git、整机大范围搜索、runner action）使用。优先级：CLI > registered action > 用户批准的 fallback 命令。
-version: 2.1.14
+version: 2.1.17
 ---
 
 # Harness Runner 子 skill
@@ -46,7 +46,8 @@ harness --json remote-runner exec --mapped-root <drive>:\ --action build.status 
 harness --json remote-runner ssh-install --ssh-target user@host --remote-workspace /work/code/<linux_user>
 
 # 齐治堡垒机 bridge
-harness remote-runner bridge-serve            # 用户在可信本地终端手动拉起并保持窗口；Agent 不要自动启动
+harness config ui                             # Windows 默认：用户在配置中心打开齐治 Bridge，READY 后托盘常驻；Agent 不要自动启动
+harness remote-runner bridge-serve            # 无 GUI 环境的终端 fallback
 harness --json remote-runner bridge-install --remote-workspace /work/code/<linux_user>
 harness --json remote-runner bridge-diagnose  # 固定只读诊断 runner/tmux/log；不需要用户批准 raw shell
 harness --json remote-runner bridge-exec --command "pwd" --i-understand-this-runs-raw-shell   # 用户批准的一次性命令
@@ -79,14 +80,14 @@ Agent 不要引导用户手动设置 HARNESS_QIZHI_* / OPEN_GROK_* 环境变量�
 1. `discover` 找已部署的；
 2. 用户已有可写映射但没 runner → `install`；
 3. 没有映射但 SSH 可达 → 仅在用户明确提供并批准 SSH 直连时使用 `ssh-install`；
-4. SSH 不通但齐治可登 → 用户先手动启动 `bridge-serve` 到 READY，Agent 再执行 `bridge-install`；
+4. SSH 不通但齐治可登 → 用户先手动打开 `harness config ui` 并在配置中心连接 Bridge（无 GUI 环境用 `bridge-serve`）到 READY，Agent 再执行 `bridge-install`；
 5. runner/tmux/log 的固定只读诊断 → `bridge-diagnose`，不需要用户批准 raw shell；
 6. 任务能表达成 registered action → `exec`；
 7. 只在没有 action 或语义化 CLI 时才 `bridge-exec` + 用户明确批准。
 
 Agent 自动化要求：
 
-- 如果需要齐治登录，Agent 不要自动运行 `harness remote-runner bridge-serve`。停止当前工作，提示用户在可信本地终端手动启动并保持 bridge 窗口；只有用户确认已经 READY 或 `discover` 返回 `bridge.ready: true` 后才继续。
+- 如果需要齐治登录，Agent 不要自动运行 `harness config ui` 或 `harness remote-runner bridge-serve`。停止当前工作，提示用户在可信本地图形配置中心手动连接 Bridge 并保持托盘常驻；无 GUI 环境才提示终端版 `bridge-serve`。只有用户确认已经 READY 或 `discover` 返回 `bridge.ready: true` 后才继续。
 - 先用 `harness --json remote-runner discover` 检查 `bridge.ready`；如果用户已经启动 bridge 且 READY，Agent 直接复用它执行 `bridge-install --remote-workspace /work/code/<linux_user> --force`，不要再询问 `exec.cmd` 路径；如果未 READY，必须停止并提示用户连接。
 - bridge READY 后，Agent 继续执行 `bridge-install --remote-workspace ... --force`，该命令会在 Linux 侧映射根启动并校验 runner；不要把 `start_remote_runner.sh` / `verify_remote_runner.sh` 作为“用户协助步骤”发给用户。
 - 如果已有 Windows 映射盘，只把 `install --mapped-root ...` 当作部署文件到映射目录；启动 Linux 侧 runner 仍由 Agent 通过 `ssh-install` 或 `bridge-install` 完成。

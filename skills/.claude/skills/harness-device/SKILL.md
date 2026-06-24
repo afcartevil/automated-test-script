@@ -1,7 +1,7 @@
 ---
 name: harness-device
 description: harness 本地设备操作子 skill。覆盖 device flash（本地 ROM 刷机，支持 device_update / fastboot 双后端）、device smoke（WCN 冒烟测试）、device probe（adb/fastboot 设备探测）、device remount（受控 root/remount/disable-verity，MTK 支持传音 OEM 解锁）和 apk sign（公司在线签名接口，默认归一签名）。不要让 Agent 直接拼 adb / fastboot / SP Flash Tool / 原始 shell。
-version: 2.1.14
+version: 2.1.17
 ---
 
 # Harness Device 子 skill
@@ -57,6 +57,8 @@ Agent 操作顺序：
 3. 用户确认后再 `Copy-Item -Force <unc> <local-dir>`；多文件时 `robocopy` 更稳并显示进度。
 4. 复制完成后用 `harness --json device flash --rom-path <local-dir>` 接刷机。
 
+复制/拉取 ROM 只是把版本服务器产物 staging 到用户确认的本地目录，**不要自动解压 ROM zip 或镜像包**。`device flash` 支持 zip 文件或已解包目录，并会按布局识别 `device_update` / `fastboot` 后端；默认解压会额外占用数十 GB、污染用户目录，还可能破坏原始包结构。只有用户明确要求“解压/检查包内容/提取镜像”时，才先说明目标目录和空间风险，再执行对应动作。
+
 如果 ROM 来源来自 `harness version-server find-latest` / `+latest` 的 JSON，复制源优先用 `preferred_download_path`。这个字段由 CLI 的 SMB RTT 探测在上海/重庆路径之间选择；不是固定重庆优先，上海同事 RTT 更近时会选上海。没有该字段时再向用户确认使用 `source_path/version_path` 还是 `release_path/chongqing_path`，不要自行默认选 `version_path` 拉 40GB+ ROM。`source_path` 仍主要用于 `.pipe/pack.json` / rdtool 配置发现。
 
 不能省的反例：
@@ -64,6 +66,7 @@ Agent 操作顺序：
 - ❌ Agent 直接选 `%TEMP%\<rom-name>` 然后开始 `Copy-Item`，复制中途 C: 满 → 系统不稳定。
 - ❌ Agent 选 `%USERPROFILE%\Downloads`：还是 C:。
 - ❌ Agent 选 `D:\` 但没问用户，覆盖了用户在 `D:\` 的其他文件。
+- ❌ Agent 复制 ROM 后主动 `Expand-Archive` / `tar -xf` / `unzip`，把 5 GB+ zip 展开成数十 GB 目录。
 
 如果用户已经在 env 配置了 `HARNESS_ROM_STAGE_DIR`（约定大于配置），可以直接用并向用户报告这个路径，不必每次问。
 

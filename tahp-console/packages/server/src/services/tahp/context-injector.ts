@@ -249,7 +249,7 @@ export function invalidateContextIndex(): void {
 // Skill 路径与执行规范（Agent / LLM 系统提示词共用）
 // ---------------------------------------------------------------------------
 
-export type TahpSkillScenario = 'bug_analysis' | 'adapt_debug' | 'chat'
+export type TahpSkillScenario = 'bug_analysis' | 'adapt_debug' | 'skill_config' | 'chat'
 
 /** TAHP 仓内 Skill 根目录（相对工程根，用于提示词） */
 export const TAHP_SKILLS_REL_ROOT = 'skills/.claude/skills'
@@ -350,6 +350,8 @@ export function buildSkillExecutionDirective(options?: {
     lines.push('**当前场景**: 智能诊断 — 拉取 JIRA 后必须选择并加载匹配的日志/领域分析 Skill。')
   } else if (scenario === 'adapt_debug') {
     lines.push('**当前场景**: AI 适配调试 — 优先加载用户指定的关联 Adapt Skill 并按 SOP 排查；全部完成后必须 Read `transsion-coding-standards-review` 并在报告末尾输出自检审核。')
+  } else if (scenario === 'skill_config') {
+    lines.push('**当前场景**: 必要 Skill 配置 — 仅引导用户完成指定 Skill 的环境与凭据配置，按 SKILL.md 的 setup / setup-check 章节执行。')
   } else {
     lines.push('**当前场景**: TAHP 对话 — 优先使用下方「预检索结果」作答。')
     lines.push('**禁止**在未读预检索结果前对 `skills/`、`knowledge-base/`、`harness` 做 search_files/grep 全盘搜索。')
@@ -381,6 +383,11 @@ function defaultContextOptions(scenario: TahpSkillScenario): BuildTahpContextOpt
       return {
         includeSkillCatalog: true,
         includeKnowledge: true,
+      }
+    case 'skill_config':
+      return {
+        includeSkillCatalog: false,
+        includeKnowledge: false,
       }
     case 'chat':
     default:
