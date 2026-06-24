@@ -24,7 +24,7 @@ export interface DeviceInfo {
   deviceName: string
   role: DeviceRole
   status: DeviceStatus
-  testType?: 'str4' | 'week'
+  testType?: 'str4' | 'week' | 'custom'
   currentModule?: string
   simCards: SimCardInfo[]
   testStartTime?: string
@@ -66,7 +66,7 @@ export interface CaseResult {
   module: string
   caseIndex: number
   caseName: string
-  status: '未开始' | '进行中' | '通过' | '失败' | '部分通过' | 'NA' | '跳过'
+  status: '未开始' | '进行中' | '通过' | '失败' | '部分通过' | '待确认' | 'NA' | '跳过'
   message: string
   fullAutomation: boolean
   steps: CaseStep[]
@@ -85,7 +85,7 @@ export interface ModuleProgress {
 
 export interface TestSession {
   deviceId: string
-  testType: 'str4' | 'week'
+  testType: 'str4' | 'week' | 'custom'
   modules: string[]
   currentModuleIndex: number
   moduleProgress: Record<string, ModuleProgress>
@@ -94,6 +94,33 @@ export interface TestSession {
   endTime?: string
   isRunning: boolean
   auxiliaryDevices: string[]
+  selectedCases?: string[]
+  customAuxDevices?: string[]
+}
+
+export interface CaseCatalogItem {
+  caseIndex: number
+  caseName: string
+  canReuse: boolean
+}
+
+export interface CaseCatalog {
+  key: string
+  testType: string
+  module: string
+  moduleLabel: string
+  conditions: {
+    dutSimCount: number
+    auxRequired: number
+    auxSimCount: number
+  }
+  cases: CaseCatalogItem[]
+}
+
+export interface CaseCatalogGroup {
+  testType: string
+  label: string
+  modules: CaseCatalog[]
 }
 
 export interface DeviceDetail {
@@ -136,6 +163,21 @@ export async function startTest(
   return await tahpPost<DeviceDetail>(
     `/api/tahp/device-self-check/devices/${deviceId}/test/start`,
     { testType }
+  )
+}
+
+export async function getCaseCatalogs(): Promise<CaseCatalogGroup[]> {
+  return await tahpGet<CaseCatalogGroup[]>('/api/tahp/device-self-check/case-catalogs')
+}
+
+export async function startCustomTest(
+  deviceId: string,
+  selectedCases: string[],
+  customAuxDeviceIds: string[]
+): Promise<DeviceDetail> {
+  return await tahpPost<DeviceDetail>(
+    `/api/tahp/device-self-check/devices/${deviceId}/test/custom-start`,
+    { selectedCases, customAuxDeviceIds }
   )
 }
 
@@ -190,5 +232,39 @@ export async function getPendingManualDecision(
 ): Promise<{ decisionId: string; message: string } | null> {
   return await tahpGet<{ decisionId: string; message: string } | null>(
     `/api/tahp/device-self-check/devices/${deviceId}/pending-manual-decision`
+  )
+}
+
+export async function retestCase(
+  deviceId: string,
+  testType: string,
+  module: string,
+  caseIndex: number,
+  auxDeviceId?: string
+): Promise<{ success: boolean; data: CaseResult }> {
+  return await tahpPost<{ success: boolean; data: CaseResult }>(
+    `/api/tahp/device-self-check/devices/${deviceId}/case/retest`,
+    { testType, module, caseIndex, auxDeviceId }
+  )
+}
+
+export interface AutoTestSettings {
+  autoTestEnabled: Record<string, boolean>
+  autoTestPath: Record<string, string>
+}
+
+export async function getSettings(): Promise<AutoTestSettings> {
+  const resp = await tahpGet<{ success: boolean; data: AutoTestSettings }>(
+    '/api/tahp/device-self-check/settings'
+  )
+  return resp.data
+}
+
+export async function updateSettings(
+  settings: AutoTestSettings
+): Promise<{ success: boolean }> {
+  return await tahpPost<{ success: boolean }>(
+    '/api/tahp/device-self-check/settings',
+    settings
   )
 }

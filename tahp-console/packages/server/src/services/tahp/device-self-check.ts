@@ -5,6 +5,7 @@ import { spawn } from 'child_process'
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs'
 import type { ServerResponse } from 'http'
 import { join, resolve } from 'path'
+import AdmZip from 'adm-zip'
 import { tahpPaths } from './paths'
 
 // 类型定义
@@ -33,7 +34,7 @@ export interface DeviceInfo {
   deviceName: string
   role: DeviceRole
   status: DeviceStatus
-  testType?: 'str4' | 'week'
+  testType?: 'str4' | 'week' | 'custom'
   currentModule?: string
   simCards: SimCardInfo[]
   testStartTime?: string
@@ -94,7 +95,7 @@ export interface ModuleProgress {
 
 export interface TestSession {
   deviceId: string
-  testType: 'str4' | 'week'
+  testType: 'str4' | 'week' | 'custom'
   modules: string[]
   currentModuleIndex: number
   moduleProgress: Record<string, ModuleProgress>
@@ -103,6 +104,33 @@ export interface TestSession {
   endTime?: string
   isRunning: boolean
   auxiliaryDevices: string[]
+  selectedCases?: string[]
+  customAuxDevices?: string[]
+}
+
+export interface CaseCatalogItem {
+  caseIndex: number
+  caseName: string
+  canReuse: boolean
+}
+
+export interface CaseCatalog {
+  key: string
+  testType: string
+  module: string
+  moduleLabel: string
+  conditions: {
+    dutSimCount: number
+    auxRequired: number
+    auxSimCount: number
+  }
+  cases: CaseCatalogItem[]
+}
+
+export interface CaseCatalogGroup {
+  testType: string
+  label: string
+  modules: CaseCatalog[]
 }
 
 export interface DeviceDetail {
@@ -119,6 +147,41 @@ let moduleConditions: Record<string, ModuleCondition> = {}
 const SELF_CHECK_DIR = tahpPaths.selfCheckDir
 const PYTHON_DIR = join(SELF_CHECK_DIR, 'python')
 const CASE_CONFIG_DIR = join(SELF_CHECK_DIR, 'case_config')
+const SETTINGS_PATH = join(SELF_CHECK_DIR, 'settings.json')
+
+interface AutoTestSettings {
+  autoTestEnabled: Record<string, boolean>      // key: testType/module
+  autoTestPath: Record<string, string>           // key: testType/module
+}
+
+let settings: AutoTestSettings = { autoTestEnabled: {}, autoTestPath: {} }
+
+function loadSettings(): void {
+  try {
+    if (existsSync(SETTINGS_PATH)) {
+      settings = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
+    }
+  } catch (e) {
+    console.warn('[device-self-check] Failed to load settings, using defaults')
+  }
+}
+
+function saveSettings(): void {
+  try {
+    writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2), 'utf-8')
+  } catch (e) {
+    console.error('[device-self-check] Failed to save settings:', e)
+  }
+}
+
+export function getSettings(): AutoTestSettings {
+  return settings
+}
+
+export function updateSettings(newSettings: AutoTestSettings): void {
+  settings = newSettings
+  saveSettings()
+}
 
 // 加载用例配置
 function loadCaseConfigs(): void {
@@ -488,7 +551,7 @@ export async function listDevices(): Promise<DeviceInfo[]> {
       newDevices[info.deviceId] = {
         deviceId: info.deviceId,
         deviceName: info.deviceName,
-        role: '测试机',
+        role: '未分配',
         status: '空闲',
         simCards: info.simCards,
         testDuration: 0,
@@ -538,7 +601,7 @@ export async function refreshDevices(): Promise<DeviceInfo[]> {
       newDevices[info.deviceId] = {
         deviceId: info.deviceId,
         deviceName: info.deviceName,
-        role: '测试机',
+        role: '未分配',
         status: '空闲',
         simCards: info.simCards,
         testDuration: 0,
@@ -623,13 +686,22 @@ async function checkPreconditions(
 
   // 检查辅测机
   if (cond.auxRequired > 0) {
-    const auxDevices = Object.values(devices).filter(
+    // 优先查找显式标记为辅测机的设备
+    const explicitAux = Object.values(devices).filter(
       d => d.deviceId !== deviceId && d.role === '辅测机' && (d.status === '空闲' || d.status === '占用中' || d.status === '待命')
     )
-    if (auxDevices.length < cond.auxRequired) {
-      return { status: 'waiting_aux', reason: `等待辅测机（需要${cond.auxRequired}台，当前${auxDevices.length}台）` }
+
+    // 查找同为测试机且等待同一模块的设备（互相作为辅测机）
+    const peerTesters = Object.values(devices).filter(
+      d => d.deviceId !== deviceId && d.role === '测试机' && d.status === '等待测试开始' && d.currentModule === config.module
+    )
+
+    const allCandidates = [...explicitAux, ...peerTesters]
+
+    if (allCandidates.length < cond.auxRequired) {
+      return { status: 'waiting_aux', reason: `等待辅测机（需要${cond.auxRequired}台，当前${allCandidates.length}台）` }
     }
-    return { status: 'passed', reason: '前置条件满足', auxDeviceIds: auxDevices.slice(0, cond.auxRequired).map(d => d.deviceId) }
+    return { status: 'passed', reason: '前置条件满足', auxDeviceIds: allCandidates.slice(0, cond.auxRequired).map(d => d.deviceId) }
   }
 
   return { status: 'passed', reason: '前置条件满足' }
@@ -739,7 +811,7 @@ async function runCase(
   emitEvent('case_completed', { deviceId, caseKey, result })
 
   // 构建 device_info 传给 Python 脚本
-  const deviceInfo = buildDeviceInfo(deviceId, testType, module)
+  const deviceInfo = buildDeviceInfo(deviceId, testType, module, session)
 
   // 监听实时步骤更新（Python 每次推送完整累计步骤）
   const stepHandler = (data: any) => {
@@ -859,26 +931,45 @@ function parseTestSteps(stepsText: string): CaseStep[] {
 }
 
 // 构建设备信息传给 Python 脚本
-function buildDeviceInfo(deviceId: string, testType: string, module: string): any {
+function buildDeviceInfo(
+  deviceId: string,
+  testType?: string,
+  module?: string,
+  session?: TestSession
+): any {
   const dut = devices[deviceId]
   if (!dut) return { DUT: [] }
 
-  // 查找辅测机
-  const config = moduleConditions[`${testType}/${module}`]
+  const config = testType && module ? moduleConditions[`${testType}/${module}`] : undefined
   const auxDevices: any[] = []
-  if (config?.conditions.auxRequired > 0) {
+
+  const pushAuxDevice = (id: string) => {
+    const dev = devices[id]
+    if (!dev) return
+    auxDevices.push({
+      device_id: id,
+      sim_cards: dev.simCards.map(s => ({
+        slot_index: s.slotIndex,
+        present: s.present,
+        operator: s.operator,
+        phone_number: s.phoneNumber,
+        subscription_id: 0
+      }))
+    })
+  }
+
+  if (session?.auxiliaryDevices && session.auxiliaryDevices.length > 0) {
+    for (const auxId of session.auxiliaryDevices) {
+      pushAuxDevice(auxId)
+    }
+  } else if (config && config.conditions.auxRequired > 0) {
     for (const [id, dev] of Object.entries(devices)) {
-      if (id !== deviceId && dev.role === '辅测机' && (dev.status === '空闲' || dev.status === '待命')) {
-        auxDevices.push({
-          device_id: id,
-          sim_cards: dev.simCards.map(s => ({
-            slot_index: s.slotIndex,
-            present: s.present,
-            operator: s.operator,
-            phone_number: s.phoneNumber,
-            subscription_id: 0
-          }))
-        })
+      if (
+        id !== deviceId &&
+        dev.role === '辅测机' &&
+        (dev.status === '空闲' || dev.status === '待命' || dev.status === '占用中')
+      ) {
+        pushAuxDevice(id)
         if (auxDevices.length >= config.conditions.auxRequired) break
       }
     }
@@ -897,6 +988,125 @@ function buildDeviceInfo(deviceId: string, testType: string, module: string): an
     }],
     Auxiliary: auxDevices
   }
+}
+
+// 执行 Python 内联脚本
+async function execPythonScript(
+  script: string,
+  args: string[],
+  timeoutMs = 60000,
+  label = 'python-script'
+): Promise<void> {
+  return new Promise((resolve) => {
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+    let proc: any = null
+    let timeoutId: NodeJS.Timeout | null = null
+
+    const cleanup = () => {
+      if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
+      if (proc && !proc.killed) { try { proc.kill() } catch {} }
+    }
+
+    timeoutId = setTimeout(() => {
+      console.warn(`[device-self-check] ${label} timeout after ${timeoutMs}ms`)
+      cleanup()
+      resolve()
+    }, timeoutMs)
+
+    try {
+      proc = spawn(pythonCmd, ['-c', script, ...args], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: false,
+        cwd: PYTHON_DIR,
+        env: { ...process.env, PYTHONPATH: PYTHON_DIR, PYTHONUTF8: '1' }
+      })
+
+      proc.stderr?.on('data', (data: Buffer) => {
+        const msg = data.toString().trim()
+        if (msg) console.warn(`[device-self-check] ${label} stderr: ${msg}`)
+      })
+
+      proc.on('close', () => {
+        cleanup()
+        resolve()
+      })
+      proc.on('error', () => {
+        cleanup()
+        resolve()
+      })
+    } catch {
+      cleanup()
+      resolve()
+    }
+  })
+}
+
+const MODULE_INIT_RUNNER = `
+import importlib.util
+import json
+import sys
+
+init_path = sys.argv[1]
+device_info = json.loads(sys.argv[2])
+spec = importlib.util.spec_from_file_location("module_init", init_path)
+if spec is None or spec.loader is None:
+    sys.exit(0)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+if hasattr(mod, "run"):
+    mod.run(device_info=device_info)
+`
+
+const DEVICE_INIT_RUNNER = `
+import json
+import sys
+from utils.device_init import init_devices_for_test
+
+device_info = json.loads(sys.argv[1])
+init_devices_for_test(device_info)
+`
+
+// 设备初始化：亮屏解锁、设置亮屏时间等
+async function execDeviceInit(deviceId: string, session?: TestSession): Promise<void> {
+  const device = devices[deviceId]
+  if (!device) return
+
+  const deviceInfo = buildDeviceInfo(deviceId, undefined, undefined, session)
+  const allIds = [
+    ...(deviceInfo.DUT || []).map((d: { device_id: string }) => d.device_id),
+    ...(deviceInfo.Auxiliary || []).map((d: { device_id: string }) => d.device_id),
+  ].filter(Boolean)
+
+  await Promise.all(
+    allIds.map(id =>
+      execAdbSimple(['-s', id, 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000'])
+    )
+  )
+
+  console.log(`[device-self-check] Device init: ${deviceId}, devices=${allIds.join(', ')}`)
+  await execPythonScript(DEVICE_INIT_RUNNER, [JSON.stringify(deviceInfo)], 60000, 'device-init')
+}
+
+// 执行 Python 模块初始化
+async function execPythonInit(
+  deviceId: string,
+  testType: string,
+  module: string,
+  session?: TestSession
+): Promise<void> {
+  const initScript = join(PYTHON_DIR, 'cases', testType, module, 'init.py')
+  if (!existsSync(initScript)) return
+
+  if (!devices[deviceId]) return
+
+  const deviceInfo = buildDeviceInfo(deviceId, testType, module, session)
+  console.log(`[device-self-check] Module init: ${testType}/${module}`)
+  await execPythonScript(
+    MODULE_INIT_RUNNER,
+    [initScript, JSON.stringify(deviceInfo)],
+    180000,
+    `module-init/${testType}/${module}`
+  )
 }
 
 // 执行 Python 用例脚本
@@ -1136,12 +1346,22 @@ async function runModule(
     return
   }
 
-  // 分配辅测机（标记为占用中）
+  // 分配辅测机（根据角色决定状态变更）
   if (precheck.auxDeviceIds && precheck.auxDeviceIds.length > 0) {
     session.auxiliaryDevices = precheck.auxDeviceIds
     for (const auxId of precheck.auxDeviceIds) {
       if (devices[auxId]) {
-        devices[auxId].status = '占用中'
+        if (devices[auxId].role === '测试机') {
+          // 测试机互相作为辅测机：角色不变，状态变为测试中，建立双向绑定
+          devices[auxId].status = '测试中'
+          const peerSession = testSessions[auxId]
+          if (peerSession) {
+            peerSession.auxiliaryDevices = [deviceId]
+          }
+        } else {
+          // 显式辅测机：变为占用中
+          devices[auxId].status = '占用中'
+        }
         devices[auxId].isMirroredResult = true
         emitEvent('device_updated', { device: devices[auxId] })
       }
@@ -1153,6 +1373,9 @@ async function runModule(
   devices[deviceId].status = '测试中'
   devices[deviceId].currentModule = module
   emitEvent('device_updated', { device: devices[deviceId] })
+
+  // 模块初始化（安装 APK、设置权限、亮屏解锁等）
+  await execPythonInit(deviceId, testType, module, session)
 
   // 加载用例列表
   const caseInfoPath = join(PYTHON_DIR, 'cases', testType, module, 'case_info.json')
@@ -1224,6 +1447,41 @@ async function runModule(
     }
   }
 
+  // 处理 can_reuse=false 的双向执行：互为测试机的设备需各自执行不可复用用例
+  const peerTesters = session.auxiliaryDevices.filter(
+    auxId => devices[auxId]?.role === '测试机'
+  )
+  for (const peerId of peerTesters) {
+    const peerSession = testSessions[peerId]
+    if (!peerSession) continue
+
+    const nonReusableCases: number[] = []
+    for (const caseItem of config.cases) {
+      if (!caseItem.canReuse && caseItem.caseIndex > 0) {
+        const caseKey = `${moduleKey}/${caseItem.caseIndex}`
+        if (peerSession.caseResults[caseKey]?.message?.includes('镜像自')) {
+          nonReusableCases.push(caseItem.caseIndex)
+        }
+      }
+    }
+
+    if (nonReusableCases.length > 0) {
+      console.log(`[device-self-check] Executing ${nonReusableCases.length} non-reusable cases for peer ${peerId}`)
+      for (const caseIndex of nonReusableCases) {
+        const result = await runCase(peerId, testType, module, caseIndex, peerSession)
+        const caseKey = `${moduleKey}/${caseIndex}`
+        peerSession.caseResults[caseKey] = result
+        if (result.status === '通过') {
+          peerSession.moduleProgress[moduleKey].passedCases++
+        } else if (result.status === '失败') {
+          peerSession.moduleProgress[moduleKey].failedCases++
+          peerSession.moduleProgress[moduleKey].passedCases = Math.max(0, peerSession.moduleProgress[moduleKey].passedCases - 1)
+        }
+        emitEvent('case_completed', { deviceId: peerId, caseKey, result })
+      }
+    }
+  }
+
   // 自动复测：全自动失败项重试一次
   if (failedAutoCases.length > 0) {
     console.log(`[device-self-check] Retesting ${failedAutoCases.length} failed auto cases for ${moduleKey}`)
@@ -1239,10 +1497,16 @@ async function runModule(
     }
   }
 
-  // 释放辅测机（回到待命状态）
+  // 释放辅测机（根据角色恢复状态）
   for (const auxId of session.auxiliaryDevices) {
-    if (devices[auxId] && devices[auxId].status === '占用中') {
-      devices[auxId].status = '待命'
+    if (devices[auxId]) {
+      if (devices[auxId].role === '测试机') {
+        // 测试机互相作为辅测机：恢复为等待测试开始，等待下一模块
+        devices[auxId].status = '等待测试开始'
+      } else if (devices[auxId].status === '占用中') {
+        // 显式辅测机：恢复待命
+        devices[auxId].status = '待命'
+      }
       devices[auxId].isMirroredResult = false
       emitEvent('device_updated', { device: devices[auxId] })
     }
@@ -1346,12 +1610,79 @@ export async function startTest(
   }
 }
 
+export async function startCustomTest(
+  deviceId: string,
+  selectedCases: string[],
+  customAuxDeviceIds: string[]
+): Promise<DeviceDetail | null> {
+  try {
+    const device = devices[deviceId]
+    if (!device || device.status !== '空闲') return null
+
+    device.status = '初始化中'
+    device.testType = 'custom'
+    if (device.role === '未分配') {
+      device.role = '测试机'
+    }
+    device.testStartTime = new Date().toISOString()
+    emitEvent('device_updated', { device })
+
+    const modulesSet = new Set<string>()
+    const caseList: { testType: string; module: string; caseIndex: number }[] = []
+    for (const caseKey of selectedCases) {
+      const parts = caseKey.split('/')
+      const caseIndex = parseInt(parts.pop() || '1', 10)
+      const module = parts.pop() || ''
+      const testType = parts.join('/')
+      modulesSet.add(module)
+      caseList.push({ testType, module, caseIndex })
+    }
+    const modules = Array.from(modulesSet)
+
+    const session: TestSession = {
+      deviceId,
+      testType: 'custom',
+      modules,
+      currentModuleIndex: 0,
+      moduleProgress: {},
+      caseResults: {},
+      startTime: device.testStartTime,
+      isRunning: true,
+      auxiliaryDevices: customAuxDeviceIds,
+      selectedCases,
+      customAuxDevices: customAuxDeviceIds,
+    }
+
+    testSessions[deviceId] = session
+    emitEvent('test_started', { deviceId, testType: 'custom', session })
+
+    execAdbSimple(['-s', deviceId, 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000'])
+      .catch(() => {})
+
+    runCustomTestFlow(deviceId, session, caseList).catch(e => {
+      console.error('[device-self-check] Custom test flow error:', e)
+    })
+
+    return { device, session }
+  } catch (e) {
+    console.error('Error starting custom test:', e)
+    return null
+  }
+}
+
 // 异步执行测试流程
 async function runTestFlow(
   deviceId: string,
   testType: 'str4' | 'week',
   session: TestSession
 ): Promise<void> {
+  const device = devices[deviceId]
+  if (device) {
+    device.status = '初始化中'
+    emitEvent('device_updated', { device })
+    await execDeviceInit(deviceId, session)
+  }
+
   const modules = session.modules
 
   for (let idx = 0; idx < modules.length; idx++) {
@@ -1379,6 +1710,124 @@ async function runTestFlow(
   finishTest(deviceId, session)
 }
 
+// 自定义测试：按勾选用例列表执行
+async function runCustomTestFlow(
+  deviceId: string,
+  session: TestSession,
+  caseList: { testType: string; module: string; caseIndex: number }[]
+): Promise<void> {
+  const device = devices[deviceId]
+  if (!device) return
+
+  const moduleKeys = new Set(caseList.map(c => `${c.testType}/${c.module}`))
+  for (const mk of moduleKeys) {
+    const moduleCases = caseList.filter(c => `${c.testType}/${c.module}` === mk)
+    session.moduleProgress[mk] = {
+      module: mk,
+      totalCases: moduleCases.length,
+      completedCases: 0,
+      passedCases: 0,
+      failedCases: 0,
+    }
+  }
+
+  for (const auxId of session.auxiliaryDevices) {
+    if (devices[auxId]) {
+      if (devices[auxId].role === '测试机') {
+        devices[auxId].status = '测试中'
+      } else {
+        devices[auxId].status = '占用中'
+      }
+      emitEvent('device_updated', { device: devices[auxId] })
+    }
+  }
+
+  device.status = '初始化中'
+  emitEvent('device_updated', { device })
+  await execDeviceInit(deviceId, session)
+
+  if (!session.isRunning) return
+
+  device.status = '测试中'
+  device.currentModule = '自定义测试'
+  emitEvent('device_updated', { device })
+
+  const failedAutoCases: { testType: string; module: string; caseIndex: number }[] = []
+  const initializedModules = new Set<string>()
+
+  for (const item of caseList) {
+    const { testType, module, caseIndex } = item
+    const moduleKey = `${testType}/${module}`
+    const caseKey = `${moduleKey}/${caseIndex}`
+
+    if (!initializedModules.has(moduleKey)) {
+      device.currentModule = moduleConditions[moduleKey]?.moduleLabel || module
+      emitEvent('device_updated', { device })
+      await execPythonInit(deviceId, testType, module, session)
+      initializedModules.add(moduleKey)
+      if (!session.isRunning) return
+    }
+
+    const cond = moduleConditions[moduleKey]
+    if (cond) {
+      const simCount = device.simCards.filter(s => s.present).length
+      if (cond.conditions.dutSimCount > 0 && simCount < cond.conditions.dutSimCount) {
+        console.warn(`[device-self-check] Custom test: SIM count warning for ${moduleKey}`)
+      }
+    }
+
+    session.moduleProgress[moduleKey].currentCaseIndex = caseIndex
+
+    const result = await runCase(deviceId, testType, module, caseIndex, session)
+    session.caseResults[caseKey] = result
+    session.moduleProgress[moduleKey].completedCases++
+
+    if (result.status === '通过') {
+      session.moduleProgress[moduleKey].passedCases++
+    } else if (result.status === '失败') {
+      session.moduleProgress[moduleKey].failedCases++
+      if (result.fullAutomation) {
+        failedAutoCases.push({ testType, module, caseIndex })
+      }
+    }
+
+    emitEvent('case_completed', { deviceId, caseKey, result })
+
+    if (!session.isRunning) return
+  }
+
+  if (failedAutoCases.length > 0) {
+    console.log(`[device-self-check] Retesting ${failedAutoCases.length} failed auto cases`)
+    for (const item of failedAutoCases) {
+      const { testType, module, caseIndex } = item
+      const moduleKey = `${testType}/${module}`
+      const caseKey = `${moduleKey}/${caseIndex}`
+      const result = await runCase(deviceId, testType, module, caseIndex, session)
+      if (result.status === '通过') {
+        session.moduleProgress[moduleKey].passedCases++
+        session.moduleProgress[moduleKey].failedCases = Math.max(0, session.moduleProgress[moduleKey].failedCases - 1)
+      }
+      session.caseResults[caseKey] = result
+      emitEvent('case_completed', { deviceId, caseKey, result })
+    }
+  }
+
+  for (const auxId of session.auxiliaryDevices) {
+    if (devices[auxId]) {
+      if (devices[auxId].role === '测试机') {
+        devices[auxId].status = '等待测试开始'
+      } else if (devices[auxId].status === '占用中') {
+        devices[auxId].status = '待命'
+      }
+      devices[auxId].isMirroredResult = false
+      emitEvent('device_updated', { device: devices[auxId] })
+    }
+  }
+  session.auxiliaryDevices = []
+
+  finishTest(deviceId, session)
+}
+
 // 完成测试
 function finishTest(deviceId: string, session: TestSession): void {
   const device = devices[deviceId]
@@ -1403,6 +1852,130 @@ function finishTest(deviceId: string, session: TestSession): void {
 }
 
 // 生成测试报告
+// 生成 xlsx 报告（使用 adm-zip + 原生 XML，无需额外依赖）
+function generateXlsx(sheets: { name: string; rows: string[][]; styles: ('green' | 'red' | 'yellow' | '')[] }[]): Buffer {
+  const sharedStrings: string[] = []
+  const ssIndex = new Map<string, number>()
+  const getSS = (s: string): number => {
+    if (!ssIndex.has(s)) {
+      ssIndex.set(s, sharedStrings.length)
+      sharedStrings.push(s)
+    }
+    return ssIndex.get(s)!
+  }
+
+  const escXml = (s: string): string =>
+    String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+  // sharedStrings.xml
+  const ssXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${sharedStrings.length}" uniqueCount="${sharedStrings.length}">
+${sharedStrings.map(s => `<si><t>${escXml(s)}</t></si>`).join('\n')}
+</sst>`
+
+  // styles.xml
+  const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts count="3">
+  <font><sz val="11"/><name val="Calibri"/></font>
+  <font><b/><sz val="11"/><name val="Calibri"/></font>
+  <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
+</fonts>
+<fills count="5">
+  <fill><patternFill patternType="none"/></fill>
+  <fill><patternFill patternType="gray125"/></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FFDDDDDD"/></patternFill></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FF00CC66"/></patternFill></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FFFF4444"/></patternFill></fill>
+  <fill><patternFill patternType="solid"><fgColor rgb="FFFFAA00"/></patternFill></fill>
+</fills>
+<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="5">
+  <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+  <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+  <xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1"/>
+  <xf numFmtId="0" fontId="2" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1"/>
+  <xf numFmtId="0" fontId="0" fillId="5" borderId="0" xfId="0" applyFill="1"/>
+</cellXfs>
+</styleSheet>`
+
+  // sheets.xml
+  let sheetsXml = '<sheets xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+  sheets.forEach((_, i) => {
+    sheetsXml += `<sheet name="${escXml(sheets[i].name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`
+  })
+  sheetsXml += '</sheets>'
+
+  // workbook.xml
+  const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+${sheetsXml}
+</workbook>`
+
+  // workbook.xml.rels
+  let relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
+  sheets.forEach((_, i) => {
+    relsXml += `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`
+  })
+  relsXml += `<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+<Relationship Id="rId${sheets.length + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
+</Relationships>`
+
+  // [Content_Types].xml
+  let contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>`
+  sheets.forEach((_, i) => {
+    contentTypesXml += `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
+  })
+  contentTypesXml += '</Types>'
+
+  // .rels
+  const rootRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`
+
+  const zip = new AdmZip()
+  zip.addFile('[Content_Types].xml', Buffer.from(contentTypesXml, 'utf-8'))
+  zip.addFile('_rels/.rels', Buffer.from(rootRelsXml, 'utf-8'))
+  zip.addFile('xl/workbook.xml', Buffer.from(workbookXml, 'utf-8'))
+  zip.addFile('xl/_rels/workbook.xml.rels', Buffer.from(relsXml, 'utf-8'))
+  zip.addFile('xl/styles.xml', Buffer.from(stylesXml, 'utf-8'))
+  zip.addFile('xl/sharedStrings.xml', Buffer.from(ssXml, 'utf-8'))
+
+  // 每个 sheet 生成 worksheet XML
+  sheets.forEach((sheet, si) => {
+    const cols = '<cols>' + sheet.rows[0].map((_, ci) => `<col min="${ci + 1}" max="${ci + 1}" width="${Math.max(12, sheet.rows[0][ci].length * 1.5)}" customWidth="1"/>`).join('') + '</cols>'
+    let rowsXml = ''
+    sheet.rows.forEach((row, ri) => {
+      const rowStyle = ri === 0 ? 1 : sheet.styles[ri] || ''
+      let cellsXml = ''
+      row.forEach((cell, ci) => {
+        const ssIdx = getSS(cell)
+        const styleIdx = ri === 0 ? 1 : (rowStyle === 'green' ? 2 : rowStyle === 'red' ? 3 : rowStyle === 'yellow' ? 4 : 0)
+        cellsXml += `<c r="${String.fromCharCode(65 + ci)}${ri + 1}" t="s" s="${styleIdx}"><v>${ssIdx}</v></c>`
+      })
+      rowsXml += `<row r="${ri + 1}">${cellsXml}</row>`
+    })
+    const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+${cols}
+<sheetData>${rowsXml}</sheetData>
+</worksheet>`
+    zip.addFile(`xl/worksheets/sheet${si + 1}.xml`, Buffer.from(sheetXml, 'utf-8'))
+  })
+
+  return zip.toBuffer()
+}
+
 async function generateTestReport(deviceId: string, session: TestSession): Promise<void> {
   try {
     const device = devices[deviceId]
@@ -1411,21 +1984,81 @@ async function generateTestReport(deviceId: string, session: TestSession): Promi
     const resultDir = join(tahpPaths.reportsDir, 'self-check', deviceId, session.startTime?.replace(/[:.]/g, '-') || '')
     mkdirSync(resultDir, { recursive: true })
 
-    // 生成 CSV 报告（xlsx 替代方案）
-    const rows: string[] = ['模块,用例编号,用例名称,结果,全自动化,备注']
-    for (const [key, result] of Object.entries(session.caseResults)) {
-      rows.push([
-        result.module,
-        result.caseIndex,
-        result.caseName,
-        result.status,
-        result.fullAutomation ? '是' : '否',
-        result.message
-      ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+    // 按模块分组
+    const moduleCases: Record<string, CaseResult[]> = {}
+    for (const result of Object.values(session.caseResults)) {
+      if (!moduleCases[result.module]) moduleCases[result.module] = []
+      moduleCases[result.module].push(result)
+    }
+    for (const cases of Object.values(moduleCases)) {
+      cases.sort((a, b) => a.caseIndex - b.caseIndex)
     }
 
-    const reportPath = join(resultDir, 'test_report.csv')
-    writeFileSync(reportPath, '\ufeff' + rows.join('\n'), 'utf-8')
+    const sheets: { name: string; rows: string[][]; styles: ('green' | 'red' | 'yellow' | '')[] }[] = []
+
+    if (session.testType === 'custom') {
+      const rows: string[][] = [['序号', '用例名称', '所属模块', '状态', '结论', '是否全自动', '执行时间']]
+      const styles: ('green' | 'red' | 'yellow' | '')[] = ['']
+      const orderedResults: CaseResult[] = []
+
+      if (session.selectedCases) {
+        for (const caseKey of session.selectedCases) {
+          const result = session.caseResults[caseKey]
+          if (result) orderedResults.push(result)
+        }
+      } else {
+        orderedResults.push(...Object.values(session.caseResults))
+      }
+
+      for (const c of orderedResults) {
+        const moduleKey = `${c.testType}/${c.module}`
+        const moduleLabel = moduleConditions[moduleKey]?.moduleLabel || c.module
+        const duration = c.startTime && c.endTime
+          ? `${Math.round((new Date(c.endTime).getTime() - new Date(c.startTime).getTime()) / 1000)}s`
+          : ''
+        rows.push([
+          String(c.caseIndex),
+          c.caseName,
+          moduleLabel,
+          c.status,
+          c.message,
+          c.fullAutomation ? '是' : '否',
+          duration,
+        ])
+        const statusStyle = c.status === '通过' ? 'green' : c.status === '失败' ? 'red' : c.status === '部分通过' ? 'yellow' : ''
+        styles.push(statusStyle)
+      }
+      sheets.push({ name: '自定义测试', rows, styles })
+    } else {
+      for (const [module, cases] of Object.entries(moduleCases)) {
+        const rows: string[][] = [['序号', '用例名称', '状态', '结论', '是否全自动', '执行时间']]
+        const styles: ('green' | 'red' | 'yellow' | '')[] = ['']
+        for (const c of cases) {
+          const duration = c.startTime && c.endTime
+            ? `${Math.round((new Date(c.endTime).getTime() - new Date(c.startTime).getTime()) / 1000)}s`
+            : ''
+          rows.push([
+            String(c.caseIndex),
+            c.caseName,
+            c.status,
+            c.message,
+            c.fullAutomation ? '是' : '否',
+            duration,
+          ])
+          const statusStyle = c.status === '通过' ? 'green' : c.status === '失败' ? 'red' : c.status === '部分通过' ? 'yellow' : ''
+          styles.push(statusStyle)
+        }
+        sheets.push({ name: module, rows, styles })
+      }
+    }
+
+    if (sheets.length === 0) {
+      sheets.push({ name: '摘要', rows: [['无测试数据'], []], styles: [''] })
+    }
+
+    const buffer = generateXlsx(sheets)
+    const reportPath = join(resultDir, 'test_report.xlsx')
+    writeFileSync(reportPath, buffer)
 
     // 写入摘要
     const summary = {
@@ -1464,6 +2097,9 @@ export async function continueTest(deviceId: string): Promise<DeviceDetail | nul
 
     // 重新检查前置条件并继续未完成的模块
     const testType = session.testType
+    if (testType !== 'str4' && testType !== 'week') {
+      return { device, session }
+    }
     const remainingModules = session.modules.slice(session.currentModuleIndex)
     session.isRunning = true
 
@@ -1478,11 +2114,74 @@ export async function continueTest(deviceId: string): Promise<DeviceDetail | nul
   }
 }
 
+// 判断测试机是否仍处于某类测试流程中（含已完成待用户结束）
+function isActiveDutDevice(device: DeviceInfo): boolean {
+  if (device.role === '辅测机') return false
+  if (!device.testType) return false
+  return [
+    '初始化中',
+    '等待测试开始',
+    '测试中',
+    '不满足前置条件',
+    '完成(通过)',
+    '完成(失败)',
+    '错误',
+  ].includes(device.status)
+}
+
+function hasActiveDutForTestType(testType: string, excludeDeviceId?: string): boolean {
+  return Object.values(devices).some(
+    d => d.deviceId !== excludeDeviceId && isActiveDutDevice(d) && d.testType === testType
+  )
+}
+
+// 同类测试无测试机时，自动释放待命/占用中的辅测机
+function releaseAuxDevicesIfNoActiveDut(testType: string): void {
+  if (hasActiveDutForTestType(testType)) {
+    return
+  }
+
+  for (const dev of Object.values(devices)) {
+    if (dev.role !== '辅测机') continue
+    if (dev.testType !== testType) continue
+    if (dev.status !== '待命' && dev.status !== '占用中') continue
+
+    const stillBound = Object.values(testSessions).some(
+      s => s.auxiliaryDevices?.includes(dev.deviceId)
+    )
+    if (stillBound) continue
+
+    dev.status = '空闲'
+    dev.testType = undefined
+    dev.testStartTime = undefined
+    dev.testDuration = 0
+    dev.isMirroredResult = false
+    delete testSessions[dev.deviceId]
+    emitEvent('device_updated', { device: dev })
+    console.log(
+      `[device-self-check] Auto-released aux ${dev.deviceId} (no active DUT for ${testType})`
+    )
+  }
+}
+
 // 结束测试（释放所有资源）
 export function endTest(deviceId: string): DeviceDetail | null {
   const device = devices[deviceId]
   const session = testSessions[deviceId]
   if (!device) return null
+
+  const endedTestType = device.testType || session?.testType
+
+  if (session) {
+    session.isRunning = false
+  }
+
+  // 清理与其他测试机的双向绑定：从其他 session 的 auxiliaryDevices 中移除本设备
+  for (const [, sess] of Object.entries(testSessions)) {
+    if (sess.auxiliaryDevices?.includes(deviceId)) {
+      sess.auxiliaryDevices = sess.auxiliaryDevices.filter(aid => aid !== deviceId)
+    }
+  }
 
   // 辅测机待命状态：直接回到空闲
   if (device.status === '待命' && device.role === '辅测机') {
@@ -1490,16 +2189,26 @@ export function endTest(deviceId: string): DeviceDetail | null {
     device.testType = undefined
     device.testStartTime = undefined
     device.testDuration = 0
+    delete testSessions[deviceId]
     emitEvent('device_updated', { device })
     emitEvent('test_ended', { deviceId })
+    if (endedTestType) {
+      releaseAuxDevicesIfNoActiveDut(endedTestType)
+    }
     return { device }
   }
 
-  // 释放辅测机
+  // 释放辅测机（根据角色恢复状态）
   if (session?.auxiliaryDevices) {
     for (const auxId of session.auxiliaryDevices) {
-      if (devices[auxId] && devices[auxId].status === '占用中') {
-        devices[auxId].status = '待命'
+      if (devices[auxId]) {
+        if (devices[auxId].role === '测试机') {
+          // 测试机互相作为辅测机：恢复为等待测试开始
+          devices[auxId].status = '等待测试开始'
+        } else if (devices[auxId].status === '占用中') {
+          // 显式辅测机：恢复待命
+          devices[auxId].status = '待命'
+        }
         devices[auxId].isMirroredResult = false
         emitEvent('device_updated', { device: devices[auxId] })
       }
@@ -1517,7 +2226,78 @@ export function endTest(deviceId: string): DeviceDetail | null {
 
   emitEvent('device_updated', { device })
   emitEvent('test_ended', { deviceId })
+
+  if (endedTestType) {
+    releaseAuxDevicesIfNoActiveDut(endedTestType)
+  }
+
   return { device }
+}
+
+// 复测单个用例
+export async function retestCase(
+  deviceId: string,
+  testType: string,
+  module: string,
+  caseIndex: number,
+  auxDeviceId?: string
+): Promise<CaseResult | null> {
+  const session = testSessions[deviceId]
+  if (!session) return null
+
+  const device = devices[deviceId]
+  if (!device) return null
+
+  // 如果需要辅测机，分配之
+  if (auxDeviceId && devices[auxDeviceId]) {
+    if (!session.auxiliaryDevices.includes(auxDeviceId)) {
+      session.auxiliaryDevices.push(auxDeviceId)
+    }
+    if (devices[auxDeviceId].role === '测试机') {
+      devices[auxDeviceId].status = '测试中'
+      const peerSession = testSessions[auxDeviceId]
+      if (peerSession) {
+        peerSession.auxiliaryDevices = [deviceId]
+      }
+    } else {
+      devices[auxDeviceId].status = '占用中'
+    }
+    emitEvent('device_updated', { device: devices[auxDeviceId] })
+  }
+
+  // 重新执行模块初始化
+  await execPythonInit(deviceId, testType, module, session)
+
+  // 重新执行用例
+  const result = await runCase(deviceId, testType, module, caseIndex, session)
+  const moduleKey = `${testType}/${module}`
+  const caseKey = `${moduleKey}/${caseIndex}`
+  session.caseResults[caseKey] = result
+
+  // 更新模块进度
+  if (session.moduleProgress[moduleKey]) {
+    if (result.status === '通过') {
+      session.moduleProgress[moduleKey].passedCases++
+    } else if (result.status === '失败') {
+      session.moduleProgress[moduleKey].failedCases++
+    }
+  }
+
+  emitEvent('case_completed', { deviceId, caseKey, result })
+
+  // 释放辅测机
+  if (auxDeviceId && devices[auxDeviceId]) {
+    if (devices[auxDeviceId].role === '测试机') {
+      devices[auxDeviceId].status = '等待测试开始'
+    } else {
+      devices[auxDeviceId].status = '待命'
+    }
+    devices[auxDeviceId].isMirroredResult = false
+    emitEvent('device_updated', { device: devices[auxDeviceId] })
+  }
+  session.auxiliaryDevices = session.auxiliaryDevices.filter(id => id !== auxDeviceId)
+
+  return result
 }
 
 // 修改用例结果
@@ -1555,7 +2335,59 @@ export function getModuleConditions(): Record<string, ModuleCondition> {
   return moduleConditions
 }
 
+export function getAllCaseCatalogs(): CaseCatalogGroup[] {
+  const TEST_TYPE_LABELS: Record<string, string> = {
+    str4: '转测摸底测试',
+    week: '周版本测试',
+  }
+  const MODULE_ORDER: Record<string, number> = {
+    driver: 0,
+    driver_component: 0,
+    driver_hardware: 1,
+    tdd: 99,
+  }
+
+  const modulesByType: Record<string, CaseCatalog[]> = {}
+  for (const [key, cond] of Object.entries(moduleConditions)) {
+    const [testType, module] = key.split('/')
+    if (!modulesByType[testType]) {
+      modulesByType[testType] = []
+    }
+    modulesByType[testType].push({
+      key,
+      testType,
+      module,
+      moduleLabel: cond.moduleLabel,
+      conditions: {
+        dutSimCount: cond.conditions?.dutSimCount ?? 0,
+        auxRequired: cond.conditions?.auxRequired ?? 0,
+        auxSimCount: cond.conditions?.auxSimCount ?? 0,
+      },
+      cases: cond.cases.map(c => ({
+        caseIndex: c.caseIndex,
+        caseName: c.caseName,
+        canReuse: c.canReuse,
+      })),
+    })
+  }
+
+  const typeOrder = ['str4', 'week']
+  const allTypes = [
+    ...typeOrder.filter(tt => modulesByType[tt]?.length),
+    ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),
+  ]
+
+  return allTypes.map(testType => ({
+    testType,
+    label: TEST_TYPE_LABELS[testType] || testType,
+    modules: modulesByType[testType].sort(
+      (a, b) => (MODULE_ORDER[a.module] ?? 50) - (MODULE_ORDER[b.module] ?? 50)
+    ),
+  }))
+}
+
 // 初始化
 export function initDeviceSelfCheck(): void {
   loadCaseConfigs()
+  loadSettings()
 }
