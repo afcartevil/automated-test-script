@@ -1,5 +1,5 @@
 /**
- * TAHP — 必要 Skill 配置
+ * TAHP — 常用 Skill 配置
  *
  * 清单：{projectRoot}/.tahp/required-skills.json
  * 状态：{projectRoot}/.tahp/skill-config-state.json
@@ -443,7 +443,7 @@ function buildSkillConfigInstructions(entry: RequiredSkillEntry, force: boolean)
   let base: string
   if (isVirtualEntry(entry)) {
     const relatedPath = entry.related_skill ? tahpSkillMdRelativePath(entry.related_skill) : ''
-    base = `你是 TAHP「必要 Skill 配置」向导，负责在**当前主机**完成 **${skillLabel}**（\`${skillId}\`，虚拟配置项）的安装与初始化。
+    base = `你是 TAHP「常用 Skill 配置」向导，负责在**当前主机**完成 **${skillLabel}**（\`${skillId}\`，虚拟配置项）的安装与初始化。
 
 # 必须遵守
 1. **先 Read** 内网 SOP 文档（UNC/文件路径）：\`${entry.setup_doc || '(见 agent_brief)'}\`
@@ -467,7 +467,7 @@ message: <一句话说明 harness 安装与 doctor 结果>
 `
   } else {
     const skillPath = tahpSkillMdRelativePath(skillId)
-    base = `你是 TAHP「必要 Skill 配置」向导，负责引导用户完成 **${skillLabel}**（\`${skillId}\`）的全部必要环境配置。
+    base = `你是 TAHP「常用 Skill 配置」向导，负责引导用户完成 **${skillLabel}**（\`${skillId}\`）的全部必要环境配置。
 
 # 必须遵守
 1. **先 Read** Skill 全文：\`${skillPath}\`，严格按其中「首次使用 / 环境 / Step 0」等章节执行。

@@ -1,5 +1,5 @@
 /**
- * TAHP — 必要 Skill 配置 API
+ * TAHP — 常用 Skill 配置 API
  */
 import Router from '@koa/router'
 import {

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "TAHP 必要 Skill 配置清单。在此增删 skill id 即可调整「必要 Skill 配置」页面左侧列表。",
+  "description": "TAHP 常用 Skill 配置清单。在此增删 skill id 即可调整「常用 Skill 配置」页面左侧列表。",
   "skills": [
     {
       "id": "jira-ops",

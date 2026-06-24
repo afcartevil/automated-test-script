@@ -243,7 +243,7 @@ async function onApproval(choice: string) {
 <template>
   <div class="page skill-config-page">
     <EaPageHead
-      title="必要 Skill 配置"
+      title="常用 Skill 配置"
       subtitle="由 Agent 引导完成 jira-ops、modem-analysis-local 等 Skill 的环境与凭据配置"
     >
       <template #actions>
