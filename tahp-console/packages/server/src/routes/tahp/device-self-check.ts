@@ -4,12 +4,17 @@ import {
   refreshDevices,
   setDeviceRole,
   startTest,
+  startCustomTest,
   continueTest,
   endTest,
   updateCaseResult,
+  retestCase,
   getDevice,
   getTestSession,
   getModuleConditions,
+  getAllCaseCatalogs,
+  getSettings,
+  updateSettings,
   addSseClient,
   removeSseClient,
   submitManualDecision,
@@ -137,6 +142,44 @@ tahpDeviceSelfCheckRoutes.get(
   }
 )
 
+// 获取所有用例大类
+tahpDeviceSelfCheckRoutes.get(
+  '/api/tahp/device-self-check/case-catalogs',
+  async (ctx) => {
+    try {
+      const catalogs = getAllCaseCatalogs()
+      ctx.body = { success: true, data: catalogs }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to get case catalogs' }
+    }
+  }
+)
+
+// 启动自定义测试
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/devices/:deviceId/test/custom-start',
+  async (ctx) => {
+    try {
+      const deviceId = ctx.params.deviceId
+      const { selectedCases, customAuxDeviceIds } = ctx.request.body as {
+        selectedCases: string[]
+        customAuxDeviceIds: string[]
+      }
+      const result = await startCustomTest(deviceId, selectedCases || [], customAuxDeviceIds || [])
+      if (!result) {
+        ctx.status = 400
+        ctx.body = { success: false, error: '设备不可用或不在空闲状态' }
+        return
+      }
+      ctx.body = { success: true, data: result }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to start custom test' }
+    }
+  }
+)
+
 // 结束测试
 tahpDeviceSelfCheckRoutes.post(
   '/api/tahp/device-self-check/devices/:deviceId/test/end',
@@ -174,6 +217,27 @@ tahpDeviceSelfCheckRoutes.post(
   }
 )
 
+// 复测单个用例
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/devices/:deviceId/case/retest',
+  async (ctx) => {
+    try {
+      const deviceId = ctx.params.deviceId
+      const { testType, module, caseIndex, auxDeviceId } = ctx.request.body as {
+        testType: string
+        module: string
+        caseIndex: number
+        auxDeviceId?: string
+      }
+      const result = await retestCase(deviceId, testType, module, caseIndex, auxDeviceId)
+      ctx.body = { success: true, data: result }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to retest case' }
+    }
+  }
+)
+
 // 提交人工决策
 tahpDeviceSelfCheckRoutes.post(
   '/api/tahp/device-self-check/manual-decision',
@@ -203,6 +267,35 @@ tahpDeviceSelfCheckRoutes.get(
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { success: false, error: err?.message || 'Failed to get pending decision' }
+    }
+  }
+)
+
+// 获取设置
+tahpDeviceSelfCheckRoutes.get(
+  '/api/tahp/device-self-check/settings',
+  async (ctx) => {
+    try {
+      const settings = getSettings()
+      ctx.body = { success: true, data: settings }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to get settings' }
+    }
+  }
+)
+
+// 更新设置
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/settings',
+  async (ctx) => {
+    try {
+      const newSettings = ctx.request.body as any
+      updateSettings(newSettings)
+      ctx.body = { success: true }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to update settings' }
     }
   }
 )

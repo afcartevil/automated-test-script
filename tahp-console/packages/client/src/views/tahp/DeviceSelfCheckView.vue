@@ -9,17 +9,24 @@ import {
   getDeviceDetail,
   setDeviceRole,
   startTest,
+  startCustomTest,
+  getCaseCatalogs,
   continueTest,
   endTest,
   updateCaseResult,
   getModuleConditions,
   submitManualDecision,
   getPendingManualDecision,
+  retestCase,
+  getSettings,
+  updateSettings,
   type DeviceInfo,
   type DeviceRole,
   type DeviceDetail,
   type ModuleCondition,
-  type CaseResult
+  type CaseResult,
+  type CaseCatalog,
+  type CaseCatalogGroup
 } from '@/api/tahp/device-self-check'
 
 const SELF_CHECK_SUBTITLE =
@@ -39,6 +46,34 @@ const enableFlash = ref(false)
 const flashPath = ref('')
 const enableTcardUpdate = ref(false)
 const tcardUpdatePath = ref('')
+
+// 视图模式
+const viewMode = ref<'overview' | 'detail' | 'settings' | 'customTest'>('overview')
+
+// 自定义测试
+const caseCatalogGroups = ref<CaseCatalogGroup[]>([])
+const expandedCatalogTypes = ref<Set<string>>(new Set())
+const expandedCatalogModules = ref<Set<string>>(new Set())
+const selectedCases = ref<Set<string>>(new Set())
+const customTestDutDeviceId = ref<string | null>(null)
+const customTestAuxDeviceIds = ref<Set<string>>(new Set())
+const customTestStarting = ref(false)
+
+const availableCustomAux = computed(() => {
+  return devices.value.filter(d =>
+    d.deviceId !== customTestDutDeviceId.value &&
+    d.status === '空闲' &&
+    (d.role === '辅测机' || d.role === '未分配')
+  )
+})
+
+const availableCustomDut = computed(() => {
+  return devices.value.filter(d => d.status === '空闲')
+})
+
+// 设置
+const autoSettings = ref<Record<string, { enabled: boolean; path: string }>>({})
+const settingsLoading = ref(false)
 
 // 用例列表相关
 const selectedCase = ref<string | null>(null)
@@ -96,17 +131,93 @@ async function selectDevice(deviceId: string) {
   }
 }
 
-function goBack() {
-  stopPolling()
-  selectedDeviceId.value = null
-  selectedDevice.value = null
+async function loadSettingsData() {
+  try {
+    const data = await getSettings()
+    for (const [key, enabled] of Object.entries(data.autoTestEnabled || {})) {
+      if (!autoSettings.value[key]) {
+        autoSettings.value[key] = { enabled: false, path: '' }
+      }
+      autoSettings.value[key].enabled = enabled
+    }
+    for (const [key, path] of Object.entries(data.autoTestPath || {})) {
+      if (!autoSettings.value[key]) {
+        autoSettings.value[key] = { enabled: false, path: '' }
+      }
+      autoSettings.value[key].path = path
+    }
+  } catch (e) {
+    console.error('[DeviceSelfCheck] Error loading settings:', e)
+  }
 }
 
-function startPolling() {
-  stopPolling()
-  // SSE 实时推送
+async function saveSettingsData() {
+  settingsLoading.value = true
+  try {
+    const enabled: Record<string, boolean> = {}
+    const paths: Record<string, string> = {}
+    for (const [key, val] of Object.entries(autoSettings.value)) {
+      enabled[key] = val.enabled
+      paths[key] = val.path
+    }
+    await updateSettings({ autoTestEnabled: enabled, autoTestPath: paths })
+  } catch (e) {
+    console.error('[DeviceSelfCheck] Error saving settings:', e)
+  } finally {
+    settingsLoading.value = false
+  }
+}
+
+function backToOverview() {
+  viewMode.value = 'overview'
+  selectedDeviceId.value = null
+  selectedDevice.value = null
+  selectedCase.value = null
+  stopPollingTimer()
+  loadDevices()
+}
+
+function goBack() {
+  stopPollingTimer()
+  selectedDeviceId.value = null
+  selectedDevice.value = null
+  loadDevices()
+}
+
+function patchDeviceInList(device: DeviceInfo) {
+  const idx = devices.value.findIndex(d => d.deviceId === device.deviceId)
+  if (idx >= 0) {
+    devices.value[idx] = device
+  } else {
+    devices.value.push(device)
+  }
+}
+
+async function refreshDeviceState(deviceId: string) {
+  const detail = await getDeviceDetail(deviceId)
+  patchDeviceInList(detail.device)
+  if (selectedDeviceId.value === deviceId) {
+    selectedDevice.value = detail
+  }
+}
+
+function connectEventStream() {
+  if (eventSource.value) return
   const baseUrl = window.location.origin
   eventSource.value = new EventSource(`${baseUrl}/api/tahp/device-self-check/events`)
+
+  eventSource.value.addEventListener('device_updated', (e: MessageEvent) => {
+    try {
+      const data = JSON.parse(e.data)
+      if (data.device) {
+        patchDeviceInList(data.device)
+        if (selectedDeviceId.value === data.device.deviceId && selectedDevice.value) {
+          selectedDevice.value = { ...selectedDevice.value, device: data.device }
+        }
+      }
+    } catch {}
+  })
+
   eventSource.value.addEventListener('case_completed', async (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data)
@@ -115,18 +226,27 @@ function startPolling() {
       selectedDevice.value = detail
       if (followCurrent.value && detail.session?.isRunning) {
         const session = detail.session
-        const mod = session.modules[session.currentModuleIndex]
-        if (mod) {
-          const prog = session.moduleProgress[`${session.testType}/${mod}`]
-          if (prog?.currentCaseIndex) {
-            selectedCase.value = `${mod}/${prog.currentCaseIndex}`
+        if (session.testType === 'custom' && session.selectedCases) {
+          for (const caseKey of session.selectedCases) {
+            const result = session.caseResults[caseKey]
+            if (result?.status === '进行中') {
+              selectedCase.value = caseKey
+              break
+            }
+          }
+        } else {
+          const mod = session.modules[session.currentModuleIndex]
+          if (mod) {
+            const prog = session.moduleProgress[`${session.testType}/${mod}`]
+            if (prog?.currentCaseIndex) {
+              selectedCase.value = `${mod}/${prog.currentCaseIndex}`
+            }
           }
         }
       }
       if (!detail.session?.isRunning) {
-        stopPolling()
+        await refreshDeviceState(selectedDeviceId.value!)
       }
-      // 检查是否有待处理的人工决策（SSE manual_confirm 可能丢失）
       const pending = await getPendingManualDecision(selectedDeviceId.value!)
       if (pending) {
         manualDecisionId.value = pending.decisionId
@@ -135,8 +255,17 @@ function startPolling() {
       }
     } catch {}
   })
-  eventSource.value.addEventListener('test_completed', () => {
-    stopPolling()
+  eventSource.value.addEventListener('test_completed', async (e: MessageEvent) => {
+    try {
+      const data = JSON.parse(e.data)
+      if (data.deviceId) {
+        await refreshDeviceState(data.deviceId)
+      } else {
+        await loadDevices()
+      }
+    } catch {
+      await loadDevices()
+    }
   })
   eventSource.value.addEventListener('manual_confirm', (e: MessageEvent) => {
     try {
@@ -147,28 +276,15 @@ function startPolling() {
     } catch {}
   })
   eventSource.value.onerror = () => {
-    // SSE 断开时降级为轮询
-    stopPolling()
+    if (pollingTimer.value) return
     pollingTimer.value = setInterval(async () => {
       if (!selectedDeviceId.value) return
       try {
-        const detail = await getDeviceDetail(selectedDeviceId.value)
-        selectedDevice.value = detail
-        if (followCurrent.value && detail.session?.isRunning) {
-          const session = detail.session
-          const mod = session.modules[session.currentModuleIndex]
-          if (mod) {
-            const prog = session.moduleProgress[`${session.testType}/${mod}`]
-            if (prog?.currentCaseIndex) {
-              selectedCase.value = `${mod}/${prog.currentCaseIndex}`
-            }
-          }
+        await refreshDeviceState(selectedDeviceId.value)
+        const detail = selectedDevice.value
+        if (!detail?.session?.isRunning) {
+          stopPollingTimer()
         }
-        if (!detail.session?.isRunning) {
-          stopPolling()
-          return
-        }
-        // 轮询检查人工决策
         const pending = await getPendingManualDecision(selectedDeviceId.value)
         if (pending) {
           manualDecisionId.value = pending.decisionId
@@ -180,15 +296,27 @@ function startPolling() {
   }
 }
 
-function stopPolling() {
+function startPolling() {
+  connectEventStream()
+}
+
+function stopPollingTimer() {
   if (pollingTimer.value) {
     clearInterval(pollingTimer.value)
     pollingTimer.value = null
   }
+}
+
+function disconnectEventStream() {
+  stopPollingTimer()
   if (eventSource.value) {
     eventSource.value.close()
     eventSource.value = null
   }
+}
+
+function stopPolling() {
+  disconnectEventStream()
 }
 
 async function handleSetRole(deviceId: string, role: DeviceRole) {
@@ -234,16 +362,17 @@ async function handleContinueTest(deviceId: string) {
 
 async function handleEndTest(deviceId: string) {
   try {
-    stopPolling()
-    await endTest(deviceId)
-    // 辅测机停止待命后刷新详情页，其他情况回到概览
-    if (selectedDevice.value?.device.status === '待命' || selectedDevice.value?.device.role === '辅测机') {
-      const detail = await getDeviceDetail(deviceId)
-      selectedDevice.value = detail
+    stopPollingTimer()
+    const result = await endTest(deviceId)
+    patchDeviceInList(result.device)
+    await loadDevices()
+    if (result.device.role === '辅测机' && result.device.status === '待命') {
+      selectedDeviceId.value = deviceId
+      selectedDevice.value = result
     } else {
+      selectedDeviceId.value = null
       selectedDevice.value = null
     }
-    await loadDevices()
   } catch (e: any) {
     console.error('[DeviceSelfCheck] Error ending test:', e)
   }
@@ -290,6 +419,50 @@ async function handleModifyCaseResult() {
   }
 }
 
+// 复测用例
+const showRetestDialog = ref(false)
+const retestCaseKey = ref<string | null>(null)
+const retestAuxDeviceId = ref<string | null>(null)
+const retesting = ref(false)
+
+const availableAuxForRetest = computed(() => {
+  return devices.value.filter(d =>
+    d.deviceId !== selectedDeviceId.value &&
+    (d.role === '辅测机' || d.role === '测试机') &&
+    d.status === '空闲'
+  )
+})
+
+function openRetestDialog(caseKey: string) {
+  retestCaseKey.value = caseKey
+  retestAuxDeviceId.value = null
+  showRetestDialog.value = true
+}
+
+async function handleRetestCase() {
+  if (!retestCaseKey.value || !selectedDeviceId.value) return
+  const parts = retestCaseKey.value.split('/')
+  const caseIndex = parseInt(parts.pop() || '1')
+  const module = parts.pop() || ''
+  const testType = parts.join('/')
+  retesting.value = true
+  try {
+    await retestCase(
+      selectedDeviceId.value,
+      testType,
+      module,
+      caseIndex,
+      retestAuxDeviceId.value || undefined
+    )
+    showRetestDialog.value = false
+    await selectDevice(selectedDeviceId.value)
+  } catch (e: any) {
+    console.error('[DeviceSelfCheck] Error retesting case:', e)
+  } finally {
+    retesting.value = false
+  }
+}
+
 async function handleManualDecision(decision: 'pass' | 'fail' | 'ack') {
   if (manualDecisionId.value) {
     await submitManualDecision(manualDecisionId.value, decision)
@@ -297,6 +470,139 @@ async function handleManualDecision(decision: 'pass' | 'fail' | 'ack') {
   showManualDialog.value = false
   manualDecisionId.value = null
   manualMessage.value = ''
+}
+
+function getTestTypeLabel(testType?: string): string {
+  if (testType === 'str4') return '转测摸底测试'
+  if (testType === 'week') return '周版本测试'
+  if (testType === 'custom') return '自定义测试'
+  return '未分配'
+}
+
+async function loadCaseCatalogs() {
+  try {
+    caseCatalogGroups.value = await getCaseCatalogs()
+    expandedCatalogTypes.value = new Set(caseCatalogGroups.value.map(g => g.testType))
+    expandedCatalogModules.value = new Set(
+      caseCatalogGroups.value.flatMap(g => g.modules.map(m => m.key))
+    )
+  } catch (e) {
+    console.error('[DeviceSelfCheck] Error loading case catalogs:', e)
+    error.value = '加载用例目录失败'
+  }
+}
+
+function toggleCatalogType(testType: string) {
+  if (expandedCatalogTypes.value.has(testType)) {
+    expandedCatalogTypes.value.delete(testType)
+  } else {
+    expandedCatalogTypes.value.add(testType)
+  }
+  expandedCatalogTypes.value = new Set(expandedCatalogTypes.value)
+}
+
+function toggleCatalogModule(moduleKey: string) {
+  if (expandedCatalogModules.value.has(moduleKey)) {
+    expandedCatalogModules.value.delete(moduleKey)
+  } else {
+    expandedCatalogModules.value.add(moduleKey)
+  }
+  expandedCatalogModules.value = new Set(expandedCatalogModules.value)
+}
+
+function toggleCase(caseKey: string) {
+  if (selectedCases.value.has(caseKey)) {
+    selectedCases.value.delete(caseKey)
+  } else {
+    selectedCases.value.add(caseKey)
+  }
+  selectedCases.value = new Set(selectedCases.value)
+}
+
+function toggleAllCasesInModule(catalog: CaseCatalog) {
+  const allSelected = catalog.cases.every(c =>
+    selectedCases.value.has(`${catalog.key}/${c.caseIndex}`)
+  )
+  for (const c of catalog.cases) {
+    const key = `${catalog.key}/${c.caseIndex}`
+    if (allSelected) {
+      selectedCases.value.delete(key)
+    } else {
+      selectedCases.value.add(key)
+    }
+  }
+  selectedCases.value = new Set(selectedCases.value)
+}
+
+function toggleAllCasesInGroup(group: CaseCatalogGroup) {
+  const allKeys: string[] = []
+  for (const mod of group.modules) {
+    for (const c of mod.cases) {
+      allKeys.push(`${mod.key}/${c.caseIndex}`)
+    }
+  }
+  const allSelected = allKeys.every(k => selectedCases.value.has(k))
+  for (const key of allKeys) {
+    if (allSelected) {
+      selectedCases.value.delete(key)
+    } else {
+      selectedCases.value.add(key)
+    }
+  }
+  selectedCases.value = new Set(selectedCases.value)
+}
+
+function countGroupCases(group: CaseCatalogGroup): number {
+  return group.modules.reduce((sum, m) => sum + m.cases.length, 0)
+}
+
+function isGroupAllSelected(group: CaseCatalogGroup): boolean {
+  for (const mod of group.modules) {
+    for (const c of mod.cases) {
+      if (!selectedCases.value.has(`${mod.key}/${c.caseIndex}`)) return false
+    }
+  }
+  return group.modules.length > 0
+}
+
+function toggleAuxDevice(deviceId: string) {
+  if (customTestAuxDeviceIds.value.has(deviceId)) {
+    customTestAuxDeviceIds.value.delete(deviceId)
+  } else {
+    customTestAuxDeviceIds.value.add(deviceId)
+  }
+  customTestAuxDeviceIds.value = new Set(customTestAuxDeviceIds.value)
+}
+
+async function handleStartCustomTest() {
+  if (!customTestDutDeviceId.value || selectedCases.value.size === 0) return
+  customTestStarting.value = true
+  error.value = null
+  try {
+    const result = await startCustomTest(
+      customTestDutDeviceId.value,
+      Array.from(selectedCases.value),
+      Array.from(customTestAuxDeviceIds.value)
+    )
+    viewMode.value = 'overview'
+    selectedDeviceId.value = customTestDutDeviceId.value
+    selectedDevice.value = result
+    followCurrent.value = true
+    startPolling()
+    await loadDevices()
+  } catch (e: any) {
+    console.error('[DeviceSelfCheck] Error starting custom test:', e)
+    error.value = e?.message || '启动自定义测试失败'
+  } finally {
+    customTestStarting.value = false
+  }
+}
+
+function openCustomTest() {
+  viewMode.value = 'customTest'
+  customTestDutDeviceId.value = null
+  customTestAuxDeviceIds.value = new Set()
+  loadCaseCatalogs()
 }
 
 function getStatusColor(status: string) {
@@ -316,6 +622,26 @@ function getStatusIcon(status: string) {
   if (status.includes('错误')) return '⚠'
   if (status.includes('不满足前置条件')) return '!'
   return '○'
+}
+
+function getModuleLabel(module: string): string {
+  const labels: Record<string, string> = {
+    'tdd': '通信框架',
+    'driver': '驱动',
+    'driver_component': '驱动-器件',
+    'driver_hardware': '驱动-硬测',
+  }
+  return labels[module] || module
+}
+
+function getDisplayStatus(device: DeviceInfo): string {
+  if (device.status === '等待测试开始' && device.currentModule) {
+    return `等待${getModuleLabel(device.currentModule)}开始测试`
+  }
+  if (device.status === '不满足前置条件' && device.currentModule) {
+    return `${getModuleLabel(device.currentModule)}不满足前置条件`
+  }
+  return device.status
 }
 
 function getRoleBadge(role: string) {
@@ -352,6 +678,59 @@ const MODULE_ORDER: Record<string, number> = {
 // 根据设备测试类型和模块获取用例列表
 const getCaseGroups = computed(() => {
   const testType = selectedDevice.value?.device.testType || selectedTestType.value
+  const session = selectedDevice.value?.session
+
+  if (testType === 'custom' && session?.selectedCases) {
+    const groups: Record<string, {
+      label: string
+      moduleKey: string
+      cases: { caseIndex: number; caseName: string; testType: string; module: string }[]
+    }> = {}
+
+    for (const caseKey of session.selectedCases) {
+      const parts = caseKey.split('/')
+      const caseIndex = parseInt(parts.pop() || '1', 10)
+      const module = parts.pop() || ''
+      const tt = parts.join('/')
+      const moduleKey = `${tt}/${module}`
+      const config = moduleConditions.value[moduleKey]
+      const result = session.caseResults[caseKey]
+
+      if (!groups[moduleKey]) {
+        groups[moduleKey] = {
+          label: config?.moduleLabel || module,
+          moduleKey,
+          cases: [],
+        }
+      }
+      groups[moduleKey].cases.push({
+        caseIndex,
+        caseName: result?.caseName || config?.cases.find(c => c.caseIndex === caseIndex)?.caseName || `用例${caseIndex}`,
+        testType: tt,
+        module,
+      })
+    }
+
+    return Object.entries(groups)
+      .sort((a, b) => {
+        const orderA = MODULE_ORDER[a[1].cases[0]?.module] ?? 50
+        const orderB = MODULE_ORDER[b[1].cases[0]?.module] ?? 50
+        return orderA - orderB
+      })
+      .map(([moduleKey, group]) => [group.label, [{
+        testType: group.cases[0]?.testType || 'str4',
+        module: group.cases[0]?.module || '',
+        moduleLabel: group.label,
+        moduleKey,
+        cases: group.cases.map(c => ({
+          caseIndex: c.caseIndex,
+          caseName: c.caseName,
+          mode: '',
+          canReuse: false,
+        })),
+      }]] as [string, (ModuleCondition & { moduleKey: string })[]])
+  }
+
   const modules: Record<string, ModuleCondition[]> = {}
   
   for (const [key, config] of Object.entries(moduleConditions.value)) {
@@ -363,7 +742,6 @@ const getCaseGroups = computed(() => {
     }
   }
 
-  // 按 MODULE_ORDER 排序为数组
   return Object.entries(modules).sort((a, b) => {
     const orderA = MODULE_ORDER[a[1][0]?.module] ?? 50
     const orderB = MODULE_ORDER[b[1][0]?.module] ?? 50
@@ -375,9 +753,24 @@ const isIdle = computed(() => {
   return selectedDevice.value?.device.status === '空闲'
 })
 
+const pageTitle = computed(() => {
+  if (selectedDeviceId.value) {
+    return selectedDevice.value?.device.deviceName || '设备详情'
+  }
+  if (viewMode.value === 'customTest') return '自定义测试'
+  return 'AI 自检'
+})
+
 const isTestComplete = computed(() => {
   const status = selectedDevice.value?.device.status || ''
   return status.includes('完成')
+})
+
+const canEndTest = computed(() => {
+  const device = selectedDevice.value?.device
+  if (!device || device.role === '辅测机') return false
+  if (device.status === '待命') return false
+  return !isIdle.value
 })
 
 const needsContinue = computed(() => {
@@ -389,17 +782,22 @@ const needsContinue = computed(() => {
 const selectedCaseResult = computed((): CaseResult | undefined => {
   if (!selectedCase.value || !selectedDevice.value?.session?.caseResults) return undefined
   const session = selectedDevice.value.session
-  const parts = selectedCase.value.split('/')
-  const index = parseInt(parts.pop() || '1')
-  const module = parts.join('/')
-  const testType = selectedDevice.value.device.testType || 'str4'
-  const key = `${testType}/${module}/${index}`
+  const isCustom = selectedDevice.value.device.testType === 'custom'
+  let key: string
+  if (isCustom) {
+    key = selectedCase.value
+  } else {
+    const parts = selectedCase.value.split('/')
+    const index = parseInt(parts.pop() || '1')
+    const module = parts.join('/')
+    const testType = selectedDevice.value.device.testType || 'str4'
+    key = `${testType}/${module}/${index}`
+  }
   const result = session.caseResults[key]
-  // 从 moduleConditions 中获取用例名称
   if (result) {
-    const config = moduleConditions.value[`${testType}/${module}`]
+    const config = moduleConditions.value[`${result.testType}/${result.module}`]
     if (config) {
-      const caseItem = config.cases.find(c => c.caseIndex === index)
+      const caseItem = config.cases.find(c => c.caseIndex === result.caseIndex)
       if (caseItem) {
         result.caseName = caseItem.caseName
       }
@@ -409,6 +807,7 @@ const selectedCaseResult = computed((): CaseResult | undefined => {
 })
 
 onMounted(async () => {
+  connectEventStream()
   await loadDevices()
   try {
     moduleConditions.value = await getModuleConditions()
@@ -420,7 +819,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  stopPolling()
+  disconnectEventStream()
 })
 
 // 辅助函数：获取当前选中用例名称
@@ -445,8 +844,13 @@ function getSelectedCaseName(config: ModuleCondition): string {
   return caseItem?.caseName || `用例${caseIndex}`
 }
 
-function selectCaseItem(module: string, caseIndex: number) {
-  selectedCase.value = `${module}/${caseIndex}`
+function selectCaseItem(module: string, caseIndex: number, testType?: string) {
+  if (testType || selectedDevice.value?.device.testType === 'custom') {
+    const tt = testType || selectedCase.value?.split('/')[0] || 'str4'
+    selectedCase.value = `${tt}/${module}/${caseIndex}`
+  } else {
+    selectedCase.value = `${module}/${caseIndex}`
+  }
   followCurrent.value = false
 }
 
@@ -455,15 +859,37 @@ function toggleFollowCurrent() {
   if (followCurrent.value) {
     const s = selectedDevice.value?.session
     if (s) {
-      const m = s.modules[s.currentModuleIndex]
-      if (m) {
-        const p = s.moduleProgress[s.testType + '/' + m]
-        if (p?.currentCaseIndex) {
-          selectedCase.value = m + '/' + p.currentCaseIndex
+      if (s.testType === 'custom' && s.selectedCases) {
+        for (const caseKey of s.selectedCases) {
+          const result = s.caseResults[caseKey]
+          if (result?.status === '进行中') {
+            selectedCase.value = caseKey
+            return
+          }
+        }
+      } else {
+        const m = s.modules[s.currentModuleIndex]
+        if (m) {
+          const p = s.moduleProgress[s.testType + '/' + m]
+          if (p?.currentCaseIndex) {
+            selectedCase.value = m + '/' + p.currentCaseIndex
+          }
         }
       }
     }
   }
+}
+
+function isSelectedCaseInConfig(config: ModuleCondition): boolean {
+  if (!selectedCase.value) return false
+  if (selectedDevice.value?.device.testType === 'custom') {
+    const parts = selectedCase.value.split('/')
+    const caseIndex = parts.pop()
+    const module = parts.pop()
+    const testType = parts.join('/')
+    return testType === config.testType && module === config.module && String(config.cases.find(c => c.caseIndex === parseInt(caseIndex || '0'))?.caseIndex) === caseIndex
+  }
+  return selectedCase.value.startsWith(config.module)
 }
 
 // 辅助函数：获取用例结果样式类
@@ -477,6 +903,13 @@ function getCaseItemClass(config: ModuleCondition, index: number): string {
   if (result.status === '失败') return 'failed'
   if (result.status === '待确认') return 'pending'
   return ''
+}
+
+function isCaseSelected(config: ModuleCondition, caseIndex: number): boolean {
+  if (selectedDevice.value?.device.testType === 'custom') {
+    return selectedCase.value === `${config.testType}/${config.module}/${caseIndex}`
+  }
+  return selectedCase.value === `${config.module}/${caseIndex}`
 }
 
 // 辅助函数：获取用例结果样式
@@ -493,7 +926,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
 <template>
   <div class="page" :class="{ 'page-wide': !selectedDeviceId }">
     <EaPageHead
-      :title="selectedDeviceId ? (selectedDevice?.device.deviceName || '设备详情') : 'AI 自检'"
+      :title="pageTitle"
       :subtitle="selectedDeviceId ? '多设备并行自动化测试，支持结果复用' : SELF_CHECK_SUBTITLE"
     >
       <template #actions>
@@ -504,17 +937,32 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
             </svg>
             返回概览
           </button>
-          <button v-if="isTestComplete && selectedDevice?.device.role === '测试机'" type="button" class="ea-btn-primary ea-btn-sm">
+          <button v-if="isTestComplete && selectedDevice?.device.role !== '辅测机'" type="button" class="ea-btn-primary ea-btn-sm">
             打开结果
           </button>
-          <button v-if="isTestComplete && selectedDevice?.device.role === '测试机'" type="button" class="ea-btn-ghost ea-btn-sm" @click="handleEndTest(selectedDeviceId!)">
+          <button v-if="canEndTest" type="button" class="ea-btn-ghost ea-btn-sm" @click="handleEndTest(selectedDeviceId!)">
             结束测试
           </button>
           <button v-if="selectedDevice?.device.status === '待命'" type="button" class="ea-btn-ghost ea-btn-sm" @click="handleEndTest(selectedDeviceId!)">
             停止待命
           </button>
         </template>
+        <template v-else-if="viewMode === 'customTest'">
+          <button type="button" class="ea-btn-ghost ea-btn-sm" @click="viewMode = 'overview'">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+            返回概览
+          </button>
+        </template>
         <template v-else>
+          <button
+            type="button"
+            class="ea-btn-primary"
+            @click="openCustomTest"
+          >
+            自定义测试
+          </button>
           <button
             type="button"
             class="ea-btn-primary"
@@ -527,12 +975,193 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
             </svg>
             刷新设备
           </button>
+          <button
+            type="button"
+            class="ea-btn-ghost ea-btn-sm"
+            @click="viewMode = 'settings'; loadSettingsData()"
+          >
+            设置
+          </button>
         </template>
       </template>
     </EaPageHead>
 
+    <!-- 设置视图 -->
+    <template v-if="viewMode === 'settings'">
+      <EaCard>
+        <div class="section-title">
+          <button type="button" class="ea-btn-ghost ea-btn-sm" @click="viewMode = 'overview'">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+            返回概览
+          </button>
+          <span style="margin-left: 8px;">自动化测试设置</span>
+        </div>
+        <div class="settings-list">
+          <div v-for="(config, key) in moduleConditions" :key="key" class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">{{ config.moduleLabel }}</span>
+              <span class="setting-desc">{{ key }}</span>
+            </div>
+            <label class="switch-label">
+              <input type="checkbox" v-model="autoSettings[key].enabled" />
+              <span class="switch-text">{{ autoSettings[key]?.enabled ? '已开启' : '已关闭' }}</span>
+            </label>
+            <input
+              v-if="autoSettings[key]?.enabled"
+              type="text"
+              class="form-input"
+              v-model="autoSettings[key].path"
+              placeholder="自动化测试路径"
+              style="width: 280px;"
+            />
+          </div>
+        </div>
+        <div style="margin-top: 16px;">
+          <button type="button" class="ea-btn-primary" :disabled="settingsLoading" @click="saveSettingsData">
+            {{ settingsLoading ? '保存中...' : '保存设置' }}
+          </button>
+        </div>
+      </EaCard>
+    </template>
+
+    <!-- 自定义测试视图 -->
+    <template v-if="viewMode === 'customTest'">
+      <div v-if="error" style="color: var(--error); margin: 12px 0;">{{ error }}</div>
+
+      <div class="custom-test-layout">
+        <div class="custom-test-left">
+          <EaCard>
+            <div class="section-title">
+              用例列表
+              <span class="ea-muted" style="font-size: 12px; margin-left: 8px;">
+                已选 {{ selectedCases.size }} 个
+              </span>
+            </div>
+            <div class="catalog-list">
+              <div v-for="group in caseCatalogGroups" :key="group.testType" class="catalog-type-group">
+                <div class="catalog-type-header" @click="toggleCatalogType(group.testType)">
+                  <span class="catalog-toggle">{{ expandedCatalogTypes.has(group.testType) ? '▼' : '▶' }}</span>
+                  <span class="catalog-type-label">{{ group.label }}</span>
+                  <span class="catalog-meta">{{ group.testType }} ({{ countGroupCases(group) }}个)</span>
+                  <button
+                    type="button"
+                    class="ea-btn-ghost ea-btn-sm"
+                    @click.stop="toggleAllCasesInGroup(group)"
+                  >
+                    {{ isGroupAllSelected(group) ? '取消全选' : '全选' }}
+                  </button>
+                </div>
+                <div v-if="expandedCatalogTypes.has(group.testType)" class="catalog-type-body">
+                  <div v-for="catalog in group.modules" :key="catalog.key" class="catalog-group">
+                    <div class="catalog-header" @click="toggleCatalogModule(catalog.key)">
+                      <span class="catalog-toggle catalog-toggle-nested">{{ expandedCatalogModules.has(catalog.key) ? '▼' : '▶' }}</span>
+                      <span class="catalog-label">{{ catalog.moduleLabel }}</span>
+                      <span class="catalog-meta">{{ catalog.module }} ({{ catalog.cases.length }}个)</span>
+                      <button
+                        type="button"
+                        class="ea-btn-ghost ea-btn-sm"
+                        @click.stop="toggleAllCasesInModule(catalog)"
+                      >
+                        {{ catalog.cases.every(c => selectedCases.has(catalog.key + '/' + c.caseIndex)) ? '取消全选' : '全选' }}
+                      </button>
+                    </div>
+                    <div v-if="expandedCatalogModules.has(catalog.key)" class="catalog-cases">
+                      <label
+                        v-for="c in catalog.cases"
+                        :key="c.caseIndex"
+                        class="case-checkbox"
+                      >
+                        <input
+                          type="checkbox"
+                          :checked="selectedCases.has(catalog.key + '/' + c.caseIndex)"
+                          @change="toggleCase(catalog.key + '/' + c.caseIndex)"
+                        />
+                        <span class="case-name">{{ c.caseIndex }}. {{ c.caseName }}</span>
+                        <span v-if="c.canReuse" class="case-tag">可复用</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </EaCard>
+        </div>
+
+        <div class="custom-test-right">
+          <EaCard>
+            <div class="section-title">测试机（单选）</div>
+            <div class="device-select-list">
+              <div v-if="availableCustomDut.length === 0" class="ea-muted">无可用设备</div>
+              <label
+                v-for="d in availableCustomDut"
+                :key="d.deviceId"
+                class="device-radio"
+                :class="{ selected: customTestDutDeviceId === d.deviceId }"
+              >
+                <input
+                  type="radio"
+                  name="customDut"
+                  :value="d.deviceId"
+                  v-model="customTestDutDeviceId"
+                />
+                <span class="device-name">{{ d.deviceName }}</span>
+                <span class="device-id">{{ d.deviceId }}</span>
+                <span class="device-role">{{ d.role }}</span>
+              </label>
+            </div>
+          </EaCard>
+
+          <EaCard>
+            <div class="section-title">
+              辅测机（多选）
+              <span class="ea-muted" style="font-size: 12px; margin-left: 8px;">
+                已选 {{ customTestAuxDeviceIds.size }} 个
+              </span>
+            </div>
+            <div class="device-select-list">
+              <div v-if="availableCustomAux.length === 0" class="ea-muted">无可用设备</div>
+              <label
+                v-for="d in availableCustomAux"
+                :key="d.deviceId"
+                class="device-checkbox"
+                :class="{ selected: customTestAuxDeviceIds.has(d.deviceId) }"
+              >
+                <input
+                  type="checkbox"
+                  :checked="customTestAuxDeviceIds.has(d.deviceId)"
+                  @change="toggleAuxDevice(d.deviceId)"
+                />
+                <span class="device-name">{{ d.deviceName }}</span>
+                <span class="device-id">{{ d.deviceId }}</span>
+                <span class="device-role">{{ d.role }}</span>
+              </label>
+            </div>
+          </EaCard>
+
+          <div style="text-align: center; margin-top: 16px;">
+            <button
+              type="button"
+              class="ea-btn-primary ea-btn-lg"
+              :disabled="!customTestDutDeviceId || selectedCases.size === 0 || customTestStarting"
+              @click="handleStartCustomTest"
+            >
+              {{ customTestStarting ? '启动中...' : `开始测试（${selectedCases.size} 个用例）` }}
+            </button>
+            <div v-if="!customTestDutDeviceId" class="ea-muted" style="margin-top: 8px;">
+              请选择测试机
+            </div>
+            <div v-else-if="selectedCases.size === 0" class="ea-muted" style="margin-top: 8px;">
+              请勾选至少一个用例
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
     <!-- 设备列表视图 -->
-    <template v-if="!selectedDeviceId">
+    <template v-if="!selectedDeviceId && viewMode !== 'settings' && viewMode !== 'customTest'">
       <div v-if="loading" class="ea-muted" style="padding: 40px; text-align: center;">
         加载中...
       </div>
@@ -577,12 +1206,12 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
               <div class="detail-row">
                 <span class="detail-label">测试状态</span>
                 <span class="detail-value" :style="{ color: getStatusColor(device.status) }">
-                  {{ device.status }}
+                  {{ getDisplayStatus(device) }}
                 </span>
               </div>
               <div class="detail-row" v-if="device.testType">
                 <span class="detail-label">所属用例</span>
-                <span class="detail-value">{{ device.testType === 'str4' ? '转测摸底测试' : '周版本测试' }}</span>
+                <span class="detail-value">{{ getTestTypeLabel(device.testType) }}</span>
               </div>
               <div class="detail-row">
                 <span class="detail-label">插卡情况</span>
@@ -635,8 +1264,8 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
                         v-for="caseItem in config.cases"
                         :key="caseItem.caseIndex"
                         class="case-item"
-                        :class="{ selected: selectedCase === `${config.module}/${caseItem.caseIndex}` }"
-                        @click="selectCaseItem(config.module, caseItem.caseIndex)"
+                        :class="{ selected: isCaseSelected(config, caseItem.caseIndex) }"
+                        @click="selectCaseItem(config.module, caseItem.caseIndex, config.testType)"
                       >
                         {{ caseItem.caseName }}
                       </div>
@@ -647,11 +1276,11 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
                         :key="caseItem.caseIndex"
                         class="case-item"
                         :class="{
-                          selected: selectedCase === `${config.module}/${caseItem.caseIndex}`,
+                          selected: isCaseSelected(config, caseItem.caseIndex),
                           [getCaseItemClass(config, caseItem.caseIndex)]: true
                         }"
                         :style="getCaseItemStyle(config, caseItem.caseIndex)"
-                        @click="selectCaseItem(config.module, caseItem.caseIndex)"
+                        @click="selectCaseItem(config.module, caseItem.caseIndex, config.testType)"
                       >
                         {{ caseItem.caseName }}
                       </div>
@@ -677,7 +1306,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
                   </div>
                   <div class="detail-item">
                     <span class="detail-label">所属用例</span>
-                    <span class="detail-value">{{ selectedDevice.device.testType ? (selectedDevice.device.testType === 'str4' ? '转测摸底测试' : '周版本测试') : '未分配' }}</span>
+                    <span class="detail-value">{{ getTestTypeLabel(selectedDevice.device.testType) }}</span>
                   </div>
                   <div class="detail-item">
                     <span class="detail-label">插卡情况</span>
@@ -688,7 +1317,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
                   <div class="detail-item" v-if="!isIdle">
                     <span class="detail-label">设备测试情况</span>
                     <span class="detail-value" :style="{ color: getStatusColor(selectedDevice.device.status) }">
-                      {{ selectedDevice.device.status }}
+                      {{ getDisplayStatus(selectedDevice.device) }}
                     </span>
                   </div>
                   <div class="detail-item" v-if="!isIdle && selectedDevice.device.testStartTime && selectedDevice.device.role !== '辅测机'">
@@ -702,8 +1331,8 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
                 </div>
               </div>
 
-              <!-- 空闲时的操作 -->
-              <div v-if="isIdle" class="actions-section">
+              <!-- 空闲时的操作（自定义测试不显示常规开始测试） -->
+              <div v-if="isIdle && selectedDevice.device.testType !== 'custom'" class="actions-section">
                 <div class="section-title">
                   {{ selectedDevice.device.role === '辅测机' ? '注册为辅测机' : '开始测试' }}
                 </div>
@@ -802,6 +1431,18 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
                   继续测试
                 </button>
               </div>
+
+              <!-- 结束测试 -->
+              <div v-if="canEndTest" class="actions-section">
+                <div class="section-title">测试操作</div>
+                <button
+                  type="button"
+                  class="ea-btn-primary"
+                  @click.stop="handleEndTest(selectedDevice.device.deviceId)"
+                >
+                  结束测试
+                </button>
+              </div>
             </div>
           </EaCard>
 
@@ -823,7 +1464,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
             <div v-if="selectedCase && selectedDevice?.session?.caseResults" class="case-detail-content">
               <template v-for="([label, configs]) in getCaseGroups" :key="label">
                 <template v-for="config in configs" :key="config.module">
-                  <template v-if="selectedCase.startsWith(config.module)">
+                  <template v-if="isSelectedCaseInConfig(config)">
                     <div class="case-info">
                       <div class="detail-item">
                         <span class="detail-label">用例模块</span>
@@ -862,7 +1503,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
               </template>
               
               <div v-if="isTestComplete" class="case-detail-actions">
-                <button type="button" class="ea-btn-primary" @click="openModifyDialog(selectedCase!)">复测此用例</button>
+                <button type="button" class="ea-btn-primary" @click="openRetestDialog(selectedCase!)">复测此用例</button>
                 <button type="button" class="ea-btn-ghost" @click="openModifyDialog(selectedCase!)">修改用例结果</button>
               </div>
             </div>
@@ -900,6 +1541,32 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
         <div class="modify-dialog-footer">
           <button type="button" class="ea-btn-ghost" @click="showModifyDialog = false">取消</button>
           <button type="button" class="ea-btn-primary" @click="handleModifyCaseResult">确认修改</button>
+        </div>
+      </div>
+    </div>
+  <!-- 复测用例弹窗 -->
+    <div v-if="showRetestDialog" class="modify-overlay" @click.self="showRetestDialog = false">
+      <div class="modify-dialog">
+        <div class="modify-dialog-header">
+          <span class="section-title">复测用例</span>
+          <button type="button" class="ea-btn-ghost ea-btn-sm" @click="showRetestDialog = false">✕</button>
+        </div>
+        <div class="modify-dialog-body">
+          <div class="form-group">
+            <label class="form-label">选择辅测机（可选）</label>
+            <select v-model="retestAuxDeviceId" class="form-input">
+              <option :value="null">无（不需要辅测机）</option>
+              <option v-for="d in availableAuxForRetest" :key="d.deviceId" :value="d.deviceId">
+                {{ d.deviceName }}（{{ d.role }}）
+              </option>
+            </select>
+          </div>
+        </div>
+        <div class="modify-dialog-footer">
+          <button type="button" class="ea-btn-ghost" :disabled="retesting" @click="showRetestDialog = false">取消</button>
+          <button type="button" class="ea-btn-primary" :disabled="retesting" @click="handleRetestCase">
+            {{ retesting ? '正在复测...' : '开始复测' }}
+          </button>
         </div>
       </div>
     </div>
@@ -1388,6 +2055,133 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
 
   .case-info {
     grid-template-columns: 1fr;
+  }
+
+  .custom-test-layout {
+    flex-direction: column;
+
+    .custom-test-right {
+      width: 100%;
+    }
+  }
+}
+
+.custom-test-layout {
+  display: flex;
+  gap: 16px;
+  margin-top: 16px;
+
+  .custom-test-left {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .custom-test-right {
+    width: 360px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+}
+
+.catalog-type-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+
+  .catalog-type-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 14px;
+    cursor: pointer;
+    background: var(--accent-soft);
+    font-weight: 700;
+
+    .catalog-type-label { font-size: 14px; }
+    .catalog-meta { font-size: 12px; color: var(--muted); margin-left: auto; }
+  }
+
+  .catalog-type-body {
+    padding: 8px;
+  }
+}
+
+.catalog-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 8px;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+
+  .catalog-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    background: var(--bg);
+    border-radius: 8px 8px 0 0;
+
+    .catalog-toggle { font-size: 10px; width: 14px; flex-shrink: 0; }
+    .catalog-toggle-nested { margin-left: 4px; }
+    .catalog-label { font-weight: 600; }
+    .catalog-meta { font-size: 12px; color: var(--muted); margin-left: auto; }
+  }
+
+  .catalog-cases {
+    padding: 8px 12px 8px 28px;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+}
+
+.catalog-toggle {
+  font-size: 10px;
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.case-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+  font-size: 13px;
+
+  .case-tag {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--accent);
+    color: #fff;
+  }
+}
+
+.device-select-list {
+  .device-radio, .device-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    margin-bottom: 4px;
+    cursor: pointer;
+
+    &.selected {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .device-name { font-weight: 500; }
+    .device-id { font-size: 11px; color: var(--muted); margin-left: auto; }
+    .device-role { font-size: 11px; color: var(--accent); }
   }
 }
 </style>
