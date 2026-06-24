@@ -39,7 +39,7 @@ const router = createRouter({
     {
       path: '/tahp/self-check',
       name: 'tahp.self-check',
-      component: () => import('@/views/tahp/SelfCheckView.vue'),
+      component: () => import('@/views/tahp/DeviceSelfCheckView.vue'),
     },
     {
       path: '/tahp/skill-config',

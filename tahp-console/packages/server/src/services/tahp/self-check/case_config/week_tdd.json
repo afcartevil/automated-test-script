@@ -1,0 +1,88 @@
+{
+  "testType": "week",
+  "module": "tdd",
+  "moduleLabel": "通信框架",
+  "conditions": {
+    "dutSimCount": 1,
+    "auxRequired": 1,
+    "auxSimCount": 1
+  },
+  "defaultCaseMode": "aux_for_dut_mirror",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "插入有效SIM卡,数据网络正常,网络类型能够正常切换,亮灭屏时分别来电",
+      "canReuse": true
+    },
+    {
+      "caseIndex": 2,
+      "caseName": "如果项目支持视频通话,手机能够使用国内的ViLte网络",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 3,
+      "caseName": "如果项目支持视频通话,手机能够使用国内的ViLte网络",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 4,
+      "caseName": "骚扰拦截",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 5,
+      "caseName": "SIM卡与网络设置",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 6,
+      "caseName": "SIM卡联系人",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 7,
+      "caseName": "数据连接",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 8,
+      "caseName": "发送/接收短彩信",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 9,
+      "caseName": "基带版本号检查",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 10,
+      "caseName": "插单卡、双卡识别、热插拔",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 11,
+      "caseName": "检查能否读写IMEI",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 12,
+      "caseName": "手动搜网",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 13,
+      "caseName": "通信体验",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 14,
+      "caseName": "新增SR/bug修复关联部分check",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 15,
+      "caseName": "来电铃声渐响",
+      "canReuse": true
+    }
+  ]
+}

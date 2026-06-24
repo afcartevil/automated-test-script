@@ -1,0 +1,108 @@
+{
+  "testType": "str4",
+  "module": "driver_hardware",
+  "moduleLabel": "驱动-硬测",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "开机状态充电",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 2,
+      "caseName": "关机状态充电",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 3,
+      "caseName": "反向充电",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 4,
+      "caseName": "MTP能正常枚举",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 5,
+      "caseName": "OTG基本功能",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 6,
+      "caseName": "灯效",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 7,
+      "caseName": "无线反向充电功能点检",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 8,
+      "caseName": "旁路充电/智能温控点检",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 9,
+      "caseName": "充电功能检查",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 10,
+      "caseName": "无线充电功能点检",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 11,
+      "caseName": "25度环境整机充电效率",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 12,
+      "caseName": "三档充电功能检查",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 13,
+      "caseName": "正常通话功能",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 14,
+      "caseName": "耳机与听筒之间切换",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 15,
+      "caseName": "耳机与扬声器之间切换",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 16,
+      "caseName": "喇叭、听筒、麦克、耳机基本功能",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 17,
+      "caseName": "使用主流音乐软件播放音乐",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 18,
+      "caseName": "超声距感",
+      "canReuse": false
+    },
+    {
+      "caseIndex": 19,
+      "caseName": "音频参数核对测试",
+      "canReuse": false
+    }
+  ]
+}

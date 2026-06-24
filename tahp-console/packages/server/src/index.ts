@@ -24,6 +24,7 @@ import { logger } from './services/logger'
 
 // TAHP 桥接
 import { setupTahpRunSocket } from './routes/tahp/tahp-run'
+import { initDeviceSelfCheck } from './services/tahp/device-self-check'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -224,6 +225,7 @@ export async function bootstrap() {
 
   bindShutdown(servers, undefined, chatRunServer, agentBridgeManager)
   startVersionCheck()
+  initDeviceSelfCheck()
 }
 
 bootstrap().catch((error) => {

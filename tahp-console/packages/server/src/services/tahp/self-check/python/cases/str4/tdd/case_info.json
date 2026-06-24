@@ -1,0 +1,513 @@
+[
+  {
+    "用例名": "检查语音通路call type",
+    "前置条件": "1. SIM配置：卡1 移动 4G + 卡2 联通 4G（单卡机器仅插入单卡测试）\n2. 卡一，卡二注册上IMS；",
+    "测试步骤": "1. 打开Dialer app；\n2. 拨号盘界面输入紧急号码112，点击卡一拨号；\n3. 拨号盘输入运营商客服号码，点击卡二拨号；",
+    "期望结果": "",
+    "case_index": 1
+  },
+  {
+    "用例名": "检查用户不可以关闭双卡手机的DSDS能力",
+    "前置条件": "1.双卡手机\n2.插入双卡（已开启SIM卡PIN密码功能）\n开关SIM卡pin功能参考SOP SIM卡密码扩展-第5部分介绍功能: SIM卡外发用例名词介绍及操作方法 \n3.单卡手机不测试该用例",
+    "测试步骤": "1.测试机已插入2张SIM卡（移动+联通）\n2.拨号盘输入*#*#4636#*#*进入测试页面，打开”手机信息“\n3.选择启用DSDS菜单对开关进行关闭操作\n4.再次返回测试页面后重新进入手机信息页面检查DSDS开关\n以上用例仅适用MTK平台双卡项目，展锐机器不同Android平台使用如下测试步骤\nA. 展锐机器插入2张SiM卡\nB.拨号盘输入*#*#4636#*#*进入测试页面,打开”手机信息“\nC.找到启用DSDS菜单，检查开关",
+    "期望结果": "",
+    "case_index": 2
+  },
+  {
+    "用例名": "开关飞行模式正常",
+    "前置条件": "1.准备2张有效的SIM卡插入到测试机中（移动+联通）\n2.已开启SIM卡PIN码功能\n3.不支持双卡的设备只需要插入单SIM卡",
+    "测试步骤": "1.进入【设置菜单】->【热点与连接】或者【更多连接】开启飞行模式（w版本入口：进入设置列表-》打开飞行模式）\n2.下拉控制中心面板，查看移动数据快捷图标\n3.状态栏查看信号图标\n4.下拉控制中心面板，点击飞行模式图标\n5.再次下拉控制中心面板，点击开启飞行模式\n6.灭屏一次，再亮屏，再次观察信号图标",
+    "期望结果": "",
+    "case_index": 3
+  },
+  {
+    "用例名": "用户在一定时间内连续开关漫游开关，UE不会出现逻辑异常",
+    "前置条件": "1.准备2张有效的SIM卡（移动+联通）插入到测试机器中\n2.当前测试网络区域已经覆盖测试机最高网络制式（当前SIM卡运营商已覆盖5G,4G网络)\n3.不支持双卡的设备只需要插入单SIM卡\n4.默认设置上网卡/数据卡为SIM卡1",
+    "测试步骤": "1.打开【设置】->【SIM卡与网络设置】->【点击SIM1卡菜单】->点击【漫游】按钮\n2.点击确定，再次对该菜单开关点击关闭，重复进行10次\n3.按步骤1打开SIM2“漫游”的开关按钮\n4.点击确定，再次对该菜单开关点击关闭，重复进行10次",
+    "期望结果": "",
+    "case_index": 4
+  },
+  {
+    "用例名": "插入双SIM卡-移动数据开关开关，关闭，切换数据卡正常，用户能自行进行数据卡切换，关闭，开启等操作",
+    "前置条件": "1.准备2张有效的SIM卡（移动+联通）插入到测试机器中\n2.当前测试网络区域已经覆盖测试机最高网络制式（当前SIM卡运营商已覆盖5G,4G网络）\n3.当前测试设备支持双卡功能\n4.不支持双卡的设备无需测试该条用例\n（备注：tOS16.1不适用，不再测试）",
+    "测试步骤": "1.进入SIM卡设置页面，选择当前数据卡进入，找到移动数据菜单\n2.打开内置浏览器，打开www.baidu.com网站\n3.下拉控制中心面板，点击快捷图标中对应的“移动数据”图标，进行关闭操作，打开内置浏览器，访问www.baidu.com网站\n4.重新进入SIM卡设置页面，选择当前数据卡进入，找到移动数据菜单，将对应的移动数据开启，打开内置浏览器，访问www.baidu.com网站\n5.进入SIM卡设置页面，选择当前非数据卡进入，找到移动数据菜单\n6.点开开启，弹出对应的消息窗口，选择取消\n7.再次按照步骤6，点击开关，选择确定\n8.打开内置浏览器，访问www.baidu.com网站",
+    "期望结果": "",
+    "case_index": 5
+  },
+  {
+    "用例名": "自定义SIM卡名字正常",
+    "前置条件": "1.准备2张有效的SIM卡（移动+联通）\n2.当前测试网络区域已经覆盖测试机最高网络制式（当前SIM卡运营商已覆盖5G,4G网络）\n3.不支持双卡的设备请插入单张SIM卡",
+    "测试步骤": "1.测试机已插入双SIM卡(单卡手机插入单张SIM卡)\n2.分别进入对应数据卡和非数据卡下，点击“SIM卡名称”对该张SIM->【自定义名称】进行编辑：\n3.输入任意字符后不保存\n4.输入任意字符后点击保存\n5.输入最大字符串点击保存",
+    "期望结果": "",
+    "case_index": 6
+  },
+  {
+    "用例名": "检查数据开关-SIM卡与网络设置",
+    "前置条件": "1. 测试机插双卡，设置默认数据卡为卡1",
+    "测试步骤": "1. “设置->【SIM卡与网络设置】->【SIM1】->【移动网络设置】->移动数据】，点击打开移动数据开关\n2. 打开网页浏览，并观察状态栏图标\n3. “设置->【SIM卡与网络设置】->【SIM1】->【移动网络设置】->移动数据】，点击关闭移动数据开关\n4. 打开网页浏览，并观察状态栏图标",
+    "期望结果": "",
+    "case_index": 7
+  },
+  {
+    "用例名": "检查数据开关-SIM卡与网络设置",
+    "前置条件": "1. 测试机插双卡，设置默认数据卡为卡2",
+    "测试步骤": "1. “设置->【SIM卡与网络设置】->【SIM2】->【移动网络设置】->【移动数据】，点击打开移动数据开关\n2. 打开网页浏览，并观察状态栏图标\n3. “设置->【SIM卡与网络设置】->【SIM2】->【移动网络设置】->【移动数据】，点击关闭移动数据开关\n4. 打开网页浏览，并观察状态栏图标",
+    "期望结果": "",
+    "case_index": 8
+  },
+  {
+    "用例名": "检查数据切换-SIM卡与网络设置",
+    "前置条件": "1. 测试机插双卡，设置默认数据卡为卡1",
+    "测试步骤": "1. “设置->【SIM卡与网络设置】，点击切换上网卡到卡2\n2. 打开网页浏览，并观察状态栏图标\n3. “设置->【SIM卡与网络设置】，点击切换上网卡到卡1\n4. 打开网页浏览，并观察状态栏图标",
+    "期望结果": "",
+    "case_index": 9
+  },
+  {
+    "用例名": "检查数据切换-移动网络设置",
+    "前置条件": "1. 测试机插双卡，设置默认数据卡为卡1",
+    "测试步骤": "1. “设置->【SIM卡与网络设置】->【SIM2】->【移动网络设置】->【移动数据】，点击打开SIM2移动数据开关\n2. 打开网页浏览，并观察状态栏图标\n3. “设置->【SIM卡与网络设置】->【SIM1】->【移动网络设置】->【移动数据】，点击打开SIM1移动数据开关\n4. 打开网页浏览，并观察状态栏图标",
+    "期望结果": "",
+    "case_index": 10
+  },
+  {
+    "用例名": "测试机器已打开OMAPI接口功能",
+    "前置条件": "1.测试机已开启开发者模式\n2.（本测试用例适用MTK项目搭载android T及以后系统的机器）",
+    "测试步骤": "1.测试机连接PC机， 打开CMD 输入如下查询指令。\nadb shell ls /vendor/bin/hw | findstr secure_element",
+    "期望结果": "",
+    "case_index": 11
+  },
+  {
+    "用例名": "检查重开机系统时间更新-IMS",
+    "前置条件": "1.测试机进入SIM卡与网络设置->点击SIM卡->首选网络类型：设置5G项目5G优先，4G项目4G优先，3G项目不测试此条case\n2.测试机测试机插入单卡中国移动卡（联通卡不支持NITZ）\n3.终端测试前去掉unlock界面；\n4.断开WiFi连接\n5.准备一台日期时间已正确显示的辅助机",
+    "测试步骤": "1.关闭测试机器WiFi和移动网络数据；\n2.设置中关闭自动更新时区、日期开关，设置非本地时区香港和时间（与辅助机时间不一致）；\n3.重启机器后，进入设置->【系统】->时间和日期打开自动时区更新、日期开关；\n4.查看手机系统时间是否更新正确",
+    "期望结果": "",
+    "case_index": 12
+  },
+  {
+    "用例名": "检查首次开机最高制式网络NTP方式系统时间及时区更新",
+    "前置条件": "1.测试机进入SIM卡与网络设置->点击SIM卡->首选网络类型：设置5G项目5G优先，4G项目4G优先，3G项目3G优先\n2.测试机插入单卡中国联通SIM卡，支持IMS；\n3.终端测试前去掉unlock界面；\n4.刷机或重置手机；\n5.断开WiFi连接\n6.准备一台日期时间已正确显示的辅助机",
+    "测试步骤": "1.重置测试机器（恢复出厂设置），跳过开机向导过程中不要插卡或者连接WiFi；\n2.OOBE过程中，设置非当地语言和地区, 语言选择English,地区选择任意出货海外国家，完成开机向导；\n3.插入SIM卡并开启SIM卡数据，进入设置->【系统】->时间和日期查看系统时间及时区更新状况",
+    "期望结果": "",
+    "case_index": 13
+  },
+  {
+    "用例名": "检查UE WIFI网络NTP方式系统时间及时区更新",
+    "前置条件": "1.终端测试前去掉unlock界面（无锁屏）；\n2.刷机或重置手机；\n3.手机不插SIM卡\n4.准备一台日期时间已正确显示的辅助机",
+    "测试步骤": "1.重置测试机器（恢复出厂设置），跳过开机向导过程中不要插SIM卡且不要连接WiFi；\n2.OOBE过程中，设置非当地语言和地区,语言选择English,地区选择Indonesia，完成开机向导；\n3.连接可用WiFi，进入设置->【系统】->时间和日期查看系统时间及时区更新状况",
+    "期望结果": "",
+    "case_index": 14
+  },
+  {
+    "用例名": "检查UE双卡最高制式热插拔漫游驻网功能 Check the UE highest standard hot-swappable roaming network function",
+    "前置条件": "1.手机SIM卡设置最高制式:5G项目测试5G，4G项目测试4G，3G项目测试3G\n1. Mobile phone SIM card setting highest standard: 5G project test 5G, 4G project test 4G, 3G project test 3G;\n2.测试机双卡插入漫游SIM卡，支持国际漫游（Note: 单卡项目插入单漫游卡测试，如果只有一张漫游卡插入一张卡测试）；\n2. testing device dual card in-place test, support international roaming（Note: Single card item insert single roaming card test）;\n3.终端测试前去掉unlock界面；\n3. Remove the unlock interface before the end point test;\n4.关闭数据开关；\n4. Turn off the data switch;",
+    "测试步骤": "1.热拔插SIM卡；\n1. Hot->swappable SIM card;\n2.检查SIM卡重新插入手机后双卡信号栏UI显示；\n2. Check the UI display of the dual->card signal bar after reinserting the SIM card into the phone;",
+    "期望结果": "",
+    "case_index": 15
+  },
+  {
+    "用例名": "检查UE卡1最高制式开机漫游驻网功能 Check the UE SIM 1 maximum standard boot roaming network function",
+    "前置条件": "1.测试机卡1插入漫游SIM卡，支持国际漫游；\n2.终端测试前去掉unlock界面；\n3.关闭数据开关；\n4.设置手机卡1制式为手机支持的最高制式：5G项目测试5G，4G项目测试4G，3G项目测试3G\n1. testing device card 1 into the roaming SIM card, support international roaming;\n2. Remove the unlock interface before the end point test;\n3. Turn off the data switch;\n4. Set the SIM card 1 standard as the highest standard supported by the phone: 5G project tests 5G, 4G project tests 4G, and 3G project tests 3G.\n5.关闭手机",
+    "测试步骤": "1.长按power键开机；\n2.检查开机后卡1信号栏UI显示；\n3.漫游驻网成功后，进入SIM卡与网络设置->【选择SIM1】->【首选网络类型】-> 首选网络类型由【5G】->【4G】->【3G】->【2G】，每切换一次制式都需要点击确定，间隔1mins\n1. Press and hold the power button to power on;\n2. Check the UI display of the card 1 signal bar after startup;\n3. After successful roaming, enter SIM card and network settings ->【 Select SIM1】->Preferred network type: Preferred network type ranges from 【5G】->【4G】->【3G】->【2G】, and click OK every time the standard is switched, with an interval of 1 minute",
+    "期望结果": "",
+    "case_index": 16
+  },
+  {
+    "用例名": "5G SA下单条短信发送&接收能力",
+    "前置条件": "1.测试机插入SIM卡（国内使用联通卡），SIM卡状态不欠费及通话短信功能未受限\n2.辅助机一台插入SIM卡（国内使用联通卡），SIM卡状态不欠费及通话短信功能未受限",
+    "测试步骤": "1.测试机打开通话拨号盘->输入*#*#9646633#*#*->选择Nr Configure->关闭NSA（开关置灰显示关闭）->打开SA（开关高亮显示开启）->进入设置->【SIM卡与网络】设置->选择【SIM卡】->【首选网络类型】，选择【仅2G/3G/4G/5G优先】，重启手机\n2.设置测试机语言为本地语言（国内为中文）,打开短信app，将测试机号码设置为接收号码，辅助机给测试机发送一条短信,内容为\"一二三四五六七\"\n3.设置测试机语言为不同且非当地语言（国内修改为英文)，修改方式：设置->【系统】->【语言和输入法】->【语言其它语言】->【English（United States）】,打开短信app，将测试机号码设置为接收号码，辅助机给测试机发送一条短信,内容为\"one two three four five six seven\"\n4.设置测试机语言为本地语言（国内为中文）,打开短信app，将辅助机号码设置为接收号码，测试机给辅助机发送一条短信,内容为\"一二三四五六七\"\n5.设置测试机语言为不同且非当地语言（国内修改为英文)，修改方式：设置->【系统】->【语言和输入法】->【语言其它语言】->【English（United States）】,打开短信app，将辅助机号码设置为接收号码，测试机给辅助机发送一条短信,内容为\"one two three four five six seven\"",
+    "期望结果": "",
+    "case_index": 17
+  },
+  {
+    "用例名": "4G下单条短信发送&接收能力",
+    "前置条件": "1.测试机插入SIM卡（国内使用联通卡），SIM卡状态不欠费及通话短信功能未受限\n2.辅助机一台插入SIM卡（国内使用联通卡），SIM卡状态不欠费及通话短信功能未受限",
+    "测试步骤": "1.测试机进入设置->【SIM卡与网络设置】->选择【SIM卡】->【首选网络类型】，选择仅2G/3G/4G优先,且当前设置页设置VOLTE开关为高亮开启状态\n2.设置测试机语言为本地语言（国内为中文）,打开短信app，将测试机号码设置为接收号码，辅助机给测试机发送一条短信,内容为\"一二三四五六七\"\n3.设置测试机语言为不同且非当地语言（国内修改为英文，修改方式：设置->【系统】->【语言和输入法】->【语言其它语言】->English（United States）,打开短信app，将测试机号码设置为接收号码，辅助机给测试机发送一条短信,内容为\"one two three four five six seven\"",
+    "期望结果": "",
+    "case_index": 18
+  },
+  {
+    "用例名": "确保能收到三方应用台发送的验证短信",
+    "前置条件": "1.插入当地SIM卡（国内使用联通卡），SIM卡状态不欠费及通话短信功能未受限\n2.SIM卡驻网成功，信号显示满格，有上下行数据图标\n3.手机安装今日头条app",
+    "测试步骤": "1.打开今日头条，点击登录，选择短信验证\n2.点击发送验证码",
+    "期望结果": "",
+    "case_index": 19
+  },
+  {
+    "用例名": "5G SA下内容为图片的彩信发送&接收能力",
+    "前置条件": "1.测试机插入SIM卡（国内使用联通卡），SIM卡状态不欠费及通话短信功能未受限\n2.辅助机一台插入SIM卡（国内使用联通卡），SIM卡状态不欠费及通话短信功能未受限",
+    "测试步骤": "彩信内容：内容为图片+“This is a test message”+表情符号（点击标签按钮添加）的彩信，测试机接收后点击下载\n\n1.测试机打开通话拨号盘，输入*#*#9646633#*#*->选择Nr Configure->关闭NSA（开关置灰显示关闭）->打开SA（开关高亮显示开启）->进入设置->【SIM卡与网络设置】->选择【SIM卡】->【首选网络类型】->选择[仅2G/3G/4G/5G优先]，重启手机\n2.辅助机打开短信app，将测试机号码设置为接收号码，辅助机给测试机发送一条彩信\n3.将辅助机卡替换为移动运营商卡，打开短信app，将测试机号码设置为接收号码，辅助机给测试机发送一条彩信\n4.将测试机打开短信app，将辅助机号码设置为接收号码，测试机给辅助机发送一条彩信\n5.将测试机卡替换为移动运营商卡，打开短信app，将辅助机号码设置为接收号码，测试机给辅助机发送一条彩信",
+    "期望结果": "",
+    "case_index": 20
+  },
+  {
+    "用例名": "4G网络下发送&接收内容为图片的彩信",
+    "前置条件": "1.测试机插入SIM卡（国内使用联通卡），SIM卡状态不欠费及通话短信功能未受限\n2.辅助机一台插入SIM卡（国内使用联通卡），SIM卡状态不欠费及通话短信功能未受限\n3.准备2张移动运营商卡",
+    "测试步骤": "彩信内容：内容为图片+“This is a test message”+表情符号（点击标签按钮添加）的彩信，测试机接收后点击下载\n\n1.测试机进入设置->【SIM卡与网络设置】->【SIM卡】->【首选网络类型】，选择【仅2G/3G/4G优先】,且当前设置页设置VOLTE开关为高亮开启状态\n2.辅助机打开短信app，将测试机号码设置为接收号码，辅助机给测试机发送一条彩信\n3.将辅助机卡替换为移动运营商卡，打开短信app，将测试机号码设置为接收号码，辅助机给测试机发送一条彩信\n4.将测试机打开短信app，将辅助机号码设置为接收号码，测试机给辅助机发送一条彩信\n5.将测试机卡替换为移动运营商卡，打开短信app，将辅助机号码设置为接收号码，测试机给辅助机发送一条彩信",
+    "期望结果": "",
+    "case_index": 21
+  },
+  {
+    "用例名": "用户插入SIM卡后可以自行设定相应的网络模式，优选驻留对应的网络上",
+    "前置条件": "1.准备2张有效的SIM\n2.当前测试网络已经覆盖测试机最高网络制式\n3.不支持双卡的设备只需要插入单SIM卡\n4.SIM卡和网络均支持volte或者vonr功能\n5.本用例依据SIM卡支持的网络行为测试,非5G手机不用测试步骤4",
+    "测试步骤": "1.插入双卡，默认SIM卡1为数据卡\n2.进入SIM卡与网络设置\n3.双卡均设置相同的网络模式\n4.设置网络类型为【2G/3G/4G/5G自动选择】，尝试使用浏览器上网，SIM1,SIM2分别进行MO,MT CALL, VoLTE MO,MT CALL一次\n5.设置网络类型为【2G/3G/4G自动选择】，尝试使用浏览器上网，SIM1,SIM2分别进行MO,MT CALL, VoLTE MO,MT CALL一次\n6.设置网络类型为【2G/3G自动选择】，尝试使用浏览器上网，SIM1,SIM2分别进行MO,MT CAL一次\n7.设置网络类型为【仅3G】，尝试使用浏览器上网，SIM1,SIM2分别进行MO,MT CALL一次\n8.设置网络类型为仅【2G】，SIM1,SIM2分别进行MO,MT CALL一次",
+    "期望结果": "",
+    "case_index": 22
+  },
+  {
+    "用例名": "检查测试网页数据链接-IPV4/6",
+    "前置条件": "1. 准备移动+联通运营商的卡\n2. 测试机插入移动SIM卡",
+    "测试步骤": "1. 设置->【SIM卡与网络设置】->【SIM1】->【接入点名称】->【通用】，点击通用下方栏位检查测试机APN协议是否为IPv4/IPv6\n2. 进入手机浏览器输入测试网站（http://testipv6.com/）地址并点击加载\n3. 等待测试结束，点击测试项目选项检查IPV4域名连接测试是否成功\n4. 检查IPV6域名连接测试是否成功\n5. 更换联通运营商的SIM卡，重复步骤1->4",
+    "期望结果": "",
+    "case_index": 23
+  },
+  {
+    "用例名": "检查测试网页数据链接-IPV4 only",
+    "前置条件": "1. 准备移动+联通运营商的卡\n2. 测试机插入移动SIM卡",
+    "测试步骤": "1. 设置->【SIM卡与网络设置】->【SIM1】->【接入点名称】->【通用】，点击通用下方栏位修改APN协议类型为IPV4，然后点击界面右上角三个点图标点击保存，弹框提醒后点击确定\n2. 进入手机浏览器输入测试网站（http://testipv6.com/）地址并点击加载\n3. 等待测试结束，点击测试项目选项检查IPV4域名连接测试是否成功\n4. 检查IPV6域名连接测试是否成功",
+    "期望结果": "",
+    "case_index": 24
+  },
+  {
+    "用例名": "检查VPN快捷下拉菜单",
+    "前置条件": "1. 准备测试机和对比机，均插入同一运营商的SIM卡\n2. 安装VPN软件（下载链接：https://transsioner.feishu.cn/file/BwfsbIHFFopa7XxO718clrmanbe ，进入应用后点击配置，选择URL，复制URL网址：https://sub1.smallstrawberry.com/api/v1/client/subscribe?token=798d43ca8e434b588f3d633debeb240e到URL栏位后点击确认点击保存）",
+    "测试步骤": "1. 检查下拉【快捷菜单】->【更多开关】，添加VPN快捷方式（部分手机可能无此开关，仅需关注连接VPN后状态栏显示即可）\n2. 从下拉快捷菜单激活VPN，并打开海外网页浏览（www.google.com）\n3. 从下拉快捷菜单去激活VPN，并打开海外网页浏览（www.google.com）",
+    "期望结果": "",
+    "case_index": 25
+  },
+  {
+    "用例名": "检查蜂窝USB网络共享功能检查",
+    "前置条件": "1.5G或4G覆盖区域5G/4G/3G/2G覆盖正常；\n2.测试机双卡在位测试，注册蜂窝网络，默认数据卡选择卡1；\n3.终端测试前去掉unlock界面；\n4.设置手机双卡制式为最高制式\n5.单卡机器插入单卡测试",
+    "测试步骤": "1.手机双卡注册蜂窝网络；\n2.手机通过USB连接PC，PC不连接任何网络，设置->【热点和网络共享】->打开【USB网络共享】开关；\n3.PC端打开一个网页",
+    "期望结果": "",
+    "case_index": 26
+  },
+  {
+    "用例名": "检查UE蜂窝热点超出限额后提醒并关闭热点或仅提醒功能",
+    "前置条件": "1.5G或4G覆盖区域5G/4G/3G/2G覆盖正常；\n2.测试机双卡在位测试，注册蜂窝网络，默认数据卡选择卡1；\n3.终端测试前去掉unlock界面；\n4.设置手机双卡制式为最高制式\n5.单卡机器插入单卡测试",
+    "测试步骤": "1.手机双卡注册蜂窝网络；\n2.设置->【热点和网络共享】->【打开个人热点】->【连接管理】->【单次流量限额】->打开单次流量限额开关并设置流量限额大小为1M->超额后操作设置为关闭并提醒；\n3.配合机连接测试机热点，并使流量超额，观察测试机是否提醒并关闭热点；\n4.重新打开热点开关，设置超额后操作为仅提醒；\n5.配合机连接测试机热点，并使流量超额，观察测试机是否提醒且热点不会关闭",
+    "期望结果": "",
+    "case_index": 27
+  },
+  {
+    "用例名": "检查UE双卡LTE蜂窝热点功能",
+    "前置条件": "1.LTE覆盖区域4G/3G/2G覆盖正常；\n2.测试机双卡在位测试，默认数据卡选择卡1，支持IMS；\n3.终端测试前去掉unlock界面；\n4.设置手机双卡制式为4G优先\n5.单卡机器插入单卡测试",
+    "测试步骤": "1.测试机双卡注册LTE网络；\n2.下拉状态栏打开热点开关，设置->【热点与连接】->个人热点主界面点击分享热点；\n3.配合机不插卡WLAN设置主界面点击扫一扫图标扫描测试机热点二维码连接热点；\n4.配合机打开谷歌浏览器，搜索栏输入www.baidu.com点击加载百度首页；\n5.下拉状态栏关闭测试机热点开关，切换默认数据卡到卡2后，设置->【热点与连接】->个人热点主界面打开个人热点开关；\n6.配合机不插卡打开WLAN设置界面】->【高级选项】（OS14.5及以后为更多设置）->【已保存的网络】->选择保存的测试机热点网络点击取消保存然后返回WLAN设置界面，选择测试机热点网络输入测试机热点密码连接热点；\n7.配合机打开谷歌浏览器，搜索栏输入www.baidu.com点击加载百度首页",
+    "期望结果": "",
+    "case_index": 28
+  },
+  {
+    "用例名": "插入双SIM卡到测试机后，用户开关该sim操作正常",
+    "前置条件": "1.准备2张有效的SIM卡（移动+联通）\n2.当前测试网络区域已经覆盖测试机最高网络制式（当前SIM卡运营商已覆盖5G,4G网络）\n3.当前测试设备支持双卡功能（不支持双卡的手机不需要测试该用例）",
+    "测试步骤": "1.插入2张有效的SIM卡到卡槽1，卡槽2，开机，\n2.点击设置菜单页面->点击【SIM卡与网络设置】菜单，设置默认上网卡为SIM1\n3.点击当前上网卡，对“启用卡”菜单进行关闭操作，然后打开内置浏览器，访问www.baidu.com网站\n4.重新打开已关闭的sim卡，观察该SIM卡信号图标\n5.点击当前非数据卡进入SIM卡设置页面，对“启用卡“菜单”进行关闭操作，打开内置浏览器，访问www.baidu.com网站\n6.重新打开该sim卡，\n7.打开内置浏览器上网，访问www.baidu.com网站\n备注：展锐平台的机器关闭SIM卡，不再显示该卡为空信号图标",
+    "期望结果": "",
+    "case_index": 29
+  },
+  {
+    "用例名": "用户可以进入对应SIM卡的流量使用页面查看对应阶段的数据使用状态",
+    "前置条件": "1.准备2张有效的SIM卡（移动+联通）\n2.当前测试网络区域已经覆盖测试机最高网络制式（当前SIM卡运营商已覆盖5G,4G网络）\n3.不支持双卡的设备只需要插入单SIM卡\n4.默认设置上网卡/数据卡为SIM卡1",
+    "测试步骤": "1.仅插入单张sim卡到测试机卡槽1\n2.进入对应的SIM卡设置页面->点击应用数据流量菜单\n3.插入双卡\n4.分别进入对应的SIM卡设置页面->点击应用数据流量菜单",
+    "期望结果": "",
+    "case_index": 30
+  },
+  {
+    "用例名": "用户关闭4G通话后,UE注册网络无异常",
+    "前置条件": "1.准备2张有效的SIM（移动+联通）\n2.当前测试网络区域已经覆盖测试机最高网络制式（当前SIM卡运营商已覆盖5G,4G网络）\n3.不支持双卡的设备只需要插入单SIM卡\n4.UE对应的SIM卡已关闭VoLTE或者4G通话功能",
+    "测试步骤": "1.插入双卡\n2.进入对应的数据SIM卡设置页面->【VoLTE】菜单或者【4G通话】->开关关闭->再次进入非数据SIM卡设置页面->【VoLTE】菜单或者【4G通话】->开关关闭->检查状态栏信号图标\n3.重新热插拔SIM卡一次后再次热插入所有SIM卡\n4.重启手机一次，再次检查UE注册网络行为\n5.进入对应的数据SIM卡设置页面->分别对数据卡和非数据开启VoLTE或者4G通话功能\n6.热插拔SIM卡一次后重新插入SIM卡，分别使用数据卡和非数据卡拨打一通客服电话（移动拨打10086，联通拨打10010）",
+    "期望结果": "",
+    "case_index": 31
+  },
+  {
+    "用例名": "设置SIM卡PIN码开启，需要输入相关SIM PIN密码",
+    "前置条件": "1.准备2张有效的SIM卡插入到UE中（移动+联通）\n2.当前测试网络区域已经覆盖测试机最高网络制式（当前SIM卡运营商已覆盖5G,4G网络）\n3.不支持双卡的设备只需要插入单SIM卡\n4.SIM卡未开启过PIN密码功能，且从运营商已获取到PIN，PUK密码",
+    "测试步骤": "1.设置PIN码：打开【设置】->【安全或者密码与安全】->【高级选项】->【SIM卡锁定】->开启，分别开启SIM1,SIM2的锁定功能\n2.输入错误的PIN码\n3.输入正确的pin密码\n4.重新插入带有PIN码锁的SIM卡，检查当前窗口\n5.输入错误的PIN码（3次）后，弹出PUK密码页面，并输入PUK密码。测试之前需要知晓测试卡的PUK码（有些SIM卡卡拖上有PUK密码）\n6.重启手机，检查SIM卡 PIN密码页面，并输入正确的密码",
+    "期望结果": "",
+    "case_index": 32
+  },
+  {
+    "用例名": "用户重启手机或热插SIM卡时在PIN码界面检查测试机信号状态及提示语正常",
+    "前置条件": "1.准备2张有效的SIM卡插入到UE中（移动+联通）\n2.当前测试网络区域已经覆盖测试机最高网络制式（当前SIM卡运营商已覆盖5G,4G网络）\n3.不支持双卡的设备只需要插入单SIM卡\n4.已获取到PIN，PUK密码\n5.对应双SIM卡已开启PIN密码",
+    "测试步骤": "1.热插拔SIM卡，弹出SIM卡PIN密码输入页面\n2.点击PIN密码窗口页面下的紧急呼叫\n3.输入一正常号码，点击拨号\n4.输入一紧急号码，点击拨号\n5.紧急呼救中，拔出所有SIM卡\n6.紧急呼叫结束后，再次重新插入SIM卡",
+    "期望结果": "",
+    "case_index": 33
+  },
+  {
+    "用例名": "验证5G 快捷图标开关后，首选网络类型模式显示正常",
+    "前置条件": "1.准备2张有效的SIM卡插入到测试机中（移动+联通）\n2.仅支持单卡项目只需要插入一张SIM卡（联通卡）\n3.本用例需要支持5G功能的测试机，不支持5G功能的测试机不需要测试。\n4.本用例只在Android T,U系统支持(5G项目支持)，参考SPD文档描述“”5G快捷开关“，例如：从S版本升级到T版本后也需要检查该项功能",
+    "测试步骤": "1.无卡状态下，下拉控制中心->更多“编辑快捷开关”->添加\"5G优先\"图标到托盘\n2.插入测试SIM卡（双卡手机插入双卡），进入SIM卡设置->进入对应SIM卡设置页面->首选网络类型：检查对应数据卡和非数据卡的首选网络类型\n3.下拉控制中心面板，点击“5G ”图标成灰色状态，检查对应数据卡的首选网络模式和状态栏\n4.下拉控制中心面板，切换移动数据图标到另一张SIM卡，再次检查控制中心面板的5G图标颜色以及状态栏\n5.进入【设置】->【SIM卡与网络设置】->默认数据卡/上网络卡，再次切换一次数据卡，下拉控制中心面板，检查5G图标开关颜色状态以及状态栏\n6.仅插入单张SIM卡（联通卡），进入SIM卡设置->进入对应SIM卡设置页面->首选网络类型:设置首选网络模为3G优先或者仅3G，下拉控制中心面板，检查对应的5G图标状态及颜色\n7.再次点击“5G”优先，检查5G开关状态以及状态栏\n8.再次下拉控制面板，点击\"5G\"优先图标成灰色状态后，进入【设置】->【SIM卡与网络设置】->默认数据卡/上网络卡->进入对应SIM卡设置页面->【首选网络类型】并查看",
+    "期望结果": "",
+    "case_index": 34
+  },
+  {
+    "用例名": "检查单卡机器不能出现双卡功能交互菜单",
+    "前置条件": "1.准备一张有效的SIM卡（联通或者移动）,\n2.当前测试网络区域已经覆盖测试机最高网络制式（当前SIM卡运营商已覆盖5G,4G网络）\n3.此用例只适合单卡机器\n4.手机存储若干联系人和SIM卡联系人",
+    "测试步骤": "1.测试机已开机，不插SIM卡，进入Sim卡与网络设置页面，检查主页面UI菜单\n2.进入【Sim卡与网络设置】->【网络优化或者智能网络优化】页面，检查主页面UI菜单\n3.插入一张有效SIM卡\n4.进入Sim卡&网络设置页面，检查默认卡设置项\n5.进入网络优化页面，检查主页面UI菜单\n6.进入【Sim卡与网络设置】->【更多设置】->【SIM卡工具包】（os14及以上支持）\n7.返回主桌面，找到STK（SIM卡工具包）应用APP图标点击进入",
+    "期望结果": "",
+    "case_index": 35
+  },
+  {
+    "用例名": "T卡包升级后SIM卡联系人加载正常",
+    "前置条件": "1.2张sim卡(联通+移动)，\n2.SIM1保存10个或者10个以上的联系人，SIM2保存10个或者10个以上的联系人\n3,测试机已存储1个手机联系人\n4.仅支持单卡机器项目只需要插入1张SIM卡\n7.已准备好T卡升级包",
+    "测试步骤": "1.插入双卡\n2.进入系统设置->【系统升级】（更新）：使用本地T卡包进行系统升级\n3.升级完成后重启手机进入桌面系统\n4.立即点击联系人APP页面，检查所有联系人加载数量",
+    "期望结果": "",
+    "case_index": 36
+  },
+  {
+    "用例名": "用户可以删除手机联系人和SIM卡联系人",
+    "前置条件": "1.测试机存储500个手机联系人（通过填充工具导入到手机中。填充工具获取链接：https://transsioner.feishu.cn/drive/folder/N6Wtf32T6lU0gNdgXH6cUyX3ngc?from=from_copylink）\n2.2张SIM卡分别存储100个SIM卡联系人\n3.仅支持单卡机器项目只需要插入1张SIM卡\n4.已支持全选联系人操作（长按联系人-多选：勾选全部联系人）",
+    "测试步骤": "1.插入2张有效的SIM卡(联通+移动)到手机，开机\n2.开机完成后进入联系人APP页面\n3.等待UE加载完所有联系人\n4.全选删除所有联系人\n5.热插拔一次SIM卡",
+    "期望结果": "",
+    "case_index": 37
+  },
+  {
+    "用例名": "设置默认存储联系人位置到SIM卡后拔出SIM卡，重新新建联系人成功，且存储默认设定在手机",
+    "前置条件": "1.准备2张有效的SIM卡（移动+联通）\n2.手机内无任何联系人，SIM卡中无任何联系人存储\n3.仅支持单卡测试机器项目只需要插入1张SIM卡\n4.tOS16.1项目新增一个提示“”未设置默认账号“--真实指向的默认存储为手机联系人",
+    "测试步骤": "1.插入两张正常物理SIM卡，默认数据卡1\n2.进入联系人APP设置页面->【默认存储】\n3.设置默认存储为手机联系人\n4.返回联系人页面创建一个手机联系人A并保存\n5.再次返回设置存储页面->【设定存储为数据卡】。\n6.拨卡后，创建一联系人B并保存\n7.重新插入原SIM卡，检查默认存储设定\n8.再次返回设置存储页面->设【定存储为非数据卡】。\n9.拨卡后，创建一联系人C并保存\n10.重新插入原SIM卡，检查默认存储设定",
+    "期望结果": "",
+    "case_index": 38
+  },
+  {
+    "用例名": "设置默认存储联系人位置到SIM1,SIM2正常后重启手机后默认存储设定正常",
+    "前置条件": "1.准备2张有效的SIM卡（移动+联通）\n2.手机内无任何联系人，SIM卡中无任何联系人存储\n3.仅支持单卡测试机器项目只需要插入1张SIM卡\n4.Google通讯录不支持添加sim卡联系人",
+    "测试步骤": "1.插入两张正常物理SIM卡，默认数据卡1\n2.进入联系人APP对应设置菜单\n3.点击默认存储菜单，选择为SIM1卡\n4.返回联系人页面，新建一联系人Csim1，输入对应电话号码和电子邮件并保存\n5.重新进入联系人设置页面\n6.点击默认存储菜单，选择为SIM2卡\n7.返回联系人页面，新建一联系人Csim2，输入对应电话号码和电子邮件并保存\n8.不换卡条件下重启手机成功后，等待SIM卡联系人加载完成后，再次进入联系人存储设定页面，进入联系人存储设定页面，检查联系人默认存储位置",
+    "期望结果": "",
+    "case_index": 39
+  },
+  {
+    "用例名": "重启手机后STK（SIM卡工具包）能正常启动",
+    "前置条件": "1.准备2张有效的SIM卡（移动+联通）\n2.5G测试手机或者4G测试手机1台\n3.不支持双卡的测试机只需插入一张SIM卡\n4.SIM pin 已经开启",
+    "测试步骤": "1. 插入双SIM卡，按开机键开机，进入系统，\n2.在桌面上找到【SIM卡工具包】APP,点击对应的SIM1,SIM2对应的STK主菜单\n3.按开机键进行重启手机\n4.成功进入系统桌面后，点击对应的STK菜单\n5.按开机键进行关机，关机中拔出SIM卡\n6.SIM卡进行一次互换卡槽操作后，再次开机，开机进行中插入SIM卡\n7.成功进入系统桌面后，点击对应的STK菜单",
+    "期望结果": "",
+    "case_index": 40
+  },
+  {
+    "用例名": "2张卡进行热插拔sim卡，开关飞行模式后，STK（SIM卡工具包）启动正常",
+    "前置条件": "1.准备2张有效的SIM卡（移动+联通）\n2.SIM pin密码功能已开启（设置-安全或者密码与安全-高级选项-SIM卡锁定：对应SIM卡开关开启）\n3.5G手机或者4G手机\n4.不支持双卡的测试机无需测试该case",
+    "测试步骤": "1.已插入双SIM卡(移动+联通卡),打开飞行模式开关\n2.点击STK 应用（桌面图标下找到SIM卡tool app）,尝试点击启动\n3.关闭飞行， 再次点击STK APP\n4.拨出sim卡，再次点击STK App\n5.重新插入SIM卡，等待测试机注册网络\n6.再次点击STK App图标",
+    "期望结果": "",
+    "case_index": 41
+  },
+  {
+    "用例名": "STK（SIM卡工具包）各级子菜单能够响应对应的功能反馈",
+    "前置条件": "1.准备2张有效的SIM卡（移动+联通）已插入测试机中",
+    "测试步骤": "1.打开【SIM卡工具包】应用\n2.点击进入SIM1 对应的STK主页面，逐级点击各项子菜单,逐级查看各项菜单，点击左上角的回退箭头按钮\n3.再次进入STK主页面，点击SIM2对应的STK主页面，按照步骤2操作一次",
+    "期望结果": "",
+    "case_index": 42
+  },
+  {
+    "用例名": "检查5G网络下国际通用ECC list遍历",
+    "前置条件": "1. 测试SIM卡开通支持VoNR（5G通话业务）；\n2. SIM配置：卡1 移动 5G + 卡2 联通 5G",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一；\n2. 测试机器卡一语音拨打紧急号码112/911/999；\n3. 测试机器卡二语音拨打紧急号码112/911/999；",
+    "期望结果": "",
+    "case_index": 43
+  },
+  {
+    "用例名": "检查5G SA语音通话功能（主被叫）",
+    "前置条件": "1. 测试SIM卡开通支持VoNR（5G通话业务）；\n2. SIM配置：卡1 移动 5G + 卡2 联通 5G（单卡机器仅插入单卡测试）\n3. 测试机器和辅助机器网络模式设置5G优先；",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一\n2. 打开电话应用，拨号盘界面输入有效辅助机器号码；\n3. 点击卡一语音拨号按钮；\n4. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n5. 打开电话应用，拨号盘界面输入有效辅助机器号码；点击卡二语音拨号按钮；\n6. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n7. 辅助机语音通话回拨测试机卡1号码，测试机接通来电，保持10s；测试机器端挂断通话；\n8. 辅助机语音通话回拨测试机卡2号码，测试机接通来电，保持10s；测试机器端挂断通话；",
+    "期望结果": "",
+    "case_index": 44
+  },
+  {
+    "用例名": "检查5G SA视频通话功能（主被叫）",
+    "前置条件": "1. 测试SIM卡开通支持VoNR（5G通话业务）；\n2. SIM配置：卡1 移动 5G + 卡2 联通 5G（单卡机器仅插入单卡测试）\n3. 测试机器和辅助机器网络模式设置5G优先；\n4. 设置中运营商视频通话功能开启；",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一\n2. 打开电话应用，拨号盘界面输入有效辅助机器号码；\n3. 点击视频拨号按钮，选择卡一拨号；\n4. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n5. 打开电话应用，拨号盘界面输入有效辅助机器号码； 点击视频拨号按钮，选择卡二拨号；\n6. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n7.辅助机视频通话回拨测试机卡1号码，测试机接通来电，保持10s；测试机器端挂断通话；\n8.辅助机视频通话回拨测试机卡2号码，测试机接通来电，保持10s；测试机器端挂断通话；",
+    "期望结果": "",
+    "case_index": 45
+  },
+  {
+    "用例名": "检查5G NSA语音通话功能（主被叫）",
+    "前置条件": "1. 测试SIM卡开通支持VoNR（5G通话业务）；\n2. SIM配置：卡1 移动 5G + 卡2 移动 5G（单卡机器仅插入单卡测试）\n3. 测试机器和辅助机器网络模式设置5G优先；\n4. 工模中关闭SIM1 & SIM2 SA；SIM1 & SIM2 Band Mode设置LTE Band仅勾选保留Band3；",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一\n2. 打开电话应用，拨号盘界面输入有效辅助机器号码；\n3. 点击卡一语音拨号按钮；\n4. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n5. 上网卡切换到卡二；打开电话应用，拨号盘界面输入有效辅助机器号码；点击卡二语音拨号按钮；\n6. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n7. 辅助机语音通话回拨测试机卡1号码，测试机接通来电，保持10s；测试机器端挂断通话；\n8. 辅助机语音通话回拨测试机卡2号码，测试机接通来电，保持10s；测试机器端挂断通话；",
+    "期望结果": "",
+    "case_index": 46
+  },
+  {
+    "用例名": "检查4G语音通话功能（主被叫）",
+    "前置条件": "1. 测试SIM卡开通支持VoLTE（4G通话业务）；\n2. SIM配置：卡1 移动 4G + 卡2 联通 4G（单卡机器仅插入单卡测试）；\n3. 测试机器和辅助机器的网络模式设置为4G优先；",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一\n2. 打开电话应用，拨号盘界面输入有效辅助机器号码；\n3. 点击卡一语音拨号按钮；\n4. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n5. 打开电话应用，拨号盘界面输入有效辅助机器号码；点击卡二语音拨号按钮；\n6. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n7. 辅助机语音通话回拨测试机卡1号码，测试机接通来电，保持10s；测试机器端挂断通话；\n8. 辅助机语音通话回拨测试机卡2号码，测试机接通来电，保持10s；测试机器端挂断通话；",
+    "期望结果": "",
+    "case_index": 47
+  },
+  {
+    "用例名": "检查4G视频通话功能（主被叫）",
+    "前置条件": "1. 测试SIM卡开通支持VoLTE（4G通话业务）；\n2. SIM配置：卡1 移动 4G + 卡2 联通 4G（单卡机器仅插入单卡测试）\n3. 测试机器和辅助机器网络模式设置4G优先；\n4. 设置中运营商视频通话功能开启；",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一\n2. 打开电话应用，拨号盘界面输入有效辅助机器号码；\n3. 点击视频拨号按钮，选择卡一拨号；\n4. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n5. 打开电话应用，拨号盘界面输入有效辅助机器号码； 点击视频拨号按钮，选择卡二拨号；\n6. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n7.辅助机视频通话回拨测试机卡1号码，测试机接通来电，保持10s；测试机器端挂断通话；\n8.辅助机视频通话回拨测试机卡2号码，测试机接通来电，保持10s；测试机器端挂断通话；",
+    "期望结果": "",
+    "case_index": 48
+  },
+  {
+    "用例名": "检查3G CS语音通话功能（主被叫）",
+    "前置条件": "1. SIM配置：卡1 联通 3G + 卡2 联通 3G（单卡机器仅插入单卡测试）\n2. 测试机器和辅助机器网络模式设置3G优先；",
+    "测试步骤": "1. 测试机器卡槽一插入联通SIM，卡槽二插入联通SIM；上网卡设置为卡一\n2. 打开电话应用，拨号盘界面输入有效辅助机器号码；\n3. 点击卡一语音拨号按钮；\n4. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n5. 打开电话应用，拨号盘界面输入有效辅助机器号码；点击卡二语音拨号按钮；\n6. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n7. 辅助机语音通话回拨测试机卡1号码，测试机接通来电，保持10s；测试机器端挂断通话；\n8. 辅助机语音通话回拨测试机卡2号码，测试机接通来电，保持10s；测试机器端挂断通话；",
+    "期望结果": "",
+    "case_index": 49
+  },
+  {
+    "用例名": "检查语音通话与视频通话切换功能验证",
+    "前置条件": "1. 测试SIM卡开通支持VoLTE（4G通话业务）；\n2. SIM配置：卡1 移动 4G + 卡2 联通 4G（单卡机器仅插入单卡测试）\n3. 测试机器和辅助机器网络模式设置4G优先；\n4. 设置中运营商视频通话功能开启；",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一；\n2. 辅助机器语音拨打测试机器卡一；\n3. 测试机器接听来电；\n4. 点击测试机器通话界面“视频通话”按钮；\n5. 辅助机器端接听视频通话请求，保持10s挂断；\n6. 测试机切换回语音通话，辅助机接通后，保持10s挂断；\n7. 测试机器卡二语音拨打辅助机器；\n8. 辅助机器接听来电；\n9. 点击辅助机器通话界面“视频通话”按钮；\n10. 测试机器端接听视频通话请求，保持10s挂断；\n11. 测试机切换回语音通话，辅助机接通后，保持10s挂断；",
+    "期望结果": "",
+    "case_index": 50
+  },
+  {
+    "用例名": "检查4G网络下国际通用ECC list遍历",
+    "前置条件": "1. 测试SIM卡开通支持VoLTE（4G通话业务）；\n2. SIM配置：卡1 移动 4G + 卡2 联通 4G",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一；\n2. 测试机器卡一语音拨打紧急号码112/911/999；\n3. 测试机器卡二语音拨打紧急号码112/911/999；",
+    "期望结果": "",
+    "case_index": 51
+  },
+  {
+    "用例名": "检查LTE CSFB to 3G call功能兼容",
+    "前置条件": "1. 测试SIM卡开通支持VoLTE（4G通话业务）；\n2. SIM配置：卡1 联通 4G + 卡2 移动 4G（单卡机器仅插入单卡测试）\n3. 设置中关闭SIM1 & SIM2 VoLTE功能；",
+    "测试步骤": "1. 测试机器卡槽一插入联通SIM，卡槽二插入移动SIM；上网卡设置为卡一\n2. 打开电话应用，拨号盘界面输入有效辅助机器号码；\n3. 点击卡一语音拨号按钮；\n4. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n5. 辅助机器语音拨打测试机器卡二；\n6. 测试机器接听来电，保持10s后挂断；",
+    "期望结果": "",
+    "case_index": 52
+  },
+  {
+    "用例名": "2/3G网络下国际通用ECC list遍历",
+    "前置条件": "1. SIM配置：卡1 移动 2G + 卡2 联通 3G（单卡机器仅插入单卡测试）",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一；\n2. 测试机器卡一语音拨打紧急号码112/911/999；\n3. 测试机器卡二语音拨打紧急号码112/911/999；",
+    "期望结果": "",
+    "case_index": 53
+  },
+  {
+    "用例名": "检查无卡时当地ECC号码列表通话功能",
+    "前置条件": "",
+    "测试步骤": "1. 测试机器开机不插卡，依次拨打国际通用的紧急号码112/911/999/000等；",
+    "期望结果": "",
+    "case_index": 54
+  },
+  {
+    "用例名": "插拔卡通话界面UI一致性",
+    "前置条件": "1. 测试SIM卡开通支持VoLTE（4G通话业务）；\n2. SIM配置：卡1 移动 4G + 卡2 联通 4G\n谷歌APP不显示卡一卡二角标",
+    "测试步骤": "1.卡一和卡二分别拨打紧急号码\n2.检查通话记录是否显示对应卡槽拨打记录\n3.拔出SIM卡，检查通话记录页面\n4.重新插入SIM卡，检查通话记录页面\n（单卡项目插入单卡测试）",
+    "期望结果": "",
+    "case_index": 55
+  },
+  {
+    "用例名": "支持XCAP时，4G网络下验证始终转接是否设置成功 When XCAP is supported, verify whether always forwarding is successful on a 4G network 说明：运营商是否支持XCAP，可以用对比机确认设置呼叫转移时是否回落低制式，不回落即支持XCAP,回落即不支持XCAP Note：If the carrier supports XCAP, you can use the reference phone to check whether the call CSFB to lower RAT during call forward setting. If the call not perform CSFB, XCAP is supported, and if CSFB to lower RAT, XCAP is not supported",
+    "前置条件": "1.卡1和卡2插入当地运营商卡（例如：中国测试时插入联通或者移动卡，单卡机器插入单卡测试）\n2.SIM卡开通来电转接功能\n3.运营商支持XCAP\n4.进入“设置”-“SIM卡和网络设置”-“卡1”-“首选网络模式”，设置为“2G/3G/4G”，卡1注册上4G Volte网络\n1.Insert local operator card into card slot 1 and card slot 2(For example: insert Unicom or mobile card during China test，only insert one SIM For single SIM project)\n2. Enable call forwarding function on SIM card\n3. Operators support XCAP\n4. Enter Settings - SIM Card and Network Settings - Card 1 - Preferred Network Mode, set to 2G/3G/4G，SIM1 register on a 4G VoLTE network",
+    "测试步骤": "1.测试终端测试机1,进入通话设置->【运营商功能】->选择卡1->【来电转接】->【始终转接；\n2.转接添加辅测终端测试机2的手机号码，同时观察手机是否始终在4G网络\n3.辅测终端测试机3拨打测试机1号码，转接到测试机2并接通\n4.进入\"始终转接\"设置菜单，输入与步骤2不同的电话号码，点击\"更新\"按钮\n5.进入\"始终转接\"设置菜单，点击\"关闭\"按钮；\n6.辅测终端测试机3拨打测试机1号码，测试机1接通\n1. On DUT 1#, enter Call Settings ->【 Carrier Features 】->【 Select Card 1 】->【 Call Forwarding 】->Always Forward;\n2. Add the phone number of DUT 2# as forwarding number and observe whether the mobile phone is always on 4G network.\n3. DUT 3# dial the phone number of DUT 1#, forwarding to DUT 2# and connect\n4. Go to Always Forward settings，input another phone number which is different with step2，click \"Update\" button\n5. Go to Always Forward settings，Click \"Turn off \" button;\n6. DUT 3# dial the phone number of DUT 1#, DUT 1# is connected",
+    "期望结果": "",
+    "case_index": 56
+  },
+  {
+    "用例名": "4G网络下验证三方语音通话是否成功建立 Verify that a three-party voice call is successfully established on a 4G network",
+    "前置条件": "1.卡1和卡2插入当地运营商卡（例如：中国测试时插入联通或者移动卡，单卡机器插入单卡测试）\n2.SIM卡开通会议通话功能\n3.进入“设置”-“SIM卡和网络设置”-“卡2”-“首选网络模式”，设置为“2G/3G/4G”，卡2注册上4G网络\n4.进入通话设置-->运营商功能-->选择卡2-->其他设置，开启来电等待；\n1.Insert local operator card into card slot 1 and card slot 2(For example: insert Unicom or mobile card during China test，only insert one SIM For single SIM project)\n2. Enable conference call function with SIM card\n3. Enter Settings - SIM Card and Network Settings - Card 2 - Preferred Network Mode, set to 2G/3G/4G，SIM2 register on a 4G network\n4. Go to call settings -- > operator functions -- > select card 2 -- > - > Other Settings，enable call waiting;",
+    "测试步骤": "1.测试机器1# 通过卡2拨打辅助机器2#，辅助机器2#收到来电并接通；\n2.配合机器3#拨打测试机器1#卡2号码，测试机器1#收到来电并接通；\n3.测试机器1#点击合并按钮合并两路通话，检查各方是否能听到声音；\n4.点击会议管理按钮，查看接入各方号码是否显示正确；\n5.测试机器端管理界面依次挂断两路通话；\n1. DUT 1# dial the phone number of DUT 2# from SIM2, and DUT 2# receives the call and answer the call；\n2.DUT 3# make one voice call to SIM2 number of DUT 1#，and DUT 1# receives another call and answer the call；\n3. On DUT 1#， merge the two calls , and check whether all the participants can hear the voice ;\n4.Click the button of conference management，and check whether the numbers of all participants are correct; \n5. On the conference management of DUT 1# ,hang up the two calls one by one;",
+    "期望结果": "",
+    "case_index": 57
+  },
+  {
+    "用例名": "4G网络下验证来电等待是否设置成功 NOTE:进入呼叫等待界面，会查询CLIR，查询时是否回落，涉及到TB和NB需求，当不确认网络行为时，用支持Volte的竞品机对比验证 Verify that call waiting is set successfully on a 4G network Note:when enter call waiting settings,it all query CLIR.to confirm whether perform CSFB，need know the requirement of TB or NB，if not sure，you can compare with reference phone",
+    "前置条件": "1.卡1和卡2插入当地运营商卡（例如：中国测试时插入联通或者移动卡，单卡机器插入单卡测试）；\n2.进入“设置”-“SIM卡和网络设置”-“卡2”-“首选网络模式”，设置为“2G/3G/4G”，卡2注册上4G网络\n1.Insert Card 1 and Card 2 into the local operator card(For example: insert Unicom or mobile card during China test，only insert one SIM For single SIM project).\n2. Enter Settings - SIM Card and Network Settings - Card 2 - Preferred Network Mode, set to 2G/3G/4G，SIM2 register on a 4G network",
+    "测试步骤": "1.进入通话设置->【运营商功能】->选择卡2->【其他设置】，【谷歌电话】->右上角三点【设置】->【通话】->【通话设置】->【其他设置】观察网络制式是否回落到3G或者2G；\n2.确认来电等待功能开关打开；\n3.测试机1#拨打辅助机器2#号码并建立第一路通话；\n4.辅助机器3#拨打测试机1#号码并建立第二路通话，并检查通话状态；\n5.来回切换两路通话，检查通话状态；\n6.挂断电话\n7.关闭来电等待功能开关；\n8.测试机器1#拨打辅助机器2#并建立第一路电话，辅助机器3#拨打测试机器1#；检查第二路来电状态；\n1. Go to call settings ->【 Carrier Features 】->【 select card 2 】->【 Other Settings，【Google Phone 】->【 Three Points in the Upper Right Corner 】->【 Settings 】->【 Call 】->【 Call Settings 】->Other Settings and observe whether the network falls back to 3G or 2G;\n2. Confirm that the call waiting function switch is turned on;\n3. DUT 1# dial the phone number of DUT2 and establish the first call;\n4. DUT 3# dial the phone number of DUT 1# and establish the second call，and check the status of the two calls;\n5. Switch back and forth between two calls to check the call status;\n6. Hang up the phone\n7. Turn off the call waiting function switch;\n8. DUT 1# dial the number of DUT 2# and establish the first call，DUT 3# dial the number of DUT 1#,check the status of the second incoming call;",
+    "期望结果": "",
+    "case_index": 58
+  },
+  {
+    "用例名": "4G网络下检查三方通话UI是否显示为\"会议电话\" On 4G network, check whether the three-party call UI is displayed as \"Conference Call\".",
+    "前置条件": "1.卡1和卡2插入当地运营商卡；（例如：中国测试时插入联通或者移动卡，单卡机器插入单卡测试）\n2.SIM卡开通会议通话功能\n3.进入“设置”-“SIM卡和网络设置”-“卡2”-“首选网络模式”，设置为“2G/3G/4G”，卡2注册上4G网络\n4.进入通话设置-->运营商功能-->选择卡2-->其他设置，开启来电等待；\n1.Insert local operator card into card slot 1 and card slot 2(For example: insert Unicom or mobile card during China test，only insert one SIM For single SIM project)\n2. Enable conference call function with SIM card\n3. Enter Settings - SIM Card and Network Settings - Card 2 - Preferred Network Mode, set to 2G/3G/4G，SIM2 register on a 4G network\n4. Go to call settings -- > operator functions -- > select card 2 -- > - > Other Settings，enable call waiting;",
+    "测试步骤": "1.测试机器SIM2与配合机器1#建立一路通话后，配合机器2#拨打测试机器；\n2..测试机器端接听来电后合并两路通话，检查通话界面和下拉通知栏界面是否显示“会议电话”\n3.配合机器1建立会议电话\n4.测试机器SIM1拨打配合机器1#,检查通话界面和下拉通知栏界面是否显示“会议电话”\n1.After the test phone SIM2 establishes a communication with the cooperating phone 1 #, the cooperating phone 2 #dials the test phone.\n2. The tes phone merge two calls after answering the call, and check whether display “Conference Call” in Calling screen and pull down notification bar interface\n3.the cooperating phone 1# create one conference call\n4.the test phone SIM1 joins the cooperating phone 1#，check whether display “Conference Call” in Calling screen and Pull down notification bar interface",
+    "期望结果": "",
+    "case_index": 59
+  },
+  {
+    "用例名": "4G 网络下验证来电等待是否设置成功 NOTE:进入呼叫等待界面，会查询CLIR，查询时是否回落，涉及到TB和NB需求，当不确认网络行为时，用支持Volte的竞品机关闭volte对比验证 Verify that call waiting is set successfully on a 4G network Note:when enter call waiting settings,it all query CLIR.to confirm whether perform CSFB，need know the requirement of TB or NB，When network behavior is not confirmed, turn off volte comparison verification with competing products that support volte",
+    "前置条件": "1.卡1和卡2插入当地运营商卡（例如：中国测试时插入联通或者移动卡，单卡机器插入单卡测试）；\n2.LTE覆盖区域4G/3G/2G覆盖正常;\n3.进入“设置”-“SIM卡和网络设置”-“卡1”-“首选网络模式”，设置为“2G/3G/4G”，卡1注册上4G网络，关闭VOLTE开关.\n1.Insert Card 1 and Card 2 into the local operator card(For example: insert Unicom or mobile card during China test，only insert one SIM For single SIM project).\n2. LTE coverage area 4G/3G/2G coverage is normal;\n3. Enter Settings - SIM Card and Network Settings - Card 2 - Preferred Network Mode, set to 2G/3G/4G，SIM2 register on a 4G network,Turn off the VOLTE switch.",
+    "测试步骤": "1.进入通话设置->【运营商功能】->选择卡1->其他设置\n2.确认来电等待功能开关打开；\n3.测试机1#拨打辅助机器2#号码并建立第一路通话；\n4.辅助机器3#拨打测试机1#号码并建立第二路通话，并检查通话状态；\n5.来回切换两路通话，检查通话状态；\n6.挂断电话\n7.关闭来电等待功能开关；\n8.测试机器1#拨打辅助机器2#并建立第一路电话，辅助机器3#拨打测试机器1#；检查第二路来电状态；\n1. Go to call settings ->【 Carrier Features 】->【 select card 1 】-> Other Settings;\n2. Confirm that the call waiting function switch is turned on;\n3. DUT 1# dial the phone number of DUT2 and establish the first call;\n4. DUT 3# dial the phone number of DUT 1# and establish the second call，and check the status of the two calls;\n5. Switch back and forth between two calls to check the call status;\n6. Hang up the phone\n7. Turn off the call waiting function switch;\n8. DUT 1# dial the number of DUT 2# and establish the first call，DUT 3# dial the number of DUT 1#,check the status of the second incoming call;",
+    "期望结果": "",
+    "case_index": 60
+  },
+  {
+    "用例名": "验证手机在发送不支持的USSD代码时错误弹框是否正确 Verify that the error box is correct when the phone sends an unsupported USSD code",
+    "前置条件": "1.卡1插入当地运营商卡（例如：中国测试时插入联通或者移动卡，单卡机器插入单卡测试）\n2.进入“设置”-“SIM卡和网络设置”-“卡1”-“首选网络模式”，设置为“2G/3G/4G””，卡1注册4G。\n1. Insert cards 1 and 2 into local carrier cards (For example: insert Unicom or mobile card during China test，only insert one SIM For single SIM project )\n2.Enter Settings - SIM Card and Network Settings - Card 1 - Preferred Network Mode, set to 2G/3G/4G”, and register on 4G on Card 1.",
+    "测试步骤": "1. 在拨号盘上输入错误的USSD，如* 10000 #，点击卡1拨号键发送，查看USSD菜单是否正常返回\n2.在拨号盘上输入正确的电话号码，点击卡1拨号键呼出，查看USSD错误弹框后通话是否能成功呼出\n1. Enter the wrong USSD on the dial, such as * 10000 #, click the card 1 dial key to send, and check whether the USSD menu returns normally\n2.Enter the correct phone number on the dial pad, and press the card 1 dial key to make a call. Check whether the call can be successfully made after the USSD error box is displayed",
+    "期望结果": "",
+    "case_index": 61
+  },
+  {
+    "用例名": "4G网络下拨打服务号码，检查DTMF字符响应是否正确（ 0~ 9, *, #） Dial the service number on 4G network, check whether the DTMF character response is correct (0~ 9, *, #)",
+    "前置条件": "1.卡1和卡2插入当地运营商卡（例如：中国测试时插入联通或者移动卡，单卡机器插入单卡测试）\n2..进入“设置”-“SIM卡和网络设置”-“卡2”-“首选网络模式”，设置为“2G/3G/4G”，卡2注册4G VoLTE\n1.Insert loal operator SIM card into slot1 and slot2(For example: insert Unicom or mobile card during China test，only insert one SIM For single SIM project )\n2. Enter Settings - SIM Card and Network Settings - SIM2 - Preferred Network Mode, set to 2G/3G/4G”, and register on 4G VoLte on SIM2.",
+    "测试步骤": "1.测试机器卡2拨打当地运营商客服电话，比如中国移动卡拨打10086，中国联通卡拨打10010；\n2.接通后，根据语音提示选择对应的按键字符（0~9.*、#），比如查询话费、人工服务等；\n1. Test phone SIM2 call the local operator customer service hotline , such as China mobile card dial 10086, China Unicom card dial 1010;\n2. After connecting, select the corresponding key characters (0~9, *, #) according to the voice prompt, such as inquiring phone charges and manual services",
+    "期望结果": "",
+    "case_index": 62
+  },
+  {
+    "用例名": "验证已存储的联系人以及电话号码在进行通话时能够准确匹配",
+    "前置条件": "1.准备1台测试机， 2台配合机\n2.测试机和配合机支持IMS功能（注册网络后信号图标会出现volte或者vonr标志）\n3.测试机插入双SIM卡（联通+移动）， 配合机只需要插入1张SIM卡",
+    "测试步骤": "1.测试机插入双卡，进入【设置】-【SIM卡与网络设置】-对应SIM卡详细设置页面-【首选网络类型】：设置对应的5G优先或者4G优先模式后，等待注册5G或者4G ims网络\n2.测试机新建配合机1的电话号码和联系人姓名到手机存储中，新建配合机2的电话号码和联系人姓名到非数据SIM卡存储\n3. 使用测试机数据卡发起MO call 到配合机1，等待建立通话并保持30秒\n4. 挂断电话后使用测试机非数据卡发起MO call到配合机2，等待建立通话并保持30秒\n5. 挂断电话\n6. 使用配合机1发起MO call到 测试机数据卡，等待建立通话并保持30秒\n7. 挂断电话\n8. 再次使用配合机2发起MO call到 测试机非数据卡，等待建立通话并保持30秒\n9. 挂断电话后，检查通话记录",
+    "期望结果": "",
+    "case_index": 63
+  },
+  {
+    "用例名": "支持视频通话功能的SIM卡插入测试机中可以拨打视频电话",
+    "前置条件": "1.准备2张有效的SIM（移动+联通）\n2.当前测试网络区域已经覆盖UE最高网络制式（当前SIM卡运营商已覆盖5G,4G网络）\n3.不支持双卡的设备只需要插入单SIM卡\n4.本用例依据SIM卡支持的网络行为测试\n5.准备一台配合机（已插入有效SIM卡）",
+    "测试步骤": "1.插入双卡，默认SIM卡1为数据卡，进入SIM卡与网络设置页面，进入数据卡设置页面，找到对应的“运营商视频通话”菜单，检查该开关状态\n2.进入拨号盘输入配合机号码，点击视频拨号\n3.进入通话记录详细页面，点击视频拨号\n4.配合机发起一通视频电话到测试机数据卡，并接通\n5.配合机发起一通视频电话到测试机非数据卡，并接通",
+    "期望结果": "",
+    "case_index": 64
+  },
+  {
+    "用例名": "STK应用检查",
+    "前置条件": "1.已插入有效SIM卡，且SIM卡已开启SIMpin功能\n如何开启PIN:SIM卡外发用例名词介绍及操作方法 \n2.本用例步骤3不适用于运营商定制版本",
+    "测试步骤": "1.手机插入sim卡\n2.进入工具文件夹\n3.查看STK应用名称及形状\n4.测试运营商版本时，只需要插入SIM卡（中国移动或者中国联通）在桌面应用中检查SIM卡应用是否存在",
+    "期望结果": "",
+    "case_index": 65
+  },
+  {
+    "用例名": "mStkMenu.title运营商名称",
+    "前置条件": "1.准备2张有效的SIM卡（联通和移动）\n2.对应SIM卡未在测试机上进行SIM卡名字修改（设置-SIM卡与网络设置：选择对应“SIM卡名称”未做任何修改）\n3.本用例不适用运营商定制版本",
+    "测试步骤": "1.插入一张联通卡到SIM1卡槽，在桌面APP-找到【SIM卡工具包】APP，并点击进入\n2.检查STK页面的标题栏\n3.拔出SIM1卡槽的SIM卡，然后将移动卡插入SIM2卡中，在桌面APP-找到【SIM卡工具包】APP，并点击进入\n4.检查STK页面的标题栏\n5.拔出SIM2卡中的SIM卡， SIM1,SIM2卡中都插入SIM，在桌面APP-找到【SIM卡工具包】APP，并点击进入\n6.检查该页面的菜单名字显示",
+    "期望结果": "",
+    "case_index": 66
+  },
+  {
+    "用例名": "SIM卡工具包（STK）前进、后退功能能正常响应",
+    "前置条件": "1.准备一张有效的SIM卡（联通），插入到测试机中",
+    "测试步骤": "1.打开SIM卡工具包（STK）.进入子菜单【手机营业厅】-【账户余额】点击一次\n2.等待网络响应，弹出对话框，点击“确定”\n3.点击左上角回退<-箭头按钮\n4.重新进入SIM卡工具包（STK）APP主页面，进入子菜单【手机营业厅】-【本机充值】并点击\n5.在充值页面点击“取消按钮”一次",
+    "期望结果": "",
+    "case_index": 67
+  },
+  {
+    "用例名": "检查VoNR call with VoNR功能兼容",
+    "前置条件": "1. 测试SIM卡开通支持VoNR（5G通话业务）；\n2. SIM配置：卡1 移动 5G + 卡2 联通 5G\n3. 测试机器和辅助机器网络模式设置5G优先；",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一\n2. 打开电话应用，拨号盘界面输入有效辅助机器号码；\n3. 点击卡一语音拨号按钮；\n4. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n5. 辅助机器语音拨打测试机器卡二；\n6. 测试机器接听来电，保持10s后挂断；",
+    "期望结果": "",
+    "case_index": 68
+  },
+  {
+    "用例名": "检查VoNR call with VoLTE功能兼容",
+    "前置条件": "1. 测试SIM卡开通支持VoNR（5G通话业务）；\n2. SIM配置：卡1 移动 5G + 卡2 联通 5G\n3. 测试机器网络模式设置5G优先；\n4. 辅助机器网络模式设置4G优先；",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一\n2. 打开电话应用，拨号盘界面输入有效辅助机器号码；\n3. 点击卡一语音拨号按钮；\n4. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n5. 辅助机器语音拨打测试机器卡二；\n6. 测试机器接听来电，保持10s后挂断；",
+    "期望结果": "",
+    "case_index": 69
+  },
+  {
+    "用例名": "检查VoNR call with 3G功能兼容",
+    "前置条件": "1. 测试SIM卡开通支持VoNR（5G通话业务）；\n2. SIM配置：卡1 移动 5G + 卡2 联通 5G\n3. 测试机器网络模式设置5G优先；\n4. 辅助机器网络模式设置3G优先；",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一\n2. 打开电话应用，拨号盘界面输入有效辅助机器号码；\n3. 点击卡一语音拨号按钮；\n4. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n5. 辅助机器语音拨打测试机器卡二；\n6. 测试机器接听来电，保持10s后挂断；",
+    "期望结果": "",
+    "case_index": 70
+  },
+  {
+    "用例名": "检查VoNR call with 2G功能兼容",
+    "前置条件": "1. 测试SIM卡开通支持VoNR（5G通话业务）；\n2. SIM配置：卡1 移动 5G + 卡2 联通 5G\n3. 测试机器网络模式设置5G优先；\n4. 辅助机器网络模式设置2G优先；",
+    "测试步骤": "1. 测试机器卡槽一插入移动SIM，卡槽二插入联通SIM；上网卡设置为卡一\n2. 打开电话应用，拨号盘界面输入有效辅助机器号码；\n3. 点击卡一语音拨号按钮；\n4. 辅助机器端接听来电，保持10s；测试机器端挂断通话；\n5. 辅助机器语音拨打测试机器卡二；\n6. 测试机器接听来电，保持10s后挂断；",
+    "期望结果": "",
+    "case_index": 71
+  },
+  {
+    "用例名": "检查UE双卡SA飞模驻网功能",
+    "前置条件": "1、测试机插入双卡卡1中国联通+卡2中国移动，支持IMS；\n2、终端测试前去掉unlock界面；\n3、进入SIM卡与网络设置->上网卡选择SIM1；\n4、测试机进入SIM卡与网络设置->点击SIM卡->首选网络类型：5G优先",
+    "测试步骤": "1、下拉手机状态栏点击开启飞行模式待手机进入飞行模式后关闭飞行模式；\n2、 检查关闭飞模后手机双卡显示信号棒+5G图标+VONR（不支持VONR的地区显示VOLTE）+卡1数据双箭头图标 ；\n3、手机卡1拨打辅助机电话号码，检查卡1是否仍是5G状态",
+    "期望结果": "",
+    "case_index": 72
+  },
+  {
+    "用例名": "检查UE双卡SA手动驻网功能",
+    "前置条件": "1、测试机插入双卡卡1中国联通+卡2中国移动，支持IMS；\n2、终端测试前去掉unlock界面；\n3、进入SIM卡与网络设置->上网卡选择SIM1；\n4、测试机进入SIM卡与网络设置->点击SIM卡->首选网络类型：5G优先",
+    "测试步骤": "1、打开手机设置->SIM卡与网络设置->点击卡1->选择网络->关闭自动选择网络->点击确定直到手机开始手动搜网；\n2、等待手动搜网结束后检查搜到的运营商网络，UI上显示现网中所有运营商的所有rat，且UI界面上除选择的运营商外，其他运营商按rat显示“禁止”，若存在与卡1所属运营商不同的运营商网络未显示“禁止”，需选择此网络（注意：因为国内未定制，移动卡只有联通网络会显示禁止，但运营商的名字都应和系统语言一致）；\n3、选择SIM卡1所属运营商的3G网络，手动在其上面注册；\n4、打开手机设置->SIM卡与网络设置->点击卡2->选择网络->关闭自动选择网络->点击确定直到手机开始手动搜网；\n5、等待手动搜网结束后检查搜到的运营商网络，UI上显示现网中所有运营商的所有rat，且UI界面上除选择的运营商外，其他运营商按rat显示“禁止”，若存在与卡2所属运营商不同的运营商网络未显示“禁止”，需选择此网络（注意：因为国内未定制，移动卡只有联通网络会显示禁止，但运营商的名字都应和系统语言一致）；\n6、选择显示禁止所属运营商的5G网络，手动在其上面注册；",
+    "期望结果": "",
+    "case_index": 73
+  }
+]
