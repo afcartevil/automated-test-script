@@ -52,7 +52,8 @@
     "node-pty": "^1.1.0",
     "pdf-parse": "^1.1.4",
     "socket.io": "^4.8.3",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@koa/bodyparser": "^5.0.0",

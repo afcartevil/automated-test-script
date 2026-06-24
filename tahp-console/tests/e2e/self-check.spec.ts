@@ -32,10 +32,79 @@ function mockDeviceSelfCheckApi(page: import('@playwright/test').Page) {
   })
 }
 
+function mockTestPlanningApi(page: import('@playwright/test').Page) {
+  const nodesPayload = {
+    updatedAt: '2026-06-24T08:00:00.000Z',
+    sourcePath: 'docs/升级项目关键信息表.xlsx',
+    projects: [],
+    nextNodes: [
+      {
+        project: 'X6885',
+        node: 'STR4A',
+        nodeDate: '2026/07/07',
+        display: 'X6885 STR4A 2026/07/07',
+      },
+    ],
+  }
+  const schedulePayload = {
+    updatedAt: '2026-06-24T08:00:00.000Z',
+    rules: [{ node: 'STR4A', offsetDays: -10, testName: 'GMS测试' }],
+    items: [
+      {
+        project: 'X6885',
+        node: 'STR4A',
+        nodeDate: '2026/07/07',
+        triggerDate: '2026/06/27',
+        testName: 'GMS测试',
+        status: 'upcoming',
+        display: 'X6885 STR4A 2026/06/27 GMS测试',
+      },
+    ],
+  }
+
+  return page.route('**/api/tahp/test-planning/**', async (route) => {
+    const url = route.request().url()
+    if (url.includes('/nodes/sync')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: nodesPayload }),
+      })
+      return
+    }
+    if (url.includes('/nodes')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: nodesPayload }),
+      })
+      return
+    }
+    if (url.includes('/rules')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { version: 1, rules: schedulePayload.rules } }),
+      })
+      return
+    }
+    if (url.includes('/schedule')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: schedulePayload }),
+      })
+      return
+    }
+    await route.continue()
+  })
+}
+
 test('self-check page renders device and gerrit review workspaces', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await mockHermesApi(page)
   await mockDeviceSelfCheckApi(page)
+  await mockTestPlanningApi(page)
 
   await page.route('**/api/tahp/gerrit-config', async (route) => {
     await route.fulfill({
@@ -75,12 +144,18 @@ test('self-check page renders device and gerrit review workspaces', async ({ pag
   await expect(page.getByText('Code Review 对话')).toBeVisible()
   await expect(page.getByText('AI 测试建议')).toBeVisible()
   await expect(page.getByText('P0 - 必须测试')).toBeVisible()
+  await expect(page.getByText('AI测试自规划')).toBeVisible()
+  await expect(page.getByText('项目节点')).toBeVisible()
+  await expect(page.getByText('测试规划')).toBeVisible()
+  await expect(page.getByText('X6885 STR4A 2026/07/07')).toBeVisible()
+  await expect(page.getByText('X6885 STR4A 2026/06/27 GMS测试')).toBeVisible()
 })
 
 test('self-check shows warning when gerrit is not configured', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await mockHermesApi(page)
   await mockDeviceSelfCheckApi(page)
+  await mockTestPlanningApi(page)
 
   await page.route('**/api/tahp/gerrit-config', async (route) => {
     await route.fulfill({

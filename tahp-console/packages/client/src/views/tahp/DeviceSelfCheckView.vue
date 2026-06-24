@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
 import GerritReviewWorkspace from '@/components/tahp/GerritReviewWorkspace.vue'
+import TestPlanningWorkspace from '@/components/tahp/TestPlanningWorkspace.vue'
 import {
   listDevices,
   refreshDevices,
@@ -609,6 +610,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
       </template>
 
       <GerritReviewWorkspace />
+      <TestPlanningWorkspace />
     </template>
 
     <!-- 设备详情视图 -->
