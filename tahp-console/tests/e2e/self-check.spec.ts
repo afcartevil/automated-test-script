@@ -140,12 +140,22 @@ test('self-check page renders device and gerrit review workspaces', async ({ pag
   await page.goto('/#/tahp/self-check')
   await expect(page.getByRole('heading', { name: 'AI 自检' })).toBeVisible()
   await expect(page.getByText('多设备并行自动化测试')).toBeVisible()
+
+  await expect(page.getByRole('heading', { name: 'AI智测' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'AI测试规划' })).toBeVisible()
+  await expect(page.getByText('输入gerrit提交，AI review后智能推荐、生成测试用例')).toBeVisible()
+  await expect(page.getByText('根据项目节点自行规划启动测试')).toBeVisible()
+  await expect(page.getByText('Gerrit Code Review')).not.toBeVisible()
+
+  await page.getByRole('button', { name: 'AI智测' }).click()
   await expect(page.getByText('Gerrit Code Review')).toBeVisible()
   await expect(page.getByText('Code Review 对话')).toBeVisible()
   await expect(page.getByText('AI 测试建议')).toBeVisible()
   await expect(page.getByText('必须测试')).toBeVisible()
   await expect(page.getByText('推荐测试用例')).toBeVisible()
   await expect(page.getByText('模块：')).toBeVisible()
+
+  await page.getByRole('button', { name: 'AI测试规划' }).click()
   await expect(page.getByText('AI测试自规划')).toBeVisible()
   await expect(page.getByText('项目节点')).toBeVisible()
   await expect(page.getByText('测试规划')).toBeVisible()
@@ -176,6 +186,7 @@ test('self-check shows warning when gerrit is not configured', async ({ page }) 
   })
 
   await page.goto('/#/tahp/self-check')
+  await page.getByRole('button', { name: 'AI智测' }).click()
   await expect(
     page.getByText('gerrit账号未设置，无法进行code review，请在设置中完善gerrit账号'),
   ).toBeVisible()

@@ -190,6 +190,14 @@ export function useGerritReviewWorkspace() {
     scrollThinkingToBottom()
   }, { deep: true })
 
+  watch(
+    () => [p0Result.value.items.length, isRunning.value, recommendedCases.value.length] as const,
+    ([p0Count, running, recCount]) => {
+      if (running || recCount > 0 || p0Count === 0) return
+      void gerritStore.ensureRecommendedCases()
+    },
+  )
+
   function setRecommendedCaseChecked(caseKey: string, checked: boolean) {
     gerritStore.setRecommendedCaseChecked(caseKey, checked)
   }

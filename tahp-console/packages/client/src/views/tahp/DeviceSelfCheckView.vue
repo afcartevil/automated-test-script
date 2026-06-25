@@ -4,6 +4,7 @@ import EaCard from '@/components/layout/EaCard.vue'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
 import GerritReviewWorkspace from '@/components/tahp/GerritReviewWorkspace.vue'
 import TestPlanningWorkspace from '@/components/tahp/TestPlanningWorkspace.vue'
+import SelfCheckExpandablePanel from '@/components/tahp/SelfCheckExpandablePanel.vue'
 import { useDeviceSelfCheckLaunchStore } from '@/stores/tahp/device-self-check-launch'
 import {
   listDevices,
@@ -53,6 +54,8 @@ const tcardUpdatePath = ref('')
 
 // 视图模式
 const viewMode = ref<'overview' | 'detail' | 'customTest' | 'caseCatalog'>('overview')
+const gerritPanelExpanded = ref(false)
+const planningPanelExpanded = ref(false)
 
 // 自定义测试 / 概览用例目录
 const caseCatalogGroups = ref<CaseCatalogGroup[]>([])
@@ -1476,8 +1479,25 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
         </EaCard>
       </template>
 
-      <GerritReviewWorkspace />
-      <TestPlanningWorkspace />
+      <SelfCheckExpandablePanel
+        v-model:expanded="gerritPanelExpanded"
+        title="AI智测"
+        summary="输入gerrit提交，AI review后智能推荐、生成测试用例"
+        tone="ea-t-indigo"
+        icon="code"
+      >
+        <GerritReviewWorkspace />
+      </SelfCheckExpandablePanel>
+
+      <SelfCheckExpandablePanel
+        v-model:expanded="planningPanelExpanded"
+        title="AI测试规划"
+        summary="根据项目节点自行规划启动测试"
+        tone="ea-t-sky"
+        icon="calendar"
+      >
+        <TestPlanningWorkspace />
+      </SelfCheckExpandablePanel>
     </template>
 
     <!-- 设备详情视图 -->

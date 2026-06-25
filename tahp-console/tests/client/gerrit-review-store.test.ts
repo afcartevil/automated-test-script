@@ -147,6 +147,120 @@ describe('useGerritReviewStore', () => {
     expect(gerrit.p0Result().items).toHaveLength(2)
   })
 
+  it('fetches recommended cases when completion payload has empty recommended_cases', async () => {
+    const gerrit = useGerritReviewStore()
+    const tasks = useTahpTasksStore()
+
+    fetchRecommendCasesMock.mockResolvedValueOnce({
+      recommended_cases: [
+        {
+          caseKey: 'week/driver/14',
+          caseName: 'USB功能正常充电',
+          moduleLabel: '驱动',
+          score: 2,
+          reasons: ['必须测试:USB'],
+        },
+      ],
+    })
+
+    gerrit.activeTaskId = 'task-gerrit-fetch'
+    gerrit.runningTaskId = 'task-gerrit-fetch'
+    gerrit.chatMessages = [
+      { id: 'u1', role: 'user', content: '测试建议' },
+      { id: 'a1', role: 'assistant', content: '', streaming: true, taskId: 'task-gerrit-fetch' },
+    ]
+    tasks.taskStreams = {
+      'task-gerrit-fetch': [
+        {
+          type: 'task.completed',
+          payload: {
+            llm_response: '### 4. 测试建议\n#### ### P0 - 必须测试\n1. USB 插拔验证 SAR 校准',
+            p0_items: [],
+            recommended_cases: [],
+          },
+          ts: 1,
+        },
+      ],
+    }
+
+    gerrit.processStreamEvents('task-gerrit-fetch')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(gerrit.isRunning).toBe(false)
+    expect(gerrit.serverP0Items.length).toBeGreaterThan(0)
+    expect(fetchRecommendCasesMock).toHaveBeenCalled()
+    expect(gerrit.recommendedCases).toHaveLength(1)
+    expect(gerrit.recommendedCases[0]?.caseKey).toBe('week/driver/14')
+  })
+
+  it('uses stream text when completion payload omits llm_response', async () => {
+    const gerrit = useGerritReviewStore()
+    const tasks = useTahpTasksStore()
+
+    fetchRecommendCasesMock.mockResolvedValueOnce({
+      recommended_cases: [
+        {
+          caseKey: 'week/driver/14',
+          caseName: 'USB功能正常充电',
+          moduleLabel: '驱动',
+          score: 1,
+          reasons: ['必须测试:USB'],
+        },
+      ],
+    })
+
+    gerrit.activeTaskId = 'task-gerrit-stream'
+    gerrit.runningTaskId = 'task-gerrit-stream'
+    gerrit.chatMessages = [
+      { id: 'u1', role: 'user', content: 'review' },
+      { id: 'a1', role: 'assistant', content: '', streaming: true, taskId: 'task-gerrit-stream' },
+    ]
+    tasks.taskStreams = {
+      'task-gerrit-stream': [
+        {
+          type: 'task.message',
+          payload: { level: 'stream', text: '### P0 - 必须测试\n1. USB 插拔' },
+          ts: 1,
+        },
+        {
+          type: 'task.completed',
+          payload: { p0_items: [], recommended_cases: [] },
+          ts: 2,
+        },
+      ],
+    }
+
+    gerrit.processStreamEvents('task-gerrit-stream')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(gerrit.isRunning).toBe(false)
+    expect(gerrit.serverP0Items).toEqual(['USB 插拔'])
+    expect(gerrit.recommendedCases).toHaveLength(1)
+  })
+
+  it('clears stuck running state after remount when task already completed', () => {
+    const gerrit = useGerritReviewStore()
+    const tasks = useTahpTasksStore()
+
+    gerrit.activeTaskId = 'task-gerrit-done'
+    gerrit.runningTaskId = 'task-gerrit-done'
+    gerrit.finalizedTaskIds = ['task-gerrit-done']
+    gerrit.chatMessages = [
+      { id: 'u1', role: 'user', content: 'review' },
+      { id: 'a1', role: 'assistant', content: '# done', taskId: 'task-gerrit-done' },
+    ]
+    tasks.taskStreams = {
+      'task-gerrit-done': [
+        { type: 'task.completed', payload: { llm_response: '# done' }, ts: 1 },
+      ],
+    }
+
+    gerrit.reconcileActiveTask()
+
+    expect(gerrit.isRunning).toBe(false)
+    expect(gerrit.runningTaskId).toBeNull()
+  })
+
   it('loads recommended cases from completion payload', async () => {
     const gerrit = useGerritReviewStore()
     const tasks = useTahpTasksStore()

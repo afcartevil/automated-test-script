@@ -82,14 +82,17 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
 
   function responseFromStream(taskId: string): string {
     const events = streamFor(taskId)
-    const completed = events.find(e => e.type === 'task.completed')
-    if (completed) {
-      return String(completed.payload?.llm_response ?? completed.payload?.response ?? '')
-    }
-    return events
+    const streamText = events
       .filter(ev => ev.type === 'task.message' && ev.payload?.level !== 'reasoning')
       .map(ev => String(ev.payload?.text ?? ''))
       .join('')
+    const completed = events.find(e => e.type === 'task.completed')
+    if (completed) {
+      const fromPayload = String(completed.payload?.llm_response ?? completed.payload?.response ?? '').trim()
+      if (fromPayload) return fromPayload
+      return streamText
+    }
+    return streamText
   }
 
   function finalizeAssistantForTask(
@@ -145,6 +148,38 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     return items.map(item => ({ ...item, checked: true }))
   }
 
+  function resolveTaskResponse(
+    payload: Record<string, unknown>,
+    sourceTaskId?: string,
+  ): string {
+    const fromPayload = String(payload?.llm_response ?? payload?.response ?? '').trim()
+    if (fromPayload) return fromPayload
+    if (sourceTaskId) return responseFromStream(sourceTaskId)
+    return ''
+  }
+
+  async function loadRecommendedCasesForP0(
+    p0Items: string[],
+    seq: number,
+    sourceTaskId?: string,
+  ) {
+    if (!p0Items.length) {
+      if (seq === insightApplySeq) recommendedCases.value = []
+      return
+    }
+
+    try {
+      const data = await fetchRecommendCases({ p0_items: p0Items })
+      if (seq !== insightApplySeq) return
+      if (sourceTaskId && activeTaskId.value && activeTaskId.value !== sourceTaskId) return
+      recommendedCases.value = mapRecommendedCases(data.recommended_cases || [])
+    } catch {
+      if (seq === insightApplySeq) {
+        recommendedCases.value = []
+      }
+    }
+  }
+
   async function applyReviewInsightFromPayload(
     payload: Record<string, unknown>,
     sourceTaskId?: string,
@@ -154,15 +189,18 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     }
 
     const seq = ++insightApplySeq
-    const response = String(payload?.llm_response ?? payload?.response ?? '')
+    const response = resolveTaskResponse(payload, sourceTaskId)
     const p0Items = payload?.p0_items
+    let p0ForRecommend: string[] = []
     if (Array.isArray(p0Items) && p0Items.length) {
       serverP0Items.value = p0Items.map(String).filter(Boolean)
       serverP0Raw.value = String(payload?.p0_raw_section ?? '')
+      p0ForRecommend = serverP0Items.value
     } else if (response) {
       const extracted = extractP0TestSuggestions(response)
       serverP0Items.value = extracted.items
       serverP0Raw.value = extracted.rawSection
+      p0ForRecommend = extracted.items
     }
 
     if (Array.isArray(payload?.modules)) {
@@ -183,18 +221,15 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
       return
     }
 
-    try {
-      const data = await fetchRecommendCases({
-        p0_items: serverP0Items.value,
-      })
-      if (seq !== insightApplySeq) return
-      if (sourceTaskId && activeTaskId.value && activeTaskId.value !== sourceTaskId) return
-      recommendedCases.value = mapRecommendedCases(data.recommended_cases || [])
-    } catch {
-      if (seq === insightApplySeq) {
-        recommendedCases.value = []
-      }
-    }
+    await loadRecommendedCasesForP0(p0ForRecommend, seq, sourceTaskId)
+  }
+
+  async function ensureRecommendedCases() {
+    if (isRunning.value || recommendedCases.value.length) return
+    const items = p0Result().items
+    if (!items.length) return
+    const seq = ++insightApplySeq
+    await loadRecommendedCasesForP0(items, seq)
   }
 
   function handleTerminalStreamEvent(
@@ -203,11 +238,12 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     failed: { payload: Record<string, unknown> } | undefined,
   ) {
     if (completed) {
-      const response = String(
-        completed.payload?.llm_response ?? completed.payload?.response ?? responseFromStream(taskId),
-      )
-      void applyReviewInsightFromPayload(completed.payload, taskId)
+      const response = resolveTaskResponse(completed.payload, taskId)
       finalizeAssistantForTask(taskId, response, 'completed')
+      void applyReviewInsightFromPayload(
+        { ...completed.payload, llm_response: response, response },
+        taskId,
+      )
       return
     }
     if (failed) {
@@ -216,6 +252,25 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
         `**评审失败**\n\n${failed.payload?.error ?? failed.payload?.message ?? '未知错误'}`,
         'failed',
       )
+    }
+  }
+
+  function clearRunningIfTaskTerminal(taskId: string) {
+    const events = streamFor(taskId)
+    const hasTerminal = events.some(e => e.type === 'task.completed' || e.type === 'task.failed')
+    if (!hasTerminal) return
+
+    const stillStreaming = chatMessages.value.some(
+      m => m.streaming && (m.taskId === taskId || (!m.taskId && isActiveRunTask(taskId))),
+    )
+    if (stillStreaming) return
+
+    if (
+      runningTaskId.value === taskId
+      || runningTaskId.value === 'pending'
+      || activeTaskId.value === taskId
+    ) {
+      clearRunningState('completed')
     }
   }
 
@@ -258,8 +313,12 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     }
     for (const msg of chatMessages.value) {
       if (msg.streaming && msg.taskId) taskIds.add(msg.taskId)
+      if (msg.taskId) taskIds.add(msg.taskId)
     }
-    for (const tid of taskIds) processStreamEvents(tid)
+    for (const tid of taskIds) {
+      processStreamEvents(tid)
+      clearRunningIfTaskTerminal(tid)
+    }
   }
 
   function ensureTaskWatcher() {
@@ -279,25 +338,42 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     syncAllStreamingTasks()
 
     const tid = activeTaskId.value
-    if (!tid || isFinalized(tid)) return
+    if (!tid) {
+      if (runningTaskId.value && runningTaskId.value !== 'pending') {
+        clearRunningIfTaskTerminal(runningTaskId.value)
+      }
+      void ensureRecommendedCases()
+      return
+    }
+
+    if (isFinalized(tid)) {
+      clearRunningIfTaskTerminal(tid)
+      void ensureRecommendedCases()
+      return
+    }
 
     const events = streamFor(tid)
     const hasTerminal = events.some(e => e.type === 'task.completed' || e.type === 'task.failed')
-    if (!hasTerminal) {
-      runningTaskId.value = tid
-      taskStatus.value = 'running'
-      sending.value = false
-      const hasBubble = chatMessages.value.some(m => m.taskId === tid && m.streaming)
-      if (!hasBubble) {
-        chatMessages.value.push({
-          id: `assistant-stream-${tid}`,
-          role: 'assistant',
-          content: '',
-          streaming: true,
-          taskId: tid,
-        })
-        chatMessages.value = [...chatMessages.value]
-      }
+    if (hasTerminal) {
+      processStreamEvents(tid)
+      clearRunningIfTaskTerminal(tid)
+      void ensureRecommendedCases()
+      return
+    }
+
+    runningTaskId.value = tid
+    taskStatus.value = 'running'
+    sending.value = false
+    const hasBubble = chatMessages.value.some(m => m.taskId === tid && m.streaming)
+    if (!hasBubble) {
+      chatMessages.value.push({
+        id: `assistant-stream-${tid}`,
+        role: 'assistant',
+        content: '',
+        streaming: true,
+        taskId: tid,
+      })
+      chatMessages.value = [...chatMessages.value]
     }
   }
 
@@ -461,6 +537,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     p0Result,
     modulesResult,
     reviewInsight,
+    ensureRecommendedCases,
     toggleRecommendedCase: setRecommendedCaseChecked,
     setRecommendedCaseChecked,
     isFinalized,
