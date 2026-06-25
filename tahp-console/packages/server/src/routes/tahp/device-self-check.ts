@@ -24,6 +24,14 @@ import {
   DeviceRole,
   StartTestFlashPayload,
 } from '../../services/tahp/device-self-check'
+import {
+  listSelfCheckReports,
+  getSelfCheckReportDetail,
+  submitSelfCheckReportReview,
+  type SelfCheckReviewStatus,
+} from '../../services/tahp/self-check-reports'
+import { getSelfCheckPipelineStatus } from '../../services/tahp/pipeline-status'
+import { probeTPowerStatus, loadTPowerConfig, saveTPowerConfig } from '../../services/tahp/tpower-status'
 
 export const tahpDeviceSelfCheckRoutes = new Router()
 
@@ -335,6 +343,122 @@ tahpDeviceSelfCheckRoutes.post(
 )
 
 // SSE 事件流
+tahpDeviceSelfCheckRoutes.get(
+  '/api/tahp/device-self-check/pipeline',
+  async (ctx) => {
+    try {
+      const data = await getSelfCheckPipelineStatus()
+      ctx.body = { success: true, data }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to get pipeline status' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.get(
+  '/api/tahp/device-self-check/reports',
+  async (ctx) => {
+    try {
+      const sinceHours = ctx.query.sinceHours ? Number(ctx.query.sinceHours) : undefined
+      const pendingOnly = ctx.query.pendingOnly === '1' || ctx.query.pendingOnly === 'true'
+      const data = await listSelfCheckReports({
+        sinceHours: Number.isFinite(sinceHours) ? sinceHours : undefined,
+        pendingOnly,
+      })
+      ctx.body = { success: true, data }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to list reports' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.get(
+  '/api/tahp/device-self-check/reports/:reportId',
+  async (ctx) => {
+    try {
+      const data = await getSelfCheckReportDetail(ctx.params.reportId)
+      if (!data) {
+        ctx.status = 404
+        ctx.body = { success: false, error: '报告不存在' }
+        return
+      }
+      ctx.body = { success: true, data }
+    } catch (err: any) {
+      ctx.status = 400
+      ctx.body = { success: false, error: err?.message || 'Failed to get report detail' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/reports/:reportId/review',
+  async (ctx) => {
+    try {
+      const body = (ctx.request.body || {}) as { status?: SelfCheckReviewStatus; note?: string }
+      const status = body.status
+      if (status !== 'reviewed' && status !== 'retest' && status !== 'pending') {
+        ctx.status = 400
+        ctx.body = { success: false, error: '无效 review 状态' }
+        return
+      }
+      const data = await submitSelfCheckReportReview(ctx.params.reportId, {
+        status,
+        note: body.note,
+      })
+      if (!data) {
+        ctx.status = 404
+        ctx.body = { success: false, error: '报告不存在' }
+        return
+      }
+      ctx.body = { success: true, data }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to submit review' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.get(
+  '/api/tahp/device-self-check/tpower/status',
+  async (ctx) => {
+    try {
+      const data = await probeTPowerStatus()
+      ctx.body = { success: true, data }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to probe T-Power' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.get(
+  '/api/tahp/device-self-check/tpower/config',
+  async (ctx) => {
+    try {
+      ctx.body = { success: true, data: loadTPowerConfig() }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to load T-Power config' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/tpower/config',
+  async (ctx) => {
+    try {
+      const body = (ctx.request.body || {}) as { adbSerial?: string; label?: string }
+      const data = saveTPowerConfig(body)
+      ctx.body = { success: true, data }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to save T-Power config' }
+    }
+  }
+)
+
 tahpDeviceSelfCheckRoutes.get(
   '/api/tahp/device-self-check/events',
   async (ctx) => {

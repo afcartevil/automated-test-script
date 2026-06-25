@@ -695,7 +695,7 @@ onMounted(() => {
           })
         }
       } else {
-        speech.enqueue(props.message.id, content)
+        speech.toggle(props.message.id, content)
       }
     }
   }

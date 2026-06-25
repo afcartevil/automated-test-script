@@ -35,6 +35,7 @@ const {
   handleKeydown,
   restoreWorkspace,
 } = useGerritReviewWorkspace()
+void [thinkingScrollRef, scrollRef, textareaRef, toggleRecommendedCase]
 
 onMounted(restoreWorkspace)
 onActivated(restoreWorkspace)

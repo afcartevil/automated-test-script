@@ -30,7 +30,7 @@ const coreCards = [
     tone: 'ea-t-emerald',
     icon: 'shield',
     title: 'AI 自检',
-summary: '周版本、STR4转测版本用例自动化；GMS、稳定性测试AI自规划；gerrit提交code review和测试建议',
+summary: '项目节点驱动，自动烧录、自动测试、AI Review，第二天人工复核报告',
   },
 ]
 

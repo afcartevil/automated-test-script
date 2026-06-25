@@ -9,6 +9,7 @@ import {
   getTestScheduleView,
   saveTestPlanRules,
   syncProjectNodesFromXlsx,
+  syncProjectNodesFromRemote,
   type TestPlanRule,
 } from '../../services/tahp/test-planning'
 
@@ -27,9 +28,11 @@ tahpTestPlanningRoutes.get('/api/tahp/test-planning/nodes', async (ctx) => {
 
 tahpTestPlanningRoutes.post('/api/tahp/test-planning/nodes/sync', async (ctx) => {
   try {
-    const body = (ctx.request.body || {}) as { filePath?: string }
+    const body = (ctx.request.body || {}) as { filePath?: string; remote?: boolean }
     const filePath = typeof body.filePath === 'string' ? body.filePath : undefined
-    const file = await syncProjectNodesFromXlsx(filePath)
+    const file = body.remote === false
+      ? await syncProjectNodesFromXlsx(filePath)
+      : await syncProjectNodesFromRemote(filePath)
     const data = await getProjectNodesView()
     ctx.body = { success: true, data: { ...data, synced: file } }
   } catch (err) {

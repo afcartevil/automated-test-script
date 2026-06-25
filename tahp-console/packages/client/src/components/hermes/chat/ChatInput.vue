@@ -513,6 +513,11 @@ function openKbSaveDialog() {
   showKbModal.value = true
 }
 
+function closeTahpContextBanner() {
+  tahpCtx.value = null
+  sessionStorage.removeItem('tahp_chat_context')
+}
+
 async function submitKbSave() {
   if (!tahpCtx.value || !kbTitle.value.trim() || !kbContent.value.trim()) return
   kbSaving.value = true
@@ -571,7 +576,7 @@ async function submitKbSave() {
           </template>
           提炼至知识库
         </NButton>
-        <button class="tahp-banner-close" @click="tahpCtx = null; sessionStorage.removeItem('tahp_chat_context')">
+        <button class="tahp-banner-close" @click="closeTahpContextBanner">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>

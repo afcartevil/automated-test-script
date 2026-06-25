@@ -429,6 +429,18 @@ const sessionModelProfile = computed<string | null>(() => {
   return session?.profile || null;
 });
 
+function getModelGroupsForProfile(profile: string) {
+  return appStore.profileModelGroups.find((item) => item.profile === profile)?.groups || appStore.modelGroups;
+}
+
+function getDefaultModelForProfile(profile: string) {
+  const profileModels = appStore.profileModelGroups.find((item) => item.profile === profile);
+  return {
+    provider: profileModels?.default_provider || appStore.selectedProvider || "",
+    model: profileModels?.default || appStore.selectedModel || "",
+  };
+}
+
 const sessionModelBaseGroups = computed(() =>
   sessionModelProfile.value ? getModelGroupsForProfile(sessionModelProfile.value) : [],
 );

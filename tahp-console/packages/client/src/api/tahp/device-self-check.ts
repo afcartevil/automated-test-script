@@ -326,3 +326,108 @@ export async function updateSettings(
     settings
   )
 }
+
+export type PipelineStageStatus = 'idle' | 'queued' | 'running' | 'done' | 'attention'
+
+export interface PipelineStage {
+  key: string
+  label: string
+  status: PipelineStageStatus
+  hint?: string
+}
+
+export interface SelfCheckPipelineView {
+  stages: PipelineStage[]
+  updatedAt: string
+  runningTests: number
+  pendingManual: number
+  pendingReports: number
+}
+
+export function fetchSelfCheckPipeline(): Promise<SelfCheckPipelineView> {
+  return tahpGet<SelfCheckPipelineView>('/api/tahp/device-self-check/pipeline')
+}
+
+export type SelfCheckReviewStatus = 'pending' | 'reviewed' | 'retest'
+
+export interface SelfCheckFailedCaseItem {
+  caseKey: string
+  caseName: string
+  module: string
+  status: string
+  message: string
+}
+
+export interface SelfCheckReportSummary {
+  reportId: string
+  deviceId: string
+  deviceName: string
+  testType: string
+  startTime: string
+  endTime?: string
+  status: string
+  totalCases: number
+  passedCases: number
+  failedCases: number
+  skippedCases: number
+  reviewStatus: SelfCheckReviewStatus
+  completedAt: string
+  reportPath: string
+}
+
+export interface SelfCheckReportDetail extends SelfCheckReportSummary {
+  aiSummary: string
+  failedCaseItems: SelfCheckFailedCaseItem[]
+  reviewNote?: string
+  reviewedAt?: string
+}
+
+export function listSelfCheckReports(params?: {
+  sinceHours?: number
+  pendingOnly?: boolean
+}): Promise<SelfCheckReportSummary[]> {
+  const qs = new URLSearchParams()
+  if (params?.sinceHours != null) qs.set('sinceHours', String(params.sinceHours))
+  if (params?.pendingOnly) qs.set('pendingOnly', '1')
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return tahpGet<SelfCheckReportSummary[]>(`/api/tahp/device-self-check/reports${suffix}`)
+}
+
+export function getSelfCheckReportDetail(reportId: string): Promise<SelfCheckReportDetail> {
+  return tahpGet<SelfCheckReportDetail>(`/api/tahp/device-self-check/reports/${encodeURIComponent(reportId)}`)
+}
+
+export function submitSelfCheckReportReview(
+  reportId: string,
+  payload: { status: SelfCheckReviewStatus; note?: string },
+): Promise<SelfCheckReportDetail> {
+  return tahpPost<SelfCheckReportDetail>(
+    `/api/tahp/device-self-check/reports/${encodeURIComponent(reportId)}/review`,
+    payload,
+  )
+}
+
+export interface TPowerStatus {
+  connected: boolean
+  adbSerial?: string
+  label?: string
+  message: string
+  checkedAt: string
+}
+
+export interface TPowerConfig {
+  adbSerial?: string
+  label?: string
+}
+
+export function fetchTPowerStatus(): Promise<TPowerStatus> {
+  return tahpGet<TPowerStatus>('/api/tahp/device-self-check/tpower/status')
+}
+
+export function fetchTPowerConfig(): Promise<TPowerConfig> {
+  return tahpGet<TPowerConfig>('/api/tahp/device-self-check/tpower/config')
+}
+
+export function saveTPowerConfig(config: TPowerConfig): Promise<TPowerConfig> {
+  return tahpPost<TPowerConfig>('/api/tahp/device-self-check/tpower/config', config)
+}

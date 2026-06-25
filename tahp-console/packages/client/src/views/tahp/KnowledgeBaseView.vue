@@ -2000,6 +2000,7 @@ async function openSkillPreviewById(draftId: string) {
     previewLoading.value = false
   }
 }
+void openSkillPreviewById
 
 function previewToEditor() {
   if (!previewDraft.value) return

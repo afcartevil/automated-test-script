@@ -3,6 +3,7 @@
  */
 import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
+import { logger } from '../logger'
 import { safeFileStore } from '../safe-file-store'
 import { tahpPaths } from './paths'
 import {
@@ -242,6 +243,15 @@ export async function saveTestPlanRules(rules: TestPlanRule[]): Promise<TestPlan
   return payload
 }
 
+async function writeProjectNodesFile(payload: ProjectNodesFile): Promise<ProjectNodesFile> {
+  ensureConfigDir()
+  await safeFileStore.writeText(
+    projectNodesConfigPath(),
+    `${JSON.stringify(payload, null, 2)}\n`,
+  )
+  return payload
+}
+
 export async function syncProjectNodesFromXlsx(filePath?: string): Promise<ProjectNodesFile> {
   ensureConfigDir()
   const parsed = await parseProjectInfoXlsx(filePath)
@@ -250,11 +260,37 @@ export async function syncProjectNodesFromXlsx(filePath?: string): Promise<Proje
     sourcePath: parsed.sourcePath,
     projects: parsed.projects,
   }
-  await safeFileStore.writeText(
-    projectNodesConfigPath(),
-    `${JSON.stringify(payload, null, 2)}\n`,
-  )
-  return payload
+  return writeProjectNodesFile(payload)
+}
+
+export async function syncProjectNodesFromRemoteUrl(url: string): Promise<ProjectNodesFile> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+  if (!res.ok) {
+    throw new Error(`远端项目节点同步失败: HTTP ${res.status}`)
+  }
+  const data = await res.json() as Partial<ProjectNodesFile> & { projects?: ProjectNodeEntry[] }
+  const projects = Array.isArray(data.projects) ? data.projects : []
+  if (!projects.length) {
+    throw new Error('远端返回的项目节点为空')
+  }
+  const payload: ProjectNodesFile = {
+    updatedAt: new Date().toISOString(),
+    sourcePath: url,
+    projects,
+  }
+  return writeProjectNodesFile(payload)
+}
+
+export async function syncProjectNodesFromRemote(filePath?: string): Promise<ProjectNodesFile> {
+  const remoteUrl = process.env.TAHP_PROJECT_NODES_SYNC_URL?.trim()
+  if (remoteUrl) {
+    try {
+      return await syncProjectNodesFromRemoteUrl(remoteUrl)
+    } catch (err) {
+      logger.warn({ err: (err as Error).message, remoteUrl }, '[test-planning] remote sync failed, fallback to xlsx')
+    }
+  }
+  return syncProjectNodesFromXlsx(filePath)
 }
 
 export async function getProjectNodesView(today?: Date) {

@@ -12,6 +12,7 @@ import {
   waitForAdbDevice,
 } from './device-flash'
 import { tahpPaths } from './paths'
+import { buildSelfCheckDetailPayload, type SelfCheckFailedCaseItem } from './self-check-reports'
 
 // 类型定义
 export type DeviceRole = '未分配' | '测试机' | '辅测机'
@@ -2264,6 +2265,28 @@ async function generateTestReport(deviceId: string, session: TestSession): Promi
     }
     writeFileSync(join(resultDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8')
 
+    const failedCaseItems: SelfCheckFailedCaseItem[] = []
+    const orderedResults: CaseResult[] = session.testType === 'custom' && session.selectedCases
+      ? session.selectedCases
+          .map(caseKey => session.caseResults[caseKey])
+          .filter((r): r is CaseResult => Boolean(r))
+      : Object.values(session.caseResults)
+
+    for (const c of orderedResults) {
+      if (c.status !== '失败' && c.status !== '部分通过' && c.status !== '待确认') continue
+      const caseKey = `${c.testType}/${c.module}/${c.caseIndex}`
+      failedCaseItems.push({
+        caseKey,
+        caseName: c.caseName,
+        module: c.module,
+        status: c.status,
+        message: c.message,
+      })
+    }
+
+    const detailPayload = buildSelfCheckDetailPayload(summary, failedCaseItems)
+    writeFileSync(join(resultDir, 'detail.json'), JSON.stringify(detailPayload, null, 2), 'utf-8')
+
     device.resultDir = resultDir
     console.log(`[device-self-check] Report generated: ${resultDir}`)
   } catch (e) {
@@ -2512,6 +2535,14 @@ export function updateCaseResult(
 // 结果和详情
 export function getDevice(deviceId: string): DeviceInfo | undefined {
   return devices[deviceId]
+}
+
+export function snapshotDevices(): DeviceInfo[] {
+  return Object.values(devices)
+}
+
+export function countPendingManualDecisions(): number {
+  return Object.keys(pendingManualDecisions).length
 }
 
 export function getTestSession(deviceId: string): TestSession | undefined {

@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
 import type { SkillInfo } from '@/api/hermes/skills'
 
-const { t } = useI18n()
 
 const props = defineProps<{
   skills: SkillInfo[]          // 当前功能类型下所有技能

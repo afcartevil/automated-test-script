@@ -24,7 +24,7 @@ let detailRequestId = 0
 const selectedSession = computed(() => sessions.value.find(session => session.id === selectedSessionId.value) || null)
 const selectedSessionModelName = computed(() =>
   selectedSession.value?.model
-    ? appStore.displayModelName(selectedSession.value.model, selectedSession.value.provider)
+    ? appStore.displayModelName(selectedSession.value.model, selectedSession.value.billing_provider || undefined)
     : '',
 )
 

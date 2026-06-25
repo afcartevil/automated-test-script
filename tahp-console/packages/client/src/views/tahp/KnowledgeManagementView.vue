@@ -3,14 +3,13 @@ import { ref, onMounted, computed, h, reactive } from 'vue'
 import {
   NCard, NForm, NFormItem, NInput, NSelect, NDataTable, NModal, NDrawer, NButton,
   NSpace, NTag, NSpin, NEmpty, NTabs, NTabPane, NStatistic, NGrid, NGi,
-  NSlider, NCheckbox, NDatePicker, NProgressBar, NDivider, NIcon, NPopconfirm,
-  useMessage, useDialog,
+  NSlider, NProgress, NDivider, NPopconfirm,
+  useMessage,
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
 import { useTahpModulesStore } from '@/stores/tahp/modules'
 
 const message = useMessage()
-const dialog = useDialog()
 const modulesStore = useTahpModulesStore()
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -167,6 +166,9 @@ async function createSkillDraft(draft: Partial<SkillDraft>): Promise<SkillDraft>
   return result.data
 }
 
+void createSkillDraft
+void recordFeedback
+
 async function reviewSkillDraft(draftId: string, action: 'approve' | 'reject', reviewNotes?: string): Promise<SkillDraft> {
   const response = await fetch(`/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}/review`, {
     method: 'POST',
@@ -221,6 +223,16 @@ const formEntry = reactive<KnowledgeEntry>({
   status: 'pending_review',
   is_verified: false,
   usage_count: 0,
+})
+
+const formEntryKeywordsText = computed({
+  get: () => formEntry.keywords.join('\n'),
+  set: (value: string) => {
+    formEntry.keywords = value
+      .split(/\r?\n/)
+      .map(item => item.trim())
+      .filter(Boolean)
+  },
 })
 
 // Entry Drawer
@@ -315,9 +327,9 @@ const entryColumns: DataTableColumns<KnowledgeEntry> = [
     title: '置信度',
     key: 'confidence_score',
     width: 120,
-    render: (row) => h(NProgressBar, {
+    render: (row) => h(NProgress, {
       percentage: row.confidence_score * 100,
-      type: row.confidence_score >= 0.8 ? 'success' : row.confidence_score >= 0.6 ? 'warning' : 'error',
+      status: row.confidence_score >= 0.8 ? 'success' : row.confidence_score >= 0.6 ? 'warning' : 'error',
       height: 20,
     }, { default: () => (row.confidence_score * 100).toFixed(0) + '%' })
   },
@@ -683,7 +695,7 @@ function onTabChange(tab: string) {
 
     <!-- 统计卡片 -->
     <NSpin :show="statsLoading">
-      <NGrid v-if="stats" :cols="5" :x-gap="12" :y-gap="12" class="stats-grid" responsive>
+      <NGrid v-if="stats" :cols="5" :x-gap="12" :y-gap="12" class="stats-grid" responsive="screen">
         <NGi>
           <NCard :bordered="false" size="small" class="stat-card">
             <NStatistic label="知识条目总数" :value="stats.total_entries" type="info" />
@@ -752,7 +764,7 @@ function onTabChange(tab: string) {
           <!-- 快速操作 -->
           <NCard title="快速操作" :bordered="false" class="card-mt">
             <NSpace>
-              <NButton type="primary" @click="openEditEntry">
+              <NButton type="primary" @click="() => openEditEntry()">
                 <template #icon><span>➕</span></template>
                 新建条目
               </NButton>
@@ -815,7 +827,7 @@ function onTabChange(tab: string) {
                 <NButton type="primary" @click="searchEntries">搜索</NButton>
               </NFormItem>
               <NFormItem>
-                <NButton @click="openEditEntry">新建条目</NButton>
+                <NButton @click="() => openEditEntry()">新建条目</NButton>
               </NFormItem>
               <NFormItem>
                 <NButton @click="loadEntries">刷新</NButton>
@@ -835,7 +847,7 @@ function onTabChange(tab: string) {
                   page: currentPage,
                   pageSize: pageSize,
                   pageCount: Math.ceil(entriesTotal / pageSize),
-                  prefix: (info) => `共 ${entriesTotal} 条`,
+                  prefix: () => `共 ${entriesTotal} 条`,
                   onChange: (p) => { currentPage = p; loadEntries() },
                 }"
                 size="small"
@@ -864,7 +876,7 @@ function onTabChange(tab: string) {
                   page: draftPage,
                   pageSize: draftPageSize,
                   pageCount: Math.ceil(skillDraftsTotal / draftPageSize),
-                  prefix: (info) => `共 ${skillDraftsTotal} 条草稿`,
+                  prefix: () => `共 ${skillDraftsTotal} 条草稿`,
                   onChange: (p) => { draftPage = p; loadSkillDrafts() },
                 }"
                 size="small"
@@ -959,7 +971,7 @@ function onTabChange(tab: string) {
         </NFormItem>
         <NFormItem label="关键词">
           <NInput
-            v-model:value="formEntry.keywords"
+            v-model:value="formEntryKeywordsText"
             type="textarea"
             placeholder="每行一个关键词"
             :autosize="{ minRows: 3, maxRows: 6 }"
@@ -1021,7 +1033,7 @@ function onTabChange(tab: string) {
         <div class="detail-section">
           <div class="detail-label">置信度</div>
           <div class="detail-value">
-            <NProgressBar :percentage="viewingEntry.confidence_score * 100" />
+            <NProgress :percentage="viewingEntry.confidence_score * 100" />
             <span style="margin-left: 8px">{{ (viewingEntry.confidence_score * 100).toFixed(1) }}%</span>
           </div>
         </div>

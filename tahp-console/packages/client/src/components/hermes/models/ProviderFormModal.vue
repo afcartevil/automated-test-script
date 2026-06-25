@@ -254,9 +254,9 @@ async function triggerCopilotAdd() {
   copilotChecking.value = true
   try {
     const status = await checkCopilotToken()
-    if (status.has_token) {
+    if (status.available) {
       // 已能解析到 token：弹确认窗，用户点 [添加] → enable + saved
-      const sourceText = copilotSourceLabel(status.source)
+      const sourceText = status.source ? copilotSourceLabel(status.source) : ''
       dialog.success({
         title: t('models.copilotAddDetectedTitle'),
         content: sourceText

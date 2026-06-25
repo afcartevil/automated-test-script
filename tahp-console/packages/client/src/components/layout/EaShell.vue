@@ -34,6 +34,7 @@ const systemNav = [
 
 const FEEDBACK_URL = 'https://transsioner.feishu.cn/share/base/form/shrcnDOMx8H12Nm1tcTmIOAHDId'
 
+const selectedKey = computed(() => route.name?.toString() || '')
 
 const modelDisplay = computed(() => {
   const groups = appStore.profileModelGroups.find(g => g.profile === (appStore as any).activeProfile)?.groups
