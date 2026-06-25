@@ -1,16 +1,16 @@
-"""STR4 驱动器件：距离传感器测试（按超声距感属性选择传感器1/2，复用 case23 校准与测试结果）。"""
+"""STR4 驱动器件：距离传感器测试（按超声距感属性选择传感器1/2，工模校准与测试）。"""
 
 import subprocess
 
-from utils.driver.sensor_items_result import run_reuse_sensor_items_item
 from utils.driver.tranfacmode_config import (
     PROXIMITY_SENSOR_2_ITEM_KEYWORDS,
     PROXIMITY_SENSOR_EXCLUDE_KEYWORDS,
     PROXIMITY_SENSOR_ITEM_KEYWORDS,
+    SENSOR,
+    SENSOR_CALI_EXCLUDE_KEYWORDS,
     ULTRASOUND_PROXIMITY_SUPPORT_PROP,
 )
-
-SOURCE_SENSOR_CASE_INDEX = 23
+from utils.driver.ui_tranfacmode import run_tranfacmode_group_items_test
 
 
 def _get_dut_device_id(device_info):
@@ -60,6 +60,8 @@ def _check_ultrasound_support(device_id: str) -> tuple[bool, str]:
 
 def run(category=None, case_index=None, device_info=None, **context):
     step_update = context.get("step_update")
+    operator_notify = context.get("operator_notify")
+    manual_confirm = context.get("manual_confirm")
     device_info = device_info or context.get("device_info") or {}
     sub_steps = ""
 
@@ -70,14 +72,6 @@ def run(category=None, case_index=None, device_info=None, **context):
     def on_step(label: str, ok: bool) -> None:
         nonlocal sub_steps
         sub_steps += f"\n{label}" + ("-成功" if ok else "-失败")
-        update(sub_steps)
-
-    def on_reuse_step(message: str) -> None:
-        nonlocal sub_steps
-        if sub_steps and message.startswith("\n"):
-            sub_steps += message
-        else:
-            sub_steps = message
         update(sub_steps)
 
     dut_id, error = _get_dut_device_id(device_info)
@@ -94,33 +88,40 @@ def run(category=None, case_index=None, device_info=None, **context):
         on_step("判定使用距离传感器2", True)
         item_keywords = PROXIMITY_SENSOR_2_ITEM_KEYWORDS
         item_label = "距离传感器2"
-        exclude_keywords: tuple[str, ...] = ()
+        exclude_keywords = SENSOR_CALI_EXCLUDE_KEYWORDS
     else:
         on_step("判定使用距离传感器1", True)
         item_keywords = PROXIMITY_SENSOR_ITEM_KEYWORDS
         item_label = "距离传感器"
-        exclude_keywords = PROXIMITY_SENSOR_EXCLUDE_KEYWORDS
+        exclude_keywords = (
+            PROXIMITY_SENSOR_EXCLUDE_KEYWORDS + SENSOR_CALI_EXCLUDE_KEYWORDS
+        )
 
-    cali_result = run_reuse_sensor_items_item(
-        context,
-        item_keywords,
-        item_label=item_label,
-        step_update=on_reuse_step,
-        item_source="cali_items",
-        source_case_index=SOURCE_SENSOR_CASE_INDEX,
-        exclude_keywords=exclude_keywords,
-    )
-    if cali_result["status"] != "pass":
-        return cali_result
+    def prompt_proximity_calibration():
+        nonlocal sub_steps
+        operation_text = (
+            f"请在 Sensor 工模列表中点击{item_label}校准项，并按界面提示完成校准。"
+        )
+        if callable(operator_notify):
+            operator_notify(operation_text)
+        sub_steps += f"\n需人工操作：{operation_text}\n需人工确认"
+        update(sub_steps)
+        if not callable(manual_confirm):
+            return {"status": "pending", "message": f"需确认{item_label}校准是否完成"}
+        status = manual_confirm(f"请确认{item_label}校准是否已完成。")
+        on_step(f"确认{item_label}校准完成", status == "pass")
+        if status != "pass":
+            return {"status": "fail", "message": f"{item_label}校准未确认完成"}
+        return None
 
-    test_result = run_reuse_sensor_items_item(
-        context,
-        item_keywords,
-        item_label=item_label,
-        step_update=on_reuse_step,
-        item_source="items",
-        source_case_index=SOURCE_SENSOR_CASE_INDEX,
-        exclude_keywords=exclude_keywords,
+    test_result = run_tranfacmode_group_items_test(
+        dut_id,
+        SENSOR,
+        ((item_label, item_keywords, exclude_keywords),),
+        group_label=item_label,
+        result_dir=context.get("result_dir"),
+        on_step=on_step,
+        before_items=prompt_proximity_calibration,
     )
     if test_result["status"] != "pass":
         return test_result
@@ -130,6 +131,6 @@ def run(category=None, case_index=None, device_info=None, **context):
         "status": "pass",
         "message": (
             f"距离传感器测试({sensor_path}): "
-            f"{cali_result['message']}; {test_result['message']}"
+            f"{item_label}校准已确认完成; {test_result['message']}"
         ),
     }

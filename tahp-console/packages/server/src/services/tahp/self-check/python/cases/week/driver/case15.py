@@ -1,7 +1,7 @@
-"""驱动周版本自检：开机状态充电（复用 case14 标准充电结果 + 人工插拔确认）。"""
+"""驱动周版本自检：开机状态充电（工模 USB 标准充电 + 人工插拔确认）。"""
 
-from utils.driver.tranfacmode_config import USB_STANDARD_CHARGE_ITEM_KEYWORDS
-from utils.driver.ui_tranfacmode import run_reuse_usb_group_item
+from utils.driver.tranfacmode_config import USB, USB_STANDARD_CHARGE_ITEM_KEYWORDS
+from utils.driver.ui_tranfacmode import run_tranfacmode_group_items_test
 
 
 def _get_dut_device_id(device_info):
@@ -20,8 +20,8 @@ def run(category=None, case_index=None, device_info=None, **context):
     manual_confirm = context.get("manual_confirm")
     device_info = device_info or context.get("device_info") or {}
 
-    _, error = _get_dut_device_id(device_info)
-    if error:
+    dut_id, error = _get_dut_device_id(device_info)
+    if not dut_id:
         if callable(step_update):
             step_update(error)
         return {"status": "fail", "message": error}
@@ -32,19 +32,24 @@ def run(category=None, case_index=None, device_info=None, **context):
         if callable(step_update):
             step_update(message)
 
-    def on_reuse_step(message: str) -> None:
+    def on_step(label: str, ok: bool) -> None:
         nonlocal sub_steps
-        sub_steps = message
+        sub_steps += f"\n{label}" + ("-成功" if ok else "-失败")
         update(sub_steps)
 
-    reuse_result = run_reuse_usb_group_item(
-        context,
-        USB_STANDARD_CHARGE_ITEM_KEYWORDS,
-        item_label="标准充电",
-        step_update=on_reuse_step,
+    standard_charge_result = run_tranfacmode_group_items_test(
+        dut_id,
+        USB,
+        [("标准充电", USB_STANDARD_CHARGE_ITEM_KEYWORDS)],
+        group_label="标准充电",
+        result_dir=context.get("result_dir"),
+        on_step=on_step,
     )
-    if reuse_result["status"] != "pass":
-        return reuse_result
+    if standard_charge_result["status"] != "pass":
+        return {
+            "status": standard_charge_result["status"],
+            "message": standard_charge_result["message"],
+        }
 
     operation_text = "请多次插拔USB，确认是否正常识别"
     if callable(operator_notify):

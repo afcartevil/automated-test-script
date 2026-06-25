@@ -3,8 +3,6 @@
 import subprocess
 import time
 
-from test.result_output import append_case_result, split_sub_steps
-
 GALLERY_ACTIVITY = "com.gallery20/com.gallery20.HomeActivity"
 SCREENSHOT_PATH = "/sdcard/Pictures/Screenshots/gsensor_test.png"
 
@@ -83,26 +81,11 @@ def run(category=None, case_index=None, device_info=None, case_name=None, **cont
 
     sub_steps = ""
 
-    def report_steps() -> None:
-        if callable(step_update):
-            step_update(sub_steps)
-        if result_dir and category and case_index:
-            append_case_result(
-                result_dir,
-                category,
-                {
-                    "case_index": case_index,
-                    "case_name": case_name or "",
-                    "status": "pending",
-                    "message": "需人工评判",
-                    "sub_steps": split_sub_steps(sub_steps),
-                },
-            )
-
     def on_step(label: str, ok: bool) -> None:
         nonlocal sub_steps
         sub_steps += f"\n{label}" + ("-成功" if ok else "-失败")
-        report_steps()
+        if callable(step_update):
+            step_update(sub_steps)
 
     if callable(step_update):
         step_update(sub_steps + "\n回到桌面")
@@ -167,9 +150,12 @@ def run(category=None, case_index=None, device_info=None, case_name=None, **cont
     )
     if callable(operator_notify):
         operator_notify(operation_text)
-    sub_steps += f"\n需人工操作：\n  {operation_text.replace(chr(10), chr(10) + '  ')}\n需人工评判"
-    report_steps()
+    else:
+        sub_steps += f"\n需人工操作：\n  {operation_text.replace(chr(10), chr(10) + '  ')}"
+    sub_steps += "\n需人工评判"
+    if callable(step_update):
+        step_update(sub_steps)
     if callable(manual_confirm):
         status = manual_confirm("请根据图片旋转显示效果评判本用例是否通过。")
         return {"status": status, "message": f"人工评判{status}"}
-    return {"status": "pending", "message": "需人工评判"}
+    return {"status": "pending", "message": "需人工评判", "full_automation": False}

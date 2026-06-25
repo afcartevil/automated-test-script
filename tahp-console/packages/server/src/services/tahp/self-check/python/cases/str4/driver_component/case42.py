@@ -1,17 +1,14 @@
-"""STR4 驱动器件：开机工模指纹(屏下)（属性校验 + 复用 case23 光学指纹工模测试结果）。"""
+"""STR4 驱动器件：开机工模指纹(屏下)（属性校验 + 校准人工确认 + 工模测试）。"""
 
 import subprocess
 
-from utils.driver.sensor_items_result import run_reuse_sensor_items_item
 from utils.driver.tranfacmode_config import (
-    OPTICAL_FINGERPRINT_CALI_KEYWORDS,
-    OPTICAL_FINGERPRINT_ENROLL_KEYWORDS,
+    OPTICAL_FINGERPRINT_GROUP_ITEM_SPECS,
+    OPTICAL_FINGERPRINT_GROUP_LABEL,
     OPTICAL_FINGERPRINT_SUPPORT_PROP,
-    OPTICAL_FINGERPRINT_TEST_EXCLUDE_KEYWORDS,
-    OPTICAL_FINGERPRINT_TEST_KEYWORDS,
+    SENSOR,
 )
-
-SOURCE_SENSOR_CASE_INDEX = 23
+from utils.driver.ui_tranfacmode import enter_group, run_tranfacmode_group_items_test
 
 
 def _get_dut_device_id(device_info):
@@ -41,6 +38,7 @@ def _is_prop_supported(value: str) -> bool:
 
 def run(category=None, case_index=None, device_info=None, **context):
     step_update = context.get("step_update")
+    operator_notify = context.get("operator_notify")
     manual_confirm = context.get("manual_confirm")
     device_info = device_info or context.get("device_info") or {}
     sub_steps = ""
@@ -55,13 +53,27 @@ def run(category=None, case_index=None, device_info=None, **context):
         sub_steps += f"\n{label}-{suffix}"
         update(sub_steps)
 
-    def on_reuse_step(message: str) -> None:
+    def prompt_optical_fingerprint_calibration():
         nonlocal sub_steps
-        if sub_steps and message.startswith("\n"):
-            sub_steps += message
-        else:
-            sub_steps = message
+        operation_text = (
+            "请在 Sensor 工模列表中自行选择屏下指纹校准项，并按界面提示完成校准；"
+            "校准完成后请返回 Sensor 工模列表，再确认继续。"
+        )
+        if callable(operator_notify):
+            operator_notify(operation_text)
+        sub_steps += f"\n需人工操作：{operation_text}\n需人工确认"
         update(sub_steps)
+        if not callable(manual_confirm):
+            return {"status": "pending", "message": "需确认屏下指纹校准是否完成"}
+        status = manual_confirm("请确认屏下指纹校准是否已完成并通过。")
+        on_step("确认屏下指纹校准完成", status == "pass")
+        if status != "pass":
+            return {"status": "fail", "message": "屏下指纹校准未确认通过"}
+        sensor_ready = enter_group(dut_id, SENSOR)
+        on_step("校准后进入 Sensor 工模列表", sensor_ready)
+        if not sensor_ready:
+            return {"status": "fail", "message": "校准后进入 Sensor 工模列表失败"}
+        return None
 
     dut_id, error = _get_dut_device_id(device_info)
     if not dut_id:
@@ -101,45 +113,16 @@ def run(category=None, case_index=None, device_info=None, **context):
         else:
             return {"status": "pending", "message": "需确认设备是否支持屏下指纹"}
 
-    cali_result = run_reuse_sensor_items_item(
-        context,
-        OPTICAL_FINGERPRINT_CALI_KEYWORDS,
-        item_label="光学指纹校准",
-        step_update=on_reuse_step,
-        item_source="cali_items",
-        source_case_index=SOURCE_SENSOR_CASE_INDEX,
+    fingerprint_result = run_tranfacmode_group_items_test(
+        dut_id,
+        SENSOR,
+        OPTICAL_FINGERPRINT_GROUP_ITEM_SPECS,
+        group_label=OPTICAL_FINGERPRINT_GROUP_LABEL,
+        result_dir=context.get("result_dir"),
+        on_step=on_step,
+        before_items=prompt_optical_fingerprint_calibration,
     )
-    if cali_result["status"] != "pass":
-        return cali_result
-
-    test_result = run_reuse_sensor_items_item(
-        context,
-        OPTICAL_FINGERPRINT_TEST_KEYWORDS,
-        item_label="光学指纹",
-        step_update=on_reuse_step,
-        item_source="items",
-        source_case_index=SOURCE_SENSOR_CASE_INDEX,
-        exclude_keywords=OPTICAL_FINGERPRINT_TEST_EXCLUDE_KEYWORDS,
-    )
-    if test_result["status"] != "pass":
-        return test_result
-
-    enroll_result = run_reuse_sensor_items_item(
-        context,
-        OPTICAL_FINGERPRINT_ENROLL_KEYWORDS,
-        item_label="指纹录入",
-        step_update=on_reuse_step,
-        item_source="items",
-        source_case_index=SOURCE_SENSOR_CASE_INDEX,
-    )
-    if enroll_result["status"] != "pass":
-        return enroll_result
-
     return {
-        "status": "pass",
-        "message": (
-            f"{cali_result['message']}; "
-            f"{test_result['message']}; "
-            f"{enroll_result['message']}"
-        ),
+        "status": fingerprint_result["status"],
+        "message": fingerprint_result["message"],
     }

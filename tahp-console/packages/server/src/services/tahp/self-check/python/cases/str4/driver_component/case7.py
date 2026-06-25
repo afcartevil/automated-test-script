@@ -1,23 +1,11 @@
 """驱动周版本自检：亮灭屏后 TP 触摸报点检测（getevent -ltr，5 轮）。"""
 
-import subprocess
-
 from utils.driver.tp_touch import (
     POWER_CYCLE_COUNT,
     USER_SWIPE_TIMEOUT_SEC,
     check_tp_touch_after_power_cycles,
+    go_home,
 )
-
-
-def _go_home(device_id: str) -> bool:
-    r = subprocess.run(
-        ["adb", "-s", device_id, "shell", "input", "keyevent", "3"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    return r.returncode == 0
 
 
 def _get_dut_device_id(device_info):
@@ -49,14 +37,11 @@ def run(category=None, case_index=None, device_info=None, **context):
         if callable(step_update):
             step_update(sub_steps)
 
-    ok = _go_home(dut_id)
-    on_step("回到主界面", ok)
-
     def before_cycles():
         wait_sec = int(USER_SWIPE_TIMEOUT_SEC)
         notify_text = (
             f"接下来将进行 {POWER_CYCLE_COUNT} 次亮灭屏测试。\n"
-            f"每次亮屏后请在 {wait_sec} 秒内滑动屏幕，以检测触摸报点。\n"
+            f"每次亮屏后请在 {wait_sec} 秒内手动触摸屏幕，以检测触摸报点。\n"
             "点击「知道了」后开始测试。"
         )
         if callable(operator_notify):
@@ -66,6 +51,11 @@ def run(category=None, case_index=None, device_info=None, **context):
         sub_steps += f"\n{notify_text}"
         if callable(step_update):
             step_update(sub_steps)
+
+    home_ok = go_home(dut_id)
+    on_step("返回主界面", home_ok)
+    if not home_ok:
+        return {"status": "fail", "message": "返回主界面失败"}
 
     result = check_tp_touch_after_power_cycles(
         dut_id,

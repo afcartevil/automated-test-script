@@ -1,9 +1,13 @@
-"""STR4 驱动器件：地磁功能（复用 case23 指南针工模测试结果 + 指南针应用人工确认）。"""
+"""STR4 驱动器件：地磁功能（工模指南针测试 + 指南针应用人工确认）。"""
 
 import subprocess
 
-from utils.driver.sensor_items_result import run_reuse_sensor_items_item
-from utils.driver.tranfacmode_config import COMPASS_ITEM_KEYWORDS
+from utils.driver.tranfacmode_config import (
+    COMPASS_GROUP_ITEM_SPECS,
+    COMPASS_GROUP_LABEL,
+    SENSOR,
+)
+from utils.driver.ui_tranfacmode import run_tranfacmode_group_items_test
 
 COMPASS_ACTIVITY = "com.transsion.compass/com.transsion.compass.CompassActivity"
 
@@ -61,29 +65,21 @@ def run(category=None, case_index=None, device_info=None, **context):
         sub_steps += f"\n{label}" + ("-成功" if ok else "-失败")
         update(sub_steps)
 
-    def on_reuse_step(message: str) -> None:
-        nonlocal sub_steps
-        if sub_steps and message.startswith("\n"):
-            sub_steps += message
-        else:
-            sub_steps = message
-        update(sub_steps)
-
-    test_result = run_reuse_sensor_items_item(
-        context,
-        COMPASS_ITEM_KEYWORDS,
-        item_label="指南针",
-        step_update=on_reuse_step,
-        item_source="items",
-        source_case_index=23,
-    )
-    if test_result["status"] != "pass":
-        return test_result
-
     dut_id, error = _get_dut_device_id(device_info)
     if not dut_id:
         update(error)
         return {"status": "fail", "message": error}
+
+    compass_result = run_tranfacmode_group_items_test(
+        dut_id,
+        SENSOR,
+        COMPASS_GROUP_ITEM_SPECS,
+        group_label=COMPASS_GROUP_LABEL,
+        result_dir=context.get("result_dir"),
+        on_step=on_step,
+    )
+    if compass_result["status"] != "pass":
+        return {"status": compass_result["status"], "message": compass_result["message"]}
 
     home_ok = _go_home(dut_id)
     on_step("返回桌面", home_ok)
@@ -104,6 +100,6 @@ def run(category=None, case_index=None, device_info=None, **context):
         status = manual_confirm("请确认指南针指向是否准确。")
         return {
             "status": status,
-            "message": f"{test_result['message']}; 人工评判{status}",
+            "message": f"{compass_result['message']}; 人工评判{status}",
         }
     return {"status": "pending", "message": "需人工评判"}

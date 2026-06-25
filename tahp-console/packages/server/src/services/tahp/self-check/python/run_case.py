@@ -27,6 +27,9 @@ def _resolve_module(test_type=None, module=None, category=None):
 
 
 def _ensure_module_init(test_type: str, module: str, device_info=None) -> None:
+    if device_info and device_info.get("module_init_done"):
+        return
+
     key = (test_type, module)
     if key in _initialized_modules:
         return
@@ -108,13 +111,27 @@ def run(
 
     context["step_update"] = step_update
 
-    # 注入 manual_confirm 回调：stdout 发消息 → stdin 等回复
-    def manual_confirm(message: str) -> str:
-        print(json.dumps({"type": "manual_confirm", "message": message}), flush=True)
-        response = sys.stdin.readline().strip()
-        return response
+    # 注入 manual_confirm / operator_notify：stdout 发消息 → stdin 阻塞等待回复
+    def _wait_manual_response(message: str, **extra) -> str:
+        payload = {"type": "manual_confirm", "message": message}
+        payload.update(extra)
+        print(json.dumps(payload, ensure_ascii=False), flush=True)
+        return sys.stdin.readline().strip()
+
+    def manual_confirm(message: str, **kwargs) -> str:
+        extra: dict[str, str] = {}
+        if kwargs.get("pass_label"):
+            extra["pass_label"] = str(kwargs["pass_label"])
+        if kwargs.get("fail_label"):
+            extra["fail_label"] = str(kwargs["fail_label"])
+        decision = _wait_manual_response(message, **extra)
+        return decision or "pending"
+
+    def operator_notify(message: str) -> None:
+        _wait_manual_response(message, mode="ack")
 
     context["manual_confirm"] = manual_confirm
+    context["operator_notify"] = operator_notify
 
     result = case_module.run(case_index=case_index, **context)
     if isinstance(result, str):

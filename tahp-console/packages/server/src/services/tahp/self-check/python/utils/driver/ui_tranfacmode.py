@@ -1,10 +1,10 @@
-"""工模自动化：主界面进组顺序测试 / Other 分类单项测试。"""
+"""工模自动化：主界面进组、屏幕单项测试、Other 分类单项测试。"""
 
 import json
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 from utils.driver.tranfacmode_config import (
     ADAPTER_TITLE_RID_SUFFIX,
@@ -17,9 +17,8 @@ from utils.driver.tranfacmode_config import (
     OTHER_TAB_SWIPE_LEFT_TIMES,
     OTHER_TAB_TEXT,
     SCREEN,
-    SCREEN_BACKLIGHT_ITEM_KEYWORDS,
-    SCREEN_COLOR_ITEM_KEYWORDS,
-    SCREEN_TOUCH_ITEM_KEYWORDS,
+    SCREEN_TOUCH_PANEL_ITEM_KEYWORDS,
+    SCREEN_TOUCH_SELF_ITEM_KEYWORDS,
     SENSOR,
     OtherTabItem,
     TranfacGroup,
@@ -39,7 +38,6 @@ from utils.driver.tranfacmode_ui import (
     ui_has_keywords,
 )
 from utils.tdd.ui_automatic import (
-    click_by_match,
     click_by_match_keywords,
     ensure_screen_on_and_unlocked,
 )
@@ -80,8 +78,26 @@ def _save_json(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _save_result_json(
+    result_dir: str | Path | None,
+    filename: str,
+    data: dict[str, Any],
+) -> None:
+    if not result_dir:
+        return
+    try:
+        _save_json(Path(result_dir) / filename, data)
+    except OSError:
+        pass
+
+
 def go_home(device_id: str) -> bool:
-    return adb(device_id, "shell", "input", "keyevent", "3").returncode == 0
+    """返回桌面；防误触场景需连按两次 Home。"""
+    for _ in range(3):
+        if adb(device_id, "shell", "input", "keyevent", "3").returncode != 0:
+            return False
+        time.sleep(0.1)
+    return True
 
 
 def close_tranfacmode(device_id: str) -> bool:
@@ -326,33 +342,6 @@ def _group_result_ready(result: dict, group: TranfacGroup) -> bool:
     return bool(items) and all((i.get("state") or "").strip() in terminal for i in items)
 
 
-def is_screen_touch_item(name: str) -> bool:
-    text = (name or "").strip()
-    if not text:
-        return False
-    lower = text.lower()
-    return any(keyword.lower() in lower for keyword in SCREEN_TOUCH_ITEM_KEYWORDS)
-
-
-def _screen_item_category(name: str) -> str:
-    if _item_name_matches(name, SCREEN_COLOR_ITEM_KEYWORDS):
-        return "色彩"
-    if _item_name_matches(name, SCREEN_BACKLIGHT_ITEM_KEYWORDS):
-        return "背光"
-    if is_screen_touch_item(name):
-        return "触摸"
-    return ""
-
-
-def filter_screen_touch_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [item for item in items if is_screen_touch_item(item.get("name", ""))]
-
-
-def filter_screen_case5_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """case5 关注子项：触摸、色彩、背光。"""
-    return [item for item in items if _screen_item_category(item.get("name", ""))]
-
-
 def evaluate_group_results(data: dict[str, Any]) -> tuple[str, str]:
     group = (data.get("group") or "").strip()
     items = data.get("items") or []
@@ -366,53 +355,6 @@ def evaluate_group_results(data: dict[str, Any]) -> tuple[str, str]:
         detail = "; ".join(f"{i.get('name', '?')}({i.get('state', '')})" for i in failed)
         return "fail", f"测试组「{group}」{len(failed)}项失败: {detail}"
     return "fail", f"测试组「{group}」存在未完成项"
-
-
-def evaluate_screen_touch_group_results(data: dict[str, Any]) -> tuple[str, str]:
-    """校验屏幕顺序测试中触摸、色彩、背光子项是否全部通过。"""
-    group = (data.get("group") or "").strip()
-    all_items = data.get("items") or []
-    items = filter_screen_case5_items(all_items)
-    if not items:
-        all_names = "、".join(i.get("name", "") for i in all_items if i.get("name"))
-        return (
-            "fail",
-            f"测试组「{group}」未找到触摸/色彩/背光子项"
-            + (f"（共{len(all_items)}项: {all_names}）" if all_names else ""),
-        )
-
-    def _item_summary(item: dict[str, Any]) -> str:
-        name = item.get("name", "?")
-        category = _screen_item_category(name) or "未知"
-        state = (item.get("state") or "").strip()
-        return f"{category}({name}/{state})"
-
-    if all((item.get("state") or "").strip() in PASS_TEXTS for item in items):
-        names = "、".join(_item_summary(item) for item in items)
-        return "pass", f"触摸/色彩/背光全部通过（{len(items)}项）: {names}"
-
-    failed = [
-        item for item in items if (item.get("state") or "").strip() in FAIL_TEXTS
-    ]
-    if failed:
-        detail = "; ".join(_item_summary(item) for item in failed)
-        return "fail", f"失败项: {detail}"
-
-    pending = [
-        item
-        for item in items
-        if (item.get("state") or "").strip() not in PASS_TEXTS
-    ]
-    detail = "; ".join(_item_summary(item) for item in pending)
-    return "fail", f"未完成项: {detail}"
-
-
-SCREEN_TOUCH_GROUP_JSON = "tranfacmode_screen_touch_group.json"
-SOURCE_SCREEN_TOUCH_CASE_INDEX = 5
-USB_GROUP_JSON = "tranfacmode_usb_group.json"
-SOURCE_USB_CASE_INDEX = 14
-SENSOR_ITEMS_JSON = "tranfacmode_sensor_items.json"
-SOURCE_SENSOR_ITEMS_CASE_INDEX = 22
 
 
 def _item_name_matches(name: str, keywords: tuple[str, ...]) -> bool:
@@ -430,206 +372,10 @@ def _item_name_matches(name: str, keywords: tuple[str, ...]) -> bool:
     return False
 
 
-def _load_tranfacmode_group_json(
-    result_dir: str | Path | None, filename: str
-) -> dict[str, Any] | None:
-    if not result_dir:
-        return None
-    path = Path(result_dir).resolve() / filename
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def load_screen_touch_group_result(result_dir: str | Path | None) -> dict[str, Any] | None:
-    return _load_tranfacmode_group_json(result_dir, SCREEN_TOUCH_GROUP_JSON)
-
-
-def load_usb_group_result(result_dir: str | Path | None) -> dict[str, Any] | None:
-    return _load_tranfacmode_group_json(result_dir, USB_GROUP_JSON)
-
-
-def load_sensor_items_result(result_dir: str | Path | None) -> dict[str, Any] | None:
-    from utils.driver.sensor_items_result import load_sensor_items_result as _load
-
-    return _load(result_dir)
-
-
-def save_sensor_items_result(
-    result_dir: str | Path | None,
-    items: list[dict[str, str]],
-    **kwargs: Any,
-) -> None:
-    from utils.driver.sensor_items_result import save_sensor_items_result as _save
-
-    _save(result_dir, items, **kwargs)
-
-
-def evaluate_reused_group_item(
-    data: dict[str, Any],
-    keywords: tuple[str, ...],
-    item_label: str,
-    *,
-    result_source_label: str,
-) -> tuple[str, str]:
-    items = data.get("items") or []
-    matched = [
-        item
-        for item in items
-        if isinstance(item, dict) and _item_name_matches(item.get("name", ""), keywords)
-    ]
-    if not matched:
-        all_names = "、".join(item.get("name", "") for item in items if isinstance(item, dict))
-        suffix = f"（已有: {all_names}）" if all_names else ""
-        return "fail", f"未在{result_source_label}结果中找到{item_label}子项{suffix}"
-
-    failed = [
-        item
-        for item in matched
-        if (item.get("state") or "").strip() in FAIL_TEXTS
-    ]
-    if failed:
-        detail = "; ".join(
-            f"{item.get('name', '?')}({item.get('state', '')})" for item in failed
-        )
-        return "fail", f"复用{result_source_label}结果: {detail}"
-
-    pending = [
-        item
-        for item in matched
-        if (item.get("state") or "").strip() not in PASS_TEXTS
-    ]
-    if pending:
-        detail = "; ".join(
-            f"{item.get('name', '?')}({item.get('state', '')})" for item in pending
-        )
-        return "fail", f"复用{result_source_label}结果: {item_label}未完成({detail})"
-
-    names = "、".join(item.get("name", "") for item in matched if item.get("name"))
-    return "pass", f"复用{result_source_label}结果: {names} 通过"
-
-
-def evaluate_reused_screen_item(
-    data: dict[str, Any],
-    keywords: tuple[str, ...],
-    item_label: str,
-) -> tuple[str, str]:
-    return evaluate_reused_group_item(
-        data,
-        keywords,
-        item_label,
-        result_source_label=f"case{SOURCE_SCREEN_TOUCH_CASE_INDEX} 屏幕顺序测试",
-    )
-
-
-def _run_reuse_tranfacmode_group_item(
-    context: dict[str, Any],
-    keywords: tuple[str, ...],
-    *,
-    item_label: str,
-    load_result: Callable[[str | Path | None], dict[str, Any] | None],
-    step_update: Callable[[str], None] | None = None,
-    source_case_index: int,
-    source_case_hint: str,
-    result_type_label: str,
-) -> dict[str, str]:
-    sub_steps = ""
-
-    def update(steps: str) -> None:
-        if callable(step_update):
-            step_update(steps)
-
-    sub_steps += (
-        f"\n复用 case{source_case_index} {result_type_label}结果({item_label})"
-    )
-    update(sub_steps)
-
-    data = load_result(context.get("result_dir"))
-    if not data:
-        sub_steps += f"-跳过(未找到 case{source_case_index} 结果文件)"
-        update(sub_steps)
-        return {
-            "status": "skip",
-            "message": source_case_hint,
-        }
-
-    result_source_label = f"case{source_case_index} {result_type_label}"
-    status, message = evaluate_reused_group_item(
-        data,
-        keywords,
-        item_label,
-        result_source_label=result_source_label,
-    )
-    sub_steps += "-成功" if status == "pass" else "-失败"
-    update(sub_steps)
-    return {"status": status, "message": message}
-
-
-def run_reuse_screen_touch_group_item(
-    context: dict[str, Any],
-    keywords: tuple[str, ...],
-    *,
-    item_label: str,
-    step_update: Callable[[str], None] | None = None,
-    source_case_index: int = SOURCE_SCREEN_TOUCH_CASE_INDEX,
-) -> dict[str, str]:
-    return _run_reuse_tranfacmode_group_item(
-        context,
-        keywords,
-        item_label=item_label,
-        load_result=load_screen_touch_group_result,
-        step_update=step_update,
-        source_case_index=source_case_index,
-        source_case_hint=f"请先执行 case{source_case_index} 开机工模触摸屏",
-        result_type_label="屏幕顺序测试",
-    )
-
-
-def run_reuse_usb_group_item(
-    context: dict[str, Any],
-    keywords: tuple[str, ...],
-    *,
-    item_label: str,
-    step_update: Callable[[str], None] | None = None,
-    source_case_index: int = SOURCE_USB_CASE_INDEX,
-) -> dict[str, str]:
-    return _run_reuse_tranfacmode_group_item(
-        context,
-        keywords,
-        item_label=item_label,
-        load_result=load_usb_group_result,
-        step_update=step_update,
-        source_case_index=source_case_index,
-        source_case_hint=f"请先执行 case{source_case_index} USB功能正常充电",
-        result_type_label="USB工模测试",
-    )
-
-
-def run_reuse_sensor_items_item(
-    context: dict[str, Any],
-    keywords: tuple[str, ...],
-    *,
-    item_label: str,
-    step_update: Callable[[str], None] | None = None,
-    source_case_index: int = SOURCE_SENSOR_ITEMS_CASE_INDEX,
-) -> dict[str, str]:
-    from utils.driver.sensor_items_result import run_reuse_sensor_items_item as _run
-
-    return _run(
-        context,
-        keywords,
-        item_label=item_label,
-        step_update=step_update,
-        source_case_index=source_case_index,
-    )
-
-
-def _build_group_sequence_steps(
-    device_id: str, group: TranfacGroup
+def _build_group_entry_steps(
+    device_id: str,
+    group: TranfacGroup,
+    page_ready: Callable[[], bool],
 ) -> list[tuple[str, Callable[[], bool], str]]:
     steps: list[tuple[str, Callable[[], bool], str]] = [
         *tranfacmode_prep_steps(device_id),
@@ -659,14 +405,21 @@ def _build_group_sequence_steps(
     steps.append(
         (
             "校验测试组界面",
-            lambda: poll_bool(
-                lambda: (x := dump(device_id)) is not None
-                and ui_has_keywords(x, group.page_keywords),
-                8.0,
-                0.35,
-            ),
+            lambda: poll_bool(page_ready, 8.0, 0.35),
             f"未进入测试组界面: {group.page_keywords}",
         )
+    )
+    return steps
+
+
+def _build_group_sequence_steps(
+    device_id: str, group: TranfacGroup
+) -> list[tuple[str, Callable[[], bool], str]]:
+    steps = _build_group_entry_steps(
+        device_id,
+        group,
+        lambda: (x := dump(device_id)) is not None
+        and ui_has_keywords(x, group.page_keywords),
     )
     steps.extend(
         [
@@ -686,6 +439,16 @@ def _build_group_sequence_steps(
         ]
     )
     return steps
+
+
+def _build_enter_group_steps(
+    device_id: str, group: TranfacGroup
+) -> list[tuple[str, Callable[[], bool], str]]:
+    return _build_group_entry_steps(
+        device_id,
+        group,
+        lambda: _group_page_ready(device_id, group),
+    )
 
 
 def run_group_sequence(
@@ -715,14 +478,11 @@ def run_group_sequence(
         return {"status": "fail", "message": "超时未获取测试组结果"}
 
     suffix = result_json_suffix or ""
-    if result_dir:
-        try:
-            _save_json(
-                Path(result_dir) / f"tranfacmode_{group.key}{suffix}_group.json",
-                group_result,
-            )
-        except OSError:
-            pass
+    _save_result_json(
+        result_dir,
+        f"tranfacmode_{group.key}{suffix}_group.json",
+        group_result,
+    )
 
     evaluate = evaluate_fn or evaluate_group_results
     status, message = evaluate(group_result)
@@ -731,21 +491,516 @@ def run_group_sequence(
     return {"status": status, "message": message, "group_result": group_result}
 
 
-def run_screen_touch_group_sequence(
+def _confirm_item_result(device_id: str, status: str) -> bool:
+    xml = dump(device_id)
+    if not xml:
+        return False
+    if status == "pass":
+        return tap_xml(
+            device_id,
+            xml,
+            resource_id="com.transsion.tranfacmode:id/result_btn_pass",
+        ) or tap_xml(device_id, xml, text_equals=tuple(PASS_TEXTS))
+    if status == "fail":
+        return tap_xml(
+            device_id,
+            xml,
+            resource_id="com.transsion.tranfacmode:id/result_btn_fail",
+        ) or tap_xml(device_id, xml, text_equals=tuple(FAIL_TEXTS))
+    return False
+
+
+def _apply_item_result_confirm(
+    device_id: str,
+    item_status: str | None,
+    item_label: str,
+    *,
+    on_step: Optional[Callable[[str, bool], None]] = None,
+    page_ready: Optional[Callable[[], bool]] = None,
+) -> Optional[dict[str, Any]]:
+    """根据测试结果点击工模 pass/fail 按钮；已回到列表页则跳过。"""
+    if item_status not in ("pass", "fail"):
+        return None
+
+    confirmed = _confirm_item_result(device_id, item_status)
+    if on_step:
+        label = "通过" if item_status == "pass" else "失败"
+        on_step(f"点击{item_label}{label}按钮", confirmed)
+    if confirmed:
+        return None
+
+    check_page = page_ready or (lambda: _screen_group_page_ready(device_id))
+    if check_page():
+        return None
+    return {"status": "fail", "message": f"{item_label}结果确认按钮点击失败"}
+
+
+def _tap_screen_item(
+    device_id: str,
+    keywords: tuple[str, ...],
+) -> bool:
+    return _tap_group_item(device_id, keywords)
+
+
+def _screen_group_page_ready(device_id: str) -> bool:
+    return _group_page_ready(device_id, SCREEN)
+
+
+def _group_page_ready(device_id: str, group: TranfacGroup) -> bool:
+    xml = dump(device_id)
+    if not xml or not ui_has_keywords(xml, group.page_keywords):
+        return False
+    return any(
+        ADAPTER_TITLE_RID_SUFFIX in (node.attrib.get("resource-id") or "")
+        for node in ET.parse(xml).getroot().iter("node")
+    )
+
+
+def _enter_screen_group_for_items(
+    device_id: str,
+    on_step: Optional[Callable[[str, bool], None]],
+) -> Optional[dict[str, Any]]:
+    return _run_steps(
+        on_step,
+        [
+            *tranfacmode_prep_steps(device_id),
+            ("启动工模主界面", lambda: start_main(device_id), "启动工模 MainActivity 失败"),
+            ("跳过射频参数校准", lambda: skip_rf_calibration(device_id), "跳过射频参数校准失败"),
+            ("进入screen测试组", lambda: enter_group(device_id, SCREEN), "未找到屏幕测试组入口"),
+            (
+                "校验屏幕测试组界面",
+                lambda: poll_bool(lambda: _screen_group_page_ready(device_id), 8.0, 0.35),
+                f"未进入屏幕测试组界面: {SCREEN.page_keywords}",
+            ),
+        ],
+    )
+
+
+def _collect_screen_item_names(
+    device_id: str,
+    keywords: tuple[str, ...],
+    *,
+    exclude_keywords: tuple[str, ...] = (),
+) -> list[str]:
+    return _collect_group_item_names(
+        device_id,
+        keywords,
+        exclude_keywords=exclude_keywords,
+    )
+
+
+def _collect_group_item_names(
+    device_id: str,
+    keywords: tuple[str, ...],
+    *,
+    exclude_keywords: tuple[str, ...] = (),
+) -> list[str]:
+    xml = dump(device_id)
+    if not xml:
+        return []
+    names: list[str] = []
+    for node in ET.parse(xml).getroot().iter("node"):
+        rid = node.attrib.get("resource-id") or ""
+        if ADAPTER_TITLE_RID_SUFFIX not in rid:
+            continue
+        text = (node.attrib.get("text") or "").strip()
+        if not text or not _item_name_matches(text, keywords):
+            continue
+        if exclude_keywords and _item_name_matches(text, exclude_keywords):
+            continue
+        if text not in names:
+            names.append(text)
+    return names
+
+
+def _tap_screen_item_name(device_id: str, item_name: str) -> bool:
+    return _tap_group_item_name(device_id, item_name)
+
+
+def _tap_group_item(
+    device_id: str,
+    keywords: tuple[str, ...],
+    *,
+    exclude_keywords: tuple[str, ...] = (),
+) -> bool:
+    exact_names = _collect_group_item_names(
+        device_id,
+        keywords,
+        exclude_keywords=exclude_keywords,
+    )
+    if exact_names and tap_list_item(
+        device_id, tuple(exact_names), rid_suffix=ADAPTER_TITLE_RID_SUFFIX
+    ):
+        return True
+    if exclude_keywords:
+        return False
+    return click_by_match_keywords(device_id, keywords, **CLICK_KWARGS)
+
+
+def _tap_group_item_name(device_id: str, item_name: str) -> bool:
+    if tap_list_item(device_id, (item_name,), rid_suffix=ADAPTER_TITLE_RID_SUFFIX):
+        return True
+    return click_by_match_keywords(device_id, (item_name,), **CLICK_KWARGS)
+
+
+def _wait_screen_item_result(device_id: str) -> str | None:
+    return poll_value(
+        lambda: (x := dump(device_id))
+        and tranfacmode_item_result(
+            x,
+            tuple(PASS_TEXTS),
+            tuple(FAIL_TEXTS),
+            status_rid=OTHER_RESULT_STATUS_RID,
+        ),
+        120.0,
+        0.6,
+    )
+
+
+def _run_selected_screen_item(
+    device_id: str,
+    item_label: str,
+    tap_item: Callable[[], bool],
+    keywords: tuple[str, ...],
+    *,
+    on_step: Optional[Callable[[str, bool], None]],
+    item_name: str = "",
+    manual_confirm: Optional[Callable[..., str]] = None,
+    page_ready: Optional[Callable[[], bool]] = None,
+    after_tap: Optional[Callable[[str], bool]] = None,
+) -> dict[str, Any]:
+    item_tapped = tap_item()
+    if on_step:
+        on_step(f"选择{item_label}测试项", item_tapped)
+    if not item_tapped:
+        return {"status": "fail", "message": f"未找到{item_label}测试项"}
+
+    if callable(after_tap) and not after_tap(device_id):
+        return {"status": "fail", "message": f"{item_label}进入后操作失败"}
+
+    if callable(manual_confirm):
+        if on_step:
+            on_step(f"{item_label}需人工判断", True)
+        item_status = manual_confirm(f"请根据设备工模现象判断{item_label}测试结果")
+        if item_status == "pass":
+            return {
+                "status": "pass",
+                "message": f"{item_label}人工判断通过",
+                "test_result": item_status,
+            }
+        if item_status == "fail":
+            return {
+                "status": "fail",
+                "message": f"{item_label}人工判断失败",
+                "test_result": item_status,
+            }
+        return {
+            "status": item_status or "pending",
+            "message": f"{item_label}人工判断{item_status or 'pending'}",
+            "test_result": item_status,
+        }
+
+    item_status = _wait_screen_item_result(device_id)
+    if on_step:
+        on_step(f"判断{item_label}测试结果", item_status is not None)
+
+    if err := _apply_item_result_confirm(
+        device_id,
+        item_status,
+        item_label,
+        on_step=on_step,
+        page_ready=page_ready,
+    ):
+        return err
+
+    if item_status == "pass":
+        status, message = "pass", f"{item_label}工模测试成功"
+    elif item_status == "fail":
+        status, message = "fail", f"{item_label}工模测试失败"
+    else:
+        status, message = "fail", f"超时未获取{item_label}测试结果"
+
+    return {"status": status, "message": message, "test_result": item_status}
+
+
+def _save_screen_item_result(
+    result_dir: str | Path | None,
+    item_label: str,
+    result: dict[str, Any],
+) -> None:
+    _save_result_json(
+        result_dir,
+        f"tranfacmode_screen_{item_label}_result.json",
+        {
+            "result": result.get("test_result"),
+            "status": result.get("status"),
+            "message": result.get("message"),
+        },
+    )
+
+
+def _save_group_item_result(
+    result_dir: str | Path | None,
+    group: TranfacGroup,
+    item_label: str,
+    result: dict[str, Any],
+) -> None:
+    _save_result_json(
+        result_dir,
+        f"tranfacmode_{group.key}_{item_label}_result.json",
+        {
+            "result": result.get("test_result"),
+            "status": result.get("status"),
+            "message": result.get("message"),
+            "group": group.key,
+        },
+    )
+
+
+def _save_group_items_result(
+    result_dir: str | Path | None,
+    group: TranfacGroup,
+    group_label: str,
+    result: dict[str, Any],
+) -> None:
+    _save_result_json(
+        result_dir,
+        f"tranfacmode_{group.key}_{group_label}_items_result.json",
+        result,
+    )
+
+
+def run_screen_group_item_test(
+    device_id: str,
+    keywords: tuple[str, ...],
+    *,
+    item_label: str,
+    result_dir: str | Path | None = None,
+    on_step: Optional[Callable[[str, bool], None]] = None,
+    manual_confirm: Optional[Callable[..., str]] = None,
+) -> dict[str, Any]:
+    """进入屏幕工模页，只执行指定屏幕子项（触摸/色彩/背光等）。"""
+    if err := _enter_screen_group_for_items(device_id, on_step):
+        return err
+
+    item_names = _collect_screen_item_names(device_id, keywords)
+    item_name = item_names[0] if item_names else ""
+    result = _run_selected_screen_item(
+        device_id,
+        item_label,
+        lambda: _tap_screen_item_name(device_id, item_name)
+        if item_name
+        else _tap_screen_item(device_id, keywords),
+        keywords,
+        on_step=on_step,
+        item_name=item_name,
+        manual_confirm=manual_confirm,
+    )
+    _save_screen_item_result(result_dir, item_label, result)
+    return result
+
+
+def _parse_group_item_spec(
+    item_spec: tuple[Any, ...],
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    item_label = item_spec[0]
+    keywords = item_spec[1]
+    exclude_keywords = item_spec[2] if len(item_spec) > 2 else ()
+    return item_label, keywords, exclude_keywords
+
+
+def run_tranfacmode_group_items_test(
+    device_id: str,
+    group: TranfacGroup,
+    item_specs: Sequence[tuple[Any, ...]],
+    *,
+    group_label: str = "",
+    result_dir: str | Path | None = None,
+    on_step: Optional[Callable[[str, bool], None]] = None,
+    manual_confirm: Optional[Callable[..., str]] = None,
+    before_items: Optional[Callable[[], Optional[dict[str, Any]]]] = None,
+    after_item_tap: Optional[dict[str, Callable[[str], bool]]] = None,
+    stop_on_fail: bool = True,
+) -> dict[str, Any]:
+    """进入指定工模测试组，按传入配置执行一个或多个子项。
+
+    item_specs 格式: [("标准充电", ("标准充电", "Standard Charge")), ...]
+    可选第三个元素为排除关键字: ("光感", LIGHT_SENSOR_ITEM_KEYWORDS, ("校准", "Cali"))
+    after_item_tap: 进入子项后的额外操作，如 {"光感数据采集": fn(device_id) -> bool}
+    """
+    if err := _run_steps(on_step, _build_enter_group_steps(device_id, group)):
+        return err
+
+    if callable(before_items):
+        if result := before_items():
+            return result
+
+    specs = list(item_specs)
+    if not specs:
+        return {"status": "fail", "message": f"{group.key}测试组未配置测试子项"}
+
+    item_results: list[dict[str, Any]] = []
+    for index, item_spec in enumerate(specs):
+        item_label, keywords, exclude_keywords = _parse_group_item_spec(item_spec)
+        item_names = _collect_group_item_names(
+            device_id,
+            keywords,
+            exclude_keywords=exclude_keywords,
+        )
+        item_name = item_names[0] if item_names else ""
+        result = _run_selected_screen_item(
+            device_id,
+            item_label,
+            lambda name=item_name, kws=keywords, excludes=exclude_keywords: _tap_group_item_name(device_id, name)
+            if name
+            else _tap_group_item(device_id, kws, exclude_keywords=excludes),
+            keywords,
+            on_step=on_step,
+            item_name=item_name,
+            manual_confirm=manual_confirm,
+            page_ready=lambda: _group_page_ready(device_id, group),
+            after_tap=(after_item_tap or {}).get(item_label),
+        )
+        item_result = {
+            "label": item_label,
+            "matched_name": item_name,
+            **result,
+        }
+        item_results.append(item_result)
+        _save_group_item_result(result_dir, group, item_label, result)
+
+        if result.get("status") != "pass" and stop_on_fail:
+            final_result = {
+                "status": result.get("status", "fail"),
+                "message": result.get("message", f"{item_label}工模测试失败"),
+                "items": item_results,
+                "group": group.key,
+            }
+            _save_group_items_result(
+                result_dir, group, group_label or group.key, final_result
+            )
+            return final_result
+
+        if index < len(specs) - 1 and result.get("test_result") in ("pass", "fail"):
+            ready = poll_bool(lambda: _group_page_ready(device_id, group), 8.0, 0.35)
+            if on_step:
+                on_step(f"{item_label}测试后返回测试组界面", ready)
+            if not ready:
+                final_result = {
+                    "status": "fail",
+                    "message": f"{item_label}测试后未返回{group.key}测试组界面",
+                    "items": item_results,
+                    "group": group.key,
+                }
+                _save_group_items_result(
+                    result_dir, group, group_label or group.key, final_result
+                )
+                return final_result
+
+    failed_items = [item for item in item_results if item.get("status") != "pass"]
+    if failed_items:
+        labels = "、".join(item.get("label", "?") for item in failed_items)
+        status, message = "fail", f"{group.key}测试组子项失败: {labels}"
+    else:
+        labels = "、".join(item.get("label", "?") for item in item_results)
+        status, message = "pass", f"{group.key}测试组子项全部通过: {labels}"
+
+    final_result = {
+        "status": status,
+        "message": message,
+        "items": item_results,
+        "group": group.key,
+    }
+    _save_group_items_result(result_dir, group, group_label or group.key, final_result)
+    return final_result
+
+
+def run_screen_touch_items_test(
     device_id: str,
     *,
     result_dir: str | Path | None = None,
     on_step: Optional[Callable[[str, bool], None]] = None,
 ) -> dict[str, Any]:
-    """执行屏幕顺序测试，校验触摸、色彩、背光子项结果。"""
-    return run_group_sequence(
-        device_id,
-        SCREEN,
-        result_dir=result_dir,
-        on_step=on_step,
-        evaluate_fn=evaluate_screen_touch_group_results,
-        result_json_suffix="_touch",
+    """触摸屏自检：依次执行两个 TouchSelf 项，再执行 TouchPanel 项。"""
+    if err := _enter_screen_group_for_items(device_id, on_step):
+        return err
+
+    touch_self_names = _collect_screen_item_names(
+        device_id, SCREEN_TOUCH_SELF_ITEM_KEYWORDS
     )
+    if on_step:
+        on_step("识别触摸屏自检项", len(touch_self_names) >= 2)
+    if len(touch_self_names) < 2:
+        found = "、".join(touch_self_names) if touch_self_names else "无"
+        return {
+            "status": "fail",
+            "message": f"未找到两个触摸屏自检项（已找到: {found}）",
+        }
+
+    item_results: list[dict[str, Any]] = []
+    for index, item_name in enumerate(touch_self_names[:2], start=1):
+        label = f"触摸屏自检{index}({item_name})"
+        result = _run_selected_screen_item(
+            device_id,
+            label,
+            lambda name=item_name: _tap_screen_item_name(device_id, name),
+            SCREEN_TOUCH_SELF_ITEM_KEYWORDS,
+            on_step=on_step,
+            item_name=item_name,
+        )
+        item_results.append({"item": item_name, **result})
+        if result.get("test_result") not in ("pass", "fail"):
+            _save_screen_item_result(result_dir, "触摸屏", result)
+            return {"status": result["status"], "message": result["message"]}
+        if not poll_bool(lambda: _screen_group_page_ready(device_id), 8.0, 0.35):
+            return {"status": "fail", "message": "触摸屏自检后未返回屏幕测试列表"}
+
+    touch_panel_names = _collect_screen_item_names(
+        device_id,
+        SCREEN_TOUCH_PANEL_ITEM_KEYWORDS,
+        exclude_keywords=SCREEN_TOUCH_SELF_ITEM_KEYWORDS,
+    )
+    if on_step:
+        on_step("识别触摸屏测试项", bool(touch_panel_names))
+    if not touch_panel_names:
+        return {"status": "fail", "message": "未找到触摸屏测试项"}
+
+    panel_name = touch_panel_names[0]
+    panel_result = _run_selected_screen_item(
+        device_id,
+        f"触摸屏测试({panel_name})",
+        lambda: _tap_screen_item_name(device_id, panel_name),
+        SCREEN_TOUCH_PANEL_ITEM_KEYWORDS,
+        on_step=on_step,
+        item_name=panel_name,
+    )
+    item_results.append({"item": panel_name, **panel_result})
+    if panel_result.get("test_result") not in ("pass", "fail"):
+        _save_screen_item_result(result_dir, "触摸屏", panel_result)
+        return {"status": panel_result["status"], "message": panel_result["message"]}
+
+    failed_items = [
+        item
+        for item in item_results
+        if item.get("test_result") == "fail" or item.get("status") != "pass"
+    ]
+    if failed_items:
+        detail = "、".join(item.get("item", "?") for item in failed_items)
+        result = {
+            "status": "fail",
+            "message": f"触摸屏子项失败: {detail}",
+            "items": item_results,
+        }
+        _save_screen_item_result(result_dir, "触摸屏", result)
+        return result
+
+    result = {
+        "status": "pass",
+        "message": "触摸屏自检项和触摸屏测试项全部通过",
+        "items": item_results,
+    }
+    _save_screen_item_result(result_dir, "触摸屏", result)
+    return result
 
 
 def pick_other_tab_item(
@@ -781,6 +1036,9 @@ def _finish_other_tab_item_test(
     if on_step:
         on_step(f"判断{item.label}测试结果", test_status is not None)
 
+    if err := _apply_item_result_confirm(device_id, test_status, item.label, on_step=on_step):
+        return err
+
     if test_status == "pass":
         status, message = "pass", f"{item.label}工模测试成功"
     elif test_status == "fail":
@@ -788,14 +1046,11 @@ def _finish_other_tab_item_test(
     else:
         status, message = "fail", f"超时未获取{item.label}测试结果（无成功/失败 TextView）"
 
-    if result_dir:
-        try:
-            _save_json(
-                Path(result_dir) / f"tranfacmode_{item.key}_result.json",
-                {"result": test_status, "status": status, "message": message, "item": item.key},
-            )
-        except OSError:
-            pass
+    _save_result_json(
+        result_dir,
+        f"tranfacmode_{item.key}_result.json",
+        {"result": test_status, "status": status, "message": message, "item": item.key},
+    )
 
     return {"status": status, "message": message, "test_result": test_status, "item": item.key}
 
