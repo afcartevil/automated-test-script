@@ -3,6 +3,8 @@
 import subprocess
 import time
 
+from utils.driver.tp_touch import go_home
+
 GALLERY_ACTIVITY = "com.gallery20/com.gallery20.HomeActivity"
 SCREENSHOT_PATH = "/sdcard/Pictures/Screenshots/gsensor_test.png"
 
@@ -25,11 +27,6 @@ def _adb_run(device_id: str, *args: str, timeout: int = 15) -> subprocess.Comple
         timeout=timeout,
         check=False,
     )
-
-
-def _go_home(device_id: str) -> bool:
-    ret = _adb_run(device_id, "shell", "input", "keyevent", "3")
-    return ret.returncode == 0
 
 
 def _take_screenshot(device_id: str) -> tuple[bool, str]:
@@ -89,7 +86,7 @@ def run(category=None, case_index=None, device_info=None, case_name=None, **cont
 
     if callable(step_update):
         step_update(sub_steps + "\n回到桌面")
-    home_ok = _go_home(dut_id)
+    home_ok = go_home(dut_id)
     on_step("回到桌面", home_ok)
     if not home_ok:
         return {"status": "fail", "message": "回到桌面失败"}
