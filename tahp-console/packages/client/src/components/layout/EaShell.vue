@@ -32,7 +32,7 @@ const systemNav = [
   { name: 'hermes.settings', label: '设置' },
 ]
 
-const FEEDBACK_URL = 'https://transsioner.feishu.cn/base/AlzFbIMzea05ZNsjPKOcvnBNnhe?from=from_copylink'
+const FEEDBACK_URL = 'https://transsioner.feishu.cn/share/base/form/shrcnDOMx8H12Nm1tcTmIOAHDId'
 
 
 const modelDisplay = computed(() => {
