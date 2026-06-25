@@ -152,9 +152,84 @@ const SETTINGS_PATH = join(SELF_CHECK_DIR, 'settings.json')
 interface AutoTestSettings {
   autoTestEnabled: Record<string, boolean>      // key: testType/module
   autoTestPath: Record<string, string>           // key: testType/module
+  autoRetestEnabled?: Record<string, boolean>   // key: testType
+  autoRetestCount?: Record<string, number>      // key: testType
 }
 
 let settings: AutoTestSettings = { autoTestEnabled: {}, autoTestPath: {} }
+
+export interface CaseCatalogDetailItem {
+  key: string
+  testType: string
+  module: string
+  moduleLabel: string
+  caseIndex: number
+  caseName: string
+  canReuse: boolean
+  preconditions: string
+  manualSteps: string
+  expectedResult: string
+}
+
+function getAutoRetestConfig(testType: string): { enabled: boolean; count: number } {
+  return {
+    enabled: settings.autoRetestEnabled?.[testType] ?? true,
+    count: Math.max(0, settings.autoRetestCount?.[testType] ?? 1),
+  }
+}
+
+function loadCaseInfoList(testType: string, module: string): any[] {
+  const caseInfoPath = join(PYTHON_DIR, 'cases', testType, module, 'case_info.json')
+  if (!existsSync(caseInfoPath)) return []
+  try {
+    const list = JSON.parse(readFileSync(caseInfoPath, 'utf-8'))
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
+function resolveCaseInfoItem(caseInfoList: any[], caseIndex: number): any | null {
+  const byIndex = caseInfoList.find(
+    (x: any) => (x.case_index ?? x.caseIndex) === caseIndex
+  )
+  if (byIndex) return byIndex
+  if (caseIndex > 0 && caseIndex <= caseInfoList.length) {
+    return caseInfoList[caseIndex - 1]
+  }
+  return null
+}
+
+async function retestFailedAutoCasesInModule(
+  deviceId: string,
+  testType: string,
+  module: string,
+  failedCaseIndexes: number[],
+  session: TestSession
+): Promise<void> {
+  const { enabled, count } = getAutoRetestConfig(testType)
+  if (!enabled || failedCaseIndexes.length === 0 || count === 0) return
+
+  const moduleKey = `${testType}/${module}`
+  console.log(`[device-self-check] Retesting ${failedCaseIndexes.length} failed auto cases for ${moduleKey} (max ${count} attempts each)`)
+
+  for (const caseIndex of failedCaseIndexes) {
+    const caseKey = `${moduleKey}/${caseIndex}`
+    const existing = session.caseResults[caseKey]
+    if (!existing?.fullAutomation || existing.status !== '失败') continue
+
+    for (let attempt = 0; attempt < count; attempt++) {
+      const result = await runCase(deviceId, testType, module, caseIndex, session)
+      session.caseResults[caseKey] = result
+      if (result.status === '通过') {
+        session.moduleProgress[moduleKey].passedCases++
+        session.moduleProgress[moduleKey].failedCases = Math.max(0, session.moduleProgress[moduleKey].failedCases - 1)
+      }
+      emitEvent('case_completed', { deviceId, caseKey, result })
+      if (result.status === '通过') break
+    }
+  }
+}
 
 function loadSettings(): void {
   try {
@@ -1482,20 +1557,7 @@ async function runModule(
     }
   }
 
-  // 自动复测：全自动失败项重试一次
-  if (failedAutoCases.length > 0) {
-    console.log(`[device-self-check] Retesting ${failedAutoCases.length} failed auto cases for ${moduleKey}`)
-    for (const caseIndex of failedAutoCases) {
-      const caseKey = `${moduleKey}/${caseIndex}`
-      const result = await runCase(deviceId, testType, module, caseIndex, session)
-      if (result.status === '通过') {
-        session.moduleProgress[moduleKey].passedCases++
-        session.moduleProgress[moduleKey].failedCases = Math.max(0, session.moduleProgress[moduleKey].failedCases - 1)
-      }
-      session.caseResults[caseKey] = result
-      emitEvent('case_completed', { deviceId, caseKey, result })
-    }
-  }
+  await retestFailedAutoCasesInModule(deviceId, testType, module, failedAutoCases, session)
 
   // 释放辅测机（根据角色恢复状态）
   for (const auxId of session.auxiliaryDevices) {
@@ -1796,20 +1858,17 @@ async function runCustomTestFlow(
     if (!session.isRunning) return
   }
 
-  if (failedAutoCases.length > 0) {
-    console.log(`[device-self-check] Retesting ${failedAutoCases.length} failed auto cases`)
-    for (const item of failedAutoCases) {
-      const { testType, module, caseIndex } = item
-      const moduleKey = `${testType}/${module}`
-      const caseKey = `${moduleKey}/${caseIndex}`
-      const result = await runCase(deviceId, testType, module, caseIndex, session)
-      if (result.status === '通过') {
-        session.moduleProgress[moduleKey].passedCases++
-        session.moduleProgress[moduleKey].failedCases = Math.max(0, session.moduleProgress[moduleKey].failedCases - 1)
-      }
-      session.caseResults[caseKey] = result
-      emitEvent('case_completed', { deviceId, caseKey, result })
+  const failedByModule = new Map<string, number[]>()
+  for (const item of failedAutoCases) {
+    const moduleKey = `${item.testType}/${item.module}`
+    if (!failedByModule.has(moduleKey)) {
+      failedByModule.set(moduleKey, [])
     }
+    failedByModule.get(moduleKey)!.push(item.caseIndex)
+  }
+  for (const [moduleKey, caseIndexes] of failedByModule) {
+    const [testType, module] = moduleKey.split('/')
+    await retestFailedAutoCasesInModule(deviceId, testType, module, caseIndexes, session)
   }
 
   for (const auxId of session.auxiliaryDevices) {
@@ -2384,6 +2443,32 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
       (a, b) => (MODULE_ORDER[a.module] ?? 50) - (MODULE_ORDER[b.module] ?? 50)
     ),
   }))
+}
+
+export function getCaseCatalogDetail(testType: string): CaseCatalogDetailItem[] {
+  const group = getAllCaseCatalogs().find(g => g.testType === testType)
+  if (!group) return []
+
+  const items: CaseCatalogDetailItem[] = []
+  for (const mod of group.modules) {
+    const caseInfoList = loadCaseInfoList(testType, mod.module)
+    for (const c of mod.cases) {
+      const info = resolveCaseInfoItem(caseInfoList, c.caseIndex)
+      items.push({
+        key: `${testType}/${mod.module}/${c.caseIndex}`,
+        testType,
+        module: mod.module,
+        moduleLabel: mod.moduleLabel,
+        caseIndex: c.caseIndex,
+        caseName: c.caseName,
+        canReuse: c.canReuse,
+        preconditions: info?.['前置条件'] || '',
+        manualSteps: info?.['测试步骤'] || '',
+        expectedResult: info?.['期望结果'] || '',
+      })
+    }
+  }
+  return items
 }
 
 // 初始化

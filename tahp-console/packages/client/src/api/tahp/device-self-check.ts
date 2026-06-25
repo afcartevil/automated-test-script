@@ -123,6 +123,19 @@ export interface CaseCatalogGroup {
   modules: CaseCatalog[]
 }
 
+export interface CaseCatalogDetailItem {
+  key: string
+  testType: string
+  module: string
+  moduleLabel: string
+  caseIndex: number
+  caseName: string
+  canReuse: boolean
+  preconditions: string
+  manualSteps: string
+  expectedResult: string
+}
+
 export interface DeviceDetail {
   device: DeviceInfo
   session?: TestSession
@@ -168,6 +181,12 @@ export async function startTest(
 
 export async function getCaseCatalogs(): Promise<CaseCatalogGroup[]> {
   return await tahpGet<CaseCatalogGroup[]>('/api/tahp/device-self-check/case-catalogs')
+}
+
+export async function getCaseCatalogDetail(testType: string): Promise<CaseCatalogDetailItem[]> {
+  return await tahpGet<CaseCatalogDetailItem[]>(
+    `/api/tahp/device-self-check/case-catalogs/${testType}/detail`
+  )
 }
 
 export async function startCustomTest(
@@ -251,13 +270,18 @@ export async function retestCase(
 export interface AutoTestSettings {
   autoTestEnabled: Record<string, boolean>
   autoTestPath: Record<string, string>
+  autoRetestEnabled?: Record<string, boolean>
+  autoRetestCount?: Record<string, number>
 }
 
 export async function getSettings(): Promise<AutoTestSettings> {
-  const resp = await tahpGet<{ success: boolean; data: AutoTestSettings }>(
-    '/api/tahp/device-self-check/settings'
-  )
-  return resp.data
+  const data = await tahpGet<AutoTestSettings>('/api/tahp/device-self-check/settings')
+  return {
+    autoTestEnabled: data?.autoTestEnabled || {},
+    autoTestPath: data?.autoTestPath || {},
+    autoRetestEnabled: data?.autoRetestEnabled || {},
+    autoRetestCount: data?.autoRetestCount || {},
+  }
 }
 
 export async function updateSettings(

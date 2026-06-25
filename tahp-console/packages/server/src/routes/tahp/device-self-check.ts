@@ -13,6 +13,7 @@ import {
   getTestSession,
   getModuleConditions,
   getAllCaseCatalogs,
+  getCaseCatalogDetail,
   getSettings,
   updateSettings,
   addSseClient,
@@ -152,6 +153,20 @@ tahpDeviceSelfCheckRoutes.get(
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { success: false, error: err?.message || 'Failed to get case catalogs' }
+    }
+  }
+)
+
+// 获取用例大类详情（含手动测试步骤）
+tahpDeviceSelfCheckRoutes.get(
+  '/api/tahp/device-self-check/case-catalogs/:testType/detail',
+  async (ctx) => {
+    try {
+      const detail = getCaseCatalogDetail(ctx.params.testType)
+      ctx.body = { success: true, data: detail }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to get case catalog detail' }
     }
   }
 )
