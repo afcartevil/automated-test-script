@@ -335,9 +335,7 @@ function connectEventStream() {
       }
       const pending = await getPendingManualDecision(selectedDeviceId.value!)
       if (pending) {
-        manualDecisionId.value = pending.decisionId
-        manualMessage.value = pending.message
-        showManualDialog.value = true
+        applyManualPrompt(pending)
       }
     } catch {}
   })
@@ -356,9 +354,7 @@ function connectEventStream() {
   eventSource.value.addEventListener('manual_confirm', (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data)
-      manualDecisionId.value = data.decisionId
-      manualMessage.value = data.message
-      showManualDialog.value = true
+      applyManualPrompt(data)
     } catch {}
   })
   eventSource.value.onerror = () => {
@@ -373,9 +369,7 @@ function connectEventStream() {
         }
         const pending = await getPendingManualDecision(selectedDeviceId.value)
         if (pending) {
-          manualDecisionId.value = pending.decisionId
-          manualMessage.value = pending.message
-          showManualDialog.value = true
+          applyManualPrompt(pending)
         }
       } catch {}
     }, 1000)
@@ -474,6 +468,25 @@ const modifyMessage = ref('')
 const showManualDialog = ref(false)
 const manualDecisionId = ref<string | null>(null)
 const manualMessage = ref('')
+const manualPassLabel = ref('通过')
+const manualFailLabel = ref('失败')
+const manualMode = ref<'decision' | 'ack'>('decision')
+const manualSubmitting = ref(false)
+
+function applyManualPrompt(data: {
+  decisionId: string
+  message?: string
+  passLabel?: string
+  failLabel?: string
+  mode?: 'decision' | 'ack'
+}) {
+  manualDecisionId.value = data.decisionId
+  manualMessage.value = data.message || '需人工确认'
+  manualPassLabel.value = data.passLabel || '通过'
+  manualFailLabel.value = data.failLabel || '失败'
+  manualMode.value = data.mode === 'ack' ? 'ack' : 'decision'
+  showManualDialog.value = true
+}
 
 function openModifyDialog(caseKey: string) {
   modifyCaseKey.value = caseKey
@@ -550,12 +563,21 @@ async function handleRetestCase() {
 }
 
 async function handleManualDecision(decision: 'pass' | 'fail' | 'ack') {
-  if (manualDecisionId.value) {
+  if (!manualDecisionId.value || manualSubmitting.value) return
+  manualSubmitting.value = true
+  try {
     await submitManualDecision(manualDecisionId.value, decision)
+    showManualDialog.value = false
+    manualDecisionId.value = null
+    manualMessage.value = ''
+    manualMode.value = 'decision'
+    manualPassLabel.value = '通过'
+    manualFailLabel.value = '失败'
+  } catch (e: any) {
+    console.error('[DeviceSelfCheck] Error submitting manual decision:', e)
+  } finally {
+    manualSubmitting.value = false
   }
-  showManualDialog.value = false
-  manualDecisionId.value = null
-  manualMessage.value = ''
 }
 
 function getTestTypeLabel(testType?: string): string {
@@ -1798,8 +1820,34 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
           <p class="manual-message">{{ manualMessage }}</p>
         </div>
         <div class="modify-dialog-footer">
-          <button type="button" class="ea-btn-ghost" @click="handleManualDecision('fail')">失败</button>
-          <button type="button" class="ea-btn-primary" @click="handleManualDecision('pass')">通过</button>
+          <template v-if="manualMode === 'ack'">
+            <button
+              type="button"
+              class="ea-btn-primary"
+              :disabled="manualSubmitting"
+              @click="handleManualDecision('ack')"
+            >
+              {{ manualSubmitting ? '提交中...' : '知道了' }}
+            </button>
+          </template>
+          <template v-else>
+            <button
+              type="button"
+              class="ea-btn-ghost"
+              :disabled="manualSubmitting"
+              @click="handleManualDecision('fail')"
+            >
+              {{ manualFailLabel }}
+            </button>
+            <button
+              type="button"
+              class="ea-btn-primary"
+              :disabled="manualSubmitting"
+              @click="handleManualDecision('pass')"
+            >
+              {{ manualSubmitting ? '提交中...' : manualPassLabel }}
+            </button>
+          </template>
         </div>
       </div>
     </div>

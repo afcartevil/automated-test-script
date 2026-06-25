@@ -39,6 +39,16 @@ SCREEN_TOUCH_ITEM_KEYWORDS: tuple[str, ...] = (
     "触摸",
     "触摸屏",
 )
+SCREEN_TOUCH_SELF_ITEM_KEYWORDS: tuple[str, ...] = (
+    "TouchSelf",
+    "TouchSelf(Incoming Inspection)",
+    "触摸屏自检",
+    "触摸屏自检(来料检测)",
+)
+SCREEN_TOUCH_PANEL_ITEM_KEYWORDS: tuple[str, ...] = (
+    "TouchPanel",
+    "触摸屏",
+)
 
 SCREEN_COLOR_ITEM_KEYWORDS: tuple[str, ...] = ("Color", "色彩")
 SCREEN_BACKLIGHT_ITEM_KEYWORDS: tuple[str, ...] = ("Backlight", "背光")
@@ -75,11 +85,42 @@ USB_STANDARD_CHARGE_ITEM_KEYWORDS: tuple[str, ...] = (
 )
 
 LIGHT_SENSOR_ITEM_KEYWORDS: tuple[str, ...] = (
-    "光感",
     "光传感器",
-    "Light Sensor",
     "LightSensor",
-    "ALS",
+)
+
+LIGHT_SENSOR_DATA_COLLECT_ITEM_KEYWORDS: tuple[str, ...] = (
+    "光感数据采集",
+    "LightSensorDataCollect",
+)
+
+LIGHT_SENSOR_DATA_COLLECT_ITEM_LABEL = "光感数据采集"
+LIGHT_SENSOR_DATA_COLLECT_START_RAW_RID = "com.transsion.tranfacmode:id/start_get_raw"
+LIGHT_SENSOR_DATA_COLLECT_START_RAW_XPATH = (
+    f'//*[@resource-id="{LIGHT_SENSOR_DATA_COLLECT_START_RAW_RID}"]'
+)
+
+LIGHT_SENSOR_CALI_KEYWORDS: tuple[str, ...] = (
+    "光传感器校准",
+    "LightSensorCali",
+)
+
+SENSOR_CALI_EXCLUDE_KEYWORDS: tuple[str, ...] = (
+    "校准",
+    "Cali",
+    "Calibration",
+)
+
+LIGHT_SENSOR_GROUP_LABEL = "光感"
+LIGHT_SENSOR_GROUP_ITEM_SPECS: tuple[
+    tuple[str, tuple[str, ...], tuple[str, ...]], ...
+] = (
+    ("光传感器", LIGHT_SENSOR_ITEM_KEYWORDS, SENSOR_CALI_EXCLUDE_KEYWORDS),
+    (
+        "光感数据采集",
+        LIGHT_SENSOR_DATA_COLLECT_ITEM_KEYWORDS,
+        SENSOR_CALI_EXCLUDE_KEYWORDS,
+    ),
 )
 
 COMPASS_ITEM_KEYWORDS: tuple[str, ...] = (
@@ -87,6 +128,28 @@ COMPASS_ITEM_KEYWORDS: tuple[str, ...] = (
     "Compass",
     "地磁",
     "Magnetometer",
+)
+
+COMPASS_GROUP_LABEL = "指南针"
+COMPASS_GROUP_ITEM_SPECS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (COMPASS_GROUP_LABEL, COMPASS_ITEM_KEYWORDS),
+)
+
+ACCELEROMETER_ITEM_KEYWORDS: tuple[str, ...] = (
+    "加速度",
+    "Accelerometer",
+    "Acceleration",
+    "Accel",
+    "Acceler",
+)
+
+ACCELEROMETER_GROUP_LABEL = "加速度"
+ACCELEROMETER_GROUP_ITEM_SPECS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        ACCELEROMETER_GROUP_LABEL,
+        ACCELEROMETER_ITEM_KEYWORDS,
+        SENSOR_CALI_EXCLUDE_KEYWORDS,
+    ),
 )
 
 GYRO_ITEM_KEYWORDS: tuple[str, ...] = (
@@ -157,13 +220,12 @@ OPTICAL_FINGERPRINT_SUPPORT_PROP = "ro.tr_fingerprint.optical.feature.support"
 
 OPTICAL_FINGERPRINT_CALI_KEYWORDS: tuple[str, ...] = (
     "光学指纹校准",
-    "Optical Fingerprint Cali",
-    "Optical Fingerprint Calibration",
+    "OpticalFingerprintCali",
 )
 
 OPTICAL_FINGERPRINT_TEST_KEYWORDS: tuple[str, ...] = (
     "光学指纹",
-    "Optical Fingerprint",
+    "FingerprintOptical",
 )
 
 OPTICAL_FINGERPRINT_TEST_EXCLUDE_KEYWORDS: tuple[str, ...] = (
@@ -175,8 +237,28 @@ OPTICAL_FINGERPRINT_TEST_EXCLUDE_KEYWORDS: tuple[str, ...] = (
 
 OPTICAL_FINGERPRINT_ENROLL_KEYWORDS: tuple[str, ...] = (
     "指纹录入",
-    "Fingerprint Enroll",
-    "Enrollment",
+    "FingerprintEnroll",
+)
+
+OPTICAL_FINGERPRINT_ENROLL_EXCLUDE_KEYWORDS: tuple[str, ...] = (
+    "校准",
+    "Cali",
+)
+
+OPTICAL_FINGERPRINT_GROUP_LABEL = "屏下指纹"
+OPTICAL_FINGERPRINT_GROUP_ITEM_SPECS: tuple[
+    tuple[str, tuple[str, ...], tuple[str, ...]], ...
+] = (
+    (
+        "光学指纹",
+        OPTICAL_FINGERPRINT_TEST_KEYWORDS,
+        OPTICAL_FINGERPRINT_TEST_EXCLUDE_KEYWORDS,
+    ),
+    (
+        "指纹录入",
+        OPTICAL_FINGERPRINT_ENROLL_KEYWORDS,
+        OPTICAL_FINGERPRINT_ENROLL_EXCLUDE_KEYWORDS,
+    ),
 )
 
 # Other 分类页公共参数
@@ -202,6 +284,8 @@ ADAPTER_TITLE_RID_SUFFIX = "adapter_title"
 
 KEYPAD = OtherTabItem("keypad", ("Keypad", "按键"), "按键")
 MONO_LED = OtherTabItem("mono_led", ("单色灯", "Mono LED"), "单色灯")
+SRGB_LED = OtherTabItem("srgb_led", ("RGB灯", "RGB LED"), "RGB灯")
+LED_ITEMS = (MONO_LED, SRGB_LED)
 VIBRATOR_ROTOR = OtherTabItem("vibrator_rotor", ("Vibrator", "马达"), "转子马达")
 VIBRATOR_LINEAR = OtherTabItem(
     "vibrator_linear", ("LinearVibrator", "线性马达"), "线性马达"

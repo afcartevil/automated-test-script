@@ -246,7 +246,7 @@ tahpBugAnalysisRoutes.post('/:taskId/user-input', async (ctx) => {
   ctx.body = { success: true, data: { request_id: requestId } }
 })
 
-// ─── 备注结论到 JIRA 评论 ────────────────────────────────────────────────────
+// ─── 分析结论回到 jira comment ───────────────────────────────────────────────
 //
 // POST /api/tahp/bug-analysis/:taskId/jira-comment
 // Body: { comment: string }

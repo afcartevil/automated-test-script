@@ -399,7 +399,7 @@ const canPostJiraComment = computed(() =>
   && !!(currentTask.value?.jira_key && !currentTask.value.jira_key.startsWith('LOCAL-')),
 )
 
-// JIRA 备注结论弹窗
+// 分析结论回到 jira comment 弹窗
 const showJiraCommentDialog = ref(false)
 const jiraCommentSections = ref<ReportSectionBlock[]>([])
 const jiraCommentSelectedIds = ref<string[]>([])
@@ -1095,7 +1095,7 @@ async function openJiraCommentDialog() {
   if (!jiraConfig) return
   const ok = await ensureReportForDistill()
   if (!ok) {
-    message.warning('暂无分析报告，无法备注到 JIRA')
+    message.warning('暂无分析报告，无法提交 jira comment')
     return
   }
   const body = reportMarkdown.value
@@ -1126,7 +1126,7 @@ async function submitJiraComment() {
   jiraCommentSubmitting.value = true
   try {
     await postJiraComment(tid, text, jiraConfig)
-    message.success(`已备注到 JIRA 单 ${currentTask.value?.jira_key || ''}`)
+    message.success(`分析结论已回到 jira comment（${currentTask.value?.jira_key || ''}）`)
     showJiraCommentDialog.value = false
     return true
   } catch (err) {
@@ -1976,11 +1976,18 @@ const liveStreamHint = computed(() => {
                 </template>
                 沉淀为 Skill
               </NButton>
-              <NButton v-if="canPostJiraComment" @click="openJiraCommentDialog">
+              <NButton
+                v-if="canPostJiraComment"
+                type="warning"
+                secondary
+                strong
+                class="jira-comment-btn"
+                @click="openJiraCommentDialog"
+              >
                 <template #icon>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 </template>
-                备注结论到 JIRA 单
+                分析结论回到jira comment
               </NButton>
             </NSpace>
           </footer>
@@ -2041,17 +2048,17 @@ const liveStreamHint = computed(() => {
       @user-input="onUserInputSubmit"
     />
 
-    <!-- ────── 备注结论到 JIRA 单 ────── -->
+    <!-- ────── 分析结论回到 jira comment ────── -->
     <NModal
       v-model:show="showJiraCommentDialog"
       preset="card"
-      title="备注结论到 JIRA 单"
+      title="分析结论回到jira comment"
       style="width: 640px"
       :mask-closable="false"
     >
       <NAlert type="info" :show-icon="false" style="margin-bottom: 12px">
-        从分析报告中勾选要备注的章节，将组合后写入 JIRA 单
-        <strong>{{ currentTask?.jira_key }}</strong> 的评论。
+        从分析报告中勾选要提交的章节，组合后写入
+        <strong>{{ currentTask?.jira_key }}</strong> 的 jira comment。
       </NAlert>
       <div class="modal-body-text">选择报告章节：</div>
       <NCheckboxGroup v-model:value="jiraCommentSelectedIds">
@@ -2064,7 +2071,7 @@ const liveStreamHint = computed(() => {
           />
         </NSpace>
       </NCheckboxGroup>
-      <div class="modal-body-text">预览（将提交到 JIRA 评论）：</div>
+      <div class="modal-body-text">预览（将提交到 jira comment）：</div>
       <NInput
         :value="jiraCommentComposed"
         type="textarea"
@@ -2591,6 +2598,23 @@ const liveStreamHint = computed(() => {
   max-width: 100%;
   min-width: 0;
   overflow-x: auto;
+}
+
+/* class 与 .n-button 在同一节点；须覆盖 Naive UI 的 --n-* 变量 */
+:deep(.n-button.jira-comment-btn) {
+  --n-color: #fff4e6 !important;
+  --n-color-hover: #ffe8cc !important;
+  --n-color-pressed: #ffddb0 !important;
+  --n-color-focus: #ffe8cc !important;
+  --n-text-color: #c05621 !important;
+  --n-text-color-hover: #9c4221 !important;
+  --n-text-color-pressed: #9c4221 !important;
+  --n-text-color-focus: #9c4221 !important;
+  --n-border: 1px solid #f5c48a !important;
+  --n-border-hover: 1px solid #f0b56e !important;
+  --n-border-pressed: 1px solid #e9a85c !important;
+  --n-border-focus: 1px solid #f0b56e !important;
+  font-weight: 600;
 }
 
 .modal-hint { margin-bottom: 8px; font-size: 12px; color: var(--muted); }

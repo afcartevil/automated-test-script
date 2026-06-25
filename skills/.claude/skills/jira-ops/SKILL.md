@@ -183,7 +183,7 @@ python scripts/api_jira.py extract-logs --input-dir "./jira_workspace/OS162-3773
 | `prepare-logs` | 下载 + 解压 |
 | `get-issue` / `add-comment` / `download-attachments` / `get-changelog` | 基础 Jira 操作 |
 
-### 新增 JIRA 评论（Agent / TAHP 备注结论）
+### 新增 JIRA 评论（Agent / TAHP 分析结论回到 jira comment）
 
 在 **cwd = jira-ops/** 下执行：
 

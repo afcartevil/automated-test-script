@@ -6,7 +6,7 @@ from typing import Callable, Optional
 
 from utils.driver.tp_touch import _run_adb, _save_log, capture_getevent_until
 from utils.driver.tranfacmode_ui import dump, tap_xpath
-from utils.tdd.ui_automatic import _unlock_keyguard_after_wake, dump_current_ui
+from utils.tdd.ui_automatic import dump_current_ui
 
 SETTINGS_KEY = "os_action_tapping_wake"
 TAPPING_WAKE_ACTIVITY = (
@@ -16,6 +16,7 @@ TAPPING_WAKE_SWITCH_XPATH = (
     '//*[@resource-id="com.transsion.microintelligence:id/switch_layout"]'
 )
 SCREEN_OFF_KEYCODE = "223"
+SCREEN_ON_KEYCODE = "224"
 
 USER_DOUBLE_TAP_WAIT_SEC = 45.0
 POLL_DISPLAY_INTERVAL_SEC = 1.5
@@ -68,13 +69,6 @@ def screen_off(device_id: str) -> bool:
         ["shell", "input", "keyevent", SCREEN_OFF_KEYCODE],
         timeout=10,
     )
-    return result.returncode == 0
-
-
-def go_home(device_id: str) -> bool:
-    """亮屏后上滑解锁并发送 Home 键回桌面。"""
-    _unlock_keyguard_after_wake(device_id)
-    result = _run_adb(device_id, ["shell", "input", "keyevent", "3"], timeout=10)
     return result.returncode == 0
 
 
@@ -134,6 +128,31 @@ def _build_wake_test_result(
     if not c6_ok:
         parts.append("getevent 未检测到 C6/KEY_F26 键值")
     return {"status": "fail", "message": "；".join(parts)}
+
+
+def unlock_and_go_home(device_id: str) -> tuple[bool, bool]:
+    """亮屏 → 检测是否亮起 → 上滑解锁 → 回桌面。"""
+    if _run_adb(device_id, ["shell", "input", "keyevent", SCREEN_ON_KEYCODE], timeout=10).returncode != 0:
+        return False, False
+    time.sleep(0.3)
+
+    if get_screen_state(device_id) != "ON":
+        return False, False
+
+    unlock_ok = _run_adb(
+        device_id,
+        ["shell", "input", "swipe", "540", "1800", "540", "500"],
+        timeout=10,
+    ).returncode == 0
+    time.sleep(0.4)
+
+    home_ok = True
+    for _ in range(2):
+        if _run_adb(device_id, ["shell", "input", "keyevent", "3"], timeout=10).returncode != 0:
+            home_ok = False
+            break
+        time.sleep(0.35)
+    return unlock_ok, home_ok
 
 
 def run_tp_tapping_wake_test(
@@ -206,11 +225,22 @@ def run_tp_tapping_wake_test(
     step("检测 C6(KEY_F26) 键值", c6_ok)
     step("检测到亮屏", screen_ok)
 
-    home_ok = go_home(device_id) if screen_ok else False
-    step("解锁并回到桌面", home_ok)
+    unlock_ok = False
+    home_ok = False
+    if screen_ok:
+        unlock_ok, home_ok = unlock_and_go_home(device_id)
+    step("解锁", unlock_ok)
+    step("回到桌面", home_ok)
     result = _build_wake_test_result(
         screen_ok=screen_ok,
         c6_ok=c6_ok,
         screen_state=screen_state,
     )
+    if screen_ok and c6_ok and (not unlock_ok or not home_ok):
+        parts = [result.get("message", "")]
+        if not unlock_ok:
+            parts.append("亮屏后解锁失败，仍停留在锁屏")
+        if not home_ok:
+            parts.append("返回桌面失败")
+        result = {"status": "fail", "message": "；".join(p for p in parts if p)}
     return result

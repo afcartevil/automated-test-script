@@ -1,15 +1,14 @@
-"""STR4 驱动器件：开机工模指纹（侧边指纹属性校验 + 复用 case23 指纹工模测试结果）。"""
+"""STR4 驱动器件：开机工模指纹（侧边指纹属性校验 + 工模测试）。"""
 
 import subprocess
 
-from utils.driver.sensor_items_result import run_reuse_sensor_items_item
 from utils.driver.tranfacmode_config import (
+    SENSOR,
     SIDE_FINGERPRINT_EXCLUDE_KEYWORDS,
     SIDE_FINGERPRINT_ITEM_KEYWORDS,
     SIDE_FINGERPRINT_SUPPORT_PROP,
 )
-
-SOURCE_SENSOR_CASE_INDEX = 23
+from utils.driver.ui_tranfacmode import run_tranfacmode_group_items_test
 
 
 def _get_dut_device_id(device_info):
@@ -53,14 +52,6 @@ def run(category=None, case_index=None, device_info=None, **context):
         sub_steps += f"\n{label}-{suffix}"
         update(sub_steps)
 
-    def on_reuse_step(message: str) -> None:
-        nonlocal sub_steps
-        if sub_steps and message.startswith("\n"):
-            sub_steps += message
-        else:
-            sub_steps = message
-        update(sub_steps)
-
     dut_id, error = _get_dut_device_id(device_info)
     if not dut_id:
         update(error)
@@ -99,12 +90,15 @@ def run(category=None, case_index=None, device_info=None, **context):
         else:
             return {"status": "pending", "message": "需确认设备是否支持侧边指纹"}
 
-    return run_reuse_sensor_items_item(
-        context,
-        SIDE_FINGERPRINT_ITEM_KEYWORDS,
-        item_label="指纹",
-        step_update=on_reuse_step,
-        item_source="items",
-        source_case_index=SOURCE_SENSOR_CASE_INDEX,
-        exclude_keywords=SIDE_FINGERPRINT_EXCLUDE_KEYWORDS,
+    fingerprint_result = run_tranfacmode_group_items_test(
+        dut_id,
+        SENSOR,
+        (("指纹", SIDE_FINGERPRINT_ITEM_KEYWORDS, SIDE_FINGERPRINT_EXCLUDE_KEYWORDS),),
+        group_label="侧边指纹",
+        result_dir=context.get("result_dir"),
+        on_step=on_step,
     )
+    return {
+        "status": fingerprint_result["status"],
+        "message": fingerprint_result["message"],
+    }

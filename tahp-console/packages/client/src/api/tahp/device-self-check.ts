@@ -248,8 +248,20 @@ export async function submitManualDecision(
 
 export async function getPendingManualDecision(
   deviceId: string
-): Promise<{ decisionId: string; message: string } | null> {
-  return await tahpGet<{ decisionId: string; message: string } | null>(
+): Promise<{
+  decisionId: string
+  message: string
+  passLabel?: string
+  failLabel?: string
+  mode?: 'decision' | 'ack'
+} | null> {
+  return await tahpGet<{
+    decisionId: string
+    message: string
+    passLabel?: string
+    failLabel?: string
+    mode?: 'decision' | 'ack'
+  } | null>(
     `/api/tahp/device-self-check/devices/${deviceId}/pending-manual-decision`
   )
 }

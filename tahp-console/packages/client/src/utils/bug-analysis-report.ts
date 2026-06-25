@@ -215,7 +215,7 @@ export function composeReportSections(
     .map(s => s.content.trim())
   const body = parts.join('\n\n')
   return [
-    '【TAHP 智能诊断结论备注】',
+    '【TAHP 分析结论回到 jira comment】',
     '',
     body,
   ].join('\n').trim()

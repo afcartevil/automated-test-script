@@ -1,8 +1,10 @@
-"""驱动周版本自检：工模单色灯（Mono LED）测试。"""
+"""驱动周版本自检：工模单色灯（Mono LED）/ SRGB 灯测试。"""
 
-from utils.driver.tranfacmode_config import MONO_LED
+from utils.driver.tranfacmode_config import LED_ITEMS
+from utils.driver.tranfacmode_ui import dump
 from utils.driver.ui_tranfacmode import (
     open_other_tab,
+    pick_other_tab_item,
     skip_rf_calibration,
     start_main,
     tap_other_list_item,
@@ -44,11 +46,6 @@ def run(category=None, case_index=None, device_info=None, **context):
         ("启动工模主界面", lambda: start_main(dut_id), "启动工模 MainActivity 失败"),
         ("跳过射频参数校准", lambda: skip_rf_calibration(dut_id), "跳过射频参数校准失败"),
         ("进入 Other 分类", lambda: open_other_tab(dut_id), "进入 Other/其他 分类失败"),
-        (
-            f"选择{MONO_LED.label}测试项",
-            lambda: tap_other_list_item(dut_id, MONO_LED.item_text),
-            f"未找到 {MONO_LED.item_text} 测试项",
-        ),
     ]
     for label, action, fail_msg in steps:
         ok = action()
@@ -56,10 +53,26 @@ def run(category=None, case_index=None, device_info=None, **context):
         if not ok:
             return {"status": "fail", "message": fail_msg}
 
+    xml = dump(dut_id)
+    led_item = pick_other_tab_item(xml, LED_ITEMS) if xml else None
+    on_step("识别 LED 类型", led_item is not None)
+    if led_item is None:
+        return {
+            "status": "fail",
+            "message": "未找到单色灯(Mono LED/单色灯)或 SRGB 灯(SRGB LED/SRGB灯)测试项",
+        }
+
+    on_step(f"识别为{led_item.label}", True)
+    ok = tap_other_list_item(dut_id, led_item.item_text)
+    on_step(f"选择{led_item.label}测试项", ok)
+    if not ok:
+        return {"status": "fail", "message": f"未找到 {led_item.item_text} 测试项"}
+
     sub_steps += "\n需人工评判"
     if callable(step_update):
         step_update(sub_steps)
+    manual_prompt = f"请检查{led_item.label}是否正常亮起"
     if callable(manual_confirm):
-        status = manual_confirm("请检查单色灯是否正常亮起")
+        status = manual_confirm(manual_prompt)
         return {"status": status, "message": f"人工评判{status}"}
     return {"status": "pending", "message": "需人工评判"}

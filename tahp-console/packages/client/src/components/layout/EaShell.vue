@@ -32,7 +32,8 @@ const systemNav = [
   { name: 'hermes.settings', label: '设置' },
 ]
 
-const selectedKey = computed(() => route.name as string)
+const FEEDBACK_URL = 'https://transsioner.feishu.cn/base/AlzFbIMzea05ZNsjPKOcvnBNnhe?from=from_copylink'
+
 
 const modelDisplay = computed(() => {
   const groups = appStore.profileModelGroups.find(g => g.profile === (appStore as any).activeProfile)?.groups
@@ -104,6 +105,16 @@ async function handleUpdate() {
       </nav>
 
       <div class="ck-spacer">
+        <a
+          :href="FEEDBACK_URL"
+          class="ck-feedback-btn"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="在飞书多维表格中反馈问题"
+        >
+          反馈问题
+        </a>
+
         <button type="button" class="ck-mini-model" @click="showModelModal = true">
           <span class="ck-mini-dot" :class="{ offline: !appStore.connected }" />
           <b>{{ modelDisplay }}</b>
@@ -226,6 +237,27 @@ async function handleUpdate() {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.ck-feedback-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.18s, background 0.18s, border-color 0.18s;
+
+  &:hover {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent-soft) 70%, var(--accent) 12%);
+    border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  }
 }
 
 .ck-mini-model {

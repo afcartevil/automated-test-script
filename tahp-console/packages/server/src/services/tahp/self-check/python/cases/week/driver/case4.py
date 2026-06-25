@@ -1,19 +1,6 @@
 """驱动周版本自检：TP 双击亮灭屏检测。"""
 
-import subprocess
-
 from utils.driver.tp_tapping_wake import USER_DOUBLE_TAP_WAIT_SEC, run_tp_tapping_wake_test
-
-
-def _go_home(device_id: str) -> bool:
-    r = subprocess.run(
-        ["adb", "-s", device_id, "shell", "input", "keyevent", "3"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    return r.returncode == 0
 
 
 def _get_dut_device_id(device_info):
@@ -44,9 +31,6 @@ def run(category=None, case_index=None, device_info=None, **context):
         sub_steps += f"\n{label}" + ("-成功" if ok else "-失败")
         if callable(step_update):
             step_update(sub_steps)
-
-    ok = _go_home(dut_id)
-    on_step("回到主界面", ok)
 
     def before_double_tap():
         wait_sec = int(USER_DOUBLE_TAP_WAIT_SEC)

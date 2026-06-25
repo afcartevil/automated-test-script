@@ -106,6 +106,7 @@ export interface TestSession {
   auxiliaryDevices: string[]
   selectedCases?: string[]
   customAuxDevices?: string[]
+  initializedPythonModules?: string[]
 }
 
 export interface CaseCatalogItem {
@@ -1061,7 +1062,12 @@ function buildDeviceInfo(
         subscription_id: 0
       }))
     }],
-    Auxiliary: auxDevices
+    Auxiliary: auxDevices,
+    module_init_done: Boolean(
+      testType &&
+      module &&
+      session?.initializedPythonModules?.includes(`${testType}/${module}`)
+    ),
   }
 }
 
@@ -1163,6 +1169,21 @@ async function execDeviceInit(deviceId: string, session?: TestSession): Promise<
 }
 
 // 执行 Python 模块初始化
+function markPythonModuleInitialized(
+  session: TestSession | undefined,
+  testType: string,
+  module: string
+): void {
+  if (!session) return
+  const key = `${testType}/${module}`
+  if (!session.initializedPythonModules) {
+    session.initializedPythonModules = []
+  }
+  if (!session.initializedPythonModules.includes(key)) {
+    session.initializedPythonModules.push(key)
+  }
+}
+
 async function execPythonInit(
   deviceId: string,
   testType: string,
@@ -1170,7 +1191,10 @@ async function execPythonInit(
   session?: TestSession
 ): Promise<void> {
   const initScript = join(PYTHON_DIR, 'cases', testType, module, 'init.py')
-  if (!existsSync(initScript)) return
+  if (!existsSync(initScript)) {
+    markPythonModuleInitialized(session, testType, module)
+    return
+  }
 
   if (!devices[deviceId]) return
 
@@ -1182,7 +1206,11 @@ async function execPythonInit(
     180000,
     `module-init/${testType}/${module}`
   )
+  markPythonModuleInitialized(session, testType, module)
 }
+
+const CASE_EXEC_TIMEOUT_MS = 120_000
+const MANUAL_CONFIRM_TIMEOUT_MS = 30 * 60_000
 
 // 执行 Python 用例脚本
 async function execPythonCase(
@@ -1200,16 +1228,28 @@ async function execPythonCase(
     const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
     let proc: any = null
     let timeoutId: NodeJS.Timeout | null = null
+    let settled = false
+
+    const finish = (result: { status: string; message: string; steps: CaseStep[]; fullAutomation?: boolean }) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(result)
+    }
 
     const cleanup = () => {
       if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
       if (proc && !proc.killed) { try { proc.kill() } catch {} }
     }
 
-    timeoutId = setTimeout(() => {
-      cleanup()
-      resolve({ status: 'fail', message: '用例执行超时(120s)', steps: [] })
-    }, 120000)
+    const scheduleTimeout = (ms: number, message: string) => {
+      if (timeoutId) clearTimeout(timeoutId)
+      timeoutId = setTimeout(() => {
+        finish({ status: 'fail', message, steps: [] })
+      }, ms)
+    }
+
+    scheduleTimeout(CASE_EXEC_TIMEOUT_MS, '用例执行超时(120s)')
 
     try {
       proc = spawn(pythonCmd, [
@@ -1228,7 +1268,6 @@ async function execPythonCase(
       let stdout = ''
       let stderr = ''
       let lastResultLine = ''
-      let pendingManualResolve: ((decision: string) => void) | null = null
 
       const handleLine = (line: string) => {
         if (!line.trim()) return
@@ -1240,35 +1279,38 @@ async function execPythonCase(
               step: parsed.step
             })
           } else if (parsed.type === 'manual_confirm') {
-            // 需要人工确认：暂停，发送事件到前端，等待回复
+            // 需要人工确认：延长超时，阻塞 Python stdin 直到前端提交决策
+            scheduleTimeout(MANUAL_CONFIRM_TIMEOUT_MS, '人工确认超时(30min)')
             const decisionId = `manual_${caseKey}_${Date.now()}`
-            const pendingPromise = new Promise<string>((res) => {
-              pendingManualResolve = res
-            })
+            const passLabel = typeof parsed.pass_label === 'string' ? parsed.pass_label : ''
+            const failLabel = typeof parsed.fail_label === 'string' ? parsed.fail_label : ''
+            const mode = parsed.mode === 'ack' ? 'ack' as const : 'decision' as const
             pendingManualDecisions[decisionId] = {
               deviceId,
               caseKey,
               message: parsed.message || '需人工确认',
+              passLabel: passLabel || undefined,
+              failLabel: failLabel || undefined,
+              mode,
               resolve: (decision: string) => {
-                if (pendingManualResolve) {
-                  pendingManualResolve(decision)
-                  pendingManualResolve = null
-                }
                 delete pendingManualDecisions[decisionId]
+                scheduleTimeout(CASE_EXEC_TIMEOUT_MS, '用例执行超时(120s)')
+                if (proc?.stdin && !proc.stdin.destroyed) {
+                  try {
+                    proc.stdin.write(`${decision}\n`, 'utf-8')
+                  } catch (err) {
+                    console.warn('[device-self-check] Failed to write manual decision to stdin:', err)
+                  }
+                }
               }
             }
             emitEvent('manual_confirm', {
               decisionId,
               caseKey,
-              message: parsed.message || '需人工确认'
-            })
-            // 等待前端回复后写入 stdin
-            pendingPromise.then((decision) => {
-              if (proc && proc.stdin && !proc.stdin.destroyed) {
-                try {
-                  proc.stdin.write(decision + '\n')
-                } catch {}
-              }
+              message: parsed.message || '需人工确认',
+              passLabel: passLabel || undefined,
+              failLabel: failLabel || undefined,
+              mode,
             })
           } else if (parsed.status) {
             lastResultLine = line.trim()
@@ -1296,7 +1338,7 @@ async function execPythonCase(
         if (lineBuffer.trim()) {
           handleLine(lineBuffer)
         }
-        cleanup()
+        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
         try {
           const resultLine = lastResultLine || (() => {
             const lines = stdout.split('\n').filter((l: string) => l.trim().startsWith('{'))
@@ -1306,21 +1348,21 @@ async function execPythonCase(
           const trimmed = resultLine.trim()
           if (trimmed.startsWith('{')) {
             const parsed = JSON.parse(trimmed)
-            resolve({
+            finish({
               status: parsed.status || 'fail',
               message: parsed.message || stderr.trim(),
               steps: parsed.steps || [],
               fullAutomation: parsed.full_automation
             })
           } else {
-            resolve({
+            finish({
               status: code === 0 ? 'pass' : 'fail',
               message: stdout.trim() || stderr.trim() || `退出码: ${code}`,
               steps: []
             })
           }
         } catch {
-          resolve({
+          finish({
             status: code === 0 ? 'pass' : 'fail',
             message: stdout.trim() || stderr.trim() || `退出码: ${code}`,
             steps: []
@@ -1329,12 +1371,10 @@ async function execPythonCase(
       })
 
       proc.on('error', (err: any) => {
-        cleanup()
-        resolve({ status: 'fail', message: `启动Python失败: ${err.message}`, steps: [] })
+        finish({ status: 'fail', message: `启动Python失败: ${err.message}`, steps: [] })
       })
     } catch (err: any) {
-      cleanup()
-      resolve({ status: 'fail', message: `启动Python失败: ${err.message}`, steps: [] })
+      finish({ status: 'fail', message: `启动Python失败: ${err.message}`, steps: [] })
     }
   })
 }
@@ -1345,6 +1385,9 @@ const pendingManualDecisions: Record<string, {
   message: string
   resolve: (decision: string) => void
   deviceId: string
+  passLabel?: string
+  failLabel?: string
+  mode?: 'decision' | 'ack'
 }> = {}
 
 export function submitManualDecision(decisionId: string, decision: string): boolean {
@@ -1357,10 +1400,22 @@ export function submitManualDecision(decisionId: string, decision: string): bool
 }
 
 // 获取设备的待处理人工决策
-export function getPendingManualDecision(deviceId: string): { decisionId: string; message: string } | null {
+export function getPendingManualDecision(deviceId: string): {
+  decisionId: string
+  message: string
+  passLabel?: string
+  failLabel?: string
+  mode?: 'decision' | 'ack'
+} | null {
   for (const [id, decision] of Object.entries(pendingManualDecisions)) {
     if (decision.deviceId === deviceId) {
-      return { decisionId: id, message: decision.message }
+      return {
+        decisionId: id,
+        message: decision.message,
+        passLabel: decision.passLabel,
+        failLabel: decision.failLabel,
+        mode: decision.mode,
+      }
     }
   }
   return null
@@ -1650,7 +1705,8 @@ export async function startTest(
       caseResults: {},
       startTime: device.testStartTime,
       isRunning: true,
-      auxiliaryDevices: []
+      auxiliaryDevices: [],
+      initializedPythonModules: [],
     }
 
     testSessions[deviceId] = session
@@ -1713,6 +1769,7 @@ export async function startCustomTest(
       auxiliaryDevices: customAuxDeviceIds,
       selectedCases,
       customAuxDevices: customAuxDeviceIds,
+      initializedPythonModules: [],
     }
 
     testSessions[deviceId] = session

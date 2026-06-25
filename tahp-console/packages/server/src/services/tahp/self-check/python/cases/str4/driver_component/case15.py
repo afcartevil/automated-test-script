@@ -1,4 +1,4 @@
-"""驱动周版本自检：工模 USB 测试组（先点 Sensor 标签再点 USB 标签后顺序执行）。"""
+"""驱动周版本自检：工模 USB 测试组。"""
 
 from utils.driver.tranfacmode_config import USB
 from utils.driver.ui_tranfacmode import run_group_sequence

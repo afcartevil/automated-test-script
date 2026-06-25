@@ -2,11 +2,12 @@
 
 import subprocess
 
-from utils.driver.sensor_items_result import run_reuse_sensor_items_item
 from utils.driver.tranfacmode_config import (
     PROXIMITY_SENSOR_EXCLUDE_KEYWORDS,
     PROXIMITY_SENSOR_ITEM_KEYWORDS,
+    SENSOR,
 )
+from utils.driver.ui_tranfacmode import run_tranfacmode_group_items_test
 
 ULTRASOUND_SUPPORT_PROP = "ro.tr_audio.ultrasound.support"
 
@@ -76,14 +77,6 @@ def run(category=None, case_index=None, device_info=None, **context):
         sub_steps += f"\n{label}-{suffix}"
         update(sub_steps)
 
-    def on_reuse_step(message: str) -> None:
-        nonlocal sub_steps
-        if sub_steps and message.startswith("\n"):
-            sub_steps += message
-        else:
-            sub_steps = message
-        update(sub_steps)
-
     dut_id, error = _get_dut_device_id(device_info)
     if not dut_id:
         update(error)
@@ -111,22 +104,31 @@ def run(category=None, case_index=None, device_info=None, **context):
                 pass_label="支持",
                 fail_label="不支持",
             )
-            on_step("人工确认超声距感支持", confirm_status == "pass", "支持" if confirm_status == "pass" else "不支持")
+            on_step(
+                "人工确认超声距感支持",
+                confirm_status == "pass",
+                "支持" if confirm_status == "pass" else "不支持",
+            )
             if confirm_status != "pass":
                 return {"status": "skip", "message": "设备不支持超声距感，已跳过"}
         else:
             return {"status": "pending", "message": "需确认设备是否支持超声距感"}
 
-    test_result = run_reuse_sensor_items_item(
-        context,
-        PROXIMITY_SENSOR_ITEM_KEYWORDS,
-        item_label="距离传感器",
-        step_update=on_reuse_step,
-        item_source="items",
-        exclude_keywords=PROXIMITY_SENSOR_EXCLUDE_KEYWORDS,
+    test_result = run_tranfacmode_group_items_test(
+        dut_id,
+        SENSOR,
+        (("距离传感器", PROXIMITY_SENSOR_ITEM_KEYWORDS, PROXIMITY_SENSOR_EXCLUDE_KEYWORDS),),
+        group_label="距离传感器",
+        result_dir=context.get("result_dir"),
+        on_step=on_step,
     )
     if test_result["status"] != "pass":
         return test_result
+
+    home_ok = _go_home(dut_id)
+    on_step("工模测试后返回桌面", home_ok)
+    if not home_ok:
+        return {"status": "fail", "message": "工模测试后返回桌面失败"}
 
     operation_text = (
         "请拨打电话并接听，然后将手机靠近耳朵确认是否灭屏，"

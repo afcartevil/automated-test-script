@@ -4,7 +4,7 @@ import time
 import xml.etree.ElementTree as ET
 from typing import Callable
 
-from utils.driver.tranfacmode_ui import adb, dump
+from utils.driver.tranfacmode_ui import adb, dump, tap_xml
 from utils.tdd.ui_automatic import (
     DEFAULT_SLEEP_AFTER_SWIPE,
     DEFAULT_SWIPE,
@@ -22,6 +22,7 @@ QSENSOR_ACTIVITY = (
 
 ELEVATOR_MODE_MARKER = "elevator: elevator: transsion"
 VEHICLE_MODE_MARKER = "vehicle: vehicle: transsion"
+GYRO_SENSOR_MARKER = "GYRO: lsm6dso_gyro: st"
 ELEVATOR_MODE_SUPPORT_PROP = "ro.tr_telephony.disable_elevator_mode.feature.support"
 VEHICLE_MODE_SUPPORT_PROP = "ro.tr_sensor.vehicle_mode.feature.support"
 
@@ -138,6 +139,37 @@ def search_sensor_marker_in_ui(device_id: str, marker: str) -> bool:
             else:
                 _swipe_list_once(device_id)
         return _ui_has_marker(device_id, marker)
+    finally:
+        if use_u2:
+            release_uiautomator2(device_id, wait_ready=False)
+
+
+def tap_sensor_marker_in_ui(device_id: str, marker: str) -> bool:
+    """在 QSensorTest 列表中滑动查找 @text 精确匹配的 marker 并点击。"""
+    use_u2 = acquire_u2(device_id) is not None
+    scroll_count = 0
+    target = marker.strip()
+    if not target:
+        return False
+    try:
+        for slide in range(MAX_UI_SCROLL_ROUNDS + 1):
+            xml = dump_current_ui(device_id) or dump(device_id)
+            if xml and tap_xml(device_id, xml, text_equals=(target,)):
+                return True
+            if slide >= MAX_UI_SCROLL_ROUNDS:
+                break
+            if use_u2:
+                scroll_count = _ensure_device_scroll_index(
+                    device_id,
+                    slide + 1,
+                    scroll_count,
+                    _LIST_SWIPE,
+                    DEFAULT_SLEEP_AFTER_SWIPE,
+                )
+            else:
+                _swipe_list_once(device_id)
+        xml = dump_current_ui(device_id) or dump(device_id)
+        return bool(xml and tap_xml(device_id, xml, text_equals=(target,)))
     finally:
         if use_u2:
             release_uiautomator2(device_id, wait_ready=False)

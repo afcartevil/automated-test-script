@@ -19,8 +19,6 @@ def adb(device_id: str, *args: str) -> subprocess.CompletedProcess[str]:
         ["adb", "-s", device_id, *args],
         capture_output=True,
         text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=30,
         check=False,
     )
@@ -144,26 +142,25 @@ def tap_text(device_id: str, texts: tuple[str, ...]) -> bool:
 
 def tap_list_item(device_id: str, texts: tuple[str, ...], *, rid_suffix: str = "adapter_title") -> bool:
     """点击工模列表项：匹配 text 或 adapter_title，并点击可点击父节点。"""
-    if tap_text(device_id, texts):
+    if not rid_suffix and tap_text(device_id, texts):
         return True
     xml = dump(device_id)
-    if not xml:
-        return False
-    root = ET.parse(xml).getroot()
-    parent = _parent_map(root)
-    for el in root.iter("node"):
-        rid = el.attrib.get("resource-id") or ""
-        if rid_suffix and rid_suffix not in rid:
-            continue
-        label = (el.attrib.get("text") or "").strip()
-        if label not in texts:
-            continue
-        target = _clickable(el, parent)
-        bounds = target.attrib.get("bounds") or ""
-        if bounds and _tap_bounds(device_id, bounds):
-            time.sleep(TAP_DELAY)
-            return True
-    return False
+    if xml:
+        root = ET.parse(xml).getroot()
+        parent = _parent_map(root)
+        for el in root.iter("node"):
+            rid = el.attrib.get("resource-id") or ""
+            if rid_suffix and rid_suffix not in rid:
+                continue
+            label = (el.attrib.get("text") or "").strip()
+            if label not in texts:
+                continue
+            target = _clickable(el, parent)
+            bounds = target.attrib.get("bounds") or ""
+            if bounds and _tap_bounds(device_id, bounds):
+                time.sleep(TAP_DELAY)
+                return True
+    return bool(rid_suffix and tap_text(device_id, texts))
 
 
 def swipe_resource(

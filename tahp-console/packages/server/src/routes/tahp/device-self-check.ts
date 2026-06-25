@@ -263,7 +263,7 @@ tahpDeviceSelfCheckRoutes.post(
         decision: string
       }
       const ok = submitManualDecision(decisionId, decision)
-      ctx.body = { success: ok, error: ok ? undefined : '决策已过期或不存在' }
+      ctx.body = { success: ok, data: { accepted: ok }, error: ok ? undefined : '决策已过期或不存在' }
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { success: false, error: err?.message || 'Failed to submit decision' }
