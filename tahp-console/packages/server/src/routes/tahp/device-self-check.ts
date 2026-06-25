@@ -22,6 +22,7 @@ import {
   getPendingManualDecision,
   DeviceInfo,
   DeviceRole,
+  StartTestFlashPayload,
 } from '../../services/tahp/device-self-check'
 
 export const tahpDeviceSelfCheckRoutes = new Router()
@@ -98,8 +99,11 @@ tahpDeviceSelfCheckRoutes.post(
   async (ctx) => {
     try {
       const deviceId = ctx.params.deviceId
-      const { testType } = ctx.request.body as { testType: 'str4' | 'week' }
-      const result = await startTest(deviceId, testType)
+      const { testType, flash } = ctx.request.body as {
+        testType: 'str4' | 'week'
+        flash?: StartTestFlashPayload
+      }
+      const result = await startTest(deviceId, testType, flash)
       ctx.body = {
         success: true,
         data: result,
@@ -311,6 +315,21 @@ tahpDeviceSelfCheckRoutes.post(
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { success: false, error: err?.message || 'Failed to update settings' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/flash/pick-path',
+  async (ctx) => {
+    try {
+      const { pickLocalFlashPath } = await import('../../services/tahp/device-flash')
+      const result = await pickLocalFlashPath()
+      ctx.body = { success: !result.error, data: result, error: result.error }
+      if (result.error && !result.canceled) ctx.status = 500
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to pick flash path' }
     }
   }
 )

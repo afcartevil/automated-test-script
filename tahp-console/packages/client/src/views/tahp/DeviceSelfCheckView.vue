@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
 import GerritReviewWorkspace from '@/components/tahp/GerritReviewWorkspace.vue'
@@ -12,6 +12,7 @@ import {
   getDeviceDetail,
   setDeviceRole,
   startTest,
+  pickFlashPath,
   startCustomTest,
   getCaseCatalogs,
   getCaseCatalogDetail,
@@ -31,8 +32,15 @@ import {
   type CaseResult,
   type CaseCatalog,
   type CaseCatalogGroup,
-  type CaseCatalogDetailItem
+  type CaseCatalogDetailItem,
+  type TestSession,
 } from '@/api/tahp/device-self-check'
+import {
+  createFlashProgressState,
+  parseFlashLogLine,
+  flashPhaseLabel,
+  type FlashProgressState,
+} from '@/utils/flash-progress'
 
 const SELF_CHECK_SUBTITLE =
   '周版本、STR4转测版本用例自动化；GMS、稳定性测试AI自规划；gerrit提交code review和测试建议'
@@ -46,9 +54,78 @@ const moduleConditions = ref<Record<string, ModuleCondition>>({})
 // 测试类型选择
 const selectedTestType = ref<'str4' | 'week'>('week')
 
-// 刷机相关选项（功能暂不实现）
+// 刷机相关选项（device_update，工具位于 self-check/flash_tool/）
 const enableFlash = ref(false)
 const flashPath = ref('')
+const enableRootPkg = ref(false)
+const rootPkgPath = ref('')
+const flashStageVersion = ref('')
+const flashLogs = ref<string[]>([])
+const flashLogRef = ref<HTMLElement | null>(null)
+const flashActive = ref(false)
+const flashDone = ref<'success' | 'error' | null>(null)
+const flashProgressState = ref<FlashProgressState>(createFlashProgressState())
+const flashPathPicking = ref(false)
+const rootPkgPathPicking = ref(false)
+const FLASH_MARKET_OPTIONS = [
+  { label: 'Base', value: '' },
+  { label: 'Open', value: 'Open' },
+  { label: 'Open-Payjoy', value: 'Open-Payjoy' },
+  { label: 'RU', value: 'RU' },
+  { label: 'Turkey', value: 'Turkey' },
+  { label: 'India', value: 'India' },
+]
+watch(enableRootPkg, (enabled) => {
+  if (!enabled) rootPkgPath.value = ''
+})
+
+function resetFlashProgress() {
+  flashActive.value = false
+  flashDone.value = null
+  flashProgressState.value = createFlashProgressState()
+}
+
+function appendFlashLog(line: string) {
+  flashLogs.value.push(line)
+  flashActive.value = true
+  parseFlashLogLine(flashProgressState.value, line)
+
+  nextTick(() => {
+    const el = flashLogRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+watch(flashLogs, () => {
+  nextTick(() => {
+    const el = flashLogRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+})
+
+function applyFollowCurrentCase(session?: TestSession) {
+  if (!session) return
+  if (session.testType === 'custom' && session.selectedCases) {
+    for (const caseKey of session.selectedCases) {
+      const result = session.caseResults[caseKey]
+      if (result?.status === '进行中') {
+        selectedCase.value = caseKey
+        return
+      }
+    }
+    return
+  }
+  const mod = session.modules[session.currentModuleIndex]
+  if (!mod) return
+  const prog = session.moduleProgress[`${session.testType}/${mod}`]
+  if (prog?.currentCaseIndex) {
+    selectedCase.value = `${mod}/${prog.currentCaseIndex}`
+  } else {
+    selectedCase.value = `${mod}/1`
+    expandedModules.value = new Set([...expandedModules.value, mod])
+  }
+}
+
 const enableTcardUpdate = ref(false)
 const tcardUpdatePath = ref('')
 
@@ -307,6 +384,38 @@ function connectEventStream() {
     } catch {}
   })
 
+  eventSource.value.addEventListener('flash_log', (e: MessageEvent) => {
+    try {
+      const data = JSON.parse(e.data)
+      if (data.deviceId === selectedDeviceId.value && data.line) {
+        appendFlashLog(data.line)
+      }
+    } catch {}
+  })
+
+  eventSource.value.addEventListener('flash_completed', async (e: MessageEvent) => {
+    try {
+      const data = JSON.parse(e.data)
+      if (data.deviceId !== selectedDeviceId.value) return
+      flashActive.value = false
+      if (data.success) {
+        flashLogs.value = []
+        resetFlashProgress()
+        followCurrent.value = true
+        const detail = await getDeviceDetail(selectedDeviceId.value!)
+        selectedDevice.value = detail
+        applyFollowCurrentCase(detail.session)
+      } else {
+        flashDone.value = 'error'
+        parseFlashLogLine(
+          flashProgressState.value,
+          `[刷机] 刷机失败：${data.error || `返回码 ${data.returnCode ?? '?'}`}`
+        )
+        if (data.error) appendFlashLog(`[刷机] ${data.error}`)
+      }
+    } catch {}
+  })
+
   eventSource.value.addEventListener('case_completed', async (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data)
@@ -314,24 +423,7 @@ function connectEventStream() {
       const detail = await getDeviceDetail(selectedDeviceId.value!)
       selectedDevice.value = detail
       if (followCurrent.value && detail.session?.isRunning) {
-        const session = detail.session
-        if (session.testType === 'custom' && session.selectedCases) {
-          for (const caseKey of session.selectedCases) {
-            const result = session.caseResults[caseKey]
-            if (result?.status === '进行中') {
-              selectedCase.value = caseKey
-              break
-            }
-          }
-        } else {
-          const mod = session.modules[session.currentModuleIndex]
-          if (mod) {
-            const prog = session.moduleProgress[`${session.testType}/${mod}`]
-            if (prog?.currentCaseIndex) {
-              selectedCase.value = `${mod}/${prog.currentCaseIndex}`
-            }
-          }
-        }
+        applyFollowCurrentCase(detail.session)
       }
       if (!detail.session?.isRunning) {
         await refreshDeviceState(selectedDeviceId.value!)
@@ -414,9 +506,68 @@ async function handleSetRole(deviceId: string, role: DeviceRole) {
   }
 }
 
+async function handleBrowseFlashPath() {
+  if (flashPathPicking.value) return
+  flashPathPicking.value = true
+  error.value = null
+  try {
+    const result = await pickFlashPath()
+    if (result.path) {
+      flashPath.value = result.path
+    } else if (result.error) {
+      error.value = result.error
+    }
+  } catch (e: any) {
+    error.value = e?.message || '打开路径选择框失败'
+  } finally {
+    flashPathPicking.value = false
+  }
+}
+
+async function handleBrowseRootPkgPath() {
+  if (rootPkgPathPicking.value) return
+  rootPkgPathPicking.value = true
+  error.value = null
+  try {
+    const result = await pickFlashPath()
+    if (result.path) {
+      rootPkgPath.value = result.path
+    } else if (result.error) {
+      error.value = result.error
+    }
+  } catch (e: any) {
+    error.value = e?.message || '打开路径选择框失败'
+  } finally {
+    rootPkgPathPicking.value = false
+  }
+}
+
 async function handleStartTest(deviceId: string) {
   try {
-    const result = await startTest(deviceId, selectedTestType.value)
+    if (enableFlash.value && !flashPath.value.trim()) {
+      error.value = '已勾选刷机，请填写版本路径'
+      return
+    }
+    if (enableFlash.value && enableRootPkg.value && !rootPkgPath.value.trim()) {
+      error.value = '已勾选刷 Root 小包，请填写路径'
+      return
+    }
+    flashLogs.value = []
+    resetFlashProgress()
+    const flash = enableFlash.value
+      ? {
+          enabled: true,
+          pkgPath: flashPath.value.trim(),
+          rootPkgPath: enableRootPkg.value ? rootPkgPath.value.trim() : undefined,
+          stageVersion: flashStageVersion.value || undefined,
+        }
+      : undefined
+    if (flash) {
+      flashActive.value = true
+      flashProgressState.value = createFlashProgressState()
+      appendFlashLog('[刷机] 已提交刷机任务，等待服务端响应…')
+    }
+    const result = await startTest(deviceId, selectedTestType.value, flash)
     if (result) {
       selectedDevice.value = result
       followCurrent.value = true
@@ -737,7 +888,7 @@ watch(
 function getStatusColor(status: string) {
   if (status.includes('通过') || status === '空闲') return 'var(--success)'
   if (status.includes('失败') || status.includes('错误')) return 'var(--error)'
-  if (status.includes('测试中') || status.includes('等待') || status.includes('待命')) return 'var(--accent)'
+  if (status === '刷机中' || status.includes('测试中') || status.includes('等待') || status.includes('待命')) return 'var(--accent)'
   if (status.includes('不满足前置条件')) return 'var(--warning, #f59e0b)'
   return 'var(--muted)'
 }
@@ -745,6 +896,7 @@ function getStatusColor(status: string) {
 function getStatusIcon(status: string) {
   if (status.includes('通过')) return '✓'
   if (status.includes('失败')) return '✗'
+  if (status === '刷机中') return '⚡'
   if (status.includes('测试中')) return '●'
   if (status.includes('待命')) return '🛡'
   if (status.includes('等待')) return '⏳'
@@ -882,6 +1034,36 @@ const isIdle = computed(() => {
   return selectedDevice.value?.device.status === '空闲'
 })
 
+const isFlashing = computed(() => selectedDevice.value?.device.status === '刷机中')
+
+const flashProgress = computed(() => flashProgressState.value.progress)
+
+const flashPhase = computed(() => flashPhaseLabel(flashProgressState.value))
+
+const showFlashPanel = computed(() => {
+  if (!selectedDeviceId.value) return false
+  if (isFlashing.value || flashActive.value) return true
+  return flashDone.value === 'error' && flashLogs.value.length > 0
+})
+
+const isFlashIndeterminate = computed(() => {
+  return (flashActive.value || isFlashing.value) && flashProgress.value < 8
+})
+
+const flashStatusText = computed(() => {
+  if (isFlashing.value || flashActive.value) return '刷机进行中'
+  if (flashDone.value === 'success') return '刷机成功'
+  if (flashDone.value === 'error') return '刷机失败'
+  return '刷机记录'
+})
+
+const flashStatusClass = computed(() => {
+  if (isFlashing.value || flashActive.value) return 'is-running'
+  if (flashDone.value === 'success') return 'is-success'
+  if (flashDone.value === 'error') return 'is-error'
+  return 'is-idle'
+})
+
 const pageTitle = computed(() => {
   if (selectedDeviceId.value) {
     return selectedDevice.value?.device.deviceName || '设备详情'
@@ -990,26 +1172,7 @@ function selectCaseItem(module: string, caseIndex: number, testType?: string) {
 function toggleFollowCurrent() {
   followCurrent.value = !followCurrent.value
   if (followCurrent.value) {
-    const s = selectedDevice.value?.session
-    if (s) {
-      if (s.testType === 'custom' && s.selectedCases) {
-        for (const caseKey of s.selectedCases) {
-          const result = s.caseResults[caseKey]
-          if (result?.status === '进行中') {
-            selectedCase.value = caseKey
-            return
-          }
-        }
-      } else {
-        const m = s.modules[s.currentModuleIndex]
-        if (m) {
-          const p = s.moduleProgress[s.testType + '/' + m]
-          if (p?.currentCaseIndex) {
-            selectedCase.value = m + '/' + p.currentCaseIndex
-          }
-        }
-      }
-    }
+    applyFollowCurrentCase(selectedDevice.value?.session)
   }
 }
 
@@ -1637,21 +1800,73 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
                   </div>
                 </div>
 
-                <!-- 刷机选项（功能暂不实现） -->
-                <div class="form-group form-row">
-                  <label class="checkbox-label">
+                <!-- 刷机选项（device_update） -->
+                <div class="form-group flash-options">
+                  <label class="checkbox-label flash-options-toggle">
                     <input type="checkbox" v-model="enableFlash" />
                     <span>刷机</span>
                   </label>
-                  <template v-if="enableFlash">
-                    <input
-                      type="text"
-                      class="form-input form-input-inline"
-                      placeholder="刷机路径"
-                      v-model="flashPath"
-                    />
-                    <button type="button" class="ea-btn-ghost ea-btn-sm" @click.stop>浏览</button>
-                  </template>
+
+                  <div v-if="enableFlash" class="flash-options-panel">
+                    <p class="flash-options-hint">刷机前请确保手机已完成 OEM 解锁</p>
+
+                    <div class="flash-field">
+                      <label class="flash-field-label">版本路径</label>
+                      <div class="flash-path-row">
+                        <input
+                          type="text"
+                          class="form-input form-input-inline flash-path-input"
+                          placeholder="zip / scatter xml / 目录"
+                          v-model="flashPath"
+                        />
+                        <button
+                          type="button"
+                          class="ea-btn-ghost ea-btn-sm flash-browse-btn"
+                          :disabled="flashPathPicking"
+                          @click.stop="handleBrowseFlashPath"
+                        >
+                          {{ flashPathPicking ? '选择中…' : '浏览' }}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="flash-field">
+                      <label class="flash-field-label">市场版本</label>
+                      <select v-model="flashStageVersion" class="form-input flash-market-select">
+                        <option
+                          v-for="opt in FLASH_MARKET_OPTIONS"
+                          :key="opt.value || 'none'"
+                          :value="opt.value"
+                        >
+                          {{ opt.label }}
+                        </option>
+                      </select>
+                    </div>
+
+                    <div class="flash-field flash-field--root">
+                      <label class="checkbox-label flash-root-toggle">
+                        <input type="checkbox" v-model="enableRootPkg" />
+                        <span>刷 Root 小包</span>
+                        <span class="flash-field-hint">可选</span>
+                      </label>
+                      <div v-show="enableRootPkg" class="flash-path-row">
+                        <input
+                          type="text"
+                          class="form-input form-input-inline flash-path-input"
+                          placeholder="Root 包路径（zip / scatter xml / 目录）"
+                          v-model="rootPkgPath"
+                        />
+                        <button
+                          type="button"
+                          class="ea-btn-ghost ea-btn-sm flash-browse-btn"
+                          :disabled="rootPkgPathPicking"
+                          @click.stop="handleBrowseRootPkgPath"
+                        >
+                          {{ rootPkgPathPicking ? '选择中…' : '浏览' }}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <!-- T卡升级选项（功能暂不实现） -->
@@ -1703,6 +1918,28 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
                   结束测试
                 </button>
               </div>
+            </div>
+          </EaCard>
+
+          <EaCard v-if="showFlashPanel" class="flash-progress-card" style="margin-bottom: 16px;">
+            <div class="flash-progress-header">
+              <span class="section-title">刷机进度</span>
+              <div class="flash-progress-meta">
+                <span class="flash-progress-percent">{{ Math.min(flashProgress, 100) }}%</span>
+                <span class="flash-progress-badge" :class="flashStatusClass">{{ flashStatusText }}</span>
+              </div>
+            </div>
+            <div class="flash-progress-track">
+              <div
+                class="flash-progress-fill"
+                :class="{ 'is-indeterminate': isFlashIndeterminate }"
+                :style="!isFlashIndeterminate ? { width: `${Math.min(flashProgress, 100)}%` } : undefined"
+              />
+            </div>
+            <p class="flash-phase-text">{{ flashPhase || '正在处理，请查看下方日志…' }}</p>
+            <div class="flash-log-panel">
+              <span class="form-label">实时日志</span>
+              <pre ref="flashLogRef" class="flash-log-content">{{ flashLogs.join('\n') }}</pre>
             </div>
           </EaCard>
 
@@ -2543,6 +2780,203 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     .device-name { font-weight: 500; }
     .device-id { font-size: 11px; color: var(--muted); margin-left: auto; }
     .device-role { font-size: 11px; color: var(--accent); }
+  }
+}
+
+.flash-options {
+  .flash-options-toggle {
+    font-weight: 600;
+  }
+}
+
+.flash-options-panel {
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 3%, var(--bg));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.flash-options-hint {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--warning, #b45309);
+  background: color-mix(in srgb, var(--warning, #b45309) 10%, var(--bg));
+  border-radius: 6px;
+}
+
+.flash-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.flash-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.flash-path-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+
+  .flash-path-input {
+    flex: 1;
+    min-width: 0;
+    margin-top: 0;
+  }
+}
+
+.flash-browse-btn {
+  flex-shrink: 0;
+  align-self: stretch;
+  min-width: 64px;
+}
+
+.flash-field--root {
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.flash-root-toggle {
+  font-size: 13px;
+  color: var(--text);
+
+  .flash-field-hint {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--muted);
+  }
+}
+
+.flash-field-hint {
+  margin-left: 2px;
+}
+
+.flash-market-select {
+  width: 100%;
+  margin-top: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.flash-progress-card {
+  .flash-progress-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+
+    .section-title {
+      margin-bottom: 0;
+    }
+  }
+}
+
+.flash-progress-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.flash-progress-percent {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  min-width: 3.2em;
+  text-align: right;
+}
+
+.flash-progress-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+
+  &.is-running {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  &.is-success {
+    color: var(--success);
+    background: color-mix(in srgb, var(--success) 12%, var(--bg));
+  }
+
+  &.is-error {
+    color: var(--error);
+    background: color-mix(in srgb, var(--error) 12%, var(--bg));
+  }
+
+  &.is-idle {
+    color: var(--muted);
+    background: var(--line);
+  }
+}
+
+.flash-progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.flash-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #fff));
+  transition: width 0.35s ease;
+  min-width: 0;
+
+  &.is-indeterminate {
+    width: 38% !important;
+    animation: flash-progress-slide 1.2s ease-in-out infinite;
+  }
+}
+
+@keyframes flash-progress-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+
+.flash-phase-text {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.flash-log-panel {
+  margin-top: 12px;
+
+  .form-label {
+    margin-bottom: 6px;
+  }
+
+  .flash-log-content {
+    margin: 0;
+    padding: 10px 12px;
+    max-height: 260px;
+    overflow: auto;
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    white-space: pre-wrap;
+    word-break: break-all;
   }
 }
 </style>

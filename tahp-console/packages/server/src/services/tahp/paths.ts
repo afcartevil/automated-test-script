@@ -36,6 +36,7 @@ export const tahpPaths = {
   reportsDir: join(projectRoot, 'reports'),
   skillsDir: join(projectRoot, 'skills', '.claude', 'skills'),
   selfCheckDir: join(__dirname, 'self-check'),
+  flashToolDir: join(__dirname, 'self-check', 'flash_tool'),
 }
 
 export function hasTahpProject(): boolean {

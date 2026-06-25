@@ -6,6 +6,11 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs'
 import type { ServerResponse } from 'http'
 import { join, resolve } from 'path'
 import AdmZip from 'adm-zip'
+import {
+  type DeviceFlashOptions,
+  runDeviceFlash,
+  waitForAdbDevice,
+} from './device-flash'
 import { tahpPaths } from './paths'
 
 // 类型定义
@@ -21,6 +26,7 @@ export type DeviceStatus =
   | '错误'
   | '占用中'
   | '待命'
+  | '刷机中'
 
 export interface SimCardInfo {
   slotIndex: number
@@ -107,6 +113,7 @@ export interface TestSession {
   selectedCases?: string[]
   customAuxDevices?: string[]
   initializedPythonModules?: string[]
+  flashOptions?: DeviceFlashOptions
 }
 
 export interface CaseCatalogItem {
@@ -700,7 +707,7 @@ export async function refreshDevices(): Promise<DeviceInfo[]> {
 
     // 保留正在测试中的设备
     for (const [id, device] of Object.entries(devices)) {
-      if (['测试中', '初始化中', '等待测试开始', '待命', '占用中'].includes(device.status)) {
+      if (['测试中', '初始化中', '刷机中', '等待测试开始', '待命', '占用中'].includes(device.status)) {
         newDevices[id] = device
       }
     }
@@ -1666,10 +1673,66 @@ function mirrorResult(
   console.log(`[device-self-check] Mirrored result for ${auxDeviceId}: ${caseKey}`)
 }
 
+export interface StartTestFlashPayload {
+  enabled: boolean
+  pkgPath?: string
+  rootPkgPath?: string
+  stageVersion?: string
+}
+
+function buildFlashOptionsFromPayload(payload?: StartTestFlashPayload): DeviceFlashOptions | undefined {
+  if (!payload?.enabled || !payload.pkgPath?.trim()) return undefined
+  const rootPkgPath = payload.rootPkgPath?.trim()
+  return {
+    pkgPath: payload.pkgPath.trim(),
+    rootPkgPath: rootPkgPath || undefined,
+    stageVersion: payload.stageVersion?.trim() || undefined,
+  }
+}
+
+async function runFlashBeforeTest(deviceId: string, session: TestSession): Promise<boolean> {
+  if (!session.flashOptions) return true
+
+  const device = devices[deviceId]
+  if (!device) return false
+
+  device.status = '刷机中'
+  emitEvent('device_updated', { device })
+  emitEvent('flash_log', { deviceId, line: '[刷机] 开始准备刷机环境…' })
+
+  const result = await runDeviceFlash([deviceId], session.flashOptions, (line) => {
+    emitEvent('flash_log', { deviceId, line })
+  })
+
+  if (!result.success) {
+    device.status = '错误'
+    session.isRunning = false
+    emitEvent('device_updated', { device })
+    emitEvent('flash_completed', {
+      deviceId,
+      success: false,
+      returnCode: result.returnCode,
+      error: result.error,
+    })
+    return false
+  }
+
+  emitEvent('flash_completed', { deviceId, success: true, returnCode: result.returnCode })
+  const reconnected = await waitForAdbDevice(deviceId)
+  if (!reconnected) {
+    device.status = '错误'
+    session.isRunning = false
+    emitEvent('device_updated', { device })
+    return false
+  }
+  return true
+}
+
 // 启动测试
 export async function startTest(
   deviceId: string,
-  testType: 'str4' | 'week'
+  testType: 'str4' | 'week',
+  flash?: StartTestFlashPayload
 ): Promise<DeviceDetail | null> {
   try {
     const device = devices[deviceId]
@@ -1687,8 +1750,10 @@ export async function startTest(
       return { device }
     }
 
+    const flashOptions = buildFlashOptionsFromPayload(flash)
+
     // 更新设备状态
-    device.status = '初始化中'
+    device.status = flashOptions ? '刷机中' : '初始化中'
     device.testType = testType
     device.testStartTime = new Date().toISOString()
     emitEvent('device_updated', { device })
@@ -1707,6 +1772,7 @@ export async function startTest(
       isRunning: true,
       auxiliaryDevices: [],
       initializedPythonModules: [],
+      flashOptions,
     }
 
     testSessions[deviceId] = session
@@ -1795,6 +1861,11 @@ async function runTestFlow(
   testType: 'str4' | 'week',
   session: TestSession
 ): Promise<void> {
+  if (session.flashOptions) {
+    const flashOk = await runFlashBeforeTest(deviceId, session)
+    if (!flashOk || !session.isRunning) return
+  }
+
   const device = devices[deviceId]
   if (device) {
     device.status = '初始化中'

@@ -11,6 +11,7 @@ export type DeviceStatus =
   | '完成(失败)'
   | '错误'
   | '占用中'
+  | '刷机中'
 
 export interface SimCardInfo {
   slotIndex: number
@@ -169,13 +170,34 @@ export async function setDeviceRole(
   )
 }
 
+export interface StartTestFlashPayload {
+  enabled: boolean
+  pkgPath?: string
+  rootPkgPath?: string
+  stageVersion?: string
+}
+
 export async function startTest(
   deviceId: string,
-  testType: 'str4' | 'week'
+  testType: 'str4' | 'week',
+  flash?: StartTestFlashPayload
 ): Promise<DeviceDetail> {
   return await tahpPost<DeviceDetail>(
     `/api/tahp/device-self-check/devices/${deviceId}/test/start`,
-    { testType }
+    { testType, flash }
+  )
+}
+
+export interface PickFlashPathResult {
+  canceled: boolean
+  path?: string
+  error?: string
+}
+
+export async function pickFlashPath(): Promise<PickFlashPathResult> {
+  return await tahpPost<PickFlashPathResult>(
+    '/api/tahp/device-self-check/flash/pick-path',
+    {}
   )
 }
 
