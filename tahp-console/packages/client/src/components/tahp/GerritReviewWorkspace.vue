@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onActivated } from 'vue'
 import { RouterLink } from 'vue-router'
-import { NButton, NScrollbar, NSpin, NEmpty } from 'naive-ui'
+import { NButton, NCheckbox, NScrollbar, NSpin, NEmpty } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
 import EaCard from '@/components/layout/EaCard.vue'
@@ -22,6 +22,12 @@ const {
   latestPhase,
   latestSkillUse,
   p0Result,
+  modulesResult,
+  recommendedCases,
+  checkedRecommendedCount,
+  toggleRecommendedCase,
+  setRecommendedCaseChecked,
+  handleStartRecommendedTest,
   handleTextareaInput,
   handleSend,
   handleCompositionStart,
@@ -132,26 +138,62 @@ onActivated(restoreWorkspace)
 
         <div class="panel p0-panel">
           <div class="panel-title">AI 测试建议</div>
-          <div class="panel-subtitle">P0 - 必须测试</div>
+          <div class="panel-subtitle module-subtitle">
+            模块：{{ modulesResult.display }}
+          </div>
+          <div class="panel-subtitle">必须测试</div>
           <NScrollbar class="p0-scroll">
-            <div v-if="isRunning && !p0Result.items.length" class="p0-loading">
+            <div v-if="isRunning && !p0Result.items.length && !recommendedCases.length" class="p0-loading">
               <NSpin size="medium" />
-              <p class="ea-muted">评审进行中，完成后自动提取 P0 测试项…</p>
+              <p class="ea-muted">评审进行中，完成后自动提取测试建议…</p>
             </div>
-            <NEmpty
-              v-else-if="!p0Result.items.length"
-              description="完成 Code Review 后将自动提取 P0 测试项"
-              size="small"
-            />
-            <ol v-else class="p0-list">
-              <li v-for="(item, i) in p0Result.items" :key="i">
-                <MarkdownRenderer :content="item" />
-              </li>
-            </ol>
-            <details v-if="p0Result.rawSection" class="p0-raw">
-              <summary>原始 P0 章节</summary>
-              <MarkdownRenderer :content="p0Result.rawSection" />
-            </details>
+            <template v-else>
+              <template v-if="p0Result.items.length">
+                <ol class="p0-list">
+                  <li v-for="(item, i) in p0Result.items" :key="i">
+                    <MarkdownRenderer :content="item" />
+                  </li>
+                </ol>
+              </template>
+              <NEmpty
+                v-else
+                description="未提取到必须测试项"
+                size="small"
+              />
+
+              <div class="recommended-section">
+                <div class="recommended-title">推荐测试用例</div>
+                <NEmpty
+                  v-if="!recommendedCases.length"
+                  description="暂无推荐用例，请完成评审或检查必须测试信息"
+                  size="small"
+                />
+                <ul v-else class="recommended-list">
+                  <li v-for="item in recommendedCases" :key="item.caseKey">
+                    <NCheckbox
+                      :checked="item.checked"
+                      @update:checked="(checked: boolean) => setRecommendedCaseChecked(item.caseKey, checked)"
+                    />
+                    <div class="recommended-item-body">
+                      <div class="recommended-item-name">{{ item.caseName }}</div>
+                      <div class="recommended-item-meta ea-muted">
+                        {{ item.caseKey }} · {{ item.moduleLabel }}
+                      </div>
+                    </div>
+                  </li>
+                </ul>
+                <div v-if="recommendedCases.length" class="recommended-actions">
+                  <NButton
+                    type="primary"
+                    size="small"
+                    :disabled="checkedRecommendedCount === 0"
+                    @click="handleStartRecommendedTest"
+                  >
+                    开始测试（{{ checkedRecommendedCount }}）
+                  </NButton>
+                </div>
+              </div>
+            </template>
           </NScrollbar>
         </div>
       </div>
@@ -242,6 +284,16 @@ onActivated(restoreWorkspace)
   padding: 4px 14px 8px;
   border-bottom: 1px dashed var(--line);
   background: var(--surface);
+}
+
+.module-subtitle {
+  border-bottom: none;
+  padding-bottom: 4px;
+}
+
+.module-hint {
+  margin-left: 4px;
+  font-size: 11px;
 }
 
 .chat-scroll,
@@ -415,6 +467,52 @@ onActivated(restoreWorkspace)
     color: var(--muted);
     margin-bottom: 8px;
   }
+}
+
+.recommended-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.recommended-title {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.recommended-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+}
+
+.recommended-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.recommended-item-name {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.recommended-item-meta {
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.recommended-actions {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
 }
 
 @media (max-width: 900px) {

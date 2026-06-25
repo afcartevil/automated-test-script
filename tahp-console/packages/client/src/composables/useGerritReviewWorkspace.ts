@@ -4,6 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useMessage } from 'naive-ui'
 import { useModelProviderReadiness } from '@/composables/useModelProviderReadiness'
 import { useGerritReviewStore } from '@/stores/tahp/gerrit-review'
+import { useDeviceSelfCheckLaunchStore } from '@/stores/tahp/device-self-check-launch'
 import { fetchGerritConfig } from '@/api/tahp/gerrit-config'
 
 export const GERRIT_NOT_CONFIGURED_MSG =
@@ -43,6 +44,13 @@ export function useGerritReviewWorkspace() {
   })
 
   const p0Result = computed(() => gerritStore.p0Result())
+  const modulesResult = computed(() => gerritStore.modulesResult())
+  const recommendedCases = computed(() => gerritStore.recommendedCases)
+  const checkedRecommendedCount = computed(() => gerritStore.checkedRecommendedCases.length)
+
+  const modulesUnrecognized = computed(() =>
+    !modulesResult.value.modules.length && modulesResult.value.display === '未识别',
+  )
 
   function rebuildThinkingLines(events: typeof stream.value) {
     const lines: string[] = []
@@ -182,6 +190,20 @@ export function useGerritReviewWorkspace() {
     scrollThinkingToBottom()
   }, { deep: true })
 
+  function setRecommendedCaseChecked(caseKey: string, checked: boolean) {
+    gerritStore.setRecommendedCaseChecked(caseKey, checked)
+  }
+
+  function handleStartRecommendedTest() {
+    const caseKeys = gerritStore.checkedRecommendedCases.map(item => item.caseKey)
+    if (!caseKeys.length) {
+      message.warning('请至少选择一个推荐测试用例')
+      return
+    }
+    useDeviceSelfCheckLaunchStore().launchCustomTestFromGerrit(caseKeys)
+    message.info('已跳转自定义测试，请选择测试机后执行')
+  }
+
   function restoreWorkspace() {
     gerritStore.init()
     void loadGerritConfigStatus()
@@ -204,6 +226,13 @@ export function useGerritReviewWorkspace() {
     latestPhase,
     latestSkillUse,
     p0Result,
+    modulesResult,
+    recommendedCases,
+    checkedRecommendedCount,
+    modulesUnrecognized,
+    toggleRecommendedCase: setRecommendedCaseChecked,
+    setRecommendedCaseChecked,
+    handleStartRecommendedTest,
     handleTextareaInput,
     handleSend,
     handleCompositionStart,

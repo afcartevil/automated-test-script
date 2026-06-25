@@ -19,3 +19,20 @@ export function sendGerritReviewMessage(
 ): Promise<GerritReviewChatResponse> {
   return tahpPost<GerritReviewChatResponse>('/api/tahp/gerrit-review/chat', req)
 }
+
+export interface RecommendedCase {
+  caseKey: string
+  caseName: string
+  moduleLabel: string
+  score: number
+  reasons: string[]
+}
+
+export function fetchRecommendCases(input: {
+  p0_items: string[]
+}): Promise<{ recommended_cases: RecommendedCase[] }> {
+  return tahpPost<{ recommended_cases: RecommendedCase[] }>(
+    '/api/tahp/gerrit-review/recommend-cases',
+    input,
+  )
+}

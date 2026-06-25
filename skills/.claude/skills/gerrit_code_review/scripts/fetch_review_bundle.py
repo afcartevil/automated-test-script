@@ -65,9 +65,12 @@ def main() -> int:
 
     kind = bundle.get("kind", "change")
     count = len(bundle.get("changes", []))
+    modules_display = bundle.get("modules_display", "")
     if kind == "topic":
         topic = bundle.get("topic", "")
         print(f"OK topic={topic!r} changes={count} output={output_path}")
+        if modules_display:
+            print(f"modules={modules_display}")
         if topic:
             report_path = report_path_for_topic(topic)
             print(f"report_path={report_path}")
@@ -75,6 +78,8 @@ def main() -> int:
     else:
         number = bundle["changes"][0]["number"] if bundle.get("changes") else "unknown"
         print(f"OK change={number} output={output_path}")
+        if modules_display:
+            print(f"modules={modules_display}")
         report_path = report_path_for_change(number)
         print(f"report_path={report_path}")
         print(f"report_url={report_file_url(report_path)}")

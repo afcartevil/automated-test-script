@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from module_detector import detect_modules, detect_modules_for_change, format_modules
+
 SKILL_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CRED_FILE = SKILL_DIR / "cred.json"
 DEFAULT_WIN_REPORT_DIR = Path(r"D:\code_review_report")
@@ -315,6 +317,14 @@ def _summarize_change(
         "patch_text": patch_text,
         "expanded_files": expanded_files,
         "url": f"{auth.host}/c/{detail.get('project', '')}/+/{number}",
+        "modules": detect_modules_for_change(
+            {
+                "subject": detail.get("subject", ""),
+                "project": detail.get("project", ""),
+                "files": files,
+                "patch_text": patch_text,
+            }
+        ),
     }
 
 
@@ -330,10 +340,13 @@ def build_review_bundle(
 
     if parsed.kind == "change":
         change = _summarize_change(auth, parsed.value, expand_files=expand_files)
+        modules = detect_modules([change])
         return {
             "input": raw_input,
             "kind": "change",
             "host": auth.host,
+            "modules": modules,
+            "modules_display": format_modules(modules),
             "changes": [change],
         }
 
@@ -345,6 +358,8 @@ def build_review_bundle(
             "kind": "topic",
             "host": auth.host,
             "topic": topic_name,
+            "modules": [],
+            "modules_display": format_modules([]),
             "changes": [],
         }
 
@@ -355,11 +370,14 @@ def build_review_bundle(
             continue
         changes.append(_summarize_change(auth, str(number), expand_files=expand_files))
 
+    modules = detect_modules(changes)
     return {
         "input": raw_input,
         "kind": "topic",
         "host": auth.host,
         "topic": topic_name,
+        "modules": modules,
+        "modules_display": format_modules(modules),
         "changes": changes,
     }
 

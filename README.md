@@ -1,19 +1,22 @@
 # TAHP — TECNO AI Harness Platform
 
-传音 Android 底软集成部 AI 辅助开发平台。通过 **Hermes Agent 执行**、**Skill 承载业务规则**、**Console 提供可视化入口**，支撑智能诊断（Bug 分析）、AI 适配调试、知识库管理与任务报告。
+传音 Android 底软集成部 AI 辅助开发平台。通过 **Hermes Agent 执行**、**Skill 承载业务规则**、**Console 提供可视化入口**，支撑智能诊断（Bug 分析）、AI 适配调试、知识库管理、AI 自检与任务报告。
 
-> 生产路径：`tahp-console` → Hermes Agent Bridge → `skills/` / `knowledge-base/` / `reports/`  
-> 不再依赖 MCP stdio 桥或 YAML 约束引擎作为日常入口。
+> **生产路径**：`tahp-console` → Hermes Agent Bridge → `skills/` / `knowledge-base/` / `reports/`  
+> 日常入口为 Web Console，不再依赖 MCP stdio 桥或 YAML 约束引擎。
 
 ---
 
 ## 目录
 
 - [架构概览](#架构概览)
+- [技术栈](#技术栈)
 - [仓库结构](#仓库结构)
+- [基本功能](#基本功能)
 - [业务模块](#业务模块)
 - [快速开始](#快速开始)
 - [使用指南](#使用指南)
+- [配置与数据存储](#配置与数据存储)
 - [开发与扩展](#开发与扩展)
 - [使用规则与安全红线](#使用规则与安全红线)
 - [验证与测试](#验证与测试)
@@ -24,11 +27,11 @@
 ## 架构概览
 
 ```
-浏览器 (Vue 3 + Pinia)
+浏览器 (Vue 3 + Pinia + Naive UI)
     │  HTTP REST + Socket.IO
     ▼
 tahp-console BFF (Koa 2, :8650)
-    ├── /api/tahp/*        TAHP 业务 REST（诊断、适配、知识库、报告）
+    ├── /api/tahp/*        TAHP 业务 REST
     ├── /api/hermes/*      Hermes 原生能力（对话、模型、Skills 库）
     └── Socket.IO /tahp-run   Agent 任务实时进度流
            │
@@ -37,18 +40,18 @@ tahp-console BFF (Koa 2, :8650)
            │
            ├── skills/.claude/skills/   业务 Skill（规则与执行规范）
            ├── knowledge-base/          知识库（BM25 检索 + 条目管理）
-           └── reports/                 Bug 分析 / 适配 Agent 报告
+           └── reports/                 任务报告（Bug / 适配 / Gerrit 等）
 ```
 
-### 双引擎定位
+### 能力分层
 
-| 引擎 | 场景 | Console 入口 | 产出 |
-|------|------|--------------|------|
-| **诊断引擎** | Bug 根因分析 | `/tahp/bug-analysis` | `reports/bug-analysis/*.json` |
-| **适配引擎** | 版本升级 / 特性移植 / 驱动适配 | `/tahp/adapt-debug` | `reports/adapt-agent/*.json` |
-| **知识库** | 经验沉淀与检索 | `/tahp/knowledge` | `knowledge-base/.kb-data/` |
+| 层级 | 说明 | 典型场景 |
+|------|------|----------|
+| **Agent + Skill** | Hermes Agent 按 Skill 链执行，Socket.IO 推送进度 | Bug 分析、AI 适配、Gerrit Code Review |
+| **BFF 直连** | Koa 服务读写本地文件 / 调用 Python / 解析表格 | 知识库、设备自检、测试自规划 |
+| **Hermes 原生** | 复用 Hermes Web UI 对话、模型、终端等 | 自由对话、Skills 浏览、模型配置 |
 
-### 任务执行流程
+### 任务执行流程（Agent 类）
 
 **智能诊断（Bug 分析）**
 
@@ -63,8 +66,41 @@ tahp-console BFF (Koa 2, :8650)
 1. 用户选择适配域、填写表单参数
 2. BFF 注入关联 Skill 与工程上下文，启动 Agent 运行
 3. 实时展示 Skill 调用、文件变更、计划步骤
-4. 完成后可选触发 `transsion-coding-standards-review` 自检
+4. 完成后可选触发编码规范自检
 5. 报告落盘 `reports/adapt-agent/<task-id>.json`
+
+**Gerrit Code Review（AI 自检内）**
+
+1. 用户在 AI 自检页输入 Gerrit 链接或 topic
+2. BFF 校验 Gerrit 账号配置后，通过 Agent 执行 Code Review Skill
+3. 右侧自动提取 P0「必须测试」建议
+
+---
+
+## 技术栈
+
+| 层次 | 技术 |
+|------|------|
+| 前端 | Vue 3、TypeScript、Pinia、Vue Router、Naive UI、Vite |
+| BFF | Node.js ≥ 20、Koa 2、TypeScript、Socket.IO |
+| Agent | Python 3.11+、`hermes-agent-main`（内置 venv） |
+| 检索 | BM25（知识库）、文件存储 |
+| 设备自检 | ADB + Python 用例脚本（`device-self-check` 服务） |
+| 表格解析 | SheetJS（`xlsx`，项目节点同步） |
+| 测试 | Vitest（单元）、Playwright（E2E） |
+| 许可证 | BSL-1.1（基于 Hermes Web UI fork） |
+
+### tahp-console 工程结构
+
+```
+tahp-console/
+├── packages/
+│   ├── client/          Vue 3 前端（views、components、stores、api）
+│   └── server/          Koa BFF（routes、services、controllers）
+├── tests/               Vitest + Playwright
+├── scripts/             开发 / 构建 / setup 脚本
+└── bin/tahp-console.mjs 生产启动入口
+```
 
 ---
 
@@ -72,21 +108,60 @@ tahp-console BFF (Koa 2, :8650)
 
 ```
 tahp/
-├── tahp-console/          Web 控制台（Vue 3 前端 + Koa BFF，fork 自 Hermes Web UI）
+├── tahp-console/          Web 控制台（Vue 3 前端 + Koa BFF）
 ├── hermes-agent-main/     Hermes Agent 运行时（Python，含 venv）
-├── skills/                Agent Skills
-│   └── .claude/skills/    各业务 Skill 目录（每目录含 SKILL.md）
+├── skills/
+│   └── .claude/skills/    各业务 Skill 目录（每目录含 SKILL.md，约 190+）
 ├── knowledge-base/        知识库数据与配置
 │   ├── config.yaml        检索与自动沉淀配置
 │   ├── .kb-data/          条目、草稿、文档（Console 管理）
 │   └── {module}/          按模块组织的参考文档
 ├── reports/               任务报告输出
 │   ├── bug-analysis/
-│   └── adapt-agent/
-├── docs/                  方案设计、控制台指南、约束规范
+│   ├── adapt-agent/
+│   └── gerrit-review/
+├── docs/                  方案设计、控制台指南、约束规范（部分本地文件 gitignore）
 ├── scripts/               开发脚本（pre-commit 等）
+├── .tahp-config/          运行时本地配置（gitignore，Gerrit 凭证、项目节点等）
 └── AGENTS.md              Agent / 协作者导航（精简版）
 ```
+
+---
+
+## 基本功能
+
+| 功能 | 路由 | 说明 |
+|------|------|------|
+| 仪表盘 | `/tahp/dashboard` | 任务统计、近 7 天趋势、模块快捷入口 |
+| 智能诊断 | `/tahp/bug-analysis` | JIRA / 描述输入，Agent + Skill Bug 根因分析 |
+| AI 适配调试 | `/tahp/adapt-debug` | 选域、填表、启动 Agent 适配，实时任务流 |
+| **AI 自检** | `/tahp/self-check` | 多设备并行自动化测试 + Gerrit Code Review + AI 测试自规划 |
+| 知识库 | `/tahp/knowledge` | 条目 CRUD、BM25 搜索、草稿审核、文档导入 |
+| 报告 | `/tahp/reports` | 浏览 Bug 分析、适配 Agent、Gerrit 评审等报告 |
+| 常用 Skill 配置 | `/tahp/skill-config` | 必选 Skill 清单与配置状态管理 |
+| 对话 | `/hermes/chat` | Hermes 原生多轮对话 |
+| Skills 库 | `/hermes/skills` | Skill 浏览与管理 |
+| 模型管理 | `/hermes/models` | Provider 与模型配置 |
+| 设置 | `/hermes/settings` | Hermes 设置 + **Gerrit 账号**（`?tab=gerrit`） |
+
+### AI 自检（`/tahp/self-check`）子能力
+
+概览页包含三个工作区：
+
+1. **多设备自动化测试**
+   - ADB 设备发现与并行测试（STR4 转测 / 周版本等）
+   - 模块：TDD、驱动器件、驱动硬测等 Python 用例
+   - 设备详情：用例树、执行进度、结果复用
+
+2. **Gerrit Code Review**
+   - 输入 Gerrit 链接或 topic，Agent 执行 Code Review
+   - 右侧展示 AI 测试建议（P0 必须测试项）
+   - 需先在设置中配置 Gerrit HTTP 账号
+
+3. **AI 测试自规划**
+   - 从 `docs/升级项目关键信息表.xlsx` 同步「升级中」项目节点（STR4 / STR4A / STR5 / STR6）
+   - 可配置各节点前后 14 天内的测试项（如 STR4A 前 10 天启动 GMS 测试）
+   - 左栏展示下一节点，右栏展示待执行测试计划
 
 ---
 
@@ -101,7 +176,7 @@ tahp/
 | `power-mgmt` | 功耗管理 | bug_analysis |
 | `shared` | 共享 | code_adaptation |
 
-Skill 数量约 190+，覆盖通信、充电/功耗、触控、振动、USB、传感器等子领域。总入口 Skill 为 `transsion-harness`，负责将任务路由到 `harness-*` 子 Skill。
+Skill 覆盖通信、充电/功耗、触控、振动、USB、传感器等子领域。总入口 Skill 为 `transsion-harness`，负责将任务路由到 `harness-*` 子 Skill。
 
 ---
 
@@ -112,6 +187,7 @@ Skill 数量约 190+，覆盖通信、充电/功耗、触控、振动、USB、�
 - **Node.js** >= 20
 - **Python** 3.11+（`hermes-agent-main` 使用，可通过 `TAHP_PYTHON` 指定）
 - 仓库根目录包含 `hermes-agent-main/` 与 `skills/.claude/skills/`
+- AI 测试自规划可选：本地放置 `docs/升级项目关键信息表.xlsx`
 
 ### 安装与启动
 
@@ -144,6 +220,9 @@ node bin/tahp-console.mjs start
 | `TAHP_PROJECT_ROOT` | 自动探测 | 含 `skills/.claude/skills` 或 `knowledge-base/` 的目录 |
 | `TAHP_PYTHON` | `python` / `python3` | Python 可执行路径 |
 | `HERMES_AGENT_ROOT` | 自动 | 内置 `hermes-agent-main` 路径 |
+| `TAHP_PROJECT_INFO_XLSX` | `docs/升级项目关键信息表.xlsx` | 项目节点 Excel 路径（可覆盖） |
+| `TAHP_GERRIT_CONFIG_DIR` | `.tahp-config/` | Gerrit 凭证存储目录 |
+| `TAHP_TEST_PLANNING_CONFIG_DIR` | `.tahp-config/` | 测试自规划配置目录 |
 | `LOG_LEVEL` | `info` | 日志级别 |
 
 路径解析优先级：`TAHP_PROJECT_ROOT` 环境变量 → 自动推断 `tahp-console` 上级目录。
@@ -152,28 +231,12 @@ node bin/tahp-console.mjs start
 
 ## 使用指南
 
-### Console 面板
-
-| 路由 | 功能 |
-|------|------|
-| `/tahp/dashboard` | 仪表盘：任务统计、近 7 天趋势、模块快捷入口 |
-| `/tahp/bug-analysis` | 智能诊断：JIRA / 描述输入，Agent + Skill 分析 |
-| `/tahp/adapt-debug` | AI 适配调试：选域、填表、启动 Agent 适配 |
-| `/tahp/knowledge` | 知识库：条目 CRUD、BM25 搜索、草稿审核、文档导入 |
-| `/tahp/reports` | 浏览 Bug 分析与适配 Agent 报告 |
-| `/tahp/self-check` | 环境自检 |
-| `/hermeses/chat` | Hermes 原生对话 |
-| `/hermes/skills` | Skills 库浏览 |
-| `/hermes/models` | 模型与 Provider 配置 |
-
-详细说明见 [docs/tahp-console.md](docs/tahp-console.md)。
-
 ### 智能诊断
 
 - 输入 JIRA Key（如 `USICPRO-12345`）或 Bug 描述
 - 支持 JQL 批量分析、补充信息继续分析
 - **所有 Bug 分析必须走 Agent**；Agent 不可用时任务直接失败，不降级为 BFF 直连 LLM
-- JIRA 预览与 JQL 枚举由 BFF `jira.ts` 提供；正式分析由 Agent 通过 Skill 拉取
+- JIRA 预览与 JQL 枚举由 BFF 提供；正式分析由 Agent 通过 Skill 拉取
 
 ### AI 适配调试
 
@@ -185,7 +248,7 @@ node bin/tahp-console.mjs start
 ### 知识库
 
 - 数据存储：`knowledge-base/.kb-data/`
-- 支持语义搜索（BM25）、文档导入（URL / 文件夹）、Skill 草稿生成与审核
+- 支持 BM25 语义搜索、文档导入（URL / 文件夹）、Skill 草稿生成与审核
 - 任务完成后可通过 feedback API 反哺知识库
 
 ### 报告
@@ -195,12 +258,31 @@ node bin/tahp-console.mjs start
 | Bug 分析 | `reports/bug-analysis/<task-id>.json` |
 | 适配 Agent | `reports/adapt-agent/<task-id>.json` |
 | 适配 Prompt 日志 | `reports/adapt-agent/prompts/<task-id>/` |
+| Gerrit Code Review | `reports/gerrit-review/<task-id>.json` |
 
 Console「报告」页与上述目录内容对应。
 
-### Hermes 配置
+### Hermes 与 Gerrit 配置
 
-模型与 API Key 通过 Hermes Profile 管理（`~/.hermes/auth.json`、`~/.hermes/config.yaml`）。首次使用需在 Console「模型管理」或 Hermes 设置中配置 Provider。
+- **模型与 API Key**：通过 Hermes Profile 管理（`~/.hermes/auth.json`、`~/.hermes/config.yaml`）
+- **Gerrit 账号**：Console → 设置 → Gerrit 账号，或访问 `/hermes/settings?tab=gerrit`  
+  凭证存于 `.tahp-config/gerrit.json`（gitignore），供 Gerrit Code Review Agent 使用
+
+详细说明见 [docs/tahp-console.md](docs/tahp-console.md)。
+
+---
+
+## 配置与数据存储
+
+| 路径 | 用途 | Git 跟踪 |
+|------|------|----------|
+| `.tahp-config/gerrit.json` | Gerrit 账号配置 | 否 |
+| `.tahp-config/project-nodes.json` | AI 测试自规划：项目节点缓存 | 否 |
+| `.tahp-config/test-plan-rules.json` | AI 测试自规划：节点测试规则 | 否 |
+| `.adapt-config/` | AI 适配调试布局与配置 | 是 |
+| `.tahp/` | 必选 Skill 配置状态 | 是 |
+| `knowledge-base/.kb-data/` | 知识库条目与文档 | 是 |
+| `docs/升级项目关键信息表.xlsx` | 升级项目节点源表（飞书导出） | 否（`docs/` gitignore） |
 
 ---
 
@@ -225,14 +307,21 @@ Console「报告」页与上述目录内容对应。
 
 挂载于 `/api/tahp/*`：
 
-- `bug-analysis` — 启动 / 查询 Bug 分析任务
-- `adapt` — 适配 Agent 运行与 prompt 预览
-- `knowledge` — 知识库 CRUD、搜索、导入、草稿审核
-- `reports` — 报告列表与详情
-- `skills` — 动态适配域与 Skill 元数据
-- `self-check` — 环境自检
+| 前缀 | 说明 |
+|------|------|
+| `bug-analysis` | Bug 分析任务启动 / 查询 / JIRA 预览 |
+| `adapt` | 适配 Agent 运行、布局与配置 |
+| `knowledge` | 知识库 CRUD、搜索、导入、草稿审核 |
+| `reports` | 报告列表与详情 |
+| `skills` | 动态适配域与 Skill 元数据 |
+| `skill-config` | 必选 Skill 配置与验证 |
+| `self-check` | 环境自检 |
+| `device-self-check` | 多设备自动化测试（ADB、用例执行、SSE 事件） |
+| `gerrit-review` | Gerrit Code Review Agent 对话 |
+| `gerrit-config` | Gerrit 账号配置读写 |
+| `test-planning` | 项目节点同步、测试规则、待执行计划 |
 
-实时事件：前端订阅 Socket.IO 命名空间 `/tahp-run`。
+实时事件：前端订阅 Socket.IO 命名空间 `/tahp-run`（Agent 任务）。
 
 ### 文件操作范围（协作者）
 
@@ -272,6 +361,9 @@ cd tahp-console
 npm run setup
 npm test
 
+# E2E（Playwright）
+npm run test:e2e
+
 # 开发模式
 npm run dev
 ```
@@ -290,6 +382,8 @@ powershell -File scripts/pre-commit-check.ps1
 | 端口 8650 被占用 | `PORT=8651 npm run start` |
 | 知识库搜索无结果 | 确认 `knowledge-base/.kb-data` 有条目，或在 Console 创建/导入 |
 | 找不到 TAHP 根目录 | 设置 `TAHP_PROJECT_ROOT` 指向含 `skills/` 的仓库根 |
+| Gerrit Review 无法开始 | 在设置 → Gerrit 账号中配置 host / 用户名 / HTTP Password |
+| 项目节点更新失败 | 确认 `docs/升级项目关键信息表.xlsx` 存在且未被 Excel 占用；可设置 `TAHP_PROJECT_INFO_XLSX` |
 
 ---
 

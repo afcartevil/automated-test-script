@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
 import GerritReviewWorkspace from '@/components/tahp/GerritReviewWorkspace.vue'
 import TestPlanningWorkspace from '@/components/tahp/TestPlanningWorkspace.vue'
+import { useDeviceSelfCheckLaunchStore } from '@/stores/tahp/device-self-check-launch'
 import {
   listDevices,
   refreshDevices,
@@ -69,6 +70,8 @@ const selectedCases = ref<Set<string>>(new Set())
 const customTestDutDeviceId = ref<string | null>(null)
 const customTestAuxDeviceIds = ref<Set<string>>(new Set())
 const customTestStarting = ref(false)
+const gerritPreselectCount = ref(0)
+const launchStore = useDeviceSelfCheckLaunchStore()
 
 const availableCustomAux = computed(() => {
   return devices.value.filter(d =>
@@ -690,6 +693,22 @@ function openCustomTest() {
   loadCaseCatalogs()
 }
 
+function applyPendingGerritLaunch() {
+  const keys = launchStore.consumePendingCustomCases()
+  if (!keys.length) return
+  selectedCases.value = new Set(keys)
+  gerritPreselectCount.value = keys.length
+  openCustomTest()
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+watch(
+  () => launchStore.pendingCustomCaseKeys.length,
+  (len) => {
+    if (len > 0) applyPendingGerritLaunch()
+  },
+)
+
 function getStatusColor(status: string) {
   if (status.includes('通过') || status === '空闲') return 'var(--success)'
   if (status.includes('失败') || status.includes('错误')) return 'var(--error)'
@@ -1058,6 +1077,9 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     <!-- 自定义测试视图 -->
     <template v-if="viewMode === 'customTest'">
       <div v-if="error" style="color: var(--error); margin: 12px 0;">{{ error }}</div>
+      <p v-if="gerritPreselectCount > 0" class="gerrit-preselect-hint ea-muted">
+        已根据 Gerrit Code Review 预选 {{ gerritPreselectCount }} 个测试用例，请选择测试机后执行。
+      </p>
 
       <div class="custom-test-layout">
         <div class="custom-test-left">

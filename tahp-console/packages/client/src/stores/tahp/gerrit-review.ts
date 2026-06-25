@@ -3,8 +3,8 @@
  */
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
-import { sendGerritReviewMessage } from '@/api/tahp/gerrit-review'
-import { extractP0TestSuggestions } from '@/utils/gerrit-review-report'
+import { sendGerritReviewMessage, fetchRecommendCases, type RecommendedCase } from '@/api/tahp/gerrit-review'
+import { extractModules, extractP0TestSuggestions } from '@/utils/gerrit-review-report'
 import { useTahpTasksStore } from './tasks'
 
 export interface GerritChatMessage {
@@ -13,6 +13,10 @@ export interface GerritChatMessage {
   content: string
   streaming?: boolean
   taskId?: string
+}
+
+export interface RecommendedCaseView extends RecommendedCase {
+  checked: boolean
 }
 
 export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
@@ -25,8 +29,24 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
   const finalizedTaskIds = ref<string[]>([])
   const serverP0Items = ref<string[]>([])
   const serverP0Raw = ref('')
+  const serverModules = ref<string[]>([])
+  const serverModulesDisplay = ref('未识别')
+  const recommendedCases = ref<RecommendedCaseView[]>([])
 
   let watcherInstalled = false
+  let insightApplySeq = 0
+
+  function isActiveRunTask(taskId: string): boolean {
+    return activeTaskId.value === taskId
+      || runningTaskId.value === taskId
+      || runningTaskId.value === 'pending'
+  }
+
+  function shouldClearRunningForTask(taskId: string): boolean {
+    return runningTaskId.value === taskId
+      || runningTaskId.value === 'pending'
+      || activeTaskId.value === taskId
+  }
 
   function isFinalized(taskId: string): boolean {
     return finalizedTaskIds.value.includes(taskId)
@@ -77,49 +97,125 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     content: string,
     terminalStatus: 'completed' | 'failed' = 'completed',
   ) {
-    const idx = chatMessages.value.findIndex(m => m.taskId === taskId && m.streaming)
+    for (const msg of chatMessages.value) {
+      if (msg.streaming && msg.taskId && msg.taskId !== taskId) {
+        msg.streaming = false
+      }
+    }
+
+    let idx = -1
+    for (let i = chatMessages.value.length - 1; i >= 0; i--) {
+      const m = chatMessages.value[i]
+      if (m.streaming && m.taskId === taskId) {
+        idx = i
+        break
+      }
+    }
+    if (idx < 0 && isActiveRunTask(taskId)) {
+      for (let i = chatMessages.value.length - 1; i >= 0; i--) {
+        if (chatMessages.value[i].streaming) {
+          idx = i
+          break
+        }
+      }
+    }
+
     if (idx >= 0) {
       chatMessages.value[idx] = {
         ...chatMessages.value[idx],
         content,
         streaming: false,
+        taskId,
       }
-    } else {
-      const lastStreaming = chatMessages.value.findIndex(m => m.streaming)
-      if (lastStreaming >= 0) {
-        chatMessages.value[lastStreaming] = {
-          ...chatMessages.value[lastStreaming],
-          content,
-          streaming: false,
-          taskId,
-        }
-      } else if (content) {
-        chatMessages.value.push({
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
-          content,
-          taskId,
-        })
-      }
+    } else if (content) {
+      chatMessages.value.push({
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content,
+        taskId,
+      })
     }
     chatMessages.value = [...chatMessages.value]
-    if (runningTaskId.value === taskId || runningTaskId.value === 'pending') {
+    if (shouldClearRunningForTask(taskId)) {
       clearRunningState(terminalStatus)
     }
   }
 
-  function applyP0FromPayload(payload: Record<string, unknown>) {
+  function mapRecommendedCases(items: RecommendedCase[]): RecommendedCaseView[] {
+    return items.map(item => ({ ...item, checked: true }))
+  }
+
+  async function applyReviewInsightFromPayload(
+    payload: Record<string, unknown>,
+    sourceTaskId?: string,
+  ) {
+    if (sourceTaskId && activeTaskId.value && activeTaskId.value !== sourceTaskId) {
+      return
+    }
+
+    const seq = ++insightApplySeq
     const response = String(payload?.llm_response ?? payload?.response ?? '')
     const p0Items = payload?.p0_items
     if (Array.isArray(p0Items) && p0Items.length) {
       serverP0Items.value = p0Items.map(String).filter(Boolean)
       serverP0Raw.value = String(payload?.p0_raw_section ?? '')
-      return
-    }
-    if (response) {
+    } else if (response) {
       const extracted = extractP0TestSuggestions(response)
       serverP0Items.value = extracted.items
       serverP0Raw.value = extracted.rawSection
+    }
+
+    if (Array.isArray(payload?.modules)) {
+      serverModules.value = payload.modules.map(String).filter(Boolean)
+      serverModulesDisplay.value = String(payload?.modules_display ?? '') || (
+        serverModules.value.length ? serverModules.value.join('/') : '未识别'
+      )
+    } else if (response) {
+      const moduleInfo = extractModules(response)
+      serverModules.value = moduleInfo.modules
+      serverModulesDisplay.value = moduleInfo.display
+    }
+
+    if (Array.isArray(payload?.recommended_cases) && payload.recommended_cases.length) {
+      if (seq === insightApplySeq) {
+        recommendedCases.value = mapRecommendedCases(payload.recommended_cases as RecommendedCase[])
+      }
+      return
+    }
+
+    try {
+      const data = await fetchRecommendCases({
+        p0_items: serverP0Items.value,
+      })
+      if (seq !== insightApplySeq) return
+      if (sourceTaskId && activeTaskId.value && activeTaskId.value !== sourceTaskId) return
+      recommendedCases.value = mapRecommendedCases(data.recommended_cases || [])
+    } catch {
+      if (seq === insightApplySeq) {
+        recommendedCases.value = []
+      }
+    }
+  }
+
+  function handleTerminalStreamEvent(
+    taskId: string,
+    completed: { payload: Record<string, unknown> } | undefined,
+    failed: { payload: Record<string, unknown> } | undefined,
+  ) {
+    if (completed) {
+      const response = String(
+        completed.payload?.llm_response ?? completed.payload?.response ?? responseFromStream(taskId),
+      )
+      void applyReviewInsightFromPayload(completed.payload, taskId)
+      finalizeAssistantForTask(taskId, response, 'completed')
+      return
+    }
+    if (failed) {
+      finalizeAssistantForTask(
+        taskId,
+        `**评审失败**\n\n${failed.payload?.error ?? failed.payload?.message ?? '未知错误'}`,
+        'failed',
+      )
     }
   }
 
@@ -129,54 +225,37 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     const events = streamFor(taskId)
     const completed = events.find(e => e.type === 'task.completed')
     const failed = events.find(e => e.type === 'task.failed')
+    if (!completed && !failed) return
 
     if (isFinalized(taskId)) {
-      if (activeTaskId.value === taskId) {
-        if (completed) clearRunningState('completed')
-        else if (failed) clearRunningState('failed')
-      }
-      const streaming = chatMessages.value.find(m => m.taskId === taskId && m.streaming)
-      if (streaming && completed) {
-        finalizeAssistantForTask(
-          taskId,
-          String(completed.payload?.llm_response ?? completed.payload?.response ?? responseFromStream(taskId)),
-          'completed',
-        )
-      } else if (streaming && failed) {
-        finalizeAssistantForTask(
-          taskId,
-          `**评审失败**\n\n${failed.payload?.error ?? failed.payload?.message ?? '未知错误'}`,
-          'failed',
-        )
+      const stillStreaming = chatMessages.value.some(
+        m => m.streaming && (m.taskId === taskId || (!m.taskId && isActiveRunTask(taskId))),
+      )
+      const stillRunning = runningTaskId.value === taskId
+        || (runningTaskId.value === 'pending' && activeTaskId.value === taskId)
+      if ((stillStreaming || stillRunning) && (completed || failed)) {
+        handleTerminalStreamEvent(taskId, completed, failed)
       }
       return
     }
 
-    for (const ev of events) {
-      if (ev.type === 'task.completed') {
-        markFinalized(taskId)
-        applyP0FromPayload(ev.payload)
-        const response = String(
-          ev.payload?.llm_response ?? ev.payload?.response ?? responseFromStream(taskId),
-        )
-        finalizeAssistantForTask(taskId, response, 'completed')
-        return
-      }
-      if (ev.type === 'task.failed') {
-        markFinalized(taskId)
-        finalizeAssistantForTask(
-          taskId,
-          `**评审失败**\n\n${ev.payload?.error ?? ev.payload?.message ?? '未知错误'}`,
-          'failed',
-        )
-        return
-      }
+    if (completed) {
+      markFinalized(taskId)
+      handleTerminalStreamEvent(taskId, completed, failed)
+      return
+    }
+    if (failed) {
+      markFinalized(taskId)
+      handleTerminalStreamEvent(taskId, undefined, failed)
     }
   }
 
   function syncAllStreamingTasks() {
     const taskIds = new Set<string>()
     if (activeTaskId.value) taskIds.add(activeTaskId.value)
+    if (runningTaskId.value && runningTaskId.value !== 'pending') {
+      taskIds.add(runningTaskId.value)
+    }
     for (const msg of chatMessages.value) {
       if (msg.streaming && msg.taskId) taskIds.add(msg.taskId)
     }
@@ -227,8 +306,12 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     if (runningTaskId.value && isFinalized(runningTaskId.value)) {
       clearRunningState('completed')
     }
-    if (activeTaskId.value && isFinalized(activeTaskId.value) && runningTaskId.value === null) {
-      taskStatus.value = 'completed'
+    if (activeTaskId.value && isFinalized(activeTaskId.value)) {
+      if (runningTaskId.value === null || runningTaskId.value === activeTaskId.value) {
+        clearRunningState('completed')
+      }
+    }
+    if (!runningTaskId.value) {
       sending.value = false
     }
   }
@@ -251,6 +334,9 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     taskStatus.value = 'running'
     serverP0Items.value = []
     serverP0Raw.value = ''
+    serverModules.value = []
+    serverModulesDisplay.value = '未识别'
+    recommendedCases.value = []
 
     const pendingId = `assistant-pending-${Date.now()}`
     chatMessages.value.push({
@@ -274,6 +360,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
       sessionId.value = res.session_id
       activeTaskId.value = res.task_id
       runningTaskId.value = res.task_id
+      sending.value = false
       tasksStore.trackTask(res.task_id)
 
       const pendingIdx = chatMessages.value.findIndex(m => m.id === pendingId)
@@ -307,6 +394,32 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     return extractP0TestSuggestions(displayLlmResponse())
   }
 
+  function modulesResult() {
+    if (serverModules.value.length || serverModulesDisplay.value !== '未识别') {
+      return { modules: serverModules.value, display: serverModulesDisplay.value }
+    }
+    return extractModules(displayLlmResponse())
+  }
+
+  function setRecommendedCaseChecked(caseKey: string, checked: boolean) {
+    recommendedCases.value = recommendedCases.value.map(item =>
+      item.caseKey === caseKey ? { ...item, checked } : item,
+    )
+  }
+
+  const checkedRecommendedCases = computed(() =>
+    recommendedCases.value.filter(item => item.checked),
+  )
+
+  function reviewInsight() {
+    return {
+      modules: modulesResult(),
+      p0: p0Result(),
+      recommendedCases: recommendedCases.value,
+      checkedRecommendedCases: checkedRecommendedCases.value,
+    }
+  }
+
   function cancelPendingAssistant() {
     const next = chatMessages.value.filter(m => !m.streaming)
     if (next.length !== chatMessages.value.length) {
@@ -332,6 +445,10 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     finalizedTaskIds,
     serverP0Items,
     serverP0Raw,
+    serverModules,
+    serverModulesDisplay,
+    recommendedCases,
+    checkedRecommendedCases,
     stream,
     streamingText,
     isRunning,
@@ -342,6 +459,10 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     processStreamEvents,
     displayLlmResponse,
     p0Result,
+    modulesResult,
+    reviewInsight,
+    toggleRecommendedCase: setRecommendedCaseChecked,
+    setRecommendedCaseChecked,
     isFinalized,
   }
 })

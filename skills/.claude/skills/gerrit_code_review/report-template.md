@@ -10,10 +10,10 @@ See `report-template.html` for the full HTML skeleton with embedded CSS.
 
 Required sections (same as before):
 
-1. 基本信息
+1. 基本信息（含 **模块** 行，取自 `modules_display`）
 2. 问题统计
 3. 详细问题列表和改善建议
-4. 影响范围
+4. 影响范围（含模块影响说明）
 5. 测试建议 (P0 / P1 / P2)
 
 ## Topic Summary Report
