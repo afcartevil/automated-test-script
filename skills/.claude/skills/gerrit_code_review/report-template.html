@@ -116,6 +116,7 @@
         <tr><td>分支</td><td>{branch}</td></tr>
         <tr><td>作者</td><td>{owner}</td></tr>
         <tr><td>状态</td><td>{status}</td></tr>
+        <tr><td>模块</td><td>{modules}</td></tr>
         <tr><td>修改文件</td><td>{file_count} 个</td></tr>
         <tr><td>变更行数</td><td>+{insertions} / -{deletions}</td></tr>
         <tr><td>链接</td><td><a href="{url}" target="_blank">{url}</a></td></tr>
@@ -168,6 +169,11 @@
     <!-- 4. 影响范围 -->
     <h2>4. 影响范围</h2>
     <div class="card">
+      <h3>模块影响</h3>
+      <ul>
+        <li><strong>模块</strong>: {modules}</li>
+        <li>{module-specific impact notes}</li>
+      </ul>
       <h3>直接影响</h3>
       <ul>
         <li>{files, methods, configs changed}</li>
@@ -214,5 +220,6 @@
 
 <!-- Topic Summary Report: save as review-report-topic-{topic_slug}.html
      Same 5 sections; group by Change number within each section.
+     基本信息须包含合并后的「模块」字段（来自 bundle.modules_display）。
      End with 跨 Change 共性风险 and 合并测试建议 (deduplicated P0/P1/P2).
      Terminal summary 测试建议: copy section 5 (or 合并测试建议) verbatim. -->

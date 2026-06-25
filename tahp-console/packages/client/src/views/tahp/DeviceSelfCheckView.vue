@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
 import GerritReviewWorkspace from '@/components/tahp/GerritReviewWorkspace.vue'
 import TestPlanningWorkspace from '@/components/tahp/TestPlanningWorkspace.vue'
+import { useDeviceSelfCheckLaunchStore } from '@/stores/tahp/device-self-check-launch'
 import {
   listDevices,
   refreshDevices,
@@ -69,6 +70,8 @@ const selectedCases = ref<Set<string>>(new Set())
 const customTestDutDeviceId = ref<string | null>(null)
 const customTestAuxDeviceIds = ref<Set<string>>(new Set())
 const customTestStarting = ref(false)
+const gerritPreselectCount = ref(0)
+const launchStore = useDeviceSelfCheckLaunchStore()
 
 const availableCustomAux = computed(() => {
   return devices.value.filter(d =>
@@ -332,9 +335,7 @@ function connectEventStream() {
       }
       const pending = await getPendingManualDecision(selectedDeviceId.value!)
       if (pending) {
-        manualDecisionId.value = pending.decisionId
-        manualMessage.value = pending.message
-        showManualDialog.value = true
+        applyManualPrompt(pending)
       }
     } catch {}
   })
@@ -353,9 +354,7 @@ function connectEventStream() {
   eventSource.value.addEventListener('manual_confirm', (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data)
-      manualDecisionId.value = data.decisionId
-      manualMessage.value = data.message
-      showManualDialog.value = true
+      applyManualPrompt(data)
     } catch {}
   })
   eventSource.value.onerror = () => {
@@ -370,9 +369,7 @@ function connectEventStream() {
         }
         const pending = await getPendingManualDecision(selectedDeviceId.value)
         if (pending) {
-          manualDecisionId.value = pending.decisionId
-          manualMessage.value = pending.message
-          showManualDialog.value = true
+          applyManualPrompt(pending)
         }
       } catch {}
     }, 1000)
@@ -471,6 +468,25 @@ const modifyMessage = ref('')
 const showManualDialog = ref(false)
 const manualDecisionId = ref<string | null>(null)
 const manualMessage = ref('')
+const manualPassLabel = ref('通过')
+const manualFailLabel = ref('失败')
+const manualMode = ref<'decision' | 'ack'>('decision')
+const manualSubmitting = ref(false)
+
+function applyManualPrompt(data: {
+  decisionId: string
+  message?: string
+  passLabel?: string
+  failLabel?: string
+  mode?: 'decision' | 'ack'
+}) {
+  manualDecisionId.value = data.decisionId
+  manualMessage.value = data.message || '需人工确认'
+  manualPassLabel.value = data.passLabel || '通过'
+  manualFailLabel.value = data.failLabel || '失败'
+  manualMode.value = data.mode === 'ack' ? 'ack' : 'decision'
+  showManualDialog.value = true
+}
 
 function openModifyDialog(caseKey: string) {
   modifyCaseKey.value = caseKey
@@ -547,12 +563,21 @@ async function handleRetestCase() {
 }
 
 async function handleManualDecision(decision: 'pass' | 'fail' | 'ack') {
-  if (manualDecisionId.value) {
+  if (!manualDecisionId.value || manualSubmitting.value) return
+  manualSubmitting.value = true
+  try {
     await submitManualDecision(manualDecisionId.value, decision)
+    showManualDialog.value = false
+    manualDecisionId.value = null
+    manualMessage.value = ''
+    manualMode.value = 'decision'
+    manualPassLabel.value = '通过'
+    manualFailLabel.value = '失败'
+  } catch (e: any) {
+    console.error('[DeviceSelfCheck] Error submitting manual decision:', e)
+  } finally {
+    manualSubmitting.value = false
   }
-  showManualDialog.value = false
-  manualDecisionId.value = null
-  manualMessage.value = ''
 }
 
 function getTestTypeLabel(testType?: string): string {
@@ -689,6 +714,22 @@ function openCustomTest() {
   customTestAuxDeviceIds.value = new Set()
   loadCaseCatalogs()
 }
+
+function applyPendingGerritLaunch() {
+  const keys = launchStore.consumePendingCustomCases()
+  if (!keys.length) return
+  selectedCases.value = new Set(keys)
+  gerritPreselectCount.value = keys.length
+  openCustomTest()
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+watch(
+  () => launchStore.pendingCustomCaseKeys.length,
+  (len) => {
+    if (len > 0) applyPendingGerritLaunch()
+  },
+)
 
 function getStatusColor(status: string) {
   if (status.includes('通过') || status === '空闲') return 'var(--success)'
@@ -1058,6 +1099,9 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     <!-- 自定义测试视图 -->
     <template v-if="viewMode === 'customTest'">
       <div v-if="error" style="color: var(--error); margin: 12px 0;">{{ error }}</div>
+      <p v-if="gerritPreselectCount > 0" class="gerrit-preselect-hint ea-muted">
+        已根据 Gerrit Code Review 预选 {{ gerritPreselectCount }} 个测试用例，请选择测试机后执行。
+      </p>
 
       <div class="custom-test-layout">
         <div class="custom-test-left">
@@ -1776,8 +1820,34 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
           <p class="manual-message">{{ manualMessage }}</p>
         </div>
         <div class="modify-dialog-footer">
-          <button type="button" class="ea-btn-ghost" @click="handleManualDecision('fail')">失败</button>
-          <button type="button" class="ea-btn-primary" @click="handleManualDecision('pass')">通过</button>
+          <template v-if="manualMode === 'ack'">
+            <button
+              type="button"
+              class="ea-btn-primary"
+              :disabled="manualSubmitting"
+              @click="handleManualDecision('ack')"
+            >
+              {{ manualSubmitting ? '提交中...' : '知道了' }}
+            </button>
+          </template>
+          <template v-else>
+            <button
+              type="button"
+              class="ea-btn-ghost"
+              :disabled="manualSubmitting"
+              @click="handleManualDecision('fail')"
+            >
+              {{ manualFailLabel }}
+            </button>
+            <button
+              type="button"
+              class="ea-btn-primary"
+              :disabled="manualSubmitting"
+              @click="handleManualDecision('pass')"
+            >
+              {{ manualSubmitting ? '提交中...' : manualPassLabel }}
+            </button>
+          </template>
         </div>
       </div>
     </div>

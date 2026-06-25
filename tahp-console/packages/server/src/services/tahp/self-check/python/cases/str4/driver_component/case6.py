@@ -1,6 +1,6 @@
-"""驱动周版本自检：工模屏幕顺序测试，校验触摸、色彩、背光子项。"""
+"""STR4 驱动器件：开机工模触摸屏自检和触摸屏测试。"""
 
-from utils.driver.ui_tranfacmode import run_screen_touch_group_sequence
+from utils.driver.ui_tranfacmode import run_screen_touch_items_test
 
 
 def _get_dut_device_id(device_info):
@@ -31,7 +31,7 @@ def run(category=None, case_index=None, device_info=None, **context):
         if callable(step_update):
             step_update(sub_steps)
 
-    result = run_screen_touch_group_sequence(
+    result = run_screen_touch_items_test(
         dut_id,
         result_dir=context.get("result_dir"),
         on_step=on_step,

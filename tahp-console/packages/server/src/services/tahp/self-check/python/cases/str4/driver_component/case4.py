@@ -1,19 +1,6 @@
 """驱动周版本自检：TP 触摸报点检测（getevent -ltr）。"""
 
-import subprocess
-
-from utils.driver.tp_touch import check_tp_touch_reporting
-
-
-def _go_home(device_id: str) -> bool:
-    r = subprocess.run(
-        ["adb", "-s", device_id, "shell", "input", "keyevent", "3"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    return r.returncode == 0
+from utils.driver.tp_touch import GETEVENT_COLLECT_SEC, check_tp_touch_reporting, go_home
 
 
 def _get_dut_device_id(device_info):
@@ -45,13 +32,11 @@ def run(category=None, case_index=None, device_info=None, **context):
         if callable(step_update):
             step_update(sub_steps)
 
-    ok = _go_home(dut_id)
-    on_step("回到主界面", ok)
-
     def before_parse():
+        wait_sec = int(GETEVENT_COLLECT_SEC)
         notify_text = (
-            "模拟屏幕滑动已成功。\n"
-            "点击「知道了」后，请滑动两下屏幕，脚本将解析触摸报点。"
+            f"点击「知道了」后，请在 {wait_sec} 秒内手动触摸屏幕（建议滑动 2 次），"
+            "脚本将采集触摸报点。"
         )
         if callable(operator_notify):
             operator_notify(notify_text)
@@ -60,6 +45,11 @@ def run(category=None, case_index=None, device_info=None, **context):
         sub_steps += f"\n{notify_text}"
         if callable(step_update):
             step_update(sub_steps)
+
+    home_ok = go_home(dut_id)
+    on_step("返回主界面", home_ok)
+    if not home_ok:
+        return {"status": "fail", "message": "返回主界面失败"}
 
     result = check_tp_touch_reporting(
         dut_id,

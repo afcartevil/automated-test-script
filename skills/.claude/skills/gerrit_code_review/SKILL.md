@@ -120,9 +120,10 @@ The script prints `report_path=` and `report_url=` (clickable `file://` URL for 
 ### Step 2: Analyze diffs
 
 1. Read `review-bundle.json`
-2. For each change, review `patch_text` (decoded unified diff)
-3. Use `expanded_files` or re-run with `--expand-files` when needed
-4. Apply checklist in [check-items.md](check-items.md)
+2. Note **`modules`** / **`modules_display`** at bundle root (and per-change `modules` for topics)
+3. For each change, review `patch_text` (decoded unified diff)
+4. Use `expanded_files` or re-run with `--expand-files` when needed
+5. Apply checklist in [check-items.md](check-items.md)
 
 ### Step 3: Write report (HTML)
 
@@ -138,6 +139,15 @@ Write a complete, valid **HTML** file. Output **must** contain these 5 sections:
    3. P2 - 建议测试
 
 Use [report-template.html](report-template.html) for structure and styling. Severity levels: **Critical / High / Medium / Low**.
+
+**模块信息**（必填）：
+
+- 使用 `review-bundle.json` 顶层的 `modules_display`（如 `LCM/TP/Sensor`）写入 HTML **基本信息 → 模块** 行
+- 在 **影响范围** 中补充模块相关说明（可参考 `modules` 数组）
+- Topic 报告：合并所有 Change 的模块，去重后写入一条 **模块** 字段
+- 若 `modules` 为空，显示 `未识别`，并在影响范围中说明依据不足
+
+模块由 [`scripts/module_detector.py`](scripts/module_detector.py) 根据文件路径、标题、patch 自动识别，规则见 [module-rules.md](module-rules.md)。
 
 **Report output directory** (Windows default):
 
@@ -159,7 +169,7 @@ After `fetch_review_bundle.py` runs, use the printed `report_path=` value as the
 
 After writing the HTML report, print a concise summary with these parts:
 
-1. **Change/topic info** — change number or topic name, subject, project
+1. **Change/topic info** — change number or topic name, subject, project, **模块** (`modules_display` from bundle, e.g. `LCM/TP/Sensor` or `通信`)
 2. **问题统计** — Critical / High / Medium / Low counts
 3. **主要发现** — brief top findings (1–3 bullets)
 4. **测试建议** — **copy section 5 from the HTML report verbatim** (P0 / P1 / P2 lists; do not paraphrase, summarize, or reorder)
@@ -176,6 +186,7 @@ Use the exact `report_url=` printed by the fetch script (do not invent the path)
 | Script | Purpose |
 |--------|---------|
 | [`scripts/gerrit_client.py`](scripts/gerrit_client.py) | Auth, input parsing, Gerrit REST API, report path/URL helpers |
+| [`scripts/module_detector.py`](scripts/module_detector.py) | Infer affected modules (LCM/TP/…/通信) from paths and diff |
 | [`scripts/fetch_review_bundle.py`](scripts/fetch_review_bundle.py) | CLI entry; outputs JSON bundle for agent |
 
 **Do not** use inline PowerShell curl or one-liner Python for Gerrit access. Always use these scripts.
@@ -188,6 +199,8 @@ Use the exact `report_url=` printed by the fetch script (do not invent the path)
   "kind": "change|topic",
   "host": "https://gerrit.transsion.com",
   "topic": "optional",
+  "modules": ["LCM", "TP"],
+  "modules_display": "LCM/TP",
   "changes": [
     {
       "number": 1540692,
@@ -196,6 +209,7 @@ Use the exact `report_url=` printed by the fetch script (do not invent the path)
       "branch": "...",
       "status": "NEW",
       "owner": "...",
+      "modules": ["LCM"],
       "files": [{"path": "...", "lines_inserted": 1, "lines_deleted": 0}],
       "patch_text": "unified diff text",
       "expanded_files": {}
@@ -208,3 +222,4 @@ Use the exact `report_url=` printed by the fetch script (do not invent the path)
 
 - Review checklist: [check-items.md](check-items.md)
 - Report format: [report-template.html](report-template.html)
+- Module detection rules: [module-rules.md](module-rules.md)

@@ -1,36 +1,69 @@
-"""STR4 驱动器件：hal sensor 校准（复用 case23 Sensor 工模 HAL Sensor 校准结果）。"""
+"""STR4 驱动器件：hal sensor（Sensor 工模 HAL Sensor 测试）。"""
 
-from utils.driver.sensor_items_result import run_reuse_sensor_item_with_support_check
-from utils.driver.tranfacmode_config import HAL_SENSOR_CALI_KEYWORDS
+from utils.driver.tranfacmode_config import HAL_SENSOR_CALI_KEYWORDS, SENSOR
+from utils.driver.ui_tranfacmode import run_tranfacmode_group_items_test
 
-SOURCE_SENSOR_CASE_INDEX = 23
+
+def _get_dut_device_id(device_info):
+    dut_list = (device_info or {}).get("DUT") or []
+    if not dut_list:
+        return None, "未获取到测试机设备信息"
+    dut_id = (dut_list[0].get("device_id") or "").strip()
+    if not dut_id:
+        return None, "测试机 device_id 为空"
+    return dut_id, ""
 
 
 def run(category=None, case_index=None, device_info=None, **context):
     step_update = context.get("step_update")
+    operator_notify = context.get("operator_notify")
+    manual_confirm = context.get("manual_confirm")
+    device_info = device_info or context.get("device_info") or {}
     sub_steps = ""
 
     def update(message: str) -> None:
         if callable(step_update):
             step_update(message)
 
-    def on_reuse_step(message: str) -> None:
+    def on_step(label: str, ok: bool) -> None:
         nonlocal sub_steps
-        if sub_steps and message.startswith("\n"):
-            sub_steps += message
-        else:
-            sub_steps = message
+        sub_steps += f"\n{label}" + ("-成功" if ok else "-失败")
         update(sub_steps)
 
-    result = run_reuse_sensor_item_with_support_check(
-        context,
-        HAL_SENSOR_CALI_KEYWORDS,
-        item_label="hal sensor校准",
-        feature_name="HAL Sensor",
-        step_update=on_reuse_step,
-        item_source="cali_items",
-        source_case_index=SOURCE_SENSOR_CASE_INDEX,
+    dut_id, error = _get_dut_device_id(device_info)
+    if not dut_id:
+        update(error)
+        return {"status": "fail", "message": error}
+
+    result = run_tranfacmode_group_items_test(
+        dut_id,
+        SENSOR,
+        (("hal sensor", HAL_SENSOR_CALI_KEYWORDS),),
+        group_label="hal sensor",
+        result_dir=context.get("result_dir"),
+        on_step=on_step,
     )
     if result["status"] == "pass":
-        return {"status": "pass", "message": f"hal sensor校准: {result['message']}"}
-    return result
+        return {"status": "pass", "message": f"hal sensor: {result['message']}"}
+    if "未找到hal sensor测试项" not in result.get("message", ""):
+        return result
+
+    notice = "Sensor 工模未找到 hal sensor 测试项，请确认本机是否支持 HAL Sensor。"
+    if callable(operator_notify):
+        operator_notify(notice)
+    sub_steps += f"\n需人工确认：{notice}"
+    update(sub_steps)
+    if not callable(manual_confirm):
+        return {"status": "pending", "message": "需确认设备是否支持 HAL Sensor"}
+    status = manual_confirm(
+        "Sensor 工模未找到 hal sensor 测试项，请确认本机是否支持 HAL Sensor。",
+        pass_label="支持",
+        fail_label="不支持",
+    )
+    on_step("人工确认 HAL Sensor 支持", status == "pass")
+    if status == "pass":
+        return {
+            "status": "fail",
+            "message": f"{result['message']}（人工确认支持 HAL Sensor）",
+        }
+    return {"status": "skip", "message": "设备不支持 HAL Sensor，已跳过"}

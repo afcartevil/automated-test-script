@@ -1,4 +1,4 @@
-"""case22 sensor 逐项测试结果读写与复用（独立模块，避免 ui_tranfacmode 热加载缓存问题）。"""
+"""Sensor 逐项测试结果读写与复用。"""
 
 import json
 from pathlib import Path
@@ -8,11 +8,6 @@ from utils.driver.tranfacmode_group_result import FAIL_TEXTS, PASS_TEXTS
 
 SENSOR_ITEMS_JSON = "tranfacmode_sensor_items.json"
 SOURCE_SENSOR_ITEMS_CASE_INDEX = 22
-
-
-def _save_json(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def _item_name_matches(name: str, keywords: tuple[str, ...]) -> bool:
@@ -47,38 +42,6 @@ def load_sensor_items_result(result_dir: str | Path | None) -> dict[str, Any] | 
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
-
-
-def save_sensor_items_result(
-    result_dir: str | Path | None,
-    items: list[dict[str, str]],
-    *,
-    cali_items: list[dict[str, str]] | None = None,
-) -> None:
-    if not result_dir:
-        return
-    payload_items = [
-        {"name": item.get("name", ""), "state": item.get("state", "")}
-        for item in items
-        if isinstance(item, dict) and item.get("name")
-    ]
-    payload_cali_items = [
-        {"name": item.get("name", ""), "state": item.get("state", "")}
-        for item in (cali_items or [])
-        if isinstance(item, dict) and item.get("name")
-    ]
-    states = {(item.get("state") or "").strip() for item in payload_items}
-    data = {
-        "group": "sensor",
-        "items": payload_items,
-        "cali_items": payload_cali_items,
-        "all_pass": bool(payload_items) and states.issubset(PASS_TEXTS),
-        "has_fail": any(state in FAIL_TEXTS for state in states),
-    }
-    try:
-        _save_json(Path(result_dir) / SENSOR_ITEMS_JSON, data)
-    except OSError:
-        pass
 
 
 def evaluate_reused_sensor_item(

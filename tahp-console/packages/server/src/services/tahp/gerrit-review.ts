@@ -24,7 +24,8 @@ import {
 } from './context-injector'
 import { saveAgentPromptLog } from './prompt-log'
 import { humanizeAgentError } from './adapt-agent-health'
-import { extractP0TestSuggestions } from './gerrit-review-report'
+import { extractModules, extractP0TestSuggestions } from './gerrit-review-report'
+import { recommendTestCases } from './gerrit-case-recommendation'
 import {
   isGerritConfigured,
   writeRuntimeCredFile,
@@ -362,6 +363,8 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
     })
 
     const p0 = extractP0TestSuggestions(fullResponse)
+    const moduleInfo = extractModules(fullResponse)
+    const recommendedCases = recommendTestCases(p0.items)
     ctx.llmResponse = fullResponse
     ctx.p0Items = p0.items
     ctx.status = 'completed'
@@ -385,9 +388,12 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
       llm_response: fullResponse,
       p0_items: p0.items,
       p0_raw_section: p0.rawSection,
+      modules: moduleInfo.modules,
+      modules_display: moduleInfo.display,
+      recommended_cases: recommendedCases,
       skills_used: ctx.skillsUsed,
       duration_ms: Date.now() - startMs,
-      message: `评审完成，提取 ${p0.items.length} 条 P0 测试建议`,
+      message: `评审完成，提取 ${p0.items.length} 条 P0 测试建议，推荐 ${recommendedCases.length} 个测试用例`,
     })
 
     try {
@@ -402,6 +408,9 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
           llm_response: fullResponse,
           p0_items: p0.items,
           p0_raw_section: p0.rawSection,
+          modules: moduleInfo.modules,
+          modules_display: moduleInfo.display,
+          recommended_cases: recommendedCases,
           skills_used: ctx.skillsUsed,
           duration_ms: Date.now() - startMs,
         }, null, 2),

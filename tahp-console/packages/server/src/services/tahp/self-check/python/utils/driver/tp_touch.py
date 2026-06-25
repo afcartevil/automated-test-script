@@ -7,15 +7,28 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Generator, Optional
 
-GETEVENT_COLLECT_SEC = 6.0
-SWIPE_START_DELAY_SEC = 0.6
+GETEVENT_COLLECT_SEC = 15.0
 SCREEN_ON_KEYCODE = "224"
 SCREEN_OFF_KEYCODE = "223"
 POWER_CYCLE_COUNT = 5
-USER_SWIPE_TIMEOUT_SEC = 5.0
+USER_SWIPE_TIMEOUT_SEC = 12.0
 
-_MT_MARKERS = ("ABS_MT_POSITION_X", "ABS_MT_POSITION_Y")
-_SYN_MARKER = "EV_SYN"
+# 兼容不同内核/驱动：带 label、仅 hex、单点坐标
+_MT_X_MARKERS = (
+    "ABS_MT_POSITION_X",
+    "MT_POSITION_X",
+    "ABS_X",
+    "0035",
+    "0035 ",
+)
+_MT_Y_MARKERS = (
+    "ABS_MT_POSITION_Y",
+    "MT_POSITION_Y",
+    "ABS_Y",
+    "0036",
+    "0036 ",
+)
+_SYN_MARKERS = ("EV_SYN", "SYN_REPORT", "SYN_MT_REPORT")
 
 
 def _run_adb(device_id: str, args: list[str], timeout: int = 30) -> subprocess.CompletedProcess[str]:
@@ -26,6 +39,15 @@ def _run_adb(device_id: str, args: list[str], timeout: int = 30) -> subprocess.C
         timeout=timeout,
         check=False,
     )
+
+
+def go_home(device_id: str) -> bool:
+    """返回桌面；防误触场景连按两次 Home。"""
+    for _ in range(2):
+        if _run_adb(device_id, ["shell", "input", "keyevent", "3"], timeout=10).returncode != 0:
+            return False
+        time.sleep(0.35)
+    return True
 
 
 def screen_on(device_id: str) -> bool:
@@ -42,7 +64,7 @@ def _keyevent(device_id: str, code: str) -> bool:
     ).returncode == 0
 
 
-def _stop_getevent(proc: subprocess.Popen[str]) -> None:
+def _stop_getevent(proc: subprocess.Popen[str], device_id: str = "") -> None:
     if proc.poll() is not None:
         return
     proc.terminate()
@@ -50,7 +72,12 @@ def _stop_getevent(proc: subprocess.Popen[str]) -> None:
         proc.wait(timeout=2)
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait(timeout=1)
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+    if device_id and proc.poll() is None:
+        _run_adb(device_id, ["shell", "pkill", "-f", "getevent"], timeout=5)
 
 
 @contextmanager
@@ -82,21 +109,34 @@ def _getevent_lines(device_id: str) -> Generator[list[str], None, None]:
         yield lines
     finally:
         stop.set()
-        _stop_getevent(proc)
+        _stop_getevent(proc, device_id)
         thread.join(timeout=2)
+
+
+def _has_any_marker(text: str, markers: tuple[str, ...]) -> bool:
+    upper = text.upper()
+    for marker in markers:
+        if marker in text or marker.upper() in upper:
+            return True
+    return False
 
 
 def _touch_ok(output: str, *, require_syn: bool = True) -> tuple[bool, str]:
     text = output or ""
     if not text.strip():
         return False, "getevent 无输出，未检测到触摸事件"
-    upper = text.upper()
-    missing = [m for m in _MT_MARKERS if m not in text and m not in upper]
-    if missing:
+    has_x = _has_any_marker(text, _MT_X_MARKERS)
+    has_y = _has_any_marker(text, _MT_Y_MARKERS)
+    if not has_x or not has_y:
+        missing = []
+        if not has_x:
+            missing.append("X 坐标")
+        if not has_y:
+            missing.append("Y 坐标")
         return False, f"缺少触摸坐标事件: {', '.join(missing)}"
-    if require_syn and _SYN_MARKER not in text and _SYN_MARKER not in upper:
-        return False, "有坐标事件但未检测到 EV_SYN 同步帧"
-    return True, "检测到 ABS_MT 坐标与 EV_SYN，TP 报点正常"
+    if require_syn and not _has_any_marker(text, _SYN_MARKERS):
+        return False, "有坐标事件但未检测到 SYN 同步帧"
+    return True, "检测到触摸坐标与 SYN，TP 报点正常"
 
 
 def _save_log(result_dir: Optional[str], output: str, filename: str) -> None:
@@ -149,34 +189,24 @@ def check_tp_touch_reporting(
     result_dir: Optional[str] = None,
     on_step: Optional[Callable[[str, bool], None]] = None,
     before_parse: Optional[Callable[[], None]] = None,
+    collect_sec: float = GETEVENT_COLLECT_SEC,
 ) -> dict:
     if not (device_id or "").strip():
         return _result(False, "device_id 为空")
 
+    if callable(before_parse):
+        before_parse()
+
+    if not _keyevent(device_id, SCREEN_ON_KEYCODE):
+        return _result(False, "亮屏失败")
+
+    wait_sec = max(float(collect_sec), 3.0)
     if callable(on_step):
         on_step("启动 getevent -ltr", True)
+        on_step(f"等待手动触摸报点({int(wait_sec)}s)", True)
 
-    with _getevent_lines(device_id) as lines:
-        time.sleep(SWIPE_START_DELAY_SEC)
-        _keyevent(device_id, SCREEN_ON_KEYCODE)
-        time.sleep(0.25)
-        swipe_ret = _run_adb(
-            device_id,
-            ["shell", "input", "swipe", "500", "1600", "500", "800", "250"],
-            timeout=15,
-        )
-        swipe_ok = swipe_ret.returncode == 0
-        if callable(on_step):
-            on_step("模拟屏幕滑动", swipe_ok)
-        if not swipe_ok:
-            return _result(False, "模拟屏幕滑动失败")
-        if callable(before_parse):
-            before_parse()
-        time.sleep(GETEVENT_COLLECT_SEC)
-        output = "".join(lines)
-
+    ok, detail, output = wait_touch_events(device_id, timeout_sec=wait_sec)
     _save_log(result_dir, output, "tp_getevent_ltr.log")
-    ok, detail = _touch_ok(output)
     if callable(on_step):
         on_step("解析触摸事件", ok)
     return _result(ok, detail)
@@ -213,7 +243,7 @@ def check_tp_touch_after_power_cycles(
             return _result(False, f"{tag} 亮屏失败")
         time.sleep(0.5)
 
-        step(f"请滑动屏幕({int(USER_SWIPE_TIMEOUT_SEC)}s内)", True)
+        step(f"请手动触摸屏幕({int(USER_SWIPE_TIMEOUT_SEC)}s内)", True)
         ok, detail, output = wait_touch_events(device_id)
         _save_log(result_dir, output, f"tp_power_cycle_round{n}_getevent.log")
         if not ok:
