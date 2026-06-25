@@ -1976,7 +1976,14 @@ const liveStreamHint = computed(() => {
                 </template>
                 沉淀为 Skill
               </NButton>
-              <NButton v-if="canPostJiraComment" @click="openJiraCommentDialog">
+              <NButton
+                v-if="canPostJiraComment"
+                type="warning"
+                secondary
+                strong
+                class="jira-comment-btn"
+                @click="openJiraCommentDialog"
+              >
                 <template #icon>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 </template>
@@ -2591,6 +2598,23 @@ const liveStreamHint = computed(() => {
   max-width: 100%;
   min-width: 0;
   overflow-x: auto;
+}
+
+/* class 与 .n-button 在同一节点；须覆盖 Naive UI 的 --n-* 变量 */
+:deep(.n-button.jira-comment-btn) {
+  --n-color: #fff4e6 !important;
+  --n-color-hover: #ffe8cc !important;
+  --n-color-pressed: #ffddb0 !important;
+  --n-color-focus: #ffe8cc !important;
+  --n-text-color: #c05621 !important;
+  --n-text-color-hover: #9c4221 !important;
+  --n-text-color-pressed: #9c4221 !important;
+  --n-text-color-focus: #9c4221 !important;
+  --n-border: 1px solid #f5c48a !important;
+  --n-border-hover: 1px solid #f0b56e !important;
+  --n-border-pressed: 1px solid #e9a85c !important;
+  --n-border-focus: 1px solid #f0b56e !important;
+  font-weight: 600;
 }
 
 .modal-hint { margin-bottom: 8px; font-size: 12px; color: var(--muted); }
