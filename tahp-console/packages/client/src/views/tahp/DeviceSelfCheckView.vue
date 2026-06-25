@@ -12,6 +12,7 @@ import {
   startTest,
   startCustomTest,
   getCaseCatalogs,
+  getCaseCatalogDetail,
   continueTest,
   endTest,
   updateCaseResult,
@@ -27,7 +28,8 @@ import {
   type ModuleCondition,
   type CaseResult,
   type CaseCatalog,
-  type CaseCatalogGroup
+  type CaseCatalogGroup,
+  type CaseCatalogDetailItem
 } from '@/api/tahp/device-self-check'
 
 const SELF_CHECK_SUBTITLE =
@@ -49,12 +51,20 @@ const enableTcardUpdate = ref(false)
 const tcardUpdatePath = ref('')
 
 // 视图模式
-const viewMode = ref<'overview' | 'detail' | 'settings' | 'customTest'>('overview')
+const viewMode = ref<'overview' | 'detail' | 'customTest' | 'caseCatalog'>('overview')
 
-// 自定义测试
+// 自定义测试 / 概览用例目录
 const caseCatalogGroups = ref<CaseCatalogGroup[]>([])
+const selectedCatalogTestType = ref<string | null>(null)
+const catalogDetailItems = ref<CaseCatalogDetailItem[]>([])
+const selectedCatalogCaseKey = ref<string | null>(null)
+const catalogDetailLoading = ref(false)
+const catalogTypeSettings = ref({ autoRetestEnabled: true, autoRetestCount: 1 })
+const catalogSettingsSaving = ref(false)
+const AUTO_RETEST_TOOLTIP = '测试结束后自动复测无人工参与的失败用例'
 const expandedCatalogTypes = ref<Set<string>>(new Set())
 const expandedCatalogModules = ref<Set<string>>(new Set())
+const expandedCatalogDetailModules = ref<Set<string>>(new Set())
 const selectedCases = ref<Set<string>>(new Set())
 const customTestDutDeviceId = ref<string | null>(null)
 const customTestAuxDeviceIds = ref<Set<string>>(new Set())
@@ -71,10 +81,6 @@ const availableCustomAux = computed(() => {
 const availableCustomDut = computed(() => {
   return devices.value.filter(d => d.status === '空闲')
 })
-
-// 设置
-const autoSettings = ref<Record<string, { enabled: boolean; path: string }>>({})
-const settingsLoading = ref(false)
 
 // 用例列表相关
 const selectedCase = ref<string | null>(null)
@@ -132,42 +138,118 @@ async function selectDevice(deviceId: string) {
   }
 }
 
-async function loadSettingsData() {
+function backFromCaseCatalog() {
+  viewMode.value = 'overview'
+  selectedCatalogTestType.value = null
+  catalogDetailItems.value = []
+  selectedCatalogCaseKey.value = null
+  expandedCatalogDetailModules.value = new Set()
+}
+
+function catalogDetailModuleKey(module: string): string {
+  return `${selectedCatalogTestType.value}/${module}`
+}
+
+function isCatalogDetailModuleExpanded(module: string): boolean {
+  return expandedCatalogDetailModules.value.has(catalogDetailModuleKey(module))
+}
+
+function toggleCatalogDetailModule(module: string) {
+  const key = catalogDetailModuleKey(module)
+  if (expandedCatalogDetailModules.value.has(key)) {
+    expandedCatalogDetailModules.value.delete(key)
+  } else {
+    expandedCatalogDetailModules.value.add(key)
+  }
+  expandedCatalogDetailModules.value = new Set(expandedCatalogDetailModules.value)
+}
+
+async function openCaseCatalog(testType: string) {
+  selectedCatalogTestType.value = testType
+  viewMode.value = 'caseCatalog'
+  selectedCatalogCaseKey.value = null
+  catalogDetailLoading.value = true
+  error.value = null
   try {
-    const data = await getSettings()
-    for (const [key, enabled] of Object.entries(data.autoTestEnabled || {})) {
-      if (!autoSettings.value[key]) {
-        autoSettings.value[key] = { enabled: false, path: '' }
-      }
-      autoSettings.value[key].enabled = enabled
+    const [detail, settingsData] = await Promise.all([
+      getCaseCatalogDetail(testType),
+      getSettings(),
+    ])
+    catalogDetailItems.value = detail
+    expandedCatalogDetailModules.value = new Set(
+      [...new Set(detail.map(item => `${testType}/${item.module}`))]
+    )
+    catalogTypeSettings.value = {
+      autoRetestEnabled: settingsData.autoRetestEnabled?.[testType] ?? true,
+      autoRetestCount: settingsData.autoRetestCount?.[testType] ?? 1,
     }
-    for (const [key, path] of Object.entries(data.autoTestPath || {})) {
-      if (!autoSettings.value[key]) {
-        autoSettings.value[key] = { enabled: false, path: '' }
-      }
-      autoSettings.value[key].path = path
+    if (detail.length > 0) {
+      selectedCatalogCaseKey.value = detail[0].key
     }
-  } catch (e) {
-    console.error('[DeviceSelfCheck] Error loading settings:', e)
+  } catch (e: any) {
+    error.value = e?.message || '加载用例详情失败'
+  } finally {
+    catalogDetailLoading.value = false
   }
 }
 
-async function saveSettingsData() {
-  settingsLoading.value = true
+function selectCatalogCase(caseKey: string) {
+  selectedCatalogCaseKey.value = caseKey
+}
+
+async function saveCatalogTypeSettings() {
+  if (!selectedCatalogTestType.value) return
+  catalogSettingsSaving.value = true
   try {
-    const enabled: Record<string, boolean> = {}
-    const paths: Record<string, string> = {}
-    for (const [key, val] of Object.entries(autoSettings.value)) {
-      enabled[key] = val.enabled
-      paths[key] = val.path
-    }
-    await updateSettings({ autoTestEnabled: enabled, autoTestPath: paths })
+    const current = await getSettings()
+    const testType = selectedCatalogTestType.value
+    const count = Math.max(0, Math.min(10, catalogTypeSettings.value.autoRetestCount || 0))
+    catalogTypeSettings.value.autoRetestCount = count
+    await updateSettings({
+      ...current,
+      autoRetestEnabled: {
+        ...(current.autoRetestEnabled || {}),
+        [testType]: catalogTypeSettings.value.autoRetestEnabled,
+      },
+      autoRetestCount: {
+        ...(current.autoRetestCount || {}),
+        [testType]: count,
+      },
+    })
   } catch (e) {
-    console.error('[DeviceSelfCheck] Error saving settings:', e)
+    console.error('[DeviceSelfCheck] Error saving catalog settings:', e)
   } finally {
-    settingsLoading.value = false
+    catalogSettingsSaving.value = false
   }
 }
+
+function parseManualSteps(steps: string): string[] {
+  if (!steps.trim()) return []
+  return steps.split('\n').map(line => line.trim()).filter(Boolean)
+}
+
+const catalogDetailByModule = computed(() => {
+  const groups: { module: string; moduleLabel: string; cases: CaseCatalogDetailItem[] }[] = []
+  const indexByModule = new Map<string, number>()
+  for (const item of catalogDetailItems.value) {
+    const idx = indexByModule.get(item.module)
+    if (idx === undefined) {
+      indexByModule.set(item.module, groups.length)
+      groups.push({ module: item.module, moduleLabel: item.moduleLabel, cases: [item] })
+    } else {
+      groups[idx].cases.push(item)
+    }
+  }
+  return groups
+})
+
+const selectedCatalogItem = computed(() =>
+  catalogDetailItems.value.find(item => item.key === selectedCatalogCaseKey.value)
+)
+
+const selectedCatalogGroup = computed(() =>
+  caseCatalogGroups.value.find(group => group.testType === selectedCatalogTestType.value)
+)
 
 function backToOverview() {
   viewMode.value = 'overview'
@@ -480,7 +562,7 @@ function getTestTypeLabel(testType?: string): string {
   return '未分配'
 }
 
-async function loadCaseCatalogs() {
+async function loadCaseCatalogs(options?: { silent?: boolean }) {
   try {
     caseCatalogGroups.value = await getCaseCatalogs()
     expandedCatalogTypes.value = new Set(caseCatalogGroups.value.map(g => g.testType))
@@ -489,7 +571,9 @@ async function loadCaseCatalogs() {
     )
   } catch (e) {
     console.error('[DeviceSelfCheck] Error loading case catalogs:', e)
-    error.value = '加载用例目录失败'
+    if (!options?.silent) {
+      error.value = '加载用例目录失败'
+    }
   }
 }
 
@@ -759,6 +843,9 @@ const pageTitle = computed(() => {
     return selectedDevice.value?.device.deviceName || '设备详情'
   }
   if (viewMode.value === 'customTest') return '自定义测试'
+  if (viewMode.value === 'caseCatalog') {
+    return selectedCatalogGroup.value?.label || '用例详情'
+  }
   return 'AI 自检'
 })
 
@@ -810,6 +897,7 @@ const selectedCaseResult = computed((): CaseResult | undefined => {
 onMounted(async () => {
   connectEventStream()
   await loadDevices()
+  loadCaseCatalogs({ silent: true })
   try {
     moduleConditions.value = await getModuleConditions()
     // 默认展开所有模块
@@ -956,76 +1044,16 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
             返回概览
           </button>
         </template>
-        <template v-else>
-          <button
-            type="button"
-            class="ea-btn-primary"
-            @click="openCustomTest"
-          >
-            自定义测试
-          </button>
-          <button
-            type="button"
-            class="ea-btn-primary"
-            :disabled="loading"
-            @click="doRefreshDevices"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <polyline points="23 4 23 10 17 10"/>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-            刷新设备
-          </button>
-          <button
-            type="button"
-            class="ea-btn-ghost ea-btn-sm"
-            @click="viewMode = 'settings'; loadSettingsData()"
-          >
-            设置
-          </button>
-        </template>
-      </template>
-    </EaPageHead>
-
-    <!-- 设置视图 -->
-    <template v-if="viewMode === 'settings'">
-      <EaCard>
-        <div class="section-title">
-          <button type="button" class="ea-btn-ghost ea-btn-sm" @click="viewMode = 'overview'">
+        <template v-else-if="viewMode === 'caseCatalog'">
+          <button type="button" class="ea-btn-ghost ea-btn-sm" @click="backFromCaseCatalog">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <polyline points="15 18 9 12 15 6"/>
             </svg>
             返回概览
           </button>
-          <span style="margin-left: 8px;">自动化测试设置</span>
-        </div>
-        <div class="settings-list">
-          <div v-for="(config, key) in moduleConditions" :key="key" class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">{{ config.moduleLabel }}</span>
-              <span class="setting-desc">{{ key }}</span>
-            </div>
-            <label class="switch-label">
-              <input type="checkbox" v-model="autoSettings[key].enabled" />
-              <span class="switch-text">{{ autoSettings[key]?.enabled ? '已开启' : '已关闭' }}</span>
-            </label>
-            <input
-              v-if="autoSettings[key]?.enabled"
-              type="text"
-              class="form-input"
-              v-model="autoSettings[key].path"
-              placeholder="自动化测试路径"
-              style="width: 280px;"
-            />
-          </div>
-        </div>
-        <div style="margin-top: 16px;">
-          <button type="button" class="ea-btn-primary" :disabled="settingsLoading" @click="saveSettingsData">
-            {{ settingsLoading ? '保存中...' : '保存设置' }}
-          </button>
-        </div>
-      </EaCard>
-    </template>
+        </template>
+      </template>
+    </EaPageHead>
 
     <!-- 自定义测试视图 -->
     <template v-if="viewMode === 'customTest'">
@@ -1161,8 +1189,132 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
       </div>
     </template>
 
+    <!-- 用例大类详情视图 -->
+    <template v-if="viewMode === 'caseCatalog'">
+      <div v-if="catalogDetailLoading" class="ea-muted" style="padding: 40px; text-align: center;">
+        加载中...
+      </div>
+      <div v-else-if="error" style="padding: 40px; text-align: center;">
+        <div style="color: var(--error); margin-bottom: 16px;">{{ error }}</div>
+        <button type="button" class="ea-btn-primary" @click="openCaseCatalog(selectedCatalogTestType!)">
+          重试
+        </button>
+      </div>
+      <div v-else class="detail-container">
+        <EaCard class="sidebar-card">
+          <div class="section-title">用例列表</div>
+          <div class="case-list">
+            <div
+              v-for="mod in catalogDetailByModule"
+              :key="mod.module"
+              class="module-group"
+            >
+              <div
+                class="module-name"
+                @click="toggleCatalogDetailModule(mod.module)"
+              >
+                <span class="module-arrow" :class="{ open: isCatalogDetailModuleExpanded(mod.module) }">▶</span>
+                {{ mod.moduleLabel }}
+                <span class="module-count">{{ mod.cases.length }}</span>
+              </div>
+              <div class="module-cases" v-show="isCatalogDetailModuleExpanded(mod.module)">
+                <div
+                  v-for="item in mod.cases"
+                  :key="item.key"
+                  class="case-item"
+                  :class="{ selected: selectedCatalogCaseKey === item.key }"
+                  @click="selectCatalogCase(item.key)"
+                >
+                  {{ item.caseName }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </EaCard>
+
+        <div class="detail-main">
+          <EaCard style="margin-bottom: 16px;">
+            <div class="detail-card-content">
+              <div class="detail-section">
+                <div class="section-title">用例设置</div>
+                <div class="catalog-auto-retest-row">
+                  <label
+                    class="checkbox-label"
+                    :title="AUTO_RETEST_TOOLTIP"
+                  >
+                    <input
+                      type="checkbox"
+                      v-model="catalogTypeSettings.autoRetestEnabled"
+                      :disabled="catalogSettingsSaving"
+                      @change="saveCatalogTypeSettings"
+                    />
+                    <span>自动复测</span>
+                  </label>
+                  <input
+                    type="number"
+                    class="catalog-setting-input"
+                    min="0"
+                    max="10"
+                    v-model.number="catalogTypeSettings.autoRetestCount"
+                    :disabled="!catalogTypeSettings.autoRetestEnabled || catalogSettingsSaving"
+                    @change="saveCatalogTypeSettings"
+                  />
+                  <span>次</span>
+                </div>
+              </div>
+            </div>
+          </EaCard>
+
+          <EaCard>
+            <div class="case-detail-header">
+              <span class="section-title">用例详情</span>
+            </div>
+            <div v-if="selectedCatalogItem" class="case-detail-content">
+              <div class="case-info">
+                <div class="detail-item">
+                  <span class="detail-label">用例模块</span>
+                  <span class="detail-value">{{ selectedCatalogItem.moduleLabel }}</span>
+                </div>
+                <div class="detail-item">
+                  <span class="detail-label">用例名称</span>
+                  <span class="detail-value">{{ selectedCatalogItem.caseName }}</span>
+                </div>
+                <div v-if="selectedCatalogItem.preconditions" class="detail-item">
+                  <span class="detail-label">前置条件</span>
+                  <span class="detail-value pre-wrap">{{ selectedCatalogItem.preconditions }}</span>
+                </div>
+                <div v-if="selectedCatalogItem.expectedResult" class="detail-item">
+                  <span class="detail-label">期望结果</span>
+                  <span class="detail-value pre-wrap">{{ selectedCatalogItem.expectedResult }}</span>
+                </div>
+              </div>
+              <div v-if="selectedCatalogItem.manualSteps" class="case-steps">
+                <div class="section-title">测试步骤</div>
+                <div
+                  v-for="(step, idx) in parseManualSteps(selectedCatalogItem.manualSteps)"
+                  :key="idx"
+                  class="step-item"
+                >
+                  {{ step }}
+                </div>
+              </div>
+              <div
+                v-if="!selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
+                class="ea-muted"
+              >
+                暂无手动测试步骤
+              </div>
+            </div>
+            <div v-else class="case-detail-empty">
+              <span class="ea-muted">请从左侧选择用例查看详情</span>
+            </div>
+          </EaCard>
+        </div>
+      </div>
+    </template>
+
     <!-- 设备列表视图 -->
-    <template v-if="!selectedDeviceId && viewMode !== 'settings' && viewMode !== 'customTest'">
+    <template v-if="!selectedDeviceId && viewMode !== 'customTest' && viewMode !== 'caseCatalog'">
       <div v-if="loading" class="ea-muted" style="padding: 40px; text-align: center;">
         加载中...
       </div>
@@ -1180,62 +1332,104 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
         <h3 class="section-heading">多设备并行自动化测试</h3>
         <p class="section-desc ea-muted">支持结果复用，连接 Android 设备后刷新列表</p>
 
-        <div v-if="devices.length === 0" class="ea-muted" style="padding: 40px; text-align: center;">
-          暂无连接设备，请连接 Android 设备后刷新
-        </div>
+        <EaCard v-if="caseCatalogGroups.length" class="overview-catalog-section">
+          <div class="section-title">用例大类</div>
+          <div class="ea-domain-bar overview-catalog-bar">
+            <button
+              v-for="group in caseCatalogGroups"
+              :key="group.testType"
+              type="button"
+              class="ea-domain-chip"
+              @click="openCaseCatalog(group.testType)"
+            >
+              {{ group.label }}
+            </button>
+          </div>
+        </EaCard>
 
-        <div v-else class="device-grid">
-          <EaCard
-            v-for="device in devices"
-            :key="device.deviceId"
-            class="device-card"
-            @click="(device.role !== '辅测机' || device.status === '待命' || device.status === '空闲') ? selectDevice(device.deviceId) : null"
-          >
-            <div class="device-header">
-              <div class="device-status-icon" :style="{ color: getStatusColor(device.status) }">
-                {{ getStatusIcon(device.status) }}
-              </div>
-              <div class="device-info">
-                <h4>{{ device.deviceName }}</h4>
-                <span class="device-id">{{ device.deviceId }}</span>
-              </div>
-              <span class="role-badge" :style="getRoleBadge(device.status === '空闲' ? '未分配' : device.role)">
-                {{ device.status === '空闲' ? '未分配' : device.role }}
-              </span>
-            </div>
-            <div class="device-details">
-              <div class="detail-row">
-                <span class="detail-label">测试状态</span>
-                <span class="detail-value" :style="{ color: getStatusColor(device.status) }">
-                  {{ getDisplayStatus(device) }}
-                </span>
-              </div>
-              <div class="detail-row" v-if="device.testType">
-                <span class="detail-label">所属用例</span>
-                <span class="detail-value">{{ getTestTypeLabel(device.testType) }}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">插卡情况</span>
-                <span class="detail-value">
-                  插入{{ device.simCards.filter(s => s.present).length }}张SIM卡
-                </span>
-              </div>
-              <div class="detail-row" v-if="device.testStartTime && device.role !== '辅测机'">
-                <span class="detail-label">测试开始时间</span>
-                <span class="detail-value">{{ new Date(device.testStartTime).toLocaleString('zh-CN') }}</span>
-              </div>
-              <div class="detail-row" v-if="device.testDuration">
-                <span class="detail-label">测试用时</span>
-                <span class="detail-value">{{ Math.round(device.testDuration / 60) }} 分钟</span>
-              </div>
-            </div>
-            <div class="device-actions" v-if="device.role !== '辅测机' && device.status.includes('完成')">
-              <button type="button" class="ea-btn-ghost ea-btn-sm" @click.stop>
-                打开结果
+        <EaCard class="device-list-section" :class="{ 'device-list-section-spaced': caseCatalogGroups.length }">
+          <div class="device-list-header">
+            <div class="section-title device-list-title">设备列表</div>
+            <div class="device-list-actions">
+              <button
+                type="button"
+                class="ea-btn-primary ea-btn-sm"
+                @click="openCustomTest"
+              >
+                自定义测试
+              </button>
+              <button
+                type="button"
+                class="ea-btn-primary ea-btn-sm"
+                :disabled="loading"
+                @click="doRefreshDevices"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <polyline points="23 4 23 10 17 10"/>
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                </svg>
+                刷新设备
               </button>
             </div>
-          </EaCard>
-        </div>
+          </div>
+
+          <div v-if="devices.length === 0" class="ea-muted device-list-empty">
+            暂无连接设备，请连接 Android 设备后刷新
+          </div>
+
+          <div v-else class="device-grid">
+            <EaCard
+              v-for="device in devices"
+              :key="device.deviceId"
+              class="device-card"
+              @click="(device.role !== '辅测机' || device.status === '待命' || device.status === '空闲') ? selectDevice(device.deviceId) : null"
+            >
+              <div class="device-header">
+                <div class="device-status-icon" :style="{ color: getStatusColor(device.status) }">
+                  {{ getStatusIcon(device.status) }}
+                </div>
+                <div class="device-info">
+                  <h4>{{ device.deviceName }}</h4>
+                  <span class="device-id">{{ device.deviceId }}</span>
+                </div>
+                <span class="role-badge" :style="getRoleBadge(device.status === '空闲' ? '未分配' : device.role)">
+                  {{ device.status === '空闲' ? '未分配' : device.role }}
+                </span>
+              </div>
+              <div class="device-details">
+                <div class="detail-row">
+                  <span class="detail-label">测试状态</span>
+                  <span class="detail-value" :style="{ color: getStatusColor(device.status) }">
+                    {{ getDisplayStatus(device) }}
+                  </span>
+                </div>
+                <div class="detail-row" v-if="device.testType">
+                  <span class="detail-label">所属用例</span>
+                  <span class="detail-value">{{ getTestTypeLabel(device.testType) }}</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">插卡情况</span>
+                  <span class="detail-value">
+                    插入{{ device.simCards.filter(s => s.present).length }}张SIM卡
+                  </span>
+                </div>
+                <div class="detail-row" v-if="device.testStartTime && device.role !== '辅测机'">
+                  <span class="detail-label">测试开始时间</span>
+                  <span class="detail-value">{{ new Date(device.testStartTime).toLocaleString('zh-CN') }}</span>
+                </div>
+                <div class="detail-row" v-if="device.testDuration">
+                  <span class="detail-label">测试用时</span>
+                  <span class="detail-value">{{ Math.round(device.testDuration / 60) }} 分钟</span>
+                </div>
+              </div>
+              <div class="device-actions" v-if="device.role !== '辅测机' && device.status.includes('完成')">
+                <button type="button" class="ea-btn-ghost ea-btn-sm" @click.stop>
+                  打开结果
+                </button>
+              </div>
+            </EaCard>
+          </div>
+        </EaCard>
       </template>
 
       <GerritReviewWorkspace />
@@ -1600,6 +1794,81 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
 .section-desc {
   font-size: 13px;
   margin: 0 0 16px;
+}
+
+.section-heading-spaced {
+  margin-top: 20px;
+}
+
+.device-list-section-spaced {
+  margin-top: 20px;
+}
+
+.device-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.device-list-title {
+  margin-bottom: 0;
+}
+
+.device-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.device-list-empty {
+  padding: 40px;
+  text-align: center;
+}
+
+.overview-catalog-section {
+  margin-bottom: 8px;
+}
+
+.overview-catalog-bar {
+  margin-bottom: 0;
+}
+
+.catalog-auto-retest-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  font-size: 13px;
+  margin-top: 0;
+}
+
+.catalog-setting-input {
+  width: 64px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--bg);
+  margin: 0;
+  flex-shrink: 0;
+  cursor: text;
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.pre-wrap {
+  white-space: pre-wrap;
 }
 
 .device-grid {
