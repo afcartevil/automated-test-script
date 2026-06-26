@@ -70,4 +70,21 @@ describe('adapt-agent prompts', () => {
     expect(userPrompt).toContain('PRJ Path（项目路径）')
     expect(userPrompt).toContain('prj_path')
   })
+
+  it('includes interactive protocol for carrierconfig-tools', () => {
+    const { systemPrompt, userPrompt } = buildAdaptAgentPrompts({
+      domainId: 'carrierconfig-tools',
+      domainLabel: 'CarrierConfig配置',
+      module: 'telephony',
+      relatedSkills: ['carrierconfig-tools', 'jira-ops'],
+      formData: { description: 'JIRA-123 修改 key foo' },
+      formFields: [{ name: 'description', label: '描述', required: true }],
+      interactionMode: true,
+    })
+    expect(systemPrompt).toContain('carrierconfig-tools')
+    expect(systemPrompt).toContain('TAHP_USER_INPUT')
+    expect(systemPrompt).toContain('CarrierConfig')
+    expect(userPrompt).toContain('描述')
+    expect(userPrompt).toContain('JIRA-123')
+  })
 })

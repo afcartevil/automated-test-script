@@ -3,24 +3,44 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { NModal, NButton, NSpace, NForm, NFormItem, NInput, NAlert, NProgress } from 'naive-ui'
 import type { BugApprovalRequest, BugUserInputRequest } from '@/stores/tahp/bug-analysis'
 
+export interface ContinueChatPrompt {
+  title: string
+  message?: string
+  placeholder?: string
+}
+
 const props = defineProps<{
   approval: BugApprovalRequest | null
   userInput: BugUserInputRequest | null
+  continueChat?: ContinueChatPrompt | null
+  /** 仅 continue_chat 模式：由父组件控制是否显示（不自动弹出） */
+  showContinueChat?: boolean
   submitting?: boolean
 }>()
 
 const emit = defineEmits<{
   approval: [choice: string]
   userInput: [values: Record<string, string>]
+  continueChat: [message: string]
+  continueChatDismiss: []
 }>()
 
-const show = computed(() => !!props.approval || !!props.userInput)
-const mode = computed(() => (props.approval ? 'approval' : 'user_input') as 'approval' | 'user_input')
+const show = computed(() =>
+  !!props.approval
+  || !!props.userInput
+  || (!!props.continueChat && props.showContinueChat === true),
+)
+const mode = computed(() => {
+  if (props.approval) return 'approval' as const
+  if (props.userInput) return 'user_input' as const
+  return 'continue_chat' as const
+})
 
 const countdownSec = ref(0)
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 
 const formValues = ref<Record<string, string>>({})
+const continueMessage = ref('')
 
 function stopCountdown() {
   if (countdownTimer) {
@@ -41,10 +61,11 @@ function startCountdown(deadlineAt: number) {
 }
 
 watch(
-  () => [props.approval, props.userInput] as const,
-  ([ap, ui]) => {
+  () => [props.approval, props.userInput, props.continueChat] as const,
+  ([ap, ui, cc]) => {
     if (ap) {
       formValues.value = {}
+      continueMessage.value = ''
       startCountdown(ap.deadline_at)
     } else if (ui) {
       const init: Record<string, string> = {}
@@ -52,7 +73,12 @@ watch(
         init[f.name] = f.default || ''
       }
       formValues.value = init
+      continueMessage.value = ''
       startCountdown(ui.deadline_at)
+    } else if (cc) {
+      formValues.value = {}
+      continueMessage.value = ''
+      stopCountdown()
     } else {
       stopCountdown()
     }
@@ -88,23 +114,45 @@ function onApprovalClick(choice: string) {
 function onSubmitUserInput() {
   emit('userInput', { ...formValues.value })
 }
+
+function onSubmitContinue() {
+  const text = continueMessage.value.trim()
+  if (!text) return
+  emit('continueChat', text)
+}
+
+function onModalShowUpdate(visible: boolean) {
+  if (!visible && mode.value === 'continue_chat') {
+    emit('continueChatDismiss')
+  }
+}
 </script>
 
 <template>
   <NModal
+    preset="card"
     :show="show"
-    :mask-closable="false"
-    :close-on-esc="false"
+    :mask-closable="mode === 'continue_chat'"
+    :close-on-esc="mode === 'continue_chat'"
+    :closable="mode === 'continue_chat'"
     :auto-focus="false"
     transform-origin="center"
     class="bug-interaction-modal"
-    style="width: min(640px, calc(100vw - 32px))"
+    :style="{ width: 'min(640px, calc(100vw - 32px))' }"
+    :content-style="{ padding: '0 20px 20px' }"
+    :segmented="{ content: true, footer: false }"
+    @update:show="onModalShowUpdate"
   >
     <template #header>
       <div class="bim-header">
         <span v-if="mode === 'approval'">危险命令确认</span>
-        <span v-else>{{ userInput?.title || '配置输入' }}</span>
-        <span class="bim-countdown" :class="{ urgent: countdownSec > 0 && countdownSec <= 10 }">
+        <span v-else-if="mode === 'user_input'">{{ userInput?.title || '配置输入' }}</span>
+        <span v-else>{{ continueChat?.title || '补充信息' }}</span>
+        <span
+          v-if="mode !== 'continue_chat'"
+          class="bim-countdown"
+          :class="{ urgent: countdownSec > 0 && countdownSec <= 10 }"
+        >
           {{ countdownLabel }}
         </span>
       </div>
@@ -140,8 +188,9 @@ function onSubmitUserInput() {
     </div>
 
     <div v-else-if="mode === 'user_input' && userInput" class="bim-body">
-      <NAlert type="info" :show-icon="true" style="margin-bottom: 12px">
-        {{ userInput.message || '请按下方格式填写配置，提交后 Agent 将继续分析并持久化配置。' }}
+      <div v-if="userInput.message" class="bim-message">{{ userInput.message }}</div>
+      <NAlert v-else type="info" :show-icon="true" style="margin-bottom: 12px">
+        请按下方格式填写，提交后 Agent 将继续执行。
       </NAlert>
       <NProgress
         type="line"
@@ -149,7 +198,7 @@ function onSubmitUserInput() {
         :show-indicator="false"
         style="margin-bottom: 14px"
       />
-      <NForm label-placement="top">
+      <NForm label-placement="top" class="bim-form">
         <NFormItem
           v-for="field in userInput.fields"
           :key="field.name"
@@ -179,14 +228,32 @@ function onSubmitUserInput() {
         </NButton>
       </NSpace>
     </div>
+
+    <div v-else-if="mode === 'continue_chat' && continueChat" class="bim-body">
+      <div v-if="continueChat.message" class="bim-message">{{ continueChat.message }}</div>
+      <NAlert v-else type="info" :show-icon="true" style="margin-bottom: 12px">
+        请输入补充说明，Agent 将根据您的输入继续执行。
+      </NAlert>
+      <NForm label-placement="top" class="bim-form">
+        <NFormItem label="补充信息">
+          <NInput
+            v-model:value="continueMessage"
+            type="textarea"
+            :placeholder="continueChat.placeholder || '确认结果、补充路径、变更说明等'"
+            :autosize="{ minRows: 3, maxRows: 8 }"
+          />
+        </NFormItem>
+      </NForm>
+      <NSpace justify="end" style="margin-top: 8px">
+        <NButton type="primary" :loading="submitting" :disabled="!continueMessage.trim()" @click="onSubmitContinue">
+          发送并继续对话
+        </NButton>
+      </NSpace>
+    </div>
   </NModal>
 </template>
 
 <style scoped>
-.bug-interaction-modal :deep(.n-card-header) {
-  padding-bottom: 8px;
-}
-
 .bim-header {
   display: flex;
   align-items: center;
@@ -205,6 +272,40 @@ function onSubmitUserInput() {
 
 .bim-countdown.urgent {
   color: #d03050;
+}
+
+.bim-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(68vh, 640px);
+  overflow-y: auto;
+}
+
+.bim-message {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--n-text-color-2);
+  background: var(--n-color-modal);
+  border: 1px solid var(--n-border-color);
+}
+
+.bim-form {
+  width: 100%;
+}
+
+.bim-form :deep(.n-form-item) {
+  margin-bottom: 14px;
+}
+
+.bim-form :deep(.n-form-item-label) {
+  font-weight: 600;
+  padding-bottom: 4px;
 }
 
 .bim-desc {
@@ -232,9 +333,22 @@ function onSubmitUserInput() {
 }
 </style>
 
-<!-- 固定于视口顶层，避免被分析区布局挤压 -->
+<!-- 固定于视口顶层，不透明卡片背景，避免背后 Agent 输出穿透 -->
 <style>
 .bug-interaction-modal.n-modal {
   z-index: 4000 !important;
+}
+
+.bug-interaction-modal.n-modal .n-card {
+  background: var(--n-color-modal) !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+
+.bug-interaction-modal.n-modal .n-card__content {
+  background: var(--n-color-modal) !important;
+}
+
+.bug-interaction-modal.n-modal .n-modal-mask {
+  background-color: rgba(0, 0, 0, 0.55) !important;
 }
 </style>

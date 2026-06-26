@@ -13,6 +13,10 @@ import {
   getAdaptAgentTask,
   readAdaptAgentReport,
   buildAdaptAgentPrompts,
+  submitAdaptUserInput,
+  continueAdaptAgentRun,
+  respondAdaptApproval,
+  completeAdaptAgentRun,
   type AdaptAgentRunInput,
   type AdaptAgentFieldMeta,
 } from '../../services/tahp/adapt-agent'
@@ -82,10 +86,11 @@ function parseAdaptAgentRunBody(body: Record<string, unknown>): AdaptAgentRunInp
     : typeof body.userNotes === 'string' ? body.userNotes : undefined
   const formFields = parseFormFields(body)
   const workspaceId = String(body.workspace_id || body.workspaceId || DEFAULT_ADAPT_WORKSPACE).trim()
+  const interactionMode = body.interaction_mode === true || body.interactionMode === true
 
   if (!domainId) return { error: '缺少 domain_id' }
   if (!isAdaptWorkspaceId(workspaceId)) return { error: `无效的工作区: ${workspaceId}` }
-  return { domainId, domainLabel, module, relatedSkills, formData, userNotes, formFields, workspaceId }
+  return { domainId, domainLabel, module, relatedSkills, formData, userNotes, formFields, workspaceId, interactionMode }
 }
 
 const DOMAIN_ID_RE = /^[a-zA-Z0-9_-]+$/
@@ -304,6 +309,68 @@ tahpAdaptRoutes.get('/api/tahp/adapt/agent-run/:taskId', async (ctx) => {
     return
   }
   ctx.body = { success: true, data: { live, report } }
+})
+
+tahpAdaptRoutes.post('/api/tahp/adapt/agent-run/:taskId/user-input', async (ctx) => {
+  const { taskId } = ctx.params
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const requestId = String(body.request_id || body.requestId || '').trim()
+  const values = (body.values || {}) as Record<string, string>
+  if (!requestId) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 request_id' }
+    return
+  }
+  const result = await submitAdaptUserInput(taskId, requestId, values)
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+  ctx.body = { success: true, data: { request_id: requestId } }
+})
+
+tahpAdaptRoutes.post('/api/tahp/adapt/agent-run/:taskId/continue', async (ctx) => {
+  const { taskId } = ctx.params
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const message = String(body.message || '').trim()
+  const result = await continueAdaptAgentRun(taskId, message)
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+  ctx.body = { success: true, data: { ok: true } }
+})
+
+tahpAdaptRoutes.post('/api/tahp/adapt/agent-run/:taskId/complete', async (ctx) => {
+  const { taskId } = ctx.params
+  const result = await completeAdaptAgentRun(taskId)
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+  ctx.body = { success: true, data: { ok: true } }
+})
+
+tahpAdaptRoutes.post('/api/tahp/adapt/agent-run/:taskId/approval', async (ctx) => {
+  const { taskId } = ctx.params
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const approvalId = String(body.approval_id || body.approvalId || '').trim()
+  const choice = String(body.choice || 'once').trim()
+  if (!approvalId) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 approval_id' }
+    return
+  }
+  const result = await respondAdaptApproval(taskId, approvalId, choice)
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+  ctx.body = { success: true, data: { approval_id: approvalId, choice } }
 })
 
 tahpAdaptRoutes.get('/api/tahp/adapt/config/get', async (ctx) => {

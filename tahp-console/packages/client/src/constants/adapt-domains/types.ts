@@ -18,6 +18,8 @@ export interface AdaptDomainDef {
   fields: AdaptFieldDef[]
   relatedSkills: string[]
   module?: string
+  /** 启用 Agent 人机协同（TAHP_USER_INPUT 弹窗 + 补充对话） */
+  interactionMode?: boolean
 }
 
 export const ADAPT_WORKSPACE_IDS = ['adapt-debug', 'feature-adapt', 'carrier-config'] as const

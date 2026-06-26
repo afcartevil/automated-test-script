@@ -3,6 +3,25 @@ import type { AdaptDomainDef } from './types'
 /** 运营商配置工作区内置域 */
 export const CARRIER_ADAPT_DOMAINS: AdaptDomainDef[] = [
   {
+    id: 'carrierconfig-tools',
+    label: 'CarrierConfig配置',
+    icon: 'CC',
+    color: '#0969da',
+    status: 'active',
+    module: 'telephony',
+    relatedSkills: ['carrierconfig-tools', 'jira-ops'],
+    interactionMode: true,
+    fields: [
+      {
+        name: 'description',
+        label: '描述',
+        type: 'textarea',
+        required: true,
+        placeholder: 'Jira 单号/链接、运营商、mccmnc、变更 key、期望值、项目/平台信息等',
+      },
+    ],
+  },
+  {
     id: 'apn-config',
     label: 'APN配置',
     icon: 'APN',

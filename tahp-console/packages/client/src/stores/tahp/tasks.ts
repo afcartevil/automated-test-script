@@ -35,6 +35,7 @@ export const useTahpTasksStore = defineStore('tahp-tasks', () => {
       'task.skill_use', 'task.file_change', 'task.plan', 'task.tool_completed',
       'task.audit_completed', 'task.skill_config_complete',
       'task.approval_requested', 'task.approval_resolved',
+      'task.user_input_requested', 'task.user_input_submitted',
     ]
     events.forEach(e => s.on(e, handler))
     socketBound = true

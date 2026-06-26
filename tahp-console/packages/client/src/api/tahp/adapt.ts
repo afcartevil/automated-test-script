@@ -42,10 +42,36 @@ export interface AdaptAgentRunRequest {
   form_data: Record<string, string>
   form_fields?: AdaptAgentFormFieldMeta[]
   user_notes?: string
+  interaction_mode?: boolean
 }
 
 export function startAdaptAgentRun(req: AdaptAgentRunRequest): Promise<{ task_id: string; status: string; mode: string }> {
   return tahpPost<{ task_id: string; status: string; mode: string }>('/api/tahp/adapt/agent-run', req)
+}
+
+export function submitAdaptUserInput(
+  taskId: string,
+  payload: { request_id: string; values: Record<string, string> },
+): Promise<{ request_id: string }> {
+  return tahpPost(`/api/tahp/adapt/agent-run/${encodeURIComponent(taskId)}/user-input`, payload)
+}
+
+export function continueAdaptAgentRun(
+  taskId: string,
+  message: string,
+): Promise<{ ok: boolean }> {
+  return tahpPost(`/api/tahp/adapt/agent-run/${encodeURIComponent(taskId)}/continue`, { message })
+}
+
+export function respondAdaptApproval(
+  taskId: string,
+  payload: { approval_id: string; choice: string },
+): Promise<{ approval_id: string; choice: string }> {
+  return tahpPost(`/api/tahp/adapt/agent-run/${encodeURIComponent(taskId)}/approval`, payload)
+}
+
+export function completeAdaptAgentRun(taskId: string): Promise<{ ok: boolean }> {
+  return tahpPost(`/api/tahp/adapt/agent-run/${encodeURIComponent(taskId)}/complete`)
 }
 
 export interface AdaptAgentPromptPreview {

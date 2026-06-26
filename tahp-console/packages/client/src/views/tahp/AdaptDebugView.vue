@@ -3,6 +3,8 @@ import { ref, computed, reactive, watch, nextTick, onMounted } from 'vue'
 import { NButton, NSelect, NInput, NProgress, NTag, NSpin, NModal, NTabs, NTabPane, NForm, NFormItem, NSwitch, useMessage } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
+import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
+import type { ContinueChatPrompt } from '@/components/tahp/BugAnalysisInteractionModal.vue'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPill from '@/components/layout/EaPill.vue'
@@ -10,7 +12,7 @@ import { useModelProviderReadiness } from '@/composables/useModelProviderReadine
 import { useTahpTasksStore } from '@/stores/tahp/tasks'
 import type { TahpModule } from '@/constants/tahp-modules'
 import { fetchDynamicDomains } from '@/api/tahp/skills'
-import { startAdaptAgentRun, previewAdaptAgentPrompts } from '@/api/tahp/adapt'
+import { startAdaptAgentRun, previewAdaptAgentPrompts, submitAdaptUserInput, continueAdaptAgentRun, respondAdaptApproval, completeAdaptAgentRun } from '@/api/tahp/adapt'
 import { fetchSkills, type SkillInfo } from '@/api/hermes/skills'
 import {
   fetchAdaptLayouts,
@@ -54,6 +56,34 @@ interface DomainDef {
   status: 'active' | 'done' | 'pending' | 'warn'
   fields: FieldDef[]
   relatedSkills: string[]
+  interactionMode?: boolean
+}
+
+interface AdaptApprovalRequest {
+  approval_id: string
+  command: string
+  description: string
+  choices: string[]
+  timeout_ms: number
+  deadline_at: number
+}
+
+interface AdaptUserInputRequest {
+  request_id: string
+  title: string
+  message?: string
+  fields: Array<{
+    name: string
+    label: string
+    type?: string
+    required?: boolean
+    placeholder?: string
+    hint?: string
+    default?: string
+  }>
+  timeout_sec: number
+  deadline_at: number
+  persist_key?: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -760,6 +790,8 @@ const executionSteps = computed((): AdaptExecStep[] => {
 })
 
 const agentRunError = computed(() => {
+  const s = taskStatus.value.toUpperCase()
+  if (s !== 'FAILED') return ''
   const failed = [...stream.value].reverse().find(e => e.type === 'task.failed')
   if (failed) return String(failed.payload?.message || failed.payload?.error || '')
   return ''
@@ -806,8 +838,184 @@ const statusTagType = computed<'info' | 'success' | 'error' | 'warning'>(() => {
   if (s === 'COMPLETED') return 'success'
   if (s === 'FAILED')    return 'error'
   if (s === 'STARTING')  return 'warning'
+  if (s === 'WAITING_USER' || s === 'WAITING_USER_INPUT') return 'warning'
   return 'info'
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 人机协同弹窗（CarrierConfig 等交互式域）
+// ─────────────────────────────────────────────────────────────────────────────
+const pendingApproval = ref<AdaptApprovalRequest | null>(null)
+const pendingUserInput = ref<AdaptUserInputRequest | null>(null)
+const canContinueChat = ref(false)
+const showContinueChatModal = ref(false)
+const completeTaskLoading = ref(false)
+const interactionSubmitting = ref(false)
+const handledInteractionTs = ref<Record<string, number>>({})
+
+const CONTINUE_CHAT_CONFIG: ContinueChatPrompt = {
+  title: '补充信息继续分析',
+  message: '请输入补充说明，Agent 将根据您的输入继续执行。',
+}
+
+const isInteractiveDomain = computed(() => !!activeDomain.value.interactionMode)
+
+const canCompleteInteractiveTask = computed(() => {
+  if (!isInteractiveDomain.value || !launchedTaskId.value) return false
+  const s = taskStatus.value.toUpperCase()
+  return s !== '' && s !== 'COMPLETED' && s !== 'FAILED' && s !== 'STARTING'
+})
+
+const canViewAdaptReport = computed(() => {
+  if (!launchedTaskId.value) return false
+  return taskStatus.value.toUpperCase() === 'COMPLETED'
+})
+
+function openAdaptReport() {
+  const tid = launchedTaskId.value
+  if (!tid) return
+  router.push({ name: 'tahp.reports', query: { task_id: tid } })
+}
+
+function resetInteractionState() {
+  pendingApproval.value = null
+  pendingUserInput.value = null
+  canContinueChat.value = false
+  showContinueChatModal.value = false
+  handledInteractionTs.value = {}
+}
+
+function openContinueChatModal() {
+  if (!canContinueChat.value) return
+  showContinueChatModal.value = true
+}
+
+function onContinueChatDismiss() {
+  showContinueChatModal.value = false
+}
+
+watch(stream, () => {
+  if (!isInteractiveDomain.value || !launchedTaskId.value) return
+  for (const ev of stream.value) {
+    const key = `${ev.type}:${ev.ts}`
+    if (handledInteractionTs.value[key]) continue
+    handledInteractionTs.value[key] = 1
+
+    if (ev.type === 'task.approval_requested' && !pendingApproval.value) {
+      const p = ev.payload
+      pendingApproval.value = {
+        approval_id: String(p.approval_id || ''),
+        command: String(p.command || ''),
+        description: String(p.description || ''),
+        choices: Array.isArray(p.choices) ? p.choices as string[] : ['once', 'deny'],
+        timeout_ms: Number(p.timeout_ms) || 60000,
+        deadline_at: Number(p.deadline_at) || Date.now() + 60000,
+      }
+      showContinueChatModal.value = false
+    }
+    if (ev.type === 'task.approval_resolved') {
+      pendingApproval.value = null
+    }
+    if (ev.type === 'task.user_input_requested') {
+      const requestId = String(ev.payload?.request_id || '')
+      const fields = Array.isArray(ev.payload?.fields) ? ev.payload.fields as AdaptUserInputRequest['fields'] : []
+      if (!requestId || !fields.length) continue
+      pendingUserInput.value = {
+        request_id: requestId,
+        title: String(ev.payload?.title || '请确认/补充信息'),
+        message: typeof ev.payload?.message === 'string' ? ev.payload.message : undefined,
+        fields,
+        timeout_sec: Number(ev.payload?.timeout_sec) || 300,
+        deadline_at: Number(ev.payload?.deadline_at) || Date.now() + 300000,
+        persist_key: typeof ev.payload?.persist_key === 'string' ? ev.payload.persist_key : undefined,
+      }
+      showContinueChatModal.value = false
+      taskStatus.value = 'WAITING_USER_INPUT'
+    }
+    if (ev.type === 'task.user_input_submitted') {
+      pendingUserInput.value = null
+      taskStatus.value = 'EXECUTING'
+    }
+    if (ev.type === 'task.phase') {
+      const phase = String(ev.payload?.phase || '')
+      if (phase === 'WAITING_USER' && !pendingUserInput.value && !pendingApproval.value) {
+        canContinueChat.value = true
+        showContinueChatModal.value = false
+        taskStatus.value = 'WAITING_USER'
+      }
+      if (phase === 'EXECUTING') {
+        canContinueChat.value = false
+        showContinueChatModal.value = false
+      }
+    }
+    if (ev.type === 'task.completed' || ev.type === 'task.failed') {
+      resetInteractionState()
+    }
+  }
+}, { deep: true })
+
+async function onAdaptApproval(choice: string) {
+  const tid = launchedTaskId.value
+  const ap = pendingApproval.value
+  if (!tid || !ap) return
+  interactionSubmitting.value = true
+  try {
+    await respondAdaptApproval(tid, { approval_id: ap.approval_id, choice })
+    pendingApproval.value = null
+  } catch (err) {
+    message.error((err as Error).message || '审批提交失败')
+  } finally {
+    interactionSubmitting.value = false
+  }
+}
+
+async function onAdaptUserInput(values: Record<string, string>) {
+  const tid = launchedTaskId.value
+  const ui = pendingUserInput.value
+  if (!tid || !ui) return
+  interactionSubmitting.value = true
+  try {
+    await submitAdaptUserInput(tid, { request_id: ui.request_id, values })
+    pendingUserInput.value = null
+  } catch (err) {
+    message.error((err as Error).message || '提交失败')
+  } finally {
+    interactionSubmitting.value = false
+  }
+}
+
+async function onAdaptContinueChat(text: string) {
+  const tid = launchedTaskId.value
+  if (!tid || !text.trim()) return
+  interactionSubmitting.value = true
+  try {
+    await continueAdaptAgentRun(tid, text.trim())
+    showContinueChatModal.value = false
+    canContinueChat.value = false
+    taskStatus.value = 'EXECUTING'
+  } catch (err) {
+    message.error((err as Error).message || '发送失败')
+  } finally {
+    interactionSubmitting.value = false
+  }
+}
+
+async function onCompleteAdaptTask() {
+  const tid = launchedTaskId.value
+  if (!tid) return
+  completeTaskLoading.value = true
+  try {
+    await completeAdaptAgentRun(tid)
+    showContinueChatModal.value = false
+    canContinueChat.value = false
+    taskStatus.value = 'COMPLETED'
+    message.success('任务已结束，报告已生成')
+  } catch (err) {
+    message.error((err as Error).message || '结束任务失败')
+  } finally {
+    completeTaskLoading.value = false
+  }
+}
 
 // 监听事件流 → 更新状态 + 自动滚动到底部
 watch(stream, async (evs) => {
@@ -923,6 +1131,7 @@ function buildAgentRunPayload() {
     form_data: { ...currentFormData.value },
     form_fields: formFieldsForAgent.value,
     user_notes: currentFormData.value.user_notes || undefined,
+    interaction_mode: d.interactionMode === true,
   }
 }
 
@@ -997,6 +1206,7 @@ async function launchAgentAdapt() {
   monitorMode.value = 'agent'
   taskStatus.value = 'starting'
   launchedTaskId.value = null
+  resetInteractionState()
   showMonitor.value = true
   startTime.value = Date.now()
 
@@ -1393,7 +1603,6 @@ function openSkill(skillName: string) {
               <span v-if="isRunning" class="ea-dot-live" />
               {{ taskStatus || 'starting' }}
             </EaPill>
-            <NButton size="small" @click="router.push({ name: 'tahp.reports' })">报告</NButton>
           </div>
         </div>
 
@@ -1482,6 +1691,35 @@ function openSkill(skillName: string) {
               <NSpin size="small" />
               <span>大模型思考中...</span>
             </div>
+            <div
+              v-if="isInteractiveDomain && (canContinueChat || canCompleteInteractiveTask || canViewAdaptReport)"
+              class="adapt-output-actions"
+            >
+              <NButton
+                v-if="canContinueChat"
+                type="primary"
+                secondary
+                @click="openContinueChatModal"
+              >
+                补充信息继续分析
+              </NButton>
+              <NButton
+                v-if="canCompleteInteractiveTask"
+                type="warning"
+                secondary
+                :loading="completeTaskLoading"
+                @click="onCompleteAdaptTask"
+              >
+                结束任务（生成报告）
+              </NButton>
+              <NButton
+                v-if="canViewAdaptReport"
+                type="primary"
+                @click="openAdaptReport"
+              >
+                查看报告
+              </NButton>
+            </div>
           </div>
 
           <!-- Skill / 文件（右侧） -->
@@ -1513,7 +1751,7 @@ function openSkill(skillName: string) {
         <div v-if="taskStatus === 'COMPLETED'" class="result-banner result-ok">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
           适配任务已完成
-          <NButton size="small" type="primary" style="margin-left:12px;" @click="router.push({ name: 'tahp.reports', query: launchedTaskId ? { task_id: launchedTaskId } : {} })">查看报告</NButton>
+          <NButton size="small" type="primary" style="margin-left:12px;" @click="openAdaptReport">查看报告</NButton>
           <NButton size="small" style="margin-left:6px;" @click="backToForm">返回表单</NButton>
         </div>
         <div v-else-if="taskStatus === 'FAILED'" class="result-banner result-err">
@@ -1645,6 +1883,19 @@ function openSkill(skillName: string) {
         </template>
       </div>
     </NModal>
+
+    <BugAnalysisInteractionModal
+      v-if="isInteractiveDomain"
+      :approval="pendingApproval"
+      :user-input="pendingUserInput"
+      :continue-chat="canContinueChat ? CONTINUE_CHAT_CONFIG : null"
+      :show-continue-chat="showContinueChatModal"
+      :submitting="interactionSubmitting"
+      @approval="onAdaptApproval"
+      @user-input="onAdaptUserInput"
+      @continue-chat="onAdaptContinueChat"
+      @continue-chat-dismiss="onContinueChatDismiss"
+    />
 
   </div>
 </template>
@@ -1997,19 +2248,28 @@ $adapt-sidebar-gap: 10px;
   min-height: 0;
 
   .ea-mon-output {
-    height: $adapt-output-h;
-    min-height: $adapt-output-h;
+    flex: 1 1 auto;
+    min-height: 280px;
     max-height: $adapt-output-h;
+    height: auto;
     overflow-y: auto;
     margin: 0;
   }
 
   .lrp-waiting {
-    height: $adapt-output-h;
-    min-height: $adapt-output-h;
+    flex: 1 1 auto;
+    min-height: 280px;
     max-height: $adapt-output-h;
-    flex: none;
   }
+}
+
+.adapt-output-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding-top: 4px;
 }
 
 .adapt-output-head {
