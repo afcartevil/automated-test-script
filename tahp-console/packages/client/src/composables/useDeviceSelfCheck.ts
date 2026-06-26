@@ -133,7 +133,9 @@ const enableTcardUpdate = ref(false)
 const tcardUpdatePath = ref('')
 
 // 视图模式
-const viewMode = ref<'list' | 'customTest' | 'caseCatalog'>('list')
+const viewMode = ref<'list' | 'customTest'>('list')
+const catalogPanelExpanded = ref(false)
+const deviceDetailExpanded = ref(false)
 
 // 自定义测试 / 概览用例目录
 const caseCatalogGroups = ref<CaseCatalogGroup[]>([])
@@ -211,23 +213,6 @@ const launchStore = useDeviceSelfCheckLaunchStore()
   function handleNewTask() {
     activeTab.value = 'devices'
     openCustomTest()
-  }
-
-  function handleChecklistStr4(_domain: 'driver' | 'comm') {
-    activeTab.value = 'devices'
-    selectedTestType.value = 'str4'
-  }
-
-  function handleChecklistPower() {
-    const hint = tpowerStatus.value?.connected
-      ? 'T-Power 已连接，请在设备执行中选择功耗相关用例'
-      : (tpowerStatus.value?.message || '请先连接 T-Power 硬件并配置 ADB 序列号')
-    message.info(hint)
-    activeTab.value = 'devices'
-  }
-
-  function handleChecklistStress() {
-    activeTab.value = 'planning'
   }
 
   const stats = computed(() => ({
@@ -357,6 +342,7 @@ function applyFollowCurrentCase(session?: { testType: string; selectedCases?: st
 async function selectDevice(deviceId: string) {
   try {
     selectedDeviceId.value = deviceId
+    deviceDetailExpanded.value = true
     const detail = await getDeviceDetail(deviceId)
     selectedDevice.value = detail
     selectedCase.value = null
@@ -372,12 +358,16 @@ async function selectDevice(deviceId: string) {
   }
 }
 
-function backFromCaseCatalog() {
-  viewMode.value = 'list'
+function collapseCaseCatalog() {
+  catalogPanelExpanded.value = false
   selectedCatalogTestType.value = null
   catalogDetailItems.value = []
   selectedCatalogCaseKey.value = null
   expandedCatalogDetailModules.value = new Set()
+}
+
+function collapseDeviceDetail() {
+  deviceDetailExpanded.value = false
 }
 
 function catalogDetailModuleKey(module: string): string {
@@ -400,7 +390,8 @@ function toggleCatalogDetailModule(module: string) {
 
 async function openCaseCatalog(testType: string) {
   selectedCatalogTestType.value = testType
-  viewMode.value = 'caseCatalog'
+  catalogPanelExpanded.value = true
+  viewMode.value = 'list'
   selectedCatalogCaseKey.value = null
   catalogDetailLoading.value = true
   error.value = null
@@ -414,8 +405,12 @@ async function openCaseCatalog(testType: string) {
       [...new Set(detail.map(item => `${testType}/${item.module}`))]
     )
     catalogTypeSettings.value = {
-      autoRetestEnabled: settingsData.autoRetestEnabled?.[testType] ?? true,
-      autoRetestCount: settingsData.autoRetestCount?.[testType] ?? 1,
+      autoRetestEnabled: testType === 'monkey'
+        ? false
+        : (settingsData.autoRetestEnabled?.[testType] ?? true),
+      autoRetestCount: testType === 'monkey'
+        ? 0
+        : (settingsData.autoRetestCount?.[testType] ?? 1),
       monkeyDuration: settingsData.monkeyDuration || '7d',
     }
     if (detail.length > 0) {
@@ -438,9 +433,24 @@ async function saveCatalogTypeSettings() {
   try {
     const current = await getSettings()
     const testType = selectedCatalogTestType.value
+    const monkeyDuration = catalogTypeSettings.value.monkeyDuration?.trim() || '7d'
+
+    if (testType === 'monkey') {
+      const autoRetestEnabled = { ...(current.autoRetestEnabled || {}) }
+      const autoRetestCount = { ...(current.autoRetestCount || {}) }
+      delete autoRetestEnabled.monkey
+      delete autoRetestCount.monkey
+      await updateSettings({
+        ...current,
+        autoRetestEnabled,
+        autoRetestCount,
+        monkeyDuration,
+      })
+      return
+    }
+
     const count = Math.max(0, Math.min(10, catalogTypeSettings.value.autoRetestCount || 0))
     catalogTypeSettings.value.autoRetestCount = count
-    const monkeyDuration = catalogTypeSettings.value.monkeyDuration?.trim() || '7d'
     await updateSettings({
       ...current,
       autoRetestEnabled: {
@@ -1027,6 +1037,10 @@ function openCustomTest() {
   loadCaseCatalogs()
 }
 
+function closeCustomTest() {
+  viewMode.value = 'list'
+}
+
 function applyPendingGerritLaunch() {
   const keys = launchStore.consumePendingCustomCases()
   if (!keys.length) return
@@ -1034,7 +1048,6 @@ function applyPendingGerritLaunch() {
   gerritPreselectCount.value = keys.length
   activeTab.value = 'devices'
   openCustomTest()
-  window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 watch(
@@ -1157,8 +1170,8 @@ const pageTitle = computed(() => {
     return selectedDevice.value?.device.deviceName || '设备详情'
   }
   if (viewMode.value === 'customTest') return '自定义测试'
-  if (viewMode.value === 'caseCatalog') {
-    return selectedCatalogGroup.value?.label || '用例详情'
+  if (catalogPanelExpanded.value && selectedCatalogGroup.value) {
+    return selectedCatalogGroup.value.label
   }
   return 'AI 自检'
 })
@@ -1337,9 +1350,6 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     loadTPowerStatus,
     handleSyncNodes,
     handleNewTask,
-    handleChecklistStr4,
-    handleChecklistPower,
-    handleChecklistStress,
     AUTO_RETEST_TOOLTIP,
     devices,
     selectedDeviceId,
@@ -1369,6 +1379,8 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     enableTcardUpdate,
     tcardUpdatePath,
     viewMode,
+    catalogPanelExpanded,
+    deviceDetailExpanded,
     caseCatalogGroups,
     selectedCatalogTestType,
     catalogDetailItems,
@@ -1418,7 +1430,8 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     loadDevices,
     doRefreshDevices,
     selectDevice,
-    backFromCaseCatalog,
+    collapseCaseCatalog,
+    collapseDeviceDetail,
     isCatalogDetailModuleExpanded,
     toggleCatalogDetailModule,
     openCaseCatalog,
@@ -1445,6 +1458,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     toggleAuxDevice,
     handleStartCustomTest,
     openCustomTest,
+    closeCustomTest,
     getTestTypeLabel,
     getStatusColor,
     getStatusIcon,

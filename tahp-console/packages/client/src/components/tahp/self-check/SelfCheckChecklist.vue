@@ -1,98 +1,70 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { CaseCatalogGroup } from '@/api/tahp/device-self-check'
 import EaCard from '@/components/layout/EaCard.vue'
+import {
+  formatCatalogAutomation,
+  formatCatalogModuleScope,
+  formatCatalogPrereq,
+} from './self-check-utils'
 
 const props = withDefaults(
   defineProps<{
     compact?: boolean
-    tpowerConnected?: boolean
-    tpowerMessage?: string
+    groups?: CaseCatalogGroup[]
+    activeTestType?: string | null
   }>(),
   {
     compact: false,
-    tpowerConnected: false,
-    tpowerMessage: '',
+    groups: () => [],
+    activeTestType: null,
   },
 )
 
 const emit = defineEmits<{
-  startStr4: [domain: 'driver' | 'comm']
-  startPower: []
-  startStress: [type: 'gms' | 'stability' | 'custom']
   openCatalog: [testType: string]
 }>()
 
-const cards = computed(() => [
-  {
-    key: 'driver',
-    title: '驱动 STR4 / 转测 Checklist',
-    scope: '驱动摸底、转测 checklist 自检',
-    automation: '脚本自动化 + 半自动化',
-    prereq: 'ADB 连接测试机',
-    lastResult: '—',
-    action: '启动驱动自检',
-    tone: 'ea-t-indigo',
-    handler: () => emit('startStr4', 'driver'),
-  },
-  {
-    key: 'comm',
-    title: '通信 STR4 / 转测 Checklist',
-    scope: '通信框架摸底、转测 checklist',
-    automation: '脚本自动化 + 半自动化',
-    prereq: '双卡 SIM + 辅测机',
-    lastResult: '—',
-    action: '启动通信自检',
-    tone: 'ea-t-sky',
-    handler: () => emit('startStr4', 'comm'),
-  },
-  {
-    key: 'power',
-    title: '功耗 T-Power 自动化测试',
-    scope: 'USB 连接 T-Power 硬件，ADB 下发功耗测试命令',
-    automation: '全自动（需硬件）',
-    prereq: props.tpowerConnected ? 'T-Power 已连接' : (props.tpowerMessage || 'T-Power 未连接'),
-    lastResult: props.tpowerConnected ? '硬件就绪' : '未就绪',
-    action: '配置功耗测试',
-    tone: 'ea-t-emerald',
-    handler: () => emit('startPower'),
-  },
-  {
-    key: 'stress',
-    title: 'GMS / 稳定性 / 特定项压测',
-    scope: '按项目节点提前自动排期执行',
-    automation: '全自动（可设提前天数）',
-    prereq: '项目节点已同步',
-    lastResult: '—',
-    action: '查看压测计划',
-    tone: 'ea-t-amber',
-    handler: () => emit('startStress', 'gms'),
-  },
-] as const)
+const CASE_TYPES = ['str4', 'week', 'monkey'] as const
+
+const catalogCards = computed(() => {
+  const byType = new Map(props.groups.map(g => [g.testType, g]))
+  return CASE_TYPES.map(testType => byType.get(testType)).filter(Boolean) as CaseCatalogGroup[]
+})
+
+const toneByType: Record<string, string> = {
+  str4: 'ea-t-indigo',
+  week: 'ea-t-sky',
+  monkey: 'ea-t-amber',
+}
+
+function openCatalog(testType: string) {
+  emit('openCatalog', testType)
+}
 </script>
 
 <template>
   <div class="checklist-root" :class="{ compact }">
-    <div v-if="!compact" class="checklist-head">
-      <h3>Checklist 自检能力</h3>
-      <p class="ea-muted">驱动、通信 STR4 摸底与转测 checklist；功耗接 T-Power；压测按项目节点自动跑</p>
-    </div>
     <div class="checklist-grid">
       <EaCard
-        v-for="card in cards"
-        :key="card.key"
-        class="checklist-card"
-        :class="card.tone"
+        v-for="group in catalogCards"
+        :key="group.testType"
+        class="checklist-card checklist-card-clickable"
+        :class="[
+          toneByType[group.testType] || '',
+          { 'is-active': activeTestType === group.testType },
+        ]"
+        role="button"
+        tabindex="0"
+        @click="openCatalog(group.testType)"
+        @keydown.enter="openCatalog(group.testType)"
       >
-        <h4>{{ card.title }}</h4>
+        <h4>{{ group.label }}</h4>
         <dl class="checklist-meta">
-          <div><dt>覆盖</dt><dd>{{ card.scope }}</dd></div>
-          <div><dt>自动化</dt><dd>{{ card.automation }}</dd></div>
-          <div><dt>前置</dt><dd>{{ card.prereq }}</dd></div>
-          <div><dt>最近</dt><dd>{{ card.lastResult }}</dd></div>
+          <div><dt>覆盖</dt><dd>{{ formatCatalogModuleScope(group) }}</dd></div>
+          <div><dt>自动化</dt><dd>{{ formatCatalogAutomation(group) }}</dd></div>
+          <div><dt>前置</dt><dd>{{ formatCatalogPrereq(group) }}</dd></div>
         </dl>
-        <button type="button" class="ea-btn-primary ea-btn-sm" @click="card.handler()">
-          {{ card.action }}
-        </button>
       </EaCard>
     </div>
   </div>
@@ -103,28 +75,13 @@ const cards = computed(() => [
   margin-bottom: 16px;
 
   &.compact .checklist-grid {
-    grid-template-columns: repeat(4, 1fr);
-  }
-}
-
-.checklist-head {
-  margin-bottom: 12px;
-
-  h3 {
-    margin: 0 0 4px;
-    font-size: 15px;
-    font-weight: 700;
-  }
-
-  p {
-    margin: 0;
-    font-size: 13px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 .checklist-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -134,7 +91,6 @@ const cards = computed(() => [
 
   &.ea-t-indigo { border-top-color: #6366f1; }
   &.ea-t-sky { border-top-color: #0ea5e9; }
-  &.ea-t-emerald { border-top-color: #10b981; }
   &.ea-t-amber { border-top-color: #f59e0b; }
 
   h4 {
@@ -145,8 +101,26 @@ const cards = computed(() => [
   }
 }
 
+.checklist-card-clickable {
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+
+  &:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+
+  &.is-active {
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
 .checklist-meta {
-  margin: 0 0 12px;
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -166,13 +140,6 @@ const cards = computed(() => [
   dd {
     margin: 0;
     line-height: 1.4;
-  }
-}
-
-@media (max-width: 1100px) {
-  .checklist-root.compact .checklist-grid,
-  .checklist-grid {
-    grid-template-columns: 1fr 1fr;
   }
 }
 

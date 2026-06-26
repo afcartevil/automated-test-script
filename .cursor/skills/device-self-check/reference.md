@@ -10,7 +10,7 @@ Base：`/api/tahp/device-self-check`
 | POST | `/devices/refresh` | ADB 刷新 |
 | GET | `/devices/:deviceId` | 设备 + session |
 | POST | `/devices/:deviceId/role` | 设置角色 |
-| POST | `/devices/:deviceId/test/start` | `{ testType: 'str4' \| 'week' }` |
+| POST | `/devices/:deviceId/test/start` | `{ testType, flash? }`；`flash` 含刷机包路径等 |
 | POST | `/devices/:deviceId/test/custom-start` | `{ selectedCases[], customAuxDeviceIds[] }` |
 | POST | `/devices/:deviceId/test/continue` | 前置条件满足后继续 |
 | POST | `/devices/:deviceId/test/end` | 结束/释放 |
@@ -18,9 +18,17 @@ Base：`/api/tahp/device-self-check`
 | POST | `/devices/:deviceId/case/retest` | 单用例复测 |
 | GET | `/module-conditions` | 模块配置全集 |
 | GET | `/case-catalogs` | 用例大类（分组） |
+| GET | `/case-catalogs/:testType/detail` | 用例详情（含 `case_info.json` 手动步骤） |
 | POST | `/manual-decision` | `{ decisionId, decision }` |
 | GET | `/devices/:deviceId/pending-manual-decision` | 待处理人工确认 |
-| GET/POST | `/settings` | 自动化脚本开关 |
+| GET/POST | `/settings` | `autoRetestEnabled` / `autoRetestCount` 等 |
+| POST | `/flash/pick-path` | 本地选择刷机包路径 |
+| GET | `/pipeline` | 流水线阶段状态 |
+| GET | `/reports` | 自检报告列表（`sinceHours` / `pendingOnly`） |
+| GET | `/reports/:reportId` | 报告详情 |
+| POST | `/reports/:reportId/review` | 报告审阅（`reviewed` / `retest` / `pending`） |
+| GET | `/tpower/status` | T-Power 连接探测 |
+| GET/POST | `/tpower/config` | T-Power 配置 |
 | GET | `/events` | SSE 流 |
 
 `selectedCases` 元素格式：`{testType}/{module}/{caseIndex}`，例：`str4/tdd/5`。
@@ -126,26 +134,49 @@ self-check/
 
 ---
 
-## 前端状态变量速查
+## 前端状态变量速查（`useDeviceSelfCheck.ts`）
 
 | 变量 | 用途 |
 |------|------|
-| `devices` | 概览设备列表 |
-| `selectedDevice` | 详情 `{ device, session }` |
-| `moduleConditions` | 设置页 + 用例树数据源 |
-| `caseCatalogGroups` | 概览大类 + 自定义测试目录 |
-| `expandedOverviewTypes` | 概览大类展开 |
+| `activeTab` | 顶层 Tab：`overview` / `planning` / `devices` / `gerrit` / `review` |
+| `viewMode` | 设备执行内层：`list` / `customTest` |
+| `catalogPanelExpanded` | 用例大类展开面板是否显示 |
+| `deviceDetailExpanded` | 设备详情面板是否展开（列表保持可见） |
+| `devices` | 设备列表 |
+| `selectedDeviceId` / `selectedDevice` | 详情 `{ device, session }` |
+| `moduleConditions` | 用例树数据源 |
+| `caseCatalogGroups` | 顶部用例卡片 + 自定义测试目录 |
+| `catalogDetailItems` / `selectedCatalogItem` | 用例大类详情页数据 |
+| `catalogTypeSettings` | 用例详情页自动复测（`autoRetestEnabled` / `autoRetestCount`） |
+| `expandedCatalogDetailModules` / `selectedCatalogCaseKey` | 用例详情页展开/选中 |
 | `expandedCatalogTypes` / `expandedCatalogModules` | 自定义测试展开 |
 | `selectedCases` | 自定义测试勾选 |
 | `customTestDutDeviceId` / `customTestAuxDeviceIds` | 自定义 DUT/辅测 |
 | `selectedTestType` | 详情页 str4/week 选择 |
+| `enableFlash` / `flashPath` / `flashStageVersion` | 刷机开关与参数 |
 | `manualDecision` | 人工确认弹窗 |
+| `pipelineStatus` / `reportSummaries` | 流水线与报告摘要 |
 | `eventSource` | SSE 连接 |
 
 ---
 
-## 未实现 / 占位功能
+## 设置 `AutoTestSettings`
 
-- 刷机、T 卡升级（详情页 checkbox + 路径输入，无后端）
-- 概览/详情「打开结果」按钮（部分仅 UI，需接 `resultDir` 或报告下载）
-- `ai自检设计文档.md` 中部分设置项可能与当前 `AutoTestSettings` 不完全一致，以代码为准
+```typescript
+{
+  autoTestEnabled: Record<string, boolean>   // 遗留字段，无独立设置页
+  autoTestPath: Record<string, string>
+  autoRetestEnabled?: Record<string, boolean>  // 按 testType
+  autoRetestCount?: Record<string, number>
+}
+```
+
+持久化：`tahp-console/packages/server/src/services/tahp/self-check/settings.json`（运行时生成）。
+
+---
+
+## 未实现 / 遗留
+
+- T 卡升级（若 UI 仍有 checkbox，以代码为准）
+- `autoTestEnabled` / `autoTestPath` 无独立设置页，后端未用于调度
+- 设计文档 `ai自检*.md` 可能与 V0.8 不完全一致，以代码为准

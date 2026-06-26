@@ -29,11 +29,11 @@ const {
   handleSyncNodes,
   handleNewTask,
   doRefreshDevices,
-  handleChecklistStr4,
-  handleChecklistPower,
-  handleChecklistStress,
+  caseCatalogGroups,
+  openCaseCatalog,
+  catalogPanelExpanded,
+  selectedCatalogTestType,
   selectDevice,
-  tpowerStatus,
 } = ctx
 
 function goDevicesAndSelect(deviceId: string) {
@@ -79,11 +79,9 @@ function goDevicesAndSelect(deviceId: string) {
       <template v-else-if="activeTab === 'devices'">
         <SelfCheckChecklist
           compact
-          :tpower-connected="tpowerStatus?.connected ?? false"
-          :tpower-message="tpowerStatus?.message"
-          @start-str4="handleChecklistStr4"
-          @start-power="handleChecklistPower"
-          @start-stress="handleChecklistStress"
+          :groups="caseCatalogGroups"
+          :active-test-type="catalogPanelExpanded ? selectedCatalogTestType : null"
+          @open-catalog="openCaseCatalog"
         />
         <SelfCheckDeviceRun />
       </template>
