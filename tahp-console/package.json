@@ -29,6 +29,7 @@
     "build": "vue-tsc -b && vite build && tsc --noEmit -p packages/server/tsconfig.json && node scripts/build-server.mjs",
     "preview": "NODE_ENV=production vite preview",
     "setup": "node scripts/setup-tahp.mjs",
+    "preflight": "node scripts/preflight-env.mjs",
     "setup:agent": "node scripts/ensure-hermes-agent.mjs",
     "setup:hermes-wizard": "node scripts/ensure-hermes-agent.mjs --wizard-only",
     "predev": "node scripts/ensure-hermes-agent.mjs",

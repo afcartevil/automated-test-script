@@ -2,6 +2,31 @@
 chcp 65001 >nul
 cd /d "%~dp0tahp-console"
 
+echo.
+echo [EasyAdapter] 检查运行环境（Node.js + Python）...
+echo.
+
+where node >nul 2>&1
+if errorlevel 1 (
+    echo [EasyAdapter] 未检测到 Node.js，无法启动。
+    echo   需要 Node.js 22.5 或更高版本 ^(内置 SQLite 依赖 node:sqlite^)
+    echo   下载: https://nodejs.org/
+    echo   安装后请关闭并重新打开终端，再双击本脚本。
+    echo.
+    pause
+    exit /b 1
+)
+
+node scripts/preflight-env.mjs
+if errorlevel 1 (
+    echo.
+    pause
+    exit /b 1
+)
+
+echo [EasyAdapter] 运行环境检查通过
+echo.
+
 if not exist node_modules (
     echo [EasyAdapter] 首次运行，正在安装 npm 依赖...
 ) else (

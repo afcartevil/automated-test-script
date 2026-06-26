@@ -5,6 +5,7 @@ import { NConfigProvider, NMessageProvider, NDialogProvider, NNotificationProvid
 import { useI18n } from 'vue-i18n'
 import { getThemeOverrides } from '@/styles/theme'
 import EaShell from '@/components/layout/EaShell.vue'
+import SkillConfigBanner from '@/components/tahp/SkillConfigBanner.vue'
 import { useKeyboard } from '@/composables/useKeyboard'
 import { useAppStore } from '@/stores/hermes/app'
 import SessionSearchModal from '@/components/hermes/chat/SessionSearchModal.vue'
@@ -47,9 +48,10 @@ useKeyboard()
     <NMessageProvider>
       <NDialogProvider>
         <NNotificationProvider>
-          <div v-if="nodeVersionLow && ready" class="node-warning-bar">
+          <div v-if="nodeVersionLow && ready && !isLoginPage" class="global-warning-bar">
             {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
           </div>
+          <SkillConfigBanner v-if="ready && !isLoginPage" />
           <template v-if="ready">
             <router-view v-if="isLoginPage" />
             <EaShell v-else>
@@ -64,7 +66,7 @@ useKeyboard()
 </template>
 
 <style scoped lang="scss">
-.node-warning-bar {
+.global-warning-bar {
   background: var(--warn-soft);
   color: var(--warn);
   text-align: center;
