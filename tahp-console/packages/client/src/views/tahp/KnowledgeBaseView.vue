@@ -3,7 +3,7 @@ import { ref, onMounted, h, reactive, computed } from 'vue'
 import {
   NForm, NFormItem, NInput, NSelect, NInputNumber,
   NButton, NSpace, NTag, NSpin, NEmpty, NTabs, NTabPane,
-  NDataTable, NModal,
+  NDataTable, NModal, NAlert,
   NDrawer, NDrawerContent, useMessage, useDialog,
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
@@ -17,6 +17,7 @@ import {
   createSkillDraft,
   listSkillDrafts,
   reviewSkillDraft,
+  submitSkillDraftForReview,
   startImportJob,
   subscribeImportProgress,
   saveImportedEntries,
@@ -73,6 +74,8 @@ import {
   // 治理面板
   getGovernance,
   type GovernanceData,
+  // 运行角色（local + 中心已配置 → 隐藏审核入口）
+  getRuntimeMode,
 } from '@/api/tahp/knowledge'
 import { useTahpModulesStore } from '@/stores/tahp/modules'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
@@ -461,6 +464,10 @@ const draftColumns: DataTableColumns<SkillDraft> = [
         draft: '草稿', reviewing: '审核中', approved: '已激活', rejected: '已拒绝',
         deprecated: '已废弃', archived: '已归档',
       }
+      // 中心已配置：已提交中心待审
+      if (centralConfigured.value && ((r as any).submitted_to_central || r.status === 'reviewing')) {
+        return h(NTag, { size: 'small', type: 'info' }, () => '已提交中心待审')
+      }
       const statusType = map[r.status || 'draft'] || 'default'
       const statusLabel = label[r.status || 'draft'] || r.status
       const style = r.status === 'deprecated' ? { '--n-color': '#fff3e022', '--n-text-color': '#e65100', '--n-border': 'none' } : {}
@@ -477,6 +484,19 @@ const draftColumns: DataTableColumns<SkillDraft> = [
         h(NButton, { size: 'tiny', quaternary: true, onClick: () => openSkillPreview(r) }, () => '预览'),
       ]
       const s = r.status || 'draft'
+
+      // 研发本机（中心已配置）：可编辑/删除/提交审核；批准拒绝仅在中心后台
+      if (centralConfigured.value) {
+        if (s === 'draft' || s === 'rejected' || s === 'reviewing') {
+          btns.push(h(NButton, { size: 'tiny', type: 'primary', ghost: true, onClick: () => openSkillEditor(r) }, () => '编辑'))
+        }
+        if (s === 'draft' || s === 'rejected') {
+          btns.push(h(NButton, { size: 'tiny', type: 'success', onClick: () => submitDraftForReview(r) }, () => '提交审核'))
+          btns.push(h(NButton, { size: 'tiny', type: 'error', quaternary: true, onClick: () => confirmDeleteDraft(r) }, () => '删除'))
+        }
+        return h(NSpace, { size: 4, wrap: true }, () => btns)
+      }
+
       if (s === 'draft' || s === 'reviewing') {
         btns.push(h(NButton, { size: 'tiny', type: 'success', onClick: () => openReviewModal(r, 'approve') }, () => '✓ 批准'))
         btns.push(h(NButton, { size: 'tiny', type: 'error', ghost: true, onClick: () => openReviewModal(r, 'reject') }, () => '✗ 拒绝'))
@@ -501,9 +521,22 @@ const draftColumns: DataTableColumns<SkillDraft> = [
 ]
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────
+// 中心已配置时（研发本机），审核集中到中心后台，本地仅展示与提交
+const centralConfigured = ref(false)
+const centralUrl = ref<string | null>(null)
+async function loadRuntimeMode() {
+  try {
+    const mode = await getRuntimeMode()
+    centralConfigured.value = mode.role === 'local' && mode.central_configured
+    centralUrl.value = mode.central_url
+  } catch {
+    centralConfigured.value = false
+  }
+}
+
 onMounted(async () => {
   await modulesStore.refresh()
-  await Promise.all([loadStats(), loadDocuments()])
+  await Promise.all([loadStats(), loadDocuments(), loadRuntimeMode()])
 })
 
 // ─── Data loaders ─────────────────────────────────────────────────────────
@@ -998,6 +1031,18 @@ async function submitCreateDraft() {
     message.error((err as Error).message)
   } finally {
     submittingDraft.value = false
+  }
+}
+
+async function submitDraftForReview(draft: SkillDraft) {
+  if (!draft.id) return
+  try {
+    await submitSkillDraftForReview(draft.id)
+    message.success(centralConfigured.value ? '已提交中心审核' : '已提交审核')
+    await loadDrafts()
+    await loadStats()
+  } catch (err) {
+    message.error((err as Error).message)
   }
 }
 
@@ -2040,35 +2085,33 @@ async function saveSkillDraft() {
 
 async function submitSkillForReview() {
   if (!editingDraft.value?.id) return
-  // 先保存草稿
   await saveSkillDraft()
 
-  // 质量不达标 → 引导式对话框，用户自主决定
+  const proceed = async () => {
+    await submitDraftForReview(editingDraft.value!)
+    showSkillEditor.value = false
+  }
+
   if (!editorQuality.value?.pass_gate) {
     const score = editorQuality.value?.total ?? 0
     const reasons = editorQuality.value?.blocking_reasons ?? []
     dialog.warning({
       title: `Skill 质量评分偏低（${score}/100）`,
-      content: `当前 Skill 尚有以下待补充项：\n${reasons.map(r => `• ${r}`).join('\n')}\n\n建议先完善后再发布，以确保 AI 执行任务时效果更好。`,
+      content: `当前 Skill 尚有以下待补充项：\n${reasons.map(r => `• ${r}`).join('\n')}\n\n建议先完善后再提交，以确保 AI 执行任务时效果更好。`,
       positiveText: '仍要提交审核',
       negativeText: '去完善 Skill',
-      onPositiveClick: () => {
-        // 用户坚持提交，直接打开审核
-        const draft = editingDraft.value!
-        openReviewModal({ ...draft } as SkillDraft, 'approve')
-        showSkillEditor.value = false
-      },
-      onNegativeClick: () => {
-        // 保持在编辑器，让用户完善
-        // 右侧质量面板已高亮阻塞原因，无需额外操作
-      },
+      onPositiveClick: () => { void proceed() },
     })
     return
   }
 
-  // 质量达标，直接打开审核
-  const draft = editingDraft.value
-  openReviewModal({ ...draft } as SkillDraft, 'approve')
+  if (centralConfigured.value) {
+    await proceed()
+    return
+  }
+
+  // 单机模式：沿用本地批准激活流程
+  openReviewModal({ ...editingDraft.value } as SkillDraft, 'approve')
   showSkillEditor.value = false
 }
 
@@ -2853,6 +2896,12 @@ function scoreColor(score: number, max: number): string {
         <EaInnerTabs :tabs="draftsSubTabs" :model-value="draftsSubTab" @update:model-value="onDraftsSubTabChange" />
 
         <div v-show="draftsSubTab === 'list'">
+        <NAlert v-if="centralConfigured" type="info" :bordered="false" style="margin-bottom:10px" :show-icon="true">
+          本机为研发端：Skill 草稿保存在本地可编辑；编辑完成后点击「提交审核」同步到
+          <a v-if="centralUrl" :href="centralUrl + '/knowledge'" target="_blank" style="text-decoration:underline">中心后台「待审 Skill 草稿」</a>
+          <span v-else>中心后台「待审 Skill 草稿」</span>
+          。批准 / 拒绝仅在中心进行。
+        </NAlert>
         <div class="tab-toolbar">
           <NSpace size="small">
             <NButton size="small" @click="loadDrafts">
@@ -2867,7 +2916,7 @@ function scoreColor(score: number, max: number): string {
               </template>
               新建草稿
             </NButton>
-            <NButton size="small" type="error" secondary :loading="bulkCleanupLoading" :disabled="rejectedCount === 0" @click="doBulkCleanup">
+            <NButton v-if="!centralConfigured" size="small" type="error" secondary :loading="bulkCleanupLoading" :disabled="rejectedCount === 0" @click="doBulkCleanup">
               清理已拒绝 ({{ rejectedCount }})
             </NButton>
           </NSpace>
@@ -2903,10 +2952,13 @@ function scoreColor(score: number, max: number): string {
           <div v-if="checkedDraftKeys.length > 0" class="batch-action-bar">
             <span class="batch-count">已选 {{ checkedDraftKeys.length }} 项</span>
             <NButton size="small" @click="checkedDraftKeys = []">取消选择</NButton>
-            <NButton size="small" type="success" :loading="bulkDraftLoading" @click="doBulkApproveDrafts">批准</NButton>
-            <NButton size="small" type="warning" :loading="bulkDraftLoading" @click="doBulkRejectDrafts">拒绝</NButton>
-            <NButton size="small" type="error" :loading="bulkDraftLoading" @click="doBulkDeleteDrafts">删除</NButton>
-            <NButton size="small" :loading="bulkDraftLoading" @click="doBulkArchiveDrafts">归档</NButton>
+            <template v-if="!centralConfigured">
+              <NButton size="small" type="success" :loading="bulkDraftLoading" @click="doBulkApproveDrafts">批准</NButton>
+              <NButton size="small" type="warning" :loading="bulkDraftLoading" @click="doBulkRejectDrafts">拒绝</NButton>
+              <NButton size="small" type="error" :loading="bulkDraftLoading" @click="doBulkDeleteDrafts">删除</NButton>
+              <NButton size="small" :loading="bulkDraftLoading" @click="doBulkArchiveDrafts">归档</NButton>
+            </template>
+            <span v-else class="ea-muted" style="font-size:12px">审核操作请前往中心后台</span>
           </div>
         </NSpin>
         </div>
@@ -2987,94 +3039,6 @@ function scoreColor(score: number, max: number): string {
                 <span v-else class="suggestion-need-more">需 {{ 3 - s.entry_count + (s.entry_count < 3 ? s.entry_count : 0) }} 条更多条目</span>
               </div>
             </div>
-          </div>
-
-          <!-- 已有草稿列表 -->
-          <div class="workshop-section" style="margin-top:24px">
-            <div class="workshop-section-hd">
-              <span class="workshop-section-title">Skill 草稿列表</span>
-              <NButton size="tiny" @click="loadDrafts">刷新</NButton>
-            </div>
-            <NSpin :show="draftsLoading">
-              <NEmpty v-if="!drafts.length && !draftsLoading" description="暂无草稿" style="padding:24px 0" />
-              <div v-else class="draft-list">
-                <div
-                  v-for="d in drafts"
-                  :key="d.id"
-                  class="draft-item"
-                  :class="{ 'draft-item--needs-polish': d.quality_score && !d.quality_score.pass_gate }"
-                >
-                  <div class="draft-item-main">
-                    <div class="draft-item-name">{{ d.skill_name }}</div>
-                    <div class="draft-item-meta">
-                      <NTag size="tiny" :style="{ '--n-color': (MODULE_COLOR[d.module] || '#722ed1') + '18', '--n-text-color': MODULE_COLOR[d.module] || '#722ed1', '--n-border': 'none' }">{{ MODULE_SHORT[d.module] || d.module }}</NTag>
-                      <span class="badge badge-func badge-xs">{{ FUNC_TYPE_SHORT[d.func_type] || d.func_type }}</span>
-                      <!-- 质量分 + 待完善提示 -->
-                      <span v-if="d.quality_score" class="quality-badge" :style="{ color: scoreColor(d.quality_score.total, 100) }">
-                        Q{{ d.quality_score.total }}
-                      </span>
-                      <span v-if="d.quality_score && !d.quality_score.pass_gate" class="draft-needs-polish-tag">
-                        ⚠ 待完善
-                      </span>
-                    </div>
-                    <!-- 血缘：关联来源条目 / 源文档 -->
-                    <div class="draft-lineage">
-                      <span class="draft-lineage-item">🔖 {{ (d.generated_from_entries || []).length }} 条来源条目</span>
-                      <span v-if="d.source_document_ids && d.source_document_ids.length" class="draft-lineage-item">
-                        📄 {{ d.source_document_ids.length }} 个源文档
-                      </span>
-                    </div>
-                    <!-- 低质量时展示待完善原因 -->
-                    <div v-if="d.quality_score && !d.quality_score.pass_gate" class="draft-polish-hint">
-                      {{ d.quality_score.blocking_reasons.join('；') }}
-                    </div>
-                  </div>
-                  <NSpace size="small">
-                    <NButton
-                      size="tiny"
-                      @click="d.id && openSkillPreview(d)"
-                    >
-                      预览
-                    </NButton>
-                    <!-- 低质量草稿：优先显示「完善 Skill」，按钮更突出 -->
-                    <NButton
-                      v-if="d.quality_score && !d.quality_score.pass_gate"
-                      size="tiny"
-                      type="warning"
-                      @click="d.id && openSkillEditorById(d.id)"
-                    >
-                      ✏️ 完善 Skill
-                    </NButton>
-                    <NButton
-                      v-else
-                      size="tiny"
-                      type="primary"
-                      ghost
-                      @click="d.id && openSkillEditorById(d.id)"
-                    >
-                      编辑
-                    </NButton>
-                    <NButton size="tiny" type="success" ghost @click="d.id && openReviewModal(d, 'approve')">
-                      发布
-                    </NButton>
-                    <NButton
-                      v-if="d.status === 'draft' || d.status === 'rejected'"
-                      size="tiny"
-                      type="error"
-                      quaternary
-                      @click="d.id && confirmDeleteDraft(d)"
-                    >删除</NButton>
-                    <NButton
-                      v-if="d.status === 'approved'"
-                      size="tiny"
-                      type="warning"
-                      ghost
-                      @click="d.id && openDeprecateModal(d)"
-                    >废弃</NButton>
-                  </NSpace>
-                </div>
-              </div>
-            </NSpin>
           </div>
         </NSpin>
         </div>
@@ -3391,7 +3355,12 @@ function scoreColor(score: number, max: number): string {
           <NButton @click="showSkillPreview = false">关闭</NButton>
           <NButton v-if="previewDraft" @click="previewToEditor">编辑</NButton>
           <NButton
-            v-if="previewDraft && (previewDraft.status === 'draft' || previewDraft.status === 'reviewing')"
+            v-if="previewDraft && (previewDraft.status === 'draft' || previewDraft.status === 'rejected') && centralConfigured"
+            type="success"
+            @click="previewDraft && submitDraftForReview(previewDraft); showSkillPreview = false"
+          >提交审核</NButton>
+          <NButton
+            v-if="previewDraft && !centralConfigured && (previewDraft.status === 'draft' || previewDraft.status === 'reviewing')"
             type="success"
             @click="previewToReview"
           >批准发布</NButton>

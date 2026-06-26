@@ -25,6 +25,7 @@ import { logger } from './services/logger'
 // TAHP 桥接
 import { setupTahpRunSocket } from './routes/tahp/tahp-run'
 import { initDeviceSelfCheck } from './services/tahp/device-self-check'
+import { startSyncScheduler } from './services/tahp/sync'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -226,6 +227,13 @@ export async function bootstrap() {
   bindShutdown(servers, undefined, chatRunServer, agentBridgeManager)
   startVersionCheck()
   initDeviceSelfCheck()
+
+  // TAHP 中心同步：local 角色 + 已配置中心时，启动拉取调度（离线容忍）
+  try {
+    startSyncScheduler()
+  } catch (err) {
+    logger.warn({ err }, '[bootstrap] sync scheduler failed to start')
+  }
 }
 
 bootstrap().catch((error) => {

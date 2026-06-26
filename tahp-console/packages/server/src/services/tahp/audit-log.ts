@@ -13,6 +13,7 @@ import { logger } from '../logger'
 // ─── 审计事件类型 ────────────────────────────────────────────────────────────
 
 export type AuditAction =
+  | 'skill_draft_submitted'
   | 'skill_draft_deleted'
   | 'skill_draft_deprecated'
   | 'skill_draft_deactivated'

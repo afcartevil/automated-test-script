@@ -47,12 +47,16 @@ import { randomUUID, createHash } from 'crypto'
 import { load as yamlLoad, dump as yamlDump } from 'js-yaml'
 import { callTahpLLM } from '../../services/tahp/llm-caller'
 import { writeAuditLog } from '../../services/tahp/audit-log'
+import { pushEntry, pushSkillDraft } from '../../services/tahp/sync'
+import { shouldRedirectWrites, isReviewDisabledLocally, respondReviewDisabled } from '../../services/tahp/sync/local-guard'
+import { getRuntimeModeInfo } from '../../services/tahp/runtime-mode'
 import {
   buildSearchBlob,
   buildTags,
   extractTldr,
   extractSymptomPhrases,
   upsertIndexRecord,
+  removeIndexRecord,
 } from '../../services/tahp/kb-search'
 import {
   findDuplicateDistillEntry,
@@ -166,6 +170,10 @@ export interface KnowledgeEntry {
   maintenance_owner?: string
   last_used_in_task?: string
   usage_count: number
+  /** 已同步提交到中心待审 */
+  submitted_to_central?: boolean
+  /** 中心权威条目 ID（与 entry.id 对齐后用于 pull 合并） */
+  central_entry_id?: string
 }
 
 interface EvalCase {
@@ -250,6 +258,9 @@ interface SkillDraft {
   archived_from_status?: string  // 归档前的原始状态
   updated_at?: string
   review_action?: 'approve' | 'reject'
+  // ─── 中心同步：本地提交到中心后的标记（本地仅留只读副本） ───────────
+  submitted_to_central?: boolean
+  central_draft_id?: string
 }
 
 // ─── Phase 2 Types ───────────────────────────────────────────────────────────
@@ -436,6 +447,47 @@ async function writeEntry(entry: KnowledgeEntry): Promise<void> {
   } catch (err) {
     logger.warn({ err: (err as Error).message, id: entry.id }, '[kb] index upsert failed')
   }
+}
+
+/** 本地落盘后同步到中心待审；中心去重后返回权威 ID，必要时 re-key 本地文件 */
+async function syncEntryToCentral(entry: KnowledgeEntry): Promise<KnowledgeEntry> {
+  if (!shouldRedirectWrites()) return entry
+  try {
+    const res = await pushEntry({
+      content: entry.content,
+      category: entry.category,
+      module: entry.module,
+      func_type: entry.func_type,
+      keywords: entry.keywords,
+      confidence_score: entry.confidence_score,
+      source_file: entry.source_file,
+      source_task_id: entry.source_task_id,
+      jira_key: entry.jira_key,
+      tags: entry.tags,
+      related_skill_ids: entry.related_skill_ids,
+      source_type: entry.source_type,
+    })
+    const centralId = res.id
+    entry.submitted_to_central = true
+    entry.central_entry_id = centralId
+
+    if (centralId !== entry.id) {
+      const oldId = entry.id
+      entry.id = centralId
+      await writeEntry(entry)
+      try {
+        unlinkSync(getEntryPath(oldId))
+        removeIndexRecord(oldId)
+      } catch { /* old file may not exist */ }
+      logger.info({ oldId, centralId }, '[kb] entry re-keyed to central id after sync')
+    } else {
+      await writeEntry(entry)
+    }
+    logger.info({ entryId: centralId, action: res.action }, '[kb] entry synced to central for review')
+  } catch (e) {
+    logger.warn({ entryId: entry.id, err: (e as Error).message }, '[kb] central sync failed; local copy kept searchable')
+  }
+  return entry
 }
 
 async function readSkillDraft(draftId: string): Promise<SkillDraft | null> {
@@ -1509,6 +1561,11 @@ EVAL_CASE_END
 
 // ─── Routes ────────────────────────────────────────────────────────────────────
 
+// GET /api/tahp/runtime-mode — 供前端判断本机角色与中心配置，决定是否显示审核入口
+tahpKnowledgeRoutes.get('/api/tahp/runtime-mode', async (ctx) => {
+  ctx.body = { success: true, data: getRuntimeModeInfo() }
+})
+
 // POST /api/tahp/knowledge/entries — 创建知识条目
 tahpKnowledgeRoutes.post('/api/tahp/knowledge/entries', async (ctx) => {
   try {
@@ -1527,6 +1584,7 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/entries', async (ctx) => {
       return
     }
 
+    // 中心已配置：本地落盘 + 同步提交中心待审（审核前本地可检索，通过后 pull 下发同事）
     const entry: KnowledgeEntry = {
       id: `kb-${randomUUID().slice(0, 8)}`,
       content: String(content),
@@ -1549,8 +1607,9 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/entries', async (ctx) => {
     }
 
     await writeEntry(entry)
-    logger.info({ entryId: entry.id, module }, '[kb] entry created')
-    ctx.body = { success: true, data: entry }
+    const synced = await syncEntryToCentral(entry)
+    logger.info({ entryId: synced.id, module }, '[kb] entry created')
+    ctx.body = { success: true, data: synced, message: synced.submitted_to_central ? '已保存本地并提交中心待审核' : undefined }
   } catch (err) {
     logger.error({ err: (err as Error).message }, '[kb] failed to create entry')
     ctx.status = 500
@@ -1648,7 +1707,8 @@ export async function depositDistilledEntry(params: {
 
     if (normalizeEntryContent(existing.content) === normalizeEntryContent(params.content)) {
       logger.info({ entryId: existing.id, jira: jiraKey, task: params.source_task_id }, '[kb] distill dedup unchanged')
-      return { entry: existing, action: 'unchanged' }
+      const synced = await syncEntryToCentral(existing)
+      return { entry: synced, action: 'unchanged' }
     }
 
     const updated: KnowledgeEntry = {
@@ -1673,8 +1733,9 @@ export async function depositDistilledEntry(params: {
     updated.search_blob = buildSearchBlob(updated)
     updated.tags = buildTags(updated)
     await writeEntry(updated)
-    logger.info({ entryId: updated.id, jira: jiraKey, task: params.source_task_id }, '[kb] distill dedup updated')
-    return { entry: updated, action: 'updated' }
+    const syncedUpdated = await syncEntryToCentral(updated)
+    logger.info({ entryId: syncedUpdated.id, jira: jiraKey, task: params.source_task_id }, '[kb] distill dedup updated')
+    return { entry: syncedUpdated, action: 'updated' }
   }
 
   const draft: KnowledgeEntry = {
@@ -1703,12 +1764,13 @@ export async function depositDistilledEntry(params: {
   draft.search_blob = buildSearchBlob(draft)
   draft.tags = buildTags(draft)
   await writeEntry(draft)
+  const syncedDraft = await syncEntryToCentral(draft)
   logger.info({
-    entryId: draft.id,
+    entryId: syncedDraft.id,
     task: params.source_task_id,
     business_domain: businessDomain,
   }, '[kb] distilled entry deposited')
-  return { entry: draft, action: 'created' }
+  return { entry: syncedDraft, action: 'created' }
 }
 
 /** 为导入文档创建 L1 路由摘要条目，便于概念类检索先命中文档再搜 chunk */
@@ -2962,7 +3024,7 @@ async function runSkillGenerationStream(
   draft.conflicts = detectConflicts(draft, activatedSkills)
   draft.quality_score = calculateQualityScore(draft, draft.conflicts)
 
-  // Step 8: 持久化
+  // Step 8: 持久化（生成仅落本地；提交审核时再同步中心）
   emit({ stage: 'quality_score', progress: 98, message: '保存 Skill 草稿...' })
   await writeSkillDraft(draft)
   logger.info({ draftId: draft.id, skillId, module: mod, func_type, llmError }, '[kb] skill draft generated via stream')
@@ -3425,9 +3487,61 @@ ${entriesToUse.slice(0, 5).map((e, i) => `### 参考条目 ${i + 1}\n${e.content
   }
 })
 
+// POST /api/tahp/knowledge/skill-drafts/:draftId/submit — 研发端提交审核（同步中心，非本地批准）
+tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/:draftId/submit', async (ctx) => {
+  try {
+    await initDirs()
+    const { draftId } = ctx.params
+    const draft = await readSkillDraft(draftId)
+    if (!draft) {
+      ctx.status = 404
+      ctx.body = { success: false, error: `草稿 ${draftId} 不存在` }
+      return
+    }
+    const s = draft.status || 'draft'
+    if (s !== 'draft' && s !== 'rejected' && s !== 'reviewing') {
+      ctx.status = 409
+      ctx.body = { success: false, error: `当前状态 ${s} 不可提交审核` }
+      return
+    }
+
+    const updated: SkillDraft = {
+      ...draft,
+      status: 'reviewing',
+      updated_at: new Date().toISOString(),
+    }
+
+    if (shouldRedirectWrites()) {
+      const res = await pushSkillDraft(updated as unknown as Record<string, unknown>)
+      updated.submitted_to_central = true
+      updated.central_draft_id = res.id
+      logger.info({ draftId, centralId: res.id, skillId: draft.skill_id }, '[kb] skill draft submitted to central for review')
+    }
+
+    await writeSkillDraft(updated)
+    writeAuditLog({
+      action: 'skill_draft_submitted',
+      actor: 'local_user',
+      target_type: 'skill_draft',
+      target_id: draftId,
+      target_name: draft.skill_name,
+    })
+    ctx.body = {
+      success: true,
+      data: updated,
+      message: updated.submitted_to_central ? '已提交中心审核，请在中心后台「待审 Skill 草稿」处理' : '已提交审核',
+    }
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, '[kb] failed to submit skill draft')
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
 // POST /api/tahp/knowledge/skill-drafts/:draftId/review — 审核和激活 Skill 草稿
 tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/:draftId/review', async (ctx) => {
   try {
+    if (isReviewDisabledLocally()) { respondReviewDisabled(ctx); return }
     const { draftId } = ctx.params
     const draft = await readSkillDraft(draftId)
     if (!draft) {
@@ -4736,6 +4850,7 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/save', async (ctx) => {
 // POST /api/tahp/knowledge/skill-drafts/bulk-approve — 批量批准草稿
 tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/bulk-approve', async (ctx) => {
   try {
+    if (isReviewDisabledLocally()) { respondReviewDisabled(ctx); return }
     const body = (ctx.request.body || {}) as Record<string, unknown>
     const ids = Array.isArray(body.draft_ids) ? (body.draft_ids as string[]) : []
     if (!ids.length) { ctx.status = 400; ctx.body = { success: false, error: 'draft_ids is required' }; return }
@@ -4761,6 +4876,7 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/bulk-approve', async 
 // POST /api/tahp/knowledge/skill-drafts/bulk-reject — 批量拒绝草稿
 tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/bulk-reject', async (ctx) => {
   try {
+    if (isReviewDisabledLocally()) { respondReviewDisabled(ctx); return }
     const body = (ctx.request.body || {}) as Record<string, unknown>
     const ids = Array.isArray(body.draft_ids) ? (body.draft_ids as string[]) : []
     const reason = body.reason ? String(body.reason) : ''

@@ -263,13 +263,18 @@ export function listSkillDrafts(query?: {
   return tahpGet<{ drafts: SkillDraft[]; total: number; limit: number; offset: number }>(path)
 }
 
-/** POST /api/tahp/knowledge/skill-drafts/:draftId/review — Review skill draft */
+/** POST /api/tahp/knowledge/skill-drafts/:draftId/review — Review skill draft (local admin / standalone) */
 export function reviewSkillDraft(draftId: string, action: 'approve' | 'reject', reviewedBy?: string, reviewNotes?: string): Promise<SkillDraft> {
   return tahpPost<SkillDraft>(`/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}/review`, {
     action,
     reviewed_by: reviewedBy,
     review_notes: reviewNotes,
   })
+}
+
+/** POST /api/tahp/knowledge/skill-drafts/:draftId/submit — 研发端提交中心审核 */
+export function submitSkillDraftForReview(draftId: string): Promise<SkillDraft> {
+  return tahpPost<SkillDraft>(`/api/tahp/knowledge/skill-drafts/${encodeURIComponent(draftId)}/submit`, {})
 }
 
 /** POST /api/tahp/knowledge/entries/:entryId/feedback — Record task feedback */
@@ -285,6 +290,17 @@ export function recordFeedback(entryId: string, feedback: {
 /** GET /api/tahp/knowledge/stats — Get knowledge base statistics */
 export function getKnowledgeStats(): Promise<KnowledgeStats> {
   return tahpGet<KnowledgeStats>('/api/tahp/knowledge/stats')
+}
+
+export interface RuntimeMode {
+  role: 'local' | 'central'
+  central_configured: boolean
+  central_url: string | null
+}
+
+/** 查询本机运行角色与中心配置：local + central_configured 时隐藏审核入口，仅展示与提交 */
+export function getRuntimeMode(): Promise<RuntimeMode> {
+  return tahpGet<RuntimeMode>('/api/tahp/runtime-mode')
 }
 
 // ─── Legacy API Functions (backward compatibility) ────────────────────────

@@ -1,5 +1,39 @@
 import { join, resolve } from 'path'
 import { homedir } from 'os'
+import { existsSync, readFileSync } from 'fs'
+
+/**
+ * 轻量 .env 加载（零依赖）：在读取任何 process.env 前，载入 tahp-console/.env。
+ * 仅设置尚未存在的变量，真实环境变量优先级更高。便于本地配置 TAHP_CENTRAL_URL/TOKEN 等。
+ */
+function loadDotEnv(): void {
+  const candidates = [
+    resolve(process.cwd(), '.env'),
+    resolve(__dirname, '../../../.env'),
+  ]
+  const seen = new Set<string>()
+  for (const file of candidates) {
+    if (seen.has(file) || !existsSync(file)) continue
+    seen.add(file)
+    try {
+      for (const rawLine of readFileSync(file, 'utf-8').split(/\r?\n/)) {
+        const line = rawLine.trim()
+        if (!line || line.startsWith('#')) continue
+        const eq = line.indexOf('=')
+        if (eq <= 0) continue
+        const key = line.slice(0, eq).trim()
+        if (!key || process.env[key] !== undefined) continue
+        let val = line.slice(eq + 1).trim()
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1)
+        }
+        process.env[key] = val
+      }
+    } catch { /* 忽略 .env 解析失败，回退纯环境变量 */ }
+  }
+}
+
+loadDotEnv()
 
 /**
  * Web UI environment variables.
@@ -52,4 +86,19 @@ export const config = {
   uploadDir: process.env.UPLOAD_DIR || join(appHome, 'upload'),
   dataDir: resolve(__dirname, '..', 'data'),
   corsOrigins: process.env.CORS_ORIGINS || '*',
+
+  /**
+   * TAHP 中心同步配置。
+   * - role: 'local'（默认，研发本机；新建条目/草稿 push 到中心待审，审核接口禁用）
+   *         'central'（中心权威源，由 easyadapter_bff 承担，本仓一般不用）
+   * - centralUrl: 中心 BFF 基址，如 http://central-host:8660
+   * - centralToken: 机器间同步共享 token（与中心 TAHP_CENTRAL_TOKEN 一致）
+   * - syncIntervalMs: 增量 pull 间隔，默认 5 分钟；<=0 关闭定时
+   */
+  tahp: {
+    role: (process.env.TAHP_ROLE?.trim() || 'local') as 'local' | 'central',
+    centralUrl: process.env.TAHP_CENTRAL_URL?.trim() || '',
+    centralToken: process.env.TAHP_CENTRAL_TOKEN?.trim() || '',
+    syncIntervalMs: parseInt(process.env.TAHP_SYNC_INTERVAL_MS || '300000', 10),
+  },
 }
