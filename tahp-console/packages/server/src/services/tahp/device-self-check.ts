@@ -190,6 +190,9 @@ export interface CaseCatalogDetailItem {
 }
 
 function getAutoRetestConfig(testType: string): { enabled: boolean; count: number } {
+  if (testType === 'monkey') {
+    return { enabled: false, count: 0 }
+  }
   return {
     enabled: settings.autoRetestEnabled?.[testType] ?? true,
     count: Math.max(0, settings.autoRetestCount?.[testType] ?? 1),

@@ -1,8 +1,68 @@
 <script setup lang="ts">
-import { computed, inject } from 'vue'
+import { computed, inject, nextTick, ref, watch } from 'vue'
 import type { DeviceInfo, DeviceRole } from '@/api/tahp/device-self-check'
 import EaCard from '@/components/layout/EaCard.vue'
 import { DEVICE_SELF_CHECK_KEY } from './self-check-context'
+import {
+  DEVICE_LIST_FILTER_OPTIONS,
+  formatCatalogAutomation,
+  formatCatalogModuleScope,
+  formatCatalogPrereq,
+  deviceMatchesListFilter,
+  getDeviceListFilterKey,
+  parseManualSteps,
+} from './self-check-utils'
+import type { DeviceListFilterKey } from './self-check-utils'
+
+const catalogPanelRef = ref<HTMLElement | null>(null)
+const deviceListAnchorRef = ref<HTMLElement | null>(null)
+const deviceDetailPanelRef = ref<HTMLElement | null>(null)
+const customTestPanelRef = ref<HTMLElement | null>(null)
+const deviceListFilter = ref<DeviceListFilterKey>('all')
+
+function getScrollParent(el: HTMLElement): HTMLElement | Window {
+  let node: HTMLElement | null = el.parentElement
+  while (node) {
+    const { overflowY } = getComputedStyle(node)
+    if (/(auto|scroll|overlay)/.test(overflowY) && node.scrollHeight > node.clientHeight) {
+      return node
+    }
+    node = node.parentElement
+  }
+  return window
+}
+
+function scrollElementIntoView(el: HTMLElement) {
+  const scrollMargin = 16
+  const scrollParent = getScrollParent(el)
+  if (scrollParent === window) {
+    const top = el.getBoundingClientRect().top + window.scrollY - scrollMargin
+    window.scrollTo({ top, behavior: 'smooth' })
+    return
+  }
+
+  const elRect = el.getBoundingClientRect()
+  const parentRect = scrollParent.getBoundingClientRect()
+  const top = scrollParent.scrollTop + (elRect.top - parentRect.top) - scrollMargin
+  scrollParent.scrollTo({ top, behavior: 'smooth' })
+}
+
+async function scrollToElement(el: HTMLElement | null | undefined) {
+  if (!el) return
+  await nextTick()
+  requestAnimationFrame(() => {
+    scrollElementIntoView(el)
+  })
+}
+
+async function scrollToElementWhenReady(getEl: () => HTMLElement | null | undefined) {
+  await nextTick()
+  await nextTick()
+  requestAnimationFrame(() => {
+    const el = getEl()
+    if (el) scrollElementIntoView(el)
+  })
+}
 
 const {
   viewMode,
@@ -19,12 +79,14 @@ const {
   catalogTypeSettings,
   catalogSettingsSaving,
   selectedCatalogTestType,
+  selectedCatalogGroup,
   availableCustomDut,
   customTestDutDeviceId,
   customTestAuxDeviceIds,
   availableCustomAux,
   customTestStarting,
   selectedDevice,
+  selectedDeviceId,
   getCaseGroups,
   isIdle,
   canEndTest,
@@ -47,11 +109,15 @@ const {
   toggleAuxDevice,
   handleStartCustomTest,
   openCaseCatalog,
+  collapseCaseCatalog,
+  catalogPanelExpanded,
+  deviceDetailExpanded,
+  collapseDeviceDetail,
   selectCatalogCase,
   toggleCatalogDetailModule,
   isCatalogDetailModuleExpanded,
-  parseManualSteps,
   openCustomTest,
+  closeCustomTest,
   doRefreshDevices,
   loadDevices,
   handleEndTest,
@@ -99,6 +165,45 @@ const {
 } = inject(DEVICE_SELF_CHECK_KEY)!
 void flashLogRef
 
+function handleCollapseCaseCatalog() {
+  collapseCaseCatalog()
+  void scrollToElement(deviceListAnchorRef.value)
+}
+
+function handleCollapseDeviceDetail() {
+  collapseDeviceDetail()
+  void scrollToElement(deviceListAnchorRef.value)
+}
+
+function handleOpenCustomTest() {
+  openCustomTest()
+  void scrollToElementWhenReady(() => customTestPanelRef.value)
+}
+
+watch(
+  () => catalogPanelExpanded.value && !catalogDetailLoading.value,
+  (ready) => {
+    if (ready) void scrollToElementWhenReady(() => catalogPanelRef.value)
+  },
+  { flush: 'post' },
+)
+
+watch(
+  () => deviceDetailExpanded.value && !!selectedDevice.value,
+  (ready) => {
+    if (ready) void scrollToElementWhenReady(() => deviceDetailPanelRef.value)
+  },
+  { flush: 'post' },
+)
+
+watch(
+  () => viewMode.value === 'customTest',
+  (ready) => {
+    if (ready) void scrollToElementWhenReady(() => customTestPanelRef.value)
+  },
+  { flush: 'post' },
+)
+
 const DUT_ROLE = '\u6d4b\u8bd5\u673a' as DeviceRole
 const AUX_ROLE = '\u8f85\u6d4b\u673a' as DeviceRole
 const STATUS_IDLE = '\u7a7a\u95f2'
@@ -116,9 +221,38 @@ function isIdleDevice(device: DeviceInfo) {
   return (device.status as string) === STATUS_IDLE
 }
 
-const runningDevices = computed(() => devices.value.filter(isRunning))
-const idleDevices = computed(() => devices.value.filter(isIdleDevice))
-const otherDevices = computed(() => devices.value.filter(d => !isRunning(d) && !isIdleDevice(d)))
+const deviceFilterCounts = computed(() => {
+  const counts = Object.fromEntries(
+    DEVICE_LIST_FILTER_OPTIONS.map(opt => [opt.key, 0]),
+  ) as Record<DeviceListFilterKey, number>
+  counts.all = devices.value.length
+  for (const device of devices.value) {
+    if (device.role === AUX_ROLE) counts.aux += 1
+    const key = getDeviceListFilterKey(device)
+    if (key !== 'other') counts[key] += 1
+  }
+  return counts
+})
+
+const filteredDevices = computed(() =>
+  devices.value.filter(device => deviceMatchesListFilter(device, deviceListFilter.value)),
+)
+
+const showGroupedDeviceList = computed(() => deviceListFilter.value === 'all')
+
+const filteredRunningDevices = computed(() => filteredDevices.value.filter(isRunning))
+const filteredIdleDevices = computed(() => filteredDevices.value.filter(isIdleDevice))
+const filteredOtherDevices = computed(() =>
+  filteredDevices.value.filter(d => !isRunning(d) && !isIdleDevice(d)),
+)
+
+function selectDeviceListFilter(key: DeviceListFilterKey) {
+  deviceListFilter.value = key
+}
+
+function isDeviceCardRunning(device: DeviceInfo) {
+  return isRunning(device)
+}
 
 function canSelectDevice(device: DeviceInfo) {
   const role = device.role as string
@@ -135,6 +269,18 @@ const selectedDutDevice = computed(() =>
 )
 
 const selectedDutLabel = computed(() => selectedDutDevice.value?.deviceName ?? '未选择')
+
+const selectedCaseDisplayName = computed(() => {
+  if (!selectedCase.value) return '用例详情'
+  for (const [, configs] of getCaseGroups.value) {
+    for (const config of configs) {
+      if (isSelectedCaseInConfig(config)) {
+        return getSelectedCaseName(config)
+      }
+    }
+  }
+  return '用例详情'
+})
 
 function dutRowActionLabel(deviceId: string): string {
   if (customTestDutDeviceId.value !== deviceId) return '设为测试机'
@@ -160,83 +306,95 @@ function handleDutRowAction(deviceId: string) {
 </script>
 
 <template>
-  <!-- 自定义测试视图 -->
+    <!-- 自定义测试视图 -->
     <template v-if="viewMode === 'customTest'">
-      <div v-if="error" style="color: var(--error); margin: 12px 0;">{{ error }}</div>
-      <p v-if="gerritPreselectCount > 0" class="gerrit-preselect-hint ea-muted">
-        已根据 Gerrit Code Review 预选 {{ gerritPreselectCount }} 个测试用例，请选择测试机后执行。
-      </p>
+      <div ref="customTestPanelRef" class="custom-test-view">
+        <div v-if="error" style="color: var(--error); margin: 12px 0;">{{ error }}</div>
+        <p v-if="gerritPreselectCount > 0" class="gerrit-preselect-hint ea-muted">
+          已根据 Gerrit Code Review 预选 {{ gerritPreselectCount }} 个测试用例，请选择测试机后执行。
+        </p>
 
-      <div class="custom-test-layout">
-        <div class="custom-test-left">
-          <EaCard>
-            <div class="section-title">
-              用例列表
-              <span class="ea-muted" style="font-size: 12px; margin-left: 8px;">
-                已选 {{ selectedCases.size }} 个
-              </span>
-            </div>
-            <div class="catalog-list">
-              <div v-for="group in caseCatalogGroups" :key="group.testType" class="catalog-type-group">
-                <div class="catalog-type-header" @click="toggleCatalogType(group.testType)">
-                  <span class="catalog-toggle">{{ expandedCatalogTypes.has(group.testType) ? '▼' : '▶' }}</span>
-                  <span class="catalog-type-label">{{ group.label }}</span>
-                  <span class="catalog-meta">{{ group.testType }} ({{ countGroupCases(group) }}个)</span>
-                  <button
-                    type="button"
-                    class="ea-btn-ghost ea-btn-sm"
-                    @click.stop="toggleAllCasesInGroup(group)"
-                  >
-                    {{ isGroupAllSelected(group) ? '取消全选' : '全选' }}
-                  </button>
+        <div class="custom-test-layout">
+          <div class="custom-test-left">
+            <EaCard class="custom-test-case-card">
+              <div class="custom-test-case-header">
+                <div class="section-title custom-test-case-title">
+                  用例列表
+                  <span class="ea-muted" style="font-size: 12px; margin-left: 8px;">
+                    已选 {{ selectedCases.size }} 个
+                  </span>
                 </div>
-                <div v-if="expandedCatalogTypes.has(group.testType)" class="catalog-type-body">
-                  <div v-for="catalog in group.modules" :key="catalog.key" class="catalog-group">
-                    <div class="catalog-header" @click="toggleCatalogModule(catalog.key)">
-                      <span class="catalog-toggle catalog-toggle-nested">{{ expandedCatalogModules.has(catalog.key) ? '▼' : '▶' }}</span>
-                      <span class="catalog-label">{{ catalog.moduleLabel }}</span>
-                      <span class="catalog-meta">{{ catalog.module }} ({{ catalog.cases.length }}个)</span>
-                      <button
-                        type="button"
-                        class="ea-btn-ghost ea-btn-sm"
-                        @click.stop="toggleAllCasesInModule(catalog)"
-                      >
-                        {{ catalog.cases.every(c => selectedCases.has(catalog.key + '/' + c.caseIndex)) ? '取消全选' : '全选' }}
-                      </button>
-                    </div>
-                    <div v-if="expandedCatalogModules.has(catalog.key)" class="catalog-cases">
-                      <div
-                        v-for="c in catalog.cases"
-                        :key="c.caseIndex"
-                        class="case-checkbox"
-                        :class="{ selected: selectedCases.has(catalog.key + '/' + c.caseIndex) }"
-                        role="checkbox"
-                        tabindex="0"
-                        :aria-checked="selectedCases.has(catalog.key + '/' + c.caseIndex)"
-                        @click="toggleCase(catalog.key + '/' + c.caseIndex)"
-                        @keydown.enter.prevent="toggleCase(catalog.key + '/' + c.caseIndex)"
-                        @keydown.space.prevent="toggleCase(catalog.key + '/' + c.caseIndex)"
-                      >
-                        <input
-                          type="checkbox"
-                          :checked="selectedCases.has(catalog.key + '/' + c.caseIndex)"
-                          @click.stop
-                          @change="toggleCase(catalog.key + '/' + c.caseIndex)"
-                        />
-                        <span class="case-name">{{ c.caseIndex }}. {{ c.caseName }}</span>
-                        <span v-if="c.canReuse" class="case-tag">可复用</span>
+              </div>
+              <div class="custom-test-case-scroll catalog-list">
+                <div v-for="group in caseCatalogGroups" :key="group.testType" class="catalog-type-group">
+                  <div class="catalog-type-header" @click="toggleCatalogType(group.testType)">
+                    <span class="catalog-toggle">{{ expandedCatalogTypes.has(group.testType) ? '▼' : '▶' }}</span>
+                    <span class="catalog-type-label">{{ group.label }}</span>
+                    <span class="catalog-meta">{{ group.testType }} ({{ countGroupCases(group) }}个)</span>
+                    <button
+                      type="button"
+                      class="ea-btn-ghost ea-btn-sm"
+                      @click.stop="toggleAllCasesInGroup(group)"
+                    >
+                      {{ isGroupAllSelected(group) ? '取消全选' : '全选' }}
+                    </button>
+                  </div>
+                  <div v-if="expandedCatalogTypes.has(group.testType)" class="catalog-type-body">
+                    <div v-for="catalog in group.modules" :key="catalog.key" class="catalog-group">
+                      <div class="catalog-header" @click="toggleCatalogModule(catalog.key)">
+                        <span class="catalog-toggle catalog-toggle-nested">{{ expandedCatalogModules.has(catalog.key) ? '▼' : '▶' }}</span>
+                        <span class="catalog-label">{{ catalog.moduleLabel }}</span>
+                        <span class="catalog-meta">{{ catalog.module }} ({{ catalog.cases.length }}个)</span>
+                        <button
+                          type="button"
+                          class="ea-btn-ghost ea-btn-sm"
+                          @click.stop="toggleAllCasesInModule(catalog)"
+                        >
+                          {{ catalog.cases.every(c => selectedCases.has(catalog.key + '/' + c.caseIndex)) ? '取消全选' : '全选' }}
+                        </button>
+                      </div>
+                      <div v-if="expandedCatalogModules.has(catalog.key)" class="catalog-cases">
+                        <div
+                          v-for="c in catalog.cases"
+                          :key="c.caseIndex"
+                          class="case-checkbox"
+                          :class="{ selected: selectedCases.has(catalog.key + '/' + c.caseIndex) }"
+                          role="checkbox"
+                          tabindex="0"
+                          :aria-checked="selectedCases.has(catalog.key + '/' + c.caseIndex)"
+                          @click="toggleCase(catalog.key + '/' + c.caseIndex)"
+                          @keydown.enter.prevent="toggleCase(catalog.key + '/' + c.caseIndex)"
+                          @keydown.space.prevent="toggleCase(catalog.key + '/' + c.caseIndex)"
+                        >
+                          <input
+                            type="checkbox"
+                            :checked="selectedCases.has(catalog.key + '/' + c.caseIndex)"
+                            @click.stop
+                            @change="toggleCase(catalog.key + '/' + c.caseIndex)"
+                          />
+                          <span class="case-name">{{ c.caseIndex }}. {{ c.caseName }}</span>
+                          <span v-if="c.canReuse" class="case-tag">可复用</span>
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </EaCard>
-        </div>
+            </EaCard>
+          </div>
 
         <div class="custom-test-right">
           <EaCard class="custom-run-summary">
-            <div class="section-title">执行摘要</div>
+            <div class="catalog-overview-header custom-run-summary-header">
+              <div class="section-title custom-run-summary-title">执行摘要</div>
+              <button
+                type="button"
+                class="ea-btn-ghost ea-btn-sm"
+                @click="closeCustomTest"
+              >
+                ← 返回
+              </button>
+            </div>
             <dl class="custom-run-meta">
               <div>
                 <dt>用例</dt>
@@ -342,57 +500,71 @@ function handleDutRowAction(deviceId: string) {
           </EaCard>
         </div>
       </div>
+      </div>
     </template>
 
-    <!-- 用例大类详情视图 -->
-    <template v-if="viewMode === 'caseCatalog'">
-      <div v-if="catalogDetailLoading" class="ea-muted" style="padding: 40px; text-align: center;">
+    <!-- 设备列表视图 -->
+    <template v-if="viewMode === 'list'">
+      <div v-if="loading" class="ea-muted" style="padding: 40px; text-align: center;">
         加载中...
       </div>
-      <div v-else-if="error" style="padding: 40px; text-align: center;">
-        <div style="color: var(--error); margin-bottom: 16px;">{{ error }}</div>
-        <button type="button" class="ea-btn-primary" @click="openCaseCatalog(selectedCatalogTestType!)">
+
+      <div v-else-if="error && !catalogPanelExpanded" style="padding: 40px; text-align: center;">
+        <div style="color: var(--error); margin-bottom: 16px;">
+          {{ error }}
+        </div>
+        <button class="ea-btn-primary" @click="loadDevices">
           重试
         </button>
       </div>
-      <div v-else class="detail-container">
-        <EaCard class="sidebar-card">
-          <div class="section-title">用例列表</div>
-          <div class="case-list">
-            <div
-              v-for="mod in catalogDetailByModule"
-              :key="mod.module"
-              class="module-group"
-            >
-              <div
-                class="module-name"
-                @click="toggleCatalogDetailModule(mod.module)"
-              >
-                <span class="module-arrow" :class="{ open: isCatalogDetailModuleExpanded(mod.module) }">&#9654;</span>
-                {{ mod.moduleLabel }}
-                <span class="module-count">{{ mod.cases.length }}</span>
-              </div>
-              <div class="module-cases" v-show="isCatalogDetailModuleExpanded(mod.module)">
-                <div
-                  v-for="item in mod.cases"
-                  :key="item.key"
-                  class="case-item"
-                  :class="{ selected: selectedCatalogCaseKey === item.key }"
-                  @click="selectCatalogCase(item.key)"
-                >
-                  {{ item.caseName }}
-                </div>
-              </div>
-            </div>
-          </div>
-        </EaCard>
 
-        <div class="detail-main">
-          <EaCard style="margin-bottom: 16px;">
-            <div class="detail-card-content">
-              <div class="detail-section">
-                <div class="section-title">用例设置</div>
-                <div v-if="selectedCatalogTestType === 'monkey'" class="catalog-monkey-duration">
+      <template v-else>
+        <div class="self-check-stack">
+        <div
+          v-if="catalogPanelExpanded"
+          ref="catalogPanelRef"
+          class="catalog-detail-layout self-check-stack-pane self-check-stack-pane--catalog"
+        >
+          <div v-if="catalogDetailLoading" class="ea-muted catalog-panel-loading">
+            加载中...
+          </div>
+          <div v-else-if="error" class="catalog-panel-error">
+            <div style="color: var(--error); margin-bottom: 16px;">{{ error }}</div>
+            <button type="button" class="ea-btn-primary" @click="openCaseCatalog(selectedCatalogTestType!)">
+              重试
+            </button>
+          </div>
+          <template v-else>
+            <EaCard class="catalog-overview-card">
+              <div class="detail-card-content">
+                <div class="catalog-overview-header">
+                  <div class="section-title">{{ selectedCatalogGroup?.label || '用例整体情况' }}</div>
+                  <button
+                    type="button"
+                    class="ea-btn-ghost ea-btn-sm"
+                    @click="handleCollapseCaseCatalog"
+                  >
+                    收起
+                  </button>
+                </div>
+                <dl v-if="selectedCatalogGroup" class="catalog-overview-meta">
+                  <div>
+                    <dt>覆盖</dt>
+                    <dd>{{ formatCatalogModuleScope(selectedCatalogGroup) }}</dd>
+                  </div>
+                  <div>
+                    <dt>自动化</dt>
+                    <dd>{{ formatCatalogAutomation(selectedCatalogGroup) }}</dd>
+                  </div>
+                  <div>
+                    <dt>前置</dt>
+                    <dd>{{ formatCatalogPrereq(selectedCatalogGroup) }}</dd>
+                  </div>
+                </dl>
+                <div
+                  v-if="selectedCatalogTestType === 'monkey'"
+                  class="catalog-monkey-duration catalog-overview-retest"
+                >
                   <label class="catalog-monkey-label" for="monkey-duration-input">monkey测试时长</label>
                   <input
                     id="monkey-duration-input"
@@ -407,7 +579,7 @@ function handleDutRowAction(deviceId: string) {
                     支持 Nm/Nd，例如 30m、7d；m 表示分钟，d 表示天，最长 14 天
                   </span>
                 </div>
-                <div v-else class="catalog-auto-retest-row">
+                <div v-else class="catalog-auto-retest-row catalog-overview-retest">
                   <label
                     class="checkbox-label"
                     :title="AUTO_RETEST_TOOLTIP"
@@ -432,100 +604,91 @@ function handleDutRowAction(deviceId: string) {
                   <span>次</span>
                 </div>
               </div>
-            </div>
-          </EaCard>
+            </EaCard>
 
-          <EaCard>
-            <div class="case-detail-header">
-              <span class="section-title">用例详情</span>
-            </div>
-            <div v-if="selectedCatalogItem" class="case-detail-content">
-              <div class="case-info">
-                <div v-if="selectedCatalogTestType !== 'monkey'" class="detail-item">
-                  <span class="detail-label">用例模块</span>
-                  <span class="detail-value">{{ selectedCatalogItem.moduleLabel }}</span>
+            <div class="detail-container catalog-detail-body">
+              <EaCard class="sidebar-card">
+                <div class="section-title">用例列表</div>
+                <div class="case-list">
+                  <div
+                    v-for="mod in catalogDetailByModule"
+                    :key="mod.module"
+                    class="module-group"
+                  >
+                    <div
+                      class="module-name"
+                      @click="toggleCatalogDetailModule(mod.module)"
+                    >
+                      <span class="module-arrow" :class="{ open: isCatalogDetailModuleExpanded(mod.module) }">&#9654;</span>
+                      {{ mod.moduleLabel }}
+                      <span class="module-count">{{ mod.cases.length }}</span>
+                    </div>
+                    <div class="module-cases" v-show="isCatalogDetailModuleExpanded(mod.module)">
+                      <div
+                        v-for="item in mod.cases"
+                        :key="item.key"
+                        class="case-item"
+                        :class="{ selected: selectedCatalogCaseKey === item.key }"
+                        @click="selectCatalogCase(item.key)"
+                      >
+                        {{ item.caseName }}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div class="detail-item">
-                  <span class="detail-label">用例名称</span>
-                  <span class="detail-value">{{ selectedCatalogItem.caseName }}</span>
-                </div>
-                <div v-if="selectedCatalogItem.preconditions" class="detail-item">
-                  <span class="detail-label">前置条件</span>
-                  <span class="detail-value pre-wrap">{{ selectedCatalogItem.preconditions }}</span>
-                </div>
-                <div v-if="selectedCatalogItem.expectedResult" class="detail-item">
-                  <span class="detail-label">期望结果</span>
-                  <span class="detail-value pre-wrap">{{ selectedCatalogItem.expectedResult }}</span>
-                </div>
+              </EaCard>
+
+              <div class="detail-main">
+                <EaCard class="catalog-case-detail-card">
+                  <div v-if="selectedCatalogItem" class="case-detail-header">
+                    <span class="catalog-case-title">{{ selectedCatalogItem.caseName }}</span>
+                  </div>
+                  <div v-if="selectedCatalogItem" class="case-detail-content">
+                    <div v-if="selectedCatalogItem.preconditions" class="case-info">
+                      <div class="detail-item">
+                        <span class="detail-label">前置条件</span>
+                        <span class="detail-value pre-wrap">{{ selectedCatalogItem.preconditions }}</span>
+                      </div>
+                    </div>
+                    <div v-if="selectedCatalogItem.manualSteps" class="case-steps">
+                      <div class="section-title">测试步骤</div>
+                      <div
+                        v-for="(step, idx) in parseManualSteps(selectedCatalogItem.manualSteps)"
+                        :key="idx"
+                        class="step-item"
+                      >
+                        {{ step }}
+                      </div>
+                    </div>
+                    <div v-if="selectedCatalogItem.expectedResult" class="case-steps case-expected">
+                      <div class="section-title">期望结果</div>
+                      <div class="detail-value pre-wrap">{{ selectedCatalogItem.expectedResult }}</div>
+                    </div>
+                    <div
+                      v-if="selectedCatalogTestType !== 'monkey' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
+                      class="ea-muted"
+                    >
+                      暂无手动测试步骤
+                    </div>
+                  </div>
+                  <div v-else class="case-detail-empty">
+                    <span class="ea-muted">请从左侧选择用例查看详情</span>
+                  </div>
+                </EaCard>
               </div>
-              <div v-if="selectedCatalogItem.manualSteps" class="case-steps">
-                <div class="section-title">测试步骤</div>
-                <div
-                  v-for="(step, idx) in parseManualSteps(selectedCatalogItem.manualSteps)"
-                  :key="idx"
-                  class="step-item"
-                >
-                  {{ step }}
-                </div>
-              </div>
-              <div
-                v-if="selectedCatalogTestType !== 'monkey'"
-                v-show="!selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
-                class="ea-muted"
-              >
-                暂无手动测试步骤
-              </div>
             </div>
-            <div v-else class="case-detail-empty">
-              <span class="ea-muted">请从左侧选择用例查看详情</span>
-            </div>
-          </EaCard>
+          </template>
         </div>
-      </div>
-    </template>
 
-    <!-- 设备列表视图 -->
-    <template v-if="viewMode === 'list' && !selectedDevice">
-      <div v-if="loading" class="ea-muted" style="padding: 40px; text-align: center;">
-        加载中...
-      </div>
-
-      <div v-else-if="error" style="padding: 40px; text-align: center;">
-        <div style="color: var(--error); margin-bottom: 16px;">
-          {{ error }}
-        </div>
-        <button class="ea-btn-primary" @click="loadDevices">
-          重试
-        </button>
-      </div>
-
-      <template v-else>
-        <h3 class="section-heading">多设备并行自动化测试</h3>
-        <p class="section-desc ea-muted">支持结果复用，连接 Android 设备后刷新列表</p>
-
-        <EaCard v-if="caseCatalogGroups.length" class="overview-catalog-section">
-          <div class="section-title">用例大类</div>
-          <div class="ea-domain-bar overview-catalog-bar">
-            <button
-              v-for="group in caseCatalogGroups"
-              :key="group.testType"
-              type="button"
-              class="ea-domain-chip"
-              @click="openCaseCatalog(group.testType)"
-            >
-              {{ group.label }}
-            </button>
-          </div>
-        </EaCard>
-
-        <EaCard class="device-list-section" :class="{ 'device-list-section-spaced': caseCatalogGroups.length }">
+        <div ref="deviceListAnchorRef" class="device-list-anchor self-check-stack-pane self-check-stack-pane--list">
+        <EaCard class="device-list-section">
           <div class="device-list-header">
             <div class="section-title device-list-title">设备列表</div>
             <div class="device-list-actions">
               <button
                 type="button"
                 class="ea-btn-primary ea-btn-sm"
-                @click="openCustomTest"
+                @click="handleOpenCustomTest"
               >
                 自定义测试
               </button>
@@ -544,16 +707,64 @@ function handleDutRowAction(deviceId: string) {
             </div>
           </div>
 
+          <div v-if="devices.length > 0" class="device-list-filters">
+            <button
+              v-for="opt in DEVICE_LIST_FILTER_OPTIONS"
+              :key="opt.key"
+              type="button"
+              class="device-filter-chip"
+              :class="[
+                `device-filter-chip--${opt.key}`,
+                { active: deviceListFilter === opt.key },
+              ]"
+              @click="selectDeviceListFilter(opt.key)"
+            >
+              {{ opt.label }}
+              <span class="device-filter-count">{{ deviceFilterCounts[opt.key] }}</span>
+            </button>
+          </div>
+
           <div v-if="devices.length === 0" class="ea-muted device-list-empty">
             暂无连接设备，请连接 Android 设备后刷新
           </div>
 
-          
-        <template v-else>
-          <div v-if="runningDevices.length" class="device-group">
+          <template v-else>
+          <div v-if="!showGroupedDeviceList && filteredDevices.length === 0" class="ea-muted device-list-empty">
+            暂无「{{ DEVICE_LIST_FILTER_OPTIONS.find(o => o.key === deviceListFilter)?.label }}」设备
+          </div>
+
+          <template v-else-if="!showGroupedDeviceList">
+            <div class="device-group">
+              <div class="device-grid">
+                <EaCard
+                  v-for="device in filteredDevices"
+                  :key="device.deviceId"
+                  class="device-card"
+                  :class="{
+                    'device-card-running': isDeviceCardRunning(device),
+                    'device-card-selected': selectedDeviceId === device.deviceId,
+                  }"
+                  @click="canSelectDevice(device) && selectDevice(device.deviceId)"
+                >
+                  <div class="device-header">
+                    <span class="status-dot" :style="{ background: getStatusColor(device.status) }" />
+                    <div class="device-info"><h4>{{ device.deviceName }}</h4><span class="device-id">{{ device.deviceId }}</span></div>
+                    <span class="role-badge" :style="getRoleBadge(displayRole(device))">{{ displayRole(device) }}</span>
+                  </div>
+                  <div class="device-details">
+                    <div class="detail-row"><span class="detail-label">状态</span><span :style="{ color: getStatusColor(device.status) }">{{ getDisplayStatus(device) }}</span></div>
+                    <div v-if="device.testType" class="detail-row"><span class="detail-label">用例</span><span>{{ getTestTypeLabel(device.testType) }}</span></div>
+                  </div>
+                </EaCard>
+              </div>
+            </div>
+          </template>
+
+          <template v-else>
+          <div v-if="filteredRunningDevices.length" class="device-group">
             <h4 class="group-label">运行中</h4>
             <div class="device-grid">
-              <EaCard v-for="device in runningDevices" :key="device.deviceId" class="device-card device-card-running" @click="canSelectDevice(device) && selectDevice(device.deviceId)">
+              <EaCard v-for="device in filteredRunningDevices" :key="device.deviceId" class="device-card device-card-running" :class="{ 'device-card-selected': selectedDeviceId === device.deviceId }" @click="canSelectDevice(device) && selectDevice(device.deviceId)">
                 <div class="device-header">
                   <span class="status-dot" :style="{ background: getStatusColor(device.status) }" />
                   <div class="device-info"><h4>{{ device.deviceName }}</h4><span class="device-id">{{ device.deviceId }}</span></div>
@@ -566,10 +777,10 @@ function handleDutRowAction(deviceId: string) {
               </EaCard>
             </div>
           </div>
-          <div v-if="idleDevices.length" class="device-group">
+          <div v-if="filteredIdleDevices.length" class="device-group">
             <h4 class="group-label">空闲</h4>
             <div class="device-grid">
-              <EaCard v-for="device in idleDevices" :key="device.deviceId" class="device-card" @click="selectDevice(device.deviceId)">
+              <EaCard v-for="device in filteredIdleDevices" :key="device.deviceId" class="device-card" :class="{ 'device-card-selected': selectedDeviceId === device.deviceId }" @click="selectDevice(device.deviceId)">
                 <div class="device-header">
                   <span class="status-dot" :style="{ background: getStatusColor(device.status) }" />
                   <div class="device-info"><h4>{{ device.deviceName }}</h4><span class="device-id">{{ device.deviceId }}</span></div>
@@ -581,10 +792,10 @@ function handleDutRowAction(deviceId: string) {
               </EaCard>
             </div>
           </div>
-          <div v-if="otherDevices.length" class="device-group">
+          <div v-if="filteredOtherDevices.length" class="device-group">
             <h4 class="group-label">其他状态</h4>
             <div class="device-grid">
-              <EaCard v-for="device in otherDevices" :key="device.deviceId" class="device-card" @click="canSelectDevice(device) && selectDevice(device.deviceId)">
+              <EaCard v-for="device in filteredOtherDevices" :key="device.deviceId" class="device-card" :class="{ 'device-card-selected': selectedDeviceId === device.deviceId }" @click="canSelectDevice(device) && selectDevice(device.deviceId)">
                 <div class="device-header">
                   <span class="status-dot" :style="{ background: getStatusColor(device.status) }" />
                   <div class="device-info"><h4>{{ device.deviceName }}</h4><span class="device-id">{{ device.deviceId }}</span></div>
@@ -596,368 +807,371 @@ function handleDutRowAction(deviceId: string) {
               </EaCard>
             </div>
           </div>
-        </template>
-        </EaCard>
-      </template>
-
-      </template>
-
-    <!-- 设备详情视图 -->
-    <template v-else-if="selectedDevice">
-      <div class="detail-container">
-        <!-- 左侧用例列表 -->
-        <EaCard class="sidebar-card">
-          <div class="section-title">用例列表</div>
-          <div class="case-list">
-            <template v-for="([label, configs]) in getCaseGroups" :key="label">
-              <template v-for="config in configs" :key="config.module">
-                <div class="module-group">
-                  <div
-                    class="module-name"
-                    @click="toggleModule(`${config.module}`)"
-                  >
-                    <span class="module-arrow" :class="{ open: isModuleExpanded(config.module) }">&#9654;</span>
-                    {{ config.moduleLabel }}
-                    <span class="module-count">{{ config.cases.length }}</span>
-                  </div>
-                  <div class="module-cases" v-show="isModuleExpanded(config.module)">
-                    <template v-if="isIdle">
-                      <div
-                        v-for="caseItem in config.cases"
-                        :key="caseItem.caseIndex"
-                        class="case-item"
-                        :class="{ selected: isCaseSelected(config, caseItem.caseIndex) }"
-                        @click="selectCaseItem(config.module, caseItem.caseIndex, config.testType)"
-                      >
-                        {{ caseItem.caseName }}
-                      </div>
-                    </template>
-                    <template v-else>
-                      <div
-                        v-for="caseItem in config.cases"
-                        :key="caseItem.caseIndex"
-                        class="case-item"
-                        :class="{
-                          selected: isCaseSelected(config, caseItem.caseIndex),
-                          [getCaseItemClass(config, caseItem.caseIndex)]: true
-                        }"
-                        :style="getCaseItemStyle(config, caseItem.caseIndex)"
-                        @click="selectCaseItem(config.module, caseItem.caseIndex, config.testType)"
-                      >
-                        {{ caseItem.caseName }}
-                      </div>
-                    </template>
-                  </div>
-                </div>
-              </template>
+          </template>
             </template>
-          </div>
         </EaCard>
+        </div>
 
-        <!-- 右侧区域 -->
-        <div class="detail-main">
-          <!-- 设备信息卡片 -->
-          <EaCard style="margin-bottom: 16px;">
+        <div
+          v-if="selectedDevice && deviceDetailExpanded"
+          ref="deviceDetailPanelRef"
+          class="device-detail-layout self-check-stack-pane self-check-stack-pane--device"
+        >
+          <EaCard class="device-overview-card">
             <div class="detail-card-content">
-              <div class="detail-section">
-                <div class="section-title">设备信息</div>
-                <div class="detail-grid">
-                  <div class="detail-item" v-if="!isIdle">
-                    <span class="detail-label">设备角色</span>
-                    <span class="detail-value">{{ selectedDevice.device.role }}</span>
-                  </div>
-                  <div class="detail-item">
-                    <span class="detail-label">所属用例</span>
-                    <span class="detail-value">{{ getTestTypeLabel(selectedDevice.device.testType) }}</span>
-                  </div>
-                  <div class="detail-item">
-                    <span class="detail-label">插卡情况</span>
-                    <span class="detail-value">
-                      插入{{ selectedDevice.device.simCards.filter(s => s.present).length }}张SIM卡
-                    </span>
-                  </div>
-                  <div class="detail-item" v-if="!isIdle">
-                    <span class="detail-label">设备测试情况</span>
-                    <span class="detail-value" :style="{ color: getStatusColor(selectedDevice.device.status) }">
-                      {{ getDisplayStatus(selectedDevice.device) }}
-                    </span>
-                  </div>
-                  <div class="detail-item" v-if="!isIdle && selectedDevice.device.testStartTime && selectedDevice.device.role !== AUX_ROLE">
-                    <span class="detail-label">测试开始时间</span>
-                    <span class="detail-value">{{ new Date(selectedDevice.device.testStartTime).toLocaleString('zh-CN') }}</span>
-                  </div>
-                  <div class="detail-item" v-if="!isIdle && selectedDevice.device.testDuration">
-                    <span class="detail-label">测试用时</span>
-                    <span class="detail-value">{{ Math.round(selectedDevice.device.testDuration / 60) }} 分钟</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 空闲时的操作（自定义测试不显示常规开始测试） -->
-              <div v-if="isIdle && selectedDevice.device.testType !== 'custom'" class="actions-section">
-                <div class="section-title">
-                  {{ selectedDevice.device.role === AUX_ROLE ? '注册为辅测机' : '开始测试' }}
-                </div>
-
-                <!-- 设备角色选择 -->
-                <div class="form-group">
-                  <span class="form-label">设备角色</span>
-                  <div class="role-selector">
-                    <button
-                      v-for="role in [DUT_ROLE, AUX_ROLE]"
-                      :key="role"
-                      type="button"
-                      class="role-btn"
-                      :class="{ active: selectedDevice.device.role === role }"
-                      @click.stop="handleSetRole(selectedDevice.device.deviceId, role as DeviceRole)"
-                    >
-                      {{ role }}
-                    </button>
-                  </div>
-                </div>
-
-                <!-- 用例选择 -->
-                <div class="form-group">
-                  <span class="form-label">用例选择</span>
-                  <div class="test-type-selector">
-                    <button
-                      type="button"
-                      class="test-type-btn"
-                      :class="{ active: selectedTestType === 'str4' }"
-                      @click.stop="selectedTestType = 'str4'"
-                    >
-                      <strong>转测摸底测试</strong>
-                    </button>
-                    <button
-                      type="button"
-                      class="test-type-btn"
-                      :class="{ active: selectedTestType === 'week' }"
-                      @click.stop="selectedTestType = 'week'"
-                    >
-                      <strong>周版本测试</strong>
-                    </button>
-                    <button
-                      type="button"
-                      class="test-type-btn"
-                      :class="{ active: selectedTestType === 'monkey' }"
-                      @click.stop="selectedTestType = 'monkey'"
-                    >
-                      <strong>monkey测试</strong>
-                    </button>
-                  </div>
-                </div>
-
-                <!-- 刷机选项（device_update） -->
-                <div class="form-group flash-options">
-                  <label class="checkbox-label flash-options-toggle">
-                    <input type="checkbox" v-model="enableFlash" />
-                    <span>刷机</span>
-                  </label>
-
-                  <div v-if="enableFlash" class="flash-options-panel">
-                    <p class="flash-options-hint">开始测试前先执行 device_update 刷机；刷机成功后会自动进入所选自检用例。</p>
-
-                    <div class="flash-field">
-                      <label class="flash-field-label">刷机包路径</label>
-                      <div class="flash-path-row">
-                        <input
-                          type="text"
-                          class="form-input form-input-inline flash-path-input"
-                          placeholder="zip / scatter xml / 刷机目录"
-                          v-model="flashPath"
-                        />
-                        <button
-                          type="button"
-                          class="ea-btn-ghost ea-btn-sm flash-browse-btn"
-                          :disabled="flashPathPicking"
-                          @click.stop="handleBrowseFlashPath"
-                        >
-                          {{ flashPathPicking ? '选择中...' : '浏览' }}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div class="flash-field">
-                      <label class="flash-field-label">市场版本</label>
-                      <select v-model="flashStageVersion" class="form-input flash-market-select">
-                        <option
-                          v-for="opt in FLASH_MARKET_OPTIONS"
-                          :key="opt.value || 'none'"
-                          :value="opt.value"
-                        >
-                          {{ opt.label }}
-                        </option>
-                      </select>
-                    </div>
-
-                    <div class="flash-field flash-field--root">
-                      <label class="checkbox-label flash-root-toggle">
-                        <input type="checkbox" v-model="enableRootPkg" />
-                        <span>刷 Root 包</span>
-                        <span class="flash-field-hint">可选</span>
-                      </label>
-                      <div v-show="enableRootPkg" class="flash-path-row">
-                        <input
-                          type="text"
-                          class="form-input form-input-inline flash-path-input"
-                          placeholder="Root 包路径：zip / scatter xml / 刷机目录"
-                          v-model="rootPkgPath"
-                        />
-                        <button
-                          type="button"
-                          class="ea-btn-ghost ea-btn-sm flash-browse-btn"
-                          :disabled="rootPkgPathPicking"
-                          @click.stop="handleBrowseRootPkgPath"
-                        >
-                          {{ rootPkgPathPicking ? '选择中...' : '浏览' }}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- T卡升级选项（功能暂不实现） -->
-                <div class="form-group form-row">
-                  <label class="checkbox-label">
-                    <input type="checkbox" v-model="enableTcardUpdate" />
-                    <span>T卡升级</span>
-                  </label>
-                  <template v-if="enableTcardUpdate">
-                    <input
-                      type="text"
-                      class="form-input form-input-inline"
-                      placeholder="T卡升级路径"
-                      v-model="tcardUpdatePath"
-                    />
-                    <button type="button" class="ea-btn-ghost ea-btn-sm" @click.stop>浏览</button>
-                  </template>
-                </div>
-
+              <div class="catalog-overview-header">
+                <div class="section-title device-detail-panel-title">{{ selectedDevice.device.deviceName }}</div>
                 <button
                   type="button"
-                  class="ea-btn-primary"
-                  @click.stop="handleStartTest(selectedDevice.device.deviceId)"
+                  class="ea-btn-ghost ea-btn-sm"
+                  @click="handleCollapseDeviceDetail"
                 >
-                  {{ selectedDevice.device.role === AUX_ROLE ? '开始待命' : '开始测试' }}
+                  收起
                 </button>
               </div>
-
-              <!-- 前置条件不满足时的操作 -->
-              <div v-if="needsContinue" class="actions-section">
-                <div class="section-title">继续测试</div>
-                <button
-                  type="button"
-                  class="ea-btn-primary"
-                  @click.stop="handleContinueTest(selectedDevice.device.deviceId)"
-                >
-                  继续测试
-                </button>
-              </div>
-
-              <!-- 结束测试 -->
-              <div v-if="canEndTest" class="actions-section">
-                <div class="section-title">测试操作</div>
-                <button
-                  type="button"
-                  class="ea-btn-primary"
-                  @click.stop="handleEndTest(selectedDevice.device.deviceId)"
-                >
-                  结束测试
-                </button>
-              </div>
+              <dl class="catalog-overview-meta device-overview-meta">
+                <div>
+                  <dt>设备 ID</dt>
+                  <dd class="device-id-inline">{{ selectedDevice.device.deviceId }}</dd>
+                </div>
+                <div v-if="!isIdle">
+                  <dt>角色</dt>
+                  <dd>{{ selectedDevice.device.role }}</dd>
+                </div>
+                <div>
+                  <dt>所属用例</dt>
+                  <dd>{{ getTestTypeLabel(selectedDevice.device.testType) }}</dd>
+                </div>
+                <div>
+                  <dt>插卡</dt>
+                  <dd>插入 {{ selectedDevice.device.simCards.filter(s => s.present).length }} 张 SIM 卡</dd>
+                </div>
+                <div v-if="!isIdle">
+                  <dt>状态</dt>
+                  <dd :style="{ color: getStatusColor(selectedDevice.device.status) }">
+                    {{ getDisplayStatus(selectedDevice.device) }}
+                  </dd>
+                </div>
+                <div v-if="!isIdle && selectedDevice.device.testStartTime && selectedDevice.device.role !== AUX_ROLE">
+                  <dt>开始时间</dt>
+                  <dd>{{ new Date(selectedDevice.device.testStartTime).toLocaleString('zh-CN') }}</dd>
+                </div>
+                <div v-if="!isIdle && selectedDevice.device.testDuration">
+                  <dt>用时</dt>
+                  <dd>{{ Math.round(selectedDevice.device.testDuration / 60) }} 分钟</dd>
+                </div>
+              </dl>
             </div>
           </EaCard>
 
-          <EaCard v-if="showFlashPanel" class="flash-progress-card" style="margin-bottom: 16px;">
-            <div class="flash-progress-header">
-              <span class="section-title">刷机进度</span>
-              <div class="flash-progress-meta">
-                <span class="flash-progress-percent">{{ Math.min(flashProgress, 100) }}%</span>
-                <span class="flash-progress-badge" :class="flashStatusClass">{{ flashStatusText }}</span>
-              </div>
-            </div>
-            <div class="flash-progress-track">
-              <div
-                class="flash-progress-fill"
-                :class="{ 'is-indeterminate': isFlashIndeterminate }"
-                :style="!isFlashIndeterminate ? { width: `${Math.min(flashProgress, 100)}%` } : undefined"
-              />
-            </div>
-            <p class="flash-phase-text">{{ flashPhase || '等待刷机日志...' }}</p>
-            <div class="flash-log-panel">
-              <span class="form-label">刷机日志</span>
-              <pre ref="flashLogRef" class="flash-log-content">{{ flashLogs.join('\n') }}</pre>
-            </div>
-          </EaCard>
-
-          <!-- 用例详情（空闲时隐藏） -->
-          <EaCard v-if="!isIdle">
-            <div class="case-detail-header">
-              <span class="section-title">用例详情</span>
-              <button
-                v-if="selectedDevice?.session?.isRunning"
-                type="button"
-                class="ea-btn-ghost ea-btn-sm"
-                :style="{ opacity: followCurrent ? 1 : 0.5 }"
-                @click="toggleFollowCurrent"
-              >
-                {{ followCurrent ? '● 跟随当前' : '○ 跟随当前' }}
-              </button>
-            </div>
-            
-            <div v-if="selectedCase && selectedDevice?.session?.caseResults" class="case-detail-content">
-              <template v-for="([label, configs]) in getCaseGroups" :key="label">
-                <template v-for="config in configs" :key="config.module">
-                  <template v-if="isSelectedCaseInConfig(config)">
-                    <div class="case-info">
-                      <div class="detail-item">
-                        <span class="detail-label">用例模块</span>
-                        <span class="detail-value">{{ config.moduleLabel }}</span>
-                      </div>
-                      <div class="detail-item">
-                        <span class="detail-label">用例名称</span>
-                        <span class="detail-value">
-                          {{ getSelectedCaseName(config) }}
-                        </span>
-                      </div>
-                      <div class="detail-item">
-                        <span class="detail-label">测试结果</span>
-                        <span class="detail-value" :style="{ color: getCaseResultColor(selectedCaseResult?.status || '') }">
-                          {{ selectedCaseResult?.status || '未开始' }}
-                        </span>
-                      </div>
-                      <div class="detail-item">
-                        <span class="detail-label">测试结论</span>
-                        <span class="detail-value">{{ selectedCaseResult?.message || '暂无' }}</span>
-                      </div>
-                    </div>
-                    
-                    <div class="case-steps" v-if="selectedCaseResult?.steps?.length">
-                      <div class="section-title">子步骤</div>
+          <div class="detail-container device-detail-body">
+            <EaCard class="sidebar-card">
+              <div class="section-title">用例列表</div>
+              <div class="case-list">
+                <template v-for="([label, configs]) in getCaseGroups" :key="label">
+                  <template v-for="config in configs" :key="config.module">
+                    <div class="module-group">
                       <div
-                        v-for="(step, idx) in selectedCaseResult.steps"
-                        :key="idx"
-                        class="step-item"
+                        class="module-name"
+                        @click="toggleModule(`${config.module}`)"
                       >
-                        {{ step.stepDesc }}
+                        <span class="module-arrow" :class="{ open: isModuleExpanded(config.module) }">&#9654;</span>
+                        {{ config.moduleLabel }}
+                        <span class="module-count">{{ config.cases.length }}</span>
+                      </div>
+                      <div class="module-cases" v-show="isModuleExpanded(config.module)">
+                        <template v-if="isIdle">
+                          <div
+                            v-for="caseItem in config.cases"
+                            :key="caseItem.caseIndex"
+                            class="case-item"
+                            :class="{ selected: isCaseSelected(config, caseItem.caseIndex) }"
+                            @click="selectCaseItem(config.module, caseItem.caseIndex, config.testType)"
+                          >
+                            {{ caseItem.caseName }}
+                          </div>
+                        </template>
+                        <template v-else>
+                          <div
+                            v-for="caseItem in config.cases"
+                            :key="caseItem.caseIndex"
+                            class="case-item"
+                            :class="{
+                              selected: isCaseSelected(config, caseItem.caseIndex),
+                              [getCaseItemClass(config, caseItem.caseIndex)]: true
+                            }"
+                            :style="getCaseItemStyle(config, caseItem.caseIndex)"
+                            @click="selectCaseItem(config.module, caseItem.caseIndex, config.testType)"
+                          >
+                            {{ caseItem.caseName }}
+                          </div>
+                        </template>
                       </div>
                     </div>
                   </template>
                 </template>
-              </template>
-              
-              <div v-if="isTestComplete" class="case-detail-actions">
-                <button type="button" class="ea-btn-primary" @click="openRetestDialog(selectedCase!)">复测此用例</button>
-                <button type="button" class="ea-btn-ghost" @click="openModifyDialog(selectedCase!)">修改用例结果</button>
               </div>
+            </EaCard>
+
+            <div class="detail-main">
+              <EaCard class="device-detail-main-card">
+                <div v-if="showFlashPanel" class="device-detail-main-scroll">
+                  <div class="flash-progress-header">
+                    <span class="section-title">刷机进度</span>
+                    <div class="flash-progress-meta">
+                      <span class="flash-progress-percent">{{ Math.min(flashProgress, 100) }}%</span>
+                      <span class="flash-progress-badge" :class="flashStatusClass">{{ flashStatusText }}</span>
+                    </div>
+                  </div>
+                  <div class="flash-progress-track">
+                    <div
+                      class="flash-progress-fill"
+                      :class="{ 'is-indeterminate': isFlashIndeterminate }"
+                      :style="!isFlashIndeterminate ? { width: `${Math.min(flashProgress, 100)}%` } : undefined"
+                    />
+                  </div>
+                  <p class="flash-phase-text">{{ flashPhase || '等待刷机日志...' }}</p>
+                  <div class="flash-log-panel">
+                    <span class="form-label">刷机日志</span>
+                    <pre ref="flashLogRef" class="flash-log-content">{{ flashLogs.join('\n') }}</pre>
+                  </div>
+                </div>
+
+                <template v-else-if="isIdle && selectedDevice.device.testType !== 'custom'">
+                  <div class="device-detail-main-header">
+                    <span class="catalog-case-title">
+                      {{ selectedDevice.device.role === AUX_ROLE ? '注册为辅测机' : '开始测试' }}
+                    </span>
+                  </div>
+                  <div class="device-detail-main-scroll">
+                    <div class="form-group">
+                      <span class="form-label">设备角色</span>
+                      <div class="role-selector">
+                        <button
+                          v-for="role in [DUT_ROLE, AUX_ROLE]"
+                          :key="role"
+                          type="button"
+                          class="role-btn"
+                          :class="{ active: selectedDevice.device.role === role }"
+                          @click.stop="handleSetRole(selectedDevice.device.deviceId, role as DeviceRole)"
+                        >
+                          {{ role }}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="form-group">
+                      <span class="form-label">用例选择</span>
+                      <div class="test-type-selector">
+                        <button
+                          type="button"
+                          class="test-type-btn"
+                          :class="{ active: selectedTestType === 'str4' }"
+                          @click.stop="selectedTestType = 'str4'"
+                        >
+                          <strong>转测摸底测试</strong>
+                        </button>
+                        <button
+                          type="button"
+                          class="test-type-btn"
+                          :class="{ active: selectedTestType === 'week' }"
+                          @click.stop="selectedTestType = 'week'"
+                        >
+                          <strong>周版本测试</strong>
+                        </button>
+                        <button
+                          type="button"
+                          class="test-type-btn"
+                          :class="{ active: selectedTestType === 'monkey' }"
+                          @click.stop="selectedTestType = 'monkey'"
+                        >
+                          <strong>monkey测试</strong>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="form-group flash-options">
+                      <label class="checkbox-label flash-options-toggle">
+                        <input type="checkbox" v-model="enableFlash" />
+                        <span>刷机</span>
+                      </label>
+
+                      <div v-if="enableFlash" class="flash-options-panel">
+                        <p class="flash-options-hint">开始测试前先执行 device_update 刷机；刷机成功后会自动进入所选自检用例。</p>
+
+                        <div class="flash-field">
+                          <label class="flash-field-label">刷机包路径</label>
+                          <div class="flash-path-row">
+                            <input
+                              type="text"
+                              class="form-input form-input-inline flash-path-input"
+                              placeholder="zip / scatter xml / 刷机目录"
+                              v-model="flashPath"
+                            />
+                            <button
+                              type="button"
+                              class="ea-btn-ghost ea-btn-sm flash-browse-btn"
+                              :disabled="flashPathPicking"
+                              @click.stop="handleBrowseFlashPath"
+                            >
+                              {{ flashPathPicking ? '选择中...' : '浏览' }}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div class="flash-field">
+                          <label class="flash-field-label">市场版本</label>
+                          <select v-model="flashStageVersion" class="form-input flash-market-select">
+                            <option
+                              v-for="opt in FLASH_MARKET_OPTIONS"
+                              :key="opt.value || 'none'"
+                              :value="opt.value"
+                            >
+                              {{ opt.label }}
+                            </option>
+                          </select>
+                        </div>
+
+                        <div class="flash-field flash-field--root">
+                          <label class="checkbox-label flash-root-toggle">
+                            <input type="checkbox" v-model="enableRootPkg" />
+                            <span>刷 Root 包</span>
+                            <span class="flash-field-hint">可选</span>
+                          </label>
+                          <div v-show="enableRootPkg" class="flash-path-row">
+                            <input
+                              type="text"
+                              class="form-input form-input-inline flash-path-input"
+                              placeholder="Root 包路径：zip / scatter xml / 刷机目录"
+                              v-model="rootPkgPath"
+                            />
+                            <button
+                              type="button"
+                              class="ea-btn-ghost ea-btn-sm flash-browse-btn"
+                              :disabled="rootPkgPathPicking"
+                              @click.stop="handleBrowseRootPkgPath"
+                            >
+                              {{ rootPkgPathPicking ? '选择中...' : '浏览' }}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="form-group form-row">
+                      <label class="checkbox-label">
+                        <input type="checkbox" v-model="enableTcardUpdate" />
+                        <span>T卡升级</span>
+                      </label>
+                      <template v-if="enableTcardUpdate">
+                        <input
+                          type="text"
+                          class="form-input form-input-inline"
+                          placeholder="T卡升级路径"
+                          v-model="tcardUpdatePath"
+                        />
+                        <button type="button" class="ea-btn-ghost ea-btn-sm" @click.stop>浏览</button>
+                      </template>
+                    </div>
+
+                    <button
+                      type="button"
+                      class="ea-btn-primary"
+                      @click.stop="handleStartTest(selectedDevice.device.deviceId)"
+                    >
+                      {{ selectedDevice.device.role === AUX_ROLE ? '开始待命' : '开始测试' }}
+                    </button>
+                  </div>
+                </template>
+
+                <template v-else-if="!isIdle">
+                  <div class="case-detail-header">
+                    <span class="catalog-case-title">{{ selectedCaseDisplayName }}</span>
+                    <button
+                      v-if="selectedDevice?.session?.isRunning"
+                      type="button"
+                      class="ea-btn-ghost ea-btn-sm"
+                      :style="{ opacity: followCurrent ? 1 : 0.5 }"
+                      @click="toggleFollowCurrent"
+                    >
+                      {{ followCurrent ? '● 跟随当前' : '○ 跟随当前' }}
+                    </button>
+                  </div>
+
+                  <div v-if="needsContinue || canEndTest" class="device-detail-inline-actions">
+                    <button
+                      v-if="needsContinue"
+                      type="button"
+                      class="ea-btn-primary ea-btn-sm"
+                      @click.stop="handleContinueTest(selectedDevice.device.deviceId)"
+                    >
+                      继续测试
+                    </button>
+                    <button
+                      v-if="canEndTest"
+                      type="button"
+                      class="ea-btn-primary ea-btn-sm"
+                      @click.stop="handleEndTest(selectedDevice.device.deviceId)"
+                    >
+                      结束测试
+                    </button>
+                  </div>
+
+                  <div v-if="selectedCase && selectedDevice?.session?.caseResults" class="device-detail-main-scroll case-detail-content">
+                    <template v-for="([label, configs]) in getCaseGroups" :key="label">
+                      <template v-for="config in configs" :key="config.module">
+                        <template v-if="isSelectedCaseInConfig(config)">
+                          <div class="case-info">
+                            <div class="detail-item">
+                              <span class="detail-label">用例模块</span>
+                              <span class="detail-value">{{ config.moduleLabel }}</span>
+                            </div>
+                            <div class="detail-item">
+                              <span class="detail-label">测试结果</span>
+                              <span class="detail-value" :style="{ color: getCaseResultColor(selectedCaseResult?.status || '') }">
+                                {{ selectedCaseResult?.status || '未开始' }}
+                              </span>
+                            </div>
+                            <div class="detail-item detail-item--full">
+                              <span class="detail-label">测试结论</span>
+                              <span class="detail-value">{{ selectedCaseResult?.message || '暂无' }}</span>
+                            </div>
+                          </div>
+
+                          <div class="case-steps" v-if="selectedCaseResult?.steps?.length">
+                            <div class="section-title">子步骤</div>
+                            <div
+                              v-for="(step, idx) in selectedCaseResult.steps"
+                              :key="idx"
+                              class="step-item"
+                            >
+                              {{ step.stepDesc }}
+                            </div>
+                          </div>
+                        </template>
+                      </template>
+                    </template>
+
+                    <div v-if="isTestComplete" class="case-detail-actions">
+                      <button type="button" class="ea-btn-primary" @click="openRetestDialog(selectedCase!)">复测此用例</button>
+                      <button type="button" class="ea-btn-ghost" @click="openModifyDialog(selectedCase!)">修改用例结果</button>
+                    </div>
+                  </div>
+
+                  <div v-else class="device-detail-main-scroll case-detail-empty">
+                    <span class="ea-muted">请从左侧选择用例查看详情</span>
+                  </div>
+                </template>
+
+                <div v-else class="device-detail-main-scroll case-detail-empty">
+                  <span class="ea-muted">暂无操作</span>
+                </div>
+              </EaCard>
             </div>
-            
-            <div v-else class="case-detail-empty">
-              <span class="ea-muted">请从左侧选择用例查看详情</span>
-            </div>
-          </EaCard>
+          </div>
         </div>
-      </div>
+        </div>
+      </template>
     </template>
 </template>
 
@@ -967,42 +1181,260 @@ function handleDutRowAction(deviceId: string) {
 .group-label { margin: 0 0 10px; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; }
 .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .device-card-running { border-left: 3px solid var(--accent); }
+
+.device-card-selected {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.device-list-anchor {
+  scroll-margin-top: 16px;
+}
+
+$catalog-pane-height: calc(100vh - 48px);
+
+.self-check-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.self-check-stack-pane {
+  scroll-margin-top: 16px;
+  flex-shrink: 0;
+}
+
+.self-check-stack-pane--catalog {
+  height: $catalog-pane-height;
+  min-height: $catalog-pane-height;
+  max-height: $catalog-pane-height;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+
+  &.catalog-detail-layout {
+    height: $catalog-pane-height;
+    min-height: $catalog-pane-height;
+    max-height: $catalog-pane-height;
+  }
+
+  .catalog-overview-card {
+    flex-shrink: 0;
+  }
+
+  .catalog-detail-body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .catalog-detail-body.detail-container {
+    display: flex;
+    gap: 16px;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .catalog-detail-body .sidebar-card {
+    width: 280px;
+    flex-shrink: 0;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+
+    .section-title {
+      flex-shrink: 0;
+      margin-bottom: 8px;
+    }
+
+    .case-list {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+  }
+
+  .catalog-detail-body .detail-main {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .catalog-detail-body .catalog-case-detail-card {
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .catalog-detail-body .catalog-case-detail-card .case-detail-header {
+    flex-shrink: 0;
+  }
+
+  .catalog-detail-body .catalog-case-detail-card .case-detail-content,
+  .catalog-detail-body .catalog-case-detail-card .case-detail-empty {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+.self-check-stack-pane--list {
+  min-height: 0;
+  position: relative;
+  z-index: 0;
+}
+
+.self-check-stack-pane--device {
+  height: $catalog-pane-height;
+  min-height: $catalog-pane-height;
+  max-height: $catalog-pane-height;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+
+  &.device-detail-layout {
+    height: $catalog-pane-height;
+    min-height: $catalog-pane-height;
+    max-height: $catalog-pane-height;
+  }
+
+  .device-overview-card {
+    flex-shrink: 0;
+  }
+
+  .device-detail-body {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .device-detail-body.detail-container {
+    display: flex;
+    gap: 16px;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .device-detail-body .sidebar-card {
+    width: 280px;
+    flex-shrink: 0;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+
+    .section-title {
+      flex-shrink: 0;
+      margin-bottom: 8px;
+    }
+
+    .case-list {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+  }
+
+  .device-detail-body .detail-main {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .device-detail-body .device-detail-main-card {
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .device-detail-body .device-detail-main-card .case-detail-header,
+  .device-detail-body .device-detail-main-card .device-detail-main-header,
+  .device-detail-body .device-detail-main-card .device-detail-inline-actions {
+    flex-shrink: 0;
+  }
+
+  .device-detail-body .device-detail-main-card .device-detail-main-scroll,
+  .device-detail-body .device-detail-main-card .case-detail-empty {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .device-detail-body .device-detail-main-card > .device-detail-main-scroll:first-child {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+.device-overview-meta {
+  margin-bottom: 0;
+}
+
+.device-id-inline {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.device-detail-main-header {
+  margin-bottom: 12px;
+}
+
+.device-detail-inline-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.device-detail-panel-title {
+  margin-bottom: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.detail-item--full {
+  grid-column: 1 / -1;
+}
+
 .device-list-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .device-list-title { margin-bottom: 0; }
 .detail-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .error-banner { color: var(--error); margin-bottom: 12px; font-size: 13px; }
-
-
-.section-heading {
-  font-size: 15px;
-  font-weight: 700;
-  margin: 0 0 4px;
-}
-
-.section-desc {
-  font-size: 13px;
-  margin: 0 0 16px;
-}
-
-.section-heading-spaced {
-  margin-top: 20px;
-}
-
-.device-list-section-spaced {
-  margin-top: 20px;
-}
-
-.device-list-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.device-list-title {
-  margin-bottom: 0;
-}
 
 .device-list-actions {
   display: flex;
@@ -1011,17 +1443,120 @@ function handleDutRowAction(deviceId: string) {
   flex-shrink: 0;
 }
 
+.device-list-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.device-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--filter-border, var(--line));
+  border-radius: 999px;
+  background: var(--filter-bg, var(--bg));
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--filter-fg, var(--text));
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+
+  &:hover {
+    filter: brightness(0.97);
+  }
+
+  &.active {
+    border-color: var(--filter-active-border, var(--filter-border, var(--accent)));
+    background: var(--filter-active-bg, var(--filter-bg, var(--accent-soft)));
+    color: var(--filter-active-fg, var(--filter-fg, var(--accent)));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--filter-active-border, var(--accent)) 24%, transparent);
+  }
+}
+
+.device-filter-chip--all {
+  --filter-border: #94a3b8;
+  --filter-bg: #f8fafc;
+  --filter-fg: #475569;
+  --filter-active-border: #64748b;
+  --filter-active-bg: #e2e8f0;
+  --filter-active-fg: #334155;
+}
+
+.device-filter-chip--testing {
+  --filter-border: #60a5fa;
+  --filter-bg: #eff6ff;
+  --filter-fg: #1d4ed8;
+  --filter-active-border: #2563eb;
+  --filter-active-bg: #dbeafe;
+  --filter-active-fg: #1e40af;
+}
+
+.device-filter-chip--waiting {
+  --filter-border: #fbbf24;
+  --filter-bg: #fffbeb;
+  --filter-fg: #b45309;
+  --filter-active-border: #d97706;
+  --filter-active-bg: #fef3c7;
+  --filter-active-fg: #92400e;
+}
+
+.device-filter-chip--idle {
+  --filter-border: #a1a1aa;
+  --filter-bg: #fafafa;
+  --filter-fg: #52525b;
+  --filter-active-border: #71717a;
+  --filter-active-bg: #f4f4f5;
+  --filter-active-fg: #3f3f46;
+}
+
+.device-filter-chip--passed {
+  --filter-border: #4ade80;
+  --filter-bg: #f0fdf4;
+  --filter-fg: #15803d;
+  --filter-active-border: #16a34a;
+  --filter-active-bg: #dcfce7;
+  --filter-active-fg: #166534;
+}
+
+.device-filter-chip--failed {
+  --filter-border: #f87171;
+  --filter-bg: #fef2f2;
+  --filter-fg: #b91c1c;
+  --filter-active-border: #dc2626;
+  --filter-active-bg: #fee2e2;
+  --filter-active-fg: #991b1b;
+}
+
+.device-filter-chip--aux {
+  --filter-border: #34d399;
+  --filter-bg: #ecfdf5;
+  --filter-fg: #047857;
+  --filter-active-border: #10b981;
+  --filter-active-bg: #d1fae5;
+  --filter-active-fg: #065f46;
+}
+
+.device-filter-count {
+  min-width: 1.2em;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--filter-fg, var(--text)) 12%, var(--filter-bg, var(--bg)));
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+
+  .device-filter-chip.active & {
+    background: color-mix(in srgb, var(--filter-active-fg, var(--accent)) 16%, var(--filter-active-bg, var(--bg)));
+  }
+}
+
 .device-list-empty {
   padding: 40px;
   text-align: center;
-}
-
-.overview-catalog-section {
-  margin-bottom: 8px;
-}
-
-.overview-catalog-bar {
-  margin-bottom: 0;
 }
 
 .catalog-auto-retest-row {
@@ -1031,6 +1566,68 @@ function handleDutRowAction(deviceId: string) {
   flex-wrap: nowrap;
   font-size: 13px;
   margin-top: 0;
+}
+
+.catalog-overview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+
+  .section-title {
+    margin-bottom: 0;
+  }
+}
+
+.catalog-overview-meta {
+  margin: 0 0 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  div {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    gap: 8px;
+    font-size: 12px;
+  }
+
+  dt {
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  dd {
+    margin: 0;
+    line-height: 1.4;
+  }
+}
+
+.catalog-overview-retest {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.catalog-monkey-duration {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.catalog-monkey-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.catalog-monkey-input {
+  width: 90px;
+}
+
+.catalog-monkey-help {
+  font-size: 12px;
 }
 
 .catalog-setting-input {
@@ -1053,27 +1650,6 @@ function handleDutRowAction(deviceId: string) {
     opacity: 0.6;
     cursor: not-allowed;
   }
-}
-
-.catalog-monkey-duration {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 13px;
-}
-
-.catalog-monkey-label {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.catalog-monkey-input {
-  width: 90px;
-}
-
-.catalog-monkey-help {
-  font-size: 12px;
 }
 
 .pre-wrap {
@@ -1164,6 +1740,60 @@ function handleDutRowAction(deviceId: string) {
   gap: 16px;
   height: calc(100vh - 180px);
   min-height: 500px;
+}
+
+.self-check-stack-pane--catalog .catalog-detail-body.detail-container {
+  height: 100%;
+  min-height: 0;
+}
+
+.self-check-stack-pane--device .device-detail-body.detail-container {
+  height: 100%;
+  min-height: 0;
+}
+
+.self-check-stack .detail-container:not(.catalog-detail-body):not(.device-detail-body) {
+  height: auto;
+  min-height: 0;
+}
+
+.catalog-detail-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.self-check-stack-pane--catalog.catalog-detail-layout {
+  height: $catalog-pane-height;
+  min-height: $catalog-pane-height;
+}
+
+.device-detail-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.self-check-stack-pane--device.device-detail-layout {
+  height: $catalog-pane-height;
+  min-height: $catalog-pane-height;
+  max-height: $catalog-pane-height;
+}
+
+.catalog-detail-layout .detail-container {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.catalog-panel-loading,
+.catalog-panel-error {
+  padding: 40px;
+  text-align: center;
+}
+
+.catalog-overview-card .detail-card-content {
+  gap: 8px;
 }
 
 .sidebar-card {
@@ -1299,7 +1929,7 @@ function handleDutRowAction(deviceId: string) {
 
 .test-type-selector {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -1419,6 +2049,13 @@ function handleDutRowAction(deviceId: string) {
   margin-bottom: 16px;
 }
 
+.catalog-case-title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--text);
+}
+
 .case-detail-content {
   display: flex;
   flex-direction: column;
@@ -1434,6 +2071,11 @@ function handleDutRowAction(deviceId: string) {
 .case-steps {
   padding-top: 16px;
   border-top: 1px solid var(--line);
+}
+
+.case-expected .detail-value {
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .step-item {
@@ -1516,10 +2158,23 @@ function handleDutRowAction(deviceId: string) {
 }
 
 @media (max-width: 1024px) {
-  .detail-container {
+  .self-check-stack-pane--catalog,
+  .self-check-stack-pane--device {
+    height: calc(100vh - 32px);
+    min-height: calc(100vh - 32px);
+    max-height: calc(100vh - 32px);
+  }
+
+  .detail-container,
+  .catalog-detail-layout,
+  .device-detail-layout {
     flex-direction: column;
     height: auto;
     min-height: auto;
+  }
+
+  .catalog-detail-layout .detail-container {
+    flex: none;
   }
 
   .sidebar-card {
@@ -1540,20 +2195,37 @@ function handleDutRowAction(deviceId: string) {
   .custom-test-layout {
     flex-direction: column;
 
+    .custom-test-left {
+      width: 100%;
+      height: calc(100vh - 120px);
+      max-height: calc(100vh - 120px);
+    }
+
     .custom-test-right {
       width: 100%;
+      max-height: none;
     }
   }
+}
+
+.custom-test-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scroll-margin-top: 16px;
 }
 
 .custom-test-layout {
   display: flex;
   gap: 16px;
-  margin-top: 16px;
+  min-height: 0;
 
   .custom-test-left {
     flex: 1;
     min-width: 0;
+    min-height: 0;
+    height: $catalog-pane-height;
+    max-height: $catalog-pane-height;
   }
 
   .custom-test-right {
@@ -1563,6 +2235,37 @@ function handleDutRowAction(deviceId: string) {
     flex-direction: column;
     gap: 16px;
     align-self: flex-start;
+    max-height: $catalog-pane-height;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+.custom-test-case-card {
+  height: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.custom-test-case-header {
+  flex-shrink: 0;
+}
+
+.custom-test-case-title {
+  margin-bottom: 0;
+}
+
+.custom-test-case-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+
+  .catalog-cases {
+    max-height: none;
+    overflow-y: visible;
   }
 }
 
@@ -1570,6 +2273,14 @@ function handleDutRowAction(deviceId: string) {
   position: sticky;
   top: 12px;
   z-index: 2;
+}
+
+.custom-run-summary-header {
+  margin-bottom: 12px;
+}
+
+.custom-run-summary-title {
+  margin-bottom: 0;
 }
 
 .custom-run-meta {

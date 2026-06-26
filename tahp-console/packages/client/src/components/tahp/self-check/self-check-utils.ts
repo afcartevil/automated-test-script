@@ -1,4 +1,4 @@
-import type { DeviceInfo } from '@/api/tahp/device-self-check'
+import type { CaseCatalogGroup, DeviceInfo } from '@/api/tahp/device-self-check'
 
 export const SELF_CHECK_SUBTITLE =
   '项目节点驱动，自动烧录、自动测试、AI Review，第二天人工复核报告'
@@ -87,6 +87,81 @@ export function getCaseResultColor(status: string): string {
 export function parseManualSteps(steps: string): string[] {
   if (!steps.trim()) return []
   return steps.split('\n').map(line => line.trim()).filter(Boolean)
+}
+
+export const DEVICE_LIST_FILTER_OPTIONS = [
+  { key: 'all', label: '全部' },
+  { key: 'testing', label: '测试中' },
+  { key: 'waiting', label: '等待测试' },
+  { key: 'idle', label: '空闲' },
+  { key: 'passed', label: '通过' },
+  { key: 'failed', label: '失败' },
+  { key: 'aux', label: '辅测机' },
+] as const
+
+export type DeviceListFilterKey = typeof DEVICE_LIST_FILTER_OPTIONS[number]['key']
+
+export function getDeviceListFilterKey(device: DeviceInfo): DeviceListFilterKey | 'other' {
+  const status = device.status as string
+  if (
+    status === '测试中'
+    || status === '刷机中'
+    || status === '占用中'
+    || status === '初始化中'
+  ) {
+    return 'testing'
+  }
+  if (
+    status === '等待测试开始'
+    || status === '待命'
+    || status === '不满足前置条件'
+  ) {
+    return 'waiting'
+  }
+  if (status === '空闲') return 'idle'
+  if (status === '完成(通过)') return 'passed'
+  if (status === '完成(失败)' || status === '错误') return 'failed'
+  return 'other'
+}
+
+export function deviceMatchesListFilter(
+  device: DeviceInfo,
+  filter: DeviceListFilterKey,
+): boolean {
+  if (filter === 'all') return true
+  if (filter === 'aux') return device.role === '辅测机'
+  return getDeviceListFilterKey(device) === filter
+}
+
+/** 用例大类卡片：模块覆盖范围 */
+export function formatCatalogModuleScope(group: CaseCatalogGroup): string {
+  return group.modules.map(m => m.moduleLabel).join('、')
+}
+
+/** 用例大类卡片：自动化说明 */
+export function formatCatalogAutomation(group: CaseCatalogGroup): string {
+  if (group.testType === 'monkey') {
+    return '脚本全自动（Monkey）'
+  }
+  const hasReuse = group.modules.some(m => m.cases.some(c => c.canReuse))
+  const base = '脚本自动化 + 半自动化'
+  return hasReuse ? `${base}（支持结果复用）` : base
+}
+
+/** 用例大类卡片：聚合各模块最高前置要求 */
+export function formatCatalogPrereq(group: CaseCatalogGroup): string {
+  const parts: string[] = ['ADB 连接测试机']
+  const maxDutSim = Math.max(0, ...group.modules.map(m => m.conditions.dutSimCount))
+  const maxAux = Math.max(0, ...group.modules.map(m => m.conditions.auxRequired))
+  const maxAuxSim = Math.max(0, ...group.modules.map(m => m.conditions.auxSimCount))
+  if (maxDutSim > 0) {
+    parts.push(`测试机插入${maxDutSim}张SIM卡`)
+  }
+  if (maxAux > 0) {
+    const auxPart = `${maxAux}台辅测机`
+    parts.push(maxAuxSim > 0 ? `${auxPart}（各${maxAuxSim}张SIM）` : auxPart)
+  }
+  return parts.join('；')
 }
 
 export type PipelineStageStatus =
