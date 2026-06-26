@@ -108,7 +108,7 @@ tahpDeviceSelfCheckRoutes.post(
     try {
       const deviceId = ctx.params.deviceId
       const { testType, flash } = ctx.request.body as {
-        testType: 'str4' | 'week'
+        testType: 'str4' | 'week' | 'monkey'
         flash?: StartTestFlashPayload
       }
       const result = await startTest(deviceId, testType, flash)
@@ -213,7 +213,7 @@ tahpDeviceSelfCheckRoutes.post(
   async (ctx) => {
     try {
       const deviceId = ctx.params.deviceId
-      const result = endTest(deviceId)
+      const result = await endTest(deviceId)
       ctx.body = { success: true, data: result }
     } catch (err: any) {
       ctx.status = 500

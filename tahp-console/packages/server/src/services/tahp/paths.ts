@@ -5,8 +5,9 @@
  *   1. 环境变量 TAHP_PROJECT_ROOT
  *   2. 自动推断 (tahp-console 上级目录，含 skills 或 knowledge-base)
  */
+import { spawnSync } from 'child_process'
 import { existsSync } from 'fs'
-import { resolve, dirname, join } from 'path'
+import { resolve, join } from 'path'
 
 function isTahpProjectRoot(dir: string): boolean {
   return (
@@ -29,14 +30,55 @@ function deriveProjectRoot(): string {
 
 const projectRoot = deriveProjectRoot()
 
+function pythonWorks(cmd: string): boolean {
+  const parts = cmd.trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return false
+  const [command, ...prefixArgs] = parts
+  try {
+    const result = spawnSync(command, [...prefixArgs, '--version'], {
+      encoding: 'utf-8',
+      windowsHide: true,
+      timeout: 5000,
+    })
+    if (result.status !== 0) return false
+    const version = `${result.stdout || ''}${result.stderr || ''}`.trim()
+    return /Python 3\./.test(version)
+  } catch {
+    return false
+  }
+}
+
+function discoverPython(): string {
+  const fromEnv = process.env.TAHP_PYTHON?.trim()
+  if (fromEnv && pythonWorks(fromEnv)) return fromEnv
+
+  if (process.platform === 'win32') {
+    for (const candidate of ['py -3.12', 'py -3.11', 'py -3', 'python3', 'python']) {
+      if (pythonWorks(candidate)) return candidate
+    }
+    return 'python'
+  }
+
+  return pythonWorks('python3') ? 'python3' : 'python'
+}
+
 export const tahpPaths = {
   projectRoot,
-  python: process.env.TAHP_PYTHON || (process.platform === 'win32' ? 'python' : 'python3'),
+  python: discoverPython(),
   knowledgeDir: join(projectRoot, 'knowledge-base'),
   reportsDir: join(projectRoot, 'reports'),
   skillsDir: join(projectRoot, 'skills', '.claude', 'skills'),
   selfCheckDir: join(__dirname, 'self-check'),
   flashToolDir: join(__dirname, 'self-check', 'flash_tool'),
+}
+
+/** 将 `py -3` 这类命令拆成 spawn(command, prefixArgs) 可用形式 */
+export function resolvePythonSpawn(python = tahpPaths.python): { command: string; prefixArgs: string[] } {
+  const parts = python.trim().split(/\s+/).filter(Boolean)
+  return {
+    command: parts[0] || 'python',
+    prefixArgs: parts.slice(1),
+  }
 }
 
 export function hasTahpProject(): boolean {

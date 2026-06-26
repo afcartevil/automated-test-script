@@ -11,7 +11,7 @@ import {
   runDeviceFlash,
   waitForAdbDevice,
 } from './device-flash'
-import { tahpPaths } from './paths'
+import { resolvePythonSpawn, tahpPaths } from './paths'
 import { buildSelfCheckDetailPayload, type SelfCheckFailedCaseItem } from './self-check-reports'
 
 // 类型定义
@@ -29,6 +29,9 @@ export type DeviceStatus =
   | '待命'
   | '刷机中'
 
+export type StandardTestType = 'str4' | 'week' | 'monkey'
+export type DeviceTestType = StandardTestType | 'custom'
+
 export interface SimCardInfo {
   slotIndex: number
   operator: string
@@ -41,7 +44,7 @@ export interface DeviceInfo {
   deviceName: string
   role: DeviceRole
   status: DeviceStatus
-  testType?: 'str4' | 'week' | 'custom'
+  testType?: DeviceTestType
   currentModule?: string
   simCards: SimCardInfo[]
   testStartTime?: string
@@ -102,7 +105,7 @@ export interface ModuleProgress {
 
 export interface TestSession {
   deviceId: string
-  testType: 'str4' | 'week' | 'custom'
+  testType: DeviceTestType
   modules: string[]
   currentModuleIndex: number
   moduleProgress: Record<string, ModuleProgress>
@@ -163,9 +166,15 @@ interface AutoTestSettings {
   autoTestPath: Record<string, string>           // key: testType/module
   autoRetestEnabled?: Record<string, boolean>   // key: testType
   autoRetestCount?: Record<string, number>      // key: testType
+  monkeyDuration?: string
 }
 
-let settings: AutoTestSettings = { autoTestEnabled: {}, autoTestPath: {} }
+const DEFAULT_MONKEY_DURATION = '7d'
+let settings: AutoTestSettings = {
+  autoTestEnabled: {},
+  autoTestPath: {},
+  monkeyDuration: DEFAULT_MONKEY_DURATION,
+}
 
 export interface CaseCatalogDetailItem {
   key: string
@@ -243,11 +252,23 @@ async function retestFailedAutoCasesInModule(
 function loadSettings(): void {
   try {
     if (existsSync(SETTINGS_PATH)) {
-      settings = JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8'))
+      settings = {
+        ...settings,
+        ...JSON.parse(readFileSync(SETTINGS_PATH, 'utf-8')),
+      }
     }
   } catch (e) {
     console.warn('[device-self-check] Failed to load settings, using defaults')
   }
+}
+
+function normalizeMonkeyDuration(duration?: string): string {
+  const text = String(duration || DEFAULT_MONKEY_DURATION).trim().toLowerCase()
+  if (/^\d+$/.test(text)) return text
+  if (/^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.test(text) && /[dhms]/.test(text)) {
+    return text
+  }
+  return DEFAULT_MONKEY_DURATION
 }
 
 function saveSettings(): void {
@@ -259,11 +280,19 @@ function saveSettings(): void {
 }
 
 export function getSettings(): AutoTestSettings {
-  return settings
+  return {
+    ...settings,
+    monkeyDuration: normalizeMonkeyDuration(settings.monkeyDuration),
+  }
 }
 
 export function updateSettings(newSettings: AutoTestSettings): void {
-  settings = newSettings
+  settings = {
+    ...newSettings,
+    autoTestEnabled: newSettings.autoTestEnabled || {},
+    autoTestPath: newSettings.autoTestPath || {},
+    monkeyDuration: normalizeMonkeyDuration(newSettings.monkeyDuration),
+  }
   saveSettings()
 }
 
@@ -271,7 +300,8 @@ export function updateSettings(newSettings: AutoTestSettings): void {
 function loadCaseConfigs(): void {
   const configFiles = [
     'str4_tdd.json', 'str4_driver_component.json', 'str4_driver_hardware.json',
-    'week_tdd.json', 'week_driver.json'
+    'week_tdd.json', 'week_driver.json',
+    'monkey_monkey.json',
   ]
   
   for (const file of configFiles) {
@@ -792,10 +822,10 @@ async function checkPreconditions(
 }
 
 // 获取模块列表
-function getModulesForTestType(testType: 'str4' | 'week'): string[] {
-  return testType === 'str4'
-    ? ['driver_component', 'driver_hardware', 'tdd']
-    : ['driver', 'tdd']
+function getModulesForTestType(testType: StandardTestType): string[] {
+  if (testType === 'str4') return ['driver_component', 'driver_hardware', 'tdd']
+  if (testType === 'monkey') return ['monkey']
+  return ['driver', 'tdd']
 }
 
 // 执行单个用例
@@ -1071,12 +1101,66 @@ function buildDeviceInfo(
       }))
     }],
     Auxiliary: auxDevices,
+    monkeyDuration: normalizeMonkeyDuration(settings.monkeyDuration),
     module_init_done: Boolean(
       testType &&
       module &&
       session?.initializedPythonModules?.includes(`${testType}/${module}`)
     ),
   }
+}
+
+function spawnPythonProcess(
+  args: string[],
+  options: {
+    cwd?: string
+    label?: string
+    timeoutMs?: number
+    onStdout?: (chunk: Buffer) => void
+    onStderr?: (chunk: Buffer) => void
+    onClose?: (code: number) => void
+    onError?: (err: Error) => void
+  } = {}
+): { proc: ReturnType<typeof spawn>; cleanup: () => void } {
+  const { command, prefixArgs } = resolvePythonSpawn()
+  let proc: ReturnType<typeof spawn> | null = null
+  let timeoutId: NodeJS.Timeout | null = null
+
+  const cleanup = () => {
+    if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
+    if (proc && !proc.killed) { try { proc.kill() } catch {} }
+  }
+
+  if (options.timeoutMs && options.timeoutMs > 0) {
+    timeoutId = setTimeout(() => {
+      if (options.label) {
+        console.warn(`[device-self-check] ${options.label} timeout after ${options.timeoutMs}ms`)
+      }
+      cleanup()
+      options.onClose?.(-1)
+    }, options.timeoutMs)
+  }
+
+  proc = spawn(command, [...prefixArgs, ...args], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    shell: false,
+    cwd: options.cwd || PYTHON_DIR,
+    env: { ...process.env, PYTHONPATH: PYTHON_DIR, PYTHONUTF8: '1' },
+  })
+
+  proc.stdout?.on('data', (data: Buffer) => options.onStdout?.(data))
+  proc.stderr?.on('data', (data: Buffer) => options.onStderr?.(data))
+  proc.on('close', (code: number) => {
+    cleanup()
+    options.onClose?.(code ?? -1)
+  })
+  proc.on('error', (err: Error) => {
+    cleanup()
+    options.onError?.(err)
+    options.onClose?.(-1)
+  })
+
+  return { proc, cleanup }
 }
 
 // 执行 Python 内联脚本
@@ -1087,44 +1171,41 @@ async function execPythonScript(
   label = 'python-script'
 ): Promise<void> {
   return new Promise((resolve) => {
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
-    let proc: any = null
-    let timeoutId: NodeJS.Timeout | null = null
-
-    const cleanup = () => {
-      if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
-      if (proc && !proc.killed) { try { proc.kill() } catch {} }
-    }
-
-    timeoutId = setTimeout(() => {
-      console.warn(`[device-self-check] ${label} timeout after ${timeoutMs}ms`)
-      cleanup()
-      resolve()
-    }, timeoutMs)
-
     try {
-      proc = spawn(pythonCmd, ['-c', script, ...args], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        shell: false,
-        cwd: PYTHON_DIR,
-        env: { ...process.env, PYTHONPATH: PYTHON_DIR, PYTHONUTF8: '1' }
-      })
-
-      proc.stderr?.on('data', (data: Buffer) => {
-        const msg = data.toString().trim()
-        if (msg) console.warn(`[device-self-check] ${label} stderr: ${msg}`)
-      })
-
-      proc.on('close', () => {
-        cleanup()
-        resolve()
-      })
-      proc.on('error', () => {
-        cleanup()
-        resolve()
+      spawnPythonProcess(['-c', script, ...args], {
+        label,
+        timeoutMs,
+        onStderr: (data) => {
+          const msg = data.toString().trim()
+          if (msg) console.warn(`[device-self-check] ${label} stderr: ${msg}`)
+        },
+        onClose: () => resolve(),
+        onError: () => resolve(),
       })
     } catch {
-      cleanup()
+      resolve()
+    }
+  })
+}
+
+async function stopMonkeyForDevice(deviceId: string): Promise<void> {
+  const script = join(PYTHON_DIR, 'tools', 'monkey_usd', 'monkey_test.py')
+  if (!existsSync(script)) return
+
+  return new Promise((resolve) => {
+    try {
+      spawnPythonProcess([script, '-s', deviceId, 'stop'], {
+        cwd: join(PYTHON_DIR, 'tools', 'monkey_usd'),
+        label: `monkey-stop/${deviceId}`,
+        timeoutMs: 30_000,
+        onStderr: (data) => {
+          const msg = data.toString().trim()
+          if (msg) console.warn(`[device-self-check] monkey-stop stderr: ${msg}`)
+        },
+        onClose: () => resolve(),
+        onError: () => resolve(),
+      })
+    } catch {
       resolve()
     }
   })
@@ -1233,7 +1314,7 @@ async function execPythonCase(
     const deviceInfoJson = JSON.stringify(deviceInfo)
     const caseKey = `${testType}/${module}/${caseIndex}`
 
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+    const { command, prefixArgs } = resolvePythonSpawn()
     let proc: any = null
     let timeoutId: NodeJS.Timeout | null = null
     let settled = false
@@ -1260,7 +1341,8 @@ async function execPythonCase(
     scheduleTimeout(CASE_EXEC_TIMEOUT_MS, '用例执行超时(120s)')
 
     try {
-      proc = spawn(pythonCmd, [
+      proc = spawn(command, [
+        ...prefixArgs,
         runCaseScript,
         '--test-type', testType,
         '--module', module,
@@ -1452,7 +1534,7 @@ function isFullAutomation(steps: string): boolean {
 // 执行模块测试
 async function runModule(
   deviceId: string,
-  testType: 'str4' | 'week',
+  testType: StandardTestType,
   module: string,
   session: TestSession
 ): Promise<void> {
@@ -1732,7 +1814,7 @@ async function runFlashBeforeTest(deviceId: string, session: TestSession): Promi
 // 启动测试
 export async function startTest(
   deviceId: string,
-  testType: 'str4' | 'week',
+  testType: StandardTestType,
   flash?: StartTestFlashPayload
 ): Promise<DeviceDetail | null> {
   try {
@@ -1859,7 +1941,7 @@ export async function startCustomTest(
 // 异步执行测试流程
 async function runTestFlow(
   deviceId: string,
-  testType: 'str4' | 'week',
+  testType: StandardTestType,
   session: TestSession
 ): Promise<void> {
   if (session.flashOptions) {
@@ -2307,7 +2389,7 @@ export async function continueTest(deviceId: string): Promise<DeviceDetail | nul
 
     // 重新检查前置条件并继续未完成的模块
     const testType = session.testType
-    if (testType !== 'str4' && testType !== 'week') {
+    if (testType === 'custom') {
       return { device, session }
     }
     const remainingModules = session.modules.slice(session.currentModuleIndex)
@@ -2374,13 +2456,15 @@ function releaseAuxDevicesIfNoActiveDut(testType: string): void {
   }
 }
 
-// 结束测试（释放所有资源）
-export function endTest(deviceId: string): DeviceDetail | null {
+// 结束测试（释放所有资源，并停止后台 Monkey）
+export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
   const device = devices[deviceId]
   const session = testSessions[deviceId]
   if (!device) return null
 
   const endedTestType = device.testType || session?.testType
+
+  await stopMonkeyForDevice(deviceId)
 
   if (session) {
     session.isRunning = false
@@ -2557,11 +2641,13 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
   const TEST_TYPE_LABELS: Record<string, string> = {
     str4: '转测摸底测试',
     week: '周版本测试',
+    monkey: 'monkey测试',
   }
   const MODULE_ORDER: Record<string, number> = {
     driver: 0,
     driver_component: 0,
     driver_hardware: 1,
+    monkey: 2,
     tdd: 99,
   }
 
@@ -2589,7 +2675,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week']
+  const typeOrder = ['str4', 'week', 'monkey']
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),

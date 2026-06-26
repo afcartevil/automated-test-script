@@ -1,0 +1,18 @@
+{
+  "testType": "monkey",
+  "module": "monkey",
+  "moduleLabel": "monkey测试",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "monkey测试",
+      "canReuse": false
+    }
+  ]
+}

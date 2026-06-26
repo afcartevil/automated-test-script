@@ -80,7 +80,7 @@ const selectedDevice = ref<DeviceDetail | null>(null)
 const moduleConditions = ref<Record<string, ModuleCondition>>({})
 
 // 测试类型选择
-const selectedTestType = ref<'str4' | 'week'>('week')
+const selectedTestType = ref<'str4' | 'week' | 'monkey'>('week')
 
 // 刷机相关选项（device_update，工具位于 self-check/flash_tool/）
 const enableFlash = ref(false)
@@ -141,7 +141,11 @@ const selectedCatalogTestType = ref<string | null>(null)
 const catalogDetailItems = ref<CaseCatalogDetailItem[]>([])
 const selectedCatalogCaseKey = ref<string | null>(null)
 const catalogDetailLoading = ref(false)
-const catalogTypeSettings = ref({ autoRetestEnabled: true, autoRetestCount: 1 })
+const catalogTypeSettings = ref({
+  autoRetestEnabled: true,
+  autoRetestCount: 1,
+  monkeyDuration: '7d',
+})
 const catalogSettingsSaving = ref(false)
 const expandedCatalogTypes = ref<Set<string>>(new Set())
 const expandedCatalogModules = ref<Set<string>>(new Set())
@@ -412,6 +416,7 @@ async function openCaseCatalog(testType: string) {
     catalogTypeSettings.value = {
       autoRetestEnabled: settingsData.autoRetestEnabled?.[testType] ?? true,
       autoRetestCount: settingsData.autoRetestCount?.[testType] ?? 1,
+      monkeyDuration: settingsData.monkeyDuration || '7d',
     }
     if (detail.length > 0) {
       selectedCatalogCaseKey.value = detail[0].key
@@ -435,6 +440,7 @@ async function saveCatalogTypeSettings() {
     const testType = selectedCatalogTestType.value
     const count = Math.max(0, Math.min(10, catalogTypeSettings.value.autoRetestCount || 0))
     catalogTypeSettings.value.autoRetestCount = count
+    const monkeyDuration = catalogTypeSettings.value.monkeyDuration?.trim() || '7d'
     await updateSettings({
       ...current,
       autoRetestEnabled: {
@@ -445,6 +451,7 @@ async function saveCatalogTypeSettings() {
         ...(current.autoRetestCount || {}),
         [testType]: count,
       },
+      monkeyDuration,
     })
   } catch (e) {
     console.error('[DeviceSelfCheck] Error saving catalog settings:', e)

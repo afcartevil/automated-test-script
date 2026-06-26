@@ -47,7 +47,13 @@ function displayStatus(report: SelfCheckReportSummary): string {
 }
 
 function reportTitle(report: SelfCheckReportSummary): string {
-  const typeLabel = report.testType === 'custom' ? '自定义测试' : report.testType === 'str4' ? 'STR4' : '周版本'
+  const typeLabel = report.testType === 'custom'
+    ? '自定义测试'
+    : report.testType === 'str4'
+      ? 'STR4'
+      : report.testType === 'monkey'
+        ? 'monkey测试'
+        : '周版本'
   return `${report.deviceName} · ${typeLabel}`
 }
 

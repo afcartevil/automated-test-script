@@ -154,7 +154,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="TAHP 用例执行器")
-    parser.add_argument("--test-type", required=True, help="测试类型 (str4/week)")
+    parser.add_argument("--test-type", required=True, help="测试类型 (str4/week/monkey)")
     parser.add_argument("--module", required=True, help="模块名")
     parser.add_argument("--case-index", type=int, required=True, help="用例编号")
     parser.add_argument("--device-info", default="{}", help="设备信息 JSON")

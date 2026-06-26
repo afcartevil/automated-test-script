@@ -1,0 +1,11 @@
+{
+  "autoTestEnabled": {},
+  "autoTestPath": {},
+  "autoRetestEnabled": {
+    "monkey": true
+  },
+  "autoRetestCount": {
+    "monkey": 1
+  },
+  "monkeyDuration": "1m"
+}

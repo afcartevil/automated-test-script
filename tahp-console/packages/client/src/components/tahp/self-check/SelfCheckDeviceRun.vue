@@ -392,7 +392,22 @@ function handleDutRowAction(deviceId: string) {
             <div class="detail-card-content">
               <div class="detail-section">
                 <div class="section-title">用例设置</div>
-                <div class="catalog-auto-retest-row">
+                <div v-if="selectedCatalogTestType === 'monkey'" class="catalog-monkey-duration">
+                  <label class="catalog-monkey-label" for="monkey-duration-input">monkey测试时长</label>
+                  <input
+                    id="monkey-duration-input"
+                    v-model.trim="catalogTypeSettings.monkeyDuration"
+                    type="text"
+                    class="catalog-setting-input catalog-monkey-input"
+                    :disabled="catalogSettingsSaving"
+                    placeholder="7d"
+                    @change="saveCatalogTypeSettings"
+                  />
+                  <span class="ea-muted catalog-monkey-help">
+                    支持 Nm/Nd，例如 30m、7d；m 表示分钟，d 表示天，最长 14 天
+                  </span>
+                </div>
+                <div v-else class="catalog-auto-retest-row">
                   <label
                     class="checkbox-label"
                     :title="AUTO_RETEST_TOOLTIP"
@@ -426,7 +441,7 @@ function handleDutRowAction(deviceId: string) {
             </div>
             <div v-if="selectedCatalogItem" class="case-detail-content">
               <div class="case-info">
-                <div class="detail-item">
+                <div v-if="selectedCatalogTestType !== 'monkey'" class="detail-item">
                   <span class="detail-label">用例模块</span>
                   <span class="detail-value">{{ selectedCatalogItem.moduleLabel }}</span>
                 </div>
@@ -454,7 +469,8 @@ function handleDutRowAction(deviceId: string) {
                 </div>
               </div>
               <div
-                v-if="!selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
+                v-if="selectedCatalogTestType !== 'monkey'"
+                v-show="!selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
                 class="ea-muted"
               >
                 暂无手动测试步骤
@@ -719,6 +735,14 @@ function handleDutRowAction(deviceId: string) {
                       @click.stop="selectedTestType = 'week'"
                     >
                       <strong>周版本测试</strong>
+                    </button>
+                    <button
+                      type="button"
+                      class="test-type-btn"
+                      :class="{ active: selectedTestType === 'monkey' }"
+                      @click.stop="selectedTestType = 'monkey'"
+                    >
+                      <strong>monkey测试</strong>
                     </button>
                   </div>
                 </div>
@@ -1029,6 +1053,27 @@ function handleDutRowAction(deviceId: string) {
     opacity: 0.6;
     cursor: not-allowed;
   }
+}
+
+.catalog-monkey-duration {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.catalog-monkey-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.catalog-monkey-input {
+  width: 90px;
+}
+
+.catalog-monkey-help {
+  font-size: 12px;
 }
 
 .pre-wrap {

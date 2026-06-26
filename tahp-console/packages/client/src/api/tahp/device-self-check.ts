@@ -25,7 +25,7 @@ export interface DeviceInfo {
   deviceName: string
   role: DeviceRole
   status: DeviceStatus
-  testType?: 'str4' | 'week' | 'custom'
+  testType?: 'str4' | 'week' | 'custom' | 'monkey'
   currentModule?: string
   simCards: SimCardInfo[]
   testStartTime?: string
@@ -86,7 +86,7 @@ export interface ModuleProgress {
 
 export interface TestSession {
   deviceId: string
-  testType: 'str4' | 'week' | 'custom'
+  testType: 'str4' | 'week' | 'custom' | 'monkey'
   modules: string[]
   currentModuleIndex: number
   moduleProgress: Record<string, ModuleProgress>
@@ -179,7 +179,7 @@ export interface StartTestFlashPayload {
 
 export async function startTest(
   deviceId: string,
-  testType: 'str4' | 'week',
+  testType: 'str4' | 'week' | 'monkey',
   flash?: StartTestFlashPayload
 ): Promise<DeviceDetail> {
   return await tahpPost<DeviceDetail>(
@@ -306,6 +306,7 @@ export interface AutoTestSettings {
   autoTestPath: Record<string, string>
   autoRetestEnabled?: Record<string, boolean>
   autoRetestCount?: Record<string, number>
+  monkeyDuration?: string
 }
 
 export async function getSettings(): Promise<AutoTestSettings> {
@@ -315,6 +316,7 @@ export async function getSettings(): Promise<AutoTestSettings> {
     autoTestPath: data?.autoTestPath || {},
     autoRetestEnabled: data?.autoRetestEnabled || {},
     autoRetestCount: data?.autoRetestCount || {},
+    monkeyDuration: data?.monkeyDuration || '7d',
   }
 }
 

@@ -9,12 +9,14 @@ export const MODULE_ORDER: Record<string, number> = {
   driver: 0,
   driver_component: 0,
   driver_hardware: 1,
+  monkey: 2,
   tdd: 99,
 }
 
 export function getTestTypeLabel(testType?: string): string {
   if (testType === 'str4') return '转测摸底测试'
   if (testType === 'week') return '周版本测试'
+  if (testType === 'monkey') return 'monkey测试'
   if (testType === 'custom') return '自定义测试'
   return '未分配'
 }
@@ -44,6 +46,7 @@ export function getModuleLabel(module: string): string {
     driver: '驱动',
     driver_component: '驱动-器件',
     driver_hardware: '驱动-硬测',
+    monkey: 'monkey测试',
   }
   return labels[module] || module
 }
