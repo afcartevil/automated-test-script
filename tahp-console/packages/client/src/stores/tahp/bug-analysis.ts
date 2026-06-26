@@ -102,6 +102,75 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
 
   let socketBound = false
 
+  function applyInteractionSocketEvent(tid: string, ev: TahpEvent): void {
+    switch (ev.type) {
+      case 'task.approval_requested': {
+        const approvalId = String(ev.payload?.approval_id || '')
+        if (!approvalId) break
+        pendingApprovals.value = {
+          ...pendingApprovals.value,
+          [tid]: {
+            approval_id: approvalId,
+            command: String(ev.payload?.command || ''),
+            description: String(ev.payload?.description || ''),
+            choices: Array.isArray(ev.payload?.choices) ? ev.payload.choices as string[] : ['once', 'deny'],
+            allow_permanent: ev.payload?.allow_permanent !== false,
+            timeout_ms: Number(ev.payload?.timeout_ms) || 60000,
+            deadline_at: Number(ev.payload?.deadline_at) || Date.now() + 60000,
+            auto_action: typeof ev.payload?.auto_action === 'string' ? ev.payload.auto_action : 'once',
+          },
+        }
+        break
+      }
+      case 'task.approval_resolved': {
+        const next = { ...pendingApprovals.value }
+        delete next[tid]
+        pendingApprovals.value = next
+        break
+      }
+      case 'task.user_input_requested': {
+        const requestId = String(ev.payload?.request_id || '')
+        const fields = Array.isArray(ev.payload?.fields) ? ev.payload.fields as BugUserInputField[] : []
+        if (!requestId || fields.length === 0) break
+        pendingUserInputs.value = {
+          ...pendingUserInputs.value,
+          [tid]: {
+            request_id: requestId,
+            title: String(ev.payload?.title || '配置输入'),
+            message: typeof ev.payload?.message === 'string' ? ev.payload.message : undefined,
+            fields,
+            timeout_sec: Number(ev.payload?.timeout_sec) || 300,
+            deadline_at: Number(ev.payload?.deadline_at) || Date.now() + 300000,
+            persist_key: typeof ev.payload?.persist_key === 'string' ? ev.payload.persist_key : undefined,
+          },
+        }
+        if (tasks.value[tid]) {
+          tasks.value = {
+            ...tasks.value,
+            [tid]: {
+              ...tasks.value[tid],
+              status: 'waiting_user_input',
+              phase: 'WAITING_USER_INPUT',
+            },
+          }
+        }
+        break
+      }
+      case 'task.user_input_submitted': {
+        const next = { ...pendingUserInputs.value }
+        delete next[tid]
+        pendingUserInputs.value = next
+        if (tasks.value[tid]) {
+          tasks.value = {
+            ...tasks.value,
+            [tid]: { ...tasks.value[tid], status: 'running' },
+          }
+        }
+        break
+      }
+    }
+  }
+
   function ensureSocket() {
     if (socketBound) return
     const s = getTahpSocket()
@@ -114,6 +183,16 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
       arr.push({ type: ev.type, payload: ev.payload, ts: ev.ts })
       if (arr.length > 800) arr.splice(0, arr.length - 800)
       streams.value = { ...streams.value, [tid]: arr }
+
+      // 人机协同事件：不依赖 tasks 是否已注册，确保弹窗能弹出
+      if (
+        ev.type === 'task.approval_requested'
+        || ev.type === 'task.approval_resolved'
+        || ev.type === 'task.user_input_requested'
+        || ev.type === 'task.user_input_submitted'
+      ) {
+        applyInteractionSocketEvent(tid, ev)
+      }
 
       // Update task state (single tasks)
       if (tasks.value[tid]) {
@@ -141,57 +220,17 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             t.progress = 100
             t.error = ev.payload?.error as string
             break
-          case 'task.approval_requested': {
-            const approvalId = String(ev.payload?.approval_id || '')
-            if (!approvalId) break
-            pendingApprovals.value = {
-              ...pendingApprovals.value,
-              [tid]: {
-                approval_id: approvalId,
-                command: String(ev.payload?.command || ''),
-                description: String(ev.payload?.description || ''),
-                choices: Array.isArray(ev.payload?.choices) ? ev.payload.choices as string[] : ['once', 'deny'],
-                allow_permanent: ev.payload?.allow_permanent !== false,
-                timeout_ms: Number(ev.payload?.timeout_ms) || 60000,
-                deadline_at: Number(ev.payload?.deadline_at) || Date.now() + 60000,
-                auto_action: typeof ev.payload?.auto_action === 'string' ? ev.payload.auto_action : 'once',
-              },
+          case 'task.approval_requested':
+          case 'task.approval_resolved':
+          case 'task.user_input_requested':
+            if (ev.type === 'task.user_input_requested') {
+              t.status = 'waiting_user_input'
+              t.phase = 'WAITING_USER_INPUT'
             }
             break
-          }
-          case 'task.approval_resolved': {
-            const next = { ...pendingApprovals.value }
-            delete next[tid]
-            pendingApprovals.value = next
-            break
-          }
-          case 'task.user_input_requested': {
-            const requestId = String(ev.payload?.request_id || '')
-            const fields = Array.isArray(ev.payload?.fields) ? ev.payload.fields as BugUserInputField[] : []
-            if (!requestId || fields.length === 0) break
-            t.status = 'waiting_user_input'
-            t.phase = 'WAITING_USER_INPUT'
-            pendingUserInputs.value = {
-              ...pendingUserInputs.value,
-              [tid]: {
-                request_id: requestId,
-                title: String(ev.payload?.title || '配置输入'),
-                message: typeof ev.payload?.message === 'string' ? ev.payload.message : undefined,
-                fields,
-                timeout_sec: Number(ev.payload?.timeout_sec) || 300,
-                deadline_at: Number(ev.payload?.deadline_at) || Date.now() + 300000,
-                persist_key: typeof ev.payload?.persist_key === 'string' ? ev.payload.persist_key : undefined,
-              },
-            }
-            break
-          }
-          case 'task.user_input_submitted': {
-            const next = { ...pendingUserInputs.value }
-            delete next[tid]
-            pendingUserInputs.value = next
+          case 'task.user_input_submitted':
             t.status = 'running'
             break
-          }
           case 'task.phase':
             t.phase = ev.payload?.phase as string
             if (typeof ev.payload?.progress === 'number') t.progress = ev.payload.progress as number

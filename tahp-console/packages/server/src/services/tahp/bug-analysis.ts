@@ -590,7 +590,7 @@ async function runAgentChat(
     instructions?: string
     conversationHistory?: unknown[]
   },
-): Promise<{ fullResponse: string; runId: string }> {
+): Promise<{ fullResponse: string; runId: string; interrupted?: boolean }> {
   const manager = getAgentBridgeManager()
   if (!manager.running) {
     throw new Error(
@@ -654,7 +654,8 @@ async function runAgentChat(
         throw new Error(chunk.error || 'Agent 运行出错')
       }
       if (chunk.status === 'interrupted') {
-        throw new Error('Agent 运行被中断')
+        // 用户配置输入暂停会主动 interrupt，由调用方根据 userInputPause 处理
+        return { fullResponse, runId: started.run_id, interrupted: true }
       }
       break
     }
@@ -664,7 +665,7 @@ async function runAgentChat(
     throw new Error('Agent 流式输出意外终止（无终止 chunk）')
   }
 
-  return { fullResponse, runId: started.run_id }
+  return { fullResponse, runId: started.run_id, interrupted: false }
 }
 
 // ─── 解析 LLM 中的 <skill_use /> 标记 ────────────────────────────────────────
@@ -1216,7 +1217,7 @@ async function runSingleBugAnalysis(
     let lastSkillHitIdx = 0
     let toolCallCount = 0
 
-    const { fullResponse } = await runAgentChat(agentSessionId, userMessage, {
+    const { fullResponse, interrupted } = await runAgentChat(agentSessionId, userMessage, {
       onText: (delta) => {
         emit(taskId, 'task.message', { level: 'stream', text: delta })
 
@@ -1277,10 +1278,20 @@ async function runSingleBugAnalysis(
     }, { instructions, conversationHistory })
 
     const runtimeAfterChat = taskRuntime.get(taskId)
-    if (runtimeAfterChat?.userInputPause) {
+    if (runtimeAfterChat?.userInputPause || pendingUserInputByTask.has(taskId)) {
       pausedForUserInput = true
-      logBug(taskId, 'info', `task paused for user input: ${runtimeAfterChat.userInputPause.requestId}`)
+      logBug(taskId, 'info', `task paused for user input: ${runtimeAfterChat?.userInputPause?.requestId || 'pending'}`)
       return
+    }
+
+    if (interrupted) {
+      const control = taskRuntime.get(taskId)
+      if (control?.userInputPause) {
+        pausedForUserInput = true
+        logBug(taskId, 'info', `task paused for user input (interrupt): ${control.userInputPause.requestId}`)
+        return
+      }
+      throw new Error('Agent 运行被中断')
     }
 
     ctx.llmResponse = fullResponse

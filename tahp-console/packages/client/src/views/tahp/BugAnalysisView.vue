@@ -7,6 +7,7 @@ import {
   NSpace, NForm, NFormItem, NCheckbox, NCheckboxGroup,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
+import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
 import EaCard from '@/components/layout/EaCard.vue'
