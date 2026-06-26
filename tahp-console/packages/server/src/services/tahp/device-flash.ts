@@ -22,7 +22,6 @@ export interface PickFlashPathResult {
   error?: string
 }
 
-const PICKER_SCRIPT = join(__dirname, 'self-check', 'python', 'pick_flash_path.py')
 const EXTRACT_ZIP_SCRIPT = join(__dirname, 'self-check', 'python', 'extract_flash_zip.py')
 
 function resolveExtractZipScript(): string {
@@ -30,62 +29,139 @@ function resolveExtractZipScript(): string {
   return join(tahpPaths.selfCheckDir, 'python', 'extract_flash_zip.py')
 }
 
-function resolvePickerScript(): string {
-  if (existsSync(PICKER_SCRIPT)) return resolve(PICKER_SCRIPT)
-  return join(tahpPaths.selfCheckDir, 'python', 'pick_flash_path.py')
+function commandAvailable(cmd: string): boolean {
+  const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', [cmd], {
+    encoding: 'utf8',
+    windowsHide: true,
+  })
+  return probe.status === 0
 }
 
 function pathPickerError(): string | null {
-  const script = resolvePickerScript()
-  if (!existsSync(script)) return `未找到路径选择脚本: ${script}`
-  if (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
-    return '无图形界面，请手动输入路径'
+  if (process.platform === 'linux') {
+    if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+      return '无图形界面，请手动输入路径'
+    }
+    if (!commandAvailable('zenity') && !commandAvailable('kdialog')) {
+      return '请安装 zenity 或 kdialog（sudo apt install zenity），或手动输入路径'
+    }
   }
-  try {
-    const probe = spawnSync(tahpPaths.python, [script, '--probe'], {
-      encoding: 'utf8',
-      windowsHide: true,
-      env: pythonPickerEnv(),
-      timeout: 10_000,
-    })
-    if (probe.status !== 0) return 'Python tkinter 不可用，请手动输入路径'
-  } catch {
-    return '路径选择器不可用'
+  if (process.platform === 'win32' && !commandAvailable('powershell.exe')) {
+    return '未找到 PowerShell，请手动输入路径'
   }
   return null
 }
 
-/** 本机 tkinter 文件选择框（Windows / Linux 桌面 / macOS）。 */
+const WINDOWS_PICKER_SCRIPT = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class TahpFg {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+  public static void ForceForeground(IntPtr hWnd) {
+    // 模拟一次 ALT 抬起，解除 Windows 前台锁定，再抢前台
+    keybd_event(0x12, 0, 0, UIntPtr.Zero);
+    keybd_event(0x12, 0, 0x0002, UIntPtr.Zero);
+    ShowWindow(hWnd, 5);
+    BringWindowToTop(hWnd);
+    SetForegroundWindow(hWnd);
+  }
+}
+"@
+$owner = New-Object System.Windows.Forms.Form
+$owner.TopMost = $true
+$owner.ShowInTaskbar = $false
+$owner.FormBorderStyle = 'None'
+$owner.Size = New-Object System.Drawing.Size(1, 1)
+$owner.StartPosition = 'Manual'
+$owner.Location = New-Object System.Drawing.Point(-2000, -2000)
+$owner.Add_Shown({ [TahpFg]::ForceForeground($owner.Handle) })
+$owner.Show()
+$owner.Activate()
+[TahpFg]::ForceForeground($owner.Handle)
+$dlg = New-Object System.Windows.Forms.OpenFileDialog
+$dlg.Title = '选择版本包（zip / scatter xml）'
+$dlg.Filter = '刷机包 (*.zip;*.xml)|*.zip;*.xml|ZIP (*.zip)|*.zip|Scatter XML (*.xml)|*.xml|所有文件 (*.*)|*.*'
+$dlg.FilterIndex = 1
+$result = $dlg.ShowDialog($owner)
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dlg.FileName }
+$owner.Dispose()
+`
+
+function pickFlashPathWindows(): PickFlashPathResult {
+  // 用 -EncodedCommand（base64/UTF-16LE）避免内嵌 C#/中文/引号被命令行转义破坏
+  const encoded = Buffer.from(WINDOWS_PICKER_SCRIPT, 'utf16le').toString('base64')
+  const proc = spawnSync(
+    'powershell.exe',
+    ['-NoProfile', '-STA', '-EncodedCommand', encoded],
+    { encoding: 'utf8', windowsHide: false }
+  )
+  const path = (proc.stdout || '').trim()
+  if (path) return { canceled: false, path }
+  return { canceled: true }
+}
+
+function pickFlashPathDarwin(): PickFlashPathResult {
+  const proc = spawnSync(
+    'osascript',
+    [
+      '-e',
+      'tell application "System Events" to activate',
+      '-e',
+      'POSIX path of (choose file with prompt "选择版本包（zip / scatter xml）")',
+    ],
+    { encoding: 'utf8', windowsHide: false }
+  )
+  const path = (proc.stdout || '').trim()
+  if (proc.status === 0 && path) return { canceled: false, path }
+  return { canceled: true }
+}
+
+function pickFlashPathLinux(): PickFlashPathResult {
+  if (commandAvailable('zenity')) {
+    const proc = spawnSync(
+      'zenity',
+      [
+        '--file-selection',
+        '--modal',
+        '--title=选择版本包（zip / scatter xml）',
+        '--file-filter=刷机包 | *.zip *.xml',
+        '--file-filter=所有文件 | *',
+      ],
+      { encoding: 'utf8', windowsHide: false }
+    )
+    const path = (proc.stdout || '').trim()
+    if (proc.status === 0 && path) return { canceled: false, path }
+    return { canceled: true }
+  }
+  const proc = spawnSync(
+    'kdialog',
+    ['--getopenfilename', '', '刷机包 (*.zip *.xml)|*.zip *.xml', '选择版本包（zip / scatter xml）'],
+    { encoding: 'utf8', windowsHide: false }
+  )
+  const path = (proc.stdout || '').trim()
+  if (proc.status === 0 && path) return { canceled: false, path }
+  return { canceled: true }
+}
+
+/** 本机系统文件选择框（Windows PowerShell / macOS osascript / Linux zenity）。 */
 export async function pickLocalFlashPath(): Promise<PickFlashPathResult> {
   const unavailable = pathPickerError()
   if (unavailable) return { canceled: true, error: unavailable }
 
-  const script = resolvePickerScript()
-  return new Promise((resolve) => {
-    const proc = spawn(tahpPaths.python, [script, '--pick'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: false,
-      env: pythonPickerEnv(),
-    })
-    const stdoutChunks: Buffer[] = []
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      stdoutChunks.push(chunk)
-    })
-    proc.on('error', (err) => resolve({ canceled: true, error: err.message }))
-    proc.on('close', () => {
-      try {
-        const stdout = decodeSubprocessBytes(Buffer.concat(stdoutChunks))
-        const data = JSON.parse(stdout.trim() || '{}') as PickFlashPathResult
-        resolve({
-          canceled: Boolean(data.canceled),
-          path: typeof data.path === 'string' ? data.path : undefined,
-          error: typeof data.error === 'string' ? data.error : undefined,
-        })
-      } catch {
-        resolve({ canceled: true, error: '路径选择结果解析失败' })
-      }
-    })
-  })
+  try {
+    if (process.platform === 'win32') return pickFlashPathWindows()
+    if (process.platform === 'darwin') return pickFlashPathDarwin()
+    if (process.platform === 'linux') return pickFlashPathLinux()
+    return { canceled: true, error: '当前平台不支持文件选择，请手动输入路径' }
+  } catch (err: any) {
+    return { canceled: true, error: err?.message || '路径选择失败' }
+  }
 }
 
 export const MARKET_VERSIONS = [
