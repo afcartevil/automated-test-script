@@ -107,11 +107,12 @@ tahpDeviceSelfCheckRoutes.post(
   async (ctx) => {
     try {
       const deviceId = ctx.params.deviceId
-      const { testType, flash } = ctx.request.body as {
+      const { testType, flash, scheduleKey } = ctx.request.body as {
         testType: 'str4' | 'week' | 'monkey'
         flash?: StartTestFlashPayload
+        scheduleKey?: string
       }
-      const result = await startTest(deviceId, testType, flash)
+      const result = await startTest(deviceId, testType, flash, { scheduleKey })
       ctx.body = {
         success: true,
         data: result,

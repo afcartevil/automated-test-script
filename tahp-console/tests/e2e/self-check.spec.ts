@@ -48,16 +48,21 @@ function mockTestPlanningApi(page: import('@playwright/test').Page) {
   }
   const schedulePayload = {
     updatedAt: '2026-06-24T08:00:00.000Z',
-    rules: [{ node: 'STR4A', offsetDays: -10, testName: 'GMS测试' }],
+    rules: [{ node: 'STR4A', offsetDays: -10, testType: 'monkey' }],
     items: [
       {
+        scheduleKey: 'X6885|STR4A|2026/06/27|monkey',
         project: 'X6885',
         node: 'STR4A',
         nodeDate: '2026/07/07',
         triggerDate: '2026/06/27',
-        testName: 'GMS测试',
-        status: 'upcoming',
-        display: 'X6885 STR4A 2026/06/27 GMS测试',
+        testType: 'monkey',
+        testTypeLabel: 'monkey测试',
+        phase: 'upcoming',
+        runtimeStatus: 'no_device',
+        displayLabel: '即将开始',
+        tags: ['无设备'],
+        display: 'X6885 STR4A 2026/06/27 monkey测试',
       },
     ],
   }
@@ -163,7 +168,18 @@ test('self-check page renders tabs and workspaces', async ({ page }) => {
   await page.getByRole('button', { name: '项目规划' }).click()
   await expect(page.getByText('AI测试自规划')).toBeVisible()
   await expect(page.getByText('项目节点')).toBeVisible()
-  await expect(page.getByText('X6885 STR4A 2026/07/07')).toBeVisible()
+  const nodesPanel = page.locator('.nodes-panel .item-list li').first()
+  await expect(nodesPanel).toContainText('X6885')
+  await expect(nodesPanel).toContainText('STR4A')
+  await expect(nodesPanel).toContainText('2026/07/07')
+
+  await expect(page.getByText('无设备')).toBeVisible()
+
+  const schedulePanel = page.locator('.schedule-panel .schedule-table').first()
+  await expect(schedulePanel.locator('.col-date')).toContainText('2026/06/27')
+  await expect(schedulePanel.locator('.col-project')).toContainText('X6885')
+  await expect(schedulePanel.locator('.col-test')).toContainText('monkey测试')
+  await expect(schedulePanel.locator('.col-status')).toContainText('即将开始')
 })
 
 test('self-check shows warning when gerrit is not configured', async ({ page }) => {

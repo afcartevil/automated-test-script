@@ -46,6 +46,14 @@ function displayStatus(report: SelfCheckReportSummary): string {
   return report.status.includes('通过') ? '通过' : '待 Review'
 }
 
+function reportShortType(testType: string): string {
+  if (testType === 'monkey') return 'monkey'
+  if (testType === 'str4') return 'STR4'
+  if (testType === 'week') return '周版本'
+  if (testType === 'custom') return '自定义'
+  return testType
+}
+
 function reportTitle(report: SelfCheckReportSummary): string {
   const typeLabel = report.testType === 'custom'
     ? '自定义测试'
@@ -54,6 +62,9 @@ function reportTitle(report: SelfCheckReportSummary): string {
       : report.testType === 'monkey'
         ? 'monkey测试'
         : '周版本'
+  if (report.aiPlanned) {
+    return `${report.deviceName} · ${reportShortType(report.testType)} · AI规划`
+  }
   return `${report.deviceName} · ${typeLabel}`
 }
 

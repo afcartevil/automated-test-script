@@ -4,6 +4,14 @@ import { NButton, NEmpty, NScrollbar, NSpin, NTag } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
 import TestPlanSettingsModal from '@/components/tahp/TestPlanSettingsModal.vue'
 import { useTestPlanningWorkspace } from '@/composables/useTestPlanningWorkspace'
+import type { ScheduleItem } from '@/api/tahp/test-planning'
+
+function scheduleTagType(item: ScheduleItem): 'default' | 'warning' | 'success' | 'error' {
+  if (item.runtimeStatus === 'completed') return 'success'
+  if (item.runtimeStatus === 'running') return 'warning'
+  if (item.runtimeStatus === 'no_device') return 'error'
+  return item.phase === 'active' ? 'warning' : 'default'
+}
 
 const {
   loading,
@@ -12,6 +20,7 @@ const {
   sourcePath,
   nextNodes,
   scheduleItems,
+  scheduleTable,
   rules,
   hasSyncedData,
   hasRules,
@@ -60,7 +69,13 @@ onActivated(restoreWorkspace)
             />
             <ul v-else class="item-list">
               <li v-for="item in nextNodes" :key="`${item.project}-${item.node}`">
-                {{ item.display }}
+                <span class="item-line">
+                  <strong class="item-project">{{ item.project }}</strong>
+                  <span class="item-sep"> · </span>
+                  <span>{{ item.node }}</span>
+                  <span class="item-sep"> · </span>
+                  <span>{{ item.nodeDate }}</span>
+                </span>
               </li>
             </ul>
           </NScrollbar>
@@ -87,19 +102,56 @@ onActivated(restoreWorkspace)
               description="当前无待执行测试项"
               size="small"
             />
-            <ul v-else class="item-list">
-              <li v-for="item in scheduleItems" :key="`${item.project}-${item.node}-${item.triggerDate}-${item.testName}`">
-                <NTag
-                  size="small"
-                  :type="item.status === 'active' ? 'warning' : 'default'"
-                  :bordered="false"
-                  class="status-tag"
-                >
-                  {{ item.status === 'active' ? '进行中' : '即将开始' }}
-                </NTag>
-                <span>{{ item.display }}</span>
-              </li>
-            </ul>
+            <div v-else class="schedule-table-wrap">
+              <div
+                v-for="(block, blockIdx) in scheduleTable"
+                :key="block.triggerDate"
+                class="schedule-date-block"
+                :class="{ 'is-last': blockIdx === scheduleTable.length - 1 }"
+              >
+                <table class="schedule-table">
+                  <tbody>
+                    <tr v-for="(row, idx) in block.rows" :key="row.scheduleKey">
+                      <td
+                        v-if="idx === 0"
+                        :rowspan="block.rows.length"
+                        class="col-date"
+                      >
+                        {{ block.triggerDate }}
+                      </td>
+                      <td
+                        v-if="row.showProject"
+                        :rowspan="row.projectRowSpan"
+                        class="col-project"
+                      >
+                        <strong>{{ row.item.project }}</strong>
+                      </td>
+                      <td class="col-test">{{ row.item.testTypeLabel }}</td>
+                      <td class="col-status">
+                        <NTag
+                          size="tiny"
+                          :type="scheduleTagType(row.item)"
+                          :bordered="false"
+                          class="status-tag"
+                        >
+                          {{ row.item.displayLabel }}
+                        </NTag>
+                        <NTag
+                          v-for="tag in row.item.tags"
+                          :key="`${row.scheduleKey}-${tag}`"
+                          size="tiny"
+                          type="error"
+                          :bordered="false"
+                          class="status-tag"
+                        >
+                          {{ tag }}
+                        </NTag>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </NScrollbar>
         </div>
       </div>
@@ -206,7 +258,93 @@ onActivated(restoreWorkspace)
 
 .status-tag {
   flex-shrink: 0;
-  margin-top: 2px;
+}
+
+.schedule-panel .panel-scroll {
+  padding: 8px 10px;
+}
+
+.schedule-table-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.schedule-date-block {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+
+  &.is-last {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+}
+
+.schedule-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.35;
+
+  tbody tr {
+    border-bottom: 1px dashed var(--line);
+
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+
+  td {
+    padding: 3px 6px;
+    vertical-align: middle;
+  }
+}
+
+.col-date {
+  width: 88px;
+  font-weight: 700;
+  font-size: 12px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.col-project {
+  width: 64px;
+  text-align: center;
+  vertical-align: middle;
+
+  strong {
+    font-weight: 700;
+  }
+}
+
+.col-test {
+  text-align: left;
+  padding-right: 4px;
+}
+
+.col-status {
+  min-width: 80px;
+  text-align: left;
+  white-space: nowrap;
+  vertical-align: middle;
+
+  .status-tag + .status-tag {
+    margin-left: 4px;
+  }
+}
+
+.item-line {
+  min-width: 0;
+}
+
+.item-project {
+  font-weight: 700;
+}
+
+.item-sep {
+  color: var(--muted);
 }
 
 @media (max-width: 900px) {

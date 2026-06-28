@@ -12,9 +12,16 @@ import {
   type ProjectNodeKey,
   parseProjectInfoXlsx,
 } from './project-info-xlsx'
+import {
+  buildScheduleKey,
+  loadPlanExecutions,
+  type PlanRuntimeStatus,
+} from './test-plan-executions'
 
 export const MAX_OFFSET_DAYS = 14
 export const UPCOMING_HORIZON_DAYS = 14
+
+export type PlanTestType = 'str4' | 'week' | 'monkey'
 
 export interface ProjectNodesFile {
   updatedAt: string
@@ -25,7 +32,7 @@ export interface ProjectNodesFile {
 export interface TestPlanRule {
   node: ProjectNodeKey
   offsetDays: number
-  testName: string
+  testType: PlanTestType
 }
 
 export interface TestPlanRulesFile {
@@ -41,13 +48,40 @@ export interface NextNodeItem {
 }
 
 export interface ScheduleItem {
+  scheduleKey: string
   project: string
   node: ProjectNodeKey
   nodeDate: string
   triggerDate: string
-  testName: string
-  status: 'active' | 'upcoming'
+  testType: PlanTestType
+  testTypeLabel: string
+  phase: 'upcoming' | 'active'
+  runtimeStatus: PlanRuntimeStatus
+  displayLabel: '即将开始' | '进行中' | '已完成'
+  tags: string[]
   display: string
+  /** @deprecated 保留兼容，等同 testTypeLabel */
+  testName?: string
+  /** @deprecated 保留兼容，由 phase + runtimeStatus 推导 */
+  status?: 'active' | 'upcoming'
+}
+
+const TEST_TYPE_LABELS: Record<PlanTestType, string> = {
+  str4: '转测摸底测试',
+  week: '周版本测试',
+  monkey: 'monkey测试',
+}
+
+export function getTestTypeLabel(testType: PlanTestType): string {
+  return TEST_TYPE_LABELS[testType] || testType
+}
+
+export function normalizePlanTestType(raw: unknown): PlanTestType | null {
+  const text = String(raw || '').trim().toLowerCase()
+  if (text === 'str4' || text.includes('转测') || text.includes('摸底')) return 'str4'
+  if (text === 'week' || text.includes('周版本')) return 'week'
+  if (text === 'monkey' || text.includes('monkey')) return 'monkey'
+  return null
 }
 
 function configDir(): string {
@@ -101,6 +135,17 @@ function startOfToday(today?: Date): Date {
   return base
 }
 
+export function matchProjectToDevice(
+  project: string,
+  device: { deviceName: string; status: string; role: string },
+): boolean {
+  if (device.status !== '空闲') return false
+  if (device.role === '辅测机') return false
+  const projectCode = project.trim().toUpperCase()
+  if (!projectCode) return false
+  return device.deviceName.toUpperCase().includes(projectCode)
+}
+
 export function getNextNodes(projects: ProjectNodeEntry[], today?: Date): NextNodeItem[] {
   const now = startOfToday(today)
   const items: NextNodeItem[] = []
@@ -136,10 +181,26 @@ export function getNextNodes(projects: ProjectNodeEntry[], today?: Date): NextNo
   return items
 }
 
+function resolveDisplayLabel(
+  phase: 'upcoming' | 'active',
+  runtimeStatus: PlanRuntimeStatus,
+): ScheduleItem['displayLabel'] {
+  if (runtimeStatus === 'completed') return '已完成'
+  if (runtimeStatus === 'running') return '进行中'
+  if (runtimeStatus === 'no_device') return '即将开始'
+  return phase === 'active' ? '进行中' : '即将开始'
+}
+
+function resolveTags(runtimeStatus: PlanRuntimeStatus): string[] {
+  if (runtimeStatus === 'no_device') return ['无设备']
+  return []
+}
+
 export function buildTestSchedule(
   projects: ProjectNodeEntry[],
   rules: TestPlanRule[],
   today?: Date,
+  executions: Record<string, { runtimeStatus: PlanRuntimeStatus }> = {},
 ): ScheduleItem[] {
   const now = startOfToday(today)
   const horizonEnd = addDays(now, UPCOMING_HORIZON_DAYS)
@@ -158,14 +219,29 @@ export function buildTestSchedule(
       if (!isActive && !isUpcoming) continue
 
       const triggerDisplay = toDisplayDate(triggerDate)
+      const testTypeLabel = getTestTypeLabel(rule.testType)
+      const scheduleKey = buildScheduleKey(project.name, rule.node, triggerDisplay, rule.testType)
+      const execution = executions[scheduleKey]
+      const runtimeStatus: PlanRuntimeStatus = execution?.runtimeStatus ?? 'pending'
+      const phase = isActive ? 'active' : 'upcoming'
+      const displayLabel = resolveDisplayLabel(phase, runtimeStatus)
+      const tags = resolveTags(runtimeStatus)
+
       items.push({
+        scheduleKey,
         project: project.name,
         node: rule.node,
         nodeDate: nodeDateStr,
         triggerDate: triggerDisplay,
-        testName: rule.testName,
-        status: isActive ? 'active' : 'upcoming',
-        display: `${project.name} ${rule.node} ${triggerDisplay} ${rule.testName}`,
+        testType: rule.testType,
+        testTypeLabel,
+        phase,
+        runtimeStatus,
+        displayLabel,
+        tags,
+        display: `${project.name} ${rule.node} ${triggerDisplay} ${testTypeLabel}`,
+        testName: testTypeLabel,
+        status: phase,
       })
     }
   }
@@ -175,7 +251,7 @@ export function buildTestSchedule(
     if (diff !== 0) return diff
     const projectDiff = a.project.localeCompare(b.project, 'zh-CN')
     if (projectDiff !== 0) return projectDiff
-    return a.testName.localeCompare(b.testName, 'zh-CN')
+    return a.testTypeLabel.localeCompare(b.testTypeLabel, 'zh-CN')
   })
 
   return items
@@ -192,25 +268,55 @@ export async function getProjectNodesFile(): Promise<ProjectNodesFile | null> {
   }
 }
 
+function normalizeStoredRule(raw: Record<string, unknown>): TestPlanRule | null {
+  const node = String(raw.node || '').trim() as ProjectNodeKey
+  const offsetDays = Number(raw.offsetDays)
+  let testType = normalizePlanTestType(raw.testType)
+  if (!testType && raw.testName) {
+    testType = normalizePlanTestType(raw.testName)
+    if (testType) {
+      logger.warn(
+        { node, testName: raw.testName, testType },
+        '[test-planning] migrated legacy testName to testType',
+      )
+    } else {
+      logger.warn({ node, testName: raw.testName }, '[test-planning] dropped legacy rule with unknown testName')
+      return null
+    }
+  }
+  if (!testType) return null
+  if (!Number.isInteger(offsetDays)) return null
+  return { node, offsetDays, testType }
+}
+
 export async function getTestPlanRules(): Promise<TestPlanRulesFile> {
   const path = testPlanRulesConfigPath()
   if (!existsSync(path)) {
-    return { version: 1, rules: [] }
+    return { version: 2, rules: [] }
   }
   try {
     const raw = await safeFileStore.readText(path)
-    const data = JSON.parse(raw) as Partial<TestPlanRulesFile>
+    const data = JSON.parse(raw) as Partial<TestPlanRulesFile> & { rules?: unknown[] }
+    const rules: TestPlanRule[] = []
+    if (Array.isArray(data.rules)) {
+      for (const item of data.rules) {
+        if (!item || typeof item !== 'object') continue
+        const normalized = normalizeStoredRule(item as Record<string, unknown>)
+        if (normalized) rules.push(normalized)
+      }
+    }
     return {
-      version: data.version ?? 1,
-      rules: Array.isArray(data.rules) ? data.rules : [],
+      version: 2,
+      rules,
     }
   } catch {
-    return { version: 1, rules: [] }
+    return { version: 2, rules: [] }
   }
 }
 
 export function validateTestPlanRules(rules: TestPlanRule[]): TestPlanRule[] {
   const validNodes = new Set<string>(NODE_KEYS)
+  const validTypes = new Set<string>(['str4', 'week', 'monkey'])
   const cleaned: TestPlanRule[] = []
 
   for (const rule of rules) {
@@ -222,11 +328,11 @@ export function validateTestPlanRules(rules: TestPlanRule[]): TestPlanRule[] {
     if (!Number.isInteger(offsetDays) || offsetDays < -MAX_OFFSET_DAYS || offsetDays > MAX_OFFSET_DAYS) {
       throw new Error(`偏移天数须在 -${MAX_OFFSET_DAYS} 至 ${MAX_OFFSET_DAYS} 之间`)
     }
-    const testName = String(rule.testName || '').trim()
-    if (!testName) {
-      throw new Error('测试项名称不能为空')
+    const testType = String(rule.testType || '').trim() as PlanTestType
+    if (!validTypes.has(testType)) {
+      throw new Error(`无效测试大类: ${rule.testType}，须为 str4 / week / monkey`)
     }
-    cleaned.push({ node, offsetDays, testName })
+    cleaned.push({ node, offsetDays, testType })
   }
 
   return cleaned
@@ -235,7 +341,7 @@ export function validateTestPlanRules(rules: TestPlanRule[]): TestPlanRule[] {
 export async function saveTestPlanRules(rules: TestPlanRule[]): Promise<TestPlanRulesFile> {
   ensureConfigDir()
   const cleaned = validateTestPlanRules(rules)
-  const payload: TestPlanRulesFile = { version: 1, rules: cleaned }
+  const payload: TestPlanRulesFile = { version: 2, rules: cleaned }
   await safeFileStore.writeText(
     testPlanRulesConfigPath(),
     `${JSON.stringify(payload, null, 2)}\n`,
@@ -307,10 +413,11 @@ export async function getProjectNodesView(today?: Date) {
 export async function getTestScheduleView(today?: Date) {
   const file = await getProjectNodesFile()
   const rulesFile = await getTestPlanRules()
+  const executions = await loadPlanExecutions()
   const projects = file?.projects ?? []
   return {
     updatedAt: file?.updatedAt ?? null,
     rules: rulesFile.rules,
-    items: buildTestSchedule(projects, rulesFile.rules, today),
+    items: buildTestSchedule(projects, rulesFile.rules, today, executions),
   }
 }

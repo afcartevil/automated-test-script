@@ -2,15 +2,15 @@
 import { computed, ref, watch } from 'vue'
 import {
   NButton,
-  NInput,
   NInputNumber,
   NModal,
   NSelect,
   NSpace,
   useMessage,
 } from 'naive-ui'
-import type { ProjectNodeKey, TestPlanRule } from '@/api/tahp/test-planning'
+import type { PlanTestType, ProjectNodeKey, TestPlanRule } from '@/api/tahp/test-planning'
 import { saveTestPlanRules } from '@/api/tahp/test-planning'
+import { getTestTypeLabel } from '@/components/tahp/self-check/self-check-utils'
 
 const NODE_OPTIONS: { label: string; value: ProjectNodeKey }[] = [
   { label: 'STR4', value: 'STR4' },
@@ -19,9 +19,15 @@ const NODE_OPTIONS: { label: string; value: ProjectNodeKey }[] = [
   { label: 'STR6', value: 'STR6' },
 ]
 
+const TEST_TYPE_OPTIONS: { label: string; value: PlanTestType }[] = [
+  { label: getTestTypeLabel('str4'), value: 'str4' },
+  { label: getTestTypeLabel('week'), value: 'week' },
+  { label: getTestTypeLabel('monkey'), value: 'monkey' },
+]
+
 const EXAMPLE_RULES: TestPlanRule[] = [
-  { node: 'STR4A', offsetDays: -10, testName: 'GMS测试' },
-  { node: 'STR4A', offsetDays: -7, testName: '内核稳定性测试' },
+  { node: 'STR4A', offsetDays: -10, testType: 'week' },
+  { node: 'STR4A', offsetDays: -7, testType: 'monkey' },
 ]
 
 const props = defineProps<{
@@ -56,7 +62,7 @@ function rulesForNode(node: ProjectNodeKey): TestPlanRule[] {
 }
 
 function addRule(node: ProjectNodeKey) {
-  draftRules.value.push({ node, offsetDays: -7, testName: '' })
+  draftRules.value.push({ node, offsetDays: -7, testType: 'week' })
 }
 
 function removeRule(node: ProjectNodeKey, indexInNode: number) {
@@ -101,7 +107,7 @@ async function handleSave() {
     @update:show="emit('update:show', $event)"
   >
     <p class="modal-desc ea-muted">
-      为各项目节点配置前后 14 天内的测试项。偏移为负数表示节点前，正数表示节点后。
+      为各项目节点配置前后 14 天内的测试项。偏移为负数表示节点前，正数表示节点后。测试项须从 AI 自检已有测试大类中选择。
     </p>
 
     <div class="toolbar">
@@ -136,11 +142,12 @@ async function handleSave() {
           style="width: 120px"
         />
         <span class="offset-hint ea-muted">{{ offsetLabel(rule.offsetDays) }}</span>
-        <NInput
-          v-model:value="rule.testName"
+        <NSelect
+          v-model:value="rule.testType"
+          :options="TEST_TYPE_OPTIONS"
           size="small"
-          placeholder="测试项名称，如 GMS测试"
-          style="flex: 1"
+          placeholder="测试大类"
+          style="flex: 1; min-width: 160px"
         />
         <NButton size="tiny" quaternary type="error" @click="removeRule(node, idx)">删除</NButton>
       </div>

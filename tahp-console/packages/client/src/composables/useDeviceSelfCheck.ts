@@ -216,7 +216,9 @@ const launchStore = useDeviceSelfCheckLaunchStore()
   }
 
   const stats = computed(() => ({
-    pendingProjects: scheduleItems.value.filter(i => i.status === 'upcoming').length,
+    pendingProjects: scheduleItems.value.filter(
+      i => i.runtimeStatus !== 'completed' && i.displayLabel !== '已完成',
+    ).length,
     runningTests: pipelineView.value?.runningTests ?? devices.value.filter(d =>
       d.status.includes('测试') || d.status.includes('等待') || d.status === '初始化中',
     ).length,
@@ -619,9 +621,11 @@ function connectEventStream() {
         await loadDevices()
       }
       await loadPipelineStatus()
+      await loadPlanningSummary()
     } catch {
       await loadDevices()
       await loadPipelineStatus()
+      await loadPlanningSummary()
     }
   })
   eventSource.value.addEventListener('manual_confirm', (e: MessageEvent) => {

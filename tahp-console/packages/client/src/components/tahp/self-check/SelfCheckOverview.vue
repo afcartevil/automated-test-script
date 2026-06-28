@@ -76,17 +76,17 @@ function isRunning(device: DeviceInfo): boolean {
           <button type="button" class="ea-btn-ghost ea-btn-sm" @click="emit('goPlanning')">查看规则</button>
         </div>
         <div v-if="!scheduleItems.length" class="panel-empty ea-muted">
-          配置节点规则后，GMS / 稳定性 / 特定项压测将自动排期
+          配置节点规则后，到点将自动匹配设备并启动对应测试大类
         </div>
         <ul v-else class="item-list">
           <li
             v-for="item in scheduleItems.slice(0, 5)"
-            :key="`${item.project}-${item.node}-${item.testName}`"
+            :key="item.scheduleKey"
             class="item-row"
           >
             <span class="item-main">
-              <strong>{{ item.testName }}</strong>
-              <small>{{ item.display }}</small>
+              <strong>{{ item.testTypeLabel }}</strong>
+              <small>{{ item.displayLabel }}{{ item.tags.length ? ` · ${item.tags.join(' · ')}` : '' }} · {{ item.display }}</small>
             </span>
           </li>
         </ul>

@@ -67,6 +67,9 @@ services/tahp/self-check/python/
 | 刷机服务 | `services/tahp/device-flash.ts` | device_update 调度 |
 | 核心服务 | `services/tahp/device-self-check.ts` | 调度、会话、报告 |
 | 报告列表 | `services/tahp/self-check-reports.ts` | 报告 Review |
+| 测试规划 | `services/tahp/test-planning.ts` | 节点同步、排期计算 |
+| 规划执行 | `services/tahp/test-plan-executor.ts` | 到点自动 startTest |
+| 规划执行态 | `services/tahp/test-plan-executions.ts` | `.tahp-config/test-plan-executions.json` |
 | Python | `services/tahp/self-check/python/` | 用例与 `run_case.py` |
 | E2E | `tests/e2e/self-check.spec.ts` | 页面冒烟 |
 
@@ -79,7 +82,7 @@ services/tahp/self-check/python/
 | key | 组件 | 内容 |
 |-----|------|------|
 | `overview` | `SelfCheckOverview` | 运行中设备、即将到节点、计划任务、待审报告摘要 |
-| `planning` | `TestPlanningWorkspace` | 项目节点与测试排期规则 |
+| `planning` | `TestPlanningWorkspace` | 项目节点、测试排期规则、AI 规划自动执行状态 |
 | `devices` | `SelfCheckChecklist` + `SelfCheckDeviceRun` | 用例大类卡片（点击进入详情）+ 设备列表/详情/自定义测试 |
 | `gerrit` | `GerritReviewWorkspace` | AI Code Review + 用例推荐 |
 | `review` | `SelfCheckReportReview` | 自检报告审阅 |
@@ -127,6 +130,21 @@ services/tahp/self-check/python/
 - `useDeviceSelfCheck` 内 `connectEventStream()` 全局 SSE
 - 事件：`device_updated`、`test_completed`、`case_completed` 等
 - SSE 失败降级：轮询 `getDeviceDetail` + `getPendingManualDecision`
+
+### AI 测试自规划（项目规划 Tab）
+
+**规则配置**（`TestPlanSettingsModal`）：每个节点偏移天数 + **测试大类单选**（`str4` / `week` / `monkey`，对应转测摸底 / 周版本 / monkey）。
+
+**排期计算**（`test-planning.ts`）：由项目节点日期 + 规则偏移生成 `ScheduleItem`；`phase` 为时间窗口（`upcoming` / `active`），`runtimeStatus` 为执行态（`pending` / `no_device` / `running` / `completed`）。
+
+**自动执行**（`test-plan-executor.ts`，bootstrap 启动，默认 60s tick）：
+
+- 对 `phase === 'active'` 且未完成的项，按项目代号匹配空闲设备名（如 `X6876` ↔ `Infinix X6876`）
+- 匹配成功 → `startTest(..., { scheduleKey })`，不刷机
+- 无设备 → `runtimeStatus=no_device`，UI 仍显示「即将开始」+ 标签「无设备」，设备连上后下一 tick 重试
+- 测试完成 → `finishTest` 写 `completed`；报告 `summary.json` 含 `aiPlanned: true`
+
+**报告 Review**：AI 规划触发的报告标题形如 `{deviceName} · monkey · AI规划`（见 `SelfCheckReportReview.vue`）。
 
 ---
 

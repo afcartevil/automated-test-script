@@ -180,11 +180,12 @@ export interface StartTestFlashPayload {
 export async function startTest(
   deviceId: string,
   testType: 'str4' | 'week' | 'monkey',
-  flash?: StartTestFlashPayload
+  flash?: StartTestFlashPayload,
+  scheduleKey?: string,
 ): Promise<DeviceDetail> {
   return await tahpPost<DeviceDetail>(
     `/api/tahp/device-self-check/devices/${deviceId}/test/start`,
-    { testType, flash }
+    { testType, flash, scheduleKey }
   )
 }
 
@@ -375,6 +376,8 @@ export interface SelfCheckReportSummary {
   reviewStatus: SelfCheckReviewStatus
   completedAt: string
   reportPath: string
+  aiPlanned?: boolean
+  scheduleKey?: string
 }
 
 export interface SelfCheckReportDetail extends SelfCheckReportSummary {

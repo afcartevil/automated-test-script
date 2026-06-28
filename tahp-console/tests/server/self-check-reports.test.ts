@@ -32,6 +32,8 @@ describe('self-check-reports', () => {
       passedCases: 2,
       failedCases: 1,
       skippedCases: 0,
+      aiPlanned: true,
+      scheduleKey: 'X6876|STR4A|2026/06/28|monkey',
     }
     const failed = [{
       caseKey: 'week/driver/1',
@@ -57,6 +59,8 @@ describe('self-check-reports', () => {
     expect(items[0]?.deviceName).toBe('Test Phone')
     expect(items[0]?.failedCases).toBe(1)
     expect(items[0]?.reviewStatus).toBe('pending')
+    expect(items[0]?.aiPlanned).toBe(true)
+    expect(items[0]?.scheduleKey).toContain('monkey')
   })
 
   it('loads report detail with ai summary and failed cases', async () => {

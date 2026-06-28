@@ -26,6 +26,7 @@ import { logger } from './services/logger'
 import { setupTahpRunSocket } from './routes/tahp/tahp-run'
 import { initDeviceSelfCheck } from './services/tahp/device-self-check'
 import { startSyncScheduler } from './services/tahp/sync'
+import { startPlanExecutor } from './services/tahp/test-plan-executor'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -232,6 +233,12 @@ export async function bootstrap() {
     startSyncScheduler()
   } catch (err) {
     logger.warn({ err }, '[bootstrap] sync scheduler failed to start')
+  }
+
+  try {
+    startPlanExecutor()
+  } catch (err) {
+    logger.warn({ err }, '[bootstrap] plan executor failed to start')
   }
 }
 

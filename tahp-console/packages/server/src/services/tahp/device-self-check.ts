@@ -13,6 +13,7 @@ import {
 } from './device-flash'
 import { resolvePythonSpawn, tahpPaths } from './paths'
 import { buildSelfCheckDetailPayload, type SelfCheckFailedCaseItem } from './self-check-reports'
+import { markPlanExecutionCompleted } from './test-plan-executions'
 
 // 类型定义
 export type DeviceRole = '未分配' | '测试机' | '辅测机'
@@ -118,6 +119,7 @@ export interface TestSession {
   customAuxDevices?: string[]
   initializedPythonModules?: string[]
   flashOptions?: DeviceFlashOptions
+  scheduleKey?: string
 }
 
 export interface CaseCatalogItem {
@@ -1814,11 +1816,16 @@ async function runFlashBeforeTest(deviceId: string, session: TestSession): Promi
   return true
 }
 
+export interface StartTestOptions {
+  scheduleKey?: string
+}
+
 // 启动测试
 export async function startTest(
   deviceId: string,
   testType: StandardTestType,
-  flash?: StartTestFlashPayload
+  flash?: StartTestFlashPayload,
+  options?: StartTestOptions,
 ): Promise<DeviceDetail | null> {
   try {
     const device = devices[deviceId]
@@ -1859,6 +1866,7 @@ export async function startTest(
       auxiliaryDevices: [],
       initializedPythonModules: [],
       flashOptions,
+      scheduleKey: options?.scheduleKey,
     }
 
     testSessions[deviceId] = session
@@ -2118,6 +2126,12 @@ function finishTest(deviceId: string, session: TestSession): void {
   emitEvent('device_updated', { device })
   emitEvent('test_completed', { deviceId, session })
 
+  if (session.scheduleKey) {
+    void markPlanExecutionCompleted(session.scheduleKey).catch(err => {
+      console.warn('[device-self-check] Failed to mark plan completed:', session.scheduleKey, err)
+    })
+  }
+
   // 生成 xlsx 报告
   generateTestReport(deviceId, session).catch(e => {
     console.warn('[device-self-check] Failed to generate report:', e)
@@ -2347,6 +2361,9 @@ async function generateTestReport(deviceId: string, session: TestSession): Promi
       passedCases: Object.values(session.caseResults).filter(r => r.status === '通过').length,
       failedCases: Object.values(session.caseResults).filter(r => r.status === '失败').length,
       skippedCases: Object.values(session.caseResults).filter(r => r.status === '跳过').length,
+      ...(session.scheduleKey
+        ? { aiPlanned: true, scheduleKey: session.scheduleKey }
+        : {}),
     }
     writeFileSync(join(resultDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8')
 

@@ -12,12 +12,19 @@ import {
 import {
   buildTestSchedule,
   getNextNodes,
+  matchProjectToDevice,
+  normalizePlanTestType,
   projectNodesConfigPath,
   saveTestPlanRules,
   syncProjectNodesFromXlsx,
   testPlanRulesConfigPath,
   validateTestPlanRules,
 } from '../../packages/server/src/services/tahp/test-planning'
+import {
+  buildScheduleKey,
+  loadPlanExecutions,
+  markPlanExecutionCompleted,
+} from '../../packages/server/src/services/tahp/test-plan-executions'
 
 const SAMPLE_PROJECTS: ProjectNodeEntry[] = [
   {
@@ -97,36 +104,70 @@ describe('test-planning schedule', () => {
     expect(items[1]?.project).toBe('CL6')
   })
 
-  it('builds active and upcoming schedule items', () => {
+  it('builds active and upcoming schedule items with testType labels', () => {
     const rules = [
-      { node: 'STR4A' as const, offsetDays: -10, testName: 'GMS测试' },
-      { node: 'STR4A' as const, offsetDays: -7, testName: '内核稳定性测试' },
+      { node: 'STR4A' as const, offsetDays: -10, testType: 'week' as const },
+      { node: 'STR4A' as const, offsetDays: -7, testType: 'monkey' as const },
     ]
     const items = buildTestSchedule(SAMPLE_PROJECTS, rules, today)
 
-    const gms = items.find((item) => item.project === 'X6885' && item.testName === 'GMS测试')
-    expect(gms).toMatchObject({
+    const weekItem = items.find((item) => item.project === 'X6885' && item.testType === 'week')
+    expect(weekItem).toMatchObject({
       node: 'STR4A',
       triggerDate: '2026/06/27',
-      status: 'upcoming',
-      display: 'X6885 STR4A 2026/06/27 GMS测试',
+      phase: 'upcoming',
+      testTypeLabel: '周版本测试',
+      runtimeStatus: 'pending',
+      displayLabel: '即将开始',
+      display: 'X6885 STR4A 2026/06/27 周版本测试',
     })
 
-    const kernel = items.find((item) => item.project === 'X6885' && item.testName === '内核稳定性测试')
-    expect(kernel).toMatchObject({
+    const monkeyItem = items.find((item) => item.project === 'X6885' && item.testType === 'monkey')
+    expect(monkeyItem).toMatchObject({
       triggerDate: '2026/06/30',
-      status: 'upcoming',
+      phase: 'upcoming',
+      testTypeLabel: 'monkey测试',
     })
 
     const activeItems = buildTestSchedule(SAMPLE_PROJECTS, rules, new Date(2026, 5, 30))
-    const activeKernel = activeItems.find((item) => item.project === 'X6885' && item.testName === '内核稳定性测试')
-    expect(activeKernel?.status).toBe('active')
+    const activeMonkey = activeItems.find((item) => item.project === 'X6885' && item.testType === 'monkey')
+    expect(activeMonkey?.phase).toBe('active')
+    expect(activeMonkey?.displayLabel).toBe('进行中')
   })
 
-  it('validates rule offset range', () => {
+  it('merges execution state into schedule items', () => {
+    const rules = [{ node: 'STR4A' as const, offsetDays: -10, testType: 'monkey' as const }]
+    const scheduleKey = buildScheduleKey('X6885', 'STR4A', '2026/06/27', 'monkey')
+    const items = buildTestSchedule(SAMPLE_PROJECTS, rules, today, {
+      [scheduleKey]: { runtimeStatus: 'no_device' },
+    })
+    const item = items.find(i => i.scheduleKey === scheduleKey)
+    expect(item?.runtimeStatus).toBe('no_device')
+    expect(item?.displayLabel).toBe('即将开始')
+    expect(item?.tags).toEqual(['无设备'])
+  })
+
+  it('validates rule offset range and testType', () => {
     expect(() => validateTestPlanRules([
-      { node: 'STR4A', offsetDays: -15, testName: 'GMS测试' },
+      { node: 'STR4A', offsetDays: -15, testType: 'week' },
     ])).toThrow(/偏移天数/)
+    expect(() => validateTestPlanRules([
+      { node: 'STR4A', offsetDays: -7, testType: 'invalid' as any },
+    ])).toThrow(/无效测试大类/)
+  })
+
+  it('matches project code in device name', () => {
+    expect(matchProjectToDevice('X6876', {
+      deviceName: 'Infinix X6876',
+      status: '空闲',
+      role: '未分配',
+    })).toBe(true)
+    expect(matchProjectToDevice('X6876', {
+      deviceName: 'Infinix X6876',
+      status: '测试中',
+      role: '测试机',
+    })).toBe(false)
+    expect(normalizePlanTestType('monkey测试')).toBe('monkey')
   })
 })
 
@@ -154,11 +195,19 @@ describe('test-planning config files', () => {
     expect(existsSync(projectNodesConfigPath())).toBe(true)
   })
 
-  it('saves test plan rules', async () => {
+  it('saves test plan rules with testType', async () => {
     const saved = await saveTestPlanRules([
-      { node: 'STR4A', offsetDays: -10, testName: 'GMS测试' },
+      { node: 'STR4A', offsetDays: -10, testType: 'monkey' },
     ])
     expect(saved.rules).toHaveLength(1)
+    expect(saved.rules[0]?.testType).toBe('monkey')
     expect(existsSync(testPlanRulesConfigPath())).toBe(true)
+  })
+
+  it('persists plan execution records', async () => {
+    const key = buildScheduleKey('X6876', 'STR4A', '2026/06/28', 'monkey')
+    await markPlanExecutionCompleted(key)
+    const records = await loadPlanExecutions()
+    expect(records[key]?.runtimeStatus).toBe('completed')
   })
 })

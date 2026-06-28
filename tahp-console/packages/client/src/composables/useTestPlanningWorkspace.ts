@@ -9,6 +9,7 @@ import {
   type ScheduleItem,
   type TestPlanRule,
 } from '@/api/tahp/test-planning'
+import { buildScheduleTableView } from '@/utils/test-plan-schedule-view'
 
 export function useTestPlanningWorkspace() {
   const message = useMessage()
@@ -25,6 +26,7 @@ export function useTestPlanningWorkspace() {
 
   const hasSyncedData = computed(() => Boolean(updatedAt.value))
   const hasRules = computed(() => rules.value.length > 0)
+  const scheduleTable = computed(() => buildScheduleTableView(scheduleItems.value))
 
   const updatedAtLabel = computed(() => {
     if (!updatedAt.value) return ''
@@ -89,6 +91,7 @@ export function useTestPlanningWorkspace() {
     sourcePath,
     nextNodes,
     scheduleItems,
+    scheduleTable,
     rules,
     hasSyncedData,
     hasRules,

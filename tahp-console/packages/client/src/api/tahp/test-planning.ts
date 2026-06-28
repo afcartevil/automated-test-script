@@ -5,6 +5,10 @@ import { tahpGet, tahpPost } from './client'
 
 export type ProjectNodeKey = 'STR4' | 'STR4A' | 'STR5' | 'STR6'
 
+export type PlanTestType = 'str4' | 'week' | 'monkey'
+
+export type PlanRuntimeStatus = 'pending' | 'no_device' | 'running' | 'completed'
+
 export interface ProjectNodeEntry {
   name: string
   status: string
@@ -28,7 +32,7 @@ export interface ProjectNodesView {
 export interface TestPlanRule {
   node: ProjectNodeKey
   offsetDays: number
-  testName: string
+  testType: PlanTestType
 }
 
 export interface TestPlanRulesFile {
@@ -37,13 +41,22 @@ export interface TestPlanRulesFile {
 }
 
 export interface ScheduleItem {
+  scheduleKey: string
   project: string
   node: ProjectNodeKey
   nodeDate: string
   triggerDate: string
-  testName: string
-  status: 'active' | 'upcoming'
+  testType: PlanTestType
+  testTypeLabel: string
+  phase: 'upcoming' | 'active'
+  runtimeStatus: PlanRuntimeStatus
+  displayLabel: '即将开始' | '进行中' | '已完成'
+  tags: string[]
   display: string
+  /** @deprecated */
+  testName?: string
+  /** @deprecated */
+  status?: 'active' | 'upcoming'
 }
 
 export interface TestScheduleView {

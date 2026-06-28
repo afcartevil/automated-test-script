@@ -39,6 +39,8 @@ export interface SelfCheckReportSummary {
   reviewStatus: SelfCheckReviewStatus
   completedAt: string
   reportPath: string
+  aiPlanned?: boolean
+  scheduleKey?: string
 }
 
 export interface SelfCheckReportDetail extends SelfCheckReportSummary {
@@ -60,6 +62,8 @@ interface SummaryJson {
   passedCases: number
   failedCases: number
   skippedCases: number
+  aiPlanned?: boolean
+  scheduleKey?: string
 }
 
 interface DetailJson extends SummaryJson {
@@ -163,6 +167,8 @@ function buildSummaryFromDir(relativePath: string, sessionDir: string, deviceId:
     reviewStatus: 'pending',
     completedAt: summary.endTime || new Date(mtime).toISOString(),
     reportPath: relativePath.replace(/\\/g, '/'),
+    aiPlanned: summary.aiPlanned === true,
+    scheduleKey: summary.scheduleKey,
   }
 }
 
