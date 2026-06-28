@@ -13,7 +13,7 @@ import { getToken, requireAuth } from './services/auth'
 import { initLoginLimiter } from './services/login-limiter'
 import { bindShutdown } from './services/shutdown'
 import { setupTerminalWebSocket } from './routes/hermes/terminal'
-import { startVersionCheck } from './routes/health'
+import { startVersionCheck, prefetchHermesVersion } from './routes/health'
 import { registerRoutes } from './routes'
 import { setChatRunServer } from './routes/hermes/chat-run'
 import { ChatRunSocket } from './services/hermes/run-chat'
@@ -131,12 +131,8 @@ export async function bootstrap() {
     )
     process.exit(1)
   }
-  await new Promise(resolve => setTimeout(resolve, 1000))
-  // Initialize all web-ui SQLite tables
   const { initAllStores } = await import('./db/hermes/init')
-  // Wait 1 second before initializing stores to ensure all resources are ready
   initAllStores()
-  await new Promise(resolve => setTimeout(resolve, 1000))
   console.log('[bootstrap] all stores initialized')
 
   const app = new Koa()
@@ -226,6 +222,9 @@ export async function bootstrap() {
 
   bindShutdown(servers, undefined, chatRunServer, agentBridgeManager)
   startVersionCheck()
+  if (agentBridgeReady) {
+    prefetchHermesVersion()
+  }
   initDeviceSelfCheck()
 
   // TAHP 中心同步：local 角色 + 已配置中心时，启动拉取调度（离线容忍）

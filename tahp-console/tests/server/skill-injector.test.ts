@@ -61,4 +61,25 @@ describe('HermesSkillInjector', () => {
     await expect(readFile(join(hermesHome, 'skills', 'new-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# New Skill\n')
     await expect(readFile(join(hermesHome, 'skills', 'existing-skill', 'SKILL.md'), 'utf-8')).resolves.toBe('# Bundled Existing\n')
   })
+
+  it('skips unchanged bundled skills on subsequent sync', async () => {
+    const source = await tempDir('hermes-skill-source-skip-')
+    const hermesHome = await tempDir('hermes-skill-home-skip-')
+    process.env.HERMES_HOME = hermesHome
+
+    await mkdir(join(source, 'stable-skill'), { recursive: true })
+    await writeFile(join(source, 'stable-skill', 'SKILL.md'), '# Stable\n', 'utf-8')
+
+    const { HermesSkillInjector } = await import('../../packages/server/src/services/hermes/skill-injector')
+    const injector = new HermesSkillInjector(source)
+
+    const first = await injector.injectMissingSkills()
+    expect(first.injected).toEqual(['stable-skill'])
+    expect(first.skipped).toEqual([])
+
+    const second = await injector.injectMissingSkills()
+    expect(second.injected).toEqual([])
+    expect(second.updated).toEqual([])
+    expect(second.skipped).toEqual(['stable-skill'])
+  })
 })

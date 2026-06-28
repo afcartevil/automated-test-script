@@ -45,6 +45,26 @@ const LOCAL_VERSION = typeof __APP_VERSION__ !== 'undefined'
   : PACKAGE_INFO?.version || ''
 
 let cachedLatestVersion = ''
+let cachedHermesVersion = ''
+let cachedHermesVersionAt = 0
+const HERMES_VERSION_CACHE_MS = 60_000
+
+async function refreshHermesVersion(): Promise<string> {
+  try {
+    const raw = await hermesCli.getVersion()
+    cachedHermesVersion = raw.split('\n')[0].replace('Hermes Agent ', '') || ''
+  } catch {
+    cachedHermesVersion = cachedHermesVersion || ''
+  }
+  cachedHermesVersionAt = Date.now()
+  return cachedHermesVersion
+}
+
+/** 后台预热 Hermes 版本，避免 /health 首次探测阻塞 dev 启动 */
+export function prefetchHermesVersion(): void {
+  if (Date.now() - cachedHermesVersionAt < HERMES_VERSION_CACHE_MS && cachedHermesVersion) return
+  void refreshHermesVersion()
+}
 
 export async function checkLatestVersion(): Promise<void> {
   try {
@@ -67,13 +87,16 @@ export function startVersionCheck(): void {
 }
 
 export async function healthCheck(ctx: any) {
-  const raw = await hermesCli.getVersion()
-  const hermesVersion = raw.split('\n')[0].replace('Hermes Agent ', '') || ''
+  const now = Date.now()
+  const versionStale = now - cachedHermesVersionAt >= HERMES_VERSION_CACHE_MS
+  if (!cachedHermesVersion || versionStale) {
+    void refreshHermesVersion()
+  }
   const agentBridge = getAgentBridgeManager().running ? 'running' : 'stopped'
   ctx.body = {
     status: 'ok',
     platform: 'hermes-agent',
-    version: hermesVersion,
+    version: cachedHermesVersion,
     gateway: 'running',
     agent_bridge: agentBridge,
     webui_version: LOCAL_VERSION,

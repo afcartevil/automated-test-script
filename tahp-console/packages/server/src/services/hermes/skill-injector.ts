@@ -61,7 +61,11 @@ export class HermesSkillInjector {
       const sourceSkillDir = join(this.sourceDir, entry.name)
       const targetSkillDir = join(this.targetDir, entry.name)
       const existed = existsSync(targetSkillDir)
-      if (existsSync(targetSkillDir)) {
+      if (existed && !(await this.dirNeedsSync(sourceSkillDir, targetSkillDir))) {
+        result.skipped.push(entry.name)
+        continue
+      }
+      if (existed) {
         await rm(targetSkillDir, { recursive: true, force: true })
       }
       await this.copyDir(sourceSkillDir, targetSkillDir)
@@ -71,10 +75,12 @@ export class HermesSkillInjector {
 
     if (result.injected.length > 0 || result.updated.length > 0) {
       logger.info({
-        injected: result.injected,
-        updated: result.updated,
-        targetDir: this.targetDir,
+        injected: result.injected.length,
+        updated: result.updated.length,
+        skipped: result.skipped.length,
       }, '[skill-injector] synced bundled skills')
+    } else if (result.skipped.length > 0) {
+      logger.debug('[skill-injector] all %d bundled skills up to date', result.skipped.length)
     }
     return result
   }
@@ -84,6 +90,34 @@ export class HermesSkillInjector {
       return (await stat(path)).isDirectory()
     } catch {
       return false
+    }
+  }
+
+  /** 比较目录内所有文件的相对路径 + size + mtime，一致则跳过复制 */
+  private async dirNeedsSync(sourceDir: string, targetDir: string): Promise<boolean> {
+    const sourceSig = await this.dirSignature(sourceDir)
+    const targetSig = await this.dirSignature(targetDir)
+    return sourceSig !== targetSig
+  }
+
+  private async dirSignature(dir: string): Promise<string> {
+    const parts: string[] = []
+    await this.collectSignatureParts(dir, dir, parts)
+    parts.sort()
+    return parts.join('\n')
+  }
+
+  private async collectSignatureParts(root: string, current: string, parts: string[]): Promise<void> {
+    const entries = await readdir(current, { withFileTypes: true })
+    for (const entry of entries) {
+      const fullPath = join(current, entry.name)
+      if (entry.isDirectory()) {
+        await this.collectSignatureParts(root, fullPath, parts)
+      } else if (entry.isFile()) {
+        const rel = fullPath.slice(root.length + 1).replace(/\\/g, '/')
+        const info = await stat(fullPath)
+        parts.push(`${rel}:${info.size}:${info.mtimeMs}`)
+      }
     }
   }
 

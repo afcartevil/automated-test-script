@@ -3,12 +3,15 @@
 import { spawn } from 'child_process'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
-import { ensureHermesAgent } from './ensure-hermes-agent.mjs'
+import { applyHermesAgentEnvFromDisk, ensureHermesAgent } from './ensure-hermes-agent.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const consoleRoot = resolve(__dirname, '..')
 
-const agent = ensureHermesAgent({ quiet: false })
+let agent = applyHermesAgentEnvFromDisk()
+if (!agent.ok) {
+  agent = ensureHermesAgent({ quiet: true, skipImportVerify: true })
+}
 if (!agent.ok) {
   console.error('\n[dev-server] Hermes Agent 初始化失败，服务仍将启动但 Bridge/Bug 分析可能不可用。\n')
 }

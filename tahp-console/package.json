@@ -32,7 +32,7 @@
     "preflight": "node scripts/preflight-env.mjs",
     "setup:agent": "node scripts/ensure-hermes-agent.mjs",
     "setup:hermes-wizard": "node scripts/ensure-hermes-agent.mjs --wizard-only",
-    "predev": "node scripts/ensure-hermes-agent.mjs",
+    "predev": "node scripts/predev-agent.mjs",
     "prestart": "node scripts/ensure-hermes-agent.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

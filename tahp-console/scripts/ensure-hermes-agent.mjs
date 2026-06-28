@@ -286,11 +286,22 @@ function createVenv(systemPython, agentDir) {
   return true
 }
 
+function canUseCachedAgent(cached, agentDir, { skipImportVerify = false } = {}) {
+  if (cached?.version !== MARKER_VERSION) return false
+  if (cached.agentRoot !== agentDir) return false
+  if (!isVenvPythonUsable(cached.python)) return false
+  if (!existsSync(join(agentDir, 'run_agent.py'))) return false
+  if (skipImportVerify) return true
+  return verifyAgentImport(cached.python, agentDir)
+}
+
 /**
- * @param {{ force?: boolean, full?: boolean, quiet?: boolean }} opts
+ * @param {{ force?: boolean, full?: boolean, quiet?: boolean, skipImportVerify?: boolean, forceWizard?: boolean, optional?: boolean }} opts
  * @returns {{ ok: boolean, skipped?: boolean, paths?: object, error?: string }}
  */
 export function ensureHermesAgent(opts = {}) {
+  const skipImportVerify = opts.skipImportVerify
+    || process.env.TAHP_AGENT_SKIP_IMPORT_VERIFY === '1'
   if (process.env.TAHP_SKIP_AGENT_SETUP === '1') {
     applyHermesAgentEnvFromDisk()
     return { ok: true, skipped: true }
@@ -319,13 +330,7 @@ export function ensureHermesAgent(opts = {}) {
   const venvPython = getVenvPython(agentDir)
   const hermesBin = getVenvHermesBin(agentDir)
 
-  if (
-    !opts.force
-    && cached?.version === MARKER_VERSION
-    && cached.agentRoot === agentDir
-    && isVenvPythonUsable(cached.python)
-    && verifyAgentImport(cached.python, agentDir)
-  ) {
+  if (!opts.force && cached && canUseCachedAgent(cached, agentDir, { skipImportVerify })) {
     if (!opts.quiet) log('  ✓ Agent 环境已就绪（跳过安装）')
     applyToProcessEnv(cached)
     const init = opts.forceWizard
@@ -400,6 +405,7 @@ export function ensureHermesAgent(opts = {}) {
     python: activeVenvPython,
     hermesBin: existsSync(hermesBin) ? hermesBin : undefined,
     readyAt: new Date().toISOString(),
+    verifiedAt: new Date().toISOString(),
   }
   writeAgentPaths(consoleRoot, paths)
   mergeConsoleEnv(consoleRoot, {
@@ -472,6 +478,7 @@ if (isMain) {
   const forceWizard = process.argv.includes('--wizard')
   const wizardOnly = process.argv.includes('--wizard-only')
   const optional = process.argv.includes('--optional')
+  const skipImportVerify = process.argv.includes('--skip-import-verify')
   if (wizardOnly) {
     const consoleRoot = getConsoleRoot()
     loadDotEnv(consoleRoot)
@@ -485,6 +492,6 @@ if (isMain) {
     })
     process.exit(wizard.ok ? 0 : 1)
   }
-  const result = ensureHermesAgent({ force, full, forceWizard, optional })
+  const result = ensureHermesAgent({ force, full, forceWizard, optional, skipImportVerify })
   process.exit(result.ok || result.optional ? 0 : 1)
 }

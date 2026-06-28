@@ -27,12 +27,7 @@ if errorlevel 1 (
 echo [EasyAdapter] 运行环境检查通过
 echo.
 
-if not exist node_modules (
-    echo [EasyAdapter] 首次运行，正在安装 npm 依赖...
-) else (
-    echo [EasyAdapter] 同步 npm 依赖（拉取新代码后若 package.json 有变更会自动补装）...
-)
-call npm install
+node scripts/npm-install-if-needed.mjs
 if errorlevel 1 (
     echo [EasyAdapter] npm install 失败
     pause
@@ -66,6 +61,8 @@ echo.
 
 set TAHP_OPEN_BROWSER=1
 set TAHP_REQUIRE_AGENT=1
+set TAHP_SKIP_PREDEV_AGENT=1
+set TAHP_AGENT_SKIP_IMPORT_VERIFY=1
 set PORT=8650
 
 call npm run dev

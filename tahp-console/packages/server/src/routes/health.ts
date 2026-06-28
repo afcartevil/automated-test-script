@@ -5,4 +5,4 @@ export const healthRoutes = new Router()
 
 healthRoutes.get('/health', ctrl.healthCheck)
 
-export { startVersionCheck } from '../controllers/health'
+export { startVersionCheck, prefetchHermesVersion } from '../controllers/health'

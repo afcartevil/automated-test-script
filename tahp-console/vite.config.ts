@@ -25,6 +25,7 @@ function createProxyConfig(): ProxyOptions {
 
 export default defineConfig({
   root: 'packages/client',
+  cacheDir: resolve(__dirname, 'node_modules/.vite'),
   plugins: [vue()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
@@ -87,6 +88,7 @@ export default defineConfig({
       'pinia',
       'naive-ui',
     ],
+    entries: [resolve(__dirname, 'packages/client/index.html')],
   },
   server: {
     proxy: {
