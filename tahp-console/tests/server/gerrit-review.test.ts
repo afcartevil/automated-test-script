@@ -1,15 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sendGerritReviewChatMock = vi.fn()
+const cancelGerritReviewTaskMock = vi.fn()
 
 vi.mock('../../packages/server/src/services/tahp/gerrit-review', () => ({
   sendGerritReviewChat: (...args: unknown[]) => sendGerritReviewChatMock(...args),
+  cancelGerritReviewTask: (...args: unknown[]) => cancelGerritReviewTaskMock(...args),
 }))
 
 describe('gerrit-review routes', () => {
   beforeEach(() => {
     vi.resetModules()
     sendGerritReviewChatMock.mockReset()
+    cancelGerritReviewTaskMock.mockReset()
   })
 
   it('returns 400 when message is empty', async () => {
@@ -96,6 +99,28 @@ describe('gerrit-review routes', () => {
         task_id: 'task-gerrit-1',
         status: 'running',
       },
+    })
+  })
+
+  it('cancels running gerrit review task', async () => {
+    cancelGerritReviewTaskMock.mockResolvedValue({ ok: true, action: 'interrupted_running' })
+
+    const { tahpGerritReviewRoutes } = await import('../../packages/server/src/routes/tahp/gerrit-review')
+    const layer = tahpGerritReviewRoutes.stack.find(
+      (entry: { path: string }) => entry.path === '/api/tahp/gerrit-review/tasks/:id/cancel',
+    )
+    const ctx: {
+      params: { id: string }
+      status?: number
+      body?: unknown
+    } = { params: { id: 'task-gerrit-1' } }
+
+    await layer!.stack[0](ctx)
+
+    expect(cancelGerritReviewTaskMock).toHaveBeenCalledWith('task-gerrit-1')
+    expect(ctx.body).toEqual({
+      success: true,
+      data: { ok: true, action: 'interrupted_running' },
     })
   })
 })

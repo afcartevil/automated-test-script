@@ -30,7 +30,7 @@ const MUST_TEST_KEYWORD_HINTS: Record<string, string[]> = {
   指纹: ['指纹', '解锁'],
   相机: ['相机', '拍照', '录像', 'CAMERA'],
   音频: ['音频', '喇叭', '耳机', '录音'],
-  传感器: ['传感器', 'SENSOR', 'SAR', '光感', '距离', 'sensor'],
+  传感器: ['传感器', 'SENSOR', 'SAR', '光感', '距离', '距感', 'sensor', '超声'],
 }
 
 const DRIVER_CATALOG_HINTS = ['USB', '显示', '充电', '指纹', '相机', '音频', 'LCM', 'TP', '传感器', 'SAR', '插拔', '马达', '触控']
@@ -87,9 +87,34 @@ function caseMatchesKeywords(caseName: string, keywords: string[]): boolean {
   return keywords.some(kw => normalized.includes(normalizeText(kw)))
 }
 
+function normalizeMustTestText(text: string): string {
+  return text
+    .replace(/\*\*/g, '')
+    .replace(/^[\d.\s]+/, '')
+    .replace(/\s*[—–-]\s*.+$/, '')
+    .replace(/\s*\/\s*验证点:.+$/i, '')
+    .trim()
+}
+
+function normalizeMustTestItems(items: string[]): string[] {
+  return items
+    .map(normalizeMustTestText)
+    .filter(Boolean)
+}
+
+function caseMatchesPhrase(caseName: string, phrase: string): boolean {
+  const normalizedCase = normalizeText(caseName)
+  const normalizedPhrase = normalizeText(phrase)
+  if (!normalizedPhrase || normalizedPhrase.length < 2) return false
+  if (normalizedCase.includes(normalizedPhrase)) return true
+  if (normalizedPhrase.length >= 4 && normalizedPhrase.includes(normalizedCase)) return true
+  return false
+}
+
 function matchMustTest(caseName: string, mustTestItems: string[]): { hit: boolean; reasons: string[] } {
   const reasons: string[] = []
-  const combined = mustTestItems.join(' ')
+  const cleanedItems = normalizeMustTestItems(mustTestItems)
+  const combined = cleanedItems.join(' ')
   for (const [label, keywords] of Object.entries(MUST_TEST_KEYWORD_HINTS)) {
     const mentioned = keywords.some(kw => combined.includes(kw))
     if (mentioned && caseMatchesKeywords(caseName, keywords)) {
@@ -97,9 +122,17 @@ function matchMustTest(caseName: string, mustTestItems: string[]): { hit: boolea
     }
   }
   if (!reasons.length) {
-    for (const token of extractFallbackTokens(mustTestItems)) {
+    for (const token of extractFallbackTokens(cleanedItems)) {
       if (caseMatchesKeywords(caseName, [token])) {
         reasons.push(`必须测试:${token.slice(0, 12)}`)
+      }
+    }
+  }
+  if (!reasons.length) {
+    for (const item of cleanedItems) {
+      const head = item.split(/[，。；、/|]/)[0]?.trim() ?? item
+      if (head.length >= 2 && caseMatchesPhrase(caseName, head)) {
+        reasons.push(`必须测试:${head.slice(0, 12)}`)
       }
     }
   }
@@ -142,8 +175,11 @@ function collectFromConfig(
   return scored.slice(0, limit)
 }
 
-function routeCatalogs(mustTestItems: string[]): Array<{ file: string; prefix: string; label: string }> {
-  const combined = mustTestItems.join(' ')
+function routeCatalogs(
+  mustTestItems: string[],
+  modules: string[] = [],
+): Array<{ file: string; prefix: string; label: string }> {
+  const combined = [...mustTestItems, ...modules].join(' ')
   const wantsDriver = DRIVER_CATALOG_HINTS.some(k => combined.includes(k))
   const wantsTdd = TDD_CATALOG_HINTS.some(k => combined.includes(k))
   const catalogs: Array<{ file: string; prefix: string; label: string }> = []
@@ -161,14 +197,18 @@ function routeCatalogs(mustTestItems: string[]): Array<{ file: string; prefix: s
 const MAX_PER_CATALOG = 8
 const MAX_TOTAL = 16
 
+const FALLBACK_CATALOGS = [
+  { file: 'str4_driver_component.json', prefix: 'str4/driver_component', label: '转测驱动' },
+] as const
+
 /**
- * 根据「必须测试」项推荐 week 用例。
+ * 根据「必须测试」项推荐 week 用例；week 无命中时回退 str4 驱动组件库。
  */
-export function recommendTestCases(mustTestItems: string[]): RecommendedCase[] {
-  const normalizedMustTest = mustTestItems.map(t => t.trim()).filter(Boolean)
+export function recommendTestCases(mustTestItems: string[], modules: string[] = []): RecommendedCase[] {
+  const normalizedMustTest = normalizeMustTestItems(mustTestItems)
   if (!normalizedMustTest.length) return []
 
-  const catalogs = routeCatalogs(normalizedMustTest)
+  const catalogs = routeCatalogs(normalizedMustTest, modules)
   const all: RecommendedCase[] = []
 
   for (const cat of catalogs) {
@@ -181,6 +221,20 @@ export function recommendTestCases(mustTestItems: string[]): RecommendedCase[] {
         MAX_PER_CATALOG,
       ),
     )
+  }
+
+  if (!all.length) {
+    for (const cat of FALLBACK_CATALOGS) {
+      all.push(
+        ...collectFromConfig(
+          cat.file,
+          cat.prefix,
+          cat.label,
+          normalizedMustTest,
+          MAX_PER_CATALOG,
+        ),
+      )
+    }
   }
 
   all.sort((a, b) => b.score - a.score)

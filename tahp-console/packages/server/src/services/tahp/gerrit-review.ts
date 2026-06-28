@@ -61,7 +61,7 @@ export interface GerritReviewTaskCtx {
   sessionId: string
   userMessage: string
   startedAt: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
   llmResponse?: string
   p0Items?: string[]
   skillsUsed: string[]
@@ -72,6 +72,7 @@ export interface GerritReviewTaskCtx {
 
 const sessionCtx = new Map<string, GerritReviewSessionCtx>()
 const taskCtx = new Map<string, GerritReviewTaskCtx>()
+const taskRuntime = new Map<string, { sessionId: string; interruptRequested: boolean }>()
 
 function genSessionId(): string {
   return `sess-gerrit-${Date.now()}-${randomBytes(3).toString('hex')}`
@@ -245,6 +246,31 @@ export function getGerritReviewTask(taskId: string): GerritReviewTaskCtx | undef
   return taskCtx.get(taskId)
 }
 
+export async function cancelGerritReviewTask(
+  taskId: string,
+): Promise<{ ok: boolean; action?: 'cancelled_pending' | 'interrupted_running'; error?: string }> {
+  const ctx = taskCtx.get(taskId)
+  if (!ctx) return { ok: false, error: `找不到任务: ${taskId}` }
+  if (ctx.status === 'completed' || ctx.status === 'failed' || ctx.status === 'cancelled') {
+    return { ok: false, error: `任务已结束，当前状态: ${ctx.status}` }
+  }
+
+  const agentSessionId = `tahp-gerrit-${taskId}`
+  const control = taskRuntime.get(taskId) || { sessionId: agentSessionId, interruptRequested: false }
+  control.interruptRequested = true
+  taskRuntime.set(taskId, control)
+
+  emit(taskId, 'task.message', { level: 'warn', text: '已请求停止评审，等待 Agent 结束...' })
+  logger.warn({ taskId, sessionId: control.sessionId }, '[gerrit-review] interrupt requested')
+
+  setImmediate(() => {
+    sharedBridgeClient.interrupt(control.sessionId, '用户手动停止 Gerrit 评审').catch((err) => {
+      logger.warn({ err: (err as Error).message, taskId }, '[gerrit-review] interrupt rpc failed')
+    })
+  })
+  return { ok: true, action: 'interrupted_running' }
+}
+
 export function sendGerritReviewChat(input: {
   sessionId?: string
   message: string
@@ -311,6 +337,17 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
   const startMs = Date.now()
   const agentSessionId = `tahp-gerrit-${taskId}`
 
+  const preControl = taskRuntime.get(taskId)
+  if (preControl?.interruptRequested) {
+    ctx.status = 'cancelled'
+    ctx.error = '评审已取消'
+    ctx.completedAt = new Date().toISOString()
+    emit(taskId, 'task.cancelled', { error: ctx.error, message: ctx.error })
+    taskRuntime.delete(taskId)
+    return
+  }
+  taskRuntime.set(taskId, { sessionId: agentSessionId, interruptRequested: false })
+
   try {
     const credFilePath = writeRuntimeCredFile()
     const cfg = getGerritConfig()
@@ -364,7 +401,7 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
 
     const p0 = extractP0TestSuggestions(fullResponse)
     const moduleInfo = extractModules(fullResponse)
-    const recommendedCases = recommendTestCases(p0.items)
+    const recommendedCases = recommendTestCases(p0.items, moduleInfo.modules)
     ctx.llmResponse = fullResponse
     ctx.p0Items = p0.items
     ctx.status = 'completed'
@@ -420,11 +457,22 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
       logger.warn({ err: (e as Error).message, taskId }, '[gerrit-review] report write failed')
     }
   } catch (err) {
-    const msg = humanizeAgentError((err as Error).message)
-    ctx.status = 'failed'
+    const control = taskRuntime.get(taskId)
+    const interruptedByUser = control?.interruptRequested === true
+      || String((err as Error).message || '').includes('被中断')
+    const msg = interruptedByUser
+      ? '评审已被用户停止'
+      : humanizeAgentError((err as Error).message)
+    ctx.status = interruptedByUser ? 'cancelled' : 'failed'
     ctx.error = msg
-    emit(taskId, 'task.failed', { error: msg, message: msg })
+    ctx.completedAt = new Date().toISOString()
+    if (interruptedByUser) {
+      emit(taskId, 'task.cancelled', { error: msg, message: msg })
+    } else {
+      emit(taskId, 'task.failed', { error: msg, message: msg })
+    }
   } finally {
+    taskRuntime.delete(taskId)
     sharedBridgeClient.destroy(agentSessionId).catch(() => {})
   }
 }

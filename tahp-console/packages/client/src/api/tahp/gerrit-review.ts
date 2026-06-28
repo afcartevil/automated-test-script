@@ -30,9 +30,16 @@ export interface RecommendedCase {
 
 export function fetchRecommendCases(input: {
   p0_items: string[]
+  modules?: string[]
 }): Promise<{ recommended_cases: RecommendedCase[] }> {
   return tahpPost<{ recommended_cases: RecommendedCase[] }>(
     '/api/tahp/gerrit-review/recommend-cases',
     input,
   )
+}
+
+export function cancelGerritReviewTask(
+  taskId: string,
+): Promise<{ ok: boolean; action?: 'cancelled_pending' | 'interrupted_running' }> {
+  return tahpPost(`/api/tahp/gerrit-review/tasks/${encodeURIComponent(taskId)}/cancel`)
 }

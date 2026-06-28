@@ -13,6 +13,7 @@ const {
   streamingText,
   isRunning,
   sending,
+  stopping,
   inputText,
   gerritConfigured,
   thinkingLines,
@@ -25,11 +26,16 @@ const {
   modulesResult,
   recommendedCases,
   checkedRecommendedCount,
+  p0Count,
+  recommendedCount,
+  refreshingRecommend,
   toggleRecommendedCase,
   setRecommendedCaseChecked,
   handleStartRecommendedTest,
+  handleRefreshRecommend,
   handleTextareaInput,
   handleSend,
+  handleStop,
   handleCompositionStart,
   handleCompositionEnd,
   handleKeydown,
@@ -121,10 +127,18 @@ onActivated(restoreWorkspace)
               />
               <div class="input-actions">
                 <NButton
+                  v-if="isRunning"
+                  size="small"
+                  type="error"
+                  :disabled="stopping"
+                  @click="handleStop"
+                >
+                  停止
+                </NButton>
+                <NButton
                   size="small"
                   type="primary"
-                  :loading="isRunning"
-                  :disabled="!inputText.trim() || sending || !gerritConfigured"
+                  :disabled="!inputText.trim() || isRunning || !gerritConfigured"
                   @click="handleSend"
                 >
                   <template #icon>
@@ -142,60 +156,83 @@ onActivated(restoreWorkspace)
           <div class="panel-subtitle module-subtitle">
             模块：{{ modulesResult.display }}
           </div>
-          <div class="panel-subtitle">必须测试</div>
-          <NScrollbar class="p0-scroll">
-            <div v-if="isRunning && !p0Result.items.length && !recommendedCases.length" class="p0-loading">
+
+          <div class="insight-body">
+            <div
+              v-if="isRunning && !p0Count && !recommendedCount"
+              class="p0-loading"
+            >
               <NSpin size="medium" />
               <p class="ea-muted">评审进行中，完成后自动提取测试建议…</p>
             </div>
             <template v-else>
-              <template v-if="p0Result.items.length">
-                <ol class="p0-list">
-                  <li v-for="(item, i) in p0Result.items" :key="i">
-                    <MarkdownRenderer :content="item" />
-                  </li>
-                </ol>
-              </template>
-              <NEmpty
-                v-else
-                description="未提取到必须测试项"
-                size="small"
-              />
-
-              <div class="recommended-section">
-                <div class="recommended-title">推荐测试用例</div>
-                <NEmpty
-                  v-if="!recommendedCases.length"
-                  description="暂无推荐用例，请完成评审或检查必须测试信息"
-                  size="small"
-                />
-                <ul v-else class="recommended-list">
-                  <li v-for="item in recommendedCases" :key="item.caseKey">
-                    <NCheckbox
-                      :checked="item.checked"
-                      @update:checked="(checked: boolean) => setRecommendedCaseChecked(item.caseKey, checked)"
-                    />
-                    <div class="recommended-item-body">
-                      <div class="recommended-item-name">{{ item.caseName }}</div>
-                      <div class="recommended-item-meta ea-muted">
-                        {{ item.caseKey }} · {{ item.moduleLabel }}
-                      </div>
-                    </div>
-                  </li>
-                </ul>
-                <div v-if="recommendedCases.length" class="recommended-actions">
-                  <NButton
-                    type="primary"
-                    size="small"
-                    :disabled="checkedRecommendedCount === 0"
-                    @click="handleStartRecommendedTest"
-                  >
-                    开始测试（{{ checkedRecommendedCount }}）
-                  </NButton>
+              <div class="insight-section p0-section">
+                <div class="section-title section-title-bold">
+                  必须测试 · {{ p0Count }}
                 </div>
+                <NScrollbar class="section-scroll">
+                  <template v-if="p0Count">
+                    <ol class="p0-list">
+                      <li v-for="(item, i) in p0Result.items" :key="i">
+                        <MarkdownRenderer :content="item" />
+                      </li>
+                    </ol>
+                  </template>
+                  <NEmpty
+                    v-else
+                    description="未提取到必须测试项"
+                    size="small"
+                  />
+                </NScrollbar>
+              </div>
+
+              <div class="insight-section recommended-section">
+                <div class="section-title">
+                  推荐测试用例 · {{ recommendedCount }}
+                </div>
+                <NScrollbar class="section-scroll">
+                  <NEmpty
+                    v-if="!recommendedCount"
+                    description="暂无推荐用例，请完成评审或点击重新推荐"
+                    size="small"
+                  />
+                  <ul v-else class="recommended-list">
+                    <li v-for="item in recommendedCases" :key="item.caseKey">
+                      <NCheckbox
+                        :checked="item.checked"
+                        @update:checked="(checked: boolean) => setRecommendedCaseChecked(item.caseKey, checked)"
+                      />
+                      <div class="recommended-item-body">
+                        <div class="recommended-item-name">{{ item.caseName }}</div>
+                        <div class="recommended-item-meta ea-muted">
+                          {{ item.caseKey }} · {{ item.moduleLabel }}
+                        </div>
+                      </div>
+                    </li>
+                  </ul>
+                </NScrollbar>
               </div>
             </template>
-          </NScrollbar>
+          </div>
+
+          <div class="insight-footer">
+            <NButton
+              type="primary"
+              size="small"
+              :disabled="checkedRecommendedCount === 0"
+              @click="handleStartRecommendedTest"
+            >
+              开始测试（{{ checkedRecommendedCount }}）
+            </NButton>
+            <NButton
+              size="small"
+              :disabled="!p0Count || isRunning"
+              :loading="refreshingRecommend"
+              @click="handleRefreshRecommend"
+            >
+              重新推荐
+            </NButton>
+          </div>
         </div>
       </div>
     </EaCard>
@@ -204,6 +241,9 @@ onActivated(restoreWorkspace)
 
 <style scoped lang="scss">
 @use '@/styles/variables' as *;
+
+$gerrit-action-inner-min: 48px;
+$gerrit-bottom-bar-min: calc(10px + 12px + #{$gerrit-action-inner-min});
 
 .gerrit-workspace-root {
   margin-top: 24px;
@@ -253,12 +293,11 @@ onActivated(restoreWorkspace)
 }
 
 .review-workspace {
-  height: calc(50vh - 40px);
-  min-height: 360px;
+  height: calc((50vh - 40px) * 4 / 3);
+  min-height: 480px;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
-  min-height: 0;
 }
 
 .panel {
@@ -297,11 +336,80 @@ onActivated(restoreWorkspace)
   font-size: 11px;
 }
 
-.chat-scroll,
-.p0-scroll {
-  flex: 1;
-  min-height: 0;
-  padding: 12px 14px;
+.chat-panel {
+  .chat-scroll {
+    flex: 1;
+    min-height: 0;
+    padding: 12px 14px;
+  }
+}
+
+.p0-panel {
+  .insight-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 12px;
+    overflow: hidden;
+  }
+
+  .insight-section {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+
+  .p0-section {
+    flex: 0.85;
+  }
+
+  .recommended-section {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .section-title {
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 8px 12px;
+    border-bottom: 1px dashed var(--line);
+    background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+  }
+
+  .section-title-bold {
+    font-weight: 700;
+  }
+
+  .section-scroll {
+    flex: 1;
+    min-height: 0;
+    padding: 10px 12px;
+  }
+
+  .insight-footer {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: $gerrit-bottom-bar-min;
+    padding: 10px 12px 12px;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    box-sizing: border-box;
+
+    :deep(.n-button) {
+      height: 28px;
+      padding: 0 14px;
+      font-size: 14px;
+    }
+  }
 }
 
 .chat-empty {
@@ -347,17 +455,24 @@ onActivated(restoreWorkspace)
   border-top: 1px solid var(--line);
   background: var(--surface);
   flex-shrink: 0;
+  min-height: $gerrit-bottom-bar-min;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
 }
 
 .input-wrapper {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
+  min-height: $gerrit-action-inner-min;
   background-color: $bg-input;
   border: 1px solid $border-color;
   border-radius: $radius-md;
   padding: 10px 12px;
   transition: border-color $transition-fast, background-color $transition-fast;
+  box-sizing: border-box;
 
   &:focus-within {
     border-color: $accent-primary;
@@ -365,6 +480,12 @@ onActivated(restoreWorkspace)
 
   .dark & {
     background-color: #333333;
+  }
+
+  :deep(.n-button) {
+    height: 28px;
+    padding: 0 14px;
+    font-size: 14px;
   }
 }
 
@@ -471,15 +592,9 @@ onActivated(restoreWorkspace)
 }
 
 .recommended-section {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px dashed var(--line);
-}
-
-.recommended-title {
-  font-size: 12px;
-  font-weight: 700;
-  margin-bottom: 10px;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 
 .recommended-list {
@@ -491,7 +606,7 @@ onActivated(restoreWorkspace)
     display: flex;
     align-items: flex-start;
     gap: 8px;
-    margin-bottom: 10px;
+    margin: 0 0 10px 2px;
   }
 }
 
@@ -510,20 +625,14 @@ onActivated(restoreWorkspace)
   margin-top: 2px;
 }
 
-.recommended-actions {
-  margin-top: 12px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--line);
-}
-
 @media (max-width: 900px) {
   .review-workspace {
     grid-template-columns: 1fr;
     height: auto;
-    min-height: 520px;
+    min-height: 693px;
   }
   .panel {
-    min-height: 280px;
+    min-height: 320px;
   }
 }
 </style>
