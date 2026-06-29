@@ -14,6 +14,7 @@ import {
 import { basename, join, resolve } from 'path'
 import { pipeline } from 'stream/promises'
 import { Transform } from 'stream'
+import * as XLSX from 'xlsx'
 import { tahpPaths } from './paths'
 
 export interface PickFlashPathResult {
@@ -22,7 +23,58 @@ export interface PickFlashPathResult {
   error?: string
 }
 
+export interface DailySystemVersionOption {
+  label: string
+  value: string
+  branchFolder: string
+}
+
+export interface DailyFlashOptions {
+  deviceId: string
+  brand: string
+  project: string
+  devRoot: string
+  devProjectPath: string
+  systemVersions: DailySystemVersionOption[]
+}
+
+export interface LatestDailyFlashRequest {
+  deviceId: string
+  /** 省略时自动选择项目 DEV 下最新的 tOS 分支（如 tOS17.0 > tOS16.3 > tOS16.2） */
+  systemVersion?: string
+}
+
+export interface LatestDailyFlashResult {
+  deviceId: string
+  brand: string
+  project: string
+  systemVersion: string
+  branchFolder: string
+  devRoot: string
+  devProjectPath: string
+  branchPath: string
+  versionPath: string
+  versionName: string
+  releaseNotePath: string
+  archivePathCq: string
+  resolvedArchivePath: string
+  openPath: string
+  packagePath: string
+  usedIdhFallback: boolean
+}
+
 const EXTRACT_ZIP_SCRIPT = join(__dirname, 'self-check', 'python', 'extract_flash_zip.py')
+const DAILY_VERSION_ROOT = '\\\\10.150.98.24\\sw_ver_sh'
+const RELEASE_NOTE_FILE = 'ReleaseNote.xlsx'
+const DEFAULT_DEV_PROJECT_KEYWORD = 'Android_16'
+const RELEASE_BRANCH_SUFFIX = '_mtk_sys_release'
+const BRAND_PROPS = ['ro.product.brand', 'ro.build.brand', 'ro.product.manufacturer']
+const PROJECT_PROPS = [
+  'ro.product.name',
+  'ro.build.product',
+  'ro.product.device',
+  'ro.product.model',
+]
 
 function resolveExtractZipScript(): string {
   if (existsSync(EXTRACT_ZIP_SCRIPT)) return resolve(EXTRACT_ZIP_SCRIPT)
@@ -302,6 +354,370 @@ export function isZipFile(path: string): boolean {
 export function isNetworkPath(path: string): boolean {
   const normalized = normalizePath(path).replace(/\//g, '\\')
   return normalized.startsWith('\\\\')
+}
+
+function safeDirEntries(dir: string): { name: string; isDirectory: () => boolean; isFile: () => boolean }[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true }) as any
+  } catch {
+    return []
+  }
+}
+
+function newestByNameTimestamp(baseDir: string, entries: string[]): string | null {
+  const candidates = entries.map((name) => {
+    const full = join(baseDir, name)
+    const timestamp = name.match(/^(\d{4})\.(\d{2})\.(\d{2})\.(\d{2})\.(\d{2})\.(\d{2})_(\d+)/)
+    const timeKey = timestamp ? timestamp.slice(1).join('') : ''
+    let mtime = 0
+    try {
+      mtime = statSync(full).mtimeMs
+    } catch {
+      // keep lexical timestamp ordering even if stat fails on a network share
+    }
+    return { name, timeKey, mtime }
+  })
+  candidates.sort((a, b) => {
+    if (a.timeKey || b.timeKey) return b.timeKey.localeCompare(a.timeKey)
+    if (a.mtime !== b.mtime) return b.mtime - a.mtime
+    return b.name.localeCompare(a.name)
+  })
+  return candidates[0]?.name || null
+}
+
+function getAdbProp(deviceId: string, prop: string): Promise<string> {
+  return new Promise((resolvePromise) => {
+    const proc = spawn('adb', ['-s', deviceId, 'shell', 'getprop', prop], { windowsHide: true })
+    let stdout = ''
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8')
+    })
+    proc.on('close', () => resolvePromise(stdout.trim()))
+    proc.on('error', () => resolvePromise(''))
+  })
+}
+
+export function buildReleaseBranchFolder(systemVersion: string): string {
+  const trimmed = systemVersion.trim()
+  const match =
+    trimmed.match(/^tOS(\d+)\.(\d+)$/i) ||
+    trimmed.match(/^(\d+)\.(\d+)$/)
+  if (!match) {
+    throw new Error(`无效系统版本: ${systemVersion}`)
+  }
+  return `tOS${match[1]}.${match[2]}.0${RELEASE_BRANCH_SUFFIX}`
+}
+
+export function normalizeSystemVersionLabel(branchFolder: string): string | null {
+  const match = branchFolder.match(/^tOS(\d+)\.(\d+)\.0_mtk_sys_release$/i)
+  if (!match) return null
+  return `tOS${match[1]}.${match[2]}`
+}
+
+function compareSystemVersionLabels(a: string, b: string): number {
+  const parse = (label: string) => {
+    const match = label.match(/^tOS(\d+)\.(\d+)$/i)
+    return match ? [Number(match[1]), Number(match[2])] : [0, 0]
+  }
+  const [aMajor, aMinor] = parse(a)
+  const [bMajor, bMinor] = parse(b)
+  if (aMajor !== bMajor) return bMajor - aMajor
+  return bMinor - aMinor
+}
+
+function normalizeBrandName(raw: string): string | null {
+  const upper = raw.trim().toUpperCase()
+  if (!upper) return null
+  if (upper.includes('TECNO')) return 'TECNO'
+  if (upper.includes('INFINIX')) return 'INFINIX'
+  if (upper.includes('ITEL')) return 'itel'
+  return null
+}
+
+function extractProjectCandidates(...values: string[]): string[] {
+  const candidates = new Set<string>()
+  for (const raw of values) {
+    const value = raw.trim()
+    if (!value) continue
+    const head = value.split(/[-_[\s(]/)[0]?.trim()
+    if (head && /^[A-Za-z]+\d+/.test(head)) {
+      candidates.add(head.toUpperCase())
+    }
+    const inline = value.match(/([A-Za-z]+\d+)/g)
+    inline?.forEach((part) => candidates.add(part.toUpperCase()))
+  }
+  return [...candidates]
+}
+
+function resolveBrandFromProps(props: string[]): string {
+  const shareBrands = safeDirEntries(DAILY_VERSION_ROOT)
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+
+  for (const raw of props) {
+    const brand = normalizeBrandName(raw)
+    if (brand && shareBrands.includes(brand)) return brand
+  }
+
+  if (shareBrands.includes('TECNO')) return 'TECNO'
+  throw new Error(`无法识别品牌，请确认设备已连接且可访问 ${DAILY_VERSION_ROOT}`)
+}
+
+function resolveProjectOnShare(brand: string, candidates: string[]): string {
+  const brandRoot = join(DAILY_VERSION_ROOT, brand)
+  if (!existsSync(brandRoot)) {
+    throw new Error(`品牌路径不存在: ${brandRoot}`)
+  }
+
+  const projects = safeDirEntries(brandRoot)
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+
+  for (const candidate of candidates) {
+    const exact = projects.find((name) => name.toUpperCase() === candidate.toUpperCase())
+    if (exact) return exact
+  }
+
+  for (const candidate of candidates) {
+    const prefix = projects.find((name) => name.toUpperCase().startsWith(candidate.toUpperCase()))
+    if (prefix) return prefix
+  }
+
+  throw new Error(`无法识别项目代号（候选: ${candidates.join(', ') || '无'}）`)
+}
+
+export async function resolveFlashDeviceIdentity(deviceId: string): Promise<{
+  deviceId: string
+  brand: string
+  project: string
+  devRoot: string
+  devProjectPath: string
+}> {
+  const serial = deviceId.trim()
+  if (!serial) throw new Error('设备 ID 为空')
+
+  const [brandProps, projectProps] = await Promise.all([
+    Promise.all(BRAND_PROPS.map((prop) => getAdbProp(serial, prop))),
+    Promise.all(PROJECT_PROPS.map((prop) => getAdbProp(serial, prop))),
+  ])
+
+  const brand = resolveBrandFromProps(brandProps)
+  const project = resolveProjectOnShare(brand, extractProjectCandidates(...projectProps))
+  const devRoot = join(DAILY_VERSION_ROOT, brand, project, 'DEV')
+  if (!existsSync(devRoot)) throw new Error(`DEV 路径不存在: ${devRoot}`)
+
+  const devProjectPath = findDevProjectPath(devRoot, DEFAULT_DEV_PROJECT_KEYWORD)
+  return { deviceId: serial, brand, project, devRoot, devProjectPath }
+}
+
+export function listSystemVersions(devProjectPath: string): DailySystemVersionOption[] {
+  const options = safeDirEntries(devProjectPath)
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        /^tOS\d+\.\d+\.0_mtk_sys_release$/i.test(entry.name),
+    )
+    .map((entry) => entry.name)
+    .map((branchFolder) => {
+      const label = normalizeSystemVersionLabel(branchFolder) || branchFolder
+      return { label, value: label, branchFolder }
+    })
+    .sort((a, b) => compareSystemVersionLabels(a.label, b.label))
+
+  return options
+}
+
+export async function getDailyFlashOptions(deviceId: string): Promise<DailyFlashOptions> {
+  const identity = await resolveFlashDeviceIdentity(deviceId)
+  const systemVersions = listSystemVersions(identity.devProjectPath)
+  if (!systemVersions.length) {
+    throw new Error(`项目 DEV 目录下未找到 tOS 系统版本分支: ${identity.devProjectPath}`)
+  }
+  return {
+    deviceId: identity.deviceId,
+    brand: identity.brand,
+    project: identity.project,
+    devRoot: identity.devRoot,
+    devProjectPath: identity.devProjectPath,
+    systemVersions,
+  }
+}
+
+function findDevProjectPath(devRoot: string, devProjectKeyword: string): string {
+  const keyword = devProjectKeyword.trim() || DEFAULT_DEV_PROJECT_KEYWORD
+  const devProjects = safeDirEntries(devRoot)
+    .filter((entry) => entry.isDirectory() && entry.name.includes(keyword))
+    .map((entry) => entry.name)
+  if (!devProjects.length) {
+    throw new Error(`未在 DEV 下找到包含「${keyword}」的项目 DEV 目录: ${devRoot}`)
+  }
+  const latest = newestByNameTimestamp(devRoot, devProjects) || devProjects.sort().at(-1)!
+  return join(devRoot, latest)
+}
+
+function findReleaseBranchBySystemVersion(devProjectPath: string, systemVersion: string): string {
+  const branchFolder = buildReleaseBranchFolder(systemVersion)
+  const branchPath = join(devProjectPath, branchFolder)
+  if (!existsSync(branchPath)) {
+    throw new Error(`未找到系统版本分支: ${branchFolder}`)
+  }
+  return branchPath
+}
+
+function findLatestStableVersion(stableRoot: string): { versionName: string; versionPath: string } {
+  const versions = safeDirEntries(stableRoot)
+    .filter((entry) => entry.isDirectory() && /^\d{4}\.\d{2}\.\d{2}\.\d{2}\.\d{2}\.\d{2}_\d+/.test(entry.name))
+    .map((entry) => entry.name)
+  if (!versions.length) {
+    throw new Error(`stable 下未找到 daily 版本目录: ${stableRoot}`)
+  }
+  const versionName = newestByNameTimestamp(stableRoot, versions) || versions[0]
+  return { versionName, versionPath: join(stableRoot, versionName) }
+}
+
+function cellText(value: unknown): string {
+  return String(value ?? '').trim()
+}
+
+function extractArchivePathCqFromReleaseNote(releaseNotePath: string): string {
+  const workbook = XLSX.readFile(releaseNotePath, { cellDates: true })
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName]
+    const rows = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      defval: '',
+      raw: false,
+    }) as unknown[][]
+
+    for (let rowIdx = 0; rowIdx < rows.length; rowIdx += 1) {
+      const row = rows[rowIdx]
+      for (let colIdx = 0; colIdx < row.length; colIdx += 1) {
+        const text = cellText(row[colIdx])
+        if (!text) continue
+
+        const inlineMatch = text.match(/archive_path_cq\s*[:=：]\s*(.+)$/i)
+        if (inlineMatch?.[1]?.trim()) return normalizePath(inlineMatch[1])
+
+        if (text.toLowerCase() !== 'archive_path_cq') continue
+
+        const right = cellText(row[colIdx + 1])
+        if (right) return normalizePath(right)
+
+        for (let nextRow = rowIdx + 1; nextRow < rows.length; nextRow += 1) {
+          const below = cellText(rows[nextRow]?.[colIdx])
+          if (below) return normalizePath(below)
+        }
+      }
+    }
+  }
+  throw new Error(`ReleaseNote.xlsx 中未找到 archive_path_cq: ${releaseNotePath}`)
+}
+
+function buildIdhArchivePath(path: string, brand: string): string {
+  const normalized = normalizePath(path).replace(/\//g, '\\')
+  const escapedBrand = brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const brandPattern = new RegExp(`(\\\\CI\\\\)${escapedBrand}(\\\\)`, 'i')
+  if (brandPattern.test(normalized)) {
+    return normalized.replace(brandPattern, `$1IDH\\${brand}$2`)
+  }
+  if (/\\CI\\/i.test(normalized)) {
+    return normalized.replace(/\\CI\\/i, '\\CI\\IDH\\')
+  }
+  return normalized
+}
+
+function resolveExistingArchivePath(archivePath: string, brand: string): { path: string; usedIdhFallback: boolean } {
+  const normalized = normalizePath(archivePath)
+  if (existsSync(normalized)) return { path: normalized, usedIdhFallback: false }
+
+  const idhPath = buildIdhArchivePath(normalized, brand)
+  if (idhPath !== normalized && existsSync(idhPath)) {
+    return { path: idhPath, usedIdhFallback: true }
+  }
+
+  throw new Error(`archive_path_cq 路径不存在，IDH 兜底也不存在: ${normalized}`)
+}
+
+// 构建产物 / 单分区包后缀，不能作为整包刷机包（如 *_user_EFUSE.zip）。
+const EXCLUDED_PACKAGE_PATTERN = /(_user|_userdebug|_eng|efuse)/i
+
+function findFlashPackageInOpenPath(openPath: string): string {
+  if (!existsSync(openPath)) {
+    throw new Error(`Open 刷机包目录不存在: ${openPath}`)
+  }
+
+  const entries = safeDirEntries(openPath)
+  const zipFiles = entries
+    .filter((entry) => entry.isFile() && /\.zip$/i.test(entry.name))
+    .map((entry) => entry.name)
+
+  // 优先选不含 _user/EFUSE 等后缀的整包刷机包；没有时再退回全部 zip。
+  const preferredZips = zipFiles.filter((name) => !EXCLUDED_PACKAGE_PATTERN.test(name))
+  const zipPool = preferredZips.length ? preferredZips : zipFiles
+  const latestZip = newestByNameTimestamp(openPath, zipPool)
+  if (latestZip) return join(openPath, latestZip)
+
+  // 没有 zip 时再考虑 scatter xml。
+  const xmlFiles = entries
+    .filter((entry) => entry.isFile() && /\.xml$/i.test(entry.name))
+    .map((entry) => entry.name)
+  const latestXml = newestByNameTimestamp(openPath, xmlFiles)
+  if (latestXml) return join(openPath, latestXml)
+
+  const dirs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+  const scatterDir = dirs.find((name) => findScatterPkgPath(join(openPath, name)) !== resolve(join(openPath, name)))
+  if (scatterDir) return join(openPath, scatterDir)
+
+  // device_update can accept a package directory; use Open itself when no single file is present.
+  return openPath
+}
+
+export function pickLatestSystemVersion(versions: DailySystemVersionOption[]): string {
+  if (!versions.length) {
+    throw new Error('未找到可用的 tOS 系统版本')
+  }
+  const sorted = [...versions].sort((a, b) => compareSystemVersionLabels(a.label, b.label))
+  return sorted[0]!.value
+}
+
+export async function resolveLatestDailyFlashPackage(
+  request: LatestDailyFlashRequest
+): Promise<LatestDailyFlashResult> {
+  const identity = await resolveFlashDeviceIdentity(request.deviceId)
+  const availableVersions = listSystemVersions(identity.devProjectPath)
+  const systemVersion = request.systemVersion?.trim() || pickLatestSystemVersion(availableVersions)
+  const branchFolder = buildReleaseBranchFolder(systemVersion)
+  const branchPath = findReleaseBranchBySystemVersion(identity.devProjectPath, systemVersion)
+  const stableRoot = join(branchPath, 'stable')
+  if (!existsSync(stableRoot)) throw new Error(`release 分支下 stable 路径不存在: ${stableRoot}`)
+
+  const { versionName, versionPath } = findLatestStableVersion(stableRoot)
+  const releaseNotePath = join(versionPath, RELEASE_NOTE_FILE)
+  if (!existsSync(releaseNotePath)) throw new Error(`最新 daily 版本缺少 ${RELEASE_NOTE_FILE}: ${releaseNotePath}`)
+
+  const archivePathCq = extractArchivePathCqFromReleaseNote(releaseNotePath)
+  const resolved = resolveExistingArchivePath(archivePathCq, identity.brand)
+  const openPath = join(resolved.path, 'Open')
+  const packagePath = findFlashPackageInOpenPath(openPath)
+
+  return {
+    deviceId: identity.deviceId,
+    brand: identity.brand,
+    project: identity.project,
+    systemVersion,
+    branchFolder,
+    devRoot: identity.devRoot,
+    devProjectPath: identity.devProjectPath,
+    branchPath,
+    versionPath,
+    versionName,
+    releaseNotePath,
+    archivePathCq,
+    resolvedArchivePath: resolved.path,
+    openPath,
+    packagePath,
+    usedIdhFallback: resolved.usedIdhFallback,
+  }
 }
 
 function findScatterPkgPath(searchRoot: string): string {

@@ -202,6 +202,61 @@ export async function pickFlashPath(): Promise<PickFlashPathResult> {
   )
 }
 
+export interface DailySystemVersionOption {
+  label: string
+  value: string
+  branchFolder: string
+}
+
+export interface DailyFlashOptions {
+  deviceId: string
+  brand: string
+  project: string
+  devRoot: string
+  devProjectPath: string
+  systemVersions: DailySystemVersionOption[]
+}
+
+export interface LatestDailyFlashRequest {
+  deviceId: string
+  /** 省略时服务端自动选择最新 tOS 分支 */
+  systemVersion?: string
+}
+
+export interface LatestDailyFlashResult {
+  deviceId: string
+  brand: string
+  project: string
+  systemVersion: string
+  branchFolder: string
+  devRoot: string
+  devProjectPath: string
+  branchPath: string
+  versionPath: string
+  versionName: string
+  releaseNotePath: string
+  archivePathCq: string
+  resolvedArchivePath: string
+  openPath: string
+  packagePath: string
+  usedIdhFallback: boolean
+}
+
+export async function fetchDailyFlashOptions(deviceId: string): Promise<DailyFlashOptions> {
+  return await tahpGet<DailyFlashOptions>(
+    `/api/tahp/device-self-check/flash/daily-options?deviceId=${encodeURIComponent(deviceId)}`
+  )
+}
+
+export async function resolveLatestDailyFlashPackage(
+  payload: LatestDailyFlashRequest
+): Promise<LatestDailyFlashResult> {
+  return await tahpPost<LatestDailyFlashResult>(
+    '/api/tahp/device-self-check/flash/latest-daily',
+    payload
+  )
+}
+
 export async function getCaseCatalogs(): Promise<CaseCatalogGroup[]> {
   return await tahpGet<CaseCatalogGroup[]>('/api/tahp/device-self-check/case-catalogs')
 }
