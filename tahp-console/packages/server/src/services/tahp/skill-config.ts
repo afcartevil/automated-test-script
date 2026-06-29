@@ -10,7 +10,7 @@ import { join } from 'path'
 import { spawnSync } from 'child_process'
 import { logger } from '../logger'
 import { getTaskStream } from './task-stream'
-import { tahpPaths } from './paths'
+import { tahpPaths, resolvePythonSpawn } from './paths'
 import {
   AgentBridgeClient,
   getAgentBridgeManager,
@@ -223,6 +223,54 @@ function buildVirtualPreviewMd(entry: RequiredSkillEntry): string {
   return lines.filter(Boolean).join('\n')
 }
 
+function spawnOutputText(r: ReturnType<typeof spawnSync>): string {
+  return [r.stdout, r.stderr].map((chunk) => (chunk == null ? '' : String(chunk))).join('').trim()
+}
+
+function spawnVerifyScript(root: string, command: string): ReturnType<typeof spawnSync> {
+  const parts = command.trim().split(/\s+/).filter(Boolean)
+  const scriptArgs = parts[0] === 'python' ? parts.slice(1) : parts.slice(1)
+  const pythonCandidates = parts[0] === 'python'
+    ? [tahpPaths.python, process.env.TAHP_PYTHON?.trim(), 'python3', 'python'].filter(
+      (v, i, arr): v is string => !!v?.trim() && arr.indexOf(v) === i,
+    )
+    : [parts[0]]
+
+  let last: ReturnType<typeof spawnSync> | null = null
+  for (const candidate of pythonCandidates) {
+    const { command: exe, prefixArgs } = resolvePythonSpawn(candidate)
+    const r = spawnSync(exe, [...prefixArgs, ...scriptArgs], {
+      cwd: root,
+      encoding: 'utf-8',
+      timeout: 60_000,
+      windowsHide: true,
+    })
+    last = r
+    if (r.status === null) continue
+    const out = spawnOutputText(r)
+    if (!out) continue
+    try {
+      JSON.parse(out)
+      return r
+    } catch {
+      if (r.status !== 0) continue
+    }
+  }
+  return last || spawnSync(parts[0] || 'python', scriptArgs, {
+    cwd: root,
+    encoding: 'utf-8',
+    timeout: 60_000,
+    windowsHide: true,
+    shell: true,
+  })
+}
+
+function formatScriptVerifyFailure(r: ReturnType<typeof spawnSync>, stdout: string): string {
+  if (stdout) return stdout.slice(0, 400)
+  if (r.error?.message) return `脚本启动失败: ${r.error.message}`
+  return `脚本退出码 ${r.status ?? 'null'}`
+}
+
 export function verifySkillConfig(skillId: string, entry?: RequiredSkillEntry): {
   ok: boolean
   detail: string
@@ -266,16 +314,8 @@ export function verifySkillConfig(skillId: string, entry?: RequiredSkillEntry): 
   const root = skillRoot(skillId)
 
   if (verify.type === 'script') {
-    const parts = verify.command.trim().split(/\s+/)
-    const cmd = parts[0] === 'python' ? tahpPaths.python : parts[0]
-    const args = parts[0] === 'python' ? parts.slice(1) : parts.slice(1)
-    const r = spawnSync(cmd, args, {
-      cwd: root,
-      encoding: 'utf-8',
-      timeout: 60_000,
-      windowsHide: true,
-    })
-    const stdout = (r.stdout || r.stderr || '').trim()
+    const r = spawnVerifyScript(root, verify.command)
+    const stdout = spawnOutputText(r)
     try {
       const json = JSON.parse(stdout) as Record<string, unknown>
       const pathKey = verify.ready_json_path || 'data.ready'
@@ -286,7 +326,7 @@ export function verifySkillConfig(skillId: string, entry?: RequiredSkillEntry): 
         ? `setup-check 未就绪: ${JSON.stringify(checks).slice(0, 400)}`
         : stdout.slice(0, 400) || 'setup-check 失败' }
     } catch {
-      return { ok: false, detail: stdout.slice(0, 400) || `脚本退出码 ${r.status}` }
+      return { ok: false, detail: formatScriptVerifyFailure(r, stdout) }
     }
   }
 
