@@ -10,8 +10,9 @@ import { join } from 'path'
 import { spawnSync } from 'child_process'
 import { logger } from '../logger'
 import { getTaskStream } from './task-stream'
-import { tahpPaths, resolvePythonSpawn } from './paths'
+import { tahpPaths } from './paths'
 import { applyJiraUserConfigToEnv } from './jira-user-config'
+import { spawnPythonScript, spawnOutputText, formatPythonSpawnError } from './python-spawn'
 import {
   AgentBridgeClient,
   getAgentBridgeManager,
@@ -224,54 +225,31 @@ function buildVirtualPreviewMd(entry: RequiredSkillEntry): string {
   return lines.filter(Boolean).join('\n')
 }
 
-function spawnOutputText(r: ReturnType<typeof spawnSync>): string {
-  return [r.stdout, r.stderr].map((chunk) => (chunk == null ? '' : String(chunk))).join('').trim()
-}
-
 function spawnVerifyScript(root: string, command: string): ReturnType<typeof spawnSync> {
   const parts = command.trim().split(/\s+/).filter(Boolean)
   const scriptArgs = parts[0] === 'python' ? parts.slice(1) : parts.slice(1)
-  const pythonCandidates = parts[0] === 'python'
-    ? [tahpPaths.python, process.env.TAHP_PYTHON?.trim(), 'python3', 'python'].filter(
-      (v, i, arr): v is string => !!v?.trim() && arr.indexOf(v) === i,
-    )
-    : [parts[0]]
-
-  let last: ReturnType<typeof spawnSync> | null = null
-  for (const candidate of pythonCandidates) {
-    const { command: exe, prefixArgs } = resolvePythonSpawn(candidate)
-    const r = spawnSync(exe, [...prefixArgs, ...scriptArgs], {
+  const env = applyJiraUserConfigToEnv(process.env)
+  if (parts[0] === 'python') {
+    return spawnPythonScript({
       cwd: root,
-      encoding: 'utf-8',
+      args: scriptArgs,
+      env,
       timeout: 60_000,
-      windowsHide: true,
-      env: applyJiraUserConfigToEnv(process.env),
+      preferJsonOutput: true,
     })
-    last = r
-    if (r.status === null) continue
-    const out = spawnOutputText(r)
-    if (!out) continue
-    try {
-      JSON.parse(out)
-      return r
-    } catch {
-      if (r.status !== 0) continue
-    }
   }
-  return last || spawnSync(parts[0] || 'python', scriptArgs, {
+  return spawnSync(parts[0], scriptArgs, {
     cwd: root,
     encoding: 'utf-8',
     timeout: 60_000,
     windowsHide: true,
     shell: true,
-    env: applyJiraUserConfigToEnv(process.env),
+    env,
   })
 }
 
 function formatScriptVerifyFailure(r: ReturnType<typeof spawnSync>, stdout: string): string {
-  if (stdout) return stdout.slice(0, 400)
-  if (r.error?.message) return `脚本启动失败: ${r.error.message}`
-  return `脚本退出码 ${r.status ?? 'null'}`
+  return formatPythonSpawnError('脚本', r, stdout)
 }
 
 export function verifySkillConfig(skillId: string, entry?: RequiredSkillEntry): {
