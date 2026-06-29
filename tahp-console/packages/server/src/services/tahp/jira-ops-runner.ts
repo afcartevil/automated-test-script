@@ -7,16 +7,17 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { tahpPaths } from './paths'
 import { parseIssueKey, type JiraConfig } from './jira'
+import { applyJiraUserConfigToEnv, resolveJiraConfig, hasJiraBasicCredentials } from './jira-user-config'
 
 function jiraOpsRoot(): string {
   return join(tahpPaths.skillsDir, 'jira-ops')
 }
 
-function applyJiraCfgToEnv(env: NodeJS.ProcessEnv, cfg?: JiraConfig): NodeJS.ProcessEnv {
-  const out = { ...env }
-  if (cfg?.baseUrl) out.JIRA_SERVER = cfg.baseUrl
-  if (cfg?.username) out.JIRA_USERNAME = cfg.username
-  if (cfg?.password) out.JIRA_PASSWORD = cfg.password
+function applyJiraCfgToEnv(env: NodeJS.ProcessEnv, cfg: JiraConfig): NodeJS.ProcessEnv {
+  const out = applyJiraUserConfigToEnv(env)
+  if (cfg.baseUrl) out.JIRA_SERVER = cfg.baseUrl
+  if (cfg.username) out.JIRA_USERNAME = cfg.username
+  if (cfg.password) out.JIRA_PASSWORD = cfg.password
   return out
 }
 
@@ -46,7 +47,7 @@ export function runJiraOpsAddComment(
         cwd: root,
         encoding: 'utf-8',
         timeout: 90_000,
-        env: applyJiraCfgToEnv(process.env, jiraCfg),
+        env: applyJiraCfgToEnv(process.env, resolveJiraConfig(jiraCfg)),
       },
     )
     const stdout = (r.stdout || r.stderr || '').trim()

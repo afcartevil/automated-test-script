@@ -44,10 +44,57 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
 DOWNLOAD_USER_AGENT = "jira-ops-cli/1.1"
 
 
+def _resolve_tahp_project_root() -> Optional[Path]:
+    root = (os.environ.get("TAHP_PROJECT_ROOT") or "").strip()
+    if root:
+        return Path(root)
+    # skills/.claude/skills/jira-ops → 工程根
+    candidate = _SKILL_ROOT.parent.parent.parent.parent
+    if (candidate / "skills").is_dir():
+        return candidate
+    return None
+
+
+def _load_tahp_console_jira_config() -> Dict[str, str]:
+    """智能诊断页面 localStorage 同步文件：.tahp/jira-user-config.json"""
+    project_root = _resolve_tahp_project_root()
+    if not project_root:
+        return {}
+    path = project_root / ".tahp" / "jira-user-config.json"
+    if not path.is_file():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        username = str(data.get("username") or "").strip()
+        password = str(data.get("password") or "")
+        server = str(data.get("base_url") or data.get("baseUrl") or "").strip()
+        if not username or not password:
+            return {}
+        out: Dict[str, str] = {"user": username, "password": password}
+        if server:
+            out["server"] = server
+        return out
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
 def load_config() -> Dict[str, str]:
-    """Jira credentials: bugtool yaml → ~/.jira_cli_config.json → jira-ops/.env (JIRA_*)."""
+    """Jira credentials: Console 页面同步 → env JIRA_* → bugtool yaml → ~/.jira_cli_config.json → jira-ops/.env."""
     load_optional_env(_SKILL_ROOT)
-    config: Dict[str, str] = {}
+    config: Dict[str, str] = _load_tahp_console_jira_config()
+
+    if not config.get("server") and os.environ.get("JIRA_SERVER"):
+        config["server"] = os.environ.get("JIRA_SERVER", "").strip()
+    if not config.get("user") and os.environ.get("JIRA_USERNAME"):
+        config["user"] = os.environ.get("JIRA_USERNAME", "").strip()
+    if not config.get("password") and os.environ.get("JIRA_PASSWORD"):
+        config["password"] = os.environ.get("JIRA_PASSWORD", "")
+
+    if config.get("user") and config.get("password"):
+        return config
 
     bugtool_yaml = Path.home() / ".integration_bug_tool" / "env.yaml"
     if bugtool_yaml.is_file():

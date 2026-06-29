@@ -3,7 +3,7 @@
  *
  * 所有响应统一 ApiEnvelope，由 tahpRequest 解包.
  */
-import { tahpGet, tahpPost, tahpDelete } from './client'
+import { tahpGet, tahpPost, tahpPut, tahpDelete } from './client'
 
 export interface JiraUserConfig {
   username: string
@@ -235,6 +235,23 @@ export function distillToKnowledge(
 }
 
 // ─── JIRA 预览 ────────────────────────────────────────────────────────────
+
+export interface JiraConfigVerifyResult {
+  ok: boolean
+  error?: string
+  detail?: string
+  user?: string
+}
+
+export function verifyJiraUserConfig(jiraConfig?: JiraUserConfig): Promise<JiraConfigVerifyResult> {
+  return tahpPost<JiraConfigVerifyResult>('/api/tahp/bug-analysis/jira-config/verify', {}, {
+    headers: jiraConfig ? jiraHeaders(jiraConfig) : {},
+  })
+}
+
+export function syncJiraUserConfig(jiraConfig: JiraUserConfig): Promise<{ username: string; updated_at?: string }> {
+  return tahpPut('/api/tahp/bug-analysis/jira-user-config', jiraConfig)
+}
 
 export function previewJira(input: string, jiraConfig?: JiraUserConfig): Promise<JiraIssueDetail> {
   return tahpGet<JiraIssueDetail>(`/api/tahp/bug-analysis/jira/${encodeURIComponent(input)}`, { headers: jiraHeaders(jiraConfig) })

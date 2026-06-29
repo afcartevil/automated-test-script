@@ -30,8 +30,13 @@ import {
   respondBugApproval,
   submitBugUserInput,
 } from '../../services/tahp/bug-analysis'
-import { searchJQL, parseIssueKey } from '../../services/tahp/jira'
+import { searchJQL, parseIssueKey, verifyJiraConnectivity } from '../../services/tahp/jira'
 import type { JiraConfig } from '../../services/tahp/jira'
+import {
+  resolveJiraConfig,
+  hasJiraBasicCredentials,
+  writeJiraUserConfig,
+} from '../../services/tahp/jira-user-config'
 import { readBugLog, recordDistillRequest, listDistillRequests } from '../../services/tahp/bug-analysis-logger'
 import { depositDistilledEntry, type DepositDistilledResult } from './knowledge'
 import {
@@ -42,24 +47,24 @@ import { logger } from '../../services/logger'
 
 export const tahpBugAnalysisRoutes = new Router({ prefix: '/api/tahp/bug-analysis' })
 
-function readJiraConfigFromHeaders(ctx: any): JiraConfig | null {
+function readJiraHeaderOverride(ctx: any): Partial<JiraConfig> | null {
   const username = String(ctx.headers['x-tahp-jira-username'] || '').trim()
   const password = String(ctx.headers['x-tahp-jira-password'] || '').trim()
   if (!username || !password) return null
-  return {
-    baseUrl: (process.env.TAHP_JIRA_BASE_URL || 'http://jira.transsion.com').replace(/\/+$/, ''),
-    username,
-    password,
-  }
+  return { username, password }
+}
+
+function resolveJiraConfigFromRequest(ctx: any): JiraConfig {
+  return resolveJiraConfig(readJiraHeaderOverride(ctx))
 }
 
 function requireJiraUserConfig(ctx: any): JiraConfig | null {
-  const cfg = readJiraConfigFromHeaders(ctx)
-  if (cfg) return cfg
+  const cfg = resolveJiraConfigFromRequest(ctx)
+  if (hasJiraBasicCredentials(cfg)) return cfg
   ctx.status = 400
   ctx.body = {
     success: false,
-    error: '请先配置 JIRA 账号密码（TAHP_JIRA_USERNAME + TAHP_JIRA_PASSWORD）',
+    error: '请先在智能诊断页面配置 JIRA 账号密码（将同步到本机 .tahp/jira-user-config.json）',
   }
   return null
 }
@@ -362,6 +367,55 @@ tahpBugAnalysisRoutes.post('/:taskId/distill', async (ctx) => {
     } catch { /* ignore */ }
     ctx.status = 500
     ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// ─── 同步页面 JIRA 凭据到服务端（localStorage 镜像）────────────────────────
+//
+// PUT /api/tahp/bug-analysis/jira-user-config
+// Body: { username, password }
+tahpBugAnalysisRoutes.put('/jira-user-config', async (ctx) => {
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const username = typeof body.username === 'string' ? body.username.trim() : ''
+  const password = typeof body.password === 'string' ? body.password : ''
+  if (!username || !password) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 username 或 password' }
+    return
+  }
+  try {
+    const record = writeJiraUserConfig({ username, password })
+    ctx.body = { success: true, data: { username: record.username, updated_at: record.updated_at } }
+  } catch (err) {
+    ctx.status = 400
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// ─── JIRA 凭据连通性校验 ─────────────────────────────────────────────────────
+//
+// POST /api/tahp/bug-analysis/jira-config/verify
+// Headers: x-tahp-jira-username / x-tahp-jira-password（可选，缺省则用已同步的页面凭据）
+tahpBugAnalysisRoutes.post('/jira-config/verify', async (ctx) => {
+  const jiraCfg = resolveJiraConfigFromRequest(ctx)
+  if (!hasJiraBasicCredentials(jiraCfg)) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '请填写 JIRA 用户名和密码' }
+    return
+  }
+  const r = await verifyJiraConnectivity(jiraCfg)
+  if (!r.ok) {
+    ctx.body = { success: true, data: { ok: false, error: r.error || '无法连接 JIRA' } }
+    return
+  }
+  const who = r.data?.displayName || r.data?.name || jiraCfg.username
+  ctx.body = {
+    success: true,
+    data: {
+      ok: true,
+      detail: `JIRA 连接正常（${who}）`,
+      user: who,
+    },
   }
 })
 

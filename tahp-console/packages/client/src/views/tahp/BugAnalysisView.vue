@@ -19,6 +19,8 @@ import {
   startSingle, startBatch, startLocal, continueAnalysis, distillToKnowledge,
   previewJira, previewJql, getBugReport, getBugLog, cancelBugTask,
   listBugReports, deleteBugReport, respondBugApproval, submitBugUserInput, postJiraComment,
+  verifyJiraUserConfig,
+  syncJiraUserConfig,
   type JiraIssueDetail, type JqlPreview, type BugReport, type BugReportSummary, type JiraUserConfig,
 } from '@/api/tahp/bug-analysis'
 import {
@@ -91,6 +93,10 @@ const submitting = ref(false)
 const showJiraConfigDialog = ref(false)
 const jiraConfigForm = ref<JiraUserConfig>({ username: '', password: '' })
 const jiraConfigReady = ref(false)
+const jiraConfigVerifying = ref(false)
+const jiraConfigSaving = ref(false)
+const jiraConfigVerifyError = ref<string | null>(null)
+const jiraConfigVerifyOk = ref<string | null>(null)
 
 function loadJiraConfig() {
   const raw = localStorage.getItem('tahp_bug_jira_config')
@@ -107,19 +113,80 @@ function loadJiraConfig() {
   }
 }
 
-function saveJiraConfig() {
+async function syncJiraConfigToServer(cfg?: JiraUserConfig) {
+  const c = cfg || jiraConfigForm.value
+  const username = c.username.trim()
+  const password = c.password.trim()
+  if (!username || !password) return
+  try {
+    await syncJiraUserConfig({ username, password })
+  } catch {
+    // 静默失败：本地仍可用，服务端脚本待下次保存再同步
+  }
+}
+
+watch(jiraConfigForm, () => {
+  jiraConfigVerifyError.value = null
+  jiraConfigVerifyOk.value = null
+}, { deep: true })
+
+async function runJiraConfigVerify(): Promise<boolean> {
+  const username = jiraConfigForm.value.username.trim()
+  const password = jiraConfigForm.value.password.trim()
+  if (!username || !password) {
+    jiraConfigVerifyError.value = '请填写 JIRA 用户名和密码'
+    jiraConfigVerifyOk.value = null
+    return false
+  }
+  try {
+    const r = await verifyJiraUserConfig({ username, password })
+    if (!r.ok) {
+      jiraConfigVerifyError.value = r.error || 'JIRA 配置不可用'
+      jiraConfigVerifyOk.value = null
+      return false
+    }
+    jiraConfigVerifyError.value = null
+    jiraConfigVerifyOk.value = r.detail || 'JIRA 连接正常'
+    await syncJiraConfigToServer({ username, password })
+    return true
+  } catch (err) {
+    jiraConfigVerifyError.value = (err as Error).message || 'JIRA 校验失败'
+    jiraConfigVerifyOk.value = null
+    return false
+  }
+}
+
+async function checkJiraConfig() {
+  jiraConfigVerifying.value = true
+  try {
+    const ok = await runJiraConfigVerify()
+    if (ok) message.success(jiraConfigVerifyOk.value || 'JIRA 连接正常')
+  } finally {
+    jiraConfigVerifying.value = false
+  }
+}
+
+async function saveJiraConfig() {
   const username = jiraConfigForm.value.username.trim()
   const password = jiraConfigForm.value.password.trim()
   if (!username || !password) {
     message.warning('请填写 JIRA 用户名和密码')
     return false
   }
-  jiraConfigForm.value = { username, password }
-  localStorage.setItem('tahp_bug_jira_config', JSON.stringify(jiraConfigForm.value))
-  jiraConfigReady.value = true
-  showJiraConfigDialog.value = false
-  message.success('JIRA 凭证已保存')
-  return true
+  jiraConfigSaving.value = true
+  try {
+    const ok = await runJiraConfigVerify()
+    if (!ok) return false
+    jiraConfigForm.value = { username, password }
+    localStorage.setItem('tahp_bug_jira_config', JSON.stringify(jiraConfigForm.value))
+    await syncJiraConfigToServer({ username, password })
+    jiraConfigReady.value = true
+    showJiraConfigDialog.value = false
+    message.success('JIRA 凭证已保存')
+    return true
+  } finally {
+    jiraConfigSaving.value = false
+  }
 }
 
 function getJiraConfigOrWarn(): JiraUserConfig | null {
@@ -1382,6 +1449,7 @@ async function stopOrCancelCurrentTask() {
 // ─────────────────────────────────────────────────────────────────────────────
 onMounted(async () => {
   loadJiraConfig()
+  if (jiraConfigReady.value) void syncJiraConfigToServer()
   if (!jiraConfigReady.value) showJiraConfigDialog.value = true
   store.ensureSocket()
   await store.refresh()
@@ -2022,11 +2090,28 @@ const liveStreamHint = computed(() => {
       title="配置 JIRA 账号"
       positive-text="保存配置"
       :negative-text="jiraConfigReady ? '取消' : undefined"
+      :positive-button-props="{ loading: jiraConfigSaving }"
       style="width: 520px"
       @positive-click="saveJiraConfig"
     >
       <NAlert type="warning" :show-icon="false" style="margin-bottom: 12px">
-        进入智能诊断前必须先配置一次 JIRA 凭证（TAHP_JIRA_USERNAME + TAHP_JIRA_PASSWORD）。
+        进入智能诊断前必须先配置一次 JIRA 凭证（TAHP_JIRA_USERNAME + TAHP_JIRA_PASSWORD）。保存前会校验能否正常访问 JIRA。
+      </NAlert>
+      <NAlert
+        v-if="jiraConfigVerifyError"
+        type="error"
+        :show-icon="false"
+        style="margin-bottom: 12px"
+      >
+        {{ jiraConfigVerifyError }}
+      </NAlert>
+      <NAlert
+        v-else-if="jiraConfigVerifyOk"
+        type="success"
+        :show-icon="false"
+        style="margin-bottom: 12px"
+      >
+        {{ jiraConfigVerifyOk }}
       </NAlert>
       <NForm label-placement="top">
         <NFormItem label="TAHP_JIRA_USERNAME">
@@ -2036,6 +2121,16 @@ const liveStreamHint = computed(() => {
           <NInput v-model:value="jiraConfigForm.password" type="password" show-password-on="click" placeholder="请输入 Jira 密码" />
         </NFormItem>
       </NForm>
+      <div style="margin-top: 4px">
+        <NButton
+          secondary
+          :loading="jiraConfigVerifying"
+          :disabled="jiraConfigSaving"
+          @click="checkJiraConfig"
+        >
+          检查配置
+        </NButton>
+      </div>
     </NModal>
 
     <NModal

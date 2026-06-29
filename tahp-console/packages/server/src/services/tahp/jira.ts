@@ -89,6 +89,12 @@ export interface JiraResult<T> {
   error?: string
 }
 
+export interface JiraSelfInfo {
+  name?: string
+  displayName?: string
+  emailAddress?: string
+}
+
 const DEFAULT_BASE_URL = 'http://jira.transsion.com'
 
 export function getJiraConfig(): JiraConfig {
@@ -115,6 +121,62 @@ export function parseIssueKey(input: string): string | null {
   const inlineMatch = trimmed.match(/([A-Z][A-Z0-9_]+-\d+)/i)
   if (inlineMatch) return inlineMatch[1].toUpperCase()
   return null
+}
+
+function formatJiraConnectivityError(status: number, bodyText: string, cfg: JiraConfig): string {
+  const snippet = bodyText.trim().slice(0, 240)
+  if (status === 401) {
+    return snippet
+      ? `JIRA 鉴权失败（401）：用户名或密码错误。${snippet}`
+      : 'JIRA 鉴权失败（401）：用户名或密码错误，请检查域账号与密码。'
+  }
+  if (status === 403) {
+    return snippet
+      ? `JIRA 拒绝访问（403）：${snippet}`
+      : 'JIRA 拒绝访问（403）：账号无权限访问 REST API。'
+  }
+  if (status === 404) {
+    return `JIRA 地址不可达（404）：请确认 TAHP_JIRA_BASE_URL 或服务器地址是否正确（当前 ${cfg.baseUrl}）。`
+  }
+  return snippet
+    ? `JIRA 请求失败（${status}）：${snippet}`
+    : `JIRA 请求失败（HTTP ${status}）`
+}
+
+function formatJiraNetworkError(err: Error, cfg: JiraConfig): string {
+  const msg = err.message || '未知网络错误'
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout/i.test(msg)) {
+    return `无法连接 JIRA 服务器（${cfg.baseUrl}）：${msg}`
+  }
+  return msg
+}
+
+/** 用 /rest/api/2/myself 校验 Basic Auth 凭据是否可用 */
+export async function verifyJiraConnectivity(cfg: JiraConfig): Promise<JiraResult<JiraSelfInfo>> {
+  if (!cfg.username?.trim() || !cfg.password) {
+    return { ok: false, error: '请填写 JIRA 用户名和密码' }
+  }
+
+  const url = `${cfg.baseUrl}/rest/api/2/myself`
+  try {
+    const resp = await fetch(url, { headers: buildHeaders(cfg) })
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => resp.statusText)
+      return { ok: false, error: formatJiraConnectivityError(resp.status, text, cfg) }
+    }
+    const json: any = await resp.json()
+    return {
+      ok: true,
+      data: {
+        name: typeof json.name === 'string' ? json.name : undefined,
+        displayName: typeof json.displayName === 'string' ? json.displayName : undefined,
+        emailAddress: typeof json.emailAddress === 'string' ? json.emailAddress : undefined,
+      },
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, baseUrl: cfg.baseUrl }, '[jira] verifyJiraConnectivity failed')
+    return { ok: false, error: formatJiraNetworkError(err as Error, cfg) }
+  }
 }
 
 function buildHeaders(cfg: JiraConfig): Record<string, string> {

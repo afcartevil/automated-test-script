@@ -11,6 +11,7 @@ import { spawnSync } from 'child_process'
 import { logger } from '../logger'
 import { getTaskStream } from './task-stream'
 import { tahpPaths, resolvePythonSpawn } from './paths'
+import { applyJiraUserConfigToEnv } from './jira-user-config'
 import {
   AgentBridgeClient,
   getAgentBridgeManager,
@@ -244,6 +245,7 @@ function spawnVerifyScript(root: string, command: string): ReturnType<typeof spa
       encoding: 'utf-8',
       timeout: 60_000,
       windowsHide: true,
+      env: applyJiraUserConfigToEnv(process.env),
     })
     last = r
     if (r.status === null) continue
@@ -262,6 +264,7 @@ function spawnVerifyScript(root: string, command: string): ReturnType<typeof spa
     timeout: 60_000,
     windowsHide: true,
     shell: true,
+    env: applyJiraUserConfigToEnv(process.env),
   })
 }
 

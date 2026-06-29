@@ -55,9 +55,11 @@ python scripts/api_jira.py config set --server "http://jira.transsion.com/" --us
 
 **Jira 凭据读取优先级**（改造后仍兼容旧配置）：
 
-1. `~/.integration_bug_tool/env.yaml` 中的 `jira.user` / `jira.password`（integration bug tool，最高）
-2. `~/.jira_cli_config.json`（`config set` / `config show`）
-3. `jira-ops/.env` 中的 `JIRA_SERVER` / `JIRA_USERNAME` / `JIRA_PASSWORD`（仅在前两者缺字段时补足）
+1. **智能诊断页面配置**（`localStorage` → 服务端 `.tahp/jira-user-config.json`，最高）
+2. 进程环境变量 `JIRA_SERVER` / `JIRA_USERNAME` / `JIRA_PASSWORD`（BFF / Skill 校验注入）
+3. `~/.integration_bug_tool/env.yaml` 中的 `jira.user` / `jira.password`（integration bug tool）
+4. `~/.jira_cli_config.json`（`config set` / `config show`）
+5. `jira-ops/.env` 中的 `JIRA_*`（仅在前述来源缺字段时补足）
 
 因此：原先通过 bug tool 或 `config set` 配好的 Jira 服务器、用户名、密码**无需改动**即可继续用；若只在 modem 风格 `.env` 里写了 `JIRA_*`，现在也会被识别。
 
