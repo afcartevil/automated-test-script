@@ -8,7 +8,10 @@ import NousLoginModal from './NousLoginModal.vue'
 import CopilotLoginModal from './CopilotLoginModal.vue'
 import XaiOAuthLoginModal from './XaiOAuthLoginModal.vue'
 import { checkCopilotToken, enableCopilot, type CopilotTokenSource } from '@/api/hermes/copilot-auth'
-import { fetchProviderModels } from '@/api/hermes/system'
+import {
+  probeProviderConnectivity,
+  shouldProbeProviderConnectivity,
+} from '@/utils/provider-connectivity'
 
 const { t } = useI18n()
 
@@ -136,15 +139,15 @@ async function fetchModels() {
 
   fetchingModels.value = true
   try {
-    const data = await fetchProviderModels({
-      base_url: base_url.trim(),
-      api_key: formData.value.api_key.trim(),
-    })
-    modelOptions.value = data.models.map(m => ({ label: m, value: m }))
+    const { modelCount, models } = await probeProviderConnectivity(
+      base_url.trim(),
+      formData.value.api_key.trim(),
+    )
+    modelOptions.value = models.map(m => ({ label: m, value: m }))
     if (modelOptions.value.length > 0 && !formData.value.model) {
       formData.value.model = modelOptions.value[0].value
     }
-    message.success(t('models.foundModels', { count: modelOptions.value.length }))
+    message.success(t('models.foundModels', { count: modelCount }))
   } catch (e: any) {
     message.error(t('models.fetchFailed') + ': ' + e.message)
   } finally {
@@ -199,6 +202,13 @@ async function handleSave() {
     const providerKey = providerType.value === 'preset'
       ? selectedPreset.value
       : null
+
+    if (shouldProbeProviderConnectivity(providerType.value, providerKey, formData.value.base_url)) {
+      await probeProviderConnectivity(
+        formData.value.base_url.trim(),
+        formData.value.api_key.trim(),
+      )
+    }
 
     const contextLength = formData.value.context_length ?? undefined
     await modelsStore.addProvider({

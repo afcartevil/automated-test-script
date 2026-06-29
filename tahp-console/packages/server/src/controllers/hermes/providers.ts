@@ -2,9 +2,13 @@ import { existsSync, readFileSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import { getActiveAuthPath } from '../../services/hermes/hermes-profile'
 import * as hermesCli from '../../services/hermes/hermes-cli'
-import { updateConfigYaml, saveEnvValue, PROVIDER_ENV_MAP } from '../../services/config-helpers'
+import { updateConfigYaml, saveEnvValue, PROVIDER_ENV_MAP, readConfigYaml } from '../../services/config-helpers'
 import { PROVIDER_PRESETS } from '../../shared/providers'
 import { logger } from '../../services/logger'
+import {
+  shouldVerifyProviderConnectivity,
+  verifyProviderConnectivity,
+} from '../../services/provider-connectivity'
 
 const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth'])
 const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth'])
@@ -38,6 +42,40 @@ function buildProviderEntry(name: string, base_url: string, api_key: string, mod
   return entry
 }
 
+function providerProbeStatus(err: any): number {
+  return /探活|连接|Provider|base_url|API|模型列表|超时|HTTP/i.test(err?.message || '') ? 502 : 500
+}
+
+async function resolveProviderProbeCredentials(
+  poolKey: string,
+  patch: { base_url?: string; api_key?: string },
+): Promise<{ base_url: string; api_key?: string } | null> {
+  const preset = PROVIDER_PRESETS.find(p => p.value === poolKey)
+  const config = await readConfigYaml()
+  let baseUrl = patch.base_url?.trim() || ''
+  let apiKey = patch.api_key
+
+  if (poolKey.startsWith('custom:')) {
+    const entry = Array.isArray(config.custom_providers)
+      ? (config.custom_providers as any[]).find((e: any) => {
+        return `custom:${String(e.name || '').trim().toLowerCase().replace(/ /g, '-')}` === poolKey
+      })
+      : undefined
+    if (!baseUrl) baseUrl = String(entry?.base_url || '').trim()
+    if (apiKey === undefined) apiKey = entry?.api_key
+  } else if (!baseUrl) {
+    baseUrl = String(preset?.base_url || '').trim()
+    const envMapping = PROVIDER_ENV_MAP[poolKey]
+    if (apiKey === undefined && envMapping?.base_url_env) {
+      const fromEnv = process.env[envMapping.base_url_env]
+      if (fromEnv?.trim()) baseUrl = fromEnv.trim()
+    }
+  }
+
+  if (!baseUrl) return null
+  return { base_url: baseUrl, api_key: apiKey }
+}
+
 export async function create(ctx: any) {
   const { name, base_url, api_key, model, context_length, providerKey } = ctx.request.body as {
     name: string; base_url: string; api_key: string; model: string; context_length?: number; providerKey?: string | null
@@ -50,6 +88,9 @@ export async function create(ctx: any) {
   }
   try {
     const poolKey = providerKey || `custom:${name.trim().toLowerCase().replace(/ /g, '-')}`
+    if (shouldVerifyProviderConnectivity(poolKey, base_url)) {
+      await verifyProviderConnectivity(base_url, api_key)
+    }
     const isBuiltin = poolKey in PROVIDER_ENV_MAP
     await updateConfigYaml(async (config) => {
       if (typeof config.model !== 'object' || config.model === null) { config.model = {} }
@@ -117,11 +158,9 @@ export async function create(ctx: any) {
       delete config.model.api_key
       return config
     })
-    // TODO: Test if provider works without gateway restart
-    // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }
   } catch (err: any) {
-    ctx.status = 500; ctx.body = { error: err.message }
+    ctx.status = providerProbeStatus(err); ctx.body = { error: err.message }
   }
 }
 
@@ -131,6 +170,12 @@ export async function update(ctx: any) {
     name?: string; base_url?: string; api_key?: string; model?: string
   }
   try {
+    if (api_key !== undefined || base_url !== undefined) {
+      const probeCreds = await resolveProviderProbeCredentials(poolKey, { base_url, api_key })
+      if (probeCreds && shouldVerifyProviderConnectivity(poolKey, probeCreds.base_url)) {
+        await verifyProviderConnectivity(probeCreds.base_url, probeCreds.api_key)
+      }
+    }
     const isCustom = poolKey.startsWith('custom:')
     if (isCustom) {
       const found = await updateConfigYaml((config) => {
@@ -155,11 +200,9 @@ export async function update(ctx: any) {
       }
       if (api_key !== undefined) { await saveEnvValue(envMapping.api_key_env, api_key) }
     }
-    // TODO: Test if provider works without gateway restart
-    // try { await hermesCli.restartGateway() } catch (e: any) { logger.error(e, 'Gateway restart failed') }
     ctx.body = { success: true }
   } catch (err: any) {
-    ctx.status = 500; ctx.body = { error: err.message }
+    ctx.status = providerProbeStatus(err); ctx.body = { error: err.message }
   }
 }
 

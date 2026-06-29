@@ -215,10 +215,10 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             if (ev.payload?.jira_key) t.jira_key = String(ev.payload.jira_key)
             break
           case 'task.continue_failed':
-            t.status = 'completed'
-            t.phase = 'COMPLETED'
-            t.progress = 100
-            t.error = ev.payload?.error as string
+            t.status = 'failed'
+            t.phase = 'FAILED'
+            t.completed_at = new Date(ev.ts).toISOString()
+            t.error = (ev.payload?.message as string) || (ev.payload?.error as string)
             break
           case 'task.approval_requested':
           case 'task.approval_resolved':
@@ -325,7 +325,7 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             t.status = 'failed'
             t.phase = 'FAILED'
             t.completed_at = new Date(ev.ts).toISOString()
-            t.error = ev.payload?.error as string
+            t.error = (ev.payload?.message as string) || (ev.payload?.error as string)
             delete pendingApprovals.value[tid]
             delete pendingUserInputs.value[tid]
             pendingApprovals.value = { ...pendingApprovals.value }
@@ -335,7 +335,7 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             t.status = 'cancelled'
             t.phase = 'CANCELLED'
             t.completed_at = new Date(ev.ts).toISOString()
-            t.error = ev.payload?.error as string
+            t.error = (ev.payload?.message as string) || (ev.payload?.error as string)
             delete pendingApprovals.value[tid]
             delete pendingUserInputs.value[tid]
             pendingApprovals.value = { ...pendingApprovals.value }

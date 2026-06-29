@@ -4,6 +4,10 @@ import { NInput, NButton, NSpin, NEmpty, useMessage } from 'naive-ui'
 import { useModelsStore } from '@/stores/hermes/models'
 import { updateProvider } from '@/api/hermes/system'
 import { useI18n } from 'vue-i18n'
+import {
+  probeProviderConnectivity,
+  shouldProbeProviderConnectivity,
+} from '@/utils/provider-connectivity'
 
 const { t } = useI18n()
 const modelsStore = useModelsStore()
@@ -37,8 +41,12 @@ async function handleSaveApiKey(providerKey: string) {
     message.warning(t('settings.models.apiKeyPlaceholder'))
     return
   }
+  const group = modelsStore.providers.find(p => p.provider === providerKey)
   savingKey.value = providerKey
   try {
+    if (group && shouldProbeProviderConnectivity('preset', providerKey, group.base_url)) {
+      await probeProviderConnectivity(group.base_url, key.trim())
+    }
     await updateProvider(providerKey, { api_key: key.trim() })
     message.success(t('settings.models.saved'))
     await modelsStore.fetchProviders()
@@ -51,8 +59,12 @@ async function handleSaveApiKey(providerKey: string) {
 
 async function handleSaveCustom(providerKey: string) {
   const key = getEditKey(providerKey)
+  const group = modelsStore.providers.find(p => p.provider === providerKey)
   savingKey.value = providerKey
   try {
+    if (group && shouldProbeProviderConnectivity('custom', providerKey, group.base_url)) {
+      await probeProviderConnectivity(group.base_url, key.trim())
+    }
     await updateProvider(providerKey, { api_key: key.trim() })
     message.success(t('settings.models.saved'))
     await modelsStore.fetchProviders()

@@ -169,6 +169,14 @@ const isRunning = computed(() => !isHistoryView.value && currentTask.value?.stat
 const isPending = computed(() => !isHistoryView.value && currentTask.value?.status === 'pending')
 const isWaitingUserInput = computed(() => !isHistoryView.value && currentTask.value?.status === 'waiting_user_input')
 
+const taskRunError = computed(() => {
+  const task = currentTask.value
+  if (!task) return ''
+  const status = String(task.status || '').toLowerCase()
+  if (status !== 'failed' && status !== 'cancelled') return ''
+  return String(task.error || '').trim()
+})
+
 const currentPendingApproval = computed(() => {
   const tid = currentTaskId.value
   return tid ? store.pendingApprovals[tid] || null : null
@@ -1820,6 +1828,22 @@ const liveStreamHint = computed(() => {
             </div>
           </div>
 
+          <div v-if="taskRunError" class="bug-error-banner">
+            <strong>{{ currentTask?.status === 'cancelled' ? '任务已取消' : '分析失败' }}</strong>
+            <pre class="bug-error-text">{{ taskRunError }}</pre>
+            <div class="ea-row" style="gap:8px;margin-top:8px;">
+              <NButton size="small" type="warning" @click="router.push({ name: 'hermes.models' })">模型管理</NButton>
+              <NButton
+                v-if="!isHistoryView"
+                size="small"
+                :disabled="!modelProviderReady || isRunning"
+                @click="openContinue"
+              >
+                补充信息重试
+              </NButton>
+            </div>
+          </div>
+
           <div v-if="currentTask" class="task-progress">
             <NProgress :percentage="displayProgress" :show-indicator="false" :height="6" :color="phaseColor(currentTask.phase)" />
             <span class="ea-muted tp-text">{{ displayProgress }}%</span>
@@ -2675,6 +2699,25 @@ const liveStreamHint = computed(() => {
   line-height: 1.5;
 
   &.is-error { color: var(--error, #d03050); }
+}
+
+.bug-error-banner {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--error) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
+  color: var(--error);
+}
+
+.bug-error-text {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  font-family: ui-monospace, monospace;
 }
 
 code {
