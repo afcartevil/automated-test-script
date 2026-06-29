@@ -251,6 +251,7 @@ export function verifySkillConfig(skillId: string, entry?: RequiredSkillEntry): 
       encoding: 'utf-8',
       timeout: 120_000,
       shell: true,
+      windowsHide: true,
     })
     const output = (r.stdout || r.stderr || '').trim()
     if (r.status === expectCode) {
@@ -268,7 +269,12 @@ export function verifySkillConfig(skillId: string, entry?: RequiredSkillEntry): 
     const parts = verify.command.trim().split(/\s+/)
     const cmd = parts[0] === 'python' ? tahpPaths.python : parts[0]
     const args = parts[0] === 'python' ? parts.slice(1) : parts.slice(1)
-    const r = spawnSync(cmd, args, { cwd: root, encoding: 'utf-8', timeout: 60_000 })
+    const r = spawnSync(cmd, args, {
+      cwd: root,
+      encoding: 'utf-8',
+      timeout: 60_000,
+      windowsHide: true,
+    })
     const stdout = (r.stdout || r.stderr || '').trim()
     try {
       const json = JSON.parse(stdout) as Record<string, unknown>
@@ -336,9 +342,13 @@ export function listRequiredSkills(): {
   const manifest = readManifest()
   const state = readStateMap()
   const skills: SkillConfigListItem[] = manifest.skills.map((entry) => {
-    const verify = verifySkillConfig(entry.id, entry)
     const rec = state[entry.id]
     const active = activeTasks.get(entry.id)
+    const needsVerify =
+      rec?.status === 'configured' || rec?.status === 'verify_failed'
+    const verify = needsVerify
+      ? verifySkillConfig(entry.id, entry)
+      : { ok: false, detail: '未完成配置' }
     let status: SkillConfigStatus = 'not_configured'
     if (active && (active.status === 'running' || active.status === 'waiting_user')) {
       status = 'configuring'
