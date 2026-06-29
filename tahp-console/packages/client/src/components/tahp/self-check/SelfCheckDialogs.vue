@@ -11,6 +11,7 @@ const {
   retesting,
   availableAuxForRetest,
   showManualDialog,
+  manualDeviceName,
   manualMessage,
   manualMode,
   manualSubmitting,
@@ -81,7 +82,7 @@ const {
   <div v-if="showManualDialog" class="modify-overlay">
     <div class="modify-dialog">
       <div class="modify-dialog-header">
-        <span class="section-title">需人工确认</span>
+        <span class="section-title">{{ manualDeviceName || '需人工确认' }}</span>
       </div>
       <div class="modify-dialog-body">
         <p class="manual-message">{{ manualMessage }}</p>

@@ -828,6 +828,7 @@ const modifyMessage = ref('')
 // 人工确认弹窗
 const showManualDialog = ref(false)
 const manualDecisionId = ref<string | null>(null)
+const manualDeviceName = ref('')
 const manualMessage = ref('')
 const manualPassLabel = ref('通过')
 const manualFailLabel = ref('失败')
@@ -836,12 +837,19 @@ const manualSubmitting = ref(false)
 
 function applyManualPrompt(data: {
   decisionId: string
+  deviceId?: string
+  deviceName?: string
   message?: string
   passLabel?: string
   failLabel?: string
   mode?: 'decision' | 'ack'
 }) {
   manualDecisionId.value = data.decisionId
+  manualDeviceName.value =
+    data.deviceName ||
+    devices.value.find((d) => d.deviceId === data.deviceId)?.deviceName ||
+    data.deviceId ||
+    ''
   manualMessage.value = data.message || '需人工确认'
   manualPassLabel.value = data.passLabel || '通过'
   manualFailLabel.value = data.failLabel || '失败'
@@ -1442,6 +1450,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     modifyMessage,
     showManualDialog,
     manualDecisionId,
+    manualDeviceName,
     manualMessage,
     manualPassLabel,
     manualFailLabel,

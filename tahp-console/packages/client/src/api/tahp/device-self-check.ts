@@ -328,6 +328,8 @@ export async function getPendingManualDecision(
   deviceId: string
 ): Promise<{
   decisionId: string
+  deviceId?: string
+  deviceName?: string
   message: string
   passLabel?: string
   failLabel?: string
@@ -335,6 +337,8 @@ export async function getPendingManualDecision(
 } | null> {
   return await tahpGet<{
     decisionId: string
+    deviceId?: string
+    deviceName?: string
     message: string
     passLabel?: string
     failLabel?: string
