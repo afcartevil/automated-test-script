@@ -142,6 +142,7 @@ const {
   saveCatalogTypeSettings,
   enableFlash,
   flashPath,
+  dailyFlashResolving,
   enableRootPkg,
   rootPkgPath,
   flashStageVersion,
@@ -157,6 +158,7 @@ const {
   flashStatusText,
   flashStatusClass,
   handleBrowseFlashPath,
+  handleResolveLatestDailyFlash,
   handleBrowseRootPkgPath,
   enableTcardUpdate,
   tcardUpdatePath,
@@ -1015,6 +1017,14 @@ function handleDutRowAction(deviceId: string) {
                               @click.stop="handleBrowseFlashPath"
                             >
                               {{ flashPathPicking ? '选择中...' : '浏览' }}
+                            </button>
+                            <button
+                              type="button"
+                              class="ea-btn-primary ea-btn-sm flash-daily-resolve-btn"
+                              :disabled="dailyFlashResolving"
+                              @click.stop="handleResolveLatestDailyFlash"
+                            >
+                              {{ dailyFlashResolving ? '解析中...' : '获取最新daily版本' }}
                             </button>
                           </div>
                         </div>
@@ -2530,6 +2540,64 @@ $catalog-pane-height: calc(100vh - 48px);
     font-weight: 400;
     color: var(--muted);
   }
+}
+
+.flash-daily-panel {
+  padding: 12px;
+  border: 1px dashed var(--line-strong, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 94%, var(--accent));
+}
+
+.flash-daily-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.flash-daily-resolve-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.flash-daily-meta {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.flash-daily-field--full {
+  margin-bottom: 4px;
+}
+
+.flash-daily-grid {
+  display: grid;
+  grid-template-columns: 0.8fr 1fr 1.1fr 1.1fr;
+  gap: 8px;
+}
+
+.flash-daily-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.flash-daily-input {
+  margin-top: 0;
+  font-size: 13px;
+}
+
+.flash-daily-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  word-break: break-all;
 }
 
 .flash-field-hint {

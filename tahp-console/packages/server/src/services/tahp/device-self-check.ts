@@ -919,6 +919,8 @@ async function runCase(
     })
     emitEvent('manual_confirm', {
       decisionId,
+      deviceId,
+      deviceName: devices[deviceId]?.deviceName || deviceId,
       caseKey,
       message: `用例"${result.caseName}"需要人工测试。\n请手动完成测试后确认结果。`
     })
@@ -1013,6 +1015,8 @@ async function runCase(
       })
       emitEvent('manual_confirm', {
         decisionId,
+        deviceId,
+        deviceName: devices[deviceId]?.deviceName || deviceId,
         caseKey,
         message: result.message || '需人工评判'
       })
@@ -1401,6 +1405,8 @@ async function execPythonCase(
             }
             emitEvent('manual_confirm', {
               decisionId,
+              deviceId,
+              deviceName: devices[deviceId]?.deviceName || deviceId,
               caseKey,
               message: parsed.message || '需人工确认',
               passLabel: passLabel || undefined,
@@ -1497,6 +1503,8 @@ export function submitManualDecision(decisionId: string, decision: string): bool
 // 获取设备的待处理人工决策
 export function getPendingManualDecision(deviceId: string): {
   decisionId: string
+  deviceId: string
+  deviceName: string
   message: string
   passLabel?: string
   failLabel?: string
@@ -1506,6 +1514,8 @@ export function getPendingManualDecision(deviceId: string): {
     if (decision.deviceId === deviceId) {
       return {
         decisionId: id,
+        deviceId,
+        deviceName: devices[deviceId]?.deviceName || deviceId,
         message: decision.message,
         passLabel: decision.passLabel,
         failLabel: decision.failLabel,

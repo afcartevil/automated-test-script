@@ -343,6 +343,47 @@ tahpDeviceSelfCheckRoutes.post(
   }
 )
 
+tahpDeviceSelfCheckRoutes.get(
+  '/api/tahp/device-self-check/flash/daily-options',
+  async (ctx) => {
+    try {
+      const deviceId = String(ctx.query.deviceId || '').trim()
+      if (!deviceId) {
+        ctx.status = 400
+        ctx.body = { success: false, error: '缺少 deviceId' }
+        return
+      }
+      const { getDailyFlashOptions } = await import('../../services/tahp/device-flash')
+      const result = await getDailyFlashOptions(deviceId)
+      ctx.body = { success: true, data: result }
+    } catch (err: any) {
+      ctx.status = 400
+      ctx.body = { success: false, error: err?.message || 'Failed to load daily flash options' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/flash/latest-daily',
+  async (ctx) => {
+    try {
+      const { resolveLatestDailyFlashPackage } = await import('../../services/tahp/device-flash')
+      const body = (ctx.request.body || {}) as {
+        deviceId?: string
+        systemVersion?: string
+      }
+      const result = await resolveLatestDailyFlashPackage({
+        deviceId: body.deviceId || '',
+        systemVersion: body.systemVersion || '',
+      })
+      ctx.body = { success: true, data: result }
+    } catch (err: any) {
+      ctx.status = 400
+      ctx.body = { success: false, error: err?.message || 'Failed to resolve latest daily flash package' }
+    }
+  }
+)
+
 // SSE 事件流
 tahpDeviceSelfCheckRoutes.get(
   '/api/tahp/device-self-check/pipeline',

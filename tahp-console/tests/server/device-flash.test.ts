@@ -4,7 +4,11 @@ import {
   isZipFile,
   isNetworkPath,
   buildFlashCommand,
+  buildReleaseBranchFolder,
+  normalizeSystemVersionLabel,
+  pickLatestSystemVersion,
   MARKET_VERSIONS,
+  type DailySystemVersionOption,
 } from '../../packages/server/src/services/tahp/device-flash'
 
 describe('device-flash helpers', () => {
@@ -32,5 +36,20 @@ describe('device-flash helpers', () => {
 
   it('exports market version options', () => {
     expect(MARKET_VERSIONS.some((m) => m.value === 'India')).toBe(true)
+  })
+
+  it('maps system version to mtk release branch folder', () => {
+    expect(buildReleaseBranchFolder('tOS16.2')).toBe('tOS16.2.0_mtk_sys_release')
+    expect(buildReleaseBranchFolder('16.3')).toBe('tOS16.3.0_mtk_sys_release')
+    expect(normalizeSystemVersionLabel('tOS16.3.0_mtk_sys_release')).toBe('tOS16.3')
+  })
+
+  it('picks the newest tOS system version', () => {
+    const versions: DailySystemVersionOption[] = [
+      { label: 'tOS16.2', value: 'tOS16.2', branchFolder: 'tOS16.2.0_mtk_sys_release' },
+      { label: 'tOS17.0', value: 'tOS17.0', branchFolder: 'tOS17.0.0_mtk_sys_release' },
+      { label: 'tOS16.3', value: 'tOS16.3', branchFolder: 'tOS16.3.0_mtk_sys_release' },
+    ]
+    expect(pickLatestSystemVersion(versions)).toBe('tOS17.0')
   })
 })

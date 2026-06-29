@@ -15,6 +15,7 @@ import {
   setDeviceRole,
   startTest,
   pickFlashPath,
+  resolveLatestDailyFlashPackage,
   startCustomTest,
   getCaseCatalogs,
   getCaseCatalogDetail,
@@ -85,9 +86,10 @@ const selectedTestType = ref<'str4' | 'week' | 'monkey'>('week')
 // 刷机相关选项（device_update，工具位于 self-check/flash_tool/）
 const enableFlash = ref(false)
 const flashPath = ref('')
+const dailyFlashResolving = ref(false)
 const enableRootPkg = ref(false)
 const rootPkgPath = ref('')
-const flashStageVersion = ref('')
+const flashStageVersion = ref('Open')
 const flashLogs = ref<string[]>([])
 const flashLogRef = ref<HTMLElement | null>(null)
 const flashActive = ref(false)
@@ -702,6 +704,33 @@ async function handleBrowseFlashPath() {
   }
 }
 
+async function handleResolveLatestDailyFlash() {
+  if (dailyFlashResolving.value) return
+  const deviceId = selectedDeviceId.value
+  if (!deviceId) {
+    const text = '请先选择设备'
+    error.value = text
+    message.error(text)
+    return
+  }
+  dailyFlashResolving.value = true
+  error.value = null
+  try {
+    const result = await resolveLatestDailyFlashPackage({ deviceId })
+    flashPath.value = result.packagePath
+    flashStageVersion.value = 'Open'
+    message.success(
+      `已找到 ${result.systemVersion} 最新 daily：${result.versionName}${result.usedIdhFallback ? '（已使用 IDH 路径）' : ''}`
+    )
+  } catch (e: any) {
+    const text = e?.message || '解析最新 daily 刷机包失败'
+    error.value = text
+    message.error(text)
+  } finally {
+    dailyFlashResolving.value = false
+  }
+}
+
 async function handleBrowseRootPkgPath() {
   if (rootPkgPathPicking.value) return
   rootPkgPathPicking.value = true
@@ -799,6 +828,7 @@ const modifyMessage = ref('')
 // 人工确认弹窗
 const showManualDialog = ref(false)
 const manualDecisionId = ref<string | null>(null)
+const manualDeviceName = ref('')
 const manualMessage = ref('')
 const manualPassLabel = ref('通过')
 const manualFailLabel = ref('失败')
@@ -807,12 +837,19 @@ const manualSubmitting = ref(false)
 
 function applyManualPrompt(data: {
   decisionId: string
+  deviceId?: string
+  deviceName?: string
   message?: string
   passLabel?: string
   failLabel?: string
   mode?: 'decision' | 'ack'
 }) {
   manualDecisionId.value = data.decisionId
+  manualDeviceName.value =
+    data.deviceName ||
+    devices.value.find((d) => d.deviceId === data.deviceId)?.deviceName ||
+    data.deviceId ||
+    ''
   manualMessage.value = data.message || '需人工确认'
   manualPassLabel.value = data.passLabel || '通过'
   manualFailLabel.value = data.failLabel || '失败'
@@ -1364,6 +1401,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     selectedTestType,
     enableFlash,
     flashPath,
+    dailyFlashResolving,
     enableRootPkg,
     rootPkgPath,
     flashStageVersion,
@@ -1379,6 +1417,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     flashStatusText,
     flashStatusClass,
     handleBrowseFlashPath,
+    handleResolveLatestDailyFlash,
     handleBrowseRootPkgPath,
     enableTcardUpdate,
     tcardUpdatePath,
@@ -1411,6 +1450,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     modifyMessage,
     showManualDialog,
     manualDecisionId,
+    manualDeviceName,
     manualMessage,
     manualPassLabel,
     manualFailLabel,
