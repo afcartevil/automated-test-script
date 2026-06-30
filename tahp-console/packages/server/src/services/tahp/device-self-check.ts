@@ -1792,16 +1792,17 @@ function mirrorResult(
 export interface StartTestFlashPayload {
   enabled: boolean
   pkgPath?: string
+  enableRootPkg?: boolean
   rootPkgPath?: string
   stageVersion?: string
 }
 
 function buildFlashOptionsFromPayload(payload?: StartTestFlashPayload): DeviceFlashOptions | undefined {
   if (!payload?.enabled || !payload.pkgPath?.trim()) return undefined
-  const rootPkgPath = payload.rootPkgPath?.trim()
   return {
     pkgPath: payload.pkgPath.trim(),
-    rootPkgPath: rootPkgPath || undefined,
+    enableRootPkg: payload.enableRootPkg === true,
+    rootPkgPath: payload.rootPkgPath?.trim() || undefined,
     stageVersion: payload.stageVersion?.trim() || undefined,
   }
 }

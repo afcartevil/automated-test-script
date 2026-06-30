@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { mkdirSync, writeFileSync } from 'fs'
+import { mkdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
-import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import {
   normalizePath,
@@ -11,7 +10,7 @@ import {
   buildReleaseBranchFolder,
   normalizeSystemVersionLabel,
   pickLatestSystemVersion,
-  findRootPackageInArchive,
+  resolveUserRootPkgPath,
   MARKET_VERSIONS,
   type DailySystemVersionOption,
 } from '../../packages/server/src/services/tahp/device-flash'
@@ -58,16 +57,19 @@ describe('device-flash helpers', () => {
     expect(pickLatestSystemVersion(versions)).toBe('tOS17.0')
   })
 
-  it('finds root package under archive Root directory', () => {
-    const tempDir = mkdtempSync(join(tmpdir(), 'tahp-flash-root-'))
+  it('resolves user_root package from flash package directory', () => {
+    const base = join(tmpdir(), `tahp-flash-root-${Date.now()}`)
+    mkdirSync(base, { recursive: true })
     try {
-      const rootDir = join(tempDir, 'Root')
-      mkdirSync(rootDir, { recursive: true })
-      writeFileSync(join(rootDir, 'root_build.zip'), 'zip')
-      expect(findRootPackageInArchive(tempDir)).toBe(join(rootDir, 'root_build.zip'))
-      expect(findRootPackageInArchive(join(tempDir, 'missing'))).toBeUndefined()
+      const mainZip = join(base, '2026.06.29.12.00.00_100_CM5_v1000.zip')
+      const rootZip = join(base, '2026.06.29.12.00.00_100_CM5_v1000_user_root.zip')
+      writeFileSync(mainZip, 'main')
+      writeFileSync(rootZip, 'root')
+
+      expect(resolveUserRootPkgPath(mainZip)).toBe(rootZip)
+      expect(resolveUserRootPkgPath(base)).toBe(rootZip)
     } finally {
-      rmSync(tempDir, { recursive: true, force: true })
+      rmSync(base, { recursive: true, force: true })
     }
   })
 })

@@ -88,7 +88,6 @@ const enableFlash = ref(false)
 const flashPath = ref('')
 const dailyFlashResolving = ref(false)
 const enableRootPkg = ref(false)
-const rootPkgPath = ref('')
 const flashStageVersion = ref('Open')
 const flashLogs = ref<string[]>([])
 const flashLogRef = ref<HTMLElement | null>(null)
@@ -96,7 +95,6 @@ const flashActive = ref(false)
 const flashDone = ref<'success' | 'error' | null>(null)
 const flashProgressState = ref<FlashProgressState>(createFlashProgressState())
 const flashPathPicking = ref(false)
-const rootPkgPathPicking = ref(false)
 const FLASH_MARKET_OPTIONS = [
   { label: 'Base', value: '' },
   { label: 'Open', value: 'Open' },
@@ -105,9 +103,6 @@ const FLASH_MARKET_OPTIONS = [
   { label: 'Turkey', value: 'Turkey' },
   { label: 'India', value: 'India' },
 ]
-watch(enableRootPkg, (enabled) => {
-  if (!enabled) rootPkgPath.value = ''
-})
 
 function resetFlashProgress() {
   flashActive.value = false
@@ -747,32 +742,10 @@ async function handleResolveLatestDailyFlash() {
   }
 }
 
-async function handleBrowseRootPkgPath() {
-  if (rootPkgPathPicking.value) return
-  rootPkgPathPicking.value = true
-  error.value = null
-  try {
-    const result = await pickFlashPath()
-    if (result.path) {
-      rootPkgPath.value = result.path
-    } else if (result.error) {
-      error.value = result.error
-    }
-  } catch (e: any) {
-    error.value = e?.message || '选择 Root 包失败'
-  } finally {
-    rootPkgPathPicking.value = false
-  }
-}
-
 async function handleStartTest(deviceId: string) {
   try {
     if (enableFlash.value && !flashPath.value.trim()) {
       error.value = '请先选择刷机包路径'
-      return
-    }
-    if (enableFlash.value && enableRootPkg.value && !rootPkgPath.value.trim()) {
-      error.value = '请先选择 Root 包路径'
       return
     }
     flashLogs.value = []
@@ -781,7 +754,7 @@ async function handleStartTest(deviceId: string) {
       ? {
           enabled: true,
           pkgPath: flashPath.value.trim(),
-          rootPkgPath: enableRootPkg.value ? rootPkgPath.value.trim() : undefined,
+          enableRootPkg: enableRootPkg.value,
           stageVersion: flashStageVersion.value || undefined,
         }
       : undefined
@@ -1419,12 +1392,10 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     flashPath,
     dailyFlashResolving,
     enableRootPkg,
-    rootPkgPath,
     flashStageVersion,
     flashLogs,
     flashLogRef,
     flashPathPicking,
-    rootPkgPathPicking,
     FLASH_MARKET_OPTIONS,
     flashProgress,
     flashPhase,
@@ -1434,7 +1405,6 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     flashStatusClass,
     handleBrowseFlashPath,
     handleResolveLatestDailyFlash,
-    handleBrowseRootPkgPath,
     enableTcardUpdate,
     tcardUpdatePath,
     viewMode,

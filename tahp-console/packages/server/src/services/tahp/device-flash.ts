@@ -11,7 +11,7 @@ import {
   rmSync,
   statSync,
 } from 'fs'
-import { basename, join, resolve } from 'path'
+import { basename, dirname, join, resolve } from 'path'
 import { pipeline } from 'stream/promises'
 import { Transform } from 'stream'
 import * as XLSX from 'xlsx'
@@ -229,6 +229,8 @@ export interface DeviceFlashOptions {
   pkgPath: string
   stageVersion?: string
   customMarket?: boolean
+  /** 勾选后从 pkgPath 同目录自动查找 user_root 小包 */
+  enableRootPkg?: boolean
   rootPkgPath?: string
   unzipPath?: string
   useCustomUnzipPath?: boolean
@@ -640,6 +642,55 @@ function resolveExistingArchivePath(archivePath: string, brand: string): { path:
 
 // 构建产物 / 单分区包后缀，不能作为整包刷机包（如 *_user_EFUSE.zip）。
 const EXCLUDED_PACKAGE_PATTERN = /(_user|_userdebug|_eng|efuse)/i
+const USER_ROOT_PACKAGE_PATTERN = /user_root/i
+
+function findUserRootPkgInDirectory(searchDir: string): string | null {
+  if (!existsSync(searchDir)) return null
+  const zipFiles = safeDirEntries(searchDir)
+    .filter((entry) => entry.isFile() && /\.zip$/i.test(entry.name))
+    .map((entry) => entry.name)
+    .filter((name) => USER_ROOT_PACKAGE_PATTERN.test(name))
+  const latestZip = newestByNameTimestamp(searchDir, zipFiles)
+  return latestZip ? join(searchDir, latestZip) : null
+}
+
+function collectUserRootSearchDirs(pkgPath: string): string[] {
+  const normalized = normalizePath(pkgPath.trim())
+  if (!normalized) return []
+
+  const dirs: string[] = []
+  const pushDir = (dir: string) => {
+    const resolved = resolve(dir)
+    if (!dirs.includes(resolved)) dirs.push(resolved)
+  }
+
+  if (existsSync(normalized)) {
+    const stat = statSync(normalized)
+    if (stat.isFile()) {
+      pushDir(dirname(normalized))
+    } else {
+      pushDir(normalized)
+      pushDir(join(normalized, '..'))
+    }
+    return dirs
+  }
+
+  if (isZipFile(normalized) || /\.xml$/i.test(normalized)) {
+    pushDir(dirname(normalized))
+  } else {
+    pushDir(normalized)
+    pushDir(join(normalized, '..'))
+  }
+  return dirs
+}
+
+export function resolveUserRootPkgPath(pkgPath: string): string {
+  for (const searchDir of collectUserRootSearchDirs(pkgPath)) {
+    const found = findUserRootPkgInDirectory(searchDir)
+    if (found) return found
+  }
+  throw new Error(`未在刷机包路径下找到 user_root 小包: ${pkgPath}`)
+}
 
 function findFlashPackageInOpenPath(openPath: string): string {
   if (!existsSync(openPath)) {
@@ -1015,7 +1066,12 @@ export async function runDeviceFlash(
 
   try {
     const { pkgPath, skipUnzip } = await prepareFlashPkgPath(options.pkgPath, options, log)
-    const rootPkgPath = await prepareRootPkgPath(options.rootPkgPath || '', log)
+    let resolvedRootPkgPath = options.rootPkgPath?.trim() || ''
+    if (!resolvedRootPkgPath && options.enableRootPkg) {
+      resolvedRootPkgPath = resolveUserRootPkgPath(options.pkgPath)
+      log(`[刷机] 自动解析 user_root 小包: ${resolvedRootPkgPath}`)
+    }
+    const rootPkgPath = await prepareRootPkgPath(resolvedRootPkgPath, log)
     const cmd = buildFlashCommand(serials, pkgPath, {
       rootPkgPath,
       stageVersion: options.stageVersion,

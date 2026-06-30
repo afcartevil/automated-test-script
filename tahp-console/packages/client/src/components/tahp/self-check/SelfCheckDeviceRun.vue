@@ -144,12 +144,10 @@ const {
   flashPath,
   dailyFlashResolving,
   enableRootPkg,
-  rootPkgPath,
   flashStageVersion,
   flashLogs,
   flashLogRef,
   flashPathPicking,
-  rootPkgPathPicking,
   FLASH_MARKET_OPTIONS,
   flashProgress,
   flashPhase,
@@ -159,7 +157,6 @@ const {
   flashStatusClass,
   handleBrowseFlashPath,
   handleResolveLatestDailyFlash,
-  handleBrowseRootPkgPath,
   enableTcardUpdate,
   tcardUpdatePath,
   isSelectedCaseInConfig,
@@ -1073,22 +1070,6 @@ function handleDutRowAction(deviceId: string) {
                             <span>刷 Root 包</span>
                             <span class="flash-field-hint">可选</span>
                           </label>
-                          <div v-show="enableRootPkg" class="flash-path-row">
-                            <input
-                              type="text"
-                              class="form-input form-input-inline flash-path-input"
-                              placeholder="Root 包路径：zip / scatter xml / 刷机目录"
-                              v-model="rootPkgPath"
-                            />
-                            <button
-                              type="button"
-                              class="ea-btn-ghost ea-btn-sm flash-browse-btn"
-                              :disabled="rootPkgPathPicking"
-                              @click.stop="handleBrowseRootPkgPath"
-                            >
-                              {{ rootPkgPathPicking ? '选择中...' : '浏览' }}
-                            </button>
-                          </div>
                         </div>
                       </div>
                     </div>
