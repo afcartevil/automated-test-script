@@ -30,6 +30,7 @@ import {
   runFirstLaunchHermesInit,
   runInteractiveHermesSetupWizard,
 } from './lib/hermes-setup-wizard.mjs'
+import { ensureGitBashEnv, mergeConsoleEnvBlock } from './lib/discover-git-bash.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -181,24 +182,16 @@ function writeAgentPaths(consoleRoot, data) {
 }
 
 function mergeConsoleEnv(consoleRoot, entries) {
-  const envPath = join(consoleRoot, '.env')
-  const header = '# --- TAHP bundled hermes-agent (auto-generated) ---'
-  const footer = '# --- end TAHP bundled hermes-agent ---'
-  let content = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : ''
-  const start = content.indexOf(header)
-  const end = content.indexOf(footer)
-  const block = [
-    header,
-    ...Object.entries(entries).map(([k, v]) => `${k}=${v}`),
-    footer,
-    '',
-  ].join('\n')
-  if (start >= 0 && end > start) {
-    content = `${content.slice(0, start)}${block}${content.slice(end + footer.length).replace(/^\n+/, '')}`
-  } else {
-    content = `${content.trimEnd()}\n\n${block}`
+  mergeConsoleEnvBlock(consoleRoot, entries)
+}
+
+function applyGitBashEnv(consoleRoot, { quiet = false } = {}) {
+  const gitBash = ensureGitBashEnv({ consoleRoot, quiet, persist: true })
+  if (!gitBash.ok && process.platform === 'win32' && !quiet) {
+    warn(`  ⚠ ${gitBash.error?.split('\n')[0] || '未找到 Git Bash'}`)
+    warn('    Hermes 终端工具将不可用，直到配置 HERMES_GIT_BASH_PATH')
   }
-  writeFileSync(envPath, content, 'utf-8')
+  return gitBash
 }
 
 function applyToProcessEnv(paths) {
@@ -206,6 +199,9 @@ function applyToProcessEnv(paths) {
   process.env.HERMES_AGENT_BRIDGE_PYTHON = paths.python
   if (paths.hermesBin && existsSync(paths.hermesBin)) {
     process.env.HERMES_BIN = paths.hermesBin
+  }
+  if (paths.gitBash) {
+    process.env.HERMES_GIT_BASH_PATH = paths.gitBash
   }
 }
 
@@ -324,6 +320,8 @@ export function ensureHermesAgent(opts = {}) {
     return finishOptionalFailure(opts, msg)
   }
 
+  const gitBashResult = applyGitBashEnv(consoleRoot, { quiet: opts.quiet })
+
   if (!opts.quiet) log(`  ✓ Agent 源码: ${agentDir}`)
 
   const cached = readAgentPaths(consoleRoot)
@@ -332,7 +330,10 @@ export function ensureHermesAgent(opts = {}) {
 
   if (!opts.force && cached && canUseCachedAgent(cached, agentDir, { skipImportVerify })) {
     if (!opts.quiet) log('  ✓ Agent 环境已就绪（跳过安装）')
-    applyToProcessEnv(cached)
+    applyToProcessEnv({
+      ...cached,
+      gitBash: gitBashResult.path || process.env.HERMES_GIT_BASH_PATH,
+    })
     const init = opts.forceWizard
       ? runInteractiveHermesSetupWizard({
         consoleRoot,
@@ -404,6 +405,7 @@ export function ensureHermesAgent(opts = {}) {
     agentRoot: agentDir,
     python: activeVenvPython,
     hermesBin: existsSync(hermesBin) ? hermesBin : undefined,
+    gitBash: gitBashResult.path || process.env.HERMES_GIT_BASH_PATH,
     readyAt: new Date().toISOString(),
     verifiedAt: new Date().toISOString(),
   }
@@ -412,6 +414,7 @@ export function ensureHermesAgent(opts = {}) {
     HERMES_AGENT_ROOT: agentDir,
     HERMES_AGENT_BRIDGE_PYTHON: activeVenvPython,
     ...(paths.hermesBin ? { HERMES_BIN: paths.hermesBin } : {}),
+    ...(paths.gitBash ? { HERMES_GIT_BASH_PATH: paths.gitBash } : {}),
   })
   applyToProcessEnv(paths)
 
@@ -451,6 +454,7 @@ export function ensureHermesAgent(opts = {}) {
 export function applyHermesAgentEnvFromDisk() {
   const consoleRoot = getConsoleRoot()
   loadDotEnv(consoleRoot)
+  ensureGitBashEnv({ consoleRoot, quiet: true, persist: false })
   if (process.env.HERMES_AGENT_ROOT?.trim()) return { ok: true, source: 'env' }
   const cached = readAgentPaths(consoleRoot)
   if (cached?.agentRoot && cached?.python) {

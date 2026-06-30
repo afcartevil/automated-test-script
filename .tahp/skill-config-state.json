@@ -13,5 +13,12 @@
     "last_task_id": "task-skill-config-transsion-harness-install-1782790231581-b5ce",
     "note": "transsion-harness-cli v1.1.11 已安装，13 个 Agent skill 就绪，doctor 验证通过（stable channel）",
     "configured_by": "agent"
+  },
+  "modem-analysis-local": {
+    "status": "configured",
+    "completed_at": "2026-06-30T06:07:20.887Z",
+    "last_task_id": "task-skill-config-modem-analysis-local-1782799322525-05cc",
+    "note": "核心配置完成：Jira凭据、工作区、外部工具路径、Python依赖均已从jira-ops/harness复用并写入.env；Jira API连通性验证通过。",
+    "configured_by": "agent"
   }
 }

@@ -4,9 +4,13 @@ import { spawn } from 'child_process'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { applyHermesAgentEnvFromDisk, ensureHermesAgent } from './ensure-hermes-agent.mjs'
+import { ensureGitBashEnv } from './lib/discover-git-bash.mjs'
+import { getConsoleRoot } from './lib/tahp-paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const consoleRoot = resolve(__dirname, '..')
+
+ensureGitBashEnv({ consoleRoot, quiet: true, persist: false })
 
 let agent = applyHermesAgentEnvFromDisk()
 if (!agent.ok) {

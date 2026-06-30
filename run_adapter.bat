@@ -24,6 +24,19 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo [EasyAdapter] 检测 Git Bash（Hermes 终端工具必需）...
+node scripts/ensure-git-bash-env.mjs
+if errorlevel 1 (
+    echo.
+    echo [EasyAdapter] 未找到 Git Bash，Agent 终端功能将不可用。
+    echo   请安装 Git for Windows: https://git-scm.com/download/win
+    echo   或在 tahp-console\.env 中设置:
+    echo   HERMES_GIT_BASH_PATH=你的安装路径\bin\bash.exe
+    echo.
+    pause
+    exit /b 1
+)
+
 echo [EasyAdapter] 运行环境检查通过
 echo.
 
