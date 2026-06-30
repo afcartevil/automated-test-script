@@ -173,6 +173,7 @@ export async function setDeviceRole(
 export interface StartTestFlashPayload {
   enabled: boolean
   pkgPath?: string
+  enableRootPkg?: boolean
   rootPkgPath?: string
   stageVersion?: string
 }
