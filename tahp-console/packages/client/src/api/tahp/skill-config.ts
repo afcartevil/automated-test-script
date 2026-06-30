@@ -1,6 +1,6 @@
 import { tahpGet, tahpPost } from './client'
 
-export type SkillConfigStatus = 'not_configured' | 'configuring' | 'configured' | 'verify_failed'
+export type SkillConfigStatus = 'not_configured' | 'configuring' | 'configured'
 
 export interface SkillConfigListItem {
   id: string
@@ -8,9 +8,8 @@ export interface SkillConfigListItem {
   description?: string
   depends_on?: string[]
   status: SkillConfigStatus
-  verify_ok: boolean
-  verify_detail?: string
   completed_at?: string
+  note?: string
   active_task_id?: string
 }
 
@@ -53,10 +52,6 @@ export function respondSkillConfigApproval(
   payload: { approval_id: string; choice: string },
 ): Promise<{ approval_id: string; choice: string }> {
   return tahpPost(`/api/tahp/skill-config/tasks/${encodeURIComponent(taskId)}/approval`, payload)
-}
-
-export function verifySkillConfig(skillId: string): Promise<{ ok: boolean; detail: string }> {
-  return tahpPost(`/api/tahp/skill-config/${encodeURIComponent(skillId)}/verify`)
 }
 
 export function resetSkillConfig(skillId: string): Promise<{ skill_id: string; status: string }> {

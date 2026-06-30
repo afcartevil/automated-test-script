@@ -8,7 +8,6 @@ import {
   startSkillConfigAgent,
   continueSkillConfigAgent,
   respondSkillConfigApproval,
-  verifySkillConfig,
   markSkillConfigured,
   clearSkillConfigured,
   getRequiredSkillsManifestPath,
@@ -69,11 +68,6 @@ tahpSkillConfigRoutes.get('/:skillId/preview', async (ctx) => {
   ctx.body = { success: true, data: preview }
 })
 
-tahpSkillConfigRoutes.post('/:skillId/verify', async (ctx) => {
-  const result = verifySkillConfig(ctx.params.skillId)
-  ctx.body = { success: true, data: result }
-})
-
 tahpSkillConfigRoutes.post('/:skillId/start', async (ctx) => {
   const body = (ctx.request.body || {}) as Record<string, unknown>
   const force = body.force === true
@@ -92,12 +86,6 @@ tahpSkillConfigRoutes.post('/:skillId/reset', async (ctx) => {
 })
 
 tahpSkillConfigRoutes.post('/:skillId/mark-complete', async (ctx) => {
-  const verify = verifySkillConfig(ctx.params.skillId)
-  if (!verify.ok) {
-    ctx.status = 400
-    ctx.body = { success: false, error: `校验未通过: ${verify.detail}` }
-    return
-  }
   markSkillConfigured(ctx.params.skillId, { by: 'manual', note: '手动标记完成' })
   ctx.body = { success: true, data: { skill_id: ctx.params.skillId, status: 'configured' } }
 })

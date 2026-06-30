@@ -17,7 +17,6 @@ import {
   startSkillConfig,
   continueSkillConfig,
   respondSkillConfigApproval,
-  verifySkillConfig,
   type SkillConfigListItem,
   type SkillConfigPreview,
 } from '@/api/tahp/skill-config'
@@ -55,7 +54,6 @@ function statusLabel(status: SkillConfigListItem['status']): string {
   switch (status) {
     case 'configured': return '配置完成'
     case 'configuring': return '配置中'
-    case 'verify_failed': return '需检查'
     default: return '未配置'
   }
 }
@@ -64,7 +62,6 @@ function statusVariant(status: SkillConfigListItem['status']): 'ok' | 'info' | '
   switch (status) {
     case 'configured': return 'ok'
     case 'configuring': return 'info'
-    case 'verify_failed': return 'warn'
     default: return 'muted'
   }
 }
@@ -212,18 +209,6 @@ async function onSendChat() {
   }
 }
 
-async function onVerify() {
-  if (!selectedId.value) return
-  try {
-    const r = await verifySkillConfig(selectedId.value)
-    if (r.ok) message.success(r.detail)
-    else message.warning(r.detail)
-    await loadList()
-  } catch (err) {
-    message.error((err as Error).message || '校验失败')
-  }
-}
-
 async function onApproval(choice: string) {
   const tid = activeTaskId.value
   const ap = pendingApproval.value
@@ -290,7 +275,6 @@ async function onApproval(choice: string) {
               <p class="ea-muted">{{ selectedSkill.description }}</p>
             </div>
             <NSpace>
-              <NButton size="small" @click="onVerify">验证配置</NButton>
               <NButton
                 type="primary"
                 size="small"
@@ -309,9 +293,6 @@ async function onApproval(choice: string) {
                 重新配置
               </NButton>
             </NSpace>
-          </div>
-          <div v-if="selectedSkill.verify_detail" class="verify-hint ea-muted">
-            校验：{{ selectedSkill.verify_detail }}
           </div>
           <NSpin :show="previewLoading">
             <NScrollbar style="max-height: 280px">
@@ -440,11 +421,6 @@ async function onApproval(choice: string) {
     font-size: 16px;
   }
   p { margin: 0; font-size: 12.5px; }
-}
-
-.verify-hint {
-  font-size: 12px;
-  margin-bottom: 10px;
 }
 
 .chat-placeholder {

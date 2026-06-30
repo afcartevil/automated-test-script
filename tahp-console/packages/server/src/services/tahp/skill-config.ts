@@ -7,12 +7,9 @@
 import { randomBytes } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { spawnSync } from 'child_process'
 import { logger } from '../logger'
 import { getTaskStream } from './task-stream'
 import { tahpPaths } from './paths'
-import { applyJiraUserConfigToEnv } from './jira-user-config'
-import { spawnPythonScript, spawnOutputText, formatPythonSpawnError } from './python-spawn'
 import {
   AgentBridgeClient,
   getAgentBridgeManager,
@@ -48,31 +45,7 @@ function statePath(): string {
   return join(tahpConfigDir(), 'skill-config-state.json')
 }
 
-export type SkillConfigStatus = 'not_configured' | 'configuring' | 'configured' | 'verify_failed'
-
-export interface RequiredSkillVerifyScript {
-  type: 'script'
-  command: string
-  ready_json_path?: string
-}
-
-export interface RequiredSkillVerifyEnvFiles {
-  type: 'env_files'
-  files: string[]
-  required_keys: string[]
-}
-
-export interface RequiredSkillVerifyCommand {
-  type: 'command'
-  command: string
-  expect_exit_code?: number
-  cwd?: string
-}
-
-export type RequiredSkillVerify =
-  | RequiredSkillVerifyScript
-  | RequiredSkillVerifyEnvFiles
-  | RequiredSkillVerifyCommand
+export type SkillConfigStatus = 'not_configured' | 'configuring' | 'configured'
 
 export interface RequiredSkillEntry {
   id: string
@@ -84,7 +57,6 @@ export interface RequiredSkillEntry {
   setup_doc?: string
   agent_brief?: string
   related_skill?: string
-  verify?: RequiredSkillVerify
 }
 
 export interface RequiredSkillsManifest {
@@ -94,9 +66,8 @@ export interface RequiredSkillsManifest {
 }
 
 export interface SkillConfigStateRecord {
-  status: 'configured' | 'verify_failed'
+  status: 'configured'
   completed_at?: string
-  verified_at?: string
   last_task_id?: string
   note?: string
   configured_by?: 'agent' | 'manual'
@@ -108,9 +79,8 @@ export interface SkillConfigListItem {
   description?: string
   depends_on?: string[]
   status: SkillConfigStatus
-  verify_ok: boolean
-  verify_detail?: string
   completed_at?: string
+  note?: string
   active_task_id?: string
 }
 
@@ -165,33 +135,14 @@ function skillRoot(skillId: string): string {
   return join(tahpPaths.skillsDir, skillId)
 }
 
-function getByPath(obj: Record<string, unknown>, path: string): unknown {
-  let cur: unknown = obj
-  for (const part of path.split('.')) {
-    if (!cur || typeof cur !== 'object') return undefined
-    cur = (cur as Record<string, unknown>)[part]
-  }
-  return cur
-}
-
-function parseEnvFile(content: string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const line of content.split(/\r?\n/)) {
-    const t = line.trim()
-    if (!t || t.startsWith('#')) continue
-    const idx = t.indexOf('=')
-    if (idx <= 0) continue
-    out[t.slice(0, idx).trim()] = t.slice(idx + 1).trim()
-  }
-  return out
-}
-
-function isVirtualEntry(entry: RequiredSkillEntry): boolean {
-  return entry.virtual === true
-}
-
-function getManifestEntry(skillId: string): RequiredSkillEntry | undefined {
-  return readManifest().skills.find(s => s.id === skillId)
+function isSkillConfiguredInState(
+  state: Record<string, SkillConfigStateRecord>,
+  skillId: string,
+): boolean {
+  const rec = state[skillId]
+  if (!rec) return false
+  // 兼容旧版状态文件中的 verify_failed
+  return rec.status === 'configured' || (rec.status as string) === 'verify_failed'
 }
 
 function buildVirtualPreviewMd(entry: RequiredSkillEntry): string {
@@ -219,118 +170,15 @@ function buildVirtualPreviewMd(entry: RequiredSkillEntry): string {
       '',
     )
   }
-  if (entry.verify?.type === 'command') {
-    lines.push('## 完成校验', '', `\`${entry.verify.command}\`（退出码 ${entry.verify.expect_exit_code ?? 0}）`, '')
-  }
   return lines.filter(Boolean).join('\n')
 }
 
-function spawnVerifyScript(root: string, command: string): ReturnType<typeof spawnSync> {
-  const parts = command.trim().split(/\s+/).filter(Boolean)
-  const scriptArgs = parts[0] === 'python' ? parts.slice(1) : parts.slice(1)
-  const env = applyJiraUserConfigToEnv(process.env)
-  if (parts[0] === 'python') {
-    return spawnPythonScript({
-      cwd: root,
-      args: scriptArgs,
-      env,
-      timeout: 60_000,
-      preferJsonOutput: true,
-    })
-  }
-  return spawnSync(parts[0], scriptArgs, {
-    cwd: root,
-    encoding: 'utf-8',
-    timeout: 60_000,
-    windowsHide: true,
-    shell: true,
-    env,
-  })
+function isVirtualEntry(entry: RequiredSkillEntry): boolean {
+  return entry.virtual === true
 }
 
-function formatScriptVerifyFailure(r: ReturnType<typeof spawnSync>, stdout: string): string {
-  return formatPythonSpawnError('脚本', r, stdout)
-}
-
-export function verifySkillConfig(skillId: string, entry?: RequiredSkillEntry): {
-  ok: boolean
-  detail: string
-} {
-  const manifest = readManifest()
-  const item = entry || manifest.skills.find(s => s.id === skillId)
-  if (!item) return { ok: false, detail: `清单中无此 Skill: ${skillId}` }
-
-  if (!isVirtualEntry(item)) {
-    const root = skillRoot(skillId)
-    if (!existsSync(join(root, 'SKILL.md'))) {
-      return { ok: false, detail: `Skill 目录不存在: ${root}` }
-    }
-  }
-
-  const verify = item.verify
-  if (!verify) {
-    return { ok: true, detail: '未定义校验规则，视为通过' }
-  }
-
-  if (verify.type === 'command') {
-    const cwd = verify.cwd ? join(tahpPaths.projectRoot, verify.cwd) : tahpPaths.projectRoot
-    const expectCode = verify.expect_exit_code ?? 0
-    const r = spawnSync(verify.command, {
-      cwd,
-      encoding: 'utf-8',
-      timeout: 120_000,
-      shell: true,
-      windowsHide: true,
-    })
-    const output = (r.stdout || r.stderr || '').trim()
-    if (r.status === expectCode) {
-      return { ok: true, detail: `命令校验通过: ${verify.command}` }
-    }
-    return {
-      ok: false,
-      detail: output.slice(0, 400) || `命令退出码 ${r.status ?? 'null'}，期望 ${expectCode}`,
-    }
-  }
-
-  const root = skillRoot(skillId)
-
-  if (verify.type === 'script') {
-    const r = spawnVerifyScript(root, verify.command)
-    const stdout = spawnOutputText(r)
-    try {
-      const json = JSON.parse(stdout) as Record<string, unknown>
-      const pathKey = verify.ready_json_path || 'data.ready'
-      const ready = getByPath(json, pathKey)
-      if (ready === true) return { ok: true, detail: 'setup-check 通过' }
-      const checks = getByPath(json, 'data.checks')
-      return { ok: false, detail: typeof checks !== 'undefined'
-        ? `setup-check 未就绪: ${JSON.stringify(checks).slice(0, 400)}`
-        : stdout.slice(0, 400) || 'setup-check 失败' }
-    } catch {
-      return { ok: false, detail: formatScriptVerifyFailure(r, stdout) }
-    }
-  }
-
-  if (verify.type === 'env_files') {
-    const missing: string[] = []
-    const emptyKeys: string[] = []
-    for (const rel of verify.files) {
-      const fp = join(root, rel)
-      if (!existsSync(fp)) {
-        missing.push(rel)
-        continue
-      }
-      const env = parseEnvFile(readFileSync(fp, 'utf-8'))
-      for (const key of verify.required_keys) {
-        if (!env[key]?.trim()) emptyKeys.push(`${rel}:${key}`)
-      }
-    }
-    if (missing.length) return { ok: false, detail: `缺少文件: ${missing.join(', ')}` }
-    if (emptyKeys.length) return { ok: false, detail: `未填写: ${emptyKeys.join(', ')}` }
-    return { ok: true, detail: '环境文件校验通过' }
-  }
-
-  return { ok: false, detail: '未知校验类型' }
+function getManifestEntry(skillId: string): RequiredSkillEntry | undefined {
+  return readManifest().skills.find(s => s.id === skillId)
 }
 
 export function markSkillConfigured(
@@ -338,13 +186,11 @@ export function markSkillConfigured(
   opts: { taskId?: string; note?: string; by?: 'agent' | 'manual' } = {},
 ): void {
   const map = readStateMap()
-  const verify = verifySkillConfig(skillId)
   map[skillId] = {
-    status: verify.ok ? 'configured' : 'verify_failed',
+    status: 'configured',
     completed_at: new Date().toISOString(),
-    verified_at: new Date().toISOString(),
     last_task_id: opts.taskId,
-    note: opts.note || (verify.ok ? '配置完成' : verify.detail),
+    note: opts.note || '配置完成',
     configured_by: opts.by || 'agent',
   }
   writeStateMap(map)
@@ -365,17 +211,12 @@ export function listRequiredSkills(): {
   const skills: SkillConfigListItem[] = manifest.skills.map((entry) => {
     const rec = state[entry.id]
     const active = activeTasks.get(entry.id)
-    const needsVerify =
-      rec?.status === 'configured' || rec?.status === 'verify_failed'
-    const verify = needsVerify
-      ? verifySkillConfig(entry.id, entry)
-      : { ok: false, detail: '未完成配置' }
     let status: SkillConfigStatus = 'not_configured'
     if (active && (active.status === 'running' || active.status === 'waiting_user')) {
       status = 'configuring'
-    } else if (rec?.status === 'configured' && verify.ok) status = 'configured'
-    else if (rec?.status === 'configured' && !verify.ok) status = 'verify_failed'
-    else if (rec?.status === 'verify_failed') status = 'verify_failed'
+    } else if (rec && isSkillConfiguredInState(state, entry.id)) {
+      status = 'configured'
+    }
 
     return {
       id: entry.id,
@@ -383,9 +224,8 @@ export function listRequiredSkills(): {
       description: entry.description,
       depends_on: entry.depends_on,
       status,
-      verify_ok: verify.ok,
-      verify_detail: verify.detail,
       completed_at: rec?.completed_at,
+      note: rec?.note,
       active_task_id: active?.taskId,
     }
   })
@@ -454,6 +294,136 @@ function emit(taskId: string, type: string, payload: Record<string, unknown>) {
 
 const CONFIG_COMPLETE_RE = /=== TAHP_SKILL_CONFIG_COMPLETE ===\r?\n([\s\S]*?)=== END_TAHP_SKILL_CONFIG_COMPLETE ===/
 
+export interface ConfiguredPeerSkillRef {
+  id: string
+  label: string
+  isDependency: boolean
+  configLocations: string[]
+  completedNote?: string
+}
+
+/** 清单中已配置完成、可供当前 Skill 参考的其它条目 */
+export function getConfiguredPeerSkills(currentSkillId: string): {
+  peers: ConfiguredPeerSkillRef[]
+  missingDependencies: Array<{ id: string; label: string }>
+} {
+  const manifest = readManifest()
+  const state = readStateMap()
+  const currentEntry = manifest.skills.find(s => s.id === currentSkillId)
+  const peers: ConfiguredPeerSkillRef[] = []
+
+  function isSkillConfigured(entry: RequiredSkillEntry): boolean {
+    return isSkillConfiguredInState(state, entry.id)
+  }
+
+  for (const entry of manifest.skills) {
+    if (entry.id === currentSkillId) continue
+    if (!isSkillConfigured(entry)) continue
+
+    peers.push({
+      id: entry.id,
+      label: entry.label,
+      isDependency: currentEntry?.depends_on?.includes(entry.id) ?? false,
+      configLocations: getSkillConfigLocations(entry),
+      completedNote: state[entry.id]?.note,
+    })
+  }
+
+  const missingDependencies: Array<{ id: string; label: string }> = []
+  for (const depId of currentEntry?.depends_on ?? []) {
+    const depEntry = manifest.skills.find(s => s.id === depId)
+    if (!depEntry || isSkillConfigured(depEntry)) continue
+    missingDependencies.push({
+      id: depId,
+      label: depEntry.label || depId,
+    })
+  }
+
+  return { peers, missingDependencies }
+}
+
+function getSkillConfigLocations(entry: RequiredSkillEntry): string[] {
+  const rel = getTahpSkillsRootForPrompt()
+  const hints: string[] = []
+
+  if (isVirtualEntry(entry)) {
+    if (entry.setup_doc) hints.push(`SOP 文档: \`${entry.setup_doc}\``)
+    if (entry.related_skill) {
+      hints.push(`相关 Skill: \`${tahpSkillMdRelativePath(entry.related_skill)}\``)
+      hints.push('`harness config show` / `harness --json doctor` 输出')
+    }
+    return hints
+  }
+
+  const skillRel = `${rel}/${entry.id}`
+  hints.push(`\`${skillRel}/SKILL.md\``)
+  hints.push(`\`${skillRel}/.env\``)
+  hints.push(`\`${skillRel}/log-pipeline/.env\`（若存在）`)
+  hints.push(`\`${skillRel}/\` 下 \`python scripts/api_jira.py config show\`（若适用）`)
+  return hints
+}
+
+/** 首次配置时注入：引导 Agent 复用清单中已配置 Skill 的凭据与路径 */
+export function buildConfiguredSkillsReferenceBlock(
+  currentSkillId: string,
+  currentEntry: RequiredSkillEntry,
+  peerContext?: ReturnType<typeof getConfiguredPeerSkills>,
+): string {
+  const { peers, missingDependencies } = peerContext ?? getConfiguredPeerSkills(currentSkillId)
+  if (!peers.length && !missingDependencies.length) return ''
+
+  const lines: string[] = [
+    '# 参考已配置 Skill（减少重复填写）',
+    '',
+    '配置清单中已有 Skill 完成配置。配置当前 Skill 前，**必须先 Read 下列已配置项的持久化存储**，复用相同或等价的系统账号、密码、工具路径（如 `JIRA_*`、`FEISHU_*`、`WORKSPACE_ROOT`、`SEVEN_ZIP_EXE`、`NETWORK_SERVERS`、harness `config` 等）。',
+    '**禁止**向用户重复索要已在其它 Skill 或工程级文件中存在的凭据；仅对缺失项提问。',
+    '',
+    '## 工程级共享凭据（优先检查）',
+    '- `.tahp/jira-user-config.json` — Console 同步的 JIRA 用户名/密码/服务器',
+    '- `~/.jira_cli_config.json` — jira-ops `config set` 写入的 Jira 凭据',
+    '',
+  ]
+
+  if (missingDependencies.length) {
+    lines.push('## 前置依赖尚未就绪')
+    for (const dep of missingDependencies) {
+      lines.push(`- **${dep.label}**（\`${dep.id}\`）尚未配置完成；若当前 Skill 强依赖其能力，请先提示用户完成该依赖，或说明将单独补齐缺失项。`)
+    }
+    lines.push('')
+  }
+
+  if (peers.length) {
+    const sorted = [...peers].sort((a, b) => {
+      if (a.isDependency !== b.isDependency) return a.isDependency ? -1 : 1
+      return a.label.localeCompare(b.label, 'zh-CN')
+    })
+    lines.push('## 已配置 Skill 参考清单')
+    for (const peer of sorted) {
+      const depTag = peer.isDependency ? '（**本 Skill 依赖项，优先参考**）' : ''
+      lines.push(`### ${peer.label}（\`${peer.id}\`）${depTag}`)
+      if (peer.completedNote) lines.push(`- 配置摘要: ${peer.completedNote}`)
+      lines.push('- 建议 Read 的配置位置:')
+      for (const loc of peer.configLocations) {
+        lines.push(`  - ${loc}`)
+      }
+      lines.push('')
+    }
+  }
+
+  const currentDeps = currentEntry.depends_on ?? []
+  if (currentDeps.length && peers.some(p => p.isDependency)) {
+    lines.push(
+      '## 复用规则',
+      `- 当前 Skill（\`${currentSkillId}\`）声明依赖: ${currentDeps.map(d => `\`${d}\``).join('、')}`,
+      '- 从依赖 Skill 的 `.env` / `config show` 中读取到的 `JIRA_SERVER`、`JIRA_USERNAME`、`JIRA_PASSWORD`、`WORKSPACE_ROOT` 等，应直接写入当前 Skill 规定的存储位置（如 `.env`、`log-pipeline/.env`、`config set`），无需用户再次输入。',
+      '- 写入后运行当前 Skill 的体检命令确认；若某项在依赖 Skill 中也不存在，再向用户索取。',
+      '',
+    )
+  }
+
+  return lines.join('\n')
+}
+
 function parseConfigCompleteMarker(text: string): { skillId?: string; message?: string } | null {
   const m = CONFIG_COMPLETE_RE.exec(text)
   if (!m) return null
@@ -466,10 +436,17 @@ function parseConfigCompleteMarker(text: string): { skillId?: string; message?: 
   return { skillId: fields.skill_id, message: fields.message }
 }
 
-function buildSkillConfigInstructions(entry: RequiredSkillEntry, force: boolean): string {
+function buildSkillConfigInstructions(
+  entry: RequiredSkillEntry,
+  force: boolean,
+  peerContext?: ReturnType<typeof getConfiguredPeerSkills>,
+): string {
   const skillId = entry.id
   const skillLabel = entry.label
   const rel = getTahpSkillsRootForPrompt()
+  const resolvedPeerContext = force
+    ? { peers: [], missingDependencies: [] }
+    : (peerContext ?? getConfiguredPeerSkills(skillId))
 
   let base: string
   if (isVirtualEntry(entry)) {
@@ -522,13 +499,23 @@ message: <一句话说明配置结果>
 `
   }
 
+  const referenceBlock = force ? '' : buildConfiguredSkillsReferenceBlock(skillId, entry, resolvedPeerContext)
+  if (referenceBlock) {
+    base = `${base}\n\n${referenceBlock}`
+  }
+
   const userHint = force
     ? `请引导我重新完成 ${skillLabel} 的全部必要配置（可覆盖已有配置）。`
     : entry.agent_brief || `请引导我完成 ${skillLabel} 的全部必要配置。`
-  const preferred = [entry.related_skill, skillId].filter(Boolean) as string[]
+  const preferred = [
+    ...resolvedPeerContext.peers.map(p => p.id),
+    ...(entry.depends_on ?? []),
+    entry.related_skill,
+    skillId,
+  ].filter(Boolean) as string[]
   const tahpCtx = buildFullTahpSystemContext(userHint, {
     scenario: 'skill_config',
-    preferredSkillIds: preferred,
+    preferredSkillIds: [...new Set(preferred)],
   })
   return tahpCtx ? `${base}\n\n${tahpCtx}` : base
 }
@@ -613,12 +600,13 @@ async function executeSkillConfigRun(
   ctx: SkillConfigTaskCtx,
   userMessage: string,
   isContinue: boolean,
+  peerContext?: ReturnType<typeof getConfiguredPeerSkills>,
 ): Promise<void> {
   try {
     const entry = getManifestEntry(ctx.skillId)
     const instructions = isContinue || !entry
       ? undefined
-      : buildSkillConfigInstructions(entry, ctx.forceReconfigure)
+      : buildSkillConfigInstructions(entry, ctx.forceReconfigure, peerContext)
 
     if (!isContinue) {
       saveAgentPromptLog(ctx.taskId, 'skill-config', instructions || '', userMessage)
@@ -641,18 +629,15 @@ async function executeSkillConfigRun(
         note: complete.message,
         by: 'agent',
       })
-      const verify = verifySkillConfig(ctx.skillId)
       ctx.status = 'completed'
+      const message = complete.message || '配置完成'
       emit(ctx.taskId, 'task.skill_config_complete', {
         skill_id: ctx.skillId,
-        verify_ok: verify.ok,
-        verify_detail: verify.detail,
-        message: verify.ok ? '配置完成' : `Agent 已标记完成，但校验未通过: ${verify.detail}`,
+        message,
       })
       emit(ctx.taskId, 'task.completed', {
         status: 'completed',
         skill_id: ctx.skillId,
-        verify_ok: verify.ok,
         message: 'Skill 配置向导完成',
       })
       activeTasks.delete(ctx.skillId)
@@ -715,9 +700,17 @@ export function startSkillConfigAgent(skillId: string, force = false): {
   taskCtx.set(taskId, ctx)
   activeTasks.set(skillId, ctx)
 
+  const peerContext = force ? { peers: [], missingDependencies: [] } : getConfiguredPeerSkills(skillId)
+  const peerHint = force
+    ? ''
+    : (peerContext.peers.length
+      ? `请先参考配置清单中已完成的 Skill：${peerContext.peers.map(p => `${p.label}（${p.id}）`).join('、')}，复用其中已有的系统账号、密码与工具路径，避免重复向我索要。`
+      : '')
   const userMessage = force
     ? `请引导我**重新配置** ${entry.label}（${skillId}）的全部必要项，可覆盖已有配置。`
-    : (entry.agent_brief || `请引导我完成 ${entry.label}（${skillId}）的全部必要配置。`)
+    : [peerHint, entry.agent_brief || `请引导我完成 ${entry.label}（${skillId}）的全部必要配置。`]
+      .filter(Boolean)
+      .join('\n')
 
   emit(taskId, 'task.started', {
     type: 'skill_config',
@@ -728,7 +721,7 @@ export function startSkillConfigAgent(skillId: string, force = false): {
   })
 
   setImmediate(() => {
-    executeSkillConfigRun(ctx, userMessage, false).catch(() => {})
+    executeSkillConfigRun(ctx, userMessage, false, peerContext).catch(() => {})
   })
 
   return { ok: true, taskId }
