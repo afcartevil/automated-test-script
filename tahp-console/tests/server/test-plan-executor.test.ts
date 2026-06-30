@@ -15,11 +15,21 @@ import {
 
 const startTestMock = vi.fn()
 const snapshotDevicesMock = vi.fn()
+const buildPlannedTestFlashPayloadMock = vi.fn()
 
 vi.mock('../../packages/server/src/services/tahp/device-self-check', () => ({
   snapshotDevices: (...args: unknown[]) => snapshotDevicesMock(...args),
   startTest: (...args: unknown[]) => startTestMock(...args),
 }))
+
+vi.mock('../../packages/server/src/services/tahp/device-flash', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../packages/server/src/services/tahp/device-flash')>()
+  return {
+    ...actual,
+    buildPlannedTestFlashPayload: (...args: unknown[]) =>
+      buildPlannedTestFlashPayloadMock(...args),
+  }
+})
 
 describe('test-plan-executor', () => {
   let tempDir = ''
@@ -54,6 +64,13 @@ describe('test-plan-executor', () => {
 
     startTestMock.mockReset()
     snapshotDevicesMock.mockReset()
+    buildPlannedTestFlashPayloadMock.mockReset()
+    buildPlannedTestFlashPayloadMock.mockResolvedValue({
+      enabled: true,
+      pkgPath: '\\\\server\\daily\\Open\\rom.zip',
+      stageVersion: 'Open',
+      rootPkgPath: '\\\\server\\daily\\Root\\root.zip',
+    })
     vi.resetModules()
   })
 
@@ -74,10 +91,11 @@ describe('test-plan-executor', () => {
     const { getPlanExecution } = await import('../../packages/server/src/services/tahp/test-plan-executions')
     const record = await getPlanExecution(scheduleKey)
     expect(record?.runtimeStatus).toBe('no_device')
+    expect(buildPlannedTestFlashPayloadMock).not.toHaveBeenCalled()
     expect(startTestMock).not.toHaveBeenCalled()
   })
 
-  it('auto-starts test when project matches device name', async () => {
+  it('auto-starts monkey test with flash payload including root package', async () => {
     snapshotDevicesMock.mockReturnValue([
       { deviceId: 'dev-1', deviceName: 'Infinix X6876', status: '空闲', role: '未分配' },
     ])
@@ -86,10 +104,16 @@ describe('test-plan-executor', () => {
     const { tickPlanExecutor } = await import('../../packages/server/src/services/tahp/test-plan-executor')
     await tickPlanExecutor()
 
+    expect(buildPlannedTestFlashPayloadMock).toHaveBeenCalledWith('dev-1', 'monkey')
     expect(startTestMock).toHaveBeenCalledWith(
       'dev-1',
       'monkey',
-      undefined,
+      {
+        enabled: true,
+        pkgPath: '\\\\server\\daily\\Open\\rom.zip',
+        stageVersion: 'Open',
+        rootPkgPath: '\\\\server\\daily\\Root\\root.zip',
+      },
       expect.objectContaining({ scheduleKey }),
     )
 
@@ -97,6 +121,53 @@ describe('test-plan-executor', () => {
     const record = await getPlanExecution(scheduleKey)
     expect(record?.runtimeStatus).toBe('running')
     expect(record?.deviceId).toBe('dev-1')
+  })
+
+  it('auto-starts str4 test with flash payload without root package', async () => {
+    const str4Key = buildScheduleKey('X6876', 'STR4A', nodeDate, 'str4')
+    await saveTestPlanRules([
+      { node: 'STR4A', offsetDays: 0, testType: 'str4' },
+    ])
+    buildPlannedTestFlashPayloadMock.mockResolvedValue({
+      enabled: true,
+      pkgPath: '\\\\server\\daily\\Open\\rom.zip',
+      stageVersion: 'Open',
+    })
+
+    snapshotDevicesMock.mockReturnValue([
+      { deviceId: 'dev-1', deviceName: 'Infinix X6876', status: '空闲', role: '未分配' },
+    ])
+    startTestMock.mockResolvedValue({ device: { deviceId: 'dev-1' }, session: {} })
+
+    const { tickPlanExecutor } = await import('../../packages/server/src/services/tahp/test-plan-executor')
+    await tickPlanExecutor()
+
+    expect(buildPlannedTestFlashPayloadMock).toHaveBeenCalledWith('dev-1', 'str4')
+    expect(startTestMock).toHaveBeenCalledWith(
+      'dev-1',
+      'str4',
+      {
+        enabled: true,
+        pkgPath: '\\\\server\\daily\\Open\\rom.zip',
+        stageVersion: 'Open',
+      },
+      expect.objectContaining({ scheduleKey: str4Key }),
+    )
+  })
+
+  it('marks no_device when flash package resolution fails', async () => {
+    snapshotDevicesMock.mockReturnValue([
+      { deviceId: 'dev-1', deviceName: 'Infinix X6876', status: '空闲', role: '未分配' },
+    ])
+    buildPlannedTestFlashPayloadMock.mockRejectedValue(new Error('DEV 路径不存在'))
+
+    const { tickPlanExecutor } = await import('../../packages/server/src/services/tahp/test-plan-executor')
+    await tickPlanExecutor()
+
+    expect(startTestMock).not.toHaveBeenCalled()
+    const { getPlanExecution } = await import('../../packages/server/src/services/tahp/test-plan-executions')
+    const record = await getPlanExecution(scheduleKey)
+    expect(record?.runtimeStatus).toBe('no_device')
   })
 
   it('persists running state via markPlanExecutionRunning', async () => {

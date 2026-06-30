@@ -720,6 +720,46 @@ export async function resolveLatestDailyFlashPackage(
   }
 }
 
+export type PlannedTestType = 'str4' | 'week' | 'monkey'
+
+/** 与 device-self-check StartTestFlashPayload 结构兼容 */
+export interface PlannedTestFlashPayload {
+  enabled: boolean
+  pkgPath?: string
+  rootPkgPath?: string
+  stageVersion?: string
+}
+
+export function findRootPackageInArchive(resolvedArchivePath: string): string | undefined {
+  const rootPath = join(resolvedArchivePath, 'Root')
+  if (!existsSync(rootPath)) return undefined
+  try {
+    return findFlashPackageInOpenPath(rootPath)
+  } catch {
+    return undefined
+  }
+}
+
+/** AI 测试规划自动执行：解析 latest daily + Open 市场，monkey 可选 Root 包 */
+export async function buildPlannedTestFlashPayload(
+  deviceId: string,
+  testType: PlannedTestType,
+): Promise<PlannedTestFlashPayload> {
+  const daily = await resolveLatestDailyFlashPackage({ deviceId })
+  const payload: PlannedTestFlashPayload = {
+    enabled: true,
+    pkgPath: daily.packagePath,
+    stageVersion: 'Open',
+  }
+  if (testType === 'monkey') {
+    const rootPkgPath = findRootPackageInArchive(daily.resolvedArchivePath)
+    if (rootPkgPath) {
+      payload.rootPkgPath = rootPkgPath
+    }
+  }
+  return payload
+}
+
 function findScatterPkgPath(searchRoot: string): string {
   const stack = [searchRoot]
   const scatterMatches: string[] = []

@@ -13,6 +13,7 @@ import {
   markPlanExecutionNoDevice,
   markPlanExecutionRunning,
 } from './test-plan-executions'
+import { buildPlannedTestFlashPayload } from './device-flash'
 import { snapshotDevices, startTest } from './device-self-check'
 
 let timer: NodeJS.Timeout | null = null
@@ -49,10 +50,29 @@ export async function tickPlanExecutor(): Promise<void> {
         continue
       }
 
+      let flash
+      try {
+        flash = await buildPlannedTestFlashPayload(
+          matched.deviceId,
+          item.testType as PlanTestType,
+        )
+      } catch (err) {
+        await markPlanExecutionNoDevice(item.scheduleKey)
+        logger.warn(
+          {
+            scheduleKey: item.scheduleKey,
+            deviceId: matched.deviceId,
+            err: (err as Error).message,
+          },
+          '[plan-executor] failed to resolve flash package',
+        )
+        continue
+      }
+
       const result = await startTest(
         matched.deviceId,
         item.testType as PlanTestType,
-        undefined,
+        flash,
         { scheduleKey: item.scheduleKey },
       )
       if (!result) {

@@ -1,4 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { mkdirSync, writeFileSync } from 'fs'
+import { join } from 'path'
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
 import {
   normalizePath,
   isZipFile,
@@ -7,6 +11,7 @@ import {
   buildReleaseBranchFolder,
   normalizeSystemVersionLabel,
   pickLatestSystemVersion,
+  findRootPackageInArchive,
   MARKET_VERSIONS,
   type DailySystemVersionOption,
 } from '../../packages/server/src/services/tahp/device-flash'
@@ -51,5 +56,18 @@ describe('device-flash helpers', () => {
       { label: 'tOS16.3', value: 'tOS16.3', branchFolder: 'tOS16.3.0_mtk_sys_release' },
     ]
     expect(pickLatestSystemVersion(versions)).toBe('tOS17.0')
+  })
+
+  it('finds root package under archive Root directory', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tahp-flash-root-'))
+    try {
+      const rootDir = join(tempDir, 'Root')
+      mkdirSync(rootDir, { recursive: true })
+      writeFileSync(join(rootDir, 'root_build.zip'), 'zip')
+      expect(findRootPackageInArchive(tempDir)).toBe(join(rootDir, 'root_build.zip'))
+      expect(findRootPackageInArchive(join(tempDir, 'missing'))).toBeUndefined()
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 })
