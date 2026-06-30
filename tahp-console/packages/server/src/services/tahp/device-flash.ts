@@ -778,6 +778,7 @@ export interface PlannedTestFlashPayload {
   enabled: boolean
   pkgPath?: string
   rootPkgPath?: string
+  enableRootPkg?: boolean
   stageVersion?: string
 }
 
@@ -791,7 +792,10 @@ export function findRootPackageInArchive(resolvedArchivePath: string): string | 
   }
 }
 
-/** AI 测试规划自动执行：解析 latest daily + Open 市场，monkey 可选 Root 包 */
+/** monkey / smoke 规划自动执行需与手动 UI 一致：刷机 + 勾选「刷 Root 包」 */
+const PLANNED_TEST_TYPES_WITH_ROOT_PKG: PlannedTestType[] = ['monkey', 'smoke']
+
+/** AI 测试规划自动执行：解析 latest daily + Open 市场 */
 export async function buildPlannedTestFlashPayload(
   deviceId: string,
   testType: PlannedTestType,
@@ -802,11 +806,8 @@ export async function buildPlannedTestFlashPayload(
     pkgPath: daily.packagePath,
     stageVersion: 'Open',
   }
-  if (testType === 'monkey') {
-    const rootPkgPath = findRootPackageInArchive(daily.resolvedArchivePath)
-    if (rootPkgPath) {
-      payload.rootPkgPath = rootPkgPath
-    }
+  if (PLANNED_TEST_TYPES_WITH_ROOT_PKG.includes(testType)) {
+    payload.enableRootPkg = true
   }
   return payload
 }
