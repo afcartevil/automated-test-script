@@ -30,11 +30,13 @@ const EXCEL_COLUMN_MAP: Record<ProjectNodeKey, string[]> = {
   STR6: ['STR6'],
 }
 
+export const PROJECT_INFO_XLSX_RELATIVE = join('temp_milestone_info', '升级项目关键信息表.xlsx')
+
 export function defaultProjectInfoXlsxPath(): string {
   if (process.env.TAHP_PROJECT_INFO_XLSX) {
     return resolve(process.env.TAHP_PROJECT_INFO_XLSX)
   }
-  return join(tahpPaths.projectRoot, 'docs', '升级项目关键信息表.xlsx')
+  return join(tahpPaths.projectRoot, PROJECT_INFO_XLSX_RELATIVE)
 }
 
 export function normalizeHeader(header: string): string {

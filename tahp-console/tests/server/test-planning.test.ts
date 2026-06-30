@@ -4,11 +4,13 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import * as XLSX from 'xlsx'
 import {
+  defaultProjectInfoXlsxPath,
   normalizeHeader,
   parseProjectDate,
   parseProjectInfoXlsx,
   type ProjectNodeEntry,
 } from '../../packages/server/src/services/tahp/project-info-xlsx'
+import { tahpPaths } from '../../packages/server/src/services/tahp/paths'
 import {
   buildTestSchedule,
   getNextNodes,
@@ -71,6 +73,19 @@ describe('project-info-xlsx', () => {
     expect(parseProjectDate('2026-07-07 00:00:00')).toBe('2026/07/07')
     expect(parseProjectDate('2026/07/27')).toBe('2026/07/27')
     expect(parseProjectDate('')).toBeNull()
+  })
+
+  it('defaults project info xlsx under temp_milestone_info', () => {
+    const prev = process.env.TAHP_PROJECT_INFO_XLSX
+    delete process.env.TAHP_PROJECT_INFO_XLSX
+    try {
+      expect(defaultProjectInfoXlsxPath()).toBe(
+        join(tahpPaths.projectRoot, 'temp_milestone_info', '升级项目关键信息表.xlsx'),
+      )
+    } finally {
+      if (prev === undefined) delete process.env.TAHP_PROJECT_INFO_XLSX
+      else process.env.TAHP_PROJECT_INFO_XLSX = prev
+    }
   })
 
   it('reads upgrading projects from xlsx', async () => {

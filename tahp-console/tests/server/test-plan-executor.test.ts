@@ -69,7 +69,7 @@ describe('test-plan-executor', () => {
       enabled: true,
       pkgPath: '\\\\server\\daily\\Open\\rom.zip',
       stageVersion: 'Open',
-      rootPkgPath: '\\\\server\\daily\\Root\\root.zip',
+      enableRootPkg: true,
     })
     vi.resetModules()
   })
@@ -95,7 +95,7 @@ describe('test-plan-executor', () => {
     expect(startTestMock).not.toHaveBeenCalled()
   })
 
-  it('auto-starts monkey test with flash payload including root package', async () => {
+  it('auto-starts monkey test with flash payload enabling root package', async () => {
     snapshotDevicesMock.mockReturnValue([
       { deviceId: 'dev-1', deviceName: 'Infinix X6876', status: '空闲', role: '未分配' },
     ])
@@ -112,7 +112,7 @@ describe('test-plan-executor', () => {
         enabled: true,
         pkgPath: '\\\\server\\daily\\Open\\rom.zip',
         stageVersion: 'Open',
-        rootPkgPath: '\\\\server\\daily\\Root\\root.zip',
+        enableRootPkg: true,
       },
       expect.objectContaining({ scheduleKey }),
     )
@@ -121,6 +121,40 @@ describe('test-plan-executor', () => {
     const record = await getPlanExecution(scheduleKey)
     expect(record?.runtimeStatus).toBe('running')
     expect(record?.deviceId).toBe('dev-1')
+  })
+
+  it('auto-starts smoke test with flash payload enabling root package', async () => {
+    const smokeKey = buildScheduleKey('X6876', 'STR4A', nodeDate, 'smoke')
+    await saveTestPlanRules([
+      { node: 'STR4A', offsetDays: 0, testType: 'smoke' },
+    ])
+    buildPlannedTestFlashPayloadMock.mockResolvedValue({
+      enabled: true,
+      pkgPath: '\\\\server\\daily\\Open\\rom.zip',
+      stageVersion: 'Open',
+      enableRootPkg: true,
+    })
+
+    snapshotDevicesMock.mockReturnValue([
+      { deviceId: 'dev-1', deviceName: 'Infinix X6876', status: '空闲', role: '未分配' },
+    ])
+    startTestMock.mockResolvedValue({ device: { deviceId: 'dev-1' }, session: {} })
+
+    const { tickPlanExecutor } = await import('../../packages/server/src/services/tahp/test-plan-executor')
+    await tickPlanExecutor()
+
+    expect(buildPlannedTestFlashPayloadMock).toHaveBeenCalledWith('dev-1', 'smoke')
+    expect(startTestMock).toHaveBeenCalledWith(
+      'dev-1',
+      'smoke',
+      {
+        enabled: true,
+        pkgPath: '\\\\server\\daily\\Open\\rom.zip',
+        stageVersion: 'Open',
+        enableRootPkg: true,
+      },
+      expect.objectContaining({ scheduleKey: smokeKey }),
+    )
   })
 
   it('auto-starts str4 test with flash payload without root package', async () => {

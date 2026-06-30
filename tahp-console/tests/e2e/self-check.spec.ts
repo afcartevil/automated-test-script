@@ -35,7 +35,7 @@ function mockDeviceSelfCheckApi(page: import('@playwright/test').Page) {
 function mockTestPlanningApi(page: import('@playwright/test').Page) {
   const nodesPayload = {
     updatedAt: '2026-06-24T08:00:00.000Z',
-    sourcePath: 'docs/升级项目关键信息表.xlsx',
+    sourcePath: 'temp_milestone_info/升级项目关键信息表.xlsx',
     projects: [],
     nextNodes: [
       {
