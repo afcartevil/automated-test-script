@@ -20,6 +20,7 @@ import {
   getCaseCatalogs,
   getCaseCatalogDetail,
   continueTest,
+  resumeTest,
   endTest,
   updateCaseResult,
   getModuleConditions,
@@ -30,6 +31,7 @@ import {
   updateSettings,
   fetchSelfCheckPipeline,
   fetchTPowerStatus,
+  listSelfCheckReports,
   type DeviceRole,
   type DeviceInfo,
   type DeviceDetail,
@@ -39,6 +41,7 @@ import {
   type CaseCatalogGroup,
   type CaseCatalogDetailItem,
   type SelfCheckPipelineView,
+  type SelfCheckReportSummary,
   type TPowerStatus,
 } from '@/api/tahp/device-self-check'
 import {
@@ -67,7 +70,7 @@ export const SELF_CHECK_TABS = [
   { key: 'planning', label: '项目规划' },
   { key: 'devices', label: '设备执行' },
   { key: 'gerrit', label: 'AI Review' },
-  { key: 'review', label: '报告 Review' },
+  { key: 'review', label: '测试报告' },
 ] as const
 
 export function useDeviceSelfCheck() {
@@ -133,6 +136,9 @@ const tcardUpdatePath = ref('')
 const viewMode = ref<'list' | 'customTest'>('list')
 const catalogPanelExpanded = ref(false)
 const deviceDetailExpanded = ref(false)
+/** 重复选中同一设备/用例时递增，供视图层滚动到详情 */
+const deviceDetailScrollNonce = ref(0)
+const catalogPanelScrollNonce = ref(0)
 
 // 自定义测试 / 概览用例目录
 const caseCatalogGroups = ref<CaseCatalogGroup[]>([])
@@ -153,6 +159,12 @@ const expandedCatalogDetailModules = ref<Set<string>>(new Set())
 const selectedCases = ref<Set<string>>(new Set())
 const customTestDutDeviceId = ref<string | null>(null)
 const customTestAuxDeviceIds = ref<Set<string>>(new Set())
+
+watch(customTestDutDeviceId, (deviceId, prevId) => {
+  if (deviceId !== prevId && deviceId !== null) {
+    customTestAuxDeviceIds.value = new Set()
+  }
+})
 const customTestStarting = ref(false)
 const gerritPreselectCount = ref(0)
 const launchStore = useDeviceSelfCheckLaunchStore()
@@ -163,6 +175,8 @@ const launchStore = useDeviceSelfCheckLaunchStore()
   const scheduleItems = ref<ScheduleItem[]>([])
   const pipelineView = ref<SelfCheckPipelineView | null>(null)
   const tpowerStatus = ref<TPowerStatus | null>(null)
+  const overviewReports = ref<SelfCheckReportSummary[]>([])
+  const reportsLoading = ref(false)
 
   async function loadPipelineStatus() {
     try {
@@ -177,6 +191,17 @@ const launchStore = useDeviceSelfCheckLaunchStore()
       tpowerStatus.value = await fetchTPowerStatus()
     } catch {
       tpowerStatus.value = null
+    }
+  }
+
+  async function loadOverviewReports() {
+    reportsLoading.value = true
+    try {
+      overviewReports.value = await listSelfCheckReports({ sinceHours: 72, pendingOnly: true })
+    } catch {
+      overviewReports.value = []
+    } finally {
+      reportsLoading.value = false
     }
   }
 
@@ -283,6 +308,47 @@ const pollingTimer = ref<ReturnType<typeof setInterval> | null>(null)
 const followCurrent = ref(true)
 const eventSource = ref<EventSource | null>(null)
 
+interface ParsedSelectedCase {
+  testType: string
+  module: string
+  caseIndex: number
+}
+
+function parseSelectedCaseKey(
+  selected: string | null | undefined,
+  fallbackTestType?: string,
+): ParsedSelectedCase | null {
+  if (!selected) return null
+  const parts = selected.split('/').filter(Boolean)
+  if (parts.length >= 3) {
+    const caseIndex = parseInt(parts[parts.length - 1], 10)
+    if (!Number.isFinite(caseIndex)) return null
+    return {
+      testType: parts.slice(0, -2).join('/'),
+      module: parts[parts.length - 2],
+      caseIndex,
+    }
+  }
+  if (parts.length === 2) {
+    const caseIndex = parseInt(parts[1], 10)
+    if (!Number.isFinite(caseIndex)) return null
+    return {
+      testType: fallbackTestType || 'str4',
+      module: parts[0],
+      caseIndex,
+    }
+  }
+  return null
+}
+
+function formatSelectedCaseKey(testType: string, module: string, caseIndex: number): string {
+  return `${testType}/${module}/${caseIndex}`
+}
+
+function formatCaseResultKey(parsed: ParsedSelectedCase): string {
+  return formatSelectedCaseKey(parsed.testType, parsed.module, parsed.caseIndex)
+}
+
 async function loadDevices() {
   loading.value = true
   error.value = null
@@ -332,14 +398,15 @@ function applyFollowCurrentCase(session?: { testType: string; selectedCases?: st
   if (!mod) return
   const prog = session.moduleProgress[`${session.testType}/${mod}`]
   if (prog?.currentCaseIndex) {
-    selectedCase.value = `${mod}/${prog.currentCaseIndex}`
+    selectedCase.value = formatSelectedCaseKey(session.testType, mod, prog.currentCaseIndex)
   } else {
-    selectedCase.value = `${mod}/1`
+    selectedCase.value = formatSelectedCaseKey(session.testType, mod, 1)
     expandedModules.value = new Set([...expandedModules.value, mod])
   }
 }
 
 async function selectDevice(deviceId: string) {
+  const reselect = selectedDeviceId.value === deviceId && deviceDetailExpanded.value
   try {
     selectedDeviceId.value = deviceId
     deviceDetailExpanded.value = true
@@ -351,6 +418,9 @@ async function selectDevice(deviceId: string) {
     // 如果正在测试中，开始轮询
     if (detail.session?.isRunning) {
       startPolling()
+    }
+    if (reselect) {
+      deviceDetailScrollNonce.value += 1
     }
   } catch (e: any) {
     console.error('[DeviceSelfCheck] Error getting device detail:', e)
@@ -389,6 +459,7 @@ function toggleCatalogDetailModule(module: string) {
 }
 
 async function openCaseCatalog(testType: string) {
+  const reselect = catalogPanelExpanded.value && selectedCatalogTestType.value === testType
   selectedCatalogTestType.value = testType
   catalogPanelExpanded.value = true
   viewMode.value = 'list'
@@ -421,11 +492,18 @@ async function openCaseCatalog(testType: string) {
     error.value = e?.message || '加载用例详情失败'
   } finally {
     catalogDetailLoading.value = false
+    if (reselect) {
+      catalogPanelScrollNonce.value += 1
+    }
   }
 }
 
 function selectCatalogCase(caseKey: string) {
+  const reselect = selectedCatalogCaseKey.value === caseKey && catalogPanelExpanded.value
   selectedCatalogCaseKey.value = caseKey
+  if (reselect) {
+    catalogPanelScrollNonce.value += 1
+  }
 }
 
 async function saveCatalogTypeSettings() {
@@ -611,7 +689,7 @@ function connectEventStream() {
           if (mod) {
             const prog = session.moduleProgress[`${session.testType}/${mod}`]
             if (prog?.currentCaseIndex) {
-              selectedCase.value = `${mod}/${prog.currentCaseIndex}`
+              selectedCase.value = formatSelectedCaseKey(session.testType, mod, prog.currentCaseIndex)
             }
           }
         }
@@ -687,10 +765,11 @@ function disconnectEventStream() {
 
 async function handleSetRole(deviceId: string, role: DeviceRole) {
   try {
-    await setDeviceRole(deviceId, role)
-    await loadDevices()
-    if (selectedDeviceId.value === deviceId) {
-      await selectDevice(deviceId)
+    const updated = await setDeviceRole(deviceId, role)
+    if (!updated) return
+    patchDeviceInList(updated)
+    if (selectedDeviceId.value === deviceId && selectedDevice.value) {
+      selectedDevice.value = { ...selectedDevice.value, device: updated }
     }
   } catch (e: any) {
     console.error('[DeviceSelfCheck] Error setting device role:', e)
@@ -787,6 +866,25 @@ async function handleContinueTest(deviceId: string) {
     await loadDevices()
   } catch (e: any) {
     console.error('[DeviceSelfCheck] Error continuing test:', e)
+    message.error(e?.message || '继续测试失败')
+  }
+}
+
+async function handleResumeTest(deviceId: string) {
+  try {
+    const result = await resumeTest(deviceId)
+    if (result) {
+      selectedDevice.value = result
+      followCurrent.value = true
+      startPolling()
+      message.success('已从报错模块恢复测试')
+    } else {
+      message.error('无法恢复测试，请检查设备状态')
+    }
+    await loadDevices()
+  } catch (e: any) {
+    console.error('[DeviceSelfCheck] Error resuming test:', e)
+    message.error(e?.message || '恢复测试失败')
   }
 }
 
@@ -796,6 +894,7 @@ async function handleEndTest(deviceId: string) {
     const result = await endTest(deviceId)
     patchDeviceInList(result.device)
     await loadDevices()
+    message.success('测试已终止，设备已恢复空闲')
     if (result.device.role === '辅测机' && (result.device.status as string) === '待命') {
       selectedDeviceId.value = deviceId
       selectedDevice.value = result
@@ -1026,11 +1125,20 @@ function isGroupAllSelected(group: CaseCatalogGroup): boolean {
   return group.modules.length > 0
 }
 
-function toggleAuxDevice(deviceId: string) {
+async function toggleAuxDevice(deviceId: string) {
   if (customTestAuxDeviceIds.value.has(deviceId)) {
     customTestAuxDeviceIds.value.delete(deviceId)
   } else {
     customTestAuxDeviceIds.value.add(deviceId)
+    const dev = devices.value.find(d => d.deviceId === deviceId)
+    if (dev?.role === '未分配') {
+      try {
+        const updated = await setDeviceRole(deviceId, '辅测机')
+        if (updated) patchDeviceInList(updated)
+      } catch (e: any) {
+        console.error('[DeviceSelfCheck] Error setting aux role:', e)
+      }
+    }
   }
   customTestAuxDeviceIds.value = new Set(customTestAuxDeviceIds.value)
 }
@@ -1165,6 +1273,20 @@ const isIdle = computed(() => {
   return selectedDevice.value?.device.status === '空闲'
 })
 
+const isError = computed(() => selectedDevice.value?.device.status === '错误')
+
+const errorReason = computed(() => {
+  const session = selectedDevice.value?.session
+  if (session?.errorReason) return session.errorReason
+  if (flashDone.value === 'error' && flashLogs.value.length) {
+    const last = [...flashLogs.value].reverse().find(l => /失败|error|错误/i.test(l))
+    if (last) return last
+  }
+  return '测试流程异常中断'
+})
+
+const errorModuleLabel = computed(() => selectedDevice.value?.device.currentModule || '')
+
 const isFlashing = computed(() => selectedDevice.value?.device.status === '刷机中')
 
 const flashProgress = computed(() => flashProgressState.value.progress)
@@ -1213,9 +1335,12 @@ const isTestComplete = computed(() => {
 
 const canEndTest = computed(() => {
   const device = selectedDevice.value?.device
+  const session = selectedDevice.value?.session
   if (!device || device.role === '辅测机') return false
   if ((device.status as string) === '待命') return false
-  return !isIdle.value
+  if (session?.isRunning) return true
+  const status = device.status || ''
+  return status === '测试中' || status === '初始化中' || status === '等待测试开始' || status === '刷机中' || status === '错误'
 })
 
 const needsContinue = computed(() => {
@@ -1227,17 +1352,12 @@ const needsContinue = computed(() => {
 const selectedCaseResult = computed((): CaseResult | undefined => {
   if (!selectedCase.value || !selectedDevice.value?.session?.caseResults) return undefined
   const session = selectedDevice.value.session
-  const isCustom = selectedDevice.value.device.testType === 'custom'
-  let key: string
-  if (isCustom) {
-    key = selectedCase.value
-  } else {
-    const parts = selectedCase.value.split('/')
-    const index = parseInt(parts.pop() || '1')
-    const module = parts.join('/')
-    const testType = selectedDevice.value.device.testType || 'str4'
-    key = `${testType}/${module}/${index}`
-  }
+  const parsed = parseSelectedCaseKey(
+    selectedCase.value,
+    selectedDevice.value.device.testType,
+  )
+  if (!parsed) return undefined
+  const key = formatCaseResultKey(parsed)
   const result = session.caseResults[key]
   if (result) {
     const config = moduleConditions.value[`${result.testType}/${result.module}`]
@@ -1254,7 +1374,12 @@ const selectedCaseResult = computed((): CaseResult | undefined => {
 onMounted(async () => {
   connectEventStream()
   await loadDevices()
-  await Promise.all([loadPlanningSummary(), loadPipelineStatus(), loadTPowerStatus()])
+  await Promise.all([
+    loadPlanningSummary(),
+    loadPipelineStatus(),
+    loadTPowerStatus(),
+    loadOverviewReports(),
+  ])
   loadCaseCatalogs({ silent: true })
   try {
     moduleConditions.value = await getModuleConditions()
@@ -1286,19 +1411,24 @@ function isModuleExpanded(key: string): boolean {
 
 // 辅助函数：获取当前选中用例名称
 function getSelectedCaseName(config: ModuleCondition): string {
-  const caseIndex = parseInt(selectedCase.value?.split('/').pop() || '1')
+  const parsed = parseSelectedCaseKey(
+    selectedCase.value,
+    selectedDevice.value?.device.testType,
+  )
+  const caseIndex = parsed?.caseIndex ?? parseInt(selectedCase.value?.split('/').pop() || '1', 10)
   const caseItem = config.cases.find(c => c.caseIndex === caseIndex)
   return caseItem?.caseName || `用例${caseIndex}`
 }
 
 function selectCaseItem(module: string, caseIndex: number, testType?: string) {
-  if (testType || selectedDevice.value?.device.testType === 'custom') {
-    const tt = testType || selectedCase.value?.split('/')[0] || 'str4'
-    selectedCase.value = `${tt}/${module}/${caseIndex}`
-  } else {
-    selectedCase.value = `${module}/${caseIndex}`
-  }
+  const tt = testType || selectedDevice.value?.device.testType || 'str4'
+  const nextKey = formatSelectedCaseKey(tt, module, caseIndex)
+  const reselect = selectedCase.value === nextKey && deviceDetailExpanded.value
+  selectedCase.value = nextKey
   followCurrent.value = false
+  if (reselect) {
+    deviceDetailScrollNonce.value += 1
+  }
 }
 
 function toggleFollowCurrent() {
@@ -1319,7 +1449,7 @@ function toggleFollowCurrent() {
         if (m) {
           const p = s.moduleProgress[s.testType + '/' + m]
           if (p?.currentCaseIndex) {
-            selectedCase.value = m + '/' + p.currentCaseIndex
+            selectedCase.value = formatSelectedCaseKey(s.testType, m, p.currentCaseIndex)
           }
         }
       }
@@ -1328,15 +1458,12 @@ function toggleFollowCurrent() {
 }
 
 function isSelectedCaseInConfig(config: ModuleCondition): boolean {
-  if (!selectedCase.value) return false
-  if (selectedDevice.value?.device.testType === 'custom') {
-    const parts = selectedCase.value.split('/')
-    const caseIndex = parts.pop()
-    const module = parts.pop()
-    const testType = parts.join('/')
-    return testType === config.testType && module === config.module && String(config.cases.find(c => c.caseIndex === parseInt(caseIndex || '0'))?.caseIndex) === caseIndex
-  }
-  return selectedCase.value.startsWith(config.module)
+  const parsed = parseSelectedCaseKey(
+    selectedCase.value,
+    selectedDevice.value?.device.testType,
+  )
+  if (!parsed) return false
+  return parsed.testType === config.testType && parsed.module === config.module
 }
 
 // 辅助函数：获取用例结果样式类
@@ -1353,10 +1480,16 @@ function getCaseItemClass(config: ModuleCondition, index: number): string {
 }
 
 function isCaseSelected(config: ModuleCondition, caseIndex: number): boolean {
-  if (selectedDevice.value?.device.testType === 'custom') {
-    return selectedCase.value === `${config.testType}/${config.module}/${caseIndex}`
-  }
-  return selectedCase.value === `${config.module}/${caseIndex}`
+  const parsed = parseSelectedCaseKey(
+    selectedCase.value,
+    selectedDevice.value?.device.testType,
+  )
+  if (!parsed) return false
+  return (
+    parsed.testType === config.testType
+    && parsed.module === config.module
+    && parsed.caseIndex === caseIndex
+  )
 }
 
 // 辅助函数：获取用例结果样式
@@ -1376,6 +1509,9 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     scheduleItems,
     stats,
     pipelineStages,
+    overviewReports,
+    reportsLoading,
+    loadOverviewReports,
     tpowerStatus,
     loadTPowerStatus,
     handleSyncNodes,
@@ -1410,6 +1546,8 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     viewMode,
     catalogPanelExpanded,
     deviceDetailExpanded,
+    deviceDetailScrollNonce,
+    catalogPanelScrollNonce,
     caseCatalogGroups,
     selectedCatalogTestType,
     catalogDetailItems,
@@ -1452,6 +1590,9 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     selectedCatalogGroup,
     getCaseGroups,
     isIdle,
+    isError,
+    errorReason,
+    errorModuleLabel,
     pageTitle,
     isTestComplete,
     canEndTest,
@@ -1472,6 +1613,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     handleSetRole,
     handleStartTest,
     handleContinueTest,
+    handleResumeTest,
     handleEndTest,
     openModifyDialog,
     handleModifyCaseResult,

@@ -97,6 +97,7 @@ export interface TestSession {
   auxiliaryDevices: string[]
   selectedCases?: string[]
   customAuxDevices?: string[]
+  errorReason?: string
 }
 
 export interface CaseCatalogItem {
@@ -286,6 +287,13 @@ export async function continueTest(deviceId: string): Promise<DeviceDetail> {
   )
 }
 
+export async function resumeTest(deviceId: string): Promise<DeviceDetail> {
+  return await tahpPost<DeviceDetail>(
+    `/api/tahp/device-self-check/devices/${deviceId}/test/resume`,
+    {}
+  )
+}
+
 export async function getModuleConditions(): Promise<
   Record<string, ModuleCondition>
 > {
@@ -442,9 +450,22 @@ export interface SelfCheckReportSummary {
   scheduleKey?: string
 }
 
+export interface SelfCheckCaseItem {
+  caseKey: string
+  caseName: string
+  module: string
+  testType: string
+  caseIndex: number
+  status: string
+  message: string
+  fullAutomation?: boolean
+  steps?: { stepDesc: string; status: string; timestamp: string }[]
+}
+
 export interface SelfCheckReportDetail extends SelfCheckReportSummary {
   aiSummary: string
   failedCaseItems: SelfCheckFailedCaseItem[]
+  allCaseItems: SelfCheckCaseItem[]
   reviewNote?: string
   reviewedAt?: string
 }
@@ -464,12 +485,39 @@ export function getSelfCheckReportDetail(reportId: string): Promise<SelfCheckRep
   return tahpGet<SelfCheckReportDetail>(`/api/tahp/device-self-check/reports/${encodeURIComponent(reportId)}`)
 }
 
+export function openSelfCheckReportFile(reportId: string): Promise<{ filePath: string }> {
+  return tahpPost<{ filePath: string }>(
+    `/api/tahp/device-self-check/reports/${encodeURIComponent(reportId)}/open`,
+    {},
+  )
+}
+
 export function submitSelfCheckReportReview(
   reportId: string,
   payload: { status: SelfCheckReviewStatus; note?: string },
 ): Promise<SelfCheckReportDetail> {
   return tahpPost<SelfCheckReportDetail>(
     `/api/tahp/device-self-check/reports/${encodeURIComponent(reportId)}/review`,
+    payload,
+  )
+}
+
+export function updateReportCaseResult(
+  reportId: string,
+  payload: { caseKey: string; status: string; message?: string },
+): Promise<SelfCheckReportDetail> {
+  return tahpPost<SelfCheckReportDetail>(
+    `/api/tahp/device-self-check/reports/${encodeURIComponent(reportId)}/case-result`,
+    payload,
+  )
+}
+
+export function retestReportCase(
+  reportId: string,
+  payload: { caseKey: string; auxDeviceId?: string },
+): Promise<{ result: CaseResult; detail: SelfCheckReportDetail }> {
+  return tahpPost<{ result: CaseResult; detail: SelfCheckReportDetail }>(
+    `/api/tahp/device-self-check/reports/${encodeURIComponent(reportId)}/retest`,
     payload,
   )
 }

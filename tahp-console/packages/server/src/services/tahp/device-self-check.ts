@@ -12,7 +12,7 @@ import {
   waitForAdbDevice,
 } from './device-flash'
 import { resolvePythonSpawn, tahpPaths } from './paths'
-import { buildSelfCheckDetailPayload, type SelfCheckFailedCaseItem } from './self-check-reports'
+import { buildSelfCheckDetailPayload, reportAbsoluteDir, type SelfCheckCaseItem, type SelfCheckFailedCaseItem } from './self-check-reports'
 import { markPlanExecutionCompleted } from './test-plan-executions'
 
 // 类型定义
@@ -117,9 +117,11 @@ export interface TestSession {
   auxiliaryDevices: string[]
   selectedCases?: string[]
   customAuxDevices?: string[]
+  customAuxPromotedIds?: string[]
   initializedPythonModules?: string[]
   flashOptions?: DeviceFlashOptions
   scheduleKey?: string
+  errorReason?: string
 }
 
 export interface CaseCatalogItem {
@@ -155,6 +157,7 @@ export interface DeviceDetail {
 // 内存状态存储 - 只使用一个单一的数据源，避免不一致
 let devices: Record<string, DeviceInfo> = {}
 let testSessions: Record<string, TestSession> = {}
+const activeCaseCleanups: Record<string, () => void> = {}
 let moduleConditions: Record<string, ModuleCondition> = {}
 
 // 配置路径
@@ -1348,6 +1351,7 @@ async function execPythonCase(
       if (settled) return
       settled = true
       cleanup()
+      delete activeCaseCleanups[deviceId]
       resolve(result)
     }
 
@@ -1355,6 +1359,8 @@ async function execPythonCase(
       if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
       if (proc && !proc.killed) { try { proc.kill() } catch {} }
     }
+
+    activeCaseCleanups[deviceId] = cleanup
 
     const caseTimeoutMs = resolveCaseExecTimeoutMs(testType, module)
 
@@ -1824,6 +1830,8 @@ async function runFlashBeforeTest(deviceId: string, session: TestSession): Promi
   if (!result.success) {
     device.status = '错误'
     session.isRunning = false
+    session.errorReason = result.error || '刷机失败'
+    device.currentModule = '刷机'
     emitEvent('device_updated', { device })
     emitEvent('flash_completed', {
       deviceId,
@@ -1839,6 +1847,8 @@ async function runFlashBeforeTest(deviceId: string, session: TestSession): Promi
   if (!reconnected) {
     device.status = '错误'
     session.isRunning = false
+    session.errorReason = '刷机后设备未重新连接'
+    device.currentModule = '刷机'
     emitEvent('device_updated', { device })
     return false
   }
@@ -1847,6 +1857,47 @@ async function runFlashBeforeTest(deviceId: string, session: TestSession): Promi
 
 export interface StartTestOptions {
   scheduleKey?: string
+}
+
+function bindCustomAuxDevices(auxIds: string[], dutId: string, session: TestSession): void {
+  const now = new Date().toISOString()
+  if (!session.customAuxPromotedIds) {
+    session.customAuxPromotedIds = []
+  }
+  for (const auxId of auxIds) {
+    if (auxId === dutId) continue
+    const aux = devices[auxId]
+    if (!aux) continue
+    if (aux.role === '未分配') {
+      session.customAuxPromotedIds.push(auxId)
+      aux.role = '辅测机'
+    }
+    aux.testType = 'custom'
+    aux.testStartTime = aux.testStartTime || now
+    aux.status = aux.role === '测试机' ? '测试中' : '占用中'
+    aux.isMirroredResult = false
+    emitEvent('device_updated', { device: aux })
+  }
+}
+
+function releaseCustomAuxDevices(session: TestSession): void {
+  const promoted = new Set(session.customAuxPromotedIds ?? [])
+  for (const auxId of session.auxiliaryDevices ?? []) {
+    const aux = devices[auxId]
+    if (!aux) continue
+    aux.status = '空闲'
+    aux.testType = undefined
+    aux.testStartTime = undefined
+    aux.testDuration = 0
+    aux.currentModule = undefined
+    aux.isMirroredResult = false
+    if (promoted.has(auxId)) {
+      aux.role = '未分配'
+    }
+    emitEvent('device_updated', { device: aux })
+  }
+  session.auxiliaryDevices = []
+  session.customAuxPromotedIds = []
 }
 
 // 启动测试
@@ -1907,7 +1958,7 @@ export async function startTest(
 
     // 异步执行测试流程
     runTestFlow(deviceId, testType, session).catch(e => {
-      console.error(`[device-self-check] Test flow error:`, e)
+      markTestFlowError(deviceId, e, testType)
     })
 
     return { device, session }
@@ -1925,6 +1976,15 @@ export async function startCustomTest(
   try {
     const device = devices[deviceId]
     if (!device || device.status !== '空闲') return null
+
+    const auxIds = customAuxDeviceIds.filter(id => id !== deviceId)
+    for (const auxId of auxIds) {
+      const aux = devices[auxId]
+      if (!aux || aux.status !== '空闲') {
+        console.warn(`[device-self-check] Custom test: aux ${auxId} not idle`)
+        return null
+      }
+    }
 
     device.status = '初始化中'
     device.testType = 'custom'
@@ -1955,20 +2015,21 @@ export async function startCustomTest(
       caseResults: {},
       startTime: device.testStartTime,
       isRunning: true,
-      auxiliaryDevices: customAuxDeviceIds,
+      auxiliaryDevices: auxIds,
       selectedCases,
-      customAuxDevices: customAuxDeviceIds,
+      customAuxDevices: auxIds,
       initializedPythonModules: [],
     }
 
     testSessions[deviceId] = session
+    bindCustomAuxDevices(auxIds, deviceId, session)
     emitEvent('test_started', { deviceId, testType: 'custom', session })
 
     execAdbSimple(['-s', deviceId, 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000'])
       .catch(() => {})
 
     runCustomTestFlow(deviceId, session, caseList).catch(e => {
-      console.error('[device-self-check] Custom test flow error:', e)
+      markTestFlowError(deviceId, e, 'custom')
     })
 
     return { device, session }
@@ -1979,68 +2040,158 @@ export async function startCustomTest(
 }
 
 // 异步执行测试流程
+function markTestFlowError(
+  deviceId: string,
+  err: unknown,
+  testType?: string,
+): void {
+  const device = devices[deviceId]
+  const session = testSessions[deviceId]
+  if (!device || !session) return
+  if (device.status === '错误') return
+
+  session.isRunning = false
+  const msg = err instanceof Error ? err.message : String(err)
+  session.errorReason = msg || '测试流程异常'
+
+  const moduleName = session.modules[session.currentModuleIndex]
+  if (moduleName) {
+    const tt = testType || session.testType
+    const moduleKey = `${tt}/${moduleName}`
+    device.currentModule = moduleConditions[moduleKey]?.moduleLabel || moduleName
+  }
+
+  device.status = '错误'
+  emitEvent('device_updated', { device })
+  emitEvent('test_error', { deviceId, message: session.errorReason, module: device.currentModule })
+}
+
+function parseCustomCaseKeys(selectedCases: string[]): { testType: string; module: string; caseIndex: number }[] {
+  const caseList: { testType: string; module: string; caseIndex: number }[] = []
+  for (const caseKey of selectedCases) {
+    const parts = caseKey.split('/')
+    const caseIndex = parseInt(parts.pop() || '1', 10)
+    const module = parts.pop() || ''
+    const tt = parts.join('/')
+    caseList.push({ testType: tt, module, caseIndex })
+  }
+  return caseList
+}
+
+export function formatCaseResultKey(testType: string, module: string, caseIndex: number): string {
+  return `${testType}/${module}/${caseIndex}`
+}
+
+function resolveCaseResult(
+  caseResults: Record<string, CaseResult>,
+  rawKey: string,
+): CaseResult | undefined {
+  const direct = caseResults[rawKey]
+  if (direct) return direct
+  const parsed = parseCustomCaseKeys([rawKey])[0]
+  if (!parsed) return undefined
+  return caseResults[formatCaseResultKey(parsed.testType, parsed.module, parsed.caseIndex)]
+}
+
+/** 按执行顺序收集报告用例结果；自定义测试在 selectedCases 映射失败时回退到 caseResults */
+export function collectOrderedCaseResults(session: TestSession): CaseResult[] {
+  const allResults = Object.values(session.caseResults)
+  if (allResults.length === 0) return []
+
+  const sortResults = (results: CaseResult[]) =>
+    [...results].sort((a, b) =>
+      formatCaseResultKey(a.testType, a.module, a.caseIndex)
+        .localeCompare(formatCaseResultKey(b.testType, b.module, b.caseIndex), undefined, { numeric: true }),
+    )
+
+  if (session.testType === 'custom' && session.selectedCases?.length) {
+    const ordered: CaseResult[] = []
+    const seen = new Set<string>()
+    for (const rawKey of session.selectedCases) {
+      const result = resolveCaseResult(session.caseResults, rawKey)
+      if (!result) continue
+      const key = formatCaseResultKey(result.testType, result.module, result.caseIndex)
+      if (seen.has(key)) continue
+      seen.add(key)
+      ordered.push(result)
+    }
+    if (ordered.length > 0) return ordered
+  }
+
+  return sortResults(allResults)
+}
+
+const TERMINAL_CASE_STATUSES = new Set(['通过', '失败', '部分通过', 'NA', '跳过'])
+
 async function runTestFlow(
   deviceId: string,
   testType: StandardTestType,
-  session: TestSession
+  session: TestSession,
+  startModuleIndex = 0,
 ): Promise<void> {
-  if (session.flashOptions) {
-    const flashOk = await runFlashBeforeTest(deviceId, session)
-    if (!flashOk || !session.isRunning) return
-  }
-
-  const device = devices[deviceId]
-  if (device) {
-    device.status = '初始化中'
-    emitEvent('device_updated', { device })
-    await execDeviceInit(deviceId, session)
-  }
-
-  const modules = session.modules
-
-  for (let idx = 0; idx < modules.length; idx++) {
-    const module = modules[idx]
-    session.currentModuleIndex = idx
-
-    await runModule(deviceId, testType, module, session)
+  try {
+    if (session.flashOptions && startModuleIndex === 0) {
+      const flashOk = await runFlashBeforeTest(deviceId, session)
+      if (!flashOk || !session.isRunning) return
+    }
 
     const device = devices[deviceId]
-    if (!device || !session.isRunning) {
-      return
+    if (device && startModuleIndex === 0) {
+      device.status = '初始化中'
+      emitEvent('device_updated', { device })
+      await execDeviceInit(deviceId, session)
     }
 
-    // 不满足前置条件 → 停止
-    if (device.status === '不满足前置条件') {
-      return
+    const modules = session.modules
+
+    for (let idx = startModuleIndex; idx < modules.length; idx++) {
+      const module = modules[idx]
+      session.currentModuleIndex = idx
+
+      await runModule(deviceId, testType, module, session)
+
+      const dev = devices[deviceId]
+      if (!dev || !session.isRunning) {
+        return
+      }
+
+      if (dev.status === '不满足前置条件') {
+        return
+      }
+      if (dev.status === '等待测试开始') {
+        return
+      }
     }
-    // 等待辅测机 → 暂停，等待 continueTest
-    if (device.status === '等待测试开始') {
-      return
-    }
+
+    finishTest(deviceId, session)
+  } catch (e) {
+    console.error(`[device-self-check] Test flow error for ${deviceId}:`, e)
+    markTestFlowError(deviceId, e, testType)
   }
-
-  // 测试完成
-  finishTest(deviceId, session)
 }
 
 // 自定义测试：按勾选用例列表执行
 async function runCustomTestFlow(
   deviceId: string,
   session: TestSession,
-  caseList: { testType: string; module: string; caseIndex: number }[]
+  caseList: { testType: string; module: string; caseIndex: number }[],
+  options: { skipDeviceInit?: boolean } = {},
 ): Promise<void> {
+  try {
   const device = devices[deviceId]
   if (!device) return
 
   const moduleKeys = new Set(caseList.map(c => `${c.testType}/${c.module}`))
   for (const mk of moduleKeys) {
     const moduleCases = caseList.filter(c => `${c.testType}/${c.module}` === mk)
-    session.moduleProgress[mk] = {
-      module: mk,
-      totalCases: moduleCases.length,
-      completedCases: 0,
-      passedCases: 0,
-      failedCases: 0,
+    if (!session.moduleProgress[mk]) {
+      session.moduleProgress[mk] = {
+        module: mk,
+        totalCases: moduleCases.length,
+        completedCases: 0,
+        passedCases: 0,
+        failedCases: 0,
+      }
     }
   }
 
@@ -2048,8 +2199,11 @@ async function runCustomTestFlow(
     if (devices[auxId]) {
       if (devices[auxId].role === '测试机') {
         devices[auxId].status = '测试中'
-      } else {
+      } else if (devices[auxId].status !== '占用中') {
         devices[auxId].status = '占用中'
+      }
+      if (!devices[auxId].testType) {
+        devices[auxId].testType = 'custom'
       }
       emitEvent('device_updated', { device: devices[auxId] })
     }
@@ -2057,7 +2211,9 @@ async function runCustomTestFlow(
 
   device.status = '初始化中'
   emitEvent('device_updated', { device })
-  await execDeviceInit(deviceId, session)
+  if (!options.skipDeviceInit) {
+    await execDeviceInit(deviceId, session)
+  }
 
   if (!session.isRunning) return
 
@@ -2122,20 +2278,13 @@ async function runCustomTestFlow(
     await retestFailedAutoCasesInModule(deviceId, testType, module, caseIndexes, session)
   }
 
-  for (const auxId of session.auxiliaryDevices) {
-    if (devices[auxId]) {
-      if (devices[auxId].role === '测试机') {
-        devices[auxId].status = '等待测试开始'
-      } else if (devices[auxId].status === '占用中') {
-        devices[auxId].status = '待命'
-      }
-      devices[auxId].isMirroredResult = false
-      emitEvent('device_updated', { device: devices[auxId] })
-    }
-  }
-  session.auxiliaryDevices = []
+  releaseCustomAuxDevices(session)
 
   finishTest(deviceId, session)
+  } catch (e) {
+    console.error(`[device-self-check] Custom test flow error for ${deviceId}:`, e)
+    markTestFlowError(deviceId, e, 'custom')
+  }
 }
 
 // 完成测试
@@ -2145,12 +2294,13 @@ function finishTest(deviceId: string, session: TestSession): void {
 
   const allPassed = Object.values(session.caseResults)
     .every(r => r.status === '通过' || r.status === '跳过')
-  device.status = allPassed ? '完成(通过)' : '完成(失败)'
+  const finalStatus = allPassed ? '完成(通过)' : '完成(失败)'
   device.testDuration = Math.round(
     (Date.now() - new Date(device.testStartTime || Date.now()).getTime()) / 1000
   )
   session.endTime = new Date().toISOString()
   session.isRunning = false
+  device.status = finalStatus
 
   emitEvent('device_updated', { device })
   emitEvent('test_completed', { deviceId, session })
@@ -2161,10 +2311,27 @@ function finishTest(deviceId: string, session: TestSession): void {
     })
   }
 
-  // 生成 xlsx 报告
-  generateTestReport(deviceId, session).catch(e => {
-    console.warn('[device-self-check] Failed to generate report:', e)
-  })
+  void generateTestReport(deviceId, session)
+    .catch(e => {
+      console.warn('[device-self-check] Failed to generate report:', e)
+    })
+    .finally(() => {
+      resetDeviceToIdleAfterTest(deviceId)
+    })
+}
+
+function resetDeviceToIdleAfterTest(deviceId: string): void {
+  const device = devices[deviceId]
+  if (!device) return
+  device.status = '空闲'
+  device.testType = undefined
+  device.currentModule = undefined
+  device.testStartTime = undefined
+  device.testDuration = 0
+  device.isMirroredResult = false
+  delete testSessions[deviceId]
+  emitEvent('device_updated', { device })
+  emitEvent('test_ended', { deviceId })
 }
 
 // 生成测试报告
@@ -2197,7 +2364,7 @@ ${sharedStrings.map(s => `<si><t>${escXml(s)}</t></si>`).join('\n')}
   <font><b/><sz val="11"/><name val="Calibri"/></font>
   <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
 </fonts>
-<fills count="5">
+<fills count="6">
   <fill><patternFill patternType="none"/></fill>
   <fill><patternFill patternType="gray125"/></fill>
   <fill><patternFill patternType="solid"><fgColor rgb="FFDDDDDD"/></patternFill></fill>
@@ -2292,39 +2459,26 @@ ${cols}
   return zip.toBuffer()
 }
 
-async function generateTestReport(deviceId: string, session: TestSession): Promise<void> {
+async function generateTestReport(
+  deviceId: string,
+  session: TestSession,
+  existingResultDir?: string,
+): Promise<void> {
   try {
     const device = devices[deviceId]
     if (!device) return
 
-    const resultDir = join(tahpPaths.reportsDir, 'self-check', deviceId, session.startTime?.replace(/[:.]/g, '-') || '')
+    const resultDir = existingResultDir
+      ?? join(tahpPaths.reportsDir, 'self-check', deviceId, session.startTime?.replace(/[:.]/g, '-') || '')
     mkdirSync(resultDir, { recursive: true })
 
-    // 按模块分组
-    const moduleCases: Record<string, CaseResult[]> = {}
-    for (const result of Object.values(session.caseResults)) {
-      if (!moduleCases[result.module]) moduleCases[result.module] = []
-      moduleCases[result.module].push(result)
-    }
-    for (const cases of Object.values(moduleCases)) {
-      cases.sort((a, b) => a.caseIndex - b.caseIndex)
-    }
+    const orderedResults = collectOrderedCaseResults(session)
 
     const sheets: { name: string; rows: string[][]; styles: ('green' | 'red' | 'yellow' | '')[] }[] = []
 
     if (session.testType === 'custom') {
       const rows: string[][] = [['序号', '用例名称', '所属模块', '状态', '结论', '是否全自动', '执行时间']]
       const styles: ('green' | 'red' | 'yellow' | '')[] = ['']
-      const orderedResults: CaseResult[] = []
-
-      if (session.selectedCases) {
-        for (const caseKey of session.selectedCases) {
-          const result = session.caseResults[caseKey]
-          if (result) orderedResults.push(result)
-        }
-      } else {
-        orderedResults.push(...Object.values(session.caseResults))
-      }
 
       for (const c of orderedResults) {
         const moduleKey = `${c.testType}/${c.module}`
@@ -2346,7 +2500,16 @@ async function generateTestReport(deviceId: string, session: TestSession): Promi
       }
       sheets.push({ name: '自定义测试', rows, styles })
     } else {
-      for (const [module, cases] of Object.entries(moduleCases)) {
+      const moduleCases = new Map<string, CaseResult[]>()
+      for (const result of orderedResults) {
+        const moduleKey = `${result.testType}/${result.module}`
+        if (!moduleCases.has(moduleKey)) moduleCases.set(moduleKey, [])
+        moduleCases.get(moduleKey)!.push(result)
+      }
+      for (const [moduleKey, cases] of moduleCases) {
+        cases.sort((a, b) => a.caseIndex - b.caseIndex)
+        const sheetName = (moduleConditions[moduleKey]?.moduleLabel || moduleKey.split('/').pop() || moduleKey)
+          .slice(0, 31)
         const rows: string[][] = [['序号', '用例名称', '状态', '结论', '是否全自动', '执行时间']]
         const styles: ('green' | 'red' | 'yellow' | '')[] = ['']
         for (const c of cases) {
@@ -2364,12 +2527,12 @@ async function generateTestReport(deviceId: string, session: TestSession): Promi
           const statusStyle = c.status === '通过' ? 'green' : c.status === '失败' ? 'red' : c.status === '部分通过' ? 'yellow' : ''
           styles.push(statusStyle)
         }
-        sheets.push({ name: module, rows, styles })
+        sheets.push({ name: sheetName, rows, styles })
       }
     }
 
     if (sheets.length === 0) {
-      sheets.push({ name: '摘要', rows: [['无测试数据'], []], styles: [''] })
+      sheets.push({ name: '摘要', rows: [['无测试数据']], styles: [''] })
     }
 
     const buffer = generateXlsx(sheets)
@@ -2386,26 +2549,24 @@ async function generateTestReport(deviceId: string, session: TestSession): Promi
       duration: device.testDuration,
       status: device.status,
       modules: session.moduleProgress,
-      totalCases: Object.keys(session.caseResults).length,
-      passedCases: Object.values(session.caseResults).filter(r => r.status === '通过').length,
-      failedCases: Object.values(session.caseResults).filter(r => r.status === '失败').length,
-      skippedCases: Object.values(session.caseResults).filter(r => r.status === '跳过').length,
+      totalCases: orderedResults.length,
+      passedCases: orderedResults.filter(r => r.status === '通过').length,
+      failedCases: orderedResults.filter(r => r.status === '失败').length,
+      skippedCases: orderedResults.filter(r => r.status === '跳过' || r.status === 'NA').length,
       ...(session.scheduleKey
         ? { aiPlanned: true, scheduleKey: session.scheduleKey }
+        : {}),
+      ...(session.testType === 'custom' && session.selectedCases?.length
+        ? { selectedCases: session.selectedCases }
         : {}),
     }
     writeFileSync(join(resultDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8')
 
     const failedCaseItems: SelfCheckFailedCaseItem[] = []
-    const orderedResults: CaseResult[] = session.testType === 'custom' && session.selectedCases
-      ? session.selectedCases
-          .map(caseKey => session.caseResults[caseKey])
-          .filter((r): r is CaseResult => Boolean(r))
-      : Object.values(session.caseResults)
 
     for (const c of orderedResults) {
       if (c.status !== '失败' && c.status !== '部分通过' && c.status !== '待确认') continue
-      const caseKey = `${c.testType}/${c.module}/${c.caseIndex}`
+      const caseKey = formatCaseResultKey(c.testType, c.module, c.caseIndex)
       failedCaseItems.push({
         caseKey,
         caseName: c.caseName,
@@ -2415,7 +2576,19 @@ async function generateTestReport(deviceId: string, session: TestSession): Promi
       })
     }
 
-    const detailPayload = buildSelfCheckDetailPayload(summary, failedCaseItems)
+    const allCaseItems: SelfCheckCaseItem[] = orderedResults.map(c => ({
+      caseKey: formatCaseResultKey(c.testType, c.module, c.caseIndex),
+      caseName: c.caseName,
+      module: c.module,
+      testType: c.testType,
+      caseIndex: c.caseIndex,
+      status: c.status,
+      message: c.message,
+      fullAutomation: c.fullAutomation,
+      steps: c.steps,
+    }))
+
+    const detailPayload = buildSelfCheckDetailPayload(summary, failedCaseItems, allCaseItems)
     writeFileSync(join(resultDir, 'detail.json'), JSON.stringify(detailPayload, null, 2), 'utf-8')
 
     device.resultDir = resultDir
@@ -2434,23 +2607,64 @@ export async function continueTest(deviceId: string): Promise<DeviceDetail | nul
     }
 
     device.status = '测试中'
+    session.errorReason = undefined
     emitEvent('device_updated', { device })
 
-    // 重新检查前置条件并继续未完成的模块
     const testType = session.testType
     if (testType === 'custom') {
       return { device, session }
     }
-    const remainingModules = session.modules.slice(session.currentModuleIndex)
     session.isRunning = true
 
-    runTestFlow(deviceId, testType, session).catch(e => {
-      console.error(`[device-self-check] Continue test flow error:`, e)
+    runTestFlow(deviceId, testType, session, session.currentModuleIndex).catch(e => {
+      markTestFlowError(deviceId, e, testType)
     })
 
     return { device, session }
   } catch (e) {
     console.error('Error continuing test:', e)
+    return null
+  }
+}
+
+export async function resumeTest(deviceId: string): Promise<DeviceDetail | null> {
+  try {
+    const device = devices[deviceId]
+    const session = testSessions[deviceId]
+    if (!device || !session || device.status !== '错误') {
+      return null
+    }
+
+    session.isRunning = true
+    session.errorReason = undefined
+    device.status = session.flashOptions && session.currentModuleIndex === 0 ? '刷机中' : '初始化中'
+    emitEvent('device_updated', { device })
+
+    const testType = session.testType
+    if (testType === 'custom') {
+      const allCases = parseCustomCaseKeys(session.selectedCases || [])
+      const remaining = allCases.filter(item => {
+        const caseKey = `${item.testType}/${item.module}/${item.caseIndex}`
+        const result = session.caseResults[caseKey]
+        return !result || !TERMINAL_CASE_STATUSES.has(result.status)
+      })
+      if (remaining.length === 0) {
+        finishTest(deviceId, session)
+        return { device: devices[deviceId]!, session }
+      }
+      bindCustomAuxDevices(session.auxiliaryDevices, deviceId, session)
+      runCustomTestFlow(deviceId, session, remaining, { skipDeviceInit: false }).catch(e => {
+        markTestFlowError(deviceId, e, 'custom')
+      })
+    } else {
+      runTestFlow(deviceId, testType, session, session.currentModuleIndex).catch(e => {
+        markTestFlowError(deviceId, e, testType)
+      })
+    }
+
+    return { device, session }
+  } catch (e) {
+    console.error('Error resuming test:', e)
     return null
   }
 }
@@ -2505,7 +2719,7 @@ function releaseAuxDevicesIfNoActiveDut(testType: string): void {
   }
 }
 
-// 结束测试（释放所有资源，并停止后台 Monkey）
+// 结束测试（终止当前执行、释放资源，并停止后台 Monkey）
 export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
   const device = devices[deviceId]
   const session = testSessions[deviceId]
@@ -2513,10 +2727,29 @@ export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
 
   const endedTestType = device.testType || session?.testType
 
+  if (activeCaseCleanups[deviceId]) {
+    activeCaseCleanups[deviceId]()
+    delete activeCaseCleanups[deviceId]
+  }
+
   await stopMonkeyForDevice(deviceId)
 
   if (session) {
     session.isRunning = false
+    if (Object.keys(session.caseResults).length > 0) {
+      session.endTime = new Date().toISOString()
+      device.status = '完成(失败)'
+      device.testDuration = Math.round(
+        (Date.now() - new Date(device.testStartTime || Date.now()).getTime()) / 1000
+      )
+      emitEvent('device_updated', { device })
+      emitEvent('test_completed', { deviceId, session })
+      try {
+        await generateTestReport(deviceId, session)
+      } catch (e) {
+        console.warn('[device-self-check] Failed to generate partial report on end:', e)
+      }
+    }
   }
 
   // 清理与其他测试机的双向绑定：从其他 session 的 auxiliaryDevices 中移除本设备
@@ -2542,18 +2775,20 @@ export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
   }
 
   // 释放辅测机（根据角色恢复状态）
-  if (session?.auxiliaryDevices) {
-    for (const auxId of session.auxiliaryDevices) {
-      if (devices[auxId]) {
-        if (devices[auxId].role === '测试机') {
-          // 测试机互相作为辅测机：恢复为等待测试开始
-          devices[auxId].status = '等待测试开始'
-        } else if (devices[auxId].status === '占用中') {
-          // 显式辅测机：恢复待命
-          devices[auxId].status = '待命'
+  if (session?.auxiliaryDevices?.length) {
+    if (session.testType === 'custom') {
+      releaseCustomAuxDevices(session)
+    } else {
+      for (const auxId of session.auxiliaryDevices) {
+        if (devices[auxId]) {
+          if (devices[auxId].role === '测试机') {
+            devices[auxId].status = '等待测试开始'
+          } else if (devices[auxId].status === '占用中') {
+            devices[auxId].status = '待命'
+          }
+          devices[auxId].isMirroredResult = false
+          emitEvent('device_updated', { device: devices[auxId] })
         }
-        devices[auxId].isMirroredResult = false
-        emitEvent('device_updated', { device: devices[auxId] })
       }
     }
   }
@@ -2641,6 +2876,141 @@ export async function retestCase(
   session.auxiliaryDevices = session.auxiliaryDevices.filter(id => id !== auxDeviceId)
 
   return result
+}
+
+function caseItemToResult(item: SelfCheckCaseItem): CaseResult {
+  return {
+    testType: item.testType,
+    module: item.module,
+    caseIndex: item.caseIndex,
+    caseName: item.caseName,
+    status: item.status as CaseResult['status'],
+    message: item.message,
+    fullAutomation: item.fullAutomation ?? true,
+    steps: (item.steps as CaseStep[]) ?? [],
+  }
+}
+
+function buildSessionFromReport(
+  deviceId: string,
+  summary: { testType: string; startTime?: string; endTime?: string; scheduleKey?: string },
+  allCaseItems: SelfCheckCaseItem[],
+): TestSession {
+  const caseResults: Record<string, CaseResult> = {}
+  const moduleProgress: Record<string, ModuleProgress> = {}
+  const modules: string[] = []
+  for (const item of allCaseItems) {
+    const moduleKey = `${item.testType}/${item.module}`
+    if (!moduleProgress[moduleKey]) {
+      modules.push(item.module)
+      moduleProgress[moduleKey] = {
+        module: item.module,
+        totalCases: 0,
+        completedCases: 0,
+        passedCases: 0,
+        failedCases: 0,
+      }
+    }
+    const result = caseItemToResult(item)
+    caseResults[item.caseKey] = result
+    const prog = moduleProgress[moduleKey]
+    prog.totalCases++
+    prog.completedCases++
+    if (result.status === '通过') prog.passedCases++
+    if (result.status === '失败' || result.status === '部分通过') prog.failedCases++
+  }
+  return {
+    deviceId,
+    testType: summary.testType as DeviceTestType,
+    modules,
+    currentModuleIndex: 0,
+    moduleProgress,
+    caseResults,
+    startTime: summary.startTime,
+    endTime: summary.endTime,
+    isRunning: true,
+    auxiliaryDevices: [],
+    selectedCases: summary.testType === 'custom'
+      ? ((summary as { selectedCases?: string[] }).selectedCases?.length
+        ? (summary as { selectedCases?: string[] }).selectedCases
+        : allCaseItems.map(i => i.caseKey))
+      : undefined,
+    scheduleKey: summary.scheduleKey,
+  }
+}
+
+export async function retestReportCase(
+  reportId: string,
+  caseKey: string,
+  auxDeviceId?: string,
+): Promise<CaseResult | null> {
+  const absDir = reportAbsoluteDir(reportId)
+  const detailPath = join(absDir, 'detail.json')
+  const summaryPath = join(absDir, 'summary.json')
+  if (!existsSync(detailPath) || !existsSync(summaryPath)) return null
+
+  const detailJson = JSON.parse(readFileSync(detailPath, 'utf-8')) as {
+    allCaseItems?: SelfCheckCaseItem[]
+    failedCaseItems?: SelfCheckFailedCaseItem[]
+    deviceId: string
+    testType: string
+    startTime?: string
+    endTime?: string
+    scheduleKey?: string
+  }
+  const summaryJson = JSON.parse(readFileSync(summaryPath, 'utf-8')) as {
+    deviceId: string
+    testType: string
+    startTime?: string
+    endTime?: string
+    scheduleKey?: string
+  }
+
+  const allCaseItems = detailJson.allCaseItems?.length
+    ? detailJson.allCaseItems
+    : (detailJson.failedCaseItems ?? []).map(item => ({
+        caseKey: item.caseKey,
+        caseName: item.caseName,
+        module: item.module,
+        testType: item.caseKey.split('/')[0] || summaryJson.testType,
+        caseIndex: Number.parseInt(item.caseKey.split('/').pop() || '1', 10),
+        status: item.status,
+        message: item.message,
+      }))
+
+  const target = allCaseItems.find(c => c.caseKey === caseKey)
+  if (!target) return null
+
+  const deviceId = summaryJson.deviceId
+  const device = devices[deviceId]
+  if (!device || device.status !== '空闲') {
+    throw new Error('设备非空闲，无法从报告复测')
+  }
+
+  const session = buildSessionFromReport(deviceId, summaryJson, allCaseItems)
+  testSessions[deviceId] = session
+  device.status = '测试中'
+  device.testType = session.testType
+  emitEvent('device_updated', { device })
+
+  try {
+    const result = await retestCase(
+      deviceId,
+      target.testType,
+      target.module,
+      target.caseIndex,
+      auxDeviceId,
+    )
+    if (result) {
+      const allPassed = Object.values(session.caseResults)
+        .every(r => r.status === '通过' || r.status === '跳过')
+      device.status = allPassed ? '完成(通过)' : '完成(失败)'
+      await generateTestReport(deviceId, session, absDir)
+    }
+    return result
+  } finally {
+    resetDeviceToIdleAfterTest(deviceId)
+  }
 }
 
 // 修改用例结果

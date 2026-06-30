@@ -1,43 +1,150 @@
 <script setup lang="ts">
-import EaCard from '@/components/layout/EaCard.vue'
-import type { DeviceInfo } from '@/api/tahp/device-self-check'
+import { computed } from 'vue'
+import type { DeviceInfo, SelfCheckReportSummary } from '@/api/tahp/device-self-check'
 import type { NextNodeItem, ScheduleItem } from '@/api/tahp/test-planning'
-import { getDisplayStatus, getStatusColor, getTestTypeLabel } from './self-check-utils'
+import type { PipelineStage } from './self-check-utils'
+import SelfCheckOverviewCard from './SelfCheckOverviewCard.vue'
+import SelfCheckFlowStatus from './SelfCheckFlowStatus.vue'
+import {
+  getDisplayStatus,
+  getStatusColor,
+  getTestTypeLabel,
+  isActiveAuxiliaryDevice,
+} from './self-check-utils'
 
-defineProps<{
+const props = defineProps<{
   devices: DeviceInfo[]
   nextNodes: NextNodeItem[]
   scheduleItems: ScheduleItem[]
+  overviewReports: SelfCheckReportSummary[]
+  stats: {
+    pendingProjects: number
+    runningTests: number
+    pendingManual: number
+    pendingReports: number
+  }
+  pipelineStages: PipelineStage[]
   loading?: boolean
+  gerritTaskStatus?: string
+  reportsLoading?: boolean
 }>()
 
 const emit = defineEmits<{
   goDevices: []
   goPlanning: []
   goReports: []
+  goGerrit: []
+  goTab: [tab: string]
   selectDevice: [deviceId: string]
 }>()
 
 function isRunning(device: DeviceInfo): boolean {
   return device.status.includes('测试') || device.status.includes('等待') || device.status === '初始化中'
 }
+
+const runningDevices = computed(() => props.devices.filter(isRunning))
+
+const deviceCounts = computed(() => ({
+  idle: props.devices.filter(d => d.status === '空闲').length,
+  activeAux: props.devices.filter(isActiveAuxiliaryDevice).length,
+  error: props.devices.filter(d => d.status === '错误').length,
+}))
+
+const activeSchedules = computed(() =>
+  props.scheduleItems.filter(
+    i => i.runtimeStatus === 'running' || i.runtimeStatus === 'no_device',
+  ),
+)
+
+const reportPreview = computed(() => props.overviewReports.slice(0, 3))
+
+const gerritStatusLabel = computed(() => {
+  const s = props.gerritTaskStatus || ''
+  if (s === 'running') return '评审进行中'
+  if (s === 'completed') return '最近评审已完成'
+  if (s === 'failed') return '最近评审失败'
+  return '暂无进行中的评审'
+})
+
+function formatReportTime(report: SelfCheckReportSummary): string {
+  const t = report.completedAt || report.endTime || report.startTime
+  try {
+    return new Date(t).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return t
+  }
+}
+
+function onFlowStage(tab: string) {
+  emit('goTab', tab)
+}
 </script>
 
 <template>
   <div class="overview-root">
-    <div class="overview-grid">
-      <EaCard class="overview-panel">
-        <div class="panel-head">
-          <h3>运行中设备</h3>
-          <button type="button" class="ea-btn-ghost ea-btn-sm" @click="emit('goDevices')">查看全部</button>
+    <SelfCheckOverviewCard
+      compact
+      hide-enter
+      title="流程状态"
+      tone="tone-violet"
+      :metric="stats.pendingManual"
+      metric-label="待人工确认"
+    >
+      <SelfCheckFlowStatus
+        layout="horizontal"
+        :stages="pipelineStages"
+        @stage-click="onFlowStage"
+      />
+    </SelfCheckOverviewCard>
+
+    <div class="module-grid">
+      <SelfCheckOverviewCard
+        title="项目规划"
+        tone="tone-indigo"
+        :metric="stats.pendingProjects"
+        metric-label="待执行排期"
+        @enter="emit('goPlanning')"
+      >
+        <div v-if="!nextNodes.length" class="panel-empty ea-muted">
+          尚未同步项目节点，请进入
+          <button type="button" class="link-btn" @click="emit('goPlanning')">项目规划</button>
+          同步
         </div>
+        <ul v-else class="item-list">
+          <li v-for="node in nextNodes.slice(0, 3)" :key="`${node.project}-${node.node}`" class="item-row">
+            <span class="item-main">
+              <strong>{{ node.project }}</strong>
+              <small>{{ node.node }} · {{ node.nodeDate }}</small>
+            </span>
+          </li>
+          <li v-if="nextNodes.length > 3" class="item-more ea-muted">还有 {{ nextNodes.length - 3 }} 个节点</li>
+        </ul>
+        <ul v-if="activeSchedules.length" class="item-list item-list--secondary">
+          <li v-for="item in activeSchedules.slice(0, 2)" :key="item.scheduleKey" class="item-row">
+            <span class="item-main">
+              <strong>{{ item.testTypeLabel }}</strong>
+              <small>{{ item.displayLabel }}{{ item.tags.length ? ` · ${item.tags.join(' · ')}` : '' }}</small>
+            </span>
+          </li>
+        </ul>
+      </SelfCheckOverviewCard>
+
+      <SelfCheckOverviewCard
+        title="设备执行"
+        tone="tone-sky"
+        :metric="stats.runningTests"
+        metric-label="运行中"
+        :secondary-metric="`空闲 ${deviceCounts.idle} · 辅测 ${deviceCounts.activeAux} · 错误 ${deviceCounts.error}`"
+        @enter="emit('goDevices')"
+      >
         <div v-if="loading" class="panel-empty ea-muted">加载中…</div>
-        <div v-else-if="!devices.filter(isRunning).length" class="panel-empty ea-muted">
-          暂无运行中测试，可在「设备执行」启动
+        <div v-else-if="!runningDevices.length" class="panel-empty ea-muted">
+          暂无运行中测试，请进入
+          <button type="button" class="link-btn" @click="emit('goDevices')">设备执行</button>
         </div>
         <ul v-else class="item-list">
           <li
-            v-for="device in devices.filter(isRunning).slice(0, 5)"
+            v-for="device in runningDevices.slice(0, 3)"
             :key="device.deviceId"
             class="item-row clickable"
             @click="emit('selectDevice', device.deviceId)"
@@ -50,90 +157,76 @@ function isRunning(device: DeviceInfo): boolean {
             <span class="item-meta">{{ getTestTypeLabel(device.testType) }}</span>
           </li>
         </ul>
-      </EaCard>
+      </SelfCheckOverviewCard>
 
-      <EaCard class="overview-panel">
-        <div class="panel-head">
-          <h3>即将到节点</h3>
-          <button type="button" class="ea-btn-ghost ea-btn-sm" @click="emit('goPlanning')">项目规划</button>
-        </div>
-        <div v-if="!nextNodes.length" class="panel-empty ea-muted">
-          尚未同步项目节点，点击顶部「同步项目节点」
+      <SelfCheckOverviewCard
+        title="测试报告"
+        tone="tone-emerald"
+        :metric="stats.pendingReports"
+        metric-label="待审阅"
+        @enter="emit('goReports')"
+      >
+        <div v-if="reportsLoading" class="panel-empty ea-muted">加载报告…</div>
+        <div v-else-if="!reportPreview.length" class="panel-empty ea-muted">
+          近 72 小时暂无测试报告
         </div>
         <ul v-else class="item-list">
-          <li v-for="node in nextNodes.slice(0, 5)" :key="`${node.project}-${node.node}`" class="item-row">
+          <li v-for="report in reportPreview" :key="report.reportId" class="item-row">
             <span class="item-main">
-              <strong>{{ node.project }}</strong>
-              <small>{{ node.node }} · {{ node.nodeDate }}</small>
+              <strong>{{ report.deviceName }}</strong>
+              <small>{{ formatReportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }} 通过</small>
             </span>
           </li>
         </ul>
-      </EaCard>
+      </SelfCheckOverviewCard>
 
-      <EaCard class="overview-panel">
-        <div class="panel-head">
-          <h3>计划任务</h3>
-          <button type="button" class="ea-btn-ghost ea-btn-sm" @click="emit('goPlanning')">查看规则</button>
-        </div>
-        <div v-if="!scheduleItems.length" class="panel-empty ea-muted">
-          配置节点规则后，到点将自动匹配设备并启动对应测试大类
-        </div>
-        <ul v-else class="item-list">
-          <li
-            v-for="item in scheduleItems.slice(0, 5)"
-            :key="item.scheduleKey"
-            class="item-row"
-          >
-            <span class="item-main">
-              <strong>{{ item.testTypeLabel }}</strong>
-              <small>{{ item.displayLabel }}{{ item.tags.length ? ` · ${item.tags.join(' · ')}` : '' }} · {{ item.display }}</small>
-            </span>
-          </li>
-        </ul>
-      </EaCard>
-
-      <EaCard class="overview-panel">
-        <div class="panel-head">
-          <h3>待 Review 报告</h3>
-          <button type="button" class="ea-btn-ghost ea-btn-sm" @click="emit('goReports')">报告 Review</button>
-        </div>
-        <div class="panel-empty ea-muted">
-          昨晚完成的测试报告将在此汇总，支持 AI 摘要与人工结论
-        </div>
-      </EaCard>
+      <SelfCheckOverviewCard
+        title="AI Review"
+        tone="tone-amber"
+        :metric="gerritStatusLabel"
+        metric-label="状态"
+        @enter="emit('goGerrit')"
+      >
+        <p class="panel-desc ea-muted">
+          基于 Gerrit 变更进行 Code Review，并推荐关联测试用例。
+        </p>
+      </SelfCheckOverviewCard>
     </div>
   </div>
 </template>
 
 <style scoped lang="scss">
-.overview-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+.overview-root {
+  display: flex;
+  flex-direction: column;
   gap: 14px;
 }
 
-.overview-panel {
-  padding: 14px 16px;
-  min-height: 180px;
-}
-
-.panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-
-  h3 {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 700;
-  }
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
 }
 
 .panel-empty {
   font-size: 13px;
   line-height: 1.5;
-  padding: 8px 0;
+}
+
+.panel-desc {
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
 }
 
 .item-list {
@@ -143,6 +236,12 @@ function isRunning(device: DeviceInfo): boolean {
   display: flex;
   flex-direction: column;
   gap: 8px;
+
+  &--secondary {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+  }
 }
 
 .item-row {
@@ -161,6 +260,11 @@ function isRunning(device: DeviceInfo): boolean {
       background: var(--bg);
     }
   }
+}
+
+.item-more {
+  font-size: 12px;
+  padding-left: 2px;
 }
 
 .status-dot {
@@ -193,8 +297,14 @@ function isRunning(device: DeviceInfo): boolean {
   flex-shrink: 0;
 }
 
-@media (max-width: 900px) {
-  .overview-grid {
+@media (max-width: 1100px) {
+  .module-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .module-grid {
     grid-template-columns: 1fr;
   }
 }

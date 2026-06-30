@@ -13,7 +13,8 @@ Base：`/api/tahp/device-self-check`
 | POST | `/devices/:deviceId/test/start` | `{ testType, flash? }`；`flash` 含刷机包路径等 |
 | POST | `/devices/:deviceId/test/custom-start` | `{ selectedCases[], customAuxDeviceIds[] }` |
 | POST | `/devices/:deviceId/test/continue` | 前置条件满足后继续 |
-| POST | `/devices/:deviceId/test/end` | 结束/释放 |
+| POST | `/devices/:deviceId/test/resume` | 错误状态恢复测试（从当前/报错模块继续） |
+| POST | `/devices/:deviceId/test/end` | 终止当前测试（杀用例进程、停 monkey），生成部分报告后设备恢复空闲 |
 | POST | `/devices/:deviceId/case-result` | 人工改结果 |
 | POST | `/devices/:deviceId/case/retest` | 单用例复测 |
 | GET | `/module-conditions` | 模块配置全集 |
@@ -24,9 +25,11 @@ Base：`/api/tahp/device-self-check`
 | GET/POST | `/settings` | `autoRetestEnabled` / `autoRetestCount` 等 |
 | POST | `/flash/pick-path` | 本地选择刷机包路径 |
 | GET | `/pipeline` | 流水线阶段状态 |
-| GET | `/reports` | 自检报告列表（`sinceHours` / `pendingOnly`） |
-| GET | `/reports/:reportId` | 报告详情 |
+| GET | `/reports` | 测试报告列表（`sinceHours` / `pendingOnly`） |
+| GET | `/reports/:reportId` | 报告详情（含 `allCaseItems`） |
 | POST | `/reports/:reportId/review` | 报告审阅（`reviewed` / `retest` / `pending`） |
+| POST | `/reports/:reportId/case-result` | 修改报告中单用例结果（仅 JSON，不跑用例） |
+| POST | `/reports/:reportId/retest` | 从报告复测单用例（需设备空闲，完成后回写报告并恢复空闲） |
 | GET | `/tpower/status` | T-Power 连接探测 |
 | GET/POST | `/tpower/config` | T-Power 配置 |
 | GET | `/events` | SSE 流 |

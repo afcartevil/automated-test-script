@@ -22,6 +22,7 @@ const NODE_OPTIONS: { label: string; value: ProjectNodeKey }[] = [
 const TEST_TYPE_OPTIONS: { label: string; value: PlanTestType }[] = [
   { label: getTestTypeLabel('str4'), value: 'str4' },
   { label: getTestTypeLabel('week'), value: 'week' },
+  { label: getTestTypeLabel('smoke'), value: 'smoke' },
   { label: getTestTypeLabel('monkey'), value: 'monkey' },
   { label: getTestTypeLabel('smoke'), value: 'smoke' },
 ]

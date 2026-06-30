@@ -6,9 +6,11 @@ import {
   startTest,
   startCustomTest,
   continueTest,
+  resumeTest,
   endTest,
   updateCaseResult,
   retestCase,
+  retestReportCase,
   getDevice,
   getTestSession,
   getModuleConditions,
@@ -27,7 +29,9 @@ import {
 import {
   listSelfCheckReports,
   getSelfCheckReportDetail,
+  openSelfCheckReportXlsx,
   submitSelfCheckReportReview,
+  updateReportCaseResult,
   type SelfCheckReviewStatus,
 } from '../../services/tahp/self-check-reports'
 import { getSelfCheckPipelineStatus } from '../../services/tahp/pipeline-status'
@@ -138,6 +142,26 @@ tahpDeviceSelfCheckRoutes.post(
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { success: false, error: err?.message || 'Failed to continue test' }
+    }
+  }
+)
+
+// 从错误状态恢复测试（从当前/报错模块继续）
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/devices/:deviceId/test/resume',
+  async (ctx) => {
+    try {
+      const deviceId = ctx.params.deviceId
+      const result = await resumeTest(deviceId)
+      if (!result) {
+        ctx.status = 400
+        ctx.body = { success: false, error: '设备非错误状态或会话已失效' }
+        return
+      }
+      ctx.body = { success: true, data: result }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to resume test' }
     }
   }
 )
@@ -416,6 +440,20 @@ tahpDeviceSelfCheckRoutes.get(
   }
 )
 
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/reports/:reportId/open',
+  async (ctx) => {
+    try {
+      const filePath = openSelfCheckReportXlsx(ctx.params.reportId)
+      ctx.body = { success: true, data: { filePath } }
+    } catch (err: any) {
+      const message = err?.message || 'Failed to open report file'
+      ctx.status = message.includes('不存在') ? 404 : 400
+      ctx.body = { success: false, error: message }
+    }
+  },
+)
+
 tahpDeviceSelfCheckRoutes.get(
   '/api/tahp/device-self-check/reports/:reportId',
   async (ctx) => {
@@ -458,6 +496,68 @@ tahpDeviceSelfCheckRoutes.post(
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { success: false, error: err?.message || 'Failed to submit review' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/reports/:reportId/case-result',
+  async (ctx) => {
+    try {
+      const body = (ctx.request.body || {}) as {
+        caseKey?: string
+        status?: string
+        message?: string
+      }
+      if (!body.caseKey || !body.status) {
+        ctx.status = 400
+        ctx.body = { success: false, error: '缺少 caseKey 或 status' }
+        return
+      }
+      const data = await updateReportCaseResult(
+        ctx.params.reportId,
+        body.caseKey,
+        body.status,
+        body.message ?? '',
+      )
+      if (!data) {
+        ctx.status = 404
+        ctx.body = { success: false, error: '报告或用例不存在' }
+        return
+      }
+      ctx.body = { success: true, data }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to update report case' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/reports/:reportId/retest',
+  async (ctx) => {
+    try {
+      const body = (ctx.request.body || {}) as { caseKey?: string; auxDeviceId?: string }
+      if (!body.caseKey) {
+        ctx.status = 400
+        ctx.body = { success: false, error: '缺少 caseKey' }
+        return
+      }
+      const result = await retestReportCase(
+        ctx.params.reportId,
+        body.caseKey,
+        body.auxDeviceId,
+      )
+      if (!result) {
+        ctx.status = 404
+        ctx.body = { success: false, error: '报告或用例不存在' }
+        return
+      }
+      const detail = await getSelfCheckReportDetail(ctx.params.reportId)
+      ctx.body = { success: true, data: { result, detail } }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to retest report case' }
     }
   }
 )

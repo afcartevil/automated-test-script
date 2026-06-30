@@ -2,8 +2,38 @@ import { expect, test } from '@playwright/test'
 import { authenticate, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
 
 function mockDeviceSelfCheckApi(page: import('@playwright/test').Page) {
+  const pipelinePayload = {
+    stages: [
+      { key: 'sync', label: '项目节点同步', status: 'done', hint: '1 个项目' },
+      { key: 'flash', label: '版本拉取/烧录', status: 'idle' },
+      { key: 'test', label: '自动测试', status: 'queued' },
+      { key: 'ai', label: 'AI 分析', status: 'idle' },
+      { key: 'review', label: '人工 Review', status: 'idle' },
+    ],
+    updatedAt: '2026-06-24T08:00:00.000Z',
+    runningTests: 0,
+    pendingManual: 0,
+    pendingReports: 0,
+  }
+
   return page.route('**/api/tahp/device-self-check/**', async (route) => {
     const url = route.request().url()
+    if (url.includes('/pipeline')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: pipelinePayload }),
+      })
+      return
+    }
+    if (url.includes('/reports')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: [] }),
+      })
+      return
+    }
     if (url.includes('/module-conditions')) {
       await route.fulfill({
         status: 200,
@@ -152,12 +182,14 @@ test('self-check page renders tabs and workspaces', async ({ page }) => {
 
   await page.goto('/#/tahp/self-check')
   await expect(page.getByRole('heading', { name: 'AI 自检', level: 1 })).toBeVisible()
-  await expect(page.getByText('今日自动化流程')).toBeVisible()
+  await expect(page.getByText('今日自动化流程')).not.toBeVisible()
   await expect(page.getByRole('button', { name: '总览' })).toBeVisible()
   await expect(page.getByRole('button', { name: '项目规划' })).toBeVisible()
   await expect(page.getByRole('button', { name: '设备执行' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'AI Review' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '报告 Review' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '测试报告' })).toBeVisible()
+  await expect(page.getByText('项目规划').first()).toBeVisible()
+  await expect(page.getByText('流程状态').first()).toBeVisible()
   await expect(page.getByText('Gerrit Code Review')).not.toBeVisible()
 
   await page.getByRole('button', { name: 'AI Review' }).click()

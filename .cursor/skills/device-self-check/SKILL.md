@@ -1,7 +1,7 @@
 ---
 name: device-self-check
 description: >-
-  TAHP Console「AI 自检」V0.8：Tab 化总览/项目规划/设备执行/AI Review/报告 Review、
+  TAHP Console「AI 自检」V0.9：页头 Tab 导航、总览功能看板、
   设备并行调度、刷机、str4/week/custom 测试流程、SSE 与 Python 用例执行。
   在 Cursor 中调整 AI 自检 UI、测试流程、用例目录、刷机或报告时使用。
 ---
@@ -30,12 +30,12 @@ Console 入口：`/#/tahp/self-check`（`DeviceSelfCheckView.vue`）。
 ```
 DeviceSelfCheckView.vue          ← Tab 壳层 + provide 上下文
   ├─ useDeviceSelfCheck.ts       ← 状态、SSE、测试/刷机/用例详情
-  ├─ SelfCheckHero / Pipeline
-  ├─ SelfCheckOverview           ← 「总览」Tab
+  ├─ SelfCheckPageHeader         ← 标题 + 右侧 Tab 导航
+  ├─ SelfCheckOverview           ← 「总览」Tab：5 功能看板卡
   ├─ TestPlanningWorkspace       ← 「项目规划」Tab
   ├─ SelfCheckChecklist + SelfCheckDeviceRun  ← 「设备执行」Tab
   ├─ GerritReviewWorkspace       ← 「AI Review」Tab
-  └─ SelfCheckReportReview       ← 「报告 Review」Tab
+  └─ SelfCheckReportReview       ← 「测试报告」Tab
         │ HTTP + EventSource(SSE)
         ▼
 routes/tahp/device-self-check.ts
@@ -45,8 +45,9 @@ services/tahp/device-flash.ts        ← 刷机 device_update
         │ spawn python
         ▼
 services/tahp/self-check/python/
-  run_case.py → cases/{str4|week}/{module}/caseN.py
+  run_case.py → cases/{str4|week|smoke}/{module}/caseN.py
   case_config/*.json
+  tools/sdd_test/si_run.py          ← 冒烟 USD（cases/smoke/usd/case1.py 调用）
 ```
 
 报告输出：`reports/self-check/{deviceId}/{timestamp}/`（CSV + summary.json + xlsx）。
@@ -60,14 +61,17 @@ services/tahp/self-check/python/
 | 页面壳层 | `views/tahp/DeviceSelfCheckView.vue` | Tab 切换、provide `DEVICE_SELF_CHECK_KEY` |
 | 核心 Composable | `composables/useDeviceSelfCheck.ts` | 全部前端状态与 API 调用 |
 | 设备执行 UI | `components/tahp/self-check/SelfCheckDeviceRun.vue` | 设备列表/详情/自定义测试/用例大类详情 |
-| 用例大类卡片 | `components/tahp/self-check/SelfCheckChecklist.vue` | 顶部 str4/week 卡片，点击进入用例详情 |
-| 总览 UI | `components/tahp/self-check/SelfCheckOverview.vue` | 运行中设备、节点、计划任务摘要 |
+| 用例大类卡片 | `components/tahp/self-check/SelfCheckChecklist.vue` | 顶部 str4/week/smoke/monkey 卡片 |
+| 总览 UI | `components/tahp/self-check/SelfCheckOverview.vue` | 5 功能看板卡 |
+| 页头 | `components/tahp/self-check/SelfCheckPageHeader.vue` | 标题 + 右侧 Tab |
+| 功能卡 | `components/tahp/self-check/SelfCheckOverviewCard.vue` | 总览模块卡片壳 |
+| 流程状态 | `components/tahp/self-check/SelfCheckFlowStatus.vue` | 紧凑 pipeline 列表 |
 | 工具函数 | `components/tahp/self-check/self-check-utils.ts` | 状态色、文案等 |
 | 刷机进度 | `utils/flash-progress.ts` | 解析 device_update 日志 |
 | 前端 API | `api/tahp/device-self-check.ts` | 类型与 REST 封装 |
 | 刷机服务 | `services/tahp/device-flash.ts` | device_update 调度 |
 | 核心服务 | `services/tahp/device-self-check.ts` | 调度、会话、报告 |
-| 报告列表 | `services/tahp/self-check-reports.ts` | 报告 Review |
+| 报告列表 | `services/tahp/self-check-reports.ts` | 测试报告审阅与用例结果修正 |
 | 测试规划 | `services/tahp/test-planning.ts` | 节点同步、排期计算 |
 | 规划执行 | `services/tahp/test-plan-executor.ts` | 到点自动刷机 + startTest |
 | 规划执行态 | `services/tahp/test-plan-executions.ts` | `.tahp-config/test-plan-executions.json` |
@@ -76,23 +80,28 @@ services/tahp/self-check/python/
 
 ---
 
-## 界面布局（V0.8）
+## 界面布局（V0.9）
+
+### 页头
+
+`SelfCheckPageHeader`：左侧「AI 自检」标题 + 副标题；右侧 `EaInnerTabs`（`align="end"`）。  
+**不再**在页头展示统计四卡或横向流水线（`SelfCheckHero` / 页面级 `SelfCheckPipeline` 已移除）。
 
 ### 顶层 Tab `activeTab`
 
 | key | 组件 | 内容 |
 |-----|------|------|
-| `overview` | `SelfCheckOverview` | 运行中设备、即将到节点、计划任务、待审报告摘要 |
+| `overview` | `SelfCheckOverview` | 5 功能看板：项目规划、设备执行、测试报告、AI Review、流程状态 |
 | `planning` | `TestPlanningWorkspace` | 项目节点、测试排期规则、AI 规划自动执行状态 |
 | `devices` | `SelfCheckChecklist` + `SelfCheckDeviceRun` | 用例大类卡片（点击进入详情）+ 设备列表/详情/自定义测试 |
 | `gerrit` | `GerritReviewWorkspace` | AI Code Review + 用例推荐 |
-| `review` | `SelfCheckReportReview` | 自检报告审阅 |
+| `review` | `SelfCheckReportReview` | 测试报告列表 + 可展开详情（复测/改结果/人工审阅） |
 
-页头区：`SelfCheckHero`（统计、同步项目节点、新建任务、刷新设备）+ `SelfCheckPipeline`（流水线阶段）。
+设计说明见 `docs/tahp-self-check-ui-redesign.md`。
 
 ### 「设备执行」Tab 布局
 
-**顶部用例卡片**（`SelfCheckChecklist`）：展示 `str4` / `week` / `monkey` 三个用例大类。
+**顶部用例卡片**（`SelfCheckChecklist`）：展示 `str4` / `week` / `smoke` / `monkey` 四个用例大类。
 
 - 标题：与用例大类名一致（转测摸底测试、周版本测试）
 - 覆盖：该大类包含的模块名（`moduleLabel` 拼接）
@@ -123,8 +132,18 @@ services/tahp/self-check/python/
 ### 设备详情（空闲时操作）
 
 - **刷机**（已实现）：`device_update`，可选 Root 包、市场版本；`startTest` 可带 `flash` payload
-- 开始测试 / 继续测试 / 结束测试
-- 用例详情（进行中）：步骤、人工确认、复测/改结果
+- 开始测试 / 继续测试 / **结束测试**（终止当前执行中的用例与流程）
+- **错误**状态设备：设备列表可用「错误」筛选；详情区展示异常位置与原因，支持 **恢复测试**（从报错模块继续）或 **结束测试**
+
+测试正常结束或手动结束后，设备**自动恢复空闲**；完整报告写入「测试报告」Tab。
+
+设备列表筛选：全部 / 测试中 / 等待测试 / 空闲 / **错误** / 辅测机（已移除无意义的「通过」「失败」筛选项）。
+
+### 测试报告 Tab（`SelfCheckReportReview`）
+
+- 列表展示近 72 小时报告；点击报告**向下展开**详情面板（布局与设备详情三框类似）
+- 左侧用例列表 + 右侧用例详情，支持**复测此用例**、**修改用例结果**、人工审阅结论
+- 报告内复测要求对应设备处于**空闲**状态
 
 ### 实时更新
 
@@ -134,7 +153,7 @@ services/tahp/self-check/python/
 
 ### AI 测试自规划（项目规划 Tab）
 
-**规则配置**（`TestPlanSettingsModal`）：每个节点偏移天数 + **测试大类单选**（`str4` / `week` / `monkey`，对应转测摸底 / 周版本 / monkey）。
+**规则配置**（`TestPlanSettingsModal`）：每个节点偏移天数 + **测试大类单选**（`str4` / `week` / `smoke` / `monkey`）。
 
 **排期计算**（`test-planning.ts`）：由项目节点日期 + 规则偏移生成 `ScheduleItem`；`phase` 为时间窗口（`upcoming` / `active`），`runtimeStatus` 为执行态（`pending` / `no_device` / `running` / `completed`）。
 
@@ -145,7 +164,7 @@ services/tahp/self-check/python/
 - 刷机包解析失败或无设备 → `runtimeStatus=no_device`，下一 tick 重试
 - 测试完成 → `finishTest` 写 `completed`；报告 `summary.json` 含 `aiPlanned: true`
 
-**报告 Review**：AI 规划触发的报告标题形如 `{deviceName} · monkey · AI规划`（见 `SelfCheckReportReview.vue`）。
+**测试报告**：AI 规划触发的报告标题形如 `{deviceName} · monkey · AI规划`（见 `SelfCheckReportReview.vue`）。
 
 ---
 
@@ -158,6 +177,7 @@ services/tahp/self-check/python/
 | `str4` | 转测摸底测试 | driver_component → driver_hardware → tdd |
 | `week` | 周版本测试 | driver → tdd |
 | `monkey` | monkey测试 | monkey |
+| `smoke` | 冒烟测试 | usd（`si_run --test-type usd`） |
 | `custom` | 自定义测试 | 用户勾选顺序 |
 
 新增标准 testType 流程见 [self-check-test-integration](../self-check-test-integration/SKILL.md)。
@@ -199,7 +219,7 @@ services/tahp/self-check/python/
 | 新 REST 能力 | service → routes → `client/api` |
 | 用例逻辑 | `self-check/python/cases/...` |
 | 刷机工具链 | `device-flash.ts`、`self-check/flash_tool/` |
-| 报告 Review | `self-check-reports.ts`、`SelfCheckReportReview.vue` |
+| 报告审阅 / 报告内复测改结果 | `self-check-reports.ts`、`SelfCheckReportReview.vue` |
 
 **最小变更**：UI 改组件；流程变更需核对 SSE 与 `TestSession` 字段。
 

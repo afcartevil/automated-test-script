@@ -97,14 +97,20 @@ export const DEVICE_LIST_FILTER_OPTIONS = [
   { key: 'testing', label: '测试中' },
   { key: 'waiting', label: '等待测试' },
   { key: 'idle', label: '空闲' },
-  { key: 'passed', label: '通过' },
-  { key: 'failed', label: '失败' },
+  { key: 'error', label: '错误' },
   { key: 'aux', label: '辅测机' },
 ] as const
 
 export type DeviceListFilterKey = typeof DEVICE_LIST_FILTER_OPTIONS[number]['key']
 
+/** 参与测试中的辅测机（待命/占用中等）；已释放为空闲的不算 */
+export function isActiveAuxiliaryDevice(device: DeviceInfo): boolean {
+  return device.role === '辅测机' && device.status !== '空闲'
+}
+
 export function getDeviceListFilterKey(device: DeviceInfo): DeviceListFilterKey | 'other' {
+  if (isActiveAuxiliaryDevice(device)) return 'aux'
+
   const status = device.status as string
   if (
     status === '测试中'
@@ -122,8 +128,7 @@ export function getDeviceListFilterKey(device: DeviceInfo): DeviceListFilterKey 
     return 'waiting'
   }
   if (status === '空闲') return 'idle'
-  if (status === '完成(通过)') return 'passed'
-  if (status === '完成(失败)' || status === '错误') return 'failed'
+  if (status === '错误') return 'error'
   return 'other'
 }
 
@@ -132,7 +137,6 @@ export function deviceMatchesListFilter(
   filter: DeviceListFilterKey,
 ): boolean {
   if (filter === 'all') return true
-  if (filter === 'aux') return device.role === '辅测机'
   return getDeviceListFilterKey(device) === filter
 }
 

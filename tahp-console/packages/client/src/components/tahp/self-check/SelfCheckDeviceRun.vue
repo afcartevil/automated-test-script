@@ -10,6 +10,8 @@ import {
   formatCatalogPrereq,
   deviceMatchesListFilter,
   getDeviceListFilterKey,
+  getModuleLabel,
+  isActiveAuxiliaryDevice,
   parseManualSteps,
 } from './self-check-utils'
 import type { DeviceListFilterKey } from './self-check-utils'
@@ -19,6 +21,8 @@ const deviceListAnchorRef = ref<HTMLElement | null>(null)
 const deviceDetailPanelRef = ref<HTMLElement | null>(null)
 const customTestPanelRef = ref<HTMLElement | null>(null)
 const deviceListFilter = ref<DeviceListFilterKey>('all')
+
+const STANDARD_TEST_TYPES = ['str4', 'week', 'smoke', 'monkey'] as const
 
 function getScrollParent(el: HTMLElement): HTMLElement | Window {
   let node: HTMLElement | null = el.parentElement
@@ -89,9 +93,11 @@ const {
   selectedDeviceId,
   getCaseGroups,
   isIdle,
+  isError,
+  errorReason,
+  errorModuleLabel,
   canEndTest,
   needsContinue,
-  isTestComplete,
   selectedCase,
   selectedCaseResult,
   followCurrent,
@@ -112,6 +118,8 @@ const {
   collapseCaseCatalog,
   catalogPanelExpanded,
   deviceDetailExpanded,
+  deviceDetailScrollNonce,
+  catalogPanelScrollNonce,
   collapseDeviceDetail,
   selectCatalogCase,
   toggleCatalogDetailModule,
@@ -130,6 +138,7 @@ const {
   handleSetRole,
   handleStartTest,
   handleContinueTest,
+  handleResumeTest,
   toggleFollowCurrent,
   openRetestDialog,
   openModifyDialog,
@@ -195,6 +204,18 @@ watch(
   { flush: 'post' },
 )
 
+watch(deviceDetailScrollNonce, () => {
+  if (deviceDetailExpanded.value) {
+    void scrollToElementWhenReady(() => deviceDetailPanelRef.value)
+  }
+})
+
+watch(catalogPanelScrollNonce, () => {
+  if (catalogPanelExpanded.value && !catalogDetailLoading.value) {
+    void scrollToElementWhenReady(() => catalogPanelRef.value)
+  }
+})
+
 watch(
   () => viewMode.value === 'customTest',
   (ready) => {
@@ -211,6 +232,10 @@ const STATUS_INITIALIZING = '\u521d\u59cb\u5316\u4e2d'
 const WORD_TESTING = '\u6d4b\u8bd5'
 const WORD_WAITING = '\u7b49\u5f85'
 
+function isAuxDevice(device: DeviceInfo) {
+  return isActiveAuxiliaryDevice(device)
+}
+
 function isRunning(device: DeviceInfo) {
   const status = device.status as string
   return status.includes(WORD_TESTING) || status.includes(WORD_WAITING) || status === STATUS_INITIALIZING
@@ -226,7 +251,6 @@ const deviceFilterCounts = computed(() => {
   ) as Record<DeviceListFilterKey, number>
   counts.all = devices.value.length
   for (const device of devices.value) {
-    if (device.role === AUX_ROLE) counts.aux += 1
     const key = getDeviceListFilterKey(device)
     if (key !== 'other') counts[key] += 1
   }
@@ -239,10 +263,15 @@ const filteredDevices = computed(() =>
 
 const showGroupedDeviceList = computed(() => deviceListFilter.value === 'all')
 
-const filteredRunningDevices = computed(() => filteredDevices.value.filter(isRunning))
-const filteredIdleDevices = computed(() => filteredDevices.value.filter(isIdleDevice))
+const filteredAuxDevices = computed(() => filteredDevices.value.filter(isAuxDevice))
+const filteredRunningDevices = computed(() =>
+  filteredDevices.value.filter(d => isRunning(d) && !isAuxDevice(d)),
+)
+const filteredIdleDevices = computed(() =>
+  filteredDevices.value.filter(d => isIdleDevice(d) && !isAuxDevice(d)),
+)
 const filteredOtherDevices = computed(() =>
-  filteredDevices.value.filter(d => !isRunning(d) && !isIdleDevice(d)),
+  filteredDevices.value.filter(d => !isRunning(d) && !isIdleDevice(d) && !isAuxDevice(d)),
 )
 
 function selectDeviceListFilter(key: DeviceListFilterKey) {
@@ -449,6 +478,7 @@ function handleDutRowAction(deviceId: string) {
                 <span class="device-name">{{ d.deviceName }}</span>
                 <span class="device-id">{{ d.deviceId }}</span>
                 <span class="device-role">{{ d.role }}</span>
+                <span class="device-status ea-muted">{{ getDisplayStatus(d) }}</span>
                 <button
                   type="button"
                   class="ea-btn-primary ea-btn-sm device-radio-action"
@@ -494,6 +524,7 @@ function handleDutRowAction(deviceId: string) {
                 <span class="device-name">{{ d.deviceName }}</span>
                 <span class="device-id">{{ d.deviceId }}</span>
                 <span class="device-role">{{ d.role }}</span>
+                <span class="device-status ea-muted">{{ getDisplayStatus(d) }}</span>
               </label>
             </div>
           </EaCard>
@@ -793,6 +824,31 @@ function handleDutRowAction(deviceId: string) {
               </EaCard>
             </div>
           </div>
+          <div v-if="filteredAuxDevices.length" class="device-group">
+            <h4 class="group-label">辅测机</h4>
+            <div class="device-grid">
+              <EaCard
+                v-for="device in filteredAuxDevices"
+                :key="device.deviceId"
+                class="device-card"
+                :class="{
+                  'device-card-running': device.status === '占用中' || device.status === '待命',
+                  'device-card-selected': selectedDeviceId === device.deviceId,
+                }"
+                @click="canSelectDevice(device) && selectDevice(device.deviceId)"
+              >
+                <div class="device-header">
+                  <span class="status-dot" :style="{ background: getStatusColor(device.status) }" />
+                  <div class="device-info"><h4>{{ device.deviceName }}</h4><span class="device-id">{{ device.deviceId }}</span></div>
+                  <span class="role-badge" :style="getRoleBadge(displayRole(device))">{{ displayRole(device) }}</span>
+                </div>
+                <div class="device-details">
+                  <div class="detail-row"><span class="detail-label">状态</span><span :style="{ color: getStatusColor(device.status) }">{{ getDisplayStatus(device) }}</span></div>
+                  <div v-if="device.testType" class="detail-row"><span class="detail-label">用例</span><span>{{ getTestTypeLabel(device.testType) }}</span></div>
+                </div>
+              </EaCard>
+            </div>
+          </div>
           <div v-if="filteredIdleDevices.length" class="device-group">
             <h4 class="group-label">空闲</h4>
             <div class="device-grid">
@@ -931,7 +987,7 @@ function handleDutRowAction(deviceId: string) {
 
             <div class="detail-main">
               <EaCard class="device-detail-main-card">
-                <div v-if="showFlashPanel" class="device-detail-main-scroll">
+                <div v-if="showFlashPanel && !isError" class="device-detail-main-scroll">
                   <div class="flash-progress-header">
                     <span class="section-title">刷机进度</span>
                     <div class="flash-progress-meta">
@@ -952,6 +1008,44 @@ function handleDutRowAction(deviceId: string) {
                     <pre ref="flashLogRef" class="flash-log-content">{{ flashLogs.join('\n') }}</pre>
                   </div>
                 </div>
+
+                <template v-else-if="isError">
+                  <div class="case-detail-header">
+                    <span class="catalog-case-title">测试异常</span>
+                  </div>
+                  <div class="device-detail-main-scroll case-detail-content">
+                    <div class="case-info">
+                      <div v-if="errorModuleLabel" class="detail-item">
+                        <span class="detail-label">异常位置</span>
+                        <span class="detail-value">{{ errorModuleLabel }}</span>
+                      </div>
+                      <div class="detail-item detail-item--full">
+                        <span class="detail-label">原因</span>
+                        <span class="detail-value">{{ errorReason }}</span>
+                      </div>
+                    </div>
+                    <div v-if="showFlashPanel" class="flash-log-panel" style="margin-bottom: 12px;">
+                      <span class="form-label">刷机日志</span>
+                      <pre class="flash-log-content">{{ flashLogs.join('\n') }}</pre>
+                    </div>
+                    <div class="device-detail-inline-actions">
+                      <button
+                        type="button"
+                        class="ea-btn-primary ea-btn-sm"
+                        @click.stop="handleResumeTest(selectedDevice.device.deviceId)"
+                      >
+                        恢复测试
+                      </button>
+                      <button
+                        type="button"
+                        class="ea-btn-primary ea-btn-sm end-test-btn"
+                        @click.stop="handleEndTest(selectedDevice.device.deviceId)"
+                      >
+                        结束测试
+                      </button>
+                    </div>
+                  </div>
+                </template>
 
                 <template v-else-if="isIdle && selectedDevice.device.testType !== 'custom'">
                   <div class="device-detail-main-header">
@@ -980,28 +1074,14 @@ function handleDutRowAction(deviceId: string) {
                       <span class="form-label">用例选择</span>
                       <div class="test-type-selector">
                         <button
+                          v-for="testType in STANDARD_TEST_TYPES"
+                          :key="testType"
                           type="button"
                           class="test-type-btn"
-                          :class="{ active: selectedTestType === 'str4' }"
-                          @click.stop="selectedTestType = 'str4'"
+                          :class="{ active: selectedTestType === testType }"
+                          @click.stop="selectedTestType = testType"
                         >
-                          <strong>转测摸底测试</strong>
-                        </button>
-                        <button
-                          type="button"
-                          class="test-type-btn"
-                          :class="{ active: selectedTestType === 'week' }"
-                          @click.stop="selectedTestType = 'week'"
-                        >
-                          <strong>周版本测试</strong>
-                        </button>
-                        <button
-                          type="button"
-                          class="test-type-btn"
-                          :class="{ active: selectedTestType === 'monkey' }"
-                          @click.stop="selectedTestType = 'monkey'"
-                        >
-                          <strong>monkey测试</strong>
+                          <strong>{{ getTestTypeLabel(testType) }}</strong>
                         </button>
                         <button
                           type="button"
@@ -1114,67 +1194,55 @@ function handleDutRowAction(deviceId: string) {
                     </button>
                   </div>
 
-                  <div v-if="needsContinue || canEndTest" class="device-detail-inline-actions">
-                    <button
-                      v-if="needsContinue"
-                      type="button"
-                      class="ea-btn-primary ea-btn-sm"
-                      @click.stop="handleContinueTest(selectedDevice.device.deviceId)"
-                    >
-                      继续测试
-                    </button>
-                    <button
-                      v-if="canEndTest"
-                      type="button"
-                      class="ea-btn-primary ea-btn-sm"
-                      @click.stop="handleEndTest(selectedDevice.device.deviceId)"
-                    >
-                      结束测试
-                    </button>
-                  </div>
+                    <div v-if="canEndTest" class="device-detail-inline-actions">
+                      <button
+                        v-if="needsContinue"
+                        type="button"
+                        class="ea-btn-primary ea-btn-sm"
+                        @click.stop="handleContinueTest(selectedDevice.device.deviceId)"
+                      >
+                        继续测试
+                      </button>
+                      <button
+                        type="button"
+                        class="ea-btn-primary ea-btn-sm end-test-btn"
+                        @click.stop="handleEndTest(selectedDevice.device.deviceId)"
+                      >
+                        结束测试
+                      </button>
+                    </div>
 
-                  <div v-if="selectedCase && selectedDevice?.session?.caseResults" class="device-detail-main-scroll case-detail-content">
-                    <template v-for="([label, configs]) in getCaseGroups" :key="label">
-                      <template v-for="config in configs" :key="config.module">
-                        <template v-if="isSelectedCaseInConfig(config)">
-                          <div class="case-info">
-                            <div class="detail-item">
-                              <span class="detail-label">用例模块</span>
-                              <span class="detail-value">{{ config.moduleLabel }}</span>
-                            </div>
-                            <div class="detail-item">
-                              <span class="detail-label">测试结果</span>
-                              <span class="detail-value" :style="{ color: getCaseResultColor(selectedCaseResult?.status || '') }">
-                                {{ selectedCaseResult?.status || '未开始' }}
-                              </span>
-                            </div>
-                            <div class="detail-item detail-item--full">
-                              <span class="detail-label">测试结论</span>
-                              <span class="detail-value">{{ selectedCaseResult?.message || '暂无' }}</span>
-                            </div>
-                          </div>
+                  <div v-if="selectedCaseResult" class="device-detail-main-scroll case-detail-content">
+                    <div class="case-info">
+                      <div class="detail-item">
+                        <span class="detail-label">用例模块</span>
+                        <span class="detail-value">{{ getModuleLabel(selectedCaseResult.module) }}</span>
+                      </div>
+                      <div class="detail-item">
+                        <span class="detail-label">测试结果</span>
+                        <span class="detail-value" :style="{ color: getCaseResultColor(selectedCaseResult.status || '') }">
+                          {{ selectedCaseResult.status || '未开始' }}
+                        </span>
+                      </div>
+                      <div class="detail-item detail-item--full">
+                        <span class="detail-label">测试结论</span>
+                        <span class="detail-value">{{ selectedCaseResult.message || '暂无' }}</span>
+                      </div>
+                    </div>
 
-                          <div class="case-steps" v-if="selectedCaseResult?.steps?.length">
-                            <div class="section-title">子步骤</div>
-                            <div
-                              v-for="(step, idx) in selectedCaseResult.steps"
-                              :key="idx"
-                              class="step-item"
-                            >
-                              {{ step.stepDesc }}
-                            </div>
-                          </div>
-                        </template>
-                      </template>
-                    </template>
-
-                    <div v-if="isTestComplete" class="case-detail-actions">
-                      <button type="button" class="ea-btn-primary" @click="openRetestDialog(selectedCase!)">复测此用例</button>
-                      <button type="button" class="ea-btn-ghost" @click="openModifyDialog(selectedCase!)">修改用例结果</button>
+                    <div class="case-steps" v-if="selectedCaseResult.steps?.length">
+                      <div class="section-title">子步骤</div>
+                      <div
+                        v-for="(step, idx) in selectedCaseResult.steps"
+                        :key="idx"
+                        class="step-item"
+                      >
+                        {{ step.stepDesc }}
+                      </div>
                     </div>
                   </div>
 
-                  <div v-else class="device-detail-main-scroll case-detail-empty">
+                  <div v-else-if="selectedCase" class="device-detail-main-scroll case-detail-empty">
                     <span class="ea-muted">请从左侧选择用例查看详情</span>
                   </div>
                 </template>
@@ -1529,22 +1597,13 @@ $catalog-pane-height: calc(100vh - 48px);
   --filter-active-fg: #3f3f46;
 }
 
-.device-filter-chip--passed {
-  --filter-border: #4ade80;
-  --filter-bg: #f0fdf4;
-  --filter-fg: #15803d;
-  --filter-active-border: #16a34a;
-  --filter-active-bg: #dcfce7;
-  --filter-active-fg: #166534;
-}
-
-.device-filter-chip--failed {
-  --filter-border: #f87171;
-  --filter-bg: #fef2f2;
-  --filter-fg: #b91c1c;
-  --filter-active-border: #dc2626;
-  --filter-active-bg: #fee2e2;
-  --filter-active-fg: #991b1b;
+.device-filter-chip--error {
+  --filter-border: #fb923c;
+  --filter-bg: #fff7ed;
+  --filter-fg: #c2410c;
+  --filter-active-border: #ea580c;
+  --filter-active-bg: #ffedd5;
+  --filter-active-fg: #9a3412;
 }
 
 .device-filter-chip--aux {
@@ -1954,24 +2013,27 @@ $catalog-pane-height: calc(100vh - 48px);
 }
 
 .test-type-selector {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .test-type-btn {
-  display: flex;
+  display: inline-flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 16px;
+  width: auto;
+  padding: 8px 14px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--bg);
   cursor: pointer;
   transition: all 0.15s;
   text-align: center;
   font-family: inherit;
+  font-size: 13px;
+  white-space: nowrap;
   color: var(--text);
 
   &:hover {

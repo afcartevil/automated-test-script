@@ -2,6 +2,8 @@
  * 设备自检报告列表、详情与人工 Review 元数据
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
+import { spawn } from 'child_process'
+import { platform } from 'os'
 import { join, resolve } from 'path'
 import { tahpPaths } from './paths'
 import { safeFileStore } from '../safe-file-store'
@@ -22,6 +24,18 @@ export interface SelfCheckFailedCaseItem {
   module: string
   status: string
   message: string
+}
+
+export interface SelfCheckCaseItem {
+  caseKey: string
+  caseName: string
+  module: string
+  testType: string
+  caseIndex: number
+  status: string
+  message: string
+  fullAutomation?: boolean
+  steps?: { stepDesc: string; status: string; timestamp: string }[]
 }
 
 export interface SelfCheckReportSummary {
@@ -46,6 +60,7 @@ export interface SelfCheckReportSummary {
 export interface SelfCheckReportDetail extends SelfCheckReportSummary {
   aiSummary: string
   failedCaseItems: SelfCheckFailedCaseItem[]
+  allCaseItems: SelfCheckCaseItem[]
   reviewNote?: string
   reviewedAt?: string
 }
@@ -69,6 +84,7 @@ interface SummaryJson {
 interface DetailJson extends SummaryJson {
   aiSummary?: string
   failedCaseItems?: SelfCheckFailedCaseItem[]
+  allCaseItems?: SelfCheckCaseItem[]
 }
 
 interface ReviewMetaStore {
@@ -232,6 +248,17 @@ export async function getSelfCheckReportDetail(reportId: string): Promise<SelfCh
   const base = summaryJson || detailJson
 
   const failedCaseItems = detailJson?.failedCaseItems ?? []
+  const allCaseItems = detailJson?.allCaseItems?.length
+    ? detailJson.allCaseItems
+    : failedCaseItems.map(item => ({
+        caseKey: item.caseKey,
+        caseName: item.caseName,
+        module: item.module,
+        testType: item.caseKey.split('/')[0] || summary.testType,
+        caseIndex: Number.parseInt(item.caseKey.split('/').pop() || '1', 10),
+        status: item.status,
+        message: item.message,
+      }))
   const aiSummary = detailJson?.aiSummary
     ?? (base ? buildAiSummary(base, failedCaseItems) : '暂无 AI 摘要')
 
@@ -240,6 +267,7 @@ export async function getSelfCheckReportDetail(reportId: string): Promise<SelfCh
     reviewStatus: review?.status ?? summary.reviewStatus,
     aiSummary,
     failedCaseItems,
+    allCaseItems,
     reviewNote: review?.note,
     reviewedAt: review?.updatedAt,
   }
@@ -265,10 +293,124 @@ export async function submitSelfCheckReportReview(
 export function buildSelfCheckDetailPayload(
   summary: SummaryJson,
   failedCaseItems: SelfCheckFailedCaseItem[],
+  allCaseItems?: SelfCheckCaseItem[],
 ): DetailJson {
   return {
     ...summary,
     failedCaseItems,
+    allCaseItems: allCaseItems ?? failedCaseItems.map(item => ({
+      caseKey: item.caseKey,
+      caseName: item.caseName,
+      module: item.module,
+      testType: item.caseKey.split('/')[0] || summary.testType,
+      caseIndex: Number.parseInt(item.caseKey.split('/').pop() || '1', 10),
+      status: item.status,
+      message: item.message,
+    })),
     aiSummary: buildAiSummary(summary, failedCaseItems),
   }
+}
+
+function collectFailedFromAll(allCaseItems: SelfCheckCaseItem[]): SelfCheckFailedCaseItem[] {
+  return allCaseItems
+    .filter(c => c.status === '失败' || c.status === '部分通过' || c.status === '待确认')
+    .map(c => ({
+      caseKey: c.caseKey,
+      caseName: c.caseName,
+      module: c.module,
+      status: c.status,
+      message: c.message,
+    }))
+}
+
+function recomputeSummaryCounts(allCaseItems: SelfCheckCaseItem[]): Pick<
+  SummaryJson,
+  'totalCases' | 'passedCases' | 'failedCases' | 'skippedCases' | 'status'
+> {
+  const totalCases = allCaseItems.length
+  const passedCases = allCaseItems.filter(c => c.status === '通过').length
+  const failedCases = allCaseItems.filter(
+    c => c.status === '失败' || c.status === '部分通过' || c.status === '待确认',
+  ).length
+  const skippedCases = allCaseItems.filter(c => c.status === '跳过' || c.status === 'NA').length
+  const status = failedCases === 0 ? '完成(通过)' : '完成(失败)'
+  return { totalCases, passedCases, failedCases, skippedCases, status }
+}
+
+export async function updateReportCaseResult(
+  reportId: string,
+  caseKey: string,
+  status: string,
+  message: string,
+): Promise<SelfCheckReportDetail | null> {
+  const relativePath = decodeReportId(reportId)
+  const absDir = join(reportsDir(), relativePath)
+  const detailPath = join(absDir, 'detail.json')
+  const summaryPath = join(absDir, 'summary.json')
+  const detailJson = readJsonFile<DetailJson>(detailPath)
+  const summaryJson = readJsonFile<SummaryJson>(summaryPath)
+  if (!detailJson || !summaryJson) return null
+
+  const allCaseItems = [...(detailJson.allCaseItems ?? detailJson.failedCaseItems?.map(item => ({
+    caseKey: item.caseKey,
+    caseName: item.caseName,
+    module: item.module,
+    testType: item.caseKey.split('/')[0] || summaryJson.testType,
+    caseIndex: Number.parseInt(item.caseKey.split('/').pop() || '1', 10),
+    status: item.status,
+    message: item.message,
+  })) ?? [])]
+
+  const idx = allCaseItems.findIndex(c => c.caseKey === caseKey)
+  if (idx < 0) return null
+
+  allCaseItems[idx] = { ...allCaseItems[idx], status, message }
+  const failedCaseItems = collectFailedFromAll(allCaseItems)
+  const counts = recomputeSummaryCounts(allCaseItems)
+  const nextSummary: SummaryJson = { ...summaryJson, ...counts }
+  const nextDetail = buildSelfCheckDetailPayload(nextSummary, failedCaseItems, allCaseItems)
+
+  writeFileSync(summaryPath, JSON.stringify(nextSummary, null, 2), 'utf-8')
+  writeFileSync(detailPath, JSON.stringify(nextDetail, null, 2), 'utf-8')
+  return getSelfCheckReportDetail(reportId)
+}
+
+export function reportAbsoluteDir(reportId: string): string {
+  return join(reportsDir(), decodeReportId(reportId))
+}
+
+export function getSelfCheckReportXlsxPath(reportId: string): string | null {
+  const filePath = join(reportAbsoluteDir(reportId), 'test_report.xlsx')
+  if (!existsSync(filePath)) return null
+  return filePath
+}
+
+/** 用系统默认应用打开本地 xlsx（在运行 Console 的机器上打开，非浏览器下载） */
+export function openSelfCheckReportXlsx(reportId: string): string {
+  const filePath = getSelfCheckReportXlsxPath(reportId)
+  if (!filePath) {
+    throw new Error('报告文件不存在')
+  }
+  openLocalFile(filePath)
+  return filePath
+}
+
+function openLocalFile(filePath: string): void {
+  const plat = platform()
+  let child
+  if (plat === 'win32') {
+    child = spawn('cmd', ['/c', 'start', '""', filePath], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+  } else if (plat === 'darwin') {
+    child = spawn('open', [filePath], { detached: true, stdio: 'ignore' })
+  } else {
+    child = spawn('xdg-open', [filePath], { detached: true, stdio: 'ignore' })
+  }
+  child.on('error', (err) => {
+    throw new Error(`无法打开报告文件: ${err.message}`)
+  })
+  child.unref()
 }

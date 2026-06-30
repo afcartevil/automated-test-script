@@ -7,6 +7,7 @@ import {
   encodeReportId,
   getSelfCheckReportDetail,
   listSelfCheckReports,
+  openSelfCheckReportXlsx,
   submitSelfCheckReportReview,
 } from '../../packages/server/src/services/tahp/self-check-reports'
 
@@ -69,6 +70,7 @@ describe('self-check-reports', () => {
     const detail = await getSelfCheckReportDetail(reportId)
     expect(detail?.aiSummary).toContain('失败 1')
     expect(detail?.failedCaseItems).toHaveLength(1)
+    expect(detail?.allCaseItems?.length).toBeGreaterThanOrEqual(1)
   })
 
   it('persists manual review conclusion', async () => {
@@ -83,5 +85,23 @@ describe('self-check-reports', () => {
 
     const pending = await listSelfCheckReports({ pendingOnly: true })
     expect(pending).toHaveLength(0)
+  })
+
+  it('resolves xlsx path for local open', () => {
+    const rel = 'self-check/dev-1/2026-06-25T10-00-00'
+    const reportId = encodeReportId(rel)
+    const reportDir = join(tempDir, 'reports', rel)
+    const xlsxPath = join(reportDir, 'test_report.xlsx')
+    writeFileSync(xlsxPath, 'xlsx')
+
+    const opened = openSelfCheckReportXlsx(reportId)
+    expect(opened).toBe(xlsxPath)
+    expect(existsSync(opened)).toBe(true)
+  })
+
+  it('rejects open when xlsx is missing', () => {
+    const rel = 'self-check/dev-1/2026-06-25T10-00-00'
+    const reportId = encodeReportId(rel)
+    expect(() => openSelfCheckReportXlsx(reportId)).toThrow('报告文件不存在')
   })
 })

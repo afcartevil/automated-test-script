@@ -1,12 +1,17 @@
 from typing import Optional
 
 from utils.tdd.apk.contact import add_contact, delete_contact, query_contact, update_contact
-from utils.tdd.device_sim import get_sim_by_slot, resolve_dut, sim_phone_number
+from utils.tdd.device_sim import (
+    dut_storage_key,
+    resolve_aux,
+    resolve_dut_active,
+    sim_slot_label,
+)
 from utils.tdd.ui_sim_pin import reboot_and_unlock
 from test.step_runner import StepRunner
 
-SIM1_CONTACT_NAME = "卡1"
-SIM2_CONTACT_NAME = "卡2"
+CONTACT_NAME = "SIM测试联系人"
+CONTACT_NAME_EDITED = "SIM测试联系人改"
 
 
 def _query_contact(
@@ -44,317 +49,136 @@ def _reboot(steps: StepRunner, dut_id: str) -> Optional[str]:
 def run(category=None, case_index=None, device_info=None, **context):
     step_update = context.get("step_update")
     device_info = device_info or context.get("device_info") or {}
-    dut, dut_id = resolve_dut(device_info)
-    if not dut:
-        return {"status": "fail", "message": dut_id}
 
-    sim_cards = dut.get("sim_cards") or []
-    sim1 = get_sim_by_slot(sim_cards, 0)
-    sim2 = get_sim_by_slot(sim_cards, 1)
-    if not sim1 or not sim2:
-        return {"status": "fail", "message": "测试机非双卡，无法执行 SIM 卡联系人用例"}
+    _, dut_id, _, slot_index, _, sim_err = resolve_dut_active(device_info)
+    if sim_err:
+        return {"status": "fail", "message": sim_err}
 
-    sim1_number = sim_phone_number(sim1)
-    sim2_number = sim_phone_number(sim2)
-    if not sim1_number or not sim2_number:
-        return {"status": "fail", "message": "测试机卡1或卡2无可用号码"}
+    _, aux_number, _, aux_err = resolve_aux(device_info)
+    if aux_err:
+        return {"status": "fail", "message": aux_err}
 
+    storage = dut_storage_key(slot_index)
+    slot_label = sim_slot_label(slot_index)
     steps = StepRunner(step_update)
 
-    steps.begin(f"卡1新增联系人(名称:{SIM2_CONTACT_NAME},号码:{sim2_number})")
-    if not add_contact(dut_id, "sim1", SIM2_CONTACT_NAME, sim2_number):
+    steps.begin(f"{slot_label}新增联系人(名称:{CONTACT_NAME},号码:{aux_number})")
+    if not add_contact(dut_id, storage, CONTACT_NAME, aux_number):
         steps.fail()
-        return {"status": "fail", "message": "卡1新增卡2联系人失败"}
+        return {"status": "fail", "message": f"{slot_label}新增联系人失败"}
     steps.ok()
 
-    steps.begin(f"卡2新增联系人(名称:{SIM1_CONTACT_NAME},号码:{sim1_number})")
-    if not add_contact(dut_id, "sim2", SIM1_CONTACT_NAME, sim1_number):
-        steps.fail()
-        return {"status": "fail", "message": "卡2新增卡1联系人失败"}
-    steps.ok()
-
-    for err in (
-        _query_contact(
-            steps,
-            dut_id,
-            "sim1",
-            "卡1",
-            SIM2_CONTACT_NAME,
-            sim2_number,
-            expect_found=True,
-            fail_message="卡1应能查到卡2联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim2",
-            "卡2",
-            SIM1_CONTACT_NAME,
-            sim1_number,
-            expect_found=True,
-            fail_message="卡2应能查到卡1联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim1",
-            "卡1",
-            SIM1_CONTACT_NAME,
-            sim1_number,
-            expect_found=False,
-            fail_message="卡1不应查到卡1联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim2",
-            "卡2",
-            SIM2_CONTACT_NAME,
-            sim2_number,
-            expect_found=False,
-            fail_message="卡2不应查到卡2联系人",
-        ),
-    ):
-        if err:
-            return {"status": "fail", "message": err}
+    err = _query_contact(
+        steps,
+        dut_id,
+        storage,
+        slot_label,
+        CONTACT_NAME,
+        aux_number,
+        expect_found=True,
+        fail_message=f"{slot_label}应能查到新建联系人",
+    )
+    if err:
+        return {"status": "fail", "message": err}
 
     steps.begin(
-        f"卡1修改联系人(名称:{SIM2_CONTACT_NAME},号码:{sim2_number}"
-        f"→名称:{SIM1_CONTACT_NAME},号码:{sim1_number})"
+        f"{slot_label}修改联系人(名称:{CONTACT_NAME},号码:{aux_number}"
+        f"→名称:{CONTACT_NAME_EDITED},号码:{aux_number})"
     )
     if not update_contact(
         dut_id,
-        "sim1",
-        SIM2_CONTACT_NAME,
-        sim2_number,
-        new_contact_name=SIM1_CONTACT_NAME,
-        new_contact_number=sim1_number,
+        storage,
+        CONTACT_NAME,
+        aux_number,
+        new_contact_name=CONTACT_NAME_EDITED,
+        new_contact_number=aux_number,
     ):
         steps.fail()
-        return {"status": "fail", "message": "卡1修改联系人失败"}
+        return {"status": "fail", "message": f"{slot_label}修改联系人失败"}
     steps.ok()
 
-    steps.begin(
-        f"卡2修改联系人(名称:{SIM1_CONTACT_NAME},号码:{sim1_number}"
-        f"→名称:{SIM2_CONTACT_NAME},号码:{sim2_number})"
-    )
-    if not update_contact(
+    err = _query_contact(
+        steps,
         dut_id,
-        "sim2",
-        SIM1_CONTACT_NAME,
-        sim1_number,
-        new_contact_name=SIM2_CONTACT_NAME,
-        new_contact_number=sim2_number,
-    ):
-        steps.fail()
-        return {"status": "fail", "message": "卡2修改联系人失败"}
-    steps.ok()
+        storage,
+        slot_label,
+        CONTACT_NAME,
+        aux_number,
+        expect_found=False,
+        fail_message=f"{slot_label}修改后不应再查到旧名称联系人",
+    )
+    if err:
+        return {"status": "fail", "message": err}
 
-    for err in (
-        _query_contact(
-            steps,
-            dut_id,
-            "sim1",
-            "卡1",
-            SIM2_CONTACT_NAME,
-            sim2_number,
-            expect_found=False,
-            fail_message="卡1修改后不应再查到卡2联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim2",
-            "卡2",
-            SIM1_CONTACT_NAME,
-            sim1_number,
-            expect_found=False,
-            fail_message="卡2修改后不应再查到卡1联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim1",
-            "卡1",
-            SIM1_CONTACT_NAME,
-            sim1_number,
-            expect_found=True,
-            fail_message="卡1修改后应能查到卡1联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim2",
-            "卡2",
-            SIM2_CONTACT_NAME,
-            sim2_number,
-            expect_found=True,
-            fail_message="卡2修改后应能查到卡2联系人",
-        ),
-    ):
-        if err:
-            return {"status": "fail", "message": err}
+    err = _query_contact(
+        steps,
+        dut_id,
+        storage,
+        slot_label,
+        CONTACT_NAME_EDITED,
+        aux_number,
+        expect_found=True,
+        fail_message=f"{slot_label}修改后应能查到新名称联系人",
+    )
+    if err:
+        return {"status": "fail", "message": err}
 
     err = _reboot(steps, dut_id)
     if err:
         return {"status": "fail", "message": err}
 
-    for err in (
-        _query_contact(
-            steps,
-            dut_id,
-            "sim1",
-            "卡1",
-            SIM2_CONTACT_NAME,
-            sim2_number,
-            expect_found=False,
-            fail_message="重启后卡1不应查到卡2联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim2",
-            "卡2",
-            SIM1_CONTACT_NAME,
-            sim1_number,
-            expect_found=False,
-            fail_message="重启后卡2不应查到卡1联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim1",
-            "卡1",
-            SIM1_CONTACT_NAME,
-            sim1_number,
-            expect_found=True,
-            fail_message="重启后卡1应能查到卡1联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim2",
-            "卡2",
-            SIM2_CONTACT_NAME,
-            sim2_number,
-            expect_found=True,
-            fail_message="重启后卡2应能查到卡2联系人",
-        ),
-    ):
-        if err:
-            return {"status": "fail", "message": err}
+    err = _query_contact(
+        steps,
+        dut_id,
+        storage,
+        slot_label,
+        CONTACT_NAME_EDITED,
+        aux_number,
+        expect_found=True,
+        fail_message=f"重启后{slot_label}应能查到联系人",
+    )
+    if err:
+        return {"status": "fail", "message": err}
 
-    steps.begin(f"卡1删除联系人(名称:{SIM1_CONTACT_NAME},号码:{sim1_number})")
+    steps.begin(f"{slot_label}删除联系人(名称:{CONTACT_NAME_EDITED},号码:{aux_number})")
     if not delete_contact(
-        dut_id, "sim1", sim1_number, contact_name=SIM1_CONTACT_NAME
+        dut_id, storage, aux_number, contact_name=CONTACT_NAME_EDITED
     ):
         steps.fail()
-        return {"status": "fail", "message": "卡1删除联系人失败"}
+        return {"status": "fail", "message": f"{slot_label}删除联系人失败"}
     steps.ok()
 
-    steps.begin(f"卡2删除联系人(名称:{SIM2_CONTACT_NAME},号码:{sim2_number})")
-    if not delete_contact(
-        dut_id, "sim2", sim2_number, contact_name=SIM2_CONTACT_NAME
-    ):
-        steps.fail()
-        return {"status": "fail", "message": "卡2删除联系人失败"}
-    steps.ok()
-
-    for err in (
-        _query_contact(
-            steps,
-            dut_id,
-            "sim1",
-            "卡1",
-            SIM2_CONTACT_NAME,
-            sim2_number,
-            expect_found=False,
-            fail_message="删除后卡1不应查到卡2联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim2",
-            "卡2",
-            SIM1_CONTACT_NAME,
-            sim1_number,
-            expect_found=False,
-            fail_message="删除后卡2不应查到卡1联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim1",
-            "卡1",
-            SIM1_CONTACT_NAME,
-            sim1_number,
-            expect_found=False,
-            fail_message="删除后卡1不应查到卡1联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim2",
-            "卡2",
-            SIM2_CONTACT_NAME,
-            sim2_number,
-            expect_found=False,
-            fail_message="删除后卡2不应查到卡2联系人",
-        ),
-    ):
-        if err:
-            return {"status": "fail", "message": err}
+    err = _query_contact(
+        steps,
+        dut_id,
+        storage,
+        slot_label,
+        CONTACT_NAME_EDITED,
+        aux_number,
+        expect_found=False,
+        fail_message=f"删除后{slot_label}不应查到联系人",
+    )
+    if err:
+        return {"status": "fail", "message": err}
 
     err = _reboot(steps, dut_id)
     if err:
         return {"status": "fail", "message": err}
 
-    for err in (
-        _query_contact(
-            steps,
-            dut_id,
-            "sim1",
-            "卡1",
-            SIM2_CONTACT_NAME,
-            sim2_number,
-            expect_found=False,
-            fail_message="二次重启后卡1不应查到卡2联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim2",
-            "卡2",
-            SIM1_CONTACT_NAME,
-            sim1_number,
-            expect_found=False,
-            fail_message="二次重启后卡2不应查到卡1联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim1",
-            "卡1",
-            SIM1_CONTACT_NAME,
-            sim1_number,
-            expect_found=False,
-            fail_message="二次重启后卡1不应查到卡1联系人",
-        ),
-        _query_contact(
-            steps,
-            dut_id,
-            "sim2",
-            "卡2",
-            SIM2_CONTACT_NAME,
-            sim2_number,
-            expect_found=False,
-            fail_message="二次重启后卡2不应查到卡2联系人",
-        ),
-    ):
-        if err:
-            return {"status": "fail", "message": err}
+    err = _query_contact(
+        steps,
+        dut_id,
+        storage,
+        slot_label,
+        CONTACT_NAME_EDITED,
+        aux_number,
+        expect_found=False,
+        fail_message=f"二次重启后{slot_label}不应查到已删除联系人",
+    )
+    if err:
+        return {"status": "fail", "message": err}
 
     return {
         "status": "pass",
-        "message": "SIM卡联系人互增、修改、重启持久化与删除验证通过",
+        "message": f"单卡 {slot_label} SIM 联系人新增、修改、重启持久化与删除验证通过",
     }

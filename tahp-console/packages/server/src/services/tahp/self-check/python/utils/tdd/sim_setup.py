@@ -2,7 +2,7 @@
 
 import time
 
-from utils.tdd.device_sim import enter_sim_sub_settings_by_sim
+from utils.tdd.device_sim import enter_sim_sub_settings_by_sim, get_sim_by_slot, sim_is_present
 from utils.tdd.ui_automatic import set_mobile_data_enable
 from utils.tdd.ui_first_network import set_preferred_network
 from utils.tdd.ui_turn_onoff_sim import set_sim_enable
@@ -84,3 +84,30 @@ def enable_mobile_data(device_id: str) -> bool:
     if DATA_SETTLE_SECONDS > 0:
         time.sleep(DATA_SETTLE_SECONDS)
     return True
+
+
+def ensure_dut_single_sim_mode(device_id: str, sim_cards) -> bool:
+    """
+    单卡执行模式初始化：
+    - 双卡均插：开卡1、关卡2
+    - 仅插卡1：打开卡1
+    - 仅插卡2：打开卡2
+    """
+    sim1 = get_sim_by_slot(sim_cards or [], 0)
+    sim2 = get_sim_by_slot(sim_cards or [], 1)
+    sim1_ok = sim_is_present(sim1)
+    sim2_ok = sim_is_present(sim2)
+    if not sim1_ok and not sim2_ok:
+        return False
+    if sim1_ok and sim2_ok:
+        if not open_sim_only(device_id, sim1):
+            return False
+        return setup_sim_preferred_network(device_id, sim2, enable=False)
+    if sim1_ok:
+        return open_sim_only(device_id, sim1)
+    return open_sim_only(device_id, sim2)
+
+
+def ensure_dut_sim1_only(device_id: str, sim_cards) -> bool:
+    """兼容旧名，等同 ensure_dut_single_sim_mode。"""
+    return ensure_dut_single_sim_mode(device_id, sim_cards)

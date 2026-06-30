@@ -35,8 +35,8 @@ const catalogCards = computed(() => {
 const toneByType: Record<string, string> = {
   str4: 'ea-t-indigo',
   week: 'ea-t-sky',
-  monkey: 'ea-t-amber',
   smoke: 'ea-t-emerald',
+  monkey: 'ea-t-amber',
 }
 
 function openCatalog(testType: string) {
@@ -76,7 +76,7 @@ function openCatalog(testType: string) {
   margin-bottom: 16px;
 
   &.compact .checklist-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
@@ -92,6 +92,7 @@ function openCatalog(testType: string) {
 
   &.ea-t-indigo { border-top-color: #6366f1; }
   &.ea-t-sky { border-top-color: #0ea5e9; }
+  &.ea-t-emerald { border-top-color: #129b71; }
   &.ea-t-amber { border-top-color: #f59e0b; }
 
   h4 {

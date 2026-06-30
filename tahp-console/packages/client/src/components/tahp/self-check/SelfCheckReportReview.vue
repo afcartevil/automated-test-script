@@ -1,25 +1,44 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
-import { NEmpty, NTag, NButton, useMessage } from 'naive-ui'
+import { ref, computed, onMounted, watch, inject } from 'vue'
+import { NEmpty, NButton, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
+import { DEVICE_SELF_CHECK_KEY } from './self-check-context'
+import { getCaseResultColor, getTestTypeLabel } from './self-check-utils'
 import {
   listSelfCheckReports,
   getSelfCheckReportDetail,
   submitSelfCheckReportReview,
+  updateReportCaseResult,
+  retestReportCase,
+  openSelfCheckReportFile,
   type SelfCheckReportSummary,
   type SelfCheckReportDetail,
+  type SelfCheckCaseItem,
   type SelfCheckReviewStatus,
 } from '@/api/tahp/device-self-check'
 
 const message = useMessage()
+const ctx = inject(DEVICE_SELF_CHECK_KEY)!
+
 const loading = ref(false)
 const detailLoading = ref(false)
 const submitting = ref(false)
 const reports = ref<SelfCheckReportSummary[]>([])
 const selectedId = ref<string | null>(null)
+const reportPanelExpanded = ref(false)
 const filterText = ref('')
 const reviewNote = ref('')
 const reportDetail = ref<SelfCheckReportDetail | null>(null)
+const selectedCaseKey = ref<string | null>(null)
+const expandedModules = ref<Set<string>>(new Set())
+
+const showModifyDialog = ref(false)
+const modifyStatus = ref('通过')
+const modifyMessage = ref('')
+
+const showRetestDialog = ref(false)
+const retestAuxDeviceId = ref<string | null>(null)
+const retesting = ref(false)
 
 const filteredReports = computed(() => {
   const q = filterText.value.trim().toLowerCase()
@@ -31,19 +50,46 @@ const filteredReports = computed(() => {
   )
 })
 
-function statusTagType(status: SelfCheckReviewStatus | string): 'success' | 'error' | 'warning' | 'default' {
-  if (status === 'reviewed') return 'success'
-  if (status === 'retest') return 'warning'
-  if (/fail|失败/i.test(status)) return 'error'
-  if (status === 'pending' || /待/i.test(status)) return 'warning'
-  return 'default'
-}
+const caseGroups = computed(() => {
+  const items = reportDetail.value?.allCaseItems ?? []
+  const map = new Map<string, SelfCheckCaseItem[]>()
+  for (const item of items) {
+    const label = item.module
+    if (!map.has(label)) map.set(label, [])
+    map.get(label)!.push(item)
+  }
+  return [...map.entries()].map(([label, cases]) => ({
+    label,
+    cases: cases.sort((a, b) => a.caseIndex - b.caseIndex),
+  }))
+})
+
+const selectedCaseItem = computed(() =>
+  reportDetail.value?.allCaseItems.find(c => c.caseKey === selectedCaseKey.value) ?? null,
+)
+
+const availableAuxForRetest = computed(() =>
+  ctx.devices.value.filter(d =>
+    d.deviceId !== reportDetail.value?.deviceId &&
+    (d.role === '辅测机' || d.role === '测试机') &&
+    d.status === '空闲',
+  ),
+)
 
 function displayStatus(report: SelfCheckReportSummary): string {
-  if (report.reviewStatus === 'reviewed') return '已 Review'
+  if (report.reviewStatus === 'reviewed') return '已审阅'
   if (report.reviewStatus === 'retest') return '待补测'
-  if (report.failedCases > 0) return '待 Review'
-  return report.status.includes('通过') ? '通过' : '待 Review'
+  if (report.failedCases > 0) return '待审阅'
+  return report.status.includes('通过') ? '通过' : '待审阅'
+}
+
+type ReportStatusKind = 'passed' | 'pending' | 'reviewed' | 'retest'
+
+function reportStatusKind(report: SelfCheckReportSummary): ReportStatusKind {
+  if (report.reviewStatus === 'reviewed') return 'reviewed'
+  if (report.reviewStatus === 'retest') return 'retest'
+  if (report.failedCases > 0 || !report.status.includes('通过')) return 'pending'
+  return 'passed'
 }
 
 function reportShortType(testType: string): string {
@@ -51,6 +97,7 @@ function reportShortType(testType: string): string {
   if (testType === 'smoke') return '冒烟'
   if (testType === 'str4') return 'STR4'
   if (testType === 'week') return '周版本'
+  if (testType === 'smoke') return '冒烟'
   if (testType === 'custom') return '自定义'
   return testType
 }
@@ -58,13 +105,7 @@ function reportShortType(testType: string): string {
 function reportTitle(report: SelfCheckReportSummary): string {
   const typeLabel = report.testType === 'custom'
     ? '自定义测试'
-    : report.testType === 'str4'
-      ? 'STR4'
-      : report.testType === 'monkey'
-        ? 'monkey测试'
-        : report.testType === 'smoke'
-          ? '冒烟测试'
-          : '周版本'
+    : getTestTypeLabel(report.testType)
   if (report.aiPlanned) {
     return `${report.deviceName} · ${reportShortType(report.testType)} · AI规划`
   }
@@ -78,6 +119,45 @@ function reportTime(report: SelfCheckReportSummary): string {
   } catch {
     return t
   }
+}
+
+function toggleModule(module: string) {
+  if (expandedModules.value.has(module)) expandedModules.value.delete(module)
+  else expandedModules.value.add(module)
+  expandedModules.value = new Set(expandedModules.value)
+}
+
+function selectReport(reportId: string) {
+  if (selectedId.value === reportId && reportPanelExpanded.value) {
+    reportPanelExpanded.value = false
+    return
+  }
+  selectedId.value = reportId
+  reportPanelExpanded.value = true
+}
+
+function collapseReportPanel() {
+  reportPanelExpanded.value = false
+}
+
+const openingReport = ref(false)
+
+async function openReportFile() {
+  if (!selectedId.value || openingReport.value) return
+  openingReport.value = true
+  try {
+    const { filePath } = await openSelfCheckReportFile(selectedId.value)
+    message.success(`已在本地打开：${filePath}`)
+  } catch (err: unknown) {
+    const text = err instanceof Error ? err.message : '打开报告失败'
+    message.error(text)
+  } finally {
+    openingReport.value = false
+  }
+}
+
+function selectCase(caseKey: string) {
+  selectedCaseKey.value = caseKey
 }
 
 async function loadReports() {
@@ -99,6 +179,11 @@ async function loadDetail(reportId: string) {
   try {
     reportDetail.value = await getSelfCheckReportDetail(reportId)
     reviewNote.value = reportDetail.value.reviewNote || ''
+    expandedModules.value = new Set(
+      (reportDetail.value.allCaseItems ?? []).map(item => item.module),
+    )
+    const first = reportDetail.value.allCaseItems[0]
+    selectedCaseKey.value = first?.caseKey ?? null
   } catch {
     reportDetail.value = null
   } finally {
@@ -114,12 +199,63 @@ async function handleSubmitReview(status: SelfCheckReviewStatus) {
       status,
       note: reviewNote.value,
     })
-    message.success(status === 'retest' ? '已标记待补测' : 'Review 结论已提交')
+    message.success(status === 'retest' ? '已标记待补测' : '审阅结论已提交')
     await loadReports()
   } catch (err) {
     message.error((err as Error).message || '提交失败')
   } finally {
     submitting.value = false
+  }
+}
+
+function openModifyDialog() {
+  if (!selectedCaseItem.value) return
+  modifyStatus.value = selectedCaseItem.value.status
+  modifyMessage.value = selectedCaseItem.value.message || ''
+  showModifyDialog.value = true
+}
+
+async function handleModifyCaseResult() {
+  if (!selectedId.value || !selectedCaseKey.value) return
+  submitting.value = true
+  try {
+    reportDetail.value = await updateReportCaseResult(selectedId.value, {
+      caseKey: selectedCaseKey.value,
+      status: modifyStatus.value,
+      message: modifyMessage.value,
+    })
+    showModifyDialog.value = false
+    message.success('用例结果已更新')
+    await loadReports()
+  } catch (err) {
+    message.error((err as Error).message || '修改失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+function openRetestDialog() {
+  retestAuxDeviceId.value = null
+  showRetestDialog.value = true
+}
+
+async function handleRetestCase() {
+  if (!selectedId.value || !selectedCaseKey.value) return
+  retesting.value = true
+  try {
+    const { detail } = await retestReportCase(selectedId.value, {
+      caseKey: selectedCaseKey.value,
+      auxDeviceId: retestAuxDeviceId.value || undefined,
+    })
+    reportDetail.value = detail
+    showRetestDialog.value = false
+    message.success('复测完成')
+    await loadReports()
+    await ctx.loadDevices()
+  } catch (err) {
+    message.error((err as Error).message || '复测失败')
+  } finally {
+    retesting.value = false
   }
 }
 
@@ -139,8 +275,8 @@ onMounted(async () => {
     <EaCard class="report-list-card">
       <div class="list-head">
         <div>
-          <h3>次日报告 Review</h3>
-          <p class="ea-muted">展示近 72 小时完成的自检报告，支持 AI 摘要与人工结论</p>
+          <h3>测试报告</h3>
+          <p class="ea-muted">近 72 小时自检报告统一在此审阅；点击报告展开详情</p>
         </div>
         <input
           v-model="filterText"
@@ -152,103 +288,246 @@ onMounted(async () => {
       <div v-if="loading" class="panel-empty ea-muted">加载报告…</div>
       <NEmpty
         v-else-if="!filteredReports.length"
-        description="暂无待 Review 报告。自动测试完成后，报告将在此汇总"
+        description="暂无测试报告。测试完成后将自动汇总至此"
         size="small"
       />
-      <ul v-else class="report-list">
+      <ul v-else class="report-grid">
         <li
           v-for="report in filteredReports"
           :key="report.reportId"
-          class="report-item"
-          :class="{ selected: selectedId === report.reportId }"
-          @click="selectedId = report.reportId"
+          class="report-card"
+          :class="{ selected: selectedId === report.reportId && reportPanelExpanded }"
+          @click="selectReport(report.reportId)"
         >
-          <NTag size="small" :type="statusTagType(report.reviewStatus)" :bordered="false">
-            {{ displayStatus(report) }}
-          </NTag>
-          <div class="report-item-body">
-            <strong>{{ reportTitle(report) }}</strong>
-            <small class="ea-muted">
-              {{ reportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }} 通过
-            </small>
+          <div class="report-card-tags">
+            <span class="report-status" :class="reportStatusKind(report)">
+              {{ displayStatus(report) }}
+            </span>
+            <span v-if="report.passedCases > 0" class="report-stat report-stat--pass">
+              通过 {{ report.passedCases }}
+            </span>
+            <span v-if="report.failedCases > 0" class="report-stat report-stat--fail">
+              失败 {{ report.failedCases }}
+            </span>
+            <span v-if="report.skippedCases > 0" class="report-stat report-stat--skip">
+              跳过 {{ report.skippedCases }}
+            </span>
           </div>
+          <strong class="report-card-title">{{ reportTitle(report) }}</strong>
+          <small class="report-card-meta ea-muted">
+            {{ reportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }}
+          </small>
         </li>
       </ul>
     </EaCard>
 
-    <EaCard class="report-detail-card">
-      <div v-if="detailLoading" class="panel-empty ea-muted">加载详情…</div>
-      <template v-else-if="reportDetail">
-        <div class="detail-head">
-          <h3>{{ reportTitle(reportDetail) }}</h3>
-          <NTag size="small" :type="statusTagType(reportDetail.reviewStatus)" :bordered="false">
-            {{ displayStatus(reportDetail) }}
-          </NTag>
+    <div
+      v-if="reportPanelExpanded && selectedId"
+      class="report-detail-layout report-stack-pane"
+    >
+      <EaCard class="report-overview-card">
+        <div v-if="detailLoading" class="panel-empty ea-muted">加载详情…</div>
+        <template v-else-if="reportDetail">
+          <div class="catalog-overview-header">
+            <div class="detail-head">
+              <h3>{{ reportTitle(reportDetail) }}</h3>
+              <span class="report-status" :class="reportStatusKind(reportDetail)">
+                {{ displayStatus(reportDetail) }}
+              </span>
+            </div>
+            <div class="overview-header-actions">
+              <button
+                type="button"
+                class="ea-btn-ghost ea-btn-sm"
+                :disabled="openingReport"
+                @click="openReportFile"
+              >
+                {{ openingReport ? '打开中…' : '打开报告' }}
+              </button>
+              <button type="button" class="ea-btn-ghost ea-btn-sm" @click="collapseReportPanel">
+                收起
+              </button>
+            </div>
+          </div>
+
+          <div class="report-review-section">
+            <div class="section-title">人工审阅</div>
+            <textarea
+              v-model="reviewNote"
+              class="review-textarea"
+              rows="3"
+              placeholder="填写审阅结论、补测意见…"
+            />
+            <div class="detail-actions">
+              <NButton size="small" type="primary" :loading="submitting" @click="handleSubmitReview('reviewed')">
+                提交结论
+              </NButton>
+              <NButton size="small" tertiary :loading="submitting" @click="handleSubmitReview('retest')">
+                标记待补测
+              </NButton>
+            </div>
+          </div>
+
+          <dl class="catalog-overview-meta">
+            <div>
+              <dt>设备</dt>
+              <dd>{{ reportDetail.deviceName }}（{{ reportDetail.deviceId }}）</dd>
+            </div>
+            <div>
+              <dt>测试类型</dt>
+              <dd>{{ getTestTypeLabel(reportDetail.testType) }}</dd>
+            </div>
+            <div>
+              <dt>完成时间</dt>
+              <dd>{{ reportTime(reportDetail) }}</dd>
+            </div>
+            <div>
+              <dt>通过率</dt>
+              <dd>{{ reportDetail.passedCases }}/{{ reportDetail.totalCases }}</dd>
+            </div>
+          </dl>
+          <p class="detail-text overview-summary">{{ reportDetail.aiSummary }}</p>
+        </template>
+      </EaCard>
+
+      <div v-if="reportDetail && !detailLoading" class="detail-container report-detail-body">
+        <EaCard class="sidebar-card">
+          <div class="section-title">用例列表</div>
+          <div class="case-list">
+            <div v-for="group in caseGroups" :key="group.label" class="module-group">
+              <div class="module-name" @click="toggleModule(group.label)">
+                <span class="module-arrow" :class="{ open: expandedModules.has(group.label) }">&#9654;</span>
+                {{ group.label }}
+                <span class="module-count">{{ group.cases.length }}</span>
+              </div>
+              <div v-show="expandedModules.has(group.label)" class="module-cases">
+                <div
+                  v-for="item in group.cases"
+                  :key="item.caseKey"
+                  class="case-item"
+                  :class="{ selected: selectedCaseKey === item.caseKey }"
+                  :style="{ color: getCaseResultColor(item.status) }"
+                  @click="selectCase(item.caseKey)"
+                >
+                  {{ item.caseName }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </EaCard>
+
+        <div class="detail-main">
+          <EaCard class="report-case-detail-card">
+            <template v-if="selectedCaseItem">
+              <div class="case-detail-header">
+                <span class="catalog-case-title">{{ selectedCaseItem.caseName }}</span>
+              </div>
+              <div class="case-detail-content">
+                <div class="case-info">
+                  <div class="detail-item">
+                    <span class="detail-label">模块</span>
+                    <span class="detail-value">{{ selectedCaseItem.module }}</span>
+                  </div>
+                  <div class="detail-item">
+                    <span class="detail-label">结果</span>
+                    <span class="detail-value" :style="{ color: getCaseResultColor(selectedCaseItem.status) }">
+                      {{ selectedCaseItem.status }}
+                    </span>
+                  </div>
+                  <div class="detail-item detail-item--full">
+                    <span class="detail-label">结论</span>
+                    <span class="detail-value">{{ selectedCaseItem.message || '暂无' }}</span>
+                  </div>
+                </div>
+                <div v-if="selectedCaseItem.steps?.length" class="case-steps">
+                  <div class="section-title">子步骤</div>
+                  <div v-for="(step, idx) in selectedCaseItem.steps" :key="idx" class="step-item">
+                    {{ step.stepDesc }}
+                  </div>
+                </div>
+                <div class="case-detail-actions">
+                  <button type="button" class="ea-btn-primary" @click="openRetestDialog">复测此用例</button>
+                  <button type="button" class="ea-btn-ghost" @click="openModifyDialog">修改用例结果</button>
+                </div>
+              </div>
+            </template>
+            <NEmpty v-else description="请从左侧选择用例" size="small" />
+          </EaCard>
         </div>
-        <div class="detail-section">
-          <div class="section-label">AI 摘要</div>
-          <p class="detail-text">{{ reportDetail.aiSummary }}</p>
+      </div>
+    </div>
+
+    <div v-if="showModifyDialog" class="modify-overlay" @click.self="showModifyDialog = false">
+      <div class="modify-dialog">
+        <div class="modify-dialog-header">
+          <span class="section-title">修改用例结果</span>
+          <button type="button" class="ea-btn-ghost ea-btn-sm" @click="showModifyDialog = false">✕</button>
         </div>
-        <div class="detail-section">
-          <div class="section-label">失败用例（{{ reportDetail.failedCaseItems.length }}）</div>
-          <NEmpty
-            v-if="!reportDetail.failedCaseItems.length"
-            description="无失败项"
-            size="small"
-          />
-          <ul v-else class="failed-list">
-            <li v-for="item in reportDetail.failedCaseItems" :key="item.caseKey">
-              <strong>{{ item.caseName }}</strong>
-              <span class="ea-muted">{{ item.module }} · {{ item.status }}</span>
-              <p v-if="item.message" class="ea-muted">{{ item.message }}</p>
-            </li>
-          </ul>
-        </div>
-        <div class="detail-section">
-          <div class="section-label">人工结论</div>
-          <textarea
-            v-model="reviewNote"
-            class="review-textarea"
-            rows="4"
-            placeholder="填写 Review 结论、补测意见…"
-          />
-          <div class="detail-actions">
-            <NButton
-              size="small"
-              type="primary"
-              :loading="submitting"
-              @click="handleSubmitReview('reviewed')"
-            >
-              提交结论
-            </NButton>
-            <NButton
-              size="small"
-              tertiary
-              :loading="submitting"
-              @click="handleSubmitReview('retest')"
-            >
-              标记待补测
-            </NButton>
+        <div class="modify-dialog-body">
+          <div class="form-group">
+            <label class="form-label">测试结果</label>
+            <select v-model="modifyStatus" class="form-input">
+              <option value="通过">通过</option>
+              <option value="失败">失败</option>
+              <option value="部分通过">部分通过</option>
+              <option value="NA">NA</option>
+              <option value="跳过">跳过</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">备注</label>
+            <textarea v-model="modifyMessage" class="form-input" rows="3" placeholder="输入备注…" />
           </div>
         </div>
-      </template>
-      <NEmpty v-else description="选择左侧报告查看详情" size="small" />
-    </EaCard>
+        <div class="modify-dialog-footer">
+          <button type="button" class="ea-btn-ghost" @click="showModifyDialog = false">取消</button>
+          <button type="button" class="ea-btn-primary" :disabled="submitting" @click="handleModifyCaseResult">
+            确认修改
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showRetestDialog" class="modify-overlay" @click.self="showRetestDialog = false">
+      <div class="modify-dialog">
+        <div class="modify-dialog-header">
+          <span class="section-title">复测用例</span>
+          <button type="button" class="ea-btn-ghost ea-btn-sm" @click="showRetestDialog = false">✕</button>
+        </div>
+        <div class="modify-dialog-body">
+          <div class="form-group">
+            <label class="form-label">选择辅测机（可选）</label>
+            <select v-model="retestAuxDeviceId" class="form-input">
+              <option :value="null">无（不需要辅测机）</option>
+              <option v-for="d in availableAuxForRetest" :key="d.deviceId" :value="d.deviceId">
+                {{ d.deviceName }}（{{ d.role }}）
+              </option>
+            </select>
+          </div>
+        </div>
+        <div class="modify-dialog-footer">
+          <button type="button" class="ea-btn-ghost" :disabled="retesting" @click="showRetestDialog = false">取消</button>
+          <button type="button" class="ea-btn-primary" :disabled="retesting" @click="handleRetestCase">
+            {{ retesting ? '正在复测…' : '开始复测' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped lang="scss">
+$report-pane-height: calc(100vh - 48px);
+
 .report-review-root {
-  display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   min-height: 420px;
 }
 
-.report-list-card,
-.report-detail-card {
+.report-list-card {
   padding: 16px 18px;
-  min-height: 400px;
 }
 
 .list-head {
@@ -268,6 +547,7 @@ onMounted(async () => {
 
 .filter-input {
   width: 100%;
+  max-width: 360px;
   padding: 6px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -281,58 +561,156 @@ onMounted(async () => {
   font-size: 13px;
 }
 
-.report-list {
+.report-grid {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 480px;
-  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
 }
 
-.report-item {
+.report-card {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
   border-radius: 10px;
   cursor: pointer;
-  border: 1px solid transparent;
+  border: 1px solid var(--line);
+  background: var(--surface, var(--bg));
+  min-width: 0;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
   &:hover {
-    background: var(--bg);
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   }
 
   &.selected {
     border-color: var(--accent);
     background: var(--accent-soft);
+    box-shadow: 0 0 0 1px var(--accent);
   }
 }
 
-.report-item-body {
+.report-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.report-status,
+.report-stat {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.report-status {
+  &.passed {
+    background: rgba(16, 185, 129, 0.14);
+    color: #059669;
+  }
+
+  &.pending {
+    background: rgba(245, 158, 11, 0.16);
+    color: #d97706;
+  }
+
+  &.reviewed {
+    background: rgba(59, 130, 246, 0.14);
+    color: #2563eb;
+  }
+
+  &.retest {
+    background: rgba(249, 115, 22, 0.16);
+    color: #ea580c;
+  }
+}
+
+.report-stat--pass {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+}
+
+.report-stat--fail {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.report-stat--skip {
+  background: rgba(100, 116, 139, 0.12);
+  color: #64748b;
+}
+
+.report-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.report-card-meta {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+@media (max-width: 1200px) {
+  .report-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .report-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .report-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.report-stack-pane {
+  height: $report-pane-height;
+  min-height: $report-pane-height;
+  max-height: $report-pane-height;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-width: 0;
+  gap: 12px;
+  overflow: hidden;
+}
 
-  strong {
-    font-size: 13px;
-    font-weight: 600;
-  }
+.report-overview-card {
+  flex-shrink: 0;
+  padding: 16px 18px;
+}
 
-  small {
-    font-size: 11px;
-  }
+.catalog-overview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .detail-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 10px;
+  flex-wrap: wrap;
 
   h3 {
     margin: 0;
@@ -341,50 +719,194 @@ onMounted(async () => {
   }
 }
 
-.detail-section {
-  margin-bottom: 18px;
+.overview-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
-.section-label {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 8px;
+.report-review-section {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
 }
 
-.detail-text {
+.catalog-overview-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px 16px;
+  margin: 0 0 10px;
+
+  dt {
+    font-size: 11px;
+    color: var(--muted);
+    margin: 0;
+  }
+
+  dd {
+    margin: 2px 0 0;
+    font-size: 13px;
+  }
+}
+
+.overview-summary {
   margin: 0;
   font-size: 13px;
   line-height: 1.55;
 }
 
-.failed-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.report-detail-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.sidebar-card {
+  width: 280px;
+  flex-shrink: 0;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
 
-  li {
-    padding: 10px 12px;
-    border-radius: 8px;
+.section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.case-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.module-group {
+  margin-bottom: 8px;
+}
+
+.module-name {
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.module-arrow {
+  display: inline-block;
+  transition: transform 0.15s;
+  font-size: 10px;
+
+  &.open {
+    transform: rotate(90deg);
+  }
+}
+
+.module-count {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.case-item {
+  font-size: 12px;
+  padding: 6px 8px 6px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+
+  &:hover {
     background: var(--bg);
-    display: flex;
+  }
+
+  &.selected {
+    background: var(--accent-soft);
+  }
+}
+
+.detail-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.report-case-detail-card {
+  padding: 16px 18px;
+}
+
+.report-case-detail-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.catalog-case-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.case-detail-header {
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.case-detail-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.case-info {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.detail-item {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+
+  &--full {
     flex-direction: column;
     gap: 4px;
-
-    strong {
-      font-size: 13px;
-    }
-
-    p {
-      margin: 0;
-      font-size: 12px;
-    }
   }
+}
+
+.detail-label {
+  color: var(--muted);
+  min-width: 48px;
+}
+
+.step-item {
+  font-size: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.case-detail-actions,
+.detail-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
 }
 
 .review-textarea {
@@ -396,6 +918,7 @@ onMounted(async () => {
   font-family: inherit;
   background: var(--bg);
   resize: vertical;
+  margin-bottom: 10px;
 
   &:focus {
     outline: none;
@@ -403,15 +926,68 @@ onMounted(async () => {
   }
 }
 
-.detail-actions {
+.modify-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
   display: flex;
-  gap: 8px;
-  margin-top: 10px;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
 }
 
-@media (max-width: 900px) {
-  .report-review-root {
-    grid-template-columns: 1fr;
+.modify-dialog {
+  background: var(--card, #fff);
+  border-radius: 16px;
+  width: 440px;
+  max-width: 90vw;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.modify-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modify-dialog-body {
+  padding: 20px;
+}
+
+.modify-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--muted);
+}
+
+.form-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--bg);
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent);
   }
 }
 </style>

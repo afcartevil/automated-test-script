@@ -9,6 +9,72 @@ def get_sim_by_slot(sim_cards, slot_index):
     return next((s for s in sim_cards if s.get("slot_index") == slot_index), None)
 
 
+def sim_is_present(sim) -> bool:
+    """SIM 卡槽是否已插卡（优先 present 字段，否则以号码推断）。"""
+    if not sim:
+        return False
+    present = sim.get("present")
+    if present is True:
+        return True
+    if present is False:
+        return bool(sim_phone_number(sim))
+    return bool(sim_phone_number(sim))
+
+
+def resolve_active_sim(sim_cards) -> tuple[Optional[dict], int, str]:
+    """
+    解析测试机当前应使用的单卡：双卡均插时优先卡1；仅插卡1或卡2亦可。
+    返回 (sim, slot_index, error_message)。
+    """
+    sim1 = get_sim_by_slot(sim_cards or [], 0)
+    sim2 = get_sim_by_slot(sim_cards or [], 1)
+    sim1_ok = sim_is_present(sim1)
+    sim2_ok = sim_is_present(sim2)
+    if sim1_ok:
+        return sim1, 0, ""
+    if sim2_ok:
+        return sim2, 1, ""
+    return None, -1, "测试机未检测到可用 SIM 卡"
+
+
+def dut_dial_slot(slot_index: int) -> int:
+    """拨号/短信 APK 卡槽参数：slot_index 0→1，1→2。"""
+    return slot_index + 1
+
+
+def dut_storage_key(slot_index: int) -> str:
+    """联系人/短信 storage：sim1 / sim2。"""
+    return "sim1" if slot_index == 0 else "sim2"
+
+
+def sim_slot_label(slot_index: int) -> str:
+    return f"卡{slot_index + 1}"
+
+
+def resolve_dut_active(device_info: dict):
+    """
+    解析 DUT 与当前活动 SIM。
+    返回 (dut, dut_id, active_sim, slot_index, phone_number, error_message)。
+    """
+    dut, dut_id = resolve_dut(device_info)
+    if not dut:
+        return None, dut_id, None, -1, "", dut_id
+    active_sim, slot_index, err = resolve_active_sim(dut.get("sim_cards") or [])
+    if err:
+        return dut, dut_id, None, -1, "", err
+    number = sim_phone_number(active_sim)
+    if not number:
+        return (
+            dut,
+            dut_id,
+            active_sim,
+            slot_index,
+            "",
+            f"测试机{sim_slot_label(slot_index)}无可用号码",
+        )
+    return dut, dut_id, active_sim, slot_index, number, ""
+
+
 def sim_subscription_id(sim) -> Optional[int]:
     if not sim:
         return None

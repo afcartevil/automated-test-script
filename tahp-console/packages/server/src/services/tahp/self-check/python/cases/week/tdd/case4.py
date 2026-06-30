@@ -1,6 +1,11 @@
 from utils.tdd.apk.call import start_auto_dial
 from utils.tdd.apk.get_result import wait_test_result
-from utils.tdd.device_sim import get_sim_by_slot, pick_aux_number, sim_phone_number
+from utils.tdd.device_sim import (
+    get_sim_by_slot,
+    pick_aux_number,
+    resolve_dut_active,
+    sim_phone_number,
+)
 from utils.tdd.sim_setup import NETWORK_TYPE_5G_AUTO, setup_sim_volte_network
 from utils.tdd.ui_harassment_filter import (
     add_number_to_blacklist,
@@ -25,22 +30,11 @@ def run(category=None, case_index=None, device_info=None, **context):
     step_update = context.get("step_update")
     device_info = device_info or context.get("device_info") or {}
 
-    dut_list = (device_info or {}).get("DUT") or []
-    if not dut_list:
-        return {"status": "fail", "message": "未获取到测试机设备信息"}
-    dut = dut_list[0]
-    dut_id = (dut.get("device_id") or "").strip()
-    if not dut_id:
-        return {"status": "fail", "message": "测试机 device_id 为空"}
-
-    dut_sim_cards = dut.get("sim_cards") or []
-    sim1 = get_sim_by_slot(dut_sim_cards, 0)
-    sim2 = get_sim_by_slot(dut_sim_cards, 1)
-    if not sim1 or not sim2:
-        return {"status": "fail", "message": "测试机非双卡，无法执行骚扰拦截用例"}
-    dut_target_number = sim_phone_number(sim1) or sim_phone_number(sim2)
-    if not dut_target_number:
-        return {"status": "fail", "message": "测试机无可用号码，无法执行辅测机拨号验证"}
+    _, dut_id, active_sim, _, dut_target_number, sim_err = resolve_dut_active(
+        device_info
+    )
+    if sim_err:
+        return {"status": "fail", "message": sim_err}
 
     aux_list = device_info.get("Auxiliary") or []
     aux = aux_list[0] if aux_list else {}
@@ -57,30 +51,16 @@ def run(category=None, case_index=None, device_info=None, **context):
 
     sub_steps = ""
 
-    sub_steps += "\n卡1打开SIM卡，打开VoLTE，首选网络切换（最高）"
+    sub_steps += "\n活动卡打开SIM卡，打开VoLTE，首选网络切换（最高）"
     if callable(step_update):
         step_update(sub_steps)
     if not setup_sim_volte_network(
-        dut_id, sim1, network_type=NETWORK_TYPE_5G_AUTO
+        dut_id, active_sim, network_type=NETWORK_TYPE_5G_AUTO
     ):
         sub_steps += "-失败"
         if callable(step_update):
             step_update(sub_steps)
-        return {"status": "fail", "message": "卡1打开SIM卡/VoLTE/首选网络失败"}
-    sub_steps += "-成功"
-    if callable(step_update):
-        step_update(sub_steps)
-
-    sub_steps += "\n卡2打开SIM卡，打开VoLTE，首选网络切换（最高）"
-    if callable(step_update):
-        step_update(sub_steps)
-    if not setup_sim_volte_network(
-        dut_id, sim2, network_type=NETWORK_TYPE_5G_AUTO
-    ):
-        sub_steps += "-失败"
-        if callable(step_update):
-            step_update(sub_steps)
-        return {"status": "fail", "message": "卡2打开SIM卡/VoLTE/首选网络失败"}
+        return {"status": "fail", "message": "活动卡打开SIM卡/VoLTE/首选网络失败"}
     sub_steps += "-成功"
     if callable(step_update):
         step_update(sub_steps)

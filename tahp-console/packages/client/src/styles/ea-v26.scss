@@ -255,6 +255,10 @@
   gap: 4px;
   border-bottom: 1px solid var(--line);
   margin-bottom: 16px;
+
+  &--end {
+    justify-content: flex-end;
+  }
 }
 
 .ea-itab {

@@ -72,7 +72,7 @@ export const SELF_CHECK_TABS = [
   { key: 'planning', label: '项目规划' },
   { key: 'devices', label: '设备执行' },
   { key: 'gerrit', label: 'AI Review' },
-  { key: 'review', label: '报告 Review' },
+  { key: 'review', label: '测试报告' },
 ] as const
 
 export function useDeviceSelfCheck() {

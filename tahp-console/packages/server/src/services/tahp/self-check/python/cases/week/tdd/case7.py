@@ -2,12 +2,10 @@ import time
 
 from utils.tdd.apk.web import run_web_test
 from utils.tdd.ui_automatic import set_mobile_data_enable, set_wifi_enable
-from utils.tdd.device_sim import get_sim_by_slot
+from utils.tdd.device_sim import resolve_dut_active, sim_slot_label
 from utils.tdd.sim_setup import (
     NETWORK_TYPE_5G_AUTO,
     enter_sim_sub_page,
-    open_sim_only,
-    setup_sim_preferred_network,
     setup_sim_volte_network,
 )
 from utils.tdd.ui_first_network import set_preferred_network
@@ -38,19 +36,11 @@ def run(category=None, case_index=None, device_info=None, **context):
     step_update = context.get("step_update")
     device_info = device_info or context.get("device_info") or {}
 
-    dut_list = (device_info or {}).get("DUT") or []
-    if not dut_list:
-        return {"status": "fail", "message": "未获取到测试机设备信息"}
-    dut = dut_list[0]
-    dut_id = (dut.get("device_id") or "").strip()
-    if not dut_id:
-        return {"status": "fail", "message": "测试机 device_id 为空"}
+    _, dut_id, active_sim, slot_index, _, sim_err = resolve_dut_active(device_info)
+    if sim_err:
+        return {"status": "fail", "message": sim_err}
 
-    sim_cards = dut.get("sim_cards") or []
-    sim1 = get_sim_by_slot(sim_cards, 0)
-    sim2 = get_sim_by_slot(sim_cards, 1)
-    if not sim1 or not sim2:
-        return {"status": "fail", "message": "测试机非双卡，无法执行数据连接用例"}
+    slot_label = sim_slot_label(slot_index)
 
     sub_steps = ""
     critical_ok = True
@@ -69,23 +59,14 @@ def run(category=None, case_index=None, device_info=None, **context):
     def _critical_fail(message: str):
         return {"status": "fail", "message": message}
 
-    sub_steps += "\n卡1打开SIM卡，打开VoLTE，首选网络5G或4G"
+    sub_steps += f"\n{slot_label}打开SIM卡，打开VoLTE，首选网络5G或4G"
     _update()
     if not setup_sim_volte_network(
-        dut_id, sim1, network_type=NETWORK_TYPE_5G_AUTO
+        dut_id, active_sim, network_type=NETWORK_TYPE_5G_AUTO
     ):
         sub_steps += "-失败"
         _update()
-        return _critical_fail("卡1打开SIM卡/VoLTE/首选网络失败")
-    sub_steps += "-成功"
-    _update()
-
-    sub_steps += "\n卡2关闭"
-    _update()
-    if not setup_sim_preferred_network(dut_id, sim2, enable=False):
-        sub_steps += "-失败"
-        _update()
-        return _critical_fail("关闭卡2失败")
+        return _critical_fail(f"{slot_label}打开SIM卡/VoLTE/首选网络失败")
     sub_steps += "-成功"
     _update()
 
@@ -114,10 +95,10 @@ def run(category=None, case_index=None, device_info=None, **context):
     _update()
 
     for network_type, label, result_key in NETWORK_WEB_ROUNDS:
-        sub_steps += f"\n卡1切换首选网络{label}并访问百度"
+        sub_steps += f"\n{slot_label}切换首选网络{label}并访问百度"
         _update()
         step_ok = True
-        if not enter_sim_sub_page(dut_id, sim1):
+        if not enter_sim_sub_page(dut_id, active_sim):
             sub_steps += "-失败"
             _update()
             critical_ok = False
@@ -137,15 +118,6 @@ def run(category=None, case_index=None, device_info=None, **context):
 
     if not critical_ok:
         return _critical_fail("切换首选网络失败")
-
-    sub_steps += "\n卡2打开"
-    _update()
-    if not open_sim_only(dut_id, sim2):
-        sub_steps += "-失败"
-        _update()
-        return _critical_fail("打开卡2失败")
-    sub_steps += "-成功"
-    _update()
 
     legacy = [web_results[k] for k in LEGACY_WEB_KEYS]
     legacy_all_fail = all(not item for item in legacy)

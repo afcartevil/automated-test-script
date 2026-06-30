@@ -1,8 +1,12 @@
 <script setup lang="ts">
-const props = defineProps<{
-  tabs: { key: string; label: string; disabled?: boolean }[]
-  modelValue: string
-}>()
+withDefaults(
+  defineProps<{
+    tabs: { key: string; label: string; disabled?: boolean }[]
+    modelValue: string
+    align?: 'start' | 'end'
+  }>(),
+  { align: 'start' },
+)
 
 const emit = defineEmits<{ 'update:modelValue': [key: string] }>()
 
@@ -13,7 +17,7 @@ function select(key: string, disabled?: boolean) {
 </script>
 
 <template>
-  <div class="ea-itabs">
+  <div class="ea-itabs" :class="{ 'ea-itabs--end': align === 'end' }">
     <button
       v-for="tab in tabs"
       :key="tab.key"
