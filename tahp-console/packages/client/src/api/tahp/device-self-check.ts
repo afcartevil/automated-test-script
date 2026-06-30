@@ -25,7 +25,7 @@ export interface DeviceInfo {
   deviceName: string
   role: DeviceRole
   status: DeviceStatus
-  testType?: 'str4' | 'week' | 'custom' | 'monkey'
+  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke'
   currentModule?: string
   simCards: SimCardInfo[]
   testStartTime?: string
@@ -86,7 +86,7 @@ export interface ModuleProgress {
 
 export interface TestSession {
   deviceId: string
-  testType: 'str4' | 'week' | 'custom' | 'monkey'
+  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke'
   modules: string[]
   currentModuleIndex: number
   moduleProgress: Record<string, ModuleProgress>
@@ -179,7 +179,7 @@ export interface StartTestFlashPayload {
 
 export async function startTest(
   deviceId: string,
-  testType: 'str4' | 'week' | 'monkey',
+  testType: 'str4' | 'week' | 'monkey' | 'smoke',
   flash?: StartTestFlashPayload,
   scheduleKey?: string,
 ): Promise<DeviceDetail> {
@@ -367,6 +367,7 @@ export interface AutoTestSettings {
   autoRetestEnabled?: Record<string, boolean>
   autoRetestCount?: Record<string, number>
   monkeyDuration?: string
+  smokeUsdSkipSpdInfo?: boolean
 }
 
 export async function getSettings(): Promise<AutoTestSettings> {
@@ -377,6 +378,7 @@ export async function getSettings(): Promise<AutoTestSettings> {
     autoRetestEnabled: data?.autoRetestEnabled || {},
     autoRetestCount: data?.autoRetestCount || {},
     monkeyDuration: data?.monkeyDuration || '7d',
+    smokeUsdSkipSpdInfo: Boolean(data?.smokeUsdSkipSpdInfo),
   }
 }
 

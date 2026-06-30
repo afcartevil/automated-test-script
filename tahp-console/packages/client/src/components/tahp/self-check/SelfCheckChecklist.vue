@@ -25,7 +25,7 @@ const emit = defineEmits<{
   openCatalog: [testType: string]
 }>()
 
-const CASE_TYPES = ['str4', 'week', 'monkey'] as const
+const CASE_TYPES = ['str4', 'week', 'monkey', 'smoke'] as const
 
 const catalogCards = computed(() => {
   const byType = new Map(props.groups.map(g => [g.testType, g]))
@@ -36,6 +36,7 @@ const toneByType: Record<string, string> = {
   str4: 'ea-t-indigo',
   week: 'ea-t-sky',
   monkey: 'ea-t-amber',
+  smoke: 'ea-t-emerald',
 }
 
 function openCatalog(testType: string) {

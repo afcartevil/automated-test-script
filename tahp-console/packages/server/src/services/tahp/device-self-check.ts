@@ -30,7 +30,7 @@ export type DeviceStatus =
   | '待命'
   | '刷机中'
 
-export type StandardTestType = 'str4' | 'week' | 'monkey'
+export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke'
 export type DeviceTestType = StandardTestType | 'custom'
 
 export interface SimCardInfo {
@@ -169,6 +169,8 @@ interface AutoTestSettings {
   autoRetestEnabled?: Record<string, boolean>   // key: testType
   autoRetestCount?: Record<string, number>      // key: testType
   monkeyDuration?: string
+  /** USD 冒烟：为 true 时 si_run 传 --skip-spd-info */
+  smokeUsdSkipSpdInfo?: boolean
 }
 
 const DEFAULT_MONKEY_DURATION = '7d'
@@ -192,7 +194,7 @@ export interface CaseCatalogDetailItem {
 }
 
 function getAutoRetestConfig(testType: string): { enabled: boolean; count: number } {
-  if (testType === 'monkey') {
+  if (testType === 'monkey' || testType === 'smoke') {
     return { enabled: false, count: 0 }
   }
   return {
@@ -288,6 +290,7 @@ export function getSettings(): AutoTestSettings {
   return {
     ...settings,
     monkeyDuration: normalizeMonkeyDuration(settings.monkeyDuration),
+    smokeUsdSkipSpdInfo: settings.smokeUsdSkipSpdInfo ?? false,
   }
 }
 
@@ -297,6 +300,7 @@ export function updateSettings(newSettings: AutoTestSettings): void {
     autoTestEnabled: newSettings.autoTestEnabled || {},
     autoTestPath: newSettings.autoTestPath || {},
     monkeyDuration: normalizeMonkeyDuration(newSettings.monkeyDuration),
+    smokeUsdSkipSpdInfo: Boolean(newSettings.smokeUsdSkipSpdInfo),
   }
   saveSettings()
 }
@@ -307,6 +311,7 @@ function loadCaseConfigs(): void {
     'str4_tdd.json', 'str4_driver_component.json', 'str4_driver_hardware.json',
     'week_tdd.json', 'week_driver.json',
     'monkey_monkey.json',
+    'smoke_usd.json',
   ]
   
   for (const file of configFiles) {
@@ -830,6 +835,7 @@ async function checkPreconditions(
 function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'str4') return ['driver_component', 'driver_hardware', 'tdd']
   if (testType === 'monkey') return ['monkey']
+  if (testType === 'smoke') return ['usd']
   return ['driver', 'tdd']
 }
 
@@ -1111,6 +1117,7 @@ function buildDeviceInfo(
     }],
     Auxiliary: auxDevices,
     monkeyDuration: normalizeMonkeyDuration(settings.monkeyDuration),
+    smokeUsdSkipSpdInfo: Boolean(settings.smokeUsdSkipSpdInfo),
     module_init_done: Boolean(
       testType &&
       module &&
@@ -1308,7 +1315,16 @@ async function execPythonInit(
 }
 
 const CASE_EXEC_TIMEOUT_MS = 120_000
+const SMOKE_USD_EXEC_TIMEOUT_MS = 3_600_000
 const MANUAL_CONFIRM_TIMEOUT_MS = 30 * 60_000
+
+function resolveCaseExecTimeoutMs(testType: string, module: string): number {
+  if (testType === 'smoke' && module === 'usd') {
+    const raw = Number(process.env.TAHP_SMOKE_USD_TIMEOUT_MS)
+    return Number.isFinite(raw) && raw > 0 ? raw : SMOKE_USD_EXEC_TIMEOUT_MS
+  }
+  return CASE_EXEC_TIMEOUT_MS
+}
 
 // 执行 Python 用例脚本
 async function execPythonCase(
@@ -1340,6 +1356,8 @@ async function execPythonCase(
       if (proc && !proc.killed) { try { proc.kill() } catch {} }
     }
 
+    const caseTimeoutMs = resolveCaseExecTimeoutMs(testType, module)
+
     const scheduleTimeout = (ms: number, message: string) => {
       if (timeoutId) clearTimeout(timeoutId)
       timeoutId = setTimeout(() => {
@@ -1347,7 +1365,7 @@ async function execPythonCase(
       }, ms)
     }
 
-    scheduleTimeout(CASE_EXEC_TIMEOUT_MS, '用例执行超时(120s)')
+    scheduleTimeout(caseTimeoutMs, `用例执行超时(${Math.round(caseTimeoutMs / 1000)}s)`)
 
     try {
       proc = spawn(command, [
@@ -1393,7 +1411,7 @@ async function execPythonCase(
               mode,
               resolve: (decision: string) => {
                 delete pendingManualDecisions[decisionId]
-                scheduleTimeout(CASE_EXEC_TIMEOUT_MS, '用例执行超时(120s)')
+                scheduleTimeout(caseTimeoutMs, `用例执行超时(${Math.round(caseTimeoutMs / 1000)}s)`)
                 if (proc?.stdin && !proc.stdin.destroyed) {
                   try {
                     proc.stdin.write(`${decision}\n`, 'utf-8')
@@ -2672,12 +2690,14 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     str4: '转测摸底测试',
     week: '周版本测试',
     monkey: 'monkey测试',
+    smoke: '冒烟测试',
   }
   const MODULE_ORDER: Record<string, number> = {
     driver: 0,
     driver_component: 0,
     driver_hardware: 1,
     monkey: 2,
+    usd: 3,
     tdd: 99,
   }
 
@@ -2705,7 +2725,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week', 'monkey']
+  const typeOrder = ['str4', 'week', 'monkey', 'smoke']
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),

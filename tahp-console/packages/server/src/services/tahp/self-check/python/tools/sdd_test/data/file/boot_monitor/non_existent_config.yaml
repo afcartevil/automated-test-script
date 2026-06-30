@@ -1,0 +1,26 @@
+_metadata:
+  created_at: '2025-09-04T09:52:14.362339'
+  description: Android启动证书监控系统配置文件
+  version: '1.0'
+adb_retry_count: 3
+adb_retry_delay: 1.0
+adb_timeout: 300
+auto_generate_report: true
+critical_threshold_days: 30
+data_retention_days: 30
+debug_mode: false
+enable_continuous_monitoring: false
+enable_notifications: false
+log_level: INFO
+logcat_buffer_size: 1000
+logcat_tag: BootDataExport
+logcat_timeout: 1800
+max_history_records: 1000
+max_retry_attempts: 5
+monitor_interval: 300
+notification_email: null
+notification_webhook: null
+report_format: html
+report_output_dir: output/reports
+save_raw_data: false
+warning_threshold_days: 90

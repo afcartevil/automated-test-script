@@ -48,6 +48,7 @@ function displayStatus(report: SelfCheckReportSummary): string {
 
 function reportShortType(testType: string): string {
   if (testType === 'monkey') return 'monkey'
+  if (testType === 'smoke') return '冒烟'
   if (testType === 'str4') return 'STR4'
   if (testType === 'week') return '周版本'
   if (testType === 'custom') return '自定义'
@@ -61,7 +62,9 @@ function reportTitle(report: SelfCheckReportSummary): string {
       ? 'STR4'
       : report.testType === 'monkey'
         ? 'monkey测试'
-        : '周版本'
+        : report.testType === 'smoke'
+          ? '冒烟测试'
+          : '周版本'
   if (report.aiPlanned) {
     return `${report.deviceName} · ${reportShortType(report.testType)} · AI规划`
   }

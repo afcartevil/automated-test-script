@@ -154,6 +154,9 @@ describe('test-planning schedule', () => {
     expect(() => validateTestPlanRules([
       { node: 'STR4A', offsetDays: -7, testType: 'invalid' as any },
     ])).toThrow(/无效测试大类/)
+    expect(validateTestPlanRules([
+      { node: 'STR4A', offsetDays: -3, testType: 'smoke' },
+    ])).toEqual([{ node: 'STR4A', offsetDays: -3, testType: 'smoke' }])
   })
 
   it('matches project code in device name', () => {
@@ -168,6 +171,7 @@ describe('test-planning schedule', () => {
       role: '测试机',
     })).toBe(false)
     expect(normalizePlanTestType('monkey测试')).toBe('monkey')
+    expect(normalizePlanTestType('冒烟测试')).toBe('smoke')
   })
 })
 

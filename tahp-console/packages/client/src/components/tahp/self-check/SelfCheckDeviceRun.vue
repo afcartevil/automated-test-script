@@ -581,6 +581,23 @@ function handleDutRowAction(deviceId: string) {
                     支持 Nm/Nd，例如 30m、7d；m 表示分钟，d 表示天，最长 14 天
                   </span>
                 </div>
+                <div
+                  v-else-if="selectedCatalogTestType === 'smoke'"
+                  class="catalog-smoke-settings catalog-overview-retest"
+                >
+                  <label class="checkbox-label catalog-smoke-skip-spd">
+                    <input
+                      type="checkbox"
+                      v-model="catalogTypeSettings.smokeUsdSkipSpdInfo"
+                      :disabled="catalogSettingsSaving"
+                      @change="saveCatalogTypeSettings"
+                    />
+                    <span>跳过 SPD 拉取（--skip-spd-info）</span>
+                  </label>
+                  <span class="ea-muted catalog-smoke-help">
+                    执行 si_run.py --test-type usd；无 SPD 网络时可勾选，SPD 依赖用例将自动跳过
+                  </span>
+                </div>
                 <div v-else class="catalog-auto-retest-row catalog-overview-retest">
                   <label
                     class="checkbox-label"
@@ -667,7 +684,7 @@ function handleDutRowAction(deviceId: string) {
                       <div class="detail-value pre-wrap">{{ selectedCatalogItem.expectedResult }}</div>
                     </div>
                     <div
-                      v-if="selectedCatalogTestType !== 'monkey' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
+                      v-if="selectedCatalogTestType !== 'monkey' && selectedCatalogTestType !== 'smoke' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
                       class="ea-muted"
                     >
                       暂无手动测试步骤
@@ -988,6 +1005,14 @@ function handleDutRowAction(deviceId: string) {
                           @click.stop="selectedTestType = 'monkey'"
                         >
                           <strong>monkey测试</strong>
+                        </button>
+                        <button
+                          type="button"
+                          class="test-type-btn"
+                          :class="{ active: selectedTestType === 'smoke' }"
+                          @click.stop="selectedTestType = 'smoke'"
+                        >
+                          <strong>冒烟测试</strong>
                         </button>
                       </div>
                     </div>
@@ -1637,6 +1662,16 @@ $catalog-pane-height: calc(100vh - 48px);
 }
 
 .catalog-monkey-help {
+  font-size: 12px;
+}
+
+.catalog-smoke-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.catalog-smoke-help {
   font-size: 12px;
 }
 

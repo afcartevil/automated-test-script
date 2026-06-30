@@ -10,6 +10,7 @@ export const MODULE_ORDER: Record<string, number> = {
   driver_component: 0,
   driver_hardware: 1,
   monkey: 2,
+  usd: 3,
   tdd: 99,
 }
 
@@ -17,6 +18,7 @@ export function getTestTypeLabel(testType?: string): string {
   if (testType === 'str4') return '转测摸底测试'
   if (testType === 'week') return '周版本测试'
   if (testType === 'monkey') return 'monkey测试'
+  if (testType === 'smoke') return '冒烟测试'
   if (testType === 'custom') return '自定义测试'
   return '未分配'
 }
@@ -47,6 +49,7 @@ export function getModuleLabel(module: string): string {
     driver_component: '驱动-器件',
     driver_hardware: '驱动-硬测',
     monkey: 'monkey测试',
+    usd: 'USD冒烟测试',
   }
   return labels[module] || module
 }
@@ -142,6 +145,9 @@ export function formatCatalogModuleScope(group: CaseCatalogGroup): string {
 export function formatCatalogAutomation(group: CaseCatalogGroup): string {
   if (group.testType === 'monkey') {
     return '脚本全自动（Monkey）'
+  }
+  if (group.testType === 'smoke') {
+    return '脚本全自动（SDD USD pytest）'
   }
   const hasReuse = group.modules.some(m => m.cases.some(c => c.canReuse))
   const base = '脚本自动化 + 半自动化'

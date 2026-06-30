@@ -19,6 +19,7 @@ Console 入口：`/#/tahp/self-check`（`DeviceSelfCheckView.vue`）。
 - 调整测试启动/继续/结束/复测/刷机/自定义用例流程
 - 新增或修改用例、模块前置条件、结果复用规则
 - 排查设备状态不同步、SSE、人工确认、报告生成问题
+- **将新测试大类/外部工具接入自检**：先读 [self-check-test-integration](../self-check-test-integration/SKILL.md) 完成能力清单，再改代码
 
 **先读代码再改**：状态与业务逻辑在 `useDeviceSelfCheck.ts`，设备执行 UI 在 `SelfCheckDeviceRun.vue`，后端以 `device-self-check.ts`（service）为准。
 
@@ -68,7 +69,7 @@ services/tahp/self-check/python/
 | 核心服务 | `services/tahp/device-self-check.ts` | 调度、会话、报告 |
 | 报告列表 | `services/tahp/self-check-reports.ts` | 报告 Review |
 | 测试规划 | `services/tahp/test-planning.ts` | 节点同步、排期计算 |
-| 规划执行 | `services/tahp/test-plan-executor.ts` | 到点自动 startTest |
+| 规划执行 | `services/tahp/test-plan-executor.ts` | 到点自动刷机 + startTest |
 | 规划执行态 | `services/tahp/test-plan-executions.ts` | `.tahp-config/test-plan-executions.json` |
 | Python | `services/tahp/self-check/python/` | 用例与 `run_case.py` |
 | E2E | `tests/e2e/self-check.spec.ts` | 页面冒烟 |
@@ -140,8 +141,8 @@ services/tahp/self-check/python/
 **自动执行**（`test-plan-executor.ts`，bootstrap 启动，默认 60s tick）：
 
 - 对 `phase === 'active'` 且未完成的项，按项目代号匹配空闲设备名（如 `X6876` ↔ `Infinix X6876`）
-- 匹配成功 → `startTest(..., { scheduleKey })`，不刷机
-- 无设备 → `runtimeStatus=no_device`，UI 仍显示「即将开始」+ 标签「无设备」，设备连上后下一 tick 重试
+- 匹配成功 → `buildPlannedTestFlashPayload`：解析最新 daily 刷机包、市场版本 `Open`；`monkey` 测试额外从 archive `Root/` 目录解析 Root 包（若存在）→ `startTest(..., flash, { scheduleKey })`
+- 刷机包解析失败或无设备 → `runtimeStatus=no_device`，下一 tick 重试
 - 测试完成 → `finishTest` 写 `completed`；报告 `summary.json` 含 `aiPlanned: true`
 
 **报告 Review**：AI 规划触发的报告标题形如 `{deviceName} · monkey · AI规划`（见 `SelfCheckReportReview.vue`）。
@@ -156,7 +157,10 @@ services/tahp/self-check/python/
 |----------|------|----------|
 | `str4` | 转测摸底测试 | driver_component → driver_hardware → tdd |
 | `week` | 周版本测试 | driver → tdd |
+| `monkey` | monkey测试 | monkey |
 | `custom` | 自定义测试 | 用户勾选顺序 |
+
+新增标准 testType 流程见 [self-check-test-integration](../self-check-test-integration/SKILL.md)。
 
 ### 标准流程（str4 / week）
 
@@ -188,6 +192,7 @@ services/tahp/self-check/python/
 
 | 目标 | 优先修改 |
 |------|----------|
+| **新测试项接入** | [self-check-test-integration](../self-check-test-integration/SKILL.md) → case_config / python / 前后端清单 |
 | Tab / 总览 / 流水线 UI | `DeviceSelfCheckView.vue`、对应 `SelfCheck*.vue` |
 | 设备列表/详情/用例详情 UI | `SelfCheckDeviceRun.vue` |
 | 状态、API、SSE、刷机逻辑 | `useDeviceSelfCheck.ts` |
@@ -214,4 +219,5 @@ npx playwright test tests/e2e/self-check.spec.ts
 ## 延伸阅读
 
 - API / SSE / 类型： [reference.md](reference.md)
+- **测试项集成（能力门禁 + 验收）**：[self-check-test-integration](../self-check-test-integration/SKILL.md)
 - 流程细节：`ai自检流程梳理.md`（可能未入库）

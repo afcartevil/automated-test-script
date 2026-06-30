@@ -3,5 +3,6 @@
   "autoTestPath": {},
   "autoRetestEnabled": {},
   "autoRetestCount": {},
-  "monkeyDuration": "1m"
+  "monkeyDuration": "1m",
+  "smokeUsdSkipSpdInfo": false
 }

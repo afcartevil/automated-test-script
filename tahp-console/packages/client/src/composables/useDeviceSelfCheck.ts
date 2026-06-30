@@ -81,7 +81,7 @@ const selectedDevice = ref<DeviceDetail | null>(null)
 const moduleConditions = ref<Record<string, ModuleCondition>>({})
 
 // 测试类型选择
-const selectedTestType = ref<'str4' | 'week' | 'monkey'>('week')
+const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke'>('week')
 
 // 刷机相关选项（device_update，工具位于 self-check/flash_tool/）
 const enableFlash = ref(false)
@@ -149,6 +149,7 @@ const catalogTypeSettings = ref({
   autoRetestEnabled: true,
   autoRetestCount: 1,
   monkeyDuration: '7d',
+  smokeUsdSkipSpdInfo: false,
 })
 const catalogSettingsSaving = ref(false)
 const expandedCatalogTypes = ref<Set<string>>(new Set())
@@ -409,13 +410,14 @@ async function openCaseCatalog(testType: string) {
       [...new Set(detail.map(item => `${testType}/${item.module}`))]
     )
     catalogTypeSettings.value = {
-      autoRetestEnabled: testType === 'monkey'
+      autoRetestEnabled: testType === 'monkey' || testType === 'smoke'
         ? false
         : (settingsData.autoRetestEnabled?.[testType] ?? true),
-      autoRetestCount: testType === 'monkey'
+      autoRetestCount: testType === 'monkey' || testType === 'smoke'
         ? 0
         : (settingsData.autoRetestCount?.[testType] ?? 1),
       monkeyDuration: settingsData.monkeyDuration || '7d',
+      smokeUsdSkipSpdInfo: Boolean(settingsData.smokeUsdSkipSpdInfo),
     }
     if (detail.length > 0) {
       selectedCatalogCaseKey.value = detail[0].key
@@ -449,6 +451,20 @@ async function saveCatalogTypeSettings() {
         autoRetestEnabled,
         autoRetestCount,
         monkeyDuration,
+      })
+      return
+    }
+
+    if (testType === 'smoke') {
+      const autoRetestEnabled = { ...(current.autoRetestEnabled || {}) }
+      const autoRetestCount = { ...(current.autoRetestCount || {}) }
+      delete autoRetestEnabled.smoke
+      delete autoRetestCount.smoke
+      await updateSettings({
+        ...current,
+        autoRetestEnabled,
+        autoRetestCount,
+        smokeUsdSkipSpdInfo: catalogTypeSettings.value.smokeUsdSkipSpdInfo,
       })
       return
     }
