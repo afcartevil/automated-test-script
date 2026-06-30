@@ -115,7 +115,7 @@ python scripts/fetch_review_bundle.py "<input>" --cred-file path/to/cred.json
 
 Under TAHP, `path/to/cred.json` is typically `<TAHP_PROJECT_ROOT>/.tahp-config/gerrit-cred.runtime.json`.
 
-The script prints `report_path=` and `report_url=` (clickable `file://` URL for the HTML report).
+The script prints `report_path=` and `report_url=` (clickable `file://` URL for the Markdown report).
 
 ### Step 2: Analyze diffs
 
@@ -125,9 +125,9 @@ The script prints `report_path=` and `report_url=` (clickable `file://` URL for 
 4. Use `expanded_files` or re-run with `--expand-files` when needed
 5. Apply checklist in [check-items.md](check-items.md)
 
-### Step 3: Write report (HTML)
+### Step 3: Write report (Markdown)
 
-Write a complete, valid **HTML** file. Output **must** contain these 5 sections:
+Write a complete **Markdown** file (`.md`). Output **must** contain these 5 sections:
 
 1. 基本信息
 2. 问题统计
@@ -138,16 +138,24 @@ Write a complete, valid **HTML** file. Output **must** contain these 5 sections:
    2. P1 - 强烈建议
    3. P2 - 建议测试
 
-Use [report-template.html](report-template.html) for structure and styling. Severity levels: **Critical / High / Medium / Low**.
+Use [report-template.md](report-template.md) for structure and heading conventions. Severity levels: **Critical / High / Medium / Low**.
 
 **模块信息**（必填）：
 
-- 使用 `review-bundle.json` 顶层的 `modules_display`（如 `LCM/TP/Sensor`）写入 HTML **基本信息 → 模块** 行
+- 使用 `review-bundle.json` 顶层的 `modules_display`（如 `LCM/TP/Sensor`）写入 Markdown **基本信息 → 模块** 行
 - 在 **影响范围** 中补充模块相关说明（可参考 `modules` 数组）
 - Topic 报告：合并所有 Change 的模块，去重后写入一条 **模块** 字段
 - 若 `modules` 为空，显示 `未识别`，并在影响范围中说明依据不足
 
-模块由 [`scripts/module_detector.py`](scripts/module_detector.py) 根据文件路径、标题、patch 自动识别，规则见 [module-rules.md](module-rules.md)。
+模块由 [`scripts/module_detector.py`](scripts/module_detector.py) 根据文件路径、标题、patch 自动识别，规则见 [module-rules.md](module-rules.md).
+
+**Formatting rules**:
+
+- Use `##` for the 5 main sections (e.g. `## 1. 基本信息`)
+- Use `###` for subsections (e.g. `### P0 - 必须测试`, severity groups under section 3)
+- Use Markdown tables for 基本信息 and 问题统计
+- Use ordered lists (`1.`) for P0/P1/P2 test items
+- Do **not** wrap the report in HTML; plain Markdown only
 
 **Report output directory** (Windows default):
 
@@ -158,8 +166,8 @@ Use [report-template.html](report-template.html) for structure and styling. Seve
 
 **Report file naming** (under report directory):
 
-- Single change: `D:\code_review_report\review-report-{change_id}.html`
-- Topic (merged summary): `D:\code_review_report\review-report-topic-{topic_slug}.html`
+- Single change: `D:\code_review_report\review-report-{change_id}.md`
+- Topic (merged summary): `D:\code_review_report\review-report-topic-{topic_slug}.md`
 
 After `fetch_review_bundle.py` runs, use the printed `report_path=` value as the write target.
 
@@ -167,16 +175,16 @@ After `fetch_review_bundle.py` runs, use the printed `report_path=` value as the
 
 ### Step 4: Terminal summary
 
-After writing the HTML report, print a concise summary with these parts:
+After writing the Markdown report, print a concise summary with these parts:
 
 1. **Change/topic info** — change number or topic name, subject, project, **模块** (`modules_display` from bundle, e.g. `LCM/TP/Sensor` or `通信`)
 2. **问题统计** — Critical / High / Medium / Low counts
 3. **主要发现** — brief top findings (1–3 bullets)
-4. **测试建议** — **copy section 5 from the HTML report verbatim** (P0 / P1 / P2 lists; do not paraphrase, summarize, or reorder)
-5. **Report** — output a **clickable link** to open the HTML report in the browser, using the `report_url=` value from Step 1:
+4. **测试建议** — **copy section 5 from the Markdown report verbatim** (P0 / P1 / P2 lists; do not paraphrase, summarize, or reorder)
+5. **Report** — output a **clickable link** to open the Markdown report, using the `report_url=` value from Step 1:
 
 ```markdown
-[打开报告](file:///D:/code_review_report/review-report-1540692.html)
+[打开报告](file:///D:/code_review_report/review-report-1540692.md)
 ```
 
 Use the exact `report_url=` printed by the fetch script (do not invent the path). Markdown link format ensures the path is clickable in the terminal/chat.
@@ -221,5 +229,5 @@ Use the exact `report_url=` printed by the fetch script (do not invent the path)
 ## Additional Resources
 
 - Review checklist: [check-items.md](check-items.md)
-- Report format: [report-template.html](report-template.html)
+- Report format: [report-template.md](report-template.md)
 - Module detection rules: [module-rules.md](module-rules.md)

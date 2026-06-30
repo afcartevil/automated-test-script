@@ -40,6 +40,6 @@ export function fetchRecommendCases(input: {
 
 export function cancelGerritReviewTask(
   taskId: string,
-): Promise<{ ok: boolean; action?: 'cancelled_pending' | 'interrupted_running' }> {
+): Promise<{ ok: boolean; action?: 'cancelled_pending' | 'interrupted_running'; error?: string }> {
   return tahpPost(`/api/tahp/gerrit-review/tasks/${encodeURIComponent(taskId)}/cancel`)
 }

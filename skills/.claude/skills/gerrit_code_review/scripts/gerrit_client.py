@@ -405,13 +405,13 @@ def ensure_report_dir() -> Path:
 
 
 def report_path_for_change(change_id: str | int) -> Path:
-    return ensure_report_dir() / f"review-report-{change_id}.html"
+    return ensure_report_dir() / f"review-report-{change_id}.md"
 
 
 def report_path_for_topic(topic_name: str) -> Path:
-    return ensure_report_dir() / f"review-report-topic-{topic_slug(topic_name)}.html"
+    return ensure_report_dir() / f"review-report-topic-{topic_slug(topic_name)}.md"
 
 
 def report_file_url(report_path: Path) -> str:
-    """Return a file:// URL that opens the HTML report in a browser."""
+    """Return a file:// URL for the Markdown report path."""
     return report_path.resolve().as_uri()

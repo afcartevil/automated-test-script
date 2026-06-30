@@ -71,6 +71,10 @@ export function getDisplayStatus(device: DeviceInfo): string {
   return device.status
 }
 
+export function getDisplayRole(device: DeviceInfo): string {
+  return device.status === '空闲' ? '未分配' : device.role
+}
+
 export function getRoleBadge(role: string): string {
   const colors: Record<string, string> = {
     未分配: 'background: var(--bg)',

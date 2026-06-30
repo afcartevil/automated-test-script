@@ -22,6 +22,7 @@ export function useGerritReviewWorkspace() {
     isRunning,
     sending,
     stopping,
+    loadingRecommendations,
   } = storeToRefs(gerritStore)
 
   const inputText = ref('')
@@ -50,7 +51,6 @@ export function useGerritReviewWorkspace() {
   const checkedRecommendedCount = computed(() => gerritStore.checkedRecommendedCases.length)
   const p0Count = computed(() => p0Result.value.items.length)
   const recommendedCount = computed(() => recommendedCases.value.length)
-  const refreshingRecommend = ref(false)
 
   const modulesUnrecognized = computed(() =>
     !modulesResult.value.modules.length && modulesResult.value.display === '未识别',
@@ -207,7 +207,7 @@ export function useGerritReviewWorkspace() {
     ([p0Count, running, recCount]) => {
       if (recCount > 0 || p0Count === 0) return
       if (running) return
-      if (refreshingRecommend.value || gerritStore.isRefreshingRecommendations()) return
+      if (loadingRecommendations.value || gerritStore.isRefreshingRecommendations()) return
       void gerritStore.ensureRecommendedCases()
     },
   )
@@ -231,7 +231,6 @@ export function useGerritReviewWorkspace() {
       message.warning('暂无必须测试项，无法推荐用例')
       return
     }
-    refreshingRecommend.value = true
     try {
       const hasCases = await gerritStore.refreshRecommendedCases()
       if (!hasCases) {
@@ -239,8 +238,6 @@ export function useGerritReviewWorkspace() {
       }
     } catch (err) {
       message.error((err as Error).message || '重新推荐失败')
-    } finally {
-      refreshingRecommend.value = false
     }
   }
 
@@ -272,7 +269,7 @@ export function useGerritReviewWorkspace() {
     checkedRecommendedCount,
     p0Count,
     recommendedCount,
-    refreshingRecommend,
+    loadingRecommendations,
     modulesUnrecognized,
     toggleRecommendedCase: setRecommendedCaseChecked,
     setRecommendedCaseChecked,

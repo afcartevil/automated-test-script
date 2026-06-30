@@ -513,6 +513,24 @@ describe('useGerritReviewStore', () => {
     expect(gerrit.chatMessages.find(m => m.taskId === 'task-gerrit-stop')?.content).toContain('评审已被用户停止')
   })
 
+  it('stops running review optimistically before task.cancelled arrives', async () => {
+    const gerrit = useGerritReviewStore()
+
+    gerrit.activeTaskId = 'task-gerrit-stop-fast'
+    gerrit.runningTaskId = 'task-gerrit-stop-fast'
+    gerrit.chatMessages = [
+      { id: 'u1', role: 'user', content: 'review' },
+      { id: 'a1', role: 'assistant', content: '', streaming: true, taskId: 'task-gerrit-stop-fast' },
+    ]
+
+    await gerrit.stopReview()
+
+    expect(cancelGerritReviewTaskMock).toHaveBeenCalledWith('task-gerrit-stop-fast')
+    expect(gerrit.isRunning).toBe(false)
+    expect(gerrit.chatMessages.find(m => m.taskId === 'task-gerrit-stop-fast')?.streaming).toBe(false)
+    expect(gerrit.chatMessages.find(m => m.taskId === 'task-gerrit-stop-fast')?.content).toContain('评审已被用户停止')
+  })
+
   it('does not replay cancelled events onto new pending assistant bubble', () => {
     const gerrit = useGerritReviewStore()
     const tasks = useTahpTasksStore()

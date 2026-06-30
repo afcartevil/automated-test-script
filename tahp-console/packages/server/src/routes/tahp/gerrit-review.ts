@@ -6,7 +6,7 @@ import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { logger } from '../../services/logger'
 import { sendGerritReviewChat, cancelGerritReviewTask } from '../../services/tahp/gerrit-review'
-import { recommendTestCases } from '../../services/tahp/gerrit-case-recommendation'
+import { recommendTestCasesWithMeta } from '../../services/tahp/gerrit-case-recommendation'
 import { tahpPaths } from '../../services/tahp/paths'
 
 export const tahpGerritReviewRoutes = new Router()
@@ -62,9 +62,14 @@ tahpGerritReviewRoutes.post('/api/tahp/gerrit-review/recommend-cases', async (ct
     }
     const modules = Array.isArray(body.modules) ? body.modules.map(String) : []
     const p0Items = Array.isArray(body.p0_items) ? body.p0_items.map(String) : []
-    const recommended_cases = recommendTestCases(p0Items, modules)
+    const { cases: recommended_cases, source } = await recommendTestCasesWithMeta(p0Items, modules)
     logger.info(
-      { p0Count: p0Items.length, moduleCount: modules.length, recommendedCount: recommended_cases.length },
+      {
+        p0Count: p0Items.length,
+        moduleCount: modules.length,
+        recommendedCount: recommended_cases.length,
+        source,
+      },
       '[gerrit-review] recommend-cases',
     )
     ctx.body = { success: true, data: { recommended_cases } }

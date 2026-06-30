@@ -73,6 +73,61 @@ export interface GerritReviewTaskCtx {
 const sessionCtx = new Map<string, GerritReviewSessionCtx>()
 const taskCtx = new Map<string, GerritReviewTaskCtx>()
 const taskRuntime = new Map<string, { sessionId: string; interruptRequested: boolean }>()
+const forceCancelTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+const GERRIT_FORCE_CANCEL_MS = 5000
+
+function gerritReviewMaxDurationMs(): number {
+  const raw = process.env.GERRIT_REVIEW_MAX_DURATION_MS
+  if (!raw) return 25 * 60_000
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? value : 25 * 60_000
+}
+
+function gerritReviewHeartbeatMs(): number {
+  const raw = process.env.GERRIT_REVIEW_HEARTBEAT_MS
+  if (!raw) return 60_000
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? value : 60_000
+}
+
+function agentSessionIdForTask(taskId: string): string {
+  return `tahp-gerrit-${taskId}`
+}
+
+function isInterruptRequested(taskId: string): boolean {
+  return taskRuntime.get(taskId)?.interruptRequested === true
+}
+
+function clearForceCancelTimer(taskId: string): void {
+  const timer = forceCancelTimers.get(taskId)
+  if (timer) {
+    clearTimeout(timer)
+    forceCancelTimers.delete(taskId)
+  }
+}
+
+function emitTaskCancelled(taskId: string, ctx: GerritReviewTaskCtx, message: string): void {
+  if (ctx.status === 'completed' || ctx.status === 'failed' || ctx.status === 'cancelled') return
+  ctx.status = 'cancelled'
+  ctx.error = message
+  ctx.completedAt = new Date().toISOString()
+  emit(taskId, 'task.cancelled', { error: message, message })
+}
+
+function scheduleForceCancel(taskId: string, sessionId: string): void {
+  clearForceCancelTimer(taskId)
+  const timer = setTimeout(() => {
+    forceCancelTimers.delete(taskId)
+    const ctx = taskCtx.get(taskId)
+    if (!ctx || ctx.status !== 'running') return
+    logger.warn({ taskId, sessionId }, '[gerrit-review] force cancel after interrupt timeout')
+    emitTaskCancelled(taskId, ctx, '评审已被用户停止')
+    sharedBridgeClient.destroy(sessionId).catch(() => {})
+    taskRuntime.delete(taskId)
+  }, GERRIT_FORCE_CANCEL_MS)
+  forceCancelTimers.set(taskId, timer)
+}
 
 function genSessionId(): string {
   return `sess-gerrit-${Date.now()}-${randomBytes(3).toString('hex')}`
@@ -118,15 +173,15 @@ export function buildGerritReviewInstructions(
 # 必须遵守
 1. **先 Read 主控 Skill 全文**：\`${skillPath}\`（\`${GERRIT_REVIEW_SKILL_ID}\`），严格按其中工作流执行。
 2. 用户输入可能是 Gerrit change URL、topic URL、\`topic:xxx\` 或纯 change number；按 Skill 调用 \`fetch_review_bundle.py\` 拉取 diff。
-3. 分析报告必须包含以下 5 个章节（与 Skill report-template 一致）：
+3. 分析报告必须包含以下 5 个章节（与 Skill report-template.md 一致），并写入 \`report_path=\` 指定的 **Markdown（.md）** 文件：
    - ## 1. 基本信息
    - ## 2. 问题统计
    - ## 3. 详细问题列表和改善建议
    - ## 4. 影响范围
    - ## 5. 测试建议（必须含 \`### P0 - 必须测试\`、\`### P1 - 强烈建议\`、\`### P2 - 建议测试\`）
-4. Topic 评审须产出**一份合并报告**，P0 列表去重合并。
+4. Topic 评审须产出**一份合并 Markdown 报告**，P0 列表去重合并。
 5. 必须真实调用工具执行 fetch 与分析；禁止编造 diff 内容。
-6. 完成后在终端摘要中打印 report_path。
+6. 完成后在终端摘要中打印 report_path 与可点击的 report_url（Markdown 文件）。
 ${credFileLine ? `${credFileLine}\n` : ''}
 # 工程 Skill 根目录
 \`${skillsDir}\`
@@ -167,6 +222,35 @@ function buildGerritReviewUserMessage(
   return lines.join('\n')
 }
 
+async function autoApproveGerritCommand(
+  taskId: string,
+  approvalId: string,
+  command: string,
+  seenApprovals: Set<string>,
+): Promise<void> {
+  if (!approvalId || seenApprovals.has(approvalId)) return
+  seenApprovals.add(approvalId)
+
+  const preview = command.trim().slice(0, 160) || '(命令)'
+  emit(taskId, 'task.skill_use', {
+    skill_id: 'terminal_approval',
+    source: 'approval',
+    message: `自动批准执行: ${preview}`,
+  })
+  logger.info({ taskId, approvalId, command: preview }, '[gerrit-review] auto-approve command')
+
+  try {
+    await sharedBridgeClient.approvalRespond(approvalId, 'once')
+    emit(taskId, 'task.tool_completed', {
+      skill_id: 'terminal_approval',
+      error: false,
+      message: `已自动批准: ${preview}`,
+    })
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, taskId, approvalId }, '[gerrit-review] approval respond failed')
+  }
+}
+
 async function runAgentChat(
   sessionId: string,
   instructions: string,
@@ -177,12 +261,17 @@ async function runAgentChat(
     onToolCompleted: (toolName: string, isError: boolean, toolCallId: unknown) => void
     onReasoning?: (text: string) => void
   },
+  taskId?: string,
 ): Promise<{ fullResponse: string }> {
   const manager = getAgentBridgeManager()
   if (!manager.running) {
     throw new Error(
       'Agent Bridge 未运行。请确认 hermes-agent-main 已初始化（npm run setup:agent）。',
     )
+  }
+
+  if (taskId && isInterruptRequested(taskId)) {
+    throw new Error('Agent 运行被中断')
   }
 
   const started: AgentBridgeChatStarted = await sharedBridgeClient.chat(
@@ -196,25 +285,65 @@ async function runAgentChat(
   const markupState: { bridgePendingToolCallMarkup?: string } = {}
   let fullResponse = ''
   let lastChunk: AgentBridgeOutput | null = null
+  const seenApprovals = new Set<string>()
+  const startedAt = Date.now()
+  let lastHeartbeatAt = startedAt
+  const maxDurationMs = gerritReviewMaxDurationMs()
+  const heartbeatMs = gerritReviewHeartbeatMs()
 
   for await (const chunk of sharedBridgeClient.streamOutput(started.run_id, { intervalMs: 250 })) {
+    if (taskId && isInterruptRequested(taskId)) {
+      await sharedBridgeClient.interrupt(sessionId, '用户手动停止 Gerrit 评审').catch(() => {})
+      throw new Error('Agent 运行被中断')
+    }
+
+    const now = Date.now()
+    if (now - startedAt > maxDurationMs) {
+      throw new Error(`Gerrit 评审超时（超过 ${Math.round(maxDurationMs / 60_000)} 分钟），请缩小变更范围或稍后重试`)
+    }
+    if (taskId && now - lastHeartbeatAt >= heartbeatMs) {
+      const elapsedMin = Math.max(1, Math.round((now - startedAt) / 60_000))
+      emit(taskId, 'task.phase', {
+        phase: 'EXECUTING',
+        progress: 20,
+        message: `Agent 仍在执行评审…（已运行 ${elapsedMin} 分钟）`,
+      })
+      lastHeartbeatAt = now
+    }
+
+    let hadProgress = false
     lastChunk = chunk
     for (const ev of chunk.events || []) {
       const evType = ev.event as string | undefined
-      if (evType === 'tool.started') {
+      if (evType === 'approval.requested' && taskId) {
+        hadProgress = true
+        void autoApproveGerritCommand(
+          taskId,
+          String(ev.approval_id || ''),
+          String(ev.command || ev.description || ''),
+          seenApprovals,
+        )
+      } else if (evType === 'tool.started') {
+        hadProgress = true
         cb.onToolStarted((ev.tool_name as string) || 'unknown-tool', ev.args, ev.tool_call_id)
       } else if (evType === 'tool.completed') {
+        hadProgress = true
         cb.onToolCompleted((ev.tool_name as string) || 'unknown-tool', ev.is_error === true, ev.tool_call_id)
       } else if ((evType === 'reasoning.delta' || evType === 'thinking.delta') && cb.onReasoning) {
+        hadProgress = true
         cb.onReasoning(String(ev.text || ''))
       }
     }
     if (chunk.delta) {
       const cleaned = filterBridgeToolCallMarkupDelta(markupState, chunk.delta)
       if (cleaned) {
+        hadProgress = true
         fullResponse += cleaned
         cb.onText(cleaned)
       }
+    }
+    if (hadProgress) {
+      lastHeartbeatAt = now
     }
     if (chunk.done) {
       if (chunk.status === 'error') {
@@ -255,7 +384,7 @@ export async function cancelGerritReviewTask(
     return { ok: false, error: `任务已结束，当前状态: ${ctx.status}` }
   }
 
-  const agentSessionId = `tahp-gerrit-${taskId}`
+  const agentSessionId = agentSessionIdForTask(taskId)
   const control = taskRuntime.get(taskId) || { sessionId: agentSessionId, interruptRequested: false }
   control.interruptRequested = true
   taskRuntime.set(taskId, control)
@@ -264,10 +393,16 @@ export async function cancelGerritReviewTask(
   logger.warn({ taskId, sessionId: control.sessionId }, '[gerrit-review] interrupt requested')
 
   setImmediate(() => {
-    sharedBridgeClient.interrupt(control.sessionId, '用户手动停止 Gerrit 评审').catch((err) => {
-      logger.warn({ err: (err as Error).message, taskId }, '[gerrit-review] interrupt rpc failed')
-    })
+    void (async () => {
+      try {
+        await sharedBridgeClient.interrupt(control.sessionId, '用户手动停止 Gerrit 评审')
+      } catch (err) {
+        logger.warn({ err: (err as Error).message, taskId }, '[gerrit-review] interrupt rpc failed')
+        await sharedBridgeClient.destroy(control.sessionId).catch(() => {})
+      }
+    })()
   })
+  scheduleForceCancel(taskId, control.sessionId)
   return { ok: true, action: 'interrupted_running' }
 }
 
@@ -335,7 +470,7 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
   if (!session) return
 
   const startMs = Date.now()
-  const agentSessionId = `tahp-gerrit-${taskId}`
+  const agentSessionId = agentSessionIdForTask(taskId)
 
   const preControl = taskRuntime.get(taskId)
   if (preControl?.interruptRequested) {
@@ -346,7 +481,18 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
     taskRuntime.delete(taskId)
     return
   }
-  taskRuntime.set(taskId, { sessionId: agentSessionId, interruptRequested: false })
+  taskRuntime.set(taskId, {
+    sessionId: agentSessionId,
+    interruptRequested: preControl?.interruptRequested === true,
+  })
+  if (isInterruptRequested(taskId)) {
+    ctx.status = 'cancelled'
+    ctx.error = '评审已取消'
+    ctx.completedAt = new Date().toISOString()
+    emit(taskId, 'task.cancelled', { error: ctx.error, message: ctx.error })
+    taskRuntime.delete(taskId)
+    return
+  }
 
   try {
     const credFilePath = writeRuntimeCredFile()
@@ -368,6 +514,10 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
     getAgentBridgeManager()
 
     emit(taskId, 'task.phase', { phase: 'EXECUTING', progress: 20, message: 'Agent 执行 Gerrit Code Review...' })
+
+    if (isInterruptRequested(taskId)) {
+      throw new Error('Agent 运行被中断')
+    }
 
     const { fullResponse } = await runAgentChat(agentSessionId, instructions, userMessage, {
       onText: (delta) => {
@@ -397,11 +547,12 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
       onReasoning: (text) => {
         if (text) emit(taskId, 'task.message', { level: 'reasoning', text })
       },
-    })
+    }, taskId)
 
+    emit(taskId, 'task.phase', { phase: 'RECOMMENDING', progress: 92, message: '正在推荐测试用例…' })
     const p0 = extractP0TestSuggestions(fullResponse)
     const moduleInfo = extractModules(fullResponse)
-    const recommendedCases = recommendTestCases(p0.items, moduleInfo.modules)
+    const recommendedCases = await recommendTestCases(p0.items, moduleInfo.modules)
     ctx.llmResponse = fullResponse
     ctx.p0Items = p0.items
     ctx.status = 'completed'
@@ -472,6 +623,7 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
       emit(taskId, 'task.failed', { error: msg, message: msg })
     }
   } finally {
+    clearForceCancelTimer(taskId)
     taskRuntime.delete(taskId)
     sharedBridgeClient.destroy(agentSessionId).catch(() => {})
   }

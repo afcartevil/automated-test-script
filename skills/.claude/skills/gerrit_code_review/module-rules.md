@@ -37,5 +37,5 @@
 ## 使用位置
 
 1. `review-bundle.json` 顶层及每个 change
-2. HTML 报告 **基本信息 → 模块**
+2. Markdown 报告 **基本信息 → 模块**
 3. Terminal summary **Change/topic info → 模块**

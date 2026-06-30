@@ -28,7 +28,7 @@ const {
   checkedRecommendedCount,
   p0Count,
   recommendedCount,
-  refreshingRecommend,
+  loadingRecommendations,
   toggleRecommendedCase,
   setRecommendedCaseChecked,
   handleStartRecommendedTest,
@@ -191,8 +191,15 @@ onActivated(restoreWorkspace)
                   推荐测试用例 · {{ recommendedCount }}
                 </div>
                 <NScrollbar class="section-scroll">
+                  <div
+                    v-if="loadingRecommendations"
+                    class="recommend-loading"
+                  >
+                    <NSpin size="small" />
+                    <p class="ea-muted">AI 正在分析必须测试项，生成推荐用例…</p>
+                  </div>
                   <NEmpty
-                    v-if="!recommendedCount"
+                    v-else-if="!recommendedCount"
                     description="暂无推荐用例，请完成评审或点击重新推荐"
                     size="small"
                   />
@@ -227,7 +234,7 @@ onActivated(restoreWorkspace)
             <NButton
               size="small"
               :disabled="!p0Count || isRunning"
-              :loading="refreshingRecommend"
+              :loading="loadingRecommendations"
               @click="handleRefreshRecommend"
             >
               重新推荐
@@ -569,6 +576,23 @@ $gerrit-bottom-bar-min: calc(10px + 12px + #{$gerrit-action-inner-min});
   gap: 12px;
   padding: 32px 16px;
   text-align: center;
+}
+
+.recommend-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 120px;
+  padding: 24px 12px;
+  text-align: center;
+
+  p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+  }
 }
 
 .p0-list {

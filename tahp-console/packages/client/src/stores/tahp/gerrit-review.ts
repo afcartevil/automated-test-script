@@ -34,6 +34,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
   const serverModules = ref<string[]>([])
   const serverModulesDisplay = ref('未识别')
   const recommendedCases = ref<RecommendedCaseView[]>([])
+  const loadingRecommendations = ref(false)
 
   let watcherInstalled = false
   let insightApplySeq = 0
@@ -220,6 +221,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
       return
     }
 
+    if (seq === insightApplySeq) loadingRecommendations.value = true
     try {
       const data = await fetchRecommendCases({ p0_items: p0Items, modules })
       logState('loadRecommendedCasesForP0.done', sourceTaskId, {
@@ -241,6 +243,8 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
       if (seq === insightApplySeq && options?.force !== true) {
         recommendedCases.value = []
       }
+    } finally {
+      if (seq === insightApplySeq) loadingRecommendations.value = false
     }
   }
 
@@ -718,12 +722,28 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
       return
     }
 
+    const stopMsg = '**评审已被用户停止**'
     stopping.value = true
     try {
-      await cancelGerritReviewTask(taskId)
+      const res = await cancelGerritReviewTask(taskId)
+      if (!res.ok) {
+        finalizeAssistantForTask(
+          taskId,
+          `${stopMsg}\n\n${res.error ?? '停止请求被拒绝'}`,
+          'failed',
+        )
+        if (!isFinalized(taskId)) markFinalized(taskId)
+        return
+      }
+
+      if (!isFinalized(taskId)) {
+        markFinalized(taskId)
+      }
+      finalizeAssistantForTask(taskId, stopMsg, 'failed')
       processStreamEvents(taskId)
     } catch {
-      finalizeAssistantForTask(taskId, '**评审已停止**\n\n停止请求失败，已重置界面状态', 'failed')
+      finalizeAssistantForTask(taskId, `${stopMsg}\n\n停止请求失败，已重置界面状态`, 'failed')
+      if (!isFinalized(taskId)) markFinalized(taskId)
       clearRunningState('failed')
     } finally {
       stopping.value = false
@@ -759,6 +779,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     serverModules,
     serverModulesDisplay,
     recommendedCases,
+    loadingRecommendations,
     checkedRecommendedCases,
     stream,
     streamingText,

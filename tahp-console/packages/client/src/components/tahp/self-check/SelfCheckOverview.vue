@@ -6,6 +6,7 @@ import type { PipelineStage } from './self-check-utils'
 import SelfCheckOverviewCard from './SelfCheckOverviewCard.vue'
 import SelfCheckFlowStatus from './SelfCheckFlowStatus.vue'
 import {
+  getDisplayRole,
   getDisplayStatus,
   getStatusColor,
   getTestTypeLabel,
@@ -37,12 +38,6 @@ const emit = defineEmits<{
   goTab: [tab: string]
   selectDevice: [deviceId: string]
 }>()
-
-function isRunning(device: DeviceInfo): boolean {
-  return device.status.includes('测试') || device.status.includes('等待') || device.status === '初始化中'
-}
-
-const runningDevices = computed(() => props.devices.filter(isRunning))
 
 const deviceCounts = computed(() => ({
   idle: props.devices.filter(d => d.status === '空闲').length,
@@ -132,31 +127,45 @@ function onFlowStage(tab: string) {
       <SelfCheckOverviewCard
         title="设备执行"
         tone="tone-sky"
+        fill-body
+        tall
         :metric="stats.runningTests"
         metric-label="运行中"
         :secondary-metric="`空闲 ${deviceCounts.idle} · 辅测 ${deviceCounts.activeAux} · 错误 ${deviceCounts.error}`"
         @enter="emit('goDevices')"
       >
-        <div v-if="loading" class="panel-empty ea-muted">加载中…</div>
-        <div v-else-if="!runningDevices.length" class="panel-empty ea-muted">
-          暂无运行中测试，请进入
+        <div v-if="loading" class="device-panel panel-empty ea-muted">加载中…</div>
+        <div v-else-if="!devices.length" class="device-panel panel-empty ea-muted">
+          暂无设备，请连接 ADB 后进入
           <button type="button" class="link-btn" @click="emit('goDevices')">设备执行</button>
+          刷新
         </div>
-        <ul v-else class="item-list">
-          <li
-            v-for="device in runningDevices.slice(0, 3)"
-            :key="device.deviceId"
-            class="item-row clickable"
-            @click="emit('selectDevice', device.deviceId)"
-          >
-            <span class="status-dot" :style="{ background: getStatusColor(device.status) }" />
-            <span class="item-main">
-              <strong>{{ device.deviceName }}</strong>
-              <small>{{ getDisplayStatus(device) }}</small>
-            </span>
-            <span class="item-meta">{{ getTestTypeLabel(device.testType) }}</span>
-          </li>
-        </ul>
+        <div v-else class="device-panel">
+          <ul class="item-list device-list">
+            <li
+              v-for="device in devices"
+              :key="device.deviceId"
+              class="device-row clickable"
+              :title="`${device.deviceName} · ${device.deviceId}`"
+              @click="emit('selectDevice', device.deviceId)"
+            >
+              <span class="status-dot" :style="{ background: getStatusColor(device.status) }" />
+              <strong class="device-name">{{ device.deviceName }}</strong>
+              <span class="device-role">{{ getDisplayRole(device) }}</span>
+              <div class="device-info-meta">
+                <span class="device-id">{{ device.deviceId }}</span>
+                <span class="device-sep">·</span>
+                <span class="device-status" :style="{ color: getStatusColor(device.status) }">
+                  {{ getDisplayStatus(device) }}
+                </span>
+                <template v-if="device.testType">
+                  <span class="device-sep">·</span>
+                  <span class="device-test">{{ getTestTypeLabel(device.testType) }}</span>
+                </template>
+              </div>
+            </li>
+          </ul>
+        </div>
       </SelfCheckOverviewCard>
 
       <SelfCheckOverviewCard
@@ -206,6 +215,11 @@ function onFlowStage(tab: string) {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 14px;
+  align-items: stretch;
+
+  > * {
+    min-width: 0;
+  }
 }
 
 .panel-empty {
@@ -272,6 +286,10 @@ function onFlowStage(tab: string) {
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+  margin-top: 0.35em;
 }
 
 .item-main {
@@ -295,6 +313,96 @@ function onFlowStage(tab: string) {
   font-size: 12px;
   color: var(--muted);
   flex-shrink: 0;
+}
+
+.device-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.device-list {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.device-row {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) var(--card-action-col, 68px);
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 4px;
+  align-items: center;
+  font-size: 13px;
+  line-height: 1.45;
+  min-width: 0;
+
+  &.clickable {
+    cursor: pointer;
+    padding: 8px 0 8px 8px;
+    margin: -8px 0 -8px -8px;
+    border-radius: 8px;
+
+    &:hover {
+      background: var(--bg);
+    }
+  }
+}
+
+.device-name {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-role {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: start;
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.device-info-meta {
+  grid-column: 2;
+  grid-row: 2;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-id {
+  font-size: 11px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.device-sep {
+  margin: 0 4px;
+}
+
+.device-test {
+  color: var(--muted);
+}
+
+.device-status {
+  font-weight: 500;
 }
 
 @media (max-width: 1100px) {

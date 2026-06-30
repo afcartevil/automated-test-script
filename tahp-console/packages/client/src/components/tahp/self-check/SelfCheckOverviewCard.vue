@@ -9,6 +9,8 @@ defineProps<{
   secondaryMetric?: string
   compact?: boolean
   hideEnter?: boolean
+  fillBody?: boolean
+  tall?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -17,7 +19,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <EaCard class="overview-feature-card" :class="[tone, { compact }]">
+  <EaCard class="overview-feature-card" :class="[tone, { compact, tall }]">
     <div class="card-head">
       <h3>{{ title }}</h3>
       <button
@@ -36,7 +38,7 @@ const emit = defineEmits<{
       </div>
       <div v-if="secondaryMetric" class="metric-secondary ea-muted">{{ secondaryMetric }}</div>
     </div>
-    <div class="card-body">
+    <div class="card-body" :class="{ 'card-body--fill': fillBody }">
       <slot />
     </div>
   </EaCard>
@@ -44,6 +46,7 @@ const emit = defineEmits<{
 
 <style scoped lang="scss">
 .overview-feature-card {
+  --card-action-col: 68px;
   padding: 14px 16px;
   min-height: 200px;
   display: flex;
@@ -58,6 +61,10 @@ const emit = defineEmits<{
 
   &.compact {
     min-height: 0;
+  }
+
+  &.tall {
+    min-height: 360px;
   }
 }
 
@@ -77,6 +84,8 @@ const emit = defineEmits<{
 
 .card-enter {
   flex-shrink: 0;
+  min-width: var(--card-action-col);
+  justify-content: center;
 }
 
 .card-metrics {
@@ -110,5 +119,10 @@ const emit = defineEmits<{
   flex: 1;
   min-height: 0;
   font-size: 13px;
+
+  &--fill {
+    display: flex;
+    flex-direction: column;
+  }
 }
 </style>

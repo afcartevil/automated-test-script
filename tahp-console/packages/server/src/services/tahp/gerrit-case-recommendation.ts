@@ -1,10 +1,13 @@
 /**
  * 根据 Gerrit 评审提取的「必须测试」项，从 week 用例库推荐测试用例。
+ * 默认 hybrid：LLM 语义精排 + 规则匹配兜底。
  */
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { logger } from '../logger'
 import { tahpPaths } from './paths'
+import { rerankCasesWithLlm } from './gerrit-case-recommend-llm'
 
 const CASE_CONFIG_DIR = join(tahpPaths.selfCheckDir, 'case_config')
 
@@ -15,6 +18,20 @@ export interface RecommendedCase {
   score: number
   reasons: string[]
 }
+
+export interface CaseCandidate {
+  caseKey: string
+  caseName: string
+  moduleLabel: string
+}
+
+export interface CatalogDef {
+  file: string
+  prefix: string
+  label: string
+}
+
+export type RecommendSource = 'llm' | 'rule'
 
 interface WeekCaseConfig {
   cases?: Array<{ caseIndex: number; caseName: string; [key: string]: unknown }>
@@ -36,6 +53,25 @@ const MUST_TEST_KEYWORD_HINTS: Record<string, string[]> = {
 const DRIVER_CATALOG_HINTS = ['USB', '显示', '充电', '指纹', '相机', '音频', 'LCM', 'TP', '传感器', 'SAR', '插拔', '马达', '触控']
 const TDD_CATALOG_HINTS = ['SIM', '通信', '网络', '通话', 'WIFI', '蓝牙', 'GPS', 'NFC', '5G', '4G', '数据']
 
+const MAX_PER_CATALOG = 8
+
+export const FALLBACK_CATALOGS: readonly CatalogDef[] = [
+  { file: 'str4_driver_component.json', prefix: 'str4/driver_component', label: '转测驱动' },
+]
+
+function recommendMaxTotal(): number {
+  const raw = process.env.GERRIT_RECOMMEND_MAX
+  if (!raw) return 16
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 16
+}
+
+function recommendMode(): 'hybrid' | 'llm' | 'rule' {
+  const mode = (process.env.GERRIT_RECOMMEND_MODE || 'hybrid').toLowerCase()
+  if (mode === 'llm' || mode === 'rule') return mode
+  return 'hybrid'
+}
+
 function loadWeekCases(filename: string): Array<{ caseIndex: number; caseName: string }> {
   try {
     const path = join(CASE_CONFIG_DIR, filename)
@@ -45,6 +81,26 @@ function loadWeekCases(filename: string): Array<{ caseIndex: number; caseName: s
   } catch {
     return []
   }
+}
+
+export function loadCatalogCases(catalogs: readonly CatalogDef[]): CaseCandidate[] {
+  const result: CaseCandidate[] = []
+  const seen = new Set<string>()
+
+  for (const cat of catalogs) {
+    for (const c of loadWeekCases(cat.file)) {
+      const caseKey = `${cat.prefix}/${c.caseIndex}`
+      if (seen.has(caseKey)) continue
+      seen.add(caseKey)
+      result.push({
+        caseKey,
+        caseName: c.caseName,
+        moduleLabel: cat.label,
+      })
+    }
+  }
+
+  return result
 }
 
 const GENERIC_TOKEN_STOPWORDS = new Set([
@@ -96,7 +152,7 @@ function normalizeMustTestText(text: string): string {
     .trim()
 }
 
-function normalizeMustTestItems(items: string[]): string[] {
+export function normalizeMustTestItems(items: string[]): string[] {
   return items
     .map(normalizeMustTestText)
     .filter(Boolean)
@@ -175,14 +231,14 @@ function collectFromConfig(
   return scored.slice(0, limit)
 }
 
-function routeCatalogs(
+export function routeCatalogs(
   mustTestItems: string[],
   modules: string[] = [],
-): Array<{ file: string; prefix: string; label: string }> {
+): CatalogDef[] {
   const combined = [...mustTestItems, ...modules].join(' ')
   const wantsDriver = DRIVER_CATALOG_HINTS.some(k => combined.includes(k))
   const wantsTdd = TDD_CATALOG_HINTS.some(k => combined.includes(k))
-  const catalogs: Array<{ file: string; prefix: string; label: string }> = []
+  const catalogs: CatalogDef[] = []
 
   if (wantsDriver || !wantsTdd) {
     catalogs.push({ file: 'week_driver.json', prefix: 'week/driver', label: '驱动' })
@@ -194,20 +250,27 @@ function routeCatalogs(
   return catalogs
 }
 
-const MAX_PER_CATALOG = 8
-const MAX_TOTAL = 16
-
-const FALLBACK_CATALOGS = [
-  { file: 'str4_driver_component.json', prefix: 'str4/driver_component', label: '转测驱动' },
-] as const
+export function resolveCandidateCatalogs(
+  mustTestItems: string[],
+  modules: string[] = [],
+): CatalogDef[] {
+  const catalogs = routeCatalogs(mustTestItems, modules)
+  const candidates = loadCatalogCases(catalogs)
+  if (candidates.length) return catalogs
+  return [...FALLBACK_CATALOGS]
+}
 
 /**
- * 根据「必须测试」项推荐 week 用例；week 无命中时回退 str4 驱动组件库。
+ * 规则匹配推荐（同步，作 fallback）。
  */
-export function recommendTestCases(mustTestItems: string[], modules: string[] = []): RecommendedCase[] {
+export function recommendTestCasesByRules(
+  mustTestItems: string[],
+  modules: string[] = [],
+): RecommendedCase[] {
   const normalizedMustTest = normalizeMustTestItems(mustTestItems)
   if (!normalizedMustTest.length) return []
 
+  const maxTotal = recommendMaxTotal()
   const catalogs = routeCatalogs(normalizedMustTest, modules)
   const all: RecommendedCase[] = []
 
@@ -244,8 +307,70 @@ export function recommendTestCases(mustTestItems: string[], modules: string[] = 
     if (seen.has(item.caseKey)) continue
     seen.add(item.caseKey)
     deduped.push(item)
-    if (deduped.length >= MAX_TOTAL) break
+    if (deduped.length >= maxTotal) break
   }
 
   return deduped
+}
+
+/**
+ * Hybrid 推荐：LLM 精排优先，失败或空结果时回退规则匹配。
+ */
+export async function recommendTestCases(
+  mustTestItems: string[],
+  modules: string[] = [],
+): Promise<RecommendedCase[]> {
+  const { cases } = await recommendTestCasesWithMeta(mustTestItems, modules)
+  return cases
+}
+
+export async function recommendTestCasesWithMeta(
+  mustTestItems: string[],
+  modules: string[] = [],
+): Promise<{ cases: RecommendedCase[]; source: RecommendSource }> {
+  const normalizedMustTest = normalizeMustTestItems(mustTestItems)
+  if (!normalizedMustTest.length) {
+    return { cases: [], source: 'rule' }
+  }
+
+  const mode = recommendMode()
+  if (mode === 'rule') {
+    const cases = recommendTestCasesByRules(normalizedMustTest, modules)
+    return { cases, source: 'rule' }
+  }
+
+  const maxTotal = recommendMaxTotal()
+  const catalogDefs = resolveCandidateCatalogs(normalizedMustTest, modules)
+  const candidates = loadCatalogCases(catalogDefs)
+
+  try {
+    const llmCases = await rerankCasesWithLlm(
+      normalizedMustTest,
+      modules,
+      candidates,
+      maxTotal,
+    )
+    if (llmCases.length) {
+      logger.info(
+        { source: 'llm', p0Count: normalizedMustTest.length, recommendedCount: llmCases.length },
+        '[gerrit-recommend] recommend-cases',
+      )
+      return { cases: llmCases, source: 'llm' }
+    }
+  } catch (err) {
+    logger.warn(
+      { err: (err as Error).message, mode },
+      '[gerrit-recommend] LLM rerank failed, falling back to rules',
+    )
+    if (mode === 'llm') {
+      return { cases: [], source: 'rule' }
+    }
+  }
+
+  const ruleCases = recommendTestCasesByRules(normalizedMustTest, modules)
+  logger.info(
+    { source: 'rule', p0Count: normalizedMustTest.length, recommendedCount: ruleCases.length },
+    '[gerrit-recommend] recommend-cases',
+  )
+  return { cases: ruleCases, source: 'rule' }
 }
