@@ -18,6 +18,9 @@ reports/
 .chroma_db/
 # TAHP Console 本地配置（含 Gerrit 凭证）
 .tahp-config/
+# 每人本机 Skill 配置状态与 Jira 凭据（勿提交）
+.tahp/skill-config-state.json
+.tahp/jira-user-config.json
 # TranCopilot 项目规则文件夹
 *.copilot
 # 刷机工具运行时日志与本地解压缓存

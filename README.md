@@ -280,7 +280,9 @@ Console「报告」页与上述目录内容对应。
 | `.tahp-config/project-nodes.json` | AI 测试自规划：项目节点缓存 | 否 |
 | `.tahp-config/test-plan-rules.json` | AI 测试自规划：节点测试规则 | 否 |
 | `.adapt-config/` | AI 适配调试布局与配置 | 是 |
-| `.tahp/` | 必选 Skill 配置状态 | 是 |
+| `.tahp/required-skills.json` | 必选 Skill 清单（团队共享） | 是 |
+| `.tahp/skill-config-state.json` | 本机 Skill 配置完成状态 | 否 |
+| `.tahp/jira-user-config.json` | 智能诊断同步的 Jira 凭据 | 否 |
 | `knowledge-base/.kb-data/` | 知识库条目与文档 | 是 |
 | `docs/升级项目关键信息表.xlsx` | 升级项目节点源表（飞书导出） | 否（`docs/` gitignore） |
 
