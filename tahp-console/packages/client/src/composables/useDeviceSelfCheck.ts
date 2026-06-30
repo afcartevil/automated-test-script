@@ -1041,9 +1041,7 @@ async function loadCaseCatalogs(options?: { silent?: boolean }) {
   try {
     caseCatalogGroups.value = await getCaseCatalogs()
     expandedCatalogTypes.value = new Set(caseCatalogGroups.value.map(g => g.testType))
-    expandedCatalogModules.value = new Set(
-      caseCatalogGroups.value.flatMap(g => g.modules.map(m => m.key))
-    )
+    expandedCatalogModules.value = new Set()
   } catch (e) {
     console.error('[DeviceSelfCheck] Error loading case catalogs:', e)
     if (!options?.silent) {

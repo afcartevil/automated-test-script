@@ -103,15 +103,26 @@ onActivated(restoreWorkspace)
               size="small"
             />
             <div v-else class="schedule-table-wrap">
-              <div
-                v-for="(block, blockIdx) in scheduleTable"
-                :key="block.triggerDate"
-                class="schedule-date-block"
-                :class="{ 'is-last': blockIdx === scheduleTable.length - 1 }"
-              >
-                <table class="schedule-table">
-                  <tbody>
-                    <tr v-for="(row, idx) in block.rows" :key="row.scheduleKey">
+              <table class="schedule-table">
+                <colgroup>
+                  <col class="col-date-col" />
+                  <col class="col-project-col" />
+                  <col class="col-test-col" />
+                  <col class="col-status-col" />
+                </colgroup>
+                <tbody>
+                  <template
+                    v-for="(block, blockIdx) in scheduleTable"
+                    :key="block.triggerDate"
+                  >
+                    <tr
+                      v-for="(row, idx) in block.rows"
+                      :key="row.scheduleKey"
+                      :class="{
+                        'row-start-time-separator':
+                          idx === block.rows.length - 1 && blockIdx < scheduleTable.length - 1,
+                      }"
+                    >
                       <td
                         v-if="idx === 0"
                         :rowspan="block.rows.length"
@@ -128,29 +139,31 @@ onActivated(restoreWorkspace)
                       </td>
                       <td class="col-test">{{ row.item.testTypeLabel }}</td>
                       <td class="col-status">
-                        <NTag
-                          size="tiny"
-                          :type="scheduleTagType(row.item)"
-                          :bordered="false"
-                          class="status-tag"
-                        >
-                          {{ row.item.displayLabel }}
-                        </NTag>
-                        <NTag
-                          v-for="tag in row.item.tags"
-                          :key="`${row.scheduleKey}-${tag}`"
-                          size="tiny"
-                          type="error"
-                          :bordered="false"
-                          class="status-tag"
-                        >
-                          {{ tag }}
-                        </NTag>
+                        <span class="status-tags">
+                          <NTag
+                            size="tiny"
+                            :type="scheduleTagType(row.item)"
+                            :bordered="false"
+                            class="status-tag"
+                          >
+                            {{ row.item.displayLabel }}
+                          </NTag>
+                          <NTag
+                            v-for="tag in row.item.tags"
+                            :key="`${row.scheduleKey}-${tag}`"
+                            size="tiny"
+                            type="error"
+                            :bordered="false"
+                            class="status-tag"
+                          >
+                            {{ tag }}
+                          </NTag>
+                        </span>
                       </td>
                     </tr>
-                  </tbody>
-                </table>
-              </div>
+                  </template>
+                </tbody>
+              </table>
             </div>
           </NScrollbar>
         </div>
@@ -265,33 +278,41 @@ onActivated(restoreWorkspace)
 }
 
 .schedule-table-wrap {
-  display: flex;
-  flex-direction: column;
-}
-
-.schedule-date-block {
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--line);
-
-  &.is-last {
-    margin-bottom: 0;
-    padding-bottom: 0;
-    border-bottom: none;
-  }
+  width: 100%;
 }
 
 .schedule-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 12px;
   line-height: 1.35;
+
+  .col-date-col {
+    width: 88px;
+  }
+
+  .col-project-col {
+    width: 72px;
+  }
+
+  .col-test-col {
+    width: 100px;
+  }
+
+  .col-status-col {
+    width: 108px;
+  }
 
   tbody tr {
     border-bottom: 1px dashed var(--line);
 
     &:last-child {
       border-bottom: none;
+    }
+
+    &.row-start-time-separator {
+      border-bottom: 1px solid var(--line);
     }
   }
 
@@ -302,7 +323,6 @@ onActivated(restoreWorkspace)
 }
 
 .col-date {
-  width: 88px;
   font-weight: 700;
   font-size: 12px;
   text-align: center;
@@ -310,8 +330,7 @@ onActivated(restoreWorkspace)
 }
 
 .col-project {
-  width: 64px;
-  text-align: center;
+  text-align: left;
   vertical-align: middle;
 
   strong {
@@ -321,18 +340,24 @@ onActivated(restoreWorkspace)
 
 .col-test {
   text-align: left;
-  padding-right: 4px;
+  padding-right: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .col-status {
-  min-width: 80px;
   text-align: left;
-  white-space: nowrap;
   vertical-align: middle;
+  padding-left: 0;
+}
 
-  .status-tag + .status-tag {
-    margin-left: 4px;
-  }
+.status-tags {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  gap: 4px;
 }
 
 .item-line {
