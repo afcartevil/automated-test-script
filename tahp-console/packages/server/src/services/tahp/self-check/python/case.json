@@ -209,5 +209,15 @@
             "新增SR/bug修复关联部分check",
             "来电铃声渐响"
         ]
+    },
+    "monkey": {
+        "monkey": [
+            "monkey测试"
+        ]
+    },
+    "smoke": {
+        "usd": [
+            "USD冒烟测试"
+        ]
     }
 }

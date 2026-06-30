@@ -97,7 +97,6 @@ function reportShortType(testType: string): string {
   if (testType === 'smoke') return '冒烟'
   if (testType === 'str4') return 'STR4'
   if (testType === 'week') return '周版本'
-  if (testType === 'smoke') return '冒烟'
   if (testType === 'custom') return '自定义'
   return testType
 }

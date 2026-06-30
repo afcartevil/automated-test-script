@@ -76,15 +76,21 @@ def run(device_info=None, step_update=None, **_context):
 
     add_step("正在运行 si_run.py --test-type usd …")
 
+    log_dir = sdd_root / "report"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"si_run_usd_{serial}.log"
+
     try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(sdd_root),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        with log_path.open("w", encoding="utf-8") as log_file:
+            result = subprocess.run(
+                cmd,
+                cwd=str(sdd_root),
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
     except Exception as exc:
         add_step("USD 冒烟执行异常-失败")
         return {
@@ -93,8 +99,13 @@ def run(device_info=None, step_update=None, **_context):
             "full_automation": True,
         }
 
-    stdout_tail = (result.stdout or "").strip()[-2000:]
-    stderr_tail = (result.stderr or "").strip()[-2000:]
+    stdout_tail = ""
+    stderr_tail = ""
+    try:
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        stdout_tail = log_text.strip()[-2000:]
+    except OSError:
+        pass
     report_path = _find_latest_report(sdd_root / "report")
 
     if report_path:

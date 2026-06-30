@@ -1083,14 +1083,6 @@ function handleDutRowAction(deviceId: string) {
                         >
                           <strong>{{ getTestTypeLabel(testType) }}</strong>
                         </button>
-                        <button
-                          type="button"
-                          class="test-type-btn"
-                          :class="{ active: selectedTestType === 'smoke' }"
-                          @click.stop="selectedTestType = 'smoke'"
-                        >
-                          <strong>冒烟测试</strong>
-                        </button>
                       </div>
                     </div>
 

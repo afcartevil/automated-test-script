@@ -1647,6 +1647,9 @@ async function runModule(
       console.warn(`[device-self-check] Failed to load case info: ${caseInfoPath}`)
     }
   }
+  if (!cases.length && config.cases?.length) {
+    cases = config.cases.map(c => ({ case_index: c.caseIndex, 用例名: c.caseName }))
+  }
 
   const totalCases = cases.length || 0
   session.moduleProgress[moduleKey] = {
