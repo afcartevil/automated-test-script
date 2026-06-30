@@ -30,7 +30,7 @@ export type DeviceStatus =
   | '待命'
   | '刷机中'
 
-export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke'
+export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms'
 export type DeviceTestType = StandardTestType | 'custom'
 
 export interface SimCardInfo {
@@ -174,6 +174,10 @@ interface AutoTestSettings {
   monkeyDuration?: string
   /** USD 冒烟：为 true 时 si_run 传 --skip-spd-info */
   smokeUsdSkipSpdInfo?: boolean
+  /** GMS：CTS/GTS/VTS 的 xxx-tradefed 可执行文件路径 */
+  gmsTradefedPath?: Record<string, string>
+  /** @deprecated 兼容旧配置：套件根目录，将自动解析 tools/xxx-tradefed */
+  gmsTradefedRoot?: Record<string, string>
 }
 
 const DEFAULT_MONKEY_DURATION = '7d'
@@ -196,8 +200,29 @@ export interface CaseCatalogDetailItem {
   expectedResult: string
 }
 
+function normalizeGmsTradefedPath(
+  paths?: Record<string, string>,
+  legacyRoots?: Record<string, string>,
+): Record<string, string> {
+  const normalized: Record<string, string> = {}
+  const merged: Record<string, string> = {}
+  if (legacyRoots && typeof legacyRoots === 'object') {
+    for (const suite of ['cts', 'gts', 'vts'] as const) {
+      const value = String(legacyRoots[suite] || '').trim()
+      if (value) merged[suite] = value
+    }
+  }
+  if (paths && typeof paths === 'object') {
+    for (const suite of ['cts', 'gts', 'vts'] as const) {
+      const value = String(paths[suite] || '').trim()
+      if (value) merged[suite] = value
+    }
+  }
+  return merged
+}
+
 function getAutoRetestConfig(testType: string): { enabled: boolean; count: number } {
-  if (testType === 'monkey' || testType === 'smoke') {
+  if (testType === 'monkey' || testType === 'smoke' || testType === 'gms') {
     return { enabled: false, count: 0 }
   }
   return {
@@ -294,6 +319,10 @@ export function getSettings(): AutoTestSettings {
     ...settings,
     monkeyDuration: normalizeMonkeyDuration(settings.monkeyDuration),
     smokeUsdSkipSpdInfo: settings.smokeUsdSkipSpdInfo ?? false,
+    gmsTradefedPath: normalizeGmsTradefedPath(
+      settings.gmsTradefedPath,
+      settings.gmsTradefedRoot,
+    ),
   }
 }
 
@@ -304,6 +333,7 @@ export function updateSettings(newSettings: AutoTestSettings): void {
     autoTestPath: newSettings.autoTestPath || {},
     monkeyDuration: normalizeMonkeyDuration(newSettings.monkeyDuration),
     smokeUsdSkipSpdInfo: Boolean(newSettings.smokeUsdSkipSpdInfo),
+    gmsTradefedPath: normalizeGmsTradefedPath(newSettings.gmsTradefedPath),
   }
   saveSettings()
 }
@@ -315,6 +345,9 @@ function loadCaseConfigs(): void {
     'week_tdd.json', 'week_driver.json',
     'monkey_monkey.json',
     'smoke_usd.json',
+    'gms_cts.json',
+    'gms_gts.json',
+    'gms_vts.json',
   ]
   
   for (const file of configFiles) {
@@ -839,6 +872,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'str4') return ['driver_component', 'driver_hardware', 'tdd']
   if (testType === 'monkey') return ['monkey']
   if (testType === 'smoke') return ['usd']
+  if (testType === 'gms') return ['cts', 'gts', 'vts']
   return ['driver', 'tdd']
 }
 
@@ -1121,6 +1155,10 @@ function buildDeviceInfo(
     Auxiliary: auxDevices,
     monkeyDuration: normalizeMonkeyDuration(settings.monkeyDuration),
     smokeUsdSkipSpdInfo: Boolean(settings.smokeUsdSkipSpdInfo),
+    gmsTradefedPath: normalizeGmsTradefedPath(
+      settings.gmsTradefedPath,
+      settings.gmsTradefedRoot,
+    ),
     module_init_done: Boolean(
       testType &&
       module &&
@@ -1319,12 +1357,17 @@ async function execPythonInit(
 
 const CASE_EXEC_TIMEOUT_MS = 120_000
 const SMOKE_USD_EXEC_TIMEOUT_MS = 3_600_000
+const GMS_EXEC_TIMEOUT_MS = 28_800_000
 const MANUAL_CONFIRM_TIMEOUT_MS = 30 * 60_000
 
 function resolveCaseExecTimeoutMs(testType: string, module: string): number {
   if (testType === 'smoke' && module === 'usd') {
     const raw = Number(process.env.TAHP_SMOKE_USD_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : SMOKE_USD_EXEC_TIMEOUT_MS
+  }
+  if (testType === 'gms' && ['cts', 'gts', 'vts'].includes(module)) {
+    const raw = Number(process.env.TAHP_GMS_TIMEOUT_MS)
+    return Number.isFinite(raw) && raw > 0 ? raw : GMS_EXEC_TIMEOUT_MS
   }
   return CASE_EXEC_TIMEOUT_MS
 }
@@ -3065,6 +3108,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     week: '周版本测试',
     monkey: 'monkey测试',
     smoke: '冒烟测试',
+    gms: 'GMS测试',
   }
   const MODULE_ORDER: Record<string, number> = {
     driver: 0,
@@ -3072,6 +3116,9 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     driver_hardware: 1,
     monkey: 2,
     usd: 3,
+    cts: 10,
+    gts: 11,
+    vts: 12,
     tdd: 99,
   }
 
@@ -3099,7 +3146,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week', 'monkey', 'smoke']
+  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms']
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),

@@ -17,9 +17,16 @@ const {
   manualSubmitting,
   manualFailLabel,
   manualPassLabel,
+  showGmsTradefedDialog,
+  gmsTradefedDraft,
+  gmsPathPickingSuite,
+  catalogSettingsSaving,
   handleModifyCaseResult,
   handleRetestCase,
   handleManualDecision,
+  handleBrowseGmsTradefedPath,
+  closeGmsTradefedDialog,
+  saveGmsTradefedSettingsFromDialog,
 } = inject(DEVICE_SELF_CHECK_KEY)!
 </script>
 
@@ -104,6 +111,96 @@ const {
       </div>
     </div>
   </div>
+
+  <div v-if="showGmsTradefedDialog" class="modify-overlay" @click.self="closeGmsTradefedDialog">
+    <div class="modify-dialog gms-tradefed-dialog">
+      <div class="modify-dialog-header">
+        <span class="section-title">GMS Tradefed 路径配置</span>
+        <button type="button" class="ea-btn-ghost ea-btn-sm" @click="closeGmsTradefedDialog">✕</button>
+      </div>
+      <div class="modify-dialog-body">
+        <p class="gms-tradefed-dialog-hint">
+          配置 Linux 服务器上的 cts/gts/vts-tradefed 可执行文件路径，保存后对所有 GMS 用例生效。
+        </p>
+        <div class="form-group">
+          <label class="form-label" for="gms-dialog-cts">cts-tradefed</label>
+          <div class="gms-tradefed-path-row">
+            <input
+              id="gms-dialog-cts"
+              v-model.trim="gmsTradefedDraft.cts"
+              type="text"
+              class="form-input"
+              placeholder="/opt/gms/android-cts/tools/cts-tradefed"
+            />
+            <button
+              type="button"
+              class="ea-btn-ghost ea-btn-sm"
+              :disabled="catalogSettingsSaving || gmsPathPickingSuite === 'cts'"
+              @click="handleBrowseGmsTradefedPath('cts')"
+            >
+              {{ gmsPathPickingSuite === 'cts' ? '选择中...' : '浏览' }}
+            </button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="gms-dialog-gts">gts-tradefed</label>
+          <div class="gms-tradefed-path-row">
+            <input
+              id="gms-dialog-gts"
+              v-model.trim="gmsTradefedDraft.gts"
+              type="text"
+              class="form-input"
+              placeholder="/opt/gms/android-gts/tools/gts-tradefed"
+            />
+            <button
+              type="button"
+              class="ea-btn-ghost ea-btn-sm"
+              :disabled="catalogSettingsSaving || gmsPathPickingSuite === 'gts'"
+              @click="handleBrowseGmsTradefedPath('gts')"
+            >
+              {{ gmsPathPickingSuite === 'gts' ? '选择中...' : '浏览' }}
+            </button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="gms-dialog-vts">vts-tradefed</label>
+          <div class="gms-tradefed-path-row">
+            <input
+              id="gms-dialog-vts"
+              v-model.trim="gmsTradefedDraft.vts"
+              type="text"
+              class="form-input"
+              placeholder="/opt/gms/android-vts/tools/vts-tradefed"
+            />
+            <button
+              type="button"
+              class="ea-btn-ghost ea-btn-sm"
+              :disabled="catalogSettingsSaving || gmsPathPickingSuite === 'vts'"
+              @click="handleBrowseGmsTradefedPath('vts')"
+            >
+              {{ gmsPathPickingSuite === 'vts' ? '选择中...' : '浏览' }}
+            </button>
+          </div>
+        </div>
+        <p class="gms-tradefed-dialog-footnote">
+          执行命令形如 cts-tradefed run cts --subplan &lt;name&gt; -s &lt;serial&gt;
+        </p>
+      </div>
+      <div class="modify-dialog-footer">
+        <button type="button" class="ea-btn-ghost" :disabled="catalogSettingsSaving" @click="closeGmsTradefedDialog">
+          取消
+        </button>
+        <button
+          type="button"
+          class="ea-btn-primary"
+          :disabled="catalogSettingsSaving"
+          @click="saveGmsTradefedSettingsFromDialog"
+        >
+          {{ catalogSettingsSaving ? '保存中...' : '保存' }}
+        </button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped lang="scss">
@@ -185,5 +282,32 @@ const {
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
+}
+
+.gms-tradefed-dialog {
+  width: 560px;
+}
+
+.gms-tradefed-dialog-hint,
+.gms-tradefed-dialog-footnote {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin: 0 0 16px;
+}
+
+.gms-tradefed-dialog-footnote {
+  margin: 0;
+}
+
+.gms-tradefed-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  .form-input {
+    flex: 1;
+    min-width: 0;
+  }
 }
 </style>

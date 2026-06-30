@@ -172,6 +172,9 @@ describe('test-planning schedule', () => {
     expect(validateTestPlanRules([
       { node: 'STR4A', offsetDays: -3, testType: 'smoke' },
     ])).toEqual([{ node: 'STR4A', offsetDays: -3, testType: 'smoke' }])
+    expect(validateTestPlanRules([
+      { node: 'STR4A', offsetDays: -2, testType: 'gms' },
+    ])).toEqual([{ node: 'STR4A', offsetDays: -2, testType: 'gms' }])
   })
 
   it('matches project code in device name', () => {
@@ -187,6 +190,7 @@ describe('test-planning schedule', () => {
     })).toBe(false)
     expect(normalizePlanTestType('monkey测试')).toBe('monkey')
     expect(normalizePlanTestType('冒烟测试')).toBe('smoke')
+    expect(normalizePlanTestType('GMS测试')).toBe('gms')
   })
 })
 

@@ -25,7 +25,7 @@ export interface DeviceInfo {
   deviceName: string
   role: DeviceRole
   status: DeviceStatus
-  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke'
+  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms'
   currentModule?: string
   simCards: SimCardInfo[]
   testStartTime?: string
@@ -86,7 +86,7 @@ export interface ModuleProgress {
 
 export interface TestSession {
   deviceId: string
-  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke'
+  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms'
   modules: string[]
   currentModuleIndex: number
   moduleProgress: Record<string, ModuleProgress>
@@ -181,7 +181,7 @@ export interface StartTestFlashPayload {
 
 export async function startTest(
   deviceId: string,
-  testType: 'str4' | 'week' | 'monkey' | 'smoke',
+  testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms',
   flash?: StartTestFlashPayload,
   scheduleKey?: string,
 ): Promise<DeviceDetail> {
@@ -200,6 +200,13 @@ export interface PickFlashPathResult {
 export async function pickFlashPath(): Promise<PickFlashPathResult> {
   return await tahpPost<PickFlashPathResult>(
     '/api/tahp/device-self-check/flash/pick-path',
+    {}
+  )
+}
+
+export async function pickGmsTradefedPath(): Promise<PickFlashPathResult> {
+  return await tahpPost<PickFlashPathResult>(
+    '/api/tahp/device-self-check/gms/pick-tradefed-path',
     {}
   )
 }
@@ -377,6 +384,7 @@ export interface AutoTestSettings {
   autoRetestCount?: Record<string, number>
   monkeyDuration?: string
   smokeUsdSkipSpdInfo?: boolean
+  gmsTradefedPath?: Record<string, string>
 }
 
 export async function getSettings(): Promise<AutoTestSettings> {
@@ -388,6 +396,7 @@ export async function getSettings(): Promise<AutoTestSettings> {
     autoRetestCount: data?.autoRetestCount || {},
     monkeyDuration: data?.monkeyDuration || '7d',
     smokeUsdSkipSpdInfo: Boolean(data?.smokeUsdSkipSpdInfo),
+    gmsTradefedPath: data?.gmsTradefedPath || {},
   }
 }
 

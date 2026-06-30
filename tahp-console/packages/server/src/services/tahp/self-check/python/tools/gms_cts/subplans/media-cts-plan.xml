@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2019 Google Inc.
+
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+     You may obtain a copy of the License at
+
+          http://www.apache.org/licenses/LICENSE-2.0
+
+     Unless required by applicable law or agreed to in writing, software
+     distributed under the License is distributed on an "AS IS" BASIS,
+     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     See the License for the specific language governing permissions and
+     limitations under the License.
+-->
+<configuration description="Runs specific CTS modules specific to BusinessLogic enabled test plan ">
+  <include name="cts" />
+  <option name="plan" value="media-cts-plan" />
+    <!-- Test Modules for BusinessLogic enabled test plan -->
+
+	<option name="compatibility:include-filter" value="CtsAppCloningMediaProviderHostTest" />
+	<option name="compatibility:include-filter" value="CtsDrmTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaBetterTogetherTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaExtractorTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaMuxerTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaParserHostTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaParserTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaProviderTranscodeTests" />
+	<option name="compatibility:include-filter" value="CtsDevicePolicyTestCases android.devicepolicy.cts.PhysicalMediaTest" />
+	<option name="compatibility:include-filter" value="CtsDevicePolicyTestCases android.devicepolicy.cts.AudioTest" />
+	<option name="compatibility:include-filter" value="CtsHdmiCecHostTestCases" />
+	<option name="compatibility:include-filter" value="CtsPhotoPickerTest" />
+	<option name="compatibility:include-filter" value="CtsVideoCodecTestCases" />
+	<option name="compatibility:include-filter" value="CtsVideoEncodingQualityHostTestCases" />
+	<option name="compatibility:include-filter" value="CtsVideoTestCases" />
+	<option name="compatibility:include-filter" value="CtsVoiceInteractionHostTestCases" />
+	<option name="compatibility:include-filter" value="CtsVoiceRecognitionTestCases" />
+	<option name="compatibility:include-filter" value="CtsVoiceSettingsTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaBetterTogetherTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaExtractorTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaMuxerTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaParserTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaRecorderTestCases" />
+	<option name="compatibility:include-filter" value="CtsAudioRecordPermissionTests" />
+	<option name="compatibility:include-filter" value="CtsTelecomTestCases android.telecom.cts.BackgroundCallAudioTest" />
+	<option name="compatibility:include-filter" value="CtsMediaAudioTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaAudioPermissionTestCases" />
+	<option name="compatibility:include-filter" value="CtsNativeMediaAAudioTestCases" />
+	<option name="compatibility:include-filter" value="CtsVirtualDevicesAudioTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaEncoderTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaEncoderTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaHostTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaRouterTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaSessionTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaStressTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaTranscodingTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaV2TestCases" />
+	<option name="compatibility:include-filter" value="CtsNativeMediaMetricsTestCases" />
+	<option name="compatibility:include-filter" value="CtsNativeMediaSlTestCases" />
+	<option name="compatibility:include-filter" value="CtsNativeMediaXaTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaCodecTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaDecoderTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaDrmFrameworkTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaMiscTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaPlayerTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaSessionTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaTranscodingTestCases" />
+	<option name="compatibility:include-filter" value="MctsMediaV2TestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaCUJLargeTest" />
+	<option name="compatibility:include-filter" value="CtsMediaCUJSmallTest" />
+	<option name="compatibility:include-filter" value="CtsMediaCodecTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaDecoderTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaDrmFrameworkTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaEditingTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaPerformanceClassTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaMiscTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaPlayerTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaProjectionSDK33TestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaProjectionSDK34TestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaProjectionTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaQualityTestCases" />
+	<option name="compatibility:include-filter" value="CtsMediaRecorderTestCases" />
+	<option name="compatibility:include-filter" value="CtsHardwareTestCases" />
+	<option name="compatibility:include-filter" value="CtsOsTestCases" />
+	<option name="compatibility:include-filter" value="CtsVoiceInteractionTestCases" />
+	<option name="compatibility:include-filter" value="CtsLocalVoiceInteraction" />
+	<option name="compatibility:include-filter" value="CtsAndroidTestBaseUsesLibraryApiSignatureTestCases" />
+	<option name="compatibility:include-filter" value="CtsSoundTriggerTestCases" />
+	<option name="compatibility:include-filter" value="CtsSpeechTestCases" />
+	<option name="compatibility:include-filter" value="CtsBluetoothTestCases" />
+	<option name="compatibility:include-filter" value="CtsSecurityHostTestCases" />
+	<option name="compatibility:include-filter" value="CtsSecurityTestCases" />
+	<option name="compatibility:include-filter" value="CtsSelinuxEphemeralTestCases" />
+	<option name="compatibility:include-filter" value="CtsSelinuxTargetSdk25TestCases" />
+	<option name="compatibility:include-filter" value="CtsSelinuxTargetSdk27TestCases" />
+	<option name="compatibility:include-filter" value="CtsSelinuxTargetSdk28TestCases" />
+	<option name="compatibility:include-filter" value="CtsSelinuxTargetSdk29TestCases" />
+	<option name="compatibility:include-filter" value="CtsSelinuxTargetSdk30TestCases" />
+	<option name="compatibility:include-filter" value="CtsSelinuxTargetSdkCurrentTestCases" />
+		
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+</configuration>
+

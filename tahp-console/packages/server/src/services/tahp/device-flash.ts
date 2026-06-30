@@ -175,16 +175,36 @@ function pickFlashPathDarwin(): PickFlashPathResult {
 }
 
 function pickFlashPathLinux(): PickFlashPathResult {
+  return pickFilePathLinux({
+    title: '选择版本包（zip / scatter xml）',
+    zenityFilters: [
+      '--file-filter=刷机包 | *.zip *.xml',
+      '--file-filter=所有文件 | *',
+    ],
+    kdialogFilter: '刷机包 (*.zip *.xml)|*.zip *.xml',
+  })
+}
+
+function pickTradefedPathLinux(): PickFlashPathResult {
+  return pickFilePathLinux({
+    title: '选择 Tradefed 启动脚本（xxx-tradefed）',
+    zenityFilters: [
+      '--file-filter=Tradefed | *-tradefed *-tradefed.*',
+      '--file-filter=所有文件 | *',
+    ],
+    kdialogFilter: 'Tradefed (*-tradefed *)|*-tradefed *-tradefed.*',
+  })
+}
+
+function pickFilePathLinux(options: {
+  title: string
+  zenityFilters: string[]
+  kdialogFilter: string
+}): PickFlashPathResult {
   if (commandAvailable('zenity')) {
     const proc = spawnSync(
       'zenity',
-      [
-        '--file-selection',
-        '--modal',
-        '--title=选择版本包（zip / scatter xml）',
-        '--file-filter=刷机包 | *.zip *.xml',
-        '--file-filter=所有文件 | *',
-      ],
+      ['--file-selection', '--modal', `--title=${options.title}`, ...options.zenityFilters],
       { encoding: 'utf8', windowsHide: false }
     )
     const path = (proc.stdout || '').trim()
@@ -193,7 +213,7 @@ function pickFlashPathLinux(): PickFlashPathResult {
   }
   const proc = spawnSync(
     'kdialog',
-    ['--getopenfilename', '', '刷机包 (*.zip *.xml)|*.zip *.xml', '选择版本包（zip / scatter xml）'],
+    ['--getopenfilename', '', options.kdialogFilter, options.title],
     { encoding: 'utf8', windowsHide: false }
   )
   const path = (proc.stdout || '').trim()
@@ -210,6 +230,21 @@ export async function pickLocalFlashPath(): Promise<PickFlashPathResult> {
     if (process.platform === 'win32') return pickFlashPathWindows()
     if (process.platform === 'darwin') return pickFlashPathDarwin()
     if (process.platform === 'linux') return pickFlashPathLinux()
+    return { canceled: true, error: '当前平台不支持文件选择，请手动输入路径' }
+  } catch (err: any) {
+    return { canceled: true, error: err?.message || '路径选择失败' }
+  }
+}
+
+/** GMS：选择 xxx-tradefed 可执行文件（Linux zenity / kdialog）。 */
+export async function pickLocalTradefedPath(): Promise<PickFlashPathResult> {
+  const unavailable = pathPickerError()
+  if (unavailable) return { canceled: true, error: unavailable }
+
+  try {
+    if (process.platform === 'linux') return pickTradefedPathLinux()
+    if (process.platform === 'win32') return pickFlashPathWindows()
+    if (process.platform === 'darwin') return pickFlashPathDarwin()
     return { canceled: true, error: '当前平台不支持文件选择，请手动输入路径' }
   } catch (err: any) {
     return { canceled: true, error: err?.message || '路径选择失败' }
@@ -771,7 +806,7 @@ export async function resolveLatestDailyFlashPackage(
   }
 }
 
-export type PlannedTestType = 'str4' | 'week' | 'monkey' | 'smoke'
+export type PlannedTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms'
 
 /** 与 device-self-check StartTestFlashPayload 结构兼容 */
 export interface PlannedTestFlashPayload {

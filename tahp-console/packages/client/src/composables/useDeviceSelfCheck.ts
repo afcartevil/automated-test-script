@@ -15,6 +15,7 @@ import {
   setDeviceRole,
   startTest,
   pickFlashPath,
+  pickGmsTradefedPath,
   resolveLatestDailyFlashPackage,
   startCustomTest,
   getCaseCatalogs,
@@ -84,7 +85,7 @@ const selectedDevice = ref<DeviceDetail | null>(null)
 const moduleConditions = ref<Record<string, ModuleCondition>>({})
 
 // 测试类型选择
-const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke'>('week')
+const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke' | 'gms'>('week')
 
 // 刷机相关选项（device_update，工具位于 self-check/flash_tool/）
 const enableFlash = ref(false)
@@ -151,8 +152,20 @@ const catalogTypeSettings = ref({
   autoRetestCount: 1,
   monkeyDuration: '7d',
   smokeUsdSkipSpdInfo: false,
+  gmsTradefedPath: {
+    cts: '',
+    gts: '',
+    vts: '',
+  },
 })
 const catalogSettingsSaving = ref(false)
+const gmsPathPickingSuite = ref<'cts' | 'gts' | 'vts' | null>(null)
+const showGmsTradefedDialog = ref(false)
+const gmsTradefedDraft = ref({
+  cts: '',
+  gts: '',
+  vts: '',
+})
 const expandedCatalogTypes = ref<Set<string>>(new Set())
 const expandedCatalogModules = ref<Set<string>>(new Set())
 const expandedCatalogDetailModules = ref<Set<string>>(new Set())
@@ -458,6 +471,100 @@ function toggleCatalogDetailModule(module: string) {
   expandedCatalogDetailModules.value = new Set(expandedCatalogDetailModules.value)
 }
 
+async function loadGmsTradefedSettings() {
+  try {
+    const settingsData = await getSettings()
+    catalogTypeSettings.value.gmsTradefedPath = {
+      cts: settingsData.gmsTradefedPath?.cts || '',
+      gts: settingsData.gmsTradefedPath?.gts || '',
+      vts: settingsData.gmsTradefedPath?.vts || '',
+    }
+  } catch (e: any) {
+    console.error('[DeviceSelfCheck] Failed to load GMS tradefed settings:', e)
+  }
+}
+
+async function saveGmsTradefedSettings(showToast = false) {
+  catalogSettingsSaving.value = true
+  try {
+    const current = await getSettings()
+    const autoRetestEnabled = { ...(current.autoRetestEnabled || {}) }
+    const autoRetestCount = { ...(current.autoRetestCount || {}) }
+    delete autoRetestEnabled.gms
+    delete autoRetestCount.gms
+    const paths = catalogTypeSettings.value.gmsTradefedPath || { cts: '', gts: '', vts: '' }
+    await updateSettings({
+      ...current,
+      autoRetestEnabled,
+      autoRetestCount,
+      gmsTradefedPath: {
+        cts: paths.cts?.trim() || '',
+        gts: paths.gts?.trim() || '',
+        vts: paths.vts?.trim() || '',
+      },
+    })
+    if (showToast) {
+      message.success('GMS Tradefed 路径已保存')
+    }
+  } catch (e: any) {
+    const text = e?.message || '保存 GMS 配置失败'
+    error.value = text
+    message.error(text)
+    throw e
+  } finally {
+    catalogSettingsSaving.value = false
+  }
+}
+
+async function handleBrowseGmsTradefedPath(suite: 'cts' | 'gts' | 'vts') {
+  if (gmsPathPickingSuite.value) return
+  gmsPathPickingSuite.value = suite
+  error.value = null
+  try {
+    const result = await pickGmsTradefedPath()
+    if (result.path) {
+      const target = showGmsTradefedDialog.value
+        ? gmsTradefedDraft.value
+        : catalogTypeSettings.value.gmsTradefedPath
+      target[suite] = result.path
+    } else if (result.error) {
+      error.value = result.error
+      message.error(result.error)
+    }
+  } catch (e: any) {
+    const text = e?.message || '选择 Tradefed 路径失败'
+    error.value = text
+    message.error(text)
+  } finally {
+    gmsPathPickingSuite.value = null
+  }
+}
+
+async function openGmsTradefedDialog() {
+  await loadGmsTradefedSettings()
+  const paths = catalogTypeSettings.value.gmsTradefedPath || { cts: '', gts: '', vts: '' }
+  gmsTradefedDraft.value = {
+    cts: paths.cts || '',
+    gts: paths.gts || '',
+    vts: paths.vts || '',
+  }
+  showGmsTradefedDialog.value = true
+}
+
+function closeGmsTradefedDialog() {
+  showGmsTradefedDialog.value = false
+}
+
+async function saveGmsTradefedSettingsFromDialog() {
+  catalogTypeSettings.value.gmsTradefedPath = {
+    cts: gmsTradefedDraft.value.cts?.trim() || '',
+    gts: gmsTradefedDraft.value.gts?.trim() || '',
+    vts: gmsTradefedDraft.value.vts?.trim() || '',
+  }
+  await saveGmsTradefedSettings(true)
+  showGmsTradefedDialog.value = false
+}
+
 async function openCaseCatalog(testType: string) {
   const reselect = catalogPanelExpanded.value && selectedCatalogTestType.value === testType
   selectedCatalogTestType.value = testType
@@ -476,14 +583,19 @@ async function openCaseCatalog(testType: string) {
       [...new Set(detail.map(item => `${testType}/${item.module}`))]
     )
     catalogTypeSettings.value = {
-      autoRetestEnabled: testType === 'monkey' || testType === 'smoke'
+      autoRetestEnabled: testType === 'monkey' || testType === 'smoke' || testType === 'gms'
         ? false
         : (settingsData.autoRetestEnabled?.[testType] ?? true),
-      autoRetestCount: testType === 'monkey' || testType === 'smoke'
+      autoRetestCount: testType === 'monkey' || testType === 'smoke' || testType === 'gms'
         ? 0
         : (settingsData.autoRetestCount?.[testType] ?? 1),
       monkeyDuration: settingsData.monkeyDuration || '7d',
       smokeUsdSkipSpdInfo: Boolean(settingsData.smokeUsdSkipSpdInfo),
+      gmsTradefedPath: {
+        cts: settingsData.gmsTradefedPath?.cts || '',
+        gts: settingsData.gmsTradefedPath?.gts || '',
+        vts: settingsData.gmsTradefedPath?.vts || '',
+      },
     }
     if (detail.length > 0) {
       selectedCatalogCaseKey.value = detail[0].key
@@ -542,6 +654,11 @@ async function saveCatalogTypeSettings() {
       return
     }
 
+    if (testType === 'gms') {
+      await saveGmsTradefedSettings(false)
+      return
+    }
+
     const count = Math.max(0, Math.min(10, catalogTypeSettings.value.autoRetestCount || 0))
     catalogTypeSettings.value.autoRetestCount = count
     await updateSettings({
@@ -585,6 +702,13 @@ const selectedCatalogItem = computed(() =>
 const selectedCatalogGroup = computed(() =>
   caseCatalogGroups.value.find(group => group.testType === selectedCatalogTestType.value)
 )
+
+const gmsTradefedConfiguredSummary = computed(() => {
+  const paths = catalogTypeSettings.value.gmsTradefedPath || { cts: '', gts: '', vts: '' }
+  const configured = (['cts', 'gts', 'vts'] as const).filter(suite => Boolean(paths[suite]?.trim()))
+  if (configured.length === 0) return '未配置 Tradefed 路径'
+  return `已配置 ${configured.length}/3：${configured.map(s => `${s}-tradefed`).join('、')}`
+})
 
 function backToOverview() {
   viewMode.value = 'list'
@@ -1369,6 +1493,12 @@ const selectedCaseResult = computed((): CaseResult | undefined => {
   return result
 })
 
+watch(selectedTestType, (testType) => {
+  if (testType === 'gms') {
+    void loadGmsTradefedSettings()
+  }
+})
+
 onMounted(async () => {
   connectEventStream()
   await loadDevices()
@@ -1379,6 +1509,7 @@ onMounted(async () => {
     loadOverviewReports(),
   ])
   loadCaseCatalogs({ silent: true })
+  await loadGmsTradefedSettings()
   try {
     moduleConditions.value = await getModuleConditions()
     // 默认展开所有模块
@@ -1606,6 +1737,15 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     openCaseCatalog,
     selectCatalogCase,
     saveCatalogTypeSettings,
+    saveGmsTradefedSettings,
+    saveGmsTradefedSettingsFromDialog,
+    openGmsTradefedDialog,
+    closeGmsTradefedDialog,
+    showGmsTradefedDialog,
+    gmsTradefedDraft,
+    gmsTradefedConfiguredSummary,
+    handleBrowseGmsTradefedPath,
+    gmsPathPickingSuite,
     backToOverview,
     goBack,
     handleSetRole,

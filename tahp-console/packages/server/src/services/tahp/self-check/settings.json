@@ -4,5 +4,6 @@
   "autoRetestEnabled": {},
   "autoRetestCount": {},
   "monkeyDuration": "1m",
-  "smokeUsdSkipSpdInfo": false
+  "smokeUsdSkipSpdInfo": false,
+  "gmsTradefedPath": {}
 }

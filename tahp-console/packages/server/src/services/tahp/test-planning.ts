@@ -21,7 +21,7 @@ import {
 export const MAX_OFFSET_DAYS = 14
 export const UPCOMING_HORIZON_DAYS = 14
 
-export type PlanTestType = 'str4' | 'week' | 'monkey' | 'smoke'
+export type PlanTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms'
 
 export interface ProjectNodesFile {
   updatedAt: string
@@ -71,6 +71,7 @@ const TEST_TYPE_LABELS: Record<PlanTestType, string> = {
   week: '周版本测试',
   monkey: 'monkey测试',
   smoke: '冒烟测试',
+  gms: 'GMS测试',
 }
 
 export function getTestTypeLabel(testType: PlanTestType): string {
@@ -83,6 +84,7 @@ export function normalizePlanTestType(raw: unknown): PlanTestType | null {
   if (text === 'week' || text.includes('周版本')) return 'week'
   if (text === 'monkey' || text.includes('monkey')) return 'monkey'
   if (text === 'smoke' || text.includes('冒烟')) return 'smoke'
+  if (text === 'gms' || text.includes('gms')) return 'gms'
   return null
 }
 
@@ -318,7 +320,7 @@ export async function getTestPlanRules(): Promise<TestPlanRulesFile> {
 
 export function validateTestPlanRules(rules: TestPlanRule[]): TestPlanRule[] {
   const validNodes = new Set<string>(NODE_KEYS)
-  const validTypes = new Set<string>(['str4', 'week', 'monkey', 'smoke'])
+  const validTypes = new Set<string>(['str4', 'week', 'monkey', 'smoke', 'gms'])
   const cleaned: TestPlanRule[] = []
 
   for (const rule of rules) {
@@ -332,7 +334,7 @@ export function validateTestPlanRules(rules: TestPlanRule[]): TestPlanRule[] {
     }
     const testType = String(rule.testType || '').trim() as PlanTestType
     if (!validTypes.has(testType)) {
-      throw new Error(`无效测试大类: ${rule.testType}，须为 str4 / week / monkey / smoke`)
+      throw new Error(`无效测试大类: ${rule.testType}，须为 str4 / week / monkey / smoke / gms`)
     }
     cleaned.push({ node, offsetDays, testType })
   }

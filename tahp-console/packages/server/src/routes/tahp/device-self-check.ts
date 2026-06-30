@@ -112,7 +112,7 @@ tahpDeviceSelfCheckRoutes.post(
     try {
       const deviceId = ctx.params.deviceId
       const { testType, flash, scheduleKey } = ctx.request.body as {
-        testType: 'str4' | 'week' | 'monkey' | 'smoke'
+        testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms'
         flash?: StartTestFlashPayload
         scheduleKey?: string
       }
@@ -363,6 +363,21 @@ tahpDeviceSelfCheckRoutes.post(
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { success: false, error: err?.message || 'Failed to pick flash path' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/gms/pick-tradefed-path',
+  async (ctx) => {
+    try {
+      const { pickLocalTradefedPath } = await import('../../services/tahp/device-flash')
+      const result = await pickLocalTradefedPath()
+      ctx.body = { success: !result.error, data: result, error: result.error }
+      if (result.error && !result.canceled) ctx.status = 500
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to pick tradefed path' }
     }
   }
 )

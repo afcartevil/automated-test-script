@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright (C) 2019 Google Inc.
+
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+     You may obtain a copy of the License at
+
+          http://www.apache.org/licenses/LICENSE-2.0
+
+     Unless required by applicable law or agreed to in writing, software
+     distributed under the License is distributed on an "AS IS" BASIS,
+     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     See the License for the specific language governing permissions and
+     limitations under the License.
+-->
+<configuration description="Runs specific VTS modules specific to BusinessLogic enabled test plan ">
+  <include name="vts" />
+  <option name="plan" value="media-vts-plan" />
+    <!-- Test Modules for BusinessLogic enabled test plan -->
+	<option name="compatibility:include-filter" value="VtsAidlHalDrmTargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalDrmV1_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalDrmV1_1TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalDrmV1_2TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalDrmV1_3TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalDrmV1_4TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalCasV1_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalCasV1_1TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalCasV1_2TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalCasAidlTargetTest" />
+	<option name="compatibility:include-filter" value="HalAudioV6_0GeneratorTest" />
+	<option name="compatibility:include-filter" value="HalAudioV7_0GeneratorTest" />
+	<option name="compatibility:include-filter" value="VtsAidlHalAudioControlTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioControlV1_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioControlV2_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioCoreTargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioEffectFactoryTargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioEffectTargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioEffectV2_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioEffectV4_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioEffectV5_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioEffectV6_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioEffectV7_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioPolicyV1_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioV2_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioV4_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioV5_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioV6_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioV7_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalAudioV7_1TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalBluetoothAudioTargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalBluetoothAudioV2_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalBluetoothAudioV2_1TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalSoundDoseFactoryTargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalSoundtriggerV2_0TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalSoundtriggerV2_1TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalSoundtriggerV2_2TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalSoundtriggerV2_3TargetTest" />
+	<option name="compatibility:include-filter" value="VtsHalMediaC2V1_0TargetAudioDecTest" />
+	<option name="compatibility:include-filter" value="VtsHalMediaC2V1_0TargetAudioEncTest" />
+	<option name="compatibility:include-filter" value="VtsHalMediaOmxV1_0TargetAudioDecTest" />
+	<option name="compatibility:include-filter" value="VtsHalMediaOmxV1_0TargetAudioEncTest" />
+	<option name="compatibility:include-filter" value="VtsHalMediaC2V1_0TargetComponentTest" />
+	<option name="compatibility:include-filter" value="VtsHalMediaC2V1_0TargetMasterTest" />
+	<option name="compatibility:include-filter" value="VtsHalMediaC2V1_0TargetVideoDecTest" />
+	<option name="compatibility:include-filter" value="VtsHalMediaC2V1_0TargetVideoEncTest" />
+	<option name="compatibility:include-filter" value="VtsHalMediaOmxV1_0TargetComponentTest" />
+	<option name="compatibility:include-filter" value="VtsHalMediaOmxV1_0TargetStoreTest" />
+	<option name="compatibility:include-filter" value="VtsHalMediaOmxV1_0TargetVideoDecTest" />
+	<option name="compatibility:include-filter" value="VtsHalMediaOmxV1_0TargetVideoEncTest" />
+	<option name="compatibility:include-filter" value="vts_mediaCodecs_validate_test" />
+	<option name="compatibility:include-filter" value="vts_mediaProfiles_validate_test" />
+</configuration>

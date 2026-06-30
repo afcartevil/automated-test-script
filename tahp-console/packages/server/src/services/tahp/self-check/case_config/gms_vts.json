@@ -1,0 +1,17 @@
+{
+  "testType": "gms",
+  "module": "vts",
+  "moduleLabel": "VTS",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    { "caseIndex": 1, "caseName": "VTS指纹测试", "canReuse": false },
+    { "caseIndex": 2, "caseName": "VTS传感器测试", "canReuse": false },
+    { "caseIndex": 3, "caseName": "VTS通信测试", "canReuse": false },
+    { "caseIndex": 4, "caseName": "VTS多媒体测试", "canReuse": false }
+  ]
+}

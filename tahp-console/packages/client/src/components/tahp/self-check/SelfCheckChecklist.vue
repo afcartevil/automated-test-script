@@ -25,7 +25,7 @@ const emit = defineEmits<{
   openCatalog: [testType: string]
 }>()
 
-const CASE_TYPES = ['str4', 'week', 'monkey', 'smoke'] as const
+const CASE_TYPES = ['str4', 'week', 'monkey', 'smoke', 'gms'] as const
 
 const catalogCards = computed(() => {
   const byType = new Map(props.groups.map(g => [g.testType, g]))
@@ -37,6 +37,7 @@ const toneByType: Record<string, string> = {
   week: 'ea-t-sky',
   smoke: 'ea-t-emerald',
   monkey: 'ea-t-amber',
+  gms: 'ea-t-violet',
 }
 
 function openCatalog(testType: string) {
@@ -76,7 +77,7 @@ function openCatalog(testType: string) {
   margin-bottom: 16px;
 
   &.compact .checklist-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 
@@ -94,6 +95,7 @@ function openCatalog(testType: string) {
   &.ea-t-sky { border-top-color: #0ea5e9; }
   &.ea-t-emerald { border-top-color: #129b71; }
   &.ea-t-amber { border-top-color: #f59e0b; }
+  &.ea-t-violet { border-top-color: #8b5cf6; }
 
   h4 {
     margin: 0 0 10px;

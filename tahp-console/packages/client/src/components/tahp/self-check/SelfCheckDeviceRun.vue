@@ -22,7 +22,7 @@ const deviceDetailPanelRef = ref<HTMLElement | null>(null)
 const customTestPanelRef = ref<HTMLElement | null>(null)
 const deviceListFilter = ref<DeviceListFilterKey>('all')
 
-const STANDARD_TEST_TYPES = ['str4', 'week', 'smoke', 'monkey'] as const
+const STANDARD_TEST_TYPES = ['str4', 'week', 'smoke', 'monkey', 'gms'] as const
 
 function getScrollParent(el: HTMLElement): HTMLElement | Window {
   let node: HTMLElement | null = el.parentElement
@@ -149,6 +149,8 @@ const {
   getCaseResultColor,
   selectDevice,
   saveCatalogTypeSettings,
+  openGmsTradefedDialog,
+  gmsTradefedConfiguredSummary,
   enableFlash,
   flashPath,
   dailyFlashResolving,
@@ -626,6 +628,19 @@ function handleDutRowAction(deviceId: string) {
                     执行 si_run.py --test-type usd；无 SPD 网络时可勾选，SPD 依赖用例将自动跳过
                   </span>
                 </div>
+                <div
+                  v-else-if="selectedCatalogTestType === 'gms'"
+                  class="catalog-gms-settings catalog-overview-retest"
+                >
+                  <p class="catalog-gms-intro ea-muted">{{ gmsTradefedConfiguredSummary }}</p>
+                  <button
+                    type="button"
+                    class="ea-btn-ghost ea-btn-sm"
+                    @click="openGmsTradefedDialog"
+                  >
+                    配置 Tradefed 路径
+                  </button>
+                </div>
                 <div v-else class="catalog-auto-retest-row catalog-overview-retest">
                   <label
                     class="checkbox-label"
@@ -712,7 +727,7 @@ function handleDutRowAction(deviceId: string) {
                       <div class="detail-value pre-wrap">{{ selectedCatalogItem.expectedResult }}</div>
                     </div>
                     <div
-                      v-if="selectedCatalogTestType !== 'monkey' && selectedCatalogTestType !== 'smoke' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
+                      v-if="selectedCatalogTestType !== 'monkey' && selectedCatalogTestType !== 'smoke' && selectedCatalogTestType !== 'gms' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
                       class="ea-muted"
                     >
                       暂无手动测试步骤
@@ -1084,6 +1099,18 @@ function handleDutRowAction(deviceId: string) {
                           <strong>{{ getTestTypeLabel(testType) }}</strong>
                         </button>
                       </div>
+                    </div>
+
+                    <div v-if="selectedTestType === 'gms'" class="form-group gms-tradefed-settings">
+                      <span class="form-label">GMS Tradefed</span>
+                      <p class="gms-tradefed-summary ea-muted">{{ gmsTradefedConfiguredSummary }}</p>
+                      <button
+                        type="button"
+                        class="ea-btn-ghost ea-btn-sm"
+                        @click.stop="openGmsTradefedDialog"
+                      >
+                        配置 Tradefed 路径
+                      </button>
                     </div>
 
                     <div class="form-group flash-options">
@@ -1705,6 +1732,27 @@ $catalog-pane-height: calc(100vh - 48px);
 
 .catalog-smoke-help {
   font-size: 12px;
+}
+
+.catalog-gms-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.catalog-gms-intro {
+  font-size: 12px;
+  margin: 0;
+}
+
+.gms-tradefed-settings {
+  padding: 12px 0 4px;
+  border-top: 1px solid var(--line);
+}
+
+.gms-tradefed-summary {
+  font-size: 12px;
+  margin: 0 0 8px;
 }
 
 .catalog-setting-input {
