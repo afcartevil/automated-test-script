@@ -67,6 +67,9 @@ if (bundledDir) {
   warn(`未找到 ${join(projectRoot, 'hermes-agent-main')}，Agent Bridge 功能将不可用`)
 }
 
+// 6. 功耗自动化依赖（启动功耗测试时自动安装，不参与 Console 启动）
+pass('功耗自动化依赖在启动功耗测试时自动检查/安装')
+
 console.log('')
 if (ok) {
   console.log('✓ 环境检查通过')

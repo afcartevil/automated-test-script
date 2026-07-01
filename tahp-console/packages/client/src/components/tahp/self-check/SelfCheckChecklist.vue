@@ -6,6 +6,7 @@ import {
   formatCatalogAutomation,
   formatCatalogModuleScope,
   formatCatalogPrereq,
+  STANDARD_TEST_TYPE_ORDER,
 } from './self-check-utils'
 
 const props = withDefaults(
@@ -25,11 +26,9 @@ const emit = defineEmits<{
   openCatalog: [testType: string]
 }>()
 
-const CASE_TYPES = ['str4', 'week', 'monkey', 'smoke', 'gms'] as const
-
 const catalogCards = computed(() => {
   const byType = new Map(props.groups.map(g => [g.testType, g]))
-  return CASE_TYPES.map(testType => byType.get(testType)).filter(Boolean) as CaseCatalogGroup[]
+  return STANDARD_TEST_TYPE_ORDER.map(testType => byType.get(testType)).filter(Boolean) as CaseCatalogGroup[]
 })
 
 const toneByType: Record<string, string> = {

@@ -1,0 +1,72 @@
+# 测试用例用例集名称
+case_set: mock
+
+# 调试模式标记
+debug_modes:
+- placeholder
+#- fallback # 打开该选项，则将实现录制节点的 fallback，方便进行快速开发，正式测试不需要打开，让其自动报错
+#- no_sim # 是否不检查sim卡
+#- setup_case # 即使在单条调试时，也会进入setup等装饰器控制状态
+#- setup_task # 即使在单条调试时，也会进入session会话级别的setup等流程中，比如会话级开启指标采集等
+#- use_copilot_as_main # 在没有任何一台主测机被找到时，尝试将辅助机（或观测机）转化为主测机
+#- short_test # 在正式测试用例时，将使用很短的测试时长，快速跑测
+#- mock_pretest # 使用模拟的方式快速通过预测试，不打开任何App，比0级预测试还快
+
+# 主干标记，用于控制某些代码的开启和关闭
+trunk_flags:
+- placeholder
+#- use_feishu_static_table # 是否在使用了FeishuStaticTableLoaderInjectionFactory的静态表中使用飞书表格
+#- feishu_static_table_fallback_local # 当飞书静态表格不可用时，是否fallback到本地表
+#- allow_env_detect_wifi_adb # 是否允许 WiFi adb 设备被测试环境自动识别（不建议打开，除非你明确完全不连USB就使用测试环境）
+#- auto_lock_copilot_on_copilot_case_setup # 在需要辅助机的用例开始前自动请求锁定辅助机的使用权（如使用权被占用，则等待）
+
+# 预测试等级：-1直接跳过预测试，0基本不预测试，1快速预测试，2完整预测试
+pretest_level: 2
+
+# 预测试自动跳过已测试通过并且没过期的用例，这里配置过期时间（小时）
+pretest_skip_pass_hours: 0
+
+# 测试轮次（大循环）
+test_loop: 1
+
+# 单用例测试轮次（小循环）
+small_test_loop: 1
+
+# 单条用例的失败重试次数
+retry: 0
+
+# 资源提供路径
+res_provider_path: '\\10.205.101.200\nas2\resource\xttx_test_res'
+res_provider_username: ''
+res_provider_password: ''
+
+# 日志报告上传路径
+logs_uploader_path: '\\10.205.101.200\nas2\tmp\xttx\logs_reports\xssx'
+logs_uploader_username: ''
+logs_uploader_password: ''
+
+# 飞书相关配置
+feishu:
+  # 飞书机器人AppID和AppSecret
+  feishu_app_id: xxxxxxxxxxxxx
+  feishu_app_secret: xxxxxxxxxxxxxxxxxxx
+
+  # 飞书在线表配置
+  feishu_root_table_tokens:
+    default: xxxxxxxxxxxxxxx
+    # xssx: xxxxxxxxxxxxxxxx
+
+  # 飞书云文件配置
+  feishu_root_folder_tokens:
+    default: xxxxxxxxxxxxxxxx
+    # xssx: xxxxxxxxxxxxxxxx
+
+
+# 账号配置
+accounts:
+  google_email: xxxx@gmail.com
+  google_password: xxxx
+
+# 背景App配置
+back_apps:
+- placeholder

@@ -1,0 +1,25 @@
+# ------ 测试方案元配置 ------
+
+# 测试方案的名称
+name: 'dou3'
+
+# 测试方案所属团队名
+team: 'dzppt'
+
+# 测试方案需要继承的元配置方案名，支持多级配置比如继承自'dzppt/dou3'（可不配置）
+parent: 'dzppt'
+
+# 测试方案需要优先启动的环境类全名
+env_class: tests.dzppt.dou3.dou3_env.Dou3Env
+
+plugins:
+  - dou3_pt5_splitter
+  - pypowertool
+  - pysmartusbhub
+  - bugreport_utils
+
+assets:
+  - assets/res_plugins/sim/ui_sim_tool_infinix.apk
+  - assets/res_plugins/sim/ui_sim_tool_itel.apk
+  - assets/res_plugins/sim/ui_sim_tool_tecno.apk
+  - assets/res_plugins/sim/ui_sim_tool_os16.apk

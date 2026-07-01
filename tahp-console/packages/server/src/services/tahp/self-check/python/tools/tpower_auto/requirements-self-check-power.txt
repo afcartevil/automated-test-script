@@ -1,0 +1,30 @@
+# TAHP AI 自检 — 功耗自动化测试 (tpower_auto) 运行时依赖
+# 不含 PyQt / pytest 运行器 / weditor（实验室无头环境）
+pyyaml
+openpyxl
+typing_extensions
+uiautomator2==3.2.6
+setuptools>=65,<82
+psutil
+apkutils2
+thrift
+mss
+opencv-contrib-python
+pillow
+scipy
+numpy
+pandas
+xlrd
+ruamel.yaml
+appdirs
+packaging
+onnxruntime
+rapidocr
+certifi
+requests
+pyserial
+colorlog
+pycryptodome
+deprecated
+func-timeout
+openai

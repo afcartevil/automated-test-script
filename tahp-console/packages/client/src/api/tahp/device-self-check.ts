@@ -25,7 +25,7 @@ export interface DeviceInfo {
   deviceName: string
   role: DeviceRole
   status: DeviceStatus
-  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms'
+  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms' | 'power'
   currentModule?: string
   simCards: SimCardInfo[]
   testStartTime?: string
@@ -86,7 +86,7 @@ export interface ModuleProgress {
 
 export interface TestSession {
   deviceId: string
-  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms'
+  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms' | 'power'
   modules: string[]
   currentModuleIndex: number
   moduleProgress: Record<string, ModuleProgress>
@@ -181,7 +181,7 @@ export interface StartTestFlashPayload {
 
 export async function startTest(
   deviceId: string,
-  testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms',
+  testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power',
   flash?: StartTestFlashPayload,
   scheduleKey?: string,
 ): Promise<DeviceDetail> {

@@ -13,6 +13,7 @@ import {
   getModuleLabel,
   isActiveAuxiliaryDevice,
   parseManualSteps,
+  STANDARD_TEST_TYPE_ORDER,
 } from './self-check-utils'
 import type { DeviceListFilterKey } from './self-check-utils'
 
@@ -21,8 +22,6 @@ const deviceListAnchorRef = ref<HTMLElement | null>(null)
 const deviceDetailPanelRef = ref<HTMLElement | null>(null)
 const customTestPanelRef = ref<HTMLElement | null>(null)
 const deviceListFilter = ref<DeviceListFilterKey>('all')
-
-const STANDARD_TEST_TYPES = ['str4', 'week', 'smoke', 'monkey', 'gms'] as const
 
 function getScrollParent(el: HTMLElement): HTMLElement | Window {
   let node: HTMLElement | null = el.parentElement
@@ -135,7 +134,8 @@ const {
   isCaseSelected,
   getCaseItemClass,
   getCaseItemStyle,
-  handleSetRole,
+  startTestIntentRole,
+  setStartTestIntentRole,
   handleStartTest,
   handleContinueTest,
   handleResumeTest,
@@ -727,7 +727,7 @@ function handleDutRowAction(deviceId: string) {
                       <div class="detail-value pre-wrap">{{ selectedCatalogItem.expectedResult }}</div>
                     </div>
                     <div
-                      v-if="selectedCatalogTestType !== 'monkey' && selectedCatalogTestType !== 'smoke' && selectedCatalogTestType !== 'gms' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
+                      v-if="selectedCatalogTestType !== 'monkey' && selectedCatalogTestType !== 'smoke' && selectedCatalogTestType !== 'gms' && selectedCatalogTestType !== 'power' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
                       class="ea-muted"
                     >
                       暂无手动测试步骤
@@ -1065,7 +1065,7 @@ function handleDutRowAction(deviceId: string) {
                 <template v-else-if="isIdle && selectedDevice.device.testType !== 'custom'">
                   <div class="device-detail-main-header">
                     <span class="catalog-case-title">
-                      {{ selectedDevice.device.role === AUX_ROLE ? '注册为辅测机' : '开始测试' }}
+                      {{ startTestIntentRole === AUX_ROLE ? '注册为辅测机' : '开始测试' }}
                     </span>
                   </div>
                   <div class="device-detail-main-scroll">
@@ -1077,8 +1077,8 @@ function handleDutRowAction(deviceId: string) {
                           :key="role"
                           type="button"
                           class="role-btn"
-                          :class="{ active: selectedDevice.device.role === role }"
-                          @click.stop="handleSetRole(selectedDevice.device.deviceId, role as DeviceRole)"
+                          :class="{ active: startTestIntentRole === role }"
+                          @click.stop="setStartTestIntentRole(role as DeviceRole)"
                         >
                           {{ role }}
                         </button>
@@ -1089,7 +1089,7 @@ function handleDutRowAction(deviceId: string) {
                       <span class="form-label">用例选择</span>
                       <div class="test-type-selector">
                         <button
-                          v-for="testType in STANDARD_TEST_TYPES"
+                          v-for="testType in STANDARD_TEST_TYPE_ORDER"
                           :key="testType"
                           type="button"
                           class="test-type-btn"
@@ -1194,7 +1194,7 @@ function handleDutRowAction(deviceId: string) {
                       class="ea-btn-primary"
                       @click.stop="handleStartTest(selectedDevice.device.deviceId)"
                     >
-                      {{ selectedDevice.device.role === AUX_ROLE ? '开始待命' : '开始测试' }}
+                      {{ startTestIntentRole === AUX_ROLE ? '开始待命' : '开始测试' }}
                     </button>
                   </div>
                 </template>

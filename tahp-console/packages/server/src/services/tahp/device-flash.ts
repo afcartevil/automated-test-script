@@ -806,7 +806,7 @@ export async function resolveLatestDailyFlashPackage(
   }
 }
 
-export type PlannedTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms'
+export type PlannedTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power'
 
 /** 与 device-self-check StartTestFlashPayload 结构兼容 */
 export interface PlannedTestFlashPayload {

@@ -1,0 +1,90 @@
+from time import sleep
+from powertrde.utils.trde import adb
+from tests.current_analysis.phoneconfig import PhoneConfig
+import datetime
+
+def instagram_start(phone :PhoneConfig):
+    app_name = 'Instagram'
+    app_info = phone.global_config.table_apps[app_name]
+    phone.u2d.app_stop(app_info['package'])
+    sleep(2)
+    phone.u2d.app_start(app_info['package'])
+    phone.u2d.xpath('//*[@text="Continue"]').click_exists(timeout=15)
+    phone.u2d.xpath('//*[@text="Not now"]').click_exists(timeout=5)
+    phone.u2d_helper.click_wait('//*[@resource-id="com.instagram.android:id/search_tab"]',
+                                 timeout=10, post_wait=2)
+    phone.u2d_helper.click_wait('//*[@resource-id="com.instagram.android:id/action_bar_search_hints_text_layout"]',
+                                 timeout=10, post_wait=2)
+    phone.u2d_helper.input_text('muliunian356')
+    sleep(1)
+    phone.u2d_helper.press_enter_key()
+    phone.u2d_helper.click_wait('//*[@resource-id="com.instagram.android:id/row_search_user_container"]',
+                                 pre_wait = 1, timeout=10, post_wait=2)
+    phone.u2d_helper.click_wait('//*[@resource-id="android:id/list"]/android.widget.LinearLayout[1]/android.widget.FrameLayout[2]',
+                                 pre_wait = 1, timeout=10, post_wait=2)
+    sleep(2)
+    phone.u2d.click(0.5,0.5)
+
+def instagram_stop(phone :PhoneConfig):
+    app_info = phone.global_config.table_apps['Instagram']
+    phone.u2d_helper.press_home_key()
+    sleep(1)
+    phone.u2d.app_stop(app_info['package'])
+    
+def instagram_check(phone :PhoneConfig, delay: float = 10):
+    for i in range(3):
+        try:
+            instagram_start(phone)
+            break
+        except Exception as e:
+            phone.logerror(f"---第{i+1}次启动失败: {e}")
+            instagram_stop(phone)
+            if i == 2:
+                raise Exception(f"{e}")
+        sleep(5)
+    sleep(delay)
+    instagram_stop(phone)
+    return True
+
+def C22_instagram_video(phone :PhoneConfig):
+    device = phone.device
+    instagram_start(phone)
+    refresh_rate_before1 = phone.get_refresh_rate()
+    if refresh_rate_before1 is not None:
+        device.set_keyvalue(phone.pmsn, "refresh_max", refresh_rate_before1)
+    sleep(5)
+    # 获取测试前亮度（使用PhoneConfig类的get_screen_brightness方法）
+    brightness_before = phone.get_screen_brightness()
+    if brightness_before is not None:
+        device.set_keyvalue(phone.pmsn, "brightness_actual", brightness_before)
+    
+    # 获取测试前刷新率（使用PhoneConfig类的get_refresh_rate方法）
+    refresh_rate_before = phone.get_refresh_rate()
+    if refresh_rate_before is not None:
+        device.set_keyvalue(phone.pmsn, "refresh_min", refresh_rate_before)
+    # 添加功耗测试前截图
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    phone.screenshot(f"{current_time}.png")
+    device.usb_disconnect(phone.pmsn)
+    sleep(60)
+    phone.device.set_filterperiod(phone.pmsn, 90)
+    phone.loginfo(f"---开始测量")
+    # 3. 功耗测试
+    device.start_measure(phone.pmsn)
+    sleep(180)
+    result = device.stop_measure(phone.pmsn)
+    if result is None:
+        phone.logerror(f"---测量失败")
+    else:
+        phone.loginfo(f"---测量成功")
+        device.set_keyvalue(phone.pmsn, "current", result["avgcurrent_mA"])
+    sleep(3)
+    instagram_stop(phone)
+    device.usb_connect(phone.pmsn)
+    # 获取测试后板温
+    board_temp_after = phone.get_board_temperature()
+    if board_temp_after is not None:
+        device.set_keyvalue(phone.pmsn, "ntc_end", board_temp_after)
+    # 保存日志
+    phone.phone_log_stop_save()
+    return result

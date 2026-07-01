@@ -1,0 +1,13 @@
+# 功耗自动化 — 最小启动依赖（优先安装，用于快速通过 powertrde.env 导入）
+appdirs
+pyyaml
+openpyxl
+pandas
+requests
+ruamel.yaml
+packaging
+psutil
+colorlog
+deprecated
+func-timeout
+certifi

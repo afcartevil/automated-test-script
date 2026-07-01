@@ -1,0 +1,4 @@
+openpyxl
+apkutils2
+mss
+packaging
