@@ -183,7 +183,7 @@ const {
           </div>
         </div>
         <p class="gms-tradefed-dialog-footnote">
-          执行命令形如 cts-tradefed run cts --subplan &lt;name&gt; -s &lt;serial&gt;
+          执行命令形如 cts-tradefed run &lt;name&gt; -s &lt;serial&gt;
         </p>
       </div>
       <div class="modify-dialog-footer">

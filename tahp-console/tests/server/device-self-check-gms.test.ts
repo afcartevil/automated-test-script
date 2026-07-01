@@ -24,7 +24,7 @@ describe('device self-check gms catalog', () => {
       moduleLabel: 'CTS',
       caseName: 'CTS指纹测试',
     })
-    expect(ctsDetail[0]?.manualSteps).toContain('cts-tradefed run cts --subplan fingerprint-cts-plan')
+    expect(ctsDetail[0]?.manualSteps).toContain('cts-tradefed run fingerprint-cts-plan')
 
     expect(getSettings().gmsTradefedPath).toEqual({})
   })
