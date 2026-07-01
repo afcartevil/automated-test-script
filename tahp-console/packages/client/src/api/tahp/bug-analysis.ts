@@ -243,6 +243,19 @@ export interface JiraConfigVerifyResult {
   user?: string
 }
 
+export interface JiraConfigStatus {
+  configured: boolean
+  connected: boolean
+  detail?: string
+  error?: string
+  user?: string
+}
+
+/** 读取服务端已保存的 JIRA 配置状态（是否配置 + 是否连通） */
+export function fetchJiraConfigStatus(): Promise<JiraConfigStatus> {
+  return tahpGet<JiraConfigStatus>('/api/tahp/bug-analysis/jira-config/status')
+}
+
 export function verifyJiraUserConfig(jiraConfig?: JiraUserConfig): Promise<JiraConfigVerifyResult> {
   return tahpPost<JiraConfigVerifyResult>('/api/tahp/bug-analysis/jira-config/verify', {}, {
     headers: jiraConfig ? jiraHeaders(jiraConfig) : {},

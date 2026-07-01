@@ -419,6 +419,28 @@ tahpBugAnalysisRoutes.post('/jira-config/verify', async (ctx) => {
   }
 })
 
+// ─── JIRA 配置状态（是否已配置 + 是否连通）─────────────────────────────────
+//
+// GET /api/tahp/bug-analysis/jira-config/status
+tahpBugAnalysisRoutes.get('/jira-config/status', async (ctx) => {
+  const jiraCfg = resolveJiraConfigFromRequest(ctx)
+  const configured = hasJiraBasicCredentials(jiraCfg)
+  if (!configured) {
+    ctx.body = { success: true, data: { configured: false, connected: false } }
+    return
+  }
+  const r = await verifyJiraConnectivity(jiraCfg)
+  if (!r.ok) {
+    ctx.body = { success: true, data: { configured: true, connected: false, error: r.error || '无法连接 JIRA' } }
+    return
+  }
+  const who = r.data?.displayName || r.data?.name || jiraCfg.username
+  ctx.body = {
+    success: true,
+    data: { configured: true, connected: true, detail: `JIRA 连接正常（${who}）`, user: who },
+  }
+})
+
 // ─── JIRA 预览 (单条) ────────────────────────────────────────────────────────
 //
 // GET /api/tahp/bug-analysis/jira/:input

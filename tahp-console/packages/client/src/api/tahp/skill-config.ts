@@ -1,4 +1,4 @@
-import { tahpGet, tahpPost } from './client'
+import { tahpGet, tahpPost, tahpPut } from './client'
 
 export type SkillConfigStatus = 'not_configured' | 'configuring' | 'configured'
 
@@ -56,4 +56,37 @@ export function respondSkillConfigApproval(
 
 export function resetSkillConfig(skillId: string): Promise<{ skill_id: string; status: string }> {
   return tahpPost(`/api/tahp/skill-config/${encodeURIComponent(skillId)}/reset`)
+}
+
+// ─── 一键配置表单 ─────────────────────────────────────────────────────────────
+
+export type UnifiedConfigFieldType = 'text' | 'password'
+
+export interface UnifiedConfigField {
+  key: string
+  label: string
+  type: UnifiedConfigFieldType
+  group: string
+  placeholder?: string
+  description?: string
+  shared?: boolean
+  default?: string
+}
+
+export interface UnifiedConfigForm {
+  fields: UnifiedConfigField[]
+  values: Record<string, string>
+  updated_at?: string
+}
+
+export function fetchUnifiedConfigForm(): Promise<UnifiedConfigForm> {
+  return tahpGet<UnifiedConfigForm>('/api/tahp/skill-config/unified-form')
+}
+
+export function saveUnifiedConfigForm(values: Record<string, string>): Promise<UnifiedConfigForm> {
+  return tahpPut<UnifiedConfigForm>('/api/tahp/skill-config/unified-form', { values })
+}
+
+export function startConfigureAllSkills(): Promise<{ task_id: string; status: string }> {
+  return tahpPost('/api/tahp/skill-config/configure-all', {})
 }

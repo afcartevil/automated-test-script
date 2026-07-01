@@ -11,6 +11,7 @@ import { join } from 'path'
 import yaml from 'js-yaml'
 import { tahpPaths, hasTahpProject } from './paths'
 import { invalidateKbSearchIndex } from './kb-search'
+import { buildUnifiedConfigDirective } from './unified-config'
 import { logger } from '../logger'
 
 // ---------------------------------------------------------------------------
@@ -334,6 +335,9 @@ export function buildSkillExecutionDirective(options?: {
   const lines: string[] = [
     '# TAHP Skill 执行规范（必读）',
     '',
+    `TAHP 工程根目录（绝对路径，解析下列相对路径的基准）: \`${tahpPaths.projectRoot}\``,
+    '> 注意：Agent 当前工作目录不一定是工程根。下方所有相对路径（如 `.tahp/...`、`skills/.claude/skills/...`）均相对上述**工程根绝对路径**；访问前请拼成绝对路径，不要相对当前 CWD 解析。',
+    '',
     `工程内 Skill 根目录（唯一权威来源，相对工程根）: \`${skillsDir}\``,
     '每个 Skill 为 `<skillId>/SKILL.md`。**按需**选择 1～3 个相关 Skill，禁止编造不存在的 skillId。',
     '',
@@ -368,6 +372,15 @@ export function buildSkillExecutionDirective(options?: {
     }
     lines.push('')
   }
+
+  // 缺配置时优先复用「一键配置表单」，而非直接向用户索要（req 5）
+  try {
+    const unified = buildUnifiedConfigDirective()
+    if (unified.trim()) {
+      lines.push(unified)
+      lines.push('')
+    }
+  } catch { /* 一键配置表单不可用时忽略 */ }
 
   return lines.join('\n')
 }
