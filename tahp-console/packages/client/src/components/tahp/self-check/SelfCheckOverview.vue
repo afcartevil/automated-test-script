@@ -136,9 +136,7 @@ function onFlowStage(tab: string) {
       >
         <div v-if="loading" class="device-panel panel-empty ea-muted">加载中…</div>
         <div v-else-if="!devices.length" class="device-panel panel-empty ea-muted">
-          暂无设备，请连接 ADB 后进入
-          <button type="button" class="link-btn" @click="emit('goDevices')">设备执行</button>
-          刷新
+          暂无设备，请连接 ADB 后刷新
         </div>
         <div v-else class="device-panel">
           <ul class="item-list device-list">
