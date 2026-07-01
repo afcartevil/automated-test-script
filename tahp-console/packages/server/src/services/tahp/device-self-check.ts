@@ -414,253 +414,173 @@ function emitEvent(eventName: string, data: any) {
   }
 }
 
-// 使用 ADB 获取设备列表
-async function getAdbDevices(): Promise<string[]> {
+const ADB_PROBE_TIMEOUT_MS = 12_000
+const ADB_LIST_TIMEOUT_MS = 8_000
+const ADB_DEFAULT_TIMEOUT_MS = 10_000
+
+const deviceAdbTail = new Map<string, Promise<unknown>>()
+
+function withDeviceAdbLock<T>(deviceId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = deviceAdbTail.get(deviceId) ?? Promise.resolve()
+  const run = prev.catch(() => undefined).then(fn)
+  const done = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  deviceAdbTail.set(deviceId, done)
+  return run.finally(() => {
+    if (deviceAdbTail.get(deviceId) === done) {
+      deviceAdbTail.delete(deviceId)
+    }
+  })
+}
+
+async function execAdbCommand(
+  args: string[],
+  options: { timeoutMs?: number; label?: string } = {},
+): Promise<string> {
+  const timeoutMs = options.timeoutMs ?? ADB_DEFAULT_TIMEOUT_MS
   return new Promise((resolve) => {
-    let adbProcess: any = null
+    let proc: ReturnType<typeof spawn> | null = null
     let timeoutId: NodeJS.Timeout | null = null
-    
-    const cleanup = () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId)
-        timeoutId = null
+    let settled = false
+
+    const finish = (value: string) => {
+      if (settled) return
+      settled = true
+      if (timeoutId) clearTimeout(timeoutId)
+      if (proc && !proc.killed) {
+        try { proc.kill() } catch { /* ignore */ }
       }
-      if (adbProcess && !adbProcess.killed) {
-        try {
-          adbProcess.kill()
-        } catch {
-          // ignore
-        }
-      }
+      resolve(value)
     }
 
     timeoutId = setTimeout(() => {
-      cleanup()
-      console.warn('[device-self-check] ADB command timeout - returning empty device list')
-      resolve([])
-    }, 5000) // 5秒超时
+      if (options.label) {
+        console.warn(`[device-self-check] ADB ${options.label} timeout after ${timeoutMs}ms`)
+      }
+      finish('')
+    }, timeoutMs)
 
     try {
-      adbProcess = spawn('adb', ['devices'], {
+      proc = spawn('adb', args, {
         stdio: ['ignore', 'pipe', 'pipe'],
-        shell: process.platform === 'win32' // 在 Windows 上使用 shell
+        windowsHide: true,
       })
 
       let stdout = ''
       let stderr = ''
-      
-      adbProcess.stdout?.on('data', (data: Buffer) => {
-        stdout += data.toString()
-      })
-      
-      adbProcess.stderr?.on('data', (data: Buffer) => {
-        stderr += data.toString()
-      })
+      proc.stdout?.on('data', (data: Buffer) => { stdout += data.toString() })
+      proc.stderr?.on('data', (data: Buffer) => { stderr += data.toString() })
 
-      adbProcess.on('close', (code: number) => {
-        cleanup()
-        if (code !== 0 && stderr) {
-          console.warn('[device-self-check] ADB command error:', stderr)
+      proc.on('close', (code: number) => {
+        if (code !== 0 && stderr && options.label) {
+          console.warn(`[device-self-check] ADB ${options.label} stderr:`, stderr.trim())
         }
-        const lines = stdout.split('\n')
-        const deviceIds: string[] = []
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (trimmed && !trimmed.startsWith('List')) {
-            const parts = trimmed.split(/\s+/)
-            if (parts.length >= 2 && parts[1] === 'device') {
-              deviceIds.push(parts[0])
-            }
-          }
-        }
-        resolve(deviceIds)
+        finish(stdout.trim())
       })
-
-      adbProcess.on('error', (err: Error) => {
-        cleanup()
-        console.warn('[device-self-check] ADB process error:', err.message)
-        resolve([])
+      proc.on('error', (err: Error) => {
+        if (options.label) {
+          console.warn(`[device-self-check] ADB ${options.label} error:`, err.message)
+        }
+        finish('')
       })
     } catch (err) {
-      cleanup()
       console.warn('[device-self-check] Failed to spawn ADB process:', err)
-      resolve([])
+      finish('')
     }
   })
 }
 
-// 获取设备名称
-async function getDeviceName(deviceId: string): Promise<string> {
-  return new Promise((resolve) => {
-    let adbProcess: any = null
-    let timeoutId: NodeJS.Timeout | null = null
-    
-    const cleanup = () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId)
-        timeoutId = null
-      }
-      if (adbProcess && !adbProcess.killed) {
-        try {
-          adbProcess.kill()
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    timeoutId = setTimeout(() => {
-      cleanup()
-      console.warn('[device-self-check] ADB get device name timeout - using deviceId as name')
-      resolve(deviceId)
-    }, 3000) // 3秒超时
-
-    try {
-      adbProcess = spawn('adb', ['-s', deviceId, 'shell', 'getprop', 'ro.product.model'], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: process.platform === 'win32' // 在 Windows 上使用 shell
-      })
-
-      let stdout = ''
-      
-      adbProcess.stdout?.on('data', (data: Buffer) => {
-        stdout += data.toString()
-      })
-
-      adbProcess.on('close', () => {
-        cleanup()
-        resolve(stdout.trim() || deviceId)
-      })
-
-      adbProcess.on('error', () => {
-        cleanup()
-        resolve(deviceId)
-      })
-    } catch (err) {
-      cleanup()
-      console.warn('[device-self-check] Failed to spawn ADB getprop process:', err)
-      resolve(deviceId)
-    }
-  })
-}
-
-// 获取设备 SIM 卡信息（仅用 getprop gsm.sim.state 判断）
-async function getSimInfo(deviceId: string): Promise<SimCardInfo[]> {
+export function parseDeviceProbeOutput(
+  output: string,
+  deviceId: string,
+): { deviceName: string; simCards: SimCardInfo[] } {
   const simCards: SimCardInfo[] = [
     { slotIndex: 0, operator: '', phoneNumber: '', present: false },
-    { slotIndex: 1, operator: '', phoneNumber: '', present: false }
+    { slotIndex: 1, operator: '', phoneNumber: '', present: false },
   ]
+  const lines = output.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  const model = lines[0] || ''
+  const simState = lines[1] || ''
+  if (simState) {
+    const states = simState.split(',')
+    if (states.length >= 1 && states[0].toUpperCase() === 'LOADED') {
+      simCards[0].present = true
+    }
+    if (states.length >= 2 && states[1].toUpperCase() === 'LOADED') {
+      simCards[1].present = true
+    }
+  }
+  return {
+    deviceName: model || deviceId,
+    simCards,
+  }
+}
 
-  try {
-    const simState = await execAdbSimple(['-s', deviceId, 'shell', 'getprop', 'gsm.sim.state'])
-    // 格式: "LOADED,LOADED" / "LOADED,ABSENT" / "ABSENT,ABSENT" / "NOT_READY,NOT_READY"
-    if (simState) {
-      const states = simState.trim().split(',')
-      if (states.length >= 1 && states[0].toUpperCase() === 'LOADED') {
-        simCards[0].present = true
-      }
-      if (states.length >= 2 && states[1].toUpperCase() === 'LOADED') {
-        simCards[1].present = true
+async function probeDeviceInfo(deviceId: string): Promise<{ deviceName: string; simCards: SimCardInfo[] }> {
+  return withDeviceAdbLock(deviceId, async () => {
+    let output = await execAdbCommand(
+      ['-s', deviceId, 'shell', 'getprop ro.product.model; getprop gsm.sim.state'],
+      { timeoutMs: ADB_PROBE_TIMEOUT_MS, label: `probe ${deviceId}` },
+    )
+
+    if (!output) {
+      const model = await execAdbCommand(
+        ['-s', deviceId, 'shell', 'getprop', 'ro.product.model'],
+        { timeoutMs: ADB_PROBE_TIMEOUT_MS, label: `getprop model ${deviceId}` },
+      )
+      const simState = await execAdbCommand(
+        ['-s', deviceId, 'shell', 'getprop', 'gsm.sim.state'],
+        { timeoutMs: ADB_PROBE_TIMEOUT_MS, label: `getprop sim ${deviceId}` },
+      )
+      output = [model, simState].filter(Boolean).join('\n')
+    }
+
+    const parsed = parseDeviceProbeOutput(output, deviceId)
+    const detectedCount = parsed.simCards.filter(c => c.present).length
+    console.log(
+      `[device-self-check] Device ${deviceId} probe: name=${parsed.deviceName}, `
+      + `SIM: ${detectedCount} card(s), Slot0=${parsed.simCards[0].present}, Slot1=${parsed.simCards[1].present}`,
+    )
+    return parsed
+  })
+}
+
+// 使用 ADB 获取设备列表
+async function getAdbDevices(): Promise<string[]> {
+  const stdout = await execAdbCommand(['devices'], {
+    timeoutMs: ADB_LIST_TIMEOUT_MS,
+    label: 'devices',
+  })
+  if (!stdout) return []
+
+  const deviceIds: string[] = []
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed && !trimmed.startsWith('List')) {
+      const parts = trimmed.split(/\s+/)
+      if (parts.length >= 2 && parts[1] === 'device') {
+        deviceIds.push(parts[0])
       }
     }
-  } catch (e) {
-    console.warn('[device-self-check] Failed to get SIM info:', e)
   }
-
-  const detectedCount = simCards.filter(c => c.present).length
-  console.log(`[device-self-check] Device ${deviceId} SIM: ${detectedCount} card(s), ` +
-    `Slot0=${simCards[0].present}, Slot1=${simCards[1].present}`)
-
-  return simCards
+  return deviceIds
 }
 
 // 简单的 ADB 命令执行
 async function execAdbSimple(args: string[]): Promise<string> {
-  return new Promise((resolve) => {
-    let adbProcess: any = null
-    let timeoutId: NodeJS.Timeout | null = null
-    
-    const cleanup = () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId)
-        timeoutId = null
-      }
-      if (adbProcess && !adbProcess.killed) {
-        try { adbProcess.kill() } catch { /* ignore */ }
-      }
-    }
-
-    timeoutId = setTimeout(() => { cleanup(); resolve('') }, 2000)
-
-    try {
-      adbProcess = spawn('adb', args, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: process.platform === 'win32'
-      })
-      
-      let stdout = ''
-      
-      adbProcess.stdout?.on('data', (data: Buffer) => { stdout += data.toString() })
-      
-      adbProcess.on('close', () => { cleanup(); resolve(stdout.trim()) })
-      adbProcess.on('error', () => { cleanup(); resolve('') })
-    } catch (err) {
-      cleanup(); resolve('')
-    }
-  })
+  return execAdbCommand(args, { timeoutMs: ADB_DEFAULT_TIMEOUT_MS })
 }
 
 // 获取 SIM 卡运营商
 async function getSimOperator(deviceId: string, slot: number): Promise<string> {
-  return new Promise((resolve) => {
-    let adbProcess: any = null
-    let timeoutId: NodeJS.Timeout | null = null
-    
-    const cleanup = () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId)
-        timeoutId = null
-      }
-      if (adbProcess && !adbProcess.killed) {
-        try {
-          adbProcess.kill()
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    timeoutId = setTimeout(() => {
-      cleanup()
-      resolve('')
-    }, 3000)
-
-    try {
-      adbProcess = spawn('adb', ['-s', deviceId, 'shell', 'getprop', 'gsm.sim.operator.alpha'], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: process.platform === 'win32'
-      })
-
-      let stdout = ''
-      
-      adbProcess.stdout?.on('data', (data: Buffer) => {
-        stdout += data.toString()
-      })
-
-      adbProcess.on('close', () => {
-        cleanup()
-        const operator = stdout.trim()
-        resolve(operator || '未知运营商')
-      })
-
-      adbProcess.on('error', () => {
-        cleanup()
-        resolve('')
-      })
-    } catch (err) {
-      cleanup()
-      resolve('')
-    }
+  return withDeviceAdbLock(deviceId, async () => {
+    const operator = await execAdbCommand(
+      ['-s', deviceId, 'shell', 'getprop', 'gsm.sim.operator.alpha'],
+      { timeoutMs: ADB_PROBE_TIMEOUT_MS, label: `getprop operator ${deviceId}` },
+    )
+    return operator || '未知运营商'
   })
 }
 
@@ -668,10 +588,7 @@ async function getSimOperator(deviceId: string, slot: number): Promise<string> {
 async function updateDeviceInfoAsync(deviceId: string): Promise<void> {
   try {
     // 异步获取设备名称和 SIM 卡信息，不阻塞
-    const [deviceName, simCards] = await Promise.all([
-      getDeviceName(deviceId),
-      getSimInfo(deviceId)
-    ])
+    const { deviceName, simCards } = await probeDeviceInfo(deviceId)
     // 更新设备信息
     if (devices[deviceId]) {
       devices[deviceId].deviceName = deviceName
@@ -700,10 +617,7 @@ export async function listDevices(): Promise<DeviceInfo[]> {
     // 首次加载：并行获取所有设备信息
     const deviceInfos = await Promise.all(
       adbDeviceIds.map(async (deviceId) => {
-        const [deviceName, simCards] = await Promise.all([
-          getDeviceName(deviceId),
-          getSimInfo(deviceId)
-        ])
+        const { deviceName, simCards } = await probeDeviceInfo(deviceId)
         return { deviceId, deviceName, simCards }
       })
     )
@@ -740,20 +654,17 @@ export async function refreshDevices(): Promise<DeviceInfo[]> {
     const newDeviceIds = adbDeviceIds.filter(id => !devices[id])
     const newDeviceInfos = await Promise.all(
       newDeviceIds.map(async (deviceId) => {
-        const [deviceName, simCards] = await Promise.all([
-          getDeviceName(deviceId),
-          getSimInfo(deviceId)
-        ])
+        const { deviceName, simCards } = await probeDeviceInfo(deviceId)
         return { deviceId, deviceName, simCards }
       })
     )
 
-    // 并行更新已有设备的 SIM 信息
+    // 并行更新已有空闲/完成设备的名称与 SIM（名称曾为 deviceId 时也会重试）
     const existingIds = adbDeviceIds.filter(id => devices[id] && ['空闲', '完成(通过)', '完成(失败)', '错误'].includes(devices[id].status))
     const existingUpdates = await Promise.all(
       existingIds.map(async (deviceId) => {
-        const simCards = await getSimInfo(deviceId)
-        return { deviceId, simCards }
+        const { deviceName, simCards } = await probeDeviceInfo(deviceId)
+        return { deviceId, deviceName, simCards }
       })
     )
 
@@ -774,7 +685,11 @@ export async function refreshDevices(): Promise<DeviceInfo[]> {
 
     for (const update of existingUpdates) {
       if (devices[update.deviceId]) {
-        newDevices[update.deviceId] = { ...devices[update.deviceId], simCards: update.simCards }
+        newDevices[update.deviceId] = {
+          ...devices[update.deviceId],
+          deviceName: update.deviceName,
+          simCards: update.simCards,
+        }
       }
     }
 
