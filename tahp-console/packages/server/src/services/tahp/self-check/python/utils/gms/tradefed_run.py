@@ -20,6 +20,8 @@ TRADEFED_END_MARKERS = (
     "=================== End ====================",
 )
 
+TRADEFED_REAP_TIMEOUT_SEC = 15.0
+
 _SUMMARY_FAILED_RE = re.compile(r"FAILED\s*:\s*(\d+)", re.IGNORECASE)
 _SUMMARY_PASSED_RE = re.compile(r"PASSED\s*:\s*(\d+)", re.IGNORECASE)
 _MODULE_RUN_FAILURE_RE = re.compile(r"Module\(s\) with run failure", re.IGNORECASE)
@@ -27,6 +29,19 @@ _MODULES_COMPLETED_RE = re.compile(r"(\d+)/(\d+)\s+modules completed", re.IGNORE
 _XML_FAILED_ATTR_RE = re.compile(
     r'\b(?:failed|failures)\s*=\s*["\'](\d+)["\']', re.IGNORECASE
 )
+
+
+_RESULT_DIR_RE = re.compile(r"RESULT\s+DIRECTORY\s*:\s*(.+)", re.IGNORECASE)
+_LOG_DIR_RE = re.compile(r"LOG\s+DIRECTORY\s*:\s*(.+)", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class TradefedArtifactPaths:
+    result_dir: str | None = None
+    log_dir: str | None = None
+    test_result_html: str | None = None
+    test_result_xml: str | None = None
+    console_log: str | None = None
 
 
 @dataclass(frozen=True)
@@ -170,6 +185,88 @@ def _latest_child_dir(parent: Path) -> Path | None:
     return max(children, key=lambda item: item.stat().st_mtime)
 
 
+def _resolve_artifact_paths(
+    suite_root: Path, stdout_log: str, console_log: Path
+) -> TradefedArtifactPaths:
+    result_dir = None
+    log_dir = None
+
+    result_match = _RESULT_DIR_RE.search(stdout_log)
+    if result_match:
+        result_dir = result_match.group(1).strip()
+
+    log_match = _LOG_DIR_RE.search(stdout_log)
+    if log_match:
+        log_dir = log_match.group(1).strip()
+
+    latest_result = _latest_child_dir(suite_root / "results")
+    if result_dir is None and latest_result is not None:
+        result_dir = str(latest_result)
+
+    latest_log = _latest_child_dir(suite_root / "logs")
+    if log_dir is None and latest_log is not None:
+        log_dir = str(latest_log)
+
+    test_result_html = None
+    test_result_xml = None
+    if latest_result is not None:
+        html_path = latest_result / "test_result.html"
+        xml_path = latest_result / "test_result.xml"
+        if html_path.is_file():
+            test_result_html = str(html_path)
+        if xml_path.is_file():
+            test_result_xml = str(xml_path)
+
+    console_log_path = str(console_log) if console_log.is_file() else None
+    return TradefedArtifactPaths(
+        result_dir=result_dir,
+        log_dir=log_dir,
+        test_result_html=test_result_html,
+        test_result_xml=test_result_xml,
+        console_log=console_log_path,
+    )
+
+
+def _format_artifact_paths(paths: TradefedArtifactPaths) -> str:
+    lines: list[str] = []
+    if paths.result_dir:
+        lines.append(f"结果目录: {paths.result_dir}")
+    if paths.log_dir:
+        lines.append(f"日志目录: {paths.log_dir}")
+    if paths.test_result_html:
+        lines.append(f"HTML 报告: {paths.test_result_html}")
+    if paths.test_result_xml:
+        lines.append(f"XML 报告: {paths.test_result_xml}")
+    if paths.console_log:
+        lines.append(f"控制台日志: {paths.console_log}")
+    return "\n".join(lines)
+
+
+class _GmsStepReporter:
+    """GMS 子步骤输出，与其他自检用例保持 begin/on_step 风格一致。"""
+
+    def __init__(self, step_update) -> None:
+        self._step_update = step_update
+        self._committed = ""
+
+    def _emit(self, preview: str | None = None) -> None:
+        if not callable(self._step_update):
+            return
+        text = preview if preview is not None else self._committed
+        self._step_update(text.strip())
+
+    def note(self, text: str) -> None:
+        self._committed += f"\n{text}"
+        self._emit()
+
+    def begin(self, text: str) -> None:
+        self._emit(self._committed + f"\n{text}")
+
+    def complete(self, text: str, ok: bool) -> None:
+        self._committed += f"\n{text}{'-成功' if ok else '-失败'}"
+        self._emit()
+
+
 def _collect_result_logs(suite_root: Path) -> str:
     chunks: list[str] = []
 
@@ -195,6 +292,25 @@ def _collect_result_logs(suite_root: Path) -> str:
                 pass
 
     return "\n".join(chunk for chunk in chunks if chunk.strip())
+
+
+def _reap_tradefed_process(
+    proc: subprocess.Popen[str], timeout_sec: float = TRADEFED_REAP_TIMEOUT_SEC
+) -> None:
+    """Tradefed 打印结束标记后子进程可能长期不退出，限时回收避免阻塞。"""
+    if proc.stdout and not proc.stdout.closed:
+        proc.stdout.close()
+    if proc.poll() is not None:
+        return
+    try:
+        proc.wait(timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
 
 
 def _device_serial(device_info: dict) -> str:
@@ -339,26 +455,22 @@ def run_gms_subplan(
             "full_automation": True,
         }
 
-    steps: list[str] = []
-
-    def add_step(text: str) -> None:
-        steps.append(text)
-        if step_update:
-            step_update("\n".join(steps))
+    steps = _GmsStepReporter(step_update)
 
     subplan_name = subplan[:-4] if subplan.endswith(".xml") else subplan
-    add_step(f"准备执行 {suite.upper()} subplan={subplan_name}，设备: {serial}")
-    add_step(f"{TRADEFED_SCRIPT[suite]}: {launcher}")
-    add_step(f"工作目录: {suite_root}")
+    steps.note(f"Plan: {subplan_name}")
+    steps.note(f"设备: {serial}")
+    steps.note(f"套件根目录: {suite_root}")
+    steps.note(f"Tradefed: {launcher}")
     cmd = _build_tradefed_cmd(launcher, subplan_name, serial)
-    add_step(f"命令: {format_tradefed_command(launcher, subplan_name, serial)}")
+    steps.note(f"命令: {format_tradefed_command(launcher, subplan_name, serial)}")
 
     log_dir = suite_root / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{suite}_{subplan_name}_{serial}.log"
 
     log_chunks: list[str] = []
-    saw_end_marker = False
+    steps.begin("执行 Tradefed")
 
     try:
         with log_path.open("w", encoding="utf-8") as log_file:
@@ -375,24 +487,19 @@ def run_gms_subplan(
             for line in proc.stdout:
                 log_file.write(line)
                 log_chunks.append(line)
-                stripped = line.strip()
-                if stripped:
-                    tail = stripped if len(stripped) <= 240 else stripped[-240:]
-                    if len(steps) > 1 and steps[-1].startswith("…"):
-                        steps[-1] = f"…{tail}"
-                    else:
-                        add_step(f"…{tail}")
-                if not saw_end_marker and tradefed_log_finished("".join(log_chunks)):
-                    saw_end_marker = True
-                    add_step(f"{suite.upper()} 日志已出现 End of Results，等待进程收尾…")
-            proc.wait()
+                if tradefed_log_finished("".join(log_chunks)):
+                    break
+            _reap_tradefed_process(proc)
     except Exception as exc:
-        add_step(f"{suite.upper()} 执行异常-失败")
+        steps.complete("执行 Tradefed", False)
+        steps.note(f"异常: {exc}")
         return {
             "status": "fail",
             "message": str(exc),
             "full_automation": True,
         }
+
+    steps.complete("执行 Tradefed", True)
 
     stdout_log = "".join(log_chunks)
     supplemental_log = _collect_result_logs(suite_root)
@@ -400,36 +507,62 @@ def run_gms_subplan(
     if supplemental_log and supplemental_log not in combined_log:
         combined_log = f"{stdout_log}\n{supplemental_log}"
 
+    artifact_paths = _resolve_artifact_paths(suite_root, combined_log, log_path)
     analysis = analyze_tradefed_log(combined_log)
-    tail = combined_log.strip()[-2000:]
+    path_text = _format_artifact_paths(artifact_paths)
+    summary_tail = combined_log.strip()[-1200:]
 
+    steps.begin("解析测试结果")
     if not analysis.finished:
-        add_step(f"{suite.upper()} subplan {subplan_name} 未完成-失败")
+        steps.complete("解析测试结果", False)
+        steps.note(analysis.reason)
+        if path_text:
+            steps.note(path_text)
         return {
             "status": "fail",
-            "message": tail or analysis.reason,
+            "message": _join_message(analysis.reason, path_text, summary_tail),
             "full_automation": True,
         }
 
+    steps.complete("解析测试结果", True)
+    if analysis.passed_count is not None or analysis.failed_count is not None:
+        passed_text = analysis.passed_count if analysis.passed_count is not None else "?"
+        failed_text = analysis.failed_count if analysis.failed_count is not None else "?"
+        steps.note(f"统计: PASSED={passed_text}, FAILED={failed_text}")
+
     if analysis.passed is True:
-        add_step(f"{suite.upper()} subplan {subplan_name} 通过-成功 ({analysis.reason})")
+        steps.complete("测试判定", True)
+        steps.note(analysis.reason)
+        if path_text:
+            steps.note(path_text)
         return {
             "status": "pass",
-            "message": tail or analysis.reason,
+            "message": _join_message(analysis.reason, path_text, summary_tail),
             "full_automation": True,
         }
 
     if analysis.passed is False:
-        add_step(f"{suite.upper()} subplan {subplan_name} 失败-失败 ({analysis.reason})")
+        steps.complete("测试判定", False)
+        steps.note(analysis.reason)
+        if path_text:
+            steps.note(path_text)
         return {
             "status": "fail",
-            "message": tail or analysis.reason,
+            "message": _join_message(analysis.reason, path_text, summary_tail),
             "full_automation": True,
         }
 
-    add_step(f"{suite.upper()} subplan {subplan_name} 结果未知-失败 ({analysis.reason})")
+    steps.complete("测试判定", False)
+    steps.note(analysis.reason)
+    if path_text:
+        steps.note(path_text)
     return {
         "status": "fail",
-        "message": tail or analysis.reason,
+        "message": _join_message(analysis.reason, path_text, summary_tail),
         "full_automation": True,
     }
+
+
+def _join_message(*parts: str) -> str:
+    chunks = [part.strip() for part in parts if part and part.strip()]
+    return "\n\n".join(chunks)
