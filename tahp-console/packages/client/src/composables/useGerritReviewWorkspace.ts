@@ -231,6 +231,7 @@ export function useGerritReviewWorkspace() {
       if (recCount > 0 || p0Count === 0) return
       if (running) return
       if (loadingRecommendations.value || gerritStore.isRefreshingRecommendations()) return
+      if (gerritStore.isApplyingReviewInsight()) return
       void gerritStore.ensureRecommendedCases()
     },
   )
