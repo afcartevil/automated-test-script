@@ -10,7 +10,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { getTahpSocket, type TahpEvent } from '@/api/tahp/socket'
 import {
-  listBugTasks, listBugJobs, getBugTask,
+  listBugTasks, listBugJobs,
   type BugTask, type BugJob,
 } from '@/api/tahp/bug-analysis'
 
@@ -387,15 +387,6 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
     }
   }
 
-  async function refreshTask(taskId: string) {
-    try {
-      const t = await getBugTask(taskId)
-      tasks.value = { ...tasks.value, [taskId]: t }
-    } catch {
-      // ignore
-    }
-  }
-
   function registerTask(t: BugTask) {
     if (!streams.value[t.task_id]) streams.value = { ...streams.value, [t.task_id]: [] }
     tasks.value = { ...tasks.value, [t.task_id]: t }
@@ -461,7 +452,7 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
     tasks, jobs, streams, skillCalls, stageDetails, pendingApprovals, pendingUserInputs,
     selectedTaskId, selectedJobId, loading, lastError,
     recentTasks, recentJobs,
-    ensureSocket, refresh, refreshTask, registerTask, registerJob,
+    ensureSocket, refresh, registerTask, registerJob,
     stream, skillCallList, llmText, reasoningText, stageDetailMap, structuredEvents, selectTask, selectJob,
   }
 })

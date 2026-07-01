@@ -1499,13 +1499,6 @@ const liveStreamHint = computed(() => {
         <EaPill :variant="jiraConfigReady ? 'ok' : 'warn'">
           {{ jiraConfigReady ? 'JIRA 已配置' : '需配置 JIRA' }}
         </EaPill>
-        <button type="button" class="ea-btn-ghost ea-btn-sm" @click="store.refresh">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <polyline points="23 4 23 10 17 10"/>
-            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-          </svg>
-          刷新
-        </button>
       </template>
     </EaPageHead>
 
