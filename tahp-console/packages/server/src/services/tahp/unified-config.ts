@@ -33,11 +33,13 @@ export interface UnifiedConfigField {
 const GROUP_DOMAIN = '域账号（Jira / Gerrit / OpenGrok 共用）'
 const GROUP_FEISHU = '飞书 OpenAPI（可选，用于日志下载）'
 const GROUP_LOCAL = '本地环境与工具（可选）'
+const GROUP_TONES = 'TONES SCMP（属性 / 配置查询）'
 
 /**
  * 一键配置表单字段（已按「配置清单中各 Skill 需用户配置项」去重）。
  * Jira / Gerrit / OpenGrok 服务器地址为固定值，不在此表单中配置（见 FIXED_SERVER_ADDRESSES）。
- * 字段来源：jira-ops、modem-analysis-local（含 log-pipeline）的 .env 配置项。
+ * 字段来源：jira-ops、modem-analysis-local（含 log-pipeline）的 .env 配置项，
+ * 以及 tones-scmp 的 scripts/config.yaml 中的 token 字段。
  * 新增/调整字段只需改这里，前端表单与 Agent 提示词会自动跟随。
  */
 export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
@@ -131,6 +133,24 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     placeholder: '如 C:\\Program Files\\Qualcomm\\QUTS\\Support\\python',
     description: 'QUTS_PYTHON_PATH：Qualcomm QUTS modem log 导出用。',
   },
+  {
+    key: 'tones_scmp_auth',
+    label: 'TONES SCMP Token（p-auth / authorization）',
+    type: 'password',
+    group: GROUP_TONES,
+    placeholder: '如 r_Mjg3...',
+    description:
+      '写入 tones-scmp 的 scripts/config.yaml：auth_profiles.hk-intra-paas.p_auth 与 authorization（两者同值）。从浏览器 DevTools 请求头 p-auth 复制。',
+  },
+  {
+    key: 'tones_scmp_rtoken',
+    label: 'TONES SCMP p-rtoken',
+    type: 'password',
+    group: GROUP_TONES,
+    placeholder: '如 u_Mjg3...',
+    description:
+      '写入 tones-scmp 的 scripts/config.yaml：auth_profiles.hk-intra-paas.p_rtoken。从浏览器 DevTools 请求头 p-rtoken 复制。',
+  },
 ]
 
 /** 固定服务器地址：不在表单中配置，供 Agent / 派生存储直接使用 */
@@ -220,6 +240,36 @@ function readSkillEnvDefaults(): UnifiedConfigValues {
   return defaults
 }
 
+/**
+ * 从 tones-scmp 的 scripts/config.yaml 中提取 token 默认值。
+ * config.yaml 非标准 .env，这里只按需抓取 auth_profiles.hk-intra-paas 下的
+ * p_auth / authorization / p_rtoken 三个键（简单行匹配，避免引入 yaml 依赖）。
+ */
+function readTonesScmpDefaults(): UnifiedConfigValues {
+  const p = join(tahpPaths.skillsDir, 'tones-scmp', 'scripts', 'config.yaml')
+  const out: UnifiedConfigValues = {}
+  if (!existsSync(p)) return out
+  try {
+    const text = readFileSync(p, 'utf-8')
+    const pick = (key: string): string => {
+      const m = text.match(new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'm'))
+      if (!m) return ''
+      let v = m[1].trim()
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+        v = v.slice(1, -1)
+      }
+      return v
+    }
+    const auth = pick('p_auth') || pick('authorization')
+    const rtoken = pick('p_rtoken')
+    if (auth) out.tones_scmp_auth = auth
+    if (rtoken) out.tones_scmp_rtoken = rtoken
+  } catch {
+    /* ignore unreadable config.yaml */
+  }
+  return out
+}
+
 export type UnifiedConfigValues = Record<string, string>
 
 function tahpConfigDir(): string {
@@ -254,7 +304,7 @@ export function readUnifiedConfig(): UnifiedConfigValues {
  */
 export function readUnifiedConfigForForm(): UnifiedConfigValues {
   const stored = readUnifiedConfig()
-  const skillDefaults = readSkillEnvDefaults()
+  const skillDefaults = { ...readSkillEnvDefaults(), ...readTonesScmpDefaults() }
   const values: UnifiedConfigValues = {}
   for (const field of UNIFIED_CONFIG_FIELDS) {
     const saved = (stored[field.key] || '').trim()
