@@ -21,7 +21,7 @@ import {
 export const MAX_OFFSET_DAYS = 14
 export const UPCOMING_HORIZON_DAYS = 14
 
-export type PlanTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms'
+export type PlanTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power'
 
 export interface ProjectNodesFile {
   updatedAt: string
@@ -72,6 +72,7 @@ const TEST_TYPE_LABELS: Record<PlanTestType, string> = {
   monkey: 'monkey测试',
   smoke: '冒烟测试',
   gms: 'GMS测试',
+  power: '功耗自动化测试',
 }
 
 export function getTestTypeLabel(testType: PlanTestType): string {
@@ -85,6 +86,7 @@ export function normalizePlanTestType(raw: unknown): PlanTestType | null {
   if (text === 'monkey' || text.includes('monkey')) return 'monkey'
   if (text === 'smoke' || text.includes('冒烟')) return 'smoke'
   if (text === 'gms' || text.includes('gms')) return 'gms'
+  if (text === 'power' || text.includes('功耗')) return 'power'
   return null
 }
 
@@ -320,7 +322,7 @@ export async function getTestPlanRules(): Promise<TestPlanRulesFile> {
 
 export function validateTestPlanRules(rules: TestPlanRule[]): TestPlanRule[] {
   const validNodes = new Set<string>(NODE_KEYS)
-  const validTypes = new Set<string>(['str4', 'week', 'monkey', 'smoke', 'gms'])
+  const validTypes = new Set<string>(['str4', 'week', 'monkey', 'smoke', 'gms', 'power'])
   const cleaned: TestPlanRule[] = []
 
   for (const rule of rules) {

@@ -1,8 +1,8 @@
 /**
  * 设备自动化自检服务
  */
-import { spawn } from 'child_process'
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs'
+import { spawn, spawnSync } from 'child_process'
+import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'fs'
 import type { ServerResponse } from 'http'
 import { join, resolve } from 'path'
 import AdmZip from 'adm-zip'
@@ -12,6 +12,7 @@ import {
   waitForAdbDevice,
 } from './device-flash'
 import { resolvePythonSpawn, tahpPaths } from './paths'
+import { ensurePowerTestPythonDeps } from './self-check-python-deps'
 import { buildSelfCheckDetailPayload, reportAbsoluteDir, type SelfCheckCaseItem, type SelfCheckFailedCaseItem } from './self-check-reports'
 import { markPlanExecutionCompleted } from './test-plan-executions'
 
@@ -30,7 +31,7 @@ export type DeviceStatus =
   | '待命'
   | '刷机中'
 
-export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms'
+export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power'
 export type DeviceTestType = StandardTestType | 'custom'
 
 export interface SimCardInfo {
@@ -222,7 +223,7 @@ function normalizeGmsTradefedPath(
 }
 
 function getAutoRetestConfig(testType: string): { enabled: boolean; count: number } {
-  if (testType === 'monkey' || testType === 'smoke' || testType === 'gms') {
+  if (testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power') {
     return { enabled: false, count: 0 }
   }
   return {
@@ -348,6 +349,7 @@ function loadCaseConfigs(): void {
     'gms_cts.json',
     'gms_gts.json',
     'gms_vts.json',
+    'power_current_analysis.json',
   ]
   
   for (const file of configFiles) {
@@ -873,6 +875,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'monkey') return ['monkey']
   if (testType === 'smoke') return ['usd']
   if (testType === 'gms') return ['cts', 'gts', 'vts']
+  if (testType === 'power') return ['current_analysis']
   return ['driver', 'tdd']
 }
 
@@ -1268,6 +1271,116 @@ async function stopMonkeyForDevice(deviceId: string): Promise<void> {
   })
 }
 
+const POWER_TOOLS_DIR = join(PYTHON_DIR, 'tools', 'tpower_auto')
+const POWER_OUTPUT_DIR = join(POWER_TOOLS_DIR, 'output')
+const POWER_EXEC_TIMEOUT_MS = 86_400_000 // 24h，功耗任务由飞书表驱动，长时间运行
+
+function summarizePowerReportFromXlsx(): {
+  ok: boolean
+  total: number
+  failed: number
+  passed: number
+  message: string
+  path?: string
+} | null {
+  const script = join(POWER_TOOLS_DIR, 'run_power_env.py')
+  if (!existsSync(script)) return null
+  const { command, prefixArgs } = resolvePythonSpawn()
+  const result = spawnSync(
+    command,
+    [...prefixArgs, script, 'summarize-xlsx'],
+    { cwd: POWER_TOOLS_DIR, encoding: 'utf-8', windowsHide: true },
+  )
+  const stdout = (result.stdout || '').trim()
+  if (!stdout) return null
+  try {
+    const line = stdout.split('\n').filter(Boolean).pop() || ''
+    return JSON.parse(line)
+  } catch {
+    return null
+  }
+}
+
+function finalizePowerCaseResults(deviceId: string, session: TestSession): void {
+  if (session.testType !== 'power') return
+  const summary = summarizePowerReportFromXlsx()
+  if (!summary) return
+
+  for (const [caseKey, result] of Object.entries(session.caseResults)) {
+    if (!caseKey.startsWith('power/current_analysis/')) continue
+    if (result.status !== '进行中' && result.endTime) continue
+
+    const failed = summary.failed ?? 0
+    const total = summary.total ?? 0
+    const message = summary.message || result.message
+    result.status = total > 0 && failed === 0 ? '通过' : '失败'
+    result.message = message
+    result.endTime = new Date().toISOString()
+    if (summary.path) {
+      result.steps.push({
+        stepDesc: `报告: ${summary.path}`,
+        status: '完成',
+        timestamp: result.endTime,
+      })
+    }
+    result.steps.push({
+      stepDesc: `结果: ${message}`,
+      status: result.status,
+      timestamp: result.endTime,
+    })
+    emitEvent('case_completed', { deviceId, caseKey, result })
+  }
+}
+
+function findLatestPowerReportXlsx(): string | null {
+  if (!existsSync(POWER_OUTPUT_DIR)) return null
+  let latest: { path: string; mtime: number } | null = null
+  for (const name of readdirSync(POWER_OUTPUT_DIR)) {
+    if (!name.toLowerCase().endsWith('.xlsx')) continue
+    const filePath = join(POWER_OUTPUT_DIR, name)
+    try {
+      const mtime = statSync(filePath).mtimeMs
+      if (!latest || mtime > latest.mtime) {
+        latest = { path: filePath, mtime }
+      }
+    } catch {
+      // skip unreadable files
+    }
+  }
+  return latest?.path ?? null
+}
+
+function copyPowerArtifactToReport(resultDir: string): string | null {
+  const latest = findLatestPowerReportXlsx()
+  if (!latest) return null
+  const dest = join(resultDir, 'test_report.xlsx')
+  copyFileSync(latest, dest)
+  return dest
+}
+
+async function stopPowerForDevice(deviceId: string): Promise<void> {
+  const script = join(POWER_TOOLS_DIR, 'run_power_env.py')
+  if (!existsSync(script)) return
+
+  return new Promise((resolve) => {
+    try {
+      spawnPythonProcess([script, 'stop', '-s', deviceId], {
+        cwd: POWER_TOOLS_DIR,
+        label: `power-stop/${deviceId}`,
+        timeoutMs: 30_000,
+        onStderr: (data) => {
+          const msg = data.toString().trim()
+          if (msg) console.warn(`[device-self-check] power-stop stderr: ${msg}`)
+        },
+        onClose: () => resolve(),
+        onError: () => resolve(),
+      })
+    } catch {
+      resolve()
+    }
+  })
+}
+
 const MODULE_INIT_RUNNER = `
 import importlib.util
 import json
@@ -1369,6 +1482,10 @@ function resolveCaseExecTimeoutMs(testType: string, module: string): number {
     const raw = Number(process.env.TAHP_GMS_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : GMS_EXEC_TIMEOUT_MS
   }
+  if (testType === 'power' && module === 'current_analysis') {
+    const raw = Number(process.env.TAHP_POWER_TIMEOUT_MS)
+    return Number.isFinite(raw) && raw > 0 ? raw : POWER_EXEC_TIMEOUT_MS
+  }
   return CASE_EXEC_TIMEOUT_MS
 }
 
@@ -1400,6 +1517,9 @@ async function execPythonCase(
 
     const cleanup = () => {
       if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
+      if (testType === 'power' && module === 'current_analysis') {
+        void stopPowerForDevice(deviceId)
+      }
       if (proc && !proc.killed) { try { proc.kill() } catch {} }
     }
 
@@ -1628,6 +1748,20 @@ async function runModule(
   }
 
   console.log(`[device-self-check] Starting module: ${moduleKey}`)
+
+  if (testType === 'power') {
+    const powerDeps = ensurePowerTestPythonDeps()
+    if (!powerDeps.ok && !powerDeps.skipped) {
+      const reason = powerDeps.error || '功耗自动化 Python 依赖安装失败'
+      console.error(`[device-self-check] Power deps failed: ${reason}`)
+      devices[deviceId].status = '错误'
+      devices[deviceId].currentModule = module
+      session.errorReason = reason
+      session.isRunning = false
+      emitEvent('device_updated', { device: devices[deviceId] })
+      return
+    }
+  }
 
   // 前置条件检查
   const precheck = await checkPreconditions(deviceId, moduleKey)
@@ -2278,6 +2412,14 @@ async function runCustomTestFlow(
     if (!initializedModules.has(moduleKey)) {
       device.currentModule = moduleConditions[moduleKey]?.moduleLabel || module
       emitEvent('device_updated', { device })
+      if (testType === 'power') {
+        const powerDeps = ensurePowerTestPythonDeps()
+        if (!powerDeps.ok && !powerDeps.skipped) {
+          const reason = powerDeps.error || '功耗自动化 Python 依赖安装失败'
+          markTestFlowError(deviceId, new Error(reason), 'custom')
+          return
+        }
+      }
       await execPythonInit(deviceId, testType, module, session)
       initializedModules.add(moduleKey)
       if (!session.isRunning) return
@@ -2518,6 +2660,10 @@ async function generateTestReport(
       ?? join(tahpPaths.reportsDir, 'self-check', deviceId, session.startTime?.replace(/[:.]/g, '-') || '')
     mkdirSync(resultDir, { recursive: true })
 
+    if (session.testType === 'power') {
+      finalizePowerCaseResults(deviceId, session)
+    }
+
     const orderedResults = collectOrderedCaseResults(session)
 
     const sheets: { name: string; rows: string[][]; styles: ('green' | 'red' | 'yellow' | '')[] }[] = []
@@ -2585,6 +2731,11 @@ async function generateTestReport(
     const reportPath = join(resultDir, 'test_report.xlsx')
     writeFileSync(reportPath, buffer)
 
+    let powerArtifactPath: string | null = null
+    if (session.testType === 'power') {
+      powerArtifactPath = copyPowerArtifactToReport(resultDir)
+    }
+
     // 写入摘要
     const summary = {
       deviceId,
@@ -2605,6 +2756,7 @@ async function generateTestReport(
       ...(session.testType === 'custom' && session.selectedCases?.length
         ? { selectedCases: session.selectedCases }
         : {}),
+      ...(powerArtifactPath ? { powerArtifactPath } : {}),
     }
     writeFileSync(join(resultDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8')
 
@@ -2779,6 +2931,11 @@ export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
   }
 
   await stopMonkeyForDevice(deviceId)
+  await stopPowerForDevice(deviceId)
+
+  if (session) {
+    finalizePowerCaseResults(deviceId, session)
+  }
 
   if (session) {
     session.isRunning = false
@@ -3109,6 +3266,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     monkey: 'monkey测试',
     smoke: '冒烟测试',
     gms: 'GMS测试',
+    power: '功耗自动化测试',
   }
   const MODULE_ORDER: Record<string, number> = {
     driver: 0,
@@ -3119,6 +3277,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     cts: 10,
     gts: 11,
     vts: 12,
+    current_analysis: 13,
     tdd: 99,
   }
 
@@ -3146,7 +3305,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms']
+  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power']
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),

@@ -25,6 +25,7 @@ const TEST_TYPE_OPTIONS: { label: string; value: PlanTestType }[] = [
   { label: getTestTypeLabel('smoke'), value: 'smoke' },
   { label: getTestTypeLabel('monkey'), value: 'monkey' },
   { label: getTestTypeLabel('gms'), value: 'gms' },
+  { label: getTestTypeLabel('power'), value: 'power' },
 ]
 
 const EXAMPLE_RULES: TestPlanRule[] = [

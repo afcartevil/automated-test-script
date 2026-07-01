@@ -1,0 +1,7 @@
+assert_shopee: __pic__Shopee_assert_shopee.png
+btn_close:
+- 0.8787037037037037
+- 0.23891625615763548
+btn_close_pic: __pic__Shopee_btn_close_pic.png
+close_ad2: __pic__Shopee_close_ad2.png
+log_in: __pic__Shopee_log_in.png

@@ -1,0 +1,150 @@
+#disable_cases:
+cases:
+  - test_dou3_mock_00001(hehe=xixi)
+  - test_dou3_mock_00005
+#  - test_dou3_mock_00003
+#  - test_dou3_mock_00001
+#  - test_dou3_mock_00002
+#  - test_dou3_mock_00005
+
+disable_cases:
+#cases:
+  - test_dou3_00543  # Whatapp主界面+好友文字对话-DATA
+  - test_dou3_00541  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00545  # Phone主叫通话功耗，亮屏通话-DATA
+  - test_dou3_00544  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00546  # YouTube Music亮屏听音乐-DATA
+  - test_dou3_00547  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00549  # Gallery拍照5张+浏览图片-DATA
+  - test_dou3_00550  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00557  # GCash主页待机-DATA
+  - test_dou3_00559  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00564  # Youtube滑动浏览+观看短视频-DATA
+  - test_dou3_00565  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00566  # Instagram主界面浏览-DATA
+  - test_dou3_00568  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00569  # Phone主叫通话功耗，亮屏通话-DATA
+  - test_dou3_00562  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00577  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00576  # Instagram短视频标签页浏览-DATA
+  - test_dou3_00580  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00581  # Playit本地音乐播放功耗-DATA
+  - test_dou3_00582  # Whatapp主界面+好友文字对话-DATA
+  - test_dou3_00583  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00584  # Chrome浏览网页视频-DATA
+  - test_dou3_00585  # 灭屏通话-DATA
+  - test_dou3_00586  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00590  # Phone主叫通话功耗，亮屏通话-DATA
+  - test_dou3_00591  # Grab主页待机-DATA
+  - test_dou3_00593  # foodpanda主界面浏览-DATA
+  - test_dou3_00595  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00596  # 灭屏热点分享-DATA
+  - test_dou3_00598  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00600  # GCash主页待机-DATA
+  - test_dou3_00601  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00602  # Youtube滑动浏览+长视频小窗-DATA
+  - test_dou3_00604  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00608  # Whatapp主界面+好友语音通话-DATA
+  - test_dou3_00616  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00612  # Chrome浏览网页-DATA
+  - test_dou3_00613  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00614  # Instagram主界面浏览-DATA
+  - test_dou3_00615  # Google Dialer主叫通话功耗，亮屏通话-DATA
+  - test_dou3_00619  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00620  # Phone主叫通话功耗，亮屏通话-DATA
+  - test_dou3_00622  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00623  # Playit本地视频播放功耗-DATA
+  - test_dou3_00666  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00624  # mxplayer播放本地视频-DATA
+  - test_dou3_00627  # Meesho主界面浏览-DATA
+  - test_dou3_00629  # 灭屏导航-DATA
+  - test_dou3_00630  # Block Blast！正常游戏一局-DATA
+  - test_dou3_00631  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00633  # Instagram发布视频动态-DATA
+  - test_dou3_00634  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00636  # Instagram好友聊天-DATA
+  - test_dou3_00637  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00638  # Grab主页待机-DATA
+  - test_dou3_00639  # Pinterest主页壁纸浏览-DATA
+  - test_dou3_00640  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00641  # GCash主页待机-DATA
+  - test_dou3_00642  # 灭屏听音乐-DATA
+  - test_dou3_00644  # Google Drive文档浏览-DATA
+  - test_dou3_00669  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00647  # Gallery拍照5张+浏览图片-DATA
+  - test_dou3_00649  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00652  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00654  # Whatapp主界面+好友文字对话-DATA
+  - test_dou3_00655  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00657  # 灭屏通话-DATA
+  - test_dou3_00658  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00662  # Youtube滑动浏览+观看长视频-DATA
+  - test_dou3_00671  # 灭屏不使用短待机7min-DATA
+  - test_dou3_00664  # Grab主页待机-DATA
+  - test_dou3_00674  # 灭屏不使用短待机2min-DATA
+  - test_dou3_00676  # Google Maps 导航目的地-DATA
+  - test_dou3_00635  # TikTok播放视频并切换-WIFI
+  - test_dou3_00643  # 灭屏不使用短待机7min-WIFI
+  - test_dou3_00539  # TikTok看直播（观看测试账号直播）-WIFI
+  - test_dou3_00540  # Whatapp主界面+好友文字对话-WIFI
+  - test_dou3_00542  # Facebook主界面，浏览滑动-WIFI
+  - test_dou3_00548  # TikTok播放视频并切换-WIFI
+  - test_dou3_00551  # Messenger主界面+好友发送消息-WIFI
+  - test_dou3_00552  # Facebook lite好友主页视频播放-WIFI
+  - test_dou3_00553  # 灭屏不使用短待机7min-WIFI
+  - test_dou3_00554  # TikTok个人视频列表并播放（看测试账号视频）-WIFI
+  - test_dou3_00555  # Facebook主界面video短视频滑动-WIFI
+  - test_dou3_00556  # 灭屏不使用短待机2min-WIFI
+  - test_dou3_00558  # Facebook lite主界面，浏览滑动-WIFI
+  - test_dou3_00560  # Whatapp主界面+好友视频通话-WIFI
+  - test_dou3_00561  # Facebook主界面，浏览滑动-WIFI
+  - test_dou3_00563  # Facebook主界面video短视频滑动-WIFI
+  - test_dou3_00567  # Youtube滑动浏览+长视频小窗-WIFI
+  - test_dou3_00571  # 灭屏不使用短待机7min-WIFI
+  - test_dou3_00572  # MLBB游戏中功耗-WIFI
+  - test_dou3_00574  # 灭屏不使用短待机2min-WIFI
+  - test_dou3_00575  # TikTok播放视频并切换-WIFI
+  - test_dou3_00578  # Messenger主界面+视频通话-WIFI
+  - test_dou3_00579  # TikTok播放视频并切换-WIFI
+  - test_dou3_00587  # Messenger主界面+好友发送消息-WIFI
+  - test_dou3_00588  # Whatapp主界面+好友文字对话-WIFI
+  - test_dou3_00589  # 灭屏不使用短待机7min-WIFI
+  - test_dou3_00594  # Whatapp主界面+好友文字对话-WIFI
+  - test_dou3_00592  # 灭屏不使用短待机2min-WIFI
+  - test_dou3_00597  # Facebook主界面，浏览滑动-WIFI
+  - test_dou3_00599  # Imo主界面+好友聊天+好友视频通话-WIFI
+  - test_dou3_00603  # TikTok播放视频并切换-WIFI
+  - test_dou3_00605  # Facebook好友主页视频播放-WIFI
+  - test_dou3_00606  # Gallery浏览视频-WIFI
+  - test_dou3_00607  # 灭屏不使用短待机7min-WIFI
+  - test_dou3_00609  # Google Play主界面浏览 + 应用下载-WIFI
+  - test_dou3_00610  # 灭屏不使用短待机2min-WIFI
+  - test_dou3_00611  # Netflix主界面电影浏览-WIFI
+  - test_dou3_00617  # Tiktok播放视频并切换-WIFI
+  - test_dou3_00618  # Facebook主界面video短视频滑动-WIFI
+  - test_dou3_00621  # Whatapp主界面+好友文字对话-WIFI
+  - test_dou3_00625  # 灭屏不使用短待机7min-WIFI
+  - test_dou3_00626  # Messenger主界面+好友发送消息-WIFI
+  - test_dou3_00628  # 灭屏不使用短待机2min-WIFI
+  - test_dou3_00632  # Facebook lite主界面，浏览滑动-WIFI
+  - test_dou3_00650  # Whatapp主界面+好友文字对话-WIFI
+  - test_dou3_00645  # Facebook lite主界面，浏览滑动-WIFI
+  - test_dou3_00646  # 灭屏不使用短待机2min-WIFI
+  - test_dou3_00648  # Facebook lite好友主页视频播放-WIFI
+  - test_dou3_00653  # Messenger主界面+语音通话-WIFI
+  - test_dou3_00656  # Youtube滑动浏览+观看长视频-WIFI
+  - test_dou3_00659  # Shopee 2.2 Men Sale购物浏览-WIFI
+  - test_dou3_00660  # 灭屏不使用短待机7min-WIFI
+  - test_dou3_00661  # Facebook好友主页视频播放-WIFI
+  - test_dou3_00663  # 灭屏不使用短待机2min-WIFI
+  - test_dou3_00665  # TikTok播放视频并切换-WIFI
+  - test_dou3_00667  # Telegram主界面+文字聊天+语音通话-WIFI
+  - test_dou3_00668  # Truecaller主叫通话功耗，亮屏通话-WIFI
+  - test_dou3_00670  # Youtube滑动浏览+观看短视频-WIFI
+  - test_dou3_00673  # TikTok播放视频并切换-WIFI
+  - test_dou3_00675  # Chrome浏览网页-WIFI
+  - test_dou3_00677  # 灭屏不使用短待机7min-WIFI
+  - test_dou3_00678  # CapCut图片视频剪辑-WIFI
+  - test_dou3_00680  # 灭屏不使用短待机2min-WIFI
+  - test_dou3_00679  # Facebook主界面video短视频滑动-WIFI
+  - test_dou3_00681  # 灭屏不使用长待机210min-WIFI

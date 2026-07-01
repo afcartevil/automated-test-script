@@ -1,0 +1,4 @@
+cases:
+  - test_xssx_mock_1
+  - test_xssx_mock_2(loop=1)
+#  - TestXssxScenes(class=True)
