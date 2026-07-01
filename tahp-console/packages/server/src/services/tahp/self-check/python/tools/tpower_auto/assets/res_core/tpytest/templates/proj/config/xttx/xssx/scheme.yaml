@@ -1,0 +1,13 @@
+# ------ 测试方案元配置 ------
+
+# 测试方案的名称
+name: 'xssx'
+
+# 测试方案所属团队名
+team: 'xttx'
+
+# 测试方案需要继承的元配置方案名，支持多级配置比如继承自'xttx/xssx'（可不配置）
+parent: 'xttx'
+
+# 测试方案需要优先启动的环境类全名
+env_class: tests.xttx.xssx.xssx_env.XssxEnv

@@ -1,0 +1,37 @@
+# 是否在运行该batch时使用脱离模式（batch不跟踪每个机器的测试进程，使用独立窗口，仅windows有效）
+detach_run_executors: 1
+
+# 是否使用用例负载均衡方案（开启时，每台手机均会自动分配到最合适数量的用例）
+case_loading_balance: 0
+
+# 是否执行PC预测试
+run_pc_pretests: 1
+
+# PC预测试等级
+pc_pretest_level: 2
+
+# 覆盖方案传参（可直接写入字典值或者传入文件路径）
+override_config:
+  run_pc_pretests: 0  # 一般由batch代为执行PC预测试，所以就不让单个手机的子进程单独运行PC预测试了
+
+# 自动配置手机列表
+auto_collect_devices:
+  # 精确控制测试手机数量或者填写-1表示收集所有测试手机，填写0将不自动收集测试机
+  test_phone_count: -1
+  # 精确控制辅助手机数量或者填写-1表示收集所有辅助手机，填写0将不自动收集辅助机
+  copilot_phone_count: -1
+
+# 手动配置手机列表（当自动收集手机配置为0或者不配置时才生效）
+devices:
+  # 被测手机的SN
+  main_test_phone_sn_1:
+    # 被测手机对应的辅助机SN（可注释表示不需要辅助机）
+    copilot: copilot_phone_sn_1
+    # 被测手机可单独覆盖的配置项（可直接写入字典值或者传入文件路径）
+    config:
+      mock_value: 2
+
+  main_test_phone_sn_2:
+    copilot: copilot_phone_sn_2
+    config:
+      mock_value: 0

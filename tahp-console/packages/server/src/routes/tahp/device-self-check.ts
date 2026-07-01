@@ -112,7 +112,7 @@ tahpDeviceSelfCheckRoutes.post(
     try {
       const deviceId = ctx.params.deviceId
       const { testType, flash, scheduleKey } = ctx.request.body as {
-        testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms'
+        testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power'
         flash?: StartTestFlashPayload
         scheduleKey?: string
       }

@@ -1,0 +1,36 @@
+pyyaml
+openpyxl
+typing_extensions
+uiautomator2==3.2.6
+weditor>=0.7.3 # python -m weditor；清华源: pip -i https://pypi.tuna.tsinghua.edu.cn/simple；Windows 源码安装失败: $env:PYTHONUTF8=1
+setuptools>=65,<82 # weditor 依赖 pkg_resources；setuptools 82+ 已移除，会导致 python -m weditor 报错
+psutil
+pyqt6
+qasync
+pytest
+pytest-xdist
+apkutils2
+thrift
+mss
+opencv-contrib-python
+pillow
+scipy
+numpy
+pandas
+xlrd
+ruamel.yaml
+appdirs
+packaging
+onnxruntime
+rapidocr
+certifi
+requests
+pyserial
+colorlog
+pytest-rerunfailures
+pycryptodome
+perfetto # pftrace_utils
+pyecharts # benckmark
+deprecated
+func-timeout
+openai

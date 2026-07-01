@@ -45,9 +45,10 @@ services/tahp/device-flash.ts        ← 刷机 device_update
         │ spawn python
         ▼
 services/tahp/self-check/python/
-  run_case.py → cases/{str4|week|smoke}/{module}/caseN.py
+  run_case.py → cases/{str4|week|smoke|power}/{module}/caseN.py
   case_config/*.json
   tools/sdd_test/si_run.py          ← 冒烟 USD（cases/smoke/usd/case1.py 调用）
+  tools/tpower_auto/run_power_env.py  ← 功耗电流分析（cases/power/current_analysis/case1.py 调用 run 前台阻塞）
 ```
 
 报告输出：`reports/self-check/{deviceId}/{timestamp}/`（CSV + summary.json + xlsx）。
@@ -101,7 +102,7 @@ services/tahp/self-check/python/
 
 ### 「设备执行」Tab 布局
 
-**顶部用例卡片**（`SelfCheckChecklist`）：展示 `str4` / `week` / `smoke` / `monkey` 四个用例大类。
+**顶部用例卡片**（`SelfCheckChecklist`）：展示 `str4` / `week` / `smoke` / `monkey` / `gms` / `power` 等用例大类。
 
 - 标题：与用例大类名一致（转测摸底测试、周版本测试）
 - 覆盖：该大类包含的模块名（`moduleLabel` 拼接）
@@ -153,7 +154,7 @@ services/tahp/self-check/python/
 
 ### AI 测试自规划（项目规划 Tab）
 
-**规则配置**（`TestPlanSettingsModal`）：每个节点偏移天数 + **测试大类单选**（`str4` / `week` / `smoke` / `monkey`）。
+**规则配置**（`TestPlanSettingsModal`）：每个节点偏移天数 + **测试大类单选**（`str4` / `week` / `smoke` / `monkey` / `gms` / `power`）。
 
 **排期计算**（`test-planning.ts`）：由项目节点日期 + 规则偏移生成 `ScheduleItem`；`phase` 为时间窗口（`upcoming` / `active`），`runtimeStatus` 为执行态（`pending` / `no_device` / `running` / `completed`）。
 
@@ -178,6 +179,8 @@ services/tahp/self-check/python/
 | `week` | 周版本测试 | driver → tdd |
 | `monkey` | monkey测试 | monkey |
 | `smoke` | 冒烟测试 | usd（`si_run --test-type usd`） |
+| `gms` | GMS测试 | cts / gts / vts |
+| `power` | 功耗自动化测试 | current_analysis（`run_power_env.py run` 前台阻塞，子线程执行飞书任务） |
 | `custom` | 自定义测试 | 用户勾选顺序 |
 
 新增标准 testType 流程见 [self-check-test-integration](../self-check-test-integration/SKILL.md)。
@@ -200,7 +203,19 @@ services/tahp/self-check/python/
 
 - 有 `case{N}.py` → `execPythonCase`，stdout JSON 协议
 - 无脚本 → `待确认` + SSE `manual_confirm`
-- 超时默认 120s
+- 超时默认 120s；**功耗自动化**默认 24h（`TAHP_POWER_TIMEOUT_MS`）
+
+### 功耗自动化（power）流程
+
+与冒烟/GMS 一致：`startTest` → 初始化 → **测试中**（用例阻塞）→ 完成 → 报告。
+
+- `case1.py` 前台运行 `run_power_env.py run`（内部 `task_proc_thread` 子线程调度飞书任务）
+- **首次启动功耗测试**时自动 pip 安装完整运行时依赖（`openai` / `opencv` 等）
+- 执行期间设备保持 **测试中**；实时步骤来自 `log/power_env_daemon.log` 尾行
+- **结束测试** / 用例 cleanup → `stop` 终止环境 → 汇总 `output/*.xlsx` 写入结论
+- 报告复制最新 xlsx 为 `test_report.xlsx`，结论含通过/失败项统计
+
+---
 
 ### 模块前置条件
 
@@ -229,10 +244,19 @@ services/tahp/self-check/python/
 
 ```bash
 cd tahp-console
-npm run setup
+npm run setup          # 含功耗自动化 Python 依赖
+npm run dev            # 启动前仅 ensure Hermes Agent
+npm run setup:power    # 可选：手动预装功耗依赖
 npm test
 npx playwright test tests/e2e/self-check.spec.ts
 ```
+
+**启动时依赖初始化**（`predev` / `prestart` / `dev-server` / `bootstrap`）：
+
+- 仅确保 **Hermes Agent**；**不**安装功耗 Python 依赖
+- 功耗依赖在**启动功耗自动化测试**时自动检查/安装（`ensurePowerTestPythonDeps`）
+- `TAHP_SKIP_POWER_DEPS=1` — 跳过功耗依赖安装
+- `npm run setup:power` — 手动预装（可选）
 
 ---
 

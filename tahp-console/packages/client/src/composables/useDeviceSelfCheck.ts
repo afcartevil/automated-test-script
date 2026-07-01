@@ -85,7 +85,13 @@ const selectedDevice = ref<DeviceDetail | null>(null)
 const moduleConditions = ref<Record<string, ModuleCondition>>({})
 
 // 测试类型选择
-const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke' | 'gms'>('week')
+const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power'>('week')
+/** 空闲设备开始测试前的角色意向（仅 UI，选中设备时默认测试机；点击开始测试时才落盘） */
+const startTestIntentRole = ref<DeviceRole>('测试机')
+
+function setStartTestIntentRole(role: DeviceRole) {
+  startTestIntentRole.value = role
+}
 
 // 刷机相关选项（device_update，工具位于 self-check/flash_tool/）
 const enableFlash = ref(false)
@@ -427,6 +433,9 @@ async function selectDevice(deviceId: string) {
     selectedDevice.value = detail
     selectedCase.value = null
     followCurrent.value = true
+    if (detail.device.status === '空闲') {
+      startTestIntentRole.value = '测试机'
+    }
     applyFollowCurrentCase(detail.session)
     // 如果正在测试中，开始轮询
     if (detail.session?.isRunning) {
@@ -583,10 +592,10 @@ async function openCaseCatalog(testType: string) {
       [...new Set(detail.map(item => `${testType}/${item.module}`))]
     )
     catalogTypeSettings.value = {
-      autoRetestEnabled: testType === 'monkey' || testType === 'smoke' || testType === 'gms'
+      autoRetestEnabled: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power'
         ? false
         : (settingsData.autoRetestEnabled?.[testType] ?? true),
-      autoRetestCount: testType === 'monkey' || testType === 'smoke' || testType === 'gms'
+      autoRetestCount: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power'
         ? 0
         : (settingsData.autoRetestCount?.[testType] ?? 1),
       monkeyDuration: settingsData.monkeyDuration || '7d',
@@ -656,6 +665,20 @@ async function saveCatalogTypeSettings() {
 
     if (testType === 'gms') {
       await saveGmsTradefedSettings(false)
+      return
+    }
+
+    if (testType === 'power') {
+      const autoRetestEnabled = { ...(current.autoRetestEnabled || {}) }
+      const autoRetestCount = { ...(current.autoRetestCount || {}) }
+      delete autoRetestEnabled.power
+      delete autoRetestCount.power
+      await updateSettings({
+        ...current,
+        autoRetestEnabled,
+        autoRetestCount,
+        monkeyDuration,
+      })
       return
     }
 
@@ -887,19 +910,6 @@ function disconnectEventStream() {
   }
 }
 
-async function handleSetRole(deviceId: string, role: DeviceRole) {
-  try {
-    const updated = await setDeviceRole(deviceId, role)
-    if (!updated) return
-    patchDeviceInList(updated)
-    if (selectedDeviceId.value === deviceId && selectedDevice.value) {
-      selectedDevice.value = { ...selectedDevice.value, device: updated }
-    }
-  } catch (e: any) {
-    console.error('[DeviceSelfCheck] Error setting device role:', e)
-  }
-}
-
 async function handleBrowseFlashPath() {
   if (flashPathPicking.value) return
   flashPathPicking.value = true
@@ -950,6 +960,16 @@ async function handleStartTest(deviceId: string) {
     if (enableFlash.value && !flashPath.value.trim()) {
       error.value = '请先选择刷机包路径'
       return
+    }
+    const intent = startTestIntentRole.value
+    const current = devices.value.find(d => d.deviceId === deviceId)
+    if (current && current.role !== intent) {
+      const updated = await setDeviceRole(deviceId, intent)
+      if (!updated) return
+      patchDeviceInList(updated)
+      if (selectedDeviceId.value === deviceId && selectedDevice.value) {
+        selectedDevice.value = { ...selectedDevice.value, device: updated }
+      }
     }
     flashLogs.value = []
     resetFlashProgress()
@@ -1653,6 +1673,8 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     selectedDevice,
     moduleConditions,
     selectedTestType,
+    startTestIntentRole,
+    setStartTestIntentRole,
     enableFlash,
     flashPath,
     dailyFlashResolving,
@@ -1748,7 +1770,6 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     gmsPathPickingSuite,
     backToOverview,
     goBack,
-    handleSetRole,
     handleStartTest,
     handleContinueTest,
     handleResumeTest,

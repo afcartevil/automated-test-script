@@ -1,0 +1,13 @@
+cases:
+  - test_dou3_00539 # Whatapp主界面+好友文字对话-DATA  
+  - test_dou3_00541 # Phone主叫通话功耗，亮屏通话-DATA
+  - test_dou3_00551 # Instagram主界面浏览-DATA
+  - test_dou3_00556 # Instagram短视频标签页浏览-DATA
+  - test_dou3_00549 # Youtube滑动浏览+观看短视频-DATA
+  - test_dou3_00572 # Youtube滑动浏览+长视频小窗-DATA
+  - test_dou3_00607 # Youtube滑动浏览+观看长视频-DATA
+  - test_dou3_00612 # Tiktok播放视频并切换-WIFI
+  - test_dou3_00616 # Facebook主界面，浏览滑动-WIFI
+  - test_dou3_00622 # Facebook主界面video短视频滑动-WIFI
+  - test_dou3_00636 # Whatapp主界面+好友文字对话-WIFI
+  - test_dou3_00653 # Messenger主界面+好友发送消息-WIFI

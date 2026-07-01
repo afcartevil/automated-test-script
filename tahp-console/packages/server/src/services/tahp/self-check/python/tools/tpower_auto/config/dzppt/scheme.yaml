@@ -1,0 +1,20 @@
+# ------ 测试方案元配置 ------
+
+# 测试方案的名称
+name: 'dzppt'
+
+# 测试方案所属团队名
+team: 'dzppt'
+
+# 测试方案保存用户配置的缓存文件夹（一般在团队元配置中写入，测试方案通过继承的方式使用该值，当然也可不配置，会自动在用户目录生成）
+override_cache_dir: 'D:\dz_auto_env_configs'
+
+plugins:
+  - tpy_aw
+  - tpytest_extends
+  - cv_utils
+  - dz_remote
+  - phone_dispatcher
+  - video_recorder
+  - qt_extends
+  - data_collector

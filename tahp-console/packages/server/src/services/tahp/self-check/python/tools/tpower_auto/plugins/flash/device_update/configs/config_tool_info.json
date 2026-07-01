@@ -1,0 +1,8 @@
+{
+  "ping_server": "pfgatewaysz.transsion.com",
+  "utp_gateway": "https://pfgatewaysz.transsion.com:9199/utp-task/",
+  "post_query": "/api/tool/queryToolInfoByName",
+  "post_use": "/api/tool/addToolRecord",
+  "user_name": "",
+  "user_code": ""
+}

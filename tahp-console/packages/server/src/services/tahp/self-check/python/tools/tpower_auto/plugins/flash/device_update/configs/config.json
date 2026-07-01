@@ -1,0 +1,15 @@
+{
+  "default": {
+    "cmddloader_dir": "SPRD_CmdDloader",
+    "flash_tool_cli_dir": "flash_tool_cli",
+    "crm_account": "18620736",
+    "crm_password": "V5N7HXns9hXOZr6FVJ9tmw==",
+    "swd_development_path": "D:\\Tools\\Softwaredownload_V9.2024.08.12_for_Development_Center\\SWD_Development_Center.exe",
+    "max_update_thread_num": 5,
+    "max_count_one_flash": 4,
+    "flash_super_partition": 2700,
+    "flash_other_partition": 600,
+    "erase_partition_name" : ["persist", "super", "md_udc", "metadata", "expdb"],
+    "forbid_flash_partition_name": {"tranfs": [], "userdata":["LG7n", "CI8", "CK8n"]}
+  }
+}
