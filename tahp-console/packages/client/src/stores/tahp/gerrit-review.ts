@@ -40,6 +40,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
 
   let watcherInstalled = false
   let insightApplySeq = 0
+  let recommendLoadSeq = 0
   let recommendRefreshPromise: Promise<boolean> | null = null
 
   function isActiveRunTask(taskId: string): boolean {
@@ -131,8 +132,8 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     const rid = runningTaskId.value
     if (!rid) return false
     if (rid === 'pending') return true
-    if (taskHasTerminal(rid) && !hasActiveStreamingForTask(rid)) {
-      return false
+    if (taskHasTerminal(rid)) {
+      return hasActiveStreamingForTask(rid)
     }
     return true
   })
@@ -258,7 +259,8 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
       return
     }
 
-    if (seq === insightApplySeq) loadingRecommendations.value = true
+    const loadId = ++recommendLoadSeq
+    loadingRecommendations.value = true
     try {
       const data = await fetchRecommendCases({ p0_items: p0Items, modules })
       logState('loadRecommendedCasesForP0.done', sourceTaskId, {
@@ -266,6 +268,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
         insightApplySeq,
         p0Items: p0Items.length,
         resultCount: data.recommended_cases?.length ?? 0,
+        source: data.source,
         insightTarget: isInsightTargetTask(sourceTaskId),
         force: options?.force === true,
       })
@@ -282,7 +285,9 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
         recommendedCases.value = []
       }
     } finally {
-      if (seq === insightApplySeq) loadingRecommendations.value = false
+      if (loadId === recommendLoadSeq) {
+        loadingRecommendations.value = false
+      }
     }
   }
 
@@ -322,13 +327,27 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
       serverModulesDisplay.value = moduleInfo.display
     }
 
-    if (Array.isArray(payload?.recommended_cases) && payload.recommended_cases.length) {
+    if (Array.isArray(payload?.recommended_cases)) {
+      const cases = payload.recommended_cases as RecommendedCase[]
+      const source = payload?.recommend_source
       if (seq === insightApplySeq) {
-        const cases = payload.recommended_cases as RecommendedCase[]
         recommendedCases.value = mapRecommendedCases(cases)
-        setRecommendSource(resolveRecommendSource(payload, cases))
+        if (source === 'llm' || source === 'rule') {
+          setRecommendSource(source)
+        } else {
+          setRecommendSource(resolveRecommendSource(payload, cases))
+        }
       }
-      return
+      // 服务端已完成推荐（含空结果），避免客户端重复请求引发竞态
+      if (source === 'llm' || source === 'rule') {
+        logState('applyReviewInsight.use_server_recommend', sourceTaskId, {
+          seq,
+          recommendedCount: cases.length,
+          source,
+        })
+        return
+      }
+      if (cases.length > 0) return
     }
 
     await loadRecommendedCasesForP0(
@@ -417,11 +436,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
       void applyReviewInsightFromPayload(
         { ...completed.payload, llm_response: response, response },
         taskId,
-      ).finally(() => {
-        if (!recommendedCases.value.length && p0Result().items.length) {
-          void ensureRecommendedCases()
-        }
-      })
+      )
       return
     }
     if (failed) {
@@ -448,6 +463,9 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
         markFinalized(taskId)
       }
       handleTerminalStreamEvent(taskId, completed, failed, cancelled)
+      if (hasActiveStreamingForTask(taskId)) {
+        recoverStreamingForTerminalTask(taskId)
+      }
       return
     }
 
@@ -470,6 +488,15 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     }
   }
 
+  function recoverStreamingForTerminalTask(taskId: string) {
+    if (!taskHasTerminal(taskId) || !hasActiveStreamingForTask(taskId)) return
+    const events = streamFor(taskId)
+    const completed = events.find(e => e.type === 'task.completed')
+    const failed = events.find(e => e.type === 'task.failed')
+    const cancelled = events.find(e => e.type === 'task.cancelled')
+    handleTerminalStreamEvent(taskId, completed, failed, cancelled)
+  }
+
   function sweepStaleRunningState() {
     const rid = runningTaskId.value
     if (!rid || rid === 'pending') {
@@ -482,16 +509,15 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     if (!taskHasTerminal(rid)) return
 
     if (hasActiveStreamingForTask(rid)) {
+      recoverStreamingForTerminalTask(rid)
+    }
+
+    if (!hasActiveStreamingForTask(rid)) {
       if (!isFinalized(rid)) {
         processStreamEvents(rid)
       }
-      return
+      clearRunningState('completed')
     }
-
-    if (!isFinalized(rid)) {
-      processStreamEvents(rid)
-    }
-    clearRunningState('completed')
   }
 
   function processStreamEvents(taskId: string) {

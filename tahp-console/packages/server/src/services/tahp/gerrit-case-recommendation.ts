@@ -362,14 +362,11 @@ export async function recommendTestCasesWithMeta(
       { err: (err as Error).message, mode },
       '[gerrit-recommend] LLM rerank failed, falling back to rules',
     )
-    if (mode === 'llm') {
-      return { cases: [], source: 'rule' }
-    }
   }
 
   const ruleCases = recommendTestCasesByRules(normalizedMustTest, modules)
   logger.info(
-    { source: 'rule', p0Count: normalizedMustTest.length, recommendedCount: ruleCases.length },
+    { source: 'rule', p0Count: normalizedMustTest.length, recommendedCount: ruleCases.length, mode },
     '[gerrit-recommend] recommend-cases',
   )
   return { cases: ruleCases, source: 'rule' }

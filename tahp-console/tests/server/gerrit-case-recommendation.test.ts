@@ -150,7 +150,7 @@ describe('recommendTestCases hybrid', () => {
     await expect(recommendTestCases([])).resolves.toEqual([])
   })
 
-  it('returns empty when mode=llm and LLM fails without fallback results', async () => {
+  it('falls back to rules when mode=llm and LLM fails', async () => {
     process.env.GERRIT_RECOMMEND_MODE = 'llm'
     rerankCasesWithLlmMock.mockRejectedValueOnce(new Error('timeout'))
 
@@ -158,5 +158,6 @@ describe('recommendTestCases hybrid', () => {
 
     expect(source).toBe('rule')
     expect(cases).toEqual([])
+    expect(rerankCasesWithLlmMock).toHaveBeenCalled()
   })
 })
