@@ -6,17 +6,52 @@ import {
   listRequiredSkills,
   getSkillPreview,
   startSkillConfigAgent,
+  startBatchSkillConfigAgent,
   continueSkillConfigAgent,
   respondSkillConfigApproval,
   markSkillConfigured,
   clearSkillConfigured,
   getRequiredSkillsManifestPath,
 } from '../../services/tahp/skill-config'
+import {
+  getUnifiedConfigPublic,
+  writeUnifiedConfig,
+  type UnifiedConfigValues,
+} from '../../services/tahp/unified-config'
 
 export const tahpSkillConfigRoutes = new Router({ prefix: '/api/tahp/skill-config' })
 
 tahpSkillConfigRoutes.get('/', async (ctx) => {
   ctx.body = { success: true, data: listRequiredSkills() }
+})
+
+// ─── 一键配置表单 ─────────────────────────────────────────────────────────────
+tahpSkillConfigRoutes.get('/unified-form', async (ctx) => {
+  ctx.body = { success: true, data: getUnifiedConfigPublic() }
+})
+
+tahpSkillConfigRoutes.put('/unified-form', async (ctx) => {
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const rawValues = (body.values && typeof body.values === 'object')
+    ? body.values as Record<string, unknown>
+    : body
+  const values: UnifiedConfigValues = {}
+  for (const [k, v] of Object.entries(rawValues)) {
+    if (typeof v === 'string') values[k] = v
+  }
+  const saved = writeUnifiedConfig(values)
+  ctx.body = { success: true, data: getUnifiedConfigPublic(), updated_at: saved.__updated_at }
+})
+
+// ─── 一键配置 Skill 清单（批量 Agent）───────────────────────────────────────────
+tahpSkillConfigRoutes.post('/configure-all', async (ctx) => {
+  const result = startBatchSkillConfigAgent()
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+  ctx.body = { success: true, data: { task_id: result.taskId, status: 'running' } }
 })
 
 tahpSkillConfigRoutes.get('/manifest-path', async (ctx) => {

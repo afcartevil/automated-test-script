@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   NInput, NButton, NSpin, NEmpty, NAlert,
   NModal, NScrollbar, NProgress, useMessage, NTooltip,
-  NSpace, NForm, NFormItem, NCheckbox, NCheckboxGroup,
+  NSpace, NCheckbox, NCheckboxGroup,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
@@ -19,9 +19,8 @@ import {
   startSingle, startBatch, startLocal, continueAnalysis, distillToKnowledge,
   previewJira, previewJql, getBugReport, getBugLog, cancelBugTask,
   listBugReports, deleteBugReport, respondBugApproval, submitBugUserInput, postJiraComment,
-  verifyJiraUserConfig,
-  syncJiraUserConfig,
-  type JiraIssueDetail, type JqlPreview, type BugReport, type BugReportSummary, type JiraUserConfig,
+  fetchJiraConfigStatus,
+  type JiraIssueDetail, type JqlPreview, type BugReport, type BugReportSummary,
 } from '@/api/tahp/bug-analysis'
 import {
   extractBugAnalysisReportBody,
@@ -90,112 +89,53 @@ const jqlPreviewError = ref<string | null>(null)
 // 提交状态
 const submitting = ref(false)
 
-const showJiraConfigDialog = ref(false)
-const jiraConfigForm = ref<JiraUserConfig>({ username: '', password: '' })
-const jiraConfigReady = ref(false)
-const jiraConfigVerifying = ref(false)
-const jiraConfigSaving = ref(false)
-const jiraConfigVerifyError = ref<string | null>(null)
-const jiraConfigVerifyOk = ref<string | null>(null)
+// JIRA 配置状态改由服务端统一管理（.tahp/unified-config.json / jira-user-config.json），
+// 页面只读取状态并展示；配置入口跳转「常用 Skill 配置 → 一键配置表单」。
+const jiraStatus = ref<{ configured: boolean; connected: boolean; detail?: string; error?: string }>({
+  configured: false,
+  connected: false,
+})
+const jiraStatusLoading = ref(false)
 
-function loadJiraConfig() {
-  const raw = localStorage.getItem('tahp_bug_jira_config')
-  if (!raw) return
+const jiraReady = computed(() => jiraStatus.value.configured && jiraStatus.value.connected)
+
+const jiraPillVariant = computed<'ok' | 'warn' | 'err'>(() => {
+  if (jiraReady.value) return 'ok'
+  if (jiraStatus.value.configured) return 'err'
+  return 'warn'
+})
+
+const jiraPillLabel = computed(() => {
+  if (jiraReady.value) return 'JIRA 已配置'
+  if (jiraStatus.value.configured) return '配置无效'
+  return '需配置 JIRA'
+})
+
+async function loadJiraStatus() {
+  jiraStatusLoading.value = true
   try {
-    const parsed = JSON.parse(raw) as Partial<JiraUserConfig>
-    const username = String(parsed.username || '').trim()
-    const password = String(parsed.password || '').trim()
-    if (!username || !password) return
-    jiraConfigForm.value = { username, password }
-    jiraConfigReady.value = true
+    jiraStatus.value = await fetchJiraConfigStatus()
   } catch {
-    // ignore invalid local data
-  }
-}
-
-async function syncJiraConfigToServer(cfg?: JiraUserConfig) {
-  const c = cfg || jiraConfigForm.value
-  const username = c.username.trim()
-  const password = c.password.trim()
-  if (!username || !password) return
-  try {
-    await syncJiraUserConfig({ username, password })
-  } catch {
-    // 静默失败：本地仍可用，服务端脚本待下次保存再同步
-  }
-}
-
-watch(jiraConfigForm, () => {
-  jiraConfigVerifyError.value = null
-  jiraConfigVerifyOk.value = null
-}, { deep: true })
-
-async function runJiraConfigVerify(): Promise<boolean> {
-  const username = jiraConfigForm.value.username.trim()
-  const password = jiraConfigForm.value.password.trim()
-  if (!username || !password) {
-    jiraConfigVerifyError.value = '请填写 JIRA 用户名和密码'
-    jiraConfigVerifyOk.value = null
-    return false
-  }
-  try {
-    const r = await verifyJiraUserConfig({ username, password })
-    if (!r.ok) {
-      jiraConfigVerifyError.value = r.error || 'JIRA 配置不可用'
-      jiraConfigVerifyOk.value = null
-      return false
-    }
-    jiraConfigVerifyError.value = null
-    jiraConfigVerifyOk.value = r.detail || 'JIRA 连接正常'
-    await syncJiraConfigToServer({ username, password })
-    return true
-  } catch (err) {
-    jiraConfigVerifyError.value = (err as Error).message || 'JIRA 校验失败'
-    jiraConfigVerifyOk.value = null
-    return false
-  }
-}
-
-async function checkJiraConfig() {
-  jiraConfigVerifying.value = true
-  try {
-    const ok = await runJiraConfigVerify()
-    if (ok) message.success(jiraConfigVerifyOk.value || 'JIRA 连接正常')
+    jiraStatus.value = { configured: false, connected: false }
   } finally {
-    jiraConfigVerifying.value = false
+    jiraStatusLoading.value = false
   }
 }
 
-async function saveJiraConfig() {
-  const username = jiraConfigForm.value.username.trim()
-  const password = jiraConfigForm.value.password.trim()
-  if (!username || !password) {
-    message.warning('请填写 JIRA 用户名和密码')
-    return false
-  }
-  jiraConfigSaving.value = true
-  try {
-    const ok = await runJiraConfigVerify()
-    if (!ok) return false
-    jiraConfigForm.value = { username, password }
-    localStorage.setItem('tahp_bug_jira_config', JSON.stringify(jiraConfigForm.value))
-    await syncJiraConfigToServer({ username, password })
-    jiraConfigReady.value = true
-    showJiraConfigDialog.value = false
-    message.success('JIRA 凭证已保存')
-    return true
-  } finally {
-    jiraConfigSaving.value = false
-  }
+function goConfigureJira() {
+  router.push({ name: 'tahp.skill-config', query: { openForm: '1' } })
 }
 
-function getJiraConfigOrWarn(): JiraUserConfig | null {
-  if (!jiraConfigReady.value) {
-    message.warning('请先配置 JIRA 账号密码')
-    showJiraConfigDialog.value = true
-    return null
+/** 提交/预览前确保 JIRA 已配置且连通；否则提示并跳转配置表单 */
+function ensureJiraReady(): boolean {
+  if (jiraReady.value) return true
+  if (jiraStatus.value.configured && !jiraStatus.value.connected) {
+    message.warning(jiraStatus.value.error || 'JIRA 配置无效，请前往「常用 Skill 配置」更新')
+  } else {
+    message.warning('请先在「常用 Skill 配置 → 一键配置表单」中配置 JIRA 账号密码')
   }
-  return jiraConfigForm.value
+  goConfigureJira()
+  return false
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -754,15 +694,14 @@ watch([currentLlm, currentReasoning], async () => {
 // 操作：预览 JIRA / JQL
 // ─────────────────────────────────────────────────────────────────────────────
 async function doPreviewJira() {
-  const jiraConfig = getJiraConfigOrWarn()
-  if (!jiraConfig) return
+  if (!ensureJiraReady()) return
   const v = singleForm.value.input.trim()
   if (!v) { message.warning('请先填入 Bug ID 或 URL'); return }
   previewingJira.value = true
   previewError.value = null
   jiraPreview.value = null
   try {
-    jiraPreview.value = await previewJira(v, jiraConfig)
+    jiraPreview.value = await previewJira(v)
   } catch (err) {
     previewError.value = (err as Error).message
   } finally {
@@ -771,15 +710,14 @@ async function doPreviewJira() {
 }
 
 async function doPreviewJql() {
-  const jiraConfig = getJiraConfigOrWarn()
-  if (!jiraConfig) return
+  if (!ensureJiraReady()) return
   const v = batchForm.value.jql.trim()
   if (!v) { message.warning('请填入 JQL 查询语句'); return }
   previewingJql.value = true
   jqlPreviewError.value = null
   jqlPreview.value = null
   try {
-    jqlPreview.value = await previewJql(v, jiraConfig)
+    jqlPreview.value = await previewJql(v)
   } catch (err) {
     jqlPreviewError.value = (err as Error).message
   } finally {
@@ -792,8 +730,7 @@ async function doPreviewJql() {
 // ─────────────────────────────────────────────────────────────────────────────
 async function startSingleAnalysis() {
   if (!ensureModelProviderOrWarn()) return
-  const jiraConfig = getJiraConfigOrWarn()
-  if (!jiraConfig) return
+  if (!ensureJiraReady()) return
   if (!singleForm.value.input.trim()) {
     message.warning('请填入 Bug ID 或 URL')
     return
@@ -805,7 +742,7 @@ async function startSingleAnalysis() {
       input: singleForm.value.input.trim(),
       user_description: singleForm.value.user_description || undefined,
       extra_context: singleForm.value.extra_context || undefined,
-    }, jiraConfig)
+    })
     store.registerTask({
       task_id: resp.task_id,
       jira_key: resp.jira_key || singleForm.value.input,
@@ -830,8 +767,7 @@ async function startSingleAnalysis() {
 
 async function startBatchAnalysis() {
   if (!ensureModelProviderOrWarn()) return
-  const jiraConfig = getJiraConfigOrWarn()
-  if (!jiraConfig) return
+  if (!ensureJiraReady()) return
   if (!batchForm.value.jql.trim()) {
     message.warning('请填入 JQL')
     return
@@ -842,7 +778,7 @@ async function startBatchAnalysis() {
     const resp = await startBatch({
       jql: batchForm.value.jql.trim(),
       extra_context: batchForm.value.extra_context || undefined,
-    }, jiraConfig)
+    })
     // 注册 Job + 子任务
     store.registerJob({
       job_id: resp.job_id,
@@ -1160,8 +1096,7 @@ async function ensureReportForDistill(): Promise<boolean> {
 
 async function openJiraCommentDialog() {
   if (!canPostJiraComment.value) return
-  const jiraConfig = getJiraConfigOrWarn()
-  if (!jiraConfig) return
+  if (!ensureJiraReady()) return
   const ok = await ensureReportForDistill()
   if (!ok) {
     message.warning('暂无分析报告，无法提交 jira comment')
@@ -1181,8 +1116,7 @@ async function openJiraCommentDialog() {
 async function submitJiraComment() {
   const tid = currentTaskId.value
   if (!tid) return false
-  const jiraConfig = getJiraConfigOrWarn()
-  if (!jiraConfig) return false
+  if (!ensureJiraReady()) return false
   const text = jiraCommentComposed.value.trim()
   if (!text) {
     message.warning('请至少勾选一个报告章节')
@@ -1194,7 +1128,7 @@ async function submitJiraComment() {
   }
   jiraCommentSubmitting.value = true
   try {
-    await postJiraComment(tid, text, jiraConfig)
+    await postJiraComment(tid, text)
     message.success(`分析结论已回到 jira comment（${currentTask.value?.jira_key || ''}）`)
     showJiraCommentDialog.value = false
     return true
@@ -1448,9 +1382,7 @@ async function stopOrCancelCurrentTask() {
 // 路由参数：?task_id=xxx 直接打开某条任务
 // ─────────────────────────────────────────────────────────────────────────────
 onMounted(async () => {
-  loadJiraConfig()
-  if (jiraConfigReady.value) void syncJiraConfigToServer()
-  if (!jiraConfigReady.value) showJiraConfigDialog.value = true
+  void loadJiraStatus()
   store.ensureSocket()
   await store.refresh()
   await loadHistoryReports()
@@ -1493,11 +1425,11 @@ const liveStreamHint = computed(() => {
       subtitle="基于 JIRA · 自动调用日志/分析 Skill · 实时可观察的根因定位"
     >
       <template #actions>
-        <button type="button" class="ea-btn-ghost ea-btn-sm" @click="showJiraConfigDialog = true">
+        <button type="button" class="ea-btn-ghost ea-btn-sm" @click="goConfigureJira">
           JIRA 配置
         </button>
-        <EaPill :variant="jiraConfigReady ? 'ok' : 'warn'">
-          {{ jiraConfigReady ? 'JIRA 已配置' : '需配置 JIRA' }}
+        <EaPill :variant="jiraPillVariant">
+          {{ jiraPillLabel }}
         </EaPill>
       </template>
     </EaPageHead>
@@ -2075,57 +2007,6 @@ const liveStreamHint = computed(() => {
     </div>
 
     <!-- ────── 补充信息继续分析弹窗 ────── -->
-    <NModal
-      v-model:show="showJiraConfigDialog"
-      preset="dialog"
-      :closable="jiraConfigReady"
-      :mask-closable="jiraConfigReady"
-      title="配置 JIRA 账号"
-      positive-text="保存配置"
-      :negative-text="jiraConfigReady ? '取消' : undefined"
-      :positive-button-props="{ loading: jiraConfigSaving }"
-      style="width: 520px"
-      @positive-click="saveJiraConfig"
-    >
-      <NAlert type="warning" :show-icon="false" style="margin-bottom: 12px">
-        进入智能诊断前必须先配置一次 JIRA 凭证（TAHP_JIRA_USERNAME + TAHP_JIRA_PASSWORD）。保存前会校验能否正常访问 JIRA。
-      </NAlert>
-      <NAlert
-        v-if="jiraConfigVerifyError"
-        type="error"
-        :show-icon="false"
-        style="margin-bottom: 12px"
-      >
-        {{ jiraConfigVerifyError }}
-      </NAlert>
-      <NAlert
-        v-else-if="jiraConfigVerifyOk"
-        type="success"
-        :show-icon="false"
-        style="margin-bottom: 12px"
-      >
-        {{ jiraConfigVerifyOk }}
-      </NAlert>
-      <NForm label-placement="top">
-        <NFormItem label="TAHP_JIRA_USERNAME">
-          <NInput v-model:value="jiraConfigForm.username" placeholder="请输入 Jira 用户名" />
-        </NFormItem>
-        <NFormItem label="TAHP_JIRA_PASSWORD">
-          <NInput v-model:value="jiraConfigForm.password" type="password" show-password-on="click" placeholder="请输入 Jira 密码" />
-        </NFormItem>
-      </NForm>
-      <div style="margin-top: 4px">
-        <NButton
-          secondary
-          :loading="jiraConfigVerifying"
-          :disabled="jiraConfigSaving"
-          @click="checkJiraConfig"
-        >
-          检查配置
-        </NButton>
-      </div>
-    </NModal>
-
     <NModal
       v-model:show="showContinueDialog"
       preset="dialog"

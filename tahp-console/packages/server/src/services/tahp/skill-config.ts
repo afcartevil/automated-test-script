@@ -103,6 +103,7 @@ function readManifest(): RequiredSkillsManifest {
       skills: [
         { id: 'jira-ops', label: 'Jira 操作与日志下载' },
         { id: 'modem-analysis-local', label: 'Modem 故障分析', depends_on: ['jira-ops'] },
+        { id: 'tones-scmp', label: 'TONES SCMP 属性查询' },
       ],
     }
     writeFileSync(p, JSON.stringify(fallback, null, 2), 'utf-8')
@@ -273,6 +274,8 @@ interface SkillConfigTaskCtx {
   sessionId: string
   llmResponse?: string
   error?: string
+  /** 批量「一键配置 skill 清单」任务标记 */
+  isBatch?: boolean
 }
 
 const taskCtx = new Map<string, SkillConfigTaskCtx>()
@@ -293,6 +296,8 @@ function emit(taskId: string, type: string, payload: Record<string, unknown>) {
 }
 
 const CONFIG_COMPLETE_RE = /=== TAHP_SKILL_CONFIG_COMPLETE ===\r?\n([\s\S]*?)=== END_TAHP_SKILL_CONFIG_COMPLETE ===/
+const CONFIG_COMPLETE_RE_G = /=== TAHP_SKILL_CONFIG_COMPLETE ===\r?\n([\s\S]*?)=== END_TAHP_SKILL_CONFIG_COMPLETE ===/g
+const BATCH_SKILL_ID = '__batch__'
 
 export interface ConfiguredPeerSkillRef {
   id: string
@@ -424,16 +429,59 @@ export function buildConfiguredSkillsReferenceBlock(
   return lines.join('\n')
 }
 
-function parseConfigCompleteMarker(text: string): { skillId?: string; message?: string } | null {
-  const m = CONFIG_COMPLETE_RE.exec(text)
-  if (!m) return null
+function parseMarkerFields(block: string): { skillId?: string; message?: string } {
   const fields: Record<string, string> = {}
-  for (const line of m[1].split(/\r?\n/)) {
+  for (const line of block.split(/\r?\n/)) {
     const idx = line.indexOf(':')
     if (idx <= 0) continue
     fields[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim()
   }
   return { skillId: fields.skill_id, message: fields.message }
+}
+
+function parseConfigCompleteMarker(text: string): { skillId?: string; message?: string } | null {
+  const m = CONFIG_COMPLETE_RE.exec(text)
+  if (!m) return null
+  return parseMarkerFields(m[1])
+}
+
+/** 批量配置时一次输出可能包含多个 skill 的完成标记 */
+function parseAllConfigCompleteMarkers(text: string): Array<{ skillId?: string; message?: string }> {
+  const out: Array<{ skillId?: string; message?: string }> = []
+  CONFIG_COMPLETE_RE_G.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = CONFIG_COMPLETE_RE_G.exec(text)) !== null) {
+    out.push(parseMarkerFields(m[1]))
+  }
+  return out
+}
+
+/** 依据 depends_on 对清单做拓扑排序，保证依赖先于被依赖项配置 */
+function orderedManifestSkills(): RequiredSkillEntry[] {
+  const skills = readManifest().skills
+  const byId = new Map(skills.map(s => [s.id, s]))
+  const visited = new Set<string>()
+  const ordered: RequiredSkillEntry[] = []
+  const visit = (entry: RequiredSkillEntry, stack: Set<string>) => {
+    if (visited.has(entry.id) || stack.has(entry.id)) return
+    stack.add(entry.id)
+    for (const dep of entry.depends_on ?? []) {
+      const depEntry = byId.get(dep)
+      if (depEntry) visit(depEntry, stack)
+    }
+    stack.delete(entry.id)
+    visited.add(entry.id)
+    ordered.push(entry)
+  }
+  for (const entry of skills) visit(entry, new Set())
+  return ordered
+}
+
+function allManifestSkillsConfigured(): boolean {
+  const state = readStateMap()
+  const skills = readManifest().skills
+  if (!skills.length) return false
+  return skills.every(s => isSkillConfiguredInState(state, s.id))
 }
 
 function buildSkillConfigInstructions(
@@ -518,6 +566,63 @@ message: <一句话说明配置结果>
     preferredSkillIds: [...new Set(preferred)],
   })
   return tahpCtx ? `${base}\n\n${tahpCtx}` : base
+}
+
+function buildBatchSkillConfigInstructions(): string {
+  const rel = getTahpSkillsRootForPrompt()
+  const ordered = orderedManifestSkills()
+  const state = readStateMap()
+
+  const listLines = ordered.map((entry, i) => {
+    const done = isSkillConfiguredInState(state, entry.id) ? '（已配置，可跳过或复核）' : ''
+    const deps = entry.depends_on?.length ? `，依赖: ${entry.depends_on.join('、')}` : ''
+    const loc = isVirtualEntry(entry)
+      ? `SOP: ${entry.setup_doc || '(见 agent_brief)'}`
+      : `\`${rel}/${entry.id}/SKILL.md\``
+    return `${i + 1}. **${entry.label}**（\`${entry.id}\`）${done}${deps} — ${loc}`
+  })
+
+  const base = `你是 TAHP「一键配置 Skill 清单」向导，负责依据「一键配置表单」中已保存的配置，**依次**完成配置清单中每个 Skill 的全部必要配置。
+
+# 工程根目录（务必先读）
+- TAHP 工程根（绝对路径，解析下方所有相对路径的基准）: \`${tahpPaths.projectRoot}\`
+- **你的当前工作目录不一定是工程根**。下方 \`.tahp/...\`、\`${rel}/...\` 等均相对上述工程根；访问前请拼成绝对路径，不要相对当前 CWD 解析，避免"文件不在预期位置"。
+
+# 必须遵守
+1. **先 Read** \`${tahpPaths.projectRoot}/.tahp/unified-config.json\`（即工程根下 \`.tahp/unified-config.json\`）获取用户在一键配置表单中保存的域账号、域密码等；域账号/域密码在 Jira、Gerrit、OpenGrok 间通用；服务器地址为固定常量。
+2. **按下方顺序依次配置**每个 Skill（依赖项已排在前面）：
+   - Read 对应 \`SKILL.md\`（虚拟项按其 SOP 文档），按其中「首次使用 / 环境 / Step 0 / setup」章节执行；
+   - 优先使用一键配置表单中的值写入该 Skill 规定的持久化存储（\`.env\`、\`config set\` 等），**不要**向用户重复索要表单里已有的凭据；
+   - 依据该 Skill 的能力运行体检/验证命令（如 \`setup-check\`、\`doctor\`、\`config show\`）确认配置有效；
+   - 该 Skill 验证通过后**立即输出一个完成标记块**（见下文），再继续下一个 Skill。
+3. 若某项在一键配置表单中缺失/为空，或验证失败（如密码错误、地址不可达），**先说明具体缺什么/为什么失败**，一次性列出需要用户补充的参数与格式示例，然后停下等待用户回复；收到后立即写入并继续。
+4. 使用中文与用户沟通；敏感值（密码）可直接写入安全存储。
+
+# 配置清单（按此顺序）
+${listLines.join('\n')}
+
+# 每个 Skill 完成后必须输出的标记（每个 Skill 一块）
+\`\`\`
+=== TAHP_SKILL_CONFIG_COMPLETE ===
+skill_id: <当前 skill id>
+status: success
+message: <一句话说明该 Skill 配置与验证结果>
+=== END_TAHP_SKILL_CONFIG_COMPLETE ===
+\`\`\`
+
+# 全部完成
+所有 Skill 均验证通过后，用一段话总结每个 Skill 的配置结果与关键路径。
+
+# Skill 根目录（相对工程根，拼到工程根绝对路径下访问）
+\`${rel}/\` → 绝对: \`${tahpPaths.projectRoot}/${rel}/\`
+`
+
+  const preferred = ordered.map(e => e.id)
+  const tahpCtx = buildFullTahpSystemContext('一键配置 skill 清单', {
+    scenario: 'skill_config',
+    preferredSkillIds: [...new Set(preferred)],
+  })
+  return [base, tahpCtx].filter(p => p && p.trim().length > 0).join('\n\n')
 }
 
 function registerApproval(taskId: string, payload: ApprovalRequestPayload) {
@@ -667,6 +772,115 @@ async function executeSkillConfigRun(
   }
 }
 
+async function executeBatchSkillConfigRun(
+  ctx: SkillConfigTaskCtx,
+  userMessage: string,
+  isContinue: boolean,
+): Promise<void> {
+  try {
+    const instructions = isContinue ? undefined : buildBatchSkillConfigInstructions()
+    if (!isContinue) {
+      saveAgentPromptLog(ctx.taskId, 'skill-config-batch', instructions || '', userMessage)
+    }
+
+    emit(ctx.taskId, 'task.phase', {
+      phase: 'CONFIGURING',
+      progress: 30,
+      skill_id: ctx.skillId,
+      message: isContinue ? '继续批量配置对话...' : 'Agent 正在依次配置清单中的 Skill...',
+    })
+
+    const fullResponse = await runAgentTurn(ctx, userMessage, { instructions })
+    ctx.llmResponse = (ctx.llmResponse || '') + fullResponse
+
+    for (const marker of parseAllConfigCompleteMarkers(fullResponse)) {
+      if (!marker.skillId) continue
+      markSkillConfigured(marker.skillId, {
+        taskId: ctx.taskId,
+        note: marker.message,
+        by: 'agent',
+      })
+      emit(ctx.taskId, 'task.skill_config_complete', {
+        skill_id: marker.skillId,
+        message: marker.message || '配置完成',
+      })
+    }
+
+    if (allManifestSkillsConfigured()) {
+      ctx.status = 'completed'
+      emit(ctx.taskId, 'task.completed', {
+        status: 'completed',
+        skill_id: ctx.skillId,
+        batch: true,
+        message: '配置清单中的全部 Skill 已配置完成',
+      })
+      return
+    }
+
+    ctx.status = 'waiting_user'
+    emit(ctx.taskId, 'task.phase', {
+      phase: 'WAITING_USER',
+      progress: 60,
+      skill_id: ctx.skillId,
+      message: '等待您在下方补充缺失/无效的配置项后继续',
+    })
+  } catch (err) {
+    const msg = (err as Error).message
+    ctx.status = 'failed'
+    ctx.error = msg
+    emit(ctx.taskId, 'task.failed', { error: msg, skill_id: ctx.skillId, batch: true, message: msg })
+    logger.warn({ err: msg, taskId: ctx.taskId }, '[skill-config] batch failed')
+  } finally {
+    const bucket = pendingApprovals.get(ctx.taskId)
+    if (bucket) {
+      for (const e of bucket.values()) clearTimeout(e.timer)
+      pendingApprovals.delete(ctx.taskId)
+    }
+  }
+}
+
+let batchTaskId: string | null = null
+
+export function startBatchSkillConfigAgent(): { ok: boolean; taskId?: string; error?: string } {
+  const manifest = readManifest()
+  if (!manifest.skills.length) return { ok: false, error: '配置清单为空' }
+
+  if (batchTaskId) {
+    const existing = taskCtx.get(batchTaskId)
+    if (existing && (existing.status === 'running' || existing.status === 'waiting_user')) {
+      return { ok: false, error: '一键配置任务进行中，请在对话区继续或等待结束' }
+    }
+  }
+
+  const taskId = `task-skill-config-batch-${Date.now()}-${randomBytes(2).toString('hex')}`
+  const ctx: SkillConfigTaskCtx = {
+    taskId,
+    skillId: BATCH_SKILL_ID,
+    skillLabel: '一键配置 Skill 清单',
+    forceReconfigure: false,
+    startedAt: new Date().toISOString(),
+    status: 'running',
+    sessionId: 'tahp-skill-config-batch',
+    isBatch: true,
+  }
+  taskCtx.set(taskId, ctx)
+  batchTaskId = taskId
+
+  const userMessage = '请根据一键配置表单中已保存的配置，依次完成配置清单中每个 Skill 的配置并验证有效性；缺失或无效的配置项再向我索要。'
+
+  emit(taskId, 'task.started', {
+    type: 'skill_config_batch',
+    batch: true,
+    message: '开始一键配置 Skill 清单',
+  })
+
+  setImmediate(() => {
+    executeBatchSkillConfigRun(ctx, userMessage, false).catch(() => {})
+  })
+
+  return { ok: true, taskId }
+}
+
 export function startSkillConfigAgent(skillId: string, force = false): {
   ok: boolean
   taskId?: string
@@ -736,19 +950,23 @@ export function continueSkillConfigAgent(taskId: string, message: string): {
 
   const ctx = taskCtx.get(taskId)
   if (!ctx) return { ok: false, error: `找不到任务: ${taskId}` }
-  if (ctx.status !== 'waiting_user' && ctx.status !== 'running') {
-    return { ok: false, error: `任务状态不可继续: ${ctx.status}` }
+  // 允许 completed 后继续补充信息，重新开启同一会话
+  if (ctx.status === 'running') {
+    return { ok: false, error: '当前有一轮对话正在进行，请等待 Agent 输出结束' }
   }
 
   ctx.status = 'running'
-  activeTasks.set(ctx.skillId, ctx)
+  if (!ctx.isBatch) activeTasks.set(ctx.skillId, ctx)
   emit(taskId, 'task.message', {
     level: 'user',
     text: `\n\n**用户**\n\n${text}\n\n`,
   })
 
   setImmediate(() => {
-    executeSkillConfigRun(ctx, text, true).catch(() => {})
+    const runner = ctx.isBatch
+      ? executeBatchSkillConfigRun(ctx, text, true)
+      : executeSkillConfigRun(ctx, text, true)
+    runner.catch(() => {})
   })
 
   return { ok: true }
