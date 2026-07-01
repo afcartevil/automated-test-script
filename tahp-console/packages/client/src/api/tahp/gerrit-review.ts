@@ -28,11 +28,13 @@ export interface RecommendedCase {
   reasons: string[]
 }
 
+export type RecommendSource = 'llm' | 'rule'
+
 export function fetchRecommendCases(input: {
   p0_items: string[]
   modules?: string[]
-}): Promise<{ recommended_cases: RecommendedCase[] }> {
-  return tahpPost<{ recommended_cases: RecommendedCase[] }>(
+}): Promise<{ recommended_cases: RecommendedCase[]; source: RecommendSource }> {
+  return tahpPost<{ recommended_cases: RecommendedCase[]; source: RecommendSource }>(
     '/api/tahp/gerrit-review/recommend-cases',
     input,
   )

@@ -25,7 +25,7 @@ import {
 import { saveAgentPromptLog } from './prompt-log'
 import { humanizeAgentError } from './adapt-agent-health'
 import { extractModules, extractP0TestSuggestions } from './gerrit-review-report'
-import { recommendTestCases } from './gerrit-case-recommendation'
+import { recommendTestCasesWithMeta } from './gerrit-case-recommendation'
 import {
   isGerritConfigured,
   writeRuntimeCredFile,
@@ -549,10 +549,13 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
       },
     }, taskId)
 
-    emit(taskId, 'task.phase', { phase: 'RECOMMENDING', progress: 92, message: '正在推荐测试用例…' })
+    emit(taskId, 'task.phase', { phase: 'RECOMMENDING', progress: 92, message: '正在通过 LLM 语义匹配推荐测试用例…' })
     const p0 = extractP0TestSuggestions(fullResponse)
     const moduleInfo = extractModules(fullResponse)
-    const recommendedCases = await recommendTestCases(p0.items, moduleInfo.modules)
+    const { cases: recommendedCases, source: recommendSource } = await recommendTestCasesWithMeta(
+      p0.items,
+      moduleInfo.modules,
+    )
     ctx.llmResponse = fullResponse
     ctx.p0Items = p0.items
     ctx.status = 'completed'
@@ -579,9 +582,12 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
       modules: moduleInfo.modules,
       modules_display: moduleInfo.display,
       recommended_cases: recommendedCases,
+      recommend_source: recommendSource,
       skills_used: ctx.skillsUsed,
       duration_ms: Date.now() - startMs,
-      message: `评审完成，提取 ${p0.items.length} 条 P0 测试建议，推荐 ${recommendedCases.length} 个测试用例`,
+      message: recommendSource === 'llm'
+        ? `评审完成，提取 ${p0.items.length} 条 P0 测试建议，LLM 推荐 ${recommendedCases.length} 个测试用例`
+        : `评审完成，提取 ${p0.items.length} 条 P0 测试建议，关键词规则推荐 ${recommendedCases.length} 个测试用例（LLM 未命中或不可用）`,
     })
 
     try {
@@ -599,6 +605,7 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
           modules: moduleInfo.modules,
           modules_display: moduleInfo.display,
           recommended_cases: recommendedCases,
+          recommend_source: recommendSource,
           skills_used: ctx.skillsUsed,
           duration_ms: Date.now() - startMs,
         }, null, 2),

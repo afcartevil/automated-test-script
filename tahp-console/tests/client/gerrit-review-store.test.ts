@@ -18,11 +18,15 @@ vi.mock('../../packages/client/src/api/tahp/gerrit-review', () => ({
   cancelGerritReviewTask: (...args: unknown[]) => cancelGerritReviewTaskMock(...args),
 }))
 
-vi.mock('../../packages/client/src/api/client', () => ({
-  request: vi.fn(),
-  getApiKey: vi.fn(() => 'test-key'),
-  hasApiKey: vi.fn(() => true),
-  setApiKey: vi.fn(),
+vi.mock('../../packages/client/src/api/tahp/socket', () => ({
+  getTahpSocket: () => ({
+    connected: true,
+    on: vi.fn(),
+    off: vi.fn(),
+    once: vi.fn(),
+    connect: vi.fn(),
+  }),
+  waitForTahpSocketReady: vi.fn(() => Promise.resolve()),
 }))
 
 import { useGerritReviewStore } from '../../packages/client/src/stores/tahp/gerrit-review'
@@ -33,7 +37,7 @@ describe('useGerritReviewStore', () => {
     setActivePinia(createPinia())
     sendGerritReviewMessageMock.mockReset()
     fetchRecommendCasesMock.mockReset()
-    fetchRecommendCasesMock.mockResolvedValue({ recommended_cases: [] })
+    fetchRecommendCasesMock.mockResolvedValue({ recommended_cases: [], source: 'rule' })
     cancelGerritReviewTaskMock.mockReset()
     cancelGerritReviewTaskMock.mockResolvedValue({ ok: true, action: 'interrupted_running' })
   })
@@ -171,6 +175,7 @@ describe('useGerritReviewStore', () => {
           reasons: ['必须测试:USB'],
         },
       ],
+      source: 'rule',
     })
 
     gerrit.activeTaskId = 'task-gerrit-fetch'
@@ -217,6 +222,7 @@ describe('useGerritReviewStore', () => {
           reasons: ['必须测试:USB'],
         },
       ],
+      source: 'rule',
     })
 
     gerrit.activeTaskId = 'task-gerrit-stream'
@@ -285,13 +291,14 @@ describe('useGerritReviewStore', () => {
             modules: ['USB'],
             modules_display: 'USB',
             p0_items: ['USB 插拔'],
+            recommend_source: 'llm',
             recommended_cases: [
               {
                 caseKey: 'week/driver/14',
                 caseName: 'USB功能正常充电',
                 moduleLabel: '驱动',
                 score: 4,
-                reasons: ['模块:USB'],
+                reasons: ['P0 要求验证 USB 插拔稳定性'],
               },
             ],
           },
@@ -305,6 +312,7 @@ describe('useGerritReviewStore', () => {
 
     expect(gerrit.serverModulesDisplay).toBe('USB')
     expect(gerrit.recommendedCases).toHaveLength(1)
+    expect(gerrit.recommendSource).toBe('llm')
     expect(gerrit.recommendedCases[0]?.checked).toBe(true)
     expect(gerrit.checkedRecommendedCases[0]?.caseKey).toBe('week/driver/14')
   })
@@ -767,6 +775,21 @@ describe('useGerritReviewStore', () => {
     expect(gerrit.isRunning).toBe(false)
   })
 
+  it('isServerRecommending is true during RECOMMENDING phase before completion', () => {
+    const gerrit = useGerritReviewStore()
+    const tasks = useTahpTasksStore()
+
+    gerrit.activeTaskId = 'task-gerrit-rec-phase'
+    gerrit.runningTaskId = 'task-gerrit-rec-phase'
+    tasks.taskStreams = {
+      'task-gerrit-rec-phase': [
+        { type: 'task.phase', payload: { phase: 'RECOMMENDING', message: '正在推荐测试用例…' }, ts: 1 },
+      ],
+    }
+
+    expect(gerrit.isServerRecommending).toBe(true)
+  })
+
   it('loads recommended cases when terminal exists but runningTaskId stuck', async () => {
     const gerrit = useGerritReviewStore()
     const tasks = useTahpTasksStore()
@@ -781,6 +804,7 @@ describe('useGerritReviewStore', () => {
           reasons: ['USB'],
         },
       ],
+      source: 'llm',
     })
 
     gerrit.activeTaskId = 'task-gerrit-rec-stuck'

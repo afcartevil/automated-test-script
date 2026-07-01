@@ -51,3 +51,20 @@ export function disconnectTahpSocket() {
     _socket = null
   }
 }
+
+/** 等待 /tahp-run 连接就绪，避免首条任务事件在握手前丢失 */
+export function waitForTahpSocketReady(timeoutMs = 8000): Promise<void> {
+  const s = getTahpSocket()
+  if (s.connected) return Promise.resolve()
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      s.off('connect', onConnect)
+      resolve()
+    }, timeoutMs)
+    function onConnect() {
+      clearTimeout(timer)
+      resolve()
+    }
+    s.once('connect', onConnect)
+  })
+}

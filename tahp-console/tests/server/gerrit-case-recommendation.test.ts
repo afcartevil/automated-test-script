@@ -95,7 +95,23 @@ describe('recommendTestCases hybrid', () => {
     expect(rerankCasesWithLlmMock).toHaveBeenCalled()
   })
 
-  it('falls back to rules when LLM throws', async () => {
+  it('returns source in recommend-cases API response', async () => {
+    rerankCasesWithLlmMock.mockResolvedValueOnce([
+      {
+        caseKey: 'week/driver/14',
+        caseName: 'USB功能正常充电',
+        moduleLabel: '驱动',
+        score: 9,
+        reasons: ['P0 要求验证 USB 插拔触发校准'],
+      },
+    ])
+
+    const { cases, source } = await recommendTestCasesWithMeta(['USB 插拔触发 SAR 校准'])
+    expect(source).toBe('llm')
+    expect(cases[0]?.reasons[0]).not.toMatch(/^必须测试:/)
+  })
+
+  it('rule fallback reasons use 必须测试 prefix', async () => {
     rerankCasesWithLlmMock.mockRejectedValueOnce(new Error('Agent Bridge 未运行'))
 
     const { cases, source } = await recommendTestCasesWithMeta([
@@ -104,6 +120,7 @@ describe('recommendTestCases hybrid', () => {
 
     expect(source).toBe('rule')
     expect(cases.length).toBeGreaterThan(0)
+    expect(cases.every(c => c.reasons.some(r => r.startsWith('必须测试:')))).toBe(true)
   })
 
   it('falls back to rules when LLM returns empty after filtering', async () => {

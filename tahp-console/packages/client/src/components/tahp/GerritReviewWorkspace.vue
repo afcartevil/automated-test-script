@@ -17,7 +17,6 @@ const {
   inputText,
   gerritConfigured,
   thinkingLines,
-  thinkingScrollRef,
   scrollRef,
   textareaRef,
   latestPhase,
@@ -29,6 +28,9 @@ const {
   p0Count,
   recommendedCount,
   loadingRecommendations,
+  showRecommendLoading,
+  recommendSourceLabel,
+  bindThinkingScrollRef,
   toggleRecommendedCase,
   setRecommendedCaseChecked,
   handleStartRecommendedTest,
@@ -41,7 +43,7 @@ const {
   handleKeydown,
   restoreWorkspace,
 } = useGerritReviewWorkspace()
-void [thinkingScrollRef, scrollRef, textareaRef, toggleRecommendedCase]
+void [scrollRef, textareaRef, toggleRecommendedCase]
 
 onMounted(restoreWorkspace)
 onActivated(restoreWorkspace)
@@ -83,13 +85,16 @@ onActivated(restoreWorkspace)
             >
               <div class="bubble">
                 <template v-if="msg.role === 'user'">{{ msg.content }}</template>
-                <template v-else-if="msg.streaming && !streamingText">
+                <template v-else-if="msg.streaming">
                   <div class="thinking-panel">
                     <div class="thinking-title">
                       <NSpin size="small" />
                       <span>Gerrit 评审中</span>
                     </div>
-                    <div ref="thinkingScrollRef" class="thinking-scroll">
+                    <div
+                      :ref="msg.streaming ? bindThinkingScrollRef : undefined"
+                      class="thinking-scroll"
+                    >
                       <div
                         v-for="(line, idx) in thinkingLines"
                         :key="`${idx}-${line.slice(0, 24)}`"
@@ -102,10 +107,15 @@ onActivated(restoreWorkspace)
                       </div>
                     </div>
                   </div>
+                  <MarkdownRenderer
+                    v-if="streamingText"
+                    class="streaming-response"
+                    :content="streamingText"
+                  />
                 </template>
                 <MarkdownRenderer
                   v-else
-                  :content="msg.streaming ? streamingText : msg.content"
+                  :content="msg.content"
                 />
               </div>
             </div>
@@ -188,11 +198,14 @@ onActivated(restoreWorkspace)
 
               <div class="insight-section recommended-section">
                 <div class="section-title">
-                  推荐测试用例 · {{ recommendedCount }}
+                  <span>推荐测试用例 · {{ recommendedCount }}</span>
+                  <span v-if="recommendSourceLabel" class="recommend-source-hint">
+                    {{ recommendSourceLabel }}
+                  </span>
                 </div>
                 <NScrollbar class="section-scroll">
                   <div
-                    v-if="loadingRecommendations"
+                    v-if="showRecommendLoading"
                     class="recommend-loading"
                   >
                     <NSpin size="small" />
@@ -234,7 +247,7 @@ onActivated(restoreWorkspace)
             <NButton
               size="small"
               :disabled="!p0Count || isRunning"
-              :loading="loadingRecommendations"
+              :loading="showRecommendLoading"
               @click="handleRefreshRecommend"
             >
               重新推荐
@@ -388,6 +401,17 @@ $gerrit-bottom-bar-min: calc(10px + 12px + #{$gerrit-action-inner-min});
     padding: 8px 12px;
     border-bottom: 1px dashed var(--line);
     background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .recommend-source-hint {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted);
+    white-space: nowrap;
   }
 
   .section-title-bold {
@@ -530,6 +554,10 @@ $gerrit-bottom-bar-min: calc(10px + 12px + #{$gerrit-action-inner-min});
 
 .thinking-panel {
   min-width: 260px;
+}
+
+.streaming-response {
+  margin-top: 10px;
 }
 
 .thinking-title {

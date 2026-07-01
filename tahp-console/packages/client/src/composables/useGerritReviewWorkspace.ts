@@ -23,7 +23,19 @@ export function useGerritReviewWorkspace() {
     sending,
     stopping,
     loadingRecommendations,
+    isServerRecommending,
+    recommendSource,
   } = storeToRefs(gerritStore)
+
+  const showRecommendLoading = computed(
+    () => loadingRecommendations.value || isServerRecommending.value,
+  )
+
+  const recommendSourceLabel = computed(() => {
+    if (recommendSource.value === 'llm') return 'LLM 语义匹配'
+    if (recommendSource.value === 'rule') return '关键词规则（LLM 未命中或不可用）'
+    return ''
+  })
 
   const inputText = ref('')
   const gerritConfigured = ref(true)
@@ -97,12 +109,12 @@ export function useGerritReviewWorkspace() {
       const normalized = reasoningBuf.replace(/\r\n/g, '\n')
       const chunks = normalized.split(/\n+/).map(s => s.trim()).filter(Boolean)
       if (chunks.length) {
-        for (const chunk of chunks.slice(-3)) {
-          lines.push(`💭 ${chunk.length > 140 ? `${chunk.slice(0, 140)}…` : chunk}`)
+        for (const chunk of chunks.slice(-6)) {
+          lines.push(`💭 ${chunk.length > 160 ? `${chunk.slice(0, 160)}…` : chunk}`)
         }
       } else {
         const tail = normalized.trim()
-        lines.push(`💭 ${tail.length > 140 ? `…${tail.slice(-140)}` : tail}`)
+        lines.push(`💭 ${tail.length > 160 ? `…${tail.slice(-160)}` : tail}`)
       }
     }
 
@@ -110,7 +122,11 @@ export function useGerritReviewWorkspace() {
       lines.push('◆ 正在连接 Agent Bridge…')
     }
 
-    thinkingLines.value = lines.slice(-5)
+    thinkingLines.value = lines.slice(-8)
+  }
+
+  function bindThinkingScrollRef(el: unknown) {
+    thinkingScrollRef.value = (el as HTMLElement | null) ?? null
   }
 
   function scrollThinkingToBottom() {
@@ -197,6 +213,13 @@ export function useGerritReviewWorkspace() {
     if (isRunning.value) scrollToBottom()
   })
 
+  watch(thinkingLines, () => {
+    if (isRunning.value) {
+      scrollThinkingToBottom()
+      scrollToBottom()
+    }
+  }, { deep: true })
+
   watch(stream, (events) => {
     rebuildThinkingLines(events)
     scrollThinkingToBottom()
@@ -270,7 +293,10 @@ export function useGerritReviewWorkspace() {
     p0Count,
     recommendedCount,
     loadingRecommendations,
+    showRecommendLoading,
+    recommendSourceLabel,
     modulesUnrecognized,
+    bindThinkingScrollRef,
     toggleRecommendedCase: setRecommendedCaseChecked,
     setRecommendedCaseChecked,
     handleStartRecommendedTest,

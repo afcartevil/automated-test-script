@@ -72,7 +72,7 @@ tahpGerritReviewRoutes.post('/api/tahp/gerrit-review/recommend-cases', async (ct
       },
       '[gerrit-review] recommend-cases',
     )
-    ctx.body = { success: true, data: { recommended_cases } }
+    ctx.body = { success: true, data: { recommended_cases, source } }
   } catch (err) {
     logger.warn({ err: (err as Error).message }, '[gerrit-review] recommend-cases failed')
     ctx.status = 500

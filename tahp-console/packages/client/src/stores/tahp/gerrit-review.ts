@@ -3,7 +3,8 @@
  */
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
-import { sendGerritReviewMessage, fetchRecommendCases, cancelGerritReviewTask, type RecommendedCase } from '@/api/tahp/gerrit-review'
+import { sendGerritReviewMessage, fetchRecommendCases, cancelGerritReviewTask, type RecommendedCase, type RecommendSource } from '@/api/tahp/gerrit-review'
+import { waitForTahpSocketReady } from '@/api/tahp/socket'
 import { extractModules, extractP0TestSuggestions } from '@/utils/gerrit-review-report'
 import { gerritReviewDebug } from '@/utils/gerrit-review-debug'
 import { useTahpTasksStore } from './tasks'
@@ -35,6 +36,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
   const serverModulesDisplay = ref('未识别')
   const recommendedCases = ref<RecommendedCaseView[]>([])
   const loadingRecommendations = ref(false)
+  const recommendSource = ref<RecommendSource | null>(null)
 
   let watcherInstalled = false
   let insightApplySeq = 0
@@ -97,7 +99,14 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     })
   }
 
-  const stream = computed(() => streamFor(activeTaskId.value))
+  const effectiveStreamTaskId = computed(() => {
+    if (activeTaskId.value) return activeTaskId.value
+    const rid = runningTaskId.value
+    if (rid && rid !== 'pending') return rid
+    return null
+  })
+
+  const stream = computed(() => streamFor(effectiveStreamTaskId.value))
 
   const streamingText = computed(() =>
     stream.value
@@ -105,6 +114,17 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
       .map(ev => String(ev.payload?.text ?? ''))
       .join(''),
   )
+
+  const isServerRecommending = computed(() => {
+    const events = stream.value
+    const recommending = events.some(
+      e => e.type === 'task.phase' && e.payload?.phase === 'RECOMMENDING',
+    )
+    const terminal = events.some(
+      e => e.type === 'task.completed' || e.type === 'task.failed' || e.type === 'task.cancelled',
+    )
+    return recommending && !terminal
+  })
 
   const isRunning = computed(() => {
     if (sending.value) return true
@@ -195,6 +215,23 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     }
   }
 
+  function resolveRecommendSource(
+    payload: Record<string, unknown>,
+    cases: RecommendedCase[],
+  ): RecommendSource | null {
+    const raw = payload?.recommend_source
+    if (raw === 'llm' || raw === 'rule') return raw
+    if (!cases.length) return null
+    const ruleLike = cases.every(item =>
+      item.reasons?.length && item.reasons.every(r => r.startsWith('必须测试:')),
+    )
+    return ruleLike ? 'rule' : 'llm'
+  }
+
+  function setRecommendSource(source: RecommendSource | null) {
+    recommendSource.value = source
+  }
+
   function mapRecommendedCases(items: RecommendedCase[]): RecommendedCaseView[] {
     return items.map(item => ({ ...item, checked: true }))
   }
@@ -235,6 +272,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
       if (seq !== insightApplySeq) return
       if (!options?.force && !isInsightTargetTask(sourceTaskId)) return
       recommendedCases.value = mapRecommendedCases(data.recommended_cases || [])
+      setRecommendSource(data.source ?? resolveRecommendSource({}, data.recommended_cases || []))
     } catch (err) {
       logState('loadRecommendedCasesForP0.error', sourceTaskId, {
         seq,
@@ -286,7 +324,9 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
 
     if (Array.isArray(payload?.recommended_cases) && payload.recommended_cases.length) {
       if (seq === insightApplySeq) {
-        recommendedCases.value = mapRecommendedCases(payload.recommended_cases as RecommendedCase[])
+        const cases = payload.recommended_cases as RecommendedCase[]
+        recommendedCases.value = mapRecommendedCases(cases)
+        setRecommendSource(resolveRecommendSource(payload, cases))
       }
       return
     }
@@ -518,10 +558,17 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     if (watcherInstalled) return
     watcherInstalled = true
     const tasksStore = useTahpTasksStore()
+    tasksStore.$subscribe(() => {
+      syncAllStreamingTasks()
+    })
     watch(
-      () => tasksStore.taskStreams,
+      stream,
       () => {
-        syncAllStreamingTasks()
+        const tid = effectiveStreamTaskId.value
+        if (!tid) return
+        processStreamEvents(tid)
+        clearRunningIfTaskTerminal(tid)
+        sweepStaleRunningState()
       },
       { deep: true },
     )
@@ -613,6 +660,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     serverModules.value = []
     serverModulesDisplay.value = '未识别'
     recommendedCases.value = []
+    recommendSource.value = null
 
     const pendingId = `assistant-pending-${Date.now()}`
     chatMessages.value.push({
@@ -626,6 +674,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     const tasksStore = useTahpTasksStore()
     tasksStore.ensureSocket()
     ensureTaskWatcher()
+    await waitForTahpSocketReady()
 
     try {
       const res = await sendGerritReviewMessage({
@@ -763,6 +812,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     tasksStore.ensureSocket()
     ensureTaskWatcher()
     reconcileActiveTask()
+    void waitForTahpSocketReady()
   }
 
   return {
@@ -780,9 +830,12 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     serverModulesDisplay,
     recommendedCases,
     loadingRecommendations,
+    recommendSource,
     checkedRecommendedCases,
     stream,
+    effectiveStreamTaskId,
     streamingText,
+    isServerRecommending,
     isRunning,
     init,
     reconcileActiveTask,
