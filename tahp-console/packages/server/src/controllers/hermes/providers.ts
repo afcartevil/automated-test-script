@@ -9,6 +9,7 @@ import {
   shouldVerifyProviderConnectivity,
   verifyProviderConnectivity,
 } from '../../services/provider-connectivity'
+import { verifyProviderViaBridge } from '../../services/hermes/provider-bridge-verify'
 
 const OPTIONAL_API_KEY_PROVIDERS = new Set(['cliproxyapi', 'xai-oauth'])
 const DIRECT_CONFIG_PROVIDERS = new Set(['xai-oauth'])
@@ -74,6 +75,27 @@ async function resolveProviderProbeCredentials(
 
   if (!baseUrl) return null
   return { base_url: baseUrl, api_key: apiKey }
+}
+
+export async function verifyChat(ctx: any) {
+  const { base_url, api_key, model } = ctx.request.body as {
+    base_url?: string; api_key?: string; model?: string
+  }
+  if (!base_url?.trim() || !api_key?.trim() || !model?.trim()) {
+    ctx.status = 400
+    ctx.body = { error: '缺少 Base URL、API Key 或模型名称' }
+    return
+  }
+  try {
+    ctx.body = await verifyProviderViaBridge({
+      base_url: base_url.trim(),
+      api_key: api_key.trim(),
+      model: model.trim(),
+    })
+  } catch (err: any) {
+    ctx.status = providerProbeStatus(err)
+    ctx.body = { error: err.message }
+  }
 }
 
 export async function create(ctx: any) {

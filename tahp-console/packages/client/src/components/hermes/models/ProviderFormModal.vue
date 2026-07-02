@@ -10,8 +10,10 @@ import XaiOAuthLoginModal from './XaiOAuthLoginModal.vue'
 import { checkCopilotToken, enableCopilot, type CopilotTokenSource } from '@/api/hermes/copilot-auth'
 import {
   probeProviderConnectivity,
-  shouldProbeProviderConnectivity,
 } from '@/utils/provider-connectivity'
+import { verifyProviderChat } from '@/api/hermes/system'
+
+const DEFAULT_CUSTOM_BASE_URL = 'https://sw-aimodel.transsion-os.com/v1'
 
 const { t } = useI18n()
 
@@ -33,11 +35,11 @@ const showCopilotLogin = ref(false)
 const showXaiLogin = ref(false)
 const copilotChecking = ref(false)
 
-const providerType = ref<'preset' | 'custom'>('preset')
+const providerType = ref<'preset' | 'custom'>('custom')
 const selectedPreset = ref<string | null>(null)
 const formData = ref({
   name: '',
-  base_url: '',
+  base_url: DEFAULT_CUSTOM_BASE_URL,
   api_key: '',
   model: '',
   context_length: null as number | null,
@@ -118,9 +120,15 @@ watch(() => formData.value.base_url, (url) => {
   }
 })
 
-watch(providerType, () => {
+watch(providerType, (type) => {
   modelOptions.value = []
-  formData.value = { name: '', base_url: '', api_key: '', model: '', context_length: null }
+  formData.value = {
+    name: '',
+    base_url: type === 'custom' ? DEFAULT_CUSTOM_BASE_URL : '',
+    api_key: '',
+    model: '',
+    context_length: null,
+  }
   selectedPreset.value = null
 })
 
@@ -128,7 +136,17 @@ onMounted(() => {
   if (modelsStore.providers.length === 0) {
     modelsStore.fetchProviders()
   }
+  if (providerType.value === 'custom' && formData.value.base_url.trim() && !formData.value.name) {
+    formData.value.name = autoGenerateName(formData.value.base_url.trim())
+  }
 })
+
+function shouldVerifyWithBridge(): boolean {
+  if (isCodex.value || isNous.value || isCopilot.value || isXaiOAuth.value) return false
+  if (!formData.value.base_url.trim() || !formData.value.model) return false
+  if (!formData.value.api_key.trim() && !isCliproxyApi.value) return false
+  return true
+}
 
 async function fetchModels() {
   const { base_url } = formData.value
@@ -199,18 +217,27 @@ async function handleSave() {
 
   loading.value = true
   try {
-    const providerKey = providerType.value === 'preset'
-      ? selectedPreset.value
-      : null
-
-    if (shouldProbeProviderConnectivity(providerType.value, providerKey, formData.value.base_url)) {
-      await probeProviderConnectivity(
-        formData.value.base_url.trim(),
-        formData.value.api_key.trim(),
-      )
+    if (shouldVerifyWithBridge()) {
+      const loadingMsg = message.loading(t('models.verifyingProvider'), { duration: 0 })
+      try {
+        await verifyProviderChat({
+          base_url: formData.value.base_url.trim(),
+          api_key: formData.value.api_key.trim(),
+          model: formData.value.model,
+        })
+        message.success(t('models.verifyProviderOk'))
+      } catch (e: any) {
+        message.error(e?.message || t('models.verifyProviderFailed'))
+        return
+      } finally {
+        loadingMsg.destroy()
+      }
     }
 
     const contextLength = formData.value.context_length ?? undefined
+    const providerKey = providerType.value === 'preset'
+      ? selectedPreset.value
+      : null
     await modelsStore.addProvider({
       name: formData.value.name.trim(),
       base_url: formData.value.base_url.trim(),
@@ -383,6 +410,9 @@ function handleClose() {
           :placeholder="t('models.baseUrlPlaceholder')"
           :disabled="providerType === 'preset'"
         />
+        <div v-if="providerType === 'custom'" class="base-url-hint">
+          {{ t('models.baseUrlDefaultHint') }}
+        </div>
       </NFormItem>
 
       <NFormItem v-if="!isCodex && !isNous" :label="t('models.apiKey')" :required="!isCliproxyApi && !isXaiOAuth">
@@ -483,6 +513,12 @@ function handleClose() {
 
     &:hover { opacity: 1; }
   }
+}
+
+.base-url-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-color-3);
 }
 
 .modal-footer {

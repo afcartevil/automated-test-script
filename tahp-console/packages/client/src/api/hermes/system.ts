@@ -128,6 +128,17 @@ export async function updateModelAlias(data: {
   })
 }
 
+export async function verifyProviderChat(data: {
+  base_url: string
+  api_key: string
+  model: string
+}): Promise<{ ok: true; reply: string }> {
+  return request<{ ok: true; reply: string }>('/api/hermes/config/providers/verify-chat', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
 export async function addCustomProvider(data: CustomProvider): Promise<void> {
   await request('/api/hermes/config/providers', {
     method: 'POST',
