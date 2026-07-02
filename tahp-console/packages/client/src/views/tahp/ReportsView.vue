@@ -74,6 +74,7 @@ const DOMAIN_LABELS: Record<string, string> = {
   audio: '音频',
   charging: '充电',
   sensor: 'Sensor',
+  video: 'Video',
   security: '安全',
   'mini-system': '小系统',
   modem: '通信Modem',
