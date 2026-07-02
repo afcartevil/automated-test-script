@@ -1,10 +1,7 @@
 @echo off
 chcp 65001 >nul
-cd /d "%~dp0tahp-console"
-
-echo.
-echo [EasyAdapter] 检查运行环境（Node.js + Python）...
-echo.
+set "REPO_ROOT=%~dp0"
+cd /d "%REPO_ROOT%"
 
 where node >nul 2>&1
 if errorlevel 1 (
@@ -16,6 +13,16 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+
+echo.
+echo [EasyAdapter] 检查代码更新...
+node tahp-console\scripts\git-pull-safe.mjs
+
+cd /d "%REPO_ROOT%tahp-console"
+
+echo.
+echo [EasyAdapter] 检查运行环境（Node.js + Python）...
+echo.
 
 node scripts/preflight-env.mjs
 if errorlevel 1 (
