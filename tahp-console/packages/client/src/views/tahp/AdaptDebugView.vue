@@ -46,6 +46,8 @@ interface FieldDef {
   placeholder?: string
   required: boolean
   options?: { label: string; value: string }[]
+  /** 布局编辑草稿：下拉选项文本（每行 label:value） */
+  optionsText?: string
 }
 
 interface DomainDef {
@@ -389,6 +391,7 @@ function enterLayoutEdit() {
   layoutDraftFields.value = activeDomain.value.fields.map(f => ({
     ...f,
     options: f.options ? f.options.map(o => ({ ...o })) : undefined,
+    optionsText: f.type === 'select' ? formatOptionsText(f.options) : '',
   }))
   layoutDraftRelatedSkills.value = [...activeDomain.value.relatedSkills]
   layoutEditMode.value = true
@@ -470,11 +473,44 @@ function parseOptionsText(text: string): { label: string; value: string }[] {
     .split('\n')
     .map(line => line.trim())
     .filter(Boolean)
-    .map(line => {
-      const [label, value] = line.split(':').map(s => s.trim())
-      if (value) return { label, value }
-      return { label: line, value: line }
-    })
+    .map(line => ({ label: line, value: line }))
+}
+
+function formatOptionsText(options?: { label: string; value: string }[]): string {
+  if (!options?.length) return ''
+  return options.map(o => o.value).join('\n')
+}
+
+function onLayoutFieldTypeChange(field: FieldDef, newType: FieldDef['type']) {
+  field.type = newType
+  if (newType === 'select') {
+    if (!field.optionsText) {
+      field.optionsText = formatOptionsText(field.options)
+    }
+  } else {
+    delete field.options
+    field.optionsText = ''
+  }
+}
+
+function normalizeLayoutDraftFields(draft: FieldDef[]): FieldDef[] {
+  return draft.map((raw) => {
+    const { optionsText, ...rest } = raw
+    const field: FieldDef = { ...rest }
+    const placeholder = field.placeholder?.trim()
+    field.placeholder = placeholder || undefined
+    if (field.type === 'select') {
+      const options = parseOptionsText(optionsText || '')
+      if (!options.length) {
+        throw new Error(`下拉字段「${field.label || field.name}」至少需要一个选项（每行一个）`)
+      }
+      field.options = options
+    } else {
+      delete field.options
+    }
+    delete field.optionsText
+    return field
+  })
 }
 
 function confirmAddField(): boolean {
@@ -502,10 +538,11 @@ function confirmAddField(): boolean {
   if (newFieldDraft.type === 'select') {
     const options = parseOptionsText(newFieldDraft.optionsText)
     if (!options.length) {
-      message.warning('下拉框至少需要一个选项（每行 label:value）')
+      message.warning('下拉框至少需要一个选项（每行一个）')
       return false
     }
     field.options = options
+    field.optionsText = newFieldDraft.optionsText.trim()
   }
   layoutDraftFields.value.push(field)
   showAddFieldModal.value = false
@@ -527,10 +564,10 @@ async function saveLayout() {
   }
   layoutSaving.value = true
   try {
-    const fields = layoutDraftFields.value as AdaptLayoutFieldDef[]
+    const fields = normalizeLayoutDraftFields(layoutDraftFields.value) as AdaptLayoutFieldDef[]
     const related_skills = [...layoutDraftRelatedSkills.value]
     const result = await saveAdaptDomainConfig(activeDomainId.value, { fields, related_skills }, activeWorkspaceId.value)
-    applyFieldsToDomain(activeDomainId.value, layoutDraftFields.value)
+    applyFieldsToDomain(activeDomainId.value, fields)
     applyRelatedSkillsToDomain(activeDomainId.value, related_skills)
     layoutEditMode.value = false
     layoutDraftRelatedSkills.value = []
@@ -610,6 +647,10 @@ const overallPercent = computed(() => Math.round((completedDomains.value / DOMAI
 // ─────────────────────────────────────────────────────────────────────────────
 function getFieldValue(fieldName: string): string {
   return (formData[formScopeKey(activeDomainId.value)] ?? {})[fieldName] ?? ''
+}
+function getSelectFieldValue(fieldName: string): string | null {
+  const value = getFieldValue(fieldName)
+  return value || null
 }
 function setFieldValue(fieldName: string, value: string) {
   const key = formScopeKey(activeDomainId.value)
@@ -1392,23 +1433,41 @@ function openSkill(skillName: string) {
                   :key="'draft-' + field.name"
                   class="layout-field-row"
                 >
-                  <div class="lfr-main">
-                    <NInput v-model:value="field.label" size="small" placeholder="显示标签" />
-                    <code class="lfr-name">{{ field.name }}</code>
-                    <NSelect
-                      v-model:value="field.type"
-                      size="small"
-                      :options="[
-                        { label: '文本', value: 'text' },
-                        { label: '多行文本', value: 'textarea' },
-                        { label: '下拉选择', value: 'select' },
-                      ]"
-                      style="width: 120px;"
-                    />
-                    <label class="lfr-req">
-                      <NSwitch v-model:value="field.required" size="small" />
-                      <span>必填</span>
-                    </label>
+                  <div class="lfr-body">
+                    <div class="lfr-main">
+                      <NInput v-model:value="field.label" size="small" placeholder="显示标签" />
+                      <code class="lfr-name">{{ field.name }}</code>
+                      <NSelect
+                        :value="field.type"
+                        size="small"
+                        :options="[
+                          { label: '文本', value: 'text' },
+                          { label: '多行文本', value: 'textarea' },
+                          { label: '下拉选择', value: 'select' },
+                        ]"
+                        style="width: 120px;"
+                        @update:value="v => onLayoutFieldTypeChange(field, v as FieldDef['type'])"
+                      />
+                      <label class="lfr-req">
+                        <NSwitch v-model:value="field.required" size="small" />
+                        <span>必填</span>
+                      </label>
+                    </div>
+                    <div class="lfr-extra">
+                      <NInput
+                        v-model:value="field.placeholder"
+                        size="small"
+                        :placeholder="field.type === 'select' ? '占位提示（未选择时显示在下拉框内）' : '占位提示（可选）'"
+                      />
+                      <NInput
+                        v-if="field.type === 'select'"
+                        v-model:value="field.optionsText"
+                        type="textarea"
+                        size="small"
+                        placeholder="下拉选项，每行一个&#10;如：&#10;GOODIX&#10;SAMSUNG"
+                        :autosize="{ minRows: 2, maxRows: 6 }"
+                      />
+                    </div>
                   </div>
                   <NButton size="tiny" type="error" quaternary @click="removeLayoutField(idx)">删除</NButton>
                 </div>
@@ -1435,11 +1494,11 @@ function openSkill(skillName: string) {
                     </label>
                     <NSelect
                       v-if="field.type === 'select'"
-                      :value="getFieldValue(field.name)"
+                      :value="getSelectFieldValue(field.name)"
                       :options="field.options"
                       :placeholder="field.placeholder || '请选择'"
                       clearable
-                      @update:value="v => setFieldValue(field.name, v ?? '')"
+                      @update:value="v => setFieldValue(field.name, v == null ? '' : String(v))"
                     />
                     <NInput
                       v-else-if="field.type === 'textarea'"
@@ -1792,7 +1851,10 @@ function openSkill(skillName: string) {
           />
         </NFormItem>
         <NFormItem label="占位提示">
-          <NInput v-model:value="newFieldDraft.placeholder" placeholder="可选" />
+          <NInput
+            v-model:value="newFieldDraft.placeholder"
+            :placeholder="newFieldDraft.type === 'select' ? '未选择时显示在下拉框内' : '可选'"
+          />
         </NFormItem>
         <NFormItem label="必填">
           <NSwitch v-model:value="newFieldDraft.required" />
@@ -1801,7 +1863,7 @@ function openSkill(skillName: string) {
           <NInput
             v-model:value="newFieldDraft.optionsText"
             type="textarea"
-            placeholder="每行一个，格式 label:value&#10;如 GOODIX:goodix"
+            placeholder="每行一个选项值，例如：&#10;GOODIX&#10;SAMSUNG"
             :autosize="{ minRows: 4, maxRows: 8 }"
           />
         </NFormItem>
@@ -2039,13 +2101,27 @@ function openSkill(skillName: string) {
 
 .layout-field-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--bg);
+}
+
+.lfr-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lfr-extra {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .lfr-main {
