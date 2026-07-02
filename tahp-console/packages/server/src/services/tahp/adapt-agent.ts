@@ -17,12 +17,12 @@ import {
 } from '../hermes/agent-bridge'
 import { filterBridgeToolCallMarkupDelta } from '../hermes/run-chat/bridge-delta'
 import {
-  buildFullTahpSystemContext,
-  getTahpSkillsRoot,
-  tahpSkillMdPath,
-} from './context-injector'
+  ADAPT_AUDIT_SKILL_ID,
+  buildAdaptAgentInstructions,
+  buildAdaptAgentPrompts,
+  buildAdaptAgentUserMessage,
+} from './adapt-agent-prompts'
 import { saveAgentPromptLog } from './prompt-log'
-import { resolveFormFieldLabels } from './adapt-layout/service'
 import { DEFAULT_ADAPT_WORKSPACE } from './adapt-layout/types'
 import {
   extractAdaptAgentFileChanges,
@@ -40,8 +40,7 @@ import {
 
 const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
 
-/** 适配完成后主 Agent 自检用的编码规范审核 Skill（方案四：Prompt + Skill） */
-export const ADAPT_AUDIT_SKILL_ID = 'transsion-coding-standards-review'
+export { ADAPT_AUDIT_SKILL_ID, buildAdaptAgentPrompts } from './adapt-agent-prompts'
 
 const AUDIT_SECTION_MARKERS = [
   '## Skill 遵从性自检',
@@ -404,180 +403,6 @@ export function extractAdaptAuditReport(fullResponse: string): string | undefine
   }
   if (codingIdx < 0) return undefined
   return fullResponse.slice(codingIdx).trim()
-}
-
-function buildWorkflowHint(domainId: string, primarySkill: string): string {
-  if (domainId === 'comm-framework') {
-    return [
-      '# 主控 Skill 工作流（通信框架测试）',
-      '- 校验 `prj_path` 是否有效',
-      '- 在 `prj_path` 下创建测试文件',
-      '- 按步骤多次写入（步骤、时间、地点、天气）',
-      '- 输出最终文件路径与写入结果',
-    ].join('\n')
-  }
-  if (domainId === 'modem') {
-    return [
-      '# 主控 Skill 工作流（MODEM P1 参考）',
-      '- 校验 4 个全局路径 + BOM 名称 + 变更后 BOM + RF 目标仓',
-      '- 调度 RF 移植子技能 → 获取上下文变量 X、Y',
-      '- 调度宏控移植子技能 → 汇总报告',
-    ].join('\n')
-  }
-  if (domainId === 'carrierconfig-tools') {
-    return [
-      '# 主控 Skill 工作流（CarrierConfig）',
-      '- 从用户「描述」提取 Jira、运营商、mccmnc、key、期望值',
-      '- Jira 读单/评论等 API 操作使用 **jira-ops**；业务流程调度 **carrierconfig-tools** 子 Skill',
-      '- 典型顺序：jira-reader → carrier-lookup → carrierconfig-edit → carrierconfig-submit',
-      '- 需用户确认时用 TAHP_USER_INPUT 块请求，勿在对话中裸问',
-      '- 矩阵缺失时提示是否执行 matrix-update',
-    ].join('\n')
-  }
-  return [
-    `# 主控 Skill 工作流（${primarySkill}）`,
-    `- 先 Read 主控 Skill：\`${primarySkill}\` 全文，严格按其中 SOP 执行`,
-    '- 用户表单参数已提供则核对后使用，勿重复询问已有项',
-    '- 按主控 Skill 调度下列关联 Skill（顺序执行，必要时 Read 全文）',
-    '- 输出结构化总结与文件修改清单',
-  ].join('\n')
-}
-
-function buildAdaptAgentInstructions(input: AdaptAgentRunInput, userMessage: string): string {
-  const primarySkill = input.relatedSkills[0]
-  const skillsDir = getTahpSkillsRoot()
-  const skillPaths = input.relatedSkills
-    .map((id, idx) => `- ${idx === 0 ? '**主控**' : '关联'} **${id}**: \`${tahpSkillMdPath(id)}\``)
-    .join('\n')
-  const auditSkillPath = tahpSkillMdPath(ADAPT_AUDIT_SKILL_ID)
-  const workflowHint = buildWorkflowHint(input.domainId, primarySkill)
-  const interactive = input.interactionMode === true || input.domainId === 'carrierconfig-tools'
-
-  const completionRules = interactive
-    ? `5. 适配工作**全部完成**后（经用户确认且无待办项），输出结构化总结，必须包含以下章节：
-   - ## 任务规划回顾
-   - ## 已使用的 Skill
-   - ## 文件修改清单（路径 + 修改说明；若无修改写「无」）
-   - ## 升级/适配结果摘要
-   - ## 风险与待用户确认项
-6. **最后一步（全流程完成时）— 自检审核**：Read 审核 Skill 全文 \`${auditSkillPath}\`（\`${ADAPT_AUDIT_SKILL_ID}\`），在**全部适配总结之后**追加审核章节（格式同下）。
-7. 中间步骤需要用户确认或补充参数时，**必须**输出 \`=== TAHP_USER_INPUT ===\` 块后停止本轮，等待 Console 弹窗提交。`
-    : `5. 适配工作全部完成后，输出结构化总结，必须包含以下章节：
-   - ## 任务规划回顾
-   - ## 已使用的 Skill
-   - ## 文件修改清单（路径 + 修改说明；若无修改写「无」）
-   - ## 升级/适配结果摘要
-   - ## 风险与待用户确认项
-6. **最后一步（不得跳过）— 自检审核**：Read 审核 Skill 全文 \`${auditSkillPath}\`（\`${ADAPT_AUDIT_SKILL_ID}\`），在**全部适配总结之后**追加，且**必须严格按下列顺序与格式**：`
-
-  const auditBlock = interactive
-    ? ''
-    : `   - **先输出固定概览表** \`## 审核结果概览\`（系统据此解析，禁止省略或改列名）：
-     \`\`\`
-     ## 审核结果概览
-
-     | 检查环节 | 结果 | 说明 |
-     |----------|------|------|
-     | Skill 遵从性自检 | PASS 或 FAIL 或 WARN | 一行精简说明 |
-     | 编码规范审核报告 | PASS 或 FAIL 或 WARN | 一行精简说明 |
-     | AOSP 流程风险评估 | PASS 或 FAIL 或 WARN 或 N/A | 一行精简说明 |
-     \`\`\`
-   - 再输出 \`## Skill 遵从性自检\` 详情（须含 \`**结论**:\` 行，写 PASS/FAIL 及一句总结）
-   - 再输出 \`# 编码规范审核报告\`（含 \`## 概览\` 与 \`**总体结论**:\`，严格按 \`${ADAPT_AUDIT_SKILL_ID}\` 模板）
-7. 最终回复顺序：**适配总结 → 审核结果概览表 → Skill 遵从性自检 → 编码规范审核报告**。`
-
-  const userInputProtocol = interactive ? `
-# 人机协同：结构化用户确认/配置输入
-
-当需要用户确认落点、diff、路径或补充参数时：
-
-1. **先输出**以下标记块，**然后停止本轮输出**，等待用户在 Console 弹窗提交：
-\`\`\`
-=== TAHP_USER_INPUT ===
-request_id: <唯一 ID>
-title: <弹窗标题>
-message: <向用户说明>
-timeout_sec: 300
-field.<name>.label: <字段显示名>
-field.<name>.type: text|textarea|password|number
-field.<name>.required: true|false
-field.<name>.placeholder: <占位提示>
-=== END_TAHP_USER_INPUT ===
-\`\`\`
-
-2. 用户提交后，BFF 会以「用户已提交配置」消息继续对话；请据此执行后续步骤。
-3. 同一 \`request_id\` 不要重复请求。
-` : ''
-
-  const base = `你是 TAHP「AI 适配调试 · Agent 自动适配」专家，负责在传音 Android 底软集成部完成 **${input.domainLabel}** 的适配任务。
-
-# 必须遵守
-1. **先 Read 主控 Skill 全文**：\`${tahpSkillMdPath(primarySkill)}\`，再按其中 SOP 逐步执行，不得跳过「收集参数」类步骤（用户已在表单中提供则核对后使用）。
-2. **关联 Skill（按流程调度）**：
-${skillPaths}
-3. **必须真实调用工具**；每完成一个主要阶段，用简短 Markdown 输出「任务规划 / 当前步骤 / 下一步」。
-4. 涉及代码或配置修改时，使用 Write/Edit 等工具；**禁止编造路径**。
-${completionRules}
-${auditBlock}
-8. \`## 文件修改清单\` 中每条路径必须用反引号包裹绝对路径（如 \`D:\\\\path\\\\file.txt\`），便于系统收录。
-${userInputProtocol}
-${workflowHint}
-
-# 审核 Skill（适配完成后必读）
-- **${ADAPT_AUDIT_SKILL_ID}**: \`${auditSkillPath}\`
-
-# 工程 Skill 根目录
-\`${skillsDir}\`
-`
-
-  const tahpCtx = buildFullTahpSystemContext(userMessage, {
-    scenario: 'adapt_debug',
-    preferredSkillIds: [...input.relatedSkills, ADAPT_AUDIT_SKILL_ID],
-  })
-  return tahpCtx ? `${base}\n\n${tahpCtx}` : base
-}
-
-function buildAdaptAgentUserMessage(input: AdaptAgentRunInput): string {
-  const lines: string[] = [
-    `# ${input.domainLabel} — Agent 自动适配任务`,
-    '',
-    '## 适配域信息',
-    `- 工作区: ${input.workspaceId || DEFAULT_ADAPT_WORKSPACE}`,
-    `- 域 ID: ${input.domainId}`,
-    `- TAHP 模块: ${input.module}`,
-    '',
-    '## 用户已填写的表单参数（必须使用，勿重复询问已有项）',
-  ]
-  const rows = resolveFormFieldLabels(input.formData, input.formFields)
-  for (const row of rows) {
-    lines.push(`- **${row.label}** (\`${row.name}\`): ${row.value}`)
-  }
-  lines.push('')
-  lines.push(`## 关联 Skills（须按主控 Skill 调度）`)
-  lines.push(`**主控 Skill**: ${input.relatedSkills[0]}`)
-  if (input.relatedSkills.length > 1) {
-    lines.push(`**协同 Skill**: ${input.relatedSkills.slice(1).join(', ')}`)
-  }
-  lines.push(`**关联 Skills**: ${input.relatedSkills.join(', ')}`)
-  if (input.userNotes?.trim()) {
-    lines.push('')
-    lines.push('## 用户补充说明')
-    lines.push(input.userNotes.trim())
-  }
-  lines.push('')
-  lines.push('请立即开始：Read 主控 Skill，输出任务规划，然后按 SOP 执行适配。')
-  lines.push(`全部适配完成后，必须 Read \`${ADAPT_AUDIT_SKILL_ID}\`，在报告末尾先输出「## 审核结果概览」三行 PASS/FAIL 表，再写详细审核章节。`)
-  return lines.join('\n')
-}
-
-/** 构建将发往 Agent Bridge 的最终提示词（不启动任务） */
-export function buildAdaptAgentPrompts(input: AdaptAgentRunInput): {
-  systemPrompt: string
-  userPrompt: string
-} {
-  const userPrompt = buildAdaptAgentUserMessage(input)
-  const systemPrompt = buildAdaptAgentInstructions(input, userPrompt)
-  return { systemPrompt, userPrompt }
 }
 
 async function runAgentChat(

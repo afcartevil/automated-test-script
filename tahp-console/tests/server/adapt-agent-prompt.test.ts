@@ -15,6 +15,7 @@ describe('adapt-agent prompts', () => {
       formData: { prj_path: 'D:\\project\\test' },
     })
     expect(systemPrompt).toContain('comm-framework-agent-test')
+    expect(systemPrompt).toContain('AI 适配调试')
     expect(userPrompt).toContain('prj_path')
     expect(userPrompt).not.toContain('项目代码')
     expect(userPrompt).not.toContain('升级路径')
@@ -71,8 +72,9 @@ describe('adapt-agent prompts', () => {
     expect(userPrompt).toContain('prj_path')
   })
 
-  it('includes interactive protocol for carrierconfig-tools', () => {
+  it('includes interactive protocol for carrierconfig-tools in carrier-config workspace', () => {
     const { systemPrompt, userPrompt } = buildAdaptAgentPrompts({
+      workspaceId: 'carrier-config',
       domainId: 'carrierconfig-tools',
       domainLabel: 'CarrierConfig配置',
       module: 'telephony',
@@ -83,8 +85,38 @@ describe('adapt-agent prompts', () => {
     })
     expect(systemPrompt).toContain('carrierconfig-tools')
     expect(systemPrompt).toContain('TAHP_USER_INPUT')
+    expect(systemPrompt).toContain('运营商配置')
     expect(systemPrompt).toContain('CarrierConfig')
     expect(userPrompt).toContain('描述')
     expect(userPrompt).toContain('JIRA-123')
+    expect(userPrompt).toContain('运营商配置')
+  })
+
+  it('feature-adapt workspace uses distinct product title and scenario', () => {
+    const { systemPrompt, userPrompt } = buildAdaptAgentPrompts({
+      workspaceId: 'feature-adapt',
+      domainId: 'charging',
+      domainLabel: '充电',
+      module: 'kernel-driver',
+      relatedSkills: ['pillar3-customization-input'],
+      formData: { mode: 'upgrade' },
+    })
+    expect(systemPrompt).toContain('特性适配')
+    expect(systemPrompt).toContain('可交付')
+    expect(systemPrompt).toContain('当前场景**: 特性适配')
+    expect(userPrompt).toContain('特性适配任务')
+    expect(userPrompt).toContain('feature-adapt')
+  })
+
+  it('adapt-debug comm-framework emphasizes debug workflow', () => {
+    const { systemPrompt } = buildAdaptAgentPrompts({
+      workspaceId: 'adapt-debug',
+      domainId: 'comm-framework',
+      domainLabel: '通信框架',
+      module: 'telephony',
+      relatedSkills: ['comm-framework-agent-test'],
+      formData: { prj_path: 'D:\\test' },
+    })
+    expect(systemPrompt).toContain('调试模式')
   })
 })

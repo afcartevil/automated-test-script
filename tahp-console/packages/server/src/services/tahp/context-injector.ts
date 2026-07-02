@@ -250,7 +250,7 @@ export function invalidateContextIndex(): void {
 // Skill 路径与执行规范（Agent / LLM 系统提示词共用）
 // ---------------------------------------------------------------------------
 
-export type TahpSkillScenario = 'bug_analysis' | 'adapt_debug' | 'skill_config' | 'chat'
+export type TahpSkillScenario = 'bug_analysis' | 'adapt_debug' | 'feature_adapt' | 'carrier_config' | 'skill_config' | 'chat'
 
 /** TAHP 仓内 Skill 根目录（相对工程根，用于提示词） */
 export const TAHP_SKILLS_REL_ROOT = 'skills/.claude/skills'
@@ -354,6 +354,10 @@ export function buildSkillExecutionDirective(options?: {
     lines.push('**当前场景**: 智能诊断 — 拉取 JIRA 后必须选择并加载匹配的日志/领域分析 Skill。')
   } else if (scenario === 'adapt_debug') {
     lines.push('**当前场景**: AI 适配调试 — 优先加载用户指定的关联 Adapt Skill 并按 SOP 排查；全部完成后必须 Read `transsion-coding-standards-review` 并在报告末尾输出自检审核。')
+  } else if (scenario === 'feature_adapt') {
+    lines.push('**当前场景**: 特性适配 — 按正式交付 SOP 完成特性适配；优先加载用户指定的关联 Skill；完成后必须 Read `transsion-coding-standards-review` 并输出可交付的结构化报告与自检审核。')
+  } else if (scenario === 'carrier_config') {
+    lines.push('**当前场景**: 运营商配置 — CarrierConfig/APN 等配置变更须严格按 Skill SOP；关键步骤使用 TAHP_USER_INPUT 请求用户确认；Jira 相关操作优先 `jira-ops`。')
   } else if (scenario === 'skill_config') {
     lines.push('**当前场景**: 常用 Skill 配置 — 仅引导用户完成指定 Skill 的环境与凭据配置，按 SKILL.md 的 setup / setup-check 章节执行。')
   } else {
@@ -388,6 +392,8 @@ export function buildSkillExecutionDirective(options?: {
 function defaultContextOptions(scenario: TahpSkillScenario): BuildTahpContextOptions {
   switch (scenario) {
     case 'adapt_debug':
+    case 'feature_adapt':
+    case 'carrier_config':
       return {
         includeSkillCatalog: false,
         includeKnowledge: false,

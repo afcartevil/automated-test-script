@@ -1,11 +1,15 @@
+import { ADAPT_DEBUG_DOMAINS } from './adapt-debug-domains'
 import { CARRIER_ADAPT_DOMAINS } from './carrier-config-domains'
-import { FULL_ADAPT_DOMAINS } from './full-domains'
+import { FEATURE_ADAPT_DOMAINS } from './feature-adapt-domains'
 import type { AdaptDomainDef, AdaptWorkspaceDef, AdaptWorkspaceId } from './types'
 import { ADAPT_WORKSPACE_IDS, DEFAULT_ADAPT_WORKSPACE, isAdaptWorkspaceId } from './types'
 
 export * from './types'
-export { FULL_ADAPT_DOMAINS } from './full-domains'
+export { ADAPT_DEBUG_DOMAINS } from './adapt-debug-domains'
+export { FEATURE_ADAPT_DOMAINS } from './feature-adapt-domains'
 export { CARRIER_ADAPT_DOMAINS } from './carrier-config-domains'
+/** @deprecated 使用 ADAPT_DEBUG_DOMAINS */
+export { FULL_ADAPT_DOMAINS } from './full-domains'
 
 export const ADAPT_WORKSPACES: AdaptWorkspaceDef[] = [
   {
@@ -34,7 +38,8 @@ export function getAdaptWorkspace(id: AdaptWorkspaceId): AdaptWorkspaceDef {
 
 export function getBuiltinDomainsForWorkspace(workspaceId: AdaptWorkspaceId): AdaptDomainDef[] {
   if (workspaceId === 'carrier-config') return CARRIER_ADAPT_DOMAINS
-  return FULL_ADAPT_DOMAINS
+  if (workspaceId === 'feature-adapt') return FEATURE_ADAPT_DOMAINS
+  return ADAPT_DEBUG_DOMAINS
 }
 
 export function cloneAdaptDomains(domains: AdaptDomainDef[]): AdaptDomainDef[] {
