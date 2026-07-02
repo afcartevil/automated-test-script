@@ -188,7 +188,7 @@ export const ADAPT_DEBUG_DOMAINS: AdaptDomainDef[] = [
       { name: 'path_b_priv', label: 'Path_B_Priv（目标分支私有仓）', type: 'text', required: true, placeholder: 'D:\\project\\main\\private\\' },
       { name: 'bom_name', label: 'BOM_Name（项目 BOM）', type: 'text', required: true, placeholder: 'ae10_h833_a1 / cm7_h781 / x6870_h781_f1' },
       { name: 'bom_name_target', label: 'BOM_Name_Target（变更后 BOM）', type: 'text', required: true, placeholder: 'x6856_h971_a1' },
-      { name: 'rf_target_location', label: 'RF_TARGET_LOCATION', type: 'select', required: true, options: [{ label: 'public（公共仓）', value: 'public' }, { label: 'private（私有仓）', value: 'private' }] },
+      { name: 'rf_target_location', label: 'RF_TARGET_LOCATION（升级后RF参数目标位置）', type: 'select', required: true, options: [{ label: 'public（公共仓）', value: 'public' }, { label: 'private（私有仓）', value: 'private' }] },
       { name: 'modem_platform', label: 'Modem 平台（补充）', type: 'select', required: false, options: [{ label: 'MTK', value: 'mtk' }, { label: 'Qualcomm', value: 'qcom' }, { label: 'UNISOC', value: 'unisoc' }] },
       { name: 'rf_param_dir', label: 'RF 参数目录（补充）', type: 'text', required: false, placeholder: 'vendor/mediatek/proprietary/modem_1/rf_params' },
       { name: 'carrier', label: '运营商（补充）', type: 'text', required: false, placeholder: 'CMCC / Vodafone' },
