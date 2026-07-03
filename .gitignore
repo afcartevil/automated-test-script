@@ -13,6 +13,10 @@ Thumbs.db
 *.pem
 docs/
 reports/
+.adapt-config/domain-layouts/Untitled
+knowledge-base/.kb-data/
+skills/.claude/skills/test_skill/
+tahp-console/jira_workspace/
 # 知识库数据库持久化数据
 .knowledge_db/
 .chroma_db/
