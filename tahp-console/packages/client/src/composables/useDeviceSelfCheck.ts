@@ -116,6 +116,46 @@ const FLASH_MARKET_OPTIONS = [
   { label: 'India', value: 'India' },
 ]
 
+interface DeviceFlashFormOptions {
+  enableFlash: boolean
+  flashPath: string
+  enableRootPkg: boolean
+  flashStageVersion: string
+}
+
+/** 每台设备独立保存刷机表单，切换设备时恢复 */
+const flashFormByDeviceId = ref<Record<string, DeviceFlashFormOptions>>({})
+
+function snapshotFlashFormOptions(): DeviceFlashFormOptions {
+  return {
+    enableFlash: enableFlash.value,
+    flashPath: flashPath.value,
+    enableRootPkg: enableRootPkg.value,
+    flashStageVersion: flashStageVersion.value,
+  }
+}
+
+function saveFlashFormForDevice(deviceId: string) {
+  flashFormByDeviceId.value = {
+    ...flashFormByDeviceId.value,
+    [deviceId]: snapshotFlashFormOptions(),
+  }
+}
+
+function applyFlashFormOptions(opts?: DeviceFlashFormOptions) {
+  enableFlash.value = opts?.enableFlash ?? false
+  flashPath.value = opts?.flashPath ?? ''
+  enableRootPkg.value = opts?.enableRootPkg ?? false
+  flashStageVersion.value = opts?.flashStageVersion ?? 'Open'
+  dailyFlashResolving.value = false
+}
+
+function clearFlashFormForDevice(deviceId: string) {
+  const next = { ...flashFormByDeviceId.value }
+  delete next[deviceId]
+  flashFormByDeviceId.value = next
+}
+
 function resetFlashProgress() {
   flashActive.value = false
   flashDone.value = null
@@ -444,9 +484,15 @@ function applyFollowCurrentCase(session?: { testType: string; selectedCases?: st
 
 async function selectDevice(deviceId: string) {
   const reselect = selectedDeviceId.value === deviceId && deviceDetailExpanded.value
+  const previousDeviceId = selectedDeviceId.value
+  const switchingDevice = previousDeviceId !== null && previousDeviceId !== deviceId
+  if (switchingDevice && previousDeviceId) {
+    saveFlashFormForDevice(previousDeviceId)
+  }
   try {
     selectedDeviceId.value = deviceId
     deviceDetailExpanded.value = true
+    applyFlashFormOptions(flashFormByDeviceId.value[deviceId])
     const detail = await getDeviceDetail(deviceId)
     selectedDevice.value = detail
     // 切回仍在刷机的设备时恢复刷机面板绑定（切换其他设备期间不清理刷机状态）
@@ -1064,6 +1110,7 @@ async function handleEndTest(deviceId: string) {
   try {
     stopPollingTimer()
     clearFlashPanel()
+    clearFlashFormForDevice(deviceId)
     const result = await endTest(deviceId)
     patchDeviceInList(result.device)
     await loadDevices()
