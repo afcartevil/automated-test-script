@@ -26,6 +26,13 @@ const coreCards = [
     summary: '输入 JIRA Key 或日志，Agent 自动拉单、调 Skill、定位根因并给修复路径。',
   },
   {
+    route: 'tahp.modem-baseline',
+    tone: 'ea-t-amber',
+    icon: 'branch',
+    title: 'Modem基线',
+    summary: '统一承接基线升级、冲突停驻、人工处理与运行历史，先看预览页再逐步接真链路。',
+  },
+  {
     route: 'tahp.self-check',
     tone: 'ea-t-emerald',
     icon: 'shield',
@@ -103,6 +110,15 @@ const currentModelName = computed(() =>
             <path d="M12 9c1.6-.6 3.2-.9 4-.9 3 0 5 1.9 5 3.9s-2 3.9-5 3.9c-.8 0-2.4-.3-4-.9"/>
             <path d="M12 3v18"/>
           </svg>
+          <svg v-else-if="card.icon === 'branch'" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 3v12"/>
+            <path d="M6 9c4 0 4 6 8 6h4"/>
+            <path d="M18 9v6"/>
+            <circle cx="6" cy="3" r="2"/>
+            <circle cx="6" cy="15" r="2"/>
+            <circle cx="18" cy="9" r="2"/>
+            <circle cx="18" cy="15" r="2"/>
+          </svg>
           <svg v-else width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
           </svg>
@@ -153,7 +169,7 @@ const currentModelName = computed(() =>
 .hm-hero { padding: 28px; margin-bottom: 16px; }
 .hm-hero h2 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin: 16px 0 6px; }
 .hm-hero p { font-size: 15px; opacity: 0.85; }
-.hm-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.hm-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 16px; }
 .hm-sm { padding: 24px; }
 .hm-sm h3 { font-size: 19px; font-weight: 700; margin: 14px 0 6px; }
 .hm-sm p { font-size: 13.5px; opacity: 0.82; line-height: 1.5; }

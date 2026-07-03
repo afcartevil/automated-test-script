@@ -1,0 +1,8 @@
+{
+  "NODE_BRANCH": "master",
+  "target_BRANCH": "PRODUCT_V_v0mp1rc_NR15_common",
+  "AP_lable": "V13.29",
+  "DESCRIPTION": "基线升级",
+  "JIRAID": "AR-UIF-0001-001-010",
+  "work_dir": "/home/user/modem"
+}

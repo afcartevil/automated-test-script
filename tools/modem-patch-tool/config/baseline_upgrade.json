@@ -1,0 +1,10 @@
+{
+  "NODE_BRANCH": "s0.mp1_v17.23_gen97_odm_wtn",
+  "target_BRANCH": "PRODUCT_S_s0mp1rc_GEN97_common",
+  "AP_lable": "V12.34",
+  "DESCRIPTION": "BASELINE_UPGRADE",
+  "JIRAID": "AR-20250418-0001",
+  "work_dir": "Z:\\mtk\\modem\\s\\MT6833_MT6877_SP_MOLY.NR15.R3.MP_S0",
+  "mapped_prefix": "Z:",
+  "remote_prefix": "/work/code/yue.chen11"
+}

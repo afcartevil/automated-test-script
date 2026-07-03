@@ -37,6 +37,11 @@ const router = createRouter({
       component: () => import('@/views/tahp/BugAnalysisView.vue'),
     },
     {
+      path: '/tahp/modem-baseline',
+      name: 'tahp.modem-baseline',
+      component: () => import('@/views/tahp/ModemBaselineView.vue'),
+    },
+    {
       path: '/tahp/self-check',
       name: 'tahp.self-check',
       component: () => import('@/views/tahp/DeviceSelfCheckView.vue'),

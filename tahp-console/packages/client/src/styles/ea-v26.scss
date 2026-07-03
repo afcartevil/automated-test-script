@@ -423,6 +423,8 @@
 .ea-t-indigo { background: var(--indigo-bg); border-color: color-mix(in srgb, var(--indigo-ic) 16%, transparent); color: var(--indigo-fg); }
 .ea-t-sky { background: var(--sky-bg); border-color: color-mix(in srgb, var(--sky-ic) 16%, transparent); color: var(--sky-fg); }
 .ea-t-emerald { background: var(--emerald-bg); border-color: color-mix(in srgb, var(--emerald-ic) 16%, transparent); color: var(--emerald-fg); }
+.ea-t-amber { background: var(--amber-bg); border-color: color-mix(in srgb, var(--amber-ic) 16%, transparent); color: var(--amber-fg); }
+.ea-t-violet { background: var(--violet-bg); border-color: color-mix(in srgb, var(--violet-ic) 16%, transparent); color: var(--violet-fg); }
 
 .ea-rep-grid {
   display: grid;
