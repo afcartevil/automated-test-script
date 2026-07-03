@@ -7,7 +7,7 @@ export const ADAPT_DEBUG_DOMAINS: AdaptDomainDef[] = [
     label: 'TP触摸屏',
     icon: 'TP',
     color: '#388bfd',
-    status: 'active',
+    status: 'pending',
     relatedSkills: ['tp-adapt-bringup'],
     fields: [
       { name: 'debug_project', label: '调试项目名', type: 'text', required: true, placeholder: '如 X6876_H786' },

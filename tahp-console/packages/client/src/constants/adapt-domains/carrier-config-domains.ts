@@ -7,7 +7,7 @@ export const CARRIER_ADAPT_DOMAINS: AdaptDomainDef[] = [
     label: 'CarrierConfig配置',
     icon: 'CC',
     color: '#0969da',
-    status: 'active',
+    status: 'pending',
     module: 'telephony',
     relatedSkills: ['carrierconfig-tools', 'jira-ops'],
     interactionMode: true,
@@ -26,7 +26,7 @@ export const CARRIER_ADAPT_DOMAINS: AdaptDomainDef[] = [
     label: 'APN配置',
     icon: 'APN',
     color: '#2da44e',
-    status: 'active',
+    status: 'pending',
     module: 'telephony',
     relatedSkills: ['apn-edit'],
     fields: [

@@ -7,7 +7,7 @@ export const FEATURE_ADAPT_DOMAINS: AdaptDomainDef[] = [
     label: 'TP触摸屏',
     icon: 'TP',
     color: '#388bfd',
-    status: 'active',
+    status: 'pending',
     relatedSkills: [
       'tp-adapt-smart-sampling',
       'tp-adapt-super-resolution',

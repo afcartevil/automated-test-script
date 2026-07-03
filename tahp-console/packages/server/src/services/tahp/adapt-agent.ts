@@ -995,6 +995,44 @@ export async function completeAdaptAgentRun(taskId: string): Promise<{ ok: boole
   }
 }
 
+/**
+ * 终止一个正在执行的适配任务（任意域，含非交互域）。
+ * 中断桥接会话、标记失败、发出 task.failed 事件并清理运行时资源，
+ * 使前端能立即退出「大模型思考中」状态并允许重新发起。
+ */
+export async function cancelAdaptAgentRun(taskId: string): Promise<{ ok: boolean; error?: string }> {
+  const ctx = taskCtx.get(taskId)
+  if (!ctx) return { ok: false, error: `找不到任务: ${taskId}` }
+  if (ctx.status === 'completed' || ctx.status === 'failed') {
+    return { ok: false, error: '任务已结束' }
+  }
+
+  const pending = pendingUserInputByTask.get(taskId)
+  if (pending?.timeoutTimer) clearTimeout(pending.timeoutTimer)
+  pendingUserInputByTask.delete(taskId)
+  clearApprovalTimers(taskId)
+
+  const runtime = taskRuntime.get(taskId)
+  if (runtime) runtime.userInputPause = undefined
+
+  const sessionId = ctx.sessionId
+  if (sessionId) {
+    await sharedBridgeClient.interrupt(sessionId, '用户终止任务').catch(() => {})
+  }
+
+  const msg = '任务已被用户终止'
+  ctx.status = 'failed'
+  ctx.error = msg
+  ctx.completedAt = new Date().toISOString()
+  taskCtx.set(taskId, ctx)
+
+  emit(taskId, 'task.failed', { error: msg, message: msg, cancelled: true })
+
+  cleanupAdaptSession(taskId, ctx)
+  adaptRunInProgress.delete(taskId)
+  return { ok: true }
+}
+
 export async function respondAdaptApproval(
   taskId: string,
   approvalId: string,

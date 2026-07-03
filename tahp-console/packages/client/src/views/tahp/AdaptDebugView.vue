@@ -12,7 +12,9 @@ import { useModelProviderReadiness } from '@/composables/useModelProviderReadine
 import { useTahpTasksStore } from '@/stores/tahp/tasks'
 import type { TahpModule } from '@/constants/tahp-modules'
 import { fetchDynamicDomains } from '@/api/tahp/skills'
-import { startAdaptAgentRun, previewAdaptAgentPrompts, submitAdaptUserInput, continueAdaptAgentRun, respondAdaptApproval, completeAdaptAgentRun } from '@/api/tahp/adapt'
+import { startAdaptAgentRun, previewAdaptAgentPrompts, submitAdaptUserInput, continueAdaptAgentRun, respondAdaptApproval, completeAdaptAgentRun, cancelAdaptAgentRun } from '@/api/tahp/adapt'
+import { listTaskReports, getTaskReport, type TaskReportSummary, type TaskReportDetail } from '@/api/tahp/reports'
+import { waitForTahpSocketReady } from '@/api/tahp/socket'
 import { fetchSkills, type SkillInfo } from '@/api/hermes/skills'
 import {
   fetchAdaptLayouts,
@@ -181,6 +183,54 @@ const runStateByWorkspace = reactive<Record<AdaptWorkspaceId, WorkspaceRunState>
   'feature-adapt': defaultRunState(),
   'carrier-config': defaultRunState(),
 })
+
+/** 各工作区 × 域 当前活跃运行（用于进行中计数与域按钮闪烁） */
+interface DomainActiveRun {
+  taskId: string
+  domainId: string
+  workspaceId: AdaptWorkspaceId
+}
+const activeRunsByKey = reactive<Record<string, DomainActiveRun>>({})
+
+function domainRunKey(workspaceId: AdaptWorkspaceId, domainId: string): string {
+  return `${workspaceId}:${domainId}`
+}
+
+function isTaskStreamActive(taskId: string): boolean {
+  const evs = tasksStore.getStream(taskId)
+  if (!evs.length) {
+    return launchedTaskId.value === taskId && isRunning.value
+  }
+  const last = evs[evs.length - 1]
+  if (last.type === 'task.completed' || last.type === 'task.failed' || last.type === 'task.cancelled') return false
+  return true
+}
+
+const runningTasksCount = computed(() =>
+  Object.values(activeRunsByKey).filter(
+    r => r.workspaceId === activeWorkspaceId.value && isTaskStreamActive(r.taskId),
+  ).length,
+)
+
+function domainRunDotClass(domainId: string): string {
+  const rk = domainRunKey(activeWorkspaceId.value, domainId)
+  const run = activeRunsByKey[rk]
+  if (run && isTaskStreamActive(run.taskId)) return 'dot-running'
+  const domain = DOMAINS.value.find(d => d.id === domainId)
+  if (domain?.status === 'done') return 'dot-done'
+  if (domain?.status === 'warn') return 'dot-warn'
+  return 'dot-pending'
+}
+
+function registerActiveRun(taskId: string, domainId: string, workspaceId: AdaptWorkspaceId = activeWorkspaceId.value) {
+  activeRunsByKey[domainRunKey(workspaceId, domainId)] = { taskId, domainId, workspaceId }
+}
+
+function unregisterActiveRun(taskId: string) {
+  for (const [key, run] of Object.entries(activeRunsByKey)) {
+    if (run.taskId === taskId) delete activeRunsByKey[key]
+  }
+}
 
 const agentLaunching = computed({
   get: () => runStateByWorkspace[activeWorkspaceId.value].agentLaunching,
@@ -659,6 +709,268 @@ function setFieldValue(fieldName: string, value: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 历史表单（复用 adapt-agent 运行报告：含 form_data，可回填 + 查看报告）
+// ─────────────────────────────────────────────────────────────────────────────
+const historyLoading = ref(false)
+const historyItems = ref<TaskReportSummary[]>([])
+const historyScope = ref<'current' | 'all'>('current')
+const historySearch = ref('')
+const expandedTaskId = ref<string | null>(null)
+const expandedLoading = ref(false)
+const detailCache = reactive<Record<string, TaskReportDetail>>({})
+/** 最近回填的字段名，用于表单高亮反馈（1.5s 后清空） */
+const refilledFields = ref<string[]>([])
+let refillHighlightTimer: ReturnType<typeof setTimeout> | null = null
+
+async function loadHistory() {
+  historyLoading.value = true
+  try {
+    const all = await listTaskReports()
+    historyItems.value = all.filter(
+      item => !item.report_type || item.report_type === 'adapt_agent',
+    )
+  } catch {
+    // 历史加载失败不影响主功能
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+/** 当前工作区包含的域 id 集合（「全部域」范围限定在当前工作区，避免跨 Tab 混入） */
+const currentWorkspaceDomainIds = computed(() => new Set(DOMAINS.value.map(d => d.id)))
+
+const filteredHistory = computed<TaskReportSummary[]>(() => {
+  const wsIds = currentWorkspaceDomainIds.value
+  const kw = historySearch.value.trim().toLowerCase()
+  return historyItems.value.filter((item) => {
+    const domainId = item.domain || ''
+    if (!wsIds.has(domainId)) return false
+    if (historyScope.value === 'current' && domainId !== activeDomainId.value) return false
+    if (kw) {
+      const detail = detailCache[item.task_id]
+      const haystack = [
+        item.domain_label,
+        item.domain,
+        item.task_id,
+        detail ? projectNameOf(detail) : '',
+      ].filter(Boolean).join(' ').toLowerCase()
+      if (!haystack.includes(kw)) return false
+    }
+    return true
+  })
+})
+
+async function ensureDetail(taskId: string): Promise<TaskReportDetail | null> {
+  if (detailCache[taskId]) return detailCache[taskId]
+  try {
+    const d = await getTaskReport(taskId)
+    detailCache[taskId] = d
+    return d
+  } catch {
+    return null
+  }
+}
+
+/** 为当前筛选结果预取详情（补齐标题项目名与状态），限量避免请求过多 */
+async function prefetchHistoryDetails() {
+  const pending = filteredHistory.value
+    .filter(item => !detailCache[item.task_id])
+    .slice(0, 50)
+  await Promise.all(pending.map(item => ensureDetail(item.task_id)))
+}
+
+function domainDefById(id?: string): DomainDef | undefined {
+  if (!id) return undefined
+  return DOMAINS.value.find(d => d.id === id)
+}
+
+/** 取一次运行的「项目名」：该域第一个必填字段的值，回退域标签 */
+function projectNameOf(detail: TaskReportDetail): string {
+  const domain = domainDefById(detail.domain_id || detail.domain)
+  const fd = detail.form_data || {}
+  if (domain) {
+    const firstRequired = domain.fields.find(f => f.required && fd[f.name])
+    if (firstRequired && fd[firstRequired.name]) return fd[firstRequired.name]
+    const firstAny = domain.fields.find(f => fd[f.name])
+    if (firstAny && fd[firstAny.name]) return fd[firstAny.name]
+  }
+  return detail.domain_label || detail.domain || detail.task_id
+}
+
+/** 折叠行标题：域简写 + 项目名 */
+function historyTitle(item: TaskReportSummary): string {
+  const badge = historyBadge(item)
+  const detail = detailCache[item.task_id]
+  const project = detail ? projectNameOf(detail) : (item.domain_label || item.domain || '')
+  const label = [badge.label, project].filter(Boolean).join(' · ')
+  return label || item.task_id || '未命名任务'
+}
+
+/** 域徽标（图标/颜色）来自当前工作区域定义 */
+function historyBadge(item: TaskReportSummary): { icon: string; color: string; label: string } {
+  const domain = domainDefById(item.domain)
+  return {
+    icon: domain?.icon || (item.domain || '?').slice(0, 3).toUpperCase(),
+    color: domain?.color || '#94a3b8',
+    label: domain?.label || item.domain_label || item.domain || '',
+  }
+}
+
+function historyStatus(item: TaskReportSummary): { label: string; type: 'success' | 'error' | 'warning' | 'default' } {
+  const status = (detailCache[item.task_id]?.status || '').toLowerCase()
+  if (/(complete|done|success|finish)/.test(status)) return { label: '成功', type: 'success' }
+  if (/(fail|error)/.test(status)) return { label: '失败', type: 'error' }
+  if (/(user_ended|ended|cancel)/.test(status)) return { label: '已结束', type: 'warning' }
+  if (item.completed_at) return { label: '已完成', type: 'default' }
+  return { label: '进行中', type: 'warning' }
+}
+
+function relativeTime(input?: string | number): string {
+  if (!input) return ''
+  const ts = typeof input === 'number' ? input : Date.parse(input)
+  if (!ts || Number.isNaN(ts)) return ''
+  const diff = Date.now() - ts
+  if (diff < 60_000) return '刚刚'
+  const mins = Math.floor(diff / 60_000)
+  if (mins < 60) return `${mins} 分钟前`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours} 小时前`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days} 天前`
+  return new Date(ts).toLocaleDateString()
+}
+
+function absoluteTime(input?: string | number): string {
+  if (!input) return ''
+  const ts = typeof input === 'number' ? input : Date.parse(input)
+  if (!ts || Number.isNaN(ts)) return ''
+  return new Date(ts).toLocaleString()
+}
+
+function historyTimeValue(item: TaskReportSummary): string | number | undefined {
+  return item.completed_at || item.started_at || item.mtime
+}
+
+async function toggleExpand(taskId: string) {
+  if (expandedTaskId.value === taskId) {
+    expandedTaskId.value = null
+    return
+  }
+  expandedTaskId.value = taskId
+  if (!detailCache[taskId]) {
+    expandedLoading.value = true
+    await ensureDetail(taskId)
+    expandedLoading.value = false
+  }
+}
+
+/** 展开面板：表单快照（字段 label → value） */
+function formSnapshot(detail: TaskReportDetail): Array<{ label: string; value: string }> {
+  const fd = detail.form_data || {}
+  const domain = domainDefById(detail.domain_id || detail.domain)
+  const rows: Array<{ label: string; value: string }> = []
+  if (domain) {
+    for (const f of domain.fields) {
+      const v = fd[f.name]
+      if (v) rows.push({ label: f.label || f.name, value: v })
+    }
+  } else {
+    for (const [k, v] of Object.entries(fd)) {
+      if (v) rows.push({ label: k, value: String(v) })
+    }
+  }
+  return rows
+}
+
+/** 报告摘要首行（结论） */
+function reportSummaryLine(detail: TaskReportDetail): string {
+  const text = (detail.llm_response || detail.audit_report || '').trim()
+  if (!text) return '无文本结论'
+  const firstLine = text.split('\n').map(l => l.replace(/^#+\s*/, '').trim()).find(l => l.length > 0)
+  if (!firstLine) return '无文本结论'
+  return firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine
+}
+
+function auditCounts(detail: TaskReportDetail): { pass: number; fail: number } {
+  const items = detail.audit_summary || []
+  return {
+    pass: items.filter(i => i.status === 'pass').length,
+    fail: items.filter(i => i.status === 'fail').length,
+  }
+}
+
+// ── 回填 ──────────────────────────────────────────────────────────────────
+const refillPendingDetail = ref<TaskReportDetail | null>(null)
+const refillConfirmVisible = ref(false)
+
+function domainFormHasContent(domainId: string): boolean {
+  const domain = domainDefById(domainId)
+  if (!domain) return false
+  const form = formData[formScopeKey(domainId)] || {}
+  return domain.fields.some(f => (form[f.name] ?? '').trim() !== '')
+}
+
+function requestRefill(detail: TaskReportDetail | null) {
+  if (!detail) return
+  const targetId = detail.domain_id || detail.domain
+  if (!targetId || !domainDefById(targetId)) {
+    message.warning('该记录对应的适配域已不存在于当前工作区，无法回填')
+    return
+  }
+  if (!detail.form_data || Object.keys(detail.form_data).length === 0) {
+    message.warning('该记录未保存表单快照，无法回填')
+    return
+  }
+  if (domainFormHasContent(targetId)) {
+    refillPendingDetail.value = detail
+    refillConfirmVisible.value = true
+    return
+  }
+  applyRefill(detail)
+}
+
+function applyRefill(detail: TaskReportDetail) {
+  const targetId = detail.domain_id || detail.domain
+  const domain = domainDefById(targetId)
+  if (!domain) return
+  const fd = detail.form_data || {}
+
+  activeDomainId.value = domain.id
+  const key = formScopeKey(domain.id)
+  if (!formData[key]) formData[key] = {}
+
+  const validNames = new Set(domain.fields.map(f => f.name))
+  let filled = 0
+  for (const f of domain.fields) {
+    if (fd[f.name] !== undefined && fd[f.name] !== '') {
+      formData[key][f.name] = String(fd[f.name])
+      filled++
+    }
+  }
+  const ignored = Object.keys(fd).filter(k => k && !validNames.has(k) && fd[k]).length
+
+  refilledFields.value = domain.fields.filter(f => fd[f.name]).map(f => f.name)
+  if (refillHighlightTimer) clearTimeout(refillHighlightTimer)
+  refillHighlightTimer = setTimeout(() => { refilledFields.value = [] }, 1500)
+
+  refillConfirmVisible.value = false
+  refillPendingDetail.value = null
+  expandedTaskId.value = null
+
+  message.success(
+    ignored > 0
+      ? `已回填 ${filled} 个字段，${ignored} 个字段因布局变更已忽略`
+      : `已回填 ${filled} 个字段`,
+  )
+}
+
+function viewReport(taskId: string) {
+  router.push({ name: 'tahp.reports', query: { task_id: taskId } })
+}
+
+watch([filteredHistory], () => { prefetchHistoryDetails() })
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 执行 / 监控状态（按工作区隔离，见 runStateByWorkspace）
 // ─────────────────────────────────────────────────────────────────────────────
 const eventListEl = ref<HTMLElement | null>(null)
@@ -1058,18 +1370,22 @@ async function onCompleteAdaptTask() {
   }
 }
 
-// 监听事件流 → 更新状态 + 自动滚动到底部
+// 监听事件流 → 更新状态 + 自动滚动到底部 + 任务结束时刷新历史
 watch(stream, async (evs) => {
   if (!evs.length) return
   const last = evs[evs.length - 1]
-  if (last.type === 'task.completed')
+  if (last.type === 'task.completed') {
     taskStatus.value = 'COMPLETED'
-  else if (last.type === 'task.failed')
+    unregisterActiveRun(launchedTaskId.value || '')
+    void loadHistory()
+  } else if (last.type === 'task.failed') {
     taskStatus.value = 'FAILED'
-  else if (last.type === 'task.phase')
+    unregisterActiveRun(launchedTaskId.value || '')
+  } else if (last.type === 'task.phase') {
     taskStatus.value = (last.payload?.phase as string) || 'running'
-  else if (taskStatus.value !== 'COMPLETED' && taskStatus.value !== 'FAILED')
+  } else if (taskStatus.value !== 'COMPLETED' && taskStatus.value !== 'FAILED') {
     taskStatus.value = 'running'
+  }
 
   await nextTick()
   if (eventListEl.value) {
@@ -1124,7 +1440,7 @@ async function loadDynamicDomains(workspaceId: AdaptWorkspaceId = activeWorkspac
         label:         dd.label,
         icon:          dd.icon,
         color:         dd.color,
-        status:        'active',
+        status:        'pending',
         relatedSkills: dd.relatedSkills || [dd.skillId],
         fields:        (dd.fields || []).map((f: any) => ({
           name:        f.name,
@@ -1156,6 +1472,7 @@ onMounted(async () => {
   await loadDynamicDomains(ws)
   await loadAdaptLayouts({ workspaceId: ws, showError: false })
   layoutsReadyByWorkspace[ws] = true
+  await loadHistory()
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1243,6 +1560,21 @@ async function launchAgentAdapt() {
     return
   }
 
+  const ws = activeWorkspaceId.value
+  const domainId = activeDomainId.value
+  const runKey = domainRunKey(ws, domainId)
+  const existingRun = activeRunsByKey[runKey]
+  if (existingRun && isTaskStreamActive(existingRun.taskId)) {
+    try {
+      await cancelAdaptAgentRun(existingRun.taskId)
+      unregisterActiveRun(existingRun.taskId)
+      message.info('已终止同域上一次未完成的任务')
+    } catch {
+      message.warning('同域仍有任务在执行，请稍候或手动终止后再试')
+      return
+    }
+  }
+
   agentLaunching.value = true
   monitorMode.value = 'agent'
   taskStatus.value = 'starting'
@@ -1253,11 +1585,13 @@ async function launchAgentAdapt() {
 
   try {
     tasksStore.ensureSocket()
+    await waitForTahpSocketReady()
     const data = await startAdaptAgentRun(buildAgentRunPayload())
     const tid = data.task_id
     if (tid) {
       launchedTaskId.value = tid
       tasksStore.trackTask(tid)
+      registerActiveRun(tid, domainId, ws)
       message.success(`Agent 任务已启动: ${tid}`)
     }
   } catch (err) {
@@ -1268,10 +1602,34 @@ async function launchAgentAdapt() {
   }
 }
 
+/** 统一三个入口的监控视图布局（均展示三栏 Agent 监控） */
+function openMonitorView() {
+  monitorMode.value = 'agent'
+  showMonitor.value = true
+}
+
+const cancelTaskLoading = ref(false)
+
+async function cancelRunningTask() {
+  const tid = launchedTaskId.value
+  if (!tid || !isRunning.value) return
+  cancelTaskLoading.value = true
+  try {
+    await cancelAdaptAgentRun(tid)
+    taskStatus.value = 'FAILED'
+    unregisterActiveRun(tid)
+    message.info('任务已终止')
+  } catch (err) {
+    message.error(`终止失败: ${(err as Error).message}`)
+  } finally {
+    cancelTaskLoading.value = false
+  }
+}
+
 function backToForm() {
   showMonitor.value = false
-  monitorMode.value = null
-  // 保留 launchedTaskId，以便用户再次点击"查看进度"
+  // 保留 launchedTaskId 与 monitorMode，再次打开监控时仍为 Agent 三栏布局
+  loadHistory()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1355,7 +1713,7 @@ function openSkill(skillName: string) {
       >
         <span class="ea-domain-badge" :style="{ background: domain.color }">{{ domain.icon }}</span>
         {{ domain.label }}
-        <span class="adapt-domain-dot" :class="`dot-${domain.status}`" />
+        <span class="adapt-domain-dot" :class="domainRunDotClass(domain.id)" />
       </button>
     </div>
 
@@ -1486,7 +1844,7 @@ function openSkill(skillName: string) {
                     v-for="field in activeDomain.fields"
                     :key="activeDomainId + '-' + field.name"
                     class="ea-field"
-                    :class="{ 'ea-field-full': field.type === 'textarea' }"
+                    :class="{ 'ea-field-full': field.type === 'textarea', 'ea-field-refilled': refilledFields.includes(field.name) }"
                   >
                     <label>
                       {{ field.label }}
@@ -1553,7 +1911,7 @@ function openSkill(skillName: string) {
                     v-if="launchedTaskId"
                     size="large"
                     secondary
-                    @click="showMonitor = true"
+                    @click="openMonitorView"
                   >
                     <template #icon>
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -1582,7 +1940,7 @@ function openSkill(skillName: string) {
               </div>
               <div class="mg">
                 <div class="mg-k">进行中</div>
-                <div class="mg-v adapt-stat-active">{{ DOMAINS.filter(d => d.status === 'active').length }}</div>
+                <div class="mg-v adapt-stat-active">{{ runningTasksCount }}</div>
               </div>
               <div class="mg">
                 <div class="mg-k">总进度</div>
@@ -1616,29 +1974,107 @@ function openSkill(skillName: string) {
               size="tiny"
               type="primary"
               style="margin-top:8px;width:100%;"
-              @click="showMonitor = true"
+              @click="openMonitorView"
             >查看执行详情</NButton>
           </EaCard>
 
           <EaCard>
-            <div class="ea-section-title">域列表</div>
-            <div class="ea-tasklist">
-              <button
-                v-for="d in DOMAINS"
-                :key="d.id"
-                type="button"
-                class="ea-task-item"
-                :class="{ active: d.id === activeDomainId }"
-                @click="selectDomain(d.id)"
+            <div class="ea-row ea-between adapt-history-head">
+              <div class="ea-section-title ea-mb0">历史表单</div>
+              <div class="ea-row" style="gap:6px">
+                <NSelect
+                  v-model:value="historyScope"
+                  size="tiny"
+                  style="width:104px"
+                  :options="[
+                    { label: '仅当前域', value: 'current' },
+                    { label: '全部域', value: 'all' },
+                  ]"
+                />
+                <NButton size="tiny" quaternary :loading="historyLoading" title="刷新历史" @click="loadHistory">
+                  刷新
+                </NButton>
+              </div>
+            </div>
+
+            <NInput
+              v-model:value="historySearch"
+              size="small"
+              clearable
+              placeholder="搜索项目名 / 域 / 任务号"
+              style="margin:8px 0"
+            />
+
+            <div v-if="historyLoading && !historyItems.length" class="adapt-history-empty">
+              <NSpin size="small" />
+            </div>
+            <div v-else-if="!filteredHistory.length" class="adapt-history-empty">
+              暂无历史运行记录，完成一次 Agent 自动适配后这里会出现记录。
+            </div>
+
+            <div v-else class="adapt-history-list">
+              <div
+                v-for="item in filteredHistory"
+                :key="item.task_id"
+                class="adapt-history-item"
+                :class="{ expanded: expandedTaskId === item.task_id }"
               >
-                <div class="ti-top">
-                  <span class="ea-row" style="gap:8px">
-                    <span class="ea-domain-badge" :style="{ background: d.color }">{{ d.icon }}</span>
-                    {{ d.label }}
+                <button type="button" class="ahi-row" @click="toggleExpand(item.task_id)">
+                  <span class="ahi-badge" :style="{ background: historyBadge(item).color }">
+                    {{ historyBadge(item).icon }}
                   </span>
-                  <span class="adapt-domain-dot" :class="`dot-${d.status}`" />
+                  <span class="ahi-main">
+                    <span class="ahi-title" :title="historyTitle(item)">
+                      {{ historyTitle(item) }}
+                    </span>
+                    <span class="ahi-time" :title="absoluteTime(historyTimeValue(item))">
+                      {{ relativeTime(historyTimeValue(item)) }}
+                    </span>
+                  </span>
+                  <NTag size="tiny" :type="historyStatus(item).type">{{ historyStatus(item).label }}</NTag>
+                  <span class="ahi-caret" :class="{ open: expandedTaskId === item.task_id }">▸</span>
+                </button>
+
+                <div v-if="expandedTaskId === item.task_id" class="ahi-detail">
+                  <div v-if="expandedLoading && !detailCache[item.task_id]" class="ahi-detail-loading">
+                    <NSpin size="small" />
+                  </div>
+                  <template v-else-if="detailCache[item.task_id]">
+                    <div class="ahi-snap">
+                      <div class="ahi-sub">表单快照</div>
+                      <div v-if="formSnapshot(detailCache[item.task_id]).length" class="ahi-snap-grid">
+                        <template v-for="row in formSnapshot(detailCache[item.task_id])" :key="row.label">
+                          <span class="ahi-k">{{ row.label }}</span>
+                          <span class="ahi-v" :title="row.value">{{ row.value }}</span>
+                        </template>
+                      </div>
+                      <div v-else class="ahi-muted">该记录未保存表单快照</div>
+                    </div>
+
+                    <div class="ahi-report">
+                      <div class="ahi-sub">运行报告</div>
+                      <div class="ahi-report-line">{{ reportSummaryLine(detailCache[item.task_id]) }}</div>
+                      <div class="ahi-report-meta">
+                        <span>改动文件 {{ item.files_modified ?? 0 }}</span>
+                        <span v-if="auditCounts(detailCache[item.task_id]).pass || auditCounts(detailCache[item.task_id]).fail">
+                          审计 ✓{{ auditCounts(detailCache[item.task_id]).pass }} ✗{{ auditCounts(detailCache[item.task_id]).fail }}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div class="ahi-actions">
+                      <NButton
+                        size="tiny"
+                        type="primary"
+                        :disabled="!detailCache[item.task_id].form_data || !Object.keys(detailCache[item.task_id].form_data || {}).length"
+                        @click="requestRefill(detailCache[item.task_id])"
+                      >回填此表单</NButton>
+                      <NButton size="tiny" @click="viewReport(item.task_id)">查看完整报告</NButton>
+                    </div>
+                  </template>
+                  <div v-else class="ahi-muted">报告加载失败</div>
                 </div>
-              </button>
+              </div>
             </div>
           </EaCard>
         </div>
@@ -1658,6 +2094,16 @@ function openSkill(skillName: string) {
           </div>
           <div class="ea-row" style="gap:10px">
             <code v-if="launchedTaskId" class="adapt-taskid">{{ launchedTaskId }}</code>
+            <NButton
+              v-if="isRunning && launchedTaskId"
+              size="small"
+              type="error"
+              secondary
+              :loading="cancelTaskLoading"
+              @click="cancelRunningTask"
+            >
+              终止任务
+            </NButton>
             <EaPill :variant="statusTagType === 'success' ? 'ok' : statusTagType === 'error' ? 'err' : statusTagType === 'warning' ? 'warn' : 'info'">
               <span v-if="isRunning" class="ea-dot-live" />
               {{ taskStatus || 'starting' }}
@@ -1700,7 +2146,7 @@ function openSkill(skillName: string) {
         </div>
 
         <!-- 主监控视图：有 taskId 即展示步骤时间线 -->
-        <div v-else class="ea-monitor adapt-monitor-body" :class="{ 'adapt-monitor-agent': monitorMode === 'agent' }">
+        <div v-else class="ea-monitor adapt-monitor-body" :class="{ 'adapt-monitor-agent': monitorMode === 'agent' || !!launchedTaskId }">
           <div v-if="agentRunError" class="adapt-error-banner">
             <strong>任务失败</strong>
             <pre class="adapt-error-text">{{ agentRunError }}</pre>
@@ -1782,7 +2228,7 @@ function openSkill(skillName: string) {
           </div>
 
           <!-- Skill / 文件（右侧） -->
-          <div v-if="monitorMode === 'agent'" class="adapt-sidebar-col">
+          <div v-if="monitorMode === 'agent' || launchedTaskId" class="adapt-sidebar-col">
             <div class="ea-mon-panel adapt-mon-scroll-panel">
               <h4>Skill / 工具调用</h4>
               <div class="adapt-mon-scroll-body">
@@ -1946,6 +2392,23 @@ function openSkill(skillName: string) {
       </div>
     </NModal>
 
+    <NModal
+      v-model:show="refillConfirmVisible"
+      preset="card"
+      title="覆盖当前表单？"
+      style="width: min(420px, 92vw);"
+    >
+      <p class="adapt-refill-confirm-text">
+        目标域「{{ domainDefById(refillPendingDetail?.domain_id || refillPendingDetail?.domain)?.label || '' }}」当前表单已有内容，回填将覆盖这些字段。是否继续？
+      </p>
+      <template #footer>
+        <div class="ea-row ea-between">
+          <NButton size="small" @click="refillConfirmVisible = false; refillPendingDetail = null">取消</NButton>
+          <NButton size="small" type="primary" @click="refillPendingDetail && applyRefill(refillPendingDetail)">覆盖回填</NButton>
+        </div>
+      </template>
+    </NModal>
+
     <BugAnalysisInteractionModal
       v-if="isInteractiveDomain"
       :approval="pendingApproval"
@@ -2023,7 +2486,8 @@ function openSkill(skillName: string) {
   flex-shrink: 0;
 
   &.dot-done { background: var(--success); }
-  &.dot-active { background: var(--info); animation: ea-blink 1.5s infinite; }
+  &.dot-running { background: var(--info); animation: ea-blink 1.5s infinite; }
+  &.dot-active { background: var(--info); }
   &.dot-warn { background: var(--warn); }
   &.dot-pending { background: var(--line-strong); }
 }
@@ -2739,5 +3203,171 @@ $adapt-sidebar-gap: 10px;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* ── 历史表单 ─────────────────────────────────────────────── */
+.adapt-history-head {
+  align-items: center;
+}
+.adapt-history-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 8px;
+  font-size: 12.5px;
+  color: var(--text-3, #94a3b8);
+  text-align: center;
+  line-height: 1.6;
+}
+.adapt-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 420px;
+  overflow-y: auto;
+  min-height: 48px;
+}
+.adapt-history-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg, #fff);
+  transition: border-color .15s;
+  min-height: 44px;
+  flex-shrink: 0;
+}
+.adapt-history-item.expanded {
+  border-color: var(--primary, #6366f1);
+}
+.ahi-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  min-height: 44px;
+  box-sizing: border-box;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.ahi-row:hover {
+  background: var(--hover, rgba(99, 102, 241, .06));
+}
+.ahi-badge {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ahi-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ahi-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-1, #1e293b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ahi-domain {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-3, #94a3b8);
+  margin-right: 2px;
+}
+.ahi-time {
+  font-size: 11px;
+  color: var(--text-3, #94a3b8);
+}
+.ahi-caret {
+  flex: 0 0 auto;
+  color: var(--text-3, #94a3b8);
+  transition: transform .15s;
+  font-size: 11px;
+}
+.ahi-caret.open {
+  transform: rotate(90deg);
+}
+.ahi-detail {
+  padding: 8px 10px 10px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ahi-detail-loading {
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+}
+.ahi-sub {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-3, #94a3b8);
+  margin-bottom: 4px;
+}
+.ahi-snap-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  font-size: 12px;
+}
+.ahi-k {
+  color: var(--text-3, #94a3b8);
+  white-space: nowrap;
+}
+.ahi-v {
+  color: var(--text-1, #1e293b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-all;
+}
+.ahi-muted {
+  font-size: 12px;
+  color: var(--text-3, #94a3b8);
+}
+.ahi-report-line {
+  font-size: 12px;
+  color: var(--text-2, #475569);
+  line-height: 1.5;
+}
+.ahi-report-meta {
+  margin-top: 4px;
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-3, #94a3b8);
+}
+.ahi-actions {
+  display: flex;
+  gap: 8px;
+}
+.adapt-refill-confirm-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-2, #475569);
+}
+.ea-field-refilled {
+  animation: adapt-refill-flash 1.5s ease-out;
+}
+@keyframes adapt-refill-flash {
+  0% { background: rgba(99, 102, 241, .18); }
+  100% { background: transparent; }
 }
 </style>

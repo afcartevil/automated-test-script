@@ -74,6 +74,10 @@ export function completeAdaptAgentRun(taskId: string): Promise<{ ok: boolean }> 
   return tahpPost(`/api/tahp/adapt/agent-run/${encodeURIComponent(taskId)}/complete`)
 }
 
+export function cancelAdaptAgentRun(taskId: string): Promise<{ ok: boolean }> {
+  return tahpPost(`/api/tahp/adapt/agent-run/${encodeURIComponent(taskId)}/cancel`)
+}
+
 export interface AdaptAgentPromptPreview {
   system_prompt: string
   user_prompt: string

@@ -17,6 +17,7 @@ import {
   continueAdaptAgentRun,
   respondAdaptApproval,
   completeAdaptAgentRun,
+  cancelAdaptAgentRun,
   type AdaptAgentRunInput,
   type AdaptAgentFieldMeta,
 } from '../../services/tahp/adapt-agent'
@@ -346,6 +347,17 @@ tahpAdaptRoutes.post('/api/tahp/adapt/agent-run/:taskId/continue', async (ctx) =
 tahpAdaptRoutes.post('/api/tahp/adapt/agent-run/:taskId/complete', async (ctx) => {
   const { taskId } = ctx.params
   const result = await completeAdaptAgentRun(taskId)
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+  ctx.body = { success: true, data: { ok: true } }
+})
+
+tahpAdaptRoutes.post('/api/tahp/adapt/agent-run/:taskId/cancel', async (ctx) => {
+  const { taskId } = ctx.params
+  const result = await cancelAdaptAgentRun(taskId)
   if (!result.ok) {
     ctx.status = 400
     ctx.body = { success: false, error: result.error }
