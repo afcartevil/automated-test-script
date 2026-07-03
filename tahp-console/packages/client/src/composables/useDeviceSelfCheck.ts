@@ -1472,6 +1472,7 @@ const getCaseGroups = computed(() => {
   const modules: Record<string, ModuleCondition[]> = {}
   
   for (const [, config] of Object.entries(moduleConditions.value)) {
+    if (config.customOnly) continue
     if (config.testType === testType) {
       if (!modules[config.moduleLabel]) {
         modules[config.moduleLabel] = []

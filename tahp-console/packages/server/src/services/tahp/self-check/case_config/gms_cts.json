@@ -11,7 +11,6 @@
   "cases": [
     { "caseIndex": 1, "caseName": "CTS指纹测试", "canReuse": false },
     { "caseIndex": 2, "caseName": "CTS传感器测试", "canReuse": false },
-    { "caseIndex": 3, "caseName": "CTS通信测试", "canReuse": false },
-    { "caseIndex": 4, "caseName": "CTS多媒体测试", "canReuse": false }
+    { "caseIndex": 3, "caseName": "CTS多媒体测试", "canReuse": false }
   ]
 }

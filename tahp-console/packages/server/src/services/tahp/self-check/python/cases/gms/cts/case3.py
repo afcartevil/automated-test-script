@@ -1,6 +1,6 @@
 from utils.gms.tradefed_run import run_gms_subplan
 
-SUBPLAN = "tele-cts-plan"
+SUBPLAN = "media-cts-plan"
 
 
 def run(device_info=None, step_update=None, **_context):

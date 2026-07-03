@@ -1,0 +1,15 @@
+{
+  "testType": "gms",
+  "module": "cts_tele",
+  "moduleLabel": "CTS通信",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "customOnly": true,
+  "cases": [
+    { "caseIndex": 1, "caseName": "CTS通信测试", "canReuse": false }
+  ]
+}

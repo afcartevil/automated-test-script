@@ -53,6 +53,7 @@ export interface ModuleCondition {
   moduleLabel: string
   conditions: CaseCondition
   defaultCaseMode: string
+  customOnly?: boolean
   cases: CaseInfo[]
 }
 

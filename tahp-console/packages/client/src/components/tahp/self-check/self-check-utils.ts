@@ -19,7 +19,8 @@ export const MODULE_ORDER: Record<string, number> = {
   cts: 10,
   gts: 11,
   vts: 12,
-  current_analysis: 13,
+  cts_tele: 13,
+  current_analysis: 14,
   tdd: 99,
 }
 

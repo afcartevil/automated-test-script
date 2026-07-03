@@ -74,6 +74,7 @@ export interface ModuleCondition {
   moduleLabel: string
   conditions: CaseCondition
   defaultCaseMode: string
+  customOnly?: boolean
   cases: CaseInfo[]
 }
 
@@ -347,6 +348,7 @@ function loadCaseConfigs(): void {
     'monkey_monkey.json',
     'smoke_usd.json',
     'gms_cts.json',
+    'gms_cts_tele.json',
     'gms_gts.json',
     'gms_vts.json',
     'power_current_analysis.json',
@@ -1393,7 +1395,7 @@ function resolveCaseExecTimeoutMs(testType: string, module: string): number {
     const raw = Number(process.env.TAHP_SMOKE_USD_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : SMOKE_USD_EXEC_TIMEOUT_MS
   }
-  if (testType === 'gms' && ['cts', 'gts', 'vts'].includes(module)) {
+  if (testType === 'gms' && ['cts', 'cts_tele', 'gts', 'vts'].includes(module)) {
     const raw = Number(process.env.TAHP_GMS_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : GMS_EXEC_TIMEOUT_MS
   }
@@ -3192,7 +3194,8 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     cts: 10,
     gts: 11,
     vts: 12,
-    current_analysis: 13,
+    cts_tele: 13,
+    current_analysis: 14,
     tdd: 99,
   }
 
@@ -3241,6 +3244,8 @@ export function getCaseCatalogDetail(testType: string): CaseCatalogDetailItem[] 
 
   const items: CaseCatalogDetailItem[] = []
   for (const mod of group.modules) {
+    const moduleKey = `${testType}/${mod.module}`
+    if (moduleConditions[moduleKey]?.customOnly) continue
     const caseInfoList = loadCaseInfoList(testType, mod.module)
     for (const c of mod.cases) {
       const info = resolveCaseInfoItem(caseInfoList, c.caseIndex)
