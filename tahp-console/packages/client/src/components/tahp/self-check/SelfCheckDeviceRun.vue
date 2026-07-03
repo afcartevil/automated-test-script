@@ -154,6 +154,7 @@ const {
   enableFlash,
   flashPath,
   dailyFlashResolving,
+  flashPackagesClearing,
   enableRootPkg,
   flashStageVersion,
   flashLogs,
@@ -172,6 +173,7 @@ const {
   flashStatusClass,
   handleBrowseFlashPath,
   handleResolveLatestDailyFlash,
+  handleClearFlashPackages,
   enableTcardUpdate,
   tcardUpdatePath,
   isSelectedCaseInConfig,
@@ -1158,6 +1160,15 @@ function handleDutRowAction(deviceId: string) {
                               @click.stop="handleResolveLatestDailyFlash"
                             >
                               {{ dailyFlashResolving ? '解析中...' : '获取最新daily版本' }}
+                            </button>
+                            <button
+                              type="button"
+                              class="ea-btn-ghost ea-btn-sm flash-clear-btn"
+                              :disabled="flashPackagesClearing || (showFlashPanel && !showFlashFailureUI)"
+                              title="清除本地下载/解压的刷机包缓存"
+                              @click.stop="handleClearFlashPackages"
+                            >
+                              {{ flashPackagesClearing ? '清除中...' : '一键清除刷机包' }}
                             </button>
                           </div>
                         </div>
@@ -2690,6 +2701,21 @@ $catalog-pane-height: calc(100vh - 48px);
 .flash-daily-resolve-btn {
   flex-shrink: 0;
   white-space: nowrap;
+}
+
+.flash-clear-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--warning, #b45309);
+  border-color: color-mix(in srgb, var(--warning, #b45309) 35%, var(--line));
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--warning, #b45309) 10%, var(--bg));
+  }
+
+  &:disabled {
+    opacity: 0.55;
+  }
 }
 
 .flash-daily-meta {

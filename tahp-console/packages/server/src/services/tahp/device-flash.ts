@@ -409,6 +409,45 @@ export function resolveFlashPackageDir(): string {
   return join(tahpPaths.flashToolDir, 'flash_packages')
 }
 
+export interface ClearFlashPackageCacheResult {
+  flashPackageDir: string
+  removedEntries: number
+  freedBytes: number
+}
+
+function measurePathBytes(target: string): number {
+  try {
+    const st = statSync(target)
+    if (!st.isDirectory()) return st.size
+    let total = 0
+    for (const entry of safeDirEntries(target)) {
+      total += measurePathBytes(join(target, entry.name))
+    }
+    return total
+  } catch {
+    return 0
+  }
+}
+
+/** 清除本地刷机包缓存目录（下载 ZIP、解压目录、Root 包缓存等） */
+export function clearFlashPackageCache(): ClearFlashPackageCacheResult {
+  const flashPackageDir = resolveFlashPackageDir()
+  if (!existsSync(flashPackageDir)) {
+    return { flashPackageDir, removedEntries: 0, freedBytes: 0 }
+  }
+
+  let removedEntries = 0
+  let freedBytes = 0
+  for (const entry of safeDirEntries(flashPackageDir)) {
+    const full = join(flashPackageDir, entry.name)
+    freedBytes += measurePathBytes(full)
+    rmSync(full, { recursive: true, force: true })
+    removedEntries += 1
+  }
+
+  return { flashPackageDir, removedEntries, freedBytes }
+}
+
 export function resolveDeviceUpdateExe(): string {
   const dir = resolveDeviceUpdateDir()
   return resolveExecutable([join(dir, 'device_update.exe')], 'device_update')

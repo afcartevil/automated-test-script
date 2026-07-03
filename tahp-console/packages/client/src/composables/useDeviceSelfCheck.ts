@@ -1,5 +1,5 @@
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
-import { useMessage } from 'naive-ui'
+import { useDialog, useMessage } from 'naive-ui'
 import { useDeviceSelfCheckLaunchStore } from '@/stores/tahp/device-self-check-launch'
 import {
   fetchProjectNodes,
@@ -17,6 +17,7 @@ import {
   pickFlashPath,
   pickGmsTradefedPath,
   resolveLatestDailyFlashPackage,
+  clearFlashPackageCache,
   startCustomTest,
   getCaseCatalogs,
   getCaseCatalogDetail,
@@ -76,6 +77,7 @@ export const SELF_CHECK_TABS = [
 
 export function useDeviceSelfCheck() {
   const message = useMessage()
+  const dialog = useDialog()
 
 const devices = ref<DeviceInfo[]>([])
 const selectedDeviceId = ref<string | null>(null)
@@ -97,6 +99,7 @@ function setStartTestIntentRole(role: DeviceRole) {
 const enableFlash = ref(false)
 const flashPath = ref('')
 const dailyFlashResolving = ref(false)
+const flashPackagesClearing = ref(false)
 const enableRootPkg = ref(false)
 const flashStageVersion = ref('Open')
 const flashLogs = ref<string[]>([])
@@ -1028,6 +1031,66 @@ async function handleResolveLatestDailyFlash() {
   }
 }
 
+function formatFreedBytes(bytes: number): string {
+  const gib = bytes / 1024 / 1024 / 1024
+  if (gib >= 1) return `${gib.toFixed(2)} GiB`
+  const mib = bytes / 1024 / 1024
+  if (mib >= 1) return `${mib.toFixed(1)} MiB`
+  if (bytes > 0) return `${Math.max(1, Math.round(bytes / 1024))} KiB`
+  return '0 B'
+}
+
+function isPathUnderFlashCache(target: string, cacheDir: string): boolean {
+  const norm = target.trim().replace(/\//g, '\\').toLowerCase()
+  const base = cacheDir.trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+  if (!norm || !base) return false
+  return norm === base || norm.startsWith(`${base}\\`)
+}
+
+async function handleClearFlashPackages() {
+  if (flashPackagesClearing.value || flashActive.value) return
+
+  dialog.warning({
+    title: '清除刷机包',
+    content: '清除本地下载/解压的刷机包缓存',
+    positiveText: '确认清除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      flashPackagesClearing.value = true
+      error.value = null
+      try {
+        const result = await clearFlashPackageCache()
+        if (isPathUnderFlashCache(flashPath.value, result.flashPackageDir)) {
+          flashPath.value = ''
+        }
+        if (result.removedEntries === 0) {
+          dialog.info({
+            title: '无需清理',
+            content: '本地刷机包缓存为空，无需清理',
+            positiveText: '知道了',
+          })
+        } else {
+          dialog.success({
+            title: '清除完成',
+            content: `已清除 ${result.removedEntries} 项本地刷机包缓存，释放约 ${formatFreedBytes(result.freedBytes)}`,
+            positiveText: '知道了',
+          })
+        }
+      } catch (e: any) {
+        const text = e?.message || '清除刷机包缓存失败'
+        error.value = text
+        dialog.error({
+          title: '清除失败',
+          content: text,
+          positiveText: '知道了',
+        })
+      } finally {
+        flashPackagesClearing.value = false
+      }
+    },
+  })
+}
+
 async function handleStartTest(deviceId: string) {
   try {
     if (enableFlash.value && !flashPath.value.trim()) {
@@ -1766,6 +1829,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     enableFlash,
     flashPath,
     dailyFlashResolving,
+    flashPackagesClearing,
     enableRootPkg,
     flashStageVersion,
     flashLogs,
@@ -1784,6 +1848,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     flashStatusClass,
     handleBrowseFlashPath,
     handleResolveLatestDailyFlash,
+    handleClearFlashPackages,
     enableTcardUpdate,
     tcardUpdatePath,
     viewMode,

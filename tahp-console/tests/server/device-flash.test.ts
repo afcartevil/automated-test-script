@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'fs'
+import { mkdirSync, writeFileSync, rmSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -11,6 +11,7 @@ import {
   normalizeSystemVersionLabel,
   pickLatestSystemVersion,
   resolveUserRootPkgPath,
+  clearFlashPackageCache,
   MARKET_VERSIONS,
   type DailySystemVersionOption,
 } from '../../packages/server/src/services/tahp/device-flash'
@@ -69,6 +70,28 @@ describe('device-flash helpers', () => {
       expect(resolveUserRootPkgPath(mainZip)).toBe(rootZip)
       expect(resolveUserRootPkgPath(base)).toBe(rootZip)
     } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('clears flash package cache directory contents', () => {
+    const base = join(tmpdir(), `tahp-flash-clear-${Date.now()}`)
+    mkdirSync(base, { recursive: true })
+    const prev = process.env.TAHP_FLASH_PACKAGE_DIR
+    process.env.TAHP_FLASH_PACKAGE_DIR = base
+    try {
+      writeFileSync(join(base, 'cached.zip'), 'zip-bytes')
+      mkdirSync(join(base, '_downloads'), { recursive: true })
+      writeFileSync(join(base, '_downloads', 'daily.zip'), 'daily')
+
+      const result = clearFlashPackageCache()
+      expect(result.flashPackageDir).toBe(base)
+      expect(result.removedEntries).toBe(2)
+      expect(result.freedBytes).toBeGreaterThan(0)
+      expect(readdirSync(base)).toHaveLength(0)
+    } finally {
+      if (prev === undefined) delete process.env.TAHP_FLASH_PACKAGE_DIR
+      else process.env.TAHP_FLASH_PACKAGE_DIR = prev
       rmSync(base, { recursive: true, force: true })
     }
   })

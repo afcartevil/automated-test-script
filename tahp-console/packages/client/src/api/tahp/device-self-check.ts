@@ -267,6 +267,19 @@ export async function resolveLatestDailyFlashPackage(
   )
 }
 
+export interface ClearFlashPackageCacheResult {
+  flashPackageDir: string
+  removedEntries: number
+  freedBytes: number
+}
+
+export async function clearFlashPackageCache(): Promise<ClearFlashPackageCacheResult> {
+  return await tahpPost<ClearFlashPackageCacheResult>(
+    '/api/tahp/device-self-check/flash/clear-packages',
+    {}
+  )
+}
+
 export async function getCaseCatalogs(): Promise<CaseCatalogGroup[]> {
   return await tahpGet<CaseCatalogGroup[]>('/api/tahp/device-self-check/case-catalogs')
 }

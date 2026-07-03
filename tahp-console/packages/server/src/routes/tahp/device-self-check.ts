@@ -423,6 +423,20 @@ tahpDeviceSelfCheckRoutes.post(
   }
 )
 
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/flash/clear-packages',
+  async (ctx) => {
+    try {
+      const { clearFlashPackageCache } = await import('../../services/tahp/device-flash')
+      const result = clearFlashPackageCache()
+      ctx.body = { success: true, data: result }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to clear flash package cache' }
+    }
+  }
+)
+
 // SSE 事件流
 tahpDeviceSelfCheckRoutes.get(
   '/api/tahp/device-self-check/pipeline',
