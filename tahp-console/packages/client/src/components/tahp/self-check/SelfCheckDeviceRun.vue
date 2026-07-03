@@ -163,6 +163,10 @@ const {
   flashProgress,
   flashPhase,
   showFlashPanel,
+  isFlashFailed,
+  showFlashFailureUI,
+  clearFlashPanel,
+  dismissFlashFailure,
   isFlashIndeterminate,
   flashStatusText,
   flashStatusClass,
@@ -1002,7 +1006,7 @@ function handleDutRowAction(deviceId: string) {
 
             <div class="detail-main">
               <EaCard class="device-detail-main-card">
-                <div v-if="showFlashPanel && !isError" class="device-detail-main-scroll">
+                <div v-if="showFlashPanel && !showFlashFailureUI" class="device-detail-main-scroll">
                   <div class="flash-progress-header">
                     <span class="section-title">刷机进度</span>
                     <div class="flash-progress-meta">
@@ -1024,9 +1028,9 @@ function handleDutRowAction(deviceId: string) {
                   </div>
                 </div>
 
-                <template v-else-if="isError">
+                <template v-else-if="showFlashFailureUI">
                   <div class="case-detail-header">
-                    <span class="catalog-case-title">测试异常</span>
+                    <span class="catalog-case-title">{{ isFlashFailed ? '刷机失败' : '测试异常' }}</span>
                   </div>
                   <div class="device-detail-main-scroll case-detail-content">
                     <div class="case-info">
@@ -1039,12 +1043,13 @@ function handleDutRowAction(deviceId: string) {
                         <span class="detail-value">{{ errorReason }}</span>
                       </div>
                     </div>
-                    <div v-if="showFlashPanel" class="flash-log-panel" style="margin-bottom: 12px;">
+                    <div v-if="showFlashPanel || isFlashFailed" class="flash-log-panel" style="margin-bottom: 12px;">
                       <span class="form-label">刷机日志</span>
                       <pre class="flash-log-content">{{ flashLogs.join('\n') }}</pre>
                     </div>
                     <div class="device-detail-inline-actions">
                       <button
+                        v-if="!isFlashFailed"
                         type="button"
                         class="ea-btn-primary ea-btn-sm"
                         @click.stop="handleResumeTest(selectedDevice.device.deviceId)"
@@ -1057,6 +1062,13 @@ function handleDutRowAction(deviceId: string) {
                         @click.stop="handleEndTest(selectedDevice.device.deviceId)"
                       >
                         结束测试
+                      </button>
+                      <button
+                        type="button"
+                        class="ea-btn-ghost ea-btn-sm"
+                        @click.stop="dismissFlashFailure()"
+                      >
+                        返回
                       </button>
                     </div>
                   </div>

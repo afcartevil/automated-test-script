@@ -103,6 +103,8 @@ const flashLogs = ref<string[]>([])
 const flashLogRef = ref<HTMLElement | null>(null)
 const flashActive = ref(false)
 const flashDone = ref<'success' | 'error' | null>(null)
+/** 当前刷机 UI 绑定的设备；切换设备或结束测试后清空 */
+const flashDeviceId = ref<string | null>(null)
 const flashProgressState = ref<FlashProgressState>(createFlashProgressState())
 const flashPathPicking = ref(false)
 const FLASH_MARKET_OPTIONS = [
@@ -118,6 +120,22 @@ function resetFlashProgress() {
   flashActive.value = false
   flashDone.value = null
   flashProgressState.value = createFlashProgressState()
+}
+
+function clearFlashPanel() {
+  flashDeviceId.value = null
+  flashLogs.value = []
+  resetFlashProgress()
+}
+
+async function dismissFlashFailure() {
+  const deviceId = flashDeviceId.value || selectedDeviceId.value
+  clearFlashPanel()
+  if (deviceId) {
+    try {
+      await refreshDeviceState(deviceId)
+    } catch {}
+  }
 }
 
 function scrollFlashLogToBottom() {
@@ -431,6 +449,13 @@ async function selectDevice(deviceId: string) {
     deviceDetailExpanded.value = true
     const detail = await getDeviceDetail(deviceId)
     selectedDevice.value = detail
+    // 切回仍在刷机的设备时恢复刷机面板绑定（切换其他设备期间不清理刷机状态）
+    if (detail.device.status === '刷机中') {
+      if (!flashDeviceId.value || flashDeviceId.value === deviceId) {
+        flashDeviceId.value = deviceId
+        flashActive.value = true
+      }
+    }
     selectedCase.value = null
     followCurrent.value = true
     if (detail.device.status === '空闲') {
@@ -786,7 +811,7 @@ function connectEventStream() {
   eventSource.value.addEventListener('flash_log', (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data)
-      if (data.deviceId === selectedDeviceId.value && data.line) {
+      if (data.deviceId === flashDeviceId.value && data.line) {
         appendFlashLog(data.line)
       }
     } catch {}
@@ -795,14 +820,15 @@ function connectEventStream() {
   eventSource.value.addEventListener('flash_completed', async (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data)
-      if (data.deviceId !== selectedDeviceId.value) return
+      if (!data.deviceId || data.deviceId !== flashDeviceId.value) return
       flashActive.value = false
       if (data.success) {
-        flashLogs.value = []
-        resetFlashProgress()
+        clearFlashPanel()
         followCurrent.value = true
-        const detail = await getDeviceDetail(selectedDeviceId.value!)
-        selectedDevice.value = detail
+        const detail = await getDeviceDetail(data.deviceId)
+        if (selectedDeviceId.value === data.deviceId) {
+          selectedDevice.value = detail
+        }
         applyFollowCurrentCase(detail.session)
       } else {
         flashDone.value = 'error'
@@ -811,6 +837,7 @@ function connectEventStream() {
           `[刷机] 刷机失败：${data.error || `返回码 ${data.returnCode ?? '?'}`}`,
         )
         if (data.error) appendFlashLog(`[刷机] ${data.error}`)
+        await refreshDeviceState(data.deviceId)
       }
     } catch {}
   })
@@ -971,8 +998,7 @@ async function handleStartTest(deviceId: string) {
         selectedDevice.value = { ...selectedDevice.value, device: updated }
       }
     }
-    flashLogs.value = []
-    resetFlashProgress()
+    clearFlashPanel()
     const flash = enableFlash.value
       ? {
           enabled: true,
@@ -982,6 +1008,7 @@ async function handleStartTest(deviceId: string) {
         }
       : undefined
     if (flash) {
+      flashDeviceId.value = deviceId
       flashActive.value = true
       flashProgressState.value = createFlashProgressState()
       appendFlashLog('[刷机] 已提交刷机任务，等待设备进入刷机流程...')
@@ -995,6 +1022,7 @@ async function handleStartTest(deviceId: string) {
     await loadDevices()
   } catch (e: any) {
     console.error('[DeviceSelfCheck] Error starting test:', e)
+    clearFlashPanel()
     error.value = e?.message || '启动测试失败'
   }
 }
@@ -1035,6 +1063,7 @@ async function handleResumeTest(deviceId: string) {
 async function handleEndTest(deviceId: string) {
   try {
     stopPollingTimer()
+    clearFlashPanel()
     const result = await endTest(deviceId)
     patchDeviceInList(result.device)
     await loadDevices()
@@ -1435,11 +1464,22 @@ const flashProgress = computed(() => flashProgressState.value.progress)
 
 const flashPhase = computed(() => flashPhaseLabel(flashProgressState.value))
 
+const isFlashFailed = computed(() => {
+  return flashDone.value === 'error'
+    && flashDeviceId.value === selectedDeviceId.value
+    && flashLogs.value.length > 0
+})
+
 const showFlashPanel = computed(() => {
   if (!selectedDeviceId.value) return false
-  if (isFlashing.value || flashActive.value) return true
-  return flashDone.value === 'error' && flashLogs.value.length > 0
+  // 服务端仍为刷机中：回到该设备时始终展示刷机面板
+  if (isFlashing.value) return true
+  if (!flashDeviceId.value || flashDeviceId.value !== selectedDeviceId.value) return false
+  if (flashActive.value) return true
+  return isFlashFailed.value
 })
+
+const showFlashFailureUI = computed(() => isError.value || isFlashFailed.value)
 
 const isFlashIndeterminate = computed(() => {
   return (flashActive.value || isFlashing.value) && flashProgress.value < 8
@@ -1687,6 +1727,10 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     flashProgress,
     flashPhase,
     showFlashPanel,
+    isFlashFailed,
+    showFlashFailureUI,
+    clearFlashPanel,
+    dismissFlashFailure,
     isFlashIndeterminate,
     flashStatusText,
     flashStatusClass,
