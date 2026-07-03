@@ -3,14 +3,17 @@
  */
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'child_process'
 import {
+  copyFileSync,
   createReadStream,
   createWriteStream,
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
 } from 'fs'
+import { homedir } from 'os'
 import { basename, dirname, join, resolve } from 'path'
 import { pipeline } from 'stream/promises'
 import { Transform } from 'stream'
@@ -64,6 +67,7 @@ export interface LatestDailyFlashResult {
 }
 
 const EXTRACT_ZIP_SCRIPT = join(__dirname, 'self-check', 'python', 'extract_flash_zip.py')
+const ADB_KEY_FILES = ['adbkey', 'adbkey.pub'] as const
 const DAILY_VERSION_ROOT = '\\\\10.150.98.24\\sw_ver_sh'
 const RELEASE_NOTE_FILE = 'ReleaseNote.xlsx'
 const DEFAULT_DEV_PROJECT_KEYWORD = 'Android_16'
@@ -75,6 +79,57 @@ const PROJECT_PROPS = [
   'ro.product.device',
   'ro.product.model',
 ]
+
+function resolveBundledAdbKeysDir(): string {
+  return join(tahpPaths.flashToolDir, 'adb_keys')
+}
+
+function resolveUserAndroidDir(): string {
+  const profile = process.env.USERPROFILE?.trim() || homedir()
+  return join(profile, '.android')
+}
+
+function adbKeyFilesEqual(source: string, target: string): boolean {
+  if (!existsSync(source) || !existsSync(target)) return false
+  try {
+    return readFileSync(source).equals(readFileSync(target))
+  } catch {
+    return false
+  }
+}
+
+/** 刷机前确保 %USERPROFILE%/.android 下的 adbkey 与仓库 adb_keys 一致 */
+export function ensureAdbKeysSynced(onLog?: (line: string) => void): void {
+  const sourceDir = resolveBundledAdbKeysDir()
+  const targetDir = resolveUserAndroidDir()
+  const log = (line: string) => onLog?.(line)
+
+  for (const name of ADB_KEY_FILES) {
+    const source = join(sourceDir, name)
+    if (!existsSync(source)) {
+      throw new Error(`未找到内置 ADB 密钥: ${source}`)
+    }
+  }
+
+  const needsSync = ADB_KEY_FILES.some((name) => {
+    const source = join(sourceDir, name)
+    const target = join(targetDir, name)
+    return !adbKeyFilesEqual(source, target)
+  })
+
+  if (!needsSync) {
+    log(`[刷机] ADB 密钥已与 flash_tool/adb_keys 一致: ${targetDir}`)
+    return
+  }
+
+  mkdirSync(targetDir, { recursive: true })
+  for (const name of ADB_KEY_FILES) {
+    const source = join(sourceDir, name)
+    const target = join(targetDir, name)
+    copyFileSync(source, target)
+    log(`[刷机] 已同步 ADB 密钥 ${name} -> ${target}`)
+  }
+}
 
 function resolveExtractZipScript(): string {
   if (existsSync(EXTRACT_ZIP_SCRIPT)) return resolve(EXTRACT_ZIP_SCRIPT)
@@ -1101,6 +1156,7 @@ export async function runDeviceFlash(
   }
 
   try {
+    ensureAdbKeysSynced(log)
     const { pkgPath, skipUnzip } = await prepareFlashPkgPath(options.pkgPath, options, log)
     let resolvedRootPkgPath = options.rootPkgPath?.trim() || ''
     if (!resolvedRootPkgPath && options.enableRootPkg) {
