@@ -6,9 +6,12 @@ import { useModelProviderReadiness } from '@/composables/useModelProviderReadine
 import { useGerritReviewStore } from '@/stores/tahp/gerrit-review'
 import { useDeviceSelfCheckLaunchStore } from '@/stores/tahp/device-self-check-launch'
 import { fetchGerritConfig } from '@/api/tahp/gerrit-config'
+import { gerritRecommendTrace } from '@/utils/gerrit-review-debug'
 
 export const GERRIT_NOT_CONFIGURED_MSG =
   'gerrit账号未设置，无法进行code review，请在设置中完善gerrit账号'
+
+const SEND_DEBOUNCE_MS = 600
 
 export function useGerritReviewWorkspace() {
   const message = useMessage()
@@ -25,6 +28,8 @@ export function useGerritReviewWorkspace() {
     loadingRecommendations,
     isServerRecommending,
     recommendSource,
+    recommendedCases,
+    checkedRecommendedCases,
   } = storeToRefs(gerritStore)
 
   const showRecommendLoading = computed(
@@ -44,6 +49,7 @@ export function useGerritReviewWorkspace() {
   const scrollRef = ref<InstanceType<typeof NScrollbar> | null>(null)
   const textareaRef = ref<HTMLTextAreaElement | null>(null)
   const isComposing = ref(false)
+  let lastSendAt = 0
 
   const latestPhase = computed(() => {
     const phases = stream.value.filter(ev => ev.type === 'task.phase')
@@ -59,8 +65,7 @@ export function useGerritReviewWorkspace() {
 
   const p0Result = computed(() => gerritStore.p0Result())
   const modulesResult = computed(() => gerritStore.modulesResult())
-  const recommendedCases = computed(() => gerritStore.recommendedCases)
-  const checkedRecommendedCount = computed(() => gerritStore.checkedRecommendedCases.length)
+  const checkedRecommendedCount = computed(() => checkedRecommendedCases.value.length)
   const p0Count = computed(() => p0Result.value.items.length)
   const recommendedCount = computed(() => recommendedCases.value.length)
 
@@ -178,6 +183,10 @@ export function useGerritReviewWorkspace() {
     if (!gerritConfigured.value) return
     if (!ensureModelProviderOrWarn()) return
 
+    const now = Date.now()
+    if (now - lastSendAt < SEND_DEBOUNCE_MS) return
+    lastSendAt = now
+
     inputText.value = ''
     if (textareaRef.value) textareaRef.value.style.height = 'auto'
     thinkingLines.value = ['◆ 正在提交评审任务…']
@@ -228,10 +237,24 @@ export function useGerritReviewWorkspace() {
   watch(
     () => [p0Result.value.items.length, isRunning.value, recommendedCases.value.length] as const,
     ([p0Count, running, recCount]) => {
+      gerritRecommendTrace('workspace.ensureRec.watch', {
+        p0Count,
+        running,
+        recCount,
+        loadingRecommendations: loadingRecommendations.value,
+        applyingReviewInsight: gerritStore.isApplyingReviewInsight(),
+        refreshing: gerritStore.isRefreshingRecommendations(),
+      })
       if (recCount > 0 || p0Count === 0) return
-      if (running) return
+      if (running) {
+        gerritRecommendTrace('workspace.ensureRec.blocked', { reason: 'is_running' })
+        return
+      }
       if (loadingRecommendations.value || gerritStore.isRefreshingRecommendations()) return
-      if (gerritStore.isApplyingReviewInsight()) return
+      if (gerritStore.isApplyingReviewInsight()) {
+        gerritRecommendTrace('workspace.ensureRec.blocked', { reason: 'applying_insight' })
+        return
+      }
       void gerritStore.ensureRecommendedCases()
     },
   )
@@ -241,7 +264,7 @@ export function useGerritReviewWorkspace() {
   }
 
   function handleStartRecommendedTest() {
-    const caseKeys = gerritStore.checkedRecommendedCases.map(item => item.caseKey)
+    const caseKeys = checkedRecommendedCases.value.map(item => item.caseKey)
     if (!caseKeys.length) {
       message.warning('请至少选择一个推荐测试用例')
       return
@@ -266,6 +289,10 @@ export function useGerritReviewWorkspace() {
   }
 
   function restoreWorkspace() {
+    gerritRecommendTrace('workspace.restore', {
+      p0Count: gerritStore.p0Result().items.length,
+      recCount: recommendedCases.value.length,
+    })
     gerritStore.init()
     void loadGerritConfigStatus()
     rebuildThinkingLines(stream.value)

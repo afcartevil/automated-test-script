@@ -9,7 +9,9 @@ const cancelGerritReviewTaskMock = vi.fn()
 
 vi.mock('../../packages/client/src/utils/gerrit-review-debug', () => ({
   gerritReviewDebug: vi.fn(),
+  gerritRecommendTrace: vi.fn(),
   flushGerritReviewDebug: vi.fn(),
+  recommendDebugEnabled: vi.fn(() => false),
 }))
 
 vi.mock('../../packages/client/src/api/tahp/gerrit-review', () => ({
@@ -833,5 +835,97 @@ describe('useGerritReviewStore', () => {
 
     expect(fetchRecommendCasesMock).toHaveBeenCalled()
     expect(gerrit.recommendedCases).toHaveLength(1)
+  })
+
+  it('does not replay insight when finalized task stream updates again', async () => {
+    const gerrit = useGerritReviewStore()
+    const tasks = useTahpTasksStore()
+
+    gerrit.activeTaskId = 'task-gerrit-replay'
+    gerrit.chatMessages = [
+      { id: 'u1', role: 'user', content: 'review' },
+      { id: 'a1', role: 'assistant', content: '', streaming: true, taskId: 'task-gerrit-replay' },
+    ]
+    tasks.taskStreams = {
+      'task-gerrit-replay': [
+        {
+          type: 'task.completed',
+          payload: {
+            llm_response: '### P0 - 必须测试\n1. USB 插拔',
+            p0_items: ['USB 插拔'],
+            recommend_source: 'llm',
+            recommended_cases: [{
+              caseKey: 'week/driver/14',
+              caseName: 'USB功能正常充电',
+              moduleLabel: '驱动',
+              score: 2,
+              reasons: ['USB'],
+            }],
+          },
+          ts: 1,
+        },
+      ],
+    }
+
+    gerrit.processStreamEvents('task-gerrit-replay')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(gerrit.recommendedCases).toHaveLength(1)
+
+    tasks.taskStreams = {
+      'task-gerrit-replay': [
+        ...tasks.taskStreams['task-gerrit-replay'],
+        { type: 'task.message', payload: { level: 'stream', text: 'tail' }, ts: 2 },
+      ],
+    }
+    gerrit.processStreamEvents('task-gerrit-replay')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(gerrit.recommendedCases).toHaveLength(1)
+    expect(gerrit.recommendedCases[0]?.caseKey).toBe('week/driver/14')
+  })
+
+  it('ignores duplicate sendMessage while previous send is in flight', async () => {
+    const gerrit = useGerritReviewStore()
+    let resolveFirst: ((value: { session_id: string; task_id: string; status: string }) => void) | undefined
+
+    sendGerritReviewMessageMock.mockImplementationOnce(
+      () => new Promise(resolve => { resolveFirst = resolve }),
+    )
+
+    const first = gerrit.sendMessage('https://gerrit.example/+/1')
+    await Promise.resolve()
+    await gerrit.sendMessage('https://gerrit.example/+/2')
+
+    expect(sendGerritReviewMessageMock).toHaveBeenCalledTimes(1)
+    expect(gerrit.chatMessages.filter(m => m.role === 'user')).toHaveLength(1)
+
+    resolveFirst?.({
+      session_id: 'sess-dup',
+      task_id: 'task-dup-1',
+      status: 'running',
+    })
+    await first
+  })
+
+  it('preserves recommendations when sendMessage fails', async () => {
+    const gerrit = useGerritReviewStore()
+
+    gerrit.recommendedCases = [{
+      caseKey: 'week/driver/14',
+      caseName: 'USB功能正常充电',
+      moduleLabel: '驱动',
+      score: 2,
+      reasons: ['USB'],
+      checked: true,
+    }]
+    gerrit.serverP0Items = ['USB 插拔']
+
+    sendGerritReviewMessageMock.mockRejectedValueOnce(new Error('network error'))
+
+    await expect(gerrit.sendMessage('https://gerrit.example/+/fail')).rejects.toThrow('network error')
+
+    expect(gerrit.recommendedCases).toHaveLength(1)
+    expect(gerrit.serverP0Items).toEqual(['USB 插拔'])
+    expect(gerrit.chatMessages.some(m => m.streaming)).toBe(false)
   })
 })
