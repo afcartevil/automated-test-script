@@ -11,6 +11,15 @@ interface TaskStreamEntry {
   ts: number
 }
 
+const TERMINAL_TASK_EVENTS = new Set(['task.completed', 'task.failed', 'task.cancelled'])
+
+let terminalTaskHandler: ((taskId: string) => void) | null = null
+
+/** 供 Gerrit Review 等在 task 终态时立即处理 stream，不依赖组件 watcher 生命周期。 */
+export function registerTerminalTaskHandler(handler: ((taskId: string) => void) | null) {
+  terminalTaskHandler = handler
+}
+
 export const useTahpTasksStore = defineStore('tahp-tasks', () => {
   const activeTaskId = ref<string | null>(null)
   const taskStreams = ref<Record<string, TaskStreamEntry[]>>({})
@@ -27,6 +36,9 @@ export const useTahpTasksStore = defineStore('tahp-tasks', () => {
       arr.push({ type: ev.type, payload: ev.payload, ts: ev.ts })
       if (arr.length > 500) arr.splice(0, arr.length - 500)
       taskStreams.value = { ...taskStreams.value, [tid]: arr }
+      if (terminalTaskHandler && TERMINAL_TASK_EVENTS.has(ev.type)) {
+        queueMicrotask(() => terminalTaskHandler!(tid))
+      }
     }
 
     const events = [

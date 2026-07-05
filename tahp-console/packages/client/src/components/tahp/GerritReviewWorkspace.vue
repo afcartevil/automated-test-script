@@ -24,15 +24,23 @@ const {
   p0Result,
   modulesResult,
   recommendedCases,
+  recommendCoverageScore,
+  recommendCoverageReason,
+  recommendCoverageGaps,
+  aiGeneratedCases,
   checkedRecommendedCount,
   p0Count,
   recommendedCount,
+  aiGeneratedCount,
   loadingRecommendations,
   showRecommendLoading,
   recommendSourceLabel,
+  coverageSufficient,
+  showAiCaseCoverageReasonInTitle,
   bindThinkingScrollRef,
   toggleRecommendedCase,
   setRecommendedCaseChecked,
+  setAiGeneratedCaseChecked,
   handleStartRecommendedTest,
   handleRefreshRecommend,
   handleTextareaInput,
@@ -43,7 +51,7 @@ const {
   handleKeydown,
   restoreWorkspace,
 } = useGerritReviewWorkspace()
-void [scrollRef, textareaRef, toggleRecommendedCase]
+void [scrollRef, textareaRef, toggleRecommendedCase, recommendCoverageScore, sending, loadingRecommendations]
 
 onMounted(restoreWorkspace)
 onActivated(restoreWorkspace)
@@ -168,71 +176,126 @@ onActivated(restoreWorkspace)
           </div>
 
           <div class="insight-body">
-            <div
-              v-if="isRunning && !p0Count && !recommendedCount"
-              class="p0-loading"
-            >
-              <NSpin size="medium" />
-              <p class="ea-muted">评审进行中，完成后自动提取测试建议…</p>
-            </div>
-            <template v-else>
-              <div class="insight-section p0-section">
-                <div class="section-title section-title-bold">
-                  必须测试 · {{ p0Count }}
+            <NScrollbar class="insight-body-scroll">
+              <div class="insight-sections">
+                <div
+                  v-if="isRunning && !p0Count && !recommendedCount"
+                  class="p0-loading"
+                >
+                  <NSpin size="medium" />
+                  <p class="ea-muted">评审进行中，完成后自动提取测试建议…</p>
                 </div>
-                <NScrollbar class="section-scroll">
-                  <template v-if="p0Count">
-                    <ol class="p0-list">
-                      <li v-for="(item, i) in p0Result.items" :key="i">
-                        <MarkdownRenderer :content="item" />
-                      </li>
-                    </ol>
-                  </template>
-                  <NEmpty
-                    v-else
-                    description="未提取到必须测试项"
-                    size="small"
-                  />
-                </NScrollbar>
-              </div>
-
-              <div class="insight-section recommended-section">
-                <div class="section-title">
-                  <span>推荐测试用例 · {{ recommendedCount }}</span>
-                  <span v-if="recommendSourceLabel" class="recommend-source-hint">
-                    {{ recommendSourceLabel }}
-                  </span>
-                </div>
-                <NScrollbar class="section-scroll">
-                  <div
-                    v-if="showRecommendLoading"
-                    class="recommend-loading"
-                  >
-                    <NSpin size="small" />
-                    <p class="ea-muted">AI 正在分析必须测试项，生成推荐用例…</p>
-                  </div>
-                  <NEmpty
-                    v-else-if="!recommendedCount"
-                    description="暂无推荐用例，请完成评审或点击重新推荐"
-                    size="small"
-                  />
-                  <ul v-else class="recommended-list">
-                    <li v-for="item in recommendedCases" :key="item.caseKey">
-                      <NCheckbox
-                        :checked="item.checked"
-                        @update:checked="(checked: boolean) => setRecommendedCaseChecked(item.caseKey, checked)"
+                <template v-else>
+                  <div class="insight-section p0-section">
+                    <div class="section-title section-title-bold">
+                      必须测试 · {{ p0Count }}
+                    </div>
+                    <div class="section-content">
+                      <template v-if="p0Count">
+                        <ol class="p0-list">
+                          <li v-for="(item, i) in p0Result.items" :key="i">
+                            <MarkdownRenderer :content="item" />
+                          </li>
+                        </ol>
+                      </template>
+                      <NEmpty
+                        v-else
+                        description="未提取到必须测试项"
+                        size="small"
                       />
-                      <div class="recommended-item-body">
-                        <div class="recommended-item-name">{{ item.caseName }}</div>
-                        <div class="recommended-item-meta ea-muted">
-                          {{ item.caseKey }} · {{ item.moduleLabel }}
-                        </div>
+                    </div>
+                  </div>
+
+                  <div class="insight-section recommended-section">
+                    <div class="section-title">
+                      <span>推荐测试用例 · {{ recommendedCount }}</span>
+                      <span v-if="recommendSourceLabel" class="recommend-source-hint">
+                        {{ recommendSourceLabel }}
+                      </span>
+                    </div>
+                    <div class="section-content">
+                      <div
+                        v-if="showRecommendLoading"
+                        class="recommend-loading"
+                      >
+                        <NSpin size="small" />
+                        <p class="ea-muted">AI 正在分析必须测试项，生成推荐用例…</p>
                       </div>
-                    </li>
-                  </ul>
-                </NScrollbar>
+                      <NEmpty
+                        v-else-if="!recommendedCount"
+                        description="暂无推荐用例，请完成评审或点击重新推荐"
+                        size="small"
+                      />
+                      <ul v-else class="recommended-list">
+                        <li v-for="item in recommendedCases" :key="item.caseKey">
+                          <NCheckbox
+                            :checked="item.checked"
+                            @update:checked="(checked: boolean) => setRecommendedCaseChecked(item.caseKey, checked)"
+                          />
+                          <div class="recommended-item-body">
+                            <div class="recommended-item-name">{{ item.caseName }}</div>
+                            <div class="recommended-item-meta ea-muted">
+                              {{ item.caseKey }} · {{ item.moduleLabel }}
+                            </div>
+                          </div>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div class="insight-section ai-case-section">
+                    <div class="section-title">
+                      <span>AI用例 · {{ aiGeneratedCount }}</span>
+                      <span
+                        v-if="showAiCaseCoverageReasonInTitle"
+                        class="recommend-source-hint"
+                      >
+                        {{ recommendCoverageReason }}
+                      </span>
+                    </div>
+                    <div class="section-content">
+                      <div
+                        v-if="recommendCoverageGaps.length"
+                        class="coverage-gaps"
+                      >
+                        <div class="ea-muted coverage-gap-title">覆盖不足</div>
+                        <ul>
+                          <li v-for="gap in recommendCoverageGaps" :key="gap">{{ gap }}</li>
+                        </ul>
+                      </div>
+                      <p
+                        v-if="!aiGeneratedCount && coverageSufficient && recommendCoverageReason"
+                        class="coverage-sufficient-note"
+                      >
+                        {{ recommendCoverageReason }}
+                      </p>
+                      <NEmpty
+                        v-else-if="!aiGeneratedCount"
+                        description="覆盖度不足时会自动生成 AI 用例"
+                        size="small"
+                      />
+                      <ul v-else class="recommended-list">
+                        <li v-for="item in aiGeneratedCases" :key="item.caseKey">
+                          <NCheckbox
+                            :checked="item.checked"
+                            @update:checked="(checked: boolean) => setAiGeneratedCaseChecked(item.caseKey, checked)"
+                          />
+                          <div class="recommended-item-body">
+                            <div class="recommended-item-name">{{ item.caseName }}</div>
+                            <div class="recommended-item-meta ea-muted">
+                              {{ item.caseKey }} · {{ item.moduleLabel }}
+                            </div>
+                            <div v-if="item.reason" class="recommended-item-reason ea-muted">
+                              {{ item.reason }}
+                            </div>
+                          </div>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </template>
               </div>
-            </template>
+            </NScrollbar>
           </div>
 
           <div class="insight-footer">
@@ -312,11 +375,13 @@ $gerrit-bottom-bar-min: calc(10px + 12px + #{$gerrit-action-inner-min});
   color: var(--muted);
 }
 
+$gerrit-insight-line: 1.45em;
+
 .review-workspace {
-  height: calc((50vh - 40px) * 4 / 3);
-  min-height: 480px;
+  height: calc((50vh - 40px) * 4 / 3 + #{$gerrit-insight-line});
+  min-height: calc(480px + #{$gerrit-insight-line});
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.32fr);
   gap: 14px;
 }
 
@@ -368,11 +433,19 @@ $gerrit-bottom-bar-min: calc(10px + 12px + #{$gerrit-action-inner-min});
   .insight-body {
     flex: 1;
     min-height: 0;
+    overflow: hidden;
+  }
+
+  .insight-body-scroll {
+    height: 100%;
+    max-height: 100%;
+  }
+
+  .insight-sections {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 10px 12px;
-    overflow: hidden;
+    padding: 10px 14px 12px;
   }
 
   .insight-section {
@@ -385,13 +458,38 @@ $gerrit-bottom-bar-min: calc(10px + 12px + #{$gerrit-action-inner-min});
     overflow: hidden;
   }
 
-  .p0-section {
-    flex: 0.85;
+  .recommended-section,
+  .ai-case-section {
+    .section-content {
+      padding: 10px 16px 12px;
+    }
   }
 
   .recommended-section {
-    flex: 1;
-    min-height: 0;
+    .recommended-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 10px;
+
+      li {
+        margin: 0;
+        min-width: 0;
+      }
+
+      .recommended-item-name {
+        overflow: hidden;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+      }
+
+      .recommended-item-meta {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
   }
 
   .section-title {
@@ -411,7 +509,10 @@ $gerrit-bottom-bar-min: calc(10px + 12px + #{$gerrit-action-inner-min});
     font-size: 11px;
     font-weight: 500;
     color: var(--muted);
-    white-space: nowrap;
+    white-space: normal;
+    text-align: right;
+    max-width: 55%;
+    line-height: 1.4;
   }
 
   .section-title-bold {
@@ -612,8 +713,8 @@ $gerrit-bottom-bar-min: calc(10px + 12px + #{$gerrit-action-inner-min});
   align-items: center;
   justify-content: center;
   gap: 10px;
-  min-height: 120px;
-  padding: 24px 12px;
+  min-height: 80px;
+  padding: 16px 12px;
   text-align: center;
 
   p {
@@ -643,10 +744,38 @@ $gerrit-bottom-bar-min: calc(10px + 12px + #{$gerrit-action-inner-min});
   }
 }
 
-.recommended-section {
+.recommended-section,
+.ai-case-section {
   margin-top: 0;
-  padding-top: 0;
-  border-top: none;
+}
+
+.coverage-gaps {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.06);
+
+  ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+  }
+}
+
+.coverage-gap-title {
+  font-size: 12px;
+}
+
+.coverage-sufficient-note {
+  margin: 0;
+  padding: 12px 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+  text-align: center;
+  border: 1px dashed color-mix(in srgb, var(--accent) 25%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
 }
 
 .recommended-list {
@@ -681,10 +810,13 @@ $gerrit-bottom-bar-min: calc(10px + 12px + #{$gerrit-action-inner-min});
   .review-workspace {
     grid-template-columns: 1fr;
     height: auto;
-    min-height: 693px;
+    min-height: calc(693px + #{$gerrit-insight-line});
   }
   .panel {
     min-height: 320px;
+  }
+  .p0-panel .recommended-section .recommended-list {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -552,7 +552,12 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
     emit(taskId, 'task.phase', { phase: 'RECOMMENDING', progress: 92, message: '正在通过 LLM 语义匹配推荐测试用例…' })
     const p0 = extractP0TestSuggestions(fullResponse)
     const moduleInfo = extractModules(fullResponse)
-    const { cases: recommendedCases, source: recommendSource } = await recommendTestCasesWithMeta(
+    const {
+      cases: recommendedCases,
+      source: recommendSource,
+      coverage,
+      aiGeneratedCases,
+    } = await recommendTestCasesWithMeta(
       p0.items,
       moduleInfo.modules,
     )
@@ -583,6 +588,10 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
       modules_display: moduleInfo.display,
       recommended_cases: recommendedCases,
       recommend_source: recommendSource,
+      coverage_score: coverage.score,
+      coverage_reason: coverage.reason,
+      coverage_gaps: coverage.gaps,
+      ai_generated_cases: aiGeneratedCases,
       skills_used: ctx.skillsUsed,
       duration_ms: Date.now() - startMs,
       message: recommendSource === 'llm'
@@ -606,6 +615,10 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
           modules_display: moduleInfo.display,
           recommended_cases: recommendedCases,
           recommend_source: recommendSource,
+          coverage_score: coverage.score,
+          coverage_reason: coverage.reason,
+          coverage_gaps: coverage.gaps,
+          ai_generated_cases: aiGeneratedCases,
           skills_used: ctx.skillsUsed,
           duration_ms: Date.now() - startMs,
         }, null, 2),

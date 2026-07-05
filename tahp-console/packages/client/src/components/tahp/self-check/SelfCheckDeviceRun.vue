@@ -45,9 +45,10 @@ function scrollElementIntoView(el: HTMLElement) {
   }
 
   const elRect = el.getBoundingClientRect()
-  const parentRect = scrollParent.getBoundingClientRect()
-  const top = scrollParent.scrollTop + (elRect.top - parentRect.top) - scrollMargin
-  scrollParent.scrollTo({ top, behavior: 'smooth' })
+  const parentEl = scrollParent as HTMLElement
+  const parentRect = parentEl.getBoundingClientRect()
+  const top = parentEl.scrollTop + (elRect.top - parentRect.top) - scrollMargin
+  parentEl.scrollTo({ top, behavior: 'smooth' })
 }
 
 async function scrollToElement(el: HTMLElement | null | undefined) {
@@ -76,6 +77,8 @@ const {
   expandedCatalogTypes,
   expandedCatalogModules,
   catalogDetailLoading,
+  selectedAiGeneratedCasesForDelete,
+  aiGeneratedCasesDeleting,
   catalogDetailByModule,
   selectedCatalogCaseKey,
   selectedCatalogItem,
@@ -121,6 +124,10 @@ const {
   catalogPanelScrollNonce,
   collapseDeviceDetail,
   selectCatalogCase,
+  isAiGeneratedCatalog,
+  toggleAiGeneratedCaseForDelete,
+  clearAiGeneratedDeleteSelection,
+  handleDeleteAiGeneratedCases,
   toggleCatalogDetailModule,
   isCatalogDetailModuleExpanded,
   openCustomTest,
@@ -179,7 +186,13 @@ const {
   isSelectedCaseInConfig,
   getSelectedCaseName,
 } = inject(DEVICE_SELF_CHECK_KEY)!
-void flashLogRef
+
+const DIRECT_TEST_TYPE_ORDER = STANDARD_TEST_TYPE_ORDER.filter(
+  (testType): testType is Exclude<(typeof STANDARD_TEST_TYPE_ORDER)[number], 'ai_generated'> =>
+    testType !== 'ai_generated',
+)
+
+void [flashLogRef, isError, openRetestDialog, openModifyDialog, clearFlashPanel]
 
 function handleCollapseCaseCatalog() {
   collapseCaseCatalog()
@@ -599,6 +612,27 @@ function handleDutRowAction(deviceId: string) {
                     <dd>{{ formatCatalogPrereq(selectedCatalogGroup) }}</dd>
                   </div>
                 </dl>
+                <div v-if="isAiGeneratedCatalog()" class="ai-case-delete-toolbar">
+                  <span class="ea-muted">
+                    已选择 {{ selectedAiGeneratedCasesForDelete.size }} 个待删除 AI 用例
+                  </span>
+                  <button
+                    type="button"
+                    class="ea-btn-ghost ea-btn-sm"
+                    :disabled="selectedAiGeneratedCasesForDelete.size === 0 || aiGeneratedCasesDeleting"
+                    @click="clearAiGeneratedDeleteSelection"
+                  >
+                    清空选择
+                  </button>
+                  <button
+                    type="button"
+                    class="ea-btn-danger ea-btn-sm"
+                    :disabled="selectedAiGeneratedCasesForDelete.size === 0 || aiGeneratedCasesDeleting"
+                    @click="handleDeleteAiGeneratedCases"
+                  >
+                    {{ aiGeneratedCasesDeleting ? '删除中...' : '删除所选 AI 用例' }}
+                  </button>
+                </div>
                 <div
                   v-if="selectedCatalogTestType === 'monkey'"
                   class="catalog-monkey-duration catalog-overview-retest"
@@ -699,6 +733,14 @@ function handleDutRowAction(deviceId: string) {
                         :class="{ selected: selectedCatalogCaseKey === item.key }"
                         @click="selectCatalogCase(item.key)"
                       >
+                        <input
+                          v-if="isAiGeneratedCatalog()"
+                          type="checkbox"
+                          class="ai-case-delete-checkbox"
+                          :checked="selectedAiGeneratedCasesForDelete.has(item.key)"
+                          @click.stop
+                          @change.stop="toggleAiGeneratedCaseForDelete(item.key)"
+                        />
                         {{ item.caseName }}
                       </div>
                     </div>
@@ -853,7 +895,7 @@ function handleDutRowAction(deviceId: string) {
                 :key="device.deviceId"
                 class="device-card"
                 :class="{
-                  'device-card-running': device.status === '占用中' || device.status === '待命',
+                  'device-card-running': (device.status as string) === '占用中' || (device.status as string) === '待命',
                   'device-card-selected': selectedDeviceId === device.deviceId,
                 }"
                 @click="canSelectDevice(device) && selectDevice(device.deviceId)"
@@ -1103,7 +1145,7 @@ function handleDutRowAction(deviceId: string) {
                       <span class="form-label">用例选择</span>
                       <div class="test-type-selector">
                         <button
-                          v-for="testType in STANDARD_TEST_TYPE_ORDER"
+                          v-for="testType in DIRECT_TEST_TYPE_ORDER"
                           :key="testType"
                           type="button"
                           class="test-type-btn"
@@ -1724,6 +1766,27 @@ $catalog-pane-height: calc(100vh - 48px);
 .catalog-overview-retest {
   padding-top: 12px;
   border-top: 1px solid var(--line);
+}
+
+.ai-case-delete-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.ai-case-delete-checkbox {
+  margin-right: 8px;
+}
+
+.ea-btn-danger {
+  border-color: rgba(239, 68, 68, 0.35);
+  color: var(--error);
+
+  &:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.08);
+  }
 }
 
 .catalog-monkey-duration {

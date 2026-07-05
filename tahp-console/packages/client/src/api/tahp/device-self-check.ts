@@ -301,6 +301,13 @@ export async function startCustomTest(
   )
 }
 
+export function deleteAiGeneratedCases(caseKeys: string[]): Promise<{ deleted: string[]; remaining: number }> {
+  return tahpPost<{ deleted: string[]; remaining: number }>(
+    '/api/tahp/device-self-check/ai-cases/delete',
+    { caseKeys },
+  )
+}
+
 export async function continueTest(deviceId: string): Promise<DeviceDetail> {
   return await tahpPost<DeviceDetail>(
     `/api/tahp/device-self-check/devices/${deviceId}/test/continue`,

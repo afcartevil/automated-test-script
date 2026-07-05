@@ -10,6 +10,7 @@ import {
 } from '../hermes/agent-bridge'
 import { filterBridgeToolCallMarkupDelta } from '../hermes/run-chat/bridge-delta'
 import { logger } from '../logger'
+import type { RecommendCoverage } from './gerrit-ai-generated-cases'
 import type { CaseCandidate, RecommendedCase } from './gerrit-case-recommendation'
 
 const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
@@ -22,6 +23,16 @@ export interface LlmRecommendationRaw {
 
 export interface LlmRecommendJson {
   recommendations: LlmRecommendationRaw[]
+  coverage?: {
+    score?: number
+    reason?: string
+    gaps?: string[]
+  }
+}
+
+export interface LlmRecommendResult {
+  cases: RecommendedCase[]
+  coverage?: RecommendCoverage
 }
 
 function recommendLlmTimeoutMs(): number {
@@ -91,13 +102,19 @@ export function buildRecommendPrompt(
 
 # 输出 JSON schema
 {
+  "coverage": {
+    "score": 6,
+    "reason": "推荐用例集合对 P0 的整体覆盖说明",
+    "gaps": ["未被推荐用例覆盖的 P0 原文"]
+  },
   "recommendations": [
     { "caseKey": "week/driver/14", "score": 0.95, "reason": "与 P0 验证场景匹配的简短理由" }
   ]
 }
 
 - score: 0–1 相关性（越高越相关）或 1–10 整数
-- reason: 一句话说明为何推荐`
+- reason: 一句话说明为何推荐
+- coverage.score: 1–10。1 表示几乎未覆盖，6 表示基本覆盖且可按推荐用例测试，10 表示完全覆盖。`
 
   const userMessage = `# 变更模块
 ${moduleLine}
@@ -142,6 +159,20 @@ export function mapLlmRecommendations(
 
   result.sort((a, b) => b.score - a.score)
   return result
+}
+
+export function mapLlmCoverage(parsed: LlmRecommendJson): RecommendCoverage | undefined {
+  const coverage = parsed.coverage
+  if (!coverage) return undefined
+  const rawScore = Number(coverage.score)
+  const score = Number.isFinite(rawScore)
+    ? Math.max(1, Math.min(10, Math.round(rawScore)))
+    : 1
+  return {
+    score,
+    reason: String(coverage.reason || ''),
+    gaps: Array.isArray(coverage.gaps) ? coverage.gaps.map(String).filter(Boolean) : [],
+  }
 }
 
 async function runRecommendLlmChat(
@@ -209,8 +240,8 @@ export async function rerankCasesWithLlm(
   modules: string[],
   candidates: CaseCandidate[],
   maxTotal: number,
-): Promise<RecommendedCase[]> {
-  if (!p0Items.length || !candidates.length) return []
+): Promise<LlmRecommendResult> {
+  if (!p0Items.length || !candidates.length) return { cases: [] }
 
   const { instructions, userMessage } = buildRecommendPrompt(p0Items, modules, candidates)
   const raw = await runRecommendLlmChat(instructions, userMessage)
@@ -220,8 +251,11 @@ export async function rerankCasesWithLlm(
       { responsePreview: raw.slice(0, 200) },
       '[gerrit-recommend] LLM JSON parse failed',
     )
-    return []
+    return { cases: [] }
   }
 
-  return mapLlmRecommendations(parsed, candidates, maxTotal)
+  return {
+    cases: mapLlmRecommendations(parsed, candidates, maxTotal),
+    coverage: mapLlmCoverage(parsed),
+  }
 }

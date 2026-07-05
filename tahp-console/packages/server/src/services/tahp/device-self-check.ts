@@ -15,6 +15,13 @@ import { resolvePythonSpawn, tahpPaths } from './paths'
 import { ensurePowerTestPythonDeps } from './self-check-python-deps'
 import { buildSelfCheckDetailPayload, reportAbsoluteDir, type SelfCheckCaseItem, type SelfCheckFailedCaseItem } from './self-check-reports'
 import { markPlanExecutionCompleted } from './test-plan-executions'
+import {
+  AI_GENERATED_MODULE,
+  AI_GENERATED_MODULE_LABEL,
+  AI_GENERATED_TEST_TYPE,
+  deleteAiGeneratedCases as deletePersistedAiGeneratedCases,
+  loadAiGeneratedCaseConfig,
+} from './gerrit-ai-generated-cases'
 
 // 类型定义
 export type DeviceRole = '未分配' | '测试机' | '辅测机'
@@ -31,7 +38,7 @@ export type DeviceStatus =
   | '待命'
   | '刷机中'
 
-export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power'
+export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'ai_generated'
 export type DeviceTestType = StandardTestType | 'custom'
 
 export interface SimCardInfo {
@@ -370,6 +377,17 @@ function loadCaseConfigs(): void {
       console.warn(`[device-self-check] Failed to load config: ${file}`, e)
     }
   }
+  syncAiGeneratedCaseConfig()
+}
+
+function syncAiGeneratedCaseConfig(): void {
+  const key = `${AI_GENERATED_TEST_TYPE}/${AI_GENERATED_MODULE}`
+  const config = loadAiGeneratedCaseConfig()
+  if (!config) {
+    delete moduleConditions[key]
+    return
+  }
+  moduleConditions[key] = config
 }
 
 // 跟踪设备是否已经初始化过 SIM 信息
@@ -793,6 +811,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'smoke') return ['usd']
   if (testType === 'gms') return ['cts', 'gts', 'vts']
   if (testType === 'power') return ['current_analysis']
+  if (testType === 'ai_generated') return [AI_GENERATED_MODULE]
   return ['driver', 'tdd']
 }
 
@@ -3173,10 +3192,12 @@ export function getTestSession(deviceId: string): TestSession | undefined {
 }
 
 export function getModuleConditions(): Record<string, ModuleCondition> {
+  syncAiGeneratedCaseConfig()
   return moduleConditions
 }
 
 export function getAllCaseCatalogs(): CaseCatalogGroup[] {
+  syncAiGeneratedCaseConfig()
   const TEST_TYPE_LABELS: Record<string, string> = {
     str4: '转测摸底测试',
     week: '周版本测试',
@@ -3184,6 +3205,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     smoke: '冒烟测试',
     gms: 'GMS测试',
     power: '功耗自动化测试',
+    ai_generated: 'AI用例',
   }
   const MODULE_ORDER: Record<string, number> = {
     driver: 0,
@@ -3196,6 +3218,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     vts: 12,
     cts_tele: 13,
     current_analysis: 14,
+    [AI_GENERATED_MODULE]: 20,
     tdd: 99,
   }
 
@@ -3223,7 +3246,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power']
+  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', AI_GENERATED_TEST_TYPE]
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),
@@ -3239,6 +3262,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
 }
 
 export function getCaseCatalogDetail(testType: string): CaseCatalogDetailItem[] {
+  syncAiGeneratedCaseConfig()
   const group = getAllCaseCatalogs().find(g => g.testType === testType)
   if (!group) return []
 
@@ -3264,6 +3288,19 @@ export function getCaseCatalogDetail(testType: string): CaseCatalogDetailItem[] 
     }
   }
   return items
+}
+
+export function deleteAiGeneratedCases(caseKeys: string[]): { deleted: string[]; remaining: number } {
+  const result = deletePersistedAiGeneratedCases(caseKeys)
+  syncAiGeneratedCaseConfig()
+  emitEvent('case_catalog_updated', {
+    testType: AI_GENERATED_TEST_TYPE,
+    module: AI_GENERATED_MODULE,
+    moduleLabel: AI_GENERATED_MODULE_LABEL,
+    deleted: result.deleted,
+    remaining: result.remaining,
+  })
+  return result
 }
 
 // 初始化

@@ -29,7 +29,15 @@ export function useGerritReviewWorkspace() {
     isServerRecommending,
     recommendSource,
     recommendedCases,
-    checkedRecommendedCases,
+    recommendCoverageScore,
+    recommendCoverageReason,
+    recommendCoverageGaps,
+    aiGeneratedCases,
+    checkedTestCases,
+    serverP0Items,
+    serverP0Raw,
+    serverModules,
+    serverModulesDisplay,
   } = storeToRefs(gerritStore)
 
   const showRecommendLoading = computed(
@@ -37,9 +45,10 @@ export function useGerritReviewWorkspace() {
   )
 
   const recommendSourceLabel = computed(() => {
-    if (recommendSource.value === 'llm') return 'LLM 语义匹配'
-    if (recommendSource.value === 'rule') return '关键词规则（LLM 未命中或不可用）'
-    return ''
+    const score = recommendCoverageScore.value ? ` · ${recommendCoverageScore.value}` : ''
+    if (recommendSource.value === 'llm') return `LLM 语义匹配${score}`
+    if (recommendSource.value === 'rule') return `关键词规则（LLM 未命中或不可用）${score}`
+    return score.trim()
   })
 
   const inputText = ref('')
@@ -63,11 +72,33 @@ export function useGerritReviewWorkspace() {
     return last ? String(last.payload?.message ?? last.payload?.skill_id ?? '') : ''
   })
 
-  const p0Result = computed(() => gerritStore.p0Result())
-  const modulesResult = computed(() => gerritStore.modulesResult())
-  const checkedRecommendedCount = computed(() => checkedRecommendedCases.value.length)
+  const p0Result = computed(() => {
+    if (serverP0Items.value.length) {
+      return { items: serverP0Items.value, rawSection: serverP0Raw.value }
+    }
+    return gerritStore.p0Result()
+  })
+  const modulesResult = computed(() => {
+    if (serverModules.value.length || serverModulesDisplay.value !== '未识别') {
+      return { modules: serverModules.value, display: serverModulesDisplay.value }
+    }
+    return gerritStore.modulesResult()
+  })
+  const checkedRecommendedCount = computed(() => checkedTestCases.value.length)
   const p0Count = computed(() => p0Result.value.items.length)
   const recommendedCount = computed(() => recommendedCases.value.length)
+  const aiGeneratedCount = computed(() => aiGeneratedCases.value.length)
+
+  /** 推荐用例已充分覆盖必须测试项（无需 AI 用例） */
+  const coverageSufficient = computed(() => {
+    const score = recommendCoverageScore.value
+    if (score !== null && score >= 6) return true
+    return score !== null && recommendCoverageGaps.value.length === 0 && p0Count.value > 0
+  })
+
+  const showAiCaseCoverageReasonInTitle = computed(
+    () => !!recommendCoverageReason.value && !coverageSufficient.value,
+  )
 
   const modulesUnrecognized = computed(() =>
     !modulesResult.value.modules.length && modulesResult.value.display === '未识别',
@@ -259,12 +290,26 @@ export function useGerritReviewWorkspace() {
     },
   )
 
+  watch(isRunning, (running, prevRunning) => {
+    if (prevRunning && !running) {
+      gerritRecommendTrace('workspace.reconcile.on_running_done', {
+        recCount: recommendedCases.value.length,
+        p0Count: p0Result.value.items.length,
+      })
+      gerritStore.reconcileActiveTask()
+    }
+  })
+
   function setRecommendedCaseChecked(caseKey: string, checked: boolean) {
     gerritStore.setRecommendedCaseChecked(caseKey, checked)
   }
 
+  function setAiGeneratedCaseChecked(caseKey: string, checked: boolean) {
+    gerritStore.setAiGeneratedCaseChecked(caseKey, checked)
+  }
+
   function handleStartRecommendedTest() {
-    const caseKeys = checkedRecommendedCases.value.map(item => item.caseKey)
+    const caseKeys = checkedTestCases.value.map(item => item.caseKey)
     if (!caseKeys.length) {
       message.warning('请至少选择一个推荐测试用例')
       return
@@ -317,16 +362,24 @@ export function useGerritReviewWorkspace() {
     p0Result,
     modulesResult,
     recommendedCases,
+    recommendCoverageScore,
+    recommendCoverageReason,
+    recommendCoverageGaps,
+    aiGeneratedCases,
     checkedRecommendedCount,
     p0Count,
     recommendedCount,
+    aiGeneratedCount,
     loadingRecommendations,
     showRecommendLoading,
     recommendSourceLabel,
+    coverageSufficient,
+    showAiCaseCoverageReasonInTitle,
     modulesUnrecognized,
     bindThinkingScrollRef,
     toggleRecommendedCase: setRecommendedCaseChecked,
     setRecommendedCaseChecked,
+    setAiGeneratedCaseChecked,
     handleStartRecommendedTest,
     handleRefreshRecommend,
     handleTextareaInput,

@@ -95,6 +95,36 @@ describe('recommendTestCases hybrid', () => {
     expect(rerankCasesWithLlmMock).toHaveBeenCalled()
   })
 
+  it('returns LLM coverage metadata when rerank scores the recommendation set', async () => {
+    rerankCasesWithLlmMock.mockResolvedValueOnce({
+      cases: [
+        {
+          caseKey: 'week/driver/14',
+          caseName: 'USB功能正常充电',
+          moduleLabel: '驱动',
+          score: 9,
+          reasons: ['P0 要求验证 USB 插拔触发校准'],
+        },
+      ],
+      coverage: {
+        score: 7,
+        reason: '已覆盖 USB 插拔基础验证',
+        gaps: ['未覆盖长时间稳定性'],
+      },
+    })
+
+    const { coverage, aiGeneratedCases } = await recommendTestCasesWithMeta([
+      'USB 插拔触发 SAR 校准',
+    ])
+
+    expect(coverage).toMatchObject({
+      score: 7,
+      reason: '已覆盖 USB 插拔基础验证',
+      gaps: ['未覆盖长时间稳定性'],
+    })
+    expect(aiGeneratedCases).toEqual([])
+  })
+
   it('returns source in recommend-cases API response', async () => {
     rerankCasesWithLlmMock.mockResolvedValueOnce([
       {
@@ -159,5 +189,15 @@ describe('recommendTestCases hybrid', () => {
     expect(source).toBe('rule')
     expect(cases).toEqual([])
     expect(rerankCasesWithLlmMock).toHaveBeenCalled()
+  })
+
+  it('returns low rule coverage with gaps when no case matches P0 content', async () => {
+    process.env.GERRIT_RECOMMEND_MODE = 'rule'
+
+    const { cases, coverage } = await recommendTestCasesWithMeta(['完全不相关的随机描述 xyzabc'])
+
+    expect(cases).toEqual([])
+    expect(coverage.score).toBe(1)
+    expect(coverage.gaps).toEqual(['完全不相关的随机描述 xyzabc'])
   })
 })

@@ -6,7 +6,7 @@ export const SELF_CHECK_SUBTITLE =
 export const AUTO_RETEST_TOOLTIP = '测试结束后自动复测无人工参与的失败用例'
 
 /** 标准测试大类展示顺序（与用例列表 / 后端 catalog 一致） */
-export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power'] as const
+export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'ai_generated'] as const
 
 export type StandardTestTypeKey = (typeof STANDARD_TEST_TYPE_ORDER)[number]
 
@@ -21,6 +21,7 @@ export const MODULE_ORDER: Record<string, number> = {
   vts: 12,
   cts_tele: 13,
   current_analysis: 14,
+  generated: 20,
   tdd: 99,
 }
 
@@ -31,6 +32,7 @@ export function getTestTypeLabel(testType?: string): string {
   if (testType === 'smoke') return '冒烟测试'
   if (testType === 'gms') return 'GMS测试'
   if (testType === 'power') return '功耗自动化测试'
+  if (testType === 'ai_generated') return 'AI用例'
   if (testType === 'custom') return '自定义测试'
   return '未分配'
 }
@@ -66,6 +68,7 @@ export function getModuleLabel(module: string): string {
     gts: 'GTS',
     vts: 'VTS',
     current_analysis: '电流分析',
+    generated: 'AI生成用例',
   }
   return labels[module] || module
 }

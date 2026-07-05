@@ -19,6 +19,7 @@ import {
   resolveLatestDailyFlashPackage,
   clearFlashPackageCache,
   startCustomTest,
+  deleteAiGeneratedCases,
   getCaseCatalogs,
   getCaseCatalogDetail,
   continueTest,
@@ -214,6 +215,8 @@ const selectedCatalogTestType = ref<string | null>(null)
 const catalogDetailItems = ref<CaseCatalogDetailItem[]>([])
 const selectedCatalogCaseKey = ref<string | null>(null)
 const catalogDetailLoading = ref(false)
+const selectedAiGeneratedCasesForDelete = ref<Set<string>>(new Set())
+const aiGeneratedCasesDeleting = ref(false)
 const catalogTypeSettings = ref({
   autoRetestEnabled: true,
   autoRetestCount: 1,
@@ -662,6 +665,14 @@ async function openCaseCatalog(testType: string) {
       getSettings(),
     ])
     catalogDetailItems.value = detail
+    if (testType !== 'ai_generated') {
+      clearAiGeneratedDeleteSelection()
+    } else {
+      const validKeys = new Set(detail.map(item => item.key))
+      selectedAiGeneratedCasesForDelete.value = new Set(
+        Array.from(selectedAiGeneratedCasesForDelete.value).filter(key => validKeys.has(key)),
+      )
+    }
     expandedCatalogDetailModules.value = new Set(
       [...new Set(detail.map(item => `${testType}/${item.module}`))]
     )
@@ -698,6 +709,42 @@ function selectCatalogCase(caseKey: string) {
   selectedCatalogCaseKey.value = caseKey
   if (reselect) {
     catalogPanelScrollNonce.value += 1
+  }
+}
+
+function isAiGeneratedCatalog(): boolean {
+  return selectedCatalogTestType.value === 'ai_generated'
+}
+
+function toggleAiGeneratedCaseForDelete(caseKey: string) {
+  if (!caseKey.startsWith('ai_generated/generated/')) return
+  const next = new Set(selectedAiGeneratedCasesForDelete.value)
+  if (next.has(caseKey)) next.delete(caseKey)
+  else next.add(caseKey)
+  selectedAiGeneratedCasesForDelete.value = next
+}
+
+function clearAiGeneratedDeleteSelection() {
+  selectedAiGeneratedCasesForDelete.value = new Set()
+}
+
+async function handleDeleteAiGeneratedCases() {
+  if (!isAiGeneratedCatalog() || selectedAiGeneratedCasesForDelete.value.size === 0) return
+  const caseKeys = Array.from(selectedAiGeneratedCasesForDelete.value)
+  aiGeneratedCasesDeleting.value = true
+  try {
+    await deleteAiGeneratedCases(caseKeys)
+    selectedCases.value = new Set(Array.from(selectedCases.value).filter(key => !caseKeys.includes(key)))
+    clearAiGeneratedDeleteSelection()
+    await loadCaseCatalogs({ silent: true })
+    if (selectedCatalogTestType.value) {
+      await openCaseCatalog(selectedCatalogTestType.value)
+    }
+    message.success(`已删除 ${caseKeys.length} 个 AI 用例`)
+  } catch (e: any) {
+    message.error(e?.message || '删除 AI 用例失败')
+  } finally {
+    aiGeneratedCasesDeleting.value = false
   }
 }
 
@@ -1861,6 +1908,8 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     catalogDetailItems,
     selectedCatalogCaseKey,
     catalogDetailLoading,
+    selectedAiGeneratedCasesForDelete,
+    aiGeneratedCasesDeleting,
     catalogTypeSettings,
     catalogSettingsSaving,
     expandedCatalogTypes,
@@ -1915,6 +1964,10 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     toggleCatalogDetailModule,
     openCaseCatalog,
     selectCatalogCase,
+    isAiGeneratedCatalog,
+    toggleAiGeneratedCaseForDelete,
+    clearAiGeneratedDeleteSelection,
+    handleDeleteAiGeneratedCases,
     saveCatalogTypeSettings,
     saveGmsTradefedSettings,
     saveGmsTradefedSettingsFromDialog,

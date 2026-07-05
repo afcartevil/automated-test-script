@@ -16,6 +16,7 @@ import {
   getModuleConditions,
   getAllCaseCatalogs,
   getCaseCatalogDetail,
+  deleteAiGeneratedCases,
   getSettings,
   updateSettings,
   addSseClient,
@@ -204,6 +205,21 @@ tahpDeviceSelfCheckRoutes.get(
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { success: false, error: err?.message || 'Failed to get case catalog detail' }
+    }
+  }
+)
+
+// 删除 AI 生成用例（仅允许 ai_generated/generated/*）
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/ai-cases/delete',
+  async (ctx) => {
+    try {
+      const { caseKeys } = ctx.request.body as { caseKeys?: string[] }
+      const result = deleteAiGeneratedCases(Array.isArray(caseKeys) ? caseKeys : [])
+      ctx.body = { success: true, data: result }
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to delete AI cases' }
     }
   }
 )

@@ -55,7 +55,7 @@ export function gerritRecommendTrace(
   pushDebugEntry(event, detail)
   const { taskId, ...rest } = detail ?? {}
   const label = taskId ? `[gerrit-recommend][${String(taskId).slice(-8)}]` : '[gerrit-recommend]'
-  if (event.includes('dropped') || event.includes('skip') || event.includes('blocked')) {
+  if (event.includes('dropped') || event.includes('skip') || event.includes('blocked') || event.includes('missing')) {
     console.warn(label, event, rest)
   } else {
     console.info(label, event, rest)

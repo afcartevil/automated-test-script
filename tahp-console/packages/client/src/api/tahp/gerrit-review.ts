@@ -28,13 +28,33 @@ export interface RecommendedCase {
   reasons: string[]
 }
 
+export interface AiGeneratedCase {
+  caseKey: string
+  caseIndex: number
+  caseName: string
+  moduleLabel: string
+  coveredP0Items: string[]
+  reason: string
+  manualSteps: string
+  expectedResult: string
+}
+
 export type RecommendSource = 'llm' | 'rule'
+
+export interface RecommendCasesResponse {
+  recommended_cases: RecommendedCase[]
+  source: RecommendSource
+  coverage_score: number
+  coverage_reason: string
+  coverage_gaps: string[]
+  ai_generated_cases: AiGeneratedCase[]
+}
 
 export function fetchRecommendCases(input: {
   p0_items: string[]
   modules?: string[]
-}): Promise<{ recommended_cases: RecommendedCase[]; source: RecommendSource }> {
-  return tahpPost<{ recommended_cases: RecommendedCase[]; source: RecommendSource }>(
+}): Promise<RecommendCasesResponse> {
+  return tahpPost<RecommendCasesResponse>(
     '/api/tahp/gerrit-review/recommend-cases',
     input,
   )

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 
 const sendGerritReviewMessageMock = vi.fn()
@@ -95,6 +96,56 @@ describe('useGerritReviewStore', () => {
     expect(gerrit.isFinalized('task-gerrit-2')).toBe(true)
     expect(gerrit.chatMessages.find(m => m.taskId === 'task-gerrit-2')?.streaming).toBe(false)
     expect(gerrit.serverP0Items).toEqual(['**充电** - 插拔'])
+    expect(gerrit.isRunning).toBe(false)
+  })
+
+  it('auto-applies recommendations when task.completed is appended to taskStreams', async () => {
+    const gerrit = useGerritReviewStore()
+    const tasks = useTahpTasksStore()
+
+    gerrit.activeTaskId = 'task-gerrit-auto-watch'
+    gerrit.runningTaskId = 'task-gerrit-auto-watch'
+    gerrit.chatMessages = [
+      { id: 'u1', role: 'user', content: 'review' },
+      { id: 'a1', role: 'assistant', content: '', streaming: true, taskId: 'task-gerrit-auto-watch' },
+    ]
+    tasks.taskStreams = {
+      'task-gerrit-auto-watch': [
+        { type: 'task.message', payload: { text: 'partial report' }, ts: 1 },
+      ],
+    }
+
+    await nextTick()
+    expect(gerrit.recommendedCases).toHaveLength(0)
+    expect(gerrit.isFinalized('task-gerrit-auto-watch')).toBe(false)
+
+    tasks.taskStreams = {
+      ...tasks.taskStreams,
+      'task-gerrit-auto-watch': [
+        ...tasks.taskStreams['task-gerrit-auto-watch'],
+        {
+          type: 'task.completed',
+          payload: {
+            llm_response: '### P0 - 必须测试\n1. USB 插拔',
+            p0_items: ['USB 插拔'],
+            recommend_source: 'llm',
+            recommended_cases: [{
+              caseKey: 'week/driver/14',
+              caseName: 'USB功能正常充电',
+              moduleLabel: '驱动',
+              score: 2,
+              reasons: ['USB'],
+            }],
+          },
+          ts: 2,
+        },
+      ],
+    }
+
+    await nextTick()
+
+    expect(gerrit.isFinalized('task-gerrit-auto-watch')).toBe(true)
+    expect(gerrit.recommendedCases).toHaveLength(1)
     expect(gerrit.isRunning).toBe(false)
   })
 
@@ -294,6 +345,9 @@ describe('useGerritReviewStore', () => {
             modules_display: 'USB',
             p0_items: ['USB 插拔'],
             recommend_source: 'llm',
+            coverage_score: 5,
+            coverage_reason: 'USB 长稳未覆盖',
+            coverage_gaps: ['USB 长时间稳定性'],
             recommended_cases: [
               {
                 caseKey: 'week/driver/14',
@@ -301,6 +355,18 @@ describe('useGerritReviewStore', () => {
                 moduleLabel: '驱动',
                 score: 4,
                 reasons: ['P0 要求验证 USB 插拔稳定性'],
+              },
+            ],
+            ai_generated_cases: [
+              {
+                caseKey: 'ai_generated/generated/1',
+                caseIndex: 1,
+                caseName: 'AI补充USB长稳验证',
+                moduleLabel: 'AI生成用例',
+                coveredP0Items: ['USB 长时间稳定性'],
+                reason: '补齐推荐用例缺口',
+                manualSteps: '1. 执行脚本',
+                expectedResult: '无异常',
               },
             ],
           },
@@ -317,6 +383,16 @@ describe('useGerritReviewStore', () => {
     expect(gerrit.recommendSource).toBe('llm')
     expect(gerrit.recommendedCases[0]?.checked).toBe(true)
     expect(gerrit.checkedRecommendedCases[0]?.caseKey).toBe('week/driver/14')
+    expect(gerrit.recommendCoverageScore).toBe(5)
+    expect(gerrit.recommendCoverageGaps).toEqual(['USB 长时间稳定性'])
+    expect(gerrit.aiGeneratedCases[0]?.checked).toBe(true)
+    expect(gerrit.checkedTestCases.map(item => item.caseKey)).toEqual([
+      'week/driver/14',
+      'ai_generated/generated/1',
+    ])
+
+    gerrit.setAiGeneratedCaseChecked('ai_generated/generated/1', false)
+    expect(gerrit.checkedTestCases.map(item => item.caseKey)).toEqual(['week/driver/14'])
   })
 
   it('second review clears running state and applies AI test insight after completion', async () => {
@@ -835,6 +911,45 @@ describe('useGerritReviewStore', () => {
 
     expect(fetchRecommendCasesMock).toHaveBeenCalled()
     expect(gerrit.recommendedCases).toHaveLength(1)
+  })
+
+  it('does not duplicate insight apply on concurrent processStreamEvents', async () => {
+    const gerrit = useGerritReviewStore()
+    const tasks = useTahpTasksStore()
+
+    gerrit.activeTaskId = 'task-gerrit-dup-complete'
+    gerrit.runningTaskId = 'task-gerrit-dup-complete'
+    gerrit.chatMessages = [
+      { id: 'u1', role: 'user', content: 'review' },
+      { id: 'a1', role: 'assistant', content: '', streaming: true, taskId: 'task-gerrit-dup-complete' },
+    ]
+    tasks.taskStreams = {
+      'task-gerrit-dup-complete': [
+        {
+          type: 'task.completed',
+          payload: {
+            llm_response: '### P0 - 必须测试\n1. USB 插拔',
+            p0_items: ['USB 插拔'],
+            recommend_source: 'llm',
+            recommended_cases: [{
+              caseKey: 'week/driver/14',
+              caseName: 'USB功能正常充电',
+              moduleLabel: '驱动',
+              score: 2,
+              reasons: ['USB'],
+            }],
+          },
+          ts: 1,
+        },
+      ],
+    }
+
+    gerrit.processStreamEvents('task-gerrit-dup-complete')
+    gerrit.processStreamEvents('task-gerrit-dup-complete')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(gerrit.recommendedCases).toHaveLength(1)
+    expect(gerrit.recommendedCases[0]?.caseKey).toBe('week/driver/14')
   })
 
   it('does not replay insight when finalized task stream updates again', async () => {

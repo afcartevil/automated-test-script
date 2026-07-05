@@ -62,17 +62,34 @@ tahpGerritReviewRoutes.post('/api/tahp/gerrit-review/recommend-cases', async (ct
     }
     const modules = Array.isArray(body.modules) ? body.modules.map(String) : []
     const p0Items = Array.isArray(body.p0_items) ? body.p0_items.map(String) : []
-    const { cases: recommended_cases, source } = await recommendTestCasesWithMeta(p0Items, modules)
+    const {
+      cases: recommended_cases,
+      source,
+      coverage,
+      aiGeneratedCases: ai_generated_cases,
+    } = await recommendTestCasesWithMeta(p0Items, modules)
     logger.info(
       {
         p0Count: p0Items.length,
         moduleCount: modules.length,
         recommendedCount: recommended_cases.length,
         source,
+        coverageScore: coverage.score,
+        aiGeneratedCount: ai_generated_cases.length,
       },
       '[gerrit-review] recommend-cases',
     )
-    ctx.body = { success: true, data: { recommended_cases, source } }
+    ctx.body = {
+      success: true,
+      data: {
+        recommended_cases,
+        source,
+        coverage_score: coverage.score,
+        coverage_reason: coverage.reason,
+        coverage_gaps: coverage.gaps,
+        ai_generated_cases,
+      },
+    }
   } catch (err) {
     logger.warn({ err: (err as Error).message }, '[gerrit-review] recommend-cases failed')
     ctx.status = 500
