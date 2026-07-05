@@ -468,13 +468,20 @@ async function doRefreshDevices() {
 function applyFollowCurrentCase(session?: { testType: string; selectedCases?: string[]; caseResults: Record<string, CaseResult>; modules: string[]; currentModuleIndex: number; moduleProgress: Record<string, { currentCaseIndex?: number }> }) {
   if (!session) return
   if (session.testType === 'custom' && session.selectedCases) {
+    const modulesToExpand = new Set(expandedModules.value)
     for (const caseKey of session.selectedCases) {
+      const parts = caseKey.split('/')
+      parts.pop()
+      const module = parts.pop() || ''
+      if (module) modulesToExpand.add(module)
       const result = session.caseResults[caseKey]
       if (result?.status === '进行中') {
         selectedCase.value = caseKey
+        expandedModules.value = modulesToExpand
         return
       }
     }
+    expandedModules.value = modulesToExpand
     return
   }
   const mod = session.modules[session.currentModuleIndex]
@@ -1482,11 +1489,15 @@ async function handleStartCustomTest() {
       Array.from(customTestAuxDeviceIds.value)
     )
     viewMode.value = 'list'
+    catalogPanelExpanded.value = false
     selectedDeviceId.value = customTestDutDeviceId.value
     selectedDevice.value = result
+    deviceDetailExpanded.value = true
     followCurrent.value = true
+    applyFollowCurrentCase(result.session)
     startPolling()
     await loadDevices()
+    deviceDetailScrollNonce.value += 1
   } catch (e: any) {
     console.error('[DeviceSelfCheck] Error starting custom test:', e)
     error.value = e?.message || '启动自定义测试失败'

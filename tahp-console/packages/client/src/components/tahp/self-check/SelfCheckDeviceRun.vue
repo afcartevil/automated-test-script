@@ -20,6 +20,7 @@ import type { DeviceListFilterKey } from './self-check-utils'
 const catalogPanelRef = ref<HTMLElement | null>(null)
 const deviceListAnchorRef = ref<HTMLElement | null>(null)
 const deviceDetailPanelRef = ref<HTMLElement | null>(null)
+const deviceDetailBodyRef = ref<HTMLElement | null>(null)
 const customTestPanelRef = ref<HTMLElement | null>(null)
 const deviceListFilter = ref<DeviceListFilterKey>('all')
 
@@ -217,17 +218,21 @@ watch(
   { flush: 'post' },
 )
 
+async function scrollToDeviceDetailBody() {
+  await scrollToElementWhenReady(() => deviceDetailBodyRef.value ?? deviceDetailPanelRef.value)
+}
+
 watch(
   () => deviceDetailExpanded.value && !!selectedDevice.value,
   (ready) => {
-    if (ready) void scrollToElementWhenReady(() => deviceDetailPanelRef.value)
+    if (ready) void scrollToDeviceDetailBody()
   },
   { flush: 'post' },
 )
 
 watch(deviceDetailScrollNonce, () => {
   if (deviceDetailExpanded.value) {
-    void scrollToElementWhenReady(() => deviceDetailPanelRef.value)
+    void scrollToDeviceDetailBody()
   }
 })
 
@@ -999,7 +1004,7 @@ function handleDutRowAction(deviceId: string) {
             </div>
           </EaCard>
 
-          <div class="detail-container device-detail-body">
+          <div ref="deviceDetailBodyRef" class="detail-container device-detail-body">
             <EaCard class="sidebar-card">
               <div class="section-title">用例列表</div>
               <div class="case-list">
@@ -1486,12 +1491,14 @@ $catalog-pane-height: calc(100vh - 48px);
 
   .device-overview-card {
     flex-shrink: 0;
+    height: 210px;
   }
 
   .device-detail-body {
     flex: 1 1 0;
     min-height: 0;
     overflow: hidden;
+    scroll-margin-top: 16px;
   }
 
   .device-detail-body.detail-container {
@@ -1567,6 +1574,14 @@ $catalog-pane-height: calc(100vh - 48px);
 }
 
 .device-overview-meta {
+  margin-bottom: 0;
+}
+
+.device-overview-card .detail-card-content {
+  gap: 0;
+}
+
+.device-overview-card .catalog-overview-header {
   margin-bottom: 0;
 }
 
