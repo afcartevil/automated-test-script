@@ -30,7 +30,7 @@ const coreCards = [
     tone: 'ea-t-amber',
     icon: 'branch',
     title: 'Modem基线',
-    summary: '统一承接基线升级、冲突停驻、人工处理与运行历史，先看预览页再逐步接真链路。',
+    summary: 'Modem基线升级、Modem Patch自动化合入，自动编译烧录验证。',
   },
   {
     route: 'tahp.self-check',

@@ -22,7 +22,7 @@ function nav(name: string) {
     <div class="ea-page-head">
       <div>
         <h1>Modem基线</h1>
-        <div class="sub">执行工作台与低频配置拆分为两个子页：高频执行看工作台，首次接入和规则维护看配置中心。</div>
+        <div class="sub">Modem基线升级、Modem Patch自动化合入，自动编译烧录验证。</div>
       </div>
 
       <div class="ea-head-actions ea-wrap">
