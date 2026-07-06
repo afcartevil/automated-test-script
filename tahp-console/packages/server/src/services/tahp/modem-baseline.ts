@@ -7,6 +7,7 @@ import { config as serverConfig } from '../../config'
 
 export type ModemBaselineStatus = 'running' | 'success' | 'failed' | 'conflict'
 export type ModemBaselineMode = 'stop_after_merge'
+export type ModemBaselinePhase = 'precheck' | 'merge' | 'conflict' | 'resume' | 'archive'
 
 export type ModemBaselineConfig = {
   NODE_BRANCH: string
@@ -23,6 +24,7 @@ export type ModemBaselineRunMeta = {
   runId: string
   status: ModemBaselineStatus
   mode: ModemBaselineMode
+  phase?: ModemBaselinePhase
   createdAt: string
   startedAt?: string
   finishedAt?: string
@@ -183,6 +185,31 @@ function broadcast(runId: string, event: string, data: unknown) {
   }
 }
 
+function inferPhaseFromStatus(status: ModemBaselineStatus, phase?: ModemBaselinePhase): ModemBaselinePhase {
+  if (status === 'conflict') return 'conflict'
+  if (status === 'success') return 'archive'
+  if (status === 'running') return phase === 'resume' ? 'resume' : phase === 'precheck' ? 'precheck' : 'merge'
+  return phase === 'resume' ? 'resume' : phase === 'archive' ? 'archive' : phase === 'conflict' ? 'conflict' : 'merge'
+}
+
+function updateRunMeta(runId: string, patch: Partial<ModemBaselineRunMeta>) {
+  const current = readModemBaselineRun(runId)
+  if (!current) return null
+  const nextMeta: ModemBaselineRunMeta = {
+    ...current,
+    ...patch,
+  }
+  nextMeta.phase = inferPhaseFromStatus(nextMeta.status, patch.phase ?? nextMeta.phase)
+  writeRunMeta(nextMeta)
+  broadcast(runId, 'status', {
+    status: nextMeta.status,
+    phase: nextMeta.phase,
+    reportPath: nextMeta.reportPath,
+    error: nextMeta.error,
+  })
+  return nextMeta
+}
+
 export function registerModemBaselineSseClient(runId: string, res: ServerResponse) {
   const meta = readModemBaselineRun(runId)
   if (!meta) {
@@ -192,7 +219,7 @@ export function registerModemBaselineSseClient(runId: string, res: ServerRespons
   const runtime = runtimeFor(runId)
   runtime.clients.add(res)
 
-  sendEvent(res, 'status', { status: meta.status, reportPath: meta.reportPath, error: meta.error })
+  sendEvent(res, 'status', { status: meta.status, phase: meta.phase, reportPath: meta.reportPath, error: meta.error })
   if (meta.logPath && fs.existsSync(meta.logPath)) {
     const text = fs.readFileSync(meta.logPath, 'utf-8')
     if (text) sendEvent(res, 'log', { line: text, full: true })
@@ -481,12 +508,14 @@ async function postProcessRun(runId: string, config: ModemBaselineConfig, code: 
     }
   }
 
+  let remoteMergeHead = false
   try {
     const mergeHeadProbe = await harnessExec(`cd ${remote} && test -f .git/MERGE_HEAD && echo __APM_MERGE_HEAD__ || echo __APM_NO__`, { timeoutMs: 8000 })
     const raw = (mergeHeadProbe.output ?? '').trim()
     const cleaned = raw.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('Updating files:')).join('\n').trim()
     const marker = cleaned.match(/__APM_(MERGE_HEAD|NO)__/)
     const remoteHead = marker?.[1] === 'MERGE_HEAD' ? 'MERGE_HEAD' : marker?.[1] === 'NO' ? 'NO' : cleaned || raw
+    remoteMergeHead = remoteHead === 'MERGE_HEAD'
     appendLog(`[conflicts] remote_merge_head=${remoteHead}\n`)
   } catch (error) {
     appendLog(`[conflicts] remote_merge_head probe failed: ${String((error as Error)?.message ?? error)}\n`)
@@ -503,27 +532,27 @@ async function postProcessRun(runId: string, config: ModemBaselineConfig, code: 
 
   const conflictFiles = await listUnmergedFiles(config)
   appendLog(`[conflicts] detected_files=${conflictFiles.length}\n`)
-
-  let status: ModemBaselineStatus = code === 0 ? 'success' : code === 2 ? 'conflict' : 'failed'
-  if (conflictFiles.length > 0) status = 'conflict'
-
-  if (status !== 'conflict' && ((localMergeHead && fs.existsSync(localMergeHead)) || current.remoteWorkDir)) {
-    try {
-      const probe = await harnessExec(`cd ${remote} && test -f .git/MERGE_HEAD && echo __APM_MERGE_HEAD__ || echo __APM_NO__`, { timeoutMs: 8000 })
-      if ((probe.output ?? '').includes('__APM_MERGE_HEAD__')) {
-        status = 'conflict'
-      }
-    } catch {}
-  }
+  const localStillInMerge = Boolean(localMergeHead && fs.existsSync(localMergeHead))
+  const hasRealConflict = conflictFiles.length > 0 || remoteMergeHead || localStillInMerge
+  let status: ModemBaselineStatus = hasRealConflict ? 'conflict' : code === 1 ? 'failed' : 'success'
+  appendLog(`[conflicts] final_status=${status} exit_code=${String(code)} local_merge_head=${Number(localStillInMerge)} remote_merge_head=${Number(remoteMergeHead)}\n`)
 
   const nextMeta: ModemBaselineRunMeta = {
     ...current,
     status,
+    phase: status === 'success' ? 'archive' : status === 'conflict' ? 'conflict' : current.phase,
     finishedAt: nowIso(),
     conflictFiles: conflictFiles.length ? conflictFiles : undefined,
   }
+  if (status === 'success') {
+    appendLog('[run] phase=archive status=success summary=merge_commit_post_merge_completed\n')
+  } else if (status === 'conflict') {
+    appendLog(`[run] phase=conflict status=conflict summary=manual_resolution_required files=${conflictFiles.length}\n`)
+  } else {
+    appendLog(`[run] phase=${nextMeta.phase} status=failed summary=post_process_failed exit_code=${String(code)}\n`)
+  }
   writeRunMeta(nextMeta)
-  broadcast(runId, 'status', { status: nextMeta.status, reportPath: nextMeta.reportPath, error: nextMeta.error })
+  broadcast(runId, 'status', { status: nextMeta.status, phase: nextMeta.phase, reportPath: nextMeta.reportPath, error: nextMeta.error })
   broadcast(runId, 'conflicts', { files: conflictFiles })
 }
 
@@ -534,7 +563,7 @@ function updateReportPathFromLog(runId: string, line: string) {
   if (!current) return
   const nextMeta: ModemBaselineRunMeta = { ...current, reportPath: matched[1].trim() }
   writeRunMeta(nextMeta)
-  broadcast(runId, 'status', { status: nextMeta.status, reportPath: nextMeta.reportPath, error: nextMeta.error })
+  broadcast(runId, 'status', { status: nextMeta.status, phase: nextMeta.phase, reportPath: nextMeta.reportPath, error: nextMeta.error })
 }
 
 function appendRunLog(runId: string, logPath: string, line: string) {
@@ -549,11 +578,12 @@ function markRunFailed(runId: string, error: string) {
   const nextMeta: ModemBaselineRunMeta = {
     ...current,
     status: 'failed',
+    phase: inferPhaseFromStatus('failed', current.phase),
     finishedAt: nowIso(),
     error,
   }
   writeRunMeta(nextMeta)
-  broadcast(runId, 'status', { status: nextMeta.status, reportPath: nextMeta.reportPath, error: nextMeta.error })
+  broadcast(runId, 'status', { status: nextMeta.status, phase: nextMeta.phase, reportPath: nextMeta.reportPath, error: nextMeta.error })
 }
 
 function validateConfig(input: unknown): ModemBaselineConfig | null {
@@ -610,6 +640,9 @@ async function startBackgroundRun(runId: string, config: ModemBaselineConfig, sc
       markRunFailed(runId, 'bridge_not_ready')
       return
     }
+    const current = readModemBaselineRun(runId)
+    const nextPhase = current?.phase === 'resume' ? 'resume' : 'merge'
+    updateRunMeta(runId, { status: 'running', phase: nextPhase })
   } catch {
     markRunFailed(runId, 'bridge_not_ready')
     return
@@ -618,7 +651,7 @@ async function startBackgroundRun(runId: string, config: ModemBaselineConfig, sc
   const processRef = spawn(pythonExe, ['-u', scriptPath, configPath], {
     cwd: toolRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, PYTHONUNBUFFERED: '1', SKIP_BRIDGE_CHECK: 'true' },
+    env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', SKIP_BRIDGE_CHECK: 'true' },
   })
 
   processRef.on('error', (error) => {
@@ -648,6 +681,7 @@ export function createModemBaselineRun(input: unknown) {
     runId,
     status: 'running',
     mode: 'stop_after_merge',
+    phase: 'precheck',
     createdAt: nowIso(),
     startedAt: nowIso(),
     config: validated,
@@ -674,12 +708,13 @@ export function continueModemBaselineRun(runId: string) {
   const nextMeta: ModemBaselineRunMeta = {
     ...meta,
     status: 'running',
+    phase: 'resume',
     finishedAt: undefined,
     conflictFiles: undefined,
     error: undefined,
   }
   writeRunMeta(nextMeta)
-  broadcast(runId, 'status', { status: nextMeta.status, reportPath: nextMeta.reportPath, error: nextMeta.error })
+  broadcast(runId, 'status', { status: nextMeta.status, phase: nextMeta.phase, reportPath: nextMeta.reportPath, error: nextMeta.error })
   appendRunLog(runId, meta.logPath, '[continue] requested\n')
   void startBackgroundRun(runId, meta.config, 'debug_continue_after_merge.py')
   return { runId, status: nextMeta.status }
@@ -786,13 +821,14 @@ echo "__APM_REMAINING_END__"
   const nextMeta: ModemBaselineRunMeta = {
     ...meta,
     conflictFiles: filesAfter.length ? filesAfter : undefined,
+    phase: 'conflict',
     // Refresh only reconciles the conflict list. It must not auto-advance
     // the run state, otherwise manual "continue" becomes impossible.
     status: meta.status === 'conflict' ? 'conflict' : meta.status,
   }
   writeRunMeta(nextMeta)
   broadcast(runId, 'conflicts', { files: filesAfter })
-  broadcast(runId, 'status', { status: nextMeta.status, reportPath: nextMeta.reportPath, error: nextMeta.error })
+  broadcast(runId, 'status', { status: nextMeta.status, phase: nextMeta.phase, reportPath: nextMeta.reportPath, error: nextMeta.error })
   return { files: filesAfter, staged }
 }
 

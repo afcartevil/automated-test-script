@@ -13,11 +13,13 @@ export type ModemBaselineConfig = {
 }
 
 export type ModemBaselineStatus = 'running' | 'success' | 'failed' | 'conflict'
+export type ModemBaselinePhase = 'precheck' | 'merge' | 'conflict' | 'resume' | 'archive'
 
 export type ModemBaselineRunMeta = {
   runId: string
   status: ModemBaselineStatus
   mode: 'stop_after_merge'
+  phase?: ModemBaselinePhase
   createdAt: string
   startedAt?: string
   finishedAt?: string

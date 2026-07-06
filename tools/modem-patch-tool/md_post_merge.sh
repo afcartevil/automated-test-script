@@ -81,12 +81,15 @@ TEST_SUGGESTIONS:basic test" | tee -a log/merge_conflict.log
         exit 1
     fi
 
+    echo "skip git push for local debug" | tee -a log/md_build.log
+    push_rc=0
     if command -v timeout >/dev/null 2>&1; then
-        GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15" timeout 600 git push --no-thin origin HEAD:refs/for/${target_BRANCH} 2>&1 | tee -a log/md_build.log
+        # GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15" timeout 600 git push --no-thin origin HEAD:refs/for/${target_BRANCH} 2>&1 | tee -a log/md_build.log
+        :
     else
-        GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15" git push --no-thin origin HEAD:refs/for/${target_BRANCH} 2>&1 | tee -a log/md_build.log
+        # GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15" git push --no-thin origin HEAD:refs/for/${target_BRANCH} 2>&1 | tee -a log/md_build.log
+        :
     fi
-    push_rc=${PIPESTATUS[0]}
     if [ ${push_rc} -ne 0 ]; then
         echo "git push failed" | tee -a log/md_build.log
         exit 1

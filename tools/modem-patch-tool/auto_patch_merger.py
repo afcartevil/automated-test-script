@@ -668,7 +668,11 @@ class AutoPatchMerger:
         self.report_data['end_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         has_failed = any(s.get('status') == 'failed' for s in self.report_data.get('steps', []))
         self.report_data['success'] = (not has_failed) and (not self.report_data.get('errors')) and (self.report_data['conflicts'].get('failed', 0) == 0)
-        self.log("\n[Step 9] Generating report...")
+        report_step_label = getattr(self, "report_step_label", None)
+        if report_step_label:
+            self.log(f"\n[{report_step_label}] Generate report...")
+        else:
+            self.log("\n[Step 9] Generating report...")
         return self.generate_report()
     
     def resolve_conflicts(self):

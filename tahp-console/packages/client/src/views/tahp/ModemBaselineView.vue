@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NButton, useMessage } from 'naive-ui'
 import ModemBaselineConfigCard from '@/components/tahp/modem-baseline/ModemBaselineConfigCard.vue'
 import ModemBaselineHistoryPanel from '@/components/tahp/modem-baseline/ModemBaselineHistoryPanel.vue'
@@ -33,6 +33,33 @@ const {
 } = useModemBaseline()
 
 const summaryText = computed(() => statusMeta.value.summary)
+const logScroller = ref<HTMLElement | null>(null)
+const shouldStickToBottom = ref(true)
+const LOG_BOTTOM_THRESHOLD = 24
+
+function isNearBottom(el: HTMLElement) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= LOG_BOTTOM_THRESHOLD
+}
+
+function scrollLogToBottom() {
+  if (logScroller.value) {
+    logScroller.value.scrollTop = logScroller.value.scrollHeight
+  }
+}
+
+function handleLogScroll() {
+  if (!logScroller.value) return
+  shouldStickToBottom.value = isNearBottom(logScroller.value)
+}
+
+watch(logContent, async (_, previous) => {
+  const shouldAutoScroll = shouldStickToBottom.value || !previous
+  await nextTick()
+  if (shouldAutoScroll) {
+    scrollLogToBottom()
+    shouldStickToBottom.value = true
+  }
+})
 
 function applyConfig(nextValue: typeof config.value) {
   config.value = { ...nextValue }
@@ -180,7 +207,13 @@ onUnmounted(() => {
             </div>
             <span class="ea-pill-muted">Run {{ selectedRun?.runId || '—' }}</span>
           </div>
-          <div class="ea-mon-output">{{ logContent || '暂无日志输出' }}</div>
+          <div
+            ref="logScroller"
+            class="ea-mon-output"
+            @scroll="handleLogScroll"
+          >
+            {{ logContent || '暂无日志输出' }}
+          </div>
         </div>
 
         <div class="ea-card ea-stack">

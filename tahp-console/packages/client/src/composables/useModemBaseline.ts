@@ -10,6 +10,7 @@ import {
   refreshModemBaselineConflicts,
   subscribeModemBaselineEvents,
   type ModemBaselineConfig,
+  type ModemBaselinePhase,
   type ModemBaselineRunMeta,
   type ModemBaselineStatus,
 } from '@/api/tahp/modem-baseline'
@@ -33,7 +34,7 @@ export function emptyModemBaselineConfig(): ModemBaselineConfig {
   }
 }
 
-export function getStatusMeta(status?: ModemBaselineStatus, error?: string) {
+export function getStatusMeta(status?: ModemBaselineStatus, error?: string, phase?: ModemBaselinePhase) {
   if (status === 'success') {
     return { label: '执行完成', tone: 'success', summary: '流程已完成，可查看日志、报告与冲突结果。' }
   }
@@ -43,63 +44,80 @@ export function getStatusMeta(status?: ModemBaselineStatus, error?: string) {
   if (status === 'failed') {
     const summary = error === 'bridge_not_ready'
       ? 'Harness bridge 未就绪，请先确认 bridge-serve 与权限状态。'
-      : '执行失败，请结合运行日志定位失败阶段。'
+      : phase === 'resume'
+        ? '继续执行阶段失败，请结合运行日志确认 commit、post-merge 或 push 相关步骤。'
+        : '执行失败，请结合运行日志定位失败阶段。'
     return { label: '执行失败', tone: 'error', summary }
   }
   if (status === 'running') {
+    if (phase === 'resume') {
+      return { label: '继续执行中', tone: 'info', summary: '人工解冲突后正在继续执行 commit、post-merge 与收尾步骤，请关注实时日志。' }
+    }
+    if (phase === 'precheck') {
+      return { label: '执行中', tone: 'info', summary: '正在进行预检，请关注实时日志。' }
+    }
     return { label: '执行中', tone: 'info', summary: '正在执行预检、合并或后续处理，请关注实时日志。' }
   }
   return { label: '待启动', tone: 'muted', summary: '加载默认配置后即可启动 Modem 基线升级。' }
 }
 
-export function buildStageItems(status?: ModemBaselineStatus, error?: string): StageItem[] {
+export function buildStageItems(status?: ModemBaselineStatus, error?: string, phase?: ModemBaselinePhase): StageItem[] {
+  const steps = [
+    { key: 'precheck', label: '准备环境' },
+    { key: 'merge', label: '合并补丁' },
+    { key: 'conflict', label: '冲突停驻' },
+    { key: 'resume', label: '继续执行' },
+    { key: 'archive', label: '结果归档' },
+  ] as const
+
+  const activeKey = status === 'success'
+    ? 'archive'
+    : status === 'conflict'
+      ? 'conflict'
+      : phase === 'resume'
+        ? 'resume'
+        : phase === 'archive'
+          ? 'archive'
+          : phase === 'precheck'
+            ? 'precheck'
+            : 'merge'
+
+  const activeIndex = steps.findIndex(item => item.key === activeKey)
+
   if (status === 'success') {
-    return [
-      { key: 'precheck', label: '准备环境', state: 'done' },
-      { key: 'merge', label: '合并补丁', state: 'done' },
-      { key: 'conflict', label: '冲突停驻', state: 'done' },
-      { key: 'resume', label: '继续执行', state: 'done' },
-      { key: 'archive', label: '结果归档', state: 'active' },
-    ]
+    return steps.map((item, index) => ({
+      ...item,
+      state: index < activeIndex ? 'done' : item.key === 'archive' ? 'active' : 'done',
+    }))
   }
 
   if (status === 'conflict') {
-    return [
-      { key: 'precheck', label: '准备环境', state: 'done' },
-      { key: 'merge', label: '合并补丁', state: 'done' },
-      { key: 'conflict', label: '冲突停驻', state: 'active' },
-      { key: 'resume', label: '继续执行', state: 'pending' },
-      { key: 'archive', label: '结果归档', state: 'pending' },
-    ]
+    return steps.map((item, index) => ({
+      ...item,
+      state: index < activeIndex ? 'done' : index === activeIndex ? 'active' : 'pending',
+    }))
   }
 
   if (status === 'failed') {
-    return [
-      { key: 'precheck', label: '准备环境', state: error === 'bridge_not_ready' ? 'active' : 'done' },
-      { key: 'merge', label: '合并补丁', state: error === 'bridge_not_ready' ? 'pending' : 'active' },
-      { key: 'conflict', label: '冲突停驻', state: 'pending' },
-      { key: 'resume', label: '继续执行', state: 'pending' },
-      { key: 'archive', label: '结果归档', state: 'pending' },
-    ]
+    const failedKey = error === 'bridge_not_ready' ? 'precheck' : activeKey
+    const failedIndex = steps.findIndex(item => item.key === failedKey)
+    return steps.map((item, index) => ({
+      ...item,
+      state: index < failedIndex ? 'done' : index === failedIndex ? 'active' : 'pending',
+    }))
   }
 
   if (status === 'running') {
-    return [
-      { key: 'precheck', label: '准备环境', state: 'done' },
-      { key: 'merge', label: '合并补丁', state: 'active' },
-      { key: 'conflict', label: '冲突停驻', state: 'pending' },
-      { key: 'resume', label: '继续执行', state: 'pending' },
-      { key: 'archive', label: '结果归档', state: 'pending' },
-    ]
+    return steps.map((item, index) => ({
+      ...item,
+      state: index < activeIndex ? 'done' : index === activeIndex ? 'active' : 'pending',
+    }))
   }
 
-  return [
-    { key: 'precheck', label: '准备环境', state: 'active' },
-    { key: 'merge', label: '合并补丁', state: 'pending' },
-    { key: 'conflict', label: '冲突停驻', state: 'pending' },
-    { key: 'resume', label: '继续执行', state: 'pending' },
-    { key: 'archive', label: '结果归档', state: 'pending' },
-  ]
+  return steps.map((item, index) => ({
+    ...item,
+    state: index === 0 ? 'active' : 'pending',
+  }))
 }
 
 function withString(value?: string) {
@@ -120,8 +138,8 @@ export function useModemBaseline() {
   const eventSource = ref<EventSource | null>(null)
 
   const selectedRun = computed(() => runs.value.find(item => item.runId === selectedRunId.value) ?? runs.value[0] ?? null)
-  const statusMeta = computed(() => getStatusMeta(selectedRun.value?.status, selectedRun.value?.error))
-  const stageItems = computed(() => buildStageItems(selectedRun.value?.status, selectedRun.value?.error))
+  const statusMeta = computed(() => getStatusMeta(selectedRun.value?.status, selectedRun.value?.error, selectedRun.value?.phase))
+  const stageItems = computed(() => buildStageItems(selectedRun.value?.status, selectedRun.value?.error, selectedRun.value?.phase))
   const conflictFiles = computed(() => selectedRun.value?.conflictFiles ?? [])
 
   const metrics = computed(() => [
@@ -178,12 +196,18 @@ export function useModemBaseline() {
 
     source.addEventListener('status', async (event) => {
       try {
-        const payload = JSON.parse((event as MessageEvent).data) as { status?: ModemBaselineStatus; reportPath?: string; error?: string }
+        const payload = JSON.parse((event as MessageEvent).data) as {
+          status?: ModemBaselineStatus
+          phase?: ModemBaselinePhase
+          reportPath?: string
+          error?: string
+        }
         const current = runs.value.find(item => item.runId === runId)
         if (current) {
           mergeRun({
             ...current,
             status: payload.status ?? current.status,
+            phase: payload.phase ?? current.phase,
             reportPath: payload.reportPath ?? current.reportPath,
             error: payload.error ?? current.error,
           })
