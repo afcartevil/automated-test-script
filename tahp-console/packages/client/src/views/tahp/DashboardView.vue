@@ -26,7 +26,7 @@ const coreCards = [
     summary: '输入 JIRA Key 或日志，Agent 自动拉单、调 Skill、定位根因并给修复路径。',
   },
   {
-    route: 'tahp.modem-baseline',
+    route: 'tahp.modem-baseline.workbench',
     tone: 'ea-t-amber',
     icon: 'branch',
     title: 'Modem基线',

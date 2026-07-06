@@ -11,6 +11,14 @@ export interface ApiEnvelope<T = unknown> {
   error?: string
 }
 
+function getTahpOwner(): string {
+  try {
+    return localStorage.getItem('tahp_modem_patch_owner') || ''
+  } catch {
+    return ''
+  }
+}
+
 async function tahpFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const url = `${getBaseUrlValue()}${path}`
   const headers: Record<string, string> = {
@@ -21,6 +29,11 @@ async function tahpFetch<T>(path: string, options: RequestInit = {}): Promise<T>
   const apiKey = getApiKey()
   if (apiKey) {
     headers.Authorization = `Bearer ${apiKey}`
+  }
+
+  const owner = getTahpOwner().trim()
+  if (owner) {
+    headers['x-tahp-owner'] = owner
   }
 
   const res = await fetch(url, { ...options, headers })

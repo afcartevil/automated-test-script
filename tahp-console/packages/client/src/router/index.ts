@@ -40,6 +40,19 @@ const router = createRouter({
       path: '/tahp/modem-baseline',
       name: 'tahp.modem-baseline',
       component: () => import('@/views/tahp/ModemBaselineView.vue'),
+      redirect: { name: 'tahp.modem-baseline.workbench' },
+      children: [
+        {
+          path: 'workbench',
+          name: 'tahp.modem-baseline.workbench',
+          component: () => import('@/views/tahp/ModemBaselineWorkbenchView.vue'),
+        },
+        {
+          path: 'settings',
+          name: 'tahp.modem-baseline.settings',
+          component: () => import('@/views/tahp/ModemBaselineSettingsView.vue'),
+        },
+      ],
     },
     {
       path: '/tahp/self-check',

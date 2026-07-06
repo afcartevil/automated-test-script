@@ -22,7 +22,7 @@ const coreNav = [
   { name: 'tahp.dashboard', label: '首页' },
   { name: 'tahp.adapt-debug', label: 'AI 适配调试' },
   { name: 'tahp.bug-analysis', label: '智能诊断' },
-  { name: 'tahp.modem-baseline', label: 'Modem基线' },
+  { name: 'tahp.modem-baseline.workbench', label: 'Modem基线' },
   { name: 'tahp.self-check', label: 'AI 自检' },
 ]
 
@@ -44,6 +44,13 @@ const selectedKey = computed(() => {
   if (CONFIG_ROUTE_NAMES.has(name)) return CONFIG_ROUTE_NAME
   return name
 })
+
+function isActive(name: string) {
+  if (name === 'tahp.modem-baseline.workbench') {
+    return selectedKey.value.startsWith('tahp.modem-baseline')
+  }
+  return selectedKey.value === name
+}
 
 const modelDisplay = computed(() => {
   const groups = appStore.profileModelGroups.find(g => g.profile === (appStore as any).activeProfile)?.groups
@@ -94,7 +101,7 @@ async function handleUpdate() {
           :key="item.name"
           type="button"
           class="ck-tab"
-          :class="{ active: selectedKey === item.name }"
+          :class="{ active: isActive(item.name) }"
           @click="nav(item.name)"
         >
           {{ item.label }}
@@ -107,7 +114,7 @@ async function handleUpdate() {
           :key="item.name"
           type="button"
           class="ck-tab ck-tab-sub"
-          :class="{ active: selectedKey === item.name }"
+          :class="{ active: isActive(item.name) }"
           @click="nav(item.name)"
         >
           {{ item.label }}

@@ -1,24 +1,51 @@
 import { computed, ref } from 'vue'
 import {
   continueModemBaselineRun,
+  createModemPatchRule,
+  createRepoProfile,
   createModemBaselineRun,
+  deleteRepoProfile,
+  deleteModemPatchRule,
   getModemBaselineDefaults,
   getModemBaselineLog,
   getModemBaselineRun,
+  getWorkspaceProfile,
+  listModemPatchRules,
   listModemBaselineRuns,
+  listRepoProfiles,
   openModemBaselineConflictFile,
+  parseModemPatchNotice,
+  precheckModemBaseline,
   refreshModemBaselineConflicts,
+  recommendModemPatch,
+  saveWorkspaceProfile,
+  scanRepoProfiles,
   subscribeModemBaselineEvents,
+  updateRepoProfile,
+  updateModemPatchRule,
   type ModemBaselineConfig,
   type ModemBaselinePhase,
   type ModemBaselineRunMeta,
   type ModemBaselineStatus,
+  type BranchRule,
+  type NoticeParseResult,
+  type PrecheckResult,
+  type RecommendationResult,
+  type RepoProfile,
+  type ScannedRepoCandidate,
+  type UserWorkspaceProfile,
 } from '@/api/tahp/modem-baseline'
 
 export type StageItem = {
   key: string
   label: string
   state: 'done' | 'active' | 'pending'
+}
+
+type RecommendationApplyResult = {
+  applied: boolean
+  repoAction?: 'synced_selected' | 'auto_selected' | 'fallback_selected' | 'ambiguous' | 'no_match' | 'no_platform'
+  candidates?: Array<{ repoId: string; label: string; platform?: string; localPath: string }>
 }
 
 export function emptyModemBaselineConfig(): ModemBaselineConfig {
@@ -32,6 +59,23 @@ export function emptyModemBaselineConfig(): ModemBaselineConfig {
     mapped_prefix: 'Z:',
     remote_prefix: '/work/user/code',
   }
+}
+
+const SELECTED_REPO_STORAGE_KEY = 'tahp_modem_patch_selected_repo'
+
+function loadSelectedRepoId() {
+  try {
+    return localStorage.getItem(SELECTED_REPO_STORAGE_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+function saveSelectedRepoId(repoId: string) {
+  try {
+    if (repoId) localStorage.setItem(SELECTED_REPO_STORAGE_KEY, repoId)
+    else localStorage.removeItem(SELECTED_REPO_STORAGE_KEY)
+  } catch {}
 }
 
 export function getStatusMeta(status?: ModemBaselineStatus, error?: string, phase?: ModemBaselinePhase) {
@@ -124,19 +168,60 @@ function withString(value?: string) {
   return value?.trim() || '—'
 }
 
+function normalizePlatformToken(text?: string) {
+  const raw = String(text ?? '').trim().toUpperCase().replace(/[_\s]+/g, '')
+  if (!raw) return ''
+  const unified = raw.replace(/-([STUVW])$/, '$1')
+  const matched = unified.match(/^(GEN\d+)(?:-?R(\d+))?([STUVW])?$/)
+  if (!matched) return unified
+  const family = matched[1]
+  const release = matched[2] ? `R${matched[2]}` : ''
+  const suffix = matched[3] ?? ''
+  return `${family}${release}${suffix}`
+}
+
+function platformBucketToken(text?: string) {
+  const normalized = normalizePlatformToken(text)
+  const matched = normalized.match(/^(GEN\d+)(?:R\d+)?([STUVW])?$/)
+  if (!matched) return normalized
+  return `${matched[1]}${matched[2] ?? ''}`
+}
+
 export function useModemBaseline() {
   const config = ref<ModemBaselineConfig>(emptyModemBaselineConfig())
   const toolRoot = ref('')
+  const workspaceProfile = ref<UserWorkspaceProfile | null>(null)
+  const repoProfiles = ref<RepoProfile[]>([])
+  const selectedRepoId = ref(loadSelectedRepoId())
+  const rules = ref<BranchRule[]>([])
+  const noticeText = ref('')
+  const noticeParsed = ref<NoticeParseResult | null>(null)
+  const recommendation = ref<RecommendationResult | null>(null)
+  const scanResults = ref<ScannedRepoCandidate[]>([])
+  const scanWarnings = ref<string[]>([])
+  const precheck = ref<PrecheckResult | null>(null)
   const runs = ref<ModemBaselineRunMeta[]>([])
   const selectedRunId = ref('')
   const logContent = ref('')
   const loading = ref(false)
   const starting = ref(false)
+  const prechecking = ref(false)
+  const parsingNotice = ref(false)
+  const loadingRules = ref(false)
+  const savingRule = ref(false)
+  const deletingRule = ref(false)
+  const recommending = ref(false)
+  const savingWorkspace = ref(false)
+  const savingRepo = ref(false)
+  const scanningRepos = ref(false)
+  const removingRepo = ref(false)
+  const updatingRepo = ref(false)
   const continuing = ref(false)
   const refreshing = ref(false)
   const errorMessage = ref('')
   const eventSource = ref<EventSource | null>(null)
 
+  const selectedRepo = computed(() => repoProfiles.value.find(item => item.repoId === selectedRepoId.value) ?? null)
   const selectedRun = computed(() => runs.value.find(item => item.runId === selectedRunId.value) ?? runs.value[0] ?? null)
   const statusMeta = computed(() => getStatusMeta(selectedRun.value?.status, selectedRun.value?.error, selectedRun.value?.phase))
   const stageItems = computed(() => buildStageItems(selectedRun.value?.status, selectedRun.value?.error, selectedRun.value?.phase))
@@ -148,6 +233,27 @@ export function useModemBaseline() {
     { label: '冲突文件', value: `${conflictFiles.value.length}` },
     { label: '工作区', value: withString(selectedRun.value?.config.work_dir || config.value.work_dir) },
   ])
+
+  function applyWorkspaceProfileToConfig(profile: UserWorkspaceProfile | null) {
+    if (!profile) return
+    if (!config.value.mapped_prefix || config.value.mapped_prefix === 'Z:') {
+      config.value = { ...config.value, mapped_prefix: profile.mappedPrefix }
+    }
+    if (!config.value.remote_prefix || config.value.remote_prefix === '/work/user/code') {
+      config.value = { ...config.value, remote_prefix: profile.remotePrefix }
+    }
+  }
+
+  function applyRepoToConfig(repo: RepoProfile | null) {
+    if (!repo) return
+    config.value = {
+      ...config.value,
+      work_dir: repo.localPath,
+      mapped_prefix: repo.mappedPrefix,
+      remote_prefix: repo.remotePrefix,
+    }
+    precheck.value = null
+  }
 
   function closeEventSource() {
     eventSource.value?.close()
@@ -183,6 +289,35 @@ export function useModemBaseline() {
     const data = await getModemBaselineDefaults()
     config.value = { ...data.config }
     toolRoot.value = data.toolRoot
+    applyWorkspaceProfileToConfig(workspaceProfile.value)
+    precheck.value = null
+  }
+
+  async function loadRules() {
+    loadingRules.value = true
+    try {
+      const data = await listModemPatchRules()
+      rules.value = data.items
+    } finally {
+      loadingRules.value = false
+    }
+  }
+
+  async function loadWorkspace() {
+    workspaceProfile.value = await getWorkspaceProfile()
+    applyWorkspaceProfileToConfig(workspaceProfile.value)
+  }
+
+  async function reloadRepoProfiles() {
+    const data = await listRepoProfiles()
+    repoProfiles.value = data.items
+    if (selectedRepoId.value && !data.items.find(item => item.repoId === selectedRepoId.value)) {
+      selectedRepoId.value = ''
+      saveSelectedRepoId('')
+    }
+    if (selectedRepoId.value) {
+      applyRepoToConfig(data.items.find(item => item.repoId === selectedRepoId.value) ?? null)
+    }
   }
 
   async function loadLog(runId: string) {
@@ -267,7 +402,16 @@ export function useModemBaseline() {
     loading.value = true
     errorMessage.value = ''
     try {
+      await loadWorkspace().catch(() => {
+        workspaceProfile.value = null
+      })
       await loadDefaults()
+      await reloadRepoProfiles().catch(() => {
+        repoProfiles.value = []
+      })
+      await loadRules().catch(() => {
+        rules.value = []
+      })
     } catch (error) {
       errorMessage.value = String((error as Error)?.message ?? error)
     }
@@ -285,6 +429,11 @@ export function useModemBaseline() {
   async function startRun() {
     starting.value = true
     try {
+      const check = await runPrecheck()
+      if (!check.canStart) {
+        const blocking = check.items.find(item => item.level === 'error')
+        throw new Error(blocking?.detail || '执行前检查未通过')
+      }
       const result = await createModemBaselineRun(config.value)
       await reloadRuns()
       await selectRun(result.runId)
@@ -321,9 +470,232 @@ export function useModemBaseline() {
     await openModemBaselineConflictFile(selectedRun.value.runId, file)
   }
 
+  async function parseNotice(text?: string) {
+    parsingNotice.value = true
+    try {
+      const next = await parseModemPatchNotice(text ?? noticeText.value)
+      noticeParsed.value = next
+      return next
+    } finally {
+      parsingNotice.value = false
+    }
+  }
+
+  async function requestRecommend() {
+    recommending.value = true
+    try {
+      if (noticeText.value.trim()) {
+        await parseNotice(noticeText.value)
+      }
+      const result = await recommendModemPatch({
+        noticeText: noticeText.value.trim() || undefined,
+        repoId: selectedRepoId.value || undefined,
+        config: config.value,
+      })
+      recommendation.value = result
+      return result
+    } finally {
+      recommending.value = false
+    }
+  }
+
+  function applyRecommendation(): RecommendationApplyResult {
+    if (!recommendation.value) return { applied: false }
+
+    const currentRepo = selectedRepo.value
+    const platform = normalizePlatformToken(noticeParsed.value?.platform || '')
+    let repoAction: RecommendationApplyResult['repoAction']
+    if (platform) {
+      const platformBucket = platformBucketToken(platform)
+      const candidates = repoProfiles.value
+        .filter((repo) => {
+          const token = normalizePlatformToken(repo.platform || repo.label)
+          if (!token) return false
+          if (token === platform) return true
+          return platformBucketToken(token) === platformBucket
+        })
+        .map(repo => ({
+          repoId: repo.repoId,
+          label: repo.label,
+          platform: repo.platform,
+          localPath: repo.localPath,
+        }))
+
+      if (!candidates.length) {
+        if (currentRepo) {
+          applyRepoToConfig(currentRepo)
+          repoAction = 'fallback_selected'
+        } else {
+          return { applied: true, repoAction: 'no_match' }
+        }
+      } else if (candidates.length === 1) {
+        chooseRepo(candidates[0].repoId)
+        repoAction = currentRepo && selectedRepo.value?.repoId === currentRepo.repoId
+          ? 'synced_selected'
+          : 'auto_selected'
+      } else {
+        return { applied: true, repoAction: 'ambiguous', candidates }
+      }
+    } else if (currentRepo) {
+      applyRepoToConfig(currentRepo)
+      repoAction = 'synced_selected'
+    } else {
+      return { applied: true, repoAction: 'no_platform' }
+    }
+
+    const next: ModemBaselineConfig = { ...config.value }
+    if (recommendation.value.nodeBranch) next.NODE_BRANCH = recommendation.value.nodeBranch
+    if (recommendation.value.targetBranch) next.target_BRANCH = recommendation.value.targetBranch
+    if (recommendation.value.apLabel) next.AP_lable = recommendation.value.apLabel
+    config.value = next
+    precheck.value = null
+
+    return { applied: true, repoAction }
+  }
+
+  async function createRule(input: Partial<BranchRule>) {
+    savingRule.value = true
+    try {
+      const rule = await createModemPatchRule(input)
+      await loadRules()
+      return rule
+    } finally {
+      savingRule.value = false
+    }
+  }
+
+  async function updateRule(ruleId: string, input: Partial<BranchRule>) {
+    savingRule.value = true
+    try {
+      const rule = await updateModemPatchRule(ruleId, input)
+      await loadRules()
+      return rule
+    } finally {
+      savingRule.value = false
+    }
+  }
+
+  async function removeRule(ruleId: string) {
+    deletingRule.value = true
+    try {
+      await deleteModemPatchRule(ruleId)
+      await loadRules()
+    } finally {
+      deletingRule.value = false
+    }
+  }
+
+  async function saveWorkspace(input: { mappedPrefix: string; remotePrefix: string; roots: string[] }) {
+    savingWorkspace.value = true
+    try {
+      workspaceProfile.value = await saveWorkspaceProfile(input)
+      applyWorkspaceProfileToConfig(workspaceProfile.value)
+      precheck.value = null
+      return workspaceProfile.value
+    } finally {
+      savingWorkspace.value = false
+    }
+  }
+
+  async function saveRepo(input: {
+    label: string
+    localPath: string
+    projectName?: string
+    platform?: string
+    vendor?: string
+  }) {
+    savingRepo.value = true
+    try {
+      const repo = await createRepoProfile(input)
+      await reloadRepoProfiles()
+      selectedRepoId.value = repo.repoId
+      saveSelectedRepoId(repo.repoId)
+      applyRepoToConfig(repo)
+      return repo
+    } finally {
+      savingRepo.value = false
+    }
+  }
+
+  async function removeRepo(repoId: string) {
+    removingRepo.value = true
+    try {
+      await deleteRepoProfile(repoId)
+      if (selectedRepoId.value === repoId) selectedRepoId.value = ''
+      if (selectedRepoId.value === '') saveSelectedRepoId('')
+      await reloadRepoProfiles()
+      precheck.value = null
+    } finally {
+      removingRepo.value = false
+    }
+  }
+
+  async function updateRepo(repoId: string, input: {
+    label: string
+    localPath: string
+    platform: string
+  }) {
+    updatingRepo.value = true
+    try {
+      const repo = await updateRepoProfile(repoId, input)
+      await reloadRepoProfiles()
+      if (selectedRepoId.value === repoId) {
+        applyRepoToConfig(repo)
+      }
+      return repo
+    } finally {
+      updatingRepo.value = false
+    }
+  }
+
+  async function scanRepos(root: string) {
+    scanningRepos.value = true
+    try {
+      const result = await scanRepoProfiles(root)
+      scanResults.value = result.items
+      scanWarnings.value = result.warnings
+      return result
+    } finally {
+      scanningRepos.value = false
+    }
+  }
+
+  function chooseRepo(repoId: string) {
+    selectedRepoId.value = repoId
+    saveSelectedRepoId(repoId)
+    applyRepoToConfig(repoProfiles.value.find(item => item.repoId === repoId) ?? null)
+  }
+
+  function clearSelectedRepo() {
+    selectedRepoId.value = ''
+    saveSelectedRepoId('')
+    precheck.value = null
+  }
+
+  async function runPrecheck() {
+    prechecking.value = true
+    try {
+      precheck.value = await precheckModemBaseline(config.value, selectedRepoId.value || undefined)
+      return precheck.value
+    } finally {
+      prechecking.value = false
+    }
+  }
+
   return {
     config,
     toolRoot,
+    workspaceProfile,
+    repoProfiles,
+    selectedRepoId,
+    selectedRepo,
+    rules,
+    noticeText,
+    noticeParsed,
+    recommendation,
+    scanResults,
+    scanWarnings,
+    precheck,
     runs,
     selectedRun,
     selectedRunId,
@@ -331,6 +703,17 @@ export function useModemBaseline() {
     logContent,
     loading,
     starting,
+    prechecking,
+    parsingNotice,
+    loadingRules,
+    savingRule,
+    deletingRule,
+    recommending,
+    savingWorkspace,
+    savingRepo,
+    scanningRepos,
+    removingRepo,
+    updatingRepo,
     continuing,
     refreshing,
     errorMessage,
@@ -339,6 +722,21 @@ export function useModemBaseline() {
     metrics,
     initialize,
     loadDefaults,
+    loadRules,
+    parseNotice,
+    requestRecommend,
+    applyRecommendation,
+    createRule,
+    updateRule,
+    removeRule,
+    saveWorkspace,
+    saveRepo,
+    removeRepo,
+    updateRepo,
+    scanRepos,
+    chooseRepo,
+    clearSelectedRepo,
+    runPrecheck,
     selectRun,
     startRun,
     continueRun,

@@ -91,24 +91,10 @@ function updateField<K extends keyof ModemBaselineConfig>(key: K, value: ModemBa
       />
     </div>
 
-    <div class="ea-form-grid2">
-      <div class="ea-field">
-        <label>映射盘前缀</label>
-        <NInput
-          :value="modelValue.mapped_prefix"
-          placeholder="默认 Z:"
-          @update:value="updateField('mapped_prefix', $event)"
-        />
-      </div>
-
-      <div class="ea-field">
-        <label>远端前缀</label>
-        <NInput
-          :value="modelValue.remote_prefix"
-          placeholder="默认 /work/user/code"
-          @update:value="updateField('remote_prefix', $event)"
-        />
-      </div>
+    <div class="mapping-summary">
+      <span class="ea-pill-muted">路径映射</span>
+      <strong>{{ modelValue.mapped_prefix || '—' }} → {{ modelValue.remote_prefix || '—' }}</strong>
+      <p>低频路径配置已迁移到配置中心；工作台仅展示当前生效映射。</p>
     </div>
 
     <div class="cfg-actions">
@@ -142,6 +128,27 @@ function updateField<K extends keyof ModemBaselineConfig>(key: K, value: ModemBa
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.mapping-summary {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+
+  strong {
+    display: block;
+    margin-top: 8px;
+    font-size: 14px;
+    color: var(--text);
+    word-break: break-word;
+  }
+
+  p {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
 }
 
 @media (max-width: 720px) {
