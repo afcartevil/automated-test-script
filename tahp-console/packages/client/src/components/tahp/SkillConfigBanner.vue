@@ -14,8 +14,10 @@ watch(
   },
 )
 
+import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
+
 function goConfigure() {
-  router.push({ name: 'tahp.skill-config' })
+  router.push({ name: CONFIG_ROUTE_NAME, query: { tab: 'skills' } })
 }
 </script>
 
@@ -27,7 +29,7 @@ function goConfigure() {
   >
     常用 Skill 配置尚未完成（{{ unconfiguredCount }} 项未配置），智能诊断、Jira 操作等完整功能需在
     <button type="button" class="skill-config-warning-bar__link" @click="goConfigure">
-      设置 → 常用 Skill 配置
+      配置 → 常用 Skill 配置
     </button>
     中完成全部 Skill 配置。
   </div>

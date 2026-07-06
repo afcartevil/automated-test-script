@@ -30,6 +30,7 @@ import {
   getBuiltinDomainsForWorkspace,
   type AdaptWorkspaceId,
 } from '@/constants/adapt-domains'
+import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 
 const message = useMessage()
 const router = useRouter()
@@ -1548,7 +1549,7 @@ async function copyPromptText(text: string, label: string) {
 
 async function launchAgentAdapt() {
   if (!modelProviderReady.value) {
-    message.warning('请先在「模型管理」中配置模型 Provider 和 API Key')
+    message.warning('请先在「配置 → 模型管理」中配置模型 Provider 和 API Key')
     return
   }
   if (!isComplete.value) {
@@ -2151,7 +2152,7 @@ function openSkill(skillName: string) {
             <strong>任务失败</strong>
             <pre class="adapt-error-text">{{ agentRunError }}</pre>
             <div class="ea-row" style="gap:8px;margin-top:8px;">
-              <NButton size="small" type="warning" @click="router.push({ name: 'hermes.models' })">模型管理</NButton>
+              <NButton size="small" type="warning" @click="router.push({ name: CONFIG_ROUTE_NAME, query: { tab: 'models' } })">前往配置</NButton>
               <NButton size="small" :disabled="!modelProviderReady" :loading="agentLaunching" @click="launchAgentAdapt">重试</NButton>
             </div>
           </div>
@@ -2262,7 +2263,7 @@ function openSkill(skillName: string) {
         <div v-else-if="taskStatus === 'FAILED'" class="result-banner result-err">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
           {{ agentRunError || '任务执行失败' }}
-          <NButton size="small" type="warning" style="margin-left:12px;" @click="router.push({ name: 'hermes.models' })">模型管理</NButton>
+          <NButton size="small" type="warning" style="margin-left:12px;" @click="router.push({ name: CONFIG_ROUTE_NAME, query: { tab: 'models' } })">前往配置</NButton>
           <NButton size="small" style="margin-left:6px;" @click="backToForm">重新配置</NButton>
           <NButton size="small" style="margin-left:6px;" :disabled="!modelProviderReady" :loading="agentLaunching" @click="launchAgentAdapt">重试</NButton>
         </div>

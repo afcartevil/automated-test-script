@@ -342,7 +342,7 @@ function handleDrop(e: DragEvent) {
 
 function handleSend() {
   if (!modelProviderReady.value) {
-    message.warning('请先在「模型管理」中配置模型 Provider 和 API Key')
+    message.warning('请先在「配置 → 模型管理」中配置模型 Provider 和 API Key')
     return
   }
   const text = inputText.value.trim()

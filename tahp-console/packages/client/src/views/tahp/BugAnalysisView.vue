@@ -43,6 +43,7 @@ import {
   type SkillAssociationItem,
   type SkillGenJobResult,
 } from '@/api/tahp/knowledge'
+import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 
 const route = useRoute()
 const router = useRouter()
@@ -52,7 +53,7 @@ const { isReady: modelProviderReady } = useModelProviderReadiness()
 
 function ensureModelProviderOrWarn(): boolean {
   if (modelProviderReady.value) return true
-  message.warning('请先在「模型管理」中配置模型 Provider 和 API Key')
+  message.warning('请先在「配置 → 模型管理」中配置模型 Provider 和 API Key')
   return false
 }
 
@@ -90,7 +91,7 @@ const jqlPreviewError = ref<string | null>(null)
 const submitting = ref(false)
 
 // JIRA 配置状态改由服务端统一管理（.tahp/unified-config.json / jira-user-config.json），
-// 页面只读取状态并展示；配置入口跳转「常用 Skill 配置 → 一键配置表单」。
+// 页面只读取状态并展示；配置入口跳转「配置 → 一键配置表单」。
 const jiraStatus = ref<{ configured: boolean; connected: boolean; detail?: string; error?: string }>({
   configured: false,
   connected: false,
@@ -123,16 +124,16 @@ async function loadJiraStatus() {
 }
 
 function goConfigureJira() {
-  router.push({ name: 'tahp.skill-config', query: { openForm: '1' } })
+  router.push({ name: CONFIG_ROUTE_NAME, query: { tab: 'form' } })
 }
 
 /** 提交/预览前确保 JIRA 已配置且连通；否则提示并跳转配置表单 */
 function ensureJiraReady(): boolean {
   if (jiraReady.value) return true
   if (jiraStatus.value.configured && !jiraStatus.value.connected) {
-    message.warning(jiraStatus.value.error || 'JIRA 配置无效，请前往「常用 Skill 配置」更新')
+    message.warning(jiraStatus.value.error || 'JIRA 配置无效，请前往「配置 → 一键配置表单」更新')
   } else {
-    message.warning('请先在「常用 Skill 配置 → 一键配置表单」中配置 JIRA 账号密码')
+    message.warning('请先在「配置 → 一键配置表单」中配置 JIRA 账号密码')
   }
   goConfigureJira()
   return false
@@ -1825,7 +1826,7 @@ const liveStreamHint = computed(() => {
             <strong>{{ currentTask?.status === 'cancelled' ? '任务已取消' : '分析失败' }}</strong>
             <pre class="bug-error-text">{{ taskRunError }}</pre>
             <div class="ea-row" style="gap:8px;margin-top:8px;">
-              <NButton size="small" type="warning" @click="router.push({ name: 'hermes.models' })">模型管理</NButton>
+              <NButton size="small" type="warning" @click="router.push({ name: CONFIG_ROUTE_NAME, query: { tab: 'models' } })">前往配置</NButton>
               <NButton
                 v-if="!isHistoryView"
                 size="small"

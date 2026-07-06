@@ -4,12 +4,19 @@ import { useRoute, useRouter } from 'vue-router'
 import { NDropdown, useMessage } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
 import ModelSelector from './ModelSelector.vue'
+import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
 const appStore = useAppStore()
 const showModelModal = ref(false)
+
+const CONFIG_ROUTE_NAMES = new Set([
+  CONFIG_ROUTE_NAME,
+  'hermes.models',
+  'tahp.skill-config',
+])
 
 const coreNav = [
   { name: 'tahp.dashboard', label: '首页' },
@@ -27,15 +34,16 @@ const secondaryNav = [
 ]
 
 const systemNav = [
-  { name: 'hermes.models', label: '模型管理' },
-  { name: 'tahp.skill-config', label: '常用 Skill 配置' },
-  { name: 'hermes.history', label: '历史记录' },
-  { name: 'hermes.settings', label: '设置' },
+  { name: CONFIG_ROUTE_NAME, label: '配置' },
 ]
 
 const FEEDBACK_URL = 'https://transsioner.feishu.cn/share/base/form/shrcnDOMx8H12Nm1tcTmIOAHDId'
 
-const selectedKey = computed(() => route.name?.toString() || '')
+const selectedKey = computed(() => {
+  const name = route.name?.toString() || ''
+  if (CONFIG_ROUTE_NAMES.has(name)) return CONFIG_ROUTE_NAME
+  return name
+})
 
 const modelDisplay = computed(() => {
   const groups = appStore.profileModelGroups.find(g => g.profile === (appStore as any).activeProfile)?.groups

@@ -206,6 +206,7 @@ export function clearSkillConfigured(skillId: string): void {
 export function listRequiredSkills(): {
   manifest_path: string
   skills: SkillConfigListItem[]
+  batch_task?: { task_id: string; status: 'running' | 'waiting_user'; label: string }
 } {
   const manifest = readManifest()
   const state = readStateMap()
@@ -230,7 +231,20 @@ export function listRequiredSkills(): {
       active_task_id: active?.taskId,
     }
   })
-  return { manifest_path: manifestPath(), skills }
+
+  let batch_task: { task_id: string; status: 'running' | 'waiting_user'; label: string } | undefined
+  if (batchTaskId) {
+    const batchCtx = taskCtx.get(batchTaskId)
+    if (batchCtx && (batchCtx.status === 'running' || batchCtx.status === 'waiting_user')) {
+      batch_task = {
+        task_id: batchTaskId,
+        status: batchCtx.status,
+        label: batchCtx.skillLabel,
+      }
+    }
+  }
+
+  return { manifest_path: manifestPath(), skills, batch_task }
 }
 
 export function getSkillPreview(skillId: string): SkillConfigPreview | null {
@@ -582,7 +596,7 @@ function buildBatchSkillConfigInstructions(): string {
     return `${i + 1}. **${entry.label}**（\`${entry.id}\`）${done}${deps} — ${loc}`
   })
 
-  const base = `你是 TAHP「一键配置 Skill 清单」向导，负责依据「一键配置表单」中已保存的配置，**依次**完成配置清单中每个 Skill 的全部必要配置。
+  const base = `你是 TAHP「Skill 配置检查」向导，负责依据「一键配置表单」中已保存的配置，**依次**完成配置清单中每个 Skill 的全部必要配置。
 
 # 工程根目录（务必先读）
 - TAHP 工程根（绝对路径，解析下方所有相对路径的基准）: \`${tahpPaths.projectRoot}\`
@@ -618,7 +632,7 @@ message: <一句话说明该 Skill 配置与验证结果>
 `
 
   const preferred = ordered.map(e => e.id)
-  const tahpCtx = buildFullTahpSystemContext('一键配置 skill 清单', {
+  const tahpCtx = buildFullTahpSystemContext('Skill 配置检查', {
     scenario: 'skill_config',
     preferredSkillIds: [...new Set(preferred)],
   })
@@ -848,7 +862,7 @@ export function startBatchSkillConfigAgent(): { ok: boolean; taskId?: string; er
   if (batchTaskId) {
     const existing = taskCtx.get(batchTaskId)
     if (existing && (existing.status === 'running' || existing.status === 'waiting_user')) {
-      return { ok: false, error: '一键配置任务进行中，请在对话区继续或等待结束' }
+      return { ok: false, error: 'Skill 配置检查任务进行中，请在对话区继续或等待结束' }
     }
   }
 
@@ -856,7 +870,7 @@ export function startBatchSkillConfigAgent(): { ok: boolean; taskId?: string; er
   const ctx: SkillConfigTaskCtx = {
     taskId,
     skillId: BATCH_SKILL_ID,
-    skillLabel: '一键配置 Skill 清单',
+    skillLabel: 'Skill 配置检查',
     forceReconfigure: false,
     startedAt: new Date().toISOString(),
     status: 'running',
@@ -871,7 +885,7 @@ export function startBatchSkillConfigAgent(): { ok: boolean; taskId?: string; er
   emit(taskId, 'task.started', {
     type: 'skill_config_batch',
     batch: true,
-    message: '开始一键配置 Skill 清单',
+    message: '开始 Skill 配置检查',
   })
 
   setImmediate(() => {

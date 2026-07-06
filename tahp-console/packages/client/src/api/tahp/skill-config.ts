@@ -16,6 +16,11 @@ export interface SkillConfigListItem {
 export interface SkillConfigListResp {
   manifest_path: string
   skills: SkillConfigListItem[]
+  batch_task?: {
+    task_id: string
+    status: 'running' | 'waiting_user'
+    label: string
+  }
 }
 
 export interface SkillConfigPreview {
@@ -76,6 +81,7 @@ export interface UnifiedConfigField {
 export interface UnifiedConfigForm {
   fields: UnifiedConfigField[]
   values: Record<string, string>
+  saved_values?: Record<string, string>
   updated_at?: string
 }
 

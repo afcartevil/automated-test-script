@@ -187,7 +187,7 @@ export function useGerritReviewWorkspace() {
 
   function ensureModelProviderOrWarn(): boolean {
     if (modelProviderReady.value) return true
-    message.warning('请先在「模型管理」中配置模型 Provider 和 API Key')
+    message.warning('请先在「配置 → 模型管理」中配置模型 Provider 和 API Key')
     return false
   }
 

@@ -47,9 +47,17 @@ const router = createRouter({
       component: () => import('@/views/tahp/DeviceSelfCheckView.vue'),
     },
     {
+      path: '/tahp/config',
+      name: 'tahp.config',
+      component: () => import('@/views/tahp/ConfigView.vue'),
+    },
+    {
       path: '/tahp/skill-config',
       name: 'tahp.skill-config',
-      component: () => import('@/views/tahp/SkillConfigView.vue'),
+      redirect: (to) => ({
+        name: 'tahp.config',
+        query: { tab: to.query.openForm === '1' ? 'form' : 'skills' },
+      }),
     },
     // ===== Hermes 原生视图 =====
     {
@@ -65,7 +73,7 @@ const router = createRouter({
     {
       path: '/hermes/models',
       name: 'hermes.models',
-      component: () => import('@/views/hermes/ModelsView.vue'),
+      redirect: { name: 'tahp.config', query: { tab: 'models' } },
     },
     {
       path: '/hermes/skills',

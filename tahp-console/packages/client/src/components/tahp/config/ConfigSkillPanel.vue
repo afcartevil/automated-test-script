@@ -1,36 +1,26 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import {
-  NButton, NSpin, NEmpty, NInput, NAlert, NSpace, NScrollbar, NModal, NForm, NFormItem, useMessage,
+  NButton, NSpin, NEmpty, NInput, NAlert, NSpace, NScrollbar, NForm, NFormItem, useMessage,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
 import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
-import EaPageHead from '@/components/layout/EaPageHead.vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPill from '@/components/layout/EaPill.vue'
 import { useModelProviderReadiness } from '@/composables/useModelProviderReadiness'
-import { useTahpTasksStore } from '@/stores/tahp/tasks'
+import { useSkillConfigTaskWatcher } from '@/composables/useSkillConfigTaskWatcher'
 import {
   fetchSkillConfigList,
   fetchSkillPreview,
   startSkillConfig,
   continueSkillConfig,
   respondSkillConfigApproval,
-  fetchUnifiedConfigForm,
-  saveUnifiedConfigForm,
-  startConfigureAllSkills,
   type SkillConfigListItem,
   type SkillConfigPreview,
-  type UnifiedConfigField,
 } from '@/api/tahp/skill-config'
-import type { BugApprovalRequest } from '@/stores/tahp/bug-analysis'
 
 const message = useMessage()
-const route = useRoute()
-const router = useRouter()
-const tasksStore = useTahpTasksStore()
 const { isReady: modelProviderReady } = useModelProviderReadiness()
 
 const loading = ref(false)
@@ -41,85 +31,10 @@ const preview = ref<SkillConfigPreview | null>(null)
 const previewLoading = ref(false)
 
 const activeTaskId = ref<string | null>(null)
-const batchTaskId = ref<string | null>(null)
 const chatInput = ref('')
 const chatSubmitting = ref(false)
 const starting = ref(false)
-const batchStarting = ref(false)
-const pendingApproval = ref<BugApprovalRequest | null>(null)
 const approvalSubmitting = ref(false)
-
-const scroller = ref<HTMLElement | null>(null)
-
-// ─── 一键配置表单 ─────────────────────────────────────────────────────────────
-const showFormModal = ref(false)
-const formFields = ref<UnifiedConfigField[]>([])
-const formValues = ref<Record<string, string>>({})
-const formLoading = ref(false)
-const formSaving = ref(false)
-
-const formGroups = computed(() => {
-  const groups: Array<{ name: string; fields: UnifiedConfigField[] }> = []
-  for (const f of formFields.value) {
-    let g = groups.find(x => x.name === f.group)
-    if (!g) { g = { name: f.group, fields: [] }; groups.push(g) }
-    g.fields.push(f)
-  }
-  return groups
-})
-
-async function loadUnifiedForm() {
-  formLoading.value = true
-  try {
-    const data = await fetchUnifiedConfigForm()
-    formFields.value = data.fields
-    formValues.value = { ...data.values }
-  } catch (err) {
-    message.error((err as Error).message || '加载配置表单失败')
-  } finally {
-    formLoading.value = false
-  }
-}
-
-async function openConfigForm() {
-  showFormModal.value = true
-  await loadUnifiedForm()
-}
-
-async function saveConfigForm() {
-  formSaving.value = true
-  try {
-    await saveUnifiedConfigForm(formValues.value)
-    message.success('一键配置表单已保存')
-    showFormModal.value = false
-  } catch (err) {
-    message.error((err as Error).message || '保存失败')
-  } finally {
-    formSaving.value = false
-  }
-}
-
-async function onConfigureAll() {
-  if (!modelProviderReady.value) {
-    message.warning('请先在「模型管理」中配置模型 Provider')
-    return
-  }
-  batchStarting.value = true
-  try {
-    tasksStore.ensureSocket()
-    const data = await startConfigureAllSkills()
-    activeTaskId.value = data.task_id
-    batchTaskId.value = data.task_id
-    tasksStore.trackTask(data.task_id)
-    chatInput.value = ''
-    await loadList()
-    message.info('已启动一键配置 Skill 清单')
-  } catch (err) {
-    message.error((err as Error).message || '启动失败')
-  } finally {
-    batchStarting.value = false
-  }
-}
 
 const selectedSkill = computed(() =>
   skills.value.find(s => s.id === selectedId.value) || null,
@@ -128,6 +43,25 @@ const selectedSkill = computed(() =>
 const isConfiguring = computed(() =>
   selectedSkill.value?.status === 'configuring' || !!activeTaskId.value,
 )
+
+const {
+  tasksStore,
+  pendingApproval,
+  scroller,
+  streamText,
+  watchTaskEvents,
+  scrollChatToBottom,
+} = useSkillConfigTaskWatcher({
+  activeTaskId,
+  onSkillComplete: () => loadList(),
+  onTaskEnd: () => loadList(),
+})
+
+const chatMarkdown = computed(() =>
+  activeTaskId.value ? streamText(activeTaskId.value) : '',
+)
+
+scrollChatToBottom(chatMarkdown)
 
 function statusLabel(status: SkillConfigListItem['status']): string {
   switch (status) {
@@ -176,87 +110,6 @@ watch(selectedId, (id) => {
   if (id) loadPreview(id)
 })
 
-function streamText(taskId: string): string {
-  return tasksStore.getStream(taskId)
-    .filter(e => e.type === 'task.message')
-    .map(e => {
-      const level = (e.payload as { level?: string })?.level
-      if (level === 'stream' || level === 'user') return String((e.payload as { text?: string })?.text ?? '')
-      return ''
-    })
-    .join('')
-}
-
-const chatMarkdown = computed(() =>
-  activeTaskId.value ? streamText(activeTaskId.value) : '',
-)
-
-watch(chatMarkdown, async () => {
-  await nextTick()
-  if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight
-})
-
-let pollTimer: ReturnType<typeof setInterval> | null = null
-const handledEventTs = ref<Record<string, number>>({})
-
-function watchTaskEvents() {
-  tasksStore.ensureSocket()
-  return setInterval(() => {
-    const tid = activeTaskId.value
-    if (!tid) return
-    const stream = tasksStore.getStream(tid)
-    for (const ev of stream) {
-      const key = `${ev.type}:${ev.ts}`
-      if (handledEventTs.value[key]) continue
-      handledEventTs.value[key] = 1
-
-      if (ev.type === 'task.approval_requested' && !pendingApproval.value) {
-        const p = ev.payload
-        pendingApproval.value = {
-          approval_id: String(p.approval_id || ''),
-          command: String(p.command || ''),
-          description: String(p.description || ''),
-          choices: Array.isArray(p.choices) ? p.choices as string[] : ['once', 'deny'],
-          timeout_ms: Number(p.timeout_ms) || 60000,
-          deadline_at: Number(p.deadline_at) || Date.now() + 60000,
-        }
-      }
-      if (ev.type === 'task.approval_resolved') {
-        pendingApproval.value = null
-      }
-      // 批量配置时每个 Skill 完成会各发一次，仅刷新状态、保留会话窗口
-      if (ev.type === 'task.skill_config_complete') {
-        message.success(String((ev.payload as { message?: string }).message || '配置完成'))
-        void loadList()
-      }
-      if (ev.type === 'task.completed' || ev.type === 'task.failed') {
-        const isBatch = (ev.payload as { batch?: boolean }).batch === true
-        if (ev.type === 'task.completed') {
-          message.success(String((ev.payload as { message?: string }).message || '配置流程结束'))
-        } else {
-          message.error(String((ev.payload as { message?: string }).message || '配置流程失败'))
-        }
-        // 批量任务结束后保留窗口，便于用户补充信息继续；单 Skill 任务收起
-        if (!isBatch) activeTaskId.value = null
-        void loadList()
-      }
-    }
-  }, 400)
-}
-
-onMounted(async () => {
-  await loadList()
-  pollTimer = watchTaskEvents()
-  if (route.query.openForm === '1') {
-    void openConfigForm()
-    void router.replace({ query: {} })
-  }
-})
-
-onBeforeUnmount(() => {
-  if (pollTimer) clearInterval(pollTimer)
-})
-
 watch(selectedSkill, (s) => {
   if (s?.active_task_id) {
     activeTaskId.value = s.active_task_id
@@ -264,10 +117,21 @@ watch(selectedSkill, (s) => {
   }
 })
 
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+onMounted(async () => {
+  await loadList()
+  pollTimer = watchTaskEvents()
+})
+
+onBeforeUnmount(() => {
+  if (pollTimer) clearInterval(pollTimer)
+})
+
 async function onStart(force: boolean) {
   if (!selectedId.value) return
   if (!modelProviderReady.value) {
-    message.warning('请先在「模型管理」中配置模型 Provider')
+    message.warning('请先在「配置 → 模型管理」中配置模型 Provider')
     return
   }
   starting.value = true
@@ -317,25 +181,9 @@ async function onApproval(choice: string) {
 }
 </script>
 
-<template>
-  <div class="page skill-config-page">
-    <EaPageHead
-      title="常用 Skill 配置"
-      subtitle="由 Agent 引导完成 jira-ops、modem-analysis-local 等 Skill 的环境与凭据配置"
-    >
-      <template #actions>
-        <NButton :loading="formLoading && showFormModal" @click="openConfigForm">一键配置表单</NButton>
-        <NButton
-          type="primary"
-          :loading="batchStarting"
-          :disabled="!!activeTaskId"
-          @click="onConfigureAll"
-        >
-          一键配置 Skill 清单
-        </NButton>
-      </template>
-    </EaPageHead>
 
+<template>
+  <div class="config-skill-panel">
     <ModelProviderBanner style="margin-bottom: 12px" />
 
     <NAlert type="info" :show-icon="false" style="margin-bottom: 14px">
@@ -405,7 +253,7 @@ async function onApproval(choice: string) {
         <EaCard class="sc-chat-panel">
           <div class="panel-title">Agent 配置向导</div>
           <div v-if="!activeTaskId" class="chat-placeholder ea-muted">
-            点击「开始配置」「重新配置」或顶部「一键配置 Skill 清单」后，Agent 将在此引导配置并持久化。
+            点击「开始配置」或「重新配置」后，Agent 将在此引导配置并持久化。
           </div>
           <template v-else>
             <div ref="scroller" class="chat-stream">
@@ -441,48 +289,11 @@ async function onApproval(choice: string) {
       :submitting="approvalSubmitting"
       @approval="onApproval"
     />
-
-    <NModal
-      v-model:show="showFormModal"
-      preset="card"
-      title="一键配置表单"
-      style="width: 640px"
-      :mask-closable="!formSaving"
-    >
-      <NAlert type="info" :show-icon="false" style="margin-bottom: 14px">
-        此表单汇总了配置清单中各 Skill 需要的配置项（已去重）。其中<strong>域账号 / 域密码</strong> 为 Jira、Gerrit、OpenGrok 共用。
-        保存后，可点击顶部「一键配置 Skill 清单」由 Agent 依据这些信息完成各 Skill 配置。
-      </NAlert>
-      <NSpin :show="formLoading">
-        <NForm label-placement="top">
-          <div v-for="group in formGroups" :key="group.name" class="form-group">
-            <div class="form-group-title">{{ group.name }}</div>
-            <NFormItem v-for="field in group.fields" :key="field.key" :label="field.label">
-              <NInput
-                v-model:value="formValues[field.key]"
-                :type="field.type === 'password' ? 'password' : 'text'"
-                :show-password-on="field.type === 'password' ? 'click' : undefined"
-                :placeholder="field.placeholder || ''"
-              />
-              <template v-if="field.description">
-                <div class="form-field-hint ea-muted">{{ field.description }}</div>
-              </template>
-            </NFormItem>
-          </div>
-        </NForm>
-      </NSpin>
-      <template #footer>
-        <NSpace justify="end">
-          <NButton :disabled="formSaving" @click="showFormModal = false">取消</NButton>
-          <NButton type="primary" :loading="formSaving" @click="saveConfigForm">保存配置</NButton>
-        </NSpace>
-      </template>
-    </NModal>
   </div>
 </template>
 
 <style scoped lang="scss">
-.skill-config-page {
+.config-skill-panel {
   max-width: 1280px;
 }
 
@@ -580,23 +391,6 @@ async function onApproval(choice: string) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.form-group {
-  margin-bottom: 8px;
-}
-
-.form-group-title {
-  font-size: 12.5px;
-  font-weight: 700;
-  margin: 6px 0 8px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--border);
-}
-
-.form-field-hint {
-  font-size: 11.5px;
-  margin-top: 2px;
 }
 
 @media (max-width: 900px) {

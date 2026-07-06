@@ -43,7 +43,7 @@ tahpSkillConfigRoutes.put('/unified-form', async (ctx) => {
   ctx.body = { success: true, data: getUnifiedConfigPublic(), updated_at: saved.__updated_at }
 })
 
-// ─── 一键配置 Skill 清单（批量 Agent）───────────────────────────────────────────
+// ─── Skill 配置检查（批量 Agent）───────────────────────────────────────────
 tahpSkillConfigRoutes.post('/configure-all', async (ctx) => {
   const result = startBatchSkillConfigAgent()
   if (!result.ok) {

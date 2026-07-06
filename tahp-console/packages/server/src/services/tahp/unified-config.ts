@@ -357,15 +357,23 @@ async function propagateToDerivedStores(values: UnifiedConfigValues): Promise<vo
 export interface UnifiedConfigPublic {
   fields: UnifiedConfigField[]
   values: UnifiedConfigValues
+  /** 仅含 unified-config.json 中已落盘的值（不含 .env 预填默认） */
+  saved_values: UnifiedConfigValues
   updated_at?: string
 }
 
 /** 返回给前端表单：字段 schema + 当前值（含默认值） */
 export function getUnifiedConfigPublic(): UnifiedConfigPublic {
   const stored = readUnifiedConfig()
+  const savedValues: UnifiedConfigValues = {}
+  for (const field of UNIFIED_CONFIG_FIELDS) {
+    const v = stored[field.key]
+    if (typeof v === 'string') savedValues[field.key] = v
+  }
   return {
     fields: UNIFIED_CONFIG_FIELDS,
     values: readUnifiedConfigForForm(),
+    saved_values: savedValues,
     updated_at: typeof (stored as any).__updated_at === 'string' ? (stored as any).__updated_at : undefined,
   }
 }
@@ -387,7 +395,7 @@ export function buildUnifiedConfigDirective(): string {
   const lines: string[] = [
     '# 一键配置表单（缺配置时优先复用）',
     '',
-    '当某个 Skill 缺少凭据/路径等配置时，**必须先复用**「常用 Skill 配置 → 一键配置表单」中已保存的值；',
+    '当某个 Skill 缺少凭据/路径等配置时，**必须先复用**「配置 → 一键配置表单」中已保存的值；',
     '仅当这些值为空或经验证无效时，才反馈给用户索要。',
     `- 表单落盘文件（含明文，可直接 Read）: \`${join(tahpPaths.projectRoot, '.tahp', 'unified-config.json')}\`（工程根下 \`.tahp/unified-config.json\`）`,
     '- 域账号/域密码在 Jira、Gerrit、OpenGrok 间通用。',
@@ -409,7 +417,7 @@ export function buildUnifiedConfigDirective(): string {
       }
     }
   } else {
-    lines.push('', '当前一键配置表单为空；若 Skill 缺配置，请提示用户前往「常用 Skill 配置 → 一键配置表单」填写。')
+    lines.push('', '当前一键配置表单为空；若 Skill 缺配置，请提示用户前往「配置 → 一键配置表单」填写。')
   }
 
   return lines.join('\n')
