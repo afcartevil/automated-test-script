@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   NInput, NButton, NSpin, NEmpty, NAlert,
   NModal, NScrollbar, NProgress, useMessage, NTooltip,
-  NSpace, NCheckbox, NCheckboxGroup,
+  NSpace,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
@@ -27,12 +27,12 @@ import {
   stripBugStageMarkers,
   parseHistoryStageDetails,
   reportToBugTask,
-  splitReportIntoSections,
-  composeReportSections,
   type HistoryStageDetail,
-  type ReportSectionBlock,
 } from '@/utils/bug-analysis-report'
+import { composeJiraCommentFromReport, sanitizeJiraCommentText } from '@/utils/compose-jira-comment'
+import { hasJiraRemarkSection } from '@/utils/jira-comment-from-report'
 import { prependDistillJiraHeader } from '@/utils/distill-jira-header'
+import { formatBugReportPlainText } from '@/utils/format-bug-report-plain'
 import {
   skillAssociation,
   mergeIntoSkill,
@@ -418,13 +418,8 @@ const canPostJiraComment = computed(() =>
 
 // 分析结论回到 jira comment 弹窗
 const showJiraCommentDialog = ref(false)
-const jiraCommentSections = ref<ReportSectionBlock[]>([])
-const jiraCommentSelectedIds = ref<string[]>([])
+const jiraCommentText = ref('')
 const jiraCommentSubmitting = ref(false)
-
-const jiraCommentComposed = computed(() =>
-  composeReportSections(jiraCommentSections.value, jiraCommentSelectedIds.value),
-)
 
 // ─────────────────────────────────────────────────────────────────────────────
 const PHASE_LABELS: Record<string, { label: string; color: string }> = {
@@ -1066,7 +1061,7 @@ async function submitContinue() {
 // 知识沉淀：① 沉淀为知识条目 ② 关联 / 生成 Skill
 // ─────────────────────────────────────────────────────────────────────────────
 function buildDistillContentWithJira(): string {
-  const body = reportMarkdown.value || ''
+  const body = formatBugReportPlainText(reportMarkdown.value || '')
   const j = jiraDisplayInfo.value
   if (!j) return body
   return prependDistillJiraHeader(body, {
@@ -1103,28 +1098,26 @@ async function openJiraCommentDialog() {
     message.warning('暂无分析报告，无法提交 jira comment')
     return
   }
-  const body = reportMarkdown.value
-  const sections = splitReportIntoSections(body)
-  if (!sections.length) {
-    message.warning('报告未识别到编号章节（### 1. xxx），无法拆分备注')
+
+  showJiraCommentDialog.value = true
+  jiraCommentText.value = composeJiraCommentFromReport(reportMarkdown.value)
+  if (!jiraCommentText.value.trim()) {
+    message.warning('报告未包含第 9 节「Jira 备注」，请重新分析后重试')
+    showJiraCommentDialog.value = false
     return
   }
-  jiraCommentSections.value = sections
-  jiraCommentSelectedIds.value = sections.filter(s => s.defaultSelected).map(s => s.id)
-  showJiraCommentDialog.value = true
+  if (!hasJiraRemarkSection(reportMarkdown.value)) {
+    message.info('当前为旧版报告，建议重新分析以生成标准 §9 Jira 备注')
+  }
 }
 
 async function submitJiraComment() {
   const tid = currentTaskId.value
   if (!tid) return false
   if (!ensureJiraReady()) return false
-  const text = jiraCommentComposed.value.trim()
+  const text = sanitizeJiraCommentText(jiraCommentText.value.trim())
   if (!text) {
-    message.warning('请至少勾选一个报告章节')
-    return false
-  }
-  if (!jiraCommentSelectedIds.value.length) {
-    message.warning('请至少勾选一个报告章节')
+    message.warning('备注内容不能为空')
     return false
   }
   jiraCommentSubmitting.value = true
@@ -2045,25 +2038,15 @@ const liveStreamHint = computed(() => {
       :mask-closable="false"
     >
       <NAlert type="info" :show-icon="false" style="margin-bottom: 12px">
-        从分析报告中勾选要提交的章节，组合后写入
-        <strong>{{ currentTask?.jira_key }}</strong> 的 jira comment。
+        备注内容从报告<strong>第 9 节「Jira 备注」</strong>直接提取（分析阶段已写好结论 / 依据 / 建议）。
+        提交前请核对内容是否准确，可手动微调后写入
+        <strong>{{ currentTask?.jira_key }}</strong>。
       </NAlert>
-      <div class="modal-body-text">选择报告章节：</div>
-      <NCheckboxGroup v-model:value="jiraCommentSelectedIds">
-        <NSpace vertical size="small" style="margin: 8px 0 12px">
-          <NCheckbox
-            v-for="sec in jiraCommentSections"
-            :key="sec.id"
-            :value="sec.id"
-            :label="sec.title"
-          />
-        </NSpace>
-      </NCheckboxGroup>
-      <div class="modal-body-text">预览（将提交到 jira comment）：</div>
+      <div class="modal-body-text">备注内容（可编辑）：</div>
       <NInput
-        :value="jiraCommentComposed"
+        v-model:value="jiraCommentText"
         type="textarea"
-        readonly
+        placeholder="分析结论、结论依据、建议..."
         :autosize="{ minRows: 8, maxRows: 16 }"
       />
       <template #footer>
@@ -2072,7 +2055,7 @@ const liveStreamHint = computed(() => {
           <NButton
             type="primary"
             :loading="jiraCommentSubmitting"
-            :disabled="!jiraCommentSelectedIds.length"
+            :disabled="!jiraCommentText.trim()"
             @click="submitJiraComment"
           >
             提交

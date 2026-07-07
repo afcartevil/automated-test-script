@@ -70,6 +70,7 @@ import {
   type UserInputResponseRecord,
 } from './bug-analysis-interaction'
 import { runJiraOpsAddComment } from './jira-ops-runner'
+import { preprocessJiraCommentForSubmit } from './compose-jira-comment'
 
 // ─── Agent Bridge 客户端（单例） ────────────────────────────────────────────
 //
@@ -839,12 +840,12 @@ const AGENT_INSTRUCTIONS_BASE = `你是 TAHP（TECNO AI Harness Platform）"智�
 2. 开始分析时输出 \`analyze\` 标记（\`status: running\`）；分析结论就绪后输出 \`analyze\`（\`status: success\`）。
 
 ## Step 5 — 生成分析报告
-1. 输出完整 8 节 Markdown 报告（结构见下文）。
+1. 输出完整 **9 节** Markdown 报告（结构见下文，**第 9 节 Jira 备注必填**）。
 2. 报告正文开始输出前，先输出 \`generate_report\`（\`status: running\`）；报告全部写完后再输出 \`generate_report\`（\`status: success\`，\`report_ready: true\`）。
 
 # 结构化阶段标记（每步完成后必须输出，供 BFF 解析更新 UI）
 
-**在进入下一步之前**，必须输出一段标记块（可输出在分析报告正文之前，勿嵌入 8 节报告中间）：
+**在进入下一步之前**，必须输出一段标记块（可输出在分析报告正文之前，勿嵌入 9 节报告中间）：
 
 \`\`\`
 === TAHP_STAGE:<stage_id> ===
@@ -862,7 +863,7 @@ message: <一句话说明本步结果>
 
 \`stage_id\` 必须是：\`fetch_jira\` | \`download_logs\` | \`match_skills\` | \`analyze\` | \`generate_report\`
 
-# 8 节分析报告（Step 5 正文，每节 H2 标题，不要省略）
+# 9 节分析报告（Step 5 正文，每节 H2 标题，不要省略）
 
 ### 1. 摘要 / TL;DR
 ### 2. 复现路径
@@ -872,6 +873,28 @@ message: <一句话说明本步结果>
 ### 6. 修复建议
 ### 7. 验证方案
 ### 8. 风险与遗留问题
+### 9. Jira 备注（结论 / 依据 / 建议）
+
+**第 9 节为「分析结论回到 Jira comment」的唯一数据源**，须在分析阶段一次性写好（与前面章节同步输出，勿留占位符）。格式固定如下，勿用 Markdown 表格、架构图、Jira 单号：
+
+\`\`\`
+【分析结论】
+（1~3 句中文：问题现象 + 你的分析判断，开发者一读即懂）
+
+【结论依据】
+1. （精简定位依据；若为异常/日志，本条下方完整粘贴堆栈，须含 at / Caused by 等行，勿只写异常类名）
+2. ...
+
+【建议】
+1. （可执行修复或验证步骤）
+2. ...
+\`\`\`
+
+要求：
+- **分析结论**：综合全文判断，不是代码路径或「根因层：Framework —」类标签
+- **结论依据**：2~4 条，根因细节写在这里；日志必须完整堆栈
+- **建议**：1~3 条，与第 6 节修复建议一致但面向 Jira 读者精简表述
+- 禁止输出「请根据报告补充」类占位文字
 
 # 输出末尾（必填）
 \`\`\`
@@ -931,9 +954,9 @@ const AGENT_INSTRUCTIONS_LOCAL = `你是 TAHP「智能诊断专家」，当前�
 依据已匹配 Skill 的方法论分析本地日志，输出 \`analyze\` 标记。
 
 ## Step 5 — 生成分析报告
-输出完整 8 节 Markdown 报告（结构同标准模式），输出 \`generate_report\` 标记。
+输出完整 **9 节** Markdown 报告（结构同标准模式，**第 9 节 Jira 备注必填**），输出 \`generate_report\` 标记。
 
-# 结构化阶段标记、8 节报告、TOOLS_INVOKED、红线
+# 结构化阶段标记、9 节报告、TOOLS_INVOKED、红线
 与标准智能诊断相同（见标准指令）；\`stage_id\` 须完整输出。
 
 # 红线
@@ -981,7 +1004,7 @@ function buildLocalAgentUserMessage(ctx: BugAnalysisTaskCtx): string {
     '',
     '请先输出 fetch_jira 与 download_logs 阶段标记（本地模式跳过，log_paths 使用上述路径），',
     '然后结合问题描述在 Skills 目录匹配 1～3 个分析 Skill 并 Read 全文，输出 match_skills 标记，',
-    '再分析本地日志并输出 analyze / generate_report 标记，生成完整 8 节报告。',
+    '再分析本地日志并输出 analyze / generate_report 标记，生成完整 9 节报告。',
   ]
   return blocks.join('\n')
 }
@@ -1023,7 +1046,7 @@ function buildAgentUserMessage(ctx: BugAnalysisTaskCtx): string {
   }
 
   blocks.push('')
-  blocks.push('请严格按系统提示词的五步工作流执行：jira-ops 拉 JIRA → jira-ops 下载日志 → 匹配 Skill → 分析 → 输出 8 节报告；每步完成后输出 TAHP_STAGE 标记。')
+  blocks.push('请严格按系统提示词的五步工作流执行：jira-ops 拉 JIRA → jira-ops 下载日志 → 匹配 Skill → 分析 → 输出 9 节报告；每步完成后输出 TAHP_STAGE 标记。')
 
   return blocks.join('\n')
 }
@@ -1033,7 +1056,7 @@ function buildContinueUserMessage(correction: string): string {
     '## 用户补充信息 / 修正意见',
     correction,
     '',
-    '请基于我们之前的对话与上述补充，重新生成完整的 8 节分析报告。',
+    '请基于我们之前的对话与上述补充，重新生成完整的 9 节分析报告（含第 9 节 Jira 备注）。',
   ].join('\n')
 }
 
@@ -1620,11 +1643,14 @@ export function postBugAnalysisJiraComment(
   comment: string,
   jiraCfg: JiraConfig,
 ): { ok: boolean; error?: string; comment_id?: string } {
-  const text = comment.trim()
-  if (!text) return { ok: false, error: '评论内容不能为空' }
-
   const ctx = taskCtx.get(taskId)
   const report = readBugReport(taskId) as Record<string, unknown> | null
+  const reportBody = report
+    ? extractBugAnalysisReportBody(String(report.report_body || report.llm_response || ''))
+    : ''
+  const text = preprocessJiraCommentForSubmit(comment, reportBody)
+  if (!text) return { ok: false, error: '评论内容不能为空' }
+
   const mode = ctx?.analysisMode || (report?.analysis_mode as string)
   if (mode === 'local') {
     return { ok: false, error: '本地日志分析任务不支持备注到 JIRA' }

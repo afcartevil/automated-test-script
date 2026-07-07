@@ -1,4 +1,4 @@
-/** 智能诊断沉淀为知识库时，在正文开头附带的 JIRA 元信息 */
+/** 智能诊断沉淀为知识库时，在正文开头附带的 JIRA 元信息（纯文本） */
 
 export interface DistillJiraInfo {
   key?: string
@@ -12,16 +12,16 @@ export function buildDistillJiraHeader(jira: DistillJiraInfo): string {
   const description = jira.description?.trim()
   if (!key && !summary && !description) return ''
 
-  const lines = ['## JIRA 信息', '']
-  if (key) lines.push(`- **KEY**: ${key}`)
-  if (summary) lines.push(`- **标题**: ${summary}`)
-  if (description) lines.push(`- **描述**: ${description}`)
-  lines.push('', '---', '')
+  const lines = ['【JIRA 信息】', '']
+  if (key) lines.push(`KEY: ${key}`)
+  if (summary) lines.push(`标题: ${summary}`)
+  if (description) lines.push(`描述: ${description}`)
+  lines.push('', '────────────────────────────────', '')
   return lines.join('\n')
 }
 
 export function hasDistillJiraHeader(content: string): boolean {
-  return content.trim().startsWith('## JIRA 信息')
+  return content.trim().startsWith('【JIRA 信息】')
 }
 
 export function prependDistillJiraHeader(content: string, jira: DistillJiraInfo): string {

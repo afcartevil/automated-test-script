@@ -43,6 +43,7 @@ import {
   extractJiraFromBugReport,
   prependDistillJiraHeader,
 } from '../../services/tahp/distill-jira-header'
+import { formatBugReportPlainText } from '../../services/tahp/format-bug-report-plain'
 import { logger } from '../../services/logger'
 
 export const tahpBugAnalysisRoutes = new Router({ prefix: '/api/tahp/bug-analysis' })
@@ -301,14 +302,16 @@ tahpBugAnalysisRoutes.post('/:taskId/distill', async (ctx) => {
     : ''
   if (!content) {
     const parts: string[] = []
-    if (report.title) parts.push(`# ${report.title}`)
+    if (report.title) parts.push(`【${report.title}】`)
     if (report.report_body) parts.push(String(report.report_body))
     else if (report.llm_response) parts.push(String(report.llm_response))
-    content = parts.join('\n\n').trim()
+    content = formatBugReportPlainText(parts.join('\n\n').trim())
+  } else {
+    content = formatBugReportPlainText(content)
   }
 
   content = prependDistillJiraHeader(content, extractJiraFromBugReport(report as Record<string, unknown>))
-  if (note) content += `\n\n---\n**人工补充**：${note}`
+  if (note) content += `\n\n【人工补充】\n${note}`
 
   try {
     let depositResult: DepositDistilledResult | undefined
