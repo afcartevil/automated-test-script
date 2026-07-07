@@ -1,4 +1,4 @@
-import type { CaseCatalogGroup, DeviceInfo } from '@/api/tahp/device-self-check'
+import type { CaseCatalogGroup, DeviceInfo, SelfCheckReportSummary } from '@/api/tahp/device-self-check'
 
 export const SELF_CHECK_SUBTITLE =
   '项目节点驱动，自动烧录、自动测试、AI Review，第二天人工复核报告'
@@ -223,4 +223,39 @@ export function pipelineStatusLabel(status: PipelineStageStatus): string {
     attention: '需人工处理',
   }
   return map[status]
+}
+
+export function reportShortType(testType: string): string {
+  if (testType === 'monkey') return 'monkey'
+  if (testType === 'smoke') return '冒烟'
+  if (testType === 'str4') return 'STR4'
+  if (testType === 'week') return '周版本'
+  if (testType === 'custom') return '自定义'
+  return testType
+}
+
+export function reportTitle(report: SelfCheckReportSummary): string {
+  const typeLabel = report.testType === 'custom'
+    ? '自定义测试'
+    : getTestTypeLabel(report.testType)
+  if (report.aiPlanned) {
+    return `${report.deviceName} · ${reportShortType(report.testType)} · AI规划`
+  }
+  return `${report.deviceName} · ${typeLabel}`
+}
+
+export type ReportStatusKind = 'passed' | 'pending' | 'reviewed' | 'retest'
+
+export function displayReportStatus(report: SelfCheckReportSummary): string {
+  if (report.reviewStatus === 'reviewed') return '已审阅'
+  if (report.reviewStatus === 'retest') return '待补测'
+  if (report.failedCases > 0) return '待审阅'
+  return report.status.includes('通过') ? '通过' : '待审阅'
+}
+
+export function reportStatusKind(report: SelfCheckReportSummary): ReportStatusKind {
+  if (report.reviewStatus === 'reviewed') return 'reviewed'
+  if (report.reviewStatus === 'retest') return 'retest'
+  if (report.failedCases > 0 || !report.status.includes('通过')) return 'pending'
+  return 'passed'
 }

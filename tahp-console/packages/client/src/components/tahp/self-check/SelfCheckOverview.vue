@@ -6,11 +6,13 @@ import type { PipelineStage } from './self-check-utils'
 import SelfCheckOverviewCard from './SelfCheckOverviewCard.vue'
 import SelfCheckFlowStatus from './SelfCheckFlowStatus.vue'
 import {
+  displayReportStatus,
   getDisplayRole,
   getDisplayStatus,
   getStatusColor,
   getTestTypeLabel,
   isActiveAuxiliaryDevice,
+  reportTitle,
 } from './self-check-utils'
 
 const props = defineProps<{
@@ -180,8 +182,8 @@ function onFlowStage(tab: string) {
         <ul v-else class="item-list">
           <li v-for="report in reportPreview" :key="report.reportId" class="item-row">
             <span class="item-main">
-              <strong>{{ report.deviceName }}</strong>
-              <small>{{ formatReportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }} 通过</small>
+              <strong>{{ reportTitle(report) }}</strong>
+              <small>{{ displayReportStatus(report) }} · {{ formatReportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }} 通过</small>
             </span>
           </li>
         </ul>

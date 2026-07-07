@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch, inject } from 'vue'
 import { NEmpty, NButton, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
 import { DEVICE_SELF_CHECK_KEY } from './self-check-context'
-import { getCaseResultColor, getTestTypeLabel } from './self-check-utils'
+import { getCaseResultColor, getTestTypeLabel, reportTitle, displayReportStatus, reportStatusKind } from './self-check-utils'
 import {
   listSelfCheckReports,
   getSelfCheckReportDetail,
@@ -75,41 +75,6 @@ const availableAuxForRetest = computed(() =>
     d.status === '空闲',
   ),
 )
-
-function displayStatus(report: SelfCheckReportSummary): string {
-  if (report.reviewStatus === 'reviewed') return '已审阅'
-  if (report.reviewStatus === 'retest') return '待补测'
-  if (report.failedCases > 0) return '待审阅'
-  return report.status.includes('通过') ? '通过' : '待审阅'
-}
-
-type ReportStatusKind = 'passed' | 'pending' | 'reviewed' | 'retest'
-
-function reportStatusKind(report: SelfCheckReportSummary): ReportStatusKind {
-  if (report.reviewStatus === 'reviewed') return 'reviewed'
-  if (report.reviewStatus === 'retest') return 'retest'
-  if (report.failedCases > 0 || !report.status.includes('通过')) return 'pending'
-  return 'passed'
-}
-
-function reportShortType(testType: string): string {
-  if (testType === 'monkey') return 'monkey'
-  if (testType === 'smoke') return '冒烟'
-  if (testType === 'str4') return 'STR4'
-  if (testType === 'week') return '周版本'
-  if (testType === 'custom') return '自定义'
-  return testType
-}
-
-function reportTitle(report: SelfCheckReportSummary): string {
-  const typeLabel = report.testType === 'custom'
-    ? '自定义测试'
-    : getTestTypeLabel(report.testType)
-  if (report.aiPlanned) {
-    return `${report.deviceName} · ${reportShortType(report.testType)} · AI规划`
-  }
-  return `${report.deviceName} · ${typeLabel}`
-}
 
 function reportTime(report: SelfCheckReportSummary): string {
   const t = report.completedAt || report.endTime || report.startTime
@@ -300,7 +265,7 @@ onMounted(async () => {
         >
           <div class="report-card-tags">
             <span class="report-status" :class="reportStatusKind(report)">
-              {{ displayStatus(report) }}
+              {{ displayReportStatus(report) }}
             </span>
             <span v-if="report.passedCases > 0" class="report-stat report-stat--pass">
               通过 {{ report.passedCases }}
@@ -331,7 +296,7 @@ onMounted(async () => {
             <div class="detail-head">
               <h3>{{ reportTitle(reportDetail) }}</h3>
               <span class="report-status" :class="reportStatusKind(reportDetail)">
-                {{ displayStatus(reportDetail) }}
+                {{ displayReportStatus(reportDetail) }}
               </span>
             </div>
             <div class="overview-header-actions">
