@@ -43,6 +43,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
   const recommendCoverageReason = ref('')
   const recommendCoverageGaps = ref<string[]>([])
   const aiGeneratedCases = ref<AiGeneratedCaseView[]>([])
+  const aiGenerationError = ref('')
   const loadingRecommendations = ref(false)
   const recommendSource = ref<RecommendSource | null>(null)
 
@@ -76,6 +77,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     recommendCoverageReason.value = ''
     recommendCoverageGaps.value = []
     aiGeneratedCases.value = []
+    aiGenerationError.value = ''
     recommendSource.value = null
   }
 
@@ -311,6 +313,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     aiGeneratedCases.value = Array.isArray(payload?.ai_generated_cases)
       ? mapAiGeneratedCases(payload.ai_generated_cases as AiGeneratedCase[])
       : []
+    aiGenerationError.value = String(payload?.ai_generation_error ?? '').trim()
     const gapCount = recommendCoverageGaps.value.length
     const aiCount = aiGeneratedCases.value.length
     const score = recommendCoverageScore.value
@@ -1127,6 +1130,7 @@ export const useGerritReviewStore = defineStore('tahp-gerrit-review', () => {
     recommendCoverageReason,
     recommendCoverageGaps,
     aiGeneratedCases,
+    aiGenerationError,
     loadingRecommendations,
     recommendSource,
     checkedRecommendedCases,

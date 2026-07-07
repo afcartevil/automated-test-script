@@ -67,6 +67,7 @@ tahpGerritReviewRoutes.post('/api/tahp/gerrit-review/recommend-cases', async (ct
       source,
       coverage,
       aiGeneratedCases: ai_generated_cases,
+      aiGenerationError: ai_generation_error,
     } = await recommendTestCasesWithMeta(p0Items, modules)
     logger.info(
       {
@@ -76,6 +77,7 @@ tahpGerritReviewRoutes.post('/api/tahp/gerrit-review/recommend-cases', async (ct
         source,
         coverageScore: coverage.score,
         aiGeneratedCount: ai_generated_cases.length,
+        aiGenerationError: ai_generation_error,
       },
       '[gerrit-review] recommend-cases',
     )
@@ -88,6 +90,7 @@ tahpGerritReviewRoutes.post('/api/tahp/gerrit-review/recommend-cases', async (ct
         coverage_reason: coverage.reason,
         coverage_gaps: coverage.gaps,
         ai_generated_cases,
+        ai_generation_error,
       },
     }
   } catch (err) {

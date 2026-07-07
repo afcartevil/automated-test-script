@@ -16,6 +16,12 @@ import type { RecommendedCase } from './gerrit-case-recommendation'
 
 const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
 
+/** AI 用例 LLM 生成默认超时（毫秒）；可通过 GERRIT_AI_CASE_LLM_TIMEOUT_MS 覆盖 */
+export const DEFAULT_AI_CASE_LLM_TIMEOUT_MS = 120_000
+
+/** Bridge chat 相对流式截止的额外宽限（秒），避免 bridge 先于 stream deadline 断开 */
+const AI_CASE_BRIDGE_TIMEOUT_BUFFER_SEC = 30
+
 export const AI_GENERATED_TEST_TYPE = 'ai_generated'
 export const AI_GENERATED_MODULE = 'generated'
 export const AI_GENERATED_MODULE_LABEL = 'AI生成用例'
@@ -116,11 +122,20 @@ export function normalizeCoverage(raw: unknown, fallback: RecommendCoverage): Re
   }
 }
 
+export interface AiCaseGenerationResult {
+  cases: AiGeneratedCase[]
+  error?: string
+}
+
 function aiCaseGenerationTimeoutMs(): number {
   const raw = process.env.GERRIT_AI_CASE_LLM_TIMEOUT_MS
-  if (!raw) return 30_000
+  if (!raw) return DEFAULT_AI_CASE_LLM_TIMEOUT_MS
   const value = Number(raw)
-  return Number.isFinite(value) && value > 0 ? value : 30_000
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_AI_CASE_LLM_TIMEOUT_MS
+}
+
+export function resolveAiCaseGenerationTimeoutMs(): number {
+  return aiCaseGenerationTimeoutMs()
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -151,7 +166,7 @@ async function runAiCaseLlmChat(instructions: string, userMessage: string): Prom
 
   const sessionId = `gerrit-ai-case-${randomBytes(8).toString('hex')}`
   const timeoutMs = aiCaseGenerationTimeoutMs()
-  const timeoutSec = Math.ceil(timeoutMs / 1000)
+  const timeoutSec = Math.ceil(timeoutMs / 1000) + AI_CASE_BRIDGE_TIMEOUT_BUFFER_SEC
 
   try {
     const started = await sharedBridgeClient.chat(
@@ -179,7 +194,9 @@ async function runAiCaseLlmChat(instructions: string, userMessage: string): Prom
         if (chunk.status === 'interrupted') throw new Error('AI 用例生成被中断')
         break
       }
-      if (Date.now() > deadline) throw new Error('AI 用例生成超时')
+      if (Date.now() > deadline) {
+        throw new Error(`AI 用例生成超时（${Math.round(timeoutMs / 1000)}s）`)
+      }
     }
     if (!lastChunk?.done) throw new Error('AI 用例生成流意外终止')
     if (lastChunk.error) throw new Error(String(lastChunk.error))
@@ -189,21 +206,34 @@ async function runAiCaseLlmChat(instructions: string, userMessage: string): Prom
   }
 }
 
-function validatePythonSource(source: string): { ok: boolean; error?: string } {
-  const banned = [
-    /\bimport\s+(os|subprocess|socket|requests|urllib|http|ftplib|shutil|pathlib|sys)\b/,
-    /\bfrom\s+(os|subprocess|socket|requests|urllib|http|ftplib|shutil|pathlib|sys)\b/,
-    /\b(eval|exec|compile|open|__import__|input)\s*\(/,
-    /\bglobals\s*\(|\blocals\s*\(/,
-    /\b(write|unlink|remove|rmdir|mkdir|rename|replace)\s*\(/,
-  ]
+const BANNED_PYTHON_PATTERNS: Array<{ re: RegExp; label: string }> = [
+  { re: /^\s*import\s+/m, label: '禁止 import 语句' },
+  { re: /^\s*from\s+\w+\s+import\s+/m, label: '禁止 from ... import 语句' },
+  { re: /\b(eval|exec|compile|open|__import__|input)\s*\(/, label: '禁止 eval/exec/open 等危险调用' },
+  { re: /\bglobals\s*\(|\blocals\s*\(/, label: '禁止 globals/locals' },
+  { re: /\b(write|unlink|remove|rmdir|mkdir|rename|replace)\s*\(/, label: '禁止文件系统写操作' },
+]
+
+/** AI 生成用例 Python 源码安全校验（供生成流程与单测复用） */
+export function validatePythonSource(source: string): { ok: boolean; error?: string } {
   if (!/def\s+run\s*\(/.test(source)) return { ok: false, error: '缺少 run(...) 函数' }
-  for (const re of banned) {
-    if (re.test(source)) return { ok: false, error: `命中危险 Python 语句: ${re}` }
+  for (const { re, label } of BANNED_PYTHON_PATTERNS) {
+    if (re.test(source)) return { ok: false, error: label }
   }
   if (!/return\s+\{/.test(source)) return { ok: false, error: 'run(...) 必须返回 dict 结果' }
   return { ok: true }
 }
+
+const AI_CASE_RUN_TEMPLATE = `def run(category=None, case_index=None, device_info=None, **context):
+    step_update = context.get('step_update')
+    manual_confirm = context.get('manual_confirm')
+    step_update('Step 1: 请确认前置条件。')
+    if not manual_confirm('前置条件是否满足？'):
+        return {'status': 'fail', 'message': '前置条件未满足', 'full_automation': False}
+    step_update('Step 2: 请执行测试操作并观察结果。')
+    if manual_confirm('测试结果是否符合预期？'):
+        return {'status': 'pass', 'message': '验证通过', 'full_automation': False}
+    return {'status': 'fail', 'message': '验证失败', 'full_automation': False}`
 
 function ensureAiCaseDirs(): void {
   if (!existsSync(CASE_CONFIG_DIR)) mkdirSync(CASE_CONFIG_DIR, { recursive: true })
@@ -349,16 +379,24 @@ export function findReusableHistoricalAiCases(
   }
 }
 
-function buildGenerationPrompt(p0Items: string[], recommendedCases: RecommendedCase[], coverage: RecommendCoverage) {
+function buildGenerationPrompt(
+  p0Items: string[],
+  recommendedCases: RecommendedCase[],
+  coverage: RecommendCoverage,
+  retryHint?: string,
+) {
   const instructions = `你是 TAHP AI 自检平台的 Python 用例生成助手。根据 Gerrit Review 的 P0 必须测试缺口，生成可由 run_case.py 执行的 Python 用例。
 
 # 必须遵守
 1. 禁止调用任何工具，只输出 JSON 对象。
 2. Python 只允许定义 run(category=None, case_index=None, device_info=None, **context)。
-3. 不允许 import os/subprocess/socket/requests/urllib/http/shutil/pathlib/sys，不允许 eval/exec/open/文件写删除/网络访问。
-4. 用例应通过 step_update 输出步骤；需要人工判断时可使用 manual_confirm。
+3. pythonSource 内禁止任何 import / from ... import 语句；禁止 eval/exec/open/文件写删除/网络访问。
+4. 只能通过 context.get('step_update') 与 context.get('manual_confirm') 与测试员交互，不得调用 adb/shell/subprocess。
 5. 返回 dict: {"status": "pass|fail|pending", "message": "...", "full_automation": false}
-6. 生成 1-3 个用例，覆盖推荐用例未覆盖的 P0。`
+6. 生成 1-3 个半自动用例（manual_confirm 引导人工操作），覆盖推荐用例未覆盖的 P0。
+
+# 参考模板（禁止照抄文案，须按缺口改写步骤）
+${AI_CASE_RUN_TEMPLATE}`
 
   const userMessage = `# P0 必须测试
 ${p0Items.map((item, index) => `${index + 1}. ${item}`).join('\n')}
@@ -381,51 +419,33 @@ ${coverage.gaps.map((item, index) => `${index + 1}. ${item}`).join('\n') || '无
       "reason": "覆盖说明",
       "manualSteps": "1. ...\\n2. ...",
       "expectedResult": "...",
-      "pythonSource": "def run(category=None, case_index=None, device_info=None, **context):\\n    ..."
+      "pythonSource": "def run(category=None, case_index=None, device_info=None, **context):\\n    step_update = context.get('step_update')\\n    ..."
     }
   ]
-}`
+}${retryHint ? `\n\n${retryHint}` : ''}`
 
   return { instructions, userMessage }
 }
 
-async function generateNewAiCasesViaLlm(
-  p0Items: string[],
-  recommendedCases: RecommendedCase[],
+interface LlmGenerationOutcome {
+  cases: AiGeneratedCase[]
+  error?: string
+}
+
+function persistValidatedDrafts(
+  drafts: AiGeneratedCaseDraft[],
   coverage: RecommendCoverage,
-): Promise<AiGeneratedCase[]> {
-  if (!coverage.gaps.length) return []
-
-  const { instructions, userMessage } = buildGenerationPrompt(p0Items, recommendedCases, coverage)
-  logger.info(
-    {
-      gapCount: coverage.gaps.length,
-      gaps: coverage.gaps,
-      coverageScore: coverage.score,
-    },
-    '[gerrit-ai-cases] LLM generation start',
-  )
-
-  const raw = await runAiCaseLlmChat(instructions, userMessage)
-  const parsed = parseJsonObject(raw)
-  if (!parsed) {
-    logger.warn({ responsePreview: raw.slice(0, 200) }, '[gerrit-ai-cases] JSON parse failed')
-    return []
-  }
-
-  const drafts = mapDrafts(parsed)
-  if (!drafts.length) {
-    logger.warn({ responsePreview: raw.slice(0, 200) }, '[gerrit-ai-cases] no valid drafts in LLM response')
-    return []
-  }
-
+): { cases: AiGeneratedCase[]; rejections: string[] } {
   const config = loadAiConfig()
   const caseInfo = loadCaseInfo()
   const created: AiGeneratedCase[] = []
+  const rejections: string[] = []
 
   for (const draft of drafts) {
     const validation = validatePythonSource(draft.pythonSource)
     if (!validation.ok) {
+      const reason = `${draft.caseName}: ${validation.error}`
+      rejections.push(reason)
       logger.warn({ caseName: draft.caseName, error: validation.error }, '[gerrit-ai-cases] unsafe case rejected')
       continue
     }
@@ -457,16 +477,78 @@ async function generateNewAiCasesViaLlm(
     saveAiConfig(config)
     saveCaseInfo(caseInfo)
   }
-  logger.info({ generatedCount: created.length }, '[gerrit-ai-cases] LLM generation done')
-  return created
+  return { cases: created, rejections }
+}
+
+async function generateNewAiCasesViaLlm(
+  p0Items: string[],
+  recommendedCases: RecommendedCase[],
+  coverage: RecommendCoverage,
+): Promise<LlmGenerationOutcome> {
+  if (!coverage.gaps.length) return { cases: [] }
+
+  const { instructions } = buildGenerationPrompt(p0Items, recommendedCases, coverage)
+  logger.info(
+    {
+      gapCount: coverage.gaps.length,
+      gaps: coverage.gaps,
+      coverageScore: coverage.score,
+    },
+    '[gerrit-ai-cases] LLM generation start',
+  )
+
+  let retryHint: string | undefined
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const { userMessage } = buildGenerationPrompt(p0Items, recommendedCases, coverage, retryHint)
+    const raw = await runAiCaseLlmChat(instructions, userMessage)
+    const parsed = parseJsonObject(raw)
+    if (!parsed) {
+      const preview = raw.slice(0, 200)
+      logger.warn({ responsePreview: preview, attempt }, '[gerrit-ai-cases] JSON parse failed')
+      return { cases: [], error: 'AI 用例响应无法解析为 JSON' }
+    }
+
+    const drafts = mapDrafts(parsed)
+    if (!drafts.length) {
+      const preview = raw.slice(0, 200)
+      logger.warn({ responsePreview: preview, attempt }, '[gerrit-ai-cases] no valid drafts in LLM response')
+      return { cases: [], error: 'AI 用例响应中无有效 cases' }
+    }
+
+    const { cases, rejections } = persistValidatedDrafts(drafts, coverage)
+    if (cases.length > 0) {
+      logger.info({ generatedCount: cases.length, attempt }, '[gerrit-ai-cases] LLM generation done')
+      return { cases }
+    }
+
+    if (attempt === 1 && rejections.length > 0) {
+      retryHint = [
+        '# 上次生成未通过安全校验（请修正 pythonSource 后重试）',
+        ...rejections.map(item => `- ${item}`),
+        '要求：不得包含任何 import/from 语句；仅使用 context.get("step_update") 与 context.get("manual_confirm")。',
+      ].join('\n')
+      logger.warn({ attempt, rejections }, '[gerrit-ai-cases] all drafts rejected, retrying LLM')
+      continue
+    }
+
+    const error = rejections.length
+      ? `AI 用例校验未通过：${rejections[0]}`
+      : 'AI 用例校验未通过：无有效用例'
+    logger.warn({ attempt, rejections }, '[gerrit-ai-cases] LLM generation produced no valid cases')
+    return { cases: [], error }
+  }
+
+  return { cases: [], error: 'AI 用例生成失败' }
 }
 
 export async function generateAiCasesForCoverageGap(
   p0Items: string[],
   recommendedCases: RecommendedCase[],
   coverage: RecommendCoverage,
-): Promise<AiGeneratedCase[]> {
-  if (coverage.score >= 6 || coverage.gaps.length === 0) return []
+): Promise<AiCaseGenerationResult> {
+  if (coverage.score >= 6 || coverage.gaps.length === 0) {
+    return { cases: [] }
+  }
 
   const historical = loadHistoricalAiCasesFromDisk()
   const { reusable, remainingGaps } = findReusableHistoricalAiCases(coverage.gaps, historical)
@@ -479,24 +561,32 @@ export async function generateAiCasesForCoverageGap(
       reusedCount: reusable.length,
       remainingGapCount: remainingGaps.length,
       remainingGaps,
+      timeoutMs: aiCaseGenerationTimeoutMs(),
     },
     '[gerrit-ai-cases] historical reuse check',
   )
 
   let generated: AiGeneratedCase[] = []
+  let generationError: string | undefined
   if (remainingGaps.length > 0) {
     try {
-      generated = await generateNewAiCasesViaLlm(
+      const llmResult = await generateNewAiCasesViaLlm(
         p0Items,
         recommendedCases,
         { ...coverage, gaps: remainingGaps },
       )
+      generated = llmResult.cases
+      if (!generated.length && llmResult.error) {
+        generationError = llmResult.error
+      }
     } catch (err) {
+      generationError = (err as Error).message
       logger.warn(
         {
-          err: (err as Error).message,
+          err: generationError,
           remainingGapCount: remainingGaps.length,
           remainingGaps,
+          timeoutMs: aiCaseGenerationTimeoutMs(),
         },
         '[gerrit-ai-cases] LLM generation failed',
       )
@@ -516,11 +606,16 @@ export async function generateAiCasesForCoverageGap(
       reusedCount: reusable.length,
       generatedCount: generated.length,
       totalCount: combined.length,
+      error: generationError,
     },
     '[gerrit-ai-cases] generation result',
   )
 
-  return combined
+  const noCases = combined.length === 0
+  return {
+    cases: combined,
+    ...(noCases && generationError ? { error: generationError } : {}),
+  }
 }
 
 export function loadAiGeneratedCaseConfig(): AiGeneratedCaseConfig | null {

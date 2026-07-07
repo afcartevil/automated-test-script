@@ -12,6 +12,7 @@ import {
   generateAiCasesForCoverageGap,
   normalizeCoverage,
   scoreRuleCoverage,
+  type AiCaseGenerationResult,
   type AiGeneratedCase,
   type RecommendCoverage,
 } from './gerrit-ai-generated-cases'
@@ -339,6 +340,7 @@ export async function recommendTestCasesWithMeta(
   source: RecommendSource
   coverage: RecommendCoverage
   aiGeneratedCases: AiGeneratedCase[]
+  aiGenerationError?: string
 }> {
   const normalizedMustTest = normalizeMustTestItems(mustTestItems)
   if (!normalizedMustTest.length) {
@@ -354,8 +356,8 @@ export async function recommendTestCasesWithMeta(
   if (mode === 'rule') {
     const cases = recommendTestCasesByRules(normalizedMustTest, modules)
     const coverage = scoreRuleCoverage(normalizedMustTest, cases)
-    const aiGeneratedCases = await generateAiCasesSafely(normalizedMustTest, cases, coverage)
-    return { cases, source: 'rule', coverage, aiGeneratedCases }
+    const aiResult = await generateAiCasesSafely(normalizedMustTest, cases, coverage)
+    return { cases, source: 'rule', coverage, ...aiResult }
   }
 
   const maxTotal = recommendMaxTotal()
@@ -375,18 +377,19 @@ export async function recommendTestCasesWithMeta(
     const llmCases = llmResult.cases
     if (llmCases.length) {
       const coverage = resolveRecommendCoverage(normalizedMustTest, llmCases, llmResult.coverage)
-      const aiGeneratedCases = await generateAiCasesSafely(normalizedMustTest, llmCases, coverage)
+      const aiResult = await generateAiCasesSafely(normalizedMustTest, llmCases, coverage)
       logger.info(
         {
           source: 'llm',
           p0Count: normalizedMustTest.length,
           recommendedCount: llmCases.length,
           coverageScore: coverage.score,
-          aiGeneratedCount: aiGeneratedCases.length,
+          aiGeneratedCount: aiResult.aiGeneratedCases.length,
+          aiGenerationError: aiResult.aiGenerationError,
         },
         '[gerrit-recommend] recommend-cases',
       )
-      return { cases: llmCases, source: 'llm', coverage, aiGeneratedCases }
+      return { cases: llmCases, source: 'llm', coverage, ...aiResult }
     }
   } catch (err) {
     logger.warn(
@@ -397,7 +400,7 @@ export async function recommendTestCasesWithMeta(
 
   const ruleCases = recommendTestCasesByRules(normalizedMustTest, modules)
   const coverage = scoreRuleCoverage(normalizedMustTest, ruleCases)
-  const aiGeneratedCases = await generateAiCasesSafely(normalizedMustTest, ruleCases, coverage)
+  const aiResult = await generateAiCasesSafely(normalizedMustTest, ruleCases, coverage)
   logger.info(
     {
       source: 'rule',
@@ -405,11 +408,12 @@ export async function recommendTestCasesWithMeta(
       recommendedCount: ruleCases.length,
       mode,
       coverageScore: coverage.score,
-      aiGeneratedCount: aiGeneratedCases.length,
+      aiGeneratedCount: aiResult.aiGeneratedCases.length,
+      aiGenerationError: aiResult.aiGenerationError,
     },
     '[gerrit-recommend] recommend-cases',
   )
-  return { cases: ruleCases, source: 'rule', coverage, aiGeneratedCases }
+  return { cases: ruleCases, source: 'rule', coverage, ...aiResult }
 }
 
 function resolveRecommendCoverage(
@@ -433,27 +437,32 @@ async function generateAiCasesSafely(
   p0Items: string[],
   cases: RecommendedCase[],
   coverage: RecommendCoverage,
-): Promise<AiGeneratedCase[]> {
+): Promise<{ aiGeneratedCases: AiGeneratedCase[]; aiGenerationError?: string }> {
   if (coverage.score >= 6) {
     logger.info({ coverageScore: coverage.score }, '[gerrit-ai-cases] skip: coverage score >= 6')
-    return []
+    return { aiGeneratedCases: [] }
   }
   if (!coverage.gaps.length) {
     logger.info({ coverageScore: coverage.score }, '[gerrit-ai-cases] skip: no coverage gaps')
-    return []
+    return { aiGeneratedCases: [] }
   }
   try {
-    return await generateAiCasesForCoverageGap(p0Items, cases, coverage)
+    const result: AiCaseGenerationResult = await generateAiCasesForCoverageGap(p0Items, cases, coverage)
+    return {
+      aiGeneratedCases: result.cases,
+      aiGenerationError: result.error,
+    }
   } catch (err) {
+    const message = (err as Error).message
     logger.warn(
       {
-        err: (err as Error).message,
+        err: message,
         coverageScore: coverage.score,
         gapCount: coverage.gaps.length,
         gaps: coverage.gaps,
       },
       '[gerrit-ai-cases] generation pipeline failed',
     )
-    return []
+    return { aiGeneratedCases: [], aiGenerationError: message }
   }
 }

@@ -557,6 +557,7 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
       source: recommendSource,
       coverage,
       aiGeneratedCases,
+      aiGenerationError,
     } = await recommendTestCasesWithMeta(
       p0.items,
       moduleInfo.modules,
@@ -592,6 +593,7 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
       coverage_reason: coverage.reason,
       coverage_gaps: coverage.gaps,
       ai_generated_cases: aiGeneratedCases,
+      ai_generation_error: aiGenerationError,
       skills_used: ctx.skillsUsed,
       duration_ms: Date.now() - startMs,
       message: recommendSource === 'llm'
@@ -619,6 +621,7 @@ async function runGerritReviewTask(taskId: string): Promise<void> {
           coverage_reason: coverage.reason,
           coverage_gaps: coverage.gaps,
           ai_generated_cases: aiGeneratedCases,
+          ai_generation_error: aiGenerationError,
           skills_used: ctx.skillsUsed,
           duration_ms: Date.now() - startMs,
         }, null, 2),

@@ -32,6 +32,7 @@ const {
   p0Count,
   recommendedCount,
   aiGeneratedCount,
+  aiGenerationError,
   loadingRecommendations,
   showRecommendLoading,
   recommendSourceLabel,
@@ -268,6 +269,12 @@ onActivated(restoreWorkspace)
                         class="coverage-sufficient-note"
                       >
                         {{ recommendCoverageReason }}
+                      </p>
+                      <p
+                        v-if="!aiGeneratedCount && aiGenerationError"
+                        class="ai-generation-error ea-muted"
+                      >
+                        AI 用例生成失败：{{ aiGenerationError }}
                       </p>
                       <NEmpty
                         v-else-if="!aiGeneratedCount"
@@ -764,6 +771,14 @@ $gerrit-insight-line: 1.45em;
 
 .coverage-gap-title {
   font-size: 12px;
+}
+
+.ai-generation-error {
+  margin: 0 0 8px;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--warning, #f59e0b);
 }
 
 .coverage-sufficient-note {

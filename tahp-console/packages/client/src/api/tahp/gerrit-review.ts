@@ -48,6 +48,7 @@ export interface RecommendCasesResponse {
   coverage_reason: string
   coverage_gaps: string[]
   ai_generated_cases: AiGeneratedCase[]
+  ai_generation_error?: string
 }
 
 export function fetchRecommendCases(input: {

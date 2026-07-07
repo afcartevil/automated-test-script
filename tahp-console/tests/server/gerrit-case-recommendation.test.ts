@@ -76,7 +76,7 @@ describe('recommendTestCases hybrid', () => {
   beforeEach(() => {
     rerankCasesWithLlmMock.mockReset()
     generateAiCasesForCoverageGapMock.mockReset()
-    generateAiCasesForCoverageGapMock.mockResolvedValue([])
+    generateAiCasesForCoverageGapMock.mockResolvedValue({ cases: [] })
     delete process.env.GERRIT_RECOMMEND_MODE
   })
 
