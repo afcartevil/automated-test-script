@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildRecommendPrompt,
+  mapLlmCoverage,
   mapLlmRecommendations,
   parseRecommendLlmJson,
 } from '../../packages/server/src/services/tahp/gerrit-case-recommend-llm'
@@ -31,6 +32,29 @@ describe('parseRecommendLlmJson', () => {
   it('returns null for invalid structure', () => {
     expect(parseRecommendLlmJson('{"items":[]}')).toBeNull()
     expect(parseRecommendLlmJson('not json')).toBeNull()
+  })
+
+  it('preserves coverage metadata from LLM JSON', () => {
+    const parsed = parseRecommendLlmJson(`{
+      "coverage": {
+        "score": 5,
+        "reason": "部分 P0 未覆盖",
+        "gaps": ["长按电源键软重启"]
+      },
+      "recommendations": [
+        { "caseKey": "week/driver/14", "score": 0.9, "reason": "USB" }
+      ]
+    }`)
+    expect(parsed?.coverage).toMatchObject({
+      score: 5,
+      reason: '部分 P0 未覆盖',
+      gaps: ['长按电源键软重启'],
+    })
+    expect(mapLlmCoverage(parsed!)).toMatchObject({
+      score: 5,
+      reason: '部分 P0 未覆盖',
+      gaps: ['长按电源键软重启'],
+    })
   })
 })
 

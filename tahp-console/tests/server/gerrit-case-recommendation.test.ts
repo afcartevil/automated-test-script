@@ -1,10 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const rerankCasesWithLlmMock = vi.fn()
+const generateAiCasesForCoverageGapMock = vi.fn()
 
 vi.mock('../../packages/server/src/services/tahp/gerrit-case-recommend-llm', () => ({
   rerankCasesWithLlm: (...args: unknown[]) => rerankCasesWithLlmMock(...args),
 }))
+
+vi.mock('../../packages/server/src/services/tahp/gerrit-ai-generated-cases', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../packages/server/src/services/tahp/gerrit-ai-generated-cases')>()
+  return {
+    ...actual,
+    generateAiCasesForCoverageGap: (...args: unknown[]) => generateAiCasesForCoverageGapMock(...args),
+  }
+})
 
 import {
   recommendTestCases,
@@ -66,6 +75,8 @@ describe('recommendTestCases hybrid', () => {
 
   beforeEach(() => {
     rerankCasesWithLlmMock.mockReset()
+    generateAiCasesForCoverageGapMock.mockReset()
+    generateAiCasesForCoverageGapMock.mockResolvedValue([])
     delete process.env.GERRIT_RECOMMEND_MODE
   })
 
@@ -189,6 +200,36 @@ describe('recommendTestCases hybrid', () => {
     expect(source).toBe('rule')
     expect(cases).toEqual([])
     expect(rerankCasesWithLlmMock).toHaveBeenCalled()
+  })
+
+  it('backfills rule gaps when LLM coverage score is low but gaps are empty', async () => {
+    rerankCasesWithLlmMock.mockResolvedValueOnce({
+      cases: [
+        {
+          caseKey: 'week/driver/14',
+          caseName: 'USB功能正常充电',
+          moduleLabel: '驱动',
+          score: 9,
+          reasons: ['P0 要求验证 USB 插拔触发校准'],
+        },
+      ],
+      coverage: {
+        score: 5,
+        reason: '推荐用例未完全覆盖 P0',
+        gaps: [],
+      },
+    })
+
+    const { coverage } = await recommendTestCasesWithMeta([
+      'USB 插拔触发 SAR 校准',
+      '完全不相关的随机描述 xyzabc',
+    ])
+
+    expect(coverage.score).toBe(5)
+    expect(coverage.gaps.length).toBeGreaterThan(0)
+    expect(generateAiCasesForCoverageGapMock).toHaveBeenCalled()
+    const passedCoverage = generateAiCasesForCoverageGapMock.mock.calls[0]?.[2] as { gaps: string[] }
+    expect(passedCoverage.gaps.length).toBeGreaterThan(0)
   })
 
   it('returns low rule coverage with gaps when no case matches P0 content', async () => {

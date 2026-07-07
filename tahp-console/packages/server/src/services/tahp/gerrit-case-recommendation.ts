@@ -374,8 +374,7 @@ export async function recommendTestCasesWithMeta(
       : llmResultRaw
     const llmCases = llmResult.cases
     if (llmCases.length) {
-      const fallbackCoverage = scoreRuleCoverage(normalizedMustTest, llmCases)
-      const coverage = normalizeCoverage(llmResult.coverage, fallbackCoverage)
+      const coverage = resolveRecommendCoverage(normalizedMustTest, llmCases, llmResult.coverage)
       const aiGeneratedCases = await generateAiCasesSafely(normalizedMustTest, llmCases, coverage)
       logger.info(
         {
@@ -411,6 +410,23 @@ export async function recommendTestCasesWithMeta(
     '[gerrit-recommend] recommend-cases',
   )
   return { cases: ruleCases, source: 'rule', coverage, aiGeneratedCases }
+}
+
+function resolveRecommendCoverage(
+  p0Items: string[],
+  cases: RecommendedCase[],
+  llmCoverage?: RecommendCoverage,
+): RecommendCoverage {
+  const fallback = scoreRuleCoverage(p0Items, cases)
+  const coverage = normalizeCoverage(llmCoverage, fallback)
+  if (coverage.score < 6 && coverage.gaps.length === 0 && fallback.gaps.length > 0) {
+    return {
+      ...coverage,
+      gaps: fallback.gaps,
+      reason: coverage.reason || fallback.reason,
+    }
+  }
+  return coverage
 }
 
 async function generateAiCasesSafely(

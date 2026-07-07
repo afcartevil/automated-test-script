@@ -58,24 +58,27 @@ export function parseRecommendLlmJson(text: string): LlmRecommendJson | null {
   const candidate = (fenceMatch?.[1] ?? trimmed).trim()
 
   try {
-    const parsed = JSON.parse(candidate) as unknown
-    if (!parsed || typeof parsed !== 'object') return null
-    const recs = (parsed as LlmRecommendJson).recommendations
-    if (!Array.isArray(recs)) return null
-    return { recommendations: recs }
+    return parseRecommendLlmObject(JSON.parse(candidate) as unknown)
   } catch {
     const start = trimmed.indexOf('{')
     const end = trimmed.lastIndexOf('}')
     if (start < 0 || end <= start) return null
     try {
-      const parsed = JSON.parse(trimmed.slice(start, end + 1)) as unknown
-      if (!parsed || typeof parsed !== 'object') return null
-      const recs = (parsed as LlmRecommendJson).recommendations
-      if (!Array.isArray(recs)) return null
-      return { recommendations: recs }
+      return parseRecommendLlmObject(JSON.parse(trimmed.slice(start, end + 1)) as unknown)
     } catch {
       return null
     }
+  }
+}
+
+function parseRecommendLlmObject(parsed: unknown): LlmRecommendJson | null {
+  if (!parsed || typeof parsed !== 'object') return null
+  const obj = parsed as LlmRecommendJson
+  const recs = obj.recommendations
+  if (!Array.isArray(recs)) return null
+  return {
+    recommendations: recs,
+    coverage: obj.coverage,
   }
 }
 
@@ -254,8 +257,9 @@ export async function rerankCasesWithLlm(
     return { cases: [] }
   }
 
+  const cases = mapLlmRecommendations(parsed, candidates, maxTotal)
   return {
-    cases: mapLlmRecommendations(parsed, candidates, maxTotal),
+    cases,
     coverage: mapLlmCoverage(parsed),
   }
 }
