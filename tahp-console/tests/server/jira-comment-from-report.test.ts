@@ -117,15 +117,11 @@ describe('composeJiraCommentFromReport', () => {
     expect(out).not.toContain('**')
   })
 
-  it('parses real TOS163-40582 report_body', async () => {
-    const { readFileSync } = await import('node:fs')
-    const { join } = await import('node:path')
-    const reportPath = join(process.cwd(), '../reports/bug-analysis/task-bug-1783327920702-2c6ddd.json')
-    const report = JSON.parse(readFileSync(reportPath, 'utf-8'))
-    const out = composeJiraCommentFromReport(report.report_body)
+  it('parses §9 with ## heading and fenced body (regression fixture)', () => {
+    const out = composeJiraCommentFromReport(SECTION9_H2_FENCED_TRAILING)
     expect(out).toContain('*分析结论：*')
-    expect(out).toContain('Salam Mobile')
-    expect(out).toContain('getTechsFromCarrierConfig failed')
+    expect(out).toContain('test conclusion')
+    expect(out).toContain('suggestion one')
     expect(out).not.toMatch(/`{3}/)
     expect(out).not.toMatch(/^[-─_]{3,}$/m)
   })
