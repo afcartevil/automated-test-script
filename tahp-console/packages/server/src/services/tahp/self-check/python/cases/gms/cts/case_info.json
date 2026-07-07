@@ -19,5 +19,12 @@
     "前置条件": "已配置 CTS 套件（tools/ 与 subplans/）；设备 ADB 可用",
     "测试步骤": "cts-tradefed run media-cts-plan -s <serial>",
     "期望结果": "Tradefed 执行完成且退出码为 0"
+  },
+  {
+    "case_index": 4,
+    "名称": "CTS安全测试",
+    "前置条件": "已配置 CTS 套件（tools/ 与 subplans/）；设备 ADB 可用",
+    "测试步骤": "cts-tradefed run security-cts-plan -s <serial>",
+    "期望结果": "Tradefed 执行完成且退出码为 0"
   }
 ]

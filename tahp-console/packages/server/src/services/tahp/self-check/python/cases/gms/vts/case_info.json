@@ -26,5 +26,12 @@
     "前置条件": "已配置 VTS 套件（tools/ 与 subplans/）；设备 ADB 可用",
     "测试步骤": "vts-tradefed run media-vts-plan -s <serial>",
     "期望结果": "Tradefed 执行完成且退出码为 0"
+  },
+  {
+    "case_index": 5,
+    "名称": "VTS安全测试",
+    "前置条件": "已配置 VTS 套件（tools/ 与 subplans/）；设备 ADB 可用",
+    "测试步骤": "vts-tradefed run security-vts-plan -s <serial>",
+    "期望结果": "Tradefed 执行完成且退出码为 0"
   }
 ]
