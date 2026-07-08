@@ -1,4 +1,25 @@
-﻿import type { AdaptDomainDef } from './types'
+﻿import type { AdaptDomainDef, AdaptFieldDef } from './types'
+import { ADAPT_DEBUG_DOMAINS } from './adapt-debug-domains'
+import {
+  FEATURE_CHECKLIST_AUDIO,
+  FEATURE_CHECKLIST_CHARGING,
+  FEATURE_CHECKLIST_LCM,
+  FEATURE_CHECKLIST_SENSOR,
+  FEATURE_CHECKLIST_TP,
+} from './feature-checklist-defaults'
+
+function checklistField(label = '特性清单', defaultValue = ''): AdaptFieldDef {
+  return {
+    name: 'feature_checklist',
+    label,
+    type: 'checklist',
+    required: false,
+    defaultValue,
+    placeholder: '每行一条：特性名称<Tab>特性编码（SF-…）',
+  }
+}
+
+const lcmBaseFields = ADAPT_DEBUG_DOMAINS.find(d => d.id === 'lcm')?.fields ?? []
 
 /** 特性适配工作区 — 内置域默认表单（与 AI适配调试 独立维护） */
 export const FEATURE_ADAPT_DOMAINS: AdaptDomainDef[] = [
@@ -7,7 +28,7 @@ export const FEATURE_ADAPT_DOMAINS: AdaptDomainDef[] = [
     label: 'TP触摸屏',
     icon: 'TP',
     color: '#388bfd',
-    status: 'pending',
+    status: 'active',
     relatedSkills: [
       'tp-adapt-smart-sampling',
       'tp-adapt-super-resolution',
@@ -16,14 +37,23 @@ export const FEATURE_ADAPT_DOMAINS: AdaptDomainDef[] = [
       'fc-tp-touch-master',
       'fc-vib-4d',
       'fc-vib-lra-features',
+      'tones-scmp',
     ],
     fields: [
       {
-        name: 'task_input',
-        label: '任务输入',
+        name: 'repo_path',
+        label: '代码仓库路径',
         type: 'text',
         required: true,
-        placeholder: '项目路径、平台信息及要适配/验证的 TP 特性（电竞采样率、超分、区域操作大师等）',
+        placeholder: '项目代码仓库绝对路径',
+      },
+      checklistField('特性清单', FEATURE_CHECKLIST_TP),
+      {
+        name: 'user_notes',
+        label: '补充说明',
+        type: 'text',
+        required: false,
+        placeholder: '可选：适配范围、参考项目、风险项等',
       },
     ],
   },
@@ -33,15 +63,10 @@ export const FEATURE_ADAPT_DOMAINS: AdaptDomainDef[] = [
     icon: 'LCM',
     color: '#58a6ff',
     status: 'pending',
-    relatedSkills: ['display_analyser'],
+    relatedSkills: ['display_analyser', 'tones-scmp'],
     fields: [
-      {
-        name: 'task_input',
-        label: '任务输入',
-        type: 'text',
-        required: true,
-        placeholder: '项目路径与 LCM 适配任务描述（Skill 待定，暂用 display_analyser）',
-      },
+      ...lcmBaseFields.map(f => ({ ...f })),
+      checklistField('特性清单', FEATURE_CHECKLIST_LCM),
     ],
   },
   {
@@ -50,14 +75,47 @@ export const FEATURE_ADAPT_DOMAINS: AdaptDomainDef[] = [
     icon: 'AUD',
     color: '#e3b341',
     status: 'pending',
-    relatedSkills: ['audio-feature-adaptation', 'audio-feature-selfcheck'],
+    relatedSkills: ['audio-feature-adaptation', 'audio-feature-selfcheck', 'tones-scmp'],
     fields: [
       {
-        name: 'task_input',
-        label: '任务输入',
+        name: 'vnd_path_old',
+        label: '升级前的vnd侧绝对路径',
         type: 'text',
         required: true,
-        placeholder: '升级前后 vendor 路径、升级场景及要适配/自检的音频特性',
+        placeholder: '升级前 vendor 目录绝对路径',
+      },
+      {
+        name: 'vnd_path_new',
+        label: '升级后的vnd侧绝对路径',
+        type: 'text',
+        required: true,
+        placeholder: '升级后 vendor 目录绝对路径',
+      },
+      {
+        name: 'build_option',
+        label: '编译选项',
+        type: 'text',
+        required: true,
+        placeholder: '从 SPUG 查找，如 x6885_h8923_m1',
+      },
+      checklistField('特性清单', FEATURE_CHECKLIST_AUDIO),
+      {
+        name: 'adsp_support',
+        label: '是否支持ADSP',
+        type: 'select',
+        required: true,
+        placeholder: '请选择',
+        options: [
+          { label: '是', value: 'yes' },
+          { label: '否', value: 'no' },
+        ],
+      },
+      {
+        name: 'user_notes',
+        label: '补充说明',
+        type: 'text',
+        required: false,
+        placeholder: '可选：升级场景、声学配置说明等',
       },
     ],
   },
@@ -67,14 +125,22 @@ export const FEATURE_ADAPT_DOMAINS: AdaptDomainDef[] = [
     icon: 'CHG',
     color: '#f78166',
     status: 'pending',
-    relatedSkills: ['pillar3-customization-input'],
+    relatedSkills: ['pillar3-customization-input', 'tones-scmp'],
     fields: [
       {
-        name: 'task_input',
-        label: '任务输入',
+        name: 'repo_path',
+        label: '代码仓库路径',
         type: 'text',
         required: true,
-        placeholder: '项目路径与老/新分支信息及充电特性适配需求（Skill 待定）',
+        placeholder: '项目代码仓库绝对路径',
+      },
+      checklistField('特性清单', FEATURE_CHECKLIST_CHARGING),
+      {
+        name: 'user_notes',
+        label: '补充说明',
+        type: 'text',
+        required: false,
+        placeholder: '可选：老升新/绿场、Pillar 范围等（特性清单待定）',
       },
     ],
   },
@@ -84,31 +150,22 @@ export const FEATURE_ADAPT_DOMAINS: AdaptDomainDef[] = [
     icon: 'SNS',
     color: '#a371f7',
     status: 'pending',
-    relatedSkills: ['sensor-feature-adaption'],
+    relatedSkills: ['sensor-feature-adaption', 'tones-scmp'],
     fields: [
       {
-        name: 'task_input',
-        label: '任务输入',
+        name: 'repo_path',
+        label: '代码仓库路径',
         type: 'text',
         required: true,
-        placeholder: '旧/新项目根目录路径及要迁移的 Sensor 特性说明',
+        placeholder: '旧/新项目根目录或代码仓库绝对路径',
       },
-    ],
-  },
-  {
-    id: 'video',
-    label: 'Video',
-    icon: 'VID',
-    color: '#8b5cf6',
-    status: 'pending',
-    relatedSkills: ['VIDEO_feature_spddebug'],
-    fields: [
+      checklistField('特性清单', FEATURE_CHECKLIST_SENSOR),
       {
-        name: 'task_input',
-        label: '任务输入',
+        name: 'user_notes',
+        label: '补充说明',
         type: 'text',
-        required: true,
-        placeholder: '目标仓库路径、分支及要移植的 Gerrit 提交链接或 Wiki 条目',
+        required: false,
+        placeholder: '可选：要迁移的 Sensor 特性范围说明',
       },
     ],
   },

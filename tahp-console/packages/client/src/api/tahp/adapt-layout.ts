@@ -2,7 +2,7 @@ import { tahpGet, tahpPost, tahpPut, tahpRequest } from './client'
 import type { AdaptWorkspaceId } from '@/constants/adapt-domains'
 import { DEFAULT_ADAPT_WORKSPACE } from '@/constants/adapt-domains'
 
-export type AdaptFieldType = 'text' | 'select' | 'textarea'
+export type AdaptFieldType = 'text' | 'select' | 'textarea' | 'checklist'
 
 export interface AdaptLayoutFieldDef {
   name: string
@@ -11,6 +11,7 @@ export interface AdaptLayoutFieldDef {
   placeholder?: string
   required: boolean
   options?: Array<{ label: string; value: string }>
+  defaultValue?: string
 }
 
 export interface AdaptDomainLayoutRecord {

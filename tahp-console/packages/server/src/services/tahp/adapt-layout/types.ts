@@ -16,7 +16,7 @@ export function isAdaptWorkspaceId(value: string): value is AdaptWorkspaceId {
   return (ADAPT_WORKSPACE_IDS as readonly string[]).includes(value)
 }
 
-export type AdaptFieldType = 'text' | 'select' | 'textarea'
+export type AdaptFieldType = 'text' | 'select' | 'textarea' | 'checklist'
 
 export interface AdaptLayoutFieldDef {
   name: string
@@ -25,6 +25,7 @@ export interface AdaptLayoutFieldDef {
   placeholder?: string
   required: boolean
   options?: Array<{ label: string; value: string }>
+  defaultValue?: string
 }
 
 export interface AdaptDomainConfigInput {

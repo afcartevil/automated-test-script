@@ -1,4 +1,4 @@
-export type AdaptFieldType = 'text' | 'select' | 'textarea'
+export type AdaptFieldType = 'text' | 'select' | 'textarea' | 'checklist'
 
 export interface AdaptFieldDef {
   name: string
@@ -7,6 +7,8 @@ export interface AdaptFieldDef {
   placeholder?: string
   required: boolean
   options?: { label: string; value: string }[]
+  /** 清单类型字段的默认内容（特性名<Tab>特性编码，每行一条） */
+  defaultValue?: string
 }
 
 export interface AdaptDomainDef {

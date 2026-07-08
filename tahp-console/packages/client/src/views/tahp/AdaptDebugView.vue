@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, reactive, watch, nextTick, onMounted } from 'vue'
-import { NButton, NSelect, NInput, NProgress, NTag, NSpin, NModal, NTabs, NTabPane, NForm, NFormItem, NSwitch, useMessage } from 'naive-ui'
+import { NButton, NSelect, NInput, NProgress, NTag, NSpin, NModal, NTabs, NTabPane, NForm, NFormItem, NSwitch, NTable, useMessage } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
 import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
@@ -45,11 +45,12 @@ type DomainId = string
 interface FieldDef {
   name: string
   label: string
-  type: 'text' | 'select' | 'textarea'
+  type: 'text' | 'select' | 'textarea' | 'checklist'
   placeholder?: string
   required: boolean
   options?: { label: string; value: string }[]
-  /** 布局编辑草稿：下拉选项文本（每行 label:value） */
+  defaultValue?: string
+  /** 布局编辑草稿：下拉选项文本（每行一个） */
   optionsText?: string
 }
 
@@ -286,14 +287,52 @@ const layoutsReady = computed(() => layoutsReadyByWorkspace[activeWorkspaceId.va
 const formData = reactive<Record<string, Record<string, string>>>({})
 
 // 为已知静态域初始化 formData
+interface ChecklistRow {
+  name: string
+  code: string
+}
+
+function parseChecklistText(text?: string): ChecklistRow[] {
+  if (!text?.trim()) return []
+  return text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const tabIdx = line.indexOf('\t')
+      if (tabIdx >= 0) {
+        return {
+          name: line.slice(0, tabIdx).trim(),
+          code: line.slice(tabIdx + 1).trim(),
+        }
+      }
+      const match = line.match(/^(.*?)[\s\t]+(SF-[\w-]+)\s*$/i)
+      if (match) {
+        return { name: match[1].trim(), code: match[2].trim() }
+      }
+      return { name: line, code: line }
+    })
+    .filter(row => row.name || row.code)
+}
+
+function getChecklistFieldText(field: FieldDef): string {
+  return field.defaultValue?.trim() || ''
+}
+
+function resolveFieldInitialValue(field: FieldDef): string {
+  if (field.type === 'checklist') return ''
+  return ''
+}
+
 function initDomainFormData(domain: DomainDef) {
   const key = formScopeKey(domain.id)
   if (!formData[key]) {
     formData[key] = {}
   }
   domain.fields.forEach(field => {
+    if (field.type === 'checklist') return
     if (formData[key][field.name] === undefined) {
-      formData[key][field.name] = ''
+      formData[key][field.name] = resolveFieldInitialValue(field)
     }
   })
 }
@@ -311,8 +350,12 @@ function syncFormDataForDomain(domain: DomainDef) {
     if (!validNames.has(k)) delete formData[key][k]
   }
   domain.fields.forEach(field => {
+    if (field.type === 'checklist') {
+      delete formData[key][field.name]
+      return
+    }
     if (formData[key][field.name] === undefined) {
-      formData[key][field.name] = ''
+      formData[key][field.name] = resolveFieldInitialValue(field)
     }
   })
 }
@@ -361,6 +404,7 @@ const newFieldDraft = reactive({
   placeholder: '',
   required: false,
   optionsText: '',
+  defaultValue: '',
 })
 
 let layoutLoadErrorShown = false
@@ -515,6 +559,7 @@ function openAddFieldModal() {
     placeholder: '',
     required: false,
     optionsText: '',
+    defaultValue: '',
   })
   showAddFieldModal.value = true
 }
@@ -538,7 +583,7 @@ function onLayoutFieldTypeChange(field: FieldDef, newType: FieldDef['type']) {
     if (!field.optionsText) {
       field.optionsText = formatOptionsText(field.options)
     }
-  } else {
+  } else if (newType !== 'checklist') {
     delete field.options
     field.optionsText = ''
   }
@@ -558,6 +603,12 @@ function normalizeLayoutDraftFields(draft: FieldDef[]): FieldDef[] {
       field.options = options
     } else {
       delete field.options
+    }
+    if (field.type === 'checklist') {
+      const defaultValue = field.defaultValue?.trim()
+      field.defaultValue = defaultValue || undefined
+    } else {
+      delete field.defaultValue
     }
     delete field.optionsText
     return field
@@ -594,6 +645,10 @@ function confirmAddField(): boolean {
     }
     field.options = options
     field.optionsText = newFieldDraft.optionsText.trim()
+  }
+  if (newFieldDraft.type === 'checklist') {
+    const defaultValue = newFieldDraft.defaultValue.trim()
+    if (defaultValue) field.defaultValue = defaultValue
   }
   layoutDraftFields.value.push(field)
   showAddFieldModal.value = false
@@ -943,6 +998,7 @@ function applyRefill(detail: TaskReportDetail) {
   const validNames = new Set(domain.fields.map(f => f.name))
   let filled = 0
   for (const f of domain.fields) {
+    if (f.type === 'checklist') continue
     if (fd[f.name] !== undefined && fd[f.name] !== '') {
       formData[key][f.name] = String(fd[f.name])
       filled++
@@ -1446,7 +1502,7 @@ async function loadDynamicDomains(workspaceId: AdaptWorkspaceId = activeWorkspac
         fields:        (dd.fields || []).map((f: any) => ({
           name:        f.name,
           label:       f.label,
-          type:        f.type as 'text' | 'select' | 'textarea',
+          type:        f.type as FieldDef['type'],
           required:    f.required ?? false,
           placeholder: f.placeholder || '',
           options:     f.options,
@@ -1479,17 +1535,30 @@ onMounted(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Agent 自动适配
 // ─────────────────────────────────────────────────────────────────────────────
+function buildAgentFormData(): Record<string, string> {
+  const data = { ...currentFormData.value }
+  for (const field of activeDomain.value.fields) {
+    if (field.type === 'checklist') {
+      const text = getChecklistFieldText(field)
+      if (text) data[field.name] = text
+      else delete data[field.name]
+    }
+  }
+  return data
+}
+
 function buildAgentRunPayload() {
   const d = activeDomain.value
+  const form_data = buildAgentFormData()
   return {
     workspace_id: activeWorkspaceId.value,
     domain_id: activeDomainId.value,
     domain_label: d.label,
     module: mapDomainToModule(activeDomainId.value),
     related_skills: d.relatedSkills,
-    form_data: { ...currentFormData.value },
+    form_data,
     form_fields: formFieldsForAgent.value,
-    user_notes: currentFormData.value.user_notes || undefined,
+    user_notes: form_data.user_notes || undefined,
     interaction_mode: d.interactionMode === true,
   }
 }
@@ -1803,6 +1872,7 @@ function openSkill(skillName: string) {
                           { label: '文本', value: 'text' },
                           { label: '多行文本', value: 'textarea' },
                           { label: '下拉选择', value: 'select' },
+                          { label: '清单', value: 'checklist' },
                         ]"
                         style="width: 120px;"
                         @update:value="v => onLayoutFieldTypeChange(field, v as FieldDef['type'])"
@@ -1826,6 +1896,14 @@ function openSkill(skillName: string) {
                         placeholder="下拉选项，每行一个&#10;如：&#10;GOODIX&#10;SAMSUNG"
                         :autosize="{ minRows: 2, maxRows: 6 }"
                       />
+                      <NInput
+                        v-if="field.type === 'checklist'"
+                        v-model:value="field.defaultValue"
+                        type="textarea"
+                        size="small"
+                        placeholder="清单内容（仅布局编辑可改），每行：特性名称<Tab>特性编码"
+                        :autosize="{ minRows: 3, maxRows: 8 }"
+                      />
                     </div>
                   </div>
                   <NButton size="tiny" type="error" quaternary @click="removeLayoutField(idx)">删除</NButton>
@@ -1845,7 +1923,7 @@ function openSkill(skillName: string) {
                     v-for="field in activeDomain.fields"
                     :key="activeDomainId + '-' + field.name"
                     class="ea-field"
-                    :class="{ 'ea-field-full': field.type === 'textarea', 'ea-field-refilled': refilledFields.includes(field.name) }"
+                    :class="{ 'ea-field-full': field.type === 'textarea' || field.type === 'checklist', 'ea-field-refilled': refilledFields.includes(field.name) }"
                   >
                     <label>
                       {{ field.label }}
@@ -1859,6 +1937,35 @@ function openSkill(skillName: string) {
                       clearable
                       @update:value="v => setFieldValue(field.name, v == null ? '' : String(v))"
                     />
+                    <div
+                      v-else-if="field.type === 'checklist'"
+                      class="ea-checklist-table-wrap"
+                    >
+                      <NTable
+                        v-if="parseChecklistText(getChecklistFieldText(field)).length"
+                        :bordered="true"
+                        :single-line="false"
+                        size="small"
+                        class="ea-checklist-table"
+                      >
+                        <thead>
+                          <tr>
+                            <th>特性编码</th>
+                            <th>特性名称</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr
+                            v-for="(row, rowIdx) in parseChecklistText(getChecklistFieldText(field))"
+                            :key="field.name + '-' + rowIdx"
+                          >
+                            <td><code>{{ row.code }}</code></td>
+                            <td>{{ row.name }}</td>
+                          </tr>
+                        </tbody>
+                      </NTable>
+                      <p v-else class="ea-checklist-empty">暂无特性清单，请在「编辑布局」中配置</p>
+                    </div>
                     <NInput
                       v-else-if="field.type === 'textarea'"
                       :value="getFieldValue(field.name)"
@@ -2294,6 +2401,7 @@ function openSkill(skillName: string) {
               { label: '单行文本', value: 'text' },
               { label: '多行文本', value: 'textarea' },
               { label: '下拉选择', value: 'select' },
+              { label: '清单', value: 'checklist' },
             ]"
           />
         </NFormItem>
@@ -2311,6 +2419,14 @@ function openSkill(skillName: string) {
             v-model:value="newFieldDraft.optionsText"
             type="textarea"
             placeholder="每行一个选项值，例如：&#10;GOODIX&#10;SAMSUNG"
+            :autosize="{ minRows: 4, maxRows: 8 }"
+          />
+        </NFormItem>
+        <NFormItem v-if="newFieldDraft.type === 'checklist'" label="清单内容">
+          <NInput
+            v-model:value="newFieldDraft.defaultValue"
+            type="textarea"
+            placeholder="每行一条：特性名称<Tab>特性编码（仅布局编辑可改，填写页只读展示）"
             :autosize="{ minRows: 4, maxRows: 8 }"
           />
         </NFormItem>
@@ -2499,6 +2615,40 @@ function openSkill(skillName: string) {
 
 .ea-field-full {
   grid-column: 1 / -1;
+}
+
+.ea-checklist-table-wrap {
+  width: 100%;
+}
+
+.ea-checklist-table {
+  width: 100%;
+
+  code {
+    font-family: $font-code;
+    font-size: 12px;
+  }
+
+  th {
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  td {
+    font-size: 12.5px;
+    vertical-align: top;
+  }
+}
+
+.ea-checklist-empty {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
 }
 
 .skill-row {

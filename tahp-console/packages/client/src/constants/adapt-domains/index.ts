@@ -21,7 +21,7 @@ export const ADAPT_WORKSPACES: AdaptWorkspaceDef[] = [
   {
     id: 'feature-adapt',
     label: '特性适配',
-    subtitle: '覆盖 TP、LCM、充电、Sensor、Video 等特性适配模块',
+    subtitle: '覆盖 TP、LCM、音频、充电、Sensor 等特性适配模块',
     allowDynamicDomains: true,
   },
   {

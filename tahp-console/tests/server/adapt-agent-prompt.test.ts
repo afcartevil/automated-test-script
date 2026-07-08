@@ -92,20 +92,22 @@ describe('adapt-agent prompts', () => {
     expect(userPrompt).toContain('运营商配置')
   })
 
-  it('feature-adapt workspace uses distinct product title and scenario', () => {
+  it('feature-adapt workspace uses distinct product title and SCMP workflow', () => {
     const { systemPrompt, userPrompt } = buildAdaptAgentPrompts({
       workspaceId: 'feature-adapt',
       domainId: 'charging',
       domainLabel: '充电',
       module: 'kernel-driver',
-      relatedSkills: ['pillar3-customization-input'],
-      formData: { mode: 'upgrade' },
+      relatedSkills: ['pillar3-customization-input', 'tones-scmp'],
+      formData: { repo_path: 'D:\\project\\km9' },
     })
     expect(systemPrompt).toContain('特性适配')
+    expect(systemPrompt).toContain('tones-scmp')
     expect(systemPrompt).toContain('可交付')
     expect(systemPrompt).toContain('当前场景**: 特性适配')
     expect(userPrompt).toContain('特性适配任务')
     expect(userPrompt).toContain('feature-adapt')
+    expect(userPrompt).toContain('tones-scmp')
   })
 
   it('adapt-debug comm-framework emphasizes debug workflow', () => {

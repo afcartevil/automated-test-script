@@ -20,7 +20,7 @@ export function validateLayoutFields(fields: unknown): AdaptLayoutFieldDef[] {
       throw new Error(`字段名 "${name}" 无效，须以字母开头且仅含字母数字下划线`)
     }
     if (!label) throw new Error(`字段 "${name}" 缺少 label`)
-    if (!['text', 'select', 'textarea'].includes(type)) {
+    if (!['text', 'select', 'textarea', 'checklist'].includes(type)) {
       throw new Error(`字段 "${name}" 类型无效: ${type}`)
     }
     if (names.has(name)) throw new Error(`字段名重复: ${name}`)
@@ -32,6 +32,7 @@ export function validateLayoutFields(fields: unknown): AdaptLayoutFieldDef[] {
       type,
       required: f.required === true,
       placeholder: typeof f.placeholder === 'string' ? f.placeholder : undefined,
+      defaultValue: typeof f.defaultValue === 'string' ? f.defaultValue : undefined,
     }
 
     if (type === 'select') {

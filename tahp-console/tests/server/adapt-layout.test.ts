@@ -18,6 +18,20 @@ describe('adapt-layout validate', () => {
     expect(fields[1].options?.[0].value).toBe('goodix')
   })
 
+  it('accepts checklist field with defaultValue', () => {
+    const fields = validateLayoutFields([
+      {
+        name: 'feature_checklist',
+        label: '特性清单',
+        type: 'checklist',
+        required: false,
+        defaultValue: '智能触控采样率\tSF-202507-008773',
+      },
+    ])
+    expect(fields[0].type).toBe('checklist')
+    expect(fields[0].defaultValue).toContain('SF-202507-008773')
+  })
+
   it('rejects duplicate field names', () => {
     expect(() => validateLayoutFields([
       { name: 'foo', label: 'A', type: 'text', required: false },
