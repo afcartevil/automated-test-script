@@ -70,29 +70,42 @@ if errorlevel 1 (
 
 echo.
 echo ========================================
-echo   EasyAdapter Console 开发模式
+echo   EasyAdapter Console 后台模式
 echo ========================================
-echo   启动顺序: Agent 环境 -^> 后端 8650 -^> 健康检查 -^> 前端 5173 -^> 浏览器
-echo   终端出现 [dev] 后端已就绪 后再访问页面
-echo   重启前请在本窗口按 Ctrl+C 结束上次进程；若仍报 EADDRINUSE 将自动释放 8650/5173
+echo   启动顺序: 构建检查 -^> 停止旧进程 -^> 后台守护 8650 -^> 浏览器
+echo   服务在后台运行，关闭本窗口不会影响使用
+echo   停止服务: 双击「停止服务.bat」
+echo   查看状态: 双击「查看状态.bat」
+echo   打开页面: 双击「打开控制台.bat」
 echo   配置 API Key: 系统 - 模型管理
 echo ========================================
 echo.
 
-set TAHP_OPEN_BROWSER=1
-set TAHP_REQUIRE_AGENT=1
-set TAHP_SKIP_PREDEV_AGENT=1
-set TAHP_AGENT_SKIP_IMPORT_VERIFY=1
-set PORT=8650
-
-call npm run dev
-
+node scripts/build-if-needed.mjs
 if errorlevel 1 (
     echo.
-    echo [EasyAdapter] 启动失败。可尝试:
-    echo   cd tahp-console ^&^& npm run setup:agent -- --force
-    echo   或删除 hermes-agent-main\.venv 后重新双击本脚本
+    echo [EasyAdapter] 生产构建失败，无法启动。
     echo.
+    pause
+    exit /b 1
 )
 
-pause
+node bin\tahp-console.mjs stop >nul 2>&1
+
+node scripts/migrate-dev-data.mjs
+
+node bin\tahp-console.mjs start
+if errorlevel 1 (
+    echo.
+    echo [EasyAdapter] 后台启动失败。可尝试:
+    echo   cd tahp-console ^&^& npm run build
+    echo   cd tahp-console ^&^& npm run setup:agent -- --force
+    echo   或查看日志: %%USERPROFILE%%\.tahp-console\server.log
+    echo.
+    pause
+    exit /b 1
+)
+
+echo.
+echo [EasyAdapter] 已在后台启动，本窗口即将关闭。
+timeout /t 3 /nobreak >nul

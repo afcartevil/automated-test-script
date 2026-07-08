@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, type ComponentPublicInstance } from 'vue'
 import {
   NButton, NSpin, NEmpty, NInput, NAlert, NSpace, useMessage,
 } from 'naive-ui'
@@ -63,6 +63,10 @@ const {
     void loadList()
   },
 })
+
+function setScrollerEl(el: Element | ComponentPublicInstance | null) {
+  scroller.value = el instanceof HTMLElement ? el : null
+}
 
 const chatMarkdown = computed(() =>
   activeTaskId.value ? streamText(activeTaskId.value) : '',
@@ -290,7 +294,7 @@ async function onApproval(choice: string) {
           未检测到活动会话，请返回表单重新点击「{{ SKILL_CONFIG_CHECK_BUTTON_LABEL }}」。
         </div>
         <template v-else>
-          <div ref="scroller" class="chat-stream">
+          <div :ref="setScrollerEl" class="chat-stream">
             <MarkdownRenderer v-if="chatMarkdown" :content="chatMarkdown" />
             <div v-else class="chat-waiting">
               <NSpin size="small" />

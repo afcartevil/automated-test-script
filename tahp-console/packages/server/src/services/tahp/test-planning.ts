@@ -307,7 +307,7 @@ export async function getTestPlanRules(): Promise<TestPlanRulesFile> {
     if (Array.isArray(data.rules)) {
       for (const item of data.rules) {
         if (!item || typeof item !== 'object') continue
-        const normalized = normalizeStoredRule(item as Record<string, unknown>)
+        const normalized = normalizeStoredRule(item as unknown as Record<string, unknown>)
         if (normalized) rules.push(normalized)
       }
     }

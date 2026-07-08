@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
 import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
 import type { ContinueChatPrompt } from '@/components/tahp/BugAnalysisInteractionModal.vue'
+import type { BugApprovalRequest, BugUserInputField, BugUserInputRequest } from '@/stores/tahp/bug-analysis'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPill from '@/components/layout/EaPill.vue'
@@ -65,31 +66,26 @@ interface DomainDef {
   interactionMode?: boolean
 }
 
-interface AdaptApprovalRequest {
-  approval_id: string
-  command: string
-  description: string
-  choices: string[]
-  timeout_ms: number
-  deadline_at: number
-}
+const USER_INPUT_FIELD_TYPES = new Set<BugUserInputField['type']>(['text', 'textarea', 'password', 'number'])
 
-interface AdaptUserInputRequest {
-  request_id: string
-  title: string
-  message?: string
-  fields: Array<{
-    name: string
-    label: string
-    type?: string
-    required?: boolean
-    placeholder?: string
-    hint?: string
-    default?: string
-  }>
-  timeout_sec: number
-  deadline_at: number
-  persist_key?: string
+function parseAdaptUserInputFields(raw: unknown): BugUserInputField[] {
+  if (!Array.isArray(raw)) return []
+  return raw.map((item) => {
+    const field = item as Record<string, unknown>
+    const typeRaw = String(field.type || 'text')
+    const type: BugUserInputField['type'] = USER_INPUT_FIELD_TYPES.has(typeRaw as BugUserInputField['type'])
+      ? typeRaw as BugUserInputField['type']
+      : 'text'
+    return {
+      name: String(field.name || ''),
+      label: String(field.label || ''),
+      type,
+      required: Boolean(field.required),
+      placeholder: typeof field.placeholder === 'string' ? field.placeholder : undefined,
+      hint: typeof field.hint === 'string' ? field.hint : undefined,
+      default: typeof field.default === 'string' ? field.default : undefined,
+    }
+  }).filter(field => field.name)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1255,8 +1251,8 @@ const statusTagType = computed<'info' | 'success' | 'error' | 'warning'>(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 // 人机协同弹窗（CarrierConfig 等交互式域）
 // ─────────────────────────────────────────────────────────────────────────────
-const pendingApproval = ref<AdaptApprovalRequest | null>(null)
-const pendingUserInput = ref<AdaptUserInputRequest | null>(null)
+const pendingApproval = ref<BugApprovalRequest | null>(null)
+const pendingUserInput = ref<BugUserInputRequest | null>(null)
 const canContinueChat = ref(false)
 const showContinueChatModal = ref(false)
 const completeTaskLoading = ref(false)
@@ -1328,7 +1324,7 @@ watch(stream, () => {
     }
     if (ev.type === 'task.user_input_requested') {
       const requestId = String(ev.payload?.request_id || '')
-      const fields = Array.isArray(ev.payload?.fields) ? ev.payload.fields as AdaptUserInputRequest['fields'] : []
+      const fields = parseAdaptUserInputFields(ev.payload?.fields)
       if (!requestId || !fields.length) continue
       pendingUserInput.value = {
         request_id: requestId,

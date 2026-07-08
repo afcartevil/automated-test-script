@@ -208,7 +208,7 @@ onMounted(() => {
             <div v-else :id="groupAnchor(group.name)" class="form-section form-section--collapse">
               <NCollapse
                 :expanded-names="isGroupExpanded(group.name, group.fields, group.optional) ? [group.name] : []"
-                @update:expanded-names="(names) => setGroupExpanded(group.name, names.includes(group.name))"
+                @update:expanded-names="(names: string[]) => setGroupExpanded(group.name, names.includes(group.name))"
               >
                 <NCollapseItem :name="group.name">
                   <template #header>

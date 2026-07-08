@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, type ComponentPublicInstance } from 'vue'
 import {
-  NButton, NSpin, NEmpty, NInput, NAlert, NSpace, NScrollbar, NForm, NFormItem, useMessage,
+  NButton, NSpin, NEmpty, NInput, NAlert, NSpace, NScrollbar, useMessage,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
@@ -56,6 +56,10 @@ const {
   onSkillComplete: () => loadList(),
   onTaskEnd: () => loadList(),
 })
+
+function setScrollerEl(el: Element | ComponentPublicInstance | null) {
+  scroller.value = el instanceof HTMLElement ? el : null
+}
 
 const chatMarkdown = computed(() =>
   activeTaskId.value ? streamText(activeTaskId.value) : '',
@@ -256,7 +260,7 @@ async function onApproval(choice: string) {
             点击「开始配置」或「重新配置」后，Agent 将在此引导配置并持久化。
           </div>
           <template v-else>
-            <div ref="scroller" class="chat-stream">
+            <div :ref="setScrollerEl" class="chat-stream">
               <MarkdownRenderer v-if="chatMarkdown" :content="chatMarkdown" />
               <div v-else class="ea-muted">等待 Agent 输出...</div>
             </div>
