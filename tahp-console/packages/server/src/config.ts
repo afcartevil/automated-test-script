@@ -76,6 +76,26 @@ export function getWebUiHome(env: Record<string, string | undefined> = process.e
   return appHome ? resolve(appHome) : join(homedir(), '.hermes-web-ui')
 }
 
+function deriveDataDir(env: Record<string, string | undefined> = process.env): string {
+  const explicit = env.TAHP_SERVER_DATA_DIR?.trim() || env.TAHP_DATA_DIR?.trim()
+  const candidates = [
+    explicit ? resolve(explicit) : '',
+    // Prefer the source data directory so dev mode and dist mode read the same state.
+    resolve(process.cwd(), 'packages', 'server', 'data'),
+    resolve(__dirname, '..', 'data'),
+    resolve(__dirname, '..', '..', 'packages', 'server', 'data'),
+    // Allow dist-only deployments to fall back to bundled runtime assets.
+    resolve(process.cwd(), 'dist', 'data'),
+  ].filter(Boolean)
+
+  const uniqueCandidates = Array.from(new Set(candidates))
+  for (const candidate of uniqueCandidates) {
+    if (existsSync(candidate)) return candidate
+  }
+
+  return uniqueCandidates[0] || resolve(process.cwd(), 'packages', 'server', 'data')
+}
+
 const appHome = getWebUiHome()
 
 export const config = {
@@ -84,7 +104,7 @@ export const config = {
   host: getListenHost(),
   appHome,
   uploadDir: process.env.UPLOAD_DIR || join(appHome, 'upload'),
-  dataDir: resolve(__dirname, '..', 'data'),
+  dataDir: deriveDataDir(),
   corsOrigins: process.env.CORS_ORIGINS || '*',
 
   /**

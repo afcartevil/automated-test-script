@@ -7,9 +7,11 @@ const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(resolve(rootDir, 'package.json'), 'utf-8'))
 const version = pkg.version
 const serverOutDir = resolve(rootDir, 'dist/server')
+const distDataDir = resolve(rootDir, 'dist/data')
 
 rmSync(serverOutDir, { recursive: true, force: true })
 mkdirSync(serverOutDir, { recursive: true })
+rmSync(distDataDir, { recursive: true, force: true })
 
 await esbuild.build({
   entryPoints: [resolve(rootDir, 'packages/server/src/index.ts')],
@@ -35,6 +37,20 @@ cpSync(
   resolve(bridgeOutDir, 'hermes_bridge.py'),
 )
 chmodSync(resolve(bridgeOutDir, 'hermes_bridge.py'), 0o755)
+
+const selfCheckOutDir = resolve(serverOutDir, 'self-check')
+mkdirSync(selfCheckOutDir, { recursive: true })
+cpSync(
+  resolve(rootDir, 'packages/server/src/services/tahp/self-check'),
+  selfCheckOutDir,
+  { recursive: true },
+)
+
+cpSync(
+  resolve(rootDir, 'packages/server/data'),
+  distDataDir,
+  { recursive: true },
+)
 
 const skillsOutDir = resolve(rootDir, 'dist/skills')
 rmSync(skillsOutDir, { recursive: true, force: true })

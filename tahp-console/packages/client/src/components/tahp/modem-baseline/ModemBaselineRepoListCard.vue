@@ -8,28 +8,79 @@ const props = defineProps<{
   selectedRepoId?: string
   updating?: boolean
   removing?: boolean
+  refreshingBranches?: boolean
 }>()
 
 const emit = defineEmits<{
   choose: [repoId: string]
-  update: [repoId: string, value: { label: string; localPath: string; platform: string }]
+  update: [repoId: string, value: { label: string; localPath: string; platform: string; branches?: RepoProfile['branches'] }]
   remove: [repoId: string]
+  refreshBranches: [repoId?: string]
 }>()
 
 const page = ref(1)
 const pageSize = 6
+const keyword = ref('')
 const editingRepoId = ref('')
 const editing = ref(false)
 const pendingSave = ref<{ repoId: string; localPath: string; platform: string } | null>(null)
 const editForm = reactive({
   localPath: '',
   platform: '',
+  trunkNodeBranch: 'master',
+  trunkBranch: '',
+  mp: [] as Array<{ tos: string; mpNodeBranch: string; mpBranch: string }>,
 })
 
-const total = computed(() => props.repos.length)
+function compareTos(left: string, right: string) {
+  const parse = (value: string) => String(value || '')
+    .replace(/^tOS/i, '')
+    .split('.')
+    .map(part => Number(part) || 0)
+  const leftParts = parse(left)
+  const rightParts = parse(right)
+  const max = Math.max(leftParts.length, rightParts.length)
+  for (let i = 0; i < max; i += 1) {
+    const diff = (leftParts[i] ?? 0) - (rightParts[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return String(left).localeCompare(String(right))
+}
+
+function getRepoBranchSummary(repo: RepoProfile) {
+  const trunk = repo.branches?.trunk?.trunkBranch
+    ? `${repo.branches?.trunk?.nodeBranch || 'master'} -> ${repo.branches?.trunk?.trunkBranch}`
+    : ''
+  const mpItems = Array.isArray(repo.branches?.mp) ? [...repo.branches!.mp!] : []
+  mpItems.sort((left, right) => compareTos(left.tos, right.tos))
+  return trunk || mpItems.length
+    ? {
+      trunk,
+      mpItems: mpItems.map(item => ({
+        tos: item.tos,
+        text: `${item.mpNodeBranch || 'master'} -> ${item.mpBranch}`,
+      })),
+    }
+    : null
+}
+
+const filteredRepos = computed(() => {
+  const key = keyword.value.trim().toLowerCase()
+  if (!key) return props.repos
+  return props.repos.filter((repo) => {
+    const fields = [
+      repo.label,
+      repo.platform,
+      repo.localPath,
+    ].filter(Boolean).join('\n').toLowerCase()
+    return fields.includes(key)
+  })
+})
+
+const total = computed(() => filteredRepos.value.length)
 const pagedRepos = computed(() => {
   const start = (page.value - 1) * pageSize
-  return props.repos.slice(start, start + pageSize)
+  return filteredRepos.value.slice(start, start + pageSize)
 })
 
 watch(total, (value) => {
@@ -67,8 +118,25 @@ function openEdit(repo: RepoProfile) {
   editingRepoId.value = repo.repoId
   editForm.localPath = repo.localPath
   editForm.platform = repo.platform || repo.label
+  editForm.trunkNodeBranch = repo.branches?.trunk?.nodeBranch || 'master'
+  editForm.trunkBranch = repo.branches?.trunk?.trunkBranch || ''
+  editForm.mp = Array.isArray(repo.branches?.mp)
+    ? repo.branches!.mp!.map(item => ({
+      tos: item.tos,
+      mpNodeBranch: item.mpNodeBranch || 'master',
+      mpBranch: item.mpBranch,
+    })).sort((left, right) => compareTos(left.tos, right.tos))
+    : []
   pendingSave.value = null
   editing.value = true
+}
+
+function addMpRow() {
+  editForm.mp.push({ tos: '', mpNodeBranch: 'master', mpBranch: '' })
+}
+
+function removeMpRow(index: number) {
+  editForm.mp.splice(index, 1)
 }
 
 function submitEdit() {
@@ -86,7 +154,33 @@ function submitEdit() {
     label: platform,
     localPath,
     platform,
+    branches: {
+      trunk: editForm.trunkBranch.trim()
+        ? { nodeBranch: editForm.trunkNodeBranch.trim() || 'master', trunkBranch: editForm.trunkBranch.trim() }
+        : undefined,
+      mp: editForm.mp
+        .map(item => ({
+          tos: item.tos.trim(),
+          mpNodeBranch: item.mpNodeBranch.trim() || 'master',
+          mpBranch: item.mpBranch.trim(),
+        }))
+        .filter(item => item.tos && item.mpBranch),
+    },
   })
+}
+
+function branchTemplateTagType(status?: RepoProfile['branchTemplateStatus']) {
+  if (status === 'running') return 'info'
+  if (status === 'success') return 'success'
+  if (status === 'failed') return 'error'
+  return 'default'
+}
+
+function branchTemplateTagLabel(status?: RepoProfile['branchTemplateStatus']) {
+  if (status === 'running') return '分支提取中'
+  if (status === 'success') return '分支已提取'
+  if (status === 'failed') return '分支提取失败'
+  return '分支未提取'
 }
 </script>
 
@@ -96,12 +190,22 @@ function submitEdit() {
       <div>
         <div class="ea-section-title">仓库清单</div>
         <h3>已配置仓库</h3>
-        <p>统一查看、核对和修改已登记仓库，避免后续只能删除重建。</p>
+        <p>查看、核对和修改已登记仓库。</p>
       </div>
-      <span class="ea-pill-info">共 {{ repos.length }} 项</span>
+      <div class="list-head__actions">
+        <span class="ea-pill-info">共 {{ filteredRepos.length }} 项</span>
+        <NButton secondary size="small" :loading="refreshingBranches" :disabled="!repos.length" @click="emit('refreshBranches')">
+          刷新新增分支
+        </NButton>
+      </div>
+    </div>
+
+    <div class="search-row">
+      <NInput v-model:value="keyword" placeholder="搜索平台 / 路径" clearable />
     </div>
 
     <NEmpty v-if="!repos.length" description="当前还没有已登记仓库，先在上方新增或扫描导入。" />
+    <NEmpty v-else-if="!filteredRepos.length" description="未找到匹配仓库，换个关键词试试。" />
 
     <div v-else class="repo-list">
       <div
@@ -111,25 +215,52 @@ function submitEdit() {
         :class="{ 'repo-item--active': repo.repoId === selectedRepoId }"
       >
         <div class="repo-meta">
-          <div class="repo-title">
-            <strong>{{ repo.label }}</strong>
-            <NTag v-if="repo.repoId === selectedRepoId" size="small" type="success" round>当前选中</NTag>
+          <div class="repo-head">
+            <div class="repo-title">
+              <strong>{{ repo.label }}</strong>
+              <NTag v-if="repo.repoId === selectedRepoId" size="small" type="success" round>当前选中</NTag>
+              <NTag
+                v-if="repo.branchTemplateStatus"
+                size="small"
+                :type="branchTemplateTagType(repo.branchTemplateStatus)"
+                round
+                :title="repo.branchTemplateError || ''"
+              >
+                {{ branchTemplateTagLabel(repo.branchTemplateStatus) }}
+              </NTag>
+            </div>
+            <div class="repo-actions">
+              <NButton secondary size="small" @click="emit('choose', repo.repoId)">设为当前</NButton>
+              <NButton secondary size="small" :loading="refreshingBranches" @click="emit('refreshBranches', repo.repoId)">刷新分支</NButton>
+              <NButton secondary size="small" @click="openEdit(repo)">编辑</NButton>
+              <NButton tertiary size="small" type="error" :loading="removing" @click="emit('remove', repo.repoId)">删除</NButton>
+            </div>
           </div>
           <p>{{ repo.localPath }}</p>
           <div class="repo-extra">
             <span class="ea-pill-muted">平台 {{ repo.platform || repo.label }}</span>
             <span class="ea-pill-muted">映射 {{ repo.mappedPrefix }} → {{ repo.remotePrefix }}</span>
           </div>
-        </div>
-        <div class="repo-actions">
-          <NButton secondary size="small" @click="emit('choose', repo.repoId)">设为当前</NButton>
-          <NButton secondary size="small" @click="openEdit(repo)">编辑</NButton>
-          <NButton tertiary size="small" type="error" :loading="removing" @click="emit('remove', repo.repoId)">删除</NButton>
+          <div v-if="getRepoBranchSummary(repo)" class="repo-branches">
+            <div class="repo-branches__row">
+              <NTag size="small" type="info" round>主干</NTag>
+              <span
+                class="repo-branches__text"
+                :title="getRepoBranchSummary(repo)?.trunk || ''"
+              >
+                {{ getRepoBranchSummary(repo)?.trunk || '—' }}
+              </span>
+            </div>
+            <div v-for="mp in getRepoBranchSummary(repo)?.mpItems || []" :key="mp.tos" class="repo-branches__row">
+              <NTag size="small" type="info" round>{{ mp.tos }}</NTag>
+              <span class="repo-branches__text" :title="mp.text">{{ mp.text }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <div v-if="repos.length > pageSize" class="pagination-wrap">
+    <div v-if="filteredRepos.length > pageSize" class="pagination-wrap">
       <NPagination v-model:page="page" :page-size="pageSize" :item-count="total" />
     </div>
 
@@ -142,6 +273,29 @@ function submitEdit() {
         <div class="ea-field">
           <label>本地路径</label>
           <NInput v-model:value="editForm.localPath" placeholder="例如 Z:\mtk\modem\v\TK_MD..." />
+        </div>
+        <div class="branch-edit">
+          <div class="ea-section-title">分支信息</div>
+          <div class="ea-field">
+            <label>主干节点分支</label>
+            <NInput v-model:value="editForm.trunkNodeBranch" placeholder="master" />
+          </div>
+          <div class="ea-field">
+            <label>主干分支</label>
+            <NInput v-model:value="editForm.trunkBranch" placeholder="例如 PRODUCT_W_w0mp1rc_LR13_common" />
+          </div>
+          <div class="mp-editor">
+            <div class="mp-editor__head">
+              <span class="ea-pill-muted">MP 列表</span>
+              <NButton secondary size="small" @click="addMpRow">新增 MP</NButton>
+            </div>
+            <div v-for="(item, index) in editForm.mp" :key="index" class="mp-row">
+              <NInput v-model:value="item.tos" placeholder="tOS16.3 / tOS17.0" />
+              <NInput v-model:value="item.mpNodeBranch" placeholder="节点分支（没有则 master）" />
+              <NInput v-model:value="item.mpBranch" placeholder="量产分支（tOSxx.x release）" />
+              <NButton tertiary size="small" type="error" @click="removeMpRow(index)">删除</NButton>
+            </div>
+          </div>
         </div>
         <div class="modal-actions">
           <NButton secondary @click="closeEdit">取消</NButton>
@@ -186,14 +340,18 @@ function submitEdit() {
 }
 
 .repo-item {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  display: block;
   padding: 14px 16px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--bg);
+}
+
+.repo-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .repo-item--active {
@@ -214,7 +372,9 @@ function submitEdit() {
 }
 
 .repo-meta {
+  flex: 1 1 auto;
   min-width: 0;
+  width: 100%;
 
   p {
     margin-top: 6px;
@@ -232,7 +392,44 @@ function submitEdit() {
   flex-wrap: wrap;
 }
 
-.repo-actions,
+.search-row {
+  display: flex;
+}
+
+.list-head__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.repo-branches {
+  margin-top: 10px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.repo-branches__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.repo-branches__text {
+  flex: 1 1 0%;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .modal-actions,
 .pagination-wrap {
   display: flex;
@@ -241,7 +438,9 @@ function submitEdit() {
 }
 
 .repo-actions {
-  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
   flex-wrap: wrap;
 }
 
@@ -249,11 +448,40 @@ function submitEdit() {
   width: min(560px, calc(100vw - 32px));
 }
 
+.branch-edit {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.mp-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mp-editor__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.mp-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 140px) minmax(160px, 1fr) minmax(200px, 1.2fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 @media (max-width: 720px) {
   .list-head,
-  .repo-item {
+  .repo-head {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .list-head__actions {
+    justify-content: stretch;
   }
 
   .repo-actions,
@@ -261,6 +489,10 @@ function submitEdit() {
   .pagination-wrap {
     justify-content: stretch;
     flex-direction: column;
+  }
+
+  .mp-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>

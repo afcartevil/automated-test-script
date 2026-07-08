@@ -23,6 +23,8 @@ const parseSummary = computed(() => {
   const parts = [
     props.parsed.operationType,
     props.parsed.platform ? `platform=${props.parsed.platform}` : '',
+    props.parsed.tosVersion ? `tos=${props.parsed.tosVersion}` : '',
+    props.parsed.targetMode ? `target=${props.parsed.targetMode}` : '',
     props.parsed.version ? `version=${props.parsed.version}` : '',
     `confidence=${props.parsed.confidence.toFixed(2)}`,
   ].filter(Boolean)
@@ -35,6 +37,8 @@ const recommendationSummary = computed(() => {
     props.recommendation.nodeBranch ? `NODE_BRANCH=${props.recommendation.nodeBranch}` : '',
     props.recommendation.targetBranch ? `target_BRANCH=${props.recommendation.targetBranch}` : '',
     props.recommendation.apLabel ? `AP=${props.recommendation.apLabel}` : '',
+    props.recommendation.branchSource ? `source=${props.recommendation.branchSource}` : '',
+    props.recommendation.targetMode ? `target=${props.recommendation.targetMode}` : '',
   ].filter(Boolean)
   return parts.join('\n')
 })

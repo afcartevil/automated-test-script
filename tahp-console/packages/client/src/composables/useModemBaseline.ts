@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import {
+  importBranchTemplates,
   continueModemBaselineRun,
   createModemPatchRule,
   createRepoProfile,
@@ -10,12 +11,14 @@ import {
   getModemBaselineLog,
   getModemBaselineRun,
   getWorkspaceProfile,
+  listBranchTemplates,
   listModemPatchRules,
   listModemBaselineRuns,
   listRepoProfiles,
   openModemBaselineConflictFile,
   parseModemPatchNotice,
   precheckModemBaseline,
+  refreshRepoBranches,
   refreshModemBaselineConflicts,
   recommendModemPatch,
   saveWorkspaceProfile,
@@ -28,6 +31,7 @@ import {
   type ModemBaselineRunMeta,
   type ModemBaselineStatus,
   type BranchRule,
+  type BranchTemplate,
   type NoticeParseResult,
   type PrecheckResult,
   type RecommendationResult,
@@ -192,7 +196,11 @@ export function useModemBaseline() {
   const toolRoot = ref('')
   const workspaceProfile = ref<UserWorkspaceProfile | null>(null)
   const repoProfiles = ref<RepoProfile[]>([])
+  const branchTemplates = ref<BranchTemplate[]>([])
   const selectedRepoId = ref(loadSelectedRepoId())
+  const selectedTosVersion = ref('')
+  const selectedBranchTemplateId = ref('')
+  const selectedBranchTarget = ref<'trunk' | 'mp'>('trunk')
   const rules = ref<BranchRule[]>([])
   const noticeText = ref('')
   const noticeParsed = ref<NoticeParseResult | null>(null)
@@ -208,20 +216,28 @@ export function useModemBaseline() {
   const prechecking = ref(false)
   const parsingNotice = ref(false)
   const loadingRules = ref(false)
+  const loadingBranchTemplates = ref(false)
   const savingRule = ref(false)
   const deletingRule = ref(false)
   const recommending = ref(false)
   const savingWorkspace = ref(false)
   const savingRepo = ref(false)
   const scanningRepos = ref(false)
+  const importingBranchTemplates = ref(false)
   const removingRepo = ref(false)
   const updatingRepo = ref(false)
+  const refreshingRepoBranches = ref(false)
   const continuing = ref(false)
   const refreshing = ref(false)
+  const repoRefreshTimer = ref<number | null>(null)
+  const repoHadRunning = ref(false)
   const errorMessage = ref('')
   const eventSource = ref<EventSource | null>(null)
 
   const selectedRepo = computed(() => repoProfiles.value.find(item => item.repoId === selectedRepoId.value) ?? null)
+  const selectedBranchTemplate = computed(
+    () => branchTemplates.value.find(item => item.templateId === selectedBranchTemplateId.value) ?? null,
+  )
   const selectedRun = computed(() => runs.value.find(item => item.runId === selectedRunId.value) ?? runs.value[0] ?? null)
   const statusMeta = computed(() => getStatusMeta(selectedRun.value?.status, selectedRun.value?.error, selectedRun.value?.phase))
   const stageItems = computed(() => buildStageItems(selectedRun.value?.status, selectedRun.value?.error, selectedRun.value?.phase))
@@ -253,6 +269,31 @@ export function useModemBaseline() {
       remote_prefix: repo.remotePrefix,
     }
     precheck.value = null
+  }
+
+  function normalizeBranchTemplatePlatform(text?: string) {
+    return normalizePlatformToken(String(text ?? '').replace(/\s*\([^)]*\)\s*$/, ''))
+  }
+
+  function matchBranchTemplates(tosVersion?: string, platform?: string) {
+    const tos = String(tosVersion ?? '').trim()
+    const platformToken = normalizeBranchTemplatePlatform(platform)
+    return branchTemplates.value.filter((item) => {
+      if (tos && item.tos !== tos) return false
+      if (!platformToken) return true
+      return normalizeBranchTemplatePlatform(item.platform) === platformToken
+    })
+  }
+
+  function syncBranchTemplateFromNotice() {
+    const tos = noticeParsed.value?.tosVersion
+    const platform = noticeParsed.value?.platform
+    if (tos) selectedTosVersion.value = tos
+    if (!tos && !platform) return
+    const matches = matchBranchTemplates(tos, platform)
+    if (matches.length === 1) {
+      selectedBranchTemplateId.value = matches[0].templateId
+    }
   }
 
   function closeEventSource() {
@@ -303,6 +344,26 @@ export function useModemBaseline() {
     }
   }
 
+  async function loadBranchTemplateList() {
+    loadingBranchTemplates.value = true
+    try {
+      const data = await listBranchTemplates()
+      branchTemplates.value = data.items
+      if (selectedBranchTemplateId.value && !data.items.find(item => item.templateId === selectedBranchTemplateId.value)) {
+        selectedBranchTemplateId.value = ''
+      }
+      if (!selectedTosVersion.value && data.items.length) {
+        selectedTosVersion.value = data.items[0].tos
+      }
+      if (!selectedBranchTemplateId.value && data.items.length) {
+        selectedBranchTemplateId.value = data.items[0].templateId
+      }
+      syncBranchTemplateFromNotice()
+    } finally {
+      loadingBranchTemplates.value = false
+    }
+  }
+
   async function loadWorkspace() {
     workspaceProfile.value = await getWorkspaceProfile()
     applyWorkspaceProfileToConfig(workspaceProfile.value)
@@ -317,6 +378,24 @@ export function useModemBaseline() {
     }
     if (selectedRepoId.value) {
       applyRepoToConfig(data.items.find(item => item.repoId === selectedRepoId.value) ?? null)
+    }
+
+    const hasRunning = data.items.some(item => item.branchTemplateStatus === 'running')
+    if (repoHadRunning.value && !hasRunning) {
+      repoHadRunning.value = false
+      loadBranchTemplateList().catch(() => {})
+    } else if (hasRunning) {
+      repoHadRunning.value = true
+    }
+    if (repoRefreshTimer.value !== null) {
+      window.clearTimeout(repoRefreshTimer.value)
+      repoRefreshTimer.value = null
+    }
+    if (hasRunning) {
+      repoRefreshTimer.value = window.setTimeout(() => {
+        repoRefreshTimer.value = null
+        reloadRepoProfiles().catch(() => {})
+      }, 2000)
     }
   }
 
@@ -409,6 +488,9 @@ export function useModemBaseline() {
       await reloadRepoProfiles().catch(() => {
         repoProfiles.value = []
       })
+      await loadBranchTemplateList().catch(() => {
+        branchTemplates.value = []
+      })
       await loadRules().catch(() => {
         rules.value = []
       })
@@ -475,6 +557,7 @@ export function useModemBaseline() {
     try {
       const next = await parseModemPatchNotice(text ?? noticeText.value)
       noticeParsed.value = next
+      syncBranchTemplateFromNotice()
       return next
     } finally {
       parsingNotice.value = false
@@ -564,6 +647,25 @@ export function useModemBaseline() {
     }
   }
 
+  async function importBranchTemplateFile(filePath: string) {
+    importingBranchTemplates.value = true
+    try {
+      const result = await importBranchTemplates(filePath)
+      branchTemplates.value = result.items
+      await reloadRepoProfiles()
+      if (result.items.length) {
+        selectedTosVersion.value = result.items[0].tos
+      }
+      if (result.items.length) {
+        selectedBranchTemplateId.value = result.items[0].templateId
+      }
+      syncBranchTemplateFromNotice()
+      return result
+    } finally {
+      importingBranchTemplates.value = false
+    }
+  }
+
   async function updateRule(ruleId: string, input: Partial<BranchRule>) {
     savingRule.value = true
     try {
@@ -634,6 +736,7 @@ export function useModemBaseline() {
     label: string
     localPath: string
     platform: string
+    branches?: RepoProfile['branches']
   }) {
     updatingRepo.value = true
     try {
@@ -645,6 +748,21 @@ export function useModemBaseline() {
       return repo
     } finally {
       updatingRepo.value = false
+    }
+  }
+
+  async function refreshRepoBranchTemplates(repoId?: string) {
+    const targets = repoId
+      ? [repoId]
+      : repoProfiles.value.map(item => item.repoId)
+    refreshingRepoBranches.value = true
+    try {
+      for (const id of targets) {
+        await refreshRepoBranches(id)
+      }
+      await reloadRepoProfiles()
+    } finally {
+      refreshingRepoBranches.value = false
     }
   }
 
@@ -664,6 +782,38 @@ export function useModemBaseline() {
     selectedRepoId.value = repoId
     saveSelectedRepoId(repoId)
     applyRepoToConfig(repoProfiles.value.find(item => item.repoId === repoId) ?? null)
+  }
+
+  function chooseBranchTemplate(templateId: string) {
+    selectedBranchTemplateId.value = templateId
+    const template = branchTemplates.value.find(item => item.templateId === templateId)
+    if (template) {
+      selectedTosVersion.value = template.tos
+    }
+  }
+
+  function chooseTosVersion(tos: string) {
+    selectedTosVersion.value = tos
+    const firstMatch = branchTemplates.value.find(item => item.tos === tos)
+    if (firstMatch) {
+      selectedBranchTemplateId.value = firstMatch.templateId
+    }
+  }
+
+  function applyBranchTemplate(templateId = selectedBranchTemplateId.value, target = selectedBranchTarget.value) {
+    const template = branchTemplates.value.find(item => item.templateId === templateId)
+    if (!template) {
+      return { applied: false }
+    }
+    config.value = {
+      ...config.value,
+      NODE_BRANCH: target === 'mp' ? template.mpNodeBranch : template.nodeBranch,
+      target_BRANCH: target === 'mp' ? template.mpBranch : template.trunkBranch,
+    }
+    selectedBranchTemplateId.value = template.templateId
+    selectedBranchTarget.value = target
+    precheck.value = null
+    return { applied: true, template }
   }
 
   function clearSelectedRepo() {
@@ -687,8 +837,13 @@ export function useModemBaseline() {
     toolRoot,
     workspaceProfile,
     repoProfiles,
+    branchTemplates,
     selectedRepoId,
     selectedRepo,
+    selectedTosVersion,
+    selectedBranchTemplateId,
+    selectedBranchTemplate,
+    selectedBranchTarget,
     rules,
     noticeText,
     noticeParsed,
@@ -706,14 +861,17 @@ export function useModemBaseline() {
     prechecking,
     parsingNotice,
     loadingRules,
+    loadingBranchTemplates,
     savingRule,
     deletingRule,
     recommending,
     savingWorkspace,
     savingRepo,
     scanningRepos,
+    importingBranchTemplates,
     removingRepo,
     updatingRepo,
+    refreshingRepoBranches,
     continuing,
     refreshing,
     errorMessage,
@@ -723,9 +881,11 @@ export function useModemBaseline() {
     initialize,
     loadDefaults,
     loadRules,
+    loadBranchTemplateList,
     parseNotice,
     requestRecommend,
     applyRecommendation,
+    importBranchTemplateFile,
     createRule,
     updateRule,
     removeRule,
@@ -733,8 +893,12 @@ export function useModemBaseline() {
     saveRepo,
     removeRepo,
     updateRepo,
+    refreshRepoBranchTemplates,
     scanRepos,
     chooseRepo,
+    chooseTosVersion,
+    chooseBranchTemplate,
+    applyBranchTemplate,
     clearSelectedRepo,
     runPrecheck,
     selectRun,

@@ -4,6 +4,7 @@ import { NButton, useMessage } from 'naive-ui'
 import ModemBaselineRepoListCard from '@/components/tahp/modem-baseline/ModemBaselineRepoListCard.vue'
 import ModemBaselineRulesDrawer from '@/components/tahp/modem-baseline/ModemBaselineRulesDrawer.vue'
 import ModemBaselineWorkspaceCard from '@/components/tahp/modem-baseline/ModemBaselineWorkspaceCard.vue'
+import type { RepoProfile } from '@/api/tahp/modem-baseline'
 import { useModemBaseline } from '@/composables/useModemBaseline'
 
 const message = useMessage()
@@ -21,6 +22,7 @@ const {
   scanningRepos,
   removingRepo,
   updatingRepo,
+  refreshingRepoBranches,
   savingRule,
   deletingRule,
   initialize,
@@ -28,6 +30,7 @@ const {
   saveRepo,
   removeRepo,
   updateRepo,
+  refreshRepoBranchTemplates,
   scanRepos,
   chooseRepo,
   clearSelectedRepo,
@@ -107,10 +110,20 @@ async function handleUpdateRepo(repoId: string, value: {
   localPath: string
   platform: string
   label: string
+  branches?: RepoProfile['branches']
 }) {
   try {
     await updateRepo(repoId, value)
     message.success('已更新仓库配置')
+  } catch (error) {
+    message.error(String((error as Error)?.message ?? error))
+  }
+}
+
+async function handleRefreshBranches(repoId?: string) {
+  try {
+    await refreshRepoBranchTemplates(repoId)
+    message.success(repoId ? '已触发仓库分支刷新' : '已触发全部仓库分支刷新')
   } catch (error) {
     message.error(String((error as Error)?.message ?? error))
   }
@@ -147,9 +160,11 @@ onMounted(() => {
         :selected-repo-id="selectedRepoId"
         :updating="updatingRepo"
         :removing="removingRepo"
+        :refreshing-branches="refreshingRepoBranches"
         @choose="chooseRepo"
         @update="handleUpdateRepo"
         @remove="handleRemoveRepo"
+        @refresh-branches="handleRefreshBranches"
       />
     </div>
 

@@ -120,6 +120,13 @@ function rootsFromForm() {
 function inferPlatformFromPath(localPath: string) {
   const normalized = normalizeLocalPath(localPath)
 
+  if (normalized.includes('TK_MD_MOLY.NR16.R1.MP3.MP_S0')) {
+    return 'GEN98S(MP3)'
+  }
+  if (normalized.includes('TK_MD_MOLY.NR16.R1.MP1MP2.MP_S0')) {
+    return 'GEN98S(MP1MP2)'
+  }
+
   let base = ''
   if (normalized.includes('LR12A')) base = 'GEN93'
   else if (normalized.includes('LR13')) base = 'GEN95'

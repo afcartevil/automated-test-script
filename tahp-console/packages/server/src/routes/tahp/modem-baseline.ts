@@ -9,8 +9,10 @@ import {
   getModemBaselineDefaults,
   getModemPatchWorkspaceProfile,
   listModemBaselineRuns,
+  listModemPatchBranchTemplates,
   listModemPatchRepos,
   listModemPatchRules,
+  importModemPatchBranchTemplatesFromExcel,
   openModemBaselineConflictFile,
   parseModemPatchNotice,
   precheckModemPatchConfig,
@@ -19,6 +21,7 @@ import {
   recommendModemPatchConfig,
   refreshModemBaselineConflicts,
   registerModemBaselineSseClient,
+  scheduleAutoExtractBranchTemplatesForRepo,
   saveModemPatchWorkspaceProfile,
   scanModemPatchRepos,
   updateModemPatchRepo,
@@ -77,10 +80,10 @@ tahpModemBaselineRoutes.post('/repos', async (ctx) => {
       platform?: string
       vendor?: string
     }
-    ctx.body = {
-      success: true,
-      data: createModemPatchRepo(body, resolveOwner(ctx)),
-    }
+    const owner = resolveOwner(ctx)
+    const repo = createModemPatchRepo(body, owner)
+    scheduleAutoExtractBranchTemplatesForRepo(repo.repoId, owner)
+    ctx.body = { success: true, data: listModemPatchRepos(owner).find(item => item.repoId === repo.repoId) ?? repo }
   } catch (error) {
     const message = (error as Error).message
     ctx.status = message === 'invalid_repo_profile' || message === 'workspace_profile_not_found'
@@ -98,10 +101,16 @@ tahpModemBaselineRoutes.put('/repos/:repoId', async (ctx) => {
       label?: string
       localPath?: string
       platform?: string
+      branches?: unknown
     }
     ctx.body = {
       success: true,
-      data: updateModemPatchRepo(ctx.params.repoId, body, resolveOwner(ctx)),
+      data: updateModemPatchRepo(ctx.params.repoId, {
+        label: body.label,
+        localPath: body.localPath,
+        platform: body.platform,
+        branches: (body as any).branches,
+      }, resolveOwner(ctx)),
     }
   } catch (error) {
     const message = (error as Error).message
@@ -110,6 +119,21 @@ tahpModemBaselineRoutes.put('/repos/:repoId', async (ctx) => {
       : message === 'repo_not_found' || message === 'repo_path_not_found'
         ? 404
         : 500
+    ctx.body = { success: false, error: message }
+  }
+})
+
+tahpModemBaselineRoutes.post('/repos/:repoId/refresh-branches', async (ctx) => {
+  try {
+    const owner = resolveOwner(ctx)
+    scheduleAutoExtractBranchTemplatesForRepo(ctx.params.repoId, owner)
+    ctx.body = {
+      success: true,
+      data: listModemPatchRepos(owner).find(item => item.repoId === ctx.params.repoId) ?? null,
+    }
+  } catch (error) {
+    const message = (error as Error).message
+    ctx.status = message === 'repo_not_found' ? 404 : 400
     ctx.body = { success: false, error: message }
   }
 })
@@ -143,6 +167,31 @@ tahpModemBaselineRoutes.post('/repos/scan', async (ctx) => {
 
 tahpModemBaselineRoutes.get('/rules', async (ctx) => {
   ctx.body = { success: true, data: { items: listModemPatchRules(resolveOwner(ctx)) } }
+})
+
+tahpModemBaselineRoutes.get('/branch-templates', async (ctx) => {
+  ctx.body = { success: true, data: { items: listModemPatchBranchTemplates(resolveOwner(ctx)) } }
+})
+
+tahpModemBaselineRoutes.post('/branch-templates/import', async (ctx) => {
+  try {
+    const body = (ctx.request.body || {}) as { filePath?: string }
+    ctx.body = {
+      success: true,
+      data: importModemPatchBranchTemplatesFromExcel(String(body.filePath ?? ''), resolveOwner(ctx)),
+    }
+  } catch (error) {
+    const message = (error as Error).message
+    ctx.status = message === 'invalid_branch_template_file' || message.startsWith('branch_template_missing_columns')
+      || message.startsWith('branch_template_invalid_row') || message === 'branch_template_empty'
+      ? 400
+      : message === 'branch_template_file_not_found'
+        ? 404
+        : message === 'branch_template_file_busy'
+          ? 409
+          : 500
+    ctx.body = { success: false, error: message }
+  }
 })
 
 tahpModemBaselineRoutes.post('/rules', async (ctx) => {

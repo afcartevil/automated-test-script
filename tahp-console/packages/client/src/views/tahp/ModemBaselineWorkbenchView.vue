@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, useMessage } from 'naive-ui'
+import ModemBaselineBranchTemplateApplyCard from '@/components/tahp/modem-baseline/ModemBaselineBranchTemplateApplyCard.vue'
 import ModemBaselineConfigCard from '@/components/tahp/modem-baseline/ModemBaselineConfigCard.vue'
 import ModemBaselineHistoryPanel from '@/components/tahp/modem-baseline/ModemBaselineHistoryPanel.vue'
 import ModemBaselineLogFilterBar from '@/components/tahp/modem-baseline/ModemBaselineLogFilterBar.vue'
@@ -16,7 +17,11 @@ const {
   config,
   runs,
   repoProfiles,
+  branchTemplates,
   selectedRepo,
+  selectedTosVersion,
+  selectedBranchTemplateId,
+  selectedBranchTarget,
   rules,
   noticeText,
   noticeParsed,
@@ -27,6 +32,7 @@ const {
   conflictFiles,
   logContent,
   loading,
+  loadingBranchTemplates,
   starting,
   prechecking,
   parsingNotice,
@@ -41,6 +47,9 @@ const {
   loadDefaults,
   requestRecommend,
   applyRecommendation,
+  chooseTosVersion,
+  chooseBranchTemplate,
+  applyBranchTemplate,
   runPrecheck,
   selectRun,
   startRun,
@@ -158,6 +167,7 @@ async function handleParseAndApply() {
     await requestRecommend()
     const apply = applyRecommendation()
     if (!apply.applied) return
+    const hasRecommendedBranches = Boolean(recommendation.value?.nodeBranch && recommendation.value?.targetBranch)
     if (apply.repoAction === 'ambiguous') {
       const list = (apply.candidates ?? []).slice(0, 4).map(item => item.platform || item.label).join('、')
       message.warning(`匹配到多个候选仓库（${(apply.candidates ?? []).length}）：${list}。请先到配置中心设为当前仓库`)
@@ -183,10 +193,27 @@ async function handleParseAndApply() {
       message.warning('未匹配到推荐平台对应仓库，已回退为当前仓库路径并应用推荐')
       return
     }
+    if (!hasRecommendedBranches) {
+      message.warning('已解析平台和版本，但未匹配到可用分支模板或规则，请手动选择分支模板或直接填写分支')
+      return
+    }
+    if (recommendation.value?.branchSource === 'template') {
+      message.success(`已解析并应用导入模板（${recommendation.value.targetMode === 'mp' ? 'MP' : '主干'}）`)
+      return
+    }
     message.success('已解析并应用推荐')
   } catch (error) {
     message.error(String((error as Error)?.message ?? error))
   }
+}
+
+function handleApplyBranchTemplate() {
+  const result = applyBranchTemplate()
+  if (!result.applied) {
+    message.warning('请先选择一个可用的分支模板')
+    return
+  }
+  message.success(`已按 ${selectedBranchTarget.value === 'mp' ? 'MP' : '主干'} 模板回填分支`)
 }
 
 function goSettings() {
@@ -221,6 +248,19 @@ onUnmounted(() => {
         :recommending="recommending"
         @update:notice-text="noticeText = $event"
         @parse-and-apply="handleParseAndApply"
+      />
+
+      <ModemBaselineBranchTemplateApplyCard
+        :templates="branchTemplates"
+        :selected-tos="selectedTosVersion"
+        :selected-template-id="selectedBranchTemplateId"
+        :selected-target="selectedBranchTarget"
+        :loading="loadingBranchTemplates"
+        :parsed="noticeParsed"
+        @update:selected-tos="chooseTosVersion"
+        @update:selected-template-id="chooseBranchTemplate"
+        @update:selected-target="selectedBranchTarget = $event"
+        @apply="handleApplyBranchTemplate"
       />
 
       <ModemBaselinePrecheckPanel

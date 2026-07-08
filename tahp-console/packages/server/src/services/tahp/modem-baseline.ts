@@ -4,6 +4,7 @@ import crypto from 'crypto'
 import os from 'os'
 import { spawn, spawnSync } from 'child_process'
 import type { ServerResponse } from 'http'
+import * as XLSX from 'xlsx'
 import { config as serverConfig } from '../../config'
 
 export type ModemBaselineStatus = 'running' | 'success' | 'failed' | 'conflict'
@@ -59,6 +60,13 @@ export type RepoProfile = {
   defaultTargets?: string[]
   recentBranches?: string[]
   lastUsedAt?: string
+  branchTemplateStatus?: 'idle' | 'running' | 'success' | 'failed'
+  branchTemplateError?: string
+  branchTemplateUpdatedAt?: string
+  branches?: {
+    trunk?: { nodeBranch: string; trunkBranch: string }
+    mp?: Array<{ tos: string; mpNodeBranch: string; mpBranch: string }>
+  }
 }
 
 export type ScannedRepoCandidate = {
@@ -95,10 +103,26 @@ export type BranchRule = {
   updatedAt: string
 }
 
+export type BranchTemplate = {
+  templateId: string
+  owner: string
+  tos: string
+  platform: string
+  nodeBranch: string
+  trunkBranch: string
+  mpBranch: string
+  mpNodeBranch: string
+  sourceFile?: string
+  sourceSheet?: string
+  updatedAt: string
+}
+
 export type NoticeParseResult = {
   rawText: string
   operationType: ModemPatchOperationType
   platform?: string
+  tosVersion?: string
+  targetMode?: 'trunk' | 'mp'
   version?: string
   confidence: number
   candidates: { platforms: string[] }
@@ -110,6 +134,8 @@ export type RecommendationResult = {
   targetBranch?: string
   apLabel?: string
   ruleId?: string
+  branchSource?: 'template' | 'rule'
+  targetMode?: 'trunk' | 'mp'
   warnings: string[]
 }
 
@@ -185,6 +211,10 @@ function rulesRootDir() {
   return path.resolve(modemPatchConfigRootDir(), 'rules')
 }
 
+function branchTemplatesRootDir() {
+  return path.resolve(modemPatchConfigRootDir(), 'branch-templates')
+}
+
 function ensureDir(dir: string) {
   fs.mkdirSync(dir, { recursive: true })
 }
@@ -194,6 +224,7 @@ function ensureDataDirs() {
   ensureDir(workspacesRootDir())
   ensureDir(reposRootDir())
   ensureDir(rulesRootDir())
+  ensureDir(branchTemplatesRootDir())
 }
 
 function currentOwner() {
@@ -218,6 +249,10 @@ function repoProfilesPath(owner = currentOwner()) {
 
 function rulesPath(owner = currentOwner()) {
   return path.resolve(rulesRootDir(), `${ownerKey(owner)}.json`)
+}
+
+function branchTemplatesPath(owner = currentOwner()) {
+  return path.resolve(branchTemplatesRootDir(), `${ownerKey(owner)}.json`)
 }
 
 function runDir(runId: string) {
@@ -342,8 +377,30 @@ export function createModemPatchRepo(
     platform: input.platform ? String(input.platform).trim() : undefined,
     vendor: input.vendor ? String(input.vendor).trim() : undefined,
     lastUsedAt: nowIso(),
+    branchTemplateStatus: 'idle',
+    branches: undefined,
   }
   items.unshift(nextItem)
+  writeRepoProfiles(items, owner)
+  return nextItem
+}
+
+function updateRepoBranchTemplateState(
+  repoId: string,
+  patch: { status?: RepoProfile['branchTemplateStatus']; error?: string; updatedAt?: string },
+  owner = currentOwner(),
+) {
+  const items = listModemPatchRepos(owner)
+  const index = items.findIndex(item => item.repoId === repoId)
+  if (index < 0) throw new Error('repo_not_found')
+  const current = items[index]
+  const nextItem: RepoProfile = {
+    ...current,
+    branchTemplateStatus: patch.status ?? current.branchTemplateStatus,
+    branchTemplateError: patch.error !== undefined ? patch.error : current.branchTemplateError,
+    branchTemplateUpdatedAt: patch.updatedAt ?? current.branchTemplateUpdatedAt,
+  }
+  items.splice(index, 1, nextItem)
   writeRepoProfiles(items, owner)
   return nextItem
 }
@@ -354,6 +411,7 @@ export function updateModemPatchRepo(
     label?: string
     localPath?: string
     platform?: string
+    branches?: RepoProfile['branches']
   },
   owner = currentOwner(),
 ): RepoProfile {
@@ -372,6 +430,7 @@ export function updateModemPatchRepo(
   const platform = input.platform !== undefined
     ? String(input.platform).trim()
     : (current.platform ?? '')
+  const branches = input.branches !== undefined ? input.branches : current.branches
 
   if (!label || !localPath || !platform) {
     throw new Error('invalid_repo_profile')
@@ -388,9 +447,13 @@ export function updateModemPatchRepo(
     mappedPrefix: workspace?.mappedPrefix ?? current.mappedPrefix,
     remotePrefix: workspace?.remotePrefix ?? current.remotePrefix,
     lastUsedAt: nowIso(),
+    branches,
   }
   items.splice(index, 1, nextItem)
   writeRepoProfiles(items, owner)
+  if (input.branches !== undefined) {
+    syncBranchTemplatesFromRepoBranches(platform, branches, owner)
+  }
   return nextItem
 }
 
@@ -428,9 +491,82 @@ export function listModemPatchRules(owner = currentOwner()): BranchRule[] {
   return rules
 }
 
+export function listModemPatchBranchTemplates(owner = currentOwner()): BranchTemplate[] {
+  ensureDataDirs()
+  return readJsonFile<BranchTemplate[]>(branchTemplatesPath(owner), [])
+}
+
 function writeModemPatchRules(items: BranchRule[], owner = currentOwner()) {
   ensureDataDirs()
   writeJsonFile(rulesPath(owner), items)
+}
+
+function writeModemPatchBranchTemplates(items: BranchTemplate[], owner = currentOwner()) {
+  ensureDataDirs()
+  writeJsonFile(branchTemplatesPath(owner), items)
+}
+
+function mergeBranchTemplates(items: BranchTemplate[], owner = currentOwner()) {
+  const existing = listModemPatchBranchTemplates(owner)
+  const merged = new Map<string, BranchTemplate>()
+  for (const item of existing) {
+    const key = `${normalizeBranchTemplatePlatform(item.platform)}\u0000${item.tos}`
+    merged.set(key, item)
+  }
+  for (const item of items) {
+    const key = `${normalizeBranchTemplatePlatform(item.platform)}\u0000${item.tos}`
+    merged.set(key, item)
+  }
+  const nextItems = Array.from(merged.values())
+  writeModemPatchBranchTemplates(nextItems, owner)
+  return nextItems
+}
+
+function syncRepoBranchesFromTemplates(items: BranchTemplate[], owner = currentOwner()) {
+  const repos = listModemPatchRepos(owner)
+  let changed = false
+  const byPlatform = new Map<string, BranchTemplate[]>()
+  for (const item of items) {
+    const key = normalizeBranchTemplatePlatform(item.platform)
+    if (!key) continue
+    const list = byPlatform.get(key) || []
+    list.push(item)
+    byPlatform.set(key, list)
+  }
+
+  const nextRepos = repos.map((repo) => {
+    const key = normalizeBranchTemplatePlatform(repo.platform || repo.label)
+    if (!key) return repo
+    const matched = byPlatform.get(key) || []
+    if (!matched.length) return repo
+
+    const currentMp = Array.isArray(repo.branches?.mp) ? [...repo.branches.mp] : []
+    const mpMap = new Map(currentMp.map(item => [item.tos, item]))
+    for (const item of matched) {
+      mpMap.set(item.tos, {
+        tos: item.tos,
+        mpNodeBranch: item.mpNodeBranch || 'master',
+        mpBranch: item.mpBranch,
+      })
+    }
+    const mp = Array.from(mpMap.values()).sort((left, right) => left.tos.localeCompare(right.tos))
+    const latest = matched[matched.length - 1]
+    const nextRepo: RepoProfile = {
+      ...repo,
+      branches: {
+        trunk: {
+          nodeBranch: latest.nodeBranch || 'master',
+          trunkBranch: latest.trunkBranch,
+        },
+        mp,
+      },
+    }
+    changed = true
+    return nextRepo
+  })
+
+  if (changed) writeRepoProfiles(nextRepos, owner)
+  return nextRepos
 }
 
 export function createModemPatchRule(
@@ -505,6 +641,187 @@ export function deleteModemPatchRule(ruleId: string, owner = currentOwner()) {
   return { success: true as const }
 }
 
+function normalizeTosVersion(text?: string) {
+  const raw = String(text ?? '').trim()
+  if (!raw) return ''
+  const match = raw.match(/tos\s*([0-9]+(?:\.[0-9]+){1,3})/i)
+  if (match) return `tOS${match[1]}`
+  return raw
+}
+
+const MP_TOS_VERSIONS = new Set(['tOS15.1.2', 'tOS15.1.3', 'tOS16.3'])
+
+const BUILTIN_TOS15_TEMPLATES: Array<Pick<BranchTemplate, 'tos' | 'platform' | 'nodeBranch' | 'trunkBranch' | 'mpBranch' | 'mpNodeBranch'>> = [
+  { tos: 'tOS15.1.2', platform: 'GEN95-S', nodeBranch: 'master', trunkBranch: 'PRODUCT_S_s0bsp_GEN95_common', mpBranch: 's0.mp1_v17.23_gen95_mp', mpNodeBranch: 's0.mp1_v17.23_gen95' },
+  { tos: 'tOS15.1.2', platform: 'GEN98-S', nodeBranch: 'master', trunkBranch: 'PRODUCT_S_s0mp1rc_NR16_common', mpBranch: 's0.mp1_v17.23_nr16_mp', mpNodeBranch: 's0.mp1_v17.23_nr16' },
+  { tos: 'tOS15.1.2', platform: 'GEN99-T', nodeBranch: 'master', trunkBranch: 'PRODUCT_T_t0mp1rc_NR17_common', mpBranch: 't0.mp1_v14.94_nr17_mp', mpNodeBranch: 't0.mp1_v14.94_nr17' },
+  { tos: 'tOS15.1.2', platform: 'GEN99-U', nodeBranch: 'master', trunkBranch: 'PRODUCT_U_u0mp1rc_NR17_common', mpBranch: 'u0.mp1_v10.69_nr17_mp', mpNodeBranch: 'u0.mp1_v10.69_nr17' },
+  { tos: 'tOS15.1.2', platform: 'GEN93-V', nodeBranch: 'master', trunkBranch: 'PRODUCT_V_v0mp1rc_LR12A_common', mpBranch: 'v0.mp1_v13.29_gen93_mp', mpNodeBranch: 'v0.mp1_v13.29_gen93' },
+  { tos: 'tOS15.1.2', platform: 'GEN97-V', nodeBranch: 'master', trunkBranch: 'PRODUCT_V_v0mp1rc_NR15_common', mpBranch: 'v0.mp1_v13.29_gen97_mp', mpNodeBranch: 'v0.mp1_v13.29_gen97' },
+  { tos: 'tOS15.1.3', platform: 'GEN98-S(MP1MP2)', nodeBranch: 'master', trunkBranch: 'PRODUCT_S_s0mp1rc_NR16', mpBranch: 's0.mp1_v17.23_nr16_mp', mpNodeBranch: 's0.mp1_v17.23_nr16' },
+  { tos: 'tOS15.1.3', platform: 'GEN98-S(MP3)', nodeBranch: 'master', trunkBranch: 'PRODUCT_S_s0mp1rc_NR16_common', mpBranch: 's0.mp1_v17.23_nr16_mp', mpNodeBranch: 's0.mp1_v17.23_nr16' },
+  { tos: 'tOS15.1.3', platform: 'GEN97-V', nodeBranch: 'master', trunkBranch: 'PRODUCT_V_v0mp1rc_NR15_common', mpBranch: 'v0.mp1_v13.134_gen97_mp', mpNodeBranch: 'v0.mp1_v13.134_gen97' },
+]
+
+function isMpTosVersion(tosVersion?: string) {
+  return MP_TOS_VERSIONS.has(normalizeTosVersion(tosVersion))
+}
+
+function normalizeBranchTemplateHeader(header: unknown) {
+  return String(header ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '')
+}
+
+function findBranchTemplateColumn(headerIndex: Map<string, number>, names: string[]) {
+  for (const name of names) {
+    const column = headerIndex.get(normalizeBranchTemplateHeader(name))
+    if (column !== undefined) return column
+  }
+  return undefined
+}
+
+function buildBranchTemplateHeaderIndex(headers: unknown[]) {
+  const index = new Map<string, number>()
+  headers.forEach((header, col) => {
+    const key = normalizeBranchTemplateHeader(header)
+    if (key) index.set(key, col)
+  })
+  return index
+}
+
+function deriveMpNodeBranch(mpBranch: string) {
+  const trimmed = String(mpBranch ?? '').trim()
+  if (!trimmed) return ''
+  if (/_mp$/i.test(trimmed)) {
+    return trimmed.replace(/_mp$/i, '')
+  }
+  return trimmed
+}
+
+function normalizeBranchTemplatePlatform(text?: string) {
+  return normalizePlatformToken(String(text ?? '').replace(/\s*\([^)]*\)\s*$/, ''))
+}
+
+function findBranchTemplateMatches(
+  templates: BranchTemplate[],
+  tosVersion?: string,
+  platform?: string,
+) {
+  const normalizedTos = normalizeTosVersion(tosVersion)
+  const normalizedPlatform = normalizeBranchTemplatePlatform(platform)
+  return templates.filter((item) => {
+    if (normalizedTos && item.tos !== normalizedTos) return false
+    if (!normalizedPlatform) return true
+    return normalizeBranchTemplatePlatform(item.platform) === normalizedPlatform
+  })
+}
+
+function parseModemPatchBranchTemplatesFromExcel(
+  filePath: string,
+  owner = currentOwner(),
+): { sourcePath: string; items: BranchTemplate[] } {
+  const resolved = path.resolve(String(filePath ?? '').trim())
+  if (!resolved) {
+    throw new Error('invalid_branch_template_file')
+  }
+  if (!fs.existsSync(resolved)) {
+    throw new Error('branch_template_file_not_found')
+  }
+
+  let workbook: XLSX.WorkBook
+  try {
+    workbook = XLSX.readFile(resolved, { cellDates: false })
+  } catch (error) {
+    const message = String((error as Error)?.message ?? error)
+    if (message.includes('EBUSY') || message.includes('locked')) {
+      throw new Error('branch_template_file_busy')
+    }
+    throw error
+  }
+
+  const items: BranchTemplate[] = []
+  const updatedAt = nowIso()
+
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName]
+    if (!sheet) continue
+    const rows = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      defval: '',
+      raw: false,
+    }) as unknown[][]
+    if (!rows.length) continue
+
+    const headerIndex = buildBranchTemplateHeaderIndex(rows[0])
+    const tosCol = findBranchTemplateColumn(headerIndex, ['tos', 'tos版本', '版本'])
+    const platformCol = findBranchTemplateColumn(headerIndex, ['platform', '平台'])
+    const trunkCol = findBranchTemplateColumn(headerIndex, ['trunk_branch', 'trunkbranch', '主干分支', 'modem共仓主干'])
+    const mpCol = findBranchTemplateColumn(headerIndex, ['mp_branch', 'mpbranch', '量产分支', 'modem共仓量产'])
+    const mpNodeCol = findBranchTemplateColumn(headerIndex, ['mp_node_branch', 'mpnodebranch', 'mp节点分支', '量产节点分支'])
+    const nodeCol = findBranchTemplateColumn(headerIndex, ['node_branch', 'nodebranch', 'trunk_node_branch', '主干节点分支', '节点分支'])
+
+    if (platformCol === undefined || trunkCol === undefined || mpCol === undefined) {
+      throw new Error(`branch_template_missing_columns:${sheetName}`)
+    }
+
+    let currentTos = normalizeTosVersion(String(tosCol !== undefined ? rows[1]?.[tosCol] ?? '' : '')) || normalizeTosVersion(sheetName)
+    for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
+      const row = rows[rowIndex]
+      if (!Array.isArray(row)) continue
+
+      if (tosCol !== undefined) {
+        const rowTos = normalizeTosVersion(String(row[tosCol] ?? ''))
+        if (rowTos) currentTos = rowTos
+      }
+
+      const platform = String(row[platformCol] ?? '').trim()
+      const trunkBranch = String(row[trunkCol] ?? '').trim()
+      const mpBranch = String(row[mpCol] ?? '').trim()
+      if (!platform && !trunkBranch && !mpBranch) continue
+      if (!platform || !trunkBranch || !mpBranch) {
+        throw new Error(`branch_template_invalid_row:${sheetName}:${rowIndex + 1}`)
+      }
+
+      const nodeBranch = nodeCol !== undefined ? String(row[nodeCol] ?? '').trim() || 'master' : 'master'
+      const mpNodeBranch = mpNodeCol !== undefined
+        ? String(row[mpNodeCol] ?? '').trim() || deriveMpNodeBranch(mpBranch)
+        : deriveMpNodeBranch(mpBranch)
+
+      items.push({
+        templateId: crypto.randomBytes(8).toString('hex'),
+        owner,
+        tos: currentTos || normalizeTosVersion(sheetName),
+        platform,
+        nodeBranch,
+        trunkBranch,
+        mpBranch,
+        mpNodeBranch,
+        sourceFile: resolved,
+        sourceSheet: sheetName,
+        updatedAt,
+      })
+    }
+  }
+
+  if (!items.length) {
+    throw new Error('branch_template_empty')
+  }
+
+  return {
+    sourcePath: resolved,
+    items,
+  }
+}
+
+export function importModemPatchBranchTemplatesFromExcel(
+  filePath: string,
+  owner = currentOwner(),
+): { sourcePath: string; items: BranchTemplate[] } {
+  const result = parseModemPatchBranchTemplatesFromExcel(filePath, owner)
+  mergeBranchTemplates(result.items, owner)
+  syncRepoBranchesFromTemplates(result.items, owner)
+  return result
+}
+
 function normalizeOperationType(text: string): ModemPatchOperationType {
   const lower = text.toLowerCase()
   if (lower.includes('baseline') || text.includes('基线')) return 'baseline_upgrade'
@@ -536,13 +853,23 @@ export function parseModemPatchNotice(text: string): NoticeParseResult {
       .filter(Boolean),
   ))
   const versionMatch = rawText.match(/\bV\d+(?:\.\d+){0,4}\b/i)
+  const tosMatch = rawText.match(/\btOS\s*\d+(?:\.\d+){1,3}(?:\s*MP)?\b/i)
+  const specialMpMatch = rawText.match(/\b(15\.1\.2|15\.1\.3|16\.3)(?:\s*MP)?\b/i)
+  const explicitMp = /\bMP\b/i.test(rawText)
   const platform = platforms[0]
   const version = versionMatch ? versionMatch[0].toUpperCase() : undefined
+  const tosVersion = tosMatch
+    ? normalizeTosVersion(tosMatch[0])
+    : specialMpMatch
+      ? normalizeTosVersion(`tOS${specialMpMatch[1]}`)
+      : undefined
+  const targetMode = explicitMp || isMpTosVersion(tosVersion) ? 'mp' : 'trunk'
   const operationType = normalizeOperationType(rawText)
 
   let confidence = 0.2
   if (platform) confidence += 0.4
   if (version) confidence += 0.2
+  if (tosVersion) confidence += 0.1
   if (operationType !== 'unknown') confidence += 0.2
   confidence = Math.min(1, confidence)
 
@@ -553,6 +880,8 @@ export function parseModemPatchNotice(text: string): NoticeParseResult {
     rawText,
     operationType,
     platform,
+    tosVersion,
+    targetMode,
     version,
     confidence,
     candidates: { platforms },
@@ -581,7 +910,29 @@ export function recommendModemPatchConfig(input: {
   const basePlatform = basePlatformToken(platform)
   const vendor = (repo?.vendor || '').trim()
   const operationType = parsed?.operationType || 'baseline_upgrade'
+  const targetMode = parsed?.targetMode || 'trunk'
   const rules = listModemPatchRules(owner).filter(item => item.enabled)
+  const templates = listModemPatchBranchTemplates(owner)
+  const templateMatches = findBranchTemplateMatches(templates, parsed?.tosVersion, parsed?.platform || repo?.platform)
+  const canUseSharedTrunkTemplate = targetMode === 'trunk' && !parsed?.tosVersion
+  let selectedTemplate = templateMatches.length === 1 ? templateMatches[0] : null
+  let selectedTemplateNodeBranch: string | undefined
+  let selectedTemplateTargetBranch: string | undefined
+  let templateAmbiguous = templateMatches.length > 1
+
+  if (!selectedTemplate && canUseSharedTrunkTemplate && templateMatches.length > 1) {
+    const trunkCombos = Array.from(new Map(
+      templateMatches.map(item => [
+        `${item.nodeBranch}\u0000${item.trunkBranch}`,
+        { nodeBranch: item.nodeBranch, trunkBranch: item.trunkBranch },
+      ]),
+    ).values())
+    if (trunkCombos.length === 1) {
+      selectedTemplateNodeBranch = trunkCombos[0].nodeBranch
+      selectedTemplateTargetBranch = trunkCombos[0].trunkBranch
+      templateAmbiguous = false
+    }
+  }
 
   const matched = rules
     .map((rule) => {
@@ -615,7 +966,9 @@ export function recommendModemPatchConfig(input: {
       return 0
     })[0]?.rule || null
 
-  if (!matched) warnings.push('no_rule_matched')
+  if (templateAmbiguous) warnings.push('branch_template_ambiguous')
+  else if (!templateMatches.length && parsed?.platform) warnings.push('branch_template_not_found')
+  if (!selectedTemplate && !selectedTemplateNodeBranch && !matched) warnings.push('no_rule_matched')
   const vars: Record<string, string> = {
     platform: platform || basePlatform,
     version: parsed?.version || '',
@@ -625,11 +978,25 @@ export function recommendModemPatchConfig(input: {
   }
 
   const apLabel = parsed?.version || (String(input.config?.AP_lable ?? '').trim() || undefined)
-  const defaultTarget = matched?.defaultTarget || 'trunk'
-  const nodeBranch = matched?.nodePattern ? applyTemplate(matched.nodePattern, vars) : undefined
-  const targetBranch = matched
-    ? applyTemplate(defaultTarget === 'mp' ? (matched.mpPattern || matched.trunkPattern) : matched.trunkPattern, vars)
-    : undefined
+  const defaultTarget = targetMode === 'mp' ? 'mp' : (matched?.defaultTarget || 'trunk')
+  let branchSource: RecommendationResult['branchSource']
+  const nodeBranch = selectedTemplate
+    ? (defaultTarget === 'mp' ? selectedTemplate.mpNodeBranch : selectedTemplate.nodeBranch)
+    : selectedTemplateNodeBranch
+      ? selectedTemplateNodeBranch
+    : matched?.nodePattern
+      ? applyTemplate(matched.nodePattern, vars)
+      : undefined
+  const targetBranch = selectedTemplate
+    ? (defaultTarget === 'mp' ? selectedTemplate.mpBranch : selectedTemplate.trunkBranch)
+    : selectedTemplateTargetBranch
+      ? selectedTemplateTargetBranch
+    : matched
+      ? applyTemplate(defaultTarget === 'mp' ? (matched.mpPattern || matched.trunkPattern) : matched.trunkPattern, vars)
+      : undefined
+
+  if (selectedTemplate || selectedTemplateNodeBranch) branchSource = 'template'
+  else if (matched) branchSource = 'rule'
 
   if (nodeBranch && nodeBranch.includes('{')) warnings.push('unresolved_placeholders_in_node')
   if (targetBranch && targetBranch.includes('{')) warnings.push('unresolved_placeholders_in_target')
@@ -639,6 +1006,8 @@ export function recommendModemPatchConfig(input: {
     targetBranch: targetBranch || undefined,
     apLabel,
     ruleId: matched?.ruleId,
+    branchSource,
+    targetMode: defaultTarget,
     warnings,
   }
 }
@@ -657,6 +1026,307 @@ function isGitRepoPath(targetPath: string) {
   } catch {
     return false
   }
+}
+
+type TosToken = { full: string; key: string; major: number; minor: number; patch: number }
+
+function parseTosToken(branch: string): TosToken | null {
+  const match = String(branch || '').match(/^tOS\s*([0-9]+(?:\.[0-9]+){1,3})/i)
+  if (!match) return null
+  const parts = match[1].split('.').map(part => Number(part) || 0)
+  const major = parts[0] ?? 0
+  const minor = parts[1] ?? 0
+  const patch = parts[2] ?? 0
+  return {
+    full: `tOS${match[1]}`,
+    key: `tOS${major}.${minor}`,
+    major,
+    minor,
+    patch,
+  }
+}
+
+function compareTosToken(left: { major: number; minor: number; patch: number }, right: { major: number; minor: number; patch: number }) {
+  if (left.major !== right.major) return left.major - right.major
+  if (left.minor !== right.minor) return left.minor - right.minor
+  return left.patch - right.patch
+}
+
+function tosKeyToToken(tos: string) {
+  const match = String(tos || '').match(/^tOS\s*([0-9]+)\.([0-9]+)/i)
+  if (!match) return null
+  return { major: Number(match[1]) || 0, minor: Number(match[2]) || 0, patch: 0 }
+}
+
+function pickOne(values: string[]) {
+  if (!values.length) return { value: '', ambiguous: false }
+  if (values.length === 1) return { value: values[0], ambiguous: false }
+  return { value: '', ambiguous: true }
+}
+
+function listRemoteBranches(repoPath: string, remote: string) {
+  const result = spawnSync('git', ['-C', repoPath, 'ls-remote', '--heads', remote], {
+    windowsHide: true,
+    timeout: 15000,
+    encoding: 'utf-8',
+  })
+  if (result.status !== 0) {
+    const stderr = String(result.stderr || '').trim()
+    throw new Error(stderr || `git_ls_remote_failed:${result.status ?? -1}`)
+  }
+  const stdout = String(result.stdout || '')
+  return stdout
+    .split(/\r?\n/g)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => line.split(/\s+/g)[1] || '')
+    .map(ref => ref.replace(/^refs\/heads\//, ''))
+    .filter(Boolean)
+}
+
+function pickTrunkBranch(branches: string[]) {
+  const candidates = branches.filter(name => name.endsWith('_common'))
+  return pickOne(Array.from(new Set(candidates)).sort())
+}
+
+function pickBuiltinTrunkBranch(
+  templates: Array<Pick<BranchTemplate, 'nodeBranch' | 'trunkBranch'>>,
+) {
+  const candidates = Array.from(new Map(
+    templates
+      .map(item => ({
+        nodeBranch: String(item.nodeBranch || 'master').trim() || 'master',
+        trunkBranch: String(item.trunkBranch || '').trim(),
+      }))
+      .filter(item => item.trunkBranch)
+      .map(item => [`${item.nodeBranch}::${item.trunkBranch}`, item]),
+  ).values()).sort((left, right) => (
+    left.trunkBranch.localeCompare(right.trunkBranch) || left.nodeBranch.localeCompare(right.nodeBranch)
+  ))
+
+  if (candidates.length === 1) return { value: candidates[0], ambiguous: false }
+  if (candidates.length > 1) return { value: null, ambiguous: true }
+  return { value: null, ambiguous: false }
+}
+
+function pickMpBranches(branches: string[], baseline: TosToken) {
+  const candidates = branches
+    .filter(name => /^tOS[0-9]+\.[0-9]+/i.test(name))
+    .filter(name => !/_node$/i.test(name))
+    .map(name => ({ name, token: parseTosToken(name) }))
+    .filter(item => item.token && compareTosToken(item.token, baseline) >= 0) as Array<{ name: string; token: TosToken }>
+
+  const byKey = new Map<string, Array<{ name: string; token: TosToken }>>()
+  for (const item of candidates) {
+    const list = byKey.get(item.token.key) || []
+    list.push(item)
+    byKey.set(item.token.key, list)
+  }
+
+  const picks: Array<{ name: string; token: TosToken }> = []
+  for (const [key, items] of byKey.entries()) {
+    const sorted = items.sort((left, right) => {
+      const leftRelease = /release/i.test(left.name) ? 1 : 0
+      const rightRelease = /release/i.test(right.name) ? 1 : 0
+      if (leftRelease !== rightRelease) return rightRelease - leftRelease
+      const diff = compareTosToken(left.token, right.token)
+      if (diff !== 0) return -diff
+      return left.name.localeCompare(right.name)
+    })
+    const picked = sorted[0]
+    if (picked) picks.push(picked)
+  }
+
+  return picks.sort((a, b) => compareTosToken(a.token, b.token))
+}
+
+function pickMpNodeBranch(branches: string[], token: TosToken) {
+  const candidates = branches.filter(name => /_node$/i.test(name))
+  const strict = candidates.filter(name => name.includes(token.full))
+  const relaxed = candidates.filter(name => name.startsWith(token.key) || name.includes(token.key))
+  const best = strict.length ? strict : relaxed
+  const picked = pickOne(Array.from(new Set(best)).sort())
+  if (picked.value) return { value: picked.value, ambiguous: picked.ambiguous }
+  return { value: 'master', ambiguous: false }
+}
+
+function collectTos15TemplatesForRepo(
+  repo: RepoProfile,
+  remoteBranches: string[],
+  owner = currentOwner(),
+) {
+  const normalizedPlatform = normalizeBranchTemplatePlatform(repo.platform || repo.label)
+  const branchSet = new Set(remoteBranches)
+  return BUILTIN_TOS15_TEMPLATES
+    .filter(item => normalizeBranchTemplatePlatform(item.platform) === normalizedPlatform)
+    .filter(item => branchSet.has(item.mpBranch))
+    .map(item => ({
+      ...item,
+      templateId: crypto.randomBytes(8).toString('hex'),
+      owner,
+      sourceFile: '',
+      sourceSheet: 'builtin-tos15',
+      updatedAt: nowIso(),
+    }))
+}
+
+function mergeBranchTemplatesForPlatform(
+  platform: string,
+  baselineKey: string,
+  nextItems: BranchTemplate[],
+  owner = currentOwner(),
+) {
+  const existing = listModemPatchBranchTemplates(owner)
+  const baselineToken = tosKeyToToken(baselineKey) || { major: 16, minor: 3, patch: 0 }
+  const normalizedPlatform = normalizeBranchTemplatePlatform(platform)
+  const preserved = existing.filter(item => {
+    if (normalizeBranchTemplatePlatform(item.platform) !== normalizedPlatform) return true
+    const token = tosKeyToToken(item.tos)
+    if (!token) return true
+    return compareTosToken(token, baselineToken) < 0
+  })
+  const merged = preserved.concat(nextItems)
+  writeModemPatchBranchTemplates(merged, owner)
+  return merged
+}
+
+function syncBranchTemplatesFromRepoBranches(
+  repoPlatform: string,
+  branches: RepoProfile['branches'] | undefined,
+  owner = currentOwner(),
+  baselineKey = 'tOS16.3',
+) {
+  if (!branches?.trunk?.trunkBranch) return
+  const trunkNode = String(branches.trunk.nodeBranch || 'master').trim() || 'master'
+  const trunkBranch = String(branches.trunk.trunkBranch || '').trim()
+  if (!trunkBranch) return
+  const mp = Array.isArray(branches.mp) ? branches.mp : []
+  const updatedAt = nowIso()
+  const nextTemplates: BranchTemplate[] = mp
+    .map(item => ({
+      templateId: crypto.randomBytes(8).toString('hex'),
+      owner,
+      tos: String(item.tos || '').trim(),
+      platform: repoPlatform,
+      nodeBranch: trunkNode,
+      trunkBranch,
+      mpBranch: String(item.mpBranch || '').trim(),
+      mpNodeBranch: String(item.mpNodeBranch || '').trim() || 'master',
+      sourceFile: '',
+      sourceSheet: 'manual',
+      updatedAt,
+    }))
+    .filter(item => item.tos && item.mpBranch)
+
+  if (!nextTemplates.length) return
+  mergeBranchTemplatesForPlatform(repoPlatform, baselineKey, nextTemplates, owner)
+}
+
+export function autoExtractBranchTemplatesForRepo(
+  repoId: string,
+  owner = currentOwner(),
+  options?: { remote?: string; baseline?: string },
+) {
+  const remote = String(options?.remote || 'origin')
+  const baseline = String(options?.baseline || 'tOS16.3')
+  const baselineToken = parseTosToken(baseline) || { full: baseline, key: baseline, major: 16, minor: 3, patch: 0 }
+
+  const repo = listModemPatchRepos(owner).find(item => item.repoId === repoId)
+  if (!repo) throw new Error('repo_not_found')
+  const platform = String(repo.platform || repo.label || '').trim()
+  const localPath = String(repo.localPath || '').trim()
+  if (!platform || !localPath) throw new Error('invalid_repo_profile')
+  if (!isGitRepoPath(localPath)) throw new Error('not_git_repo')
+
+  updateRepoBranchTemplateState(repoId, { status: 'running', error: '', updatedAt: nowIso() }, owner)
+
+  let errorMessage = ''
+  try {
+    const branches = listRemoteBranches(localPath, remote)
+    const tos15Templates = collectTos15TemplatesForRepo(repo, branches, owner)
+    const trunkPicked = pickTrunkBranch(branches)
+    const builtinTrunkPicked = trunkPicked.value ? { value: null, ambiguous: false } : pickBuiltinTrunkBranch(tos15Templates)
+    const trunkBranch = trunkPicked.value || builtinTrunkPicked.value?.trunkBranch || ''
+    const trunkNodeBranch = builtinTrunkPicked.value?.nodeBranch || tos15Templates[0]?.nodeBranch || 'master'
+    if (!trunkPicked.value) {
+      if (builtinTrunkPicked.value) {
+        // Some builtin tOS15 platforms, such as GEN98S(MP1MP2), do not use *_common.
+      } else {
+        throw new Error(
+          trunkPicked.ambiguous || builtinTrunkPicked.ambiguous
+            ? 'trunk_branch_ambiguous'
+            : 'trunk_branch_not_found',
+        )
+      }
+    }
+    const mpBranches = pickMpBranches(branches, baselineToken)
+    const updatedAt = nowIso()
+    if (!mpBranches.length && !tos15Templates.length) throw new Error('mp_branch_not_found')
+    const mpEntries: Array<{ tos: string; mpNodeBranch: string; mpBranch: string }> = []
+    const nextTemplates: BranchTemplate[] = mpBranches.map(item => {
+      const mpNode = pickMpNodeBranch(branches, item.token)
+      mpEntries.push({
+        tos: item.token.key,
+        mpNodeBranch: mpNode.value,
+        mpBranch: item.name,
+      })
+      return {
+        templateId: crypto.randomBytes(8).toString('hex'),
+        owner,
+        tos: item.token.key,
+        platform,
+        nodeBranch: 'master',
+        trunkBranch,
+        mpBranch: item.name,
+        mpNodeBranch: mpNode.value,
+        sourceFile: localPath,
+        sourceSheet: `auto:${remote}`,
+        updatedAt,
+      }
+    })
+
+    for (const item of tos15Templates) {
+      mpEntries.push({
+        tos: item.tos,
+        mpNodeBranch: item.mpNodeBranch || 'master',
+        mpBranch: item.mpBranch,
+      })
+    }
+
+    mergeBranchTemplatesForPlatform(platform, 'tOS15.1.2', nextTemplates.concat(tos15Templates), owner)
+    updateModemPatchRepo(repoId, {
+      branches: {
+        trunk: {
+          nodeBranch: trunkNodeBranch,
+          trunkBranch,
+        },
+        mp: Array.from(new Map(
+          mpEntries.map(item => [item.tos, item]),
+        ).values()).sort((left, right) => left.tos.localeCompare(right.tos)),
+      },
+    }, owner)
+    updateRepoBranchTemplateState(repoId, { status: 'success', error: '', updatedAt: nowIso() }, owner)
+    return { success: true as const, templates: nextTemplates.concat(tos15Templates) }
+  } catch (error) {
+    errorMessage = String((error as Error)?.message ?? error)
+    updateRepoBranchTemplateState(repoId, { status: 'failed', error: errorMessage.slice(0, 500), updatedAt: nowIso() }, owner)
+    return { success: false as const, error: errorMessage }
+  }
+}
+
+export function scheduleAutoExtractBranchTemplatesForRepo(repoId: string, owner = currentOwner()) {
+  updateRepoBranchTemplateState(repoId, { status: 'running', error: '', updatedAt: nowIso() }, owner)
+  setTimeout(() => {
+    try {
+      autoExtractBranchTemplatesForRepo(repoId, owner)
+    } catch (error) {
+      updateRepoBranchTemplateState(repoId, {
+        status: 'failed',
+        error: String((error as Error)?.message ?? error).slice(0, 500),
+        updatedAt: nowIso(),
+      }, owner)
+    }
+  }, 0)
 }
 
 export function scanModemPatchRepos(root: string, owner = currentOwner()): { root: string; items: ScannedRepoCandidate[]; warnings: string[] } {

@@ -53,6 +53,13 @@ export type RepoProfile = {
   defaultTargets?: string[]
   recentBranches?: string[]
   lastUsedAt?: string
+  branchTemplateStatus?: 'idle' | 'running' | 'success' | 'failed'
+  branchTemplateError?: string
+  branchTemplateUpdatedAt?: string
+  branches?: {
+    trunk?: { nodeBranch: string; trunkBranch: string }
+    mp?: Array<{ tos: string; mpNodeBranch: string; mpBranch: string }>
+  }
 }
 
 export type ScannedRepoCandidate = {
@@ -89,10 +96,26 @@ export type BranchRule = {
   updatedAt: string
 }
 
+export type BranchTemplate = {
+  templateId: string
+  owner: string
+  tos: string
+  platform: string
+  nodeBranch: string
+  trunkBranch: string
+  mpBranch: string
+  mpNodeBranch: string
+  sourceFile?: string
+  sourceSheet?: string
+  updatedAt: string
+}
+
 export type NoticeParseResult = {
   rawText: string
   operationType: ModemPatchOperationType
   platform?: string
+  tosVersion?: string
+  targetMode?: 'trunk' | 'mp'
   version?: string
   confidence: number
   candidates: { platforms: string[] }
@@ -104,6 +127,8 @@ export type RecommendationResult = {
   targetBranch?: string
   apLabel?: string
   ruleId?: string
+  branchSource?: 'template' | 'rule'
+  targetMode?: 'trunk' | 'mp'
   warnings: string[]
 }
 
@@ -143,6 +168,7 @@ export function updateRepoProfile(
     label: string
     localPath: string
     platform: string
+    branches?: RepoProfile['branches']
   },
 ): Promise<RepoProfile> {
   return tahpPut<RepoProfile>(`/api/tahp/modem-baseline/repos/${encodeURIComponent(repoId)}`, input)
@@ -150,6 +176,10 @@ export function updateRepoProfile(
 
 export function deleteRepoProfile(repoId: string): Promise<{ success: true }> {
   return tahpDelete<{ success: true }>(`/api/tahp/modem-baseline/repos/${encodeURIComponent(repoId)}`)
+}
+
+export function refreshRepoBranches(repoId: string): Promise<RepoProfile | null> {
+  return tahpPost<RepoProfile | null>(`/api/tahp/modem-baseline/repos/${encodeURIComponent(repoId)}/refresh-branches`, {})
 }
 
 export function scanRepoProfiles(root: string): Promise<{ root: string; items: ScannedRepoCandidate[]; warnings: string[] }> {
@@ -168,6 +198,17 @@ export function precheckModemBaseline(
 
 export function listModemPatchRules(): Promise<{ items: BranchRule[] }> {
   return tahpGet<{ items: BranchRule[] }>('/api/tahp/modem-baseline/rules')
+}
+
+export function listBranchTemplates(): Promise<{ items: BranchTemplate[] }> {
+  return tahpGet<{ items: BranchTemplate[] }>('/api/tahp/modem-baseline/branch-templates')
+}
+
+export function importBranchTemplates(filePath: string): Promise<{ sourcePath: string; items: BranchTemplate[] }> {
+  return tahpPost<{ sourcePath: string; items: BranchTemplate[] }>(
+    '/api/tahp/modem-baseline/branch-templates/import',
+    { filePath },
+  )
 }
 
 export function createModemPatchRule(input: Partial<BranchRule>): Promise<BranchRule> {
