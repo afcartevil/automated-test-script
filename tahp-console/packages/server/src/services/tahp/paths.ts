@@ -133,6 +133,10 @@ export const tahpPaths = {
   get skillsDir() {
     return join(deriveTahpProjectRoot(), 'skills', '.claude', 'skills')
   },
+  /** JIRA / modem 日志工作区：{工程根}/jira_workspace */
+  get jiraWorkspaceDir() {
+    return join(deriveTahpProjectRoot(), 'jira_workspace')
+  },
   selfCheckDir: join(__dirname, 'self-check'),
   flashToolDir: join(__dirname, 'self-check', 'flash_tool'),
 }

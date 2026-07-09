@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from 'fs'
 import { createServer } from 'net'
 import { dirname, isAbsolute, join, resolve } from 'path'
 import { logger } from '../../logger'
+import { tahpPaths } from '../../tahp/paths'
+import { getJiraWorkspaceRoot } from '../../tahp/jira-workspace'
 import { detectHermesHome, getHermesBin } from '../hermes-path'
 import { getBundledAgentRootForBridge } from '../bundled-agent'
 import { DEFAULT_AGENT_BRIDGE_ENDPOINT } from './client'
@@ -340,6 +342,8 @@ export class AgentBridgeManager {
       ...process.env,
       HERMES_AGENT_BRIDGE_ENDPOINT: this.endpoint,
       HERMES_HOME: hermesHome,
+      TAHP_PROJECT_ROOT: tahpPaths.projectRoot,
+      WORKSPACE_ROOT: getJiraWorkspaceRoot().replace(/\\/g, '/'),
       ...(agentRoot ? { HERMES_AGENT_ROOT: agentRoot } : {}),
     }
 

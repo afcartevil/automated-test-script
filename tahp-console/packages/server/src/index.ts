@@ -19,6 +19,7 @@ import { setChatRunServer } from './routes/hermes/chat-run'
 import { ChatRunSocket } from './services/hermes/run-chat'
 import { applyBundledAgentEnv } from './services/hermes/bundled-agent'
 import { formatTahpPathsForLog, hasTahpProject } from './services/tahp/paths'
+import { ensureJiraWorkspaceLayout } from './services/tahp/jira-workspace'
 import { startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { logger } from './services/logger'
@@ -117,6 +118,14 @@ export async function bootstrap() {
   } catch (err) {
     logger.warn(err, '[bootstrap] failed to inject bundled skills')
     console.warn('[bootstrap] failed to inject bundled skills:', err instanceof Error ? err.message : err)
+  }
+
+  try {
+    const workspaceRoot = ensureJiraWorkspaceLayout()
+    console.log(`[bootstrap] jira workspace: ${workspaceRoot}`)
+  } catch (err) {
+    logger.warn(err, '[bootstrap] failed to ensure jira workspace layout')
+    console.warn('[bootstrap] failed to ensure jira workspace:', err instanceof Error ? err.message : err)
   }
 
   let agentBridgeReady = false

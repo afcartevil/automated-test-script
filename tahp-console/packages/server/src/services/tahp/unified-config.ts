@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { logger } from '../logger'
 import { tahpPaths } from './paths'
+import { ensureJiraWorkspaceLayout, getJiraWorkspaceRoot } from './jira-workspace'
 import { writeJiraUserConfig } from './jira-user-config'
 import { saveGerritConfig } from './gerrit-credentials'
 
@@ -84,7 +85,8 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     label: '工作区路径',
     type: 'text',
     group: GROUP_MODEM_TOOLS,
-    placeholder: 'Modem 日志与分析工作区，建议本地 SSD',
+    placeholder: '默认：{工程根}/jira_workspace',
+    description: 'WORKSPACE_ROOT：JIRA 日志下载目录，固定为 {工程根}/jira_workspace（随 clone 路径自动解析）。',
   },
   {
     key: 'seven_zip_exe',
@@ -255,6 +257,10 @@ export function readUnifiedConfigForForm(): UnifiedConfigValues {
   const values: UnifiedConfigValues = {}
   for (const field of UNIFIED_CONFIG_FIELDS) {
     const saved = (stored[field.key] || '').trim()
+    if (field.key === 'workspace_root') {
+      values[field.key] = saved || getJiraWorkspaceRoot().replace(/\\/g, '/')
+      continue
+    }
     values[field.key] = saved || skillDefaults[field.key] || field.default || ''
   }
   return values
@@ -267,10 +273,17 @@ export function writeUnifiedConfig(input: UnifiedConfigValues): UnifiedConfigVal
     values[field.key] = typeof v === 'string' ? v.trim() : ''
   }
   values.__updated_at = new Date().toISOString()
+  const workspaceRoot = getJiraWorkspaceRoot()
+  values.workspace_root = workspaceRoot.replace(/\\/g, '/')
   writeFileSync(unifiedConfigPath(), JSON.stringify(values, null, 2), 'utf-8')
   void propagateToDerivedStores(values).catch((err) => {
     logger.warn({ err: (err as Error).message }, '[unified-config] 派生配置同步失败')
   })
+  try {
+    ensureJiraWorkspaceLayout({ workspaceRoot })
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, '[unified-config] jira workspace 同步失败')
+  }
   return values
 }
 
@@ -347,6 +360,7 @@ export function buildUnifiedConfigDirective(): string {
     '当某个 Skill 缺少凭据/路径等配置时，**必须先复用**「配置 → 一键配置表单」中已保存的值；',
     '仅当这些值为空或经验证无效时，才反馈给用户索要。',
     `- 表单落盘文件（含明文，可直接 Read）: \`${join(tahpPaths.projectRoot, '.tahp', 'unified-config.json')}\`（工程根下 \`.tahp/unified-config.json\`）`,
+    `- JIRA 日志工作区（WORKSPACE_ROOT）: \`${getJiraWorkspaceRoot().replace(/\\/g, '/')}\`；下载目录为 \`{WORKSPACE_ROOT}/<JIRA_KEY>/\``,
     '- 域账号/域密码在 Jira、Gerrit、OpenGrok 间通用。',
     '- 服务器地址为固定值（无需向用户索要）：'
       + `Jira \`${FIXED_SERVER_ADDRESSES.jira_base_url}\`、`

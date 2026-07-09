@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tahpPaths } from './paths'
+import { getJiraWorkspaceRoot } from './jira-workspace'
 import { getJiraConfig, type JiraConfig } from './jira'
 
 export interface JiraUserConfigRecord {
@@ -96,7 +97,11 @@ export function hasJiraBasicCredentials(cfg: JiraConfig): boolean {
 }
 
 export function applyJiraUserConfigToEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = { ...env, TAHP_PROJECT_ROOT: tahpPaths.projectRoot }
+  const out: NodeJS.ProcessEnv = {
+    ...env,
+    TAHP_PROJECT_ROOT: tahpPaths.projectRoot,
+    WORKSPACE_ROOT: getJiraWorkspaceRoot().replace(/\\/g, '/'),
+  }
   const cfg = resolveJiraConfig()
   if (cfg.baseUrl) out.JIRA_SERVER = cfg.baseUrl
   if (cfg.username) out.JIRA_USERNAME = cfg.username

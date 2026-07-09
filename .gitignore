@@ -17,6 +17,8 @@ reports/
 knowledge-base/.kb-data/
 skills/.claude/skills/test_skill/
 tahp-console/jira_workspace/
+jira_workspace/
+.tahp/unified-config.json
 # 知识库数据库持久化数据
 .knowledge_db/
 .chroma_db/

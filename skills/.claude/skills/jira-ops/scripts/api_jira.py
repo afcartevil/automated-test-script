@@ -727,11 +727,30 @@ def command_extract_logs(args: argparse.Namespace) -> Dict[str, Any]:
     return ok(outcome)
 
 
+def _resolve_workspace_root() -> Path:
+    """WORKSPACE_ROOT 或 {TAHP 工程根}/jira_workspace（不写死盘符）。"""
+    load_optional_env(_SKILL_ROOT)
+    raw = (os.environ.get("WORKSPACE_ROOT") or "").strip()
+    if raw:
+        p = Path(raw)
+        if not p.is_absolute():
+            project = _resolve_tahp_project_root()
+            base = project if project else _SKILL_ROOT
+            p = (base / p).resolve()
+        else:
+            p = p.resolve()
+        return p
+    project = _resolve_tahp_project_root()
+    if project:
+        return (project / "jira_workspace").resolve()
+    return (Path.cwd() / "jira_workspace").resolve()
+
+
 def _default_prepare_dir(issue_ref: str, output_dir: str) -> str:
     if output_dir and output_dir.strip():
         return output_dir.strip()
     issue_key = normalize_issue_key(issue_ref)
-    return str((Path.cwd() / "jira_workspace" / issue_key).resolve())
+    return str(_resolve_workspace_root() / issue_key)
 
 
 def command_prepare_logs(args: argparse.Namespace) -> Dict[str, Any]:
