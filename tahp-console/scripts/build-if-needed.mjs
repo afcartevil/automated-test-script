@@ -74,10 +74,15 @@ function computeFingerprint() {
 
 function runBuild() {
   const isWin = process.platform === 'win32'
+  const nodeOptions = [
+    process.env.NODE_OPTIONS?.trim(),
+    '--max-old-space-size=8192',
+  ].filter(Boolean).join(' ')
   const result = spawnSync(isWin ? 'npm.cmd' : 'npm', ['run', 'build'], {
     cwd: root,
     stdio: 'inherit',
     shell: isWin,
+    env: { ...process.env, NODE_OPTIONS: nodeOptions },
   })
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
