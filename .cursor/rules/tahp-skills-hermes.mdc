@@ -1,0 +1,27 @@
+---
+description: Hermes 业务 Skill 开发与维护规范
+globs:
+  - skills/.claude/skills/**
+alwaysApply: false
+---
+
+# 业务 Skill（`skills/.claude/skills/`）
+
+- 业务规则写在对应 `SKILL.md`，不在 Console 硬编码重复逻辑
+- Python/脚本通过环境变量读配置，**不假设** `cwd` 即工程根
+- 路径相关须读 `WORKSPACE_ROOT`、`TAHP_PROJECT_ROOT`（由 BFF 同步，见 `tahp-paths-config`）
+- 改 Skill 后说明：Hermes 注入目录、是否需重启 BFF、如何验证
+
+## 与 Cursor Skill 区分
+
+`.cursor/skills/` 仅供 **改 TAHP 代码** 时用，不会进入 Hermes 生产加载路径。
+
+## 默认边界
+
+- **不改** `hermes-agent-main/` 来适配 Skill；适配在 Skill 脚本或 Console BFF 完成
+- 不提交 Skill 下含密钥的 `.env`（仅 `.env.example` 可提交模板）
+
+## 验证
+
+- 在 Console 对应面板（智能诊断 / 适配调试）跑一条最小任务
+- 路径类改动：确认日志/报告落在 `{工程根}/jira_workspace/` 或 `reports/`，而非盘符根或 `%LOCALAPPDATA%` 误路径

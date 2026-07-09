@@ -6,7 +6,12 @@ TECNO AI Harness Platform (TAHP) — 传音 Android 底软集成部 AI 辅助开
 
 ## 首先阅读
 
-执行任何任务前，必须先阅读 [AGENTS.md](AGENTS.md) 了解项目导航。
+1. [AGENTS.md](AGENTS.md) — 项目导航与模块定位
+2. [.cursor/rules/](.cursor/rules/) — **Cursor 编码规范（强制）**，尤其：
+   - `00-change-control.mdc` — 变更范围与敏感链
+   - `tahp-verify-commit.mdc` — 验证与提交
+
+执行编码任务前须遵守上述规则；域规则按文件 glob 自动加载。
 
 ---
 
@@ -18,13 +23,16 @@ tahp-console (Vue + Koa BFF :8650)
     ├── Hermes Agent Bridge ── hermes-agent-main/
     ├── TaskStream (Socket.IO /tahp-run)
     ├── knowledge-base/ (BFF 自管 + BM25)
+    ├── jira_workspace/ (JIRA 日志工作区，工程根下)
     └── reports/
     │
     ▼
 skills/.claude/skills/  ← 业务规则与执行 Skill
 ```
 
-**生产路径**：智能诊断、AI 适配调试、知识库、报告均通过 Console BFF 直接驱动 Hermes Agent，不再经过 MCP stdio 桥。
+**生产路径**：智能诊断、AI 适配调试、知识库、报告、AI 自检均通过 Console BFF 驱动 Hermes Agent 或本地服务，不再经过 MCP stdio 桥。
+
+**Windows 交付**：`run_adapter.bat` / 托盘 / 状态脚本；运行时数据在 `~/.tahp-console/`。
 
 ---
 
@@ -32,7 +40,7 @@ skills/.claude/skills/  ← 业务规则与执行 Skill
 
 1. **Skill 优先**：业务规则写在 `skills/` 对应 SKILL.md 中
 2. **防幻觉**：所有代码产出必须有据可查，禁止编造
-3. **最小变更**：只修改与任务直接相关的代码
+3. **最小变更**：只修改与任务直接相关的代码（见 `00-change-control`）
 4. **Console 入口**：同事日常使用 `tahp-console`，而非 CLI MCP
 
 ### 安全红线
@@ -49,47 +57,48 @@ skills/.claude/skills/  ← 业务规则与执行 Skill
 cd tahp-console
 npm run setup
 npm test
+npm run build          # 改 TS/路由/构建链时必跑
 
 # Pre-commit（可选）
 powershell -File scripts/pre-commit-check.ps1
 ```
 
+Console 开发细则：[tahp-console/DEVELOPMENT.md](tahp-console/DEVELOPMENT.md)
+
 ---
 
-## tahp-console 可视化控制台
+## tahp-console
 
 ```bash
 cd tahp-console
 npm install
-npm run setup          # 检查 Python 3 + hermes-agent venv
-
 npm run dev            # client:5173, server:8650
 npm run build && npm run start
 ```
 
-环境变量（`.env` 或 shell export）：
+环境变量（`.env` 或 shell）：
 
-- `TAHP_PROJECT_ROOT` — TAHP 主仓目录，默认自动探测（含 `skills/.claude/skills` 或 `knowledge-base/`）
+- `TAHP_PROJECT_ROOT` — TAHP 主仓目录（须含 `tahp-console` 或 `hermes-agent-main` 等标记）
 - `TAHP_PYTHON` — Python 可执行路径
-- `PORT` — 端口，默认 8650
-- `AUTH_DISABLED=1` — 默认开启内网免鉴权
+- `PORT` — 默认 8650
+- `AUTH_DISABLED=1` — 内网免鉴权
 
-控制台面板：仪表盘 / 智能诊断 / AI 适配调试 / 知识库 / 报告 / Skills 库 / 对话
-
-### 如何新增 Skill
-
-在 `skills/.claude/skills/<skill-name>/` 下创建 `SKILL.md`，并在 Console Skills 库或 Agent 配置中引用。
+面板：仪表盘 / 智能诊断 / AI 适配调试 / 知识库 / 报告 / Skills 库 / 对话 / **AI 自检**
 
 ---
 
 ## 文件操作范围
 
-- 可操作: `skills/`, `knowledge-base/`, `tahp-console/`, `scripts/`, `docs/`, `reports/`
-- 禁止: `.git/`, `.env`, 无关第三方子模块的大范围改动
+详见 `00-change-control.mdc` 分区表。概要：
+
+- 可操作: `skills/`, `knowledge-base/`, `tahp-console/`, `scripts/`, `reports/`
+- 谨慎: 路径链文件（`paths.ts`, `jira-workspace.ts`, `unified-config.ts`）
+- 禁止: `.git/`, 凭据 `.env`, `hermes-agent-main/` 大范围功能开发, `knowledge-base/.kb-data/` 手改
 
 ---
 
 ## 输出格式
 
-- Bug 分析报告: 落盘 `reports/bug-analysis/*.json`
-- 适配 Agent 报告: 落盘 `reports/adapt-agent/` 与 `/tahp/reports` 浏览
+- Bug 分析报告: `reports/bug-analysis/*.json`
+- 适配 Agent 报告: `reports/adapt-agent/` 与 `/tahp/reports`
+- AI 自检报告: `reports/self-check/`

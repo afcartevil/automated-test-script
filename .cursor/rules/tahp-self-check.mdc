@@ -1,0 +1,40 @@
+---
+description: AI 自检模块开发 — 须配合 Cursor Skill 使用
+globs:
+  - tahp-console/packages/client/src/**/self-check/**
+  - tahp-console/packages/client/src/views/tahp/DeviceSelfCheckView.vue
+  - tahp-console/packages/client/src/composables/useDeviceSelfCheck.ts
+  - tahp-console/packages/server/src/services/tahp/device-self-check.ts
+  - tahp-console/packages/server/src/services/tahp/device-flash.ts
+  - tahp-console/packages/server/src/services/tahp/self-check/**
+  - tahp-console/packages/server/src/routes/tahp/device-self-check.ts
+alwaysApply: false
+---
+
+# AI 自检（`/tahp/self-check`）
+
+**必须先读** Cursor Skill（按场景）：
+
+- 界面/流程/刷机/报告：`.cursor/skills/device-self-check/SKILL.md`
+- 新增测试大类/用例：`.cursor/skills/self-check-test-integration/SKILL.md`
+
+## 硬性门禁
+
+未完成「能力清单」确认前，**禁止**改 `case_config`、Python 用例、前后端 `testType` 枚举。
+
+## 架构要点
+
+Vue → Koa BFF → Node 调度 → Python 用例（**不经** Hermes Agent）。
+
+核心文件：`useDeviceSelfCheck.ts`、`device-self-check.ts`、`self-check/python/run_case.py`。
+
+新增 `StandardTestType` 须同步 `PlanTestType`（AI 测试自规划）。
+
+## 验证
+
+```bash
+cd tahp-console
+npm test -- tests/server/device-self-check  # 相关用例
+npm run build
+# 手动冒烟：/#/tahp/self-check
+```

@@ -1,0 +1,45 @@
+---
+description: TAHP 验证、检查与提交/合并请求规范
+alwaysApply: true
+---
+
+# 验证与检查
+
+## 按改动范围选择命令
+
+| 改动范围 | 最低验证 |
+|----------|----------|
+| `tahp-console` TS/Vue/路由 | `cd tahp-console && npm test`（相关用例）+ `npm run build` |
+| 仅文档 / `.cursor/rules` | 无需 build；检查链接与路径有效 |
+| `skills/` 业务 Skill | Console 跑一条相关任务 + 确认输出路径 |
+| 路径/配置链 | 上述 + 检查 `projectRoot` / `jira_workspace` 落盘 |
+| `scripts/` 部署脚本 | 在目标环境手工冒烟（不默认改应用逻辑） |
+
+环境准备：`cd tahp-console && npm run setup`（首次或 Python/venv 变更后）。
+
+可选 pre-commit：`powershell -File scripts/pre-commit-check.ps1`（当前仅 `npm test`）。
+
+## Agent 完成编码前自检
+
+- [ ]  diff 仅含任务相关文件
+- [ ]  未提交密钥、`.env`、`.tahp/unified-config.json`
+- [ ]  `npm run build` 通过（若改了 tahp-console 代码）
+- [ ]  敏感链改动已写明重启与验证步骤
+
+# 提交规范
+
+- **仅当用户明确要求** 才执行 `git commit`；不要主动提交
+- 每个 commit 聚焦单一意图；不捆绑无关清理
+- 提交信息：简短说明「为什么」，例如 `fix jira workspace sync on startup`
+- 不 amend 已推送的 commit；hook 失败则修问题后**新 commit**
+
+# 合并请求（MR/PR）
+
+创建 MR 时使用仓库模板（`.gitlab/merge_request_templates/Default.md`），至少包含：
+
+- 变更摘要与原因
+- 实际修改文件列表
+- 是否触及路径/配置敏感链
+- 已运行的验证命令
+
+默认目标分支：`master`（以仓库当前主分支为准）。

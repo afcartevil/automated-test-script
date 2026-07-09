@@ -1,0 +1,43 @@
+---
+description: TAHP 变更范围与配置安全 — 所有编码任务必须遵守
+alwaysApply: true
+---
+
+# 变更控制（强制）
+
+## 开始前（先输出，再写代码）
+
+1. **任务边界**：本需求属于哪个功能域？（Console UI / BFF API / 路径配置 / Skill / AI 自检 / 脚本部署）
+2. **影响面清单**：预估将修改的文件（建议 ≤8 个；超出须说明理由）
+3. **敏感链检查**：是否触及路径/统一配置/Skill `.env`/Agent 注入？若是，须遵守 `tahp-paths-config` 规则
+
+## 编码中
+
+- **禁止**：顺手重构、批量格式化、改与需求无关的命名或注释
+- **禁止**：未读调用链就改 `paths.ts`、`unified-config.ts`、`jira-workspace.ts`、`agent-bridge`
+- **禁止**：同时改 `hermes-agent-main/` 与 TAHP 业务，除非任务明确要求
+- **禁止**：提交 `.env`、`.tahp/unified-config.json`、凭据、本机 `jira_workspace/` 数据
+
+## 两类 Skill 勿混淆
+
+| 目录 | 用途 |
+|------|------|
+| `skills/.claude/skills/` | Hermes **业务** Skill（生产执行） |
+| `.cursor/skills/` | Cursor **开发** Skill（改 Console/自检代码时用） |
+
+## 结束前（必须）
+
+- 列出**实际**修改文件 vs 预估，解释差异
+- 若动敏感链：写明配置权威源与重启/同步步骤
+- 按 `tahp-verify-commit` 规则执行验证
+
+## 文件操作分区
+
+| 区域 | 改动门槛 |
+|------|----------|
+| `tahp-console/packages/client` | `tahp-console-dev` 规则 + 相关测试 |
+| `tahp-console/packages/server` | 同上 + `npm run build` |
+| `skills/.claude/skills/` | `tahp-skills-hermes` 规则 |
+| `paths.ts` / `jira-workspace.ts` 等 | **强制** `tahp-paths-config` 清单 |
+| `hermes-agent-main/` | 默认禁止；仅明确指派时 |
+| `knowledge-base/.kb-data/` | 禁止手改索引 JSON |

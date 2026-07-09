@@ -1,0 +1,48 @@
+---
+description: TAHP 路径与配置联动 — 修改路径/工作区/统一配置前必读
+globs:
+  - tahp-console/packages/server/src/services/tahp/paths.ts
+  - tahp-console/packages/server/src/services/tahp/jira-workspace.ts
+  - tahp-console/packages/server/src/services/tahp/unified-config.ts
+  - tahp-console/packages/server/src/services/tahp/jira-user-config.ts
+  - tahp-console/packages/server/src/services/hermes/agent-bridge/**
+  - tahp-console/packages/server/src/index.ts
+  - tahp-console/scripts/lib/tahp-paths.mjs
+  - skills/.claude/skills/jira-ops/**
+  - skills/.claude/skills/modem-analysis-local/**
+alwaysApply: false
+---
+
+# 路径与配置权威源
+
+| 概念 | 权威实现 | 消费者 |
+|------|----------|--------|
+| 工程根 | `deriveTahpProjectRoot()` / `isValidTahpProjectRoot()` | BFF、Agent、报告落盘 |
+| JIRA 工作区 | `tahpPaths.jiraWorkspaceDir` = `{工程根}/jira_workspace` | jira-ops、modem-analysis |
+| WORKSPACE_ROOT | `ensureJiraWorkspaceLayout()` → Skill `.env` | Python `api_jira.py` 等 |
+| 用户表单配置 | `.tahp/unified-config.json` | 配置 UI、`unified-config.ts` 派生 |
+| Agent 环境 | `agent-bridge/manager.ts` 注入 `TAHP_PROJECT_ROOT`、`WORKSPACE_ROOT` | Hermes 子进程 |
+
+Skill 存在**双副本**：仓库 `skills/.claude/skills/` + `%LOCALAPPDATA%\hermes\skills/`（或 Hermes profile 目录）。
+
+## 改动检查清单
+
+- [ ] 只改权威源，不在多处硬编码路径
+- [ ] `ensureJiraWorkspaceLayout` / `skillEnvTargets` 覆盖的 `.env` 已考虑
+- [ ] `agent-bridge` 环境变量与 `paths.ts` 一致
+- [ ] 未将 `projectRoot` 解析到盘符根（如 `E:\`）
+- [ ] 补充或更新 `tahp-paths.test.ts` / `jira-workspace.test.ts`
+
+## 禁止
+
+- Skill Python 用 `Path.cwd() / "jira_workspace"` 而不读 `WORKSPACE_ROOT`
+- 业务代码写死 `C:\Users\...\hermes\skills`
+- 修改 `.gitignore` 误忽略源码（如 `jira-workspace.ts`）
+
+## 排障（配置异常时按序查）
+
+1. 服务启动日志 `formatTahpPathsForLog()`
+2. `tahp-console/.env` 的 `TAHP_PROJECT_ROOT`
+3. `{工程根}/.tahp/unified-config.json` 的 `workspace_root`
+4. `%LOCALAPPDATA%\hermes\skills\jira-ops\.env` 的 `WORKSPACE_ROOT`
+5. 重启 BFF 后重跑一条 JIRA 任务，确认落盘 `{工程根}/jira_workspace/<KEY>/`

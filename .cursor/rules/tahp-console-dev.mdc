@@ -1,0 +1,44 @@
+---
+description: tahp-console 前后端开发规范（Vue + Koa BFF）
+globs:
+  - tahp-console/**
+alwaysApply: false
+---
+
+# tahp-console 开发
+
+完整细则见 [tahp-console/DEVELOPMENT.md](tahp-console/DEVELOPMENT.md)。
+
+## 架构
+
+- 前端：`packages/client/src`（Vue 3 Composition API + Pinia + Naive UI）
+- 后端：`packages/server/src`（路由薄、逻辑在 services）
+- TAHP 业务：`services/tahp/`；Hermes 桥：`services/hermes/`
+- 生产路径：**Console BFF → Hermes Agent Bridge → skills/**
+
+## 编码
+
+- 沿用本地既有模式，不做无关抽象
+- 前后端**成对**改：路由 → controller/service → client API → view/locale
+- 新用户可见文案须同步各 locale 文件
+- 组件样式默认 `scoped` SCSS；不引入新 UI 库
+- Server 用 `execFile`/`spawn` 参数数组，避免 shell 字符串拼接
+- Web UI 状态用 `config.appHome`；Hermes 状态用 profile helpers，二者勿混
+
+## 功能域 → 额外规则
+
+| 功能 | 须加载 |
+|------|--------|
+| AI 自检 `/tahp/self-check` | `tahp-self-check` + `.cursor/skills/device-self-check/` |
+| 配置 UI / 统一配置 | `tahp-paths-config` |
+| 新测试大类接入 | `.cursor/skills/self-check-test-integration/` |
+
+## 验证（改动本目录后）
+
+```bash
+cd tahp-console
+npm test                    # 至少跑相关用例
+npm run build               # 涉及 TS/路由/构建链时必跑
+# 广域改动：
+npm run test:coverage && npm run test:e2e
+```
