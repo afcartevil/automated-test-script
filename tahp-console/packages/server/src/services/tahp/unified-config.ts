@@ -30,14 +30,14 @@ export interface UnifiedConfigField {
   default?: string
 }
 
-const GROUP_DOMAIN = '域账号（Jira / Gerrit / OpenGrok 共用）'
-const GROUP_FEISHU = '飞书 OpenAPI（可选，用于日志下载）'
-const GROUP_MODEM_TOOLS = 'Modem工具配置（可选）'
+const GROUP_DOMAIN = '域账号'
+const GROUP_FEISHU = '飞书 OpenAPI（可选）'
+const GROUP_MODEM_TOOLS = 'Modem 工具（可选）'
 
 /** 分组级配置指引（前端一键配置表单展示） */
 export const UNIFIED_CONFIG_GROUP_GUIDES: Record<string, { label: string; url: string }> = {
   [GROUP_FEISHU]: {
-    label: '如何获取 App ID 与 App Secret',
+    label: '获取 App ID / Secret 指引',
     url: 'https://transsioner.feishu.cn/wiki/Hj8ywWYbfiabCqkniEhcCXCynkg',
   },
 }
@@ -54,8 +54,7 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     label: '域账号',
     type: 'text',
     group: GROUP_DOMAIN,
-    placeholder: '如 zhangsan',
-    description: 'Jira、Gerrit、OpenGrok 共用的公司域账号。',
+    placeholder: '公司域账号，Jira / Gerrit / OpenGrok 共用',
     shared: true,
   },
   {
@@ -64,56 +63,49 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     type: 'password',
     group: GROUP_DOMAIN,
     placeholder: '域账号密码',
-    description: 'Jira、Gerrit、OpenGrok 共用的域账号密码。',
     shared: true,
   },
   {
     key: 'feishu_app_id',
-    label: '飞书 App ID',
+    label: 'App ID',
     type: 'text',
     group: GROUP_FEISHU,
     placeholder: 'cli_xxx',
-    description: 'FEISHU_APP_ID：飞书文件分享下载用。',
   },
   {
     key: 'feishu_app_secret',
-    label: '飞书 App Secret',
+    label: 'App Secret',
     type: 'password',
     group: GROUP_FEISHU,
-    placeholder: 'App Secret',
-    description: 'FEISHU_APP_SECRET。',
+    placeholder: '飞书应用密钥',
   },
   {
     key: 'workspace_root',
-    label: 'Modem 工作区路径',
+    label: '工作区路径',
     type: 'text',
     group: GROUP_MODEM_TOOLS,
-    placeholder: '如 D:\\modem_workspace',
-    description: 'WORKSPACE_ROOT：Modem 日志下载与分析本地工作区根目录（建议本地 SSD）。',
+    placeholder: 'Modem 日志与分析工作区，建议本地 SSD',
   },
   {
     key: 'seven_zip_exe',
-    label: '7-Zip 可执行路径',
+    label: '7-Zip',
     type: 'text',
     group: GROUP_MODEM_TOOLS,
-    placeholder: '如 C:\\Program Files\\7-Zip\\7z.exe',
-    description: 'SEVEN_ZIP_EXE：解压 Modem 日志包（.rar/.7z 加密/分卷）所需。',
+    placeholder: '7z.exe 完整路径',
   },
   {
     key: 'chrome_binary',
-    label: 'Chrome 可执行路径',
+    label: 'Chrome',
     type: 'text',
     group: GROUP_MODEM_TOOLS,
-    placeholder: '如 C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    description: 'CHROME_BINARY：日志下载兜底（Box 浏览器）用。',
+    placeholder: 'chrome.exe 完整路径',
   },
   {
     key: 'wireshark_path',
-    label: 'Wireshark 路径',
+    label: 'Wireshark',
     type: 'text',
     group: GROUP_MODEM_TOOLS,
-    placeholder: '如 C:\\Program Files\\Wireshark',
-    description: 'WIRESHARK_PATH：Modem pcap 转文本用。',
+    placeholder: 'Wireshark 安装目录',
   },
   {
     key: 'elt_home',
@@ -121,7 +113,6 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     type: 'text',
     group: GROUP_MODEM_TOOLS,
     placeholder: 'MTK ELT 工具目录',
-    description: 'ELT_HOME：MTK Modem trace 导出用。',
   },
   {
     key: 'nlt_home',
@@ -129,15 +120,13 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     type: 'text',
     group: GROUP_MODEM_TOOLS,
     placeholder: 'NLT 工具目录',
-    description: 'NLT_HOME：Modem trace 导出用。',
   },
   {
     key: 'quts_python_path',
-    label: 'QUTS Python 路径',
+    label: 'QUTS Python',
     type: 'text',
     group: GROUP_MODEM_TOOLS,
-    placeholder: '如 C:\\Program Files\\Qualcomm\\QUTS\\Support\\python',
-    description: 'QUTS_PYTHON_PATH：Qualcomm QUTS Modem log 导出用。',
+    placeholder: 'Qualcomm QUTS Python 目录',
   },
 ]
 

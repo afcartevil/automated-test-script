@@ -3,8 +3,6 @@ import { ref, computed, onMounted, reactive } from 'vue'
 import {
   NButton, NSpin, NInput, NSpace, NCollapse, NCollapseItem, useMessage,
 } from 'naive-ui'
-import EaCard from '@/components/layout/EaCard.vue'
-import EaPill from '@/components/layout/EaPill.vue'
 import {
   fetchUnifiedConfigForm,
   saveUnifiedConfigForm,
@@ -28,8 +26,8 @@ const groupGuides = ref<Record<string, { label: string; url: string }>>({})
 const formLoading = ref(false)
 const formSaving = ref(false)
 const saveFlash = ref(false)
+const activeNav = ref('')
 
-/** 可选分组默认折叠；有已填值时自动展开 */
 const expandedGroups = reactive<Record<string, boolean>>({})
 
 const formGroups = computed(() => {
@@ -61,6 +59,10 @@ function groupAnchor(name: string): string {
   return `ufg-${name.replace(/[^\w\u4e00-\u9fff]+/g, '-')}`
 }
 
+function groupShortName(name: string): string {
+  return name.replace(/（可选）/g, '').trim()
+}
+
 function isFieldSaved(key: string): boolean {
   return !!(savedValues.value[key] || '').trim()
 }
@@ -80,14 +82,12 @@ function setGroupExpanded(name: string, open: boolean) {
 }
 
 function fieldSpanClass(field: UnifiedConfigField): string {
-  const long = (field.description?.length ?? 0) > 48
-    || (field.label?.length ?? 0) > 24
-    || field.key.includes('path')
-    || field.key.includes('workspace')
-  return long ? 'form-field form-field--full' : 'form-field'
+  const isPath = field.key.includes('path') || field.key.includes('workspace') || field.key.includes('home')
+  return isPath ? 'form-field form-field--full' : 'form-field'
 }
 
 function scrollToGroup(name: string) {
+  activeNav.value = name
   expandedGroups[name] = true
   const el = document.getElementById(groupAnchor(name))
   el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -105,6 +105,9 @@ async function loadUnifiedForm() {
     formValues.value = { ...data.values }
     savedValues.value = { ...(data.saved_values ?? {}) }
     groupGuides.value = { ...(data.group_guides ?? {}) }
+    if (!activeNav.value && data.fields.length) {
+      activeNav.value = data.fields[0].group
+    }
     for (const g of formGroups.value) {
       if (g.optional && groupFilledCount(g.fields) > 0) {
         expandedGroups[g.name] = true
@@ -124,7 +127,7 @@ async function saveConfigForm() {
     await loadUnifiedForm()
     saveFlash.value = true
     setTimeout(() => { saveFlash.value = false }, 2000)
-    message.success('一键配置表单已保存')
+    message.success('已保存')
   } catch (err) {
     message.error((err as Error).message || '保存失败')
   } finally {
@@ -134,7 +137,7 @@ async function saveConfigForm() {
 
 function onStartSkillCheck() {
   if (!canStartSkillCheck.value) {
-    message.warning('请先在表单中填写并保存至少一项配置')
+    message.warning('请先填写并保存至少一项配置')
     return
   }
   emit('startBatch')
@@ -147,46 +150,49 @@ onMounted(() => {
 
 <template>
   <div class="unified-form">
-    <header class="form-intro">
-      <p class="form-intro__text">
-        汇总各 Skill 需填写的凭据与路径（已去重）。<strong>域账号 / 域密码</strong> 供 Jira、Gerrit、OpenGrok 共用；<strong>Modem工具配置</strong> 等分组可按需填写。
-      </p>
-      <div class="form-intro__meta">
-        <EaPill variant="info">已填写 {{ filledCount }} / {{ formFields.length }} 项</EaPill>
-        <EaPill v-if="canStartSkillCheck" variant="ok">可启动检查</EaPill>
-        <EaPill v-else variant="muted">保存后启用检查</EaPill>
+    <header class="form-toolbar">
+      <div class="form-toolbar__stat">
+        <span class="form-toolbar__count">{{ filledCount }}</span>
+        <span class="form-toolbar__sep">/</span>
+        <span class="form-toolbar__total">{{ formFields.length }}</span>
+        <span class="form-toolbar__label">已填写</span>
       </div>
+      <span
+        class="form-toolbar__status"
+        :class="canStartSkillCheck ? 'form-toolbar__status--ok' : ''"
+      >
+        {{ canStartSkillCheck ? '可启动检查' : '保存后启用检查' }}
+      </span>
     </header>
 
     <NSpin :show="formLoading">
       <div class="form-layout">
-        <nav v-if="formGroups.length" class="form-nav" aria-label="配置分组导航">
-          <div class="form-nav__title">分组</div>
+        <nav v-if="formGroups.length" class="form-nav" aria-label="配置分组">
           <button
             v-for="group in formGroups"
             :key="group.name"
             type="button"
             class="form-nav__item"
+            :class="{ 'form-nav__item--active': activeNav === group.name }"
             @click="scrollToGroup(group.name)"
           >
-            <span class="form-nav__label">{{ group.name.replace(/（可选[^）]*）/g, '').trim() }}</span>
-            <span class="form-nav__count">
-              {{ groupFilledCount(group.fields) }}/{{ group.fields.length }}
-            </span>
+            <span class="form-nav__label">{{ groupShortName(group.name) }}</span>
+            <span class="form-nav__count">{{ groupFilledCount(group.fields) }}/{{ group.fields.length }}</span>
           </button>
         </nav>
 
         <div class="form-sections">
-          <template v-for="group in formGroups" :key="group.name">
-            <!-- 必填 / 核心分组：始终展开卡片 -->
-            <EaCard
-              v-if="!group.optional"
-              :id="groupAnchor(group.name)"
-              class="form-section"
-            >
-              <div class="form-section__head">
-                <h3 class="form-section__title">{{ group.name }}</h3>
-                <EaPill variant="err">必填</EaPill>
+          <section
+            v-for="group in formGroups"
+            :id="groupAnchor(group.name)"
+            :key="group.name"
+            class="form-section"
+            :class="{ 'form-section--optional': group.optional }"
+          >
+            <template v-if="!group.optional">
+              <div class="form-section__bar">
+                <h3 class="form-section__title">{{ groupShortName(group.name) }}</h3>
+                <span class="form-section__tag form-section__tag--req">必填</span>
               </div>
               <div class="form-fields-grid">
                 <div
@@ -195,91 +201,85 @@ onMounted(() => {
                   :class="fieldSpanClass(field)"
                 >
                   <label class="form-field__label" :for="`uf-${field.key}`">
-                    {{ field.label }}
-                    <EaPill v-if="isFieldSaved(field.key)" variant="ok" class="form-field__badge">已保存</EaPill>
+                    <span>{{ field.label }}</span>
+                    <span
+                      v-if="isFieldSaved(field.key)"
+                      class="form-field__saved"
+                      title="已保存"
+                    />
                   </label>
-                  <p v-if="field.description" class="form-field__desc">{{ field.description }}</p>
                   <NInput
                     :id="`uf-${field.key}`"
                     v-model:value="formValues[field.key]"
+                    size="small"
                     :type="field.type === 'password' ? 'password' : 'text'"
                     :show-password-on="field.type === 'password' ? 'click' : undefined"
                     :placeholder="field.placeholder || ''"
                   />
                 </div>
               </div>
-            </EaCard>
+            </template>
 
-            <!-- 可选分组：折叠面板 -->
-            <div v-else :id="groupAnchor(group.name)" class="form-section form-section--collapse">
-              <NCollapse
-                :expanded-names="isGroupExpanded(group.name, group.fields, group.optional) ? [group.name] : []"
-                @update:expanded-names="(names: string[]) => setGroupExpanded(group.name, names.includes(group.name))"
-              >
-                <NCollapseItem :name="group.name">
-                  <template #header>
-                    <div class="collapse-header">
-                      <span class="form-section__title">{{ group.name }}</span>
-                      <EaPill variant="muted">可选</EaPill>
-                      <span class="collapse-header__count ea-muted">
-                        {{ groupFilledCount(group.fields) }}/{{ group.fields.length }}
-                      </span>
-                    </div>
-                  </template>
-                  <p v-if="groupGuide(group.name)" class="form-section__guide">
+            <NCollapse
+              v-else
+              :expanded-names="isGroupExpanded(group.name, group.fields, group.optional) ? [group.name] : []"
+              @update:expanded-names="(names: string[]) => setGroupExpanded(group.name, names.includes(group.name))"
+            >
+              <NCollapseItem :name="group.name">
+                <template #header>
+                  <div class="form-section__bar form-section__bar--collapse">
+                    <h3 class="form-section__title">{{ groupShortName(group.name) }}</h3>
                     <a
+                      v-if="groupGuide(group.name)"
+                      class="form-section__guide"
                       :href="groupGuide(group.name)!.url"
                       target="_blank"
                       rel="noopener noreferrer"
+                      @click.stop
                     >
                       {{ groupGuide(group.name)!.label }}
                     </a>
-                  </p>
-                  <div class="form-fields-grid">
-                    <div
-                      v-for="field in group.fields"
-                      :key="field.key"
-                      :class="fieldSpanClass(field)"
-                    >
-                      <label class="form-field__label" :for="`uf-${field.key}`">
-                        {{ field.label }}
-                        <EaPill v-if="isFieldSaved(field.key)" variant="ok" class="form-field__badge">已保存</EaPill>
-                      </label>
-                      <p v-if="field.description" class="form-field__desc">{{ field.description }}</p>
-                      <NInput
-                        :id="`uf-${field.key}`"
-                        v-model:value="formValues[field.key]"
-                        :type="field.type === 'password' ? 'password' : 'text'"
-                        :show-password-on="field.type === 'password' ? 'click' : undefined"
-                        :placeholder="field.placeholder || ''"
-                      />
-                    </div>
+                    <span class="form-section__tag">{{ groupFilledCount(group.fields) }}/{{ group.fields.length }}</span>
                   </div>
-                </NCollapseItem>
-              </NCollapse>
-            </div>
-          </template>
+                </template>
+                <div class="form-fields-grid">
+                  <div
+                    v-for="field in group.fields"
+                    :key="field.key"
+                    :class="fieldSpanClass(field)"
+                  >
+                    <label class="form-field__label" :for="`uf-${field.key}`">
+                      <span>{{ field.label }}</span>
+                      <span
+                        v-if="isFieldSaved(field.key)"
+                        class="form-field__saved"
+                        title="已保存"
+                      />
+                    </label>
+                    <NInput
+                      :id="`uf-${field.key}`"
+                      v-model:value="formValues[field.key]"
+                      size="small"
+                      :type="field.type === 'password' ? 'password' : 'text'"
+                      :show-password-on="field.type === 'password' ? 'click' : undefined"
+                      :placeholder="field.placeholder || ''"
+                    />
+                  </div>
+                </div>
+              </NCollapseItem>
+            </NCollapse>
+          </section>
         </div>
       </div>
     </NSpin>
 
     <footer class="form-footer" :class="{ 'form-footer--saved': saveFlash }">
-      <div class="form-footer__hint ea-muted">
-        <template v-if="canStartSkillCheck">
-          配置已保存，可启动 Agent 自动检查各 Skill。
-        </template>
-        <template v-else>
-          填写并保存至少一项后，「{{ SKILL_CONFIG_CHECK_BUTTON_LABEL }}」将变为可点击。
-        </template>
-      </div>
       <NSpace>
-        <NButton type="primary" size="medium" :loading="formSaving" @click="saveConfigForm">
+        <NButton type="primary" :loading="formSaving" @click="saveConfigForm">
           保存配置
         </NButton>
         <NButton
-          type="primary"
-          secondary
-          size="medium"
+          type="default"
           :disabled="!canStartSkillCheck"
           @click="onStartSkillCheck"
         >
@@ -294,61 +294,75 @@ onMounted(() => {
 .unified-form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding-bottom: 88px;
+  gap: 12px;
+  padding-bottom: 72px;
 }
 
-.form-intro {
+.form-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px 20px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line, var(--border));
 }
 
-.form-intro__text {
-  margin: 0;
-  flex: 1;
-  min-width: 240px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--text);
-}
-
-.form-intro__meta {
+.form-toolbar__stat {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  flex-shrink: 0;
+  align-items: baseline;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.form-toolbar__count {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.form-toolbar__sep,
+.form-toolbar__total {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.form-toolbar__label {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.form-toolbar__status {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+
+  &--ok {
+    color: var(--success, #18a058);
+  }
 }
 
 .form-layout {
   display: grid;
-  grid-template-columns: 200px 1fr;
-  gap: 20px;
+  grid-template-columns: 168px 1fr;
+  gap: 16px;
   align-items: start;
 }
 
 .form-nav {
   position: sticky;
   top: 8px;
-  padding: 12px;
-  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 10px;
   background: var(--surface);
   border: 1px solid var(--line, var(--border));
-}
-
-.form-nav__title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  margin-bottom: 8px;
 }
 
 .form-nav__item {
@@ -358,19 +372,23 @@ onMounted(() => {
   gap: 8px;
   width: 100%;
   padding: 8px 10px;
-  margin-bottom: 2px;
   border: none;
   border-radius: 8px;
-  background: none;
+  background: transparent;
   cursor: pointer;
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--muted);
   text-align: left;
   transition: background 0.15s, color 0.15s;
 
   &:hover {
+    background: var(--accent-soft);
+    color: var(--text);
+  }
+
+  &--active {
     background: var(--accent-soft);
     color: var(--accent);
   }
@@ -379,91 +397,107 @@ onMounted(() => {
 .form-nav__label {
   flex: 1;
   min-width: 0;
-  line-height: 1.35;
+  line-height: 1.3;
 }
 
 .form-nav__count {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  color: var(--muted);
   font-variant-numeric: tabular-nums;
+  opacity: 0.85;
 }
 
 .form-sections {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   min-width: 0;
 }
 
 .form-section {
   scroll-margin-top: 12px;
-}
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line, var(--border));
 
-.form-section__head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
-}
+  &--optional {
+    padding: 0;
+    border: none;
+    background: transparent;
 
-.form-section__title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1.35;
-}
+    :deep(.n-collapse) {
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--line, var(--border));
+      background: var(--surface);
+    }
 
-.form-section__guide {
-  margin: 0 0 14px;
-  font-size: 12.5px;
-  line-height: 1.45;
+    :deep(.n-collapse-item__header) {
+      padding: 12px 16px !important;
+    }
 
-  a {
-    color: var(--accent);
-    font-weight: 600;
-    text-decoration: none;
-
-    &:hover {
-      text-decoration: underline;
+    :deep(.n-collapse-item__content-inner) {
+      padding: 0 16px 14px !important;
     }
   }
 }
 
-.form-section--collapse {
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid var(--line, var(--border));
-  background: var(--surface);
-
-  :deep(.n-collapse-item__header) {
-    padding: 14px 16px !important;
-    font-weight: 600;
-  }
-
-  :deep(.n-collapse-item__content-inner) {
-    padding: 0 16px 16px !important;
-  }
-}
-
-.collapse-header {
+.form-section__bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex: 1;
+  gap: 8px;
+  margin-bottom: 12px;
   min-width: 0;
+
+  &--collapse {
+    margin-bottom: 0;
+    flex: 1;
+  }
 }
 
-.collapse-header__count {
+.form-section__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--head, var(--text));
+}
+
+.form-section__tag {
   margin-left: auto;
-  font-size: 12px;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+
+  &--req {
+    color: #c45656;
+    background: color-mix(in srgb, #c45656 12%, transparent);
+  }
+}
+
+.form-section__guide {
+  flex-shrink: 0;
+  font-size: 11px;
   font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }
 
 .form-fields-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px 20px;
+  gap: 10px 16px;
 }
 
 .form-field--full {
@@ -473,23 +507,19 @@ onMounted(() => {
 .form-field__label {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 4px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--head, var(--text));
 }
 
-.form-field__badge {
-  font-size: 10px;
-}
-
-.form-field__desc {
-  margin: 0 0 6px;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--muted);
+.form-field__saved {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success, #18a058);
+  flex-shrink: 0;
 }
 
 .form-footer {
@@ -497,29 +527,19 @@ onMounted(() => {
   bottom: 0;
   z-index: 10;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 20px;
-  margin: 4px -4px 0;
-  padding: 14px 18px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: blur(8px);
+  justify-content: flex-end;
+  margin-top: 4px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(10px);
   border: 1px solid var(--line, var(--border));
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.06);
-  transition: border-color 0.25s, box-shadow 0.25s;
+  box-shadow: 0 -2px 16px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.2s;
 
   &--saved {
     border-color: var(--success, #18a058);
-    box-shadow: 0 -4px 20px color-mix(in srgb, var(--success, #18a058) 18%, transparent);
   }
-}
-
-.form-footer__hint {
-  font-size: 12.5px;
-  line-height: 1.45;
-  max-width: 480px;
 }
 
 @media (max-width: 960px) {
@@ -529,22 +549,13 @@ onMounted(() => {
 
   .form-nav {
     position: static;
-    display: flex;
+    flex-direction: row;
     flex-wrap: wrap;
-    gap: 6px;
-    padding: 10px;
-  }
-
-  .form-nav__title {
-    width: 100%;
-    margin-bottom: 4px;
   }
 
   .form-nav__item {
-    width: auto;
     flex: 1 1 auto;
-    min-width: 140px;
-    margin-bottom: 0;
+    min-width: 120px;
   }
 }
 
@@ -554,8 +565,7 @@ onMounted(() => {
   }
 
   .form-footer {
-    flex-direction: column;
-    align-items: stretch;
+    justify-content: stretch;
 
     :deep(.n-space) {
       width: 100%;
