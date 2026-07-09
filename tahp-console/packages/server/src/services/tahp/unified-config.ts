@@ -34,6 +34,14 @@ const GROUP_DOMAIN = '域账号（Jira / Gerrit / OpenGrok 共用）'
 const GROUP_FEISHU = '飞书 OpenAPI（可选，用于日志下载）'
 const GROUP_MODEM_TOOLS = 'Modem工具配置（可选）'
 
+/** 分组级配置指引（前端一键配置表单展示） */
+export const UNIFIED_CONFIG_GROUP_GUIDES: Record<string, { label: string; url: string }> = {
+  [GROUP_FEISHU]: {
+    label: '如何获取 App ID 与 App Secret',
+    url: 'https://transsioner.feishu.cn/wiki/Hj8ywWYbfiabCqkniEhcCXCynkg',
+  },
+}
+
 /**
  * 一键配置表单字段（已按「配置清单中各 Skill 需用户配置项」去重）。
  * Jira / Gerrit / OpenGrok 服务器地址为固定值，不在此表单中配置（见 FIXED_SERVER_ADDRESSES）。
@@ -310,6 +318,7 @@ export interface UnifiedConfigPublic {
   /** 仅含 unified-config.json 中已落盘的值（不含 .env 预填默认） */
   saved_values: UnifiedConfigValues
   updated_at?: string
+  group_guides?: Record<string, { label: string; url: string }>
 }
 
 /** 返回给前端表单：字段 schema + 当前值（含默认值） */
@@ -325,6 +334,7 @@ export function getUnifiedConfigPublic(): UnifiedConfigPublic {
     values: readUnifiedConfigForForm(),
     saved_values: savedValues,
     updated_at: typeof (stored as any).__updated_at === 'string' ? (stored as any).__updated_at : undefined,
+    group_guides: UNIFIED_CONFIG_GROUP_GUIDES,
   }
 }
 

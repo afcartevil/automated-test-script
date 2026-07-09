@@ -2,8 +2,8 @@
  * TAHP 路径解析 — 集中处理 skills / knowledge-base / reports 等位置。
  *
  * 优先级:
- *   1. 环境变量 TAHP_PROJECT_ROOT
- *   2. tahp-console 上级目录（含 skills 或 knowledge-base）
+ *   1. 环境变量 TAHP_PROJECT_ROOT（须通过校验）
+ *   2. tahp-console 上级目录（含完整 TAHP 仓库标记）
  *   3. 自 cwd 向上探测
  */
 import { spawnSync } from 'child_process'
@@ -28,6 +28,19 @@ function isConsoleRoot(dir: string): boolean {
   )
 }
 
+/**
+ * 强校验：排除盘符根目录上残留的孤立 skills/ 目录（历史误解析产物）。
+ */
+export function isValidTahpProjectRoot(dir: string): boolean {
+  const root = resolve(dir)
+  if (isDriveRoot(root)) return false
+  if (!isTahpProjectRoot(root)) return false
+  if (existsSync(join(root, 'tahp-console', 'packages', 'server'))) return true
+  if (existsSync(join(root, 'hermes-agent-main', 'run_agent.py'))) return true
+  if (existsSync(join(root, 'skills', '.claude', 'skills', 'jira-ops', 'SKILL.md'))) return true
+  return false
+}
+
 /** 从当前模块位置推断 tahp-console 根目录（兼容 src / dist 打包） */
 function deriveConsoleRoot(): string {
   const candidates = [
@@ -42,29 +55,35 @@ function deriveConsoleRoot(): string {
   return candidates[0]
 }
 
-function deriveProjectRoot(): string {
+export function deriveTahpProjectRoot(): string {
   const fromEnv = process.env.TAHP_PROJECT_ROOT?.trim()
-  if (fromEnv) return resolve(fromEnv)
+  if (fromEnv) {
+    const resolved = resolve(fromEnv)
+    if (isValidTahpProjectRoot(resolved)) return resolved
+    console.warn(
+      `[tahp-paths] TAHP_PROJECT_ROOT 无效或缺少完整仓库标记，将自动探测: ${resolved}`,
+    )
+  }
 
   const consoleRoot = deriveConsoleRoot()
   const parentOfConsole = resolve(consoleRoot, '..')
-  if (isTahpProjectRoot(parentOfConsole)) return parentOfConsole
+  if (isValidTahpProjectRoot(parentOfConsole)) return parentOfConsole
 
   let dir = process.cwd()
   for (let i = 0; i < 10; i++) {
-    if (isTahpProjectRoot(dir)) return dir
+    if (isValidTahpProjectRoot(dir)) return resolve(dir)
     const up = resolve(dir, '..')
     if (up === dir || isDriveRoot(up)) break
     dir = up
   }
 
-  if (isTahpProjectRoot(parentOfConsole)) return parentOfConsole
-  if (!isDriveRoot(parentOfConsole)) return parentOfConsole
-
-  return consoleRoot
+  return parentOfConsole
 }
 
-const projectRoot = deriveProjectRoot()
+/** 每次调用重新解析（避免模块加载时 cwd/env 与运行时不一致） */
+export function getTahpProjectRoot(): string {
+  return deriveTahpProjectRoot()
+}
 
 function pythonWorks(cmd: string): boolean {
   const parts = cmd.trim().split(/\s+/).filter(Boolean)
@@ -98,12 +117,22 @@ function discoverPython(): string {
   return pythonWorks('python3') ? 'python3' : 'python'
 }
 
+const _python = discoverPython()
+
 export const tahpPaths = {
-  projectRoot,
-  python: discoverPython(),
-  knowledgeDir: join(projectRoot, 'knowledge-base'),
-  reportsDir: join(projectRoot, 'reports'),
-  skillsDir: join(projectRoot, 'skills', '.claude', 'skills'),
+  get projectRoot() {
+    return deriveTahpProjectRoot()
+  },
+  python: _python,
+  get knowledgeDir() {
+    return join(deriveTahpProjectRoot(), 'knowledge-base')
+  },
+  get reportsDir() {
+    return join(deriveTahpProjectRoot(), 'reports')
+  },
+  get skillsDir() {
+    return join(deriveTahpProjectRoot(), 'skills', '.claude', 'skills')
+  },
   selfCheckDir: join(__dirname, 'self-check'),
   flashToolDir: join(__dirname, 'self-check', 'flash_tool'),
 }
@@ -118,5 +147,10 @@ export function resolvePythonSpawn(python = tahpPaths.python): { command: string
 }
 
 export function hasTahpProject(): boolean {
-  return isTahpProjectRoot(tahpPaths.projectRoot)
+  return isValidTahpProjectRoot(tahpPaths.projectRoot)
+}
+
+export function formatTahpPathsForLog(): string {
+  const root = tahpPaths.projectRoot
+  return `projectRoot=${root}, skillsDir=${tahpPaths.skillsDir}, valid=${isValidTahpProjectRoot(root)}`
 }

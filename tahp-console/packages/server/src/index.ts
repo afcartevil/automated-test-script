@@ -18,6 +18,7 @@ import { registerRoutes } from './routes'
 import { setChatRunServer } from './routes/hermes/chat-run'
 import { ChatRunSocket } from './services/hermes/run-chat'
 import { applyBundledAgentEnv } from './services/hermes/bundled-agent'
+import { formatTahpPathsForLog, hasTahpProject } from './services/tahp/paths'
 import { startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { logger } from './services/logger'
@@ -92,6 +93,13 @@ export async function bootstrap() {
   }
 
   console.log(`hermes-web-ui v${APP_VERSION} starting...`)
+  console.log(`[bootstrap] ${formatTahpPathsForLog()}`)
+  if (!hasTahpProject()) {
+    console.warn(
+      '[bootstrap] TAHP 工程根校验失败，skills/配置/报告路径可能不正确。' +
+      '请在 tahp-console/.env 设置 TAHP_PROJECT_ROOT=<git clone 根目录> 后重启。',
+    )
+  }
   await mkdir(config.uploadDir, { recursive: true })
   await mkdir(config.dataDir, { recursive: true })
 

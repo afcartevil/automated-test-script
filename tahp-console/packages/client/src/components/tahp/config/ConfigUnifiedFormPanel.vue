@@ -24,6 +24,7 @@ const message = useMessage()
 const formFields = ref<UnifiedConfigField[]>([])
 const formValues = ref<Record<string, string>>({})
 const savedValues = ref<Record<string, string>>({})
+const groupGuides = ref<Record<string, { label: string; url: string }>>({})
 const formLoading = ref(false)
 const formSaving = ref(false)
 const saveFlash = ref(false)
@@ -92,6 +93,10 @@ function scrollToGroup(name: string) {
   el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+function groupGuide(name: string) {
+  return groupGuides.value[name]
+}
+
 async function loadUnifiedForm() {
   formLoading.value = true
   try {
@@ -99,6 +104,7 @@ async function loadUnifiedForm() {
     formFields.value = data.fields
     formValues.value = { ...data.values }
     savedValues.value = { ...(data.saved_values ?? {}) }
+    groupGuides.value = { ...(data.group_guides ?? {}) }
     for (const g of formGroups.value) {
       if (g.optional && groupFilledCount(g.fields) > 0) {
         expandedGroups[g.name] = true
@@ -220,6 +226,15 @@ onMounted(() => {
                       </span>
                     </div>
                   </template>
+                  <p v-if="groupGuide(group.name)" class="form-section__guide">
+                    <a
+                      :href="groupGuide(group.name)!.url"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {{ groupGuide(group.name)!.label }}
+                    </a>
+                  </p>
                   <div class="form-fields-grid">
                     <div
                       v-for="field in group.fields"
@@ -397,6 +412,22 @@ onMounted(() => {
   font-size: 14px;
   font-weight: 700;
   line-height: 1.35;
+}
+
+.form-section__guide {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  line-height: 1.45;
+
+  a {
+    color: var(--accent);
+    font-weight: 600;
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
 }
 
 .form-section--collapse {

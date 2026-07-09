@@ -5,11 +5,11 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { spawn } from 'child_process'
 import { platform } from 'os'
 import { join, resolve } from 'path'
-import { tahpPaths } from './paths'
+import { getTahpProjectRoot } from './paths'
 import { safeFileStore } from '../safe-file-store'
 
 function projectRoot(): string {
-  return process.env.TAHP_PROJECT_ROOT ? resolve(process.env.TAHP_PROJECT_ROOT) : tahpPaths.projectRoot
+  return getTahpProjectRoot()
 }
 
 function reportsDir(): string {

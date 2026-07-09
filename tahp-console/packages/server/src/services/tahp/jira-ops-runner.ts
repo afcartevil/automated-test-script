@@ -38,7 +38,10 @@ export function runJiraOpsAddComment(
   const root = jiraOpsRoot()
   const script = join(root, 'scripts', 'api_jira.py')
   if (!existsSync(script)) {
-    return { ok: false, error: `jira-ops 脚本不存在: ${script}` }
+    return {
+      ok: false,
+      error: `jira-ops 脚本不存在: ${script}（当前 TAHP 工程根: ${tahpPaths.projectRoot}。请确认 TAHP_PROJECT_ROOT 指向 git clone 根目录，并重启服务）`,
+    }
   }
 
   const env = applyJiraCfgToEnv(process.env, resolveJiraConfig(jiraCfg))

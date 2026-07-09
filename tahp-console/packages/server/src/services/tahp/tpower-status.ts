@@ -4,10 +4,10 @@
 import { spawn } from 'child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join, resolve } from 'path'
-import { tahpPaths } from './paths'
+import { getTahpProjectRoot } from './paths'
 
 function projectRoot(): string {
-  return process.env.TAHP_PROJECT_ROOT ? resolve(process.env.TAHP_PROJECT_ROOT) : tahpPaths.projectRoot
+  return getTahpProjectRoot()
 }
 
 export interface TPowerConfig {

@@ -83,6 +83,7 @@ export interface UnifiedConfigForm {
   values: Record<string, string>
   saved_values?: Record<string, string>
   updated_at?: string
+  group_guides?: Record<string, { label: string; url: string }>
 }
 
 export function fetchUnifiedConfigForm(): Promise<UnifiedConfigForm> {

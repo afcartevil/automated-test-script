@@ -4,6 +4,7 @@
  */
 import { existsSync, readFileSync } from 'fs'
 import { join, resolve } from 'path'
+import { getTahpProjectRoot, isValidTahpProjectRoot } from '../tahp/paths'
 
 const BUNDLED_DIR_NAMES = ['hermes-agent-main', 'hermes-agent'] as const
 
@@ -19,17 +20,14 @@ function deriveConsoleRoot(): string {
 }
 
 function deriveTahpProjectRoot(consoleRoot: string): string {
-  if (process.env.TAHP_PROJECT_ROOT?.trim()) {
-    return resolve(process.env.TAHP_PROJECT_ROOT.trim())
+  const fromEnv = process.env.TAHP_PROJECT_ROOT?.trim()
+  if (fromEnv) {
+    const resolved = resolve(fromEnv)
+    if (isValidTahpProjectRoot(resolved)) return resolved
   }
   const parent = resolve(consoleRoot, '..')
-  if (
-    existsSync(join(parent, 'skills', '.claude', 'skills')) ||
-    existsSync(join(parent, 'knowledge-base'))
-  ) {
-    return parent
-  }
-  return parent
+  if (isValidTahpProjectRoot(parent)) return parent
+  return getTahpProjectRoot()
 }
 
 export function getConsoleRoot(): string {

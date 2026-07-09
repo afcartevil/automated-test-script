@@ -20,13 +20,38 @@ function isTahpProjectRoot(dir) {
   )
 }
 
+function isDriveRoot(dir) {
+  return /^[A-Za-z]:[\\/]?$/.test(resolve(dir))
+}
+
+function isValidTahpProjectRoot(dir) {
+  const root = resolve(dir)
+  if (isDriveRoot(root)) return false
+  if (!isTahpProjectRoot(root)) return false
+  if (existsSync(join(root, 'tahp-console', 'packages', 'server'))) return true
+  if (existsSync(join(root, 'hermes-agent-main', 'run_agent.py'))) return true
+  if (existsSync(join(root, 'skills', '.claude', 'skills', 'jira-ops', 'SKILL.md'))) return true
+  return false
+}
+
 /** TAHP 主仓根（含 skills、knowledge-base、hermes-agent-main） */
 export function getTahpProjectRoot(consoleRoot = getConsoleRoot()) {
-  if (process.env.TAHP_PROJECT_ROOT?.trim()) {
-    return resolve(process.env.TAHP_PROJECT_ROOT.trim())
+  const fromEnv = process.env.TAHP_PROJECT_ROOT?.trim()
+  if (fromEnv) {
+    const resolved = resolve(fromEnv)
+    if (isValidTahpProjectRoot(resolved)) return resolved
   }
   const parent = resolve(consoleRoot, '..')
-  if (isTahpProjectRoot(parent)) return parent
+  if (isValidTahpProjectRoot(parent)) return parent
+
+  let dir = process.cwd()
+  for (let i = 0; i < 10; i++) {
+    if (isValidTahpProjectRoot(dir)) return resolve(dir)
+    const up = resolve(dir, '..')
+    if (up === dir || isDriveRoot(up)) break
+    dir = up
+  }
+
   return parent
 }
 

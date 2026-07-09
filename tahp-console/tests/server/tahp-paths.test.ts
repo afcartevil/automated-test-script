@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { existsSync } from 'fs'
 import { join, resolve } from 'path'
+import { isValidTahpProjectRoot } from '../../packages/server/src/services/tahp/paths'
 
 /**
  * 回归：dist/server/index.js 打包后 __dirname 为 dist/server，
- * 旧逻辑会把 projectRoot 误解析为盘符根目录（如 D:\）。
+ * 旧逻辑会把 projectRoot 误解析为盘符根目录（如 D:\ / E:\）。
  */
 describe('tahp paths (dist __dirname regression)', () => {
   it('dist/server __dirname should resolve to tahp repo root, not drive root', () => {
@@ -22,7 +23,15 @@ describe('tahp paths (dist __dirname regression)', () => {
     expect(isConsoleRoot(derivedConsole)).toBe(true)
 
     const projectRoot = resolve(derivedConsole, '..')
-    expect(existsSync(join(projectRoot, 'skills', '.claude', 'skills'))).toBe(true)
+    expect(isValidTahpProjectRoot(projectRoot)).toBe(true)
     expect(projectRoot).not.toMatch(/^[A-Za-z]:[\\/]?$/)
+  })
+
+  it('rejects drive root even when skills folder exists', () => {
+    const drive = `${process.platform === 'win32' ? 'Z:' : '/'}\\`
+    const fakeRoot = resolve(drive)
+    if (fakeRoot.match(/^[A-Za-z]:[\\/]?$/)) {
+      expect(isValidTahpProjectRoot(fakeRoot)).toBe(false)
+    }
   })
 })
