@@ -143,7 +143,7 @@ onMounted(() => {
   <div class="unified-form">
     <header class="form-intro">
       <p class="form-intro__text">
-        汇总各 Skill 需填写的凭据与路径（已去重）。<strong>域账号 / 域密码</strong> 供 Jira、Gerrit、OpenGrok 共用；其余分组可按需填写。
+        汇总各 Skill 需填写的凭据与路径（已去重）。<strong>域账号 / 域密码</strong> 供 Jira、Gerrit、OpenGrok 共用；<strong>Modem工具配置</strong> 等分组可按需填写。
       </p>
       <div class="form-intro__meta">
         <EaPill variant="info">已填写 {{ filledCount }} / {{ formFields.length }} 项</EaPill>
@@ -180,7 +180,7 @@ onMounted(() => {
             >
               <div class="form-section__head">
                 <h3 class="form-section__title">{{ group.name }}</h3>
-                <EaPill variant="warn">建议填写</EaPill>
+                <EaPill variant="err">必填</EaPill>
               </div>
               <div class="form-fields-grid">
                 <div

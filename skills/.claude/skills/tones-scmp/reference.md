@@ -1,23 +1,35 @@
 # TONES SCMP CLI Reference
 
-## 配置字段（scripts/config.yaml）
+## 鉴权（UAC 自动登录）
 
-见 `config.example.yaml`。Token 从浏览器 DevTools 获取。
+不再使用 `config.yaml` / 浏览器手工 token。
+
+| 项 | 说明 |
+|----|------|
+| 实现 | `tones_cli/uac_login.py`（账密 Base64 写死，同 sdd_test） |
+| 网关 | `https://pfgatewaysz.transsion.com:9199` |
+| 登录 | GET `.../crypto/rsaKeyPair` → RSA 加密密码 → POST `.../login/account` |
+| 缓存 | `scripts/.token_cache.json`（`p_auth` / `authorization` / `p_rtoken` / `p_appid`） |
+| CLI | `auth login` / `auth login --force` / `auth status` |
+| 刷新 | 业务请求遇 401/token 过期时 HTTP 客户端自动 `force_refresh` 并重试 1 次 |
+
+内置服务端点见 `tones_cli/config.py` 的 `SERVICES`（`tones-build-platform` / `tones-spd`）。
 
 ## 分区对照（内置）
 
-| partition | label | bid | project API | HAR |
-|-----------|-------|-----|-------------|-----|
-| `tr_product` | 项目定制软件 | 1234567892 | `queryProjectInfoByNameLike` | scmp根据项目名称模糊查询项目信息.har 等 |
-| `tr_region` | 区域定制软件 | 1234567894 | `queryProjectInfoTree` | scmp根据区域分区中项目信息名称模糊查询项目信息.har 等 |
-| `tr_carrier` | 运营商定制软件 | 1234567893 | `queryProjectInfoTree`（推导） | 无独立 HAR |
+| partition | label | bid | project API |
+|-----------|-------|-----|-------------|
+| `tr_product` | 项目定制软件 | 1234567892 | `queryProjectInfoByNameLike` |
+| `tr_region` | 区域定制软件 | 1234567894 | `queryProjectInfoTree` |
+| `tr_carrier` | 运营商定制软件 | 1234567893 | `queryProjectInfoTree`（推导） |
 
-CLI：`scmp partition list` 输出上表；`scmp partition groups` 调 API 原始列表。
+CLI：`scmp partition list` / `scmp partition groups`。
 
-## API 对照表
+## API 对照表（build-platform / SCMP）
 
 | CLI | Method | Path |
 |-----|--------|------|
+| `auth login` | POST (UAC gateway) | `/uac-auth-service/v2/api/uac-auth/login/account` |
 | `scmp apply list` | POST | `/attributeApply/queryAttributeApplyByPage` |
 | `scmp apply count` | POST | `/attributeApply/getAttributeApplyCountByStatus` |
 | `scmp info query` | POST | `/attributeInfo/queryAttributeInfoByPage` |
@@ -36,95 +48,48 @@ CLI：`scmp partition list` 输出上表；`scmp partition groups` 调 API 原�
 | `--name` | 模糊关键词 |
 | `--include-markets` | 仅树形分区：输出含 type=1 市场子节点 |
 
-树形分区返回扁平化 `data[]`，含 `isMarket`、`parentName`；`_meta.hint` 说明如何用 `name` 填 `--project-name`。
+## info detail / strategy
 
-## info detail 请求体
-
-| CLI 参数 | JSON 字段 | 说明 |
-|----------|-----------|------|
-| `--bid` | `bid` | 属性 bid；与 `--version` 同用 |
-| `--version` | `version` | 属性版本，如 `20251226.0001` |
-| `--attr-code` | — | 未提供 `--bid` 时，经 `info query` 解析 bid/version |
-| `--features-only` | — | 客户端裁剪，仅输出 `attributeFeatures` 相关字段 |
-
-HAR：`根据属性查询关联特性信息.har`
-
-## strategy list 请求体
-
-| CLI 参数 | JSON 字段 | 说明 |
-|----------|-----------|------|
-| `--partition` | → `partitionGroupBid` | 由内置 profile 映射 |
-| `--project-name` | `projectName` | 必填 |
-| `--page` / `--size` | `current` / `size` | 分页 |
-| `--strategy-type` | `strategyType` | 默认 0 |
-| `--status` | `status` | 默认 0 |
-| `--market` | `market` | 区域/运营商可选；未指定时 tr_region/tr_carrier 传 `null` |
-| `--strategy-code` | — | 客户端子串过滤 |
-
-## strategy detail
-
-| 参数 | 说明 |
-|------|------|
-| `--partition` | **必填** |
-| `--bid` / `--strategy-code` | 二选一 |
-| `--project-name` | 用 `--strategy-code` 解析 bid 时必填 |
-| `--market` | 解析 bid 时可选 |
-| `--attr-code` | 过滤 `attributeInfo` |
-| `--attrs-only` | 仅返回属性段 |
-
-## 串联示例
-
-**tr_product / KM9：**
-
-```text
-scmp project search --partition tr_product --name KM9
-scmp strategy list --partition tr_product --project-name "KM9_H357(Android 16)"
-scmp strategy detail --partition tr_product --bid sid_... --attr-code <code> --attrs-only
-```
-
-**tr_region / X6886：**
-
-```text
-scmp project search --partition tr_region --name X6886
-scmp strategy list --partition tr_region --project-name "X6886_H8921(Android 16)"
-scmp strategy detail --partition tr_region --bid sid_2059534620843585536 --attrs-only
-```
-
-**tr_carrier：** 同上，换 `--partition tr_carrier`。
+同此前 HAR 约定：`info detail` 可用 `--bid`+`--version` 或 `--attr-code`；`strategy list/detail` 必须 `--partition`。
 
 ## SPD 服务（tones-spd）
 
-配置 `services.tones-spd`：`base_url` + `path_prefix: /tones-spd`，`auth_profile` 与 build-platform 相同。
-
-| CLI | Method | Path |
-|-----|--------|------|
-| `scmp spd resolve` | POST (链式) | build-platform `queryProjectInfoByNameLike` + spd `getProjectInfoDetail` + `queryProductSpecificationList` |
+| CLI | Method | Path / 逻辑 |
+|-----|--------|-------------|
+| `scmp spd resolve` | 链式 | build-platform 项目搜索 + `getProjectInfoDetail` + `queryProductSpecificationList` |
+| `scmp spd project list` | POST | `/spd-projectInfo/getProjectInfoList` |
 | `scmp spd project detail` | POST | `/spd-projectInfo/getProjectInfoDetail` |
+| `scmp spd candidates` | 客户端 | `getProjectInfoList` + 名称匹配排序（sdd_test） |
 | `scmp spd spec list` | POST | `/productSpecificationList/queryProductSpecificationList` |
 | `scmp spd config list` | POST | `/productSpecificationList/queryProductConfigList` |
 | `scmp spd feature list` | POST | `/productSpecificationList/queryFeatureConfigList` |
+| `scmp spd google list` | POST | `/productSpecificationList/queryGoogleProgramList` |
+| `scmp spd market-support` | 链式 | feature(+google) → `{code:{market:"0"|"1"}}` |
+| `scmp spd one-step` | 链式 | candidates → tos 规格 → 合并特性 → 市场支持表 |
 
-### spd spec list 请求体
+### candidates / one-step 匹配优先级
 
-| CLI 参数 | JSON 字段 |
-|----------|-----------|
-| `--project-bid` / `--name` | `projectBid`（name 经 build-platform 解析） |
-| `--tos-version`（可重复） | `tosVersionList` |
+1. 全名精确匹配  
+2. 去掉括号后缀精确匹配  
+3. base name + token 子集  
+同名中：普通优先；含 `ANDROID` 次之；含 `SUNMAO` 最低。
+
+### market 支持值规则
+
+`marketInfoList[].value` 含「不参加」或「不支持」→ `"0"`，否则 → `"1"`。
 
 ### spd feature list 请求体
 
 | CLI 参数 | JSON 字段 |
 |----------|-----------|
-| `--spec-bid` | `bid`（产品规格清单 sid） |
+| `--spec-bid` | `bid` |
 | `--page` / `--size` | `current` / `size` |
-| `--my-related true/false` | `myRelated` | 默认 `false`（全量清单）；`true` 仅与我相关 |
+| `--my-related true/false` | `myRelated` |
 | `--config-status true/false` | `configStatus` |
 | `--build-config-status true/false` | `buildConfigStatus` |
 | `--feature-code` | `lv4Code` |
 | `--feature-name` | `lv4Name` |
-| `--feature-owner` | `featureOwner` |
-| `--feature-se` | `featureSe` |
-| `--config-owner` | `configOwner` |
+| `--feature-owner` / `--feature-se` / `--config-owner` | 对应字段 |
 | `--self-check-status` | `selfCheckStatus` |
 
 HAR：`scmp根据项目信息查询配置清单以及特性清单.har`

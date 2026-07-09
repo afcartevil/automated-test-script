@@ -1,15 +1,13 @@
 ---
 name: transsion-sunmao40-customization-features-adapt
 description: >-
-  Customization features adapt：只指导「客制化特性」如何适配。柱 3 **默认在对话里口述**（见 RULE-0「柱 3 口述输入」）；可选参考 **`pillar3-customization-input.md`**（表格挤、不必强填）。特性键 **`RULE-1`～`RULE-4` 与 `SM40-01`～`SM40-33` 均为客制化**。执行者把口述整理成「要做 / 不做 + 参数」后再落盘；分流在 mtk-adapt-template-router。
+  Customization features adapt：只指导「客制化特性」如何适配。柱 3 **默认在对话里口述**（见 RULE-0「柱 3 口述输入」）；可选参考 **`pillar3-customization-input.md`**（表格挤、不必强填）。特性键 **`RULE-1`～`RULE-4` 与 `SM40-01`～`SM40-33` 均为客制化**。执行者把口述整理成「要做 / 不做 + 参数」后再落盘；柱 3 分流在 **`mtk-adapt-pillar3-router`**（总编排见 **`mtk-adapt-template-router`**）。
 disable-model-invocation: true
-funcType: "AI自动化适配"
-category: "驱动"
 ---
 
 # Transsion 榫卯 4.0 客制化（合并版）
 
-**Customization features adapt（客制化特性适配）**：本 skill **只**收「怎么做适配」的规则与清单。`SM40-*` 对齐 **榫卯 4.0 飞书**章节号；`RULE-*` 多为 **合并前柱 3 模板 skill**（及从 basic-charging 摘录的客制化块）沿用下来的 **稳定特性键**，便于与 **`mtk-adapt-template-router`** 分流话术一一对应。**二者都是客制化**，没有「RULE 不算特性」的语义；区别见 **RULE-0「为何特性键里既有 RULE- 又有 SM40-」**。**柱 3 执行范围**以 **对话里用户口述的清单** 为准（可选对照 **`pillar3-customization-input.md`**）；**不负责**分流判定——那一步在 **`mtk-adapt-template-router`**。
+**Customization features adapt（客制化特性适配）**：本 skill **只**收「怎么做适配」的规则与清单。`SM40-*` 对齐 **榫卯 4.0 飞书**章节号；`RULE-*` 多为 **合并前柱 3 模板 skill**（及从 basic-charging 摘录的客制化块）沿用下来的 **稳定特性键**，便于与 **`mtk-adapt-pillar3-router`** 分流话术一一对应。**二者都是客制化**，没有「RULE 不算特性」的语义；区别见 **RULE-0「为何特性键里既有 RULE- 又有 SM40-」**。**柱 3 执行范围**以 **对话里用户口述的清单** 为准（可选对照 **`pillar3-customization-input.md`**）；**不负责**分流判定——那一步在 **`mtk-adapt-pillar3-router`**。
 
 > 飞书总来源：《[MTK]榫卯4.0 客制化原理以及验证方法》（SM40 各节标注原章节号）。目录名 `transsion-sunmao40-customization-features-adapt` 体现 **Customization features adapt**。
 
@@ -91,11 +89,39 @@ category: "驱动"
 
 ---
 
-## RULE-0 — 与 `mtk-adapt-template-router` 的分工
+## RULE-0 — 与柱级 router 的分工
 
-- **分流**（一级：器件 / 基本充电能力参数 / 客制化特性；二级：KPOC、工模、其它客制化等）**只**在 **`mtk-adapt-template-router`** 及其指向的 **柱 1 / 柱 2** skill 中维护；本文件 **不**重复三柱顺序、最小输入契约、输出契约、强制 Read 表等。
+- **柱 3 分流**（二级：KPOC、工模、其它客制化等）**只**在 **`mtk-adapt-pillar3-router`** 中维护；本文件 **不**重复最小输入契约、输出契约等。
+- **三柱顺序与输入包**在 **`mtk-adapt-template-router`**；柱 1 / 柱 2 分流分别在 **`mtk-adapt-pillar1-router`** / **`mtk-adapt-pillar2-router`**。
 - 当 router 已判定进入 **客制化特性** 且执行者需落盘时：**`Read` 本文件**，按 **用户口述中明确「要做」** 的 **RULE-1～4 / SM40-01～33** 各节执行（**均为客制化**；键名差异见下 **「为何特性键里既有 RULE- 又有 SM40-」**）。若用户同时提供了 **`pillar3-customization-input.md`**，**口述优先**；二者冲突时 **以对话为准** 并反问确认。
 - **基本充电能力参数**（非「特性」）仍以 **`mtk-adapt-template-basic-charging-capability`** 全文为准；其中 **仅「客制化块」注释保留规则**摘录为本文 **RULE-4**，避免与整份 basic 能力模板混淆。
+
+### 三柱入口契约（柱 3）
+
+本 skill 是 **`mtk-adapt-pillar3-router`** 柱 3 的下游正文。进入本 skill 前，应经总编排 router 调度，且已有 `Adaptation Input Packet` 的 `Pillar 3 Customization Inputs`，其中 `requested_features` 是唯一执行范围。
+
+### 输入
+
+- `requested_features`：用户明确说要做的 RULE / SM40 项
+- `explicitly_not_required`：用户明确说不做或无工作量的项
+- `pending_questions`：缺少参数、GPIO、宏、资源名、路径等需要反问的项
+- 柱 1 / 柱 2 handoff：可供客制化引用的器件事实、参数落点、DWS/LK/PL 证据
+
+### 输出
+
+按 `Pillar Handoff Output` 输出：
+- `pillar: 3`
+- `downstream_skill: transsion-sunmao40-customization-features-adapt`
+- `Changes To Apply` 中只列 `requested_features` 对应的文件、节点、宏、资源或属性
+- `source` 标注用户口述/飞书 SM40/项目输入表/历史项目
+- `review_tag` 标注需产品、硬件、BA 或实机确认的项
+
+### 强约束
+
+- 未出现在 `requested_features` 中的 RULE / SM40：只在收口提示，不实施。
+- `pillar3_customization_candidate` 只是 Inventory 候选，不等于用户已确认要做。
+- RULE-2 与 SM40-16 都指 KPOC；若两个都声明要做，只落地一次并提示二者合并。
+- 信息不足时先输出 `status: blocked` 与 `pending_questions`，不得猜参数。
 
 ### 柱 3 口述输入（默认）
 
@@ -117,13 +143,13 @@ category: "驱动"
 
 - **没有两套语义**：凡出现在 **章节目录** 与全量表中的 **`RULE-1`～`RULE-4`、`SM40-01`～`SM40-33`**，在柱 3 里 **一律视为客制化特性**；**不存在**「带 `RULE` 前缀就不算榫卯客制化」的规则。
 - **`SM40-xx` 从哪来**：对齐飞书《[MTK]榫卯4.0…》**章节编号**，方便产品 / SCM 把飞书清单逐条映射到表的 **特性键**。
-- **`RULE-1`～`RULE-4` 从哪来**：合并本 skill 之前，**`mtk-adapt-template-router`** 已用 **RULE-2（KPOC）**、**RULE-3（工模）**、**RULE-1（其它占位）**、以及从 **basic-charging** 抽出的 **客制化注释块（RULE-4）** 指向独立模板 skill；合并后 **保留原特性键字符串**，避免「router 写 RULE-2、表里只有 SM40-16」时执行者对不上行。**不是**「RULE = 非客制化」——**RULE-2/3/4 同样是客制化**，只是历史键名未整体改成 `SM40-xx`。
+- **`RULE-1`～`RULE-4` 从哪来**：合并本 skill 之前，**`mtk-adapt-pillar3-router`** 已用 **RULE-2（KPOC）**、**RULE-3（工模）**、**RULE-1（其它占位）**、以及从 **basic-charging** 抽出的 **客制化注释块（RULE-4）** 指向独立模板 skill；合并后 **保留原特性键字符串**，避免「router 写 RULE-2、表里只有 SM40-16」时执行者对不上行。**不是**「RULE = 非客制化」——**RULE-2/3/4 同样是客制化**，只是历史键名未整体改成 `SM40-xx`。
 - **「解析」指什么**：本流程 **没有**「只认 `SM40-`」的机器解析；执行者以 **用户口述或可选输入表中的特性键字符串** 与本文 **`## RULE-x` / `## SM40-xx` 标题逐字匹配** 跳转即可。**会出问题的情况**只有：拼写错误、多空格、或自创键名却未走 **RULE-1** 占位——与 `RULE` / `SM40` 前缀无关。
 - **`RULE-2` 与 `SM40-16`（KPOC）**：正文交叉引用、**宏与资源纪律同一套**。口述里 **只承诺一个「要做」**（优先 **SM40-16** 与飞书一致；说 **RULE-2** 也行）。两个都说要做则 **改码只落地一次 KPOC**，并提醒用户二选一。
 
 ### 可选：`pillar3-customization-input.md`
 
-- **约定路径**：`d:\Users\guansen.wang\.cursor\skills\pillar3-customization-input.md`（可拷贝到项目侧；若实际路径不同，任务内须显式声明 **`Read` 路径**）。
+- **约定路径**：[pillar3-customization-input.md](pillar3-customization-input.md)（可拷贝到项目侧；若实际路径不同，任务内须显式声明 **`Read` 路径**）。
 - **用途**：表格里 **示例列较密**，**不勉强阅读或填写**；若仍想用表自检，可只看 **特性键** 与 **是否需要支持**，**参数** 列可留空改在对话里口述。
 - **不再使用**：`客制化特性支持情况*.csv` / `*.xls`、以及已废弃的 **`pillar3-customization-input.yaml`**。
 
@@ -167,8 +193,8 @@ category: "驱动"
 | **SM40-24** | `battery_prop.dtsi` `tran_Q_diff` 等；`tc_pe50` `support_multi_bat_parameter` 与 `bat0_*`/`bat3_*` 表 |
 | **SM40-25** | `support_enhance_mode`；`pid_chg` `target_temp_array_enhance` 与常规表 |
 | **SM40-26** | 不应做；不做且无工作量 → 注明 **「此项特性无适配工作量」** |
-| **SM40-27** | `ro.tr_charging.animation_wireless_power=…`；`*.mk` 片段或「无 dtsi」 |
-| **SM40-28** | `ro.tr_battery.wireless_reverse_charge.support=…` |
+| **SM40-27** | 口述「支持」即可；**柱 3 无底软工作量**，**不**补 `ro.tr_charging.animation_wireless_power`（CMO/产品侧） |
+| **SM40-28** | 口述「支持」即可；**柱 3 无底软工作量**，**不**补 `ro.tr_battery.wireless_reverse_charge.support`（CMO/产品侧） |
 | **SM40-29** | `ro.tr_charging.animation_wire_power=…` |
 | **SM40-30** | `ro.tr_charging.animation.support=…` |
 | **SM40-31** | `charger_voltage_ovp=` 四项 µV 或 `dtsi: charger_voltage_ovp = <…>;` |
@@ -378,7 +404,7 @@ category: "驱动"
 
 ### 关联
 
-`mtk-adapt-template-router`（柱3）、`mtk-adapt-template-basic-charging-capability`。
+`mtk-adapt-pillar3-router`（柱3）、`mtk-adapt-template-basic-charging-capability`。
 
 ---
 
@@ -834,11 +860,15 @@ KPOC 显示关机安全充电动画与品牌 LOGO。
 
 > 飞书章节「二十六」。文档：**底软无工作量**。
 
-### 底软客制化
+### 柱 3 适配纪律
+
+- **无底软 dtsi / kernel / KO 改动**；用户口述「支持」时，执行者 **停止柱 3 改码**，说明 **「此项特性无适配工作量」** 即可。
+- **不**在柱 3 任务中补写 `ro.tr_charging.animation_wireless_power` 或检索 CMO / `*.mk` 注入链；该属性由 **CMO / 产品** 侧维护，与充电底软适配解耦。
+
+### 参考（非柱 3 执行面）
 
 - **配置属性**：`ro.tr_charging.animation_wireless_power`
-- **落地位置**：随项目 CMO / `device/*/device.mk` / `product` overlay 拼接，**非单一固定文件**；在 `${AOSP_ROOT}` 内以 `${project_full}` 为关键字检索 `animation_wireless` / `tr_charging` 注入链。
-- **底软 dtsi**：无。
+- **落地位置**：CMO / `device/*/device.mk` / product overlay（不在 `${charge_overlay}`）。
 
 ---
 
@@ -846,11 +876,15 @@ KPOC 显示关机安全充电动画与品牌 LOGO。
 
 > 合并飞书章节「二十七」「二十八」（原文说明二者重复、后续删一条）。
 
-### 底软客制化
+### 柱 3 适配纪律
+
+- **无底软 dtsi / kernel / KO 改动**；与 **SM40-27** 相同：用户口述「支持」（含「无线反向充电开关」）时，柱 3 **不改码**，说明 **「此项特性无适配工作量」**。
+- **不**在柱 3 任务中补写 `ro.tr_battery.wireless_reverse_charge.support` 或 `ProjectConfig` 宏；由 **CMO / 产品** 侧维护。
+
+### 参考（非柱 3 执行面）
 
 - **配置属性**：`ro.tr_battery.wireless_reverse_charge.support`
-- **落地位置**：CMO / 产品属性注入链；在 `vendor/transsion/projects/${project_full}/` 及关联 `*.mk` 检索拼接点。
-- **底软 dtsi**：文档写明无。
+- **落地位置**：CMO / 产品属性注入链（不在 `${charge_overlay}`）。
 
 ---
 

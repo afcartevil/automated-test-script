@@ -21,11 +21,6 @@
       "setup_doc": "\\\\10.205.4.20\\sw_temp\\底软通信开发部\\ai_dev_tool\\docs\\agent-npx-cli-sop.md",
       "agent_brief": "请按照 \\\\10.205.4.20\\sw_temp\\底软通信开发部\\ai_dev_tool\\docs\\agent-npx-cli-sop.md 安装 transsion harness",
       "related_skill": "harness-install"
-    },
-    {
-      "id": "tones-scmp",
-      "label": "TONES SCMP 属性查询",
-      "description": "SCMP 属性/策略/SPD 配置查询。需配置 hk-intra-paas 的 p-auth/authorization 与 p-rtoken token（写入 scripts/config.yaml）。"
     }
   ]
 }

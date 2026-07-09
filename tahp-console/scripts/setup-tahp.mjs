@@ -11,6 +11,7 @@ import { existsSync } from 'fs'
 import { resolve, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { ensureHermesAgent } from './ensure-hermes-agent.mjs'
+import { ensureSkillPythonDeps } from './ensure-skill-python-deps.mjs'
 import { getBundledHermesAgentDir, getSystemPython, getTahpProjectRoot, resolvePythonCommand } from './lib/tahp-paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -67,7 +68,17 @@ if (bundledDir) {
   warn(`未找到 ${join(projectRoot, 'hermes-agent-main')}，Agent Bridge 功能将不可用`)
 }
 
-// 6. 功耗自动化依赖（启动功耗测试时自动安装，不参与 Console 启动）
+// 6. Skill 脚本依赖（tones-scmp 等）
+console.log('')
+console.log('Skill Python 依赖\n')
+const skillDeps = ensureSkillPythonDeps({ quiet: false })
+if (skillDeps.ok) {
+  if (!skillDeps.skipped) pass('Skill Python 依赖已就绪')
+} else {
+  warn(skillDeps.error || 'Skill Python 依赖安装失败（特性适配 SCMP 查询可能不可用）')
+}
+
+// 7. 功耗自动化依赖（启动功耗测试时自动安装，不参与 Console 启动）
 pass('功耗自动化依赖在启动功耗测试时自动检查/安装')
 
 console.log('')

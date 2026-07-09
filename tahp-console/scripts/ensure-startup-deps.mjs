@@ -5,10 +5,11 @@
 import { resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { applyHermesAgentEnvFromDisk, ensureHermesAgent } from './ensure-hermes-agent.mjs'
+import { ensureSkillPythonDeps } from './ensure-skill-python-deps.mjs'
 
 export function ensureStartupDeps(options = {}) {
   const { skipAgent = false, agentQuiet = true } = options
-  const result = { agent: { ok: true } }
+  const result = { agent: { ok: true }, skillDeps: { ok: true } }
 
   if (!skipAgent) {
     let agent = applyHermesAgentEnvFromDisk()
@@ -21,6 +22,8 @@ export function ensureStartupDeps(options = {}) {
     }
     result.agent = agent
   }
+
+  result.skillDeps = ensureSkillPythonDeps({ quiet: agentQuiet })
 
   return result
 }

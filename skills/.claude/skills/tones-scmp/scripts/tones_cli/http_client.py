@@ -1,4 +1,4 @@
-"""HTTP client with shared auth header injection."""
+"""HTTP client with UAC auth header injection and one-shot token refresh."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from tones_cli.config import get_service_config
+from tones_cli.uac_login import ensure_auth
 
 
 class TonesApiError(Exception):
@@ -22,21 +23,30 @@ class TonesHttpClient:
 
     def __init__(self, service_name: str | None = None, timeout: float = 60.0):
         self.service_name = service_name or self.SERVICE_NAME
-        self._cfg = get_service_config(self.service_name)
         self._timeout = timeout
+        self._cfg: dict[str, Any] | None = None
+
+    def _ensure_cfg(self, *, force_refresh: bool = False) -> dict[str, Any]:
+        if self._cfg is None or force_refresh:
+            self._cfg = get_service_config(self.service_name, force_refresh=force_refresh)
+        return self._cfg
+
+    def reload_auth(self, *, force_refresh: bool = False) -> None:
+        self._cfg = get_service_config(self.service_name, force_refresh=force_refresh)
 
     @property
     def base_url(self) -> str:
-        return self._cfg["base_url"].rstrip("/")
+        return self._ensure_cfg()["base_url"].rstrip("/")
 
     @property
     def path_prefix(self) -> str:
-        prefix = self._cfg.get("path_prefix", "")
+        prefix = self._ensure_cfg().get("path_prefix", "")
         return prefix if prefix.startswith("/") else f"/{prefix}"
 
     def _build_headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
-        auth = self._cfg.get("auth") or {}
-        defaults = self._cfg.get("defaults") or {}
+        cfg = self._ensure_cfg()
+        auth = cfg.get("auth") or {}
+        defaults = cfg.get("defaults") or {}
 
         authorization = auth.get("authorization") or auth.get("p_auth") or ""
         p_auth = auth.get("p_auth") or authorization
@@ -66,6 +76,19 @@ class TonesHttpClient:
             path = f"/{path}"
         return f"{self.base_url}{self.path_prefix}{path}"
 
+    @staticmethod
+    def _is_auth_failure(status_code: int, payload: Any) -> bool:
+        if status_code in (401, 403):
+            return True
+        if isinstance(payload, dict):
+            code = payload.get("code")
+            msg = str(payload.get("msg") or payload.get("message") or "").lower()
+            if code in ("401", "403", 401, 403):
+                return True
+            if any(token in msg for token in ("unauth", "token", "登录", "过期", "expire")):
+                return True
+        return False
+
     def request(
         self,
         method: str,
@@ -74,6 +97,7 @@ class TonesHttpClient:
         json_body: dict[str, Any] | list[Any] | None = None,
         params: dict[str, Any] | None = None,
         empty_body: bool = False,
+        _retried: bool = False,
     ) -> dict[str, Any]:
         url = self._url(path)
         headers = self._build_headers()
@@ -97,6 +121,21 @@ class TonesHttpClient:
             payload = response.json()
         except json.JSONDecodeError:
             payload = {"raw": response.text}
+
+        if response.status_code >= 400 or (
+            isinstance(payload, dict) and payload.get("code") not in (None, "0000", 0)
+        ):
+            if not _retried and self._is_auth_failure(response.status_code, payload):
+                ensure_auth(force_refresh=True)
+                self.reload_auth(force_refresh=False)
+                return self.request(
+                    method,
+                    path,
+                    json_body=json_body,
+                    params=params,
+                    empty_body=empty_body,
+                    _retried=True,
+                )
 
         if response.status_code >= 400:
             raise TonesApiError(

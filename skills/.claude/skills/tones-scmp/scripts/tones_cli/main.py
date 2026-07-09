@@ -7,14 +7,8 @@ import json
 import sys
 
 from tones_cli import __version__
-from tones_cli.config import (
-    config_path,
-    ensure_config_exists,
-    load_config,
-    mask_secret,
-    set_config_value,
-)
 from tones_cli.modules.scmp_common import dispatch_scmp
+from tones_cli.uac_login import auth_status, ensure_auth
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -31,30 +25,27 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", required=True)
 
-    _register_config_commands(sub)
+    _register_auth_commands(sub)
     _register_scmp_commands(sub)
 
     return parser
 
 
-def _register_config_commands(sub) -> None:
-    config = sub.add_parser("config", help="Manage shared auth configuration")
-    config_sub = config.add_subparsers(dest="config_command", required=True)
+def _register_auth_commands(sub) -> None:
+    auth = sub.add_parser("auth", help="UAC auto-login (built-in credentials)")
+    auth_sub = auth.add_subparsers(dest="auth_command", required=True)
 
-    config_sub.add_parser("path", help="Print config file path").set_defaults(
-        config_handler=_config_path
+    login = auth_sub.add_parser("login", help="Login via UAC and cache token")
+    login.add_argument(
+        "--force",
+        action="store_true",
+        help="Force refresh even if a cached token exists",
     )
-    config_sub.add_parser("show", help="Show effective config (secrets masked)").set_defaults(
-        config_handler=_config_show
-    )
-    config_sub.add_parser("init", help="Create config file from template").set_defaults(
-        config_handler=_config_init
-    )
+    login.set_defaults(auth_handler=_auth_login)
 
-    set_cmd = config_sub.add_parser("set", help="Set a config value by dotted key")
-    set_cmd.add_argument("key", help="Dotted key, e.g. auth_profiles.hk-intra-paas.p_auth")
-    set_cmd.add_argument("value", help="Value to set")
-    set_cmd.set_defaults(config_handler=_config_set)
+    auth_sub.add_parser("status", help="Show whether a token cache exists").set_defaults(
+        auth_handler=_auth_status
+    )
 
 
 def _register_scmp_commands(sub) -> None:
@@ -74,51 +65,46 @@ def _register_scmp_commands(sub) -> None:
     ScmpSpdSpecModule().register_commands(scmp_sub)
 
 
-def _config_path(_args: argparse.Namespace) -> int:
-    print(config_path())
+def _auth_login(args: argparse.Namespace) -> int:
+    auth = ensure_auth(force_refresh=bool(args.force))
+    result = {
+        "code": "0000",
+        "msg": "success",
+        "data": {
+            "logged_in": True,
+            "p_auth_present": bool(auth.get("p_auth") or auth.get("authorization")),
+            "p_rtoken_present": bool(auth.get("p_rtoken")),
+            "forced": bool(args.force),
+        },
+    }
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print("UAC login OK (token cached)")
     return 0
 
 
-def _config_init(_args: argparse.Namespace) -> int:
-    path = ensure_config_exists()
-    print(f"Config ready at: {path}")
+def _auth_status(args: argparse.Namespace) -> int:
+    result = auth_status()
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        data = result["data"]
+        state = "cached" if data["cached"] else "missing"
+        print(f"auth status: {state} ({data['token_file']})")
     return 0
-
-
-def _config_show(args: argparse.Namespace) -> int:
-    cfg = load_config()
-    masked = _mask_config(cfg)
-    print(json.dumps(masked, ensure_ascii=False, indent=2))
-    return 0
-
-
-def _config_set(args: argparse.Namespace) -> int:
-    set_config_value(args.key, args.value)
-    print(f"Set {args.key} in {config_path()}")
-    return 0
-
-
-def _mask_config(cfg: dict) -> dict:
-    result = json.loads(json.dumps(cfg))
-    profiles = result.get("auth_profiles") or {}
-    secret_keys = {"authorization", "p_auth", "p_rtoken"}
-    for profile in profiles.values():
-        if not isinstance(profile, dict):
-            continue
-        for key in secret_keys:
-            if key in profile and profile[key]:
-                profile[key] = mask_secret(str(profile[key]))
-    return result
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.command == "config":
-        return args.config_handler(args)
+    if args.command == "auth":
+        return args.auth_handler(args)
 
     if args.command == "scmp":
+        # 业务命令入口前确保有 token（无缓存则自动登录）
+        ensure_auth()
         return dispatch_scmp(args)
 
     parser.print_help()

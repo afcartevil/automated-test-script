@@ -103,7 +103,6 @@ function readManifest(): RequiredSkillsManifest {
       skills: [
         { id: 'jira-ops', label: 'Jira 操作与日志下载' },
         { id: 'modem-analysis-local', label: 'Modem 故障分析', depends_on: ['jira-ops'] },
-        { id: 'tones-scmp', label: 'TONES SCMP 属性查询' },
       ],
     }
     writeFileSync(p, JSON.stringify(fallback, null, 2), 'utf-8')

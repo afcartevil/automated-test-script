@@ -68,6 +68,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo [EasyAdapter] 检查 Skill Python 依赖（tones-scmp 等）...
+call npm run setup:skills
+if errorlevel 1 (
+    echo.
+    echo [EasyAdapter] Skill 依赖安装失败，特性适配 SCMP 查询可能不可用。
+    echo   可稍后手动执行: npm run setup:skills
+    echo.
+)
+
 echo.
 echo ========================================
 echo   EasyAdapter Console 后台模式

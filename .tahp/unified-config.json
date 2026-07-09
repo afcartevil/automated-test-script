@@ -1,0 +1,14 @@
+{
+  "domain_account": "qing.li3",
+  "domain_password": "Lq19981021!",
+  "feishu_app_id": "cli_a9ce058904b95cc5",
+  "feishu_app_secret": "8KzmdNe6yJ1IjmWuzHQcedlEYGhGrPxe",
+  "workspace_root": "D:\\Code\\tahp\\.tahp\\jira_workspace",
+  "seven_zip_exe": "E:\\software\\7-Zip\\7z.exe",
+  "chrome_binary": "",
+  "wireshark_path": "E:\\software\\Wireshark",
+  "elt_home": "E:\\software\\ELT",
+  "nlt_home": "E:\\software\\ELT",
+  "quts_python_path": "",
+  "__updated_at": "2026-07-09T02:48:48.582Z"
+}

@@ -32,14 +32,12 @@ export interface UnifiedConfigField {
 
 const GROUP_DOMAIN = '域账号（Jira / Gerrit / OpenGrok 共用）'
 const GROUP_FEISHU = '飞书 OpenAPI（可选，用于日志下载）'
-const GROUP_LOCAL = '本地环境与工具（可选）'
-const GROUP_TONES = 'TONES SCMP（属性 / 配置查询）'
+const GROUP_MODEM_TOOLS = 'Modem工具配置（可选）'
 
 /**
  * 一键配置表单字段（已按「配置清单中各 Skill 需用户配置项」去重）。
  * Jira / Gerrit / OpenGrok 服务器地址为固定值，不在此表单中配置（见 FIXED_SERVER_ADDRESSES）。
- * 字段来源：jira-ops、modem-analysis-local（含 log-pipeline）的 .env 配置项，
- * 以及 tones-scmp 的 scripts/config.yaml 中的 token 字段。
+ * 字段来源：jira-ops、modem-analysis-local（含 log-pipeline）的 .env 配置项。
  * 新增/调整字段只需改这里，前端表单与 Agent 提示词会自动跟随。
  */
 export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
@@ -79,77 +77,59 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
   },
   {
     key: 'workspace_root',
-    label: '工作区路径',
+    label: 'Modem 工作区路径',
     type: 'text',
-    group: GROUP_LOCAL,
+    group: GROUP_MODEM_TOOLS,
     placeholder: '如 D:\\modem_workspace',
-    description: 'WORKSPACE_ROOT：日志下载/分析的本地工作区根目录（建议本地 SSD）。',
+    description: 'WORKSPACE_ROOT：Modem 日志下载与分析本地工作区根目录（建议本地 SSD）。',
   },
   {
     key: 'seven_zip_exe',
     label: '7-Zip 可执行路径',
     type: 'text',
-    group: GROUP_LOCAL,
+    group: GROUP_MODEM_TOOLS,
     placeholder: '如 C:\\Program Files\\7-Zip\\7z.exe',
-    description: 'SEVEN_ZIP_EXE：解压 .rar/.7z 加密/分卷日志包所需。',
+    description: 'SEVEN_ZIP_EXE：解压 Modem 日志包（.rar/.7z 加密/分卷）所需。',
   },
   {
     key: 'chrome_binary',
     label: 'Chrome 可执行路径',
     type: 'text',
-    group: GROUP_LOCAL,
+    group: GROUP_MODEM_TOOLS,
     placeholder: '如 C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    description: 'CHROME_BINARY：Box 浏览器兜底下载用。',
+    description: 'CHROME_BINARY：日志下载兜底（Box 浏览器）用。',
   },
   {
     key: 'wireshark_path',
     label: 'Wireshark 路径',
     type: 'text',
-    group: GROUP_LOCAL,
+    group: GROUP_MODEM_TOOLS,
     placeholder: '如 C:\\Program Files\\Wireshark',
-    description: 'WIRESHARK_PATH：modem pcap 转文本用。',
+    description: 'WIRESHARK_PATH：Modem pcap 转文本用。',
   },
   {
     key: 'elt_home',
     label: 'ELT_HOME',
     type: 'text',
-    group: GROUP_LOCAL,
+    group: GROUP_MODEM_TOOLS,
     placeholder: 'MTK ELT 工具目录',
-    description: 'ELT_HOME：MTK modem trace 导出用。',
+    description: 'ELT_HOME：MTK Modem trace 导出用。',
   },
   {
     key: 'nlt_home',
     label: 'NLT_HOME',
     type: 'text',
-    group: GROUP_LOCAL,
+    group: GROUP_MODEM_TOOLS,
     placeholder: 'NLT 工具目录',
-    description: 'NLT_HOME：modem trace 导出用。',
+    description: 'NLT_HOME：Modem trace 导出用。',
   },
   {
     key: 'quts_python_path',
     label: 'QUTS Python 路径',
     type: 'text',
-    group: GROUP_LOCAL,
+    group: GROUP_MODEM_TOOLS,
     placeholder: '如 C:\\Program Files\\Qualcomm\\QUTS\\Support\\python',
-    description: 'QUTS_PYTHON_PATH：Qualcomm QUTS modem log 导出用。',
-  },
-  {
-    key: 'tones_scmp_auth',
-    label: 'TONES SCMP Token（p-auth / authorization）',
-    type: 'password',
-    group: GROUP_TONES,
-    placeholder: '如 r_Mjg3...',
-    description:
-      '写入 tones-scmp 的 scripts/config.yaml：auth_profiles.hk-intra-paas.p_auth 与 authorization（两者同值）。从浏览器 DevTools 请求头 p-auth 复制。',
-  },
-  {
-    key: 'tones_scmp_rtoken',
-    label: 'TONES SCMP p-rtoken',
-    type: 'password',
-    group: GROUP_TONES,
-    placeholder: '如 u_Mjg3...',
-    description:
-      '写入 tones-scmp 的 scripts/config.yaml：auth_profiles.hk-intra-paas.p_rtoken。从浏览器 DevTools 请求头 p-rtoken 复制。',
+    description: 'QUTS_PYTHON_PATH：Qualcomm QUTS Modem log 导出用。',
   },
 ]
 
@@ -240,36 +220,6 @@ function readSkillEnvDefaults(): UnifiedConfigValues {
   return defaults
 }
 
-/**
- * 从 tones-scmp 的 scripts/config.yaml 中提取 token 默认值。
- * config.yaml 非标准 .env，这里只按需抓取 auth_profiles.hk-intra-paas 下的
- * p_auth / authorization / p_rtoken 三个键（简单行匹配，避免引入 yaml 依赖）。
- */
-function readTonesScmpDefaults(): UnifiedConfigValues {
-  const p = join(tahpPaths.skillsDir, 'tones-scmp', 'scripts', 'config.yaml')
-  const out: UnifiedConfigValues = {}
-  if (!existsSync(p)) return out
-  try {
-    const text = readFileSync(p, 'utf-8')
-    const pick = (key: string): string => {
-      const m = text.match(new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'm'))
-      if (!m) return ''
-      let v = m[1].trim()
-      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-        v = v.slice(1, -1)
-      }
-      return v
-    }
-    const auth = pick('p_auth') || pick('authorization')
-    const rtoken = pick('p_rtoken')
-    if (auth) out.tones_scmp_auth = auth
-    if (rtoken) out.tones_scmp_rtoken = rtoken
-  } catch {
-    /* ignore unreadable config.yaml */
-  }
-  return out
-}
-
 export type UnifiedConfigValues = Record<string, string>
 
 function tahpConfigDir(): string {
@@ -304,7 +254,7 @@ export function readUnifiedConfig(): UnifiedConfigValues {
  */
 export function readUnifiedConfigForForm(): UnifiedConfigValues {
   const stored = readUnifiedConfig()
-  const skillDefaults = { ...readSkillEnvDefaults(), ...readTonesScmpDefaults() }
+  const skillDefaults = readSkillEnvDefaults()
   const values: UnifiedConfigValues = {}
   for (const field of UNIFIED_CONFIG_FIELDS) {
     const saved = (stored[field.key] || '').trim()

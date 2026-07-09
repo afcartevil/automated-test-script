@@ -63,6 +63,14 @@ def emit_success(result: dict[str, Any], *, json_mode: bool, output_kind: str = 
         _print_spd_config_list(data)
     elif output_kind == "spd-feature" and isinstance(data, dict) and "records" in data:
         _print_spd_feature_list(data)
+    elif output_kind == "spd-google" and isinstance(data, list):
+        _print_spd_google_list(data)
+    elif output_kind in ("spd-market-support", "spd-one-step") and isinstance(data, dict):
+        _print_spd_market_support(data, result.get("_meta") or {})
+    elif output_kind == "spd-candidates" and isinstance(data, list):
+        _print_spd_candidates(data)
+    elif output_kind == "spd-project-list" and isinstance(data, list):
+        _print_spd_project_list(data)
     elif output_kind == "spd-project" and isinstance(data, dict):
         _print_spd_project(data)
     elif output_kind == "info" or (
@@ -169,6 +177,48 @@ def _print_spd_resolve(data: dict[str, Any]) -> None:
 def _print_spd_project(data: dict[str, Any]) -> None:
     print(f"Project: {data.get('name')} (bid={data.get('bid')})")
     print(f"  chip: {data.get('chip')} | osVersion: {data.get('osVersion')}")
+    print()
+
+
+def _print_spd_project_list(items: list[dict[str, Any]]) -> None:
+    print(f"SPD projects: {len(items)}\n")
+    for item in items[:50]:
+        print(f"- {item.get('name')} (bid={item.get('bid')})")
+    if len(items) > 50:
+        print(f"... and {len(items) - 50} more (use --json)")
+    print()
+
+
+def _print_spd_candidates(items: list[dict[str, Any]]) -> None:
+    print(f"Candidates: {len(items)}\n")
+    for item in items:
+        print(f"- rank={item.get('rank')} {item.get('name')} (bid={item.get('bid')})")
+    print()
+
+
+def _print_spd_google_list(items: list[dict[str, Any]]) -> None:
+    print(f"Google program items: {len(items)}\n")
+    for item in items[:30]:
+        print(f"- [{item.get('googleConfigCode')}] {item.get('strategy')} status={item.get('configStatus')}")
+    if len(items) > 30:
+        print(f"... and {len(items) - 30} more (use --json)")
+    print()
+
+
+def _print_spd_market_support(data: dict[str, Any], meta: dict[str, Any]) -> None:
+    print(f"Market-support features: {len(data)}")
+    if meta:
+        used = meta.get("spd_project") or meta.get("specBid")
+        if used:
+            print(f"  source: {used}")
+        if meta.get("warning"):
+            print(f"  warning: {meta['warning']}")
+    sample = list(data.items())[:10]
+    for code, markets in sample:
+        preview = ", ".join(f"{k}={v}" for k, v in list(markets.items())[:6])
+        print(f"- {code}: {preview}")
+    if len(data) > 10:
+        print(f"... and {len(data) - 10} more (use --json)")
     print()
 
 

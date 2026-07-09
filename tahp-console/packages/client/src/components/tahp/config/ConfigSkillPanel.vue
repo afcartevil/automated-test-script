@@ -29,6 +29,7 @@ const skills = ref<SkillConfigListItem[]>([])
 const selectedId = ref<string | null>(null)
 const preview = ref<SkillConfigPreview | null>(null)
 const previewLoading = ref(false)
+const previewError = ref('')
 
 const activeTaskId = ref<string | null>(null)
 const chatInput = ref('')
@@ -101,10 +102,12 @@ async function loadList() {
 
 async function loadPreview(skillId: string) {
   previewLoading.value = true
+  previewError.value = ''
   try {
     preview.value = await fetchSkillPreview(skillId)
-  } catch {
+  } catch (err) {
     preview.value = null
+    previewError.value = (err as Error).message || '加载失败'
   } finally {
     previewLoading.value = false
   }
@@ -249,7 +252,15 @@ async function onApproval(choice: string) {
           <NSpin :show="previewLoading">
             <NScrollbar style="max-height: 280px">
               <MarkdownRenderer v-if="preview?.skill_md" :content="preview.skill_md" />
-              <NEmpty v-else size="small" description="无法加载 SKILL.md" />
+              <NEmpty
+                v-else
+                size="small"
+                :description="previewError || '无法加载 SKILL.md'"
+              >
+                <template v-if="manifestPath" #extra>
+                  <span class="ea-muted">清单：{{ manifestPath }}</span>
+                </template>
+              </NEmpty>
             </NScrollbar>
           </NSpin>
         </EaCard>

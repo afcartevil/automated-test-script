@@ -3,7 +3,8 @@
  *
  * 优先级:
  *   1. 环境变量 TAHP_PROJECT_ROOT
- *   2. 自动推断 (tahp-console 上级目录，含 skills 或 knowledge-base)
+ *   2. tahp-console 上级目录（含 skills 或 knowledge-base）
+ *   3. 自 cwd 向上探测
  */
 import { spawnSync } from 'child_process'
 import { existsSync } from 'fs'
@@ -16,16 +17,51 @@ function isTahpProjectRoot(dir: string): boolean {
   )
 }
 
-function deriveProjectRoot(): string {
-  if (process.env.TAHP_PROJECT_ROOT) return resolve(process.env.TAHP_PROJECT_ROOT)
+function isDriveRoot(dir: string): boolean {
+  return /^[A-Za-z]:[\\/]?$/.test(resolve(dir))
+}
+
+function isConsoleRoot(dir: string): boolean {
+  return (
+    existsSync(join(dir, 'package.json')) &&
+    existsSync(join(dir, 'packages', 'server'))
+  )
+}
+
+/** 从当前模块位置推断 tahp-console 根目录（兼容 src / dist 打包） */
+function deriveConsoleRoot(): string {
   const candidates = [
-    resolve(__dirname, '..', '..', '..', '..', '..'), // dist 模式
-    resolve(__dirname, '..', '..', '..', '..', '..', '..'), // src 模式
+    resolve(__dirname, '..', '..'), // dist/server
+    resolve(__dirname, '..', '..', '..', '..'), // dist/server/services/tahp
+    resolve(__dirname, '..', '..', '..', '..', '..'), // src/services/tahp
+    resolve(process.cwd()),
   ]
   for (const c of candidates) {
-    if (isTahpProjectRoot(c)) return c
+    if (isConsoleRoot(c)) return c
   }
   return candidates[0]
+}
+
+function deriveProjectRoot(): string {
+  const fromEnv = process.env.TAHP_PROJECT_ROOT?.trim()
+  if (fromEnv) return resolve(fromEnv)
+
+  const consoleRoot = deriveConsoleRoot()
+  const parentOfConsole = resolve(consoleRoot, '..')
+  if (isTahpProjectRoot(parentOfConsole)) return parentOfConsole
+
+  let dir = process.cwd()
+  for (let i = 0; i < 10; i++) {
+    if (isTahpProjectRoot(dir)) return dir
+    const up = resolve(dir, '..')
+    if (up === dir || isDriveRoot(up)) break
+    dir = up
+  }
+
+  if (isTahpProjectRoot(parentOfConsole)) return parentOfConsole
+  if (!isDriveRoot(parentOfConsole)) return parentOfConsole
+
+  return consoleRoot
 }
 
 const projectRoot = deriveProjectRoot()
