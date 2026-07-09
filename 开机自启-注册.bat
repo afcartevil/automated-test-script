@@ -22,7 +22,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [EasyAdapter] 开机自启已注册。下次登录后将自动在后台启动服务。
+echo [EasyAdapter] 开机自启已注册。下次登录后将自动在后台启动服务及系统托盘。
 echo   取消自启: 双击「开机自启-取消.bat」
 echo.
 pause

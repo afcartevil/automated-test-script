@@ -51,6 +51,27 @@ npm run start
 node bin/tahp-console.mjs start
 ```
 
+### Windows 托盘（方案 C）
+
+双击仓库根目录 `run_adapter.bat` 成功后，会自动在系统托盘显示 **EasyAdapter** 图标（与浏览器 Tab 相同的紫底 EA 图标）。
+
+**右键菜单**：
+
+| 菜单项 | 说明 |
+|--------|------|
+| 打开控制台 | 浏览器打开 `http://localhost:8650` |
+| 重启服务 | 快速 `tahp-console restart`（不拉代码） |
+| 更新并重启 | 无闪窗静默执行 `run_adapter.bat` 全链路（研发用） |
+| 停止服务 | 停止后台 BFF |
+| 查看日志 | 打开 `%USERPROFILE%\.tahp-console\server.log` |
+| 关闭程序 | 停止服务并退出托盘 |
+
+- 仅启动托盘（服务已运行时）：双击 `启动托盘.bat`
+- 禁用自动托盘：设置环境变量 `TAHP_TRAY=0`
+- 重新生成图标：`cd tahp-console && npm run tray:icon`
+
+开机自启（`开机自启-注册.bat`）会通过 `run_adapter.bat` 一并拉起服务与托盘。
+
 ### 环境变量
 
 | 变量 | 默认值 | 说明 |
@@ -62,6 +83,7 @@ node bin/tahp-console.mjs start
 | `TAHP_PYTHON` | `python` | Python 可执行路径 |
 | `HERMES_AGENT_ROOT` | 自动 | 内置 `hermes-agent-main` 路径 |
 | `LOG_LEVEL` | `info` | 日志级别 |
+| `TAHP_TRAY` | `1` | `0` 禁用 run_adapter 后自动启动系统托盘 |
 
 ---
 

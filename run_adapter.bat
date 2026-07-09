@@ -10,7 +10,7 @@ if errorlevel 1 (
     echo   下载: https://nodejs.org/
     echo   安装后请关闭并重新打开终端，再双击本脚本。
     echo.
-    pause
+    if not "%TAHP_SILENT%"=="1" pause
     exit /b 1
 )
 
@@ -27,7 +27,7 @@ echo.
 node scripts/preflight-env.mjs
 if errorlevel 1 (
     echo.
-    pause
+    if not "%TAHP_SILENT%"=="1" pause
     exit /b 1
 )
 
@@ -40,7 +40,7 @@ if errorlevel 1 (
     echo   或在 tahp-console\.env 中设置:
     echo   HERMES_GIT_BASH_PATH=你的安装路径\bin\bash.exe
     echo.
-    pause
+    if not "%TAHP_SILENT%"=="1" pause
     exit /b 1
 )
 
@@ -50,13 +50,17 @@ echo.
 node scripts/npm-install-if-needed.mjs
 if errorlevel 1 (
     echo [EasyAdapter] npm install 失败
-    pause
+    if not "%TAHP_SILENT%"=="1" pause
     exit /b 1
 )
 
 echo.
 echo [EasyAdapter] 检查 Hermes Agent 环境（智能诊断 / 适配调试必需）...
-call npm run setup:agent
+if "%TAHP_SILENT%"=="1" (
+    node scripts/ensure-hermes-agent.mjs
+) else (
+    call npm run setup:agent
+)
 if errorlevel 1 (
     echo.
     echo [EasyAdapter] Agent 环境未就绪，无法启动。
@@ -64,7 +68,7 @@ if errorlevel 1 (
     echo   TAHP_PYTHON=C:\Path\To\Python312\python.exe
     echo   然后执行: npm run setup:agent -- --force
     echo.
-    pause
+    if not "%TAHP_SILENT%"=="1" pause
     exit /b 1
 )
 
@@ -100,7 +104,7 @@ if errorlevel 1 (
     echo   cd tahp-console ^&^& npm run build
     echo   若仍失败，请向已构建成功的同事复制 tahp-console\dist 目录。
     echo.
-    pause
+    if not "%TAHP_SILENT%"=="1" pause
     exit /b 1
 )
 
@@ -116,10 +120,16 @@ if errorlevel 1 (
     echo   cd tahp-console ^&^& npm run setup:agent -- --force
     echo   或查看日志: %%USERPROFILE%%\.tahp-console\server.log
     echo.
-    pause
+    if not "%TAHP_SILENT%"=="1" pause
     exit /b 1
 )
 
 echo.
-echo [EasyAdapter] 已在后台启动，本窗口即将关闭。
+if "%TAHP_SILENT%"=="1" (
+    echo [EasyAdapter] 已在后台启动。
+) else (
+    echo [EasyAdapter] 已在后台启动，本窗口即将关闭。
+)
+node scripts\lib\tray-launcher.mjs
+if "%TAHP_SILENT%"=="1" exit /b 0
 timeout /t 3 /nobreak >nul
