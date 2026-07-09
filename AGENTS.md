@@ -36,7 +36,7 @@ TAHP 服务于传音 Android 底软集成部，覆盖通信、驱动、内核、
 | AI 自检 | `/tahp/self-check` | `tahp-self-check` + `device-self-check` skill |
 | 查看报告 | `reports/` + `/tahp/reports` | — |
 | Console 开发细则 | [tahp-console/DEVELOPMENT.md](tahp-console/DEVELOPMENT.md) | `tahp-console-dev` |
-| Windows 部署 | `run_adapter.bat`、托盘脚本 | `00-change-control` |
+| Windows 部署 | `run_adapter.bat`、系统托盘；详见 `Windows使用说明.txt` | `00-change-control` |
 
 ## 仓库结构
 

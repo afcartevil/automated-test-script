@@ -32,7 +32,7 @@ skills/.claude/skills/  ← 业务规则与执行 Skill
 
 **生产路径**：智能诊断、AI 适配调试、知识库、报告、AI 自检均通过 Console BFF 驱动 Hermes Agent 或本地服务，不再经过 MCP stdio 桥。
 
-**Windows 交付**：`run_adapter.bat` / 托盘 / 状态脚本；运行时数据在 `~/.tahp-console/`。
+**Windows 交付**：`run_adapter.bat` + 系统托盘（日常操作）；开机自启见 `tahp-console/scripts/win/`；运行时数据在 `~/.tahp-console/`。
 
 ---
 

@@ -85,11 +85,10 @@ echo.
 echo ========================================
 echo   EasyAdapter Console 后台模式
 echo ========================================
-echo   启动顺序: 构建检查 -^> 停止旧进程 -^> 后台守护 8650 -^> 浏览器
+echo   启动顺序: 构建检查 -^> 停止旧进程 -^> 后台守护 8650 -^> 系统托盘 -^> 打开浏览器
 echo   服务在后台运行，关闭本窗口不会影响使用
-echo   停止服务: 双击「停止服务.bat」
-echo   查看状态: 双击「查看状态.bat」
-echo   打开页面: 双击「打开控制台.bat」
+echo   日常使用: 任务栏托盘图标 EA 右键菜单
+echo     打开控制台 / 重启 / 更新并重启 / 停止 / 查看日志
 echo   配置 API Key: 系统 - 模型管理
 echo ========================================
 echo.
@@ -128,8 +127,11 @@ echo.
 if "%TAHP_SILENT%"=="1" (
     echo [EasyAdapter] 已在后台启动。
 ) else (
-    echo [EasyAdapter] 已在后台启动，本窗口即将关闭。
+    echo [EasyAdapter] 已在后台启动，即将打开浏览器，本窗口即将关闭。
 )
 node scripts\lib\tray-launcher.mjs
+if not "%TAHP_SILENT%"=="1" (
+    start "" "http://localhost:8650/#/tahp/dashboard"
+)
 if "%TAHP_SILENT%"=="1" exit /b 0
 timeout /t 3 /nobreak >nul

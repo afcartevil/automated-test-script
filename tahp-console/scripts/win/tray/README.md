@@ -2,6 +2,8 @@
 
 托盘与浏览器 Tab 使用同一套图标（紫底 **EA**），源文件为 `packages/client/public/favicon.svg`。
 
+Windows 用户日常通过托盘右键菜单操作（打开控制台、重启、停止、查看日志等）。首次启动或更新代码请双击工程根目录 `run_adapter.bat`。开机自启脚本见同目录 `开机自启-注册.bat` / `开机自启-取消.bat`。
+
 ## 生成 `.ico`
 
 ```bash

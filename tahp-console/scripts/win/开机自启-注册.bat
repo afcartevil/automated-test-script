@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
-set "REPO_ROOT=%~dp0"
-set "VBS=%REPO_ROOT%tahp-console\scripts\win\autostart.vbs"
+set "SCRIPT_DIR=%~dp0"
+set "VBS=%SCRIPT_DIR%autostart.vbs"
 
 if not exist "%VBS%" (
     echo [EasyAdapter] 未找到自启脚本: %VBS%
@@ -23,6 +23,6 @@ if errorlevel 1 (
 )
 
 echo [EasyAdapter] 开机自启已注册。下次登录后将自动在后台启动服务及系统托盘。
-echo   取消自启: 双击「开机自启-取消.bat」
+echo   取消自启: 运行 tahp-console\scripts\win\开机自启-取消.bat
 echo.
 pause

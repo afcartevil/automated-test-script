@@ -1,5 +1,5 @@
 ' 静默启动 EasyAdapter（无命令行窗口）
-' 由「开机自启-注册.bat」通过任务计划程序调用
+' 由 tahp-console\scripts\win\开机自启-注册.bat 通过任务计划程序调用
 
 Dim fso, shell, scriptDir, repoRoot, batPath
 Set fso = CreateObject("Scripting.FileSystemObject")
