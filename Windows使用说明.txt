@@ -19,4 +19,6 @@ EasyAdapter — Windows 使用说明
   （注册失败时可右键「以管理员身份运行」）
 
 【日志位置】
-  %USERPROFILE%\.tahp-console\server.log
+  服务: %USERPROFILE%\.tahp-console\server.log
+  托盘: %USERPROFILE%\.tahp-console\tray.log
+  托盘图标找不到时，请查看 tray.log 或重新双击 run_adapter.bat

@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   buildTooltip,
   getConsoleHome,
+  getTrayLogFile,
   getTrayPidFile,
   isProcessRunning,
   readPidFile,
   resolveConsoleUrl,
+  shouldRestartTray,
+  stopTray,
 } from '../../scripts/lib/tray-actions.mjs'
 
 describe('tray-actions', () => {
@@ -21,6 +24,7 @@ describe('tray-actions', () => {
   it('getTrayPidFile is under console home', () => {
     const home = 'C:\\Users\\me\\.tahp-console'
     expect(getTrayPidFile({ TAHP_CONSOLE_HOME: home })).toBe('C:\\Users\\me\\.tahp-console\\tray.pid')
+    expect(getTrayLogFile({ TAHP_CONSOLE_HOME: home })).toBe('C:\\Users\\me\\.tahp-console\\tray.log')
   })
 
   it('isProcessRunning uses kill(pid, 0) probe', () => {
@@ -43,5 +47,22 @@ describe('tray-actions', () => {
 
   it('readPidFile parses integer pid', () => {
     expect(readPidFile('/nonexistent')).toBeNull()
+  })
+
+  it('shouldRestartTray reads TAHP_TRAY_RESTART', () => {
+    expect(shouldRestartTray({ TAHP_TRAY_RESTART: '1' })).toBe(true)
+    expect(shouldRestartTray({ TAHP_TRAY_RESTART: '0' })).toBe(false)
+  })
+
+  it('stopTray kills running pid and clears tray.pid', () => {
+    const killed = []
+    const env = { TAHP_CONSOLE_HOME: 'C:\\tmp\\tahp-tray-test' }
+    const kill = (pid, sig) => {
+      killed.push([pid, sig])
+      if (pid !== 77) throw new Error('ESRCH')
+    }
+    const result = stopTray({ ...env, TAHP_TRAY_RESTART: '1' }, kill)
+    expect(result.stopped).toBe(false)
+    expect(killed).toEqual([])
   })
 })

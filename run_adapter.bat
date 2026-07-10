@@ -111,6 +111,7 @@ node bin\tahp-console.mjs stop >nul 2>&1
 
 node scripts/migrate-dev-data.mjs
 
+set TAHP_OPEN_BROWSER=0
 node bin\tahp-console.mjs start
 if errorlevel 1 (
     echo.
@@ -129,6 +130,7 @@ if "%TAHP_SILENT%"=="1" (
 ) else (
     echo [EasyAdapter] 已在后台启动，即将打开浏览器，本窗口即将关闭。
 )
+set TAHP_TRAY_RESTART=1
 node scripts\lib\tray-launcher.mjs
 if not "%TAHP_SILENT%"=="1" (
     start "" "http://localhost:8650/#/tahp/dashboard"

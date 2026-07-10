@@ -14,6 +14,7 @@ If Not fso.FileExists(batPath) Then
 End If
 
 shell.Environment("PROCESS").Item("TAHP_SILENT") = "1"
+shell.Environment("PROCESS").Item("TAHP_OPEN_BROWSER") = "0"
 shell.Environment("PROCESS").Item("TAHP_TRAY") = "1"
 ' 0 = 隐藏窗口, False = 不等待进程结束
 shell.Run """" & batPath & """", 0, False

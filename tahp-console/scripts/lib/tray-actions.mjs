@@ -30,6 +30,10 @@ export function getLogFile(env = process.env) {
   return join(getConsoleHome(env), 'server.log')
 }
 
+export function getTrayLogFile(env = process.env) {
+  return join(getConsoleHome(env), 'tray.log')
+}
+
 export function getTrayIconPath() {
   return resolve(consoleRoot, 'scripts', 'win', 'tray', 'easyadapter.ico')
 }
@@ -82,6 +86,28 @@ export function writeTrayPid(pid, env = process.env) {
 
 export function removeTrayPid(env = process.env) {
   try { unlinkSync(getTrayPidFile(env)) } catch { /* ignore */ }
+}
+
+export function stopTray(env = process.env, killProbe = process.kill) {
+  const pid = readTrayPid(env)
+  if (!pid) {
+    removeTrayPid(env)
+    return { ok: true, stopped: false }
+  }
+  let stopped = false
+  if (isProcessRunning(pid, killProbe)) {
+    try {
+      killProbe(pid)
+      stopped = true
+    } catch { /* ignore */ }
+  }
+  removeTrayPid(env)
+  return { ok: true, stopped }
+}
+
+export function shouldRestartTray(env = process.env) {
+  const v = env.TAHP_TRAY_RESTART
+  return v === '1' || v === 'true' || v === 'TRUE'
 }
 
 export function queryServiceStatus(env = process.env) {

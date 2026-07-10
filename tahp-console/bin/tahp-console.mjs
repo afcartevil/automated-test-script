@@ -39,6 +39,12 @@ function shouldDisableAuthByDefault() {
   return true
 }
 
+function shouldOpenBrowser() {
+  const v = process.env.TAHP_OPEN_BROWSER
+  if (v === '0' || v === 'false' || v === 'FALSE') return false
+  return true
+}
+
 function ensureNativeModules() {
   const prebuildDir = join(pkgDir, 'node_modules', 'node-pty', 'prebuilds', `${process.platform}-${process.arch}`)
   const helper = join(prebuildDir, 'spawn-helper')
@@ -299,10 +305,12 @@ function startDaemon(port) {
         if (authDisabledDefault) {
           console.log(`    鉴权: 已关闭 (内网模式，需开启请设 AUTH_DISABLED=0)`)
         }
-        const cmd = process.platform === 'win32' ? `start ${url}`
-          : process.platform === 'darwin' ? `open ${url}`
-            : `xdg-open ${url}`
-        try { execSync(cmd, { stdio: 'ignore' }) } catch {}
+        if (shouldOpenBrowser()) {
+          const cmd = process.platform === 'win32' ? `start "" "${url}"`
+            : process.platform === 'darwin' ? `open "${url}"`
+              : `xdg-open "${url}"`
+          try { execSync(cmd, { stdio: 'ignore' }) } catch {}
+        }
       } else if (waited < maxWait) {
         setTimeout(poll, interval)
       } else {
@@ -391,6 +399,7 @@ ${CLI_NAME} v${VERSION}
   AUTH_TOKEN         显式指定 token
   TAHP_PROJECT_ROOT  TAHP 仓库根目录 (默认上级)
   TAHP_PYTHON        Python 可执行路径 (默认 python)
+  TAHP_OPEN_BROWSER  设为 0 时 start 不自动打开浏览器 (run_adapter.bat 使用)
 `)
     process.exit(0)
   }
