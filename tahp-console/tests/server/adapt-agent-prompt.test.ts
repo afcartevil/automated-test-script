@@ -98,7 +98,14 @@ describe('adapt-agent prompts', () => {
       domainId: 'charging',
       domainLabel: '充电',
       module: 'kernel-driver',
-      relatedSkills: ['pillar3-customization-input', 'tones-scmp'],
+      relatedSkills: [
+        'mtk-adapt-pillar3-router',
+        'mtk-adapt-template-feature-factory-mode',
+        'mtk-adapt-template-feature-kpoc-charging',
+        'mtk-adapt-template-feature-placeholder',
+        'transsion-sunmao40-customization-features-adapt',
+        'tones-scmp',
+      ],
       formData: { repo_path: 'D:\\project\\km9' },
     })
     expect(systemPrompt).toContain('特性适配')

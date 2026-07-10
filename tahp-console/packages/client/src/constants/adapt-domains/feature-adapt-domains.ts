@@ -125,7 +125,14 @@ export const FEATURE_ADAPT_DOMAINS: AdaptDomainDef[] = [
     icon: 'CHG',
     color: '#f78166',
     status: 'pending',
-    relatedSkills: ['pillar3-customization-input', 'tones-scmp'],
+    relatedSkills: [
+      'mtk-adapt-pillar3-router',
+      'mtk-adapt-template-feature-factory-mode',
+      'mtk-adapt-template-feature-kpoc-charging',
+      'mtk-adapt-template-feature-placeholder',
+      'transsion-sunmao40-customization-features-adapt',
+      'tones-scmp',
+    ],
     fields: [
       {
         name: 'repo_path',
@@ -140,7 +147,7 @@ export const FEATURE_ADAPT_DOMAINS: AdaptDomainDef[] = [
         label: '补充说明',
         type: 'text',
         required: false,
-        placeholder: '可选：老升新/绿场、Pillar 范围等（特性清单待定）',
+        placeholder: '可选：老升新/绿场、Pillar 范围、特性编码筛选说明等',
       },
     ],
   },
