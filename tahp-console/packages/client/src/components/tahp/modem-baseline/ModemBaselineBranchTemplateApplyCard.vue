@@ -93,6 +93,7 @@ const previewTargetBranch = computed(() => {
       <div class="ea-field">
         <label>目标类型</label>
         <NRadioGroup
+          class="branch-target-group"
           :value="selectedTarget"
           @update:value="$emit('update:selectedTarget', $event as 'trunk' | 'mp')"
         >
@@ -165,6 +166,12 @@ const previewTargetBranch = computed(() => {
   font-size: 14px;
   color: var(--text);
   word-break: break-word;
+}
+
+.branch-target-group {
+  display: inline-flex;
+  border-radius: 14px;
+  overflow: hidden;
 }
 
 .apply-actions {

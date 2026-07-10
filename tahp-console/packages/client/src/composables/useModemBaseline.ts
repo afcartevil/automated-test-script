@@ -288,7 +288,11 @@ export function useModemBaseline() {
   function syncBranchTemplateFromNotice() {
     const tos = noticeParsed.value?.tosVersion
     const platform = noticeParsed.value?.platform
+    const targetMode = noticeParsed.value?.targetMode
     if (tos) selectedTosVersion.value = tos
+    if (targetMode === 'mp' || targetMode === 'trunk') {
+      selectedBranchTarget.value = targetMode
+    }
     if (!tos && !platform) return
     const matches = matchBranchTemplates(tos, platform)
     if (matches.length === 1) {
