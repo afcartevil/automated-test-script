@@ -51,25 +51,13 @@ export default defineConfig({
       output: {
         // Manual chunk splitting to speed up rendering
         manualChunks(id) {
-          // Separate large heavy packages to avoid blocking other chunks
-          if (id.includes('node_modules/monaco-editor')) {
-            return 'monaco-editor'
-          }
-          if (id.includes('node_modules/mermaid')) {
-            return 'mermaid'
-          }
-          if (id.includes('node_modules/@xterm')) {
-            return 'xterm'
-          }
-          if (id.includes('node_modules')) {
-            if (id.includes('vue') || id.includes('pinia') || id.includes('vue-router')) {
-              return 'vue-vendor'
-            }
-            if (id.includes('naive-ui')) {
-              return 'ui-vendor'
-            }
-            return 'vendor'
-          }
+          // 仅拆大块、通常懒加载的依赖。勿再拆 vue-vendor / ui-vendor：
+          // naive-ui、vue-i18n 等与 vue 存在交叉引用，分 chunk 会在生产环境触发
+          // "Cannot access 'X' before initialization"（TDZ 循环依赖）。
+          if (id.includes('node_modules/monaco-editor')) return 'monaco-editor'
+          if (id.includes('node_modules/mermaid')) return 'mermaid'
+          if (id.includes('node_modules/@xterm')) return 'xterm'
+          if (id.includes('node_modules')) return 'vendor'
         },
         // Optimize chunk file names for better caching
         chunkFileNames: 'assets/js/[name]-[hash].js',

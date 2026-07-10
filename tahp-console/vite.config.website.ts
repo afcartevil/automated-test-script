@@ -32,15 +32,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('node_modules')) {
-            if (id.includes('vue') || id.includes('vue-router') || id.includes('vue-i18n') || id.includes('pinia')) {
-              return 'vue-vendor'
-            }
-            if (id.includes('naive-ui')) {
-              return 'ui-vendor'
-            }
-            return 'vendor'
-          }
+          if (id.includes('node_modules')) return 'vendor'
         },
         chunkFileNames: 'assets/js/[name]-[hash].js',
         entryFileNames: 'assets/js/[name]-[hash].js',
