@@ -914,15 +914,23 @@ export function recommendModemPatchConfig(input: {
   const rules = listModemPatchRules(owner).filter(item => item.enabled)
   const templates = listModemPatchBranchTemplates(owner)
   const templateMatches = findBranchTemplateMatches(templates, parsed?.tosVersion, parsed?.platform || repo?.platform)
+  const uniqueTemplateMatches = templateMatches.length > 1
+    ? Array.from(new Map(
+      templateMatches.map(item => [
+        `${String(item.nodeBranch || '').trim()}\u0000${String(item.trunkBranch || '').trim()}\u0000${String(item.mpNodeBranch || '').trim()}\u0000${String(item.mpBranch || '').trim()}`,
+        item,
+      ]),
+    ).values())
+    : templateMatches
   const canUseSharedTrunkTemplate = targetMode === 'trunk' && !parsed?.tosVersion
-  let selectedTemplate = templateMatches.length === 1 ? templateMatches[0] : null
+  let selectedTemplate = uniqueTemplateMatches.length === 1 ? uniqueTemplateMatches[0] : null
   let selectedTemplateNodeBranch: string | undefined
   let selectedTemplateTargetBranch: string | undefined
-  let templateAmbiguous = templateMatches.length > 1
+  let templateAmbiguous = uniqueTemplateMatches.length > 1
 
-  if (!selectedTemplate && canUseSharedTrunkTemplate && templateMatches.length > 1) {
+  if (!selectedTemplate && canUseSharedTrunkTemplate && uniqueTemplateMatches.length > 1) {
     const trunkCombos = Array.from(new Map(
-      templateMatches.map(item => [
+      uniqueTemplateMatches.map(item => [
         `${item.nodeBranch}\u0000${item.trunkBranch}`,
         { nodeBranch: item.nodeBranch, trunkBranch: item.trunkBranch },
       ]),
@@ -967,7 +975,7 @@ export function recommendModemPatchConfig(input: {
     })[0]?.rule || null
 
   if (templateAmbiguous) warnings.push('branch_template_ambiguous')
-  else if (!templateMatches.length && parsed?.platform) warnings.push('branch_template_not_found')
+  else if (!uniqueTemplateMatches.length && parsed?.platform) warnings.push('branch_template_not_found')
   if (!selectedTemplate && !selectedTemplateNodeBranch && !matched) warnings.push('no_rule_matched')
   const vars: Record<string, string> = {
     platform: platform || basePlatform,
@@ -1248,22 +1256,16 @@ export function autoExtractBranchTemplatesForRepo(
     const builtinTrunkPicked = trunkPicked.value ? { value: null, ambiguous: false } : pickBuiltinTrunkBranch(tos15Templates)
     const trunkBranch = trunkPicked.value || builtinTrunkPicked.value?.trunkBranch || ''
     const trunkNodeBranch = builtinTrunkPicked.value?.nodeBranch || tos15Templates[0]?.nodeBranch || 'master'
-    if (!trunkPicked.value) {
-      if (builtinTrunkPicked.value) {
-        // Some builtin tOS15 platforms, such as GEN98S(MP1MP2), do not use *_common.
-      } else {
-        throw new Error(
-          trunkPicked.ambiguous || builtinTrunkPicked.ambiguous
-            ? 'trunk_branch_ambiguous'
-            : 'trunk_branch_not_found',
-        )
-      }
-    }
+    const extractedTrunk = trunkBranch
+      ? {
+          nodeBranch: trunkNodeBranch,
+          trunkBranch,
+        }
+      : null
     const mpBranches = pickMpBranches(branches, baselineToken)
     const updatedAt = nowIso()
-    if (!mpBranches.length && !tos15Templates.length) throw new Error('mp_branch_not_found')
     const mpEntries: Array<{ tos: string; mpNodeBranch: string; mpBranch: string }> = []
-    const nextTemplates: BranchTemplate[] = mpBranches.map(item => {
+    const extractedMp = mpBranches.map(item => {
       const mpNode = pickMpNodeBranch(branches, item.token)
       mpEntries.push({
         tos: item.token.key,
@@ -1271,19 +1273,29 @@ export function autoExtractBranchTemplatesForRepo(
         mpBranch: item.name,
       })
       return {
-        templateId: crypto.randomBytes(8).toString('hex'),
-        owner,
         tos: item.token.key,
-        platform,
-        nodeBranch: 'master',
-        trunkBranch,
-        mpBranch: item.name,
         mpNodeBranch: mpNode.value,
-        sourceFile: localPath,
-        sourceSheet: `auto:${remote}`,
-        updatedAt,
+        mpBranch: item.name,
       }
     })
+    const templateTrunk = extractedTrunk || repo.branches?.trunk || null
+    const nextTemplates: BranchTemplate[] = templateTrunk
+      ? extractedMp.map(item => {
+        return {
+          templateId: crypto.randomBytes(8).toString('hex'),
+          owner,
+          tos: item.tos,
+          platform,
+          nodeBranch: templateTrunk.nodeBranch || 'master',
+          trunkBranch: templateTrunk.trunkBranch,
+          mpBranch: item.mpBranch,
+          mpNodeBranch: item.mpNodeBranch,
+          sourceFile: localPath,
+          sourceSheet: `auto:${remote}`,
+          updatedAt,
+        }
+      })
+      : []
 
     for (const item of tos15Templates) {
       mpEntries.push({
@@ -1293,20 +1305,54 @@ export function autoExtractBranchTemplatesForRepo(
       })
     }
 
-    mergeBranchTemplatesForPlatform(platform, 'tOS15.1.2', nextTemplates.concat(tos15Templates), owner)
+    const extractedAny = Boolean(extractedTrunk) || mpEntries.length > 0
+    const extractionErrors: string[] = []
+    if (!extractedTrunk) {
+      extractionErrors.push(
+        trunkPicked.ambiguous || builtinTrunkPicked.ambiguous
+          ? 'trunk_branch_ambiguous'
+          : 'trunk_branch_not_found',
+      )
+    }
+    if (!mpBranches.length && !tos15Templates.length) {
+      extractionErrors.push('mp_branch_not_found')
+    }
+    if (!extractedAny) {
+      throw new Error(extractionErrors[0] || 'branch_extract_failed')
+    }
+
+    if (nextTemplates.length || tos15Templates.length) {
+      mergeBranchTemplatesForPlatform(platform, 'tOS15.1.2', nextTemplates.concat(tos15Templates), owner)
+    }
+
+    const currentBranches = repo.branches
+    const nextRepoBranches: RepoProfile['branches'] = {
+      trunk: extractedTrunk || currentBranches?.trunk,
+      mp: mpEntries.length
+        ? Array.from(new Map(
+          [
+            ...((Array.isArray(currentBranches?.mp) ? currentBranches?.mp : []).map(item => [item.tos, item] as const)),
+            ...(mpEntries.map(item => [item.tos, item] as const)),
+          ],
+        ).values()).sort((left, right) => left.tos.localeCompare(right.tos))
+        : currentBranches?.mp,
+    }
+
     updateModemPatchRepo(repoId, {
-      branches: {
-        trunk: {
-          nodeBranch: trunkNodeBranch,
-          trunkBranch,
-        },
-        mp: Array.from(new Map(
-          mpEntries.map(item => [item.tos, item]),
-        ).values()).sort((left, right) => left.tos.localeCompare(right.tos)),
-      },
+      branches: nextRepoBranches,
     }, owner)
-    updateRepoBranchTemplateState(repoId, { status: 'success', error: '', updatedAt: nowIso() }, owner)
-    return { success: true as const, templates: nextTemplates.concat(tos15Templates) }
+
+    const partialError = extractionErrors.join('; ')
+    updateRepoBranchTemplateState(repoId, {
+      status: 'success',
+      error: partialError,
+      updatedAt: nowIso(),
+    }, owner)
+    return {
+      success: true as const,
+      templates: nextTemplates.concat(tos15Templates),
+      warnings: extractionErrors,
+    }
   } catch (error) {
     errorMessage = String((error as Error)?.message ?? error)
     updateRepoBranchTemplateState(repoId, { status: 'failed', error: errorMessage.slice(0, 500), updatedAt: nowIso() }, owner)
