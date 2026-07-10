@@ -132,6 +132,14 @@ if "%TAHP_SILENT%"=="1" (
 )
 set TAHP_TRAY_RESTART=1
 node scripts\lib\tray-launcher.mjs
+if errorlevel 1 (
+    echo.
+    echo [EasyAdapter] 托盘启动失败，服务仍在运行。
+    echo   日志: %%USERPROFILE%%\.tahp-console\tray.log
+    echo   可尝试: cd tahp-console ^&^& npm install ^&^& node scripts\lib\tray-launcher.mjs
+    echo.
+    if not "%TAHP_SILENT%"=="1" pause
+)
 if not "%TAHP_SILENT%"=="1" (
     start "" "http://localhost:8650/#/tahp/dashboard"
 )

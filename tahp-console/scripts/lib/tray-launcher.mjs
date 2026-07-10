@@ -15,6 +15,7 @@ import {
   shouldRestartTray,
   stopTray,
 } from './tray-actions.mjs'
+import { findMissingTrayPackages } from './required-npm-deps.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const consoleRoot = resolve(__dirname, '..', '..')
@@ -42,6 +43,14 @@ async function main() {
   if (!existsSync(iconPath)) {
     console.error(`${logPrefix} 托盘图标不存在: ${iconPath}`)
     console.error('  请执行: cd tahp-console && npm run tray:icon')
+    process.exit(1)
+  }
+
+  const missingTrayPkgs = findMissingTrayPackages(consoleRoot)
+  if (missingTrayPkgs.length > 0) {
+    console.error(`${logPrefix} 托盘依赖未安装: ${missingTrayPkgs.join(', ')}`)
+    console.error('  请在 tahp-console 目录执行: npm install')
+    console.error('  或重新运行工程根目录 run_adapter.bat（会自动安装依赖）')
     process.exit(1)
   }
 
