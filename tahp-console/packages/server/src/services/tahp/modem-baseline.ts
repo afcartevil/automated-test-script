@@ -147,15 +147,60 @@ type HarnessResult = {
   error?: string
 }
 
+type LocalExecResult = {
+  exitCode: number | null
+  stdout: string
+  stderr: string
+  timedOut: boolean
+}
+
 type RunRuntime = {
   runId: string
   clients: Set<ServerResponse>
+  logLineOpen: boolean
 }
 
 const runtimes = new Map<string, RunRuntime>()
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function formatRunLogTimestamp(date = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+  ].join('-') + ` ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+function ensureRunLogTimestamps(text: string, lineOpen = false) {
+  const timestamp = `[${formatRunLogTimestamp()}]`
+  const hasTimestamp = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\](?:\s|$)/
+  const parts = String(text ?? '').split(/(\r?\n)/)
+  let nextLineOpen = lineOpen
+  let normalized = ''
+
+  for (const part of parts) {
+    if (part === '\n' || part === '\r\n') {
+      normalized += part
+      nextLineOpen = false
+      continue
+    }
+    if (!part) continue
+    if (!nextLineOpen && !hasTimestamp.test(part)) {
+      normalized += `${timestamp} ${part}`
+    } else {
+      normalized += part
+    }
+    nextLineOpen = true
+  }
+
+  return {
+    text: normalized,
+    lineOpen: nextLineOpen,
+  }
 }
 
 function toolRootCandidates() {
@@ -1468,7 +1513,7 @@ function sendEvent(res: ServerResponse, event: string, data: unknown) {
 function runtimeFor(runId: string) {
   let runtime = runtimes.get(runId)
   if (!runtime) {
-    runtime = { runId, clients: new Set() }
+    runtime = { runId, clients: new Set(), logLineOpen: false }
     runtimes.set(runId, runtime)
   }
   return runtime
@@ -1565,8 +1610,16 @@ async function harnessExec(command: string, opts?: { timeoutMs?: number }): Prom
       : process.env
 
     const processRef = isWindows && harnessPs1 && fs.existsSync(harnessPs1)
-      ? spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', harnessPs1, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env })
-      : spawn('harness', args, { stdio: ['ignore', 'pipe', 'pipe'], env })
+      ? spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', harnessPs1, ...args], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env,
+          windowsHide: true,
+        })
+      : spawn('harness', args, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env,
+          windowsHide: true,
+        })
 
     let stdout = ''
     let stderr = ''
@@ -1614,6 +1667,52 @@ async function harnessExec(command: string, opts?: { timeoutMs?: number }): Prom
       } catch {
         reject(new Error(`invalid harness json: ${stderr || stdout}`))
       }
+    })
+  })
+}
+
+async function localGitExec(cwd: string, args: string[], opts?: { timeoutMs?: number }): Promise<LocalExecResult> {
+  const timeoutMs = opts?.timeoutMs ?? 1500
+  return await new Promise<LocalExecResult>((resolve) => {
+    const processRef = spawn('git', ['-C', cwd, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    let timedOut = false
+
+    const timer = setTimeout(() => {
+      if (settled) return
+      timedOut = true
+      settled = true
+      try {
+        processRef.kill('SIGKILL')
+      } catch {}
+      resolve({ exitCode: null, stdout, stderr, timedOut })
+    }, timeoutMs)
+
+    processRef.stdout.on('data', (chunk) => {
+      stdout += chunk.toString()
+    })
+
+    processRef.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
+
+    processRef.on('error', () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ exitCode: 1, stdout, stderr, timedOut })
+    })
+
+    processRef.on('close', (exitCode) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve({ exitCode, stdout, stderr, timedOut })
     })
   })
 }
@@ -1678,6 +1777,38 @@ function hasConflictMarker(buf: Buffer) {
 
 async function listUnmergedFiles(config: ModemBaselineConfig) {
   const remoteWorkDir = computeRemoteWorkDir(config)
+  const mapped = computeMappedWorkDir(config)
+
+  if (mapped) {
+    try {
+      const indexLock = path.resolve(mapped, '.git', 'index.lock')
+      if (fs.existsSync(indexLock)) {
+        return ['.git/index.lock']
+      }
+
+      const parseGitLsFilesUnmerged = (text: string) => {
+        const files = new Set<string>()
+        for (const rawLine of text.split('\n')) {
+          const line = rawLine.trim()
+          if (!line) continue
+          const tabIndex = line.lastIndexOf('\t')
+          if (tabIndex < 0) continue
+          const file = line.slice(tabIndex + 1).trim()
+          if (file) files.add(file)
+        }
+        return Array.from(files).sort()
+      }
+
+      const unmergedByLsFiles = await localGitExec(mapped, ['ls-files', '-u'], { timeoutMs: 1500 })
+      if (!unmergedByLsFiles.timedOut && unmergedByLsFiles.exitCode === 0) {
+        const files = parseGitLsFilesUnmerged(unmergedByLsFiles.stdout)
+        if (files.length) return files
+      }
+
+      const localMergeHead = path.resolve(mapped, '.git', 'MERGE_HEAD')
+      if (!fs.existsSync(localMergeHead)) return []
+    } catch {}
+  }
 
   try {
     const stripAnsi = (value: string) => value.replace(/\x1b\[[0-9;]*[A-Za-z]|\x1b./g, '')
@@ -1722,7 +1853,6 @@ async function listUnmergedFiles(config: ModemBaselineConfig) {
     }
   } catch {}
 
-  const mapped = computeMappedWorkDir(config)
   if (!mapped) return []
 
   const conflictLog = path.resolve(mapped, 'log', 'merge_conflict.log')
@@ -1922,13 +2052,27 @@ async function postProcessRun(runId: string, config: ModemBaselineConfig, code: 
   const current = readModemBaselineRun(runId)
   if (!current) return
 
+  // #region debug-point modem-postprocess-enter
+  appendLog(`[debug] postProcessRun enter runId=${runId} code=${String(code)}\n`)
+  // #endregion
+
   const mapped = computeMappedWorkDir(config)
   const remote = computeRemoteWorkDir(config)
   const mergeLogPath = mapped ? path.resolve(mapped, 'log', 'merge_conflict.log') : null
   const localMergeHead = mapped ? path.resolve(mapped, '.git', 'MERGE_HEAD') : null
+  const localIndexLock = mapped ? path.resolve(mapped, '.git', 'index.lock') : null
+  const localStillInMerge = Boolean(localMergeHead && fs.existsSync(localMergeHead))
   appendLog(
     `[conflicts] mapped=${mapped ?? ''} log=${mergeLogPath ?? ''} log_exists=${mergeLogPath ? fs.existsSync(mergeLogPath) : false} merge_head_exists=${localMergeHead ? fs.existsSync(localMergeHead) : false}\n`,
   )
+  if (localIndexLock && fs.existsSync(localIndexLock)) {
+    try {
+      const stat = fs.statSync(localIndexLock)
+      appendLog(`[conflicts] git_index_lock_exists=1 path=${localIndexLock} size=${stat.size} mtime=${stat.mtime.toISOString()}\n`)
+    } catch {
+      appendLog(`[conflicts] git_index_lock_exists=1 path=${localIndexLock}\n`)
+    }
+  }
 
   if (mergeLogPath && fs.existsSync(mergeLogPath)) {
     let text: string | null = null
@@ -1966,30 +2110,49 @@ async function postProcessRun(runId: string, config: ModemBaselineConfig, code: 
   }
 
   let remoteMergeHead = false
-  try {
-    const mergeHeadProbe = await harnessExec(`cd ${remote} && test -f .git/MERGE_HEAD && echo __APM_MERGE_HEAD__ || echo __APM_NO__`, { timeoutMs: 8000 })
-    const raw = (mergeHeadProbe.output ?? '').trim()
-    const cleaned = raw.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('Updating files:')).join('\n').trim()
-    const marker = cleaned.match(/__APM_(MERGE_HEAD|NO)__/)
-    const remoteHead = marker?.[1] === 'MERGE_HEAD' ? 'MERGE_HEAD' : marker?.[1] === 'NO' ? 'NO' : cleaned || raw
-    remoteMergeHead = remoteHead === 'MERGE_HEAD'
-    appendLog(`[conflicts] remote_merge_head=${remoteHead}\n`)
-  } catch (error) {
-    appendLog(`[conflicts] remote_merge_head probe failed: ${String((error as Error)?.message ?? error)}\n`)
+  if (mapped) {
+    remoteMergeHead = localStillInMerge
+    appendLog(`[conflicts] remote_merge_head=SKIP(mapped) local_merge_head=${Number(localStillInMerge)}\n`)
+  } else {
+    try {
+      const mergeHeadProbe = await harnessExec(`cd ${remote} && test -f .git/MERGE_HEAD && echo __APM_MERGE_HEAD__ || echo __APM_NO__`, { timeoutMs: 8000 })
+      const raw = (mergeHeadProbe.output ?? '').trim()
+      const cleaned = raw.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('Updating files:')).join('\n').trim()
+      const marker = cleaned.match(/__APM_(MERGE_HEAD|NO)__/)
+      const remoteHead = marker?.[1] === 'MERGE_HEAD' ? 'MERGE_HEAD' : marker?.[1] === 'NO' ? 'NO' : cleaned || raw
+      remoteMergeHead = remoteHead === 'MERGE_HEAD'
+      appendLog(`[conflicts] remote_merge_head=${remoteHead}\n`)
+    } catch (error) {
+      appendLog(`[conflicts] remote_merge_head probe failed: ${String((error as Error)?.message ?? error)}\n`)
+    }
   }
 
-  try {
-    const mergeSizeProbe = await harnessExec(`cd ${remote} && test -f log/merge_conflict.log && stat -c%s log/merge_conflict.log || echo MISSING`, { timeoutMs: 8000 })
-    const raw = (mergeSizeProbe.output ?? '').trim()
-    const cleaned = raw.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('Updating files:'))
-    appendLog(`[conflicts] remote_merge_conflict_size=${cleaned[cleaned.length - 1] ?? ''}\n`)
-  } catch (error) {
-    appendLog(`[conflicts] remote_merge_conflict_size probe failed: ${String((error as Error)?.message ?? error)}\n`)
+  if (mapped) {
+    try {
+      const size = mergeLogPath && fs.existsSync(mergeLogPath) ? fs.statSync(mergeLogPath).size : 'MISSING'
+      appendLog(`[conflicts] remote_merge_conflict_size=SKIP(mapped) local_size=${String(size)}\n`)
+    } catch (error) {
+      appendLog(`[conflicts] remote_merge_conflict_size local probe failed: ${String((error as Error)?.message ?? error)}\n`)
+    }
+  } else {
+    try {
+      const mergeSizeProbe = await harnessExec(`cd ${remote} && test -f log/merge_conflict.log && stat -c%s log/merge_conflict.log || echo MISSING`, { timeoutMs: 8000 })
+      const raw = (mergeSizeProbe.output ?? '').trim()
+      const cleaned = raw.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('Updating files:'))
+      appendLog(`[conflicts] remote_merge_conflict_size=${cleaned[cleaned.length - 1] ?? ''}\n`)
+    } catch (error) {
+      appendLog(`[conflicts] remote_merge_conflict_size probe failed: ${String((error as Error)?.message ?? error)}\n`)
+    }
   }
 
-  const conflictFiles = await listUnmergedFiles(config)
+  // #region debug-point modem-postprocess-before-list-unmerged
+  appendLog(`[debug] postProcessRun before listUnmergedFiles mapped=${mapped ?? ''} remote=${remote}\n`)
+  // #endregion
+  const conflictFiles = localIndexLock && fs.existsSync(localIndexLock) ? ['.git/index.lock'] : await listUnmergedFiles(config)
+  // #region debug-point modem-postprocess-after-list-unmerged
+  appendLog(`[debug] postProcessRun after listUnmergedFiles count=${conflictFiles.length}\n`)
+  // #endregion
   appendLog(`[conflicts] detected_files=${conflictFiles.length}\n`)
-  const localStillInMerge = Boolean(localMergeHead && fs.existsSync(localMergeHead))
   const hasRealConflict = conflictFiles.length > 0 || remoteMergeHead || localStillInMerge
   let status: ModemBaselineStatus = hasRealConflict ? 'conflict' : code === 1 ? 'failed' : 'success'
   appendLog(`[conflicts] final_status=${status} exit_code=${String(code)} local_merge_head=${Number(localStillInMerge)} remote_merge_head=${Number(remoteMergeHead)}\n`)
@@ -2008,6 +2171,9 @@ async function postProcessRun(runId: string, config: ModemBaselineConfig, code: 
   } else {
     appendLog(`[run] phase=${nextMeta.phase} status=failed summary=post_process_failed exit_code=${String(code)}\n`)
   }
+  // #region debug-point modem-postprocess-before-write-meta
+  appendLog(`[debug] postProcessRun before writeRunMeta status=${nextMeta.status} phase=${nextMeta.phase}\n`)
+  // #endregion
   writeRunMeta(nextMeta)
   broadcast(runId, 'status', { status: nextMeta.status, phase: nextMeta.phase, reportPath: nextMeta.reportPath, error: nextMeta.error })
   broadcast(runId, 'conflicts', { files: conflictFiles })
@@ -2024,9 +2190,12 @@ function updateReportPathFromLog(runId: string, line: string) {
 }
 
 function appendRunLog(runId: string, logPath: string, line: string) {
-  fs.appendFileSync(logPath, line, 'utf-8')
-  broadcast(runId, 'log', { line })
-  updateReportPathFromLog(runId, line)
+  const runtime = runtimeFor(runId)
+  const normalized = ensureRunLogTimestamps(line, runtime.logLineOpen)
+  runtime.logLineOpen = normalized.lineOpen
+  fs.appendFileSync(logPath, normalized.text, 'utf-8')
+  broadcast(runId, 'log', { line: normalized.text })
+  updateReportPathFromLog(runId, normalized.text)
 }
 
 function markRunFailed(runId: string, error: string) {
@@ -2105,11 +2274,18 @@ async function startBackgroundRun(runId: string, config: ModemBaselineConfig, sc
     return
   }
 
+  // #region debug-point modem-python-spawn
+  appendRunLog(runId, logPath, `[debug] startBackgroundRun spawn script=${scriptName} python=${pythonExe} scriptPath=${scriptPath} configPath=${configPath}\n`)
+  // #endregion
   const processRef = spawn(pythonExe, ['-u', scriptPath, configPath], {
     cwd: toolRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', SKIP_BRIDGE_CHECK: 'true' },
+    windowsHide: true,
   })
+  // #region debug-point modem-python-spawned
+  appendRunLog(runId, logPath, `[debug] startBackgroundRun spawned pid=${String(processRef.pid ?? '')} script=${scriptName}\n`)
+  // #endregion
 
   processRef.on('error', (error) => {
     appendRunLog(runId, logPath, `[spawn] failed: ${String((error as Error)?.message ?? error)}\n`)
@@ -2118,6 +2294,9 @@ async function startBackgroundRun(runId: string, config: ModemBaselineConfig, sc
   processRef.stdout.on('data', chunk => appendRunLog(runId, logPath, chunk.toString()))
   processRef.stderr.on('data', chunk => appendRunLog(runId, logPath, chunk.toString()))
   processRef.on('close', async (code) => {
+    // #region debug-point modem-python-close
+    appendRunLog(runId, logPath, `[debug] startBackgroundRun close pid=${String(processRef.pid ?? '')} code=${String(code)} script=${scriptName}\n`)
+    // #endregion
     await postProcessRun(runId, config, code, line => appendRunLog(runId, logPath, line))
   })
 }

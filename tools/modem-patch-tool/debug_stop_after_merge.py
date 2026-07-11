@@ -24,24 +24,12 @@ REPORT_LABEL = "Initial flow report"
 
 
 def run_stop_flow(merger) -> int:
-    log_step(merger, FLOW_LABEL, 2, "Test remote execution")
-    test_result = merger.run_harness_command(["echo", "Harness bridge connection test"])
-    if not (test_result and test_result.returncode == 0):
-        return fail_step(
-            merger,
-            "Test Harness execution",
-            "Remote execution failed",
-            "Harness bridge-exec failed",
-            report_label=REPORT_LABEL,
-        )
-    merger.add_step("Test Harness execution", "success", "Remote execution is ready")
-
-    log_step(merger, FLOW_LABEL, 3, "Upload non-interactive merge script")
+    log_step(merger, FLOW_LABEL, 2, "Upload non-interactive merge script")
     if not merger.configure_md_merge():
         return finish_with_report(merger, 1, report_label=REPORT_LABEL)
     merger.wait(merger.medium_delay)
 
-    log_step(merger, FLOW_LABEL, 4, "Run non-interactive merge")
+    log_step(merger, FLOW_LABEL, 3, "Run non-interactive merge")
     if not merger.run_md_merge():
         return finish_with_report(merger, 1, report_label=REPORT_LABEL)
 
@@ -49,7 +37,7 @@ def run_stop_flow(merger) -> int:
     in_merge = bool(merge_head and merge_head.returncode == 0)
 
     if in_merge:
-        log_step(merger, FLOW_LABEL, 5, "Wait for manual conflict resolution")
+        log_step(merger, FLOW_LABEL, 4, "Wait for manual conflict resolution")
         return warn_step(
             merger,
             "Wait for manual conflict resolution",
@@ -57,7 +45,7 @@ def run_stop_flow(merger) -> int:
             report_label=REPORT_LABEL,
         )
 
-    log_step(merger, FLOW_LABEL, 6, "Run post-merge steps")
+    log_step(merger, FLOW_LABEL, 5, "Run post-merge steps")
     if not merger.upload_scripts():
         return finish_with_report(merger, 1, report_label=REPORT_LABEL)
     merger.wait(merger.short_delay)

@@ -469,21 +469,99 @@ class AutoPatchMerger:
         except Exception as e:
             self.log(f"Failed to copy via mapped directory: {e}")
             return False
+
+    def _mapped_git_exec(self, args, timeout=2):
+        """Run a lightweight git command against the mapped worktree."""
+        if not self.mapped_work_dir or not os.path.exists(self.mapped_work_dir):
+            return None
+        started = time.perf_counter()
+        try:
+            kwargs = {
+                "capture_output": True,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+                "timeout": timeout,
+            }
+            if sys.platform == "win32":
+                kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            result = subprocess.run(["git", "-C", self.mapped_work_dir, *args], **kwargs)
+            elapsed = (time.perf_counter() - started) * 1000
+            self.log(f"[Mapped git] {' '.join(args)} rc={result.returncode} elapsed_ms={elapsed:.0f}")
+            return result
+        except subprocess.TimeoutExpired:
+            elapsed = (time.perf_counter() - started) * 1000
+            self.log(f"[Mapped git] {' '.join(args)} timeout elapsed_ms={elapsed:.0f}")
+            return None
+        except Exception as e:
+            self.log(f"[Mapped git] {' '.join(args)} failed: {e}")
+            return None
+
+    def _mapped_git_rev_parse(self, rev, timeout=2):
+        result = self._mapped_git_exec(["rev-parse", rev], timeout=timeout)
+        if result and result.returncode == 0 and result.stdout:
+            value = result.stdout.strip().splitlines()
+            if value:
+                return value[-1].strip()
+        return None
+
+    def _probe_mapped_repo_state(self):
+        """Probe merge state from mapped worktree using local fs/index only."""
+        if not self.mapped_work_dir or not os.path.exists(self.mapped_work_dir):
+            return {"available": False, "reason": "mapped_unavailable", "merge_head": False, "ls_files": [], "index_lock": False}
+
+        merge_head = os.path.exists(os.path.join(self.mapped_work_dir, ".git", "MERGE_HEAD"))
+        index_lock = os.path.exists(os.path.join(self.mapped_work_dir, ".git", "index.lock"))
+        result = self._mapped_git_exec(["ls-files", "-u"], timeout=2)
+        if not result or result.returncode != 0:
+            return {
+                "available": False,
+                "reason": "mapped_git_failed",
+                "merge_head": merge_head,
+                "ls_files": [],
+                "index_lock": index_lock,
+            }
+
+        files = []
+        for raw_line in result.stdout.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            tab_index = line.rfind("\t")
+            if tab_index < 0:
+                continue
+            file_path = line[tab_index + 1 :].strip()
+            if file_path:
+                files.append(file_path)
+
+        return {
+            "available": True,
+            "reason": "",
+            "merge_head": merge_head,
+            "ls_files": sorted(set(files)),
+            "index_lock": index_lock,
+        }
             
     def configure_md_merge(self):
         """Upload and configure non-interactive merge script to remote server"""
         self.log("Uploading and configuring non-interactive merge script...")
         
-        # Get current commit ID of NODE_BRANCH on remote
-        get_commit_cmd = ['git', 'rev-parse', self.config.get("NODE_BRANCH", "master")]
-        commit_result = self.run_harness_command(get_commit_cmd, self.remote_work_dir, delay_after=self.short_delay)
-        
-        if commit_result and commit_result.returncode == 0:
-            current_commit = commit_result.stdout.strip()
+        node_branch = self.config.get("NODE_BRANCH", "master")
+        current_commit = self._mapped_git_rev_parse(node_branch, timeout=2)
+        if current_commit:
+            self.log(f"Current commit ID (mapped): {current_commit}")
+        else:
+            get_commit_cmd = ['git', 'rev-parse', node_branch]
+            commit_result = self.run_harness_command(get_commit_cmd, self.remote_work_dir, delay_after=self.short_delay)
+            if commit_result and commit_result.returncode == 0:
+                current_commit = commit_result.stdout.strip()
+            else:
+                current_commit = ""
+
+        if current_commit:
             self.log(f"Current commit ID: {current_commit}")
         else:
             self.log("Warning: Could not get current commit ID")
-            current_commit = ""
             
         # Read local non-interactive script template
         local_script_path = os.path.join(os.path.dirname(__file__), 'md_merge_noninteractive.sh')
@@ -514,18 +592,9 @@ class AutoPatchMerger:
             success = result and result.returncode == 0
         
         if success:
-            # Make script executable via harness
-            remote_script_path = f"{self.remote_work_dir}/tools/md_merge_noninteractive.sh"
-            chmod_cmd = ['chmod', '+x', remote_script_path]
-            chmod_result = self.run_harness_command(chmod_cmd, self.remote_work_dir, delay_after=self.short_delay)
-            
-            if chmod_result and chmod_result.returncode == 0:
-                self.add_step("上传非交互式脚本", "success", "已上传并配置非交互式合并脚本")
-                self.log("Non-interactive merge script uploaded successfully")
-                return True
-            else:
-                self.add_step("上传非交互式脚本", "failed", "脚本上传成功，但设置权限失败")
-                return False
+            self.add_step("上传非交互式脚本", "success", "已上传并配置非交互式合并脚本")
+            self.log("Non-interactive merge script uploaded successfully")
+            return True
         else:
             self.add_step("上传非交互式脚本", "failed", "脚本上传失败")
             self.report_data['errors'].append("Failed to upload non-interactive merge script")
@@ -561,11 +630,6 @@ class AutoPatchMerger:
                     result = self.run_harness_command([f'echo "{content_base64}" | base64 -d > "{remote_full}"'], self.remote_work_dir, delay_after=self.short_delay)
                     success = bool(result and result.returncode == 0)
                 
-                if success:
-                    remote_full = f"{self.remote_work_dir}/{remote_rel}"
-                    chmod_result = self.run_harness_command(["chmod", "+x", remote_full], self.remote_work_dir, delay_after=self.short_delay)
-                    success = bool(chmod_result and chmod_result.returncode == 0)
-                
                 if not success:
                     all_ok = False
             except Exception as e:
@@ -585,10 +649,13 @@ class AutoPatchMerger:
         """Run non-interactive merge script on remote server"""
         self.log("Running non-interactive merge script on remote server...")
 
-        before_head = None
-        before_head_result = self.run_harness_command(['git', 'rev-parse', 'HEAD'], self.remote_work_dir, delay_after=self.short_delay)
-        if before_head_result and before_head_result.returncode == 0 and before_head_result.stdout:
-            before_head = before_head_result.stdout.strip().splitlines()[-1].strip()
+        before_head = self._mapped_git_rev_parse("HEAD", timeout=2)
+        if before_head:
+            self.log(f"Current HEAD before merge (mapped): {before_head}")
+        else:
+            before_head_result = self.run_harness_command(['git', 'rev-parse', 'HEAD'], self.remote_work_dir, delay_after=self.short_delay)
+            if before_head_result and before_head_result.returncode == 0 and before_head_result.stdout:
+                before_head = before_head_result.stdout.strip().splitlines()[-1].strip()
 
         cmd = ['bash', 'tools/md_merge_noninteractive.sh']
         result = self.run_harness_command(cmd, self.remote_work_dir, delay_after=self.long_delay)
@@ -610,17 +677,7 @@ class AutoPatchMerger:
         merge_head_result = self.run_harness_command(['test', '-f', '.git/MERGE_HEAD'], self.remote_work_dir, delay_after=self.short_delay)
         in_merge = bool(merge_head_result and merge_head_result.returncode == 0)
 
-        unmerged_files = []
-        unmerged_check = self.run_harness_command(
-            ['GIT_PAGER=cat', 'git', 'diff', '--name-only', '--diff-filter=U'],
-            self.remote_work_dir,
-            delay_after=self.short_delay,
-        )
-        if unmerged_check and unmerged_check.returncode == 0 and unmerged_check.stdout:
-            cleaned = re.sub(r'\x1b\[[0-9;]*[A-Za-z]|\x1b.', '', unmerged_check.stdout)
-            unmerged_files = [line.strip() for line in cleaned.splitlines() if line.strip()]
-
-        if in_merge or unmerged_files:
+        if in_merge:
             self.add_step("运行合并脚本", "warning", "检测到合并冲突，需要研发手动处理")
             self.log("Merge conflict detected, manual resolution is required")
             return True
@@ -632,10 +689,13 @@ class AutoPatchMerger:
         if status_result and status_result.returncode == 0 and status_result.stdout:
             status_porcelain = status_result.stdout.strip()
 
-        after_head = None
-        after_head_result = self.run_harness_command(['git', 'rev-parse', 'HEAD'], self.remote_work_dir, delay_after=self.short_delay)
-        if after_head_result and after_head_result.returncode == 0 and after_head_result.stdout:
-            after_head = after_head_result.stdout.strip().splitlines()[-1].strip()
+        after_head = self._mapped_git_rev_parse("HEAD", timeout=2)
+        if after_head:
+            self.log(f"Current HEAD after merge (mapped): {after_head}")
+        else:
+            after_head_result = self.run_harness_command(['git', 'rev-parse', 'HEAD'], self.remote_work_dir, delay_after=self.short_delay)
+            if after_head_result and after_head_result.returncode == 0 and after_head_result.stdout:
+                after_head = after_head_result.stdout.strip().splitlines()[-1].strip()
 
         merge_has_effect = bool(in_merge or status_porcelain or (before_head and after_head and before_head != after_head))
 
@@ -1868,6 +1928,8 @@ class AutoPatchMerger:
         self.log(
             f"[Merge settle] Waiting for remote repo to stabilize: max_wait={max_wait}s interval={poll_interval}s stable_reads={required_stable}"
         )
+        if self.mapped_work_dir:
+            self.log("[Merge settle] mapped-first mode enabled (local ls-files + single remote confirmation)")
         started = time.perf_counter()
         stable_hits = 0
         prev_signature = None
@@ -1876,34 +1938,88 @@ class AutoPatchMerger:
 
         while True:
             attempt += 1
-            probe = self._probe_remote_repo_state()
-            last_probe = probe
-            signature = (
-                probe["merge_head"],
-                tuple(probe["diff_files"]),
-                tuple(probe["ls_files"]),
-            )
+            local_probe = None
+            if self.mapped_work_dir:
+                local_probe = self._probe_mapped_repo_state()
+                if not local_probe.get("available"):
+                    self.log(f"[Merge settle] probe={attempt} mapped probe unavailable: {local_probe.get('reason', 'unknown')}, fallback to remote")
+                    local_probe = None
+                elif local_probe.get("index_lock"):
+                    self.log(f"[Merge settle] probe={attempt} mapped index.lock detected, fallback to remote")
+                    local_probe = None
 
-            if probe["busy"]:
-                stable_hits = 0
-                prev_signature = None
-                self.log(f"[Merge settle] probe={attempt} repo still updating, waiting...")
-            elif signature == prev_signature:
-                stable_hits += 1
-                self.log(
-                    f"[Merge settle] probe={attempt} stable={stable_hits}/{required_stable} merge_head={int(probe['merge_head'])} diff={len(probe['diff_files'])} ls={len(probe['ls_files'])}"
+            if local_probe:
+                probe = {
+                    "merge_head": local_probe["merge_head"],
+                    "diff_files": [],
+                    "ls_files": local_probe["ls_files"],
+                    "busy": False,
+                }
+                last_probe = probe
+                signature = (
+                    probe["merge_head"],
+                    tuple(probe["ls_files"]),
                 )
+
+                if signature == prev_signature:
+                    stable_hits += 1
+                    self.log(
+                        f"[Merge settle] probe={attempt} mapped stable={stable_hits}/{required_stable} merge_head={int(probe['merge_head'])} ls={len(probe['ls_files'])}"
+                    )
+                else:
+                    prev_signature = signature
+                    stable_hits = 1
+                    self.log(
+                        f"[Merge settle] probe={attempt} mapped snapshot merge_head={int(probe['merge_head'])} ls={len(probe['ls_files'])}"
+                    )
+
+                if stable_hits >= required_stable:
+                    self.log(f"[Merge settle] mapped snapshot stable, running remote confirmation")
+                    remote_probe = self._probe_remote_repo_state()
+                    confirmed_files = sorted(set((remote_probe.get("diff_files") or []) + (remote_probe.get("ls_files") or [])))
+                    local_files = sorted(set(probe["ls_files"]))
+                    if remote_probe.get("busy"):
+                        self.log(f"[Merge settle] remote confirmation still busy, continue polling")
+                        stable_hits = 0
+                        prev_signature = None
+                    else:
+                        self.log(
+                            f"[Merge settle] remote confirmation merge_head={int(remote_probe['merge_head'])} diff={len(remote_probe['diff_files'])} ls={len(remote_probe['ls_files'])}"
+                        )
+                        if bool(remote_probe["merge_head"]) != bool(probe["merge_head"]) or confirmed_files != local_files:
+                            self.log("[Merge settle] mapped/remote mismatch, using remote snapshot")
+                        elapsed = time.perf_counter() - started
+                        self.log(f"[Merge settle] repo stable after {elapsed:.2f}s")
+                        return remote_probe
             else:
-                prev_signature = signature
-                stable_hits = 1
-                self.log(
-                    f"[Merge settle] probe={attempt} snapshot merge_head={int(probe['merge_head'])} diff={len(probe['diff_files'])} ls={len(probe['ls_files'])}"
+                probe = self._probe_remote_repo_state()
+                last_probe = probe
+                signature = (
+                    probe["merge_head"],
+                    tuple(probe["diff_files"]),
+                    tuple(probe["ls_files"]),
                 )
 
-            if stable_hits >= required_stable:
-                elapsed = time.perf_counter() - started
-                self.log(f"[Merge settle] repo stable after {elapsed:.2f}s")
-                return last_probe
+                if probe["busy"]:
+                    stable_hits = 0
+                    prev_signature = None
+                    self.log(f"[Merge settle] probe={attempt} repo still updating, waiting...")
+                elif signature == prev_signature:
+                    stable_hits += 1
+                    self.log(
+                        f"[Merge settle] probe={attempt} stable={stable_hits}/{required_stable} merge_head={int(probe['merge_head'])} diff={len(probe['diff_files'])} ls={len(probe['ls_files'])}"
+                    )
+                else:
+                    prev_signature = signature
+                    stable_hits = 1
+                    self.log(
+                        f"[Merge settle] probe={attempt} snapshot merge_head={int(probe['merge_head'])} diff={len(probe['diff_files'])} ls={len(probe['ls_files'])}"
+                    )
+
+                if stable_hits >= required_stable:
+                    elapsed = time.perf_counter() - started
+                    self.log(f"[Merge settle] repo stable after {elapsed:.2f}s")
+                    return last_probe
 
             elapsed = time.perf_counter() - started
             if elapsed >= max_wait:
@@ -2178,32 +2294,19 @@ class AutoPatchMerger:
             return False
         self.add_step("检测 Harness 桥接", "success", "桥接连接正常")
         
-        # Step 2: Test harness connection
-        self.log("\n[Step 2] Testing harness bridge-exec...")
-        test_result = self.run_harness_command(['echo', 'Harness bridge connection test'])
-        if test_result and test_result.returncode == 0:
-            self.add_step("测试 Harness 执行", "success", "远程执行正常")
-        else:
-            self.add_step("测试 Harness 执行", "failed", "远程执行失败")
-            self.report_data['errors'].append("Harness bridge-exec failed")
-            report_path = self._finalize_and_generate_report()
-            if report_path:
-                self.log(f"Report: {report_path}")
-            return False
-            
-        # Step 3: Upload non-interactive merge script
-        self.log("\n[Step 3] Uploading non-interactive merge script...")
+        # Step 2: Upload non-interactive merge script
+        self.log("\n[Step 2] Uploading non-interactive merge script...")
         if not self.configure_md_merge():
             return False
         self.wait(self.medium_delay)
             
-        # Step 4: Upload scripts
-        self.log("\n[Step 4] Uploading scripts to remote...")
+        # Step 3: Upload scripts
+        self.log("\n[Step 3] Uploading scripts to remote...")
         self.upload_scripts()
         self.wait(self.short_delay)
         
-        # Step 5: Run non-interactive merge script
-        self.log("\n[Step 5] Running non-interactive merge script...")
+        # Step 4: Run non-interactive merge script
+        self.log("\n[Step 4] Running non-interactive merge script...")
         if not self.run_md_merge():
             report_path = self._finalize_and_generate_report()
             if report_path:
@@ -2211,8 +2314,8 @@ class AutoPatchMerger:
             return False
         # Note: long delay already added in run_md_merge
             
-        # Step 6: Resolve conflicts on remote
-        self.log("\n[Step 6] Resolving conflicts on remote...")
+        # Step 5: Resolve conflicts on remote
+        self.log("\n[Step 5] Resolving conflicts on remote...")
         if not self.resolve_conflicts():
             report_path = self._finalize_and_generate_report()
             if report_path:
@@ -2220,8 +2323,8 @@ class AutoPatchMerger:
             self.close_log_file()
             return False
         
-        # Step 7: Complete merge
-        self.log("\n[Step 7] Completing merge...")
+        # Step 6: Complete merge
+        self.log("\n[Step 6] Completing merge...")
         if not self.continue_merge():
             report_path = self._finalize_and_generate_report()
             if report_path:
@@ -2229,8 +2332,8 @@ class AutoPatchMerger:
             self.close_log_file()
             return False
         
-        # Step 8: Get final git status
-        self.log("\n[Step 8] Getting final git status...")
+        # Step 7: Get final git status
+        self.log("\n[Step 7] Getting final git status...")
         status_result = self.run_harness_command(['git', 'status'], self.remote_work_dir, delay_after=self.short_delay)
         
         report_path = self._finalize_and_generate_report()
