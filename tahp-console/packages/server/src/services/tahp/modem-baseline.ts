@@ -147,6 +147,12 @@ type HarnessResult = {
   error?: string
 }
 
+type BridgeProbeResult = {
+  ready: boolean
+  summary: string
+  cached?: boolean
+}
+
 type LocalExecResult = {
   exitCode: number | null
   stdout: string
@@ -161,9 +167,27 @@ type RunRuntime = {
 }
 
 const runtimes = new Map<string, RunRuntime>()
+const BRIDGE_PROBE_CACHE_TTL_MS = 90_000
+let lastBridgeProbeSuccessAt = 0
+let lastBridgeProbeSummary = ''
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function getCachedBridgeProbe(): BridgeProbeResult | null {
+  if (!lastBridgeProbeSuccessAt) return null
+  if (Date.now() - lastBridgeProbeSuccessAt > BRIDGE_PROBE_CACHE_TTL_MS) return null
+  return {
+    ready: true,
+    summary: lastBridgeProbeSummary || 'cached_bridge_probe=1',
+    cached: true,
+  }
+}
+
+function rememberBridgeProbeSuccess(summary: string) {
+  lastBridgeProbeSuccessAt = Date.now()
+  lastBridgeProbeSummary = summary
 }
 
 function formatRunLogTimestamp(date = new Date()) {
@@ -1880,6 +1904,12 @@ async function listUnmergedFiles(config: ModemBaselineConfig) {
 }
 
 async function checkBridgeHealthy(appendLog: (line: string) => void, retries = 2, timeoutMs = 60_000) {
+  const cached = getCachedBridgeProbe()
+  if (cached?.ready) {
+    appendLog(`[precheck] bridge check reused cached result ttl_ms=${BRIDGE_PROBE_CACHE_TTL_MS} summary="${cached.summary}"\n`)
+    return true
+  }
+
   let lastError: unknown = null
   for (let index = 0; index <= retries; index += 1) {
     try {
@@ -1892,6 +1922,7 @@ async function checkBridgeHealthy(appendLog: (line: string) => void, retries = 2
         `[precheck] bridge check attempt=${index + 1}/${retries + 1} result status=${probe.status} exit_code=${probe.exit_code} output="${outputSummary}" error="${errorSummary}"\n`,
       )
       if (probe.status === 'ok' && probe.exit_code === 0 && probe.output?.includes('bridge_check')) {
+        rememberBridgeProbeSuccess(`status=${probe.status} exit_code=${probe.exit_code} output="${outputSummary}" error="${errorSummary}"`)
         appendLog(`[precheck] bridge check attempt=${index + 1}/${retries + 1} passed\n`)
         return true
       }
@@ -1909,14 +1940,19 @@ async function checkBridgeHealthy(appendLog: (line: string) => void, retries = 2
 }
 
 async function probeBridge(timeoutMs: number) {
+  const cached = getCachedBridgeProbe()
+  if (cached?.ready) return cached
+
   try {
     const probe = await harnessExec('echo bridge_check', { timeoutMs })
     const outputSummary = summarizeForLog(probe.output)
     const errorSummary = summarizeForLog(probe.error)
     const ready = probe.status === 'ok' && probe.exit_code === 0 && probe.output?.includes('bridge_check')
+    const summary = `status=${probe.status} exit_code=${probe.exit_code} output="${outputSummary}" error="${errorSummary}"`
+    if (ready) rememberBridgeProbeSuccess(summary)
     return {
       ready,
-      summary: `status=${probe.status} exit_code=${probe.exit_code} output="${outputSummary}" error="${errorSummary}"`,
+      summary,
     }
   } catch (error) {
     return {
