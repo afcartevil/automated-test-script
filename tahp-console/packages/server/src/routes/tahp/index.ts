@@ -6,6 +6,7 @@ import { tahpKnowledgeRoutes } from './knowledge'
 import { tahpReportsRoutes } from './reports'
 import { tahpAdaptRoutes } from './adapt'
 import { tahpSkillsRoutes } from './skills'
+import { tahpSkillSyncRoutes } from './skill-sync'
 import { tahpBugAnalysisRoutes } from './bug-analysis'
 import { tahpSelfCheckRoutes } from './self-check'
 import { tahpGerritReviewRoutes } from './gerrit-review'
@@ -19,10 +20,12 @@ export function registerTahpRoutes(app: Koa) {
   app.use(tahpKnowledgeRoutes.routes())
   app.use(tahpReportsRoutes.routes())
   app.use(tahpAdaptRoutes.routes())
+  // skill-sync 静态路径先于 skills 的 :skillId 挂载，避免未来冲突
+  app.use(tahpSkillSyncRoutes.routes())
   app.use(tahpSkillsRoutes.routes())
   app.use(tahpBugAnalysisRoutes.routes())
   app.use(tahpSelfCheckRoutes.routes())
-app.use(tahpGerritReviewRoutes.routes())
+  app.use(tahpGerritReviewRoutes.routes())
   app.use(tahpGerritConfigRoutes.routes())
   app.use(tahpSkillConfigRoutes.routes())
   app.use(tahpDeviceSelfCheckRoutes.routes())

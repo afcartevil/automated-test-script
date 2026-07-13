@@ -32,6 +32,12 @@ describe('HermesSkillInjector', () => {
     await mkdir(distSkills, { recursive: true })
     await mkdir(devSkills, { recursive: true })
 
+    // 本仓运行时 hasTahpProject() 为真会短路到工程 skills；路径候选分支需隔离 mock
+    vi.doMock('../../packages/server/src/services/tahp/paths', () => ({
+      hasTahpProject: () => false,
+      tahpPaths: { projectRoot: root, skillsDir: join(root, 'skills') },
+    }))
+
     const { HermesSkillInjector } = await import('../../packages/server/src/services/hermes/skill-injector')
 
     expect(HermesSkillInjector.resolveSourceDir({ HERMES_WEB_UI_SKILLS_DIR: override } as any, join(root, 'dist', 'server'))).toBe(override)
@@ -81,5 +87,25 @@ describe('HermesSkillInjector', () => {
     expect(second.injected).toEqual([])
     expect(second.updated).toEqual([])
     expect(second.skipped).toEqual(['stable-skill'])
+  })
+
+  it('only syncs requested skillIds when filter is provided', async () => {
+    const source = await tempDir('hermes-skill-source-filter-')
+    const hermesHome = await tempDir('hermes-skill-home-filter-')
+    process.env.HERMES_HOME = hermesHome
+
+    await mkdir(join(source, 'keep-a'), { recursive: true })
+    await writeFile(join(source, 'keep-a', 'SKILL.md'), '# A\n', 'utf-8')
+    await mkdir(join(source, 'skip-b'), { recursive: true })
+    await writeFile(join(source, 'skip-b', 'SKILL.md'), '# B\n', 'utf-8')
+
+    const { HermesSkillInjector } = await import('../../packages/server/src/services/hermes/skill-injector')
+    const result = await new HermesSkillInjector(source).injectMissingSkills(['keep-a'])
+
+    expect(result.injected).toEqual(['keep-a'])
+    expect(result.skipped).toEqual([])
+    await expect(readFile(join(hermesHome, 'skills', 'keep-a', 'SKILL.md'), 'utf-8')).resolves.toBe('# A\n')
+    const { existsSync } = await import('fs')
+    expect(existsSync(join(hermesHome, 'skills', 'skip-b'))).toBe(false)
   })
 })

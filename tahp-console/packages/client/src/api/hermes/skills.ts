@@ -264,3 +264,83 @@ export async function fetchSkillHistory(category: string, skill: string): Promis
 export async function fetchSkillCommitDetail(category: string, skill: string, hash: string): Promise<SkillCommitDetail> {
   return request<SkillCommitDetail>(`/api/hermes/skills/${category}/${skill}/history/${hash}`)
 }
+
+// ── Skill 同步中心（Phase 1）────────────────────────────────────────────────
+
+export type SkillSyncStateName = 'synced' | 'behind' | 'local_only' | 'unknown'
+
+export interface SkillSyncStatusItem {
+  id: string
+  state: SkillSyncStateName
+  central_hash?: string
+  local_hash?: string
+  updated_at?: string
+  bundle_ids: string[]
+  name?: string
+  func_type?: string
+  module?: string
+}
+
+export interface SkillSyncGroup {
+  id: string
+  label: string
+  behind_count: number
+  skill_ids: string[]
+}
+
+export interface SkillSyncStatus {
+  configured: boolean
+  central_url: string | null
+  connected: boolean
+  last_pulled_at: string | null
+  behind_count: number
+  skills: SkillSyncStatusItem[]
+  groups: SkillSyncGroup[]
+  error?: string
+}
+
+export interface SkillSyncResult {
+  pull: {
+    entries: number
+    skills: number
+    configs: number
+    generated_at: string
+    skill_ids: string[]
+    reinjected: string[]
+    reinject_error?: string
+  } | null
+  reinjected: string[]
+  reinject_error?: string
+  status: {
+    behind_count: number
+    last_pulled_at: string | null
+    connected: boolean
+    configured: boolean
+  }
+}
+
+export interface SkillReinjectResult {
+  sourceDir: string
+  targetDir: string
+  injected: string[]
+  updated: string[]
+  skipped: string[]
+}
+
+export async function fetchSyncStatus(): Promise<SkillSyncStatus> {
+  const { tahpGet } = await import('../tahp/client')
+  return tahpGet<SkillSyncStatus>('/api/tahp/skills/sync-status')
+}
+
+export async function triggerSync(skillIds?: string[]): Promise<SkillSyncResult> {
+  const { tahpPost } = await import('../tahp/client')
+  return tahpPost<SkillSyncResult>('/api/tahp/skills/sync', skillIds?.length ? { skill_ids: skillIds } : {})
+}
+
+export async function reinjectSkills(skillIds?: string[]): Promise<SkillReinjectResult> {
+  const { tahpPost } = await import('../tahp/client')
+  return tahpPost<SkillReinjectResult>(
+    '/api/tahp/skills/reinject',
+    skillIds?.length ? { skill_ids: skillIds } : {},
+  )
+}

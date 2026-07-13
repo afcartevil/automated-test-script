@@ -1,7 +1,13 @@
 /**
  * 同步类型定义 — 与中心 easyadapter_bff/src/routes/sync.ts 的契约保持一致。
- * 两仓各存一份，修改时务必同步。
+ * 两仓各存一份，修改时务必同步。见 .cursor/skill-sync/PHASE-1.md。
  */
+
+export interface ManifestFileEntry {
+  rel_path: string
+  hash: string
+  size: number
+}
 
 export interface ManifestItem {
   type: 'entry' | 'skill' | 'config'
@@ -9,6 +15,10 @@ export interface ManifestItem {
   updated_at: string
   hash: string
   status: string
+  /** Phase 1: skill 多为 []；Phase 3 填真实 Bundle */
+  bundle_ids?: string[]
+  /** Phase 1: skill 仅 SKILL.md；Phase 2 扩展整包 */
+  files?: ManifestFileEntry[]
 }
 
 export interface SyncManifest {

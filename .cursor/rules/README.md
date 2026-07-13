@@ -22,6 +22,10 @@
 
 `.cursor/skills/` 下为任务级工作流（如 AI 自检集成），在对应规则中引用。
 
+## 设计与执行文档
+
+- Skill 同步管理：`.cursor/skill-sync/`（Phase 提案与强制自检）
+
 ## 合并请求模板
 
 - GitLab: `.gitlab/merge_request_templates/Default.md`

@@ -26,6 +26,7 @@ jira_workspace/
 .tahp-config/
 # 每人本机 Skill 配置状态、Jira 凭据与一键配置表单（勿提交）
 .tahp/skill-config-state.json
+.tahp/skill-sync-state.json
 .tahp/jira-user-config.json
 .tahp/unified-config.json
 # TranCopilot 项目规则文件夹

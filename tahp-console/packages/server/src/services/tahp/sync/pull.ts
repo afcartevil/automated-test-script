@@ -1,6 +1,7 @@
 /**
  * 从中心拉取已发布内容写入本地副本，并重建检索索引 / 热生效公共配置。
  * 执行侧（适配/自检/检索）读本地副本，逻辑不变。
+ * Phase 1：skill 写入后自动热注入 Hermes（失败不阻断 pull）。
  */
 import { join } from 'path'
 import { tahpPaths } from '../paths'
@@ -8,8 +9,10 @@ import { safeFileStore } from '../../safe-file-store'
 import { logger } from '../../logger'
 import { upsertIndexRecord } from '../kb-search'
 import { reloadBusinessDomains } from '../business-domain-registry'
+import { HermesSkillInjector } from '../../hermes/skill-injector'
 import { centralClient } from './central-client'
 import type { PullPayload } from './manifest'
+import { setLastPulledAt } from './status'
 
 let lastPulledAt = ''
 
@@ -29,9 +32,15 @@ export interface PullResult {
   skills: number
   configs: number
   generated_at: string
+  skill_ids: string[]
+  reinjected: string[]
+  reinject_error?: string
 }
 
-export async function applyPull(payload: PullPayload): Promise<PullResult> {
+export async function applyPull(
+  payload: PullPayload,
+  options?: { reinjectSkillIds?: string[] | null },
+): Promise<PullResult> {
   let entryCount = 0
   for (const entry of payload.entries) {
     const id = String((entry as Record<string, unknown>).id || '')
@@ -46,11 +55,13 @@ export async function applyPull(payload: PullPayload): Promise<PullResult> {
   }
 
   let skillCount = 0
+  const skillIds: string[] = []
   for (const skill of payload.skills) {
     if (!skill.id || typeof skill.content !== 'string') continue
     const target = join(tahpPaths.skillsDir, skill.id, 'SKILL.md')
     await safeFileStore.writeText(target, skill.content)
     skillCount++
+    skillIds.push(skill.id)
   }
 
   let configCount = 0
@@ -70,15 +81,47 @@ export async function applyPull(payload: PullPayload): Promise<PullResult> {
     }
   }
 
-  return { entries: entryCount, skills: skillCount, configs: configCount, generated_at: payload.generated_at }
+  const result: PullResult = {
+    entries: entryCount,
+    skills: skillCount,
+    configs: configCount,
+    generated_at: payload.generated_at,
+    skill_ids: skillIds,
+    reinjected: [],
+  }
+
+  const reinjectTarget =
+    options?.reinjectSkillIds === null
+      ? null
+      : options?.reinjectSkillIds?.length
+        ? options.reinjectSkillIds
+        : skillIds.length
+          ? skillIds
+          : null
+
+  if (reinjectTarget && reinjectTarget.length > 0) {
+    try {
+      const injection = await new HermesSkillInjector().injectMissingSkills(reinjectTarget)
+      result.reinjected = [...injection.injected, ...injection.updated]
+    } catch (e) {
+      result.reinject_error = (e as Error).message
+      logger.warn({ err: result.reinject_error }, '[sync] reinject after pull failed')
+    }
+  }
+
+  return result
 }
 
 /** 执行一次增量 pull（首启传空 since 拉全量） */
-export async function runPull(incremental = true): Promise<PullResult | null> {
+export async function runPull(
+  incremental = true,
+  options?: { reinjectSkillIds?: string[] | null },
+): Promise<PullResult | null> {
   const since = incremental ? lastPulledAt : ''
   const payload = await centralClient.pull(since || undefined)
-  const result = await applyPull(payload)
+  const result = await applyPull(payload, options)
   lastPulledAt = payload.generated_at
+  setLastPulledAt(payload.generated_at)
   logger.info(result, '[sync] pull applied')
   return result
 }

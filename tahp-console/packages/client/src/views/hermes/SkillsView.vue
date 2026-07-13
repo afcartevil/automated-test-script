@@ -7,6 +7,7 @@ import SkillSidebar from '@/components/hermes/skills/SkillSidebar.vue'
 import SkillGrid from '@/components/hermes/skills/SkillGrid.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
 import SkillImportModal from '@/components/hermes/skills/SkillImportModal.vue'
+import SkillSyncCenter from '@/components/hermes/skills/SkillSyncCenter.vue'
 import { fetchSkills, backfillCategories, type SkillCategory, type SkillInfo } from '@/api/hermes/skills'
 
 const { t } = useI18n()
@@ -22,6 +23,7 @@ const funcTypeFilter = ref<string | null>(null)
 const moduleFilter = ref<string | null>(null)
 const showImportModal = ref(false)
 const isFullscreen = ref(false)
+const activeTab = ref<'browse' | 'sync'>('browse')
 let mobileQuery: MediaQueryList | null = null
 
 // ── 所有技能扁平化 ─────────────────────────────────────────────────────────────
@@ -198,6 +200,28 @@ async function handleBackfill() {
       </template>
     </EaPageHead>
 
+    <div class="skills-tabs">
+      <button
+        type="button"
+        class="skills-tab"
+        :class="{ active: activeTab === 'browse' }"
+        @click="activeTab = 'browse'"
+      >
+        {{ t('skills.tabs.browse') }}
+      </button>
+      <button
+        type="button"
+        class="skills-tab"
+        :class="{ active: activeTab === 'sync' }"
+        @click="activeTab = 'sync'"
+      >
+        {{ t('skills.tabs.sync') }}
+      </button>
+    </div>
+
+    <SkillSyncCenter v-if="activeTab === 'sync'" />
+
+    <template v-else>
     <!-- 功能类型 domain-chip 过滤 -->
     <div class="ea-domain-bar skills-domain-bar">
       <button
@@ -317,10 +341,33 @@ async function handleBackfill() {
 
       </template>
     </div>
+    </template>
   </div>
 </template>
 
 <style scoped lang="scss">
+.skills-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0;
+}
+.skills-tab {
+  border: 0;
+  background: transparent;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: #64748b;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  &.active {
+    color: #3730a3;
+    border-bottom-color: #6366f1;
+    font-weight: 600;
+  }
+}
 .skills-view {
   height: calc(100 * var(--vh) - 80px);
   display: flex;

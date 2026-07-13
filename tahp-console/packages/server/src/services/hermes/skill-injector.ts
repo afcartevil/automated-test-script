@@ -13,6 +13,15 @@ export interface SkillInjectionResult {
   skipped: string[]
 }
 
+/** 进程内互斥，避免 bootstrap / sync / reinject 并发写 Hermes skills */
+let injectChain: Promise<unknown> = Promise.resolve()
+
+function withInjectLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = injectChain.then(fn, fn)
+  injectChain = run.then(() => undefined, () => undefined)
+  return run
+}
+
 export class HermesSkillInjector {
   constructor(
     private readonly sourceDir = HermesSkillInjector.resolveSourceDir(),
@@ -40,7 +49,15 @@ export class HermesSkillInjector {
     return candidates.find(candidate => existsSync(candidate)) || candidates[0]
   }
 
-  async injectMissingSkills(): Promise<SkillInjectionResult> {
+  /**
+   * 将工程 skills 同步到 Hermes profile。
+   * @param skillIds 可选；仅处理这些 skill 目录名。省略则全量扫描。
+   */
+  async injectMissingSkills(skillIds?: string[]): Promise<SkillInjectionResult> {
+    return withInjectLock(() => this.injectMissingSkillsUnlocked(skillIds))
+  }
+
+  private async injectMissingSkillsUnlocked(skillIds?: string[]): Promise<SkillInjectionResult> {
     const result: SkillInjectionResult = {
       sourceDir: this.sourceDir,
       targetDir: this.targetDir,
@@ -55,9 +72,12 @@ export class HermesSkillInjector {
     }
 
     await mkdir(this.targetDir, { recursive: true })
+
+    const filter = skillIds?.length ? new Set(skillIds) : null
     const entries = await readdir(this.sourceDir, { withFileTypes: true })
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+      if (filter && !filter.has(entry.name)) continue
       const sourceSkillDir = join(this.sourceDir, entry.name)
       const targetSkillDir = join(this.targetDir, entry.name)
       const existed = existsSync(targetSkillDir)
