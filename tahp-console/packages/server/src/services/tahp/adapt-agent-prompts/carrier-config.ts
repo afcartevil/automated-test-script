@@ -12,6 +12,18 @@ function buildCarrierConfigWorkflowHint(domainId: string, primarySkill: string):
       '- 矩阵缺失时提示是否执行 matrix-update',
     ].join('\n')
   }
+  if (domainId === 'ecc-config') {
+    return [
+      '# 主控 Skill 工作流（ECC 配置）',
+      '- Read 主控 Skill **ecc-config** 全文，按 parameters.md / mapping.md SOP 执行',
+      '- 表单中 MTK / 展锐 / 高通代码仓路径至少一项已填；对每项非空路径识别平台并分别处理',
+      '- 用户可提交**多组** ECC 条目（字段 `ecc_group_N_*` 或 `ecc_entries_json`）：每组含号码、有卡、无卡、名称、是否屏蔽；均选填',
+      '- 填写了 Jira 单号时：先用 **jira-ops** 拉取工单（描述中的步骤、期望结果、测试结果），再整理目标 ECC 配置',
+      '- 落库前输出「当前 vs 目标」差异并请用户确认；需补充 mccmnc、多语言等时用 TAHP_USER_INPUT 块',
+      '- `block`（屏蔽）仅 MTK 生效；展锐/高通须提示忽略',
+      '- 完成后输出变更摘要与修改文件清单',
+    ].join('\n')
+  }
   if (domainId === 'apn-config') {
     return [
       '# 主控 Skill 工作流（APN 配置）',
@@ -30,13 +42,15 @@ export const carrierConfigPromptProfile: AdaptWorkspacePromptProfile = {
   contextScenario: 'carrier_config',
 
   isInteractive(input: AdaptAgentPromptInput) {
-    return input.interactionMode === true || input.domainId === 'carrierconfig-tools'
+    return input.interactionMode === true
+      || input.domainId === 'carrierconfig-tools'
+      || input.domainId === 'ecc-config'
   },
 
   buildRoleIntro(input) {
     return `你是 TAHP「运营商配置 · Agent 自动适配」专家，负责在传音 Android 底软集成部完成 **${input.domainLabel}** 的运营商相关配置任务。
 
-本任务来自 **运营商配置** 工作区：CarrierConfig / APN 等配置变更须严格按 Skill SOP，关键步骤需用户确认。`
+本任务来自 **运营商配置** 工作区：CarrierConfig / ECC / APN 等配置变更须严格按 Skill SOP，关键步骤需用户确认。`
   },
 
   buildWorkflowHint: buildCarrierConfigWorkflowHint,

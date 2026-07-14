@@ -31,6 +31,14 @@ import {
   getBuiltinDomainsForWorkspace,
   type AdaptWorkspaceId,
 } from '@/constants/adapt-domains'
+import {
+  createEmptyEccEntry,
+  isEccConfigFormComplete,
+  isEccEntryFieldName,
+  packEccEntriesForAgent,
+  ECC_ENTRY_FIELD_META,
+  type EccEntryFormRow,
+} from '@/constants/adapt-domains/ecc-config-form'
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 
 const message = useMessage()
@@ -718,13 +726,44 @@ watch(activeDomainId, () => {
   if (layoutEditMode.value) cancelLayoutEdit()
 })
 
-const formFieldsForAgent = computed(() =>
-  activeDomain.value.fields.map(f => ({
-    name: f.name,
-    label: f.label,
-    required: f.required,
-  })),
+/** ECC：临时多组条目（仅当前页会话，不写本地布局/存储） */
+const eccEntries = ref<EccEntryFormRow[]>([createEmptyEccEntry()])
+
+function addEccEntryGroup() {
+  eccEntries.value.push(createEmptyEccEntry())
+}
+
+function removeEccEntryGroup(idx: number) {
+  if (eccEntries.value.length <= 1) return
+  eccEntries.value.splice(idx, 1)
+}
+
+function getEccEntrySelectValue(idx: number, name: keyof EccEntryFormRow): string | null {
+  const v = eccEntries.value[idx]?.[name]
+  return v ? v : null
+}
+
+function setEccEntryField(idx: number, name: keyof EccEntryFormRow, value: string) {
+  const row = eccEntries.value[idx]
+  if (!row) return
+  row[name] = value
+}
+
+const eccSharedFields = computed(() =>
+  (activeDomain.value?.fields ?? []).filter(f => !isEccEntryFieldName(f.name)),
 )
+
+const formFieldsForAgent = computed(() => {
+  const base = activeDomain.value.fields
+    .filter(f => activeDomain.value.id !== 'ecc-config' || !isEccEntryFieldName(f.name))
+    .map(f => ({
+      name: f.name,
+      label: f.label,
+      required: f.required,
+    }))
+  if (activeDomain.value.id !== 'ecc-config') return base
+  return [...base, ...packEccEntriesForAgent(eccEntries.value).formFields]
+})
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 计算属性（表单）
@@ -739,8 +778,12 @@ const currentFormData = computed<Record<string, string>>(() =>
 
 const requiredCount = computed(() => (activeDomain.value?.fields ?? []).filter(f => f.required).length)
 const filledCount = computed(() => (activeDomain.value?.fields ?? []).filter(f => f.required && currentFormData.value[f.name]).length)
-// 没有必填项（requiredCount === 0）时也视为完整，允许启动任务
-const isComplete = computed(() => requiredCount.value === 0 || filledCount.value === requiredCount.value)
+const isComplete = computed(() => {
+  if (activeDomain.value?.id === 'ecc-config') {
+    return isEccConfigFormComplete(currentFormData.value)
+  }
+  return requiredCount.value === 0 || filledCount.value === requiredCount.value
+})
 const completedDomains = computed(() => DOMAINS.value.filter(d => d.status === 'done').length)
 const overallPercent = computed(() => Math.round((completedDomains.value / DOMAINS.value.length) * 100))
 
@@ -1540,6 +1583,12 @@ function buildAgentFormData(): Record<string, string> {
       else delete data[field.name]
     }
   }
+  if (activeDomain.value.id === 'ecc-config') {
+    for (const name of Object.keys(data)) {
+      if (isEccEntryFieldName(name)) delete data[name]
+    }
+    Object.assign(data, packEccEntriesForAgent(eccEntries.value).formData)
+  }
   return data
 }
 
@@ -1794,7 +1843,10 @@ function openSkill(skillName: string) {
               <div class="ea-grow">
                 <h2>{{ activeDomain.label }}</h2>
                 <div class="dh-sub">
-                  <template v-if="requiredCount === 0">参考填写，无强制必填项</template>
+                  <template v-if="activeDomain.id === 'ecc-config'">
+                    MTK / 展锐 / 高通代码仓路径至少填一项；ECC 条目可临时复制多组
+                  </template>
+                  <template v-else-if="requiredCount === 0">参考填写，无强制必填项</template>
                   <template v-else>必填项 {{ filledCount }} / {{ requiredCount }} 已完成</template>
                 </div>
               </div>
@@ -1914,7 +1966,96 @@ function openSkill(skillName: string) {
 
               <!-- 填写模式 -->
               <div v-else>
-                <div class="ea-form-grid2">
+                <!-- ECC：共享字段 + 可临时复制的多组条目 -->
+                <template v-if="activeDomain.id === 'ecc-config'">
+                  <div class="ea-form-grid2">
+                    <div
+                      v-for="field in eccSharedFields"
+                      :key="activeDomainId + '-shared-' + field.name"
+                      class="ea-field"
+                      :class="{ 'ea-field-full': field.type === 'textarea', 'ea-field-refilled': refilledFields.includes(field.name) }"
+                    >
+                      <label>
+                        {{ field.label }}
+                        <span v-if="field.required" class="req">*</span>
+                      </label>
+                      <NSelect
+                        v-if="field.type === 'select'"
+                        :value="getSelectFieldValue(field.name)"
+                        :options="field.options"
+                        :placeholder="field.placeholder || '请选择'"
+                        clearable
+                        @update:value="v => setFieldValue(field.name, v == null ? '' : String(v))"
+                      />
+                      <NInput
+                        v-else-if="field.type === 'textarea'"
+                        :value="getFieldValue(field.name)"
+                        type="textarea"
+                        :placeholder="field.placeholder"
+                        :autosize="{ minRows: 3, maxRows: 6 }"
+                        @update:value="v => setFieldValue(field.name, v)"
+                      />
+                      <NInput
+                        v-else
+                        :value="getFieldValue(field.name)"
+                        :placeholder="field.placeholder"
+                        @update:value="v => setFieldValue(field.name, v)"
+                      />
+                    </div>
+                  </div>
+
+                  <div
+                    v-for="(entry, eIdx) in eccEntries"
+                    :key="'ecc-entry-' + eIdx"
+                    class="ecc-entry-group"
+                  >
+                    <div class="ecc-entry-head">
+                      <span class="ecc-entry-title">ECC 配置组 {{ eIdx + 1 }}</span>
+                      <NButton
+                        v-if="eccEntries.length > 1"
+                        size="tiny"
+                        quaternary
+                        type="error"
+                        @click="removeEccEntryGroup(eIdx)"
+                      >
+                        删除本组
+                      </NButton>
+                    </div>
+                    <div class="ea-form-grid2">
+                      <div
+                        v-for="meta in ECC_ENTRY_FIELD_META"
+                        :key="'ecc-' + eIdx + '-' + meta.name"
+                        class="ea-field"
+                      >
+                        <label>{{ meta.label }}</label>
+                        <NSelect
+                          v-if="meta.type === 'select'"
+                          :value="getEccEntrySelectValue(eIdx, meta.name)"
+                          :options="meta.options"
+                          :placeholder="meta.placeholder || '请选择'"
+                          clearable
+                          @update:value="v => setEccEntryField(eIdx, meta.name, v == null ? '' : String(v))"
+                        />
+                        <NInput
+                          v-else
+                          :value="entry[meta.name]"
+                          :placeholder="meta.placeholder"
+                          @update:value="v => setEccEntryField(eIdx, meta.name, v)"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="ecc-entry-actions">
+                    <NButton secondary @click="addEccEntryGroup">
+                      复制一组ECC配置
+                    </NButton>
+                    <span class="ea-muted" style="font-size:12px">临时增加一组号码/有卡/无卡/名称/屏蔽；仅本页生效，刷新后清空</span>
+                  </div>
+                </template>
+
+                <!-- 其它域：原表单网格 -->
+                <div v-else class="ea-form-grid2">
                   <div
                     v-for="field in activeDomain.fields"
                     :key="activeDomainId + '-' + field.name"
@@ -2645,6 +2786,34 @@ function openSkill(skillName: string) {
   border: 1px dashed var(--line);
   border-radius: 8px;
   background: var(--surface-2);
+}
+
+.ecc-entry-group {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.ecc-entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.ecc-entry-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ecc-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
 }
 
 .skill-row {

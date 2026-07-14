@@ -24,6 +24,7 @@ import {
 } from './adapt-agent-prompts'
 import { saveAgentPromptLog } from './prompt-log'
 import { DEFAULT_ADAPT_WORKSPACE } from './adapt-layout/types'
+import { isInteractiveCarrierDomain, validateEccConfigForm } from './ecc-config-form'
 import {
   extractAdaptAgentFileChanges,
   extractAdaptAgentSkillRefs,
@@ -155,7 +156,7 @@ function getSeenUserInputIds(taskId: string): Set<string> {
 }
 
 function isInteractiveAdapt(ctx: AdaptAgentTaskCtx): boolean {
-  return ctx.interactionMode === true || ctx.domainId === 'carrierconfig-tools'
+  return isInteractiveCarrierDomain(ctx.domainId, ctx.interactionMode)
 }
 
 function isInteractiveAdaptComplete(fullResponse: string): boolean {
@@ -505,6 +506,11 @@ export function startAdaptAgentRun(input: AdaptAgentRunInput): { ok: true; taskI
     }
   }
 
+  if (input.domainId === 'ecc-config') {
+    const eccErr = validateEccConfigForm(input.formData)
+    if (eccErr) return { ok: false, error: eccErr }
+  }
+
   const taskId = genTaskId()
   const ctx: AdaptAgentTaskCtx = {
     taskId,
@@ -516,7 +522,7 @@ export function startAdaptAgentRun(input: AdaptAgentRunInput): { ok: true; taskI
     formData: { ...input.formData },
     formFields: input.formFields ? [...input.formFields] : undefined,
     userNotes: input.userNotes,
-    interactionMode: input.interactionMode === true || input.domainId === 'carrierconfig-tools',
+    interactionMode: isInteractiveCarrierDomain(input.domainId, input.interactionMode === true),
     startedAt: new Date().toISOString(),
     status: 'running',
     skillsUsed: [],
