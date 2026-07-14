@@ -2026,6 +2026,7 @@ function openSkill(skillName: string) {
                         v-for="meta in ECC_ENTRY_FIELD_META"
                         :key="'ecc-' + eIdx + '-' + meta.name"
                         class="ea-field"
+                        :class="{ 'ea-field-full': meta.type === 'textarea' }"
                       >
                         <label>{{ meta.label }}</label>
                         <NSelect
@@ -2035,6 +2036,14 @@ function openSkill(skillName: string) {
                           :placeholder="meta.placeholder || '请选择'"
                           clearable
                           @update:value="v => setEccEntryField(eIdx, meta.name, v == null ? '' : String(v))"
+                        />
+                        <NInput
+                          v-else-if="meta.type === 'textarea'"
+                          type="textarea"
+                          :value="entry[meta.name]"
+                          :placeholder="meta.placeholder"
+                          :autosize="{ minRows: 2, maxRows: 6 }"
+                          @update:value="v => setEccEntryField(eIdx, meta.name, v)"
                         />
                         <NInput
                           v-else
@@ -2050,7 +2059,7 @@ function openSkill(skillName: string) {
                     <NButton secondary @click="addEccEntryGroup">
                       复制一组ECC配置
                     </NButton>
-                    <span class="ea-muted" style="font-size:12px">临时增加一组号码/有卡/无卡/名称/屏蔽；仅本页生效，刷新后清空</span>
+                    <span class="ea-muted" style="font-size:12px">临时增加一组号码/有卡/无卡/名称/屏蔽/补充信息；仅本页生效，刷新后清空</span>
                   </div>
                 </template>
 

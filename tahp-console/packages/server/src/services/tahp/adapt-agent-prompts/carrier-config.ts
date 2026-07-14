@@ -17,7 +17,7 @@ function buildCarrierConfigWorkflowHint(domainId: string, primarySkill: string):
       '# 主控 Skill 工作流（ECC 配置）',
       '- Read 主控 Skill **ecc-config** 全文，按 parameters.md / mapping.md SOP 执行',
       '- 表单中 MTK / 展锐 / 高通代码仓路径至少一项已填；对每项非空路径识别平台并分别处理',
-      '- 用户可提交**多组** ECC 条目（字段 `ecc_group_N_*` 或 `ecc_entries_json`）：每组含号码、有卡、无卡、名称、是否屏蔽；均选填',
+      '- 用户可提交**多组** ECC 条目（字段 `ecc_group_N_*` 或 `ecc_entries_json`）：每组含号码、有卡、无卡、名称、是否屏蔽、补充信息；均选填',
       '- 填写了 Jira 单号时：先用 **jira-ops** 拉取工单（描述中的步骤、期望结果、测试结果），再整理目标 ECC 配置',
       '- 落库前输出「当前 vs 目标」差异并请用户确认；需补充 mccmnc、多语言等时用 TAHP_USER_INPUT 块',
       '- `block`（屏蔽）仅 MTK 生效；展锐/高通须提示忽略',

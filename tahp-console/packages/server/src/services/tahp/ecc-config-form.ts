@@ -11,6 +11,7 @@ export const ECC_ENTRY_FIELD_NAMES = [
   'without_sim',
   'display_name',
   'block',
+  'user_notes',
 ] as const
 
 export function hasEccRepoPath(formData: Record<string, unknown>): boolean {

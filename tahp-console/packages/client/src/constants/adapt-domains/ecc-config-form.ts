@@ -13,6 +13,7 @@ export const ECC_ENTRY_FIELD_NAMES = [
   'without_sim',
   'display_name',
   'block',
+  'user_notes',
 ] as const
 
 export type EccEntryFieldName = (typeof ECC_ENTRY_FIELD_NAMES)[number]
@@ -23,12 +24,13 @@ export interface EccEntryFormRow {
   without_sim: string
   display_name: string
   block: string
+  user_notes: string
 }
 
 export const ECC_ENTRY_FIELD_META: Array<{
   name: EccEntryFieldName
   label: string
-  type: 'text' | 'select'
+  type: 'text' | 'select' | 'textarea'
   placeholder?: string
   options?: Array<{ label: string; value: string }>
 }> = [
@@ -75,6 +77,12 @@ export const ECC_ENTRY_FIELD_META: Array<{
       { label: '否', value: 'no' },
     ],
   },
+  {
+    name: 'user_notes',
+    label: '补充信息',
+    type: 'textarea',
+    placeholder: 'mccmnc、多语言、语音台等补充说明',
+  },
 ]
 
 export function createEmptyEccEntry(): EccEntryFormRow {
@@ -84,6 +92,7 @@ export function createEmptyEccEntry(): EccEntryFormRow {
     without_sim: '',
     display_name: '',
     block: '',
+    user_notes: '',
   }
 }
 

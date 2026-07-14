@@ -59,7 +59,7 @@ export const CARRIER_ADAPT_DOMAINS: AdaptDomainDef[] = [
         required: false,
         placeholder: '选填，如 OS162-12345',
       },
-      // 下列 5 个字段为一组「ECC 条目」；Console 中可临时复制多组，不落盘
+      // 下列 6 个字段为一组「ECC 条目」；Console 中可临时复制多组，不落盘
       {
         name: 'number',
         label: '号码',
@@ -111,7 +111,7 @@ export const CARRIER_ADAPT_DOMAINS: AdaptDomainDef[] = [
       {
         name: 'user_notes',
         label: '补充信息',
-        type: 'text',
+        type: 'textarea',
         required: false,
         placeholder: 'mccmnc、多语言、语音台等补充说明',
       },
