@@ -118,9 +118,9 @@ export function queryServiceStatus(env = process.env) {
 
 export function buildTooltip(status, port = DEFAULT_PORT) {
   if (status.running && status.pid) {
-    return `EasyAdapter 运行中 · :${port} · PID ${status.pid}`
+    return `EasyAdapter running :${port} PID ${status.pid}`
   }
-  return `EasyAdapter 已停止 · 点击打开或重启`
+  return 'EasyAdapter stopped'
 }
 
 export function openConsole(port = DEFAULT_PORT) {

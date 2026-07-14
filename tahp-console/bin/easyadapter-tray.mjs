@@ -2,6 +2,11 @@
 /**
  * EasyAdapter Windows 系统托盘常驻程序。
  * 菜单：打开控制台 / 重启服务 / 更新并重启 / 停止服务 / 查看日志 / 关闭程序
+ *
+ * systray2 / Windows 托盘注意：
+ * 1) SysTray.separator 是共享单例；菜单中出现两次时必须各自克隆，否则
+ *    addInternalId 会覆盖同一对象的 __id，原生右键菜单空白。
+ * 2) update-menu 不会给「新创建」的 items 补 __id；菜单项须全程复用首次对象。
  */
 import { existsSync } from 'fs'
 import { dirname, resolve } from 'path'
@@ -25,7 +30,6 @@ import {
 const SysTray = systrayModule.default ?? systrayModule
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const consoleRoot = resolve(__dirname, '..')
 
 const MENU = {
   OPEN: 'open',
@@ -38,6 +42,16 @@ const MENU = {
 
 function menuItem(title, tooltip, id, click) {
   return { title, tooltip, checked: false, enabled: true, clickId: id, click }
+}
+
+/** 每次新建分隔线对象，禁止直接复用 SysTray.separator 单例 */
+function menuSeparator() {
+  return {
+    title: SysTray.separator?.title ?? '<SEPARATOR>',
+    tooltip: '',
+    checked: false,
+    enabled: true,
+  }
 }
 
 function ensureSingleInstance() {
@@ -83,35 +97,16 @@ async function main() {
   let tooltip = buildTooltip(status, port)
   let systray
 
-  const refreshTooltip = () => {
-    status = queryServiceStatus()
-    tooltip = buildTooltip(status, port)
-    if (!systray) return
-    systray.sendAction({
-      type: 'update-menu',
-      menu: {
-        icon: iconPath,
-        title: 'EasyAdapter',
-        tooltip,
-        items: buildItems(),
-      },
-    })
-  }
-
-  const buildItems = () => [
+  // 菜单项对象只建一次，全程复用（保留 systray2 分配的 __id）
+  const menuItems = [
     menuItem('打开控制台', '在浏览器中打开 EasyAdapter', MENU.OPEN, () => openConsole(port)),
-    SysTray.separator,
+    menuSeparator(),
     menuItem('重启服务', '快速重启 BFF（不拉代码）', MENU.RESTART, () => {
       restartService()
       setTimeout(refreshTooltip, 1500)
     }),
     menuItem('更新并重启', '拉取代码、构建并重启（研发用）', MENU.FULL_RESTART, () => {
-      if (systray) {
-        systray.sendAction({
-          type: 'update-menu',
-          menu: { icon: iconPath, title: 'EasyAdapter', tooltip: 'EasyAdapter 更新中…', items: buildItems() },
-        })
-      }
+      setTooltipOnly('EasyAdapter updating...')
       spawnFullRestart()
       setTimeout(() => cleanupAndExit(systray), 500)
     }),
@@ -119,17 +114,38 @@ async function main() {
       stopService()
       setTimeout(refreshTooltip, 1000)
     }),
-    SysTray.separator,
+    menuSeparator(),
     menuItem('查看日志', '打开 server.log', MENU.LOG, () => { openLog() }),
     menuItem('关闭程序', '停止服务并退出托盘', MENU.QUIT, () => shutdownApplication(systray)),
   ]
+
+  const setTooltipOnly = (nextTooltip) => {
+    if (!systray) return
+    if (nextTooltip === tooltip) return
+    tooltip = nextTooltip
+    // 必须传 menuItems 同一引用，禁止 buildItems() 新建对象
+    systray.sendAction({
+      type: 'update-menu',
+      menu: {
+        icon: iconPath,
+        title: 'EasyAdapter',
+        tooltip,
+        items: menuItems,
+      },
+    })
+  }
+
+  const refreshTooltip = () => {
+    status = queryServiceStatus()
+    setTooltipOnly(buildTooltip(status, port))
+  }
 
   systray = new SysTray({
     menu: {
       icon: iconPath,
       title: 'EasyAdapter',
       tooltip,
-      items: buildItems(),
+      items: menuItems,
     },
     debug: false,
     copyDir: false,
@@ -148,6 +164,7 @@ async function main() {
   process.on('SIGINT', () => cleanupAndExit(systray))
   process.on('SIGTERM', () => cleanupAndExit(systray))
 
+  // 仅在 tooltip 文案变化时刷新；且复用同一批 menuItems
   setInterval(refreshTooltip, 30_000)
 }
 

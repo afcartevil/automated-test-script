@@ -28,6 +28,8 @@ const lastResult = ref<{
 } | null>(null)
 const publishingId = ref<string | null>(null)
 const publishingBatch = ref(false)
+/** 勾选待提交的 skill id */
+const selectedIds = ref<Set<string>>(new Set())
 
 const connectionLabel = computed(() => {
   if (!status.value) return ''
@@ -51,15 +53,37 @@ const activeSkills = computed<SkillSyncStatusItem[]>(() => {
   return status.value.skills.filter(s => set.has(s.id))
 })
 
-const publishableSkills = computed(() =>
-  activeSkills.value.filter(s => s.state === 'local_only' || s.state === 'behind' || s.state === 'synced'),
-)
+/** 本机有内容且未与服务器对齐时可提交（排除 synced / 仅服务器有） */
+function canPublish(s: SkillSyncStatusItem): boolean {
+  if (!status.value?.connected) return false
+  if (!s.local_hash) return false
+  if (s.state === 'synced' || s.state === 'unknown') return false
+  return s.state === 'local_only' || s.state === 'behind'
+}
+
+const publishableSkills = computed(() => activeSkills.value.filter(canPublish))
+
+const selectedPublishIds = computed(() => {
+  const allow = new Set(publishableSkills.value.map(s => s.id))
+  return [...selectedIds.value].filter(id => allow.has(id))
+})
+
+const allPublishableSelected = computed(() => {
+  const list = publishableSkills.value
+  if (!list.length) return false
+  return list.every(s => selectedIds.value.has(s.id))
+})
 
 function stateLabel(state: string): string {
   if (state === 'synced') return t('skills.sync.stateSynced')
   if (state === 'behind') return t('skills.sync.stateBehind')
   if (state === 'local_only') return t('skills.sync.stateLocalOnly')
   return t('skills.sync.stateUnknown')
+}
+
+function publishTitleFor(s: SkillSyncStatusItem): string {
+  if (s.state === 'behind') return t('skills.sync.publishTitleBehind')
+  return t('skills.sync.publishTitle')
 }
 
 function formatTime(iso: string | null): string {
@@ -71,6 +95,37 @@ function formatTime(iso: string | null): string {
   }
 }
 
+function pruneSelection() {
+  const allow = new Set(
+    (status.value?.skills || []).filter(canPublish).map(s => s.id),
+  )
+  const next = new Set<string>()
+  for (const id of selectedIds.value) {
+    if (allow.has(id)) next.add(id)
+  }
+  selectedIds.value = next
+}
+
+function toggleSelect(id: string, checked: boolean) {
+  const next = new Set(selectedIds.value)
+  if (checked) next.add(id)
+  else next.delete(id)
+  selectedIds.value = next
+}
+
+function toggleSelectAll(checked: boolean) {
+  const next = new Set(selectedIds.value)
+  for (const s of publishableSkills.value) {
+    if (checked) next.add(s.id)
+    else next.delete(s.id)
+  }
+  selectedIds.value = next
+}
+
+function clearSelection() {
+  selectedIds.value = new Set()
+}
+
 async function loadStatus() {
   loading.value = true
   try {
@@ -78,6 +133,7 @@ async function loadStatus() {
     if (selectedGroupId.value && !status.value.groups.some(g => g.id === selectedGroupId.value)) {
       selectedGroupId.value = null
     }
+    pruneSelection()
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.loadFailed'))
   } finally {
@@ -131,6 +187,8 @@ async function onReinject() {
 
 async function onPublish(skillId: string) {
   if (publishingId.value || publishingBatch.value) return
+  const row = status.value?.skills.find(s => s.id === skillId)
+  if (!row || !canPublish(row)) return
   publishingId.value = skillId
   try {
     const res = await publishSkillPackage(skillId)
@@ -145,9 +203,13 @@ async function onPublish(skillId: string) {
 
 async function onPublishBatch() {
   if (publishingBatch.value || publishingId.value) return
-  const ids = publishableSkills.value.map(s => s.id)
+  const ids = selectedPublishIds.value
   if (!ids.length) {
-    message.info(t('skills.sync.publishBatchEmpty'))
+    message.info(
+      publishableSkills.value.length
+        ? t('skills.sync.publishBatchNeedSelect')
+        : t('skills.sync.publishBatchEmpty'),
+    )
     return
   }
   if (!window.confirm(t('skills.sync.publishBatchConfirm', { n: ids.length }))) return
@@ -165,6 +227,7 @@ async function onPublishBatch() {
     } else {
       message.success(t('skills.sync.publishBatchSuccess', { n: res.ok_count }))
     }
+    clearSelection()
     await loadStatus()
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.publishBatchFailed'))
@@ -200,12 +263,21 @@ onMounted(loadStatus)
         <button
           type="button"
           class="ea-btn-ghost ea-btn-sm"
+          :disabled="!publishableSkills.length || publishingBatch || !!publishingId"
+          :title="t('skills.sync.selectAllUnsyncedTitle')"
+          @click="toggleSelectAll(!allPublishableSelected)"
+        >
+          {{ allPublishableSelected ? t('skills.sync.clearSelection') : t('skills.sync.selectAllUnsynced') }}
+        </button>
+        <button
+          type="button"
+          class="ea-btn-ghost ea-btn-sm"
           :disabled="publishingBatch || !!publishingId || !status?.configured || !status?.connected"
           :title="t('skills.sync.publishBatchTitle')"
           @click="onPublishBatch"
         >
           {{ publishingBatch ? t('skills.sync.publishBatchRunning') : t('skills.sync.publishBatch') }}
-          <span v-if="!publishingBatch && publishableSkills.length" class="btn-cnt">{{ publishableSkills.length }}</span>
+          <span v-if="!publishingBatch && selectedPublishIds.length" class="btn-cnt">{{ selectedPublishIds.length }}</span>
         </button>
         <button
           type="button"
@@ -272,6 +344,15 @@ onMounted(loadStatus)
         <table v-if="activeSkills.length" class="sync-table">
           <thead>
             <tr>
+              <th class="col-check">
+                <input
+                  type="checkbox"
+                  :checked="allPublishableSelected"
+                  :disabled="!publishableSkills.length || publishingBatch"
+                  :title="t('skills.sync.selectAllUnsyncedTitle')"
+                  @change="toggleSelectAll(($event.target as HTMLInputElement).checked)"
+                >
+              </th>
               <th>ID</th>
               <th>{{ t('skills.sync.stateSynced') }}</th>
               <th>func_type</th>
@@ -281,6 +362,15 @@ onMounted(loadStatus)
           </thead>
           <tbody>
             <tr v-for="s in activeSkills" :key="s.id">
+              <td class="col-check">
+                <input
+                  v-if="canPublish(s)"
+                  type="checkbox"
+                  :checked="selectedIds.has(s.id)"
+                  :disabled="publishingBatch || !!publishingId"
+                  @change="toggleSelect(s.id, ($event.target as HTMLInputElement).checked)"
+                >
+              </td>
               <td class="mono">{{ s.id }}</td>
               <td>
                 <span class="state-pill" :class="`st-${s.state}`">{{ stateLabel(s.state) }}</span>
@@ -292,11 +382,11 @@ onMounted(loadStatus)
               </td>
               <td>
                 <button
-                  v-if="s.state === 'local_only' || s.state === 'behind' || s.state === 'synced'"
+                  v-if="canPublish(s)"
                   type="button"
                   class="ea-btn-ghost ea-btn-sm"
                   :disabled="!!publishingId || publishingBatch || !status?.configured"
-                  :title="t('skills.sync.publishTitle')"
+                  :title="publishTitleFor(s)"
                   @click="onPublish(s.id)"
                 >
                   {{ publishingId === s.id ? '...' : t('skills.sync.publish') }}
@@ -430,6 +520,11 @@ onMounted(loadStatus)
     text-align: left;
   }
   th { color: #64748b; font-weight: 600; background: #f8fafc; position: sticky; top: 0; }
+  .col-check {
+    width: 36px;
+    text-align: center;
+    vertical-align: middle;
+  }
 }
 
 .state-pill {

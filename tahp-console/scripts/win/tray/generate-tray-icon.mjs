@@ -11,7 +11,8 @@ const consoleRoot = resolve(__dirname, '..', '..', '..')
 const svgPath = join(consoleRoot, 'packages', 'client', 'public', 'favicon.svg')
 const trayIcoPath = join(__dirname, 'easyadapter.ico')
 const faviconIcoPath = join(consoleRoot, 'packages', 'client', 'public', 'favicon.ico')
-const sizes = [16, 32, 48, 256]
+const traySizes = [16, 32, 48]
+const faviconSizes = [16, 32, 48, 256]
 
 async function main() {
   let sharp
@@ -25,16 +26,20 @@ async function main() {
     process.exit(1)
   }
 
-  const pngBuffers = await Promise.all(
-    sizes.map(size => sharp(svgPath).resize(size, size).png().toBuffer()),
+  const trayPngs = await Promise.all(
+    traySizes.map(size => sharp(svgPath).resize(size, size).png().toBuffer()),
   )
-  const ico = await toIco(pngBuffers)
+  const faviconPngs = await Promise.all(
+    faviconSizes.map(size => sharp(svgPath).resize(size, size).png().toBuffer()),
+  )
+  const trayIco = await toIco(trayPngs)
+  const faviconIco = await toIco(faviconPngs)
 
   mkdirSync(dirname(trayIcoPath), { recursive: true })
-  writeFileSync(trayIcoPath, ico)
-  writeFileSync(faviconIcoPath, ico)
-  console.log(`[tray:icon] 已生成 ${trayIcoPath}`)
-  console.log(`[tray:icon] 已生成 ${faviconIcoPath}`)
+  writeFileSync(trayIcoPath, trayIco)
+  writeFileSync(faviconIcoPath, faviconIco)
+  console.log(`[tray:icon] 已生成 ${trayIcoPath} (${trayIco.length} bytes, sizes=${traySizes.join(',')})`)
+  console.log(`[tray:icon] 已生成 ${faviconIcoPath} (${faviconIco.length} bytes)`)
 }
 
 main().catch((err) => {
