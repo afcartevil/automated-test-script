@@ -1,7 +1,6 @@
 /**
  * 从中心拉取已发布内容写入本地副本，并重建检索索引 / 热生效公共配置。
- * 执行侧（适配/自检/检索）读本地副本，逻辑不变。
- * Phase 1：skill 写入后自动热注入 Hermes（失败不阻断 pull）。
+ * Phase 2：支持整包 files 内联或 package_url ZIP；pull 后热注入。
  */
 import { join } from 'path'
 import { tahpPaths } from '../paths'
@@ -10,9 +9,15 @@ import { logger } from '../../logger'
 import { upsertIndexRecord } from '../kb-search'
 import { reloadBusinessDomains } from '../business-domain-registry'
 import { HermesSkillInjector } from '../../hermes/skill-injector'
+import { config } from '../../../config'
 import { centralClient } from './central-client'
 import type { PullPayload } from './manifest'
 import { setLastPulledAt } from './status'
+import {
+  applyInlineFilesToLocal,
+  applySkillZipToLocal,
+  localRequirementsHash,
+} from './skill-package'
 
 let lastPulledAt = ''
 
@@ -23,7 +28,6 @@ function entryPath(id: string): string {
 function configTargetPath(key: string, relPath: string): string {
   if (key === 'business-domains') return join(tahpPaths.knowledgeDir, 'business-domains.yaml')
   if (key === 'kb-config') return join(tahpPaths.knowledgeDir, 'config.yaml')
-  // 兜底：按中心给的相对路径落到 projectRoot
   return join(tahpPaths.projectRoot, relPath)
 }
 
@@ -35,6 +39,30 @@ export interface PullResult {
   skill_ids: string[]
   reinjected: string[]
   reinject_error?: string
+  requirements_changed: string[]
+}
+
+async function applyOneSkill(
+  skill: PullPayload['skills'][number],
+): Promise<{ id: string; reqBefore: string | null; reqAfter: string | null }> {
+  const id = skill.id
+  const reqBefore = localRequirementsHash(id)
+
+  if (skill.files?.length) {
+    applyInlineFilesToLocal(id, skill.files)
+  } else if (skill.package_url) {
+    const buf = await centralClient.downloadSkillPackage(id, skill.package_url)
+    applySkillZipToLocal(id, buf)
+  } else if (typeof skill.content === 'string') {
+    // P1 兼容：仅 SKILL.md
+    const target = join(tahpPaths.skillsDir, id, 'SKILL.md')
+    await safeFileStore.writeText(target, skill.content)
+  } else {
+    throw new Error(`skill ${id} 无 files/package_url/content`)
+  }
+
+  const reqAfter = localRequirementsHash(id)
+  return { id, reqBefore, reqAfter }
 }
 
 export async function applyPull(
@@ -56,12 +84,19 @@ export async function applyPull(
 
   let skillCount = 0
   const skillIds: string[] = []
+  const requirements_changed: string[] = []
   for (const skill of payload.skills) {
-    if (!skill.id || typeof skill.content !== 'string') continue
-    const target = join(tahpPaths.skillsDir, skill.id, 'SKILL.md')
-    await safeFileStore.writeText(target, skill.content)
-    skillCount++
-    skillIds.push(skill.id)
+    if (!skill.id) continue
+    try {
+      const r = await applyOneSkill(skill)
+      skillCount++
+      skillIds.push(r.id)
+      if (r.reqAfter && r.reqBefore !== r.reqAfter) {
+        requirements_changed.push(r.id)
+      }
+    } catch (e) {
+      logger.warn({ id: skill.id, err: (e as Error).message }, '[sync] apply skill package failed')
+    }
   }
 
   let configCount = 0
@@ -88,6 +123,7 @@ export async function applyPull(
     generated_at: payload.generated_at,
     skill_ids: skillIds,
     reinjected: [],
+    requirements_changed,
   }
 
   const reinjectTarget =
@@ -112,7 +148,6 @@ export async function applyPull(
   return result
 }
 
-/** 执行一次增量 pull（首启传空 since 拉全量） */
 export async function runPull(
   incremental = true,
   options?: { reinjectSkillIds?: string[] | null },
@@ -124,4 +159,21 @@ export async function runPull(
   setLastPulledAt(payload.generated_at)
   logger.info(result, '[sync] pull applied')
   return result
+}
+
+/** 将本机 skill 打 ZIP 上传到中心 */
+export async function publishSkillPackage(skillId: string): Promise<{ id: string; hash: string; file_count: number }> {
+  if (!config.tahp.centralUrl || !config.tahp.centralToken) {
+    throw new Error('中心未配置')
+  }
+  const { buildLocalSkillZipBuffer, listLocalSkillFiles, computePackageHash } = await import('./skill-package')
+  const files = listLocalSkillFiles(skillId)
+  if (!files.length) throw new Error(`本地无 Skill: ${skillId}`)
+  const buf = buildLocalSkillZipBuffer(skillId)
+  const meta = await centralClient.uploadSkillPackage(skillId, buf.toString('base64'))
+  return {
+    id: skillId,
+    hash: meta.hash || computePackageHash(files),
+    file_count: meta.files?.length || files.length,
+  }
 }

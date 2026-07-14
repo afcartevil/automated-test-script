@@ -219,6 +219,13 @@ async function handleBackfill() {
       </button>
     </div>
 
+    <!-- 导入弹窗需挂在 Tab 外，否则在「同步中心」点按钮不会挂载 -->
+    <SkillImportModal
+      v-if="showImportModal"
+      @close="showImportModal = false"
+      @imported="handleImported"
+    />
+
     <SkillSyncCenter v-if="activeTab === 'sync'" />
 
     <template v-else>
@@ -255,13 +262,6 @@ async function handleBackfill() {
         class="skill-search-input"
       />
     </div>
-
-    <!-- 批量导入模态框 -->
-    <SkillImportModal
-      v-if="showImportModal"
-      @close="showImportModal = false"
-      @imported="handleImported"
-    />
 
     <!-- ── 三栏主体 ────────────────────────────────────────────────────────── -->
     <div class="skills-body">

@@ -9,6 +9,7 @@ import { logger } from '../../logger'
 import { tahpPaths } from '../paths'
 import { getRuntimeModeInfo, isCentralConfigured } from '../runtime-mode'
 import { centralClient } from './central-client'
+import { getLocalPackageHash } from './skill-package'
 import { shortHash } from './hash'
 import type { ManifestItem } from './manifest'
 
@@ -111,7 +112,11 @@ function listLocalSkills(): Map<string, { hash: string; meta: ReturnType<typeof 
     if (!existsSync(md)) continue
     try {
       const raw = readFileSync(md, 'utf-8')
-      out.set(entry.name, { hash: shortHash(raw), meta: parseSkillMeta(raw) })
+      const pkgHash = getLocalPackageHash(entry.name)
+      out.set(entry.name, {
+        hash: pkgHash || shortHash(raw),
+        meta: parseSkillMeta(raw),
+      })
     } catch {
       out.set(entry.name, { hash: '', meta: {} })
     }

@@ -6,6 +6,8 @@ import {
   fetchSyncStatus,
   triggerSync,
   reinjectSkills,
+  publishSkillPackage,
+  publishSkillPackages,
   type SkillSyncStatus,
   type SkillSyncStatusItem,
 } from '@/api/hermes/skills'
@@ -18,7 +20,14 @@ const syncing = ref(false)
 const reinjecting = ref(false)
 const status = ref<SkillSyncStatus | null>(null)
 const selectedGroupId = ref<string | null>(null)
-const lastResult = ref<{ skills: number; reinjected: number; reinjectError?: string } | null>(null)
+const lastResult = ref<{
+  skills: number
+  reinjected: number
+  reinjectError?: string
+  requirementsChanged: string[]
+} | null>(null)
+const publishingId = ref<string | null>(null)
+const publishingBatch = ref(false)
 
 const connectionLabel = computed(() => {
   if (!status.value) return ''
@@ -41,6 +50,10 @@ const activeSkills = computed<SkillSyncStatusItem[]>(() => {
   const set = new Set(g.skill_ids)
   return status.value.skills.filter(s => set.has(s.id))
 })
+
+const publishableSkills = computed(() =>
+  activeSkills.value.filter(s => s.state === 'local_only' || s.state === 'behind' || s.state === 'synced'),
+)
 
 function stateLabel(state: string): string {
   if (state === 'synced') return t('skills.sync.stateSynced')
@@ -82,8 +95,13 @@ async function onSyncAll() {
       skills: res.pull?.skills ?? 0,
       reinjected: res.reinjected?.length ?? 0,
       reinjectError: res.reinject_error || res.pull?.reinject_error,
+      requirementsChanged: res.requirements_changed || res.pull?.requirements_changed || [],
     }
-    if (lastResult.value.reinjectError) {
+    if (lastResult.value.requirementsChanged.length) {
+      message.warning(t('skills.sync.requirementsHint', {
+        ids: lastResult.value.requirementsChanged.join(', '),
+      }))
+    } else if (lastResult.value.reinjectError) {
       message.warning(t('skills.sync.reinjectWarn'))
     } else {
       message.success(t('skills.sync.syncSuccess'))
@@ -111,6 +129,50 @@ async function onReinject() {
   }
 }
 
+async function onPublish(skillId: string) {
+  if (publishingId.value || publishingBatch.value) return
+  publishingId.value = skillId
+  try {
+    const res = await publishSkillPackage(skillId)
+    message.success(t('skills.sync.publishSuccess', { id: res.id, n: res.file_count }))
+    await loadStatus()
+  } catch (err: any) {
+    message.error(err?.message || t('skills.sync.publishFailed'))
+  } finally {
+    publishingId.value = null
+  }
+}
+
+async function onPublishBatch() {
+  if (publishingBatch.value || publishingId.value) return
+  const ids = publishableSkills.value.map(s => s.id)
+  if (!ids.length) {
+    message.info(t('skills.sync.publishBatchEmpty'))
+    return
+  }
+  if (!window.confirm(t('skills.sync.publishBatchConfirm', { n: ids.length }))) return
+
+  publishingBatch.value = true
+  try {
+    const res = await publishSkillPackages(ids)
+    if (res.failed_count > 0) {
+      const sample = res.failed.slice(0, 3).map(f => `${f.id}: ${f.error}`).join('；')
+      message.warning(t('skills.sync.publishBatchPartial', {
+        ok: res.ok_count,
+        fail: res.failed_count,
+        sample,
+      }))
+    } else {
+      message.success(t('skills.sync.publishBatchSuccess', { n: res.ok_count }))
+    }
+    await loadStatus()
+  } catch (err: any) {
+    message.error(err?.message || t('skills.sync.publishBatchFailed'))
+  } finally {
+    publishingBatch.value = false
+  }
+}
+
 onMounted(loadStatus)
 </script>
 
@@ -124,13 +186,13 @@ onMounted(loadStatus)
         <span class="muted">{{ formatTime(status?.last_pulled_at ?? null) }}</span>
       </div>
       <div class="sync-actions">
-        <button type="button" class="ea-btn-ghost ea-btn-sm" :disabled="loading" @click="loadStatus">
+        <button type="button" class="ea-btn-ghost ea-btn-sm" :disabled="loading || publishingBatch" @click="loadStatus">
           {{ t('skills.sync.checkNow') }}
         </button>
         <button
           type="button"
           class="ea-btn-primary ea-btn-sm"
-          :disabled="syncing || !status?.configured"
+          :disabled="syncing || publishingBatch || !status?.configured"
           @click="onSyncAll"
         >
           {{ syncing ? '...' : t('skills.sync.syncAll') }}
@@ -138,7 +200,17 @@ onMounted(loadStatus)
         <button
           type="button"
           class="ea-btn-ghost ea-btn-sm"
-          :disabled="reinjecting"
+          :disabled="publishingBatch || !!publishingId || !status?.configured || !status?.connected"
+          :title="t('skills.sync.publishBatchTitle')"
+          @click="onPublishBatch"
+        >
+          {{ publishingBatch ? t('skills.sync.publishBatchRunning') : t('skills.sync.publishBatch') }}
+          <span v-if="!publishingBatch && publishableSkills.length" class="btn-cnt">{{ publishableSkills.length }}</span>
+        </button>
+        <button
+          type="button"
+          class="ea-btn-ghost ea-btn-sm"
+          :disabled="reinjecting || publishingBatch"
           @click="onReinject"
         >
           {{ reinjecting ? '...' : t('skills.sync.applyAgent') }}
@@ -162,6 +234,9 @@ onMounted(loadStatus)
     <div v-if="lastResult" class="sync-banner info">
       pull skills={{ lastResult.skills }} · reinjected={{ lastResult.reinjected }}
       <span v-if="lastResult.reinjectError"> · {{ lastResult.reinjectError }}</span>
+      <span v-if="lastResult.requirementsChanged.length">
+        · requirements: {{ lastResult.requirementsChanged.join(', ') }} → npm run setup
+      </span>
     </div>
 
     <div v-if="loading && !status" class="sync-empty">{{ t('common.loading') }}</div>
@@ -198,6 +273,7 @@ onMounted(loadStatus)
               <th>{{ t('skills.sync.stateSynced') }}</th>
               <th>func_type</th>
               <th>hash</th>
+              <th>{{ t('skills.sync.actions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -210,6 +286,18 @@ onMounted(loadStatus)
               <td class="mono muted">
                 <span v-if="s.central_hash">C:{{ s.central_hash.slice(0, 8) }}</span>
                 <span v-if="s.local_hash"> L:{{ s.local_hash.slice(0, 8) }}</span>
+              </td>
+              <td>
+                <button
+                  v-if="s.state === 'local_only' || s.state === 'behind' || s.state === 'synced'"
+                  type="button"
+                  class="ea-btn-ghost ea-btn-sm"
+                  :disabled="!!publishingId || publishingBatch || !status?.configured"
+                  :title="t('skills.sync.publishTitle')"
+                  @click="onPublish(s.id)"
+                >
+                  {{ publishingId === s.id ? '...' : t('skills.sync.publish') }}
+                </button>
               </td>
             </tr>
           </tbody>
@@ -260,7 +348,14 @@ onMounted(loadStatus)
 
 .sync-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
+}
+.btn-cnt {
+  margin-left: 4px;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .sync-banner {

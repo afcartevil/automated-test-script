@@ -308,9 +308,11 @@ export interface SkillSyncResult {
     skill_ids: string[]
     reinjected: string[]
     reinject_error?: string
+    requirements_changed?: string[]
   } | null
   reinjected: string[]
   reinject_error?: string
+  requirements_changed?: string[]
   status: {
     behind_count: number
     last_pulled_at: string | null
@@ -343,4 +345,22 @@ export async function reinjectSkills(skillIds?: string[]): Promise<SkillReinject
     '/api/tahp/skills/reinject',
     skillIds?.length ? { skill_ids: skillIds } : {},
   )
+}
+
+export async function publishSkillPackage(skillId: string): Promise<{ id: string; hash: string; file_count: number }> {
+  const { tahpPost } = await import('../tahp/client')
+  return tahpPost('/api/tahp/skills/publish-package', { skill_id: skillId })
+}
+
+export interface PublishPackagesResult {
+  total: number
+  ok_count: number
+  failed_count: number
+  ok: Array<{ id: string; hash: string; file_count: number }>
+  failed: Array<{ id: string; error: string }>
+}
+
+export async function publishSkillPackages(skillIds: string[]): Promise<PublishPackagesResult> {
+  const { tahpPost } = await import('../tahp/client')
+  return tahpPost('/api/tahp/skills/publish-packages', { skill_ids: skillIds })
 }

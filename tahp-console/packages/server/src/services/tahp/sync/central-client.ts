@@ -43,7 +43,7 @@ export const centralClient = {
 
   async pull(since?: string): Promise<PullPayload> {
     const qs = since ? `?since=${encodeURIComponent(since)}` : ''
-    return request(`/api/tahp/sync/pull${qs}`, { headers: headers() })
+    return request(`/api/tahp/sync/pull${qs}`, { headers: headers() }, 120_000)
   },
 
   async submit(payload: SubmitPayload): Promise<{ id: string; action?: string }> {
@@ -52,5 +52,40 @@ export const centralClient = {
       headers: headers({ 'content-type': 'application/json' }),
       body: JSON.stringify(payload),
     })
+  },
+
+  async downloadSkillPackage(id: string, packageUrl?: string): Promise<Buffer> {
+    let url: string
+    if (packageUrl?.startsWith('http')) url = packageUrl
+    else if (packageUrl?.startsWith('/')) url = `${base()}${packageUrl}`
+    else url = `${base()}/api/tahp/sync/skill/${encodeURIComponent(id)}/package`
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 120_000)
+    try {
+      const res = await fetch(url, { headers: headers(), signal: controller.signal })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new Error(`下载 skill 包失败 ${res.status}: ${text}`)
+      }
+      const ab = await res.arrayBuffer()
+      return Buffer.from(ab)
+    } finally {
+      clearTimeout(timer)
+    }
+  },
+
+  async uploadSkillPackage(
+    id: string,
+    archive_b64: string,
+  ): Promise<{ id?: string; hash: string; files?: Array<{ rel_path: string }> }> {
+    return request(
+      `/api/tahp/sync/skill/${encodeURIComponent(id)}/package`,
+      {
+        method: 'POST',
+        headers: headers({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ archive_b64 }),
+      },
+      120_000,
+    )
   },
 }

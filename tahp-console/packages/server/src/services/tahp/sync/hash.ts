@@ -11,3 +11,8 @@ export function sha256(content: string): string {
 export function shortHash(content: string): string {
   return sha256(content).slice(0, 16)
 }
+
+/** 二进制 / 整包文件 hash（与中心 shortHashBuffer 一致） */
+export function shortHashBuffer(buf: Buffer): string {
+  return createHash('sha256').update(buf).digest('hex').slice(0, 16)
+}
