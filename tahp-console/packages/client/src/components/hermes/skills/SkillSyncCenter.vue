@@ -218,7 +218,10 @@ onMounted(loadStatus)
       </div>
     </div>
 
-    <div v-if="!status?.configured" class="sync-banner warn">
+    <div v-if="loading" class="sync-banner info">
+      {{ t('skills.sync.scanning') }}
+    </div>
+    <div v-if="status && !status.configured" class="sync-banner warn">
       {{ t('skills.sync.notConfiguredHint') }}
     </div>
     <div v-else-if="status && !status.connected" class="sync-banner err">
@@ -239,7 +242,7 @@ onMounted(loadStatus)
       </span>
     </div>
 
-    <div v-if="loading && !status" class="sync-empty">{{ t('common.loading') }}</div>
+    <div v-if="loading && !status" class="sync-empty">{{ t('skills.sync.scanning') }}</div>
     <div v-else-if="status" class="sync-body">
       <aside class="sync-groups">
         <button

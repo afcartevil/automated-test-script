@@ -518,6 +518,7 @@ export default {
       notConfiguredHint: '请在 tahp-console/.env 配置 TAHP_CENTRAL_URL 与 TAHP_CENTRAL_TOKEN 后重启服务。',
       lastSynced: '上次同步：{time}',
       neverSynced: '尚未同步',
+      scanning: '正在扫描本机 Skill（已跳过大体积工作区）…',
       behindCount: '{n} 个 Skill 可更新',
       upToDate: '已全部对齐',
       empty: '暂无 Skill 状态',

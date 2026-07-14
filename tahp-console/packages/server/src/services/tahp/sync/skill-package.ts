@@ -15,7 +15,8 @@ import AdmZip from 'adm-zip'
 import { shortHashBuffer } from './hash'
 import { tahpPaths } from '../paths'
 
-const SKIP_DIR_NAMES = new Set(['node_modules', '__pycache__', '.git'])
+/** 运行时/依赖目录不参与整包 hash 与 ZIP（含 jira-ops 本机工作区，可达数 GB） */
+const SKIP_DIR_NAMES = new Set(['node_modules', '__pycache__', '.git', 'jira_workspace'])
 
 export interface SkillFileMeta {
   rel_path: string

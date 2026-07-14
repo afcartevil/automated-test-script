@@ -518,6 +518,7 @@ export default {
       notConfiguredHint: 'Set TAHP_CENTRAL_URL and TAHP_CENTRAL_TOKEN in tahp-console/.env, then restart.',
       lastSynced: 'Last sync: {time}',
       neverSynced: 'Never synced',
+      scanning: 'Scanning local skills (large workspaces skipped)…',
       behindCount: '{n} skills outdated',
       upToDate: 'All skills up to date',
       empty: 'No skill sync status',

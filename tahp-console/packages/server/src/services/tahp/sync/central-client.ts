@@ -17,7 +17,7 @@ function headers(extra?: Record<string, string>): Record<string, string> {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit, timeoutMs = 15000): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs = 30000): Promise<T> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -27,6 +27,12 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = 15000): 
       throw new Error(json.error || `中心返回 ${res.status}`)
     }
     return json.data as T
+  } catch (e) {
+    const err = e as Error
+    if (err?.name === 'AbortError') {
+      throw new Error(`连接中心超时（${Math.round(timeoutMs / 1000)}s），请确认中心已启动且 ${base()} 可达`)
+    }
+    throw e
   } finally {
     clearTimeout(timer)
   }

@@ -24,7 +24,7 @@
 | 上传鉴权 | `POST .../package` 走 **central token**（本机发布）；后台 admin 上传同路径可选复用 |
 | 本地发布 | **做**：`POST /api/tahp/skills/publish-package` |
 | 同步策略 | **整包替换**（解压覆盖 skill 目录；不删未包含的本地多余文件以外的逻辑：先清空目标 skill 目录再解压） |
-| 排除文件 | `.env`、`.env.*`、`node_modules`、`__pycache__`、`.git`、`*.pyc` |
+| 排除文件 | `.env`、`.env.*`、`node_modules`、`__pycache__`、`.git`、`*.pyc`、`jira_workspace/`（运行时日志工作区） |
 | 整包 hash | 对 `files` 按 `rel_path` 排序后拼接 `rel_path\\0hash\\n`，再 `shortHash`；**manifest.item.hash = 整包 hash**（相对 P1 仅 SKILL.md hash 的升级） |
 
 ## 3. 影响文件清单
@@ -127,6 +127,7 @@ POST /api/tahp/skills/sync  响应增加
 | 大 ZIP 超时 | pull 下载 timeout 提升至 120s；阈值走 URL |
 | 覆盖误删本地实验文件 | 仅覆盖目标 skill_id 目录；local_only 不强制删 |
 | hash 算法漂移 | 双仓共用同一 list/hash 规则，单测锁定 |
+| `jira_workspace` 数 GB 拖死检查 | 整包扫描永久跳过该目录（双仓 + UI 加载提示） |
 
 ## 8. 开工
 
