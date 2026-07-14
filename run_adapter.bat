@@ -97,10 +97,11 @@ node scripts/build-if-needed.mjs
 if errorlevel 1 (
     echo.
     echo [EasyAdapter] 生产构建失败，无法启动。
-    echo   首次拉代码需在本地编译前端（含 Monaco 编辑器，内存占用较高）。
-    echo   建议: 关闭其它占内存程序后重试；或手动执行:
+    echo   首次拉代码需在本地编译前端，含 Monaco，内存占用较高。
+    echo   建议: 关闭其它占内存程序后重试，或手动执行:
     echo   set NODE_OPTIONS=--max-old-space-size=8192
-    echo   cd tahp-console ^&^& npm run build
+    echo   cd tahp-console
+    echo   npm run build
     echo   若仍失败，请向已构建成功的同事复制 tahp-console\dist 目录。
     echo.
     if not "%TAHP_SILENT%"=="1" pause

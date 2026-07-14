@@ -46,11 +46,14 @@ cpSync(
   { recursive: true },
 )
 
-cpSync(
-  resolve(rootDir, 'packages/server/data'),
-  distDataDir,
-  { recursive: true },
-)
+// packages/server/data 在 .gitignore 中（本机运行时 DB），clone 后可能不存在；
+// 生产模式实际读写 ~/.tahp-console，此处仅兼容旧产物布局。
+const serverDataDir = resolve(rootDir, 'packages/server/data')
+if (existsSync(serverDataDir)) {
+  cpSync(serverDataDir, distDataDir, { recursive: true })
+} else {
+  mkdirSync(distDataDir, { recursive: true })
+}
 
 const skillsOutDir = resolve(rootDir, 'dist/skills')
 rmSync(skillsOutDir, { recursive: true, force: true })
