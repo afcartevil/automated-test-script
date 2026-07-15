@@ -1,25 +1,26 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import {
-  fetchSyncStatus,
   triggerSync,
   reinjectSkills,
   publishSkillPackage,
   publishSkillPackages,
-  type SkillSyncStatus,
+  fetchSkillPackageHistory,
   type SkillSyncStatusItem,
+  type SkillHistoryCommit,
 } from '@/api/hermes/skills'
+import { useSkillSyncStore } from '@/stores/hermes/skill-sync'
 
 const { t } = useI18n()
 const message = useMessage()
+const syncStore = useSkillSyncStore()
+const { status, loading, refreshing, selectedGroupId } = storeToRefs(syncStore)
 
-const loading = ref(false)
 const syncing = ref(false)
 const reinjecting = ref(false)
-const status = ref<SkillSyncStatus | null>(null)
-const selectedGroupId = ref<string | null>(null)
 const lastResult = ref<{
   skills: number
   reinjected: number
@@ -28,6 +29,9 @@ const lastResult = ref<{
 } | null>(null)
 const publishingId = ref<string | null>(null)
 const publishingBatch = ref(false)
+const historySkillId = ref<string | null>(null)
+const historyLoading = ref(false)
+const historyCommits = ref<SkillHistoryCommit[]>([])
 /** 勾选待提交的 skill id */
 const selectedIds = ref<Set<string>>(new Set())
 
@@ -126,18 +130,14 @@ function clearSelection() {
   selectedIds.value = new Set()
 }
 
-async function loadStatus() {
-  loading.value = true
+async function loadStatus(force = false) {
   try {
-    status.value = await fetchSyncStatus()
-    if (selectedGroupId.value && !status.value.groups.some(g => g.id === selectedGroupId.value)) {
-      selectedGroupId.value = null
-    }
+    await syncStore.load({ force })
     pruneSelection()
   } catch (err: any) {
-    message.error(err?.message || t('skills.sync.loadFailed'))
-  } finally {
-    loading.value = false
+    if (!status.value) {
+      message.error(err?.message || t('skills.sync.loadFailed'))
+    }
   }
 }
 
@@ -162,7 +162,36 @@ async function onSyncAll() {
     } else {
       message.success(t('skills.sync.syncSuccess'))
     }
-    await loadStatus()
+    await loadStatus(true)
+  } catch (err: any) {
+    message.error(err?.message || t('skills.sync.syncFailed'))
+  } finally {
+    syncing.value = false
+  }
+}
+
+const selectedBundleId = computed(() => {
+  const g = selectedGroupId.value
+  if (!g?.startsWith('bundle:')) return null
+  const id = g.slice('bundle:'.length)
+  return id === '__other__' ? null : id
+})
+
+async function onSyncBundle() {
+  const bid = selectedBundleId.value
+  if (!bid || syncing.value) return
+  syncing.value = true
+  lastResult.value = null
+  try {
+    const res = await triggerSync(undefined, { bundle_id: bid })
+    lastResult.value = {
+      skills: res.pull?.skills ?? 0,
+      reinjected: res.reinjected?.length ?? 0,
+      reinjectError: res.reinject_error || res.pull?.reinject_error,
+      requirementsChanged: res.requirements_changed || res.pull?.requirements_changed || [],
+    }
+    message.success(t('skills.sync.syncBundleSuccess', { id: bid, n: lastResult.value.skills }))
+    await loadStatus(true)
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.syncFailed'))
   } finally {
@@ -192,8 +221,12 @@ async function onPublish(skillId: string) {
   publishingId.value = skillId
   try {
     const res = await publishSkillPackage(skillId)
-    message.success(t('skills.sync.publishSuccess', { id: res.id, n: res.file_count }))
-    await loadStatus()
+    message.success(t('skills.sync.publishPendingSuccess', {
+      id: res.id,
+      n: res.file_count,
+      submit: res.submit_id || '-',
+    }))
+    await loadStatus(true)
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.publishFailed'))
   } finally {
@@ -228,12 +261,33 @@ async function onPublishBatch() {
       message.success(t('skills.sync.publishBatchSuccess', { n: res.ok_count }))
     }
     clearSelection()
-    await loadStatus()
+    await loadStatus(true)
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.publishBatchFailed'))
   } finally {
     publishingBatch.value = false
   }
+}
+
+async function onShowHistory(skillId: string) {
+  if (!status.value?.configured) return
+  historySkillId.value = skillId
+  historyLoading.value = true
+  historyCommits.value = []
+  try {
+    const data = await fetchSkillPackageHistory(skillId)
+    historyCommits.value = data.commits || []
+  } catch (err: any) {
+    message.error(err?.message || t('skills.sync.historyFailed'))
+    historySkillId.value = null
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+function closeHistory() {
+  historySkillId.value = null
+  historyCommits.value = []
 }
 
 onMounted(loadStatus)
@@ -249,8 +303,23 @@ onMounted(loadStatus)
         <span class="muted">{{ formatTime(status?.last_pulled_at ?? null) }}</span>
       </div>
       <div class="sync-actions">
-        <button type="button" class="ea-btn-ghost ea-btn-sm" :disabled="loading || publishingBatch" @click="loadStatus">
+        <button
+          type="button"
+          class="ea-btn-ghost ea-btn-sm"
+          :disabled="loading || refreshing || publishingBatch"
+          @click="loadStatus(true)"
+        >
           {{ t('skills.sync.checkNow') }}
+        </button>
+        <button
+          v-if="selectedBundleId"
+          type="button"
+          class="ea-btn-ghost ea-btn-sm"
+          :disabled="syncing || publishingBatch || !status?.configured"
+          :title="t('skills.sync.syncBundleTitle')"
+          @click="onSyncBundle"
+        >
+          {{ syncing ? '...' : t('skills.sync.syncBundle') }}
         </button>
         <button
           type="button"
@@ -290,8 +359,11 @@ onMounted(loadStatus)
       </div>
     </div>
 
-    <div v-if="loading" class="sync-banner info">
+    <div v-if="loading && !status" class="sync-banner info">
       {{ t('skills.sync.scanning') }}
+    </div>
+    <div v-else-if="refreshing" class="sync-banner info">
+      {{ t('skills.sync.refreshing') }}
     </div>
     <div v-if="status && !status.configured" class="sync-banner warn">
       {{ t('skills.sync.notConfiguredHint') }}
@@ -302,7 +374,7 @@ onMounted(loadStatus)
     <div v-else-if="status && status.behind_count > 0" class="sync-banner info">
       {{ t('skills.sync.behindCount', { n: status.behind_count }) }}
     </div>
-    <div v-else-if="status" class="sync-banner ok">
+    <div v-else-if="status && !refreshing" class="sync-banner ok">
       {{ t('skills.sync.upToDate') }}
     </div>
 
@@ -391,12 +463,38 @@ onMounted(loadStatus)
                 >
                   {{ publishingId === s.id ? '...' : t('skills.sync.publish') }}
                 </button>
+                <button
+                  type="button"
+                  class="ea-btn-ghost ea-btn-sm"
+                  :disabled="!status?.configured || historyLoading"
+                  :title="t('skills.sync.historyTitle')"
+                  @click="onShowHistory(s.id)"
+                >
+                  {{ t('skills.sync.history') }}
+                </button>
               </td>
             </tr>
           </tbody>
         </table>
         <div v-else class="sync-empty">{{ t('skills.sync.empty') }}</div>
       </div>
+    </div>
+
+    <div v-if="historySkillId" class="history-panel">
+      <div class="history-head">
+        <strong>{{ t('skills.sync.historyFor', { id: historySkillId }) }}</strong>
+        <button type="button" class="ea-btn-ghost ea-btn-sm" @click="closeHistory">{{ t('skills.sync.historyClose') }}</button>
+      </div>
+      <p v-if="historyLoading" class="muted">{{ t('skills.sync.historyLoading') }}</p>
+      <p v-else-if="!historyCommits.length" class="muted">{{ t('skills.sync.historyEmpty') }}</p>
+      <ul v-else class="history-list">
+        <li v-for="c in historyCommits" :key="c.sha">
+          <span class="mono">{{ c.short_sha }}</span>
+          <span>{{ c.title }}</span>
+          <span class="muted">{{ c.author_name }} · {{ c.committed_at }}</span>
+          <a v-if="c.web_url" :href="c.web_url" target="_blank" rel="noopener">GitLab</a>
+        </li>
+      </ul>
     </div>
   </div>
 </template>
@@ -536,6 +634,32 @@ onMounted(loadStatus)
   &.st-behind { background: #ffedd5; color: #9a3412; }
   &.st-local_only { background: #f1f5f9; color: #475569; }
   &.st-unknown { background: #e2e8f0; color: #334155; }
+}
+
+.history-panel {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  padding: 12px;
+}
+.history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  li {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 13px;
+  }
 }
 
 .sync-empty {

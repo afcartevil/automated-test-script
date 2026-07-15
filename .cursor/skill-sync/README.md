@@ -13,7 +13,7 @@
 | [00-overview.md](./00-overview.md) | 已定稿 | 总体架构、决策项、阶段总览、现状诊断 |
 | [PHASE-1.md](./PHASE-1.md) | 已交付 | Phase 1 可执行提案 |
 | [PHASE-2.md](./PHASE-2.md) | 已交付 | 包型 Skill 全量分发（可执行） |
-| [PHASE-3.md](./PHASE-3.md) | 待细化 | Bundle 管理 |
+| [PHASE-3.md](./PHASE-3.md) | **可执行提案** | 审核闸门 + Git 直推/主仓镜像 + 历史 UI + Bundle |
 | [PHASE-4.md](./PHASE-4.md) | 待细化 | 治理闭环 |
 | [SELF-CHECK.md](./SELF-CHECK.md) | **强制** | 每 Step/Phase 完成后的自检规范与交付报告模板 |
 
@@ -33,8 +33,13 @@
 | 1 | 包型 Skill | 中心托管完整附件 → Phase 2 |
 | 2 | 交付节奏 | Phase 分批交付 |
 | 3 | 中心部署 | `http://10.205.0.65:8660/`（经 env，不硬编码）；本地联调可用 localhost |
-| 4 | Bundle 权威 | 中心权威（Phase 3） |
+| 4 | Bundle 权威 | 中心权威；**P3 与审核/Git 同批** |
 | 5 | P2 归档 | ZIP + 1.5MB 内联阈值；整包替换 |
+| 6 | P3 发布闸门 | 提交 = 待审；通过后才进 manifest |
+| 7 | P3 版本 | **GitLab history**；不自建版本仓 |
+| 8 | P3 Git | 审核通过 → 写 `easyadapter_bff/data/...` → **直推 master（CI）** → **再镜像主仓 easyadapter** |
+| 9 | P3 历史 UI | 客户端每个 Skill 可查 commit 历史 |
+| 10 | 知识库 | 与 Skill 同轨：审过 → 发布 + 推 Git + 镜像 |
 
 ## 当前进度
 
@@ -42,12 +47,22 @@
 - [x] Phase 1 交付并推送 GitLab
 - [x] Phase 2 可执行提案落盘
 - [x] Phase 2 交付并推送 GitLab（包型分发 + 发布到中心）
-- [ ] Phase 3 / 4
+- [x] Phase 3 可执行提案落盘（审核 + Git + 历史 + Bundle）
+- [x] Phase 3 §11 未决项按默认建议锁定（2026-07-14）
+- [x] Phase 3 Step 3A/3B/3C（审核闸门 + git-publish 可选 + 历史）
+- [x] Phase 3 Step 3D/3E（主仓镜像 warn/enforce + Bundle + 按包同步）
+- [x] 知识库审后 Git + 镜像
+- [ ] Phase 3 Step 3F 联调自检报告（部署环境）
+- [ ] Phase 4
 
 ## 变更记录
 
 | 日期 | 说明 |
 |------|------|
+| 2026-07-15 | Phase 3：主仓镜像、Bundle CRUD、kb 审后 Git、SyncCenter「同步此包」 |
+| 2026-07-14 | Phase 3 开工实现：3A 待审闸门；3B git-publish（默认关）；3C history |
+| 2026-07-14 | Phase 3 开工：§11 锁定；Step 3A 审核闸门开发 |
+| 2026-07-14 | Phase 3 定稿：待审闸门；审后写 bff `data/` 直推 master；镜像主仓；客户端 Skill 历史；Bundle 同批；知识库同轨 |
 | 2026-07-14 | Phase 2 自检通过并推送双仓 |
 | 2026-07-13 | 初版 + SELF-CHECK + 文档迁至 `.cursor/skill-sync/` |
 | 2026-07-13 | Phase 1 实现并推送 |

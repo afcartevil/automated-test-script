@@ -67,19 +67,26 @@ async function applyOneSkill(
 
 export async function applyPull(
   payload: PullPayload,
-  options?: { reinjectSkillIds?: string[] | null },
+  options?: { reinjectSkillIds?: string[] | null; onlySkillIds?: string[] | null },
 ): Promise<PullResult> {
+  const only = options?.onlySkillIds?.length
+    ? new Set(options.onlySkillIds)
+    : null
+
   let entryCount = 0
-  for (const entry of payload.entries) {
-    const id = String((entry as Record<string, unknown>).id || '')
-    if (!id) continue
-    await safeFileStore.writeText(entryPath(id), JSON.stringify(entry, null, 2))
-    try {
-      upsertIndexRecord(entry as any)
-    } catch (e) {
-      logger.warn({ id, err: (e as Error).message }, '[sync] reindex entry failed')
+  // 按包同步时不落知识条目，避免误扩大范围
+  if (!only) {
+    for (const entry of payload.entries) {
+      const id = String((entry as Record<string, unknown>).id || '')
+      if (!id) continue
+      await safeFileStore.writeText(entryPath(id), JSON.stringify(entry, null, 2))
+      try {
+        upsertIndexRecord(entry as any)
+      } catch (e) {
+        logger.warn({ id, err: (e as Error).message }, '[sync] reindex entry failed')
+      }
+      entryCount++
     }
-    entryCount++
   }
 
   let skillCount = 0
@@ -87,6 +94,7 @@ export async function applyPull(
   const requirements_changed: string[] = []
   for (const skill of payload.skills) {
     if (!skill.id) continue
+    if (only && !only.has(skill.id)) continue
     try {
       const r = await applyOneSkill(skill)
       skillCount++
@@ -150,7 +158,7 @@ export async function applyPull(
 
 export async function runPull(
   incremental = true,
-  options?: { reinjectSkillIds?: string[] | null },
+  options?: { reinjectSkillIds?: string[] | null; onlySkillIds?: string[] | null },
 ): Promise<PullResult | null> {
   const since = incremental ? lastPulledAt : ''
   const payload = await centralClient.pull(since || undefined)
@@ -161,19 +169,30 @@ export async function runPull(
   return result
 }
 
-/** 将本机 skill 打 ZIP 上传到中心 */
-export async function publishSkillPackage(skillId: string): Promise<{ id: string; hash: string; file_count: number }> {
+/** 将本机 skill 提交到中心待审（Phase 3：不再直发 live） */
+export async function publishSkillPackage(skillId: string): Promise<{
+  id: string
+  hash: string
+  file_count: number
+  submit_id?: string
+  status?: string
+}> {
   if (!config.tahp.centralUrl || !config.tahp.centralToken) {
     throw new Error('中心未配置')
   }
   const { buildLocalSkillZipBuffer, listLocalSkillFiles, computePackageHash } = await import('./skill-package')
   const files = listLocalSkillFiles(skillId)
   if (!files.length) throw new Error(`本地无 Skill: ${skillId}`)
+  const localHash = computePackageHash(files)
   const buf = buildLocalSkillZipBuffer(skillId)
-  const meta = await centralClient.uploadSkillPackage(skillId, buf.toString('base64'))
+  const meta = await centralClient.uploadSkillPackage(skillId, buf.toString('base64'), {
+    local_hash: localHash,
+  })
   return {
     id: skillId,
-    hash: meta.hash || computePackageHash(files),
-    file_count: meta.files?.length || files.length,
+    hash: meta.hash || localHash,
+    file_count: meta.file_count || meta.files?.length || files.length,
+    submit_id: meta.submit_id,
+    status: meta.status || 'pending_review',
   }
 }

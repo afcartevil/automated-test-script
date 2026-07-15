@@ -1,6 +1,6 @@
 /**
  * Skill 同步状态 — 本地 vs 中心 manifest 比对。
- * 见 .cursor/skill-sync/PHASE-1.md
+ * 性能：包 hash 指纹缓存 + 结果短 TTL + 中心请求并行。
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
@@ -43,12 +43,20 @@ export interface SkillSyncStatusResult {
   skills: SkillSyncStatusItem[]
   groups: SkillSyncGroup[]
   error?: string
+  /** 是否来自短 TTL 内存缓存 */
+  from_cache?: boolean
+  checked_at?: string
 }
 
 interface PersistedSyncState {
   last_pulled_at?: string
   skills?: Record<string, { central_hash?: string; local_hash?: string; state?: string }>
+  /** 最近一次完整 status 快照（供首屏秒开） */
+  last_status?: SkillSyncStatusResult
 }
+
+const STATUS_TTL_MS = 30_000
+let memStatus: { at: number; key: string; data: SkillSyncStatusResult } | null = null
 
 function tahpDir(): string {
   const d = join(tahpPaths.projectRoot, '.tahp')
@@ -83,6 +91,10 @@ export function setLastPulledAt(iso: string): void {
   writePersistedSyncState({ last_pulled_at: iso })
 }
 
+export function invalidateSkillSyncStatusCache(): void {
+  memStatus = null
+}
+
 function parseSkillMeta(raw: string): { name?: string; func_type?: string; module?: string } {
   const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   if (!m) return {}
@@ -102,7 +114,7 @@ function parseSkillMeta(raw: string): { name?: string; func_type?: string; modul
   }
 }
 
-function listLocalSkills(): Map<string, { hash: string; meta: ReturnType<typeof parseSkillMeta> }> {
+function listLocalSkills(forceHash = false): Map<string, { hash: string; meta: ReturnType<typeof parseSkillMeta> }> {
   const root = tahpPaths.skillsDir
   const out = new Map<string, { hash: string; meta: ReturnType<typeof parseSkillMeta> }>()
   if (!existsSync(root)) return out
@@ -112,7 +124,7 @@ function listLocalSkills(): Map<string, { hash: string; meta: ReturnType<typeof 
     if (!existsSync(md)) continue
     try {
       const raw = readFileSync(md, 'utf-8')
-      const pkgHash = getLocalPackageHash(entry.name)
+      const pkgHash = getLocalPackageHash(entry.name, forceHash)
       out.set(entry.name, {
         hash: pkgHash || shortHash(raw),
         meta: parseSkillMeta(raw),
@@ -124,11 +136,11 @@ function listLocalSkills(): Map<string, { hash: string; meta: ReturnType<typeof 
   return out
 }
 
-function buildGroups(skills: SkillSyncStatusItem[]): SkillSyncGroup[] {
+function buildGroupsByFuncType(skills: SkillSyncStatusItem[]): SkillSyncGroup[] {
   const map = new Map<string, SkillSyncGroup>()
   for (const s of skills) {
     const label = s.func_type?.trim() || '未分类'
-    const id = label
+    const id = `ft:${label}`
     let g = map.get(id)
     if (!g) {
       g = { id, label, behind_count: 0, skill_ids: [] }
@@ -143,7 +155,80 @@ function buildGroups(skills: SkillSyncStatusItem[]): SkillSyncGroup[] {
   })
 }
 
-export async function getSkillSyncStatus(): Promise<SkillSyncStatusResult> {
+function cacheBundlesPath(): string {
+  return join(tahpDir(), 'skill-bundles.cache.json')
+}
+
+function readBundlesCache(): { bundles: Array<{ id: string; label: string; skill_ids: string[] }> } | null {
+  try {
+    if (!existsSync(cacheBundlesPath())) return null
+    return JSON.parse(readFileSync(cacheBundlesPath(), 'utf-8'))
+  } catch {
+    return null
+  }
+}
+
+function writeBundlesCache(doc: unknown): void {
+  try {
+    writeFileSync(cacheBundlesPath(), JSON.stringify(doc, null, 2), 'utf-8')
+  } catch (e) {
+    logger.warn({ err: (e as Error).message }, '[skill-sync] write bundles cache failed')
+  }
+}
+
+function buildGroupsFromBundles(
+  skills: SkillSyncStatusItem[],
+  bundles: Array<{ id: string; label: string; skill_ids: string[] }>,
+): SkillSyncGroup[] {
+  if (!bundles.length) return buildGroupsByFuncType(skills)
+  const groups: SkillSyncGroup[] = []
+  const claimed = new Set<string>()
+  for (const b of bundles) {
+    const members = skills.filter(s => s.bundle_ids?.includes(b.id) || (b.skill_ids || []).includes(s.id))
+    const ids = members.map(s => s.id)
+    for (const id of ids) claimed.add(id)
+    groups.push({
+      id: `bundle:${b.id}`,
+      label: b.label || b.id,
+      behind_count: members.filter(s => s.state === 'behind').length,
+      skill_ids: ids,
+    })
+  }
+  const rest = skills.filter(s => !claimed.has(s.id))
+  if (rest.length) {
+    groups.push({
+      id: 'bundle:__other__',
+      label: '未归包',
+      behind_count: rest.filter(s => s.state === 'behind').length,
+      skill_ids: rest.map(s => s.id),
+    })
+  }
+  return groups.sort((a, b) => {
+    if (b.behind_count !== a.behind_count) return b.behind_count - a.behind_count
+    return a.label.localeCompare(b.label, 'zh')
+  })
+}
+
+function cacheKey(opts?: { bundle_id?: string }): string {
+  return opts?.bundle_id ? `b:${opts.bundle_id}` : 'all'
+}
+
+function filterByBundle(skills: SkillSyncStatusItem[], bundleId?: string): SkillSyncStatusItem[] {
+  if (!bundleId) return skills
+  return skills.filter(s => s.bundle_ids?.includes(bundleId))
+}
+
+export async function getSkillSyncStatus(opts?: {
+  bundle_id?: string
+  force?: boolean
+}): Promise<SkillSyncStatusResult> {
+  const key = cacheKey(opts)
+  const now = Date.now()
+  if (!opts?.force && memStatus && memStatus.key === key && now - memStatus.at < STATUS_TTL_MS) {
+    return { ...memStatus.data, from_cache: true }
+  }
+
+  // 非强制：若有持久化快照且请求「全部」，先可被客户端使用；此处仍做完整计算，但二次进入走 mem/disk
   const mode = getRuntimeModeInfo()
   const persisted = readPersistedSyncState()
   const base: SkillSyncStatusResult = {
@@ -154,10 +239,11 @@ export async function getSkillSyncStatus(): Promise<SkillSyncStatusResult> {
     behind_count: 0,
     skills: [],
     groups: [],
+    checked_at: new Date().toISOString(),
   }
 
   if (!isCentralConfigured()) {
-    const local = listLocalSkills()
+    const local = listLocalSkills(!!opts?.force)
     const skills: SkillSyncStatusItem[] = [...local.entries()].map(([id, v]) => ({
       id,
       state: 'local_only' as const,
@@ -167,22 +253,51 @@ export async function getSkillSyncStatus(): Promise<SkillSyncStatusResult> {
       func_type: v.meta.func_type,
       module: v.meta.module,
     }))
-    return { ...base, skills, groups: buildGroups(skills) }
+    const result = { ...base, skills, groups: buildGroupsByFuncType(skills), from_cache: false }
+    memStatus = { at: now, key, data: result }
+    writePersistedSyncState({ last_status: result })
+    return result
   }
 
   base.configured = true
   base.central_url = config.tahp.centralUrl || mode.central_url
 
   let manifestItems: ManifestItem[] = []
+  let bundlesDoc: {
+    bundles: Array<{ id: string; label: string; skill_ids: string[] }>
+  } | null = readBundlesCache()
+
   try {
-    await centralClient.ping()
-    const manifest = await centralClient.manifest()
-    manifestItems = manifest.items || []
+    const [, manifestRes, bundlesRes] = await Promise.allSettled([
+      centralClient.ping(),
+      centralClient.manifest(),
+      centralClient.skillBundles(),
+    ])
+    if (manifestRes.status !== 'fulfilled') {
+      throw (manifestRes as PromiseRejectedResult).reason || new Error('拉取 manifest 失败')
+    }
+    manifestItems = manifestRes.value.items || []
     base.connected = true
+    if (bundlesRes.status === 'fulfilled') {
+      bundlesDoc = bundlesRes.value
+      writeBundlesCache(bundlesDoc)
+    }
   } catch (e) {
     base.connected = false
     base.error = (e as Error).message
-    const local = listLocalSkills()
+    // 断连时优先返回持久化快照（秒开）
+    if (!opts?.force && persisted.last_status?.skills?.length) {
+      const snap = {
+        ...persisted.last_status,
+        connected: false,
+        error: base.error,
+        from_cache: true,
+        checked_at: base.checked_at,
+      }
+      memStatus = { at: now, key, data: snap }
+      return snap
+    }
+    const local = listLocalSkills(!!opts?.force)
     const skills: SkillSyncStatusItem[] = [...local.entries()].map(([id, v]) => ({
       id,
       state: 'unknown' as const,
@@ -192,10 +307,12 @@ export async function getSkillSyncStatus(): Promise<SkillSyncStatusResult> {
       func_type: v.meta.func_type,
       module: v.meta.module,
     }))
-    return { ...base, skills, groups: buildGroups(skills) }
+    const result = { ...base, skills, groups: buildGroupsByFuncType(skills), from_cache: false }
+    memStatus = { at: now, key, data: result }
+    return result
   }
 
-  const local = listLocalSkills()
+  const local = listLocalSkills(!!opts?.force)
   const centralSkills = manifestItems.filter(i => i.type === 'skill')
   const seen = new Set<string>()
   const skills: SkillSyncStatusItem[] = []
@@ -249,16 +366,57 @@ export async function getSkillSyncStatus(): Promise<SkillSyncStatusResult> {
     return a.id.localeCompare(b.id)
   })
 
-  const behind_count = skills.filter(s => s.state === 'behind').length
+  const filtered = filterByBundle(skills, opts?.bundle_id)
+  const behind_count = filtered.filter(s => s.state === 'behind').length
+  const groups = buildGroupsFromBundles(filtered, bundlesDoc?.bundles || [])
+
+  const result: SkillSyncStatusResult = {
+    ...base,
+    behind_count,
+    skills: filtered,
+    groups,
+    from_cache: false,
+  }
+
+  memStatus = { at: now, key, data: result }
   writePersistedSyncState({
     last_pulled_at: persisted.last_pulled_at,
     skills: skillMap,
+    last_status: opts?.bundle_id ? persisted.last_status : result,
   })
 
-  return {
-    ...base,
-    behind_count,
-    skills,
-    groups: buildGroups(skills),
+  return result
+}
+
+/** 仅读持久化快照（不扫盘、不打中心）— 前端首屏用 */
+export function getCachedSkillSyncStatus(): SkillSyncStatusResult | null {
+  if (memStatus && Date.now() - memStatus.at < STATUS_TTL_MS * 4) {
+    return { ...memStatus.data, from_cache: true }
+  }
+  const persisted = readPersistedSyncState()
+  if (persisted.last_status?.skills) {
+    return { ...persisted.last_status, from_cache: true }
+  }
+  return null
+}
+
+/** 解析 bundle 内 skill ids（供同步此包）— 尽量不触发全量重扫 */
+export async function resolveBundleSkillIds(bundleId: string): Promise<string[]> {
+  if (!isCentralConfigured()) return []
+  try {
+    let doc = readBundlesCache()
+    if (!doc) {
+      doc = await centralClient.skillBundles()
+      writeBundlesCache(doc)
+    }
+    const b = doc.bundles.find(x => x.id === bundleId)
+    const fromExplicit = new Set(b?.skill_ids || [])
+    const cached = getCachedSkillSyncStatus() || await getSkillSyncStatus()
+    for (const s of cached.skills) {
+      if (s.bundle_ids?.includes(bundleId)) fromExplicit.add(s.id)
+    }
+    return [...fromExplicit]
+  } catch {
+    return []
   }
 }

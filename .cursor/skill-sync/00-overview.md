@@ -34,27 +34,27 @@
 
 | 类型 | 特征 | 中心现状 | 完整分发 |
 |------|------|----------|----------|
-| **内容型** | 仅 SKILL.md | 草稿审核激活后可 pull | Phase 1 即可体验闭环 |
-| **包型** | 含 scripts/references 等 | **中心目前不存附件** | 必须 Phase 2 托管全量包 |
+| **内容型** | 仅 SKILL.md | 草稿审核 → 写权威（P3 起审后 Git 直推） | Phase 1 起可 sync；P3 补齐审后落 Git |
+| **包型** | 含 scripts/references 等 | Phase 2 已托管全量包；**仍直发** | Phase 3 改为待审 + 审后发布 + Git |
 
-证据：
+证据（演进）：
 
-- `easyadapter_bff` `activateSkillFromDraft()` 只写 `SKILL.md`
-- sync pull 只回传 `{ id, rel_path, content }`
-- 本地 `applyPull()` 只写 `skillsDir/<id>/SKILL.md`
+- P1：内容型 pull 以 SKILL.md 为主；草稿激活只写 `SKILL.md`
+- P2：整包 hash / ZIP；本机 publish 仍**直接**写入中心 live（缺口 → P3 闸门）
+- P3：待审 → 审后写 `data/` + Git 直推 + 主仓镜像；客户端可查 history
 
 ## 3. 目标架构
 
 ```
-easyadapter_bff（权威）
-  ├── 内容型：草稿审核 → SKILL.md
-  ├── 包型：完整包上传/托管（Phase 2）
-  ├── Bundle 注册表（Phase 3）
-  └── sync manifest（hash + files + bundle_ids）
+本机提交 → 中心 pending_review → 审核通过
+  → 写入 easyadapter_bff/data/...
+  → git commit + push master（CI 账号）
+  → 镜像同步到主仓 easyadapter（skills / knowledge-base）
+  → manifest 对同事可见
            │
            ▼ pull / 手动同步
 tahp-console（本机）
-  ├── Skill 同步中心 UI
+  ├── Skill 同步中心 UI（含单 Skill Git 历史）
   ├── sync-status / sync / reinject
   ├── skills/.claude/skills/（工程副本）
   └── skill-injector 热注入 → Hermes runtime
@@ -64,9 +64,10 @@ tahp-console（本机）
 
 | 组件 | 职责 |
 |------|------|
-| easyadapter_bff | 权威源、审核、Bundle、全量包、审计 |
-| easyadapter/tahp-console | 本地执行、同步 UI、热注入 |
-| Git | 开发协作/备份；**不是**团队发布唯一通道 |
+| easyadapter_bff | 权威 `data/...`、审核、Bundle、全量包、审后 Git 直推、审计 |
+| easyadapter 主仓 | 镜像接收已发布 skills/kb；同事工程与 Git 历史对齐 |
+| easyadapter/tahp-console | 本地执行、提交待审、同步 UI、历史查看、热注入 |
+| GitLab | **版本与审计源**（commit history）；不做自研版本仓 |
 
 ## 4. 核心概念
 
@@ -85,26 +86,29 @@ tahp-console（本机）
 
 | state | 含义 |
 |-------|------|
-| synced | 与中心一致 |
-| behind | 中心有更新 |
+| synced | 与中心**已发布**一致 |
+| behind | 中心已发布有更新 |
 | ahead | 本地有未提交修改（Phase 4） |
 | local_only | 仅本机 |
+| submitted_pending | 已提交中心、仍待审（Phase 3） |
+| rejected | 最近提交被驳回（Phase 3） |
 | conflict | 双方均改（Phase 4） |
 
 本机状态文件：`{projectRoot}/.tahp/skill-sync-state.json`（不入 Git）。
 
 ## 5. 用户心智模型（目标）
 
-> **改 Skill → 中心审核 → 同步中心点一下 → 应用到 Agent**
+> **改 Skill / 知识 → 提交中心（待审）→ 审核通过（写 data + 推 GitLab + 镜像主仓）→ 同步中心点一下 → 应用到 Agent**  
+> **版本**：在客户端查看该 Skill 的 GitLab 历史；回滚用 Git revert / 再提审。
 
 ## 6. 阶段总览
 
 | Phase | 目标 | 双仓 |
 |-------|------|------|
 | **1** | 可感知同步 + 免重启热注入（内容型） | 客户端主改；中心 manifest 向前兼容 |
-| **2** | 包型全量托管与分发 | 双仓同改 |
-| **3** | Bundle CRUD + 按包同步 | 双仓同改 |
-| **4** | ahead/conflict、审计、文档 SOP | 双仓同改 |
+| **2** | 包型全量托管与分发（提交仍直发） | 双仓同改 |
+| **3** | 审核闸门 + 审后 Git 直推/主仓镜像 + 历史 UI + Bundle | 双仓同改 |
+| **4** | ahead/conflict、审计加强、文档 SOP | 双仓同改 |
 
 ## 7. 中心部署约定
 
@@ -114,10 +118,12 @@ tahp-console（本机）
 
 ## 8. 非目标（明确不做）
 
-- 用纯 Git / npm 私有包替代中心分发
+- 自研多版本 blob 仓 / current_version 指针（版本交给 GitLab）
+- 审核通过后再开 MR（P3 定稿为 **直推 master**）
+- 用纯 npm 私有包替代中心分发
 - Phase 1 就做完整包上传
 - 同时大改 `hermes-agent-main/`
-- 提交 `.env` / 凭据 / 本机 sync-state
+- 提交 `.env` / 凭据 / 本机 sync-state / CI 私钥
 
 ## 9. 相关代码锚点
 

@@ -1,6 +1,8 @@
 /**
  * 本地 Skill 整包工具 — 与中心 easyadapter_bff/src/services/skill-package.ts 规则对齐。
  * 见 .cursor/skill-sync/PHASE-2.md
+ *
+ * 包 hash 使用 mtime+size 指纹缓存，避免 sync-status 每次全量读盘。
  */
 import {
   existsSync,
@@ -8,6 +10,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'fs'
 import { join, relative, sep } from 'path'
@@ -70,11 +73,108 @@ export function computePackageHash(files: SkillFileMeta[]): string {
   return shortHashBuffer(Buffer.from(payload, 'utf-8'))
 }
 
-export function getLocalPackageHash(id: string): string | null {
+interface PkgHashCacheEntry {
+  fingerprint: string
+  hash: string
+}
+
+type PkgHashCacheFile = Record<string, PkgHashCacheEntry>
+
+const memPkgHash = new Map<string, PkgHashCacheEntry>()
+let diskCacheLoaded = false
+
+function pkgHashCachePath(): string {
+  const d = join(tahpPaths.projectRoot, '.tahp')
+  if (!existsSync(d)) mkdirSync(d, { recursive: true })
+  return join(d, 'skill-pkg-hash-cache.json')
+}
+
+function loadDiskPkgHashCache(): void {
+  if (diskCacheLoaded) return
+  diskCacheLoaded = true
+  try {
+    const p = pkgHashCachePath()
+    if (!existsSync(p)) return
+    const raw = JSON.parse(readFileSync(p, 'utf-8')) as PkgHashCacheFile
+    for (const [id, ent] of Object.entries(raw || {})) {
+      if (ent?.fingerprint && ent?.hash) memPkgHash.set(id, ent)
+    }
+  } catch { /* ignore */ }
+}
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null
+function schedulePersistPkgHashCache(): void {
+  if (persistTimer) return
+  persistTimer = setTimeout(() => {
+    persistTimer = null
+    try {
+      const obj: PkgHashCacheFile = {}
+      for (const [id, ent] of memPkgHash) obj[id] = ent
+      writeFileSync(pkgHashCachePath(), JSON.stringify(obj), 'utf-8')
+    } catch { /* ignore */ }
+  }, 500)
+}
+
+/** 仅扫目录元数据（不读文件内容）生成指纹 */
+export function getLocalPackageFingerprint(id: string): string | null {
+  const root = localSkillDir(id)
+  if (!existsSync(join(root, 'SKILL.md'))) return null
+  const parts: string[] = []
+  const walk = (dir: string) => {
+    let entries
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name))
+    for (const entry of entries) {
+      if (shouldSkipName(entry.name)) continue
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        walk(full)
+        continue
+      }
+      if (!entry.isFile()) continue
+      try {
+        const st = statSync(full)
+        const rel = toPosix(relative(root, full))
+        parts.push(`${rel}\0${st.size}\0${Math.floor(st.mtimeMs)}`)
+      } catch { /* skip */ }
+    }
+  }
+  walk(root)
+  if (!parts.length) return null
+  parts.sort()
+  return shortHashBuffer(Buffer.from(parts.join('\n'), 'utf-8'))
+}
+
+export function invalidateLocalPackageHashCache(id?: string): void {
+  loadDiskPkgHashCache()
+  if (id) memPkgHash.delete(id)
+  else memPkgHash.clear()
+  schedulePersistPkgHashCache()
+}
+
+/**
+ * 整包 hash；指纹未变时直接复用缓存（status 热路径）。
+ * force=true 时忽略缓存重算。
+ */
+export function getLocalPackageHash(id: string, force = false): string | null {
   if (!existsSync(join(localSkillDir(id), 'SKILL.md'))) return null
+  loadDiskPkgHashCache()
+  const fingerprint = getLocalPackageFingerprint(id)
+  if (!fingerprint) return null
+  if (!force) {
+    const hit = memPkgHash.get(id)
+    if (hit && hit.fingerprint === fingerprint) return hit.hash
+  }
   const files = listLocalSkillFiles(id)
   if (!files.length) return null
-  return computePackageHash(files)
+  const hash = computePackageHash(files)
+  memPkgHash.set(id, { fingerprint, hash })
+  schedulePersistPkgHashCache()
+  return hash
 }
 
 export function buildLocalSkillZipBuffer(id: string): Buffer {
@@ -108,6 +208,7 @@ export function applySkillZipToLocal(id: string, zipBuffer: Buffer): void {
   if (!existsSync(join(root, 'SKILL.md'))) {
     throw new Error(`解压后缺少 SKILL.md: ${id}`)
   }
+  invalidateLocalPackageHashCache(id)
 }
 
 export function applyInlineFilesToLocal(
@@ -127,6 +228,7 @@ export function applyInlineFilesToLocal(
     mkdirSync(join(dest, '..'), { recursive: true })
     writeFileSync(dest, Buffer.from(f.content_b64, 'base64'))
   }
+  invalidateLocalPackageHashCache(id)
 }
 
 /** 读取本地某 skill 的 requirements.txt hash（若存在） */

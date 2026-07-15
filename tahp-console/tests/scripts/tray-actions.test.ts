@@ -40,9 +40,9 @@ describe('tray-actions', () => {
   })
 
   it('buildTooltip reflects running state', () => {
-    expect(buildTooltip({ running: true, pid: 1234 }, 8650)).toContain('运行中')
+    expect(buildTooltip({ running: true, pid: 1234 }, 8650)).toContain('running')
     expect(buildTooltip({ running: true, pid: 1234 }, 8650)).toContain('1234')
-    expect(buildTooltip({ running: false, pid: null }, 8650)).toContain('已停止')
+    expect(buildTooltip({ running: false, pid: null }, 8650)).toContain('stopped')
   })
 
   it('readPidFile parses integer pid', () => {

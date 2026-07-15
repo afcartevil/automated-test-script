@@ -25,4 +25,9 @@
 
 ## 4. 依赖
 
-- Phase 1–3 主路径稳定
+- Phase 1–3 主路径稳定（含审后 Git 直推与主仓镜像）
+
+## 5. 与 Phase 3 边界
+
+- **不在 P4 重复**：审核闸门、GitLab 版本、Bundle CRUD（见 [PHASE-3.md](./PHASE-3.md)）
+- **P4 侧重**：ahead/conflict、审计报表增强、团队 SOP / rules 文案收敛

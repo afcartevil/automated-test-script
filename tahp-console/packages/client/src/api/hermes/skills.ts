@@ -329,14 +329,27 @@ export interface SkillReinjectResult {
   skipped: string[]
 }
 
-export async function fetchSyncStatus(): Promise<SkillSyncStatus> {
+export async function fetchSyncStatus(opts?: {
+  force?: boolean
+  cachedOnly?: boolean
+}): Promise<SkillSyncStatus | null> {
   const { tahpGet } = await import('../tahp/client')
-  return tahpGet<SkillSyncStatus>('/api/tahp/skills/sync-status')
+  const qs = new URLSearchParams()
+  if (opts?.force) qs.set('refresh', '1')
+  if (opts?.cachedOnly) qs.set('cached', '1')
+  const suffix = qs.toString() ? `?${qs}` : ''
+  return tahpGet<SkillSyncStatus | null>(`/api/tahp/skills/sync-status${suffix}`)
 }
 
-export async function triggerSync(skillIds?: string[]): Promise<SkillSyncResult> {
+export async function triggerSync(
+  skillIds?: string[],
+  opts?: { bundle_id?: string },
+): Promise<SkillSyncResult> {
   const { tahpPost } = await import('../tahp/client')
-  return tahpPost<SkillSyncResult>('/api/tahp/skills/sync', skillIds?.length ? { skill_ids: skillIds } : {})
+  const body: { skill_ids?: string[]; bundle_id?: string } = {}
+  if (skillIds?.length) body.skill_ids = skillIds
+  if (opts?.bundle_id) body.bundle_id = opts.bundle_id
+  return tahpPost<SkillSyncResult>('/api/tahp/skills/sync', Object.keys(body).length ? body : {})
 }
 
 export async function reinjectSkills(skillIds?: string[]): Promise<SkillReinjectResult> {
@@ -347,7 +360,13 @@ export async function reinjectSkills(skillIds?: string[]): Promise<SkillReinject
   )
 }
 
-export async function publishSkillPackage(skillId: string): Promise<{ id: string; hash: string; file_count: number }> {
+export async function publishSkillPackage(skillId: string): Promise<{
+  id: string
+  hash: string
+  file_count: number
+  submit_id?: string
+  status?: string
+}> {
   const { tahpPost } = await import('../tahp/client')
   return tahpPost('/api/tahp/skills/publish-package', { skill_id: skillId })
 }
@@ -356,11 +375,31 @@ export interface PublishPackagesResult {
   total: number
   ok_count: number
   failed_count: number
-  ok: Array<{ id: string; hash: string; file_count: number }>
+  ok: Array<{ id: string; hash: string; file_count: number; submit_id?: string; status?: string }>
   failed: Array<{ id: string; error: string }>
 }
 
 export async function publishSkillPackages(skillIds: string[]): Promise<PublishPackagesResult> {
   const { tahpPost } = await import('../tahp/client')
   return tahpPost('/api/tahp/skills/publish-packages', { skill_ids: skillIds })
+}
+
+export interface SkillHistoryCommit {
+  sha: string
+  short_sha: string
+  title: string
+  author_name: string
+  author_email: string
+  committed_at: string
+  message: string
+  web_url?: string
+}
+
+/** Phase 3：中心 Git 发布历史（与库浏览本地 hermes history 区分） */
+export async function fetchSkillPackageHistory(skillId: string, limit = 50): Promise<{
+  id: string
+  commits: SkillHistoryCommit[]
+}> {
+  const { tahpGet } = await import('../tahp/client')
+  return tahpGet(`/api/tahp/skills/${encodeURIComponent(skillId)}/history?limit=${limit}`)
 }

@@ -54,4 +54,24 @@ describe('skill package hash', () => {
     applySkillZipToLocal('demo-pack', zip)
     expect(getLocalPackageHash('demo-pack')).toBe(hash1)
   })
+
+  it('skips jira_workspace when listing package files', async () => {
+    const root = await tempDir('skill-pkg-jw-')
+    const skillDir = join(root, 'skills', '.claude', 'skills', 'jira-ops')
+    await mkdir(join(skillDir, 'jira_workspace', 'huge'), { recursive: true })
+    await writeFile(join(skillDir, 'SKILL.md'), '---\nname: jira-ops\n---\n', 'utf-8')
+    await writeFile(join(skillDir, 'jira_workspace', 'huge', 'big.log'), 'x'.repeat(1024), 'utf-8')
+
+    vi.doMock('../../packages/server/src/services/tahp/paths', () => ({
+      tahpPaths: {
+        projectRoot: root,
+        skillsDir: join(root, 'skills', '.claude', 'skills'),
+        knowledgeDir: join(root, 'knowledge-base'),
+      },
+    }))
+
+    const { listLocalSkillFiles } = await import('../../packages/server/src/services/tahp/sync/skill-package')
+    const files = listLocalSkillFiles('jira-ops')
+    expect(files.map(f => f.rel_path)).toEqual(['SKILL.md'])
+  })
 })

@@ -11,13 +11,33 @@ import { HermesSkillInjector } from '../../services/hermes/skill-injector'
 import { logger } from '../../services/logger'
 import { isCentralConfigured } from '../../services/tahp/runtime-mode'
 import { publishSkillPackage, runPull } from '../../services/tahp/sync/pull'
-import { getSkillSyncStatus } from '../../services/tahp/sync/status'
+import {
+  getCachedSkillSyncStatus,
+  getSkillSyncStatus,
+  invalidateSkillSyncStatusCache,
+} from '../../services/tahp/sync/status'
 
 export const tahpSkillSyncRoutes = new Router()
 
 tahpSkillSyncRoutes.get('/api/tahp/skills/sync-status', async (ctx) => {
   try {
-    const data = await getSkillSyncStatus()
+    const q = ctx.query as Record<string, string>
+    const bundleId = String(q.bundle_id || '').trim() || undefined
+    const force = q.refresh === '1' || q.force === '1'
+    const cachedOnly = q.cached === '1'
+    // cached=1：只读内存/磁盘快照，绝不扫盘；无快照时返回 null（勿落穿到全量扫描）
+    if (cachedOnly) {
+      const cached = getCachedSkillSyncStatus()
+      ctx.body = {
+        success: true,
+        data: cached ? { ...cached, from_cache: true } : null,
+      }
+      return
+    }
+    const data = await getSkillSyncStatus({
+      bundle_id: bundleId,
+      force,
+    })
     ctx.body = { success: true, data }
   } catch (err) {
     logger.error({ err }, '[skill-sync] sync-status failed')
@@ -32,16 +52,31 @@ tahpSkillSyncRoutes.post('/api/tahp/skills/sync', async (ctx) => {
     ctx.body = { success: false, error: '中心未配置（TAHP_CENTRAL_URL / TAHP_CENTRAL_TOKEN）' }
     return
   }
-  const body = (ctx.request.body || {}) as { skill_ids?: string[] }
-  const skillIds = Array.isArray(body.skill_ids)
+  const body = (ctx.request.body || {}) as { skill_ids?: string[]; bundle_id?: string }
+  let skillIds = Array.isArray(body.skill_ids)
     ? body.skill_ids.map(String).filter(Boolean)
     : undefined
+
+  if (body.bundle_id && !skillIds?.length) {
+    const { resolveBundleSkillIds } = await import('../../services/tahp/sync/status')
+    skillIds = await resolveBundleSkillIds(String(body.bundle_id))
+    if (!skillIds.length) {
+      ctx.status = 400
+      ctx.body = { success: false, error: `Bundle 无关联 Skill: ${body.bundle_id}` }
+      return
+    }
+  }
 
   try {
     const pull = await runPull(false, {
       reinjectSkillIds: skillIds?.length ? skillIds : undefined,
+      onlySkillIds: skillIds?.length ? skillIds : undefined,
     })
-    const status = await getSkillSyncStatus()
+    invalidateSkillSyncStatusCache()
+    const status = await getSkillSyncStatus({
+      bundle_id: body.bundle_id ? String(body.bundle_id) : undefined,
+      force: true,
+    })
     ctx.body = {
       success: true,
       data: {
@@ -121,7 +156,7 @@ tahpSkillSyncRoutes.post('/api/tahp/skills/publish-packages', async (ctx) => {
     return
   }
 
-  const ok: Array<{ id: string; hash: string; file_count: number }> = []
+  const ok: Array<{ id: string; hash: string; file_count: number; submit_id?: string; status?: string }> = []
   const failed: Array<{ id: string; error: string }> = []
   for (const skillId of skillIds) {
     try {
@@ -142,5 +177,29 @@ tahpSkillSyncRoutes.post('/api/tahp/skills/publish-packages', async (ctx) => {
       ok,
       failed,
     },
+  }
+})
+
+tahpSkillSyncRoutes.get('/api/tahp/skills/:id/history', async (ctx) => {
+  if (!isCentralConfigured()) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '中心未配置（TAHP_CENTRAL_URL / TAHP_CENTRAL_TOKEN）' }
+    return
+  }
+  const id = String(ctx.params.id || '').trim()
+  if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少合法 skill id' }
+    return
+  }
+  const limit = parseInt(String(ctx.query.limit || '50'), 10)
+  try {
+    const { centralClient } = await import('../../services/tahp/sync/central-client')
+    const data = await centralClient.skillHistory(id, Number.isFinite(limit) ? limit : 50)
+    ctx.body = { success: true, data }
+  } catch (err) {
+    logger.error({ err, id }, '[skill-sync] history failed')
+    ctx.status = 502
+    ctx.body = { success: false, error: (err as Error).message }
   }
 })

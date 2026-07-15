@@ -24,7 +24,14 @@ const moduleFilter = ref<string | null>(null)
 const showImportModal = ref(false)
 const isFullscreen = ref(false)
 const activeTab = ref<'browse' | 'sync'>('browse')
+/** 首次打开同步中心后保持挂载，避免切 Tab 销毁组件导致反复全量加载 */
+const syncEverOpened = ref(false)
 let mobileQuery: MediaQueryList | null = null
+
+function openSyncTab() {
+  syncEverOpened.value = true
+  activeTab.value = 'sync'
+}
 
 // ── 所有技能扁平化 ─────────────────────────────────────────────────────────────
 const allSkills = computed<SkillInfo[]>(() => categories.value.flatMap(c => c.skills))
@@ -213,7 +220,7 @@ async function handleBackfill() {
         type="button"
         class="skills-tab"
         :class="{ active: activeTab === 'sync' }"
-        @click="activeTab = 'sync'"
+        @click="openSyncTab"
       >
         {{ t('skills.tabs.sync') }}
       </button>
@@ -226,9 +233,9 @@ async function handleBackfill() {
       @imported="handleImported"
     />
 
-    <SkillSyncCenter v-if="activeTab === 'sync'" />
+    <SkillSyncCenter v-if="syncEverOpened" v-show="activeTab === 'sync'" />
 
-    <template v-else>
+    <template v-if="activeTab === 'browse'">
     <!-- 功能类型 domain-chip 过滤 -->
     <div class="ea-domain-bar skills-domain-bar">
       <button

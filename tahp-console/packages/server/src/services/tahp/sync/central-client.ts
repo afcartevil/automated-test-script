@@ -83,15 +83,69 @@ export const centralClient = {
   async uploadSkillPackage(
     id: string,
     archive_b64: string,
-  ): Promise<{ id?: string; hash: string; files?: Array<{ rel_path: string }> }> {
+    opts?: { message?: string; local_hash?: string },
+  ): Promise<{
+    id?: string
+    hash: string
+    files?: Array<{ rel_path: string }>
+    file_count?: number
+    submit_id?: string
+    status?: string
+  }> {
     return request(
-      `/api/tahp/sync/skill/${encodeURIComponent(id)}/package`,
+      `/api/tahp/sync/skill/${encodeURIComponent(id)}/package/submit`,
       {
         method: 'POST',
         headers: headers({ 'content-type': 'application/json' }),
-        body: JSON.stringify({ archive_b64 }),
+        body: JSON.stringify({
+          archive_b64,
+          message: opts?.message,
+          local_hash: opts?.local_hash,
+        }),
       },
       120_000,
     )
+  },
+
+  async latestSkillSubmission(id: string): Promise<{
+    submit_id: string
+    skill_id: string
+    status: string
+    hash: string
+    comment?: string
+    submitted_at?: string
+    reviewed_at?: string
+  } | null> {
+    return request(`/api/tahp/sync/skill/${encodeURIComponent(id)}/submission/latest`, {
+      headers: headers(),
+    })
+  },
+
+  async skillHistory(id: string, limit = 50): Promise<{
+    id: string
+    commits: Array<{
+      sha: string
+      short_sha: string
+      title: string
+      author_name: string
+      author_email: string
+      committed_at: string
+      message: string
+      web_url?: string
+    }>
+  }> {
+    return request(
+      `/api/tahp/sync/skill/${encodeURIComponent(id)}/history?limit=${encodeURIComponent(String(limit))}`,
+      { headers: headers() },
+    )
+  },
+
+  async skillBundles(): Promise<{
+    version: number
+    bundles: Array<{ id: string; label: string; description?: string; skill_ids: string[]; updated_at: string }>
+    auto_rules: Array<{ id: string; label?: string; func_type?: string; module?: string; id_prefix?: string }>
+    updated_at: string
+  }> {
+    return request('/api/tahp/sync/skill-bundles', { headers: headers() })
   },
 }
