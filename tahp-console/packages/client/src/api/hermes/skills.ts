@@ -267,7 +267,13 @@ export async function fetchSkillCommitDetail(category: string, skill: string, ha
 
 // ── Skill 同步中心（Phase 1）────────────────────────────────────────────────
 
-export type SkillSyncStateName = 'synced' | 'behind' | 'local_only' | 'unknown'
+export type SkillSyncStateName =
+  | 'synced'
+  | 'behind'
+  | 'local_only'
+  | 'unknown'
+  | 'submitted_pending'
+  | 'rejected'
 
 export interface SkillSyncStatusItem {
   id: string
@@ -279,6 +285,8 @@ export interface SkillSyncStatusItem {
   name?: string
   func_type?: string
   module?: string
+  submit_id?: string
+  reject_reason?: string
 }
 
 export interface SkillSyncGroup {
@@ -294,6 +302,8 @@ export interface SkillSyncStatus {
   connected: boolean
   last_pulled_at: string | null
   behind_count: number
+  pending_count?: number
+  rejected_count?: number
   skills: SkillSyncStatusItem[]
   groups: SkillSyncGroup[]
   error?: string

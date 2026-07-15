@@ -88,11 +88,11 @@ tahp-console（本机）
 |-------|------|
 | synced | 与中心**已发布**一致 |
 | behind | 中心已发布有更新 |
-| ahead | 本地有未提交修改（Phase 4） |
+| ahead | 本地有未提交修改（**暂缓**，不进精简 P4） |
 | local_only | 仅本机 |
-| submitted_pending | 已提交中心、仍待审（Phase 3） |
-| rejected | 最近提交被驳回（Phase 3） |
-| conflict | 双方均改（Phase 4） |
+| submitted_pending | 已提交中心、仍待审（**精简 Phase 4**） |
+| rejected | 最近提交被驳回（**精简 Phase 4**） |
+| conflict | 双方均改（**暂缓**，不进精简 P4） |
 
 本机状态文件：`{projectRoot}/.tahp/skill-sync-state.json`（不入 Git）。
 
@@ -108,7 +108,7 @@ tahp-console（本机）
 | **1** | 可感知同步 + 免重启热注入（内容型） | 客户端主改；中心 manifest 向前兼容 |
 | **2** | 包型全量托管与分发（提交仍直发） | 双仓同改 |
 | **3** | 审核闸门 + 审后 Git 直推/主仓镜像 + 历史 UI + Bundle | 双仓同改 |
-| **4** | ahead/conflict、审计加强、文档 SOP | 双仓同改 |
+| **4** | 本机待审/驳回状态 + 文档 SOP（ahead/conflict/审计报表**不做**） | 客户端主改；中心默认零改动 |
 
 ## 7. 中心部署约定
 

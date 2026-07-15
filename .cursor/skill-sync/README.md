@@ -14,7 +14,7 @@
 | [PHASE-1.md](./PHASE-1.md) | 已交付 | Phase 1 可执行提案 |
 | [PHASE-2.md](./PHASE-2.md) | 已交付 | 包型 Skill 全量分发（可执行） |
 | [PHASE-3.md](./PHASE-3.md) | **可执行提案** | 审核闸门 + Git 直推/主仓镜像 + 历史 UI + Bundle |
-| [PHASE-4.md](./PHASE-4.md) | 待细化 | 治理闭环 |
+| [PHASE-4.md](./PHASE-4.md) | **可执行提案（精简）** | 仅待审/驳回状态 + SOP；ahead/conflict/审计报表砍掉 |
 | [SELF-CHECK.md](./SELF-CHECK.md) | **强制** | 每 Step/Phase 完成后的自检规范与交付报告模板 |
 
 ## 使用约定
@@ -40,6 +40,7 @@
 | 8 | P3 Git | 审核通过 → 写 `easyadapter_bff/data/...` → **直推 master（CI）** → **再镜像主仓 easyadapter** |
 | 9 | P3 历史 UI | 客户端每个 Skill 可查 commit 历史 |
 | 10 | 知识库 | 与 Skill 同轨：审过 → 发布 + 推 Git + 镜像 |
+| 11 | P4 范围 | **仅**本机 `submitted_pending`/`rejected` + 文档；不做 ahead/conflict/审计报表 |
 
 ## 当前进度
 
@@ -53,12 +54,17 @@
 - [x] Phase 3 Step 3D/3E（主仓镜像 warn/enforce + Bundle + 按包同步）
 - [x] 知识库审后 Git + 镜像
 - [ ] Phase 3 Step 3F 联调自检报告（部署环境）
-- [ ] Phase 4
+- [x] Phase 4 精简提案落盘（仅待审/驳回 + SOP；ahead/conflict/审计砍掉）
+- [x] Phase 4 Step 4A–4C（status 覆盖 + SyncCenter + SOP 文档）
+- [x] Phase 4 自动验证（相关单测 + npm run build）
+- [ ] Phase 4 联调冒烟（提交→待审→驳回/通过→本机状态）
 
 ## 变更记录
 
 | 日期 | 说明 |
 |------|------|
+| 2026-07-15 | Phase 4 裁为最小集：仅 submitted_pending/rejected + SOP；砍掉 ahead/conflict/审计报表 |
+| 2026-07-15 | Phase 4 大纲曾细化为满配治理提案（后按用户要求精简） |
 | 2026-07-15 | Phase 3：主仓镜像、Bundle CRUD、kb 审后 Git、SyncCenter「同步此包」 |
 | 2026-07-14 | Phase 3 开工实现：3A 待审闸门；3B git-publish（默认关）；3C history |
 | 2026-07-14 | Phase 3 开工：§11 锁定；Step 3A 审核闸门开发 |

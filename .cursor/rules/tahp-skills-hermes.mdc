@@ -21,6 +21,18 @@ alwaysApply: false
 - **不改** `hermes-agent-main/` 来适配 Skill；适配在 Skill 脚本或 Console BFF 完成
 - 不提交 Skill 下含密钥的 `.env`（仅 `.env.example` 可提交模板）
 
+## 发布与同步 SOP（精简 P4）
+
+- **团队分发**：改 Skill 后在 Console「同步中心」→ **提交服务器**（整包进待审）；中心「Skill 审核」通过后同事再 **同步全部 / 同步此包** → **应用到 Agent**
+- **勿把路径/ZIP 导入当日常发布**：`import` 仅用于离线/首次落盘兜底
+- **本机状态（同步中心）**：
+  - `synced` 已与中心已发布一致
+  - `behind` 中心有更新可拉
+  - `local_only` 仅本机
+  - `submitted_pending` 已提交待审（勿重复提交）
+  - `rejected` 最近提交被驳回（可见原因，可改后重提）
+- 细节与演进见 `.cursor/skill-sync/`（当前精简 Phase 4）
+
 ## 验证
 
 - 在 Console 对应面板（智能诊断 / 适配调试）跑一条最小任务

@@ -25,6 +25,60 @@ describe('skill sync hash', () => {
   })
 })
 
+describe('applySubmissionOverlay', () => {
+  it('maps pending_review → submitted_pending', async () => {
+    const { applySubmissionOverlay } = await import('../../packages/server/src/services/tahp/sync/status')
+    const row = {
+      id: 'demo',
+      state: 'local_only' as const,
+      local_hash: 'abc',
+      bundle_ids: [] as string[],
+    }
+    const out = applySubmissionOverlay(row, {
+      status: 'pending_review',
+      submit_id: 'sp-1',
+      hash: 'abc',
+    })
+    expect(out.state).toBe('submitted_pending')
+    expect(out.submit_id).toBe('sp-1')
+  })
+
+  it('maps rejected → rejected with reason when local hash matches', async () => {
+    const { applySubmissionOverlay } = await import('../../packages/server/src/services/tahp/sync/status')
+    const row = {
+      id: 'demo',
+      state: 'local_only' as const,
+      local_hash: 'abc',
+      bundle_ids: [] as string[],
+    }
+    const out = applySubmissionOverlay(row, {
+      status: 'rejected',
+      submit_id: 'sp-2',
+      hash: 'abc',
+      comment: '缺少说明',
+    })
+    expect(out.state).toBe('rejected')
+    expect(out.reject_reason).toBe('缺少说明')
+  })
+
+  it('does not lock rejected when local hash changed after rejection', async () => {
+    const { applySubmissionOverlay } = await import('../../packages/server/src/services/tahp/sync/status')
+    const row = {
+      id: 'demo',
+      state: 'local_only' as const,
+      local_hash: 'newhash',
+      bundle_ids: [] as string[],
+    }
+    const out = applySubmissionOverlay(row, {
+      status: 'rejected',
+      hash: 'oldhash',
+      comment: '旧原因',
+    })
+    expect(out.state).toBe('local_only')
+    expect(out.reject_reason).toBe('旧原因')
+  })
+})
+
 describe('getSkillSyncStatus (unconfigured)', () => {
   it('returns configured=false and marks local skills as local_only', async () => {
     const root = await tempDir('skill-sync-status-')

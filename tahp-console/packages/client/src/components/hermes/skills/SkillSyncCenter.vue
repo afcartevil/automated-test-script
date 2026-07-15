@@ -34,6 +34,8 @@ const historyLoading = ref(false)
 const historyCommits = ref<SkillHistoryCommit[]>([])
 /** 勾选待提交的 skill id */
 const selectedIds = ref<Set<string>>(new Set())
+/** 驳回原因弹层 */
+const rejectDetail = ref<{ id: string; reason: string; submit_id?: string } | null>(null)
 
 const connectionLabel = computed(() => {
   if (!status.value) return ''
@@ -57,12 +59,12 @@ const activeSkills = computed<SkillSyncStatusItem[]>(() => {
   return status.value.skills.filter(s => set.has(s.id))
 })
 
-/** 本机有内容且未与服务器对齐时可提交（排除 synced / 仅服务器有） */
+/** 本机有内容且未与服务器对齐时可提交（排除 synced / 待审 / 仅服务器有） */
 function canPublish(s: SkillSyncStatusItem): boolean {
   if (!status.value?.connected) return false
   if (!s.local_hash) return false
-  if (s.state === 'synced' || s.state === 'unknown') return false
-  return s.state === 'local_only' || s.state === 'behind'
+  if (s.state === 'synced' || s.state === 'unknown' || s.state === 'submitted_pending') return false
+  return s.state === 'local_only' || s.state === 'behind' || s.state === 'rejected'
 }
 
 const publishableSkills = computed(() => activeSkills.value.filter(canPublish))
@@ -82,12 +84,32 @@ function stateLabel(state: string): string {
   if (state === 'synced') return t('skills.sync.stateSynced')
   if (state === 'behind') return t('skills.sync.stateBehind')
   if (state === 'local_only') return t('skills.sync.stateLocalOnly')
+  if (state === 'submitted_pending') return t('skills.sync.statePending')
+  if (state === 'rejected') return t('skills.sync.stateRejected')
   return t('skills.sync.stateUnknown')
 }
 
 function publishTitleFor(s: SkillSyncStatusItem): string {
+  if (s.state === 'rejected') return t('skills.sync.publishTitleRejected')
   if (s.state === 'behind') return t('skills.sync.publishTitleBehind')
   return t('skills.sync.publishTitle')
+}
+
+function publishLabelFor(s: SkillSyncStatusItem): string {
+  return s.state === 'rejected' ? t('skills.sync.publishRetry') : t('skills.sync.publish')
+}
+
+function openRejectReason(s: SkillSyncStatusItem) {
+  if (!s.reject_reason?.trim()) return
+  rejectDetail.value = {
+    id: s.id,
+    reason: s.reject_reason.trim(),
+    submit_id: s.submit_id,
+  }
+}
+
+function closeRejectReason() {
+  rejectDetail.value = null
 }
 
 function formatTime(iso: string | null): string {
@@ -371,19 +393,17 @@ onMounted(loadStatus)
     <div v-else-if="status && !status.connected" class="sync-banner err">
       {{ status.error || t('skills.sync.disconnected') }}
     </div>
+    <div v-else-if="status && (status.rejected_count || 0) > 0" class="sync-banner warn">
+      {{ t('skills.sync.rejectedCount', { n: status.rejected_count }) }}
+    </div>
+    <div v-else-if="status && (status.pending_count || 0) > 0" class="sync-banner info">
+      {{ t('skills.sync.pendingCount', { n: status.pending_count }) }}
+    </div>
     <div v-else-if="status && status.behind_count > 0" class="sync-banner info">
       {{ t('skills.sync.behindCount', { n: status.behind_count }) }}
     </div>
     <div v-else-if="status && !refreshing" class="sync-banner ok">
       {{ t('skills.sync.upToDate') }}
-    </div>
-
-    <div v-if="lastResult" class="sync-banner info">
-      pull skills={{ lastResult.skills }} · reinjected={{ lastResult.reinjected }}
-      <span v-if="lastResult.reinjectError"> · {{ lastResult.reinjectError }}</span>
-      <span v-if="lastResult.requirementsChanged.length">
-        · requirements: {{ lastResult.requirementsChanged.join(', ') }} → npm run setup
-      </span>
     </div>
 
     <div v-if="loading && !status" class="sync-empty">{{ t('skills.sync.scanning') }}</div>
@@ -445,7 +465,22 @@ onMounted(loadStatus)
               </td>
               <td class="mono">{{ s.id }}</td>
               <td>
-                <span class="state-pill" :class="`st-${s.state}`">{{ stateLabel(s.state) }}</span>
+                <div class="state-cell">
+                  <span
+                    class="state-pill"
+                    :class="`st-${s.state}`"
+                    :title="s.reject_reason || (s.submit_id ? `submit: ${s.submit_id}` : undefined)"
+                  >{{ stateLabel(s.state) }}</span>
+                  <button
+                    v-if="s.state === 'rejected' && s.reject_reason"
+                    type="button"
+                    class="reason-link"
+                    :title="t('skills.sync.viewRejectReasonTitle')"
+                    @click="openRejectReason(s)"
+                  >
+                    {{ t('skills.sync.viewRejectReason') }}
+                  </button>
+                </div>
               </td>
               <td>{{ s.func_type || '—' }}</td>
               <td class="mono muted">
@@ -461,7 +496,7 @@ onMounted(loadStatus)
                   :title="publishTitleFor(s)"
                   @click="onPublish(s.id)"
                 >
-                  {{ publishingId === s.id ? '...' : t('skills.sync.publish') }}
+                  {{ publishingId === s.id ? '...' : publishLabelFor(s) }}
                 </button>
                 <button
                   type="button"
@@ -477,6 +512,29 @@ onMounted(loadStatus)
           </tbody>
         </table>
         <div v-else class="sync-empty">{{ t('skills.sync.empty') }}</div>
+      </div>
+    </div>
+
+    <div v-if="rejectDetail" class="reject-modal-overlay" @click.self="closeRejectReason">
+      <div class="reject-modal" role="dialog" aria-modal="true">
+        <div class="reject-modal-head">
+          <div>
+            <strong>{{ t('skills.sync.rejectReasonTitle') }}</strong>
+            <div class="mono muted reject-modal-id">{{ rejectDetail.id }}</div>
+          </div>
+          <button type="button" class="ea-btn-ghost ea-btn-sm" @click="closeRejectReason">
+            {{ t('skills.sync.rejectReasonClose') }}
+          </button>
+        </div>
+        <p v-if="rejectDetail.submit_id" class="muted reject-modal-meta">
+          {{ t('skills.sync.rejectSubmitId', { id: rejectDetail.submit_id }) }}
+        </p>
+        <div class="reject-modal-body">{{ rejectDetail.reason }}</div>
+        <div class="reject-modal-foot">
+          <button type="button" class="ea-btn-primary ea-btn-sm" @click="closeRejectReason">
+            {{ t('skills.sync.rejectReasonClose') }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -634,6 +692,74 @@ onMounted(loadStatus)
   &.st-behind { background: #ffedd5; color: #9a3412; }
   &.st-local_only { background: #f1f5f9; color: #475569; }
   &.st-unknown { background: #e2e8f0; color: #334155; }
+  &.st-submitted_pending { background: #dbeafe; color: #1d4ed8; }
+  &.st-rejected { background: #fee2e2; color: #b91c1c; }
+}
+
+.state-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.reason-link {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  color: #b91c1c;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  opacity: 0.85;
+}
+.reason-link:hover { opacity: 1; }
+
+.reject-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.reject-modal {
+  width: min(480px, 100%);
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+  padding: 16px 18px;
+}
+.reject-modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.reject-modal-id { margin-top: 4px; font-size: 12px; }
+.reject-modal-meta { margin: 0 0 10px; font-size: 12px; }
+.reject-modal-body {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: #7f1d1d;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 40vh;
+  overflow: auto;
+}
+.reject-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
 }
 
 .history-panel {

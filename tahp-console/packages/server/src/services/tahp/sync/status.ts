@@ -13,7 +13,13 @@ import { getLocalPackageHash } from './skill-package'
 import { shortHash } from './hash'
 import type { ManifestItem } from './manifest'
 
-export type SkillSyncStateName = 'synced' | 'behind' | 'local_only' | 'unknown'
+export type SkillSyncStateName =
+  | 'synced'
+  | 'behind'
+  | 'local_only'
+  | 'unknown'
+  | 'submitted_pending'
+  | 'rejected'
 
 export interface SkillSyncStatusItem {
   id: string
@@ -25,6 +31,10 @@ export interface SkillSyncStatusItem {
   name?: string
   func_type?: string
   module?: string
+  /** 最近提交单号（待审/驳回时） */
+  submit_id?: string
+  /** 中心驳回原因 */
+  reject_reason?: string
 }
 
 export interface SkillSyncGroup {
@@ -40,12 +50,101 @@ export interface SkillSyncStatusResult {
   connected: boolean
   last_pulled_at: string | null
   behind_count: number
+  /** 待审核条数（submitted_pending） */
+  pending_count?: number
+  /** 已拒绝条数 */
+  rejected_count?: number
   skills: SkillSyncStatusItem[]
   groups: SkillSyncGroup[]
   error?: string
   /** 是否来自短 TTL 内存缓存 */
   from_cache?: boolean
   checked_at?: string
+}
+
+const SUBMISSION_CONCURRENCY = 6
+
+/** 用中心最近提交覆盖基础态（纯函数，供单测 / enrich） */
+export function applySubmissionOverlay(
+  row: SkillSyncStatusItem,
+  sub: {
+    status?: string
+    hash?: string
+    comment?: string
+    submit_id?: string
+  } | null | undefined,
+): SkillSyncStatusItem {
+  if (!sub?.status) return row
+  if (sub.status === 'pending_review') {
+    return {
+      ...row,
+      state: 'submitted_pending',
+      submit_id: sub.submit_id,
+      reject_reason: undefined,
+    }
+  }
+  if (sub.status === 'rejected') {
+    // 驳回后用户又改本地 → 不锁 rejected，回到基础态可再提
+    if (sub.hash && row.local_hash && sub.hash !== row.local_hash) {
+      return { ...row, submit_id: sub.submit_id, reject_reason: sub.comment || undefined }
+    }
+    return {
+      ...row,
+      state: 'rejected',
+      submit_id: sub.submit_id,
+      reject_reason: sub.comment || undefined,
+    }
+  }
+  return row
+}
+
+function needsSubmissionLookup(row: SkillSyncStatusItem): boolean {
+  if (!row.local_hash) return false
+  return row.state === 'local_only' || row.state === 'behind' || row.state === 'unknown'
+}
+
+/** 按需并发查 latest submission；失败单条降级，不打断整页 */
+async function enrichSkillsWithSubmissions(
+  skills: SkillSyncStatusItem[],
+): Promise<SkillSyncStatusItem[]> {
+  const idxs = skills
+    .map((s, i) => (needsSubmissionLookup(s) ? i : -1))
+    .filter(i => i >= 0)
+  if (!idxs.length) return skills
+
+  const out = skills.slice()
+  let cursor = 0
+  async function worker(): Promise<void> {
+    while (cursor < idxs.length) {
+      const i = idxs[cursor++]
+      const id = out[i].id
+      try {
+        const sub = await centralClient.latestSkillSubmission(id)
+        out[i] = applySubmissionOverlay(out[i], sub)
+      } catch {
+        /* 单条失败保持基础态 */
+      }
+    }
+  }
+  const n = Math.min(SUBMISSION_CONCURRENCY, idxs.length)
+  await Promise.all(Array.from({ length: n }, () => worker()))
+  return out
+}
+
+function sortSkills(skills: SkillSyncStatusItem[]): void {
+  const order: Record<SkillSyncStateName, number> = {
+    rejected: 0,
+    submitted_pending: 1,
+    behind: 2,
+    unknown: 3,
+    local_only: 4,
+    synced: 5,
+  }
+  skills.sort((a, b) => {
+    const d = order[a.state] - order[b.state]
+    if (d !== 0) return d
+    return a.id.localeCompare(b.id)
+  })
 }
 
 interface PersistedSyncState {
@@ -359,20 +458,24 @@ export async function getSkillSyncStatus(opts?: {
     skillMap[id] = { local_hash: v.hash, state: 'local_only' }
   }
 
-  skills.sort((a, b) => {
-    const order = { behind: 0, unknown: 1, local_only: 2, synced: 3 }
-    const d = order[a.state] - order[b.state]
-    if (d !== 0) return d
-    return a.id.localeCompare(b.id)
-  })
+  // Phase 4 精简：按需查 recent submission → submitted_pending / rejected
+  const enriched = await enrichSkillsWithSubmissions(skills)
+  for (const row of enriched) {
+    if (skillMap[row.id]) skillMap[row.id].state = row.state
+  }
+  sortSkills(enriched)
 
-  const filtered = filterByBundle(skills, opts?.bundle_id)
+  const filtered = filterByBundle(enriched, opts?.bundle_id)
   const behind_count = filtered.filter(s => s.state === 'behind').length
+  const pending_count = filtered.filter(s => s.state === 'submitted_pending').length
+  const rejected_count = filtered.filter(s => s.state === 'rejected').length
   const groups = buildGroupsFromBundles(filtered, bundlesDoc?.bundles || [])
 
   const result: SkillSyncStatusResult = {
     ...base,
     behind_count,
+    pending_count,
+    rejected_count,
     skills: filtered,
     groups,
     from_cache: false,

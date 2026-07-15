@@ -132,6 +132,7 @@ tahpSkillSyncRoutes.post('/api/tahp/skills/publish-package', async (ctx) => {
   }
   try {
     const data = await publishSkillPackage(skillId)
+    invalidateSkillSyncStatusCache()
     ctx.body = { success: true, data }
   } catch (err) {
     logger.error({ err, skillId }, '[skill-sync] publish-package failed')
@@ -167,6 +168,7 @@ tahpSkillSyncRoutes.post('/api/tahp/skills/publish-packages', async (ctx) => {
       logger.warn({ err, skillId }, '[skill-sync] publish-packages item failed')
     }
   }
+  if (ok.length) invalidateSkillSyncStatusCache()
 
   ctx.body = {
     success: true,
