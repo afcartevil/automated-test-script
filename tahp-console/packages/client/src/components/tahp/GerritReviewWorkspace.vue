@@ -6,6 +6,7 @@ import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import { useGerritReviewWorkspace } from '@/composables/useGerritReviewWorkspace'
+import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 
 const {
   GERRIT_NOT_CONFIGURED_MSG,
@@ -72,7 +73,10 @@ onActivated(restoreWorkspace)
         </div>
         <p v-if="!gerritConfigured" class="gerrit-config-warning">
           {{ GERRIT_NOT_CONFIGURED_MSG }}
-          <RouterLink class="gerrit-settings-link" to="/hermes/settings?tab=gerrit">
+          <RouterLink
+            class="gerrit-settings-link"
+            :to="{ name: CONFIG_ROUTE_NAME, query: { tab: 'form' } }"
+          >
             去设置
           </RouterLink>
         </p>

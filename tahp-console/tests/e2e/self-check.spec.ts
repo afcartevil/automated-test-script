@@ -249,4 +249,8 @@ test('self-check shows warning when gerrit is not configured', async ({ page }) 
   await expect(
     page.getByText('gerrit账号未设置，无法进行code review，请在设置中完善gerrit账号'),
   ).toBeVisible()
+  await expect(page.getByRole('link', { name: '去设置' })).toHaveAttribute(
+    'href',
+    /#\/tahp\/config\?tab=form/,
+  )
 })
