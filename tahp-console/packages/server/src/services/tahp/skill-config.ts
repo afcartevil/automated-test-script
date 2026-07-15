@@ -378,6 +378,7 @@ function getSkillConfigLocations(entry: RequiredSkillEntry): string[] {
   hints.push(`\`${skillRel}/.env\``)
   hints.push(`\`${skillRel}/log-pipeline/.env\`（若存在）`)
   hints.push(`\`${skillRel}/\` 下 \`python scripts/api_jira.py config show\`（若适用）`)
+  hints.push(`\`${skillRel}/\` 下 \`python scripts/api_jira.py config verify\`（Jira 在线连通性，若适用）`)
   return hints
 }
 
@@ -536,6 +537,14 @@ message: <一句话说明 harness 安装与 doctor 结果>
 `
   } else {
     const skillPath = tahpSkillMdRelativePath(skillId)
+    const jiraConnectivityBlock = skillId === 'jira-ops'
+      ? `
+# jira-ops 连通性验证（强制）
+1. 优先复用一键配置表单 / \`.tahp/jira-user-config.json\` / \`config set\` 已保存的凭据，写入 Skill 规定存储（\`config set\` 同步 \`.env\`）。
+2. **写完凭据后必须执行**：\`python scripts/api_jira.py config verify\`（或 \`setup-check\`，其中含 \`jira_connectivity\`）。
+3. 在对话中向用户明确汇报连通结果：成功写出显示名/用户名；失败写出错误原因并停下索要修正后的账号密码，不得在连通失败时输出完成标记。
+`
+      : ''
     base = `你是 TAHP「常用 Skill 配置」向导，负责引导用户完成 **${skillLabel}**（\`${skillId}\`）的全部必要环境配置。
 
 # 必须遵守
@@ -545,13 +554,13 @@ message: <一句话说明 harness 安装与 doctor 结果>
 4. **全部必填配置完成且体检通过后**，输出完成标记块（见下文），然后简短总结已配置项。
 5. 使用中文与用户沟通；敏感值（密码）提示用户可直接在对话提供，你会写入安全存储。
 ${force ? '\n# 重新配置模式\n用户要求**覆盖/重新配置**，请先说明将检查并更新哪些项，再逐项引导。' : ''}
-
+${jiraConnectivityBlock}
 # 完成标记（体检全部通过后必须输出）
 \`\`\`
 === TAHP_SKILL_CONFIG_COMPLETE ===
 skill_id: ${skillId}
 status: success
-message: <一句话说明配置结果>
+message: <一句话说明配置结果${skillId === 'jira-ops' ? '（须含 Jira 连通性验证结论）' : ''}>
 === END_TAHP_SKILL_CONFIG_COMPLETE ===
 \`\`\`
 
@@ -610,6 +619,13 @@ function buildBatchSkillConfigInstructions(): string {
    - 该 Skill 验证通过后**立即输出一个完成标记块**（见下文），再继续下一个 Skill。
 3. 若某项在一键配置表单中缺失/为空，或验证失败（如密码错误、地址不可达），**先说明具体缺什么/为什么失败**，一次性列出需要用户补充的参数与格式示例，然后停下等待用户回复；收到后立即写入并继续。
 4. 使用中文与用户沟通；敏感值（密码）可直接写入安全存储。
+
+# jira-ops 专项（强制连通性验证）
+配置到 **jira-ops** 时：
+1. 用已保存的域账号/密码（或 \`.tahp/jira-user-config.json\`）写入 \`config set\` / Skill \`.env\`；
+2. **必须执行** \`python scripts/api_jira.py config verify\`（推荐）或 \`setup-check\`（须看 \`jira_connectivity\` / \`data.jira_connectivity\`）；
+3. **在对话中明确汇报**连通结果（成功：显示名；失败：错误原因）；连通失败则**不得**输出 jira-ops 的完成标记，应停下请用户修正凭据；
+4. 完成标记的 \`message\` 须包含连通性结论（例如「JIRA 连通正常（张三）」）。
 
 # 配置清单（按此顺序）
 ${listLines.join('\n')}
