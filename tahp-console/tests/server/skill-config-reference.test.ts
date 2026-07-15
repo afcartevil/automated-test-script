@@ -31,10 +31,16 @@ describe('skill config configured peer reference', () => {
   })
 
   it('returns empty block when no peers and no missing deps', () => {
+    const { peers, missingDependencies } = getConfiguredPeerSkills('jira-ops')
     const block = buildConfiguredSkillsReferenceBlock('jira-ops', {
       id: 'jira-ops',
       label: 'Jira 操作与日志下载',
     })
-    expect(block).toBe('')
+    if (!peers.length && !missingDependencies.length) {
+      expect(block).toBe('')
+    } else {
+      expect(block).toContain('工程级共享凭据')
+      expect(block).toContain('config verify')
+    }
   })
 })

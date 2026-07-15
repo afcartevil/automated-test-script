@@ -157,6 +157,50 @@ def err(code: str, message: str) -> Dict[str, Any]:
     return {"ok": False, "error": {"code": code, "message": message}}
 
 
+def verify_jira_connectivity(config: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """用已保存凭据请求 Jira /myself，返回连通性结果（不写存储）。"""
+    cfg = dict(config or load_config() or {})
+    server = str(cfg.get("server") or "").strip()
+    user = str(cfg.get("user") or "").strip()
+    password = str(cfg.get("password") or "")
+    missing = [k for k, v in (("server", server), ("user", user), ("password", password)) if not v]
+    if missing:
+        return {
+            "connected": False,
+            "server": server,
+            "user": user,
+            "error": f"缺少配置项: {', '.join(missing)}。请先执行 config set 或填写一键配置表单域账号密码。",
+        }
+    try:
+        client = JIRA(server=server, basic_auth=(user, password))
+        me = client.myself() or {}
+        display = str(me.get("displayName") or me.get("name") or user)
+        return {
+            "connected": True,
+            "server": server,
+            "user": user,
+            "display_name": display,
+            "message": f"JIRA 连通正常（{display}）",
+        }
+    except JIRAError as e:
+        status = getattr(e, "status_code", None)
+        text = getattr(e, "text", None) or str(e)
+        detail = f"HTTP {status}: {text}" if status else text
+        return {
+            "connected": False,
+            "server": server,
+            "user": user,
+            "error": f"JIRA 连通失败: {detail}",
+        }
+    except Exception as e:
+        return {
+            "connected": False,
+            "server": server,
+            "user": user,
+            "error": f"JIRA 连通失败: {e}",
+        }
+
+
 def extract_http_urls(text: str) -> List[str]:
     seen = set()
     urls: List[str] = []
@@ -465,6 +509,10 @@ def build_parser() -> argparse.ArgumentParser:
     config_set.add_argument("--password", required=True, help="登录密码")
 
     config_sub.add_parser("show", help="显示当前配置（密码脱敏）")
+    config_sub.add_parser(
+        "verify",
+        help="用已保存凭据请求 Jira /myself，验证连通性（不修改配置）",
+    )
 
     get_issue = subparsers.add_parser("get-issue", help="按 Jira ID/链接获取标题、描述、评论")
     get_issue.add_argument("--issue", required=True, help="例如 AAA-123 或完整 issue 链接")
@@ -600,7 +648,10 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_logs.add_argument("--box-max-retries", type=int, default=3)
     prepare_logs.add_argument("--no-recursive", action="store_true", help="解压时不递归嵌套包")
 
-    subparsers.add_parser("setup-check", help="检查依赖、Jira 凭据与 .env 配置是否就绪")
+    subparsers.add_parser(
+        "setup-check",
+        help="检查依赖、Jira 凭据、在线连通性与 .env 配置是否就绪",
+    )
 
     env_parser = subparsers.add_parser("env", help="管理 jira-ops/.env 持久化配置")
     env_sub = env_parser.add_subparsers(dest="env_cmd", required=True)
@@ -639,6 +690,13 @@ def command_config_show(_: argparse.Namespace) -> Dict[str, Any]:
     if safe_config.get("password"):
         safe_config["password"] = "******"
     return ok({"config_path": str(CONFIG_PATH.resolve()), "config": safe_config})
+
+
+def command_config_verify(_: argparse.Namespace) -> Dict[str, Any]:
+    result = verify_jira_connectivity()
+    if result.get("connected"):
+        return ok(result)
+    return err("JIRA_CONNECTIVITY_FAILED", str(result.get("error") or "无法连接 JIRA"))
 
 
 def get_client() -> JiraClient:
@@ -784,7 +842,20 @@ def command_prepare_logs(args: argparse.Namespace) -> Dict[str, Any]:
 
 
 def command_setup_check(_: argparse.Namespace) -> Dict[str, Any]:
-    return ok(run_setup_check(_SKILL_ROOT, load_config()))
+    config = load_config()
+    data = run_setup_check(_SKILL_ROOT, config)
+    conn = verify_jira_connectivity(config)
+    data.setdefault("checks", []).append(
+        {
+            "name": "jira_connectivity",
+            "ok": bool(conn.get("connected")),
+            "detail": conn.get("message") or conn.get("error") or "",
+            "required": True,
+        }
+    )
+    data["jira_connectivity"] = conn
+    data["ready"] = all(c.get("ok") for c in data["checks"] if c.get("required"))
+    return ok(data)
 
 
 def _parse_env_pair(token: str) -> tuple[str, str]:
@@ -860,6 +931,8 @@ def main() -> int:
                 result = command_config_set(args)
             elif args.config_cmd == "show":
                 result = command_config_show(args)
+            elif args.config_cmd == "verify":
+                result = command_config_verify(args)
             else:
                 raise ValueError("不支持的 config 子命令")
         elif args.command == "env":

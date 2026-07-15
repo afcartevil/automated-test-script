@@ -13,7 +13,7 @@ CLI entry: `scripts/api_jira.py`. Capabilities:
 - **Multi-channel log download** (from `modem-analysis-local` log-pipeline)
 - **Recursive archive extraction** (zip / tar / gz / rar / 7z)
 - **One-shot prepare**: download + extract (`prepare-logs`)
-- **Environment doctor** (`setup-check`) and **`.env` persistence** (`env`)
+- **Environment doctor** (`setup-check`，含 Jira 在线连通性) / **`config verify`** / **`.env` persistence** (`env`)
 
 ---
 
@@ -27,9 +27,11 @@ CLI entry: `scripts/api_jira.py`. Capabilities:
 cd <jira-ops-skill-root>
 pip install -r requirements.txt
 python scripts/api_jira.py setup-check
+python scripts/api_jira.py config verify
 ```
 
-若 `data.ready` 为 `false`，根据 `data.checks` 逐项修复（见下方配置表）。
+若 `setup-check` 的 `data.ready` 为 `false`，根据 `data.checks` 逐项修复（见下方配置表）。
+`config verify` / `setup-check` 中的 `jira_connectivity` 会用**已保存凭据**请求 Jira `/myself`：必须 `connected: true`（或 check `ok: true`）才视为 Jira 配置有效；失败时向用户说明具体错误并修正账号密码。
 
 ### Step 1 — 收集并持久化用户配置
 
@@ -51,7 +53,10 @@ python scripts/api_jira.py setup-check
 
 ```bash
 python scripts/api_jira.py config set --server "http://jira.transsion.com/" --user "<用户名>" --password "<密码>"
+python scripts/api_jira.py config verify
 ```
+
+写入后**必须**跑 `config verify`（或再跑一次含连通性检查的 `setup-check`），并在对话中向用户汇报连通结果（成功：显示名/用户名；失败：错误原因）。
 
 **Jira 凭据读取优先级**（改造后仍兼容旧配置）：
 
@@ -114,6 +119,7 @@ python scripts/api_jira.py env set SEVEN_ZIP_EXE="C:\Program Files\7-Zip\7z.exe"
 
 ```bash
 python scripts/api_jira.py setup-check
+python scripts/api_jira.py config verify
 python scripts/api_jira.py env show
 ```
 
@@ -176,9 +182,9 @@ python scripts/api_jira.py extract-logs --input-dir "./jira_workspace/OS162-3773
 
 | 命令 | 说明 |
 |------|------|
-| `setup-check` | 环境/依赖/配置体检 |
+| `setup-check` | 环境/依赖/配置体检（含 `jira_connectivity` 在线验证） |
+| `config set` / `config show` / `config verify` | Jira 凭据读写 + `/myself` 连通性验证 |
 | `env show` / `env set` / `env init-from-user` | `.env` 管理 |
-| `config set` / `config show` | Jira 凭据（`~/.jira_cli_config.json` + 同步 `.env`） |
 | `list-log-sources` | 分类列出日志来源 |
 | `download-logs` | 多渠道下载 |
 | `extract-logs` | 递归解压 |
