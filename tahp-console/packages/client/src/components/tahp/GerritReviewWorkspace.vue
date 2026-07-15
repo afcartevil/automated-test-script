@@ -66,7 +66,11 @@ onActivated(restoreWorkspace)
     <EaCard class="review-card">
       <div class="review-card-head">
         <div class="review-card-head-row">
-          <h3>Gerrit Code Review</h3>
+          <div class="review-card-head-main">
+            <p class="review-card-head-desc">
+              输入gerrit链接，AI生成测试用例&AI推荐测试用例
+            </p>
+          </div>
           <span v-if="isRunning" class="phase-hint">
             {{ latestPhase || latestSkillUse || 'Agent 评审中…' }}
           </span>
@@ -356,13 +360,21 @@ $gerrit-bottom-bar-min: calc(10px + 12px + #{$gerrit-action-inner-min});
 
 .review-card-head-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  h3 {
-    font-size: 15px;
-    font-weight: 700;
-    margin: 0;
-  }
+  gap: 12px;
+}
+
+.review-card-head-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.review-card-head-desc {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .gerrit-config-warning {
