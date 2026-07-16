@@ -33,11 +33,18 @@ const coreCards = [
     summary: 'Modem基线升级、Modem Patch自动化合入，自动编译烧录验证。',
   },
   {
+    route: 'tahp.gki-patch.dashboard',
+    tone: 'ea-t-violet',
+    icon: 'kernel',
+    title: 'GKI Patch',
+    summary: 'GKI 内核 patch 区间分析、风险评估与 vendor 合入。',
+  },
+  {
     route: 'tahp.self-check',
     tone: 'ea-t-emerald',
     icon: 'shield',
     title: 'AI 自检',
-summary: '项目节点驱动，自动烧录、自动测试、AI Review，第二天人工复核报告',
+    summary: '项目节点驱动，自动烧录、自动测试、AI Review，第二天人工复核报告',
   },
 ]
 
@@ -119,6 +126,11 @@ const currentModelName = computed(() =>
             <circle cx="18" cy="9" r="2"/>
             <circle cx="18" cy="15" r="2"/>
           </svg>
+          <svg v-else-if="card.icon === 'kernel'" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
+            <rect x="9" y="9" width="6" height="6"/>
+            <path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/>
+          </svg>
           <svg v-else width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
           </svg>
@@ -168,11 +180,31 @@ const currentModelName = computed(() =>
 .hm-icon-lg { width: 58px; height: 58px; border-radius: 17px; }
 .hm-hero { padding: 28px; margin-bottom: 16px; }
 .hm-hero h2 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin: 16px 0 6px; }
-.hm-hero p { font-size: 15px; opacity: 0.85; }
-.hm-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 16px; }
-.hm-sm { padding: 24px; }
+.hm-hero p { font-size: 15px; opacity: 0.85; max-width: 720px; line-height: 1.55; }
+
+.hm-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.hm-sm {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: 168px;
+}
+
 .hm-sm h3 { font-size: 19px; font-weight: 700; margin: 14px 0 6px; }
-.hm-sm p { font-size: 13.5px; opacity: 0.82; line-height: 1.5; }
+.hm-sm p {
+  flex: 1;
+  font-size: 13.5px;
+  opacity: 0.82;
+  line-height: 1.5;
+  margin: 0;
+}
 
 .mdl-card { border-radius: 20px; margin-top: 16px; }
 .mdl-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 16px; }
@@ -204,7 +236,12 @@ const currentModelName = computed(() =>
 }
 .mdl-item.selected .mdl-badge { background: var(--accent); color: #fff; }
 
+@media (min-width: 1100px) {
+  .hm-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
 @media (max-width: 720px) {
   .hm-row, .mdl-grid { grid-template-columns: 1fr; }
+  .hm-sm { min-height: 0; }
 }
 </style>

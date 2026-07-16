@@ -39,3 +39,6 @@ jira_workspace/
 # 刷机工具运行时日志与本地解压缓存
 tahp-console/packages/server/src/services/tahp/self-check/flash_tool/device_update/log/
 tahp-console/packages/server/src/services/tahp/self-check/flash_tool/flash_packages/
+
+# gki_patch_tool
+tools/gki-patch-tool/logs

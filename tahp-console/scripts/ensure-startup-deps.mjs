@@ -6,10 +6,11 @@ import { resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { applyHermesAgentEnvFromDisk, ensureHermesAgent } from './ensure-hermes-agent.mjs'
 import { ensureSkillPythonDeps } from './ensure-skill-python-deps.mjs'
+import { ensureGkiPatchDeps } from './ensure-gki-patch-deps.mjs'
 
 export function ensureStartupDeps(options = {}) {
   const { skipAgent = false, agentQuiet = true } = options
-  const result = { agent: { ok: true }, skillDeps: { ok: true } }
+  const result = { agent: { ok: true }, skillDeps: { ok: true }, gkiPatchDeps: { ok: true } }
 
   if (!skipAgent) {
     let agent = applyHermesAgentEnvFromDisk()
@@ -24,6 +25,7 @@ export function ensureStartupDeps(options = {}) {
   }
 
   result.skillDeps = ensureSkillPythonDeps({ quiet: agentQuiet })
+  result.gkiPatchDeps = ensureGkiPatchDeps({ quiet: agentQuiet })
 
   return result
 }

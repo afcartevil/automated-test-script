@@ -1,0 +1,71 @@
+# gki-patch-tool 运行时配置
+# CLI: python tools/patch_analyzer.py --from-tag ... --to-tag ...
+#       或 python tools/patch_analyzer.py -s gki-patch-tool.yaml ...
+# 命令行参数优先级高于本文件；本文件优先级高于内置默认值。
+# 环境变量可覆盖部分项：GKI_REPO_DIR、GKI_LLM_*、GKI_SETTINGS
+
+version: 1
+
+repo:
+  # 远程仓库 URL
+  url: https://android.googlesource.com/kernel/common
+  # 本地 clone 路径（相对工程根或绝对路径）；也可通过 GKI_REPO_DIR 环境变量设置
+  dir: code/common
+
+scoring:
+  # 评分明细规则（路径/权重/风险信号等）
+  config: config/scoring-config.yaml
+
+analysis:
+  workers: 6
+  chunk_size: 100
+  retry: 1
+  # sample_analyzer.py 专用
+  sample_size: 100
+  sample_seed: 42
+
+output:
+  dir: outputs
+  json: patch-analysis-result.json
+
+llm:
+  # 留空则使用环境变量 GKI_LLM_API_KEY / GKI_LLM_API_BASE / GKI_LLM_MODEL
+  api_key: ""
+  api_base: https://api.openai.com/v1
+  model: gpt-4o
+  concurrency: 10
+  db_batch_size: 20
+  defect_scan_workers: 8
+
+# GKI 升级合入配置
+# 注意：vendor 合入目标路径在每次创建合入任务时单独指定，不在此全局配置。
+target_repo:
+  branch: ""   # 可选，保留供后续扩展
+
+upgrade:
+  apply_mode: squash
+  # 远程合入时任务表单可填；留空则使用 /tmp（或此处默认值）
+  remote_temp_dir: ""
+
+# 远程 SSH（经 cqris 堡垒机到内网编译机）
+# 账号密码请在 Web「系统设置 → 远程 SSH」保存（写入 SQLite 数据库）
+ssh:
+  bastion_host: cqris.transsion.com
+  bastion_port: 22
+  target_ip: "10.205.0.158"
+  connect_timeout: 60
+  command_timeout: 3600
+  upload_http_port: 18765
+  upload_http_bind: "0.0.0.0"
+  prompt_patterns:
+    bastion_repassword: '(?i)(\(.*@.*\)\s*)?password\s*:?\s*$|(?i)password authentication'
+    otp: '(?i)(2nd\s*password|verification\s*code|otp|动态码|验证码)\s*:?\s*$'
+    password: "(?:'s\\s+)?password\\s*[：:]?\\s*$|密码\\s*[：:]?\\s*$"
+    asset: '(请选择目标资产|选择目标资产|请选择资产)\s*[：:]?\s*$'
+    ip: '(input\s*ip|请输入\s*ip|目标\s*ip|enter\s*ip)\s*[：:]?\s*$'
+    login: '(login|用户名|username|登录名)\s*[：:]?\s*$'
+    shell: '[\$#]\s*$'
+
+build:
+  # 编译目录与命令在每次创建合入任务时指定，不在此配置
+  timeout_seconds: 3600

@@ -1,5 +1,6 @@
 import { logger } from './logger'
 import { closeDb } from '../db'
+import { isGkiPatchAutoStartEnabled, stopGkiPatchServer } from './tahp/gki-patch'
 
 export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?: any, agentBridgeManager?: any): void {
   let isShuttingDown = false
@@ -15,6 +16,11 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
     console.log(`[shutdown] Received signal: ${signal}`)
 
     try {
+      if (isGkiPatchAutoStartEnabled()) {
+        stopGkiPatchServer()
+        logger.info('GKI patch server stopped')
+      }
+
       if (agentBridgeManager) {
         try {
           await agentBridgeManager.stop()

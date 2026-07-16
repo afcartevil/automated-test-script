@@ -1,0 +1,36 @@
+# 开发模块定义文件
+# 格式: 模块名 | 路径模式(逗号分隔) | LLM描述
+# 以 # 开头的行为注释，空行会被忽略
+# 修改此文件即可增删模块，无需修改代码
+#
+# 分类规则（详见 docs/patch-analysis/classification_rules.md）：
+#   - 代码类 patch 必须归入下方定义的某个模块，禁止使用“其他”
+#   - 仅以下非代码类路径允许归为“其他”：
+#     tools/, scripts/, Makefile, Documentation/, android/
+#     版本号提交、Merge 提交
+LCM | display/panel,drm/panel,backlight,lcd,drivers/gpu/drm/panel,gpu/drm/panel | 涉及 display/panel/lcd/backlight/DRM panel 等显示模组驱动
+通用驱动器件 | pinctrl,regulator,clk/,gpio,drivers/spi,drivers/i2c,drivers/rtc,drivers/hid,drivers/input,drivers/tty,drivers/hwmon,drivers/mtd,drivers/pci,drivers/crypto,drivers/infiniband,drivers/mailbox,drivers/xen,drivers/pwm,drivers/mfd,drivers/i3c,drivers/uio,drivers/pcmcia,drivers/misc,drivers/fpga,drivers/clocksource,drivers/thunderbolt,drivers/irqchip,drivers/phy,drivers/reset,drivers/opp,crypto/,drivers/gpu | 涉及通用外设、GPIO/pinctrl/regulator/clk/SPI/I2C/RTC/HID/输入/TTY/硬件监控/PCI/加密/FPGA/时钟源/PHY/GPU 框架等器件驱动
+Audio | sound/,asoc/,audio/,codec,include/sound/ | 涉及 ALSA/ASoC/sound/audio/codec 等音频子系统
+充电/USB | power_supply,drivers/power/supply,charger,battery,drivers/usb,usb/,typec,include/linux/usb,include/linux/power_supply | 涉及 charger/power_supply/charging/battery/USB/typec 等充电与 USB 相关
+sensor | iio/,accelerometer,gyroscope,magnetometer | 涉及 iio/sensors/accelerometer/gyroscope/magnetometer 等传感器
+video&多媒体框架 | media/,v4l2,video/,drivers/media | 涉及 media/v4l2/video/多媒体框架
+内存 | mm/,memory/,zram,zsmalloc,include/linux/mm,include/linux/gfp,include/linux/slab,include/linux/page,include/linux/memblock,include/linux/vmalloc,include/linux/swap,include/linux/memory | 涉及 mm/memory/zram/zsmalloc/page 等内存管理
+调度 | kernel/sched/,include/linux/sched,sched/,scheduler | 涉及 kernel/sched、scheduler、task 调度相关
+稳定性 | watchdog,panic,oops,drivers/edac,drivers/perf | 涉及 watchdog/panic/oops/crash/EDAC/perf 等稳定性与调试工具
+安全 | security/,selinux,apparmor | 涉及 security/selinux/apparmor/key/权限保护
+小系统 | trustzone,tee/ | 涉及 trustzone/TEE/secure OS 等小核系统
+功耗 | cpuidle,suspend,thermal,drivers/power/,drivers/devfreq,drivers/cpufreq,cpufreq | 涉及 PM/cpuidle/suspend/resume/thermal/devfreq/cpufreq 等功耗管理（charging 归充电/USB）
+驱动框架 | drivers/base,drivers/staging,drivers/bus,drivers/soc,drivers/acpi,drivers/dma,drivers/md,drivers/iommu,drivers/vfio,drivers/vhost,drivers/firmware,drivers/rpmsg,drivers/target,drivers/platform,kernel/locking,kernel/irq,kernel/time,kernel/workqueue,kernel/rcu,kernel/printk,kernel/cgroup,kernel/bpf,arch/,lib/,ipc/,init/ | 涉及设备驱动核心框架、staging/总线/SoC/ACPI/DMA/IOMMU/虚拟化/target、架构与内核通用框架代码（不含已单独成模块的 mm/sched/fs/net）
+网络协议栈 | net/,drivers/net/,include/net/,include/linux/net,include/linux/netdev,netfilter,drivers/atm,drivers/isdn,drivers/ptp | 涉及 net/tcp/udp/socket/netfilter/网络驱动/ATM/ISDN/PTP 等网络协议
+NFC | nfc/,drivers/nfc | 涉及 nfc/near field 近场通信
+BlueTooth | bluetooth/,hci_,net/bluetooth,drivers/bluetooth | 涉及 bluetooth/bt/hci 蓝牙
+WIFI | drivers/net/wireless/,net/wireless/,wireless/,wlan,mac80211,cfg80211 | 涉及 wifi/wlan/wireless/mac80211/cfg80211 无线网络
+GPS | gnss/,gps/ | 涉及 gnss/gps/location 定位
+文件系统 | fs/,ext4,f2fs,fuse/,vfs,include/linux/fs,include/linux/dcache,include/linux/namei,include/linux/mount,include/linux/vfs | 涉及 fs/ext4/f2fs/fuse/vfs 等文件系统
+block | block/,blk-,drivers/nvme,drivers/ata,include/linux/blk,include/linux/blkdev | 涉及 block/blk/NVMe/ATA/请求队列/IO 调度
+ufs | ufs/,unipro,drivers/ufs,drivers/scsi,scsi/ | 涉及 ufs/unipro/scsi 存储接口
+emmc | mmc/,sdhci,drivers/mmc,include/linux/mmc | 涉及 mmc/host/emmc/sdhost 存储主机
+sd | sdio,sdcard | 涉及 sd/sdio/sdcard 卡类存储
+ddr | ddr/,dram | 涉及 ddr/dram/ddr_freq/内存频率
+影像 | camera,isp/,drivers/media/i2c | 涉及 camera/isp/摄像头/图像处理
+Binder | binder,drivers/android | 涉及 binder/ipc/android 进程间通信

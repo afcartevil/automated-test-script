@@ -12,6 +12,7 @@ import { resolve, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { ensureHermesAgent } from './ensure-hermes-agent.mjs'
 import { ensureSkillPythonDeps } from './ensure-skill-python-deps.mjs'
+import { ensureGkiPatchDeps } from './ensure-gki-patch-deps.mjs'
 import { getBundledHermesAgentDir, getSystemPython, getTahpProjectRoot, resolvePythonCommand } from './lib/tahp-paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -78,7 +79,17 @@ if (skillDeps.ok) {
   warn(skillDeps.error || 'Skill Python 依赖安装失败（特性适配 SCMP 查询可能不可用）')
 }
 
-// 7. 功耗自动化依赖（启动功耗测试时自动安装，不参与 Console 启动）
+// 7. GKI Patch Tool 依赖
+console.log('')
+console.log('GKI Patch Tool 依赖\n')
+const gkiPatchDeps = ensureGkiPatchDeps({ quiet: false })
+if (gkiPatchDeps.ok) {
+  if (!gkiPatchDeps.skipped) pass('GKI Patch Tool 依赖已就绪')
+} else {
+  warn(gkiPatchDeps.error || 'GKI Patch Tool 依赖安装失败（GKI Patch 页面可能不可用）')
+}
+
+// 8. 功耗自动化依赖（启动功耗测试时自动安装，不参与 Console 启动）
 pass('功耗自动化依赖在启动功耗测试时自动检查/安装')
 
 console.log('')

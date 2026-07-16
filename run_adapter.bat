@@ -81,6 +81,15 @@ if errorlevel 1 (
     echo.
 )
 
+echo [EasyAdapter] 检查 GKI Patch Tool 依赖...
+call npm run setup:gki-patch
+if errorlevel 1 (
+    echo.
+    echo [EasyAdapter] GKI Patch 依赖安装失败，GKI Patch 页面可能不可用。
+    echo   可稍后手动执行: npm run setup:gki-patch
+    echo.
+)
+
 echo.
 echo ========================================
 echo   EasyAdapter Console 后台模式

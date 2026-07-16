@@ -15,6 +15,7 @@ import { tahpSkillConfigRoutes } from './skill-config'
 import { tahpDeviceSelfCheckRoutes } from './device-self-check'
 import { tahpTestPlanningRoutes } from './test-planning'
 import { tahpModemBaselineRoutes } from './modem-baseline'
+import { tahpGkiPatchRoutes } from './gki-patch'
 
 export function registerTahpRoutes(app: Koa) {
   app.use(tahpKnowledgeRoutes.routes())
@@ -31,4 +32,5 @@ export function registerTahpRoutes(app: Koa) {
   app.use(tahpDeviceSelfCheckRoutes.routes())
   app.use(tahpTestPlanningRoutes.routes())
   app.use(tahpModemBaselineRoutes.routes())
+  app.use(tahpGkiPatchRoutes.routes())
 }

@@ -55,6 +55,50 @@ const router = createRouter({
       ],
     },
     {
+      path: '/tahp/gki-patch',
+      name: 'tahp.gki-patch',
+      component: () => import('@/views/tahp/GkiPatchView.vue'),
+      redirect: { name: 'tahp.gki-patch.dashboard' },
+      children: [
+        {
+          path: 'dashboard',
+          name: 'tahp.gki-patch.dashboard',
+          component: () => import('@/views/tahp/GkiPatchFrameView.vue'),
+          props: { gkiPath: '/dashboard' },
+        },
+        {
+          path: 'analysis',
+          name: 'tahp.gki-patch.analysis',
+          component: () => import('@/views/tahp/GkiPatchFrameView.vue'),
+          props: { gkiPath: '/analysis' },
+        },
+        {
+          path: 'crash',
+          name: 'tahp.gki-patch.crash',
+          component: () => import('@/views/tahp/GkiPatchFrameView.vue'),
+          props: { gkiPath: '/crash' },
+        },
+        {
+          path: 'upgrade',
+          name: 'tahp.gki-patch.upgrade',
+          component: () => import('@/views/tahp/GkiPatchFrameView.vue'),
+          props: { gkiPath: '/upgrade' },
+        },
+        {
+          path: 'patches',
+          name: 'tahp.gki-patch.patches',
+          component: () => import('@/views/tahp/GkiPatchFrameView.vue'),
+          props: { gkiPath: '/patches' },
+        },
+        {
+          path: 'settings',
+          name: 'tahp.gki-patch.settings',
+          component: () => import('@/views/tahp/GkiPatchFrameView.vue'),
+          props: { gkiPath: '/settings' },
+        },
+      ],
+    },
+    {
       path: '/tahp/self-check',
       name: 'tahp.self-check',
       component: () => import('@/views/tahp/DeviceSelfCheckView.vue'),

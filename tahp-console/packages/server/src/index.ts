@@ -29,6 +29,7 @@ import { setupTahpRunSocket } from './routes/tahp/tahp-run'
 import { initDeviceSelfCheck } from './services/tahp/device-self-check'
 import { startSyncScheduler } from './services/tahp/sync'
 import { startPlanExecutor } from './services/tahp/test-plan-executor'
+import { bootstrapGkiPatchServer } from './services/tahp/gki-patch'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
@@ -256,6 +257,21 @@ export async function bootstrap() {
     startPlanExecutor()
   } catch (err) {
     logger.warn({ err }, '[bootstrap] plan executor failed to start')
+  }
+
+  try {
+    const gkiResult = await bootstrapGkiPatchServer()
+    if (gkiResult.ok && !gkiResult.skipped && gkiResult.status) {
+      console.log(`[bootstrap] gki-patch ready: ${gkiResult.status.appUrl}`)
+    } else if (!gkiResult.ok) {
+      console.warn(
+        `[bootstrap] gki-patch failed to start: ${gkiResult.error}\n` +
+        '  GKI Patch 页面可能不可用，可执行 npm run setup:gki-patch 后重启',
+      )
+    }
+  } catch (err) {
+    logger.warn({ err }, '[bootstrap] gki-patch bootstrap failed')
+    console.warn('[bootstrap] gki-patch bootstrap failed:', err instanceof Error ? err.message : err)
   }
 }
 

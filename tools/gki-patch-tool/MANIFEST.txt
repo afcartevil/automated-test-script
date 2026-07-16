@@ -1,0 +1,20 @@
+patch-analysis-score bundle
+version=1.0.0
+built_utc=2026-05-19T12:08:08Z
+source_root=E:\cursor\patch_skill
+
+config/scoring-config.yaml
+config/dev_modules.txt
+docs/patch-analysis/CHANGELOG.md
+docs/patch-analysis/README.md
+docs/patch-analysis/SKILL.md
+docs/patch-analysis/VERSION
+docs/patch-analysis/classification_rules.md
+DEPLOY.md
+README.md
+requirements.txt
+tools/export_patch_analysis_to_excel.py
+tools/patch_analyzer.py
+tools/render_interval_hybrid_overview.py
+tools/render_report.py
+tools/render_report_indexed.py

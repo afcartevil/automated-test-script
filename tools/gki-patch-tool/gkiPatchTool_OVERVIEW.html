@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>gkiPatchTool 工具说明文档</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#1f2937;background:#f8fafc;line-height:1.7}
+.container{max-width:1060px;margin:0 auto;padding:32px 24px;background:#fff}
+h1{font-size:26px;margin-bottom:4px;color:#000}
+h2{font-size:20px;margin:28px 0 12px;padding-bottom:6px;border-bottom:2px solid #e2e8f0;color:#000}
+h3{font-size:17px;margin:22px 0 10px;color:#000}
+h4{font-size:15px;margin:16px 0 8px;color:#000}
+p{margin:8px 0;color:#333}
+ul,ol{margin:6px 0;padding-left:22px}
+li{margin:3px 0;color:#333}
+code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.9em;color:#1e293b}
+pre{background:#1e293b;color:#e2e8f0;padding:14px 16px;border-radius:8px;overflow-x:auto;font-family:ui-monospace,monospace;font-size:13px;line-height:1.6;margin:10px 0}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+blockquote{background:#f8fafc;border-left:4px solid #3b82f6;padding:10px 16px;margin:10px 0;border-radius:0 6px 6px 0;color:#475569}
+table{width:100%;border-collapse:collapse;margin:10px 0;font-size:14px}
+th,td{border:1px solid #e2e8f0;padding:8px 12px;text-align:left;color:#333}
+th{background:#f8fafc;font-weight:600;color:#000}
+hr{margin:24px 0;border:none;border-top:1px solid #e2e8f0}
+.subtitle{color:#666;font-size:14px;margin-bottom:20px}
+.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;margin:1px 2px}
+.feature-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;margin:10px 0}
+.feature-card{border:1px solid #e2e8f0;border-radius:8px;padding:12px;background:#f8fafc}
+.feature-card h4{margin:0 0 6px;font-size:14px}
+.feature-card p{font-size:13px;margin:0;color:#4b5563}
+/* Architecture Diagram */
+.arch-title{font-size:22px;font-weight:700;margin:32px 0 4px;color:#000}
+.arch-sub{font-size:13px;color:#666;margin-bottom:20px}
+.layer{margin-bottom:14px}
+.layer-header{display:flex;align-items:center;gap:8px;padding:8px 14px;margin-bottom:6px;background:#fff;border-radius:8px;border-bottom:2px solid}
+.layer-badge{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff}
+.layer-label{font-size:14px;font-weight:600;color:#000}
+.cards-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.card{flex:1;min-width:100px;padding:8px 10px;border-radius:8px;border:1px solid}
+.card-title{font-weight:600;font-size:13px;margin-bottom:3px;line-height:1.4;color:#000}
+.card-desc{font-size:12px;line-height:1.5;color:#333}
+.flow-arrow{text-align:center;padding:0 0 1px;font-size:12px;color:#666;font-weight:500}
+.notes-section{display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid #d0d0d0;background:#fff;margin-top:8px}
+.note-tag{padding:5px 12px;border-radius:6px;font-size:13px;background:#fff;border:1px solid #d0d0d0;color:#000;white-space:nowrap}
+@media(max-width:768px){
+  .card{min-width:calc(50% - 4px)}
+  .note-tag{white-space:normal}
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>gkiPatchTool 工具说明文档</h1>
+<p class="subtitle">本文档面向需要了解 gkiPatchTool 工具整体情况的技术人员。<br>导出时间：2026-05-27</p>
+
+<h2>0. 项目背景与现状</h2>
+<p>当前 GKI 升级与修改合入内部时，普遍存在以下问题：</p>
+<ul>
+<li><strong>审阅成本高</strong>：单笔 patch 与整段 tag 区间体量大，人工逐笔分析难以稳定覆盖风险点、测试建议与合入策略。</li>
+<li><strong>口径不统一</strong>：不同评审人对「是否可合入、需补哪些测试」判断不一致，难以沉淀为可复用的规则与证据链。</li>
+<li><strong>可追溯性弱</strong>：合入决策缺少结构化记录（分数、维度、依据、建议测试项），不利于审计、复盘与跨版本对比。</li>
+</ul>
+<p>建设 <strong>GKI PATCH 工具</strong>，以自动化方式从官方仓库拉取 commit 元信息与 diff 信号，针对代码修改输出结构化评分与报告，可显著降低代码审阅工作量，降低合入风险与沟通成本，符合 GKI 长期维护与快速安全响应的现实需求。</p>
+
+<hr>
+
+<h2>1. 工具概述</h2>
+<p><strong>gkiPatchTool</strong> 是一个面向 Android GKI（Generic Kernel Image）内核补丁的批量分析与可视化报告工具。它能够从 Android Kernel 公共仓库（android.googlesource.com）抓取指定版本区间内的所有提交（commit），逐笔进行多维评分分析，并生成结构化报告，帮助内核开发/集成人员快速评估 Patch 的风险等级、测试建议和影响范围。</p>
+
+<p>工具分为两套使用方式：</p>
+<div class="feature-grid">
+  <div class="feature-card">
+    <h4>🔧 CLI 模式</h4>
+    <p>本地命令行独立运行，支持区间分析、单 SHA 分析、采样分析。适用深度分析、批量导出和 CI/CD 自动化脚本集成。无任何 GUI 依赖。</p>
+  </div>
+  <div class="feature-card">
+    <h4>🌐 Web 模式</h4>
+    <p>基于 FastAPI 的交互式平台，通过浏览器即可操作。支持任务管理、实时进度推送、可视化报告、死机分析和数据库浏览等功能。</p>
+  </div>
+</div>
+
+<hr>
+
+<h2>2. 核心功能详解</h2>
+
+<h3>2.1 补丁分析引擎（CLI）</h3>
+<p>核心分析器 <code>patch_analyzer.py</code>（≈2900行）实现了一套完整的补丁分析管线，支持从远程仓库或本地 Git 仓库获取数据并执行多维评分。</p>
+
+<h4>分析模式</h4>
+<table>
+<tr><th>模式</th><th>命令参数</th><th>说明</th></tr>
+<tr><td><strong>区间分析</strong></td><td><code>--from-tag &lt;TAG&gt; --to-tag &lt;TAG&gt;</code></td><td>分析两个 Git tag 之间的全部 commit</td></tr>
+<tr><td><strong>单 SHA 分析</strong></td><td><code>--commit &lt;SHA&gt;</code></td><td>分析单个 commit</td></tr>
+<tr><td><strong>采样分析</strong></td><td>Web 页面设置 <code>sample_size</code></td><td>区间过大时按比例采样快速评估</td></tr>
+</table>
+
+<h4>可配置参数（CLI）</h4>
+<table>
+<tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+<tr><td><code>--repo</code></td><td>（必填）</td><td>仓库 URL，如 <code>https://android.googlesource.com/kernel/common</code></td></tr>
+<tr><td><code>--config</code></td><td>（必填）</td><td>评分规则 YAML 配置文件路径</td></tr>
+<tr><td><code>--workers</code></td><td><code>6</code></td><td>并行分析线程数，控制 API 并发请求量</td></tr>
+<tr><td><code>--chunk-size</code></td><td><code>100</code></td><td>每批处理的 commit 数量，大区间建议 50~100</td></tr>
+<tr><td><code>--retry</code></td><td><code>1</code></td><td>每个 commit 分析失败时的重试次数</td></tr>
+<tr><td><code>--repo-dir</code></td><td>（可选）</td><td>本地 Git 仓库路径，可避免远程 API 速率限制</td></tr>
+<tr><td><code>--output</code></td><td><code>patch-analysis-result.json</code></td><td>分析结果 JSON 输出路径</td></tr>
+</table>
+
+<h4>多维评分体系</h4>
+<p>每个 patch 从以下维度进行评分（每项 0-10 分，加权求和）：</p>
+<table>
+<tr><th>维度</th><th>默认权重</th><th>评分依据</th></tr>
+<tr><td>correctness_completeness<br>（正确性与完整性）</td><td>配置驱动</td><td>commit message 是否包含 fix/bug 信号、修改文件数、代码改动量（churn）</td></tr>
+<tr><td>risk_safety<br>（风险与安全性）</td><td>配置驱动</td><td>是否涉及高风险路径（mm/security/kernel/arch/fs）、改动量</td></tr>
+<tr><td>testability_evidence<br>（可测性与证据）</td><td>配置驱动</td><td>是否包含测试信号（selftest/kunit 等）</td></tr>
+<tr><td>diff_maintainability<br>（代码可维护性）</td><td>配置驱动</td><td>按文件数和改动量线性扣分</td></tr>
+<tr><td>commit_metadata_quality<br>（提交元数据质量）</td><td>配置驱动</td><td>commit message 质量、是否包含 Fixes/Signed-off-by 等标记</td></tr>
+</table>
+
+<h4>风险信号评分扩展</h4>
+<p>YAML 配置中的 <code>risk_signal_score_rules</code> 允许定义自定义风险信号规则（如检测 CVE 编号、特定内存操作模式等），自动注入对应维度的加分/扣分。</p>
+
+<h4>标签自动分类</h4>
+<p>工具自动识别并打上两类标签：</p>
+<ul>
+<li><strong>路径标签</strong>（patch_tags）：根据修改文件路径识别子系统（包括：内存管理、文件系统、网络协议栈、安全、加密、调度、锁/并发、BPF、电源管理、DRM/图形、USB、Android/GKI 等 25+ 类）</li>
+<li><strong>意图标签</strong>：基于 commit message 启发式推断 patch 意图（fix bug / 新需求）</li>
+<li><strong>平台标签</strong>（platform_tags）：识别涉及的 CPU 架构（ARM64/ARM/x86/RISC-V/LoongArch 等）</li>
+<li><strong>开发模块标签</strong>（dev_module）：基于 21 个标准开发模块的路径映射规则分类</li>
+</ul>
+
+<h4>引入追溯（Introducer Analysis）</h4>
+<p>当检测到 patch 包含 fix/regression 等修复信号时，自动追溯问题引入的原始提交。通过本地 Git 历史在同文件/同函数范围内检索，基于修改文件重合度、函数名匹配、代码形态相似度等多维特征打分，找出最可能的引入修改。</p>
+
+<h4>输出内容结构</h4>
+<p>每个 patch 的分析结果包含：</p>
+<table>
+<tr><th>字段</th><th>说明</th></tr>
+<tr><td><code>score</code></td><td>综合评分（0-10）</td></tr>
+<tr><td><code>score_details</code></td><td>各维度评分明细（含 base_score、applied_rules、additions、deductions）</td></tr>
+<tr><td><code>why_scored</code></td><td>打分关键依据列表</td></tr>
+<tr><td><code>recommendation</code></td><td>推荐结论（建议合入/有条件合入/需大幅修改/不建议合入）</td></tr>
+<tr><td><code>key_risk</code></td><td>核心风险描述</td></tr>
+<tr><td><code>test_suggestions</code></td><td>建议测试项（单元测试/集成测试/回归测试/手工验证/发布保障）</td></tr>
+<tr><td><code>patch_tags</code></td><td>子系统标签列表</td></tr>
+<tr><td><code>platform_tags</code></td><td>架构平台标签列表</td></tr>
+<tr><td><code>dev_module</code></td><td>所属开发模块</td></tr>
+<tr><td><code>blocked</code></td><td>是否触发硬阻断</td></tr>
+<tr><td><code>block_rules_hit</code></td><td>触发的阻断规则列表</td></tr>
+<tr><td><code>introducer_analysis</code></td><td>问题引入追溯结果（含 detected、confidence、introducer_commit、evidence）</td></tr>
+</table>
+
+<h3>2.2 Web 交互平台</h3>
+<p>基于 <strong>FastAPI + SQLite + WebSocket</strong> 的轻量 Web 应用，全栈纯 Python + 原生 JavaScript 实现，无需任何前端框架。</p>
+
+<h4>任务管理</h4>
+<ul>
+<li><strong>创建任务</strong>：通过页面表单提交区间分析（指定 from_tag/to_tag/sample_size）或单 SHA 分析</li>
+<li><strong>任务列表</strong>：展示最近 200 条任务，包含状态（pending/running/completed/failed）、类型、区间、进度百分比</li>
+<li><strong>任务详情</strong>：点击查看单任务下所有 patch 的分析结果卡片</li>
+<li><strong>模块筛选</strong>：按 21 个开发模块过滤当前任务下的 patch</li>
+<li><strong>删除任务</strong>：支持单条删除和批量删除，删除任务不影响已保存的 patch 分析数据</li>
+</ul>
+
+<h4>实时进度跟踪</h4>
+<ul>
+<li><strong>三阶段进度条</strong>：<code>collecting → analyzing → llm_analyzing</code>（或双阶段）</li>
+<li><strong>WebSocket 长连接</strong>：每秒推送最新进度，前端实时更新阶段名称、百分比、已用时间</li>
+<li><strong>基于完成数量</strong>：进度 = 已处理 commit 数 / 总 commit 数，非时间驱动，准确反映真实进度</li>
+<li><strong>任务取消</strong>：一键标记取消，运行中的线程检测到取消标记后自行停止</li>
+</ul>
+
+<h4>LLM 配置管理</h4>
+<ul>
+<li><strong>页面内配置</strong>：支持设置 API Key、API Base URL、Model 名称</li>
+<li><strong>分层覆盖</strong>：环境变量 → 数据库（页面配置优先级高于环境变量）</li>
+<li><strong>环境变量支持</strong>：<code>GKI_LLM_API_KEY</code>、<code>GKI_LLM_API_BASE</code>、<code>GKI_LLM_MODEL</code></li>
+<li><strong>自动切换分析流程</strong>：配置 LLM 后，分析流程自动跳过脚本分析阶段，直接进入 LLM 分析</li>
+</ul>
+
+<h3>2.3 LLM 深度分析</h3>
+<p>集成了 LLM 多维度分析能力，提供比脚本评分更深入的代码理解。</p>
+
+<h4>单笔 Patch LLM 分析</h4>
+<ul>
+<li>逐笔调用 LLM 对 patch 进行深度审查</li>
+<li>输出 <strong>commit_interpretation_rich</strong>：对修改意图的人工解读</li>
+<li>输出 <strong>problem_closure_rich</strong>：问题修复类型和风险等级评估</li>
+<li>输出 <strong>LLM 评分</strong>：各维度评分与理由，与脚本评分交叉验证</li>
+<li>输出 <strong>LLM test_suggestions</strong>：基于代码理解的测试建议</li>
+<li>记录 <strong>token 消耗</strong>（usage 字段），方便追踪 API 费用</li>
+</ul>
+
+<h4>区间 Squash Diff 总结</h4>
+<ul>
+<li>对整个区间合并 diff 调用 LLM 生成全面的技术总结报告</li>
+<li>包含：变更概述、主要变更领域、风险评估、影响范围</li>
+<li><strong>分模块详细总结</strong>：按 21 个开发模块对每个模块的具体修改做详细说明</li>
+<li><strong>测试建议</strong>：针对整个区间的综合测试建议</li>
+</ul>
+
+<h4>双模流程</h4>
+<table>
+<tr><th>条件</th><th>执行流程</th></tr>
+<tr><td>已配置 LLM</td><td><code>collecting → llm_analyzing</code>（跳过脚本分析）</td></tr>
+<tr><td>未配置 LLM</td><td><code>collecting → analyzing</code>（仅脚本分析）</td></tr>
+<tr><td>脚本分析完成后手动触发</td><td><code>analyzing → llm_analyzing</code>（追加 LLM 分析）</td></tr>
+</table>
+
+<h3>2.4 死机分析（Crash Analysis）</h3>
+<p>针对 GKI 升级场景中的内核死机问题定位，提供端到端的分析流程。</p>
+
+<h4>两阶段流程</h4>
+<table>
+<tr><th>阶段</th><th>说明</th></tr>
+<tr><td><strong>Phase 1: 疑似 Patch 检索</strong></td><td>用户输入内核死机日志（Kernel Panic / Oops），系统提取关键特征（crash_files、crash_symbols、crash_function 等），在区间 commit 中检索并排序疑似 patch</td></tr>
+<tr><td><strong>Phase 2: 归因分析</strong></td><td>在疑似 patch 基础上，检查后续提交中是否有修复代码（revert、bug fix），识别间接因果关联，最终由 LLM 生成综合归因报告</td></tr>
+</table>
+
+<h4>核心能力</h4>
+<ul>
+<li><strong>LLM 日志分析</strong>：自动识别死机类型（panic/oops/NULL pointer dereference/uaf 等）、崩溃函数、模块、调用栈链路</li>
+<li><strong>多维度匹配</strong>：基于文件路径、函数名、符号名、死机机制描述等多维特征评分</li>
+<li><strong>间接因果识别</strong>：通过 LLM 分析后续提交的 commit message 和 diff，判断是否存在关联修复</li>
+<li><strong>疑似 Patch 增强</strong>：每个疑似 patch 支持折叠展示 commit 信息 + Diff 全文</li>
+<li><strong>历史记录</strong>：每次分析保存为独立记录，支持查阅、删除和报告下载</li>
+</ul>
+
+<h3>2.5 报告生成与导出</h3>
+<p>提供 6 种报告渲染/导出工具，满足不同场景需求：</p>
+<table>
+<tr><th>工具</th><th>输入</th><th>输出</th><th>适用场景</th></tr>
+<tr><td><code>render_report.py</code></td><td>分析结果 JSON</td><td>交互式 HTML</td><td>标准报告，支持评分明细折叠/Diff 展示</td></tr>
+<tr><td><code>render_report_indexed.py</code></td><td>分析结果 JSON</td><td>索引式 HTML</td><td>大量 patch 时带索引导航</td></tr>
+<tr><td><code>render_report_llm.py</code></td><td>分析结果 JSON</td><td>LLM 增强 HTML</td><td>集成 LLM 分析结果（commit 解读、归因）</td></tr>
+<tr><td><code>render_interval_hybrid_overview.py</code></td><td>分析结果 JSON</td><td>区间概览 HTML</td><td>多区间对比概览</td></tr>
+<tr><td><code>export_patch_analysis_to_excel.py</code></td><td>分析结果 JSON</td><td>Excel xlsx</td><td>数据进一步加工/分享</td></tr>
+<tr><td>Web 在线下载</td><td>数据库</td><td>HTML 报告</td><td>Web 端直接下载单任务完整报告</td></tr>
+</table>
+
+<h3>2.6 全量合并 Diff</h3>
+<p>分析任务完成后，自动生成所选版本区间内全部 Patch 的合并 Diff 文件（保存至 <code>outputs/merged_diffs/</code>），可通过 Web 页面在线下载。生成失败不影响主分析任务状态。</p>
+
+<h3>2.7 数据库浏览</h3>
+<p>提供独立的数据库浏览页面（<code>/patches</code>），支持：</p>
+<ul>
+<li><strong>分页浏览</strong>：按页码、每页条数浏览全部 patch</li>
+<li><strong>关键词搜索</strong>：按 SHA、标题、作者等搜索</li>
+<li><strong>模块筛选</strong>：按 21 个标准开发模块筛选</li>
+<li><strong>模块统计</strong>：展示各模块 patch 数量和评分分布</li>
+<li><strong>Patch 详情</strong>：点击查看单条 patch 的完整 HTML 分析报告</li>
+</ul>
+
+<h3>2.8 性能日志（Perf Logs）</h3>
+<p>自动记录每次分析任务的性能日志，包含：</p>
+<ul>
+<li><strong>文件命名</strong>：按任务开始时间精确到秒命名</li>
+<li><strong>记录内容</strong>：各阶段耗时（collecting/analyzing/llm_analyzing）、并发线程数、处理 patch 数量、失败数量</li>
+<li><strong>用途</strong>：分析性能瓶颈、优化并发参数、评估分析效率</li>
+</ul>
+
+<hr>
+
+<h2>3. 可配置化说明</h2>
+
+<h3>3.1 评分配置（scoring-config.yaml）</h3>
+<p>所有评分规则、风险检测阈值、推荐结论映射等均由 YAML 配置文件驱动，无需修改代码即可调整分析行为。支持以下配置项：</p>
+<table>
+<tr><th>配置项</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>dimensions</code></td><td>数组</td><td>评分维度定义（id、label、weight）</td></tr>
+<tr><td><code>default_profile</code></td><td>对象</td><td>默认评分配置集（各维度的 score_rules）</td></tr>
+<tr><td><code>blocking_rules</code></td><td>数组</td><td>硬阻断规则列表（命中直接标记为 blocked）</td></tr>
+<tr><td><code>risk_signal_score_rules</code></td><td>对象</td><td>自定义风险信号（检测 CVE、内存操作模式等）</td></tr>
+<tr><td><code>recommendation_mapping</code></td><td>数组</td><td>总分到推荐结论的映射（min/max/recommendation）</td></tr>
+<tr><td><code>test_suggestions</code></td><td>对象</td><td>测试建议配置。包含 <code>defaults</code>（5 个测试维度的默认文案）和 <code>rules</code>（按 tag/churn 等条件匹配的追加规则）</td></tr>
+<tr><td><code>trusted_integration_merge</code></td><td>对象</td><td>集成合并（Merge tag/LTS 合入）的特殊处理：跳过常规降分，总分对齐「建议合入」档位下限</td></tr>
+<tr><td><code>directory_profiles</code></td><td>数组</td><td>按目录前缀匹配的 profile 覆盖（如 mm/ 目录使用不同的权重和测试关注点）</td></tr>
+<tr><td><code>file_profiles</code></td><td>数组</td><td>按文件 glob 匹配的 profile 覆盖（如特定 .c 文件使用不同的权重和测试关注点）</td></tr>
+
+<h3>3.2 建议测试项配置（test_suggestions）</h3>
+<p>测试建议由 <code>test_suggestions</code> 配置块控制，包含两层结构：</p>
+<ul>
+<li><code>defaults</code>：所有 patch 默认带上的基础测试建议（5 个维度）</li>
+<li><code>rules</code>：按标签（tag）、改动规模（min_churn）等条件命中后追加的建议，多条规则可同时生效</li>
+</ul>
+<p>5 个固定输出字段：</p>
+<table>
+<tr><th>字段</th><th>说明</th></tr>
+<tr><td><code>unit_test</code></td><td>单元测试建议</td></tr>
+<tr><td><code>integration_test</code></td><td>集成/API 测试建议</td></tr>
+<tr><td><code>regression_test</code></td><td>回归测试建议</td></tr>
+<tr><td><code>manual_validation</code></td><td>人工验证建议</td></tr>
+<tr><td><code>release_safeguard</code></td><td>发布防护与上线观察建议</td></tr>
+</table>
+<p>rules.match 支持的条件：<code>test_signal</code>、<code>high_risk_paths</code>、<code>min_churn</code> / <code>max_churn</code>、<code>tag</code>（领域标签）、<code>platform</code>（平台标签）。</p>
+<p>此外，<code>default_profile.test_focus_hints</code> 以及目录/文件 profile 中的 <code>test_focus_hints</code> 会追加到 <code>manual_validation</code> 字段，用于表达 profile 级别的测试关注点。</p>
+
+<h3>3.3 LLM 配置</h3>
+<table>
+<tr><th>配置方式</th><th>优先级</th><th>说明</th></tr>
+<tr><td>Web 页面表单</td><td>最高</td><td>在浏览器页面中设置 API Key/Base/Model，持久化到 SQLite</td></tr>
+<tr><td>环境变量 <code>GKI_LLM_API_KEY</code></td><td>中</td><td>适用于 CI/CD 环境，无需页面交互</td></tr>
+<tr><td>环境变量 <code>GKI_LLM_API_BASE</code></td><td>中</td><td>默认 <code>https://api.openai.com/v1</code></td></tr>
+<tr><td>环境变量 <code>GKI_LLM_MODEL</code></td><td>中</td><td>默认 <code>gpt-4o</code></td></tr>
+</table>
+
+<h3>3.4 数据独立性设计</h3>
+<ul>
+<li>Patch 数据以 <code>SHA</code> 为主键存储，与任务解耦</li>
+<li>不同任务引用相同 SHA 的 Patch 时自动复用已有数据</li>
+<li>删除任务时仅删除任务记录，不会影响已保存的 Patch 分析结果</li>
+</ul>
+
+<h3>3.5 模块分类配置</h3>
+<p>21 个标准开发模块由 <code>dev_modules.txt</code> 定义路径映射规则：</p>
+<p><span class="tag">通用驱动器件</span> <span class="tag">驱动框架</span> <span class="tag">网络协议栈</span> <span class="tag">存储</span> <span class="tag">影像</span> <span class="tag">Binder</span> <span class="tag">Bluetooth</span> <span class="tag">电源管理</span> <span class="tag">安全</span> <span class="tag">内核基础</span> <span class="tag">调度与内存</span> <span class="tag">虚拟化</span> <span class="tag">调试与工具</span> <span class="tag">平台驱动</span> <span class="tag">SoC</span> <span class="tag">显示</span> <span class="tag">音频</span> <span class="tag">传感器</span> <span class="tag">无线连接</span> <span class="tag">系统服务</span> <span class="tag">其他</span></p>
+
+<hr>
+
+<h2>4. 系统架构</h2>
+
+<div class="arch-title">gkiPatchTool — 系统架构图</div>
+<div class="arch-sub">卡片式分层架构，展示核心模块与数据流向</div>
+
+<div class="layer">
+  <div class="layer-header" style="border-bottom-color:#0ea5e9">
+    <div class="layer-badge" style="background:#0ea5e9">1</div>
+    <span class="layer-label">输入层 Input Layer</span>
+  </div>
+  <div class="cards-row">
+    <div class="card" style="border-color:#bae6fd;background:#e0f2fe"><div class="card-title">代码输入</div><div class="card-desc">Android Kernel 仓库</div></div>
+    <div class="card" style="border-color:#bae6fd;background:#e0f2fe"><div class="card-title">LLM API (OpenAI 兼容)</div><div class="card-desc">GPT-4o / 通义千问等</div></div>
+    <div class="card" style="border-color:#bae6fd;background:#e0f2fe"><div class="card-title">CLI 命令行参数</div><div class="card-desc">--repo / --commit / --workers</div></div>
+    <div class="card" style="border-color:#bae6fd;background:#e0f2fe"><div class="card-title">Web 用户表单</div><div class="card-desc">区间 / 单 SHA 任务提交</div></div>
+    <div class="card" style="border-color:#bae6fd;background:#e0f2fe"><div class="card-title">评分规则 YAML</div><div class="card-desc">scoring-config.yaml</div></div>
+    <div class="card" style="border-color:#bae6fd;background:#e0f2fe"><div class="card-title">死机日志输入</div><div class="card-desc">Kernel Panic / Oops</div></div>
+  </div>
+  <div class="flow-arrow">↓ 数据采集</div>
+</div>
+
+<div class="layer">
+  <div class="layer-header" style="border-bottom-color:#22a65e">
+    <div class="layer-badge" style="background:#22a65e">2</div>
+    <span class="layer-label">数据层 Data Layer</span>
+  </div>
+  <div class="cards-row">
+    <div class="card" style="border-color:#bbf7d0;background:#dcfce7"><div class="card-title">SQLite 数据库</div><div class="card-desc">gki_patch.db (tasks/patches/config)</div></div>
+    <div class="card" style="border-color:#bbf7d0;background:#dcfce7"><div class="card-title">JSON 文件</div><div class="card-desc">outputs/*.json</div></div>
+    <div class="card" style="border-color:#bbf7d0;background:#dcfce7"><div class="card-title">YAML 文件</div><div class="card-desc">outputs/*.yaml</div></div>
+    <div class="card" style="border-color:#bbf7d0;background:#dcfce7"><div class="card-title">HTML 报告文件</div><div class="card-desc">5 种报告渲染器输出</div></div>
+    <div class="card" style="border-color:#bbf7d0;background:#dcfce7"><div class="card-title">Patch Diff 文件</div><div class="card-desc">merged_diffs/*.patch</div></div>
+  </div>
+  <div class="flow-arrow">↓ 存储 / 分析</div>
+</div>
+
+<div class="layer">
+  <div class="layer-header" style="border-bottom-color:#d97706">
+    <div class="layer-badge" style="background:#d97706">3</div>
+    <span class="layer-label">核心引擎层 Core Engine Layer</span>
+  </div>
+  <div class="cards-row">
+    <div class="card" style="border-color:#fde68a;background:#fef3c7"><div class="card-title">patch_analyzer.py</div><div class="card-desc">核心分析引擎 (2900行)</div></div>
+    <div class="card" style="border-color:#fde68a;background:#fef3c7"><div class="card-title">analyzer_service.py</div><div class="card-desc">Web 后台分析编排</div></div>
+    <div class="card" style="border-color:#fde68a;background:#fef3c7"><div class="card-title">crash_analyzer.py</div><div class="card-desc">死机分析服务</div></div>
+    <div class="card" style="border-color:#fde68a;background:#fef3c7"><div class="card-title">database.py</div><div class="card-desc">SQLite CRUD</div></div>
+    <div class="card" style="border-color:#fde68a;background:#fef3c7"><div class="card-title">llm_service.py</div><div class="card-desc">LLM API 客户端</div></div>
+    <div class="card" style="border-color:#fde68a;background:#fef3c7"><div class="card-title">merge_llm.py</div><div class="card-desc">LLM 批量结果合并</div></div>
+    <div class="card" style="border-color:#fde68a;background:#fef3c7"><div class="card-title">渲染/导出工具</div><div class="card-desc"></div></div>
+  </div>
+  <div class="flow-arrow">↓ 报告生成</div>
+</div>
+
+<div class="layer">
+  <div class="layer-header" style="border-bottom-color:#a855f7">
+    <div class="layer-badge" style="background:#a855f7">4</div>
+    <span class="layer-label">输出层 Output Layer</span>
+  </div>
+  <div class="cards-row">
+    <div class="card" style="border-color:#e9d5ff;background:#f3e8ff"><div class="card-title">Web 前端 SPA</div><div class="card-desc">任务管理 / 报告查看</div></div>
+    <div class="card" style="border-color:#e9d5ff;background:#f3e8ff"><div class="card-title">数据库浏览页面</div><div class="card-desc">分页搜索 / 模块筛选</div></div>
+    <div class="card" style="border-color:#e9d5ff;background:#f3e8ff"><div class="card-title">死机分析页面</div><div class="card-desc">疑似 Patch / LLM 归因</div></div>
+    <div class="card" style="border-color:#e9d5ff;background:#f3e8ff"><div class="card-title">WebSocket 实时推送</div><div class="card-desc">三阶段进度 / 状态更新</div></div>
+    <div class="card" style="border-color:#e9d5ff;background:#f3e8ff"><div class="card-title">HTML 报告下载</div><div class="card-desc">5 种渲染器 + 在线下载</div></div>
+    <div class="card" style="border-color:#e9d5ff;background:#f3e8ff"><div class="card-title">Excel 导出</div><div class="card-desc">xlsx 格式</div></div>
+  </div>
+</div>
+
+<div class="notes-section">
+  <span class="note-tag">✔ CLI 可独立运行，不依赖 Web 层</span>
+  <span class="note-tag">✔ Patches 以 SHA 为主键，跨任务复用</span>
+  <span class="note-tag">✔ LLM 配置：环境变量 → DB (页面优先)</span>
+  <span class="note-tag">✔ 双模流程：有 LLM → 跳过脚本分析</span>
+  <span class="note-tag">✔ 死机分析两阶段：疑似检索 + 归因</span>
+  <span class="note-tag">✔ 21 个标准开发模块分类</span>
+</div>
+
+<h3>4.1 核心数据流</h3>
+<pre>
+┌─────────────────────────────────────────────────────────────────┐
+│                        Web 模式                                  │
+│                                                                  │
+│  User ──→ Web 表单(from_tag/to_tag/SHA)                          │
+│              └──→ analyzer_service.py(任务编排)                    │
+│                       ├──→ 获取 commit 列表(远程API/本地git)        │
+│                       ├──→ 逐笔: 数据采集(diff/message/元信息)     │
+│                       │      ├──→ 无LLM → 脚本评分(patch_analyzer) │
+│                       │      └──→ 有LLM → LLM 深度分析             │
+│                       ├──→ SQLite 持久化(以SHA为主键，跨任务复用)   │
+│                       ├──→ 生成合并 Patch Diff                     │
+│                       └──→ 生成区间总结(llm/脚本)                  │
+│  WebSocket ──→ 实时进度推送(三阶段: collecting→analyzing→llm)
+│  Web前端 ──→ 从SQLite读取 → 渲染patch卡片/总结/模块统计
+│  Web前端 ──→ 下载(合并Diff HTML报告)
+│
+├─────────────────────────────────────────────────────────────────┤
+│                        CLI 模式                                  │
+│                                                                  │
+│  User ──→ patch_analyzer.py(CLI参数)                             │
+│              ├──→ --from-tag/--to-tag | --commit                 │
+│              ├──→ 获取 commit 列表                                │
+│              ├──→ 逐笔: 数据采集 + 脚本评分(规则来自scoring-config) │
+│              ├──→ 输出: JSON + HTML(render_report渲染)            │
+│              └──→ (可选) LLM分析 → merge_llm → 增强HTML          │
+│
+├─────────────────────────────────────────────────────────────────┤
+│                    死机分析(Crash Analysis)                        │
+│                                                                  │
+│  User ──→ crash_analysis页面                                     │
+│              ├──→ Phase1: 日志解析 → 疑似patch检索排序             │
+│              ├──→ Phase2: 后续提交检查 → 间接因果 + LLM归因报告    │
+│              └──→ 结果持久化 → 历史记录查阅/下载                   │
+└─────────────────────────────────────────────────────────────────┘
+</pre>
+
+<hr>
+
+<h2>5. 技术栈</h2>
+<table>
+<tr><th>层次</th><th>技术选型</th></tr>
+<tr><td>语言</td><td>Python 3, JavaScript (原生)</td></tr>
+<tr><td>Web 框架</td><td>FastAPI + uvicorn</td></tr>
+<tr><td>持久化</td><td>SQLite（内置 sqlite3 模块，零外部依赖）</td></tr>
+<tr><td>实时通信</td><td>WebSocket</td></tr>
+<tr><td>前端</td><td>纯 HTML + CSS + JS（无 React/Vue 等重型框架）</td></tr>
+<tr><td>报告</td><td>内联样式 HTML，单文件自包含</td></tr>
+<tr><td>配置</td><td>YAML（<code>scoring-config.yaml</code>）</td></tr>
+<tr><td>导出</td><td>openpyxl (xlsx) — 可选依赖</td></tr>
+<tr><td>HTTP 客户端</td><td>Python 内置 <code>urllib</code></td></tr>
+<tr><td>其他</td><td>argparse、subprocess、concurrent.futures 等 Python 标准库</td></tr>
+</table>
+
+<hr>
+
+<h2>6. 后续优化方向</h2>
+
+<h3>P0 - 模块化重构</h3>
+<p><code>patch_analyzer.py</code>（2900行）单体拆分：</p>
+<ul>
+<li><code>analyzer/scanner.py</code>：代码扫描（文件解析、diff 分析、metadata 提取）</li>
+<li><code>analyzer/scorer.py</code>：评分引擎（维度评分、风险信号评估）</li>
+<li><code>analyzer/rules/</code>：YAML 规则加载</li>
+<li><code>analyzer/reporters/</code>：输出格式（JSON / HTML / SQLite）</li>
+</ul>
+
+<h3>P1 - 多 Tag 区间对比</h3>
+<ul>
+<li>连续跟踪多个 LTS 版本区间（06→09→12→15_r4）</li>
+<li>生成趋势报告：patch 类型分布、风险趋势、模块热度</li>
+<li>识别同一上游修复在多个区间重复出现的 Patch</li>
+</ul>
+
+<h3>P2 - SQLite 功能拓展</h3>
+<ul>
+<li>基于 SQLite 的多维度查询（"networking 子系统中风险评分 >7 的 patch"）</li>
+<li>按模块、评分、时间筛选和聚合统计</li>
+<li>趋势图表可视化</li>
+</ul>
+
+<h3>P3 - LLM 分析质量提升</h3>
+<ul>
+<li>结构化打分脚本与 LLM 评分交叉验证</li>
+<li>多模型对比（GPT-4o / Claude / 通义千问等）</li>
+<li>分析缓存复用，避免重复 API 消耗</li>
+</ul>
+
+<h3>P4 - 自动化 CI 流水线</h3>
+<ul>
+<li>定时自动拉取新 Tag、分析、生成报告</li>
+<li>增量分析（只分析新增 Patch，已有的跳过）</li>
+<li>高风险 Patch 告警通知（邮件/IM）</li>
+</ul>
+
+<hr>
+
+<h2>附录</h2>
+
+<h3>A. 文件结构</h3>
+<pre>
+gkiPatchTool/
+├── tools/                          # CLI 工具
+│   ├── patch_analyzer.py           # 核心分析引擎（2900行）
+│   ├── sample_analyzer.py          # 采样分析器
+│   ├── extract_patches_for_llm.py  # LLM 数据提取
+│   ├── merge_llm_analysis.py       # LLM 结果合并
+│   ├── render_report.py            # 标准 HTML 报告渲染器
+│   ├── render_report_indexed.py    # 索引式 HTML 报告渲染器
+│   ├── render_report_llm.py        # LLM 增强 HTML 报告渲染器
+│   ├── render_interval_hybrid_overview.py  # 区间概览报告渲染器
+│   └── export_patch_analysis_to_excel.py   # Excel 导出
+├── web_app/                        # Web 平台
+│   ├── app.py                      # FastAPI 入口 + REST API
+│   ├── database.py                 # SQLite 数据库层（CRUD）
+│   ├── analyzer_service.py         # 后台分析编排调度
+│   ├── crash_analysis_service.py   # 死机分析服务
+│   ├── llm_service.py              # LLM API 客户端
+│   └── data/
+│       └── gki_patch.db            # SQLite 数据库文件
+├── outputs/                        # 分析结果输出
+│   ├── *.json / *.yaml / *.html    # 分析结果与报告
+│   └── merged_diffs/               # 合并 Diff 文件
+├── gkiPatchTool_OVERVIEW.md        # 文档 Markdown 源文件
+├── gkiPatchTool_OVERVIEW.html      # 本文档 HTML 版本
+├── gkiPatchTool_roadmap.md         # 工程化路线图
+├── DEPLOY.md                       # 部署说明
+└── README.md                       # 快速上手说明
+</pre>
+
+<h3>B. 启动方式</h3>
+<pre>
+# Web 模式
+python web_app/app.py
+# 打开 http://127.0.0.1:8000
+
+# CLI 模式（区间分析）
+python tools/patch_analyzer.py \
+  --repo https://android.googlesource.com/kernel/common \
+  --from-tag &lt;from_tag&gt; --to-tag &lt;to_tag&gt; \
+  --config config/scoring-config.yaml \
+  --workers 6 --output outputs/result.json
+
+# CLI 模式（单 SHA 分析）
+python tools/patch_analyzer.py \
+  --repo https://android.googlesource.com/kernel/common \
+  --commit &lt;SHA&gt; \
+  --config config/scoring-config.yaml \
+  --output outputs/single-result.json
+
+# CLI 模式（使用本地 Git 仓库避免远程 API 限流）
+python tools/patch_analyzer.py \
+  --repo https://android.googlesource.com/kernel/common \
+  --from-tag &lt;from_tag&gt; --to-tag &lt;to_tag&gt; \
+  --repo-dir /path/to/local/kernel/repo \
+  --config scoring-config.yaml \
+  --output outputs/result.json
+
+# 生成 HTML 报告
+python tools/render_report.py \
+  --input outputs/result.json --output outputs/report.html
+</pre>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# Runtime dependencies for patch-analysis-score CLI
+PyYAML>=6.0
+# Optional: only needed for export_patch_analysis_to_excel.py
+openpyxl>=3.1.0
+
+# Web App (交互分析平台)
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+httpx>=0.27.0
+paramiko>=3.4.0

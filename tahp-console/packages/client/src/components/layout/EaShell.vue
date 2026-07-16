@@ -23,6 +23,7 @@ const coreNav = [
   { name: 'tahp.adapt-debug', label: 'AI 适配调试' },
   { name: 'tahp.bug-analysis', label: '智能诊断' },
   { name: 'tahp.modem-baseline.workbench', label: 'Modem基线' },
+  { name: 'tahp.gki-patch.dashboard', label: 'GKI Patch' },
   { name: 'tahp.self-check', label: 'AI 自检' },
 ]
 
@@ -48,6 +49,9 @@ const selectedKey = computed(() => {
 function isActive(name: string) {
   if (name === 'tahp.modem-baseline.workbench') {
     return selectedKey.value.startsWith('tahp.modem-baseline')
+  }
+  if (name === 'tahp.gki-patch.dashboard') {
+    return selectedKey.value.startsWith('tahp.gki-patch')
   }
   return selectedKey.value === name
 }

@@ -1,0 +1,224 @@
+version: 1
+
+# 评分哲学（与 patch_analyzer 默认规则一致）：
+# - 总分侧重：修改本身（路径/规模/语义）、风险、可维护性、commit 元信息。
+# - 补丁内是否包含测试文件 / test_signal 不作为降分或加权依据；测试工作由独立流程承担。
+# - `testability_evidence` 维度保留在 JSON 中便于展示，默认权重为 0，不参与总分。
+
+scale:
+  min: 0
+  max: 10
+  round_digits: 1
+
+dimensions:
+  - id: correctness_completeness
+    label: "正确性与完整性"
+    weight: 0.45
+  - id: risk_safety
+    label: "风险与安全性"
+    weight: 0.28
+  - id: testability_evidence
+    label: "可测试性（展示用，默认不计入总分）"
+    weight: 0.0
+  - id: diff_maintainability
+    label: "Diff 可维护性"
+    weight: 0.17
+  - id: commit_metadata_quality
+    label: "Commit/元信息质量"
+    weight: 0.10
+
+recommendation_mapping:
+  - min: 8.5
+    max: 10.0
+    recommendation: "建议合入"
+  - min: 7.0
+    max: 8.4
+    recommendation: "有条件合入"
+  - min: 5.0
+    max: 6.9
+    recommendation: "需大幅修改"
+  - min: 0.0
+    max: 4.9
+    recommendation: "不建议合入"
+
+# 集成类合并（Merge tag、LTS 小版本批量合入 android 分支）：不做「按 diff 体量/触达路径」的常规降分，
+# 总分对齐「建议合入」档位下限；若启用硬阻断仍优先阻断。
+trusted_integration_merge:
+  enabled: true
+  title_patterns:
+    - "(?i)^Merge tag\\b"
+    - "(?i)^Merge \\d+\\.\\d+\\.\\d+ into\\s+android"
+
+# 风险信号：不再要求「无测试」才触发；仅依据路径、diff 与规模等
+risk_signal_score_rules:
+  not_solving_stated_problem:
+    enabled: true
+    description: "标题 fix 风格但未见实现文件（代理，可调正则）"
+    dimension: correctness_completeness
+    delta: -1.0
+    match:
+      all:
+        - { when: message_regex, pattern: "(?im)^\\s*fix\\b" }
+        - when: not
+          cond:
+            when: any_file_regex
+            pattern: "\\.(c|h|inc|S)$"
+  critical_security_risk:
+    enabled: true
+    description: "安全/crypto 路径 + diff 安全关键词"
+    dimension: risk_safety
+    delta: -1.2
+    match:
+      all:
+        - any:
+            - { when: any_file_prefix, prefix: "security/" }
+            - { when: any_file_prefix, prefix: "crypto/" }
+        - { when: diff_regex, pattern: "(?i)\\b(bypass|privesc|cve-|overflow|uaf|use-after-free|escalat)\\b" }
+  data_corruption_or_loss_risk:
+    enabled: true
+    description: "fs/block + 损坏/截断线索"
+    dimension: risk_safety
+    delta: -1.0
+    match:
+      all:
+        - any:
+            - { when: any_file_prefix, prefix: "fs/" }
+            - { when: any_file_prefix, prefix: "block/" }
+        - any:
+            - { when: message_regex, pattern: "(?i)\\b(data\\s*corruption|corrupt|dataloss|EIO|EIOCB)\\b" }
+            - { when: diff_regex, pattern: "(?i)\\b(truncate|journa|corrupt|data loss)\\b" }
+  high_risk_large_change:
+    enabled: true
+    description: "高风险路径且改动规模极大（独立于测试）"
+    dimension: risk_safety
+    delta: -1.2
+    match:
+      all:
+        - { when: high_risk_paths_is, value: true }
+        - { when: churn_gt, threshold: 1800 }
+
+test_suggestions:
+  defaults:
+    unit_test:
+      - "围绕受影响模块的关键函数补充边界条件、异常分支和错误返回测试。"
+    integration_test:
+      - "覆盖受影响模块与上下游调用链的集成/接口回归。"
+    regression_test:
+      - "回归受影响目录的核心场景，覆盖正常路径与失败路径。"
+    manual_validation:
+      - "人工复核关键路径、错误处理、锁/资源释放与日志可观测性。"
+    release_safeguard:
+      - "上线后监控错误率、性能指标和关键日志，保留快速回滚方案。"
+  rules:
+    - rule_id: memory_management_tests
+      description: "内存管理相关 patch 的测试建议"
+      match:
+        tag: "内存管理"
+      suggestions:
+        unit_test:
+          - "补充内存分配/释放、边界长度、异常返回路径的单元测试。"
+        integration_test:
+          - "验证内存管理改动与调用方的交互，覆盖并发访问、资源回收和失败恢复。"
+        regression_test:
+          - "回归内存压力、低内存、并发分配释放、长期稳定性场景。"
+        manual_validation:
+          - "重点复核引用计数、锁顺序、生命周期、错误路径资源释放是否完整。"
+        release_safeguard:
+          - "上线后重点观察内存泄漏、OOM、性能抖动和异常日志。"
+    - rule_id: large_churn
+      description: "改动规模较大时拆分回归范围"
+      match:
+        min_churn: 2500
+      suggestions:
+        regression_test:
+          - "改动规模较大，建议按子模块拆分回归清单并分阶段验证。"
+        release_safeguard:
+          - "灰度或分阶段发布，重点观察性能、错误率和长尾异常。"
+
+default_profile:
+  profile_id: default
+  dimension_weights:
+    correctness_completeness: 0.45
+    risk_safety: 0.28
+    testability_evidence: 0.0
+    diff_maintainability: 0.17
+    commit_metadata_quality: 0.10
+  score_rules:
+    correctness_completeness:
+      base_score: 7.6
+      adjustments:
+        - when: message_contains_any
+          keywords: ["fix", "bug"]
+          delta: 0.5
+        - when: file_count_gt
+          threshold: 30
+          delta: -0.8
+        - when: churn_gt
+          threshold: 2000
+          delta: -0.7
+    risk_safety:
+      base_score: 7.8
+      adjustments:
+        - when: high_risk_paths_is
+          value: true
+          delta: -0.9
+        - when: churn_gt
+          threshold: 3000
+          delta: -0.8
+    testability_evidence:
+      base_score: 8.0
+      adjustments: []
+    diff_maintainability:
+      base_score: 8.5
+      linear_deductions:
+        - metric: file_count
+          divisor: 40.0
+          cap: 2.2
+        - metric: churn
+          divisor: 2500.0
+          cap: 2.0
+    commit_metadata_quality:
+      base_score: 7.2
+      adjustments:
+        - when: message_length_gt
+          threshold: 40
+          delta: 0.5
+        - when: message_regex
+          pattern: "(?i)\\b(Bug:|Fixes:|Signed-off-by:)\\b"
+          delta: 1.1
+  enabled_hard_block_rules: []
+  test_focus_hints:
+    - "边界条件与异常分支"
+    - "回归路径与兼容性行为"
+
+directory_profiles:
+  - rule_id: kernel_mm
+    match:
+      directory_prefix: "mm/"
+    profile_id: kernel_mm_profile
+    overrides:
+      dimension_weights:
+        correctness_completeness: 0.40
+        risk_safety: 0.32
+        testability_evidence: 0.0
+        diff_maintainability: 0.18
+        commit_metadata_quality: 0.10
+      test_focus_hints:
+        - "并发与竞态场景"
+        - "内存安全与边界长度"
+
+file_profiles:
+  - rule_id: memfd_ashmem_shim
+    match:
+      file_glob: "mm/memfd-ashmem-shim.c"
+    profile_id: memfd_ashmem_shim_profile
+    overrides:
+      dimension_weights:
+        correctness_completeness: 0.40
+        risk_safety: 0.35
+        testability_evidence: 0.0
+        diff_maintainability: 0.17
+        commit_metadata_quality: 0.08
+      test_focus_hints:
+        - "名称读取一致性与截断行为"
+        - "并发访问下的稳定性"

@@ -80,6 +80,21 @@ export function getVenvPython(agentDir) {
     : join(agentDir, '.venv', 'bin', 'python')
 }
 
+/** GKI Patch Tool 根目录（tools/gki-patch-tool） */
+export function getGkiPatchToolRoot(tahpRoot = getTahpProjectRoot()) {
+  const fromEnv = process.env.GKI_PATCH_TOOL_ROOT?.trim()
+  if (fromEnv && existsSync(fromEnv)) return resolve(fromEnv)
+
+  const candidates = [
+    join(tahpRoot, 'tools', 'gki-patch-tool'),
+    join(getConsoleRoot(), '..', 'tools', 'gki-patch-tool'),
+  ]
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, 'web_app', 'app.py'))) return resolve(candidate)
+  }
+  return resolve(candidates[0])
+}
+
 export function getVenvHermesBin(agentDir) {
   return process.platform === 'win32'
     ? join(agentDir, '.venv', 'Scripts', 'hermes.exe')
