@@ -1404,7 +1404,7 @@ async function execPythonInit(
   markPythonModuleInitialized(session, testType, module)
 }
 
-const CASE_EXEC_TIMEOUT_MS = 120_000
+const CASE_EXEC_TIMEOUT_MS = 5 * 60_000
 const SMOKE_USD_EXEC_TIMEOUT_MS = 3_600_000
 const GMS_EXEC_TIMEOUT_MS = 28_800_000
 const MANUAL_CONFIRM_TIMEOUT_MS = 30 * 60_000
