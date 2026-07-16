@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   importBranchTemplates,
   continueModemBaselineRun,
@@ -12,6 +12,7 @@ import {
   getModemBaselineRun,
   getWorkspaceProfile,
   listBranchTemplates,
+  listModemBuildProjects,
   listModemPatchRules,
   listModemBaselineRuns,
   listRepoProfiles,
@@ -62,6 +63,7 @@ export function emptyModemBaselineConfig(): ModemBaselineConfig {
     work_dir: '',
     mapped_prefix: 'Z:',
     remote_prefix: '/work/user/code',
+    build_project: undefined,
   }
 }
 
@@ -92,12 +94,17 @@ export function getStatusMeta(status?: ModemBaselineStatus, error?: string, phas
   if (status === 'failed') {
     const summary = error === 'bridge_not_ready'
       ? 'Harness bridge 未就绪，请先确认 bridge-serve 与权限状态。'
-      : phase === 'resume'
-        ? '继续执行阶段失败，请结合运行日志确认 commit、post-merge 或 push 相关步骤。'
-        : '执行失败，请结合运行日志定位失败阶段。'
+      : error === 'build_failed' || phase === 'build'
+        ? '自动编译失败，请结合运行日志确认 ./tools/bld_modem.sh 执行结果。'
+        : phase === 'resume'
+          ? '继续执行阶段失败，请结合运行日志确认 commit、post-merge 或 push 相关步骤。'
+          : '执行失败，请结合运行日志定位失败阶段。'
     return { label: '执行失败', tone: 'error', summary }
   }
   if (status === 'running') {
+    if (phase === 'build') {
+      return { label: '自动编译中', tone: 'info', summary: '继续执行已完成，正在执行 ./tools/bld_modem.sh，请关注实时日志。' }
+    }
     if (phase === 'resume') {
       return { label: '继续执行中', tone: 'info', summary: '人工解冲突后正在继续执行 commit、post-merge 与收尾步骤，请关注实时日志。' }
     }
@@ -115,6 +122,7 @@ export function buildStageItems(status?: ModemBaselineStatus, error?: string, ph
     { key: 'merge', label: '合并补丁' },
     { key: 'conflict', label: '冲突停驻' },
     { key: 'resume', label: '继续执行' },
+    { key: 'build', label: '自动编译' },
     { key: 'archive', label: '结果归档' },
   ] as const
 
@@ -122,13 +130,15 @@ export function buildStageItems(status?: ModemBaselineStatus, error?: string, ph
     ? 'archive'
     : status === 'conflict'
       ? 'conflict'
-      : phase === 'resume'
-        ? 'resume'
-        : phase === 'archive'
-          ? 'archive'
-          : phase === 'precheck'
-            ? 'precheck'
-            : 'merge'
+      : phase === 'build'
+        ? 'build'
+        : phase === 'resume'
+          ? 'resume'
+          : phase === 'archive'
+            ? 'archive'
+            : phase === 'precheck'
+              ? 'precheck'
+              : 'merge'
 
   const activeIndex = steps.findIndex(item => item.key === activeKey)
 
@@ -147,7 +157,11 @@ export function buildStageItems(status?: ModemBaselineStatus, error?: string, ph
   }
 
   if (status === 'failed') {
-    const failedKey = error === 'bridge_not_ready' ? 'precheck' : activeKey
+    const failedKey = error === 'bridge_not_ready'
+      ? 'precheck'
+      : error === 'build_failed'
+        ? 'build'
+        : activeKey
     const failedIndex = steps.findIndex(item => item.key === failedKey)
     return steps.map((item, index) => ({
       ...item,
@@ -207,6 +221,9 @@ export function useModemBaseline() {
   const recommendation = ref<RecommendationResult | null>(null)
   const scanResults = ref<ScannedRepoCandidate[]>([])
   const scanWarnings = ref<string[]>([])
+  const buildProjects = ref<string[]>([])
+  const buildProjectsWarning = ref('')
+  const loadingBuildProjects = ref(false)
   const precheck = ref<PrecheckResult | null>(null)
   const runs = ref<ModemBaselineRunMeta[]>([])
   const selectedRunId = ref('')
@@ -270,6 +287,51 @@ export function useModemBaseline() {
     }
     precheck.value = null
   }
+
+  async function loadBuildProjects(workDir = config.value.work_dir) {
+    const dir = String(workDir ?? '').trim()
+    if (!dir) {
+      buildProjects.value = []
+      buildProjectsWarning.value = '请先填写工作区目录'
+      if (config.value.build_project) {
+        config.value = { ...config.value, build_project: undefined }
+      }
+      return
+    }
+    loadingBuildProjects.value = true
+    buildProjectsWarning.value = ''
+    try {
+      const data = await listModemBuildProjects({
+        work_dir: dir,
+        mapped_prefix: config.value.mapped_prefix,
+        remote_prefix: config.value.remote_prefix,
+      })
+      buildProjects.value = data.items
+      buildProjectsWarning.value = data.items.length
+        ? (data.source === 'remote' ? `已从远端识别：${data.remoteProjectsDir}` : '')
+        : (data.warning || `未找到项目目录：${data.projectsDir} / ${data.remoteProjectsDir}`)
+      const selected = config.value.build_project
+      if (selected && !data.items.includes(selected)) {
+        config.value = { ...config.value, build_project: undefined }
+      }
+    } catch (error) {
+      buildProjects.value = []
+      buildProjectsWarning.value = String((error as Error)?.message ?? error)
+    } finally {
+      loadingBuildProjects.value = false
+    }
+  }
+
+  let buildProjectsTimer: ReturnType<typeof setTimeout> | null = null
+  watch(
+    () => [config.value.work_dir, config.value.mapped_prefix, config.value.remote_prefix] as const,
+    () => {
+      if (buildProjectsTimer) clearTimeout(buildProjectsTimer)
+      buildProjectsTimer = setTimeout(() => {
+        void loadBuildProjects(config.value.work_dir)
+      }, 400)
+    },
+  )
 
   function normalizeBranchTemplatePlatform(text?: string) {
     return normalizePlatformToken(String(text ?? '').replace(/\s*\([^)]*\)\s*$/, ''))
@@ -336,6 +398,7 @@ export function useModemBaseline() {
     toolRoot.value = data.toolRoot
     applyWorkspaceProfileToConfig(workspaceProfile.value)
     precheck.value = null
+    await loadBuildProjects(config.value.work_dir)
   }
 
   async function loadRules() {
@@ -532,7 +595,9 @@ export function useModemBaseline() {
     if (!selectedRun.value) return
     continuing.value = true
     try {
-      await continueModemBaselineRun(selectedRun.value.runId)
+      await continueModemBaselineRun(selectedRun.value.runId, {
+        build_project: config.value.build_project,
+      })
       await reloadRun(selectedRun.value.runId)
       subscribe(selectedRun.value.runId)
     } finally {
@@ -854,6 +919,9 @@ export function useModemBaseline() {
     recommendation,
     scanResults,
     scanWarnings,
+    buildProjects,
+    buildProjectsWarning,
+    loadingBuildProjects,
     precheck,
     runs,
     selectedRun,
@@ -904,6 +972,7 @@ export function useModemBaseline() {
     chooseBranchTemplate,
     applyBranchTemplate,
     clearSelectedRepo,
+    loadBuildProjects,
     runPrecheck,
     selectRun,
     startRun,

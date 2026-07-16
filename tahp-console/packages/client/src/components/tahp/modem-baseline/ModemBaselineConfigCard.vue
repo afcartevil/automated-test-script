@@ -1,21 +1,30 @@
 <script setup lang="ts">
-import { NButton, NInput } from 'naive-ui'
+import { computed } from 'vue'
+import { NButton, NInput, NSelect } from 'naive-ui'
 import type { ModemBaselineConfig } from '@/api/tahp/modem-baseline'
 
 const props = defineProps<{
   modelValue: ModemBaselineConfig
+  buildProjects?: string[]
+  buildProjectsWarning?: string
+  loadingBuildProjects?: boolean
   loading?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: ModemBaselineConfig]
   'load-defaults': []
+  'refresh-projects': []
   'start': []
 }>()
 
 function updateField<K extends keyof ModemBaselineConfig>(key: K, value: ModemBaselineConfig[K]) {
   emit('update:modelValue', { ...props.modelValue, [key]: value })
 }
+
+const projectOptions = computed(() =>
+  (props.buildProjects ?? []).map(name => ({ label: name, value: name })),
+)
 </script>
 
 <template>
@@ -83,6 +92,30 @@ function updateField<K extends keyof ModemBaselineConfig>(key: K, value: ModemBa
     </div>
 
     <div class="ea-field">
+      <label>编译项目</label>
+      <div class="project-row">
+        <NSelect
+          :value="modelValue.build_project || null"
+          :options="projectOptions"
+          :loading="loadingBuildProjects"
+          clearable
+          filterable
+          placeholder="从 work_dir/projects 识别，冲突继续后自动编译"
+          @update:value="updateField('build_project', $event ? String($event) : undefined)"
+        />
+        <NButton secondary :disabled="loading || loadingBuildProjects" @click="$emit('refresh-projects')">
+          刷新项目
+        </NButton>
+      </div>
+      <p class="field-hint">
+        继续执行成功后将自动运行
+        <code>./tools/bld_modem.sh &lt;项目名&gt;</code>
+        ；未选择则跳过编译。
+      </p>
+      <p v-if="buildProjectsWarning" class="field-warn">{{ buildProjectsWarning }}</p>
+    </div>
+
+    <div class="ea-field">
       <label>描述</label>
       <NInput
         :value="modelValue.DESCRIPTION"
@@ -130,6 +163,34 @@ function updateField<K extends keyof ModemBaselineConfig>(key: K, value: ModemBa
   gap: 10px;
 }
 
+.project-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+
+  :deep(.n-select) {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.field-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+
+  code {
+    font-size: 12px;
+  }
+}
+
+.field-warn {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #b45309;
+  word-break: break-all;
+}
+
 .mapping-summary {
   padding: 12px 14px;
   border-radius: 14px;
@@ -153,7 +214,8 @@ function updateField<K extends keyof ModemBaselineConfig>(key: K, value: ModemBa
 
 @media (max-width: 720px) {
   .cfg-head,
-  .cfg-actions {
+  .cfg-actions,
+  .project-row {
     flex-direction: column;
     align-items: stretch;
   }

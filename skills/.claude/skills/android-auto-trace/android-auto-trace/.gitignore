@@ -1,0 +1,27 @@
+# Trace files
+*.perfetto-trace
+trace*
+
+# Local tools (workspace sibling)
+../tools/
+
+# Temp files
+/tmp/perfetto_config.txt
+perfetto_config.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

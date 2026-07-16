@@ -9,7 +9,7 @@ import { config as serverConfig } from '../../config'
 
 export type ModemBaselineStatus = 'running' | 'success' | 'failed' | 'conflict'
 export type ModemBaselineMode = 'stop_after_merge'
-export type ModemBaselinePhase = 'precheck' | 'merge' | 'conflict' | 'resume' | 'archive'
+export type ModemBaselinePhase = 'precheck' | 'merge' | 'conflict' | 'resume' | 'build' | 'archive'
 
 export type ModemBaselineConfig = {
   NODE_BRANCH: string
@@ -20,6 +20,8 @@ export type ModemBaselineConfig = {
   work_dir: string
   mapped_prefix?: string
   remote_prefix?: string
+  /** projects/ 下子目录名；继续执行成功后自动 ./tools/bld_modem.sh <name> */
+  build_project?: string
 }
 
 export type ModemBaselineRunMeta = {
@@ -1558,8 +1560,215 @@ function broadcast(runId: string, event: string, data: unknown) {
 function inferPhaseFromStatus(status: ModemBaselineStatus, phase?: ModemBaselinePhase): ModemBaselinePhase {
   if (status === 'conflict') return 'conflict'
   if (status === 'success') return 'archive'
-  if (status === 'running') return phase === 'resume' ? 'resume' : phase === 'precheck' ? 'precheck' : 'merge'
+  if (status === 'running') {
+    if (phase === 'build') return 'build'
+    if (phase === 'resume') return 'resume'
+    if (phase === 'precheck') return 'precheck'
+    return 'merge'
+  }
+  if (phase === 'build') return 'build'
   return phase === 'resume' ? 'resume' : phase === 'archive' ? 'archive' : phase === 'conflict' ? 'conflict' : 'merge'
+}
+
+const BUILD_PROJECT_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]*$/
+
+function sanitizeBuildProjectName(value: unknown): string | undefined {
+  const name = String(value ?? '').trim()
+  if (!name || !BUILD_PROJECT_NAME_RE.test(name)) return undefined
+  return name
+}
+
+function shellSingleQuote(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function evaluateModemBuildResult(result: HarnessResult): boolean {
+  const combined = `${String(result.output ?? '')}\n${String(result.error ?? '')}`
+  const successMarker = /make\s+modem\s+completed\s+su+cessfully/i.test(combined)
+    || /####\s*make\s+modem\s+completed\s+su+cessfully\s*####/i.test(combined)
+  const failureMarker = /make\s+modem\s+failed/i.test(combined)
+    || /modem\s+build\s+failed/i.test(combined)
+
+  if (successMarker && !failureMarker) return true
+  if (failureMarker) return false
+  return result.status === 'ok' && (result.exit_code === 0 || result.exit_code == null)
+}
+
+function filterBuildProjectNames(names: string[]) {
+  return Array.from(new Set(
+    names
+      .map(name => String(name ?? '').trim())
+      .filter(name => name && !name.startsWith('.') && BUILD_PROJECT_NAME_RE.test(name)),
+  )).sort((a, b) => a.localeCompare(b))
+}
+
+function listBuildProjectsLocal(projectsDir: string): string[] {
+  if (!fs.existsSync(projectsDir)) return []
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(projectsDir)
+  } catch {
+    return []
+  }
+  if (!stat.isDirectory()) return []
+
+  // 映射盘/SMB 上 Dirent.isDirectory() 常不可靠，逐项 stat
+  const names: string[] = []
+  for (const name of fs.readdirSync(projectsDir)) {
+    if (!name || name.startsWith('.')) continue
+    try {
+      if (fs.statSync(path.win32.resolve(projectsDir, name)).isDirectory()) {
+        names.push(name)
+      }
+    } catch {
+      // ignore unreadable entries
+    }
+  }
+  return filterBuildProjectNames(names)
+}
+
+async function listBuildProjectsRemote(remoteWorkDir: string): Promise<string[]> {
+  const remote = String(remoteWorkDir ?? '').trim()
+  if (!remote) return []
+  const command = `cd ${shellSingleQuote(remote)} && echo __APM_BEGIN__ && for d in projects/*/; do [ -d "$d" ] || continue; basename "$d"; done; echo __APM_END__`
+  const result = await harnessExec(command, { timeoutMs: 60_000 })
+  if (result.status !== 'ok' || result.exit_code !== 0) {
+    throw new Error(`remote_list_failed status=${result.status} exit_code=${result.exit_code}`)
+  }
+  const raw = String(result.output ?? '')
+  const start = raw.indexOf('__APM_BEGIN__')
+  const end = raw.indexOf('__APM_END__', start >= 0 ? start : 0)
+  const body = start >= 0
+    ? (end >= 0 ? raw.slice(start + '__APM_BEGIN__'.length, end) : raw.slice(start + '__APM_BEGIN__'.length))
+    : raw
+  const names = body
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('Updating files:'))
+  return filterBuildProjectNames(names)
+}
+
+/** 根据代码路径列出 work_dir/projects 下的项目名（本地优先，失败/空则走远端） */
+export async function listModemBuildProjects(input: {
+  work_dir?: string
+  mapped_prefix?: string
+  remote_prefix?: string
+}): Promise<{
+  projectsDir: string
+  remoteProjectsDir: string
+  items: string[]
+  source: 'local' | 'remote' | 'none'
+  warning?: string
+}> {
+  const workDir = String(input.work_dir ?? '').trim()
+  if (!workDir) throw new Error('work_dir_required')
+
+  const config: ModemBaselineConfig = {
+    NODE_BRANCH: '-',
+    target_BRANCH: '-',
+    AP_lable: '-',
+    JIRAID: '-',
+    work_dir: workDir,
+    mapped_prefix: input.mapped_prefix,
+    remote_prefix: input.remote_prefix,
+  }
+  const mapped = computeMappedWorkDir(config) ?? normalizeWinPath(workDir)
+  const remote = computeRemoteWorkDir(config)
+  const projectsDir = path.win32.resolve(mapped, 'projects')
+  const remoteProjectsDir = `${remote.replace(/\/+$/, '')}/projects`
+
+  try {
+    const localItems = listBuildProjectsLocal(projectsDir)
+    if (localItems.length) {
+      return { projectsDir, remoteProjectsDir, items: localItems, source: 'local' }
+    }
+  } catch (error) {
+    const warning = `local_list_failed: ${String((error as Error)?.message ?? error)}`
+    try {
+      const remoteItems = await listBuildProjectsRemote(remote)
+      if (remoteItems.length) {
+        return { projectsDir, remoteProjectsDir, items: remoteItems, source: 'remote', warning }
+      }
+      return {
+        projectsDir,
+        remoteProjectsDir,
+        items: [],
+        source: 'none',
+        warning: `${warning}; remote_projects_empty: ${remoteProjectsDir}`,
+      }
+    } catch (remoteError) {
+      return {
+        projectsDir,
+        remoteProjectsDir,
+        items: [],
+        source: 'none',
+        warning: `${warning}; remote_list_failed: ${String((remoteError as Error)?.message ?? remoteError)}`,
+      }
+    }
+  }
+
+  try {
+    const remoteItems = await listBuildProjectsRemote(remote)
+    if (remoteItems.length) {
+      return { projectsDir, remoteProjectsDir, items: remoteItems, source: 'remote' }
+    }
+    return {
+      projectsDir,
+      remoteProjectsDir,
+      items: [],
+      source: 'none',
+      warning: `projects_not_found local=${projectsDir} remote=${remoteProjectsDir}`,
+    }
+  } catch (remoteError) {
+    return {
+      projectsDir,
+      remoteProjectsDir,
+      items: [],
+      source: 'none',
+      warning: `local_empty=${projectsDir}; remote_list_failed: ${String((remoteError as Error)?.message ?? remoteError)}`,
+    }
+  }
+}
+
+async function runModemBuildAfterResume(
+  runId: string,
+  config: ModemBaselineConfig,
+  appendLog: (line: string) => void,
+): Promise<'success' | 'failed'> {
+  const project = sanitizeBuildProjectName(config.build_project)
+  if (!project) {
+    appendLog('[build] skipped: build_project not selected\n')
+    return 'success'
+  }
+
+  const remote = computeRemoteWorkDir(config)
+  updateRunMeta(runId, { status: 'running', phase: 'build', finishedAt: undefined, error: undefined })
+  appendLog(`[build] start project=${project} cmd=./tools/bld_modem.sh ${project}\n`)
+
+  const command = `cd ${shellSingleQuote(remote)} && ./tools/bld_modem.sh ${shellSingleQuote(project)}`
+  const BUILD_TIMEOUT_MS = 6 * 60 * 60 * 1000
+  appendLog(`[build] harness timeout_sec=${Math.ceil(BUILD_TIMEOUT_MS / 1000)}\n`)
+  try {
+    const result = await harnessExec(command, { timeoutMs: BUILD_TIMEOUT_MS })
+    const output = String(result.output ?? '').trim()
+    const errorText = String(result.error ?? '').trim()
+    if (output) appendLog(`[build] output:\n${output.endsWith('\n') ? output : `${output}\n`}`)
+    if (errorText) appendLog(`[build] error:\n${errorText.endsWith('\n') ? errorText : `${errorText}\n`}`)
+    appendLog(`[build] done status=${result.status} exit_code=${String(result.exit_code)}\n`)
+    if (evaluateModemBuildResult(result)) {
+      appendLog(`[build] success project=${project}\n`)
+      return 'success'
+    }
+    // bridge 默认 300s 超时会出现此文案；远端编译可能仍在跑
+    if (/timed out waiting for bridge response/i.test(`${output}\n${errorText}`)) {
+      appendLog('[build] bridge timed out before modem build finished; treat as failed wait (increase harness --timeout)\n')
+    }
+    appendLog(`[build] failed project=${project}\n`)
+    return 'failed'
+  } catch (error) {
+    appendLog(`[build] failed: ${String((error as Error)?.message ?? error)}\n`)
+    return 'failed'
+  }
 }
 
 function updateRunMeta(runId: string, patch: Partial<ModemBaselineRunMeta>) {
@@ -1614,6 +1823,9 @@ async function sleep(ms: number) {
 
 async function harnessExec(command: string, opts?: { timeoutMs?: number }): Promise<HarnessResult> {
   const timeoutMs = opts?.timeoutMs ?? 5 * 60 * 1000
+  // harness --timeout 单位为秒；比本地 timer 略短，让 bridge 先返回而非被本地 SIGKILL
+  const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000))
+  const localTimeoutMs = timeoutMs + 30_000
   const isWindows = process.platform === 'win32'
   const appData = process.env.APPDATA
   const npmBinDir = appData ? path.resolve(appData, 'npm') : null
@@ -1625,6 +1837,8 @@ async function harnessExec(command: string, opts?: { timeoutMs?: number }): Prom
       'remote-runner',
       'bridge-exec',
       '--i-understand-this-runs-raw-shell',
+      '--timeout',
+      String(timeoutSec),
       '--command',
       command,
     ]
@@ -1654,8 +1868,8 @@ async function harnessExec(command: string, opts?: { timeoutMs?: number }): Prom
       try {
         processRef.kill('SIGKILL')
       } catch {}
-      reject(new Error('harness timeout'))
-    }, timeoutMs)
+      reject(new Error(`harness timeout after ${timeoutSec}s`))
+    }, localTimeoutMs)
 
     processRef.stdout.on('data', (chunk) => {
       stdout += chunk.toString()
@@ -2193,15 +2407,40 @@ async function postProcessRun(runId: string, config: ModemBaselineConfig, code: 
   let status: ModemBaselineStatus = hasRealConflict ? 'conflict' : code === 1 ? 'failed' : 'success'
   appendLog(`[conflicts] final_status=${status} exit_code=${String(code)} local_merge_head=${Number(localStillInMerge)} remote_merge_head=${Number(remoteMergeHead)}\n`)
 
+  if (status === 'success' && current.phase === 'resume' && sanitizeBuildProjectName(config.build_project)) {
+    const buildResult = await runModemBuildAfterResume(runId, config, appendLog)
+    if (buildResult === 'failed') {
+      const failedMeta: ModemBaselineRunMeta = {
+        ...current,
+        status: 'failed',
+        phase: 'build',
+        finishedAt: nowIso(),
+        conflictFiles: undefined,
+        error: 'build_failed',
+      }
+      appendLog('[run] phase=build status=failed summary=bld_modem_failed\n')
+      writeRunMeta(failedMeta)
+      broadcast(runId, 'status', { status: failedMeta.status, phase: failedMeta.phase, reportPath: failedMeta.reportPath, error: failedMeta.error })
+      broadcast(runId, 'conflicts', { files: [] })
+      return
+    }
+  }
+
   const nextMeta: ModemBaselineRunMeta = {
     ...current,
     status,
     phase: status === 'success' ? 'archive' : status === 'conflict' ? 'conflict' : current.phase,
     finishedAt: nowIso(),
     conflictFiles: conflictFiles.length ? conflictFiles : undefined,
+    error: status === 'failed' ? current.error : undefined,
   }
   if (status === 'success') {
-    appendLog('[run] phase=archive status=success summary=merge_commit_post_merge_completed\n')
+    const built = sanitizeBuildProjectName(config.build_project)
+    appendLog(
+      built && current.phase === 'resume'
+        ? `[run] phase=archive status=success summary=resume_and_build_completed project=${built}\n`
+        : '[run] phase=archive status=success summary=merge_commit_post_merge_completed\n',
+    )
   } else if (status === 'conflict') {
     appendLog(`[run] phase=conflict status=conflict summary=manual_resolution_required files=${conflictFiles.length}\n`)
   } else {
@@ -2263,6 +2502,7 @@ function validateConfig(input: unknown): ModemBaselineConfig | null {
     work_dir: String(value.work_dir),
     mapped_prefix: value.mapped_prefix ? String(value.mapped_prefix) : undefined,
     remote_prefix: value.remote_prefix ? String(value.remote_prefix) : undefined,
+    build_project: sanitizeBuildProjectName(value.build_project),
   }
 }
 
@@ -2285,6 +2525,7 @@ export function getModemBaselineDefaults() {
       work_dir: String(raw.work_dir ?? ''),
       mapped_prefix: String(raw.mapped_prefix ?? ''),
       remote_prefix: String(raw.remote_prefix ?? ''),
+      build_project: sanitizeBuildProjectName(raw.build_project),
     } satisfies ModemBaselineConfig,
   }
 }
@@ -2369,13 +2610,20 @@ export function createModemBaselineRun(input: unknown) {
   return { runId, status: meta.status }
 }
 
-export function continueModemBaselineRun(runId: string) {
+export function continueModemBaselineRun(runId: string, input?: { build_project?: string }) {
   ensureToolRoot()
   const meta = readModemBaselineRun(runId)
   if (!meta) throw new Error('not_found')
   if (meta.status === 'running') throw new Error('running')
   if (meta.status !== 'conflict') throw new Error('not_in_conflict')
   if (!meta.logPath) throw new Error('missing_log_path')
+
+  const buildProject = sanitizeBuildProjectName(input?.build_project ?? meta.config.build_project)
+  const nextConfig: ModemBaselineConfig = {
+    ...meta.config,
+    build_project: buildProject,
+  }
+  fs.writeFileSync(runConfigPath(runId), JSON.stringify(nextConfig, null, 2), 'utf-8')
 
   const nextMeta: ModemBaselineRunMeta = {
     ...meta,
@@ -2384,11 +2632,18 @@ export function continueModemBaselineRun(runId: string) {
     finishedAt: undefined,
     conflictFiles: undefined,
     error: undefined,
+    config: nextConfig,
   }
   writeRunMeta(nextMeta)
   broadcast(runId, 'status', { status: nextMeta.status, phase: nextMeta.phase, reportPath: nextMeta.reportPath, error: nextMeta.error })
-  appendRunLog(runId, meta.logPath, '[continue] requested\n')
-  void startBackgroundRun(runId, meta.config, 'debug_continue_after_merge.py')
+  appendRunLog(
+    runId,
+    meta.logPath,
+    buildProject
+      ? `[continue] requested build_project=${buildProject}\n`
+      : '[continue] requested (no build_project; auto build will be skipped)\n',
+  )
+  void startBackgroundRun(runId, nextConfig, 'debug_continue_after_merge.py')
   return { runId, status: nextMeta.status }
 }
 
