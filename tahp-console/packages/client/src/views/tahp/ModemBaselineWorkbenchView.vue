@@ -39,12 +39,16 @@ const {
   recommending,
   continuing,
   refreshing,
+  buildProjects,
+  buildProjectsWarning,
+  loadingBuildProjects,
   errorMessage,
   statusMeta,
   stageItems,
   metrics,
   initialize,
   loadDefaults,
+  loadBuildProjects,
   requestRecommend,
   applyRecommendation,
   chooseTosVersion,
@@ -138,7 +142,11 @@ async function handleRunPrecheck() {
 async function handleContinueRun() {
   try {
     await continueRun()
-    message.success('已发送继续执行请求')
+    if (config.value.build_project) {
+      message.success(`已发送继续执行请求，完成后将编译 ${config.value.build_project}`)
+    } else {
+      message.warning('已发送继续执行请求（未选择编译项目，将跳过自动编译）')
+    }
   } catch (error) {
     message.error(String((error as Error)?.message ?? error))
   }
@@ -234,9 +242,13 @@ onUnmounted(() => {
     <div class="ea-stack">
       <ModemBaselineConfigCard
         :model-value="config"
+        :build-projects="buildProjects"
+        :build-projects-warning="buildProjectsWarning"
+        :loading-build-projects="loadingBuildProjects"
         :loading="starting || loading"
         @update:model-value="applyConfig"
         @load-defaults="handleLoadDefaults"
+        @refresh-projects="loadBuildProjects()"
         @start="handleStart"
       />
 

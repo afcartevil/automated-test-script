@@ -10,10 +10,12 @@ export type ModemBaselineConfig = {
   work_dir: string
   mapped_prefix?: string
   remote_prefix?: string
+  /** projects/ 下子目录名；继续执行成功后自动编译 */
+  build_project?: string
 }
 
 export type ModemBaselineStatus = 'running' | 'success' | 'failed' | 'conflict'
-export type ModemBaselinePhase = 'precheck' | 'merge' | 'conflict' | 'resume' | 'archive'
+export type ModemBaselinePhase = 'precheck' | 'merge' | 'conflict' | 'resume' | 'build' | 'archive'
 
 export type ModemBaselineRunMeta = {
   runId: string
@@ -251,9 +253,27 @@ export function createModemBaselineRun(config: ModemBaselineConfig): Promise<{ r
   return tahpPost<{ runId: string; status: ModemBaselineStatus }>('/api/tahp/modem-baseline/runs', { config })
 }
 
-export function continueModemBaselineRun(runId: string): Promise<{ runId: string; status: ModemBaselineStatus }> {
+export function listModemBuildProjects(input: {
+  work_dir: string
+  mapped_prefix?: string
+  remote_prefix?: string
+}): Promise<{
+  projectsDir: string
+  remoteProjectsDir: string
+  items: string[]
+  source: 'local' | 'remote' | 'none'
+  warning?: string
+}> {
+  return tahpPost('/api/tahp/modem-baseline/build-projects', input)
+}
+
+export function continueModemBaselineRun(
+  runId: string,
+  input?: { build_project?: string },
+): Promise<{ runId: string; status: ModemBaselineStatus }> {
   return tahpPost<{ runId: string; status: ModemBaselineStatus }>(
     `/api/tahp/modem-baseline/runs/${encodeURIComponent(runId)}/continue`,
+    input ?? {},
   )
 }
 

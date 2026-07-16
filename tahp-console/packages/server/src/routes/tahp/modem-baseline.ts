@@ -9,6 +9,7 @@ import {
   getModemBaselineDefaults,
   getModemPatchWorkspaceProfile,
   listModemBaselineRuns,
+  listModemBuildProjects,
   listModemPatchBranchTemplates,
   listModemPatchRepos,
   listModemPatchRules,
@@ -44,6 +45,34 @@ tahpModemBaselineRoutes.get('/defaults', async (ctx) => {
     ctx.body = { success: false, error: (error as Error).message }
   }
 })
+
+async function handleListBuildProjects(ctx: any) {
+  try {
+    const body = (ctx.request.body || {}) as {
+      work_dir?: string
+      workDir?: string
+      mapped_prefix?: string
+      remote_prefix?: string
+    }
+    const query = ctx.query || {}
+    ctx.body = {
+      success: true,
+      data: await listModemBuildProjects({
+        work_dir: body.work_dir || body.workDir || query.work_dir || query.workDir,
+        mapped_prefix: body.mapped_prefix || query.mapped_prefix,
+        remote_prefix: body.remote_prefix || query.remote_prefix,
+      }),
+    }
+  } catch (error) {
+    const message = (error as Error).message
+    ctx.status = message === 'work_dir_required' ? 400 : 500
+    ctx.body = { success: false, error: message }
+  }
+}
+
+// GET/POST 双挂载，避免前后端方法不一致导致 404
+tahpModemBaselineRoutes.get('/build-projects', handleListBuildProjects)
+tahpModemBaselineRoutes.post('/build-projects', handleListBuildProjects)
 
 tahpModemBaselineRoutes.get('/workspace-profile', async (ctx) => {
   ctx.body = { success: true, data: getModemPatchWorkspaceProfile(resolveOwner(ctx)) }
@@ -341,7 +370,11 @@ tahpModemBaselineRoutes.post('/runs', async (ctx) => {
 
 tahpModemBaselineRoutes.post('/runs/:runId/continue', async (ctx) => {
   try {
-    ctx.body = { success: true, data: continueModemBaselineRun(ctx.params.runId) }
+    const body = (ctx.request.body || {}) as { build_project?: string }
+    ctx.body = {
+      success: true,
+      data: continueModemBaselineRun(ctx.params.runId, { build_project: body.build_project }),
+    }
   } catch (error) {
     const message = (error as Error).message
     ctx.status = message === 'not_found'
