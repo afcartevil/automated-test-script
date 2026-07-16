@@ -260,6 +260,8 @@ const launchStore = useDeviceSelfCheckLaunchStore()
   const tpowerStatus = ref<TPowerStatus | null>(null)
   const overviewReports = ref<SelfCheckReportSummary[]>([])
   const reportsLoading = ref(false)
+  /** 报告列表刷新序号：测试报告落盘后递增，供「测试报告」Tab 同步重载 */
+  const reportsEpoch = ref(0)
 
   async function loadPipelineStatus() {
     try {
@@ -286,6 +288,12 @@ const launchStore = useDeviceSelfCheckLaunchStore()
     } finally {
       reportsLoading.value = false
     }
+  }
+
+  async function refreshReportsAfterTest() {
+    await loadOverviewReports()
+    await loadPipelineStatus()
+    reportsEpoch.value += 1
   }
 
   async function loadPlanningSummary() {
@@ -357,11 +365,6 @@ const launchStore = useDeviceSelfCheckLaunchStore()
         key: 'test',
         label: '自动测试',
         status: hasRunning ? 'running' : hasSchedule ? 'queued' : 'idle',
-      },
-      {
-        key: 'ai',
-        label: 'AI 分析',
-        status: hasRunning ? 'running' : 'idle',
       },
       {
         key: 'review',
@@ -995,6 +998,23 @@ function connectEventStream() {
       await loadPipelineStatus()
       await loadPlanningSummary()
     }
+  })
+  eventSource.value.addEventListener('report_ready', async () => {
+    try {
+      await refreshReportsAfterTest()
+    } catch {
+      reportsEpoch.value += 1
+    }
+  })
+  eventSource.value.addEventListener('test_ended', async (e: MessageEvent) => {
+    try {
+      const data = JSON.parse(e.data)
+      if (data.deviceId) {
+        await refreshDeviceState(data.deviceId)
+      }
+      // 报告已在 report_ready 刷新；此处兜底（例如报告生成失败仍需刷新总览）
+      await loadPipelineStatus()
+    } catch {}
   })
   eventSource.value.addEventListener('manual_confirm', (e: MessageEvent) => {
     try {
@@ -1869,6 +1889,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     pipelineStages,
     overviewReports,
     reportsLoading,
+    reportsEpoch,
     loadOverviewReports,
     tpowerStatus,
     loadTPowerStatus,

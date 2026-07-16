@@ -1,5 +1,5 @@
 /**
- * AI 自检自动化流水线状态（项目节点 → 烧录 → 测试 → AI → Review）
+ * AI 自检自动化流水线状态（项目节点 → 烧录 → 测试 → Review）
  */
 import { getProjectNodesView, getTestScheduleView } from './test-planning'
 import { snapshotDevices, countPendingManualDecisions } from './device-self-check'
@@ -82,13 +82,6 @@ export async function getSelfCheckPipelineStatus(): Promise<SelfCheckPipelineVie
     hint: runningTests > 0 ? `${runningTests} 台运行中` : undefined,
   }
 
-  const aiStage: PipelineStage = {
-    key: 'ai',
-    label: 'AI 分析',
-    status: pendingManual > 0 ? 'attention' : runningTests > 0 ? 'running' : 'idle',
-    hint: pendingManual > 0 ? `${pendingManual} 项待人工确认` : undefined,
-  }
-
   const reviewStage: PipelineStage = {
     key: 'review',
     label: '人工 Review',
@@ -97,7 +90,7 @@ export async function getSelfCheckPipelineStatus(): Promise<SelfCheckPipelineVie
   }
 
   return {
-    stages: [syncStage, flashStage, testStage, aiStage, reviewStage],
+    stages: [syncStage, flashStage, testStage, reviewStage],
     updatedAt: new Date().toISOString(),
     runningTests,
     pendingManual,

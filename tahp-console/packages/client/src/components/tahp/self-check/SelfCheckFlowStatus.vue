@@ -14,7 +14,6 @@ const stageTabMap: Record<string, string> = {
   sync: 'planning',
   flash: 'devices',
   test: 'devices',
-  ai: 'gerrit',
   review: 'review',
 }
 

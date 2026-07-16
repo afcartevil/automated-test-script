@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, inject } from 'vue'
+import { ref, computed, onMounted, onActivated, watch, inject } from 'vue'
 import { NEmpty, NButton, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
 import { DEVICE_SELF_CHECK_KEY } from './self-check-context'
@@ -228,9 +228,21 @@ watch(selectedId, (id) => {
   else reportDetail.value = null
 })
 
+watch(
+  () => ctx.reportsEpoch.value,
+  (epoch, prev) => {
+    if (epoch === prev) return
+    void loadReports()
+  },
+)
+
 onMounted(async () => {
   await loadReports()
   if (selectedId.value) await loadDetail(selectedId.value)
+})
+
+onActivated(async () => {
+  await loadReports()
 })
 </script>
 

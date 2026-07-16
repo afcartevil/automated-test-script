@@ -7,7 +7,6 @@ function mockDeviceSelfCheckApi(page: import('@playwright/test').Page) {
       { key: 'sync', label: '项目节点同步', status: 'done', hint: '1 个项目' },
       { key: 'flash', label: '版本拉取/烧录', status: 'idle' },
       { key: 'test', label: '自动测试', status: 'queued' },
-      { key: 'ai', label: 'AI 分析', status: 'idle' },
       { key: 'review', label: '人工 Review', status: 'idle' },
     ],
     updatedAt: '2026-06-24T08:00:00.000Z',

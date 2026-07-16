@@ -306,11 +306,6 @@ const newState = `${insertAfter}
         status: hasRunning ? 'running' : hasSchedule ? 'queued' : 'idle',
       },
       {
-        key: 'ai',
-        label: 'AI 分析',
-        status: hasRunning ? 'running' : 'idle',
-      },
-      {
         key: 'review',
         label: '人工 Review',
         status: stats.value.pendingManual > 0 ? 'attention' : 'idle',

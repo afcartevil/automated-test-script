@@ -2727,6 +2727,7 @@ async function generateTestReport(
 
     device.resultDir = resultDir
     console.log(`[device-self-check] Report generated: ${resultDir}`)
+    emitEvent('report_ready', { deviceId, resultDir })
   } catch (e) {
     console.error('[device-self-check] Report generation error:', e)
   }

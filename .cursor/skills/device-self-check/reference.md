@@ -46,6 +46,7 @@ Base：`/api/tahp/device-self-check`
 | `device_updated` | `{ device }` |
 | `test_started` | `{ deviceId, testType, session }` |
 | `test_completed` | `{ deviceId, session }` |
+| `report_ready` | `{ deviceId, resultDir }` — 报告落盘后触发，前端据此刷新「测试报告」 |
 | `test_ended` | `{ deviceId }` |
 | `case_completed` | `{ deviceId, caseKey, result }` |
 | `step_update` | `{ caseKey, step }` |
