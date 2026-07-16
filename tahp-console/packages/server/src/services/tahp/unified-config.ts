@@ -93,14 +93,14 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     label: '7-Zip',
     type: 'text',
     group: GROUP_MODEM_TOOLS,
-    placeholder: '7z.exe 完整路径',
+    placeholder: 'C:\\Program Files\\7-Zip\\7z.exe',
   },
   {
     key: 'chrome_binary',
     label: 'Chrome',
     type: 'text',
     group: GROUP_MODEM_TOOLS,
-    placeholder: 'chrome.exe 完整路径',
+    placeholder: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   },
   {
     key: 'wireshark_path',

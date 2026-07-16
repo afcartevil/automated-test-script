@@ -617,7 +617,7 @@ async function runAgentChat(
   let fullResponse = ''
 
   let lastChunk: AgentBridgeOutput | null = null
-  for await (const chunk of sharedBridgeClient.streamOutput(started.run_id, { intervalMs: 100 })) {
+  for await (const chunk of sharedBridgeClient.streamOutput(started.run_id, { intervalMs: 50 })) {
     lastChunk = chunk
 
     for (const ev of chunk.events || []) {
@@ -696,11 +696,17 @@ function findSkillUseHits(text: string, fromIndex = 0): SkillUseHit[] {
 
 // ─── 预备阶段（连接 Bridge，不计入 UI 五步进度） ─────────────────────────────
 
+function emitBugActivity(taskId: string, message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
+  logBug(taskId, level, message)
+  emit(taskId, 'task.message', { level: 'activity', text: message })
+}
+
 function emitPrepPhase(taskId: string, ctx: BugAnalysisTaskCtx, phase: 'PREPARING' | 'CONNECTING_AGENT', message: string) {
   const progress = phase === 'PREPARING' ? 5 : 10
   ctx.phase = phase
   ctx.progress = progress
   emit(taskId, 'task.phase', { phase, progress, message })
+  emitBugActivity(taskId, `阶段：${phase === 'PREPARING' ? '准备 Agent' : '连接 Agent Bridge'} — ${message}`)
 }
 
 function applyParsedStageMarker(
@@ -1236,6 +1242,14 @@ async function runSingleBugAnalysis(
       )
     }
     logBug(taskId, 'info', `Agent Bridge ready, session=${agentSessionId}`)
+    emitBugActivity(taskId, `Agent Bridge 已连接，开始执行分析（session=${agentSessionId}）`)
+    ctx.phase = 'ANALYZING'
+    ctx.progress = BUG_UI_PHASE_PROGRESS.ANALYZING
+    emit(taskId, 'task.phase', {
+      phase: 'ANALYZING',
+      progress: BUG_UI_PHASE_PROGRESS.ANALYZING,
+      message: 'Agent 正在调用 Skill / 工具执行分析...',
+    })
 
     let lastSkillHitIdx = 0
     let toolCallCount = 0
@@ -1273,6 +1287,7 @@ async function runSingleBugAnalysis(
         toolCallCount += 1
         if (!ctx.skillsUsed.includes(toolName)) ctx.skillsUsed.push(toolName)
         const argPreview = summarizeArgs(args)
+        const activity = `正在调用工具 ${toolName}${argPreview ? ` ${argPreview}` : ''}`
         emit(taskId, 'task.skill_use', {
           skill_id: toolName,
           source: 'tool_call',
@@ -1281,7 +1296,7 @@ async function runSingleBugAnalysis(
           purpose: `Agent 真实调用工具 ${toolName}`,
           message: `🛠 Agent 调用：${toolName}${argPreview ? ` ${argPreview}` : ''}`,
         })
-        logBug(taskId, 'info', `tool.started: ${toolName} ${argPreview}`)
+        emitBugActivity(taskId, activity)
       },
       onToolCompleted: (toolName, isError, toolCallId) => {
         emit(taskId, 'task.tool_completed', {
@@ -1290,7 +1305,7 @@ async function runSingleBugAnalysis(
           error: isError,
           message: isError ? `✗ 工具失败：${toolName}` : `✓ 工具完成：${toolName}`,
         })
-        logBug(taskId, isError ? 'warn' : 'info', `tool.completed: ${toolName} ${isError ? '(error)' : ''}`)
+        emitBugActivity(taskId, `${isError ? '工具失败' : '工具完成'}：${toolName}`, isError ? 'warn' : 'info')
       },
       onReasoning: (text) => {
         if (text) emit(taskId, 'task.message', { level: 'reasoning', text })

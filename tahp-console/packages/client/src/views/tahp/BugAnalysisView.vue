@@ -29,6 +29,11 @@ import {
   reportToBugTask,
   type HistoryStageDetail,
 } from '@/utils/bug-analysis-report'
+import {
+  buildBugActivityLog,
+  formatBugActivityLine,
+  lastBugActivityHint,
+} from '@/utils/bug-analysis-activity'
 import { composeJiraCommentFromReport, sanitizeJiraCommentText } from '@/utils/compose-jira-comment'
 import { hasJiraRemarkSection } from '@/utils/jira-comment-from-report'
 import { prependDistillJiraHeader } from '@/utils/distill-jira-header'
@@ -201,6 +206,8 @@ const reportDetail = ref<BugReport | null>(null)
 const reportLoading = ref(false)
 const taskLog = ref<string>('')
 const logLoading = ref(false)
+const activityScroller = ref<HTMLElement | null>(null)
+let logPollTimer: ReturnType<typeof setInterval> | null = null
 
 const reportMarkdown = computed(() => {
   if (!reportDetail.value) return ''
@@ -941,24 +948,50 @@ async function loadReport() {
   }
 }
 
-async function loadLog() {
+async function loadLog(silent = false) {
   if (!currentTaskId.value) return
-  logLoading.value = true
-  taskLog.value = ''
+  if (!silent) logLoading.value = true
   try {
     const r = await getBugLog(currentTaskId.value)
     taskLog.value = r.content || '(日志为空)'
   } catch (err) {
-    taskLog.value = `加载日志失败: ${(err as Error).message}`
+    if (!silent) taskLog.value = `加载日志失败: ${(err as Error).message}`
   } finally {
-    logLoading.value = false
+    if (!silent) logLoading.value = false
   }
+}
+
+function stopLogPoll() {
+  if (logPollTimer) {
+    clearInterval(logPollTimer)
+    logPollTimer = null
+  }
+}
+
+function startLogPoll() {
+  stopLogPoll()
+  logPollTimer = setInterval(() => {
+    if (!isRunning.value || !currentTaskId.value) {
+      stopLogPoll()
+      return
+    }
+    void loadLog(true)
+  }, 2500)
 }
 
 watch(activeReportTab, (tab) => {
   if ((tab === 'report' || tab === 'jira') && currentTaskId.value && !reportDetail.value) loadReport()
-  if (tab === 'log' && currentTaskId.value && !taskLog.value) loadLog()
+  if (tab === 'log' && currentTaskId.value) void loadLog()
 })
+
+watch(
+  () => isRunning.value,
+  (running) => {
+    if (running && currentTaskId.value) startLogPoll()
+    else stopLogPoll()
+  },
+  { immediate: true },
+)
 
 watch(
   () => currentTask.value?.status,
@@ -971,11 +1004,11 @@ watch(
 )
 
 function downloadLog() {
-  if (!currentTaskId.value || !taskLog.value) {
+  if (!currentTaskId.value || !displayTaskLog.value) {
     message.warning('请先在"任务日志"页加载日志')
     return
   }
-  const blob = new Blob([taskLog.value], { type: 'text/plain;charset=utf-8' })
+  const blob = new Blob([displayTaskLog.value], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -1354,6 +1387,7 @@ watch(showDistillDialog, (open) => {
 
 onBeforeUnmount(() => {
   resetSkillOp()
+  stopLogPoll()
 })
 
 async function stopOrCancelCurrentTask() {
@@ -1406,8 +1440,53 @@ const jiraInputHint = computed(() => {
 const liveStreamHint = computed(() => {
   if (currentLlm.value || currentReasoning.value) return null
   if (!isRunning.value) return null
+  const hint = lastBugActivityHint(currentStream.value)
+  if (hint) return hint
+  const phase = currentTask.value?.phase
+  if (phase === 'ANALYZING') return 'Agent 正在调用 Skill / 工具，完成后会继续输出分析结论...'
+  if (phase === 'PREPARING' || phase === 'CONNECTING_AGENT') return '正在连接 Agent Bridge...'
   return '等待 Agent 响应...'
 })
+
+const currentStream = computed(() => {
+  const tid = currentTaskId.value
+  return tid ? store.stream(tid) : []
+})
+
+const liveActivityItems = computed(() => {
+  const items: Array<{ key: string; text: string; kind: string }> = []
+  for (let i = 0; i < currentStream.value.length; i += 1) {
+    const ev = currentStream.value[i]
+    const text = formatBugActivityLine(ev)
+    if (!text) continue
+    items.push({
+      key: `${ev.ts}-${ev.type}-${i}`,
+      text: text.replace(/^\[\d{2}:\d{2}:\d{2}\]\s*/, ''),
+      kind: ev.type,
+    })
+  }
+  return items.slice(-40)
+})
+
+const agentSkillEvents = computed(() =>
+  currentStream.value.filter(ev => ev.type === 'task.skill_use' || ev.type === 'task.tool_completed'),
+)
+
+const streamTaskLog = computed(() => buildBugActivityLog(currentStream.value))
+
+const displayTaskLog = computed(() => {
+  if (isRunning.value && streamTaskLog.value) return streamTaskLog.value
+  return taskLog.value || streamTaskLog.value || ''
+})
+
+watch(
+  () => liveActivityItems.value.length,
+  async () => {
+    await nextTick()
+    const el = activityScroller.value
+    if (el) el.scrollTop = el.scrollHeight
+  },
+)
 </script>
 
 <template>
@@ -1864,17 +1943,52 @@ const liveStreamHint = computed(() => {
                   <EaPill v-else-if="isHistoryView || currentTask.status === 'completed'" variant="ok">已完成</EaPill>
                   <EaPill v-else-if="currentTask.status === 'failed'" variant="err">失败</EaPill>
                 </div>
-                <div ref="llmScroller" class="live-llm-body">
-                  <div v-if="currentReasoning && !currentLlm" class="reasoning-block">
-                    <div class="reasoning-label ea-muted">Agent 推理中</div>
-                    <pre class="reasoning-text">{{ currentReasoning }}</pre>
+                <div class="live-monitor-grid">
+                  <div class="live-activity-panel">
+                    <div class="live-activity-head">
+                      <strong>执行动态</strong>
+                      <span v-if="isRunning" class="ea-muted live-activity-sub">实时更新</span>
+                    </div>
+                    <div ref="activityScroller" class="live-activity-body">
+                      <div v-if="!liveActivityItems.length" class="live-activity-empty ea-muted">
+                        {{ isRunning ? '等待 Agent 开始输出...' : '暂无执行记录' }}
+                      </div>
+                      <div
+                        v-for="item in liveActivityItems"
+                        :key="item.key"
+                        class="live-activity-line"
+                        :class="{ 'is-tool': item.kind === 'task.skill_use' || item.kind === 'task.tool_completed' }"
+                      >
+                        {{ item.text }}
+                      </div>
+                    </div>
                   </div>
-                  <MarkdownRenderer v-if="currentLlm" :content="currentLlm" />
-                  <div v-else-if="liveStreamHint" class="llm-waiting">
-                    <NSpin size="small" />
-                    <span class="ea-muted" style="margin-left: 8px">{{ liveStreamHint }}</span>
+                  <div class="live-llm-main">
+                    <div ref="llmScroller" class="live-llm-body">
+                      <div v-if="currentReasoning && !currentLlm" class="reasoning-block">
+                        <div class="reasoning-label ea-muted">Agent 推理中</div>
+                        <pre class="reasoning-text">{{ currentReasoning }}</pre>
+                      </div>
+                      <MarkdownRenderer v-if="currentLlm" :content="currentLlm" />
+                      <div v-else-if="liveStreamHint" class="llm-waiting">
+                        <NSpin size="small" />
+                        <span class="ea-muted" style="margin-left: 8px">{{ liveStreamHint }}</span>
+                      </div>
+                      <NEmpty v-else size="small" description="暂无输出" />
+                    </div>
+                    <div v-if="agentSkillEvents.length" class="live-tool-strip">
+                      <div class="live-tool-head ea-muted">最近工具调用</div>
+                      <div class="live-tool-list">
+                        <span
+                          v-for="(ev, i) in agentSkillEvents.slice(-6)"
+                          :key="'tool-' + i"
+                          class="live-tool-chip"
+                        >
+                          {{ String(ev.payload?.skill_id || 'tool') }}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <NEmpty v-else size="small" description="暂无输出" />
                 </div>
               </div>
             </div>
@@ -1939,13 +2053,16 @@ const liveStreamHint = computed(() => {
             <div v-show="activeReportTab === 'log'" class="tab-pane tab-pane-log">
               <NSpin :show="logLoading">
                 <div class="log-header">
-                  <span class="ea-muted log-hint">日志文件: <code>{{ currentTaskId }}.log</code>（位于 hermes-web-ui 数据目录）</span>
+                  <span class="ea-muted log-hint">
+                    日志文件: <code>{{ currentTaskId }}.log</code>
+                    <template v-if="isRunning"> · 运行中每 2.5s 自动刷新</template>
+                  </span>
                   <NSpace size="small">
-                    <NButton size="small" @click="loadLog">刷新</NButton>
-                    <NButton size="small" type="primary" :disabled="!taskLog" @click="downloadLog">下载日志</NButton>
+                    <NButton size="small" @click="() => loadLog()">刷新</NButton>
+                    <NButton size="small" type="primary" :disabled="!displayTaskLog" @click="downloadLog">下载日志</NButton>
                   </NSpace>
                 </div>
-                <pre class="log-body">{{ taskLog || '(无日志或未加载)' }}</pre>
+                <pre class="log-body">{{ displayTaskLog || '(无日志或未加载)' }}</pre>
               </NSpin>
             </div>
           </div>
@@ -2403,6 +2520,70 @@ const liveStreamHint = computed(() => {
   max-height: 100%;
 }
 .live-llm-header { padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--surface); flex-shrink: 0; }
+.live-monitor-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 34%) minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.live-activity-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+}
+.live-activity-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.live-activity-sub { font-size: 11px; }
+.live-activity-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.live-activity-empty { padding: 12px 4px; font-size: 12px; }
+.live-activity-line {
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border-radius: 8px;
+  background: var(--bg);
+  word-break: break-word;
+}
+.live-activity-line.is-tool {
+  border-left: 3px solid var(--brand, #0969da);
+}
+.live-llm-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.live-tool-strip {
+  flex-shrink: 0;
+  border-top: 1px solid var(--line);
+  padding: 8px 12px;
+  background: var(--surface);
+}
+.live-tool-head { font-size: 11px; margin-bottom: 6px; }
+.live-tool-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.live-tool-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
 .live-llm-body {
   flex: 1; min-height: 0; min-width: 0;
   overflow-x: auto;
