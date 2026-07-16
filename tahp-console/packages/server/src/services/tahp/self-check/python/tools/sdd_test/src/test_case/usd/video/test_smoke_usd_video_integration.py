@@ -22,9 +22,9 @@ def test_smoke_usd_video_smartmediaengine(device_serial):
     """
     视频省电
     测试步骤: adb shell getprop ro.tr_media.smartmediaengine.feature.support
-    预期结果: 1为支持，0或空为不支持
+    预期结果: true为支持，false或空为不支持
     """
     actual = getprop(
         "ro.tr_media.smartmediaengine.feature.support", device_serial
     )
-    assert actual == "1", f"视频省电校验失败: expected 1; actual: {actual!r}"
+    assert actual == "true", f"视频省电校验失败: expected true; actual: {actual!r}"
