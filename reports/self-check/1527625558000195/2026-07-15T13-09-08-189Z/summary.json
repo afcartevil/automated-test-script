@@ -1,0 +1,23 @@
+{
+  "deviceId": "1527625558000195",
+  "deviceName": "Infinix X6876",
+  "testType": "monkey",
+  "startTime": "2026-07-15T13:09:08.189Z",
+  "endTime": "2026-07-15T13:09:17.449Z",
+  "duration": 9,
+  "status": "完成(通过)",
+  "modules": {
+    "monkey/monkey": {
+      "module": "monkey/monkey",
+      "totalCases": 1,
+      "completedCases": 1,
+      "passedCases": 1,
+      "failedCases": 0,
+      "currentCaseIndex": 1
+    }
+  },
+  "totalCases": 1,
+  "passedCases": 1,
+  "failedCases": 0,
+  "skippedCases": 0
+}

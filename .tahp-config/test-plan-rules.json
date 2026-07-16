@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "rules": [
+    {
+      "node": "STR4A",
+      "offsetDays": -1,
+      "testType": "smoke"
+    }
+  ]
+}

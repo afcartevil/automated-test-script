@@ -1,0 +1,23 @@
+{
+  "deviceId": "ASALE3741B000022",
+  "deviceName": "TECNO LJ8k",
+  "testType": "week",
+  "startTime": "2026-07-16T08:53:50.710Z",
+  "endTime": "2026-07-16T09:23:30.833Z",
+  "duration": 0,
+  "status": "完成(通过)",
+  "modules": {
+    "week/driver": {
+      "module": "week/driver",
+      "totalCases": 38,
+      "completedCases": 38,
+      "passedCases": 17,
+      "failedCases": 6,
+      "currentCaseIndex": 38
+    }
+  },
+  "totalCases": 38,
+  "passedCases": 23,
+  "failedCases": 0,
+  "skippedCases": 15
+}

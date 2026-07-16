@@ -1,0 +1,64 @@
+{
+  "deviceId": "1527625558000195",
+  "deviceName": "Infinix X6876",
+  "testType": "monkey",
+  "startTime": "2026-07-15T13:09:08.189Z",
+  "endTime": "2026-07-15T13:09:17.449Z",
+  "duration": 9,
+  "status": "完成(通过)",
+  "modules": {
+    "monkey/monkey": {
+      "module": "monkey/monkey",
+      "totalCases": 1,
+      "completedCases": 1,
+      "passedCases": 1,
+      "failedCases": 0,
+      "currentCaseIndex": 1
+    }
+  },
+  "totalCases": 1,
+  "passedCases": 1,
+  "failedCases": 0,
+  "skippedCases": 0,
+  "failedCaseItems": [],
+  "allCaseItems": [
+    {
+      "caseKey": "monkey/monkey/1",
+      "caseName": "monkey测试",
+      "module": "monkey",
+      "testType": "monkey",
+      "caseIndex": 1,
+      "status": "通过",
+      "message": "已加载黑名单 20 个包名\nMonkey 测试已启动\n设备序列号: 1527625558000195\nMonkey PID: 26724\n测试时长: 2分钟\n预计结束: 2026-07-15 21:11:17\n本地日志: E:\\AI\\easyadapter\\tahp-console\\dist\\server\\self-check\\python\\tools\\monkey_usd\\logs\\monkey_20260715_210917.log",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "在设备执行页选择测试机，勾选本用例",
+          "status": "未开始",
+          "timestamp": "2026-07-15T13:09:13.213Z"
+        },
+        {
+          "stepDesc": "在概览区配置 Monkey 测试时长（默认 7d，支持 30m、8h、7d 等格式，最长 14 天）",
+          "status": "未开始",
+          "timestamp": "2026-07-15T13:09:13.213Z"
+        },
+        {
+          "stepDesc": "准备启动 Monkey 测试，设备: 1527625558000195，时长: 2m ✓",
+          "status": "完成",
+          "timestamp": "2026-07-15T13:09:17.420Z"
+        },
+        {
+          "stepDesc": "Monkey 已后台启动 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-15T13:09:17.420Z"
+        },
+        {
+          "stepDesc": "结果: 已加载黑名单 20 个包名\nMonkey 测试已启动\n设备序列号: 1527625558000195\nMonkey PID: 26724\n测试时长: 2分钟\n预计结束: 2026-07-15 21:11:17\n本地日志: E:\\AI\\easyadapter\\tahp-console\\dist\\server\\self-check\\python\\tools\\monkey_usd\\logs\\monkey_20260715_210917.log",
+          "status": "通过",
+          "timestamp": "2026-07-15T13:09:17.449Z"
+        }
+      ]
+    }
+  ],
+  "aiSummary": "共 1 项用例，全部通过（通过率 100%）。设备 Infinix X6876，测试类型 monkey。"
+}

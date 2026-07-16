@@ -1,0 +1,74 @@
+{
+  "deviceId": "144512554Y101142",
+  "deviceName": "TECNO LJ9",
+  "testType": "smoke",
+  "startTime": "2026-07-16T09:18:47.444Z",
+  "endTime": "2026-07-16T09:18:56.493Z",
+  "duration": 9,
+  "status": "完成(失败)",
+  "modules": {
+    "smoke/usd": {
+      "module": "smoke/usd",
+      "totalCases": 1,
+      "completedCases": 1,
+      "passedCases": 0,
+      "failedCases": 1,
+      "currentCaseIndex": 1
+    }
+  },
+  "totalCases": 1,
+  "passedCases": 0,
+  "failedCases": 1,
+  "skippedCases": 0,
+  "aiPlanned": true,
+  "scheduleKey": "LJ9|STR4A|2026/07/16|smoke",
+  "failedCaseItems": [
+    {
+      "caseKey": "smoke/usd/1",
+      "caseName": "USD冒烟测试",
+      "module": "usd",
+      "status": "失败",
+      "message": ""
+    }
+  ],
+  "allCaseItems": [
+    {
+      "caseKey": "smoke/usd/1",
+      "caseName": "USD冒烟测试",
+      "module": "usd",
+      "testType": "smoke",
+      "caseIndex": 1,
+      "status": "失败",
+      "message": "",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "在设备执行页选择测试机，勾选本用例",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:18:52.369Z"
+        },
+        {
+          "stepDesc": "可选在概览区勾选「跳过 SPD 拉取（--skip-spd-info）」；无 SPD 网络时 SPD 依赖用例将自动跳过",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:18:52.369Z"
+        },
+        {
+          "stepDesc": "准备执行 USD 冒烟测试，设备: 144512554Y101142 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:18:55.250Z"
+        },
+        {
+          "stepDesc": "正在运行 si_run.py --test-type usd …",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:18:55.250Z"
+        },
+        {
+          "stepDesc": "结果: 失败",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:18:56.492Z"
+        }
+      ]
+    }
+  ],
+  "aiSummary": "共 1 项，通过 0，失败 1（通过率 0%）。失败集中在 usd。建议优先关注：USD冒烟测试。"
+}

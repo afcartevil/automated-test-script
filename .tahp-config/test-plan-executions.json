@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "records": {
+    "LJ8k|STR4A|2026/07/15|smoke": {
+      "scheduleKey": "LJ8k|STR4A|2026/07/15|smoke",
+      "runtimeStatus": "completed",
+      "deviceId": "ASALE3741B000022",
+      "startedAt": "2026-07-16T08:48:47.337Z",
+      "completedAt": "2026-07-16T08:49:21.441Z",
+      "updatedAt": "2026-07-16T08:49:21.471Z"
+    },
+    "LJ9|STR4A|2026/07/16|smoke": {
+      "scheduleKey": "LJ9|STR4A|2026/07/16|smoke",
+      "runtimeStatus": "completed",
+      "deviceId": "144512554Y101142",
+      "startedAt": "2026-07-16T09:18:47.555Z",
+      "completedAt": "2026-07-16T09:18:56.493Z",
+      "updatedAt": "2026-07-16T09:18:56.573Z"
+    },
+    "LJ8|STR4A|2026/07/15|smoke": {
+      "scheduleKey": "LJ8|STR4A|2026/07/15|smoke",
+      "runtimeStatus": "completed",
+      "deviceId": "ASALE3741B000022",
+      "startedAt": "2026-07-16T08:19:47.206Z",
+      "completedAt": "2026-07-16T08:20:50.535Z",
+      "updatedAt": "2026-07-16T08:20:50.601Z"
+    }
+  }
+}

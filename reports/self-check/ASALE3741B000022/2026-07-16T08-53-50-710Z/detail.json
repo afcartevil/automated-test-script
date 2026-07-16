@@ -1,0 +1,2348 @@
+{
+  "deviceId": "ASALE3741B000022",
+  "deviceName": "TECNO LJ8k",
+  "testType": "week",
+  "startTime": "2026-07-16T08:53:50.710Z",
+  "endTime": "2026-07-16T09:23:30.833Z",
+  "duration": 0,
+  "status": "完成(通过)",
+  "modules": {
+    "week/driver": {
+      "module": "week/driver",
+      "totalCases": 38,
+      "completedCases": 38,
+      "passedCases": 17,
+      "failedCases": 6,
+      "currentCaseIndex": 38
+    }
+  },
+  "totalCases": 38,
+  "passedCases": 23,
+  "failedCases": 0,
+  "skippedCases": 15,
+  "failedCaseItems": [],
+  "allCaseItems": [
+    {
+      "caseKey": "week/driver/1",
+      "caseName": "按键",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 1,
+      "status": "通过",
+      "message": "按键工模测试成功",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "1、进入工模，选择测试项按键，按照指示操作音量上下键或者电源键，可点击pass",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:54:00.249Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T08:54:00.250Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:20.555Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:20.555Z"
+        },
+        {
+          "stepDesc": "关闭工模应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:20.555Z"
+        },
+        {
+          "stepDesc": "启动工模主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:20.555Z"
+        },
+        {
+          "stepDesc": "跳过射频参数校准 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:20.555Z"
+        },
+        {
+          "stepDesc": "进入 Other 分类 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:20.555Z"
+        },
+        {
+          "stepDesc": "选择按键测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:20.555Z"
+        },
+        {
+          "stepDesc": "判断按键测试结果 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:20.555Z"
+        },
+        {
+          "stepDesc": "点击按键通过按钮 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:20.555Z"
+        },
+        {
+          "stepDesc": "结果: 按键工模测试成功",
+          "status": "通过",
+          "timestamp": "2026-07-16T08:54:22.331Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/2",
+      "caseName": "马达",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 2,
+      "status": "通过",
+      "message": "转子马达工模测试成功",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "1、进入工模，选择测试项Drivers，马达正常振动则pass。",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:54:22.333Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T08:54:22.333Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁-ok ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:40.794Z"
+        },
+        {
+          "stepDesc": "返回桌面-ok ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:40.794Z"
+        },
+        {
+          "stepDesc": "关闭工模应用-ok ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:40.794Z"
+        },
+        {
+          "stepDesc": "启动工模主界面-ok ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:40.794Z"
+        },
+        {
+          "stepDesc": "跳过射频参数校准-ok ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:40.794Z"
+        },
+        {
+          "stepDesc": "进入 Other 分类-ok ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:40.794Z"
+        },
+        {
+          "stepDesc": "识别马达类型-ok ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:40.794Z"
+        },
+        {
+          "stepDesc": "识别为转子马达-ok ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:40.794Z"
+        },
+        {
+          "stepDesc": "选择转子马达测试项-ok ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:40.794Z"
+        },
+        {
+          "stepDesc": "判断转子马达测试结果-ok ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:40.794Z"
+        },
+        {
+          "stepDesc": "点击转子马达通过按钮-ok",
+          "status": "进行中",
+          "timestamp": "2026-07-16T08:54:40.794Z"
+        },
+        {
+          "stepDesc": "结果: 转子马达工模测试成功",
+          "status": "通过",
+          "timestamp": "2026-07-16T08:54:42.580Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/3",
+      "caseName": "TP报点",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 3,
+      "status": "通过",
+      "message": "检测到触摸坐标与 SYN，TP 报点正常",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "1.adb shell确定连上手机，输入getevent -dlt回车（tp触摸有报点）",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:54:42.581Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T08:54:42.581Z"
+        },
+        {
+          "stepDesc": "返回主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:59.724Z"
+        },
+        {
+          "stepDesc": "启动 getevent -ltr ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:59.724Z"
+        },
+        {
+          "stepDesc": "等待手动触摸报点(15s) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:59.724Z"
+        },
+        {
+          "stepDesc": "解析触摸事件 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:54:59.724Z"
+        },
+        {
+          "stepDesc": "结果: 检测到触摸坐标与 SYN，TP 报点正常",
+          "status": "通过",
+          "timestamp": "2026-07-16T08:54:59.755Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/4",
+      "caseName": "TP双击唤醒",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 4,
+      "status": "通过",
+      "message": "屏幕已亮起且 getevent 检测到 C6(KEY_F26) 键值",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "系统设置中打开手势双击唤醒，并设置锁屏",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:54:59.756Z"
+        },
+        {
+          "stepDesc": "亮屏时 双击能灭屏；灭屏时双击能唤醒",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:54:59.756Z"
+        },
+        {
+          "stepDesc": "检查双击唤醒设置 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "双击唤醒未开启(settings=0) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "进入双击唤醒设置页 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "启动 TappingWakeActivity ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "点击双击唤醒开关 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "确认双击唤醒已开启 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "灭屏(keyevent 223) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "灭屏后屏幕状态(OFF) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "请在 45 秒内双击屏幕亮屏 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "启动 getevent -ltr 并监测亮屏 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "检测 C6(KEY_F26) 键值 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "检测到亮屏 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "回到桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:18.482Z"
+        },
+        {
+          "stepDesc": "结果: 屏幕已亮起且 getevent 检测到 C6(KEY_F26) 键值",
+          "status": "通过",
+          "timestamp": "2026-07-16T08:55:20.296Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/5",
+      "caseName": "开机工模触摸屏",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 5,
+      "status": "通过",
+      "message": "触摸屏自检项和触摸屏测试项全部通过",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "1.进入工模，进入触摸屏和两点测试项（两点测试项只存在旧工模），按照提示，能够正常点击pass，且测试项显示绿色，即代表pass",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:55:20.298Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T08:55:20.298Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "关闭工模应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "启动工模主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "跳过射频参数校准 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "进入screen测试组 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "校验屏幕测试组界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "识别触摸屏自检项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "选择触摸屏自检1(TouchSelf)测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "判断触摸屏自检1(TouchSelf)测试结果 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "点击触摸屏自检1(TouchSelf)通过按钮 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "选择触摸屏自检2(TouchSelf(Incoming Inspection))测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "判断触摸屏自检2(TouchSelf(Incoming Inspection))测试结果 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "点击触摸屏自检2(TouchSelf(Incoming Inspection))通过按钮 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "识别触摸屏测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "选择触摸屏测试(TouchPanel)测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "判断触摸屏测试(TouchPanel)测试结果 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "点击触摸屏测试(TouchPanel)通过按钮 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:55:45.576Z"
+        },
+        {
+          "stepDesc": "结果: 触摸屏自检项和触摸屏测试项全部通过",
+          "status": "通过",
+          "timestamp": "2026-07-16T08:55:47.326Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/6",
+      "caseName": "TP唤醒休眠能正常使用",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 6,
+      "status": "通过",
+      "message": "5 轮亮灭屏后触摸报点均正常",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "按power键休眠TP，然后power唤醒",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:55:47.327Z"
+        },
+        {
+          "stepDesc": "唤醒后重复第一条步骤，确定能正常使用",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:55:47.327Z"
+        },
+        {
+          "stepDesc": "返回主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第1/5轮 灭屏(keyevent 223) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第1/5轮 亮屏(keyevent 224) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第1/5轮 请手动触摸屏幕(12s内) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第1/5轮 检测报点 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第2/5轮 灭屏(keyevent 223) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第2/5轮 亮屏(keyevent 224) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第2/5轮 请手动触摸屏幕(12s内) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第2/5轮 检测报点 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第3/5轮 灭屏(keyevent 223) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第3/5轮 亮屏(keyevent 224) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第3/5轮 请手动触摸屏幕(12s内) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第3/5轮 检测报点 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第4/5轮 灭屏(keyevent 223) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第4/5轮 亮屏(keyevent 224) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第4/5轮 请手动触摸屏幕(12s内) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第4/5轮 检测报点 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第5/5轮 灭屏(keyevent 223) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第5/5轮 亮屏(keyevent 224) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第5/5轮 请手动触摸屏幕(12s内) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "第5/5轮 检测报点 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:03.861Z"
+        },
+        {
+          "stepDesc": "结果: 5 轮亮灭屏后触摸报点均正常",
+          "status": "通过",
+          "timestamp": "2026-07-16T08:56:03.894Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/7",
+      "caseName": "距离传感器能正常使用",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 7,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "测试机来电，接听",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:56:03.895Z"
+        },
+        {
+          "stepDesc": "贴着耳朵",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:56:03.895Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T08:56:03.895Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T08:56:06.652Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/8",
+      "caseName": "开机工模色彩",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 8,
+      "status": "通过",
+      "message": "色彩人工判断通过",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "1、显示正常、无黑屏、花屏、闪屏",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:56:06.653Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T08:56:06.653Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:18.196Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:18.196Z"
+        },
+        {
+          "stepDesc": "关闭工模应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:18.196Z"
+        },
+        {
+          "stepDesc": "启动工模主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:18.196Z"
+        },
+        {
+          "stepDesc": "跳过射频参数校准 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:18.196Z"
+        },
+        {
+          "stepDesc": "进入screen测试组 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:18.196Z"
+        },
+        {
+          "stepDesc": "校验屏幕测试组界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:18.196Z"
+        },
+        {
+          "stepDesc": "选择色彩测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:18.196Z"
+        },
+        {
+          "stepDesc": "色彩需人工判断 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:18.196Z"
+        },
+        {
+          "stepDesc": "结果: 色彩人工判断通过",
+          "status": "通过",
+          "timestamp": "2026-07-16T08:56:37.567Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/9",
+      "caseName": "开机工模背光",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 9,
+      "status": "通过",
+      "message": "背光人工判断通过",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "1、进入工模，选择测试项背光，根据提示背光数值255，点击pass即可",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:56:37.568Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T08:56:37.569Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:48.718Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:48.718Z"
+        },
+        {
+          "stepDesc": "关闭工模应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:48.718Z"
+        },
+        {
+          "stepDesc": "启动工模主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:48.718Z"
+        },
+        {
+          "stepDesc": "跳过射频参数校准 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:48.718Z"
+        },
+        {
+          "stepDesc": "进入screen测试组 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:48.718Z"
+        },
+        {
+          "stepDesc": "校验屏幕测试组界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:48.718Z"
+        },
+        {
+          "stepDesc": "选择背光测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:48.718Z"
+        },
+        {
+          "stepDesc": "背光需人工判断 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:56:48.718Z"
+        },
+        {
+          "stepDesc": "结果: 背光人工判断通过",
+          "status": "通过",
+          "timestamp": "2026-07-16T08:57:27.783Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/10",
+      "caseName": "LCM闪屏场景测试",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 10,
+      "status": "通过",
+      "message": "人工评判pass",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "进入设置->安全性和位置信息->指纹->录制指纹->息屏显示屏下指纹->开启",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:57:27.784Z"
+        },
+        {
+          "stepDesc": "按PWR键灭屏 或完全灭屏状态下抬起手机触发息屏模式->不断点击指纹光斑后，亮屏检查",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:57:27.784Z"
+        },
+        {
+          "stepDesc": "读取屏下指纹支持属性 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "屏下指纹支持属性值: 1 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "设备声明支持屏下指纹 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "关闭工模应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "启动工模主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "跳过射频参数校准 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "进入sensor工模列表 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "校验sensor工模界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "需人工操作：请在 Sensor 工模列表中找到指纹相关校准项。 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "需人工评判 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "确认指纹工模校准 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "进入指纹设置界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "需人工操作：录入一个指纹；灭屏后持续触摸指纹区域，观察是否出现 LCM 闪屏。 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "需人工评判",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:00:14.666Z"
+        },
+        {
+          "stepDesc": "结果: 人工评判pass",
+          "status": "通过",
+          "timestamp": "2026-07-16T09:00:18.081Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/11",
+      "caseName": "检查深色模式（暗环境下操作）",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 11,
+      "status": "通过",
+      "message": "人工评判pass",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "查看深色模式：下拉通知栏、或 点击文件夹->检查背景是否存在背景色变、色阶、mura麻点、以及竖条纹现象",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:00:18.083Z"
+        },
+        {
+          "stepDesc": "正常模式，点击分屏，查看整体背景显示",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:00:18.083Z"
+        },
+        {
+          "stepDesc": "需人工操作：请先解锁测试机。 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:37.944Z"
+        },
+        {
+          "stepDesc": "确认测试机已解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:37.944Z"
+        },
+        {
+          "stepDesc": "进入安全设置界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:37.944Z"
+        },
+        {
+          "stepDesc": "需人工操作：请在安全设置中关闭锁屏密码。 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:37.944Z"
+        },
+        {
+          "stepDesc": "确认已关闭锁屏密码 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:37.944Z"
+        },
+        {
+          "stepDesc": "读取当前深色模式状态 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:37.944Z"
+        },
+        {
+          "stepDesc": "当前深色模式查询结果: Night mode: no ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:37.944Z"
+        },
+        {
+          "stepDesc": "切换到深色模式 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:37.944Z"
+        },
+        {
+          "stepDesc": "打开文件App ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:37.944Z"
+        },
+        {
+          "stepDesc": "等待人工判断结果 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:00:37.944Z"
+        },
+        {
+          "stepDesc": "需人工评判",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:00:37.944Z"
+        },
+        {
+          "stepDesc": "结果: 人工评判pass",
+          "status": "通过",
+          "timestamp": "2026-07-16T09:00:42.368Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/12",
+      "caseName": "设置中开启指针位置以及显示点按操作反馈",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 12,
+      "status": "通过",
+      "message": "人工评判pass",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "设置->系统->关于手机->连续点击版本号3次开启开发者选项",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:00:42.369Z"
+        },
+        {
+          "stepDesc": "开发者选项->开启指针位置以及显示点按操作反馈",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:00:42.369Z"
+        },
+        {
+          "stepDesc": "关闭深色模式 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:01:03.564Z"
+        },
+        {
+          "stepDesc": "开启指针位置显示 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:01:03.564Z"
+        },
+        {
+          "stepDesc": "开启触摸点显示 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:01:03.564Z"
+        },
+        {
+          "stepDesc": "进入设置应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:01:03.564Z"
+        },
+        {
+          "stepDesc": "需人工操作：指针位置与触摸坐标点已开启；观察触摸和显示效果并判定结果。 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:01:03.564Z"
+        },
+        {
+          "stepDesc": "需人工评判",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:01:03.564Z"
+        },
+        {
+          "stepDesc": "结果: 人工评判pass",
+          "status": "通过",
+          "timestamp": "2026-07-16T09:01:04.468Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/13",
+      "caseName": "检查页面初始化",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 13,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "OOBE界面->过开机向导时，检查各项弹框显示是否有条纹、不完整现象",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:01:04.469Z"
+        },
+        {
+          "stepDesc": "开机进入系统后->滑动界面翻页、设置中点击任意弹框（例屏幕超时）、拖动图标任意移动，检查屏幕整体显示",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:01:04.469Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:01:04.469Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:01:07.427Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/14",
+      "caseName": "USB功能正常充电",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 14,
+      "status": "通过",
+      "message": "用例执行超时(120s)",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "1、进入工模，选择测试项charger，用数据线连接手机与电脑，正常显示USB充电中则pass",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:08:38.230Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:08:38.230Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:49.583Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:49.583Z"
+        },
+        {
+          "stepDesc": "关闭工模应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:49.583Z"
+        },
+        {
+          "stepDesc": "启动工模主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:49.583Z"
+        },
+        {
+          "stepDesc": "跳过射频参数校准 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:49.583Z"
+        },
+        {
+          "stepDesc": "点击USB标签 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:49.583Z"
+        },
+        {
+          "stepDesc": "校验测试组界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:49.583Z"
+        },
+        {
+          "stepDesc": "点击顺序执行 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:49.583Z"
+        },
+        {
+          "stepDesc": "等待 ForegroundActivity ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:49.583Z"
+        },
+        {
+          "stepDesc": "结果: 用例执行超时(120s)",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:10:38.231Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/15",
+      "caseName": "开机状态充电",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 15,
+      "status": "通过",
+      "message": "屏幕未亮屏或解锁成功",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "进入工模测试，要求充电器类型识别正常、电流正常，能够点击pass;",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:10:38.232Z"
+        },
+        {
+          "stepDesc": "要求多次拔插USB可正常识别",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:10:38.232Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✗",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:10:41.019Z"
+        },
+        {
+          "stepDesc": "结果: 屏幕未亮屏或解锁失败",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:10:41.057Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/16",
+      "caseName": "关机状态充电",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 16,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "关机状态插入充电器能够进入关机充电状态且显示闪电图标",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:03:10.236Z"
+        },
+        {
+          "stepDesc": "power键短按可亮灭屏且有充电动画呈现，长按可开机",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:03:10.236Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:03:10.237Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:03:12.922Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/17",
+      "caseName": "反向充电",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 17,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "1、使用C-C线可以给支持反向充电的机器进行充电，",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:03:12.923Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:03:12.924Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:03:15.603Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/18",
+      "caseName": "MTP能正常枚举",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 18,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "用数据线连接手机与电脑，手机通知栏上面选择USB的用途：传输文件；",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:03:15.604Z"
+        },
+        {
+          "stepDesc": "打开我的电脑（计算机、此电脑），会看到我的电脑中多了个便携设备，点开它；",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:03:15.604Z"
+        },
+        {
+          "stepDesc": "能正常显示内部储存设备则pass;",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:03:15.604Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:03:15.605Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:03:18.334Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/19",
+      "caseName": "OTG基本功能",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 19,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "进入工模，选择测试项OTG，连接U盘，能正常识别U盘；（电量低于5%会提示低电无法测试）",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:03:18.335Z"
+        },
+        {
+          "stepDesc": "OTG通过后拔出U盘，用数据线连接手机与电脑，打开cmd，检测能正常进入adb,没有影响usb功能则pass；",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:03:18.335Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:03:18.335Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:03:21.083Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/20",
+      "caseName": "单色灯",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 20,
+      "status": "通过",
+      "message": "屏幕未亮屏或解锁成功",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "单色灯",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:10:41.058Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:10:41.058Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✗",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:10:43.932Z"
+        },
+        {
+          "stepDesc": "结果: 屏幕未亮屏或解锁失败",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:10:43.966Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/21",
+      "caseName": "方向传感器功能正常",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 21,
+      "status": "通过",
+      "message": "返回桌面成功",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "1、设置-辅助功能-动作与手势-翻转静音 打开翻转静音，来电-手机翻转-来电静音",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:10:43.967Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:10:43.967Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✗",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:10:46.706Z"
+        },
+        {
+          "stepDesc": "结果: 返回桌面失败",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:10:46.735Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/22",
+      "caseName": "加速度功能正常",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 22,
+      "status": "通过",
+      "message": "屏幕未亮屏或解锁成功",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "进入工模",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:10:46.736Z"
+        },
+        {
+          "stepDesc": "进入gsensor检测项，查看x、y、z 三轴数据",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:10:46.736Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✗",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:10:49.602Z"
+        },
+        {
+          "stepDesc": "结果: 屏幕未亮屏或解锁失败",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:10:49.633Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/23",
+      "caseName": "光感功能正常",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 23,
+      "status": "通过",
+      "message": "sensor测试组子项全部通过: 光传感器、光感数据采集; 人工评判pass",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "进入工模，点击光感测试项",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:03:30.090Z"
+        },
+        {
+          "stepDesc": "进入光感检测项，在不同光源下光感数据会随光照强度的不同而变化",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:03:30.090Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "关闭工模应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "启动工模主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "跳过射频参数校准 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "进入sensor测试组 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "校验测试组界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "需人工操作：请在 Sensor 工模列表中点击光感校准项，并按界面提示完成校准。 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "需人工确认 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "确认光感校准完成 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "选择光传感器测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "判断光传感器测试结果 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "点击光传感器通过按钮 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "光传感器测试后返回测试组界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "选择光感数据采集测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "点击开始光感采集(start_get_raw) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "判断光感数据采集测试结果 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "点击光感数据采集通过按钮 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "关闭工模应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "开启自动背光 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "需人工操作：已返回桌面并开启自动背光，请在不同环境光下观察屏幕背光是否随光强变化（如遮挡/照射光感区域、移动至明暗环境等）。 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "需人工评判",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:05:00.818Z"
+        },
+        {
+          "stepDesc": "结果: sensor测试组子项全部通过: 光传感器、光感数据采集; 人工评判pass",
+          "status": "通过",
+          "timestamp": "2026-07-16T09:05:19.683Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/24",
+      "caseName": "地磁功能正常",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 24,
+      "status": "通过",
+      "message": "sensor测试组子项全部通过: 指南针; 人工评判pass",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "进入工模，指南针随着方向转动而转动；",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:05:19.684Z"
+        },
+        {
+          "stepDesc": "进入指南针app查看是指针方向是否准确",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:05:19.684Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "关闭工模应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "启动工模主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "跳过射频参数校准 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "进入sensor测试组 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "校验测试组界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "选择指南针测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "判断指南针测试结果 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "点击指南针通过按钮 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "打开指南针应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "需人工操作：请观察指南针指向是否准确（可旋转手机对比实际方位）。 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "需人工评判",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:05:41.475Z"
+        },
+        {
+          "stepDesc": "结果: sensor测试组子项全部通过: 指南针; 人工评判pass",
+          "status": "通过",
+          "timestamp": "2026-07-16T09:05:45.242Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/25",
+      "caseName": "SensorTest-V0.3",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 25,
+      "status": "通过",
+      "message": "屏幕未亮屏或解锁成功",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "adb install安装软件",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:10:49.634Z"
+        },
+        {
+          "stepDesc": "查看加速度传感器小球能根据倾斜的方向移动",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:10:49.634Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✗",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:10:52.821Z"
+        },
+        {
+          "stepDesc": "结果: 屏幕未亮屏或解锁失败",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:10:52.853Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/26",
+      "caseName": "Gsensor基本功能",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 26,
+      "status": "通过",
+      "message": "人工评判pass",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "打开横竖屏旋转功能",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:06:09.629Z"
+        },
+        {
+          "stepDesc": "手机横屏，打开图片",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:06:09.629Z"
+        },
+        {
+          "stepDesc": "回到桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:22.787Z"
+        },
+        {
+          "stepDesc": "打开屏幕自动旋转 (accelerometer_rotation=1) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:22.787Z"
+        },
+        {
+          "stepDesc": "截屏(/sdcard/Pictures/Screenshots/gsensor_test.png) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:22.787Z"
+        },
+        {
+          "stepDesc": "打开图库应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:22.787Z"
+        },
+        {
+          "stepDesc": "需人工评判",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:06:22.787Z"
+        },
+        {
+          "stepDesc": "结果: 人工评判pass",
+          "status": "通过",
+          "timestamp": "2026-07-16T09:06:30.261Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/27",
+      "caseName": "开机工模指纹",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 27,
+      "status": "跳过",
+      "message": "设备不支持侧边指纹，已跳过",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "进入工模测试",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:06:30.262Z"
+        },
+        {
+          "stepDesc": "进入指纹测试项，测试通过则pass",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:06:30.262Z"
+        },
+        {
+          "stepDesc": "读取侧边指纹支持属性 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:37.012Z"
+        },
+        {
+          "stepDesc": "侧边指纹支持属性值: <空> ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:37.012Z"
+        },
+        {
+          "stepDesc": "属性确认支持侧边指纹 ✗",
+          "status": "失败",
+          "timestamp": "2026-07-16T09:06:37.012Z"
+        },
+        {
+          "stepDesc": "设备属性显示不支持侧边指纹，需人工二次确认 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:37.012Z"
+        },
+        {
+          "stepDesc": "人工确认侧边指纹支持-不支持",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:06:37.012Z"
+        },
+        {
+          "stepDesc": "结果: 设备不支持侧边指纹，已跳过",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:06:37.043Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/28",
+      "caseName": "开机工模指纹(屏下)",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 28,
+      "status": "通过",
+      "message": "sensor测试组子项全部通过: 光学指纹、指纹录入",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "进入工模测试选择指纹",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:06:37.044Z"
+        },
+        {
+          "stepDesc": "使用如乳胶头校准、根据提示放置肉色、黑色、竖条",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:06:37.044Z"
+        },
+        {
+          "stepDesc": "读取屏下指纹支持属性 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "屏下指纹支持属性值: 1 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "属性确认支持屏下指纹 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "关闭工模应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "启动工模主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "跳过射频参数校准 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "进入sensor测试组 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "校验测试组界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "需人工操作：请在 Sensor 工模列表中自行选择屏下指纹校准项，并按界面提示完成校准；校准完成后请返回 Sensor 工模列表，再确认继续。 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "需人工确认 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "确认屏下指纹校准完成 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "校准后进入 Sensor 工模列表 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "选择光学指纹测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "判断光学指纹测试结果 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "点击光学指纹通过按钮 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "光学指纹测试后返回测试组界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "选择指纹录入测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "判断指纹录入测试结果 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "点击指纹录入通过按钮 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:06:59.622Z"
+        },
+        {
+          "stepDesc": "结果: sensor测试组子项全部通过: 光学指纹、指纹录入",
+          "status": "通过",
+          "timestamp": "2026-07-16T09:07:01.470Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/29",
+      "caseName": "指纹功能正常",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 29,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "进入指纹设置界面",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:01.471Z"
+        },
+        {
+          "stepDesc": "录入五个不同手指指纹",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:01.471Z"
+        },
+        {
+          "stepDesc": "分别使用五个手指进行解锁，均能解锁则pass",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:01.471Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:07:01.472Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:07:04.281Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/30",
+      "caseName": "OOBE指纹",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 30,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "开机向导，指纹设置界面录入1个指纹",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:04.282Z"
+        },
+        {
+          "stepDesc": "录入完成后，使用正确的指纹解锁",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:04.282Z"
+        },
+        {
+          "stepDesc": "录入完成后，使用错误的指纹解锁",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:04.282Z"
+        },
+        {
+          "stepDesc": "进入系统后->锁屏查看",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:04.282Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:07:04.282Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:07:07.024Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/31",
+      "caseName": "快速触摸解锁指纹（先注册指纹）",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 31,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "锁屏或熄屏，正确的指纹快速触摸指纹图标",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:07.025Z"
+        },
+        {
+          "stepDesc": "锁屏或熄屏，错误的指纹快速触摸指纹图标",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:07.025Z"
+        },
+        {
+          "stepDesc": "锁屏或熄屏，正确指纹按压指纹图标",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:07.025Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:07:07.025Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:07:09.961Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/32",
+      "caseName": "纯白和纯黑壁纸解锁（屏下指纹）",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 32,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "背光设置最低，锁屏、息屏、灭屏指纹解锁均检查",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:09.962Z"
+        },
+        {
+          "stepDesc": "分别设置纯白和纯黑锁屏壁纸，指纹解锁，检查解锁画面",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:09.962Z"
+        },
+        {
+          "stepDesc": "重复5次",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:09.962Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:07:09.962Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:07:12.851Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/33",
+      "caseName": "正常通话",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 33,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "拨打任意电话号码，通话两分钟以上",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:12.852Z"
+        },
+        {
+          "stepDesc": "来回切换听筒、扬声器",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:12.852Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:07:12.854Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:07:15.740Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/34",
+      "caseName": "耳机与听筒之间切换",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 34,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "拨打电话，蓝牙耳机接听电话",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:15.741Z"
+        },
+        {
+          "stepDesc": "快速关闭蓝牙或者有线耳机，使用听筒接听",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:15.741Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:07:15.742Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:07:18.492Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/35",
+      "caseName": "耳机与扬声器之间切换",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 35,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "拨打电话，蓝牙耳机接听电话",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:18.493Z"
+        },
+        {
+          "stepDesc": "快速关闭蓝牙或者有线耳机，使用扬声器接听",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:18.493Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:07:18.493Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:07:21.227Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/36",
+      "caseName": "喇叭，听筒，麦克，耳机基本功能",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 36,
+      "status": "通过",
+      "message": "测试组「2: Audio」全部通过（7项）: 2.1: Receiver、2.2: Speaker、2.3: Mic、2.4: Mic2、2.5: Headset、2.6: HeadsetMic、2.7: HeadsetKey",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "进入工模，选择测试项Mike，录制的声音播放正常则pass；",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:21.228Z"
+        },
+        {
+          "stepDesc": "进入工模，选择测试项Speaker，扬声器播放正常则pass；",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:07:21.228Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:07.774Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:07.774Z"
+        },
+        {
+          "stepDesc": "关闭工模应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:07.774Z"
+        },
+        {
+          "stepDesc": "启动工模主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:07.774Z"
+        },
+        {
+          "stepDesc": "跳过射频参数校准 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:07.774Z"
+        },
+        {
+          "stepDesc": "进入audio测试组 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:07.774Z"
+        },
+        {
+          "stepDesc": "校验测试组界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:07.774Z"
+        },
+        {
+          "stepDesc": "点击顺序执行 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:07.774Z"
+        },
+        {
+          "stepDesc": "等待 ForegroundActivity ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:07.774Z"
+        },
+        {
+          "stepDesc": "等待并解析测试组结果 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:07.774Z"
+        },
+        {
+          "stepDesc": "校验测试组通过状态 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:07.774Z"
+        },
+        {
+          "stepDesc": "结果: 测试组「2: Audio」全部通过（7项）: 2.1: Receiver、2.2: Speaker、2.3: Mic、2.4: Mic2、2.5: Headset、2.6: HeadsetMic、2.7: HeadsetKey",
+          "status": "通过",
+          "timestamp": "2026-07-16T09:08:09.804Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/37",
+      "caseName": "使用主流音乐软件播放音乐",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 37,
+      "status": "跳过",
+      "message": "需人工测试",
+      "fullAutomation": false,
+      "steps": [
+        {
+          "stepDesc": "进入三方音乐播放音乐",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:08:09.806Z"
+        },
+        {
+          "stepDesc": "歌曲间来回切换",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:08:09.806Z"
+        },
+        {
+          "stepDesc": "任意加减音量",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:08:09.806Z"
+        },
+        {
+          "stepDesc": "音乐播放过程中来电、挂断",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:08:09.806Z"
+        },
+        {
+          "stepDesc": "正在执行用例脚本...",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:08:09.806Z"
+        },
+        {
+          "stepDesc": "结果: 需人工测试",
+          "status": "跳过",
+          "timestamp": "2026-07-16T09:08:12.699Z"
+        }
+      ]
+    },
+    {
+      "caseKey": "week/driver/38",
+      "caseName": "超声距感",
+      "module": "driver",
+      "testType": "week",
+      "caseIndex": 38,
+      "status": "通过",
+      "message": "sensor测试组子项全部通过: 距离传感器; 人工评判pass",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "进入工模，选择测试项Distance，靠近/远离耳朵进行测试，检查是否可以pass；",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:08:12.700Z"
+        },
+        {
+          "stepDesc": "拨打任意电话号码，听筒模式下，拿起靠近耳朵是否可以灭屏，远离后是否可以亮屏，均正常则pass；",
+          "status": "未开始",
+          "timestamp": "2026-07-16T09:08:12.700Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "读取超声距感支持属性 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "ro.tr_audio.ultrasound.support=1(支持) ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "属性确认支持超声距感 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "确认屏幕已亮屏并解锁 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "关闭工模应用 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "启动工模主界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "跳过射频参数校准 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "进入sensor测试组 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "校验测试组界面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "选择距离传感器测试项 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "判断距离传感器测试结果 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "点击距离传感器通过按钮 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "工模测试后返回桌面 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "需人工操作：请拨打电话并接听，然后将手机靠近耳朵确认是否灭屏，远离耳朵确认是否亮屏。 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "需人工评判",
+          "status": "进行中",
+          "timestamp": "2026-07-16T09:08:30.080Z"
+        },
+        {
+          "stepDesc": "结果: sensor测试组子项全部通过: 距离传感器; 人工评判pass",
+          "status": "通过",
+          "timestamp": "2026-07-16T09:08:38.228Z"
+        }
+      ]
+    }
+  ],
+  "aiSummary": "共 38 项用例，全部通过（通过率 61%）。设备 TECNO LJ8k，测试类型 week。"
+}

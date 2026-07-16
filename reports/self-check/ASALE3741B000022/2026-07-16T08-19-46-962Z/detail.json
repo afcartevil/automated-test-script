@@ -1,0 +1,81 @@
+{
+  "deviceId": "ASALE3741B000022",
+  "deviceName": "TECNO LJ8",
+  "testType": "smoke",
+  "startTime": "2026-07-16T08:19:46.962Z",
+  "endTime": "2026-07-16T08:20:50.535Z",
+  "duration": 64,
+  "status": "完成(通过)",
+  "modules": {
+    "smoke/usd": {
+      "module": "smoke/usd",
+      "totalCases": 1,
+      "completedCases": 1,
+      "passedCases": 1,
+      "failedCases": 0,
+      "currentCaseIndex": 1
+    }
+  },
+  "totalCases": 1,
+  "passedCases": 1,
+  "failedCases": 0,
+  "skippedCases": 0,
+  "aiPlanned": true,
+  "scheduleKey": "LJ8|STR4A|2026/07/15|smoke",
+  "failedCaseItems": [],
+  "allCaseItems": [
+    {
+      "caseKey": "smoke/usd/1",
+      "caseName": "USD冒烟测试",
+      "module": "usd",
+      "testType": "smoke",
+      "caseIndex": 1,
+      "status": "通过",
+      "message": "success",
+      "fullAutomation": true,
+      "steps": [
+        {
+          "stepDesc": "在设备执行页选择测试机，勾选本用例",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:19:52.763Z"
+        },
+        {
+          "stepDesc": "可选在概览区勾选「跳过 SPD 拉取（--skip-spd-info）」；无 SPD 网络时 SPD 依赖用例将自动跳过",
+          "status": "未开始",
+          "timestamp": "2026-07-16T08:19:52.763Z"
+        },
+        {
+          "stepDesc": "准备执行 USD 冒烟测试，设备: ASALE3741B000022 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:20:50.504Z"
+        },
+        {
+          "stepDesc": "正在运行 si_run.py --test-type usd … ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:20:50.504Z"
+        },
+        {
+          "stepDesc": "报告路径: E:\\AI\\easyadapter\\tahp-console\\dist\\server\\self-check\\python\\tools\\sdd_test\\report\\LJ8-16.3.0.140(OP001PF001AZ)_SU\\SDD_report.json ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:20:50.504Z"
+        },
+        {
+          "stepDesc": "执行完成: total=156, failed=0, passRate=70% ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:20:50.504Z"
+        },
+        {
+          "stepDesc": "USD 冒烟测试通过 ✓",
+          "status": "完成",
+          "timestamp": "2026-07-16T08:20:50.504Z"
+        },
+        {
+          "stepDesc": "结果: success",
+          "status": "通过",
+          "timestamp": "2026-07-16T08:20:50.535Z"
+        }
+      ]
+    }
+  ],
+  "aiSummary": "共 1 项用例，全部通过（通过率 100%）。设备 TECNO LJ8，测试类型 smoke。"
+}
