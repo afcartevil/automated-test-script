@@ -1,6 +1,7 @@
 #!/bin/bash
 
 NODE_BRANCH=
+NODE_REF=
 target_BRANCH=
 AP_lable=
 DESCRIPTION=基线升级
@@ -29,23 +30,14 @@ function target_merge()
 
     echo change current_node_branch ${current_branch} | tee -a md_build.log
     echo NODE_BRANCH ${NODE_BRANCH} | tee -a md_build.log
-    if [ "${current_branch}" == "${NODE_BRANCH}" ]; then
-        node_commit_id=$(git rev-parse HEAD)       
-        echo node_commit_id ${node_commit_id} | tee -a md_build.log
-        git diff ${before_node_commit_id} ${node_commit_id} >> node.diff 
-    else
-        echo change current_wrong_node_branch ${current_branch} | tee -a md_build.log
-        git checkout ${NODE_BRANCH}
-        current_branch=$(git rev-parse --abbrev-ref HEAD)
-        echo current_branch ${current_branch} | tee -a md_build.log
-        if [ "${current_branch}" == "${NODE_BRANCH}" ]; then
-            node_commit_id=$(git rev-parse HEAD)
-            git diff ${before_node_commit_id} ${node_commit_id} >> node.diff
-        else
-            echo -e "\033[32m checkout NODE_BRANCH ${NODE_BRANCH} fail !!! \033[0m" | tee -a md_build.log
-            exit 0
-        fi
+    echo NODE_REF ${NODE_REF} | tee -a md_build.log
+    node_commit_id=$(git rev-parse ${NODE_REF})
+    if [ -z "${node_commit_id}" ]; then
+        echo -e "\033[32m resolve NODE_REF ${NODE_REF} fail !!! \033[0m" | tee -a md_build.log
+        exit 1
     fi
+    echo node_commit_id ${node_commit_id} | tee -a md_build.log
+    git diff ${before_node_commit_id} ${node_commit_id} >> node.diff
 
     git checkout ${target_BRANCH}
 
@@ -66,7 +58,7 @@ function target_merge()
     if [ "${current_branch}" == "${target_BRANCH}" ]; then
         target_before_commit_id=$(git rev-parse HEAD)
         echo ${target_before_commit_id} > ${TARGET_BEFORE_COMMIT_FILE}
-        git merge --no-progress ${NODE_BRANCH} -m "ID: ${JIRAID}
+        git merge --no-progress ${NODE_REF} -m "ID: ${JIRAID}
 DESCRIPTION: MTK Patch ${AP_lable} ${DESCRIPTION}
 TYPE:patch
 AFFECT_PROJECTS:ALL

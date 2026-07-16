@@ -505,6 +505,34 @@ class AutoPatchMerger:
                 return value[-1].strip()
         return None
 
+    def _fetch_remote_node_ref(self, node_branch):
+        node_ref = f"origin/{node_branch}"
+        fetch_cmd = ['git', 'fetch', 'origin', node_branch]
+        fetch_result = self.run_harness_command(fetch_cmd, self.remote_work_dir, delay_after=self.short_delay)
+        if not fetch_result or fetch_result.returncode != 0:
+            error_text = ""
+            if fetch_result:
+                error_text = (fetch_result.stderr or fetch_result.stdout or "").strip()
+            self.log(f"Warning: git fetch origin {node_branch} failed: {error_text or 'unknown error'}")
+            return "", ""
+
+        self.log(f"Fetched remote node branch: {node_branch}")
+        current_commit = self._mapped_git_rev_parse(node_ref, timeout=2)
+        if current_commit:
+            self.log(f"Current commit ID ({node_ref}, mapped): {current_commit}")
+            return node_ref, current_commit
+
+        self.log(f"Mapped git rev-parse {node_ref} unavailable, falling back to remote")
+        commit_result = self.run_harness_command(['git', 'rev-parse', node_ref], self.remote_work_dir, delay_after=self.short_delay)
+        if commit_result and commit_result.returncode == 0 and commit_result.stdout:
+            commit = commit_result.stdout.strip().splitlines()[-1].strip()
+            if commit:
+                self.log(f"Current commit ID ({node_ref}, remote): {commit}")
+                return node_ref, commit
+
+        self.log(f"Warning: Could not resolve commit ID for {node_ref}")
+        return node_ref, ""
+
     def _probe_mapped_repo_state(self):
         """Probe merge state from mapped worktree using local fs/index only."""
         if not self.mapped_work_dir or not os.path.exists(self.mapped_work_dir):
@@ -547,20 +575,13 @@ class AutoPatchMerger:
         self.log("Uploading and configuring non-interactive merge script...")
         
         node_branch = self.config.get("NODE_BRANCH", "master")
-        current_commit = self._mapped_git_rev_parse(node_branch, timeout=2)
-        if current_commit:
-            self.log(f"Current commit ID (mapped): {current_commit}")
-        else:
-            get_commit_cmd = ['git', 'rev-parse', node_branch]
-            commit_result = self.run_harness_command(get_commit_cmd, self.remote_work_dir, delay_after=self.short_delay)
-            if commit_result and commit_result.returncode == 0:
-                current_commit = commit_result.stdout.strip()
-            else:
-                current_commit = ""
-
-        if current_commit:
-            self.log(f"Current commit ID: {current_commit}")
-        else:
+        node_ref, current_commit = self._fetch_remote_node_ref(node_branch)
+        if not node_ref:
+            self.add_step("更新节点分支引用", "failed", f"git fetch origin {node_branch} 失败")
+            self.report_data['errors'].append(f"Failed to fetch remote node branch: {node_branch}")
+            return False
+        self.add_step("更新节点分支引用", "success", f"已刷新 {node_ref}")
+        if not current_commit:
             self.log("Warning: Could not get current commit ID")
             
         # Read local non-interactive script template
@@ -570,6 +591,7 @@ class AutoPatchMerger:
         
         # Replace placeholders with actual values
         script_content = script_content.replace('NODE_BRANCH=', f'NODE_BRANCH={self.config.get("NODE_BRANCH", "master")}')
+        script_content = script_content.replace('NODE_REF=', f'NODE_REF={node_ref}')
         script_content = script_content.replace('target_BRANCH=', f'target_BRANCH={self.config.get("target_BRANCH")}')
         script_content = script_content.replace('AP_lable=', f'AP_lable={self.config.get("AP_lable")}')
         script_content = script_content.replace('DESCRIPTION=基线升级', f'DESCRIPTION={self.config.get("DESCRIPTION", "基线升级")}')
