@@ -25,6 +25,7 @@ import {
   scheduleAutoExtractBranchTemplatesForRepo,
   saveModemPatchWorkspaceProfile,
   scanModemPatchRepos,
+  scanModemPatchReposMulti,
   updateModemPatchRepo,
   updateModemPatchRule,
   unregisterModemBaselineSseClient,
@@ -180,9 +181,10 @@ tahpModemBaselineRoutes.delete('/repos/:repoId', async (ctx) => {
 tahpModemBaselineRoutes.post('/repos/scan', async (ctx) => {
   try {
     const body = (ctx.request.body || {}) as { root?: string; roots?: unknown }
-    const roots = Array.isArray(body.roots) ? body.roots.map(item => String(item ?? '')).filter(Boolean) : []
-    const primary = roots.length ? roots[0] : String(body.root ?? '')
-    ctx.body = { success: true, data: scanModemPatchRepos(primary, resolveOwner(ctx)) }
+    const roots = Array.isArray(body.roots)
+      ? body.roots.map(item => String(item ?? '')).filter(Boolean)
+      : (body.root ? [String(body.root)] : [])
+    ctx.body = { success: true, data: scanModemPatchReposMulti(roots, resolveOwner(ctx)) }
   } catch (error) {
     const message = (error as Error).message
     ctx.status = message === 'invalid_scan_root' || message === 'workspace_profile_not_found'

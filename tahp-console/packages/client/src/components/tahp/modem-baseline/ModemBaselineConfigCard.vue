@@ -36,9 +36,6 @@ const projectOptions = computed(() =>
           <h3>执行参数</h3>
           <p>字段与外部 Modem 基线工具保持一致，直接用于真实任务启动。</p>
         </div>
-        <span class="ea-pill-info">
-          Stop After Merge
-        </span>
       </div>
     </div>
 

@@ -1503,6 +1503,40 @@ export function scanModemPatchRepos(root: string, owner = currentOwner()): { roo
   return { root: normalizedRoot, items, warnings }
 }
 
+export function scanModemPatchReposMulti(
+  roots: unknown,
+  owner = currentOwner(),
+): { roots: string[]; items: ScannedRepoCandidate[]; warnings: string[] } {
+  const list = Array.isArray(roots)
+    ? roots.map(item => String(item ?? '').trim()).filter(Boolean)
+    : String(roots ?? '').trim()
+      ? [String(roots ?? '').trim()]
+      : []
+  const normalizedRoots = Array.from(new Set(list.map(item => path.win32.normalize(item))))
+  if (!normalizedRoots.length) {
+    throw new Error('invalid_scan_root')
+  }
+
+  const rootList: string[] = []
+  const warnings: string[] = []
+  const map = new Map<string, ScannedRepoCandidate>()
+
+  for (const root of normalizedRoots) {
+    try {
+      const result = scanModemPatchRepos(root, owner)
+      rootList.push(result.root)
+      for (const warning of result.warnings) warnings.push(`${result.root}:${warning}`)
+      for (const item of result.items) {
+        map.set(path.win32.normalize(item.localPath).toUpperCase(), item)
+      }
+    } catch (error) {
+      warnings.push(`scan_root_failed:${root}:${String((error as Error)?.message ?? error)}`)
+    }
+  }
+
+  return { roots: rootList, items: Array.from(map.values()), warnings }
+}
+
 export function readModemBaselineRun(runId: string): ModemBaselineRunMeta | null {
   const metaPath = runMetaPath(runId)
   if (!fs.existsSync(metaPath)) return null

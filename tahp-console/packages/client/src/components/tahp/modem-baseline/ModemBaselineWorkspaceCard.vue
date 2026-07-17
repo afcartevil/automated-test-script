@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { NButton, NInput, NModal, NSelect } from 'naive-ui'
+import { NButton, NInput, NModal } from 'naive-ui'
 import type { RepoProfile, ScannedRepoCandidate, UserWorkspaceProfile } from '@/api/tahp/modem-baseline'
 
 const props = defineProps<{
@@ -18,39 +18,22 @@ const props = defineProps<{
 const emit = defineEmits<{
   'save-workspace': [value: { mappedPrefix: string; remotePrefix: string; roots: string[] }]
   'save-repo': [value: { label: string; localPath: string; platform: string }]
-  'scan-repos': [root: string]
-  'choose-repo': [repoId: string]
-  'clear-repo': []
+  'scan-repos': [roots: string[]]
+  'open-manual-add': []
   'remove-repo': [repoId: string]
 }>()
 
 const workspaceForm = reactive({
   owner: '',
   rootsText: '',
-  selectedRoot: '',
 })
 
-const repoForm = reactive({
-  localPath: '',
-  platform: '',
-})
 const scanImportDialogOpen = ref(false)
 const pendingScanImport = ref<{ localPath: string; platform: string } | null>(null)
 const scanImportSourceName = ref('')
 const scanImportForm = reactive({
   localPath: '',
   platform: '',
-})
-
-const scanRoot = computed(() => {
-  const roots = workspaceForm.rootsText.split(/\r?\n/).map(item => item.trim()).filter(Boolean)
-  if (workspaceForm.selectedRoot) return workspaceForm.selectedRoot
-  return roots[0] ?? ''
-})
-
-const rootOptions = computed(() => {
-  const roots = workspaceForm.rootsText.split(/\r?\n/).map(item => item.trim()).filter(Boolean)
-  return roots.map(item => ({ label: item, value: item }))
 })
 
 const workspaceRoots = computed(() => rootsFromForm())
@@ -76,11 +59,6 @@ function normalizeLocalPath(localPath: string) {
   return localPath.trim().replace(/\//g, '\\').replace(/\\+/g, '\\').toUpperCase()
 }
 
-const repoOptions = computed(() => props.repos.map(item => ({
-  label: `${item.label} · ${item.localPath}`,
-  value: item.repoId,
-})))
-
 const importedRepoPathSet = computed(() => new Set(
   props.repos.map(item => normalizeLocalPath(item.localPath)),
 ))
@@ -100,8 +78,6 @@ watch(
   (value) => {
     workspaceForm.owner = localStorage.getItem('tahp_modem_patch_owner') || value?.owner || ''
     workspaceForm.rootsText = (value?.roots ?? []).join('\n')
-    const firstRoot = (value?.roots ?? [])[0] || ''
-    workspaceForm.selectedRoot = firstRoot
   },
   { immediate: true },
 )
@@ -199,16 +175,9 @@ function isScannedRepoImported(localPath: string) {
       <span class="ea-pill-info">{{ workspaceProfile?.owner || '当前用户' }}</span>
     </div>
 
-    <div class="ea-form-grid2">
-      <div class="ea-field">
-        <label>Owner</label>
-        <NInput v-model:value="workspaceForm.owner" placeholder="例如 yue.chen11" />
-      </div>
-      <div class="ea-field">
-        <label>远端工作区前缀</label>
-        <NInput :value="inferredRemotePrefix || '将根据 Owner 自动生成'" readonly />
-        <div class="field-hint">固定按 `/work/&lt;owner&gt;/code` 生成，不再手工填写。</div>
-      </div>
+    <div class="ea-field">
+      <label>Owner</label>
+      <NInput v-model:value="workspaceForm.owner" placeholder="例如 yue.chen11" />
     </div>
 
     <div class="ea-field">
@@ -219,6 +188,7 @@ function isScannedRepoImported(localPath: string) {
         :autosize="{ minRows: 2, maxRows: 5 }"
         placeholder="例如&#10;Z:\mtk\modem&#10;Z:\temp\modem"
       />
+      <div class="field-hint">修改后请点击“扫描仓库”，将对上面填写的所有路径进行 Git 仓库扫描。</div>
     </div>
 
     <div class="cfg-actions">
@@ -233,57 +203,15 @@ function isScannedRepoImported(localPath: string) {
       })">
         保存工作区配置
       </NButton>
-      <NButton secondary :disabled="!scanRoot" :loading="scanningRepos" @click="emit('scan-repos', scanRoot)">扫描根目录</NButton>
-    </div>
-
-    <div v-if="rootOptions.length" class="ea-field">
-      <label>扫描根目录</label>
-      <NSelect
-        v-model:value="workspaceForm.selectedRoot"
-        :options="rootOptions"
-        placeholder="选择一个根目录用于扫描"
-      />
-    </div>
-
-    <div class="ea-field">
-      <label>已登记仓库</label>
-      <NSelect
-        :value="selectedRepoId || null"
-        :options="repoOptions"
-        clearable
-        placeholder="选择已登记仓库后自动带出路径"
-        @update:value="value => value ? emit('choose-repo', String(value)) : emit('clear-repo')"
-      />
-    </div>
-
-    <div v-if="selectedRepoId" class="cfg-actions">
-      <NButton secondary :loading="removingRepo" @click="emit('remove-repo', selectedRepoId)">删除当前仓库</NButton>
-    </div>
-
-    <div class="ea-section-title">新增仓库</div>
-    <div class="ea-form-grid2">
-      <div class="ea-field">
-        <label>本地路径</label>
-        <NInput v-model:value="repoForm.localPath" placeholder="例如 Z:\mtk\modem\t\GEN95\repo" />
-      </div>
-      <div class="ea-field">
-        <label>平台</label>
-        <NInput v-model:value="repoForm.platform" placeholder="例如 GEN93V / GEN99U / GEN99-R2U" />
-        <div class="field-hint">显示名称会自动使用平台值，不再单独填写。</div>
-      </div>
-    </div>
-    <div class="cfg-actions">
       <NButton
-        type="primary"
-        :loading="savingRepo"
-        :disabled="!repoForm.localPath.trim() || !repoForm.platform.trim()"
-        @click="emit('save-repo', {
-        label: repoForm.platform.trim(),
-        localPath: repoForm.localPath,
-        platform: repoForm.platform.trim(),
-      })">
-        保存仓库
+        secondary
+        :disabled="workspaceRoots.length === 0"
+        :loading="scanningRepos"
+        @click="emit('scan-repos', workspaceRoots)"
+      >
+        扫描仓库
       </NButton>
+      <NButton secondary @click="emit('open-manual-add')">手动新增Modem仓库</NButton>
     </div>
 
     <div v-if="scanWarnings?.length" class="warning-list">

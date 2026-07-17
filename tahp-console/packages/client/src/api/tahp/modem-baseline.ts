@@ -184,10 +184,10 @@ export function refreshRepoBranches(repoId: string): Promise<RepoProfile | null>
   return tahpPost<RepoProfile | null>(`/api/tahp/modem-baseline/repos/${encodeURIComponent(repoId)}/refresh-branches`, {})
 }
 
-export function scanRepoProfiles(root: string): Promise<{ root: string; items: ScannedRepoCandidate[]; warnings: string[] }> {
-  return tahpPost<{ root: string; items: ScannedRepoCandidate[]; warnings: string[] }>(
+export function scanRepoProfiles(roots: string[]): Promise<{ roots: string[]; items: ScannedRepoCandidate[]; warnings: string[] }> {
+  return tahpPost<{ roots: string[]; items: ScannedRepoCandidate[]; warnings: string[] }>(
     '/api/tahp/modem-baseline/repos/scan',
-    { root },
+    { roots },
   )
 }
 

@@ -11,7 +11,7 @@ const emit = defineEmits<{
   select: [runId: string]
 }>()
 
-const orderedRuns = computed(() => props.runs)
+const visibleRuns = computed(() => props.runs.slice(0, 5))
 
 function toneClass(status: ModemBaselineRunMeta['status']) {
   switch (status) {
@@ -54,7 +54,7 @@ function statusLabel(status: ModemBaselineRunMeta['status']) {
 
     <div class="ea-tasklist">
       <button
-        v-for="item in orderedRuns"
+        v-for="item in visibleRuns"
         :key="item.runId"
         type="button"
         class="ea-task-item"

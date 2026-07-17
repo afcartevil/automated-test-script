@@ -1,40 +1,23 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { NButton, useMessage } from 'naive-ui'
-import ModemBaselineBranchTemplateApplyCard from '@/components/tahp/modem-baseline/ModemBaselineBranchTemplateApplyCard.vue'
 import ModemBaselineConfigCard from '@/components/tahp/modem-baseline/ModemBaselineConfigCard.vue'
-import ModemBaselineHistoryPanel from '@/components/tahp/modem-baseline/ModemBaselineHistoryPanel.vue'
 import ModemBaselineLogFilterBar from '@/components/tahp/modem-baseline/ModemBaselineLogFilterBar.vue'
 import ModemBaselineNoticeRecommendCard from '@/components/tahp/modem-baseline/ModemBaselineNoticeRecommendCard.vue'
-import ModemBaselinePrecheckPanel from '@/components/tahp/modem-baseline/ModemBaselinePrecheckPanel.vue'
 import ModemBaselineStagePanel from '@/components/tahp/modem-baseline/ModemBaselineStagePanel.vue'
 import { useModemBaseline } from '@/composables/useModemBaseline'
 
-const router = useRouter()
 const message = useMessage()
 const {
   config,
-  runs,
-  repoProfiles,
-  branchTemplates,
-  selectedRepo,
-  selectedTosVersion,
-  selectedBranchTemplateId,
-  selectedBranchTarget,
-  rules,
   noticeText,
   noticeParsed,
   recommendation,
-  precheck,
   selectedRun,
-  selectedRunId,
   conflictFiles,
   logContent,
   loading,
-  loadingBranchTemplates,
   starting,
-  prechecking,
   parsingNotice,
   recommending,
   continuing,
@@ -45,17 +28,11 @@ const {
   errorMessage,
   statusMeta,
   stageItems,
-  metrics,
   initialize,
   loadDefaults,
   loadBuildProjects,
   requestRecommend,
   applyRecommendation,
-  chooseTosVersion,
-  chooseBranchTemplate,
-  applyBranchTemplate,
-  runPrecheck,
-  selectRun,
   startRun,
   continueRun,
   refreshConflicts,
@@ -108,7 +85,6 @@ watch(logContent, async (_, previous) => {
 
 function applyConfig(nextValue: typeof config.value) {
   config.value = { ...nextValue }
-  precheck.value = null
 }
 
 async function handleLoadDefaults() {
@@ -124,16 +100,6 @@ async function handleStart() {
   try {
     await startRun()
     message.success('已启动 Modem 基线任务')
-  } catch (error) {
-    message.error(String((error as Error)?.message ?? error))
-  }
-}
-
-async function handleRunPrecheck() {
-  try {
-    const result = await runPrecheck()
-    if (result.canStart) message.success('执行前检查通过')
-    else message.warning('执行前检查发现阻断项')
   } catch (error) {
     message.error(String((error as Error)?.message ?? error))
   }
@@ -215,19 +181,6 @@ async function handleParseAndApply() {
   }
 }
 
-function handleApplyBranchTemplate() {
-  const result = applyBranchTemplate()
-  if (!result.applied) {
-    message.warning('请先选择一个可用的分支模板')
-    return
-  }
-  message.success(`已按 ${selectedBranchTarget.value === 'mp' ? 'MP' : '主干'} 模板回填分支`)
-}
-
-function goSettings() {
-  router.push({ name: 'tahp.modem-baseline.settings' })
-}
-
 onMounted(() => {
   void initialize()
 })
@@ -260,25 +213,6 @@ onUnmounted(() => {
         :recommending="recommending"
         @update:notice-text="noticeText = $event"
         @parse-and-apply="handleParseAndApply"
-      />
-
-      <ModemBaselineBranchTemplateApplyCard
-        :templates="branchTemplates"
-        :selected-tos="selectedTosVersion"
-        :selected-template-id="selectedBranchTemplateId"
-        :selected-target="selectedBranchTarget"
-        :loading="loadingBranchTemplates"
-        :parsed="noticeParsed"
-        @update:selected-tos="chooseTosVersion"
-        @update:selected-template-id="chooseBranchTemplate"
-        @update:selected-target="selectedBranchTarget = $event"
-        @apply="handleApplyBranchTemplate"
-      />
-
-      <ModemBaselinePrecheckPanel
-        :result="precheck"
-        :loading="prechecking"
-        @run="handleRunPrecheck"
       />
     </div>
 
@@ -342,58 +276,6 @@ onUnmounted(() => {
           当前任务没有冲突文件；如果刚处理过冲突，请点击“刷新冲突”确认状态。
         </div>
       </div>
-    </div>
-
-    <div class="ea-stack">
-      <div class="ea-card ea-stack">
-        <div class="console-head">
-          <div>
-            <div class="ea-section-title">当前执行上下文</div>
-            <h3>仓库与规则入口</h3>
-            <p>工作台优先展示高频执行区，低频的工作区、仓库和规则维护统一放到配置中心。</p>
-          </div>
-          <NButton secondary @click="goSettings">打开配置中心</NButton>
-        </div>
-
-        <div class="repo-summary">
-          <div class="repo-summary__item">
-            <span class="ea-pill-muted">已选仓库</span>
-            <strong>{{ selectedRepo?.label || '未选择' }}</strong>
-            <p>{{ selectedRepo?.localPath || '请先到配置中心登记并选择仓库，或手动填写 work_dir。' }}</p>
-          </div>
-          <div class="repo-summary__item">
-            <span class="ea-pill-info">规则</span>
-            <strong>{{ rules.length }}</strong>
-            <p>当前用户下可用的推荐规则数量。</p>
-          </div>
-          <div class="repo-summary__item">
-            <span class="ea-pill-info">仓库</span>
-            <strong>{{ repoProfiles.length }}</strong>
-            <p>已登记仓库数量；仍支持手动填写执行路径。</p>
-          </div>
-        </div>
-      </div>
-
-      <div class="ea-card">
-        <div class="ea-section-title">任务摘要</div>
-        <div class="ea-meta-grid modem-meta-grid">
-          <div
-            v-for="item in metrics"
-            :key="item.label"
-            class="mg"
-            :class="{ 'mg-wide': item.label === '工作区' }"
-          >
-            <div class="mg-k">{{ item.label }}</div>
-            <div class="mg-v">{{ item.value }}</div>
-          </div>
-        </div>
-      </div>
-
-      <ModemBaselineHistoryPanel
-        :runs="runs"
-        :selected-run-id="selectedRunId"
-        @select="selectRun"
-      />
 
       <div v-if="errorMessage" class="preview-note">
         <strong>接入异常</strong>
@@ -406,7 +288,7 @@ onUnmounted(() => {
 <style scoped lang="scss">
 .main-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 0.95fr) minmax(420px, 1.2fr) minmax(300px, 0.85fr);
+  grid-template-columns: minmax(320px, 0.95fr) minmax(420px, 1.2fr);
   gap: 16px;
   align-items: start;
 }
@@ -427,34 +309,6 @@ onUnmounted(() => {
     margin-top: 4px;
     font-size: 13px;
     color: var(--muted);
-  }
-}
-
-.repo-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.repo-summary__item {
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-
-  strong {
-    display: block;
-    margin-top: 10px;
-    font-size: 16px;
-    color: var(--text);
-    word-break: break-word;
-  }
-
-  p {
-    margin-top: 6px;
-    font-size: 12px;
-    color: var(--muted);
-    word-break: break-word;
   }
 }
 
@@ -508,31 +362,6 @@ onUnmounted(() => {
   background: var(--bg);
   color: var(--muted);
   font-size: 13px;
-}
-
-.modem-meta-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-
-  .mg {
-    min-width: 0;
-  }
-
-  .mg-wide {
-    grid-column: 1 / -1;
-  }
-
-  .mg-k {
-    font-size: 12px;
-    margin-bottom: 6px;
-  }
-
-  .mg-v {
-    font-size: 15px;
-    line-height: 1.5;
-    word-break: break-word;
-    overflow-wrap: anywhere;
-    white-space: normal;
-  }
 }
 
 .preview-note {

@@ -26,7 +26,6 @@ function nav(name: string) {
       </div>
 
       <div class="ea-head-actions ea-wrap">
-        <span class="ea-pill-info">真实链路</span>
         <span class="ea-pill-muted">工作台 + 配置中心</span>
       </div>
     </div>

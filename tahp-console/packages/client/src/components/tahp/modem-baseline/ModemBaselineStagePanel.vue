@@ -99,7 +99,36 @@ const unresolvedCount = computed(() => props.run.conflictFiles?.length ?? 0)
   flex-wrap: wrap;
 }
 
+:deep(.ea-stage-track) {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px 24px;
+  align-items: start;
+}
+
+:deep(.ea-stage) {
+  min-width: 0;
+}
+
+:deep(.ea-stage-link) {
+  display: none;
+}
+
+:deep(.ea-stage-meta) {
+  min-width: 0;
+}
+
+:deep(.ea-stage-meta strong),
+:deep(.ea-stage-meta span) {
+  display: block;
+}
+
 @media (max-width: 720px) {
+  :deep(.ea-stage-track) {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
   .stage-top,
   .stage-actions {
     flex-direction: column;

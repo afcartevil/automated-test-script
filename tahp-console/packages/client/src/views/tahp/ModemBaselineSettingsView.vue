@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { NButton, useMessage } from 'naive-ui'
+import { onMounted, reactive, ref, watch } from 'vue'
+import { NButton, NInput, NModal, useMessage } from 'naive-ui'
 import ModemBaselineRepoListCard from '@/components/tahp/modem-baseline/ModemBaselineRepoListCard.vue'
 import ModemBaselineRulesDrawer from '@/components/tahp/modem-baseline/ModemBaselineRulesDrawer.vue'
 import ModemBaselineWorkspaceCard from '@/components/tahp/modem-baseline/ModemBaselineWorkspaceCard.vue'
@@ -9,6 +9,11 @@ import { useModemBaseline } from '@/composables/useModemBaseline'
 
 const message = useMessage()
 const rulesDrawerOpen = ref(false)
+const manualRepoModalOpen = ref(false)
+const manualRepoForm = reactive({
+  localPath: '',
+  platform: '',
+})
 const {
   workspaceProfile,
   repoProfiles,
@@ -33,7 +38,6 @@ const {
   refreshRepoBranchTemplates,
   scanRepos,
   chooseRepo,
-  clearSelectedRepo,
   createRule,
   updateRule,
   removeRule,
@@ -61,13 +65,43 @@ async function handleSaveRepo(value: {
   }
 }
 
-async function handleScanRepos(root: string) {
+async function handleScanRepos(roots: string[]) {
   try {
-    const result = await scanRepos(root)
+    const result = await scanRepos(roots)
     message.success(`扫描完成，共发现 ${result.items.length} 个 Git 仓库`)
   } catch (error) {
     message.error(String((error as Error)?.message ?? error))
   }
+}
+
+function openManualRepoModal() {
+  manualRepoModalOpen.value = true
+}
+
+function closeManualRepoModal() {
+  manualRepoModalOpen.value = false
+}
+
+watch(
+  () => savingRepo.value,
+  (value, previous) => {
+    if (previous && !value && manualRepoModalOpen.value) {
+      manualRepoForm.localPath = ''
+      manualRepoForm.platform = ''
+      manualRepoModalOpen.value = false
+    }
+  },
+)
+
+async function submitManualRepo() {
+  const localPath = manualRepoForm.localPath.trim()
+  const platform = manualRepoForm.platform.trim()
+  if (!localPath || !platform) return
+  await handleSaveRepo({
+    localPath,
+    platform,
+    label: platform,
+  })
 }
 
 async function handleRemoveRepo(repoId: string) {
@@ -150,8 +184,7 @@ onMounted(() => {
         @save-workspace="handleSaveWorkspace"
         @save-repo="handleSaveRepo"
         @scan-repos="handleScanRepos"
-        @choose-repo="chooseRepo"
-        @clear-repo="clearSelectedRepo"
+        @open-manual-add="openManualRepoModal"
         @remove-repo="handleRemoveRepo"
       />
 
@@ -227,6 +260,30 @@ onMounted(() => {
       @update="handleUpdateRule"
       @remove="handleRemoveRule"
     />
+
+    <NModal v-model:show="manualRepoModalOpen" preset="card" title="手动新增Modem仓库" class="repo-manual-modal">
+      <div class="ea-stack">
+        <div class="ea-field">
+          <label>本地路径</label>
+          <NInput v-model:value="manualRepoForm.localPath" placeholder="例如 Z:\mtk\modem\t\GEN95\repo" />
+        </div>
+        <div class="ea-field">
+          <label>平台</label>
+          <NInput v-model:value="manualRepoForm.platform" placeholder="例如 GEN95W / GEN99U / GEN99-R2U" />
+        </div>
+        <div class="modal-actions">
+          <NButton secondary @click="closeManualRepoModal">取消</NButton>
+          <NButton
+            type="primary"
+            :loading="savingRepo"
+            :disabled="!manualRepoForm.localPath.trim() || !manualRepoForm.platform.trim()"
+            @click="submitManualRepo"
+          >
+            保存仓库
+          </NButton>
+        </div>
+      </div>
+    </NModal>
   </div>
 </template>
 
@@ -290,6 +347,16 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.repo-manual-modal {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .tip-item {

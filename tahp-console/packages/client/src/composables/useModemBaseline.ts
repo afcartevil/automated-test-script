@@ -312,7 +312,9 @@ export function useModemBaseline() {
         : (data.warning || `未找到项目目录：${data.projectsDir} / ${data.remoteProjectsDir}`)
       const selected = config.value.build_project
       if (selected && !data.items.includes(selected)) {
-        config.value = { ...config.value, build_project: undefined }
+        config.value = { ...config.value, build_project: data.items[0] }
+      } else if (!selected && data.items.length) {
+        config.value = { ...config.value, build_project: data.items[0] }
       }
     } catch (error) {
       buildProjects.value = []
@@ -835,10 +837,10 @@ export function useModemBaseline() {
     }
   }
 
-  async function scanRepos(root: string) {
+  async function scanRepos(roots: string[]) {
     scanningRepos.value = true
     try {
-      const result = await scanRepoProfiles(root)
+      const result = await scanRepoProfiles(roots)
       scanResults.value = result.items
       scanWarnings.value = result.warnings
       return result
