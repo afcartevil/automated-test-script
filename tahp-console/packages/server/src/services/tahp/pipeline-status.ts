@@ -36,8 +36,10 @@ export async function getSelfCheckPipelineStatus(): Promise<SelfCheckPipelineVie
   const deviceList = snapshotDevices()
   const runningTests = deviceList.filter(d => TESTING_STATUSES.has(d.status)).length
   const recentlyCompleted = deviceList.filter(d => COMPLETED_STATUSES.has(d.status)).length
-  const initDevices = deviceList.filter(d => d.status === '初始化中').length
-  const activeSchedule = scheduleView.items.filter(i => i.status === 'active').length
+  const pendingSchedules = scheduleView.items.filter(i => i.runtimeStatus === 'pending').length
+  const noDeviceSchedules = scheduleView.items.filter(i => i.runtimeStatus === 'no_device').length
+  const runningSchedules = scheduleView.items.filter(i => i.runtimeStatus === 'running').length
+  const completedSchedules = scheduleView.items.filter(i => i.runtimeStatus === 'completed').length
   const hasNodes = nodesView.projects.length > 0
 
   const syncStage: PipelineStage = {
@@ -49,15 +51,15 @@ export async function getSelfCheckPipelineStatus(): Promise<SelfCheckPipelineVie
 
   let flashStatus: PipelineStageStatus = 'idle'
   let flashHint: string | undefined
-  if (initDevices > 0) {
-    flashStatus = 'running'
-    flashHint = `${initDevices} 台设备初始化中`
-  } else if (activeSchedule > 0 && runningTests === 0) {
+  const flashHintParts: string[] = []
+  if (pendingSchedules > 0) flashHintParts.push(`待执行 ${pendingSchedules}`)
+  if (noDeviceSchedules > 0) flashHintParts.push(`无设备 ${noDeviceSchedules}`)
+  if (noDeviceSchedules > 0) {
+    flashStatus = 'attention'
+  } else if (pendingSchedules > 0) {
     flashStatus = 'queued'
-    flashHint = `${activeSchedule} 项计划待执行`
-  } else if (recentlyCompleted > 0 && runningTests === 0) {
-    flashStatus = 'done'
   }
+  flashHint = flashHintParts.length ? flashHintParts.join(' · ') : undefined
 
   const flashStage: PipelineStage = {
     key: 'flash',
@@ -67,19 +69,20 @@ export async function getSelfCheckPipelineStatus(): Promise<SelfCheckPipelineVie
   }
 
   let testStatus: PipelineStageStatus = 'idle'
-  if (runningTests > 0) {
+  if (runningSchedules > 0) {
     testStatus = 'running'
-  } else if (activeSchedule > 0) {
-    testStatus = 'queued'
-  } else if (recentlyCompleted > 0) {
+  } else if (completedSchedules > 0) {
     testStatus = 'done'
   }
+  const testHintParts: string[] = []
+  if (runningSchedules > 0) testHintParts.push(`测试中 ${runningSchedules}`)
+  if (completedSchedules > 0) testHintParts.push(`已完成 ${completedSchedules}`)
 
   const testStage: PipelineStage = {
     key: 'test',
     label: '自动测试',
     status: testStatus,
-    hint: runningTests > 0 ? `${runningTests} 台运行中` : undefined,
+    hint: testHintParts.length ? testHintParts.join(' · ') : undefined,
   }
 
   const reviewStage: PipelineStage = {

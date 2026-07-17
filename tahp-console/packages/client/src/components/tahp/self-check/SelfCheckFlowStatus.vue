@@ -21,6 +21,13 @@ function handleStageClick(stage: PipelineStage) {
   const tab = stageTabMap[stage.key]
   if (tab) emit('stageClick', tab)
 }
+
+function shouldShowStatus(stage: PipelineStage): boolean {
+  return !(
+    (stage.key === 'flash' && stage.status === 'queued') ||
+    (stage.key === 'test' && stage.status === 'done')
+  )
+}
 </script>
 
 <template>
@@ -35,7 +42,9 @@ function handleStageClick(stage: PipelineStage) {
       <span class="flow-dot" />
       <div class="flow-body">
         <div class="flow-label">{{ stage.label }}</div>
-        <div class="flow-status">{{ pipelineStatusLabel(stage.status) }}</div>
+        <div v-if="shouldShowStatus(stage)" class="flow-status">
+          {{ pipelineStatusLabel(stage.status) }}
+        </div>
         <div v-if="stage.hint" class="flow-hint ea-muted">{{ stage.hint }}</div>
       </div>
     </li>

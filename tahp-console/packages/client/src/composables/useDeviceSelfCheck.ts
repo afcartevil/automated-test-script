@@ -347,8 +347,18 @@ const launchStore = useDeviceSelfCheckLaunchStore()
       return pipelineView.value.stages
     }
     const hasNodes = nextNodes.value.length > 0
-    const hasRunning = stats.value.runningTests > 0
-    const hasSchedule = scheduleItems.value.length > 0
+    const pendingSchedules = scheduleItems.value.filter(i => i.runtimeStatus === 'pending').length
+    const noDeviceSchedules = scheduleItems.value.filter(i => i.runtimeStatus === 'no_device').length
+    const runningSchedules = scheduleItems.value.filter(i => i.runtimeStatus === 'running').length
+    const completedSchedules = scheduleItems.value.filter(i => i.runtimeStatus === 'completed').length
+    const flashHint = [
+      pendingSchedules > 0 ? `待执行 ${pendingSchedules}` : '',
+      noDeviceSchedules > 0 ? `无设备 ${noDeviceSchedules}` : '',
+    ].filter(Boolean).join(' · ')
+    const testHint = [
+      runningSchedules > 0 ? `测试中 ${runningSchedules}` : '',
+      completedSchedules > 0 ? `已完成 ${completedSchedules}` : '',
+    ].filter(Boolean).join(' · ')
     return [
       {
         key: 'sync',
@@ -359,12 +369,14 @@ const launchStore = useDeviceSelfCheckLaunchStore()
       {
         key: 'flash',
         label: '版本拉取/烧录',
-        status: hasRunning ? 'running' : hasNodes ? 'queued' : 'idle',
+        status: noDeviceSchedules > 0 ? 'attention' : pendingSchedules > 0 ? 'queued' : 'idle',
+        hint: flashHint || undefined,
       },
       {
         key: 'test',
         label: '自动测试',
-        status: hasRunning ? 'running' : hasSchedule ? 'queued' : 'idle',
+        status: runningSchedules > 0 ? 'running' : completedSchedules > 0 ? 'done' : 'idle',
+        hint: testHint || undefined,
       },
       {
         key: 'review',

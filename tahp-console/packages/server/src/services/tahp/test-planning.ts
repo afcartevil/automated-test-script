@@ -20,6 +20,8 @@ import {
 
 export const MAX_OFFSET_DAYS = 14
 export const UPCOMING_HORIZON_DAYS = 14
+/** completed 排期在节点日后继续展示的天数（不含节点日当天，至 nodeDate+N 前） */
+export const COMPLETED_RETAIN_DAYS = 7
 
 export type PlanTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power'
 
@@ -219,17 +221,23 @@ export function buildTestSchedule(
 
       const nodeDate = fromDisplayDate(nodeDateStr)
       const triggerDate = addDays(nodeDate, rule.offsetDays)
-
-      const isActive = triggerDate <= now && now <= nodeDate
-      const isUpcoming = now < triggerDate && triggerDate <= horizonEnd
-      if (!isActive && !isUpcoming) continue
-
       const triggerDisplay = toDisplayDate(triggerDate)
-      const testTypeLabel = getTestTypeLabel(rule.testType)
       const scheduleKey = buildScheduleKey(project.name, rule.node, triggerDisplay, rule.testType)
       const execution = executions[scheduleKey]
       const runtimeStatus: PlanRuntimeStatus = execution?.runtimeStatus ?? 'pending'
-      const phase = isActive ? 'active' : 'upcoming'
+
+      const isActive = triggerDate <= now && now <= nodeDate
+      const isUpcoming = now < triggerDate && triggerDate <= horizonEnd
+      // completed：节点日过后仍保留到 nodeDate+7 之前（nodeDate < now < nodeDate+7）
+      const completedRetainEnd = addDays(nodeDate, COMPLETED_RETAIN_DAYS)
+      const isCompletedRetain =
+        runtimeStatus === 'completed' &&
+        now.getTime() > nodeDate.getTime() &&
+        now.getTime() < completedRetainEnd.getTime()
+      if (!isActive && !isUpcoming && !isCompletedRetain) continue
+
+      const testTypeLabel = getTestTypeLabel(rule.testType)
+      const phase = isActive || isCompletedRetain ? 'active' : 'upcoming'
       const displayLabel = resolveDisplayLabel(phase, runtimeStatus)
       const tags = resolveTags(runtimeStatus)
 
