@@ -23,7 +23,7 @@ const coreNav = [
   { name: 'tahp.adapt-debug', label: 'AI 适配调试' },
   { name: 'tahp.bug-analysis', label: '智能诊断' },
   { name: 'tahp.modem-baseline.workbench', label: 'Modem基线' },
-  { name: 'tahp.gki-patch.dashboard', label: 'GKI Patch' },
+  { name: 'tahp.gki-patch.dashboard', label: 'GKI 升级' },
   { name: 'tahp.self-check', label: 'AI 自检' },
 ]
 

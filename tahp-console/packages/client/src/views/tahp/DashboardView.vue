@@ -36,7 +36,7 @@ const coreCards = [
     route: 'tahp.gki-patch.dashboard',
     tone: 'ea-t-violet',
     icon: 'kernel',
-    title: 'GKI Patch',
+    title: 'GKI 升级',
     summary: 'GKI 内核 patch 区间分析、风险评估与 vendor 合入。',
   },
   {
