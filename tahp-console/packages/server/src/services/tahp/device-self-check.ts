@@ -512,6 +512,23 @@ async function execAdbCommand(
   })
 }
 
+/** 刷新设备列表时会重新 ADB 探测 SIM 的状态（含「不满足前置条件」，便于插卡后刷新） */
+export const DEVICE_STATUSES_REFRESH_SIM: readonly DeviceStatus[] = [
+  '空闲',
+  '完成(通过)',
+  '完成(失败)',
+  '错误',
+  '不满足前置条件',
+]
+
+export function shouldRefreshSimOnListRefresh(status: string): boolean {
+  return (DEVICE_STATUSES_REFRESH_SIM as readonly string[]).includes(status)
+}
+
+export function countPresentSimCards(simCards: SimCardInfo[] | undefined): number {
+  return (simCards || []).filter(s => s.present).length
+}
+
 export function parseDeviceProbeOutput(
   output: string,
   deviceId: string,
@@ -535,6 +552,23 @@ export function parseDeviceProbeOutput(
   return {
     deviceName: model || deviceId,
     simCards,
+  }
+}
+
+/** 重新 ADB 探测并写回设备名称 / SIM；继续测试与前置检查前调用，避免插卡后仍用缓存 */
+export async function refreshDeviceProbeInfo(deviceId: string): Promise<DeviceInfo | null> {
+  const device = devices[deviceId]
+  if (!device) return null
+  try {
+    const { deviceName, simCards } = await probeDeviceInfo(deviceId)
+    device.deviceName = deviceName
+    device.simCards = simCards
+    initializedDeviceIds.add(deviceId)
+    emitEvent('device_updated', { device })
+    return device
+  } catch (e) {
+    console.warn('[device-self-check] Failed to refresh device probe:', deviceId, e)
+    return device
   }
 }
 
@@ -679,8 +713,10 @@ export async function refreshDevices(): Promise<DeviceInfo[]> {
       })
     )
 
-    // 并行更新已有空闲/完成设备的名称与 SIM（名称曾为 deviceId 时也会重试）
-    const existingIds = adbDeviceIds.filter(id => devices[id] && ['空闲', '完成(通过)', '完成(失败)', '错误'].includes(devices[id].status))
+    // 并行更新可刷新状态设备的名称与 SIM（含「不满足前置条件」，便于插卡后刷新）
+    const existingIds = adbDeviceIds.filter(
+      id => devices[id] && shouldRefreshSimOnListRefresh(devices[id].status),
+    )
     const existingUpdates = await Promise.all(
       existingIds.map(async (deviceId) => {
         const { deviceName, simCards } = await probeDeviceInfo(deviceId)
@@ -773,9 +809,11 @@ async function checkPreconditions(
 
   const cond = config.conditions
 
-  // 检查 SIM 卡数量
+  // 检查 SIM 卡数量（先重新探测，避免插卡后仍用内存缓存）
   if (cond.dutSimCount > 0) {
-    const simCount = device.simCards.filter(s => s.present).length
+    await refreshDeviceProbeInfo(deviceId)
+    const refreshed = devices[deviceId] || device
+    const simCount = countPresentSimCards(refreshed.simCards)
     if (simCount < cond.dutSimCount) {
       return { status: 'failed', reason: `需要${cond.dutSimCount}张SIM卡，当前${simCount}张` }
     }
@@ -2741,6 +2779,9 @@ export async function continueTest(deviceId: string): Promise<DeviceDetail | nul
       return null
     }
 
+    // 插卡/换卡后继续：先刷新 SIM，再进入 runModule 前置检查
+    await refreshDeviceProbeInfo(deviceId)
+
     device.status = '测试中'
     session.errorReason = undefined
     emitEvent('device_updated', { device })
@@ -3178,6 +3219,24 @@ export function updateCaseResult(
 // 结果和详情
 export function getDevice(deviceId: string): DeviceInfo | undefined {
   return devices[deviceId]
+}
+
+/** @internal 单测注入设备内存态 */
+export function __testingUpsertDevice(device: DeviceInfo, session?: TestSession): void {
+  devices[device.deviceId] = {
+    ...device,
+    simCards: (device.simCards || getDefaultSimCards()).map(s => ({ ...s })),
+  }
+  if (session) {
+    testSessions[device.deviceId] = session
+  }
+}
+
+/** @internal 单测清空设备内存态 */
+export function __testingResetDevices(): void {
+  devices = {}
+  testSessions = {}
+  initializedDeviceIds = new Set()
 }
 
 export function snapshotDevices(): DeviceInfo[] {
