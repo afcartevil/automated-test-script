@@ -13,7 +13,7 @@ import { useModelProviderReadiness } from '@/composables/useModelProviderReadine
 import { useTahpTasksStore } from '@/stores/tahp/tasks'
 import type { TahpModule } from '@/constants/tahp-modules'
 import { fetchDynamicDomains } from '@/api/tahp/skills'
-import { startAdaptAgentRun, previewAdaptAgentPrompts, submitAdaptUserInput, continueAdaptAgentRun, respondAdaptApproval, completeAdaptAgentRun, cancelAdaptAgentRun } from '@/api/tahp/adapt'
+import { startAdaptAgentRun, previewAdaptAgentPrompts, submitAdaptUserInput, continueAdaptAgentRun, respondAdaptApproval, completeAdaptAgentRun, cancelAdaptAgentRun, fetchPrereqProjects, resolvePrereqsFromCenter, type AdaptPrereqProject } from '@/api/tahp/adapt'
 import { listTaskReports, getTaskReport, type TaskReportSummary, type TaskReportDetail } from '@/api/tahp/reports'
 import { waitForTahpSocketReady } from '@/api/tahp/socket'
 import { fetchSkills, type SkillInfo } from '@/api/hermes/skills'
@@ -815,6 +815,12 @@ const expandedLoading = ref(false)
 const detailCache = reactive<Record<string, TaskReportDetail>>({})
 /** 最近回填的字段名，用于表单高亮反馈（1.5s 后清空） */
 const refilledFields = ref<string[]>([])
+const stalePrereqFields = ref<string[]>([])
+const prereqProjects = ref<AdaptPrereqProject[]>([])
+const prereqProjectCode = ref<string | null>(null)
+const prereqLoading = ref(false)
+const prereqFillMode = ref<'empty' | 'overwrite'>('empty')
+const prereqCenterReady = ref(true)
 let refillHighlightTimer: ReturnType<typeof setTimeout> | null = null
 
 async function loadHistory() {
@@ -1058,6 +1064,142 @@ function applyRefill(detail: TaskReportDetail) {
       ? `已回填 ${filled} 个字段，${ignored} 个字段因布局变更已忽略`
       : `已回填 ${filled} 个字段`,
   )
+}
+
+function mapPrereqFieldType(t: string): FieldDef['type'] {
+  if (t === 'textarea') return 'textarea'
+  if (t === 'select' || t === 'multiselect') return 'select'
+  return 'text'
+}
+
+function ensurePrereqCustomFields(
+  ws: AdaptWorkspaceId,
+  domainId: string,
+  schema: Array<{ key: string; label: string; type: string; required?: boolean; options?: Array<{ label: string; value: string }>; placeholder?: string; source?: string }>,
+) {
+  const domain = workspaceDomains[ws]?.find(d => d.id === domainId)
+  if (!domain) return
+  const existing = new Set(domain.fields.map(f => f.name))
+  let added = false
+  for (const f of schema) {
+    if (!f.key || existing.has(f.key)) continue
+    if (f.source !== 'custom') continue
+    domain.fields.push({
+      name: f.key,
+      label: `${f.label} [自定义]`,
+      type: mapPrereqFieldType(f.type),
+      required: !!f.required,
+      options: f.options,
+      placeholder: f.placeholder,
+    })
+    existing.add(f.key)
+    added = true
+  }
+  if (added) initDomainFormData(domain)
+}
+
+async function loadPrereqProjects() {
+  try {
+    prereqProjects.value = await fetchPrereqProjects()
+    prereqCenterReady.value = true
+  } catch (e) {
+    prereqCenterReady.value = false
+    prereqProjects.value = []
+    // 未配置中心时静默；有中心但失败时提示
+    const msg = (e as Error).message || ''
+    if (!/未配置中心/.test(msg)) {
+      message.warning(`无法加载中心前置项目：${msg}`)
+    }
+  }
+}
+
+function prereqProjectLabel(project: AdaptPrereqProject): string {
+  const details = [project.name]
+  if (project.active_campaign_id) details.push(project.active_campaign_id)
+  if (project.active_publication_sequence) {
+    details.push(`发布v${project.active_publication_sequence}`)
+  }
+  return `${project.code}（${details.join(' · ')}）`
+}
+
+async function loadPrereqsFromCenter() {
+  const code = prereqProjectCode.value?.trim()
+  if (!code) {
+    message.warning('请先选择或输入项目号')
+    return
+  }
+  prereqLoading.value = true
+  try {
+    const result = await resolvePrereqsFromCenter({
+      project_code: code,
+      workspace_id: 'adapt-debug',
+    })
+    // 切到 AI 适配调试工作区再填表
+    if (activeWorkspaceId.value !== 'adapt-debug') {
+      await switchAdaptWorkspace('adapt-debug')
+    }
+
+    let filledTotal = 0
+    let skippedOccupied = 0
+    const allStale: string[] = []
+    const allIncomplete: string[] = []
+    const highlighted: string[] = []
+
+    for (const d of result.domains || []) {
+      if (d.workspace_id !== 'adapt-debug') continue
+      ensurePrereqCustomFields('adapt-debug', d.domain_id, d.schema || [])
+      const domain = workspaceDomains['adapt-debug']?.find(x => x.id === d.domain_id)
+      if (!domain) continue
+
+      const key = `adapt-debug:${d.domain_id}`
+      if (!formData[key]) formData[key] = {}
+      const fd = d.form_data || {}
+      const staleSet = new Set(d.stale_fields || [])
+
+      for (const field of domain.fields) {
+        if (field.type === 'checklist') continue
+        const raw = fd[field.name]
+        if (raw === undefined || raw === null || String(raw).trim() === '') continue
+        const next = String(raw)
+        const cur = String(formData[key][field.name] ?? '').trim()
+        if (prereqFillMode.value === 'empty' && cur) {
+          skippedOccupied++
+          continue
+        }
+        formData[key][field.name] = next
+        filledTotal++
+        highlighted.push(field.name)
+        if (staleSet.has(field.name)) allStale.push(`${d.domain_id}.${field.name}`)
+      }
+      for (const f of d.incomplete_required || []) {
+        allIncomplete.push(`${d.domain_id}.${f}`)
+      }
+    }
+
+    stalePrereqFields.value = allStale.map(s => s.split('.').pop() || s)
+    refilledFields.value = highlighted
+    if (refillHighlightTimer) clearTimeout(refillHighlightTimer)
+    refillHighlightTimer = setTimeout(() => { refilledFields.value = [] }, 2000)
+
+    // 切到第一个有数据的域
+    const firstFilled = (result.domains || []).find(d =>
+      d.workspace_id === 'adapt-debug' && Object.keys(d.form_data || {}).some(k => String(d.form_data[k] ?? '').trim()),
+    )
+    if (firstFilled) activeDomainId.value = firstFilled.domain_id
+
+    const parts = [
+      `已从中心载入 ${result.project_code} / ${result.campaign_id}（${result.from_os}→${result.to_os}）`,
+      `填充 ${filledTotal} 项`,
+    ]
+    if (skippedOccupied) parts.push(`跳过已填 ${skippedOccupied} 项`)
+    if (allStale.length) parts.push(`${allStale.length} 项需核对路径`)
+    if (allIncomplete.length) parts.push(`${allIncomplete.length} 个必填仍空`)
+    message.success(parts.join('；'))
+  } catch (e) {
+    message.error((e as Error).message || '从中心载入失败')
+  } finally {
+    prereqLoading.value = false
+  }
 }
 
 function viewReport(taskId: string) {
@@ -1569,6 +1711,7 @@ onMounted(async () => {
   await loadAdaptLayouts({ workspaceId: ws, showError: false })
   layoutsReadyByWorkspace[ws] = true
   await loadHistory()
+  void loadPrereqProjects()
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1780,6 +1923,39 @@ function openSkill(skillName: string) {
       :subtitle="activeWorkspace.subtitle"
     >
       <template #actions>
+        <div class="adapt-prereq-bar">
+          <NSelect
+            v-model:value="prereqProjectCode"
+            filterable
+            tag
+            clearable
+            size="small"
+            :options="prereqProjects.map(p => ({ label: prereqProjectLabel(p), value: p.code }))"
+            :placeholder="prereqCenterReady ? '选择或输入项目号' : '中心未配置'"
+            :disabled="!prereqCenterReady && !prereqProjects.length"
+            style="min-width: 220px"
+            @focus="() => void loadPrereqProjects()"
+          />
+          <NSelect
+            v-model:value="prereqFillMode"
+            size="small"
+            :options="[
+              { label: '仅填空', value: 'empty' },
+              { label: '全部覆盖', value: 'overwrite' },
+            ]"
+            style="width: 110px"
+          />
+          <NButton
+            size="small"
+            type="primary"
+            secondary
+            :loading="prereqLoading"
+            :disabled="!prereqProjectCode"
+            @click="loadPrereqsFromCenter"
+          >
+            从中心载入前置
+          </NButton>
+        </div>
         <span v-if="layoutSyncMeta?.cloud_sync_enabled" class="ea-pill-info">云端同步已启用</span>
         <button
           v-if="activeWorkspace.allowDynamicDomains"
@@ -1973,7 +2149,7 @@ function openSkill(skillName: string) {
                       v-for="field in eccSharedFields"
                       :key="activeDomainId + '-shared-' + field.name"
                       class="ea-field"
-                      :class="{ 'ea-field-full': field.type === 'textarea', 'ea-field-refilled': refilledFields.includes(field.name) }"
+                      :class="{ 'ea-field-full': field.type === 'textarea', 'ea-field-refilled': refilledFields.includes(field.name), 'ea-field-stale': stalePrereqFields.includes(field.name) }"
                     >
                       <label>
                         {{ field.label }}
@@ -2069,7 +2245,7 @@ function openSkill(skillName: string) {
                     v-for="field in activeDomain.fields"
                     :key="activeDomainId + '-' + field.name"
                     class="ea-field"
-                    :class="{ 'ea-field-full': field.type === 'textarea' || field.type === 'checklist', 'ea-field-refilled': refilledFields.includes(field.name) }"
+                    :class="{ 'ea-field-full': field.type === 'textarea' || field.type === 'checklist', 'ea-field-refilled': refilledFields.includes(field.name), 'ea-field-stale': stalePrereqFields.includes(field.name) }"
                   >
                     <label>
                       {{ field.label }}
@@ -3690,6 +3866,18 @@ $adapt-sidebar-gap: 10px;
 }
 .ea-field-refilled {
   animation: adapt-refill-flash 1.5s ease-out;
+}
+.ea-field-stale :deep(.n-input),
+.ea-field-stale :deep(.n-base-selection) {
+  background: #fffbeb !important;
+  border-color: #f59e0b !important;
+}
+.adapt-prereq-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 8px;
+  flex-wrap: wrap;
 }
 @keyframes adapt-refill-flash {
   0% { background: rgba(99, 102, 241, .18); }

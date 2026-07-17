@@ -88,3 +88,65 @@ export interface AdaptAgentPromptPreview {
 export function previewAdaptAgentPrompts(req: AdaptAgentRunRequest): Promise<AdaptAgentPromptPreview> {
   return tahpPost<AdaptAgentPromptPreview>('/api/tahp/adapt/agent-prompt-preview', req)
 }
+
+export interface AdaptPrereqProject {
+  code: string
+  name: string
+  product_line?: string
+  active_campaign_id?: string | null
+  active_publication_id?: string
+  active_publication_sequence?: number
+  updated_at: string
+}
+
+export interface AdaptPrereqFieldSchema {
+  key: string
+  label: string
+  type: string
+  required?: boolean
+  options?: Array<{ label: string; value: string }>
+  placeholder?: string
+  source?: string
+  category?: string
+}
+
+export interface AdaptPrereqResolvedDomain {
+  workspace_id: string
+  domain_id: string
+  revision: number
+  schema: AdaptPrereqFieldSchema[]
+  form_data: Record<string, unknown>
+  stale_fields: string[]
+  incomplete_required: string[]
+  updated_at?: string
+  updated_by?: string
+}
+
+export interface AdaptPrereqResolveResult {
+  project_code: string
+  campaign_id: string
+  publication_id?: string
+  from_os: string
+  to_os: string
+  domains: AdaptPrereqResolvedDomain[]
+}
+
+/** 从中心拉取前置项目列表 */
+export function fetchPrereqProjects(): Promise<AdaptPrereqProject[]> {
+  return tahpGet<AdaptPrereqProject[]>('/api/tahp/adapt/prereqs/projects')
+}
+
+/** 从中心 resolve 项目前置（默认整战役全部域） */
+export function resolvePrereqsFromCenter(opts: {
+  project_code: string
+  campaign_id?: string
+  workspace_id?: string
+  domain_id?: string
+}): Promise<AdaptPrereqResolveResult> {
+  const qs = new URLSearchParams()
+  qs.set('project_code', opts.project_code)
+  if (opts.campaign_id) qs.set('campaign_id', opts.campaign_id)
+  if (opts.workspace_id) qs.set('workspace_id', opts.workspace_id)
+  if (opts.domain_id) qs.set('domain_id', opts.domain_id)
+  return tahpGet<AdaptPrereqResolveResult>(`/api/tahp/adapt/prereqs/resolve?${qs}`)
+}

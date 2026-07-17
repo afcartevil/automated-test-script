@@ -148,4 +148,49 @@ export const centralClient = {
   }> {
     return request('/api/tahp/sync/skill-bundles', { headers: headers() })
   },
+
+  /** 适配前置：项目列表（供 Console 下拉） */
+  async listAdaptPrereqProjects(): Promise<Array<{
+    code: string
+    name: string
+    product_line?: string
+    active_campaign_id?: string | null
+    active_publication_id?: string
+    active_publication_sequence?: number
+    updated_at: string
+  }>> {
+    return request('/api/tahp/sync/adapt-prereqs/projects', { headers: headers() })
+  },
+
+  /** 适配前置：整项目/战役 resolve（含 schema + form_data） */
+  async resolveAdaptPrereqs(opts: {
+    project_code: string
+    campaign_id?: string
+    workspace_id?: string
+    domain_id?: string
+  }): Promise<{
+    project_code: string
+    campaign_id: string
+    publication_id?: string
+    from_os: string
+    to_os: string
+    domains: Array<{
+      workspace_id: string
+      domain_id: string
+      revision: number
+      schema: Array<Record<string, unknown>>
+      form_data: Record<string, unknown>
+      stale_fields: string[]
+      incomplete_required: string[]
+      updated_at?: string
+      updated_by?: string
+    }>
+  }> {
+    const qs = new URLSearchParams()
+    qs.set('project_code', opts.project_code)
+    if (opts.campaign_id) qs.set('campaign_id', opts.campaign_id)
+    if (opts.workspace_id) qs.set('workspace_id', opts.workspace_id)
+    if (opts.domain_id) qs.set('domain_id', opts.domain_id)
+    return request(`/api/tahp/sync/adapt-prereqs/resolve?${qs}`, { headers: headers() })
+  },
 }

@@ -30,6 +30,8 @@ import {
   forcePushAdaptLayouts,
 } from '../../services/tahp/adapt-layout/service'
 import { DEFAULT_ADAPT_WORKSPACE, isAdaptWorkspaceId } from '../../services/tahp/adapt-layout/types'
+import { isCentralConfigured } from '../../services/tahp/runtime-mode'
+import { centralClient } from '../../services/tahp/sync/central-client'
 
 export const tahpAdaptRoutes = new Router()
 
@@ -397,5 +399,51 @@ tahpAdaptRoutes.get('/api/tahp/adapt/config/get', async (ctx) => {
       logger.warn({ err: (err as Error).message }, '[tahp-adapt-get-config] read failed')
       ctx.body = { success: true, data: null }
     }
+  }
+})
+
+// ─── 适配前置（中心拉取，只读） ─────────────────────────────────────────
+
+tahpAdaptRoutes.get('/api/tahp/adapt/prereqs/projects', async (ctx) => {
+  if (!isCentralConfigured()) {
+    ctx.status = 503
+    ctx.body = { success: false, error: '未配置中心连接（TAHP_CENTRAL_URL / TAHP_CENTRAL_TOKEN）' }
+    return
+  }
+  try {
+    const data = await centralClient.listAdaptPrereqProjects()
+    ctx.body = { success: true, data }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, '[adapt-prereqs] list projects failed')
+    ctx.status = 502
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+tahpAdaptRoutes.get('/api/tahp/adapt/prereqs/resolve', async (ctx) => {
+  if (!isCentralConfigured()) {
+    ctx.status = 503
+    ctx.body = { success: false, error: '未配置中心连接（TAHP_CENTRAL_URL / TAHP_CENTRAL_TOKEN）' }
+    return
+  }
+  const q = ctx.query as Record<string, string>
+  const projectCode = String(q.project_code || '').trim()
+  if (!projectCode) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 project_code' }
+    return
+  }
+  try {
+    const data = await centralClient.resolveAdaptPrereqs({
+      project_code: projectCode,
+      campaign_id: q.campaign_id?.trim() || undefined,
+      workspace_id: q.workspace_id?.trim() || undefined,
+      domain_id: q.domain_id?.trim() || undefined,
+    })
+    ctx.body = { success: true, data }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message, projectCode }, '[adapt-prereqs] resolve failed')
+    ctx.status = 502
+    ctx.body = { success: false, error: (err as Error).message }
   }
 })
