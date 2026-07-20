@@ -22,6 +22,7 @@ import {
   deleteAiGeneratedCases as deletePersistedAiGeneratedCases,
   loadAiGeneratedCaseConfig,
 } from './gerrit-ai-generated-cases'
+import { createManualNlUiCase, updateManualNlUiCase } from './ai-nl-ui-cases'
 
 // 类型定义
 export type DeviceRole = '未分配' | '测试机' | '辅测机'
@@ -231,7 +232,13 @@ function normalizeGmsTradefedPath(
 }
 
 function getAutoRetestConfig(testType: string): { enabled: boolean; count: number } {
-  if (testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power') {
+  if (
+    testType === 'monkey' ||
+    testType === 'smoke' ||
+    testType === 'gms' ||
+    testType === 'power' ||
+    testType === 'ai_generated'
+  ) {
     return { enabled: false, count: 0 }
   }
   return {
@@ -382,11 +389,15 @@ function loadCaseConfigs(): void {
 
 function syncAiGeneratedCaseConfig(): void {
   const key = `${AI_GENERATED_TEST_TYPE}/${AI_GENERATED_MODULE}`
-  const config = loadAiGeneratedCaseConfig()
-  if (!config) {
-    delete moduleConditions[key]
-    return
+  const config = loadAiGeneratedCaseConfig() ?? {
+    testType: AI_GENERATED_TEST_TYPE,
+    module: AI_GENERATED_MODULE,
+    moduleLabel: AI_GENERATED_MODULE_LABEL,
+    conditions: { dutSimCount: 0, auxRequired: 0, auxSimCount: 0 },
+    defaultCaseMode: 'solo',
+    cases: [],
   }
+  // loadAiGeneratedCaseConfig 已 bootstrap 权威目录并镜像到运行时
   moduleConditions[key] = config
 }
 
@@ -1460,6 +1471,10 @@ function resolveCaseExecTimeoutMs(testType: string, module: string): number {
     const raw = Number(process.env.TAHP_POWER_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : POWER_EXEC_TIMEOUT_MS
   }
+  if (testType === 'ai_generated' && module === AI_GENERATED_MODULE) {
+    const raw = Number(process.env.TAHP_NL_UI_TIMEOUT_MS)
+    return Number.isFinite(raw) && raw > 0 ? raw : 180_000
+  }
   return CASE_EXEC_TIMEOUT_MS
 }
 
@@ -1840,10 +1855,14 @@ async function runModule(
 
     if (result.status === '通过') {
       session.moduleProgress[moduleKey].passedCases++
-    } else if (result.status === '失败') {
+    } else if (result.status === '失败' || result.status === '部分通过' || result.status === '待确认') {
       session.moduleProgress[moduleKey].failedCases++
       if (result.fullAutomation) {
         failedAutoCases.push(caseIndex)
+      }
+      if (testType === 'ai_generated') {
+        console.log(`[device-self-check] AI用例 ${caseKey} 失败，终止后续用例执行`)
+        break
       }
     }
 
@@ -3361,6 +3380,39 @@ export function deleteAiGeneratedCases(caseKeys: string[]): { deleted: string[];
     remaining: result.remaining,
   })
   return result
+}
+
+export async function createAiNlUiCase(payload: {
+  caseName: string
+  nlDescription: string
+  expectedResult?: string
+}) {
+  const created = await createManualNlUiCase(payload)
+  syncAiGeneratedCaseConfig()
+  emitEvent('case_catalog_updated', {
+    testType: AI_GENERATED_TEST_TYPE,
+    module: AI_GENERATED_MODULE,
+    moduleLabel: AI_GENERATED_MODULE_LABEL,
+    created: created.caseKey,
+  })
+  return created
+}
+
+export async function updateAiNlUiCase(payload: {
+  caseKey: string
+  caseName: string
+  nlDescription: string
+  expectedResult?: string
+}) {
+  const updated = await updateManualNlUiCase(payload)
+  syncAiGeneratedCaseConfig()
+  emitEvent('case_catalog_updated', {
+    testType: AI_GENERATED_TEST_TYPE,
+    module: AI_GENERATED_MODULE,
+    moduleLabel: AI_GENERATED_MODULE_LABEL,
+    updated: updated.caseKey,
+  })
+  return updated
 }
 
 // 初始化

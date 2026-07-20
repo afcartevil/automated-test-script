@@ -2,7 +2,7 @@
  * Gerrit Review 低覆盖场景的 AI 用例生成与持久化。
  */
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   AgentBridgeClient,
@@ -11,7 +11,17 @@ import {
 } from '../hermes/agent-bridge'
 import { filterBridgeToolCallMarkupDelta } from '../hermes/run-chat/bridge-delta'
 import { logger } from '../logger'
-import { tahpPaths } from './paths'
+import {
+  bootstrapAiGeneratedCaseStore,
+  clearDurableAiGeneratedStoreIfEmpty,
+  loadDurableAiGeneratedConfig,
+  loadDurableCaseInfo,
+  removeDurableCaseFiles,
+  saveDurableAiGeneratedConfig,
+  saveDurableCaseInfo,
+  writeDurableCasePython,
+  getAiGeneratedDurableCaseDir,
+} from './ai-generated-case-store'
 import type { RecommendedCase } from './gerrit-case-recommendation'
 
 const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
@@ -25,11 +35,6 @@ const AI_CASE_BRIDGE_TIMEOUT_BUFFER_SEC = 30
 export const AI_GENERATED_TEST_TYPE = 'ai_generated'
 export const AI_GENERATED_MODULE = 'generated'
 export const AI_GENERATED_MODULE_LABEL = 'AI生成用例'
-
-const CASE_CONFIG_DIR = join(tahpPaths.selfCheckDir, 'case_config')
-const AI_CASE_CONFIG_FILE = join(CASE_CONFIG_DIR, 'ai_generated_generated.json')
-const AI_CASE_DIR = join(tahpPaths.selfCheckDir, 'python', 'cases', AI_GENERATED_TEST_TYPE, AI_GENERATED_MODULE)
-const AI_CASE_INFO_FILE = join(AI_CASE_DIR, 'case_info.json')
 
 export interface RecommendCoverage {
   score: number
@@ -63,7 +68,7 @@ interface AiGeneratedCaseConfig {
   moduleLabel: string
   conditions: { dutSimCount: number; auxRequired: number; auxSimCount: number }
   defaultCaseMode: string
-  cases: Array<{ caseIndex: number; caseName: string; mode: string; canReuse: boolean }>
+  cases: Array<{ caseIndex: number; caseName: string; mode: string; canReuse: boolean; execMode?: 'manual' | 'nl_ui' }>
 }
 
 function clampCoverageScore(score: number): number {
@@ -236,8 +241,7 @@ const AI_CASE_RUN_TEMPLATE = `def run(category=None, case_index=None, device_inf
     return {'status': 'fail', 'message': '验证失败', 'full_automation': False}`
 
 function ensureAiCaseDirs(): void {
-  if (!existsSync(CASE_CONFIG_DIR)) mkdirSync(CASE_CONFIG_DIR, { recursive: true })
-  if (!existsSync(AI_CASE_DIR)) mkdirSync(AI_CASE_DIR, { recursive: true })
+  bootstrapAiGeneratedCaseStore()
 }
 
 function defaultConfig(): AiGeneratedCaseConfig {
@@ -252,34 +256,19 @@ function defaultConfig(): AiGeneratedCaseConfig {
 }
 
 function loadAiConfig(): AiGeneratedCaseConfig {
-  ensureAiCaseDirs()
-  if (!existsSync(AI_CASE_CONFIG_FILE)) return defaultConfig()
-  try {
-    return { ...defaultConfig(), ...JSON.parse(readFileSync(AI_CASE_CONFIG_FILE, 'utf-8')) }
-  } catch {
-    return defaultConfig()
-  }
+  return loadDurableAiGeneratedConfig()
 }
 
 function saveAiConfig(config: AiGeneratedCaseConfig): void {
-  ensureAiCaseDirs()
-  writeFileSync(AI_CASE_CONFIG_FILE, `${JSON.stringify(config, null, 2)}\n`, 'utf-8')
+  saveDurableAiGeneratedConfig(config)
 }
 
 function loadCaseInfo(): Array<Record<string, unknown>> {
-  ensureAiCaseDirs()
-  if (!existsSync(AI_CASE_INFO_FILE)) return []
-  try {
-    const parsed = JSON.parse(readFileSync(AI_CASE_INFO_FILE, 'utf-8'))
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
+  return loadDurableCaseInfo()
 }
 
 function saveCaseInfo(info: Array<Record<string, unknown>>): void {
-  ensureAiCaseDirs()
-  writeFileSync(AI_CASE_INFO_FILE, `${JSON.stringify(info, null, 2)}\n`, 'utf-8')
+  saveDurableCaseInfo(info)
 }
 
 function nextCaseIndex(config: AiGeneratedCaseConfig): number {
@@ -307,9 +296,10 @@ function loadHistoricalAiCasesFromDisk(): AiGeneratedCase[] {
   const config = loadAiConfig()
   const info = loadCaseInfo()
   const historical: AiGeneratedCase[] = []
+  const caseDir = getAiGeneratedDurableCaseDir()
 
   for (const item of config.cases) {
-    const pyFile = join(AI_CASE_DIR, `case${item.caseIndex}.py`)
+    const pyFile = join(caseDir, `case${item.caseIndex}.py`)
     if (!existsSync(pyFile)) continue
     const meta = info[item.caseIndex - 1] ?? {}
     const coveredP0Items = Array.isArray(meta.覆盖P0)
@@ -451,7 +441,7 @@ function persistValidatedDrafts(
     }
     const caseIndex = nextCaseIndex(config)
     const caseKey = `${AI_GENERATED_TEST_TYPE}/${AI_GENERATED_MODULE}/${caseIndex}`
-    config.cases.push({ caseIndex, caseName: draft.caseName, mode: 'solo', canReuse: false })
+    config.cases.push({ caseIndex, caseName: draft.caseName, mode: 'solo', canReuse: false, execMode: 'manual' })
     caseInfo[caseIndex - 1] = {
       用例名: draft.caseName,
       前置条件: '连接测试机，保持设备在线',
@@ -459,8 +449,9 @@ function persistValidatedDrafts(
       期望结果: draft.expectedResult || '必须测试项得到覆盖验证',
       覆盖P0: draft.coveredP0Items || [],
       生成原因: draft.reason || coverage.reason,
+      execMode: 'manual',
     }
-    writeFileSync(join(AI_CASE_DIR, `case${caseIndex}.py`), `${draft.pythonSource.trim()}\n`, 'utf-8')
+    writeDurableCasePython(caseIndex, `${draft.pythonSource.trim()}\n`)
     created.push({
       caseKey,
       caseIndex,
@@ -619,8 +610,7 @@ export async function generateAiCasesForCoverageGap(
 }
 
 export function loadAiGeneratedCaseConfig(): AiGeneratedCaseConfig | null {
-  if (!existsSync(AI_CASE_CONFIG_FILE)) return null
-  const config = loadAiConfig()
+  const config = bootstrapAiGeneratedCaseStore()
   return config.cases.length ? config : null
 }
 
@@ -639,12 +629,12 @@ export function deleteAiGeneratedCases(caseKeys: string[]): { deleted: string[];
   config.cases = config.cases.filter(item => !indexes.has(item.caseIndex))
   const info = loadCaseInfo()
   for (const index of indexes) {
-    const file = join(AI_CASE_DIR, `case${index}.py`)
-    if (existsSync(file)) unlinkSync(file)
     if (info[index - 1]) info[index - 1] = {}
   }
+  removeDurableCaseFiles(indexes)
   saveAiConfig(config)
   saveCaseInfo(info)
+  clearDurableAiGeneratedStoreIfEmpty(config)
 
   const deleted = before === config.cases.length
     ? []

@@ -165,6 +165,7 @@ export function deviceMatchesListFilter(
 
 /** 用例大类卡片：模块覆盖范围 */
 export function formatCatalogModuleScope(group: CaseCatalogGroup): string {
+  if (!group.modules.length) return '暂无用例'
   return group.modules.map(m => m.moduleLabel).join('、')
 }
 
@@ -178,6 +179,10 @@ export function formatCatalogAutomation(group: CaseCatalogGroup): string {
   }
   if (group.testType === 'gms') {
     return '脚本全自动（Tradefed CTS/GTS/VTS）'
+  }
+  if (group.testType === 'ai_generated') {
+    const totalCases = group.modules.reduce((sum, m) => sum + m.cases.length, 0)
+    return totalCases > 0 ? 'NL UI 自动化 + 半自动（Gerrit）' : '支持 NL UI 自动化新增'
   }
   const hasReuse = group.modules.some(m => m.cases.some(c => c.canReuse))
   const base = '脚本自动化 + 半自动化'

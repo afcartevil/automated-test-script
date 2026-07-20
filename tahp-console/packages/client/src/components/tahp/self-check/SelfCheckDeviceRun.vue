@@ -22,6 +22,7 @@ const deviceListAnchorRef = ref<HTMLElement | null>(null)
 const deviceDetailPanelRef = ref<HTMLElement | null>(null)
 const deviceDetailBodyRef = ref<HTMLElement | null>(null)
 const customTestPanelRef = ref<HTMLElement | null>(null)
+const aiNlProcessLogRef = ref<HTMLElement | null>(null)
 const deviceListFilter = ref<DeviceListFilterKey>('all')
 
 function getScrollParent(el: HTMLElement): HTMLElement | Window {
@@ -129,6 +130,15 @@ const {
   toggleAiGeneratedCaseForDelete,
   clearAiGeneratedDeleteSelection,
   handleDeleteAiGeneratedCases,
+  handleCreateAiNlUiCase,
+  startEditAiNlCase,
+  cancelEditAiNlCase,
+  aiNlCaseForm,
+  aiNlCaseEditingKey,
+  aiNlCaseCreating,
+  aiNlCaseProgress,
+  aiNlCaseProgressStatus,
+  clearAiNlProgress,
   toggleCatalogDetailModule,
   isCatalogDetailModuleExpanded,
   openCustomTest,
@@ -188,10 +198,7 @@ const {
   getSelectedCaseName,
 } = inject(DEVICE_SELF_CHECK_KEY)!
 
-const DIRECT_TEST_TYPE_ORDER = STANDARD_TEST_TYPE_ORDER.filter(
-  (testType): testType is Exclude<(typeof STANDARD_TEST_TYPE_ORDER)[number], 'ai_generated'> =>
-    testType !== 'ai_generated',
-)
+const DIRECT_TEST_TYPE_ORDER = STANDARD_TEST_TYPE_ORDER
 
 void [flashLogRef, isError, openRetestDialog, openModifyDialog, clearFlashPanel]
 
@@ -216,6 +223,15 @@ watch(
     if (ready) void scrollToElementWhenReady(() => catalogPanelRef.value)
   },
   { flush: 'post' },
+)
+
+watch(
+  () => aiNlCaseProgress.value.length,
+  async () => {
+    await nextTick()
+    const el = aiNlProcessLogRef.value
+    if (el) el.scrollTop = el.scrollHeight
+  },
 )
 
 async function scrollToDeviceDetailBody() {
@@ -686,6 +702,12 @@ function handleDutRowAction(deviceId: string) {
                     配置 Tradefed 路径
                   </button>
                 </div>
+                <div
+                  v-else-if="selectedCatalogTestType === 'ai_generated'"
+                  class="catalog-ai-generated-note catalog-overview-retest"
+                >
+                  <span class="ea-muted">AI用例失败后将立即停止，不自动复测；NL UI 用例全自动执行。</span>
+                </div>
                 <div v-else class="catalog-auto-retest-row catalog-overview-retest">
                   <label
                     class="checkbox-label"
@@ -713,10 +735,147 @@ function handleDutRowAction(deviceId: string) {
               </div>
             </EaCard>
 
+            <div v-if="isAiGeneratedCatalog()" class="ai-nl-case-create">
+              <div class="ai-nl-case-create-header">
+                <div class="section-title">{{ aiNlCaseEditingKey ? '修改 NL UI 用例' : '新增 NL UI 用例' }}</div>
+                <p class="ea-muted ai-nl-case-create-hint">
+                  {{
+                    aiNlCaseEditingKey
+                      ? `正在编辑 ${aiNlCaseEditingKey}：调整描述后点「保存并覆盖」，将重新规划并覆盖原用例。`
+                      : '左侧填写用例描述并提交；右侧展示 AI 判定可执行性、动作规划与落盘过程（失败原因也会显示在此）。'
+                  }}
+                </p>
+              </div>
+              <div class="ai-nl-case-create-split">
+                <div class="ai-nl-case-create-left">
+                  <label class="ai-nl-field">
+                    <span class="form-label">用例名称</span>
+                    <input
+                      v-model.trim="aiNlCaseForm.caseName"
+                      type="text"
+                      class="catalog-setting-input ai-nl-input"
+                      :disabled="aiNlCaseCreating"
+                      placeholder="例如：验证设置页 WLAN 入口"
+                    />
+                  </label>
+                  <label class="ai-nl-field ai-nl-field-grow">
+                    <span class="form-label">自然语言执行描述</span>
+                    <textarea
+                      v-model.trim="aiNlCaseForm.nlDescription"
+                      class="catalog-setting-input ai-nl-textarea"
+                      rows="5"
+                      :disabled="aiNlCaseCreating"
+                      placeholder="请尽量写清：前置（亮屏/解锁）、操作路径（打开哪个页面、点击/滑动什么）、验证点（界面应出现/不出现什么文案）"
+                    />
+                  </label>
+                  <label class="ai-nl-field">
+                    <span class="form-label">期望结果（可选）</span>
+                    <textarea
+                      v-model.trim="aiNlCaseForm.expectedResult"
+                      class="catalog-setting-input ai-nl-textarea ai-nl-textarea-sm"
+                      rows="2"
+                      :disabled="aiNlCaseCreating"
+                      placeholder="例如：界面出现 WLAN 开关或可用网络列表"
+                    />
+                  </label>
+                  <div class="ai-nl-case-create-actions">
+                    <button
+                      type="button"
+                      class="ea-btn-primary ai-nl-submit-btn"
+                      :disabled="aiNlCaseCreating"
+                      @click="handleCreateAiNlUiCase"
+                    >
+                      {{
+                        aiNlCaseCreating
+                          ? (aiNlCaseEditingKey ? '判定并覆盖中...' : '判定并保存中...')
+                          : (aiNlCaseEditingKey ? '保存并覆盖' : '新增用例')
+                      }}
+                    </button>
+                    <button
+                      v-if="aiNlCaseEditingKey"
+                      type="button"
+                      class="ea-btn-ghost ea-btn-sm"
+                      :disabled="aiNlCaseCreating"
+                      @click="cancelEditAiNlCase"
+                    >
+                      取消修改
+                    </button>
+                    <button
+                      v-if="aiNlCaseProgress.length"
+                      type="button"
+                      class="ea-btn-ghost ea-btn-sm"
+                      :disabled="aiNlCaseCreating"
+                      @click="clearAiNlProgress"
+                    >
+                      清空过程
+                    </button>
+                  </div>
+                </div>
+                <div
+                  class="ai-nl-case-create-right"
+                  :class="`is-${aiNlCaseProgressStatus}`"
+                >
+                  <div class="ai-nl-process-title">
+                    <span>AI 判定 / 执行过程</span>
+                    <span
+                      class="ai-nl-process-badge"
+                      :class="`is-${aiNlCaseProgressStatus}`"
+                    >
+                      {{
+                        aiNlCaseProgressStatus === 'running' ? '进行中'
+                          : aiNlCaseProgressStatus === 'success' ? '成功'
+                            : aiNlCaseProgressStatus === 'error' ? '失败'
+                              : '待命'
+                      }}
+                    </span>
+                  </div>
+                  <div
+                    ref="aiNlProcessLogRef"
+                    class="ai-nl-process-log"
+                  >
+                    <div
+                      v-if="!aiNlCaseProgress.length"
+                      class="ai-nl-process-empty ea-muted"
+                    >
+                      {{
+                        aiNlCaseEditingKey
+                          ? '点击「保存并覆盖」后，这里会展示重新规划与覆盖落盘过程。'
+                          : '点击「新增用例」后，这里会实时展示：输入校验、LLM 思考、可执行性判定、动作计划与落盘结果。'
+                      }}
+                    </div>
+                    <div
+                      v-for="item in aiNlCaseProgress"
+                      :key="item.id"
+                      class="ai-nl-process-item"
+                      :class="`level-${item.level}`"
+                    >
+                      <div class="ai-nl-process-item-head">
+                        <span class="ai-nl-process-time">{{ item.at }}</span>
+                        <span class="ai-nl-process-level">{{
+                          item.level === 'thinking' ? '思考'
+                            : item.level === 'success' ? '成功'
+                              : item.level === 'error' ? '失败'
+                                : '信息'
+                        }}</span>
+                      </div>
+                      <div class="ai-nl-process-msg">{{ item.message }}</div>
+                      <pre
+                        v-if="item.detail"
+                        class="ai-nl-process-detail"
+                      >{{ item.detail }}</pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="detail-container catalog-detail-body">
               <EaCard class="sidebar-card">
                 <div class="section-title">用例列表</div>
                 <div class="case-list">
+                  <div v-if="catalogDetailByModule.length === 0" class="ea-muted catalog-empty-cases">
+                    暂无用例，可在上方新增 NL UI 用例
+                  </div>
                   <div
                     v-for="mod in catalogDetailByModule"
                     :key="mod.module"
@@ -735,7 +894,10 @@ function handleDutRowAction(deviceId: string) {
                         v-for="item in mod.cases"
                         :key="item.key"
                         class="case-item"
-                        :class="{ selected: selectedCatalogCaseKey === item.key }"
+                        :class="{
+                          selected: selectedCatalogCaseKey === item.key,
+                          editing: aiNlCaseEditingKey === item.key,
+                        }"
                         @click="selectCatalogCase(item.key)"
                       >
                         <input
@@ -746,7 +908,17 @@ function handleDutRowAction(deviceId: string) {
                           @click.stop
                           @change.stop="toggleAiGeneratedCaseForDelete(item.key)"
                         />
-                        {{ item.caseName }}
+                        <span class="case-item-name">{{ item.caseName }}</span>
+                        <button
+                          v-if="isAiGeneratedCatalog()"
+                          type="button"
+                          class="ai-case-edit-btn"
+                          title="修改用例"
+                          :disabled="aiNlCaseCreating"
+                          @click.stop="startEditAiNlCase(item)"
+                        >
+                          ✎
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1397,9 +1569,17 @@ $catalog-pane-height: calc(100vh - 48px);
     flex-shrink: 0;
   }
 
+  .ai-nl-case-create {
+    flex: 0 1 auto;
+    max-height: min(360px, 42%);
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
   .catalog-detail-body {
     flex: 1 1 0;
-    min-height: 0;
+    min-height: 240px;
     overflow: hidden;
   }
 
@@ -1407,7 +1587,7 @@ $catalog-pane-height: calc(100vh - 48px);
     display: flex;
     gap: 16px;
     height: 100%;
-    min-height: 0;
+    min-height: 240px;
   }
 
   .catalog-detail-body .sidebar-card {
@@ -1791,6 +1971,243 @@ $catalog-pane-height: calc(100vh - 48px);
   border-top: 1px solid var(--line);
 }
 
+.ai-nl-case-create {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg, #fff);
+}
+
+.ai-nl-case-create-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.ai-nl-case-create-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ai-nl-case-create-split {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(260px, 1.15fr);
+  gap: 12px;
+  min-height: 220px;
+  align-items: stretch;
+}
+
+.ai-nl-case-create-left {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg, #fff);
+}
+
+.ai-nl-case-create-right {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 180px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.02);
+  overflow: hidden;
+
+  &.is-running {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  }
+
+  &.is-success {
+    border-color: color-mix(in srgb, var(--success) 45%, var(--line));
+  }
+
+  &.is-error {
+    border-color: color-mix(in srgb, var(--error) 45%, var(--line));
+  }
+}
+
+.ai-nl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-nl-field-grow {
+  flex: 1;
+}
+
+.ai-nl-input.catalog-setting-input,
+.ai-nl-textarea.catalog-setting-input {
+  width: 100%;
+  max-width: none;
+  flex-shrink: 1;
+  box-sizing: border-box;
+}
+
+.ai-nl-textarea {
+  min-height: 88px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.ai-nl-textarea-sm {
+  min-height: 48px;
+}
+
+.ai-nl-case-create-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.ai-nl-submit-btn {
+  min-width: 148px;
+  height: 36px;
+  padding: 0 18px;
+  font-weight: 600;
+}
+
+.ai-nl-process-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ai-nl-process-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--line);
+
+  &.is-running {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+
+  &.is-success {
+    color: var(--success);
+    border-color: color-mix(in srgb, var(--success) 35%, var(--line));
+    background: color-mix(in srgb, var(--success) 10%, transparent);
+  }
+
+  &.is-error {
+    color: var(--error);
+    border-color: color-mix(in srgb, var(--error) 35%, var(--line));
+    background: color-mix(in srgb, var(--error) 10%, transparent);
+  }
+}
+
+.ai-nl-process-log {
+  flex: 1;
+  overflow: auto;
+  padding: 10px 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 220px;
+}
+
+.ai-nl-process-empty {
+  margin: auto 0;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 24px 12px;
+}
+
+.ai-nl-process-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg, #fff);
+
+  &.level-thinking {
+    border-left: 3px solid var(--accent);
+  }
+
+  &.level-success {
+    border-left: 3px solid var(--success);
+  }
+
+  &.level-error {
+    border-left: 3px solid var(--error);
+  }
+
+  &.level-info {
+    border-left: 3px solid var(--muted);
+  }
+}
+
+.ai-nl-process-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.ai-nl-process-time {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-nl-process-level {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.ai-nl-process-msg {
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 550;
+}
+
+.ai-nl-process-detail {
+  margin: 6px 0 0;
+  padding: 8px;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.04);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--text);
+}
+
+@media (max-width: 960px) {
+  .ai-nl-case-create-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.catalog-empty-cases {
+  padding: 16px 8px;
+  font-size: 13px;
+}
+
 .ai-case-delete-checkbox {
   margin-right: 8px;
 }
@@ -1970,7 +2387,7 @@ $catalog-pane-height: calc(100vh - 48px);
 
 .self-check-stack-pane--catalog .catalog-detail-body.detail-container {
   height: 100%;
-  min-height: 0;
+  min-height: 240px;
 }
 
 .self-check-stack-pane--device .device-detail-body.detail-container {
@@ -2245,6 +2662,9 @@ $catalog-pane-height: calc(100vh - 48px);
 }
 
 .case-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 12px;
   border-radius: 6px;
   cursor: pointer;
@@ -2262,12 +2682,46 @@ $catalog-pane-height: calc(100vh - 48px);
     font-weight: 600;
   }
 
+  &.editing {
+    outline: 1px solid var(--accent);
+  }
+
   &.passed {
     border-left: 3px solid var(--success);
   }
 
   &.failed {
     border-left: 3px solid var(--error);
+  }
+}
+
+.case-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-case-edit-btn {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1;
+
+  &:hover:not(:disabled) {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 }
 

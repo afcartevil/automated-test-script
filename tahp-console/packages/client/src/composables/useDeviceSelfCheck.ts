@@ -20,6 +20,8 @@ import {
   clearFlashPackageCache,
   startCustomTest,
   deleteAiGeneratedCases,
+  createAiNlUiCase,
+  updateAiNlUiCase,
   getCaseCatalogs,
   getCaseCatalogDetail,
   continueTest,
@@ -88,7 +90,7 @@ const selectedDevice = ref<DeviceDetail | null>(null)
 const moduleConditions = ref<Record<string, ModuleCondition>>({})
 
 // 测试类型选择
-const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power'>('week')
+const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'ai_generated'>('week')
 /** 空闲设备开始测试前的角色意向（仅 UI，选中设备时默认测试机；点击开始测试时才落盘） */
 const startTestIntentRole = ref<DeviceRole>('测试机')
 
@@ -217,6 +219,87 @@ const selectedCatalogCaseKey = ref<string | null>(null)
 const catalogDetailLoading = ref(false)
 const selectedAiGeneratedCasesForDelete = ref<Set<string>>(new Set())
 const aiGeneratedCasesDeleting = ref(false)
+const aiNlCaseForm = ref({
+  caseName: '',
+  nlDescription: '',
+  expectedResult: '',
+})
+const aiNlCaseEditingKey = ref<string | null>(null)
+const aiNlCaseCreating = ref(false)
+type AiNlCaseProgressLevel = 'info' | 'thinking' | 'success' | 'error'
+interface AiNlCaseProgressItem {
+  id: string
+  level: AiNlCaseProgressLevel
+  message: string
+  detail?: string
+  at: string
+}
+const aiNlCaseProgress = ref<AiNlCaseProgressItem[]>([])
+const aiNlCaseProgressStatus = ref<'idle' | 'running' | 'success' | 'error'>('idle')
+
+function pushAiNlProgress(
+  level: AiNlCaseProgressLevel,
+  message: string,
+  detail?: string,
+) {
+  aiNlCaseProgress.value = [
+    ...aiNlCaseProgress.value,
+    {
+      id: `nl-${Date.now()}-${aiNlCaseProgress.value.length}`,
+      level,
+      message,
+      detail,
+      at: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+    },
+  ]
+}
+
+function clearAiNlProgress() {
+  aiNlCaseProgress.value = []
+  aiNlCaseProgressStatus.value = 'idle'
+}
+
+function formatNlUiStep(step: { op?: string; [key: string]: unknown }, index: number): string {
+  const op = String(step.op || '')
+  const text = step.text != null ? String(step.text).trim() : ''
+  const desc = step.desc != null ? String(step.desc).trim() : ''
+  const cmd = step.cmd != null ? String(step.cmd).trim() : ''
+  const direction = step.direction != null ? String(step.direction).trim() : ''
+  const condition = step.condition != null ? String(step.condition).trim() : ''
+  const keys = step.keys != null ? String(step.keys).trim() : ''
+  const name = step.name != null ? String(step.name).trim() : ''
+  const present = step.present
+
+  let summary = op
+  if (op === 'tap_text' && text) summary = `tap_text ${text}`
+  else if (op === 'tap_desc' && desc) summary = `tap_desc ${desc}`
+  else if (op === 'assert_text' && text) {
+    summary = present === false ? `assert_text 不应出现 ${text}` : `assert_text ${text}`
+  }
+  else if (op === 'assert_desc' && desc) {
+    summary = present === false ? `assert_desc 不应出现 ${desc}` : `assert_desc ${desc}`
+  }
+  else if (op === 'shell' && cmd) summary = `shell ${cmd.length > 56 ? `${cmd.slice(0, 53)}...` : cmd}`
+  else if (op === 'wait_until') {
+    const detail = text || desc
+    summary = detail ? `wait_until ${condition} ${detail}` : `wait_until ${condition}`
+  }
+  else if (op === 'dial_keys' && keys) summary = `dial_keys ${keys}`
+  else if (op === 'swipe' && direction) summary = `swipe ${direction}`
+  else if (op === 'wait') {
+    const seconds = step.seconds != null
+      ? Number(step.seconds)
+      : Number(step.ms ?? 1000) / 1000
+    summary = `wait ${seconds}s`
+  }
+  else if (op === 'screenshot' && name) summary = `screenshot ${name}`
+
+  const flags: string[] = []
+  if (step.optional) flags.push('optional')
+  if (step.scroll === false) flags.push('scroll=false')
+  const suffix = flags.length ? ` (${flags.join(', ')})` : ''
+  return `${index}. ${summary}${suffix}`
+}
 const catalogTypeSettings = ref({
   autoRetestEnabled: true,
   autoRetestCount: 1,
@@ -699,10 +782,10 @@ async function openCaseCatalog(testType: string) {
       [...new Set(detail.map(item => `${testType}/${item.module}`))]
     )
     catalogTypeSettings.value = {
-      autoRetestEnabled: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power'
+      autoRetestEnabled: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'ai_generated'
         ? false
         : (settingsData.autoRetestEnabled?.[testType] ?? true),
-      autoRetestCount: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power'
+      autoRetestCount: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'ai_generated'
         ? 0
         : (settingsData.autoRetestCount?.[testType] ?? 1),
       monkeyDuration: settingsData.monkeyDuration || '7d',
@@ -770,6 +853,118 @@ async function handleDeleteAiGeneratedCases() {
   }
 }
 
+async function handleCreateAiNlUiCase() {
+  if (!isAiGeneratedCatalog()) return
+  const caseName = aiNlCaseForm.value.caseName.trim()
+  const nlDescription = aiNlCaseForm.value.nlDescription.trim()
+  const expectedResult = aiNlCaseForm.value.expectedResult.trim()
+  const editingKey = aiNlCaseEditingKey.value
+  const isUpdate = Boolean(editingKey)
+  if (!caseName) {
+    message.warning('请填写用例名称')
+    return
+  }
+  if (!nlDescription) {
+    message.warning('请填写自然语言执行描述')
+    return
+  }
+
+  aiNlCaseCreating.value = true
+  aiNlCaseProgressStatus.value = 'running'
+  aiNlCaseProgress.value = []
+  pushAiNlProgress(
+    'info',
+    isUpdate ? '开始修改并覆盖 NL UI 用例' : '开始新增 NL UI 用例',
+    isUpdate ? `覆盖：${editingKey}` : `用例名：${caseName}`,
+  )
+  pushAiNlProgress('thinking', '校验输入完整性', `描述长度 ${nlDescription.length} 字`)
+  pushAiNlProgress('thinking', '调用 LLM 判定可执行性并生成动作计划…', '可能需要数十秒，请稍候')
+
+  const thinkingTimer = window.setInterval(() => {
+    if (!aiNlCaseCreating.value) return
+    pushAiNlProgress('thinking', 'AI 仍在分析自然语言描述…', '解析操作步骤与 UI 断言')
+  }, 8000)
+
+  try {
+    const saved = isUpdate
+      ? await updateAiNlUiCase({
+        caseKey: editingKey!,
+        caseName,
+        nlDescription,
+        expectedResult: expectedResult || undefined,
+      })
+      : await createAiNlUiCase({
+        caseName,
+        nlDescription,
+        expectedResult: expectedResult || undefined,
+      })
+    clearInterval(thinkingTimer)
+    pushAiNlProgress('success', 'LLM 判定：可执行', saved.plan?.reason || '已通过动作 schema 白名单校验')
+    const steps = saved.plan?.steps || []
+    if (steps.length) {
+      pushAiNlProgress(
+        'info',
+        `已生成 ${steps.length} 步动作计划`,
+        steps.map((step, index) => formatNlUiStep(step, index + 1)).join('\n'),
+      )
+    }
+    pushAiNlProgress('thinking', isUpdate ? '覆盖落盘用例资产…' : '落盘用例资产…', 'case_config / plans / caseN.py')
+    aiNlCaseForm.value = { caseName: '', nlDescription: '', expectedResult: '' }
+    aiNlCaseEditingKey.value = null
+    await loadCaseCatalogs({ silent: true })
+    if (selectedCatalogTestType.value) {
+      await openCaseCatalog(selectedCatalogTestType.value)
+      selectedCatalogCaseKey.value = saved.caseKey
+    }
+    pushAiNlProgress(
+      'success',
+      isUpdate ? '覆盖成功' : '新增成功',
+      `${saved.caseKey} · ${saved.caseName}`,
+    )
+    aiNlCaseProgressStatus.value = 'success'
+    message.success(isUpdate ? `已覆盖 AI 用例：${saved.caseName}` : `已新增 AI 用例：${saved.caseName}`)
+  } catch (e: any) {
+    clearInterval(thinkingTimer)
+    const errMsg = e?.message || (isUpdate ? '覆盖 AI 用例失败' : '新增 AI 用例失败')
+    const notExecutable = /不可|无法|过短|缺少|无效|不存在/i.test(errMsg)
+    pushAiNlProgress(
+      'error',
+      notExecutable ? '判定结果：不可用手机 UI 自动化执行' : (isUpdate ? '覆盖失败' : '新增失败'),
+      errMsg,
+    )
+    aiNlCaseProgressStatus.value = 'error'
+    if (notExecutable) {
+      message.warning(`不可用手机 UI 自动化执行：${errMsg}`)
+    } else {
+      message.error(errMsg)
+    }
+  } finally {
+    clearInterval(thinkingTimer)
+    aiNlCaseCreating.value = false
+  }
+}
+
+function startEditAiNlCase(item: CaseCatalogDetailItem) {
+  if (!isAiGeneratedCatalog() || aiNlCaseCreating.value) return
+  aiNlCaseEditingKey.value = item.key
+  aiNlCaseForm.value = {
+    caseName: item.caseName || '',
+    nlDescription: item.manualSteps || '',
+    expectedResult: item.expectedResult || '',
+  }
+  selectedCatalogCaseKey.value = item.key
+  clearAiNlProgress()
+  pushAiNlProgress('info', '已载入用例到编辑区', `${item.key} · 可调整描述后保存并覆盖`)
+  aiNlCaseProgressStatus.value = 'idle'
+}
+
+function cancelEditAiNlCase() {
+  if (aiNlCaseCreating.value) return
+  aiNlCaseEditingKey.value = null
+  aiNlCaseForm.value = { caseName: '', nlDescription: '', expectedResult: '' }
+  clearAiNlProgress()
+}
+
 async function saveCatalogTypeSettings() {
   if (!selectedCatalogTestType.value) return
   catalogSettingsSaving.value = true
@@ -822,6 +1017,10 @@ async function saveCatalogTypeSettings() {
         autoRetestCount,
         monkeyDuration,
       })
+      return
+    }
+
+    if (testType === 'ai_generated') {
       return
     }
 
@@ -2012,6 +2211,15 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     toggleAiGeneratedCaseForDelete,
     clearAiGeneratedDeleteSelection,
     handleDeleteAiGeneratedCases,
+    handleCreateAiNlUiCase,
+    startEditAiNlCase,
+    cancelEditAiNlCase,
+    aiNlCaseForm,
+    aiNlCaseEditingKey,
+    aiNlCaseCreating,
+    aiNlCaseProgress,
+    aiNlCaseProgressStatus,
+    clearAiNlProgress,
     saveCatalogTypeSettings,
     saveGmsTradefedSettings,
     saveGmsTradefedSettingsFromDialog,

@@ -25,7 +25,7 @@ export interface DeviceInfo {
   deviceName: string
   role: DeviceRole
   status: DeviceStatus
-  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms' | 'power'
+  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms' | 'power' | 'ai_generated'
   currentModule?: string
   simCards: SimCardInfo[]
   testStartTime?: string
@@ -87,7 +87,7 @@ export interface ModuleProgress {
 
 export interface TestSession {
   deviceId: string
-  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms' | 'power'
+  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms' | 'power' | 'ai_generated'
   modules: string[]
   currentModuleIndex: number
   moduleProgress: Record<string, ModuleProgress>
@@ -182,7 +182,7 @@ export interface StartTestFlashPayload {
 
 export async function startTest(
   deviceId: string,
-  testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power',
+  testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'ai_generated',
   flash?: StartTestFlashPayload,
   scheduleKey?: string,
 ): Promise<DeviceDetail> {
@@ -305,6 +305,57 @@ export function deleteAiGeneratedCases(caseKeys: string[]): Promise<{ deleted: s
   return tahpPost<{ deleted: string[]; remaining: number }>(
     '/api/tahp/device-self-check/ai-cases/delete',
     { caseKeys },
+  )
+}
+
+export interface NlUiActionPlanStep {
+  op: string
+  text?: string
+  desc?: string
+  cmd?: string
+  direction?: string
+  scroll?: boolean
+  present?: boolean
+  seconds?: number
+  name?: string
+  [key: string]: unknown
+}
+
+export interface CreatedNlUiCase {
+  caseKey: string
+  caseIndex: number
+  caseName: string
+  moduleLabel: string
+  execMode: 'nl_ui'
+  nlDescription: string
+  expectedResult: string
+  plan?: {
+    executable: boolean
+    reason?: string
+    steps: NlUiActionPlanStep[]
+  }
+}
+
+export function createAiNlUiCase(payload: {
+  caseName: string
+  nlDescription: string
+  expectedResult?: string
+}): Promise<CreatedNlUiCase> {
+  return tahpPost<CreatedNlUiCase>(
+    '/api/tahp/device-self-check/ai-cases/create',
+    payload,
+  )
+}
+
+export function updateAiNlUiCase(payload: {
+  caseKey: string
+  caseName: string
+  nlDescription: string
+  expectedResult?: string
+}): Promise<CreatedNlUiCase> {
+  return tahpPost<CreatedNlUiCase>(
+    '/api/tahp/device-self-check/ai-cases/update',
+    payload,
   )
 }
 

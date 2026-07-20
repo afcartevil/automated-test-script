@@ -17,6 +17,8 @@ import {
   getAllCaseCatalogs,
   getCaseCatalogDetail,
   deleteAiGeneratedCases,
+  createAiNlUiCase,
+  updateAiNlUiCase,
   getSettings,
   updateSettings,
   addSseClient,
@@ -113,7 +115,7 @@ tahpDeviceSelfCheckRoutes.post(
     try {
       const deviceId = ctx.params.deviceId
       const { testType, flash, scheduleKey } = ctx.request.body as {
-        testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power'
+        testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'ai_generated'
         flash?: StartTestFlashPayload
         scheduleKey?: string
       }
@@ -220,6 +222,58 @@ tahpDeviceSelfCheckRoutes.post(
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { success: false, error: err?.message || 'Failed to delete AI cases' }
+    }
+  }
+)
+
+// 手动新增 NL UI 自动化 AI 用例
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/ai-cases/create',
+  async (ctx) => {
+    try {
+      const { caseName, nlDescription, expectedResult } = ctx.request.body as {
+        caseName?: string
+        nlDescription?: string
+        expectedResult?: string
+      }
+      const created = await createAiNlUiCase({
+        caseName: String(caseName || ''),
+        nlDescription: String(nlDescription || ''),
+        expectedResult: expectedResult ? String(expectedResult) : undefined,
+      })
+      ctx.body = { success: true, data: created }
+    } catch (err: any) {
+      const message = err?.message || 'Failed to create AI case'
+      const notExecutable = /不可|无法|拒绝|缺少|无效|过短/i.test(message)
+      ctx.status = notExecutable ? 400 : 500
+      ctx.body = { success: false, error: message }
+    }
+  }
+)
+
+// 修改并覆盖已有 NL UI 自动化 AI 用例（同 caseIndex）
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/ai-cases/update',
+  async (ctx) => {
+    try {
+      const { caseKey, caseName, nlDescription, expectedResult } = ctx.request.body as {
+        caseKey?: string
+        caseName?: string
+        nlDescription?: string
+        expectedResult?: string
+      }
+      const updated = await updateAiNlUiCase({
+        caseKey: String(caseKey || ''),
+        caseName: String(caseName || ''),
+        nlDescription: String(nlDescription || ''),
+        expectedResult: expectedResult ? String(expectedResult) : undefined,
+      })
+      ctx.body = { success: true, data: updated }
+    } catch (err: any) {
+      const message = err?.message || 'Failed to update AI case'
+      const notExecutable = /不可|无法|拒绝|缺少|无效|过短|不存在/i.test(message)
+      ctx.status = notExecutable ? 400 : 500
+      ctx.body = { success: false, error: message }
     }
   }
 )
