@@ -394,11 +394,13 @@ export function buildConfiguredSkillsReferenceBlock(
   const lines: string[] = [
     '# 参考已配置 Skill（减少重复填写）',
     '',
-    '配置清单中已有 Skill 完成配置。配置当前 Skill 前，**必须先 Read 下列已配置项的持久化存储**，复用相同或等价的系统账号、密码、工具路径（如 `JIRA_*`、`FEISHU_*`、`WORKSPACE_ROOT`、`SEVEN_ZIP_EXE`、`NETWORK_SERVERS`、harness `config` 等）。',
+    '配置清单中已有 Skill 完成配置。配置当前 Skill 前，**必须先 Read 下列已配置项的持久化存储**，复用相同或等价的系统账号、密码、工具路径（如 `JIRA_*`、`FEISHU_*`、`WORKSPACE_ROOT`、`SEVEN_ZIP_EXE`、`NETWORK_SERVERS`、harness `~/.tran_harness/env.yaml` 等）。',
     '**禁止**向用户重复索要已在其它 Skill 或工程级文件中存在的凭据；仅对缺失项提问。',
     '',
     '## 工程级共享凭据（优先检查）',
+    '- `.tahp/unified-config.json` — 一键配置表单（含域账号/密码、harness 工具项；保存时已同步 `~/.tran_harness/env.yaml`）',
     '- `.tahp/jira-user-config.json` — Console 同步的 JIRA 用户名/密码/服务器',
+    '- `~/.tran_harness/env.yaml` — harness CLI 凭据（可由一键配置表单自动同步）',
     '- `~/.jira_cli_config.json` — jira-ops `config set` 写入的 Jira 凭据',
     '',
   ]
@@ -523,7 +525,7 @@ function buildSkillConfigInstructions(
 4. 缺少必填参数时一次性列出格式示例；收到用户回复后立即执行安装/配置命令，不要只记在对话里。
 5. 每完成一阶段运行 \`harness --json doctor\`（或 SOP 指定命令）验证。
 6. **全部步骤完成且 doctor 通过后**，输出完成标记块（见下文），并总结安装版本与关键路径。
-${entry.related_skill ? `7. 可参考工程 Skill \`${relatedPath}\`（\`${entry.related_skill}\`）处理后续 config / setup-env。` : ''}
+${entry.related_skill ? `7. 可参考工程 Skill \`${relatedPath}\`（\`${entry.related_skill}\`）做 \`doctor\` / \`config\` 等后续配置；缺 harness 凭据时先 Read \`${tahpPaths.projectRoot}/.tahp/unified-config.json\`（保存表单已同步 \`~/.tran_harness/env.yaml\`）。` : ''}
 ${force ? '\n# 重新配置模式\n用户要求**覆盖/重新安装**，请先检查现有 harness 版本与安装路径，再按 SOP 重新执行。' : ''}
 
 # 完成标记（doctor 通过后必须输出）
@@ -611,14 +613,20 @@ function buildBatchSkillConfigInstructions(): string {
 - **你的当前工作目录不一定是工程根**。下方 \`.tahp/...\`、\`${rel}/...\` 等均相对上述工程根；访问前请拼成绝对路径，不要相对当前 CWD 解析，避免"文件不在预期位置"。
 
 # 必须遵守
-1. **先 Read** \`${tahpPaths.projectRoot}/.tahp/unified-config.json\`（即工程根下 \`.tahp/unified-config.json\`）获取用户在一键配置表单中保存的域账号、域密码等；域账号/域密码在 Jira、Gerrit、OpenGrok 间通用；服务器地址为固定常量。
+1. **先 Read** \`${tahpPaths.projectRoot}/.tahp/unified-config.json\`（即工程根下 \`.tahp/unified-config.json\`）获取用户在一键配置表单中保存的域账号、域密码、harness 工具项等；域账号/域密码在 Jira、Gerrit、OpenGrok、harness 间通用；保存表单时 BFF 已同步 \`~/.tran_harness/env.yaml\`；服务器地址为固定常量。
 2. **按下方顺序依次配置**每个 Skill（依赖项已排在前面）：
    - Read 对应 \`SKILL.md\`（虚拟项按其 SOP 文档），按其中「首次使用 / 环境 / Step 0 / setup」章节执行；
-   - 优先使用一键配置表单中的值写入该 Skill 规定的持久化存储（\`.env\`、\`config set\` 等），**不要**向用户重复索要表单里已有的凭据；
+   - 优先使用一键配置表单中的值写入该 Skill 规定的持久化存储（\`.env\`、\`config set\`、harness \`env.yaml\` 等），**不要**向用户重复索要表单里已有的凭据；
    - 依据该 Skill 的能力运行体检/验证命令（如 \`setup-check\`、\`doctor\`、\`config show\`）确认配置有效；
    - 该 Skill 验证通过后**立即输出一个完成标记块**（见下文），再继续下一个 Skill。
 3. 若某项在一键配置表单中缺失/为空，或验证失败（如密码错误、地址不可达），**先说明具体缺什么/为什么失败**，一次性列出需要用户补充的参数与格式示例，然后停下等待用户回复；收到后立即写入并继续。
 4. 使用中文与用户沟通；敏感值（密码）可直接写入安全存储。
+
+# transsion-harness-install / harness-* 专项
+配置 **transsion-harness-install** 或依赖 harness CLI 的 Skill 时：
+1. 先 \`harness --json config show --effective\`；若缺凭据，Read unified-config.json，确认用户已保存表单（保存时会同步 env.yaml）；仍缺失则提示用户保存一键配置表单后重试。
+2. 域账号/密码 → \`HARNESS_QIZHI_USER\` / \`HARNESS_QIZHI_BASTION_PASSWORD\` 及 Jira/OpenGrok/Gerrit/Spug 同名凭据；Linux 服务器 IP/密码、映射盘见表单 \`linux_server_*\` / \`windows_map_drive\`。
+3. 安装完成后 \`harness --json doctor\` 验证。
 
 # jira-ops 专项（强制连通性验证）
 配置到 **jira-ops** 时：

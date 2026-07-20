@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive } from 'vue'
 import {
-  NButton, NSpin, NInput, NSpace, NCollapse, NCollapseItem, useMessage,
+  NButton, NSpin, NInput, NCollapse, NCollapseItem, useMessage,
 } from 'naive-ui'
 import {
   fetchUnifiedConfigForm,
@@ -25,7 +25,8 @@ const savedValues = ref<Record<string, string>>({})
 const groupGuides = ref<Record<string, { label: string; url: string }>>({})
 const formLoading = ref(false)
 const formSaving = ref(false)
-const saveFlash = ref(false)
+const saveHint = ref('')
+const saveHintKind = ref<'success' | 'error' | ''>('')
 const activeNav = ref('')
 
 const expandedGroups = reactive<Record<string, boolean>>({})
@@ -82,7 +83,10 @@ function setGroupExpanded(name: string, open: boolean) {
 }
 
 function fieldSpanClass(field: UnifiedConfigField): string {
-  const isPath = field.key.includes('path') || field.key.includes('workspace') || field.key.includes('home')
+  const isPath = field.key.includes('path')
+    || field.key.includes('workspace')
+    || field.key.includes('home')
+    || field.key.includes('map_drive')
   return isPath ? 'form-field form-field--full' : 'form-field'
 }
 
@@ -122,14 +126,25 @@ async function loadUnifiedForm() {
 
 async function saveConfigForm() {
   formSaving.value = true
+  saveHint.value = ''
+  saveHintKind.value = ''
   try {
     await saveUnifiedConfigForm(formValues.value)
     await loadUnifiedForm()
-    saveFlash.value = true
-    setTimeout(() => { saveFlash.value = false }, 2000)
-    message.success('已保存')
+    saveHint.value = '已保存（含 harness 配置同步）'
+    saveHintKind.value = 'success'
+    message.success('配置已保存')
+    window.setTimeout(() => {
+      if (saveHintKind.value === 'success') {
+        saveHint.value = ''
+        saveHintKind.value = ''
+      }
+    }, 4000)
   } catch (err) {
-    message.error((err as Error).message || '保存失败')
+    const text = (err as Error).message || '保存失败'
+    saveHint.value = text
+    saveHintKind.value = 'error'
+    message.error(text)
   } finally {
     formSaving.value = false
   }
@@ -151,18 +166,41 @@ onMounted(() => {
 <template>
   <div class="unified-form">
     <header class="form-toolbar">
-      <div class="form-toolbar__stat">
-        <span class="form-toolbar__count">{{ filledCount }}</span>
-        <span class="form-toolbar__sep">/</span>
-        <span class="form-toolbar__total">{{ formFields.length }}</span>
-        <span class="form-toolbar__label">已填写</span>
+      <div class="form-toolbar__meta">
+        <div class="form-toolbar__stat">
+          <span class="form-toolbar__count">{{ filledCount }}</span>
+          <span class="form-toolbar__sep">/</span>
+          <span class="form-toolbar__total">{{ formFields.length }}</span>
+          <span class="form-toolbar__label">已填写</span>
+        </div>
+        <span
+          class="form-toolbar__status"
+          :class="canStartSkillCheck ? 'form-toolbar__status--ok' : ''"
+        >
+          {{ canStartSkillCheck ? '可启动检查' : '保存后启用检查' }}
+        </span>
+        <span
+          v-if="saveHint"
+          class="form-toolbar__hint"
+          :class="saveHintKind === 'error' ? 'form-toolbar__hint--error' : 'form-toolbar__hint--success'"
+          role="status"
+        >
+          {{ saveHint }}
+        </span>
       </div>
-      <span
-        class="form-toolbar__status"
-        :class="canStartSkillCheck ? 'form-toolbar__status--ok' : ''"
-      >
-        {{ canStartSkillCheck ? '可启动检查' : '保存后启用检查' }}
-      </span>
+      <div class="form-toolbar__actions">
+        <NButton type="primary" size="small" :loading="formSaving" @click="saveConfigForm">
+          保存配置
+        </NButton>
+        <NButton
+          type="default"
+          size="small"
+          :disabled="!canStartSkillCheck"
+          @click="onStartSkillCheck"
+        >
+          {{ SKILL_CONFIG_CHECK_BUTTON_LABEL }}
+        </NButton>
+      </div>
     </header>
 
     <NSpin :show="formLoading">
@@ -272,21 +310,6 @@ onMounted(() => {
         </div>
       </div>
     </NSpin>
-
-    <footer class="form-footer" :class="{ 'form-footer--saved': saveFlash }">
-      <NSpace>
-        <NButton type="primary" :loading="formSaving" @click="saveConfigForm">
-          保存配置
-        </NButton>
-        <NButton
-          type="default"
-          :disabled="!canStartSkillCheck"
-          @click="onStartSkillCheck"
-        >
-          {{ SKILL_CONFIG_CHECK_BUTTON_LABEL }}
-        </NButton>
-      </NSpace>
-    </footer>
   </div>
 </template>
 
@@ -295,7 +318,6 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding-bottom: 72px;
 }
 
 .form-toolbar {
@@ -303,10 +325,40 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
   padding: 10px 14px;
   border-radius: 10px;
   background: var(--surface);
   border: 1px solid var(--line, var(--border));
+}
+
+.form-toolbar__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.form-toolbar__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.form-toolbar__hint {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+
+  &--success {
+    color: var(--success, #18a058);
+  }
+
+  &--error {
+    color: var(--error, #d33b3b);
+  }
 }
 
 .form-toolbar__stat {
@@ -522,26 +574,6 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.form-footer {
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 4px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  backdrop-filter: blur(10px);
-  border: 1px solid var(--line, var(--border));
-  box-shadow: 0 -2px 16px rgba(0, 0, 0, 0.04);
-  transition: border-color 0.2s;
-
-  &--saved {
-    border-color: var(--success, #18a058);
-  }
-}
-
 @media (max-width: 960px) {
   .form-layout {
     grid-template-columns: 1fr;
@@ -564,17 +596,9 @@ onMounted(() => {
     grid-template-columns: 1fr;
   }
 
-  .form-footer {
-    justify-content: stretch;
-
-    :deep(.n-space) {
-      width: 100%;
-      justify-content: stretch !important;
-
-      .n-button {
-        flex: 1;
-      }
-    }
+  .form-toolbar__actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 }
 </style>

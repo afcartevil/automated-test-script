@@ -8,6 +8,7 @@
  * 保存时同步派生：
  *   - .tahp/jira-user-config.json（智能诊断 / jira-ops 复用）
  *   - .tahp-config/gerrit.json（Gerrit Code Review Agent 复用）
+ *   - ~/.tran_harness/env.yaml（harness CLI / harness-* skill 复用）
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
@@ -16,6 +17,11 @@ import { tahpPaths } from './paths'
 import { ensureJiraWorkspaceLayout, getJiraWorkspaceRoot } from './jira-workspace'
 import { writeJiraUserConfig } from './jira-user-config'
 import { saveGerritConfig } from './gerrit-credentials'
+import {
+  getHarnessEnvPath,
+  readHarnessEnvFile,
+  syncHarnessEnvFromUnifiedConfig,
+} from './harness-env-sync'
 
 export type UnifiedConfigFieldType = 'text' | 'password'
 
@@ -32,6 +38,7 @@ export interface UnifiedConfigField {
 }
 
 const GROUP_DOMAIN = '域账号'
+const GROUP_HARNESS = 'harness工具'
 const GROUP_FEISHU = '飞书 OpenAPI（可选）'
 const GROUP_MODEM_TOOLS = 'Modem 工具（可选）'
 
@@ -55,7 +62,7 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     label: '域账号',
     type: 'text',
     group: GROUP_DOMAIN,
-    placeholder: '公司域账号，Jira / Gerrit / OpenGrok 共用',
+    placeholder: '公司域账号，Jira / Gerrit / OpenGrok / harness 共用',
     shared: true,
   },
   {
@@ -63,8 +70,32 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     label: '域密码',
     type: 'password',
     group: GROUP_DOMAIN,
-    placeholder: '域账号密码',
+    placeholder: '域账号密码（harness：HARNESS_QIZHI_BASTION_PASSWORD 等）',
     shared: true,
+  },
+  {
+    key: 'linux_server_ip',
+    label: 'Linux 服务器 IP',
+    type: 'text',
+    group: GROUP_HARNESS,
+    placeholder: '如 10.205.0.143',
+    description: 'HARNESS_QIZHI_TARGET_HOST',
+  },
+  {
+    key: 'linux_server_password',
+    label: 'Linux 服务器密码',
+    type: 'password',
+    group: GROUP_HARNESS,
+    placeholder: 'SSH / Samba 共享密码',
+    description: 'HARNESS_QIZHI_TARGET_PASSWORD、HARNESS_QIZHI_SAMBA_PASSWORD',
+  },
+  {
+    key: 'windows_map_drive',
+    label: 'Windows 映射盘目录',
+    type: 'text',
+    group: GROUP_HARNESS,
+    placeholder: 'Z:\\',
+    description: 'HARNESS_MAP_DRIVE_ROOT、HARNESS_REMOTE_RUNNER_MAPPED_ROOT',
   },
   {
     key: 'feishu_app_id',
@@ -154,8 +185,11 @@ export const FIXED_NETWORK_SERVERS = JSON.stringify([
 
 /** 表单字段 ↔ Skill .env 变量名映射（用于从已有 Skill 配置默认填充） */
 const FIELD_ENV_KEYS: Record<string, string[]> = {
-  domain_account: ['JIRA_USERNAME', 'GERRIT_USERNAME'],
-  domain_password: ['JIRA_PASSWORD', 'GERRIT_PASSWORD'],
+  domain_account: ['JIRA_USERNAME', 'GERRIT_USERNAME', 'HARNESS_QIZHI_USER'],
+  domain_password: ['JIRA_PASSWORD', 'GERRIT_PASSWORD', 'HARNESS_QIZHI_BASTION_PASSWORD'],
+  linux_server_ip: ['HARNESS_QIZHI_TARGET_HOST'],
+  linux_server_password: ['HARNESS_QIZHI_TARGET_PASSWORD'],
+  windows_map_drive: ['HARNESS_MAP_DRIVE_ROOT'],
   feishu_app_id: ['FEISHU_APP_ID'],
   feishu_app_secret: ['FEISHU_APP_SECRET'],
   workspace_root: ['WORKSPACE_ROOT'],
@@ -208,6 +242,9 @@ function readSkillEnvDefaults(): UnifiedConfigValues {
     for (const [k, v] of Object.entries(env)) {
       if (!(k in merged)) merged[k] = v
     }
+  }
+  for (const [k, v] of Object.entries(readHarnessEnvFile())) {
+    if (!(k in merged)) merged[k] = v
   }
   const defaults: UnifiedConfigValues = {}
   for (const field of UNIFIED_CONFIG_FIELDS) {
@@ -312,6 +349,12 @@ async function propagateToDerivedStores(values: UnifiedConfigValues): Promise<vo
       logger.warn({ err: (err as Error).message }, '[unified-config] gerrit 派生失败')
     }
   }
+
+  try {
+    syncHarnessEnvFromUnifiedConfig(values)
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, '[unified-config] harness env 同步失败')
+  }
 }
 
 export interface UnifiedConfigPublic {
@@ -361,7 +404,10 @@ export function buildUnifiedConfigDirective(): string {
     '仅当这些值为空或经验证无效时，才反馈给用户索要。',
     `- 表单落盘文件（含明文，可直接 Read）: \`${join(tahpPaths.projectRoot, '.tahp', 'unified-config.json')}\`（工程根下 \`.tahp/unified-config.json\`）`,
     `- JIRA 日志工作区（WORKSPACE_ROOT）: \`${getJiraWorkspaceRoot().replace(/\\/g, '/')}\`；下载目录为 \`{WORKSPACE_ROOT}/<JIRA_KEY>/\``,
-    '- 域账号/域密码在 Jira、Gerrit、OpenGrok 间通用。',
+    '- 域账号/域密码在 Jira、Gerrit、OpenGrok、harness（HARNESS_QIZHI_USER / HARNESS_QIZHI_BASTION_PASSWORD 及 Jira/OpenGrok/Gerrit/Spug 凭据）间通用。',
+    '- harness 工具：Linux 服务器 IP → `HARNESS_QIZHI_TARGET_HOST`；Linux 服务器密码 → `HARNESS_QIZHI_TARGET_PASSWORD` / `HARNESS_QIZHI_SAMBA_PASSWORD`；Windows 映射盘 → `HARNESS_MAP_DRIVE_ROOT`。',
+    `- 保存一键配置表单时 BFF 已自动同步 harness 配置到 \`${getHarnessEnvPath().replace(/\\/g, '/')}\`（模板默认值补全未在表单中的项）。`,
+    '- **使用 harness / harness-* skill 前**：先 `harness --json config show --effective`；若缺凭据或文件不存在，Read 上述 unified-config.json，提示用户保存一键配置表单以触发同步，或按映射手动写入 env.yaml 后再重试。',
     '- 服务器地址为固定值（无需向用户索要）：'
       + `Jira \`${FIXED_SERVER_ADDRESSES.jira_base_url}\`、`
       + `Gerrit \`${FIXED_SERVER_ADDRESSES.gerrit_host}\`、`
