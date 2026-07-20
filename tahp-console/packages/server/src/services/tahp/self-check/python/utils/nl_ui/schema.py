@@ -11,6 +11,7 @@ ALLOWED_OPS = frozenset({
     "shell",
     "tap_text",
     "tap_desc",
+    "tap_rid",
     "swipe",
     "wait",
     "wait_until",
@@ -111,6 +112,20 @@ def normalize_plan(raw: dict[str, Any]) -> dict[str, Any]:
             if not desc:
                 raise ValueError(f"第 {index} 步缺少 desc/content-desc")
             record["desc"] = desc
+        if op == "tap_rid":
+            rid = str(
+                record.get("rid")
+                or record.get("resource-id")
+                or record.get("resourceId")
+                or ""
+            ).strip()
+            if not rid:
+                raise ValueError(f"第 {index} 步 tap_rid 缺少 rid")
+            if len(rid) > 128:
+                raise ValueError(f"第 {index} 步 tap_rid 过长（最多 128）")
+            if not all(ch.isalnum() or ch in "._:/-" for ch in rid):
+                raise ValueError(f"第 {index} 步 tap_rid 含不支持字符")
+            record["rid"] = rid
         if op == "wait":
             if "seconds" in record:
                 seconds = float(record.get("seconds") or 0)

@@ -12,6 +12,9 @@ def format_step_summary(step: dict[str, Any]) -> str:
     if op == "tap_desc":
         desc = str(step.get("desc") or step.get("content-desc") or "").strip()
         return f"tap_desc {desc}"
+    if op == "tap_rid":
+        rid = str(step.get("rid") or step.get("resource-id") or step.get("resourceId") or "").strip()
+        return f"tap_rid {rid}"
     if op == "assert_text":
         text = str(step.get("text") or "").strip()
         present = step.get("present", True)

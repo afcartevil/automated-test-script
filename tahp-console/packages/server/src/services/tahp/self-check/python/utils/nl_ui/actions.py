@@ -196,6 +196,107 @@ def _class_is_button(cls: str) -> bool:
     return "button" in low or low.endswith(".button")
 
 
+def _resource_id_matches(node_rid: str, needle: str) -> bool:
+    rid = (node_rid or "").strip()
+    target = (needle or "").strip()
+    if not rid or not target:
+        return False
+    if rid == target:
+        return True
+    suffix = target.split("/")[-1]
+    return rid.endswith(f"/{suffix}") or rid.endswith(f":id/{suffix}")
+
+
+def _score_rid_tap_candidate(node: ET.Element, tap_node: ET.Element, needle: str) -> int:
+    rid = (node.attrib.get("resource-id") or "").strip()
+    cls = (node.attrib.get("class") or "")
+    tap_cls = (tap_node.attrib.get("class") or "")
+    score = 0
+    if rid == needle:
+        score += 30
+    elif _resource_id_matches(rid, needle):
+        score += 20
+    else:
+        return -10_000
+    if _is_node_clickable(node):
+        score += 60
+    if _is_node_clickable(tap_node):
+        score += 45
+    if _class_is_button(cls) or _class_is_button(tap_cls):
+        score += 35
+    if "floatingactionbutton" in cls.lower() or "floatingactionbutton" in tap_cls.lower():
+        score += 25
+    if "imagebutton" in cls.lower() or "imagebutton" in tap_cls.lower():
+        score += 15
+    if not _is_node_enabled(node) or not _is_node_enabled(tap_node):
+        score -= 200
+    return score
+
+
+def _pick_best_rid_tap_target(xml: str, rid: str) -> Optional[tuple[ET.Element, int]]:
+    needle = (rid or "").strip()
+    if not needle:
+        return None
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return None
+    parent_map = build_parent_map(root)
+    ranked: list[tuple[int, ET.Element]] = []
+    for node in root.iter("node"):
+        if not node_reported_displayed(node):
+            continue
+        node_rid = (node.attrib.get("resource-id") or "").strip()
+        if not _resource_id_matches(node_rid, needle):
+            continue
+        tap_node = resolve_tap_node(node, parent_map)
+        if not node_reported_displayed(tap_node):
+            continue
+        center = tap_element_bounds(tap_node.attrib.get("bounds") or "")
+        if center is None:
+            continue
+        score = _score_rid_tap_candidate(node, tap_node, needle)
+        ranked.append((score, tap_node))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    best_score, best_tap = ranked[0]
+    return best_tap, best_score
+
+
+def _tap_rid(
+    device_id: str,
+    rid: str,
+    *,
+    scroll: bool = True,
+    report: Optional[StepReporter] = None,
+) -> bool:
+    max_scrolls = 10 if scroll else 0
+    for attempt in range(max_scrolls + 1):
+        xml = _dump_xml(device_id)
+        if xml:
+            picked = _pick_best_rid_tap_target(xml, rid)
+            if picked is not None:
+                tap_node, score = picked
+                center = tap_element_bounds(tap_node.attrib.get("bounds") or "")
+                if center is not None and _adb_tap_xy(device_id, center[0], center[1]):
+                    if report:
+                        cls = (tap_node.attrib.get("class") or "").split(".")[-1]
+                        clickable = tap_node.attrib.get("clickable") or "false"
+                        matched_rid = tap_node.attrib.get("resource-id") or rid
+                        report(
+                            f"已点击 rid「{matched_rid}」→ {cls} clickable={clickable} "
+                            f"@({center[0]},{center[1]}) score={score}"
+                        )
+                    time.sleep(0.5)
+                    return True
+        if attempt >= max_scrolls:
+            break
+        _swipe_direction(device_id, "up")
+        time.sleep(0.45)
+    return False
+
+
 def _score_text_tap_candidate(
     node: ET.Element,
     tap_node: ET.Element,
@@ -483,6 +584,24 @@ def execute_step(device_id: str, step: dict[str, Any], *, report: StepReporter, 
             if optional:
                 raise OptionalStepSkip(f"可选步骤跳过：未找到 content-desc「{desc}」")
             raise RuntimeError(f"未找到可点击 content-desc: {desc}")
+        return
+    if op == "tap_rid":
+        rid = str(
+            step.get("rid")
+            or step.get("resource-id")
+            or step.get("resourceId")
+            or ""
+        ).strip()
+        ok = _tap_rid(
+            device_id,
+            rid,
+            scroll=bool(step.get("scroll", True)),
+            report=report,
+        )
+        if not ok:
+            if optional:
+                raise OptionalStepSkip(f"可选步骤跳过：未找到 resource-id「{rid}」")
+            raise RuntimeError(f"未找到可点击 resource-id: {rid}")
         return
     if op == "swipe":
         direction = str(step.get("direction") or "up").lower()

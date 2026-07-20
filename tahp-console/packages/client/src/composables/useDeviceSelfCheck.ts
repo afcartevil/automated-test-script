@@ -267,12 +267,20 @@ function formatNlUiStep(step: { op?: string; [key: string]: unknown }, index: nu
   const direction = step.direction != null ? String(step.direction).trim() : ''
   const condition = step.condition != null ? String(step.condition).trim() : ''
   const keys = step.keys != null ? String(step.keys).trim() : ''
+  const rid = step.rid != null
+    ? String(step.rid).trim()
+    : step['resource-id'] != null
+      ? String(step['resource-id']).trim()
+      : step.resourceId != null
+        ? String(step.resourceId).trim()
+        : ''
   const name = step.name != null ? String(step.name).trim() : ''
   const present = step.present
 
   let summary = op
   if (op === 'tap_text' && text) summary = `tap_text ${text}`
   else if (op === 'tap_desc' && desc) summary = `tap_desc ${desc}`
+  else if (op === 'tap_rid' && rid) summary = `tap_rid ${rid}`
   else if (op === 'assert_text' && text) {
     summary = present === false ? `assert_text 不应出现 ${text}` : `assert_text ${text}`
   }

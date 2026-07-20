@@ -25,6 +25,7 @@ const ALLOWED_OPS = new Set([
   'shell',
   'tap_text',
   'tap_desc',
+  'tap_rid',
   'swipe',
   'wait',
   'wait_until',
@@ -37,6 +38,8 @@ const ALLOWED_OPS = new Set([
 
 const DIAL_KEYS_ALLOWED = /^[0-9*#+]+$/
 const DIAL_KEYS_MAX_LEN = 32
+const TAP_RID_ALLOWED = /^[A-Za-z0-9._:/-]+$/
+const TAP_RID_MAX_LEN = 128
 
 const WAIT_UNTIL_CONDITIONS = new Set([
   'text_present',
@@ -193,6 +196,19 @@ export function validateNlUiPlan(raw: unknown): { ok: true; plan: NlUiActionPlan
     if ((op === 'tap_desc' || op === 'assert_desc') && !String(record.desc || record['content-desc'] || '').trim()) {
       return { ok: false, error: `第 ${i + 1} 步缺少 desc/content-desc` }
     }
+    if (op === 'tap_rid') {
+      const rid = String(record.rid || record['resource-id'] || record.resourceId || '').trim()
+      if (!rid) {
+        return { ok: false, error: `第 ${i + 1} 步 tap_rid 缺少 rid` }
+      }
+      if (rid.length > TAP_RID_MAX_LEN) {
+        return { ok: false, error: `第 ${i + 1} 步 tap_rid 过长（最多 ${TAP_RID_MAX_LEN}）` }
+      }
+      if (!TAP_RID_ALLOWED.test(rid)) {
+        return { ok: false, error: `第 ${i + 1} 步 tap_rid 含不支持字符` }
+      }
+      record.rid = rid
+    }
     if (op === 'wait') {
       const seconds = Number(record.seconds ?? record.ms ? Number(record.ms) / 1000 : 1)
       if (!Number.isFinite(seconds) || seconds < 0 || seconds > 120) {
@@ -270,7 +286,7 @@ function buildPlanningPrompt(caseName: string, nlDescription: string, expectedRe
 1. 只输出一个 JSON 对象，不要 markdown 包裹外的解释。
 2. 若无法用 adb/uiautomator/界面层级文案完成验证，设置 executable=false 并在 reason 说明原因（如：需插拔 SIM、双机对测、外设、需人工主观评价等）。
 3. 可执行时 executable=true，steps 为白名单操作数组。
-4. 允许的 op：wake, home, back, shell, tap_text, tap_desc, swipe, wait, wait_until, dial_keys, assert_text, assert_desc, screenshot, uidump
+4. 允许的 op：wake, home, back, shell, tap_text, tap_desc, tap_rid, swipe, wait, wait_until, dial_keys, assert_text, assert_desc, screenshot, uidump
 5. shell 仅允许：am start, am force-stop, input keyevent/tap/swipe/text, uiautomator, settings put/get, cmd statusbar, monkey
 6. 必须包含至少一步 assert_text 或 assert_desc 验证期望 UI 状态。
 7. 打开系统设置常用：{"op":"shell","cmd":"am start -a android.settings.SETTINGS"}
@@ -289,6 +305,11 @@ function buildPlanningPrompt(caseName: string, nlDescription: string, expectedRe
 14. 点击「按钮」且描述要求「可点击后再点」时：先 wait_until clickable，再 tap_text。示例：
     {"op":"wait_until","condition":"clickable","text":"校准","timeout":30},
     {"op":"tap_text","text":"校准"}
+15. 拨号盘输入号码后，若拨号按钮只有图标、无 text/content-desc，但用户提供了 resource-id / ui id，必须用 tap_rid：
+    - 示例：{"op":"shell","cmd":"am start -a android.intent.action.DIAL"}
+    - 示例：{"op":"dial_keys","keys":"18676785952"}
+    - 示例：{"op":"tap_rid","rid":"dialpad_floating_action_button"}
+    - 禁止：因拨号按钮无文字就判定不可执行；也禁止用 tap_text 点纯图标按钮
 
 输出 schema:
 {
@@ -296,10 +317,11 @@ function buildPlanningPrompt(caseName: string, nlDescription: string, expectedRe
   "reason": "",
   "steps": [
     { "op": "wake" },
-    { "op": "wait_until", "condition": "clickable", "text": "校准", "timeout": 30 },
-    { "op": "tap_text", "text": "校准" },
-    { "op": "wait_until", "condition": "text_present", "text": "通过", "timeout": 30 },
-    { "op": "assert_text", "text": "通过", "present": true }
+    { "op": "shell", "cmd": "am start -a android.intent.action.DIAL" },
+    { "op": "wait_until", "condition": "text_present", "text": "1", "timeout": 10 },
+    { "op": "dial_keys", "keys": "18676785952" },
+    { "op": "tap_rid", "rid": "dialpad_floating_action_button" },
+    { "op": "assert_text", "text": "通话中", "present": true }
   ]
 }`
 

@@ -85,6 +85,36 @@ describe('validateNlUiPlan', () => {
     }
   })
 
+  it('accepts tap_rid for icon-only dial button', () => {
+    const result = validateNlUiPlan({
+      executable: true,
+      steps: [
+        { op: 'shell', cmd: 'am start -a android.intent.action.DIAL' },
+        { op: 'dial_keys', keys: '18676785952' },
+        { op: 'tap_rid', rid: 'dialpad_floating_action_button' },
+        { op: 'assert_text', text: '通话中', present: true },
+      ],
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.plan.steps[2]?.rid).toBe('dialpad_floating_action_button')
+    }
+  })
+
+  it('rejects tap_rid without rid', () => {
+    const result = validateNlUiPlan({
+      executable: true,
+      steps: [
+        { op: 'tap_rid' },
+        { op: 'assert_text', text: '通话中' },
+      ],
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error).toMatch(/tap_rid/)
+    }
+  })
+
   it('rejects input text with * or #', () => {
     const result = validateNlUiPlan({
       executable: true,

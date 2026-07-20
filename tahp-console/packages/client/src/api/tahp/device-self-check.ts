@@ -312,6 +312,7 @@ export interface NlUiActionPlanStep {
   op: string
   text?: string
   desc?: string
+  rid?: string
   cmd?: string
   direction?: string
   scroll?: boolean

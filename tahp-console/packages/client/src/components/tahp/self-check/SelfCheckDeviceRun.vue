@@ -765,7 +765,7 @@ function handleDutRowAction(deviceId: string) {
                       class="catalog-setting-input ai-nl-textarea"
                       rows="5"
                       :disabled="aiNlCaseCreating"
-                      placeholder="请尽量写清：前置（亮屏/解锁）、操作路径（打开哪个页面、点击/滑动什么）、验证点（界面应出现/不出现什么文案）"
+                      placeholder="请尽量写清：前置（亮屏/解锁）、操作路径（打开哪个页面、点击/滑动什么）、验证点（界面应出现/不出现什么文案）。仅图标无文案的按钮可填写 resource-id（如 dialpad_floating_action_button）"
                     />
                   </label>
                   <label class="ai-nl-field">
@@ -1591,8 +1591,10 @@ $catalog-pane-height: calc(100vh - 48px);
   }
 
   .catalog-detail-body .sidebar-card {
-    width: 280px;
-    flex-shrink: 0;
+    /* 用例列表占内容区约 1/3 */
+    width: auto;
+    flex: 1 1 0;
+    min-width: 0;
     height: 100%;
     max-height: 100%;
     min-height: 0;
@@ -1614,7 +1616,8 @@ $catalog-pane-height: calc(100vh - 48px);
   }
 
   .catalog-detail-body .detail-main {
-    flex: 1;
+    /* 用例详情占内容区约 2/3 */
+    flex: 2 1 0;
     min-width: 0;
     min-height: 0;
     height: 100%;

@@ -22,6 +22,10 @@ class FormatStepSummaryTest(unittest.TestCase):
             "wait_until clickable 校准",
         )
         self.assertEqual(format_step_summary({"op": "dial_keys", "keys": "*#888#"}), "dial_keys *#888#")
+        self.assertEqual(
+            format_step_summary({"op": "tap_rid", "rid": "dialpad_floating_action_button"}),
+            "tap_rid dialpad_floating_action_button",
+        )
 
 
 if __name__ == "__main__":
