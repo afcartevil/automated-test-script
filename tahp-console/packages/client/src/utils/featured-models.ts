@@ -221,7 +221,24 @@ function buildPinnedSelection(
   }
 }
 
-/** 首页精选模型：用户已选置顶，其余按厂商优先级各取一个旗舰模型 */
+/** 非优先厂商时的兜底分组，避免同系列占满剩余格子 */
+function fallbackGroupKey(modelId: string, provider: string): string {
+  const family = detectVendorFamily(modelId, provider)
+  if (family) return `family:${family}`
+
+  const tail = modelTail(modelId)
+  if (/claude|opus|sonnet|haiku|anthropic/.test(tail) || /anthropic|fun-claude/.test(provider.toLowerCase())) {
+    return 'other:claude'
+  }
+  if (/fable/.test(tail)) return 'other:fable'
+  if (/doubao|seed/.test(tail)) return 'other:doubao'
+  if (/grok/.test(tail) || provider.toLowerCase().includes('xai')) return 'other:grok'
+
+  const brand = tail.match(/^([a-z]+)/)?.[1]
+  return brand ? `other:${brand}` : `other:${provider}:${tail}`
+}
+
+/** 首页精选模型：7 厂商优先推荐，不足时用其余可用模型补齐 */
 export function selectFeaturedModels(options: SelectFeaturedModelsOptions): FeaturedModelItem[] {
   const {
     groups,
@@ -242,19 +259,20 @@ export function selectFeaturedModels(options: SelectFeaturedModelsOptions): Feat
 
   const result: FeaturedModelItem[] = []
   const usedKeys = new Set<string>()
-  const usedFamilies = new Set<VendorFamily>()
+  const usedGroups = new Set<string>()
 
   const pinned = buildPinnedSelection(flatModels, selectedModel, selectedProvider, displayModelName)
   if (pinned) {
     result.push(pinned)
     usedKeys.add(`${pinned.provider}:${pinned.model}`)
-    const pinnedFamily = detectVendorFamily(pinned.model, pinned.provider)
-    if (pinnedFamily) usedFamilies.add(pinnedFamily)
+    usedGroups.add(fallbackGroupKey(pinned.model, pinned.provider))
   }
 
+  // 1) 优先：7 个厂商各取一个旗舰
   for (const family of VENDOR_FAMILY_ORDER) {
     if (result.length >= limit) break
-    if (usedFamilies.has(family)) continue
+    const groupKey = `family:${family}`
+    if (usedGroups.has(groupKey)) continue
 
     const best = bestByFamily.get(family)
     if (!best) continue
@@ -264,7 +282,27 @@ export function selectFeaturedModels(options: SelectFeaturedModelsOptions): Feat
 
     result.push(toFeaturedItem(best, displayModelName))
     usedKeys.add(key)
-    usedFamilies.add(family)
+    usedGroups.add(groupKey)
+  }
+
+  // 2) 不足 4 个时：用其余可用模型按旗舰/版本择优补齐（不框死 7 厂商）
+  if (result.length < limit) {
+    const remaining = flatModels.filter(entry => !usedKeys.has(`${entry.provider}:${entry.model}`))
+    const rankedRemaining = [...remaining].sort(compareModelCandidates)
+
+    for (const candidate of rankedRemaining) {
+      if (result.length >= limit) break
+
+      const groupKey = fallbackGroupKey(candidate.model, candidate.provider)
+      if (usedGroups.has(groupKey)) continue
+
+      const key = `${candidate.provider}:${candidate.model}`
+      if (usedKeys.has(key)) continue
+
+      result.push(toFeaturedItem(candidate, displayModelName))
+      usedKeys.add(key)
+      usedGroups.add(groupKey)
+    }
   }
 
   return result.slice(0, limit)

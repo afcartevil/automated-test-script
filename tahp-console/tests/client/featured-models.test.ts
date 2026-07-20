@@ -234,4 +234,56 @@ describe('featured-models', () => {
       vendor: 'Provider B',
     })
   })
+
+  it('falls back to non-priority models when preferred vendors are missing', () => {
+    const groups: AvailableModelGroup[] = [
+      makeGroup('custom:proxy', 'proxy', [
+        'claude-opus-4-8',
+        'claude-sonnet-4-6',
+        'fable-5',
+        'Doubao-Seed-2.1-pro',
+        'Doubao-Seed-2.0-lite',
+      ]),
+    ]
+
+    const featured = selectFeaturedModels({
+      groups,
+      selectedModel: '',
+      selectedProvider: '',
+      displayModelName: identityDisplay,
+    })
+
+    expect(featured).toHaveLength(3)
+    expect(featured.map(item => item.model)).toEqual([
+      'fable-5',
+      'claude-opus-4-8',
+      'Doubao-Seed-2.1-pro',
+    ])
+  })
+
+  it('prefers the seven vendors first, then fills remaining slots from other models', () => {
+    const groups: AvailableModelGroup[] = [
+      makeGroup('custom:proxy', 'proxy', [
+        'deepseek-v4-pro',
+        'MiniMax/MiniMax-M3',
+        'claude-opus-4-8',
+        'fable-5',
+        'Doubao-Seed-2.1-pro',
+      ]),
+    ]
+
+    const featured = selectFeaturedModels({
+      groups,
+      selectedModel: '',
+      selectedProvider: '',
+      displayModelName: identityDisplay,
+    })
+
+    expect(featured.map(item => item.model)).toEqual([
+      'deepseek-v4-pro',
+      'MiniMax/MiniMax-M3',
+      'fable-5',
+      'claude-opus-4-8',
+    ])
+  })
 })
