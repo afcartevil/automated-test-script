@@ -358,4 +358,89 @@ describe('App Store', () => {
       provider: 'deepseek',
     })
   })
+
+  it('serializes rapid model switches so later clicks wait for earlier writes', async () => {
+    let resolveFirst!: () => void
+    const firstPending = new Promise<void>(resolve => { resolveFirst = resolve })
+    const callOrder: string[] = []
+
+    mockSystemApi.updateDefaultModel
+      .mockImplementationOnce(async (payload: { default: string; provider?: string }) => {
+        callOrder.push(`start:${payload.default}`)
+        await firstPending
+        callOrder.push(`end:${payload.default}`)
+      })
+      .mockImplementationOnce(async (payload: { default: string; provider?: string }) => {
+        callOrder.push(`start:${payload.default}`)
+        callOrder.push(`end:${payload.default}`)
+      })
+
+    const store = useAppStore()
+    store.modelGroups = [{
+      provider: 'custom:transsion',
+      label: 'Transsion',
+      base_url: 'https://example.com/v1',
+      models: ['deepseek-v4-pro', 'MiniMax/MiniMax-M3', 'glm-5.1'],
+      api_key: '',
+    }]
+
+    const first = store.switchModel('deepseek-v4-pro', 'custom:transsion')
+    const second = store.switchModel('MiniMax/MiniMax-M3', 'custom:transsion')
+
+    await Promise.resolve()
+    expect(mockSystemApi.updateDefaultModel).toHaveBeenCalledTimes(1)
+    expect(mockSystemApi.updateDefaultModel).toHaveBeenLastCalledWith({
+      default: 'deepseek-v4-pro',
+      provider: 'custom:transsion',
+    })
+    expect(store.selectedModel).toBe('')
+
+    resolveFirst()
+    await Promise.all([first, second])
+
+    expect(mockSystemApi.updateDefaultModel).toHaveBeenCalledTimes(2)
+    expect(callOrder).toEqual([
+      'start:deepseek-v4-pro',
+      'end:deepseek-v4-pro',
+      'start:MiniMax/MiniMax-M3',
+      'end:MiniMax/MiniMax-M3',
+    ])
+    expect(store.selectedModel).toBe('MiniMax/MiniMax-M3')
+    expect(store.selectedProvider).toBe('custom:transsion')
+  })
+
+  it('keeps later model switches runnable after an earlier switch fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockSystemApi.updateDefaultModel
+      .mockRejectedValueOnce(new Error('write failed'))
+      .mockResolvedValueOnce(undefined)
+
+    const store = useAppStore()
+    store.modelGroups = [{
+      provider: 'custom:transsion',
+      label: 'Transsion',
+      base_url: 'https://example.com/v1',
+      models: ['deepseek-v4-pro', 'glm-5.1'],
+      api_key: '',
+    }]
+
+    await Promise.all([
+      store.switchModel('deepseek-v4-pro', 'custom:transsion'),
+      store.switchModel('glm-5.1', 'custom:transsion'),
+    ])
+
+    expect(mockSystemApi.updateDefaultModel).toHaveBeenCalledTimes(2)
+    expect(mockSystemApi.updateDefaultModel).toHaveBeenNthCalledWith(1, {
+      default: 'deepseek-v4-pro',
+      provider: 'custom:transsion',
+    })
+    expect(mockSystemApi.updateDefaultModel).toHaveBeenNthCalledWith(2, {
+      default: 'glm-5.1',
+      provider: 'custom:transsion',
+    })
+    expect(store.selectedModel).toBe('glm-5.1')
+    expect(store.selectedProvider).toBe('custom:transsion')
+    expect(consoleError).toHaveBeenCalledWith('Failed to switch model:', expect.any(Error))
+    consoleError.mockRestore()
+  })
 })

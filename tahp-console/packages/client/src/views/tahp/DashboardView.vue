@@ -1,13 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/hermes/app'
+import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useTahpModulesStore } from '@/stores/tahp/modules'
 import EaCard from '@/components/layout/EaCard.vue'
+import { selectFeaturedModels } from '@/utils/featured-models'
 
 const router = useRouter()
 const appStore = useAppStore()
+const profilesStore = useProfilesStore()
 const modulesStore = useTahpModulesStore()
+
+/** 本次进入首页时的置顶快照：点击切换不改顺序，F5/重新进入后再按最新选择置顶 */
+const featuredPin = ref<{ model: string; provider: string } | null>(null)
 
 const coreCards = [
   {
@@ -51,27 +57,38 @@ const coreCards = [
 const heroCard = computed(() => coreCards[0])
 const smallCards = computed(() => coreCards.slice(1))
 
-const modelGroups = computed(() => {
-  const groups = appStore.profileModelGroups[0]?.groups || []
-  const items: { name: string; vendor: string; model: string; provider: string; badge?: string }[] = []
-  for (const g of groups) {
-    for (const m of g.models.slice(0, 4)) {
-      items.push({
-        name: appStore.displayModelName(m, g.provider),
-        vendor: g.label,
-        model: m,
-        provider: g.provider,
-        badge: g.model_meta?.[m]?.preview ? 'Preview' : undefined,
-      })
-      if (items.length >= 4) break
-    }
-    if (items.length >= 4) break
-  }
-  return items
+const activeProfileName = computed(() => profilesStore.activeProfileName || 'default')
+
+const activeModelGroups = computed(() => {
+  const profileModels = appStore.profileModelGroups.find(entry => entry.profile === activeProfileName.value)
+  return profileModels?.groups || appStore.modelGroups
 })
+
+const activeModelGroupsWithCustom = computed(() =>
+  activeModelGroups.value.map(group => ({
+    ...group,
+    models: [
+      ...group.models,
+      ...(appStore.customModels[group.provider] || []).filter(model => !group.models.includes(model)),
+    ],
+  })),
+)
+
+const modelGroups = computed(() =>
+  selectFeaturedModels({
+    groups: activeModelGroupsWithCustom.value,
+    selectedModel: featuredPin.value?.model || '',
+    selectedProvider: featuredPin.value?.provider || '',
+    displayModelName: appStore.displayModelName,
+  }),
+)
 
 onMounted(async () => {
   await Promise.all([modulesStore.refresh(), appStore.loadModels()])
+  featuredPin.value = {
+    model: appStore.selectedModel,
+    provider: appStore.selectedProvider,
+  }
 })
 
 function go(name: string) {
@@ -79,6 +96,7 @@ function go(name: string) {
 }
 
 function selectModel(model: string, provider: string) {
+  // 仅更新真实当前模型；精选顺序仍用 featuredPin，避免卡片立即跳动
   appStore.switchModel(model, provider)
 }
 

@@ -194,24 +194,34 @@ export const useAppStore = defineStore('app', () => {
     modelAliases.value = next
   }
 
+  // 串行化模型切换：连续点击按调用顺序写入，失败不阻断后续排队请求
+  let modelSwitchChain: Promise<void> = Promise.resolve()
+
   async function switchModel(modelId: string, providerOverride?: string) {
-    try {
-      // Find the group containing this model to get provider info
-      const group = modelGroups.value.find(g => g.models.includes(modelId))
-      const provider = providerOverride || group?.provider || ''
-      await updateDefaultModel({ default: modelId, provider })
-      selectedModel.value = modelId
-      selectedProvider.value = provider || ''
-      // Track as custom if not already in the server-fetched list
-      if (provider && !modelGroups.value.find(g => g.provider === provider)?.models.includes(modelId)) {
-        if (!customModels.value[provider]) customModels.value[provider] = []
-        if (!customModels.value[provider].includes(modelId)) {
-          customModels.value[provider] = [...customModels.value[provider], modelId]
+    // 调用当下立即锁定目标，避免排队期间被其它状态变更改写意图
+    const group = modelGroups.value.find(g => g.models.includes(modelId))
+    const provider = providerOverride || group?.provider || ''
+
+    const run = async () => {
+      try {
+        await updateDefaultModel({ default: modelId, provider })
+        selectedModel.value = modelId
+        selectedProvider.value = provider || ''
+        // Track as custom if not already in the server-fetched list
+        if (provider && !modelGroups.value.find(g => g.provider === provider)?.models.includes(modelId)) {
+          if (!customModels.value[provider]) customModels.value[provider] = []
+          if (!customModels.value[provider].includes(modelId)) {
+            customModels.value[provider] = [...customModels.value[provider], modelId]
+          }
         }
+      } catch (err: any) {
+        console.error('Failed to switch model:', err)
       }
-    } catch (err: any) {
-      console.error('Failed to switch model:', err)
     }
+
+    const queued = modelSwitchChain.then(run)
+    modelSwitchChain = queued.then(() => undefined, () => undefined)
+    return queued
   }
 
   async function removeCustomModel(modelId: string, provider: string) {
