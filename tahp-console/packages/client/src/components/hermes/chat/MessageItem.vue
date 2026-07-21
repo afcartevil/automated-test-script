@@ -180,6 +180,7 @@ function getContentFileUrl(file: DisplayContentFile): string {
 }
 
 const toolExpanded = ref(false);
+const difyCitationsExpanded = ref(false);
 const previewUrl = ref<string | null>(null);
 
 const chatStore = useChatStore();
@@ -929,6 +930,54 @@ onBeforeUnmount(() => {
               :heading-id-prefix="effectiveHeadingIdPrefix"
             />
 
+            <div
+              v-if="message.role === 'assistant' && (message.dify_citations?.length || message.dify_supplement_reason)"
+              class="dify-citations-block"
+              :class="{ expanded: difyCitationsExpanded }"
+            >
+              <div class="dify-citations-header" @click="difyCitationsExpanded = !difyCitationsExpanded">
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  class="dify-citations-chevron"
+                  :class="{ rotated: difyCitationsExpanded }"
+                >
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+                <span v-if="message.dify_citations?.length">
+                  底软通信知识库补充参考（{{ message.dify_citations.length }}）
+                </span>
+                <span v-else>底软通信知识库补充参考</span>
+                <span v-if="message.dify_kb_tag" class="dify-citations-tag">{{ message.dify_kb_tag }}</span>
+              </div>
+              <div v-if="difyCitationsExpanded" class="dify-citations-body">
+                <div
+                  v-if="!message.dify_citations?.length && message.dify_supplement_reason"
+                  class="dify-citation-empty"
+                >
+                  {{ message.dify_supplement_reason === 'error'
+                    ? '底软通信知识库检索失败，请稍后重试或检查网络。'
+                    : '底软通信知识库暂无匹配条目，可换关键词或切换 kb_tag 后重试。' }}
+                </div>
+                <div
+                  v-for="(cite, idx) in message.dify_citations"
+                  :key="`${cite.title}-${idx}`"
+                  class="dify-citation-item"
+                >
+                  <div class="dify-citation-title">
+                    {{ cite.title }}
+                    <span class="dify-citation-score">{{ cite.score }}%</span>
+                  </div>
+                  <div class="dify-citation-meta">{{ cite.dataset }}</div>
+                  <div class="dify-citation-excerpt">{{ cite.excerpt }}</div>
+                </div>
+              </div>
+            </div>
+
             <!-- Render system message content -->
             <MarkdownRenderer
               v-if="message.role === 'system' && message.content && !isCommandMessage"
@@ -984,6 +1033,8 @@ onBeforeUnmount(() => {
               </svg>
             </button>
             <span class="message-time">{{ timeStr }}</span>
+            <span v-if="message.dify_citations?.length" class="dify-source-badge">含底软通信补充</span>
+            <span v-else-if="message.dify_supplement_reason" class="dify-source-badge muted">底软通信无匹配</span>
           </div>
         </div>
       </div>
@@ -1446,6 +1497,100 @@ onBeforeUnmount(() => {
 
   .dark & {
     color: #999999;
+  }
+}
+
+.dify-source-badge {
+  font-size: 10px;
+  color: var(--accent-info);
+  background: rgba(var(--accent-info-rgb), 0.12);
+  padding: 1px 6px;
+  border-radius: 999px;
+
+  &.muted {
+    color: $text-muted;
+    background: rgba(0, 0, 0, 0.04);
+  }
+}
+
+.dify-citations-block {
+  margin-top: 10px;
+  border-top: 1px dashed $border-light;
+  padding-top: 8px;
+
+  .dify-citations-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: $text-muted;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .dify-citations-chevron {
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+
+    &.rotated {
+      transform: rotate(90deg);
+    }
+  }
+
+  .dify-citations-tag {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--accent-info);
+  }
+
+  .dify-citations-body {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .dify-citation-item {
+    padding: 8px 10px;
+    border-radius: $radius-sm;
+    background: rgba(0, 0, 0, 0.03);
+    border: 1px solid $border-light;
+  }
+
+  .dify-citation-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: $text-primary;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .dify-citation-score {
+    font-size: 10px;
+    color: $text-muted;
+    font-weight: 500;
+  }
+
+  .dify-citation-meta {
+    font-size: 11px;
+    color: $text-muted;
+    margin-top: 2px;
+  }
+
+  .dify-citation-excerpt {
+    font-size: 12px;
+    color: $text-secondary;
+    margin-top: 6px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+
+  .dify-citation-empty {
+    font-size: 12px;
+    color: $text-muted;
+    padding: 8px 10px;
+    line-height: 1.5;
   }
 }
 

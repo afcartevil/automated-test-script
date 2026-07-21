@@ -1,7 +1,12 @@
 import { searchKb } from '../../kb-search'
 import { rankSkills } from '../skill-ranker'
 import type { RoutedIntent } from '../intent-router'
-import type { RetrievalBundle, RetrievalOptions } from '../types'
+import {
+  CASE_ONLY_KB_SOURCE_TYPES,
+  FUSION_KB_SOURCE_TYPES,
+  type RetrievalBundle,
+  type RetrievalOptions,
+} from '../types'
 import { INTENT_LABELS } from '../intents'
 
 const BASE_DIRECTIVES = [
@@ -20,13 +25,14 @@ export async function runAnalysisSop(
     preferred_skill_ids: options.preferred_skill_ids,
     include_excerpt: true,
   })
+  const explicit = options.explicit === true
   const kb_hits = await searchKb({
     query,
     module_hint: routed.module_hint,
-    source_types: ['bug_distill'],
+    source_types: explicit ? CASE_ONLY_KB_SOURCE_TYPES : FUSION_KB_SOURCE_TYPES,
     include_archived: true,
-    limit: 2,
-    min_score: 10,
+    limit: explicit ? 2 : 4,
+    min_score: explicit ? 10 : 8,
   })
   return {
     intent: 'analysis_sop',
@@ -34,10 +40,14 @@ export async function runAnalysisSop(
     kb_hits,
     skill_hits,
     lark_hits: [],
-    directives: [
-      ...BASE_DIRECTIVES,
-      '主答案来自 Skill SOP；知识库案例仅作附录参考。',
-    ],
+    explicit_mode: explicit,
+    directives: explicit
+      ? [...BASE_DIRECTIVES, '主答案来自 Skill SOP；知识库案例仅作附录参考。']
+      : [
+          ...BASE_DIRECTIVES,
+          '优先引用本地 SOP 文档与案例；Skill 用于补充执行步骤。',
+          '可提示用户参考「底软通信知识库补充参考」卡片。',
+        ],
     latency_ms: Date.now() - start,
   }
 }

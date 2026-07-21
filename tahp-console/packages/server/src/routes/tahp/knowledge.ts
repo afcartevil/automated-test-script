@@ -74,6 +74,7 @@ import {
   resolveAliasToDomainId,
   skillSuggestionGroupKey,
 } from '../../services/tahp/business-domain'
+import { difyEnabled, fetchDifyKbTags } from '../../services/tahp/dify-knowledge-retriever'
 
 // ── 规范化映射：英文 raw key → 中文 display（一对一，保留细分） ────────────────
 const _FUNC_TYPE_MAP: Record<string, string> = {
@@ -3676,6 +3677,13 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/entries/:entryId/feedback', async 
     ctx.status = 500
     ctx.body = { success: false, error: (err as Error).message }
   }
+})
+
+// GET /api/tahp/knowledge/dify/options — Dify 状态与 kb_tag（Key 不下发）
+tahpKnowledgeRoutes.get('/api/tahp/knowledge/dify/options', async (ctx) => {
+  const enabled = difyEnabled()
+  const kb_tags = enabled ? await fetchDifyKbTags() : []
+  ctx.body = { enabled, kb_tags }
 })
 
 // GET /api/tahp/knowledge/stats — 知识库统计

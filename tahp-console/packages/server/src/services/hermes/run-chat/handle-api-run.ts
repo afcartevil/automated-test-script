@@ -35,6 +35,7 @@ import type { ContentBlock, SessionState, ChatRunSource } from './types'
 import { buildFullTahpSystemContext, extractInputText, extractPreferredSkillIds, inferSkillScenario } from '../../tahp/context-injector'
 import { buildChatRetrievalContext } from '../../tahp/chat-retrieval'
 import type { RetrievalMode } from '../../tahp/chat-retrieval'
+import { buildDifyFusionBlock, difyEnabled, fetchDifyFusion, type DifyFusionResult } from '../../tahp/dify-knowledge-retriever'
 
 // ---------------------------------------------------------------------------
 // Bridge availability probe (cached, TTL = 10 s)
@@ -696,7 +697,7 @@ export async function loadSessionStateFromDb(sid: string, _sessionMap: Map<strin
 export async function handleApiRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; instructions?: string; source?: string; retrieval_mode?: RetrievalMode; search_lark?: boolean },
+  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; instructions?: string; source?: string; retrieval_mode?: RetrievalMode; search_lark?: boolean; search_dify?: boolean; dify_kb_tag?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
   skipUserMessage = false,
@@ -717,6 +718,7 @@ export async function handleApiRun(
   }
 
   // ── 注入 TAHP 工程上下文（对话：分场景检索；其他场景：原 injector）──
+  let difyFusion: DifyFusionResult | null = null
   try {
     const inputText = extractInputText(input)
     const preferredSkillIds = [
@@ -736,6 +738,18 @@ export async function handleApiRun(
     }
     if (tahpCtx) {
       fullInstructions = `${fullInstructions}\n\n${tahpCtx}`
+    }
+
+    // Dify 融合：chat 场景 + 开关 ON，生成前同步取回 Dify 回答注入本地融合
+    if (scenario === 'chat' && data.search_dify && difyEnabled()) {
+      difyFusion = await fetchDifyFusion(inputText, {
+        kb_tag: data.dify_kb_tag,
+        user: session_id,
+      })
+      if (difyFusion?.answer) {
+        const block = buildDifyFusionBlock(difyFusion.answer, difyFusion.kb_tag)
+        if (block) fullInstructions = `${fullInstructions}\n\n${block}`
+      }
     }
   } catch (ctxErr) {
     logger.warn('[chat-run] 工程上下文注入失败（跳过）: %s', ctxErr)
@@ -865,6 +879,26 @@ export async function handleApiRun(
       socket.emit(event, tagged)
     }
   }
+
+  // Dify 融合：回答已注入主答上下文；此处仅用同批引用渲染补充卡（不二次调用 Dify）
+  if (session_id && runMarker && data.search_dify && difyEnabled()) {
+    emit('dify.supplement', difyFusion
+      ? {
+          event: 'dify.supplement',
+          run_id: runMarker,
+          kb_tag: difyFusion.kb_tag,
+          citations: difyFusion.hits,
+          ...(difyFusion.hits.length ? {} : { reason: 'no_hits' }),
+        }
+      : {
+          event: 'dify.supplement',
+          run_id: runMarker,
+          kb_tag: data.dify_kb_tag,
+          citations: [],
+          reason: 'error',
+        })
+  }
+
   try {
     // ── Anthropic 直连 (/v1/messages) ──────────────────────────────────────
     if (providerType === 'anthropic' && upstream === 'anthropic://direct' && apiKey) {

@@ -1,7 +1,12 @@
 import { searchKb } from '../../kb-search'
 import { searchLarkKnowledge } from '../../lark-knowledge-retriever'
 import type { RoutedIntent } from '../intent-router'
-import type { RetrievalBundle, RetrievalOptions } from '../types'
+import {
+  CASE_ONLY_KB_SOURCE_TYPES,
+  FUSION_KB_SOURCE_TYPES,
+  type RetrievalBundle,
+  type RetrievalOptions,
+} from '../types'
 import { INTENT_LABELS } from '../intents'
 
 export async function runIntegrationConfig(
@@ -88,12 +93,14 @@ export async function runTroubleshootingChecklist(
   const start = Date.now()
   const { rankSkills } = await import('../skill-ranker')
   const skill_hits = rankSkills(query, { limit: 2, include_excerpt: true })
+  const explicit = options.explicit === true
   const kb_hits = await searchKb({
     query,
     module_hint: routed.module_hint,
-    source_types: ['bug_distill'],
+    source_types: explicit ? CASE_ONLY_KB_SOURCE_TYPES : FUSION_KB_SOURCE_TYPES,
     include_archived: true,
     limit: 3,
+    ...(explicit ? {} : { min_score: 8 }),
   })
   return {
     intent: 'troubleshooting_checklist',

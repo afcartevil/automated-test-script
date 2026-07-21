@@ -4,6 +4,14 @@ const CATALOG_PATTERNS = /有哪些|列出|列表|列举|都有什么|有什么�
 
 const CATALOG_STOPWORDS = /有哪些|列出|列表|列举|都有什么|有什么|案例|相关的|相关|的|请|一下|告诉我|查询|搜索|看看|帮我|有|哪些/g
 
+/** 明确「通话」焦点：只用通话子集，避免灌入 SIM/数据/modem 全词袋 */
+const CALL_FOCUS = /通话|拨号|语音|来电|去电|接听|呼叫|volte|vowifi|vozwifi|ims/i
+const CALL_BROADEN = /sim|modem|apn|短信|彩信|数据|上网|ussd|ecc|运营商|rat/i
+const CALL_KEYWORDS = [
+  '通话', '拨号', '语音', '来电', '去电', '接听', '呼叫',
+  'volte', 'vowifi', 'vozwifi', 'ims', 'call', 'voice', 'telephony', '通信',
+]
+
 const DOMAIN_KEYWORDS: Array<{ patterns: RegExp[]; keywords: string[] }> = [
   {
     patterns: [/通话|语音|拨号|来电|去电|接听|呼叫|telephony|vowifi|vozwifi|volte|ims|sim|modem|通信|运营商|rat|ussd|ecc/i],
@@ -37,13 +45,19 @@ export function resolveDomainKeywords(query: string, moduleHint?: string): strin
   const text = query.trim()
   const set = new Set<string>()
 
-  if (moduleHint === 'telephony') {
-    for (const kw of DOMAIN_KEYWORDS[0].keywords) set.add(kw)
-  }
-
-  for (const { patterns, keywords } of DOMAIN_KEYWORDS) {
-    if (patterns.some(p => p.test(text))) {
-      for (const kw of keywords) set.add(kw)
+  // 「通信通话常见问题」类：只扩通话子集，不因 moduleHint=telephony 灌全量词袋
+  const callFocused = CALL_FOCUS.test(text) && !CALL_BROADEN.test(text)
+  if (callFocused) {
+    for (const kw of CALL_KEYWORDS) set.add(kw)
+  } else {
+    for (const { patterns, keywords } of DOMAIN_KEYWORDS) {
+      if (patterns.some(p => p.test(text))) {
+        for (const kw of keywords) set.add(kw)
+      }
+    }
+    // 仅当正文未命中任何域、且有 telephony hint 时，才用全量通信词作兜底
+    if (moduleHint === 'telephony' && set.size === 0) {
+      for (const kw of DOMAIN_KEYWORDS[0].keywords) set.add(kw)
     }
   }
 

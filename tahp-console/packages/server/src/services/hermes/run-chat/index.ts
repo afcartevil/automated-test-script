@@ -20,6 +20,7 @@ import { handleAbort } from './abort'
 import { getOrCreateSession } from './compression'
 import { handleSessionCommand, isSessionCommand, parseSessionCommand } from './session-command'
 import type { ContentBlock, QueuedRun, SessionState } from './types'
+import type { RetrievalMode } from '../../tahp/chat-retrieval'
 
 export type { ContentBlock } from './types'
 
@@ -80,6 +81,10 @@ export class ChatRunSocket {
       queue_id?: string
       source?: string
       profile?: string
+      retrieval_mode?: RetrievalMode
+      search_lark?: boolean
+      search_dify?: boolean
+      dify_kb_tag?: string
     }) => {
       const runProfile = resolveRunProfile(data.session_id, data.profile)
       try {
@@ -120,6 +125,10 @@ export class ChatRunSocket {
               instructions: data.instructions,
               profile: runProfile,
               source,
+              retrieval_mode: data.retrieval_mode,
+              search_lark: data.search_lark,
+              search_dify: data.search_dify,
+              dify_kb_tag: data.dify_kb_tag,
             })
             this.nsp.to(`session:${data.session_id}`).emit('run.queued', {
               event: 'run.queued',
@@ -213,6 +222,10 @@ export class ChatRunSocket {
       model_groups?: Array<{ provider: string; models: string[] }>
       instructions?: string
       source?: string
+      retrieval_mode?: RetrievalMode
+      search_lark?: boolean
+      search_dify?: boolean
+      dify_kb_tag?: string
     },
     profile: string,
     skipUserMessage = false,
@@ -299,6 +312,10 @@ export class ChatRunSocket {
       model_groups: next.model_groups,
       instructions: next.instructions,
       source: next.source,
+      retrieval_mode: next.retrieval_mode,
+      search_lark: next.search_lark,
+      search_dify: next.search_dify,
+      dify_kb_tag: next.dify_kb_tag,
     }, next.profile || fallbackProfile, true)
   }
 

@@ -30,13 +30,14 @@ import { filterBridgeToolCallMarkupDelta } from './bridge-delta'
 import { buildFullTahpSystemContext, extractInputText, extractPreferredSkillIds, inferSkillScenario } from '../../tahp/context-injector'
 import { buildChatRetrievalContext } from '../../tahp/chat-retrieval'
 import type { RetrievalMode } from '../../tahp/chat-retrieval'
+import { buildDifyFusionBlock, difyEnabled, fetchDifyFusion, type DifyFusionResult } from '../../tahp/dify-knowledge-retriever'
 
 const BRIDGE_USAGE_FLUSH_DELAY_MS = 200
 
 export async function handleBridgeRun(
   nsp: ReturnType<Server['of']>,
   socket: Socket,
-  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string; retrieval_mode?: RetrievalMode; search_lark?: boolean },
+  data: { input: string | ContentBlock[]; session_id?: string; model?: string; provider?: string; model_groups?: RunModelGroup[]; instructions?: string; source?: string; retrieval_mode?: RetrievalMode; search_lark?: boolean; search_dify?: boolean; dify_kb_tag?: string },
   profile: string,
   sessionMap: Map<string, SessionState>,
   bridge: AgentBridgeClient,
@@ -75,6 +76,7 @@ export async function handleBridgeRun(
     fullInstructions = `\n${workspaceCtx}\n${fullInstructions}`
   }
 
+  let difyFusion: DifyFusionResult | null = null
   try {
     const inputText = extractInputText(input)
     const preferredSkillIds = [
@@ -94,6 +96,18 @@ export async function handleBridgeRun(
     }
     if (tahpCtx) {
       fullInstructions = `${fullInstructions}\n\n${tahpCtx}`
+    }
+
+    // Dify 融合：chat 场景 + 开关 ON，生成前同步取回 Dify 回答注入本地融合
+    if (scenario === 'chat' && data.search_dify && difyEnabled()) {
+      difyFusion = await fetchDifyFusion(inputText, {
+        kb_tag: data.dify_kb_tag,
+        user: session_id,
+      })
+      if (difyFusion?.answer) {
+        const block = buildDifyFusionBlock(difyFusion.answer, difyFusion.kb_tag)
+        if (block) fullInstructions = `${fullInstructions}\n\n${block}`
+      }
     }
   } catch (ctxErr) {
     logger.warn('[chat-run-bridge] TAHP skill context injection skipped: %s', ctxErr)
@@ -209,6 +223,25 @@ export async function handleBridgeRun(
       run_id: started.run_id,
       queue_length: state.queue.length || 0,
     })
+
+    // Dify 融合：回答已注入主答上下文；此处仅用同批引用渲染补充卡（不二次调用 Dify）
+    if (data.search_dify && difyEnabled()) {
+      emit('dify.supplement', difyFusion
+        ? {
+            event: 'dify.supplement',
+            run_id: started.run_id,
+            kb_tag: difyFusion.kb_tag,
+            citations: difyFusion.hits,
+            ...(difyFusion.hits.length ? {} : { reason: 'no_hits' }),
+          }
+        : {
+            event: 'dify.supplement',
+            run_id: started.run_id,
+            kb_tag: data.dify_kb_tag,
+            citations: [],
+            reason: 'error',
+          })
+    }
 
     for await (const chunk of bridge.streamOutput(started.run_id)) {
       await applyBridgeChunkAsync(nsp, socket, state, session_id, runMarker, chunk, emit, profile, sessionMap, bridge, dequeueNextQueuedRun)

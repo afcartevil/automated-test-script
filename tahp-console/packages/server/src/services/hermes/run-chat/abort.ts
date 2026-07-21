@@ -52,7 +52,7 @@ export async function handleAbort(
   logger.info({ sessionId, runId }, '[chat-run-socket][abort] started')
 
   // Flush in-memory assistant text to DB before aborting the stream.
-  if (state.source === 'cli') {
+  if (state.source === 'cli' || state.source === 'dify') {
     flushBridgePendingToDb(state, sessionId)
   } else {
     flushResponseRunToDb(state, sessionId)

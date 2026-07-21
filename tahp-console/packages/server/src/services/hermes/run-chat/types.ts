@@ -34,6 +34,10 @@ export interface QueuedRun {
   instructions?: string
   profile: string
   source?: ChatRunSource
+  retrieval_mode?: import('../../tahp/chat-retrieval').RetrievalMode
+  search_lark?: boolean
+  search_dify?: boolean
+  dify_kb_tag?: string
 }
 
 export interface SessionState {
@@ -71,7 +75,7 @@ export interface ResponseRunState {
   toolCalls: Map<string, any>
 }
 
-export type ChatRunSource = 'api_server' | 'cli'
+export type ChatRunSource = 'api_server' | 'cli' | 'dify'
 
 export interface BridgeCompressionResult {
   messages: ChatMessage[]

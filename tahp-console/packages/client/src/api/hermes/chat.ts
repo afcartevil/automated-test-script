@@ -20,6 +20,10 @@ export interface StartRunRequest {
   model_groups?: Array<{ provider: string; models: string[] }>
   queue_id?: string
   source?: 'api_server' | 'cli'
+  retrieval_mode?: 'auto' | 'historical' | 'concept' | 'sop' | 'adapt'
+  search_lark?: boolean
+  search_dify?: boolean
+  dify_kb_tag?: string
 }
 
 export interface StartRunResponse {
@@ -83,6 +87,7 @@ const sessionEventHandlers = new Map<string, {
   onRunQueued?: (event: RunEvent) => void
   onApprovalRequested?: (event: RunEvent) => void
   onApprovalResolved?: (event: RunEvent) => void
+  onDifyCitations?: (event: RunEvent) => void
 }>()
 
 /**
@@ -324,6 +329,27 @@ function globalApprovalResolvedHandler(event: RunEvent): void {
   }
 }
 
+function globalDifyCitationsHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onDifyCitations) {
+    handlers.onDifyCitations(event)
+  }
+}
+
+function globalDifySupplementHandler(event: RunEvent): void {
+  const sid = event.session_id
+  if (!sid) return
+
+  const handlers = sessionEventHandlers.get(sid)
+  if (handlers?.onDifyCitations) {
+    // Reuse citations handler; store maps both event names
+    handlers.onDifyCitations({ ...event, event: 'dify.supplement' })
+  }
+}
+
 /**
  * Register event handlers for a session
  * @param sessionId - Session ID
@@ -351,6 +377,7 @@ export function registerSessionHandlers(
     onRunQueued?: (event: RunEvent) => void
     onApprovalRequested?: (event: RunEvent) => void
     onApprovalResolved?: (event: RunEvent) => void
+    onDifyCitations?: (event: RunEvent) => void
   }
 ): () => void {
   sessionEventHandlers.set(sessionId, handlers)
@@ -441,6 +468,8 @@ export function connectChatRun(): Socket {
     chatRunSocket.on('run.queued', globalRunQueuedHandler)
     chatRunSocket.on('approval.requested', globalApprovalRequestedHandler)
     chatRunSocket.on('approval.resolved', globalApprovalResolvedHandler)
+    chatRunSocket.on('dify.citations', globalDifyCitationsHandler)
+    chatRunSocket.on('dify.supplement', globalDifySupplementHandler)
 
     // Compression events
     chatRunSocket.on('compression.started', globalCompressionStartedHandler)
@@ -632,6 +661,10 @@ export function startRunViaSocket(
     onApprovalResolved: (evt: RunEvent) => {
       if (closed) return
       onEvent(evt)
+    },
+    onDifyCitations: (evt: RunEvent) => {
+      if (closed) return
+      onEvent({ ...evt, event: evt.event || 'dify.supplement' })
     },
   }
 

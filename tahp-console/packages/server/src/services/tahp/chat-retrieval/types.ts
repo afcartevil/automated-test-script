@@ -1,5 +1,11 @@
 import type { ChatIntent } from './intents'
-import type { KbHit } from '../kb-search/types'
+import type { KbHit, KbSourceType } from '../kb-search/types'
+
+/** 自动模式融合检索：案例 + 文档 + 摘要 */
+export const FUSION_KB_SOURCE_TYPES: KbSourceType[] = ['bug_distill', 'doc_chunk', 'doc_summary']
+
+/** 显式历史案例模式：仅沉淀案例 */
+export const CASE_ONLY_KB_SOURCE_TYPES: KbSourceType[] = ['bug_distill']
 
 export interface SkillHit {
   skill_id: string
@@ -27,6 +33,8 @@ export interface RetrievalBundle {
   latency_ms: number
   /** 目录/列举类查询（如「有哪些案例」） */
   catalog_mode?: boolean
+  /** 显式模式（UI 手选 / slash / JIRA 直达）；自动路由为 false */
+  explicit_mode?: boolean
 }
 
 export interface RetrievalOptions {
@@ -34,6 +42,8 @@ export interface RetrievalOptions {
   search_lark?: boolean
   preferred_skill_ids?: string[]
   module_hint?: string
+  /** 由 orchestrator 注入：slash / UI mode / JIRA 直达时为 true */
+  explicit?: boolean
 }
 
 export interface RetrievalStrategy {

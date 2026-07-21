@@ -10,7 +10,7 @@ import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import { useModelProviderReadiness } from '@/composables/useModelProviderReadiness'
-import { saveKnowledgeFromChat } from '@/api/tahp/knowledge'
+import { saveKnowledgeFromChat, fetchDifyOptions } from '@/api/tahp/knowledge'
 
 const chatStore = useChatStore()
 const { t } = useI18n()
@@ -88,6 +88,12 @@ const autoPlaySpeech = ref(false)
 type RetrievalModeOption = 'auto' | 'historical' | 'concept' | 'sop' | 'adapt'
 const retrievalMode = ref<RetrievalModeOption>('auto')
 const searchLark = ref(false)
+const searchDify = ref(true) // Mode A: default ON, user can turn off
+const difyKbTag = ref('全局搜索')
+const difyEnabled = ref(false)
+const difyKbTagOptions = ref<Array<{ label: string; value: string }>>([
+  { label: '全局搜索', value: '全局搜索' },
+])
 const retrievalModeOptions = [
   { label: '自动', value: 'auto' },
   { label: '历史案例', value: 'historical' },
@@ -108,6 +114,28 @@ onMounted(() => {
   }
   const savedLark = localStorage.getItem('tahp_search_lark')
   if (savedLark !== null) searchLark.value = savedLark === 'true'
+  const savedDify = localStorage.getItem('tahp_search_dify')
+  // Default ON when no preference saved
+  if (savedDify !== null) searchDify.value = savedDify === 'true'
+  else searchDify.value = true
+  const savedDifyTag = localStorage.getItem('tahp_dify_kb_tag')
+  if (savedDifyTag) difyKbTag.value = savedDifyTag
+
+  void fetchDifyOptions().then((opts) => {
+    difyEnabled.value = opts.enabled
+    if (opts.kb_tags?.length) {
+      difyKbTagOptions.value = opts.kb_tags.map(tag => ({ label: tag, value: tag }))
+      if (!opts.kb_tags.includes(difyKbTag.value)) {
+        difyKbTag.value = opts.kb_tags[0]
+      }
+    }
+    // Server explicitly disabled → force off locally
+    if (!opts.enabled) searchDify.value = false
+  }).catch(() => {
+    // Options API transient failure: keep user preference / default-ON and show controls.
+    // Server-side difyEnabled() still gates the actual supplement emit.
+    difyEnabled.value = true
+  })
 
   const tahpDraft = sessionStorage.getItem('tahp_chat_draft')
   if (tahpDraft) {
@@ -136,6 +164,14 @@ watch(retrievalMode, (value) => {
 
 watch(searchLark, (value) => {
   localStorage.setItem('tahp_search_lark', String(value))
+})
+
+watch(searchDify, (value) => {
+  localStorage.setItem('tahp_search_dify', String(value))
+})
+
+watch(difyKbTag, (value) => {
+  localStorage.setItem('tahp_dify_kb_tag', value)
 })
 
 const canSend = computed(() =>
@@ -356,6 +392,8 @@ function handleSend() {
       ...(tahpInstructions ? { instructions: tahpInstructions } : {}),
       retrieval_mode: retrievalMode.value,
       search_lark: searchLark.value,
+      search_dify: difyEnabled.value ? searchDify.value : false,
+      dify_kb_tag: difyKbTag.value,
     },
   )
   inputText.value = ''
@@ -740,6 +778,20 @@ async function submitKbSave() {
           <NSwitch v-model:value="searchLark" size="small" />
           <span>搜索飞书</span>
         </label>
+        <template v-if="difyEnabled">
+          <label class="lark-toggle" title="开启后本地先答，底软通信知识库异步补充参考">
+            <NSwitch v-model:value="searchDify" size="small" />
+            <span>底软通信知识库</span>
+          </label>
+          <NSelect
+            v-if="searchDify"
+            v-model:value="difyKbTag"
+            :options="difyKbTagOptions"
+            size="small"
+            class="retrieval-mode-select"
+            placeholder="知识库范围"
+          />
+        </template>
       </div>
       <div class="input-actions">
         <NButton

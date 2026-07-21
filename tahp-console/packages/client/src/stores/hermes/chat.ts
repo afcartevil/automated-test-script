@@ -8,6 +8,7 @@ import { useProfilesStore } from './profiles'
 import { useSettingsStore } from './settings'
 import { primeCompletionSound, playCompletionSound } from '@/utils/completion-sound'
 import { detectThinkingBoundary } from '@/utils/thinking-parser'
+import type { DifyCitation } from '@/api/tahp/knowledge'
 import {
   afterToolStarted,
   createRunAssistState,
@@ -53,6 +54,12 @@ export interface Message {
   systemType?: 'command' | 'error'
   commandAction?: string
   commandData?: Record<string, unknown>
+  /** 回答来源：dify = 底软通信外部知识库直出 */
+  source?: 'hermes' | 'dify'
+  dify_citations?: DifyCitation[]
+  dify_kb_tag?: string
+  /** 底软通信补充：no_hits / error（有值且 citations 为空时展示「暂无匹配」） */
+  dify_supplement_reason?: string
 }
 
 export interface PendingApproval {
@@ -940,6 +947,8 @@ export const useChatStore = defineStore('chat', () => {
       instructions?: string
       retrieval_mode?: 'auto' | 'historical' | 'concept' | 'sop' | 'adapt'
       search_lark?: boolean
+      search_dify?: boolean
+      dify_kb_tag?: string
     },
   ) {
     if ((!content.trim() && !(attachments && attachments.length > 0))) return
@@ -1032,6 +1041,9 @@ export const useChatStore = defineStore('chat', () => {
         ...(options?.instructions?.trim() ? { instructions: options.instructions.trim() } : {}),
         ...(options?.retrieval_mode ? { retrieval_mode: options.retrieval_mode } : {}),
         ...(options?.search_lark ? { search_lark: true } : {}),
+        // Explicit boolean so server can distinguish default-on vs user-off
+        search_dify: options?.search_dify === true,
+        ...(options?.dify_kb_tag ? { dify_kb_tag: options.dify_kb_tag } : {}),
       }
       if (shouldSendInitialSessionConfig && activeSession.value) {
         activeSession.value.messageCount = Math.max(activeSession.value.messageCount || 0, 1)
@@ -1233,6 +1245,26 @@ export const useChatStore = defineStore('chat', () => {
                 registerContentMessage(runAssist, newId)
               }
 
+              break
+            }
+
+            case 'dify.supplement':
+            case 'dify.citations': {
+              const msgs = getSessionMsgs(sid)
+              const citations = ((evt as any).citations as DifyCitation[] | undefined) || []
+              const reason = (evt as any).reason as string | undefined
+              // Accept empty citations when reason is present (no_hits / error)
+              if (!citations.length && !reason) break
+              const lastAssistant = runAssist.activeAssistantMessageId
+                ? msgs.find(m => m.id === runAssist.activeAssistantMessageId)
+                : [...msgs].reverse().find(m => m.role === 'assistant')
+              if (lastAssistant) {
+                updateMessage(sid, lastAssistant.id, {
+                  dify_citations: citations,
+                  dify_kb_tag: (evt as any).kb_tag,
+                  dify_supplement_reason: citations.length ? undefined : reason,
+                })
+              }
               break
             }
 
@@ -1670,6 +1702,25 @@ export const useChatStore = defineStore('chat', () => {
           break
         }
 
+        case 'dify.supplement':
+        case 'dify.citations': {
+          const msgs = getSessionMsgs(sid)
+          const citations = ((evt as any).citations as DifyCitation[] | undefined) || []
+          const reason = (evt as any).reason as string | undefined
+          if (!citations.length && !reason) break
+          const lastAssistant = runAssist.activeAssistantMessageId
+            ? msgs.find(m => m.id === runAssist.activeAssistantMessageId)
+            : [...msgs].reverse().find(m => m.role === 'assistant')
+          if (lastAssistant) {
+            updateMessage(sid, lastAssistant.id, {
+              dify_citations: citations,
+              dify_kb_tag: (evt as any).kb_tag,
+              dify_supplement_reason: citations.length ? undefined : reason,
+            })
+          }
+          break
+        }
+
         case 'tool.started': {
           runHadToolActivity = true
           const msgs = getSessionMsgs(sid)
@@ -1876,6 +1927,7 @@ export const useChatStore = defineStore('chat', () => {
       onUsageUpdated: (evt) => handleEvent(evt),
       onSessionCommand: (evt) => handleEvent(evt),
       onRunQueued: (evt) => handleEvent(evt),
+      onDifyCitations: (evt) => handleEvent(evt),
     })
 
     // No need to emit resume here — switchSession already did it.

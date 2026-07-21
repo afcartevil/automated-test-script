@@ -12,6 +12,7 @@ export { formatRetrievalPrompt } from './prompt-formatter'
 
 /**
  * 对话场景：意图路由 + 分场景检索 → 注入 system prompt。
+ * 仅显式「历史案例」模式禁用 Skill；自动模式融合本地 KB + Skill + Dify 补充。
  */
 export async function buildChatRetrievalContext(
   userInput: string,
@@ -20,13 +21,12 @@ export async function buildChatRetrievalContext(
   if (!hasTahpProject()) return ''
 
   const preferred = options?.preferred_skill_ids || []
-  const isHistorical = options?.retrieval_mode === 'historical'
-  const skillDirective = isHistorical
-    ? buildHistoricalCaseDirective()
-    : buildSkillExecutionDirective({
-        preferredSkillIds: preferred,
-        scenario: 'chat',
-      })
+  const modeHistorical = options?.retrieval_mode === 'historical'
+  const skillDirective = buildSkillExecutionDirective({
+    preferredSkillIds: preferred,
+    scenario: 'chat',
+  })
+  const historicalDirective = buildHistoricalCaseDirective()
 
   try {
     const { bundle } = await runRetrieval(userInput, {
@@ -35,9 +35,10 @@ export async function buildChatRetrievalContext(
       preferred_skill_ids: preferred,
       module_hint: options?.module_hint,
     })
+    const directive = modeHistorical ? historicalDirective : skillDirective
     const retrievalBlock = formatRetrievalPrompt(bundle)
-    return [skillDirective, retrievalBlock].filter(Boolean).join('\n\n')
+    return [directive, retrievalBlock].filter(Boolean).join('\n\n')
   } catch {
-    return skillDirective
+    return modeHistorical ? historicalDirective : skillDirective
   }
 }

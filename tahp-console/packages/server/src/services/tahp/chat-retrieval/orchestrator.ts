@@ -46,6 +46,11 @@ export async function runRetrieval(
     retrieval_mode: options.retrieval_mode,
     slash_intent: slash.intent,
   })
-  const bundle = await executeStrategy(routed.intent, query, routed, options)
-  return { bundle, routed, query }
+  const explicit = options.explicit ?? routed.explicit_override ?? false
+  const bundle = await executeStrategy(routed.intent, query, routed, { ...options, explicit })
+  return {
+    bundle: { ...bundle, explicit_mode: explicit },
+    routed,
+    query,
+  }
 }

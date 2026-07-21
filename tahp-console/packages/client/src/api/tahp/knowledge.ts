@@ -922,3 +922,23 @@ export function bulkArchiveSelectedDrafts(draftIds: string[]): Promise<{ archive
 export function updateDocument(docId: string, data: { title?: string; module?: string }): Promise<KnowledgeDocument> {
   return tahpPut<KnowledgeDocument>(`/api/tahp/knowledge/documents/${encodeURIComponent(docId)}`, data)
 }
+
+// ─── Dify 外部知识库（对话）────────────────────────────────────────────
+
+export interface DifyCitation {
+  title: string
+  dataset: string
+  excerpt: string
+  score: number
+  kb_tag: string
+}
+
+export interface DifyOptionsResponse {
+  enabled: boolean
+  kb_tags: string[]
+}
+
+/** GET /api/tahp/knowledge/dify/options */
+export function fetchDifyOptions(): Promise<DifyOptionsResponse> {
+  return tahpGet<DifyOptionsResponse>('/api/tahp/knowledge/dify/options')
+}
