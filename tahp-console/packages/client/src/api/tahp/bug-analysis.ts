@@ -288,6 +288,16 @@ export function getBugTask(taskId: string): Promise<BugTask> {
   return tahpGet<BugTask>(`/api/tahp/bug-analysis/tasks/${encodeURIComponent(taskId)}`)
 }
 
+export interface BugTaskContinueStatus {
+  can_continue: boolean
+  reason?: string
+  agent_session_id?: string
+}
+
+export function getBugTaskContinueStatus(taskId: string): Promise<BugTaskContinueStatus> {
+  return tahpGet<BugTaskContinueStatus>(`/api/tahp/bug-analysis/tasks/${encodeURIComponent(taskId)}/continue-status`)
+}
+
 export function listBugJobs(): Promise<BugJob[]> {
   return tahpGet<BugJob[]>('/api/tahp/bug-analysis/jobs')
 }

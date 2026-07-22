@@ -22,6 +22,7 @@ import {
   previewSingleIssue,
   listBugTasks,
   getBugTask,
+  getBugTaskContinueStatus,
   listBugJobs,
   getBugJob,
   listBugReports,
@@ -188,7 +189,7 @@ tahpBugAnalysisRoutes.post('/:taskId/continue', async (ctx) => {
     ctx.body = { success: false, error: '缺少 additional_info（补充信息）' }
     return
   }
-  const result = continueBugAnalysis(taskId, { additionalInfo })
+  const result = await continueBugAnalysis(taskId, { additionalInfo })
   if (!result.ok) {
     const isConflict = result.error?.includes('运行中')
     ctx.status = isConflict ? 409 : 400
@@ -508,6 +509,11 @@ tahpBugAnalysisRoutes.get('/tasks', async (ctx) => {
     local_log_path: t.localLogPath,
   }))
   ctx.body = { success: true, data: tasks }
+})
+
+tahpBugAnalysisRoutes.get('/tasks/:id/continue-status', async (ctx) => {
+  const status = await getBugTaskContinueStatus(ctx.params.id)
+  ctx.body = { success: true, data: status }
 })
 
 tahpBugAnalysisRoutes.get('/tasks/:id', async (ctx) => {

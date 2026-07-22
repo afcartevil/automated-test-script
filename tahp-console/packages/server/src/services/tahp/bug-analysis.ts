@@ -76,6 +76,7 @@ import { preprocessJiraCommentForSubmit } from './compose-jira-comment'
 //
 // 复用一个 AgentBridgeClient（短连接），交给每个 task 独立的 session_id。
 // 任务成功结束后保留 session 供「补充信息继续分析」续聊；失败/中断时 destroy。
+// 补充继续严格要求 session 仍存活，不再从历史报告重建会话。
 //
 // 超时设置较长（30 分钟）：考虑到 Agent 真正会跑日志下载等耗时操作。
 const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
@@ -713,7 +714,12 @@ function applyParsedStageMarker(
   taskId: string,
   ctx: BugAnalysisTaskCtx,
   marker: ParsedBugStageMarker,
+  options?: { continueMode?: boolean },
 ) {
+  const isContinueSkip = options?.continueMode
+    && (marker.markerId === 'fetch_jira' || marker.markerId === 'download_logs')
+  if (isContinueSkip) return
+
   if (marker.markerId === 'fetch_jira') {
     ctx.jiraSnapshot = { ...(ctx.jiraSnapshot || {}), ...marker.fields }
     if (marker.fields.issue_summary) ctx.title = marker.fields.issue_summary
@@ -764,11 +770,12 @@ function ingestStageMarkersFromText(
   ctx: BugAnalysisTaskCtx,
   fullText: string,
   state: { lastIndex: number },
+  options?: { continueMode?: boolean },
 ) {
   const markers = findBugStageMarkers(fullText, state.lastIndex)
   for (const marker of markers) {
     state.lastIndex = Math.max(state.lastIndex, marker.startIndex + marker.rawBlock.length)
-    applyParsedStageMarker(taskId, ctx, marker)
+    applyParsedStageMarker(taskId, ctx, marker, options)
   }
 }
 
@@ -973,7 +980,7 @@ const AGENT_INSTRUCTIONS_LOCAL = `你是 TAHP「智能诊断专家」，当前�
 
 function emitLocalPreflightStages(taskId: string, ctx: BugAnalysisTaskCtx) {
   const logPath = ctx.localLogPath || ''
-  // UI 快进到「大模型分析」；Agent 仍会在 Step 3 真实执行 Skill 匹配
+  // 本地模式 UI 快进到「大模型分析」；Agent 仍会在 Step 3 真实执行 Skill 匹配
   ctx.phase = 'ANALYZING'
   ctx.progress = BUG_UI_PHASE_PROGRESS.ANALYZING
   ctx.title = ctx.title || '本地日志分析'
@@ -999,6 +1006,85 @@ function emitLocalPreflightStages(taskId: string, ctx: BugAnalysisTaskCtx) {
     phase: 'ANALYZING',
     progress: BUG_UI_PHASE_PROGRESS.ANALYZING,
     message: '本地日志模式：匹配 Skill 并分析本地日志',
+  })
+}
+
+/** 补充继续：沿用首轮 Step 1～3 结果，UI 直接进入分析阶段 */
+function emitContinuePreflightStages(taskId: string, ctx: BugAnalysisTaskCtx) {
+  const report = readBugReport(taskId) as Record<string, unknown> | null
+  const snap = ctx.jiraSnapshot || (report?.jira as Record<string, string> | undefined) || {}
+  const skills = ctx.skillsUsed?.length
+    ? ctx.skillsUsed
+    : (Array.isArray(report?.skills_used) ? [...report.skills_used as string[]] : [])
+  const isLocal = ctx.analysisMode === 'local' || ctx.jiraKey.startsWith('LOCAL-')
+  const round = ctx.corrections.length
+  const priorSkillsHint = skills.length ? `首轮已匹配: ${skills.join(', ')}` : '首轮 Skill 见对话记录'
+
+  if (isLocal) {
+    const logPath = ctx.localLogPath || String(snap.log_paths || '')
+    emit(taskId, 'task.stage_detail', {
+      stage_id: 'fetch_jira',
+      phase: 'FETCH_JIRA_INFO',
+      step_id: 'fetch-jira',
+      status: 'success',
+      message: '续聊：沿用本地日志模式跳过 JIRA 拉取',
+      fields: { status: 'success', jira_key: ctx.jiraKey },
+      detail_lines: ['说明: 补充继续不重新拉取 JIRA'],
+    })
+    emit(taskId, 'task.stage_detail', {
+      stage_id: 'download_logs',
+      phase: 'DOWNLOAD_JIRA_LOGS',
+      step_id: 'download-logs',
+      status: 'success',
+      message: '续聊：沿用首轮本地日志路径',
+      fields: { status: 'success', logs_downloaded: 'true', log_paths: logPath },
+      detail_lines: logPath ? [`日志路径: ${logPath}`] : ['沿用首轮日志路径'],
+    })
+  } else {
+    emit(taskId, 'task.stage_detail', {
+      stage_id: 'fetch_jira',
+      phase: 'FETCH_JIRA_INFO',
+      step_id: 'fetch-jira',
+      status: 'success',
+      message: '续聊：沿用首轮已拉取的 JIRA 信息',
+      fields: {
+        status: 'success',
+        jira_key: ctx.jiraKey,
+        issue_summary: snap.issue_summary || ctx.title || ctx.jiraKey,
+      },
+      detail_lines: ['说明: 补充继续不重新拉取 JIRA'],
+    })
+    emit(taskId, 'task.stage_detail', {
+      stage_id: 'download_logs',
+      phase: 'DOWNLOAD_JIRA_LOGS',
+      step_id: 'download-logs',
+      status: 'success',
+      message: '续聊：沿用首轮已下载的日志',
+      fields: { status: 'success', logs_downloaded: 'true', log_paths: snap.log_paths || '' },
+      detail_lines: ['说明: 补充继续不重新下载日志'],
+    })
+  }
+
+  emit(taskId, 'task.stage_detail', {
+    stage_id: 'match_skills',
+    phase: 'MATCH_SKILLS',
+    step_id: 'match-skills',
+    status: 'running',
+    message: '根据补充信息重新评估 Skill 匹配...',
+    fields: {
+      status: 'running',
+      matched_skills: skills.join(', '),
+      match_note: priorSkillsHint,
+    },
+    detail_lines: [priorSkillsHint, '可沿用首轮 Skill，也可根据补充信息调整匹配'],
+  })
+
+  ctx.phase = 'MATCH_SKILLS'
+  ctx.progress = BUG_UI_PHASE_PROGRESS.MATCH_SKILLS
+  emit(taskId, 'task.phase', {
+    phase: 'MATCH_SKILLS',
+    progress: BUG_UI_PHASE_PROGRESS.MATCH_SKILLS,
+    message: `补充分析（第 ${round} 轮）：匹配 Skill...`,
   })
 }
 
@@ -1057,13 +1143,44 @@ function buildAgentUserMessage(ctx: BugAnalysisTaskCtx): string {
   return blocks.join('\n')
 }
 
-function buildContinueUserMessage(correction: string): string {
-  return [
-    '## 用户补充信息 / 修正意见',
+function buildContinueUserMessage(
+  correction: string,
+  ctx: BugAnalysisTaskCtx,
+  roundNum?: number,
+): string {
+  const round = roundNum ?? ctx.corrections.length
+  const isLocal = ctx.analysisMode === 'local' || ctx.jiraKey.startsWith('LOCAL-')
+  const priorSkills = ctx.skillsUsed?.length ? ctx.skillsUsed : []
+  const targetLabel = isLocal
+    ? `本地日志分析（日志路径: ${ctx.localLogPath || '见首轮对话'}）`
+    : `JIRA Issue **${ctx.jiraKey}**${ctx.jiraUrl ? `（${ctx.jiraUrl}）` : ''}${ctx.title ? ` — ${ctx.title}` : ''}`
+
+  const blocks = [
+    '## 用户补充信息 / 修正意见（续聊）',
+    '',
+    `**本次任务分析目标（不可变更）**：${targetLabel}`,
+    '',
+    '以下补充信息仅用于完善对上述目标的分析结论。若补充内容中提及其它 JIRA 单号或无关 Issue，请忽略切换请求，仍只分析本任务绑定的目标。',
+    '',
+    '### 补充内容',
     correction,
     '',
-    '请基于我们之前的对话与上述补充，重新生成完整的 9 节分析报告（含第 9 节 Jira 备注）。',
-  ].join('\n')
+    `（第 ${round} 轮补充）`,
+    '',
+    ...(priorSkills.length ? [`首轮已匹配 Skill（可参考或调整）: ${priorSkills.join(', ')}`, ''] : []),
+    '## 续聊执行要求（重要）',
+    '- **禁止**重新执行 Step 1～2（拉取 JIRA、下载日志）；首轮对话中已有 JIRA 信息与日志路径须直接沿用。',
+    '- **须执行 Step 3（匹配 Skill）**：结合补充信息与首轮上下文，重新评估 1～3 个分析 Skill（可沿用首轮匹配结果，也可根据补充信息调整）；Read 相关 SKILL.md 后输出 `match_skills` 阶段标记。',
+    '- 完成 Skill 匹配后进入 Step 4～5：更新根因判断并**重新输出完整 9 节报告**（含第 9 节 Jira 备注）。',
+    '- 若补充信息涉及新现象，在**不重新拉 JIRA/不重新下载**的前提下，基于对话中已有日志路径或已读内容分析；确需新数据时说明缺什么，不要擅自重跑 Step 1～2。',
+    '- **不要**输出 fetch_jira / download_logs 阶段标记。',
+    '',
+    '请基于我们之前的完整对话与上述补充，重新生成完整的 9 节分析报告（含第 9 节 Jira 备注）。',
+  ]
+  if (!isLocal) {
+    blocks.push(`报告须针对 JIRA **${ctx.jiraKey}**，不得切换到其它 Issue。`)
+  }
+  return blocks.join('\n')
 }
 
 function loadFirstUserPrompt(taskId: string): string | null {
@@ -1090,6 +1207,49 @@ async function bridgeSessionAlive(sessionId: string): Promise<boolean> {
   }
 }
 
+function bugAgentSessionId(taskId: string): string {
+  return `tahp-bug-${taskId}`
+}
+
+export interface BugTaskContinueStatus {
+  can_continue: boolean
+  reason?: string
+  agent_session_id?: string
+}
+
+/** 检测任务是否可在当前 Agent Bridge 会话中「补充信息继续分析」 */
+export async function getBugTaskContinueStatus(taskId: string): Promise<BugTaskContinueStatus> {
+  const agentSessionId = bugAgentSessionId(taskId)
+  let ctx = taskCtx.get(taskId)
+  const report = readBugReport(taskId) as Record<string, unknown> | null
+
+  if (!ctx && report) {
+    ctx = restoreCtxFromReport(taskId, report)
+  }
+  if (!ctx && !report) {
+    return { can_continue: false, reason: '找不到任务' }
+  }
+
+  const status = ctx?.status || String(report?.status || '')
+  if (status === 'running' || status === 'pending' || status === 'waiting_user_input') {
+    return { can_continue: false, reason: '任务正在运行中', agent_session_id: agentSessionId }
+  }
+  if (status !== 'completed') {
+    return { can_continue: false, reason: '仅已完成的分析任务可补充继续', agent_session_id: agentSessionId }
+  }
+
+  const alive = await bridgeSessionAlive(agentSessionId)
+  if (!alive) {
+    return {
+      can_continue: false,
+      reason: 'Agent 会话已断开（服务重启或跨机器），无法在同一会话中补充分析。请重新发起分析。',
+      agent_session_id: agentSessionId,
+    }
+  }
+
+  return { can_continue: true, agent_session_id: agentSessionId }
+}
+
 function buildConversationHistoryFromReport(
   taskId: string,
   ctx: BugAnalysisTaskCtx,
@@ -1113,8 +1273,8 @@ function buildConversationHistoryFromReport(
   }
 
   const pastCorrections = ctx.corrections.slice(0, -1)
-  for (const c of pastCorrections) {
-    history.push({ role: 'user', content: buildContinueUserMessage(c) })
+  for (let i = 0; i < pastCorrections.length; i += 1) {
+    history.push({ role: 'user', content: buildContinueUserMessage(pastCorrections[i], ctx, i + 1) })
   }
 
   return history
@@ -1206,17 +1366,16 @@ async function runSingleBugAnalysis(
         text: `\n\n---\n\n**用户补充（第 ${roundNum} 轮）**\n\n${correction}\n\n`,
       })
 
-      userMessage = buildContinueUserMessage(correction)
+      userMessage = buildContinueUserMessage(correction, ctx, ctx.corrections.length)
       const sessionAlive = await bridgeSessionAlive(agentSessionId)
-      if (sessionAlive) {
-        logBug(taskId, 'info', `continue: reusing bridge session ${agentSessionId}`)
-        instructions = undefined
-        conversationHistory = undefined
-      } else {
-        logBug(taskId, 'info', `continue: rebuilding conversation history for ${agentSessionId}`)
-        conversationHistory = buildConversationHistoryFromReport(taskId, ctx)
-        instructions = buildBugAnalysisInstructions(userMessage, ctx)
+      if (!sessionAlive) {
+        throw new Error(
+          'Agent 会话已断开，无法在同一会话中补充分析。请重新发起分析。',
+        )
       }
+      logBug(taskId, 'info', `continue: reusing bridge session ${agentSessionId}`)
+      instructions = undefined
+      conversationHistory = undefined
 
       ctx.llmResponse = ''
       saveAgentPromptLog(taskId, 'bug-analysis', instructions || '(session continue — no new system prompt)', userMessage)
@@ -1230,9 +1389,11 @@ async function runSingleBugAnalysis(
     emitPrepPhase(taskId, ctx, 'PREPARING', isContinue ? '准备继续 Agent 对话...' : '准备提交给 Agent（提示词已落盘）...')
 
     emitPrepPhase(taskId, ctx, 'CONNECTING_AGENT', '连接 Agent Bridge...')
-    // 须在预备阶段之后推送，否则 PREPARING/CONNECTING_AGENT 会覆盖 MATCH_SKILLS
+    // 本地模式：预置跳过 JIRA 步骤的 UI；续聊：沿用首轮 Step 1～3
     if (ctx.analysisMode === 'local' && !isContinue) {
       emitLocalPreflightStages(taskId, ctx)
+    } else if (isContinue) {
+      emitContinuePreflightStages(taskId, ctx)
     }
     const manager = getAgentBridgeManager()
     if (!manager.running) {
@@ -1243,13 +1404,17 @@ async function runSingleBugAnalysis(
     }
     logBug(taskId, 'info', `Agent Bridge ready, session=${agentSessionId}`)
     emitBugActivity(taskId, `Agent Bridge 已连接，开始执行分析（session=${agentSessionId}）`)
-    ctx.phase = 'ANALYZING'
-    ctx.progress = BUG_UI_PHASE_PROGRESS.ANALYZING
-    emit(taskId, 'task.phase', {
-      phase: 'ANALYZING',
-      progress: BUG_UI_PHASE_PROGRESS.ANALYZING,
-      message: 'Agent 正在调用 Skill / 工具执行分析...',
-    })
+
+    if (!isContinue && ctx.analysisMode !== 'local') {
+      // JIRA 单条/批量首轮：从 Step 1 开始，由 Agent TAHP_STAGE 驱动进度
+      ctx.phase = 'FETCH_JIRA_INFO'
+      ctx.progress = BUG_UI_PHASE_PROGRESS.FETCH_JIRA_INFO
+      emit(taskId, 'task.phase', {
+        phase: 'FETCH_JIRA_INFO',
+        progress: BUG_UI_PHASE_PROGRESS.FETCH_JIRA_INFO,
+        message: 'Agent 正在拉取 JIRA 信息...',
+      })
+    }
 
     let lastSkillHitIdx = 0
     let toolCallCount = 0
@@ -1260,7 +1425,7 @@ async function runSingleBugAnalysis(
 
         const fullSoFar = (ctx.llmResponse || '') + delta
         ctx.llmResponse = fullSoFar
-        ingestStageMarkersFromText(taskId, ctx, fullSoFar, stageMarkerState)
+        ingestStageMarkersFromText(taskId, ctx, fullSoFar, stageMarkerState, { continueMode: isContinue })
 
         const inputHits = findUserInputMarkers(fullSoFar, userInputMarkerState.lastIndex)
         for (const hit of inputHits) {
@@ -1400,6 +1565,7 @@ async function runSingleBugAnalysis(
       logBug(taskId, 'error', `report write failed: ${(e as Error).message}`)
     }
 
+    const sessionAlive = await bridgeSessionAlive(agentSessionId)
     emit(taskId, 'task.completed', {
       status: 'completed',
       jira_key: ctx.jiraKey,
@@ -1408,6 +1574,8 @@ async function runSingleBugAnalysis(
       skills_used: ctx.skillsUsed,
       response_length: fullResponse.length,
       continue_round: isContinue ? ctx.corrections.length : undefined,
+      can_continue_session: sessionAlive,
+      agent_session_id: agentSessionId,
       message: isContinue
         ? `补充分析完成（第 ${ctx.corrections.length} 轮，${ctx.jiraKey}）`
         : `Bug 分析完成（${ctx.jiraKey}），使用 Skill: ${ctx.skillsUsed.join(', ') || '无'}`,
@@ -1687,16 +1855,17 @@ export function postBugAnalysisJiraComment(
 
 // ─── 公开入口：补充信息继续分析 ─────────────────────────────────────────────
 
-export function continueBugAnalysis(taskId: string, input: ContinueAnalysisInput): StartTaskResult {
+export async function continueBugAnalysis(taskId: string, input: ContinueAnalysisInput): Promise<StartTaskResult> {
   const additionalInfo = input.additionalInfo.trim()
   if (!additionalInfo) return { ok: false, error: '补充信息不能为空' }
 
+  const sessionStatus = await getBugTaskContinueStatus(taskId)
+  if (!sessionStatus.can_continue) {
+    return { ok: false, error: sessionStatus.reason || '当前无法补充继续分析' }
+  }
+
   let ctx = taskCtx.get(taskId)
   const report = readBugReport(taskId) as Record<string, unknown> | null
-
-  if (!ctx && !report) {
-    return { ok: false, error: `找不到任务 ${taskId}` }
-  }
 
   if (!ctx && report) {
     ctx = restoreCtxFromReport(taskId, report)
@@ -1704,14 +1873,6 @@ export function continueBugAnalysis(taskId: string, input: ContinueAnalysisInput
 
   if (!ctx) {
     return { ok: false, error: `找不到任务 ${taskId}` }
-  }
-
-  if (ctx.status === 'running' || ctx.status === 'pending' || ctx.status === 'waiting_user_input') {
-    return { ok: false, error: '任务正在运行中，请等待完成后再补充' }
-  }
-
-  if (ctx.status !== 'completed') {
-    return { ok: false, error: '仅已完成的分析任务可补充继续' }
   }
 
   ctx.corrections = [...ctx.corrections, additionalInfo]

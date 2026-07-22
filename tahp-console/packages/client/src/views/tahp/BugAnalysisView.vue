@@ -19,7 +19,7 @@ import {
   startSingle, startBatch, startLocal, continueAnalysis, distillToKnowledge,
   previewJira, previewJql, getBugReport, getBugLog, cancelBugTask,
   listBugReports, deleteBugReport, respondBugApproval, submitBugUserInput, postJiraComment,
-  fetchJiraConfigStatus,
+  fetchJiraConfigStatus, getBugTaskContinueStatus,
   type JiraIssueDetail, type JqlPreview, type BugReport, type BugReportSummary,
 } from '@/api/tahp/bug-analysis'
 import {
@@ -410,6 +410,37 @@ const distillCompleted = computed(() =>
   !isRunning.value && currentTask.value?.status === 'completed',
 )
 
+const canContinueSession = ref(false)
+
+const canContinueAnalysis = computed(() =>
+  !isHistoryView.value
+  && distillCompleted.value
+  && canContinueSession.value
+  && !isRunning.value
+  && !isPending.value
+  && !isWaitingUserInput.value
+  && !!currentTaskId.value,
+)
+
+async function refreshContinueStatus() {
+  const tid = currentTaskId.value
+  if (!tid || isHistoryView.value) {
+    canContinueSession.value = false
+    return
+  }
+  const t = currentTask.value
+  if (!t || t.status !== 'completed') {
+    canContinueSession.value = false
+    return
+  }
+  try {
+    const st = await getBugTaskContinueStatus(tid)
+    canContinueSession.value = st.can_continue
+  } catch {
+    canContinueSession.value = false
+  }
+}
+
 const isLocalAnalysisTask = computed(() => {
   const t = currentTask.value
   if (!t) return false
@@ -515,7 +546,9 @@ function deriveEffectiveBugPhase(
     if (phaseIdx < 0) return nextPhase
     if (isLocal && phaseIdx < nextIdx) return nextPhase
     if (phaseIdx > nextIdx) return phase
-    return nextPhase
+    // JIRA 单条/批量：以服务端 phase 为准，避免本地推导把进度条超前到「匹配 Skill」
+    if (isLocal) return nextPhase
+    return phase
   }
 
   if (phaseIdx >= 0) return phase
@@ -1000,7 +1033,33 @@ watch(
     if (status === 'completed' && prev === 'running') {
       if (reportDetail.value || activeReportTab.value === 'report') loadReport()
     }
+    void refreshContinueStatus()
   },
+)
+
+watch(
+  () => currentTaskId.value,
+  () => { void refreshContinueStatus() },
+)
+
+watch(
+  () => store.stream(currentTaskId.value || ''),
+  (evs) => {
+    const tid = currentTaskId.value
+    if (!tid || isHistoryView.value) return
+    for (let i = evs.length - 1; i >= 0; i -= 1) {
+      const ev = evs[i]
+      if (ev.type === 'task.continue_started') {
+        canContinueSession.value = false
+        break
+      }
+      if (ev.type === 'task.completed' && typeof ev.payload.can_continue_session === 'boolean') {
+        canContinueSession.value = ev.payload.can_continue_session as boolean
+        break
+      }
+    }
+  },
+  { deep: true },
 )
 
 function downloadLog() {
@@ -1084,7 +1143,8 @@ async function submitContinue() {
     })
     activeReportTab.value = 'live'
     showContinueDialog.value = false
-    message.success('补充分析已开始，将在当前对话继续输出')
+    canContinueSession.value = false
+    message.success(`补充分析已开始，将在当前会话继续分析 ${currentTask.value?.jira_key || ''}`)
   } catch (err) {
     message.error((err as Error).message)
   }
@@ -2080,7 +2140,11 @@ watch(
                 {{ isRunning ? '强行中断当前任务' : isWaitingUserInput ? '取消等待配置' : '取消等待中的任务' }}
               </NButton>
 
-              <NButton v-if="!isHistoryView" :disabled="!modelProviderReady || isRunning || isPending || isWaitingUserInput || !currentTaskId" @click="openContinue">
+              <NButton
+                v-if="canContinueAnalysis"
+                :disabled="!modelProviderReady"
+                @click="openContinue"
+              >
                 <template #icon>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
                 </template>
@@ -2128,7 +2192,10 @@ watch(
       @positive-click="submitContinue"
     >
       <div class="modal-hint">
-        将在<strong>当前任务</strong>中继续 Agent 对话：流式窗口保留此前分析，并在下方追加本轮输出；分析报告 Tab 在完成后更新为最新一版。
+        将在<strong>当前 Agent 会话</strong>中继续分析
+        <strong>{{ isLocalAnalysisTask ? '本地日志' : currentTask?.jira_key }}</strong>：
+        流式窗口保留此前对话，并在下方追加本轮输出；分析报告 Tab 在完成后更新为最新一版。
+        补充信息仅用于完善对该{{ isLocalAnalysisTask ? '任务' : ' JIRA 单' }}的分析，不会切换到其它 Issue。
       </div>
       <NInput
         v-model:value="continueText"
