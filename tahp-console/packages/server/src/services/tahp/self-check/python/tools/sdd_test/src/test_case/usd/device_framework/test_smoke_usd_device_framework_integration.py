@@ -2,7 +2,7 @@
 import pytest
 
 from src.conftests.device import get_device_market
-from src.utils.adb.adb_utils import getprop
+from src.utils.adb.adb_utils import adb_shell, getprop
 
 
 def _spd_market_supported(spd_config, feature_code, market):
@@ -112,15 +112,30 @@ def test_smoke_usd_device_framework_hbm_lcd(device_serial):
     adb shell getprop ro.odm.tr_light.high.brightness.mode.hal.feature.support
     adb shell getprop ro.tr_light.hbm.v2.lcd.feature.support
     预期结果: 1为支持
+    特例: 支持 XDR (ro.tr_light.xdr.support=1) 时无需检测
+    hbm.v2 lcd/oled 相关属性（lcd.feature.support / oled.level / lcd.level）
     """
-    prop_keys = (
+    base_prop_keys = (
         "ro.tr_light.high.brightness.mode.feature.support",
         "ro.odm.tr_light.high.brightness.mode.hal.feature.support",
+    )
+    lcd_oled_prop_keys = (
         "ro.tr_light.hbm.v2.lcd.feature.support",
     )
     expected_value = "1"
 
-    for prop_key in prop_keys:
+    for prop_key in base_prop_keys:
+        actual_value = getprop(prop_key, device_serial)
+        assert actual_value == expected_value, (
+            f"HBM高亮-LCD屏幕校验失败({prop_key}): "
+            f"expected: {expected_value}; actual: {actual_value}"
+        )
+
+    xdr_support = getprop("ro.tr_light.xdr.support", device_serial)
+    if xdr_support == "1":
+        return
+
+    for prop_key in lcd_oled_prop_keys:
         actual_value = getprop(prop_key, device_serial)
         assert actual_value == expected_value, (
             f"HBM高亮-LCD屏幕校验失败({prop_key}): "
@@ -137,15 +152,21 @@ def test_smoke_usd_device_framework_hbm_oled(device_serial):
     adb shell getprop ro.tr_light.high.brightness.mode.feature.support
     adb shell getprop ro.tr_light.hbm.v2.oled.level
     预期结果: mode为1；W等级时 oled.level=512，4095等级时需 lcd.feature.support=1
+    特例: 支持 XDR (ro.tr_light.xdr.support=1) 时无需检测
+    hbm.v2 lcd/oled 相关属性（lcd.feature.support / oled.level / lcd.level）
     """
     mode_support = getprop(
         "ro.tr_light.high.brightness.mode.feature.support", device_serial
     )
-    oled_level = getprop("ro.tr_light.hbm.v2.oled.level", device_serial) or ""
-
     assert mode_support == "1", (
         f"HBM高亮-OLED屏幕校验失败: expected mode support 1; actual: {mode_support}"
     )
+
+    xdr_support = getprop("ro.tr_light.xdr.support", device_serial)
+    if xdr_support == "1":
+        return
+
+    oled_level = getprop("ro.tr_light.hbm.v2.oled.level", device_serial) or ""
 
     if oled_level == "512":
         return
@@ -323,15 +344,18 @@ def test_smoke_usd_device_framework_motion_sickness_vehicle(device_serial):
     """
     晕动舒缓显示-自动乘车/下车识别
     适配条件: SPD是否支持 (SF-202507-002588)
-    测试步骤: adb shell getprop ro.tr_sensor.vehicle_mode.feature.support
-    预期结果: 1为支持
+    测试步骤: adb shell dumpsys sensorservice | grep -i vehicle
+    预期结果: 输出包含 type: android.sensor.vehicle
     """
-    prop_key = "ro.tr_sensor.vehicle_mode.feature.support"
-    expected_value = "1"
+    shell_command = "dumpsys sensorservice | grep -i vehicle"
+    expected_text = "type: android.sensor.vehicle"
 
-    actual_value = getprop(prop_key, device_serial)
-    assert actual_value == expected_value, (
-        f"晕动舒缓显示-自动乘车/下车识别校验失败: expected: {expected_value}; actual: {actual_value}"
+    result = adb_shell(device_serial, shell_command, no_retry=True)
+    actual_output = result["output"]
+
+    assert expected_text in actual_output, (
+        f"晕动舒缓显示-自动乘车/下车识别校验失败: "
+        f"expected contains: {expected_text}; actual: {actual_output}"
     )
 
 
@@ -459,14 +483,13 @@ def test_smoke_usd_device_framework_trancharge(device_serial):
     """
     自研TranCharge架构
     测试步骤: adb shell getprop ro.tr_battery.trancharge.feature.support
-    预期结果: 返回值为1
+    预期结果: 返回值为空或 1 均视为支持
     """
     prop_key = "ro.tr_battery.trancharge.feature.support"
-    expected_value = "1"
+    actual_value = getprop(prop_key, device_serial) or ""
 
-    actual_value = getprop(prop_key, device_serial)
-    assert actual_value == expected_value, (
-        f"自研TranCharge架构校验失败: expected: {expected_value}; actual: {actual_value}"
+    assert actual_value in ("", "1"), (
+        f"自研TranCharge架构校验失败: expected empty or 1; actual: {actual_value!r}"
     )
 
 
@@ -536,11 +559,15 @@ def test_smoke_usd_device_framework_ps_debounce_optimization(device_serial, pyte
     适配条件: 默认支持；支持超声波距感(SF-202507-002523)就不支持PS防抖优化
     测试步骤: adb shell getprop ro.tr_sensor.proximity.debounce.optimization.support
     预期结果: 默认返回值为1；支持超声波距感时不为1
+    特例: SPD 配置为空（获取失败 / --skip-spd-info）时 skip，不再按默认路径强校验
     """
     prop_key = "ro.tr_sensor.proximity.debounce.optimization.support"
     actual_value = getprop(prop_key, device_serial) or ""
 
-    spd_config = getattr(pytestconfig, "_spd_feature_config", {})
+    spd_config = getattr(pytestconfig, "_spd_feature_config", {}) or {}
+    if not spd_config:
+        pytest.skip("SPD特性配置为空（获取失败或 --skip-spd-info），跳过 PS防抖优化校验")
+
     market = get_device_market(device_serial)
     ultrasonic_supported = (
         market

@@ -642,6 +642,125 @@ async function execAdbSimple(args: string[]): Promise<string> {
   return execAdbCommand(args, { timeoutMs: ADB_DEFAULT_TIMEOUT_MS })
 }
 
+function getSessionResultDir(deviceId: string, session: TestSession): string {
+  return join(
+    tahpPaths.reportsDir,
+    'self-check',
+    deviceId,
+    session.startTime?.replace(/[:.]/g, '-') || '',
+  )
+}
+
+function sanitizeCaseKeyForPath(caseKey: string): string {
+  return caseKey.replace(/[\\/:"*?<>|]+/g, '_')
+}
+
+async function detectLogCollectionPlatform(deviceId: string): Promise<'mtk' | 'sprd' | 'other'> {
+  const hardware = (await execAdbSimple(['-s', deviceId, 'shell', 'getprop', 'ro.hardware'])).trim().toLowerCase()
+  if (hardware.startsWith('mt')) return 'mtk'
+  if (hardware.startsWith('ums') || hardware.startsWith('udx') || hardware.startsWith('sp') || hardware.includes('sprd')) {
+    return 'sprd'
+  }
+  return 'other'
+}
+
+async function startDeviceFailureLogCapture(deviceId: string): Promise<void> {
+  try {
+    await execAdbSimple(['-s', deviceId, 'shell', 'logcat', '-b', 'all', '-c'])
+    const platform = await detectLogCollectionPlatform(deviceId)
+    if (platform === 'mtk') {
+      await execAdbSimple([
+        '-s', deviceId, 'shell', 'am', 'broadcast',
+        '-a', 'com.debug.loggerui.ADB_CMD',
+        '-e', 'cmd_name', 'stop',
+        '--ei', 'cmd_target', '127',
+        '-n', 'com.debug.loggerui/.framework.LogReceiver',
+      ])
+      await execAdbSimple(['-s', deviceId, 'shell', 'rm', '-rf', '/data/debuglogger/*'])
+      await execAdbSimple([
+        '-s', deviceId, 'shell', 'am', 'broadcast',
+        '-a', 'com.debug.loggerui.ADB_CMD',
+        '-e', 'cmd_name', 'start',
+        '--ei', 'cmd_target', '5',
+        '-n', 'com.debug.loggerui/.framework.LogReceiver',
+      ])
+    } else if (platform === 'sprd') {
+      await execAdbSimple([
+        '-s', deviceId, 'shell', 'am', 'startservice',
+        '-n', 'com.reallytek.wg/.utils.LogControlService',
+        '-e', 'from', 'adb',
+        '-p', 'com.reallytek.wg',
+        '--ei', 'magic', '901',
+      ])
+      await execAdbSimple(['-s', deviceId, 'shell', 'rm', '-rf', '/sdcard/ylog/*'])
+      await execAdbSimple(['-s', deviceId, 'shell', 'rm', '-rf', '/data/ylog/*'])
+      await execAdbSimple([
+        '-s', deviceId, 'shell', 'am', 'startservice',
+        '-n', 'com.reallytek.wg/.utils.LogControlService',
+        '-e', 'from', 'adb',
+        '-p', 'com.reallytek.wg',
+        '--ei', 'magic', '902',
+        '-e', 'android', '1',
+        '-e', 'kernel', '1',
+        '-e', 'uboot', '1',
+        '-e', 'lastkmsg', '1',
+        '-e', 'thermal', '0',
+        '-e', 'bthci', '0',
+        '-e', 'apcap', '0',
+      ])
+    }
+  } catch (e) {
+    console.warn('[device-self-check] Failed to start device log capture:', deviceId, e)
+  }
+}
+
+function adbPull(deviceId: string, remotePath: string, localDir: string): void {
+  mkdirSync(localDir, { recursive: true })
+  const result = spawnSync('adb', ['-s', deviceId, 'pull', remotePath, localDir], {
+    encoding: 'utf-8',
+    windowsHide: true,
+  })
+  if (result.status !== 0) {
+    const text = `${result.stdout || ''}${result.stderr || ''}`.trim()
+    if (text && !/No such file|does not exist|failed to stat/i.test(text)) {
+      console.warn(`[device-self-check] adb pull failed for ${remotePath}: ${text}`)
+    }
+  }
+}
+
+async function exportFailureLogsForCase(
+  deviceId: string,
+  session: TestSession,
+  caseKey: string,
+): Promise<string | null> {
+  try {
+    const caseDir = join(getSessionResultDir(deviceId, session), 'failure-logs', sanitizeCaseKeyForPath(caseKey))
+    mkdirSync(caseDir, { recursive: true })
+
+    const logcat = await execAdbSimple(['-s', deviceId, 'shell', 'logcat', '-d', '-b', 'all', '-v', 'threadtime'])
+    if (logcat.trim()) {
+      writeFileSync(join(caseDir, 'logcat.txt'), logcat, 'utf-8')
+    }
+
+    const platform = await detectLogCollectionPlatform(deviceId)
+    if (platform === 'mtk') {
+      adbPull(deviceId, '/data/debuglogger/mobilelog', join(caseDir, 'mobilelog'))
+      adbPull(deviceId, '/data/debuglogger/netlog', join(caseDir, 'netlog'))
+      adbPull(deviceId, '/data/TNE', join(caseDir, 'TNE'))
+    } else if (platform === 'sprd') {
+      adbPull(deviceId, '/sdcard/ylog', join(caseDir, 'ylog'))
+      adbPull(deviceId, '/data/ylog', join(caseDir, 'ylog-data'))
+      adbPull(deviceId, '/sdcard/minidump', join(caseDir, 'minidump'))
+      adbPull(deviceId, '/data/minidump', join(caseDir, 'minidump-data'))
+    }
+
+    return caseDir
+  } catch (e) {
+    console.warn('[device-self-check] Failed to export failure logs:', deviceId, caseKey, e)
+    return null
+  }
+}
+
 // 获取 SIM 卡运营商
 async function getSimOperator(deviceId: string, slot: number): Promise<string> {
   return withDeviceAdbLock(deviceId, async () => {
@@ -1070,6 +1189,16 @@ async function runCase(
   }
 
   result.endTime = new Date().toISOString()
+  if (result.status === '失败') {
+    const exportedDir = await exportFailureLogsForCase(deviceId, session, caseKey)
+    if (exportedDir) {
+      result.steps.push({
+        stepDesc: `失败日志已导出: ${exportedDir}`,
+        status: '完成',
+        timestamp: result.endTime,
+      })
+    }
+  }
   emitEvent('case_completed', { deviceId, caseKey, result })
   return result
 }
@@ -1195,6 +1324,7 @@ function spawnPythonProcess(
     shell: false,
     cwd: options.cwd || PYTHON_DIR,
     env: { ...process.env, PYTHONPATH: PYTHON_DIR, PYTHONUTF8: '1' },
+    windowsHide: true,
   })
 
   proc.stdout?.on('data', (data: Buffer) => options.onStdout?.(data))
@@ -1541,7 +1671,8 @@ async function execPythonCase(
         stdio: ['pipe', 'pipe', 'pipe'],
         shell: false,
         cwd: PYTHON_DIR,
-        env: { ...process.env, PYTHONPATH: PYTHON_DIR, PYTHONUTF8: '1' }
+        env: { ...process.env, PYTHONPATH: PYTHON_DIR, PYTHONUTF8: '1' },
+        windowsHide: true,
       })
 
       let stdout = ''
@@ -2132,6 +2263,7 @@ export async function startTest(
     // 初始化：设置亮屏时间为30分钟
     execAdbSimple(['-s', deviceId, 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000'])
       .catch(() => {})
+    void startDeviceFailureLogCapture(deviceId)
 
     // 异步执行测试流程
     runTestFlow(deviceId, testType, session).catch(e => {
@@ -2204,6 +2336,7 @@ export async function startCustomTest(
 
     execAdbSimple(['-s', deviceId, 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000'])
       .catch(() => {})
+    void startDeviceFailureLogCapture(deviceId)
 
     runCustomTestFlow(deviceId, session, caseList).catch(e => {
       markTestFlowError(deviceId, e, 'custom')
