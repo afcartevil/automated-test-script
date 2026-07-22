@@ -515,7 +515,7 @@ export default {
       connected: '已连接中心',
       disconnected: '中心不可达',
       notConfigured: '未接入中心',
-      notConfiguredHint: '请在 tahp-console/.env 配置 TAHP_CENTRAL_URL 与 TAHP_CENTRAL_TOKEN 后重启服务。',
+      notConfiguredHint: '中心未接入。默认应连官方中心；若被关闭，请检查 TAHP_CENTRAL_URL / TAHP_CENTRAL_TOKEN 后重启。',
       lastSynced: '上次同步：{time}',
       neverSynced: '尚未同步',
       scanning: '正在扫描本机 Skill（已跳过大体积工作区）…',

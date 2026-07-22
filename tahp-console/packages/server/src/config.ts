@@ -111,14 +111,16 @@ export const config = {
    * TAHP 中心同步配置。
    * - role: 'local'（默认，研发本机；新建条目/草稿 push 到中心待审，审核接口禁用）
    *         'central'（中心权威源，由 easyadapter_bff 承担，本仓一般不用）
-   * - centralUrl: 中心 BFF 基址，如 http://central-host:8660
-   * - centralToken: 机器间同步共享 token（与中心 TAHP_CENTRAL_TOKEN 一致）
+   * - centralUrl / centralToken: 未设置环境变量时默认连内网官方中心；
+   *   可用 TAHP_CENTRAL_URL / TAHP_CENTRAL_TOKEN 覆盖；显式设为空字符串可关闭中心接入
    * - syncIntervalMs: 增量 pull 间隔，默认 5 分钟；<=0 关闭定时
    */
   tahp: {
     role: (process.env.TAHP_ROLE?.trim() || 'local') as 'local' | 'central',
-    centralUrl: process.env.TAHP_CENTRAL_URL?.trim() || '',
-    centralToken: process.env.TAHP_CENTRAL_TOKEN?.trim() || '',
+    centralUrl: process.env.TAHP_CENTRAL_URL?.trim() ?? 'http://10.205.0.65:8660',
+    centralToken:
+      process.env.TAHP_CENTRAL_TOKEN?.trim() ??
+      '5db7e6adaecec65267a84c9793a0cff407655bfc9771b47e82f96117feeb47bb',
     syncIntervalMs: parseInt(process.env.TAHP_SYNC_INTERVAL_MS || '300000', 10),
   },
 }

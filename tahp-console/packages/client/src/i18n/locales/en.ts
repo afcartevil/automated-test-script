@@ -515,7 +515,7 @@ export default {
       connected: 'Connected to central',
       disconnected: 'Central unreachable',
       notConfigured: 'Central not configured',
-      notConfiguredHint: 'Set TAHP_CENTRAL_URL and TAHP_CENTRAL_TOKEN in tahp-console/.env, then restart.',
+      notConfiguredHint: 'Central is not connected. Defaults point to the official hub; if disabled, check TAHP_CENTRAL_URL / TAHP_CENTRAL_TOKEN and restart.',
       lastSynced: 'Last sync: {time}',
       neverSynced: 'Never synced',
       scanning: 'Scanning local skills (large workspaces skipped)…',
