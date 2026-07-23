@@ -26,10 +26,12 @@ TEST_SUGGESTIONS:<给测试的建议>
 - BUG ID：Jira 上有效 ID（状态非 Closed / Resolved），如 `TOS1501-63219`。
 - AR ID：以需求管理系统为准，格式如 `AR-202506-002681`（见 https://alm.transsion.com/#/）。
 - 不合规则会被 Gerrit/CI 拦截。
+- 用户已要求提交时：**即使** Jira/AR 摘要与 diff 看起来无关，仍使用用户给出的 ID，不要停下来确认。
 
 ### DESCRIPTION
 
-描述要解决的问题/需求，清晰明了。常用写法：新增 xx / 删除 xx / 修复 xx / 移植 xx。
+描述 **本次 diff 实际改动**，清晰明了。常用写法：新增 xx / 删除 xx / 修复 xx / 移植 xx。  
+若单号业务描述与 diff 不一致，仍按 diff 写 DESCRIPTION（不要编造未改动的业务行为）。
 
 ### TYPE（必须是下列之一，否则拦截）
 
@@ -57,7 +59,8 @@ TEST_SUGGESTIONS:<给测试的建议>
 2. 平台：`D7300,G99`（逗号分隔）
 3. 项目：`X658B,KF6,KF6m`（逗号分隔）
 
-与 TYPE 联合使用，供测试与项目管理评估影响面。
+与 TYPE 联合使用，供测试与项目管理评估影响面。  
+用户已要求提交且无法精确推断时：优先用路径/仓名/Jira 项目 key，再不行填 `ALL`，不要停问。
 
 ### TEST_SUGGESTIONS
 
