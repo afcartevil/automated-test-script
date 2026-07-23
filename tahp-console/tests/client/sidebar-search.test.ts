@@ -83,7 +83,7 @@ describe('EaShell', () => {
     expect(tabs).toContain('首页')
     expect(tabs).toContain('AI 适配调试')
     expect(tabs).toContain('智能诊断')
-    expect(tabs).toContain('AI 自检')
+    expect(tabs).toContain('质量验测')
   })
 
   it('shows update button when server reports update available', async () => {

@@ -274,7 +274,7 @@ const funcTypeOptions = [
   { label: '代码适配', value: 'code_adaptation' },
   { label: '版本适配', value: 'version_adaptation' },
   { label: '运营商移植', value: 'carrier_porting' },
-  { label: 'AI自检', value: 'ai_self_check' },
+  { label: '质量验测', value: 'ai_self_check' },
 ]
 
 const statusOptions = [

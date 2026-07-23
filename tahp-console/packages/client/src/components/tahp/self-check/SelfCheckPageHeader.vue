@@ -12,7 +12,7 @@ const activeTab = defineModel<string>('activeTab', { required: true })
   <header class="self-check-page-header">
     <div class="header-main">
       <div class="header-title">
-        <h1>AI 自检</h1>
+        <h1>质量验测</h1>
         <p class="header-sub ea-muted">
           项目节点驱动，自动烧录、自动测试、AI Review，测试报告人工复核
         </p>

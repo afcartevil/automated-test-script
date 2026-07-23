@@ -82,12 +82,12 @@ const _FUNC_TYPE_MAP: Record<string, string> = {
   'code_adaptation':    '代码适配',
   'version_adaptation': '版本适配',
   'carrier_porting':    '运营商移植',
-  'self_check':         'AI自检',
-  'ai_self_check':      'AI自检',
+  'self_check':         '质量验测',
+  'ai_self_check':      '质量验测',
   'other':              '其他',
   // 中文 canonical 透传
   'Bug分析': 'Bug分析', '代码适配': '代码适配', '版本适配': '版本适配',
-  '运营商移植': '运营商移植', 'AI自检': 'AI自检', '其他': '其他',
+  '运营商移植': '运营商移植', 'AI自检': '质量验测', '质量验测': '质量验测', '其他': '其他',
   // 兼容旧数据（中文大类 → 透传）
   'AI故障分析': 'AI故障分析', 'AI自动化适配': 'AI自动化适配', 'AI自检工具': 'AI自检工具',
 }
@@ -98,7 +98,7 @@ const _FUNC_TYPE_CATEGORY_MAP: Record<string, string> = {
   'version_adaptation': 'AI自动化适配', '版本适配': 'AI自动化适配',
   'carrier_porting': 'AI自动化适配', '运营商移植': 'AI自动化适配',
   'AI自动化适配': 'AI自动化适配',
-  'self_check': 'AI自检工具', 'ai_self_check': 'AI自检工具', 'AI自检': 'AI自检工具', 'AI自检工具': 'AI自检工具',
+  'self_check': 'AI自检工具', 'ai_self_check': 'AI自检工具', 'AI自检': 'AI自检工具', '质量验测': 'AI自检工具', 'AI自检工具': 'AI自检工具',
   'other': '其他', '其他': '其他',
 }
 const _MODULE_MAP: Record<string, string> = {
@@ -1454,7 +1454,7 @@ function buildSkillGenPrompt(
 ): { system: string; user: string } {
   const funcTypeNames: Record<string, string> = {
     bug_analysis: 'Bug 分析', code_adaptation: '代码适配',
-    version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: 'AI 自检',
+    version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: '质量验测',
   }
   const moduleNames: Record<string, string> = {
     telephony: '通信模块', 'kernel-driver': '内核驱动', 'power-mgmt': '功耗管理', shared: '共享模块',
@@ -2309,7 +2309,7 @@ tahpKnowledgeRoutes.get('/api/tahp/knowledge/skill-suggestions', async (ctx) => 
 
       const funcTypeNames: Record<string, string> = {
         bug_analysis: 'Bug 分析', code_adaptation: '代码适配',
-        version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: 'AI 自检',
+        version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: '质量验测',
       }
       const moduleNames: Record<string, string> = {
         telephony: 'Telephony', 'kernel-driver': '内核驱动', 'power-mgmt': '功耗管理', shared: '共享',
@@ -2977,7 +2977,7 @@ async function runSkillGenerationStream(
     logger.warn({ llmError }, '[kb] LLM generation failed, using template fallback')
     const funcTypeNames: Record<string, string> = {
       bug_analysis: 'Bug 分析', code_adaptation: '代码适配',
-      version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: 'AI 自检',
+      version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: '质量验测',
     }
     // 增强 fallback：利用条目关键词和文档信息生成更有价值的骨架
     const keywordsSummary = [...new Set(entriesToUse.flatMap(e => e.keywords))].slice(0, 15).join(', ')
@@ -3403,7 +3403,7 @@ tahpKnowledgeRoutes.post('/api/tahp/knowledge/skill-drafts/generate', async (ctx
       // LLM 失败时使用模板骨架
       const funcTypeNames: Record<string, string> = {
         bug_analysis: 'Bug 分析', code_adaptation: '代码适配',
-        version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: 'AI 自检',
+        version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: '质量验测',
       }
       generatedContent = `# ${skill_name || `${mod} ${funcTypeNames[String(func_type)] || func_type} Skill`}
 

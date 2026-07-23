@@ -49,7 +49,7 @@ const coreCards = [
     route: 'tahp.self-check',
     tone: 'ea-t-emerald',
     icon: 'shield',
-    title: 'AI 自检',
+    title: '质量验测',
     summary: '项目节点驱动，自动烧录、自动测试、AI Review，第二天人工复核报告',
   },
 ]

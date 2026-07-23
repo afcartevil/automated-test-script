@@ -130,7 +130,7 @@ function auditPillVariant(status: AuditCheckItem['status']): 'ok' | 'err' | 'war
   <div class="page page-wide">
     <EaPageHead
       :title="mode === 'detail' ? '任务报告详情' : '任务报告'"
-      :subtitle="mode === 'detail' ? 'AI 适配执行详情、分析结果与文件修改记录' : '所有已完成任务的执行报告汇总，含文件修改与 AI 自检审核'"
+      :subtitle="mode === 'detail' ? 'AI 适配执行详情、分析结果与文件修改记录' : '所有已完成任务的执行报告汇总，含文件修改与质量验测审核'"
     >
       <template v-if="mode === 'detail'" #breadcrumb>
         <div class="rep-breadcrumb">

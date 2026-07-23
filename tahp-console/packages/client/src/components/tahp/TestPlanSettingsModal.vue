@@ -110,7 +110,7 @@ async function handleSave() {
     @update:show="emit('update:show', $event)"
   >
     <p class="modal-desc ea-muted">
-      为各项目节点配置前后 14 天内的测试项。偏移为负数表示节点前，正数表示节点后。测试项须从 AI 自检已有测试大类中选择。
+      为各项目节点配置前后 14 天内的测试项。偏移为负数表示节点前，正数表示节点后。测试项须从质量验测已有测试大类中选择。
     </p>
 
     <div class="toolbar">

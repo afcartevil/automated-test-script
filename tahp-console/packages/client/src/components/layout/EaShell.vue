@@ -24,7 +24,7 @@ const coreNav = [
   { name: 'tahp.bug-analysis', label: '智能诊断' },
   { name: 'tahp.modem-baseline.workbench', label: 'Modem基线' },
   { name: 'tahp.gki-patch.dashboard', label: 'GKI 升级' },
-  { name: 'tahp.self-check', label: 'AI 自检' },
+  { name: 'tahp.self-check', label: '质量验测' },
 ]
 
 const secondaryNav = [

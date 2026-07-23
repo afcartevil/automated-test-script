@@ -1915,7 +1915,7 @@ const pageTitle = computed(() => {
   if (catalogPanelExpanded.value && selectedCatalogGroup.value) {
     return selectedCatalogGroup.value.label
   }
-  return 'AI 自检'
+  return '质量验测'
 })
 
 const isTestComplete = computed(() => {

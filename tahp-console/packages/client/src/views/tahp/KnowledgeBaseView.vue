@@ -305,15 +305,15 @@ const FUNC_TYPE_OPTIONS = [
   { label: '代码适配', value: 'code_adaptation' },
   { label: '版本适配', value: 'version_adaptation' },
   { label: '运营商移植', value: 'carrier_porting' },
-  { label: 'AI 自检', value: 'ai_self_check' },
+  { label: '质量验测', value: 'ai_self_check' },
 ]
 const FUNC_TYPE_SHORT: Record<string, string> = {
   bug_analysis: 'Bug分析', code_adaptation: '代码适配',
-  version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: 'AI自检',
+  version_adaptation: '版本适配', carrier_porting: '运营商移植', ai_self_check: '质量验测',
   // 兑容旧数据（中文大类）
-  'AI故障分析': 'AI故障分析', 'AI自动化适配': 'AI适配', 'AI自检工具': 'AI自检',
+  'AI故障分析': 'AI故障分析', 'AI自动化适配': 'AI适配', 'AI自检工具': '质量验测',
   // 中文细分透传
-  'Bug分析': 'Bug分析', '代码适配': '代码适配', '版本适配': '版本适配', '运营商移植': '运营商移植', 'AI自检': 'AI自检',
+  'Bug分析': 'Bug分析', '代码适配': '代码适配', '版本适配': '版本适配', '运营商移植': '运营商移植', 'AI自检': '质量验测', '质量验测': '质量验测',
 }
 
 const STATUS_OPTIONS = [

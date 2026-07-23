@@ -122,12 +122,12 @@ const FUNC_TYPE_NORMALIZE: Record<string, string> = {
   'code_adaptation':    '代码适配',
   'version_adaptation': '版本适配',
   'carrier_porting':    '运营商移植',
-  'self_check':         'AI自检',
-  'ai_self_check':      'AI自检',
+  'self_check':         '质量验测',
+  'ai_self_check':      '质量验测',
   'other':              '其他',
   // 中文 canonical 透传
   'Bug分析': 'Bug分析', '代码适配': '代码适配', '版本适配': '版本适配',
-  '运营商移植': '运营商移植', 'AI自检': 'AI自检', '其他': '其他',
+  '运营商移植': '运营商移植', 'AI自检': '质量验测', '质量验测': '质量验测', '其他': '其他',
   // 兑容旧数据
   'AI故障分析': 'AI故障分析', 'AI自动化适配': 'AI自动化适配', 'AI自检工具': 'AI自检工具',
 }
@@ -1214,7 +1214,7 @@ const SKILL_CLASSIFY_MAP: Record<string, [string, string]> = {
   'transsion-sunmao40-customization-features-adapt': ['AI自动化适配', '驱动'],
   'transsion-tran-battery-to-tc-charger-dtsi':  ['AI自动化适配', '驱动'],
   'tran-projects-config-migrate-dtsi-dws':      ['AI自动化适配', '驱动'],
-  // AI 自检工具
+  // 质量验测工具（历史分类名仍为「AI自检工具」，保持数据兼容）
   'spd-cpu-feature-check':                      ['AI自检工具', '通用'],
   'kernel-panic-tracer':                        ['AI自检工具', '内核'],
 }

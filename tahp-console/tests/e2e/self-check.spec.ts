@@ -180,7 +180,7 @@ test('self-check page renders tabs and workspaces', async ({ page }) => {
   })
 
   await page.goto('/#/tahp/self-check')
-  await expect(page.getByRole('heading', { name: 'AI 自检', level: 1 })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '质量验测', level: 1 })).toBeVisible()
   await expect(page.getByText('今日自动化流程')).not.toBeVisible()
   await expect(page.getByRole('button', { name: '总览' })).toBeVisible()
   await expect(page.getByRole('button', { name: '项目规划' })).toBeVisible()

@@ -128,7 +128,7 @@ async function handleSave() {
       </NFormItem>
     </NForm>
 
-    <SettingRow label="保存配置" hint="保存后 AI 自检 Gerrit Code Review 将自动使用此账号">
+    <SettingRow label="保存配置" hint="保存后质量验测 Gerrit Code Review 将自动使用此账号">
       <NButton type="primary" :loading="saving" :disabled="loading" @click="handleSave">
         保存
       </NButton>

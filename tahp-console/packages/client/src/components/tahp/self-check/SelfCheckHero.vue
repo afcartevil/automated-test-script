@@ -28,7 +28,7 @@ const statCards = [
   <div class="self-check-hero">
     <div class="hero-head">
       <div>
-        <h1>AI 自检</h1>
+        <h1>质量验测</h1>
         <p class="hero-sub ea-muted">
           项目节点驱动，自动烧录、自动测试、AI Review，第二天人工复核报告
         </p>

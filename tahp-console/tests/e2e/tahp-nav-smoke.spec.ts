@@ -5,7 +5,7 @@ const MAIN_ROUTES = [
   { path: '/#/tahp/dashboard', heading: /AI 适配调试|模型选择/ },
   { path: '/#/tahp/adapt-debug', heading: /AI 适配调试/ },
   { path: '/#/tahp/bug-analysis', heading: /智能诊断/ },
-  { path: '/#/tahp/self-check', heading: /AI 自检/ },
+  { path: '/#/tahp/self-check', heading: /质量验测/ },
   { path: '/#/tahp/reports', heading: /任务报告|报告/ },
   { path: '/#/tahp/knowledge', heading: /知识库/ },
   { path: '/#/hermes/skills', heading: /Skills/ },
