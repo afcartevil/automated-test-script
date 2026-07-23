@@ -3,8 +3,9 @@ name: gerrit-submit
 description: >-
   将 git 修改按传音研发代码提交规范生成 commit message，并提交到 Gerrit
   （git push <remote> HEAD:refs/for/<branch> 或 repo upload）。Windows/映射盘
-  上 git 不可用时，自动改走 harness remote-runner / bridge 在 Linux 构建机上
-  完成 status/diff/commit/push；桥接未就绪则引导用户完成桥接并等待后继续。
+  上 git 不可用时，自动改走 harness remote-runner 在 Linux 构建机完成
+  status/diff/commit/push；用 skill 自带 scripts/harness_remote.py，不在映射盘
+  创建临时 .sh/prepare 脚本；路径全部来自 discover，兼容任意 Windows 主机。
   remote 与目标分支由 agent 自动解析；用户已要求提交时，不因缺分支、Jira
   与 diff 不匹配、改动风险等向用户二次确认。当用户要提交/upload 到 Gerrit、
   推 refs/for、写规范 commit、repo upload 时使用。
@@ -37,12 +38,11 @@ description: >-
 
 ```
 - [ ] 1. 收集 ID；判定执行环境（本机 git vs harness 远程）
-- [ ] 2. 若需远程：discover → 桥接就绪 → runner 可用
-- [ ] 3. 解析 remote + 目标分支；检查 hook；拉 status/diff
+- [ ] 2. 若需远程：discover → 选 approved mapped_root；runner 可用则继续（勿因 bridge 探针误报空等）
+- [ ] 3. 解析 remote + 目标分支；拉 status/diff（远程用 harness_remote.py exec --read-log）
 - [ ] 4. 按 diff 填模板并拼接 message（可展示，不阻塞）
-- [ ] 5. stage + commit（用户已要求提交时立即做）
-- [ ] 6. git push <remote> HEAD:refs/for/<branch>（每个目标）
-- [ ] 7. 回报 Change URL / 分支结果；清理临时 action/脚本
+- [ ] 5. stage + commit + push（本机 git，或 harness_remote.py submit；禁止映射盘临时 .sh）
+- [ ] 6. 回报 Change URL / Change-Id / 分支；确认 actions.local.json 已清理
 ```
 
 ### 1. 收集 ID；判定执行环境
@@ -57,7 +57,7 @@ git -c safe.directory=* rev-parse --is-inside-work-tree
 
 **改走 harness 远程**（满足任一即切换，细节见 [remote-harness.md](remote-harness.md)）：
 
-- 路径落在映射盘（如 `Z:\`、`\\host\user\...`），且对应 Linux `/work/code/<user>/...`
+- 路径落在映射盘 / UNC 共享，且对应 Linux `/work/code/<user>/...`
 - `dubious ownership` / `bad object HEAD` / `unable to normalize alternate object path`（常见 `/opt/git/mirror/...`）
 - 本机 `git status` / `diff` / `commit` / `push` 失败或明显不可用
 - 用户明确要求用 harness / 远程服务器操作 git
@@ -66,21 +66,21 @@ git -c safe.directory=* rev-parse --is-inside-work-tree
 
 ### 2. Harness 远程与桥接（仅远程模式）
 
-按序执行（命令与参数见 [remote-harness.md](remote-harness.md)）：
+按 [remote-harness.md](remote-harness.md) 执行，摘要：
 
 1. `harness --json remote-runner discover`
-2. 选用 **approved / 映射根** 候选（如 `Z:\` → `/work/code/<user>`）；忽略 `suspicious_runner_root` 误装项
-3. **`bridge.ready != true`**：
-   - **不要**自动跑 `harness config ui` / `bridge-serve`（需用户在本机图形界面完成）
-   - 明确提示用户：打开 harness 配置中心连接齐治 Bridge，保持托盘就绪
-   - **等待**：间隔重试 `discover`（或用户回复「已连接」后再 discover），直到 `bridge.ready: true` 后**自动继续**原提交任务，不要改口去问「还要不要提交」
-4. runner 不可用但 bridge 已 READY → `bridge-install --remote-workspace /work/code/<linux_user> --force`（或映射根 `install` + 远程拉起）
-5. 用已注册 action 做 `workspace.project_status` / `project_diff_stat` / `project_diff`；**commit/push** 用临时 `actions.local.json` + `remote-runner exec`（长 timeout），或经批准的 `bridge-exec`（注意默认约 10s，长任务用后台脚本写日志再读）
-6. PowerShell 会弄坏 `--args-json` 引号：用 `node .../harness.js` 或 Python `subprocess` 传参，勿直接在 PS 里嵌 JSON 花括号
+2. 选用 **approved / 非 suspicious** 候选；记录 `mapped_root`、`inferred_remote_workspace`（**禁止写死**）
+3. **`runner_available == true` → 直接继续** status/diff/submit；不要只因 `bridge.ready != true` 停住
+4. runner 不可用且 bridge 未 READY → 提示用户连齐治 Bridge，轮询/等待后自动继续原任务（不要问「还要不要提交」）
+5. bridge READY 但 runner 未起 → `bridge-install --remote-workspace <linux_root> --force`
+6. **一律**用本 skill 的 `scripts/harness_remote.py`（或 Python `subprocess` argv）调用 harness；**禁止** PowerShell 内嵌 `--args-json '{...}'`
+7. **禁止**在映射盘创建 `*_submit.sh` / `prepare_*.py`；提交用 `harness_remote.py submit`
 
 ### 3. 解析 remote / 分支；工作区与 hook
 
 **不要向用户索要 remote 名**；自行解析（**禁止写死 `origin`**）：
+
+本机模式：
 
 ```bash
 git remote -v
@@ -88,6 +88,8 @@ git branch -vv
 git branch -a
 git rev-parse --abbrev-ref @{upstream}   # 有上游时
 ```
+
+远程模式：优先读映射盘 `.git` 元数据（见 remote-harness.md），再用 `workspace.project_status` / `project_diff`。
 
 #### 自动解析 remote（优先级从高到低）
 
@@ -115,6 +117,8 @@ git rev-parse --abbrev-ref @{upstream}   # 有上游时
 
 #### 工作区
 
+本机：
+
 ```bash
 git status
 git diff
@@ -122,8 +126,10 @@ git diff --cached
 git log -5 --oneline
 ```
 
+远程：`harness_remote.py exec ... workspace.project_status|project_diff --read-log`。
+
 - 无改动且无未推送 commit → 停止说明（这是无事可做，不是「确认类」打断）
-- 确认 `commit-msg` hook；缺失则安装后再 commit：
+- 确认 `commit-msg` hook；缺失则在 **Linux 仓**安装后再 commit：
 
 ```bash
 scp -p -P 29418 <user>@gerrit.transsion.com:hooks/commit-msg .git/hooks/
@@ -153,33 +159,44 @@ scp -p -P 29418 <user>@gerrit.transsion.com:hooks/commit-msg .git/hooks/
 
 按模板**直接拼接** message。可向用户展示终稿与 `remote → refs/for/<branch>`，但用户已要求提交时 **展示后立即 commit/push**，不要等待「确认 / 没反对」。仅当用户只说「帮我写个 commit / 生成 message」时才只输出 message、不 push。
 
-### 5. Commit
+### 5. Commit + 上传
 
 只用本次要上传的改动；勿加入密钥/`.env` 等。
 
+**本机：**
+
 ```bash
 git add <相关文件>
-git commit -F <msgfile>   # Windows / 远程脚本优先 -F；避免 PS heredoc
+git commit -F <msgfile>   # 优先 -F；避免 PS heredoc
+git push <remote> HEAD:refs/for/<branch>
 ```
 
 验证：`git log -1` 含规范字段、扩展四行，且 hook 已追加 `Change-Id: I...`。
 
-### 6. 上传 Gerrit
+**远程（映射盘）：** 使用 skill 自带 helper，**不要**在映射盘写临时 shell：
 
-```bash
-git push <remote> HEAD:refs/for/<branch>
-# 例：git push origin HEAD:refs/for/tOS_mtk_A16_trunk
+```text
+python <skill_dir>/scripts/harness_remote.py submit \
+  --mapped-root "<from discover>" \
+  --linux-root "<inferred_remote_workspace>" \
+  --project-path "<rel path>" \
+  --remote "<remote>" \
+  --branch "<branch>" \
+  --add <file> \
+  --message-file <local-msg.txt>
 ```
 
-可选：`%topic=<topic>`。Android 多 project 可用 `repo upload ... --cbr -y`；不可用则各仓 `git push`。
+细节与多机路径规则见 [remote-harness.md](remote-harness.md)。
+
+可选：`%topic=<topic>`。Android 多 project 可用 `repo upload ... --cbr -y`；不可用则各仓分别 push。
 
 多分支 = 同一 commit 分别 push；此时 `[是否chery-pick其它分支]` 为「是」。
 
-远程模式下 commit+push 跑完后删除临时 `actions.local.json` / 提交脚本（勿把密钥写进脚本）。
+### 6. 回报
 
-### 7. 回报
+每个目标报告：执行环境（本机 / harness）、`mapped_root`（若远程）、`remote`、分支、成功/失败、Gerrit Change URL、`Change-Id`、message 摘要。若 Jira 与 diff 不一致或 diff 看起来有风险，**仅在回报中注明**，不要回滚已成功的 upload。任一分支出错 → 继续其余，最后汇总失败与重试命令。
 
-每个目标报告：执行环境（本机 / harness）、`remote`、分支、成功/失败、Gerrit Change URL、`Change-Id`、message 摘要。若 Jira 与 diff 不一致或 diff 看起来有风险，**仅在回报中注明**，不要回滚已成功的 upload。任一分支出错 → 继续其余，最后汇总失败与重试命令。
+确认临时 `actions.local.json` 已删除；映射盘无本次 `*_submit.sh`。
 
 ## 安全与边界
 
@@ -187,25 +204,27 @@ git push <remote> HEAD:refs/for/<branch>
 - 不 `push --force`；不跳过 hooks（除非用户明确要求 `--no-verify`）。
 - 不在回复中回显 Gerrit / LDAP / 齐治密码。
 - 不擅自改全局 git config；不删生产 mirror；临时 action 用完即清。
-- `bridge-exec` 为 raw shell 逃生口：带 `--i-understand-this-runs-raw-shell`；优先注册 action。
+- 不在映射盘落临时 `.sh` / `prepare_*.py`；只用 skill 内固定 `scripts/harness_remote.py`。
+- `bridge-exec` 为 raw shell 逃生口：带 `--i-understand-this-runs-raw-shell`；commit/push 主路径走 remote-runner + helper。
 
 ## 异常引导
 
 | 现象 | 处理 |
 |---|---|
 | 缺少 ID | 停止，请提供 AR/BUG ID |
-| 本机 git 坏 / 映射盘 | 切 harness 远程；桥接未就绪则引导并等待后继续 |
+| 本机 git 坏 / 映射盘 | 切 harness 远程；`runner_available` 则继续；仅 runner 不可用且 bridge 未就绪时引导并等待 |
 | 无 upstream 且未给分支 | **自动推断**（步骤 3），不要停问 |
 | Jira 与 diff 不符 / 改动有风险 | **继续提交**；回报里说明 |
 | remote 歧义 | 列候选问一次 remote |
 | 缺少 Change-Id | 装 hook 后 amend（仅限本 skill 刚创建且未 push）或新 commit |
 | TYPE/字段被拦截 | 对照模板改 message 后同一 Change-Id 再 push |
 | 认证失败 | 核 remote URL / ssh；MTK 主站 vs CQ 站 |
-| bridge-exec 超时 | 改用 runner 临时 action 或 `nohup` 脚本 + 读日志 |
+| PS 弄坏 args-json / CRLF 弄挂 bash | 改用 `scripts/harness_remote.py`；不要手写映射盘 `.sh` |
 | 非 fast-forward | `fetch` + rebase 再 upload，勿对非 `refs/for/*` force push |
 
 ## 依赖
 
-- 本机：`git`；可选 `repo`
-- 远程：`harness` CLI、齐治 Bridge、remote-runner；可读 [harness-runner](../harness-runner/SKILL.md)（若本机 skills 树中有）
+- 本机：`git`；可选 `repo`；远程另需 `python` + `node` + `@transsion/harness-cli`
+- 远程：齐治 Bridge（runner 拉起/恢复时）、remote-runner；可读 [harness-runner](../harness-runner/SKILL.md)（若本机 skills 树中有）
 - **不依赖** `harness gerrit commit-message`
+- 固定脚本：`scripts/harness_remote.py`（随 skill 分发；可设 `HARNESS_JS` 指向 harness.js）

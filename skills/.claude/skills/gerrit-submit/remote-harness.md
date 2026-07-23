@@ -1,99 +1,148 @@
 # Windows 映射盘 → Harness 远程 Git
 
-当目标仓库在映射根（Windows `Z:\...` ↔ Linux `/work/code/<user>/...`）或本机 git 因 `alternates` / ownership 不可用时，用 harness 在 **Linux 构建机** 上完成 status / diff / commit / push。
+当目标仓库在映射根（Windows `<mapped_root>\...` ↔ Linux `/work/code/<linux_user>/...`）或本机 git 因 `alternates` / ownership 不可用时，用 harness 在 **Linux 构建机** 上完成 status / diff / commit / push。
 
-## 路径对照
+**多机兼容铁律：禁止写死盘符、用户名、UNC。** 一律使用当次 `discover` 返回的字段。
 
-| 侧 | 示例 |
-|---|---|
-| Windows 映射根 | `Z:\`（`harness remote-runner discover` 的 `mapped_root`） |
-| Linux 映射根 | `/work/code/<linux_user>`（必须是映射根，不能深到项目子目录） |
-| 仓库（Win） | `Z:\project\km9\system\vendor\mediatek\proprietary\packages\apps\Email` |
-| 仓库（Linux） | `/work/code/<linux_user>/project/km9/system/vendor/mediatek\proprietary\packages\apps\Email` |
-| runner 根 | `<mapped_root>\tran_harness\remote-runner` |
+## 路径对照（全部来自 discover）
 
-`project_path`（传给 workspace.* action）相对 **Linux 映射根**，例如：
+| 概念 | discover 字段 / 推导 | 说明 |
+|---|---|---|
+| Windows 映射根 | `mapped_root` | 可能是 `Z:\`、`Y:\` 或 `\\host\user` |
+| Linux 映射根 | `inferred_remote_workspace` | 形如 `/work/code/<linux_user>`，必须是映射根 |
+| runner 根 | `runner_root` 或 `<mapped_root>\tran_harness\remote-runner` | 忽略 `suspicious_runner_root` 候选 |
+| 仓库（Win） | `<mapped_root>\<project_path>` | 正反斜杠按本机 |
+| 仓库（Linux） | `<linux_root>/<project_path>` | 正斜杠 |
+| `project_path` | 相对映射根 | 例：`project/km9/system/vendor/.../MdmConfig` |
 
-`project/km9/system/vendor/mediatek/proprietary/packages/apps/Email`
+从用户给出的 Windows 仓路径推导 `project_path`：
 
-## 桥接未就绪
+1. 去掉 `mapped_root` 前缀（大小写/尾斜杠不敏感）
+2. 把 `\` 换成 `/`，去掉前导 `/`
+3. 得到相对路径后再拼 Linux 绝对路径
+
+## 选用哪个 discover 候选
+
+按序：
+
+1. `approved_for_runner == true`（或等价可写映射根）
+2. `runner_available == true` 且 **没有** `suspicious_runner_root`
+3. `mapped_root` 能覆盖用户仓库路径
+4. 记下 `mapped_root` + `inferred_remote_workspace`（= linux_root）
+
+有多个合格候选时优先覆盖用户路径的那个；不要用指向项目子目录的误装 runner。
+
+## Bridge vs Runner（少走弯路）
 
 ```text
 harness --json remote-runner discover
 ```
 
-若 `bridge.ready` 不为 true：
+| 情况 | 动作 |
+|---|---|
+| `runner_available == true` | **直接**用 `remote-runner exec` / skill 脚本；**不要**因 `bridge.ready == false` 先停住空等 |
+| runner 不可用，且 `bridge.ready != true` | 提示用户打开 harness 配置中心/托盘连接齐治 Bridge；轮询 discover 或等用户说「已连接」后继续；**不要**自动 `config ui` / `bridge-serve`（除非用户明确要求且无 GUI） |
+| bridge READY 但 runner 未起 | `bridge-install --remote-workspace <linux_root> --force`（linux_root 来自 discover，勿写死） |
+| exec 失败且日志像 bridge/队列挂死 | 再引导用户检查 Bridge / 重试 discover |
 
-1. 提示用户在本机打开 harness **配置中心 / 托盘** 连接齐治 Bridge（Agent **不要**自动 `harness config ui` 或 `bridge-serve`，除非用户明确要求且无 GUI 才用终端 `bridge-serve`）。
-2. 轮询 `discover`（例如每 15–30s）或等用户说「好了」后再 `discover`。
-3. `bridge.ready: true` 后继续；若 runner 未起来：  
-   `harness --json remote-runner bridge-install --remote-workspace /work/code/<linux_user> --force`
+`bridge.ready == false` 但 runner 队列仍可完成 job（常见 shell probe 误超时）→ 以实际 `exec` 成败为准。
 
-## 只读：status / diff
+## 强制：Windows 安全调用（禁止 PS 内嵌 JSON）
 
-已注册 action（`remote-runner exec`）：
+PowerShell 会弄坏 `--args-json '{...}'`。**禁止**在 PS 里手写带花括号的 JSON 参数。
 
-- `workspace.project_status` — args: `{"project_path":"<rel>"}`
-- `workspace.project_diff_stat` — 同上
-- `workspace.project_diff` — 同上
-
-CLI 摘要常只有 `command completed`；到映射盘读日志：
-
-`<mapped_root>\tran_harness\remote-runner\logs\<job_id>.log`
-
-## PowerShell 传参
-
-`--args-json '{"project_path":"..."}'` 在 PowerShell 下常被解析坏（`Expecting property name...`）。用 Node 直调：
+本 skill 自带固定 helper（**不是**每次在映射盘新建的临时脚本）：
 
 ```text
-node %APPDATA%\npm\node_modules\@transsion\harness-cli\bin\harness.js --json remote-runner exec --mapped-root Z:\ --action workspace.project_status --args-json "{\"project_path\":\"project/.../Email\"}" --timeout 120
+<script_dir>/scripts/harness_remote.py
 ```
 
-或 Python `subprocess.run([...], ...)` 传入完整 argv。
+`<script_dir>` = 本 `SKILL.md` 所在目录（`.cursor/skills/gerrit-submit` 或仓库内 `skills/.claude/skills/gerrit-submit` 等，以实际加载路径为准）。
 
-## Commit + push（推荐临时 action）
+### status / diff
 
-1. 在 `<mapped_root>\tran_harness\remote-runner\tmp\` 写入：
-   - `*_commit_msg.txt`（LF、UTF-8 无 BOM）
-   - `*_submit.sh`：`cd` 到 Linux 仓路径 → `git add` → `git commit -F msg` → `git push <remote> HEAD:refs/for/<branch>`，stdout/stderr 写入同目录 `*_submit.log`
-2. 写入 `config/actions.local.json`，例如：
-
-```json
-{
-  "schema_version": 1,
-  "actions": [
-    {
-      "action_id": "git.gerrit_submit_once",
-      "enabled": true,
-      "cwd": ".",
-      "command": ["bash", "tran_harness/remote-runner/tmp/<script>.sh"],
-      "timeout_sec": 300,
-      "allow_args": false,
-      "arg_schema": {},
-      "env_allowlist": []
-    }
-  ]
-}
+```text
+python <script_dir>/scripts/harness_remote.py exec ^
+  --mapped-root "<mapped_root>" ^
+  --action workspace.project_status ^
+  --args-json "{\"project_path\":\"<project_path>\"}" ^
+  --timeout 120 --read-log
 ```
 
-3. 稍等 runner 重载配置后：  
-   `remote-runner exec --action git.gerrit_submit_once --timeout 300`
-4. 读 `*_submit.log` 取 Change URL / Change-Id
-5. **删除** `actions.local.json` 与临时脚本（日志可留可删）
+同理：`workspace.project_diff_stat` / `workspace.project_diff`。
 
-`bridge-exec` 默认约 10s 超时，不适合直接跑 `git push`；若用，需 `nohup`/后台 + 读日志，并带 `--i-understand-this-runs-raw-shell`。
+CLI JSON 常只有 `command completed`；`--read-log` 会打印 `<mapped_root>\tran_harness\remote-runner\logs\` 下本次最新 job log（含真正的 status/diff 正文）。
 
-## 分支线索（远程仓只读文件）
+等价手写（无 helper 时）：用 **Python `subprocess` 传完整 argv 列表**，或 `node <harness.js> ...`，`harness.js` 优先 `%APPDATA%\npm\node_modules\@transsion\harness-cli\bin\harness.js`，可用环境变量 `HARNESS_JS` 覆盖。
 
-本机读映射盘 `.git` 元数据辅助推断（即使 objects 不可用）：
+## 分支 / remote 只读推断（映射盘文件，不跑本机 git）
 
-- `refs/remotes/m/master` → 常指向 `refs/remotes/origin/<manifest-branch>`（如 `tOS_mtk_A16_trunk`）
-- `.git/config` → `[remote "..."]` URL（含 `gerrit` / `gerrit-cq`）
-- detached HEAD 仍可 `git push <remote> HEAD:refs/for/<branch>`
+优先读仓内 `.git`（或 repo 的 project gitdir）元数据：
 
-## 禁止
+1. `refs/remotes/m/master` → 常为 `ref: refs/remotes/<remote>/<branch>`（如 `origin/tOS_mtk_A16_trunk`）
+2. `.git/config` → `[remote "<name>"] url=...`（含 `gerrit` / `gerrit-cq`）
+3. detached HEAD **不影响** `git push <remote> HEAD:refs/for/<branch>`
 
-- 为修本机 git 而移动/删除 `objects/info/alternates`（除非用户明确批准且无更好路径）
-- `git config --global` 改 `safe.directory` / `commit.template`
-- 把密码写进临时脚本或 action 文件
-- 使用 `suspicious_runner_root` 指向项目子目录的 runner
+站点：`gerrit.transsion.com`（MTK/QCOM）；`gerrit-cq.transsion.com`（SPRD/UNISOC）。
+
+## Commit + push：**不写临时 .sh**
+
+### 默认路径（推荐，多机通用）
+
+1. 按 [commit-template.md](commit-template.md) 在本机拼好 message（可写到 **本机临时文件**，如 `%TEMP%\gerrit_msg.txt`，LF 即可；**不要**为了提交在映射盘写 `*_submit.sh` / `prepare_*.py`）
+2. 调用 skill 固定 helper：
+
+```text
+python <script_dir>/scripts/harness_remote.py submit ^
+  --mapped-root "<mapped_root>" ^
+  --linux-root "<inferred_remote_workspace>" ^
+  --project-path "<project_path>" ^
+  --remote "<remote>" ^
+  --branch "<branch>" ^
+  --add <file1> --add <file2> ^
+  --message-file "%TEMP%\gerrit_msg.txt" ^
+  --timeout 300
+```
+
+未传 `--add` 时远程执行 `git add -u`（仅已跟踪修改）。
+
+helper 内部会：
+
+- 把 commit message **base64** 嵌进 **临时** `config/actions.local.json` 的 `bash -lc`（**不落盘 .sh**）
+- `remote-runner exec --action git.gerrit_submit_once`
+- 解析 submit log 中的 Gerrit Change URL / `Change-Id`
+- **删除** `actions.local.json`（唯一临时配置；submit log 可留）
+
+### 禁止 / 避免
+
+| 禁止 | 原因 |
+|---|---|
+| 在映射盘写 `*_submit.sh` / `prepare_and_submit.py` | CRLF 易导致 `set: pipefail`；每台主机重复造轮子 |
+| PS 里嵌 `--args-json '{...}'` | 参数被拆坏 |
+| 写死 `Z:\`、`/work/code/某用户` | 换主机即失败 |
+| 使用 `suspicious_runner_root` 候选 | 误装到项目子目录 |
+| 改 `.git/objects/info/alternates` 或 `git config --global safe.directory` | 应用远程路径，不要硬扛本机 git |
+| 把密码写进 action / 日志说明 | 安全 |
+
+### 仅当 helper 不可用时的手工兜底
+
+若必须手写：只允许临时 `actions.local.json`，`command` 为 `["bash","-lc","echo <script_b64> | base64 -d | bash"]`，message 同样 base64；**二进制写入 JSON（LF）**；exec 后删除该文件。仍不要创建 `.sh`。
+
+`bridge-exec` 默认短超时，**不作为** commit/push 主路径；仅诊断或经用户批准的 raw shell 逃生口（`--i-understand-this-runs-raw-shell`）。
+
+## 回报解析
+
+从 submit log / job log 提取：
+
+- `https://gerrit.../+/NNNN`（Change URL）
+- `Change-Id: I...`
+- `remote` → `refs/for/<branch>`
+- commit subject / 完整 message 摘要
+
+## 清理清单
+
+每次远程提交结束后确认：
+
+- [ ] `config/actions.local.json` 已删除（或不存在）
+- [ ] 映射盘 `tmp/` 下无本次新建的 `*_submit.sh` / `prepare_*.py`
+- [ ] 回报里含 Change URL 与 Change-Id
