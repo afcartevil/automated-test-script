@@ -563,14 +563,25 @@ def build_commit_rich_html(data: dict, commit_message_full: str = "", summary_mo
     else:
         summary_html = f"<p><span class='mono'>精炼结论</span>: {original_summary}</p>"
 
+    constraint_html = (
+        f"<p><span class='mono'>约束/依据</span>: {constraint}</p>"
+        if constraint and constraint != "-"
+        else ""
+    )
+    upstream_html = (
+        f"<p><span class='mono'>上游来源</span>: {upstream_commit}</p>" if upstream_commit else ""
+    )
+    closure_html = (
+        f"<p><span class='mono'>闭环线索</span>: {closure_hint}</p>" if closure_hint else ""
+    )
     return (
         "<div class='report-block'>"
         f"<p><span class='mono'>标题</span>: {title}</p>"
         f"<p><span class='mono'>背景</span>: {context}</p>"
-        f"{('<p><span class=\"mono\">约束/依据</span>: ' + constraint + '</p>') if constraint and constraint != '-' else ''}"
-        f"{('<p><span class=\"mono\">上游来源</span>: ' + upstream_commit + '</p>') if upstream_commit else ''}"
+        f"{constraint_html}"
+        f"{upstream_html}"
         f"{summary_html}"
-        f"{('<p><span class=\"mono\">闭环线索</span>: ' + closure_hint + '</p>') if closure_hint else ''}"
+        f"{closure_html}"
         f"{build_list_html(['关键信号: ' + s for s in signals]) if signals else ''}"
         f"{build_list_html(['Fixes/Closes: ' + s for s in fixes]) if fixes else ''}"
         f"{build_list_html(['参考链接: ' + s for s in refs]) if refs else ''}"
@@ -596,11 +607,14 @@ def build_code_rich_html(data: dict) -> str:
             block.append(f"<div class='mini'><span class='mono'>修改后</span></div><pre>{after}</pre>")
         block.append("</div>")
         logic_html.append("".join(block))
+    logic_section = (
+        "".join(logic_html) if logic_html else "<p class='mini'>未提取到逻辑级代码变化解读。</p>"
+    )
     return (
         "<div class='report-block'>"
         f"<p>{summary}</p>"
         f"{build_list_html(['主要文件: ' + x for x in stat_list]) if stat_list else ''}"
-        f"{''.join(logic_html) if logic_html else '<p class=\"mini\">未提取到逻辑级代码变化解读。</p>'}"
+        f"{logic_section}"
         "</div>"
     )
 
@@ -649,15 +663,30 @@ def build_introducer_html(data: dict) -> str:
         if diff_url:
             link_items.append(f"<li><span class='mono'>引入 Diff</span>: <a href='{diff_url}' target='_blank'>{diff_url}</a></li>")
         links_html = "<ul class='mini'>{}</ul>".format("".join(link_items))
+    introducer_html = (
+        f"<p><span class='mono'>引入 patch</span>: {introducer_commit} - {introducer_title}</p>"
+        if detected
+        else ""
+    )
+    change_summary_html = (
+        f"<p><span class='mono'>引入修改摘要</span>: {change_summary}</p>"
+        if change_summary and change_summary != "-"
+        else ""
+    )
+    why_html = (
+        f"<p><span class='mono'>为什么认为它引入了问题</span>: {why}</p>"
+        if why and why != "-"
+        else ""
+    )
     return (
         "<div class='report-block'>"
         f"<p><span class='mono'>是否识别到引入修改</span>: {'是' if detected else '否'}</p>"
         f"<p><span class='mono'>判断方式</span>: {detection_method}</p>"
         f"<p><span class='mono'>可信度</span>: {confidence}</p>"
         f"<p><span class='mono'>结论摘要</span>: {summary}</p>"
-        f"{('<p><span class=\"mono\">引入 patch</span>: ' + introducer_commit + ' - ' + introducer_title + '</p>') if detected else ''}"
-        f"{('<p><span class=\"mono\">引入修改摘要</span>: ' + change_summary + '</p>') if change_summary and change_summary != '-' else ''}"
-        f"{('<p><span class=\"mono\">为什么认为它引入了问题</span>: ' + why + '</p>') if why and why != '-' else ''}"
+        f"{introducer_html}"
+        f"{change_summary_html}"
+        f"{why_html}"
         f"{links_html}"
         f"{build_list_html(['证据: ' + e for e in evidence]) if evidence else ''}"
         "</div>"

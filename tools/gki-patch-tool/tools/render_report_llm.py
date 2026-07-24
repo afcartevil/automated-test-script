@@ -364,7 +364,7 @@ def _render_warning_banners(crash_risk, crash_risk_reason, crash_patterns) -> st
         )
     if crash_patterns:
         pattern_tags = "".join(
-            f'<span class="pattern-tag {"high" if pt.get("severity")=="\u9ad8" else "medium"}">'
+            f'<span class="pattern-tag {"high" if pt.get("severity")=="高" else "medium"}">'
             f'{esc(pt.get("label",""))}</span>'
             for pt in crash_patterns
         )
@@ -398,7 +398,7 @@ def _render_crash_risk_html(crash_risk, crash_risk_reason, crash_patterns) -> st
             )
             pattern_items.append(
                 f'<div class="crash-pattern-item"><strong>{esc(pt.get("label",""))}</strong>'
-                f' <span class="pattern-tag {"high" if pt.get("severity")=="\u9ad8" else "medium"}">'
+                f' <span class="pattern-tag {"high" if pt.get("severity")=="高" else "medium"}">'
                 f'{esc(pt.get("severity",""))}</span>'
                 f'<div class="muted crash-pattern-desc">{esc(pt.get("description",""))}</div>'
                 f'<ul class="crash-pattern-lines">{lines_html}</ul></div>'
@@ -627,7 +627,7 @@ def render_patch(idx, p):
         {card("🎯 问题闭环", problem_solved or '<p class="muted">暂无 LLM 分析</p>')}
         {card("🔍 引入分析", _introducer_combined(introducer, introduced_risk))}
         {card("🔮 死机风险评估", crash_risk_html)}
-        {card("\U0001f517 后续修复", future_fix_html) if future_fix_html else ''}
+        {card("🔗 后续修复", future_fix_html) if future_fix_html else ''}
       </div>
       <div>
         {card("📊 评分明细", score_html)}
