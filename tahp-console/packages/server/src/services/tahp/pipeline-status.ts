@@ -44,7 +44,7 @@ export async function getSelfCheckPipelineStatus(): Promise<SelfCheckPipelineVie
 
   const syncStage: PipelineStage = {
     key: 'sync',
-    label: '项目节点同步',
+    label: '同步项目节点和自主规划',
     status: hasNodes ? 'done' : 'idle',
     hint: hasNodes ? `${nodesView.projects.length} 个项目` : undefined,
   }
@@ -87,9 +87,9 @@ export async function getSelfCheckPipelineStatus(): Promise<SelfCheckPipelineVie
 
   const reviewStage: PipelineStage = {
     key: 'review',
-    label: '人工 Review',
+    label: '人工复核测试报告',
     status: pendingReports > 0 ? 'attention' : recentlyCompleted > 0 && runningTests === 0 ? 'done' : 'idle',
-    hint: pendingReports > 0 ? `${pendingReports} 份待 Review` : undefined,
+    hint: pendingReports > 0 ? `${pendingReports} 份待复核` : undefined,
   }
 
   return {

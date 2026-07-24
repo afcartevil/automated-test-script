@@ -14,7 +14,7 @@ const activeTab = defineModel<string>('activeTab', { required: true })
       <div class="header-title">
         <h1>质量验测</h1>
         <p class="header-sub ea-muted">
-          项目节点驱动，自动烧录、自动测试、AI Review，测试报告人工复核
+          项目自动规划 → 自动烧录 → 自动测试 → 评审补全 → 人工复核报告
         </p>
       </div>
       <EaInnerTabs

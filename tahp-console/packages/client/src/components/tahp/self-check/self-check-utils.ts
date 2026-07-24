@@ -1,7 +1,7 @@
 import type { CaseCatalogGroup, DeviceInfo, SelfCheckReportSummary } from '@/api/tahp/device-self-check'
 
 export const SELF_CHECK_SUBTITLE =
-  '项目节点驱动，自动烧录、自动测试、AI Review，第二天人工复核报告'
+  '项目自动规划 → 自动烧录 → 自动测试 → 评审补全 → 人工复核报告'
 
 export const AUTO_RETEST_TOOLTIP = '测试结束后自动复测无人工参与的失败用例'
 

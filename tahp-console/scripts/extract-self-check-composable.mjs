@@ -69,9 +69,9 @@ export type SelfCheckTab = 'overview' | 'planning' | 'devices' | 'review' | 'ger
 
 export const SELF_CHECK_TABS = [
   { key: 'overview', label: '总览' },
-  { key: 'planning', label: '项目规划' },
-  { key: 'devices', label: '设备执行' },
-  { key: 'gerrit', label: 'AI Review' },
+  { key: 'planning', label: '自动规划' },
+  { key: 'devices', label: '测试执行' },
+  { key: 'gerrit', label: '评审补全' },
   { key: 'review', label: '测试报告' },
 ] as const
 
@@ -265,7 +265,7 @@ const newState = `${insertAfter}
   }
 
   function handleChecklistPower() {
-    message.info('功耗 T-Power 测试需连接硬件，请在设备执行中选择对应用例')
+    message.info('功耗 T-Power 测试需连接硬件，请在测试执行中选择对应用例')
     activeTab.value = 'devices'
   }
 
@@ -291,7 +291,7 @@ const newState = `${insertAfter}
     return [
       {
         key: 'sync',
-        label: '项目节点同步',
+        label: '同步项目节点和自主规划',
         status: hasNodes ? 'done' : 'idle',
         hint: hasNodes ? \`\${nextNodes.value.length} 个项目\` : undefined,
       },
@@ -307,7 +307,7 @@ const newState = `${insertAfter}
       },
       {
         key: 'review',
-        label: '人工 Review',
+        label: '人工复核测试报告',
         status: stats.value.pendingManual > 0 ? 'attention' : 'idle',
       },
     ]

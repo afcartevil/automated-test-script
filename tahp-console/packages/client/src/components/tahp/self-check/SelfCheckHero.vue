@@ -30,7 +30,7 @@ const statCards = [
       <div>
         <h1>质量验测</h1>
         <p class="hero-sub ea-muted">
-          项目节点驱动，自动烧录、自动测试、AI Review，第二天人工复核报告
+          项目自动规划 → 自动烧录 → 自动测试 → 评审补全 → 人工复核报告
         </p>
       </div>
       <div class="hero-actions">

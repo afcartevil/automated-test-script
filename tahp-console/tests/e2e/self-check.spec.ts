@@ -4,10 +4,10 @@ import { authenticate, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
 function mockDeviceSelfCheckApi(page: import('@playwright/test').Page) {
   const pipelinePayload = {
     stages: [
-      { key: 'sync', label: '项目节点同步', status: 'done', hint: '1 个项目' },
+      { key: 'sync', label: '同步项目节点和自主规划', status: 'done', hint: '1 个项目' },
       { key: 'flash', label: '版本拉取/烧录', status: 'idle' },
       { key: 'test', label: '自动测试', status: 'queued' },
-      { key: 'review', label: '人工 Review', status: 'idle' },
+      { key: 'review', label: '人工复核测试报告', status: 'idle' },
     ],
     updatedAt: '2026-06-24T08:00:00.000Z',
     runningTests: 0,
@@ -183,21 +183,21 @@ test('self-check page renders tabs and workspaces', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '质量验测', level: 1 })).toBeVisible()
   await expect(page.getByText('今日自动化流程')).not.toBeVisible()
   await expect(page.getByRole('button', { name: '总览' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '项目规划' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '设备执行' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'AI用例' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '自动规划' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '测试执行' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '评审补全' })).toBeVisible()
   await expect(page.getByRole('button', { name: '测试报告' })).toBeVisible()
-  await expect(page.getByText('项目规划').first()).toBeVisible()
+  await expect(page.getByText('自动规划').first()).toBeVisible()
   await expect(page.getByText('流程状态').first()).toBeVisible()
   const reviewCardHead = page.locator('.review-card-head')
   await expect(reviewCardHead).not.toBeVisible()
 
-  await page.getByRole('button', { name: 'AI用例' }).click()
+  await page.getByRole('button', { name: '评审补全' }).click()
   await expect(page.getByText('输入gerrit链接，AI生成测试用例&AI推荐测试用例')).toBeVisible()
   await expect(page.getByText('Code Review 对话')).toBeVisible()
   await expect(page.getByText('必须测试')).toBeVisible()
 
-  await page.getByRole('button', { name: '项目规划' }).click()
+  await page.getByRole('button', { name: '自动规划' }).click()
   await expect(page.getByText('AI测试自规划')).toBeVisible()
   await expect(page.getByText('项目节点')).toBeVisible()
   const nodesPanel = page.locator('.nodes-panel .item-list li').first()
@@ -245,7 +245,7 @@ test('self-check shows warning when gerrit is not configured', async ({ page }) 
   })
 
   await page.goto('/#/tahp/self-check')
-  await page.getByRole('button', { name: 'AI用例' }).click()
+  await page.getByRole('button', { name: '评审补全' }).click()
   await expect(
     page.getByText('gerrit账号未设置，无法进行code review，请在设置中完善gerrit账号'),
   ).toBeVisible()

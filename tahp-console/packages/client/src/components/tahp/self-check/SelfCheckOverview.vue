@@ -96,7 +96,7 @@ function onFlowStage(tab: string) {
 
     <div class="module-grid">
       <SelfCheckOverviewCard
-        title="项目规划"
+        title="自动规划"
         tone="tone-indigo"
         :metric="stats.pendingProjects"
         metric-label="待执行排期"
@@ -104,7 +104,7 @@ function onFlowStage(tab: string) {
       >
         <div v-if="!nextNodes.length" class="panel-empty ea-muted">
           尚未同步项目节点，请进入
-          <button type="button" class="link-btn" @click="emit('goPlanning')">项目规划</button>
+          <button type="button" class="link-btn" @click="emit('goPlanning')">自动规划</button>
           同步
         </div>
         <ul v-else class="item-list">
@@ -127,7 +127,7 @@ function onFlowStage(tab: string) {
       </SelfCheckOverviewCard>
 
       <SelfCheckOverviewCard
-        title="设备执行"
+        title="测试执行"
         tone="tone-sky"
         fill-body
         tall
@@ -190,7 +190,7 @@ function onFlowStage(tab: string) {
       </SelfCheckOverviewCard>
 
       <SelfCheckOverviewCard
-        title="AI Review"
+        title="评审补全"
         tone="tone-amber"
         :metric="gerritStatusLabel"
         metric-label="状态"

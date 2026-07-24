@@ -33,7 +33,7 @@ const emit = defineEmits<{
     </div>
     <div v-if="metric !== undefined && metricLabel" class="card-metrics">
       <div class="metric-primary">
-        <span class="metric-value">{{ metric }}</span>
+        <span class="metric-value" :class="{ 'metric-value--text': typeof metric !== 'number' }">{{ metric }}</span>
         <span class="metric-label">{{ metricLabel }}</span>
       </div>
       <div v-if="secondaryMetric" class="metric-secondary ea-muted">{{ secondaryMetric }}</div>
@@ -53,11 +53,11 @@ const emit = defineEmits<{
   flex-direction: column;
   border-left: 3px solid var(--line);
 
-  &.tone-indigo { border-left-color: #6366f1; }
-  &.tone-sky { border-left-color: #0ea5e9; }
-  &.tone-amber { border-left-color: #f59e0b; }
-  &.tone-emerald { border-left-color: #10b981; }
-  &.tone-violet { border-left-color: #8b5cf6; }
+  &.tone-indigo { border-left-color: #6366f1; --metric-color: #4f46e5; }
+  &.tone-sky { border-left-color: #0ea5e9; --metric-color: #0284c7; }
+  &.tone-amber { border-left-color: #f59e0b; --metric-color: #b45309; }
+  &.tone-emerald { border-left-color: #10b981; --metric-color: #059669; }
+  &.tone-violet { border-left-color: #8b5cf6; --metric-color: #7c3aed; }
 
   &.compact {
     min-height: 0;
@@ -102,6 +102,14 @@ const emit = defineEmits<{
   font-size: 22px;
   font-weight: 800;
   line-height: 1.1;
+  color: var(--metric-color);
+
+  &--text {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--metric-color);
+  }
 }
 
 .metric-label {

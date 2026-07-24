@@ -2,7 +2,7 @@
   {
     "用例名": "USD冒烟测试",
     "前置条件": "测试机已通过 ADB 连接且状态为 device；设备已解锁并进入主界面；SDD 测试框架（tools/sdd_test）已就绪。默认需可访问 SPD 信息源；无 SPD 网络时可在概览区勾选「跳过 SPD 拉取」。规划自动执行时建议先完成刷机（含 Root 包）。",
-    "测试步骤": "1、在设备执行页选择测试机，勾选本用例\n2、可选在概览区勾选「跳过 SPD 拉取（--skip-spd-info）」；无 SPD 网络时 SPD 依赖用例将自动跳过\n3、可选开启「自动复测」并设置复测次数\n4、启动测试：系统调用 si_run.py --test-type usd，通过 pytest 自动执行 USD 冒烟用例集（通信、充电、音频、显示、传感器、功耗等模块）\n5、执行完成后解析 tools/sdd_test/report 下的 SDD_report.json，汇总通过/失败项\n6、运行日志保存在 tools/sdd_test/report/si_run_usd_<序列号>.log",
+    "测试步骤": "1、在测试执行页选择测试机，勾选本用例\n2、可选在概览区勾选「跳过 SPD 拉取（--skip-spd-info）」；无 SPD 网络时 SPD 依赖用例将自动跳过\n3、可选开启「自动复测」并设置复测次数\n4、启动测试：系统调用 si_run.py --test-type usd，通过 pytest 自动执行 USD 冒烟用例集（通信、充电、音频、显示、传感器、功耗等模块）\n5、执行完成后解析 tools/sdd_test/report 下的 SDD_report.json，汇总通过/失败项\n6、运行日志保存在 tools/sdd_test/report/si_run_usd_<序列号>.log",
     "期望结果": "SDD_report.json 中 status 为 ok 且 failedCount 为 0，即 USD 冒烟用例全部通过；若有失败项，报告中将列出首个失败用例名称与原因"
   }
 ]
