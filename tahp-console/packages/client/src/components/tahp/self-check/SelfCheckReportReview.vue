@@ -50,6 +50,16 @@ const filteredReports = computed(() => {
   )
 })
 
+const RECENT_MS = 72 * 3600 * 1000
+
+function isRecentReport(report: SelfCheckReportSummary): boolean {
+  const t = Date.parse(report.completedAt || report.endTime || report.startTime) || 0
+  return t >= Date.now() - RECENT_MS
+}
+
+const recentReports = computed(() => filteredReports.value.filter(isRecentReport))
+const historyReports = computed(() => filteredReports.value.filter(r => !isRecentReport(r)))
+
 const caseGroups = computed(() => {
   const items = reportDetail.value?.allCaseItems ?? []
   const map = new Map<string, SelfCheckCaseItem[]>()
@@ -127,7 +137,7 @@ function selectCase(caseKey: string) {
 async function loadReports() {
   loading.value = true
   try {
-    reports.value = await listSelfCheckReports({ sinceHours: 72 })
+    reports.value = await listSelfCheckReports()
     if (!selectedId.value && reports.value.length) {
       selectedId.value = reports.value[0].reportId
     }
@@ -252,7 +262,7 @@ onActivated(async () => {
       <div class="list-head">
         <div>
           <h3>测试报告</h3>
-          <p class="ea-muted">近 72 小时自检报告统一在此审阅；点击报告展开详情</p>
+          <p class="ea-muted">全部自检报告统一在此审阅；近 72 小时优先展示，历史报告可展开</p>
         </div>
         <input
           v-model="filterText"
@@ -267,34 +277,78 @@ onActivated(async () => {
         description="暂无测试报告。测试完成后将自动汇总至此"
         size="small"
       />
-      <ul v-else class="report-grid">
-        <li
-          v-for="report in filteredReports"
-          :key="report.reportId"
-          class="report-card"
-          :class="{ selected: selectedId === report.reportId && reportPanelExpanded }"
-          @click="selectReport(report.reportId)"
-        >
-          <div class="report-card-tags">
-            <span class="report-status" :class="reportStatusKind(report)">
-              {{ displayReportStatus(report) }}
-            </span>
-            <span v-if="report.passedCases > 0" class="report-stat report-stat--pass">
-              通过 {{ report.passedCases }}
-            </span>
-            <span v-if="report.failedCases > 0" class="report-stat report-stat--fail">
-              失败 {{ report.failedCases }}
-            </span>
-            <span v-if="report.skippedCases > 0" class="report-stat report-stat--skip">
-              跳过 {{ report.skippedCases }}
-            </span>
+      <div v-else class="report-sections">
+        <section class="report-section">
+          <div class="report-section-title">
+            近 72 小时
+            <span class="report-section-count">{{ recentReports.length }}</span>
           </div>
-          <strong class="report-card-title">{{ reportTitle(report) }}</strong>
-          <small class="report-card-meta ea-muted">
-            {{ reportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }}
-          </small>
-        </li>
-      </ul>
+          <p v-if="!recentReports.length" class="panel-empty ea-muted">近 72 小时暂无报告</p>
+          <ul v-else class="report-grid">
+            <li
+              v-for="report in recentReports"
+              :key="report.reportId"
+              class="report-card"
+              :class="{ selected: selectedId === report.reportId && reportPanelExpanded }"
+              @click="selectReport(report.reportId)"
+            >
+              <div class="report-card-tags">
+                <span class="report-status" :class="reportStatusKind(report)">
+                  {{ displayReportStatus(report) }}
+                </span>
+                <span v-if="report.passedCases > 0" class="report-stat report-stat--pass">
+                  通过 {{ report.passedCases }}
+                </span>
+                <span v-if="report.failedCases > 0" class="report-stat report-stat--fail">
+                  失败 {{ report.failedCases }}
+                </span>
+                <span v-if="report.skippedCases > 0" class="report-stat report-stat--skip">
+                  跳过 {{ report.skippedCases }}
+                </span>
+              </div>
+              <strong class="report-card-title">{{ reportTitle(report) }}</strong>
+              <small class="report-card-meta ea-muted">
+                {{ reportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }}
+              </small>
+            </li>
+          </ul>
+        </section>
+
+        <details v-if="historyReports.length" class="report-section report-section--history">
+          <summary class="report-section-title">
+            历史报告
+            <span class="report-section-count">{{ historyReports.length }}</span>
+          </summary>
+          <ul class="report-grid">
+            <li
+              v-for="report in historyReports"
+              :key="report.reportId"
+              class="report-card"
+              :class="{ selected: selectedId === report.reportId && reportPanelExpanded }"
+              @click="selectReport(report.reportId)"
+            >
+              <div class="report-card-tags">
+                <span class="report-status" :class="reportStatusKind(report)">
+                  {{ displayReportStatus(report) }}
+                </span>
+                <span v-if="report.passedCases > 0" class="report-stat report-stat--pass">
+                  通过 {{ report.passedCases }}
+                </span>
+                <span v-if="report.failedCases > 0" class="report-stat report-stat--fail">
+                  失败 {{ report.failedCases }}
+                </span>
+                <span v-if="report.skippedCases > 0" class="report-stat report-stat--skip">
+                  跳过 {{ report.skippedCases }}
+                </span>
+              </div>
+              <strong class="report-card-title">{{ reportTitle(report) }}</strong>
+              <small class="report-card-meta ea-muted">
+                {{ reportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }}
+              </small>
+            </li>
+          </ul>
+        </details>
+      </div>
     </EaCard>
 
     <div
@@ -535,6 +589,59 @@ $report-pane-height: calc(100vh - 48px);
   padding: 24px 0;
   text-align: center;
   font-size: 13px;
+}
+
+.report-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.report-section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--head);
+  list-style: none;
+  cursor: default;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+}
+
+.report-section--history > summary.report-section-title {
+  cursor: pointer;
+  user-select: none;
+
+  &::before {
+    content: '▸';
+    display: inline-block;
+    font-size: 11px;
+    color: var(--muted);
+    transition: transform 0.15s;
+  }
+}
+
+.report-section--history[open] > summary.report-section-title::before {
+  transform: rotate(90deg);
+}
+
+.report-section-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--bg);
 }
 
 .report-grid {

@@ -169,27 +169,6 @@ function onFlowStage(tab: string) {
       </SelfCheckOverviewCard>
 
       <SelfCheckOverviewCard
-        title="测试报告"
-        tone="tone-emerald"
-        :metric="stats.pendingReports"
-        metric-label="待审阅"
-        @enter="emit('goReports')"
-      >
-        <div v-if="reportsLoading" class="panel-empty ea-muted">加载报告…</div>
-        <div v-else-if="!reportPreview.length" class="panel-empty ea-muted">
-          近 72 小时暂无测试报告
-        </div>
-        <ul v-else class="item-list">
-          <li v-for="report in reportPreview" :key="report.reportId" class="item-row">
-            <span class="item-main">
-              <strong>{{ reportTitle(report) }}</strong>
-              <small>{{ displayReportStatus(report) }} · {{ formatReportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }} 通过</small>
-            </span>
-          </li>
-        </ul>
-      </SelfCheckOverviewCard>
-
-      <SelfCheckOverviewCard
         title="评审补全"
         tone="tone-amber"
         :metric="gerritStatusLabel"
@@ -199,6 +178,27 @@ function onFlowStage(tab: string) {
         <p class="panel-desc ea-muted">
           Gerrit 链接 → 启动识别「必测项」 → 从用例库推荐测试用例（带覆盖度评分）→ 覆盖不足时 AI 生成用例
         </p>
+      </SelfCheckOverviewCard>
+
+      <SelfCheckOverviewCard
+        title="测试报告"
+        tone="tone-emerald"
+        :metric="stats.pendingReports"
+        metric-label="待审阅"
+        @enter="emit('goReports')"
+      >
+        <div v-if="reportsLoading" class="panel-empty ea-muted">加载报告…</div>
+        <div v-else-if="!reportPreview.length" class="panel-empty ea-muted">
+          近 72 小时暂无新报告，进入查看历史
+        </div>
+        <ul v-else class="item-list">
+          <li v-for="report in reportPreview" :key="report.reportId" class="item-row">
+            <span class="item-main">
+              <strong>{{ reportTitle(report) }}</strong>
+              <small>{{ displayReportStatus(report) }} · {{ formatReportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }} 通过</small>
+            </span>
+          </li>
+        </ul>
       </SelfCheckOverviewCard>
     </div>
   </div>
