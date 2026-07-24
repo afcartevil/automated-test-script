@@ -373,7 +373,10 @@ const launchStore = useDeviceSelfCheckLaunchStore()
   async function loadOverviewReports() {
     reportsLoading.value = true
     try {
-      overviewReports.value = await listSelfCheckReports({ sinceHours: 72, pendingOnly: true })
+      // 仅按 72h 过滤，不再要求 pendingOnly：已审阅报告也算「新报告」，
+      // 避免出现「近 72 小时暂无新报告」而报告页却有 72h 内报告的矛盾。
+      // 「待审阅」计数仍由 pipelineView.pendingReports 提供（全量 pending）。
+      overviewReports.value = await listSelfCheckReports({ sinceHours: 72 })
     } catch {
       overviewReports.value = []
     } finally {
