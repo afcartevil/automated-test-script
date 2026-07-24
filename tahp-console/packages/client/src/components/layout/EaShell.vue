@@ -72,6 +72,13 @@ const systemOptions = systemNav.map(item => ({
   key: item.name,
 }))
 
+const secondaryOptions = secondaryNav.map(item => ({
+  label: item.label,
+  key: item.name,
+}))
+
+const isSecondaryActive = computed(() => secondaryNav.some(item => isActive(item.name)))
+
 function goHome() {
   router.push({ name: 'tahp.dashboard' })
 }
@@ -81,6 +88,10 @@ function nav(name: string) {
 }
 
 function onSystemSelect(key: string) {
+  router.push({ name: key })
+}
+
+function onSecondarySelect(key: string) {
   router.push({ name: key })
 }
 
@@ -113,16 +124,26 @@ async function handleUpdate() {
 
         <span class="ck-tab-sep" />
 
-        <button
-          v-for="item in secondaryNav"
-          :key="item.name"
-          type="button"
-          class="ck-tab ck-tab-sub"
-          :class="{ active: isActive(item.name) }"
-          @click="nav(item.name)"
-        >
-          {{ item.label }}
-        </button>
+        <NDropdown trigger="click" :options="secondaryOptions" @select="onSecondarySelect">
+          <button
+            type="button"
+            class="ck-tab ck-tab-sub"
+            :class="{ active: isSecondaryActive }"
+          >
+            运营监控
+            <svg
+              class="ck-caret"
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.4"
+            >
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+        </NDropdown>
       </nav>
 
       <div class="ck-spacer">
@@ -243,6 +264,13 @@ async function handleUpdate() {
   font-size: 13px;
   font-weight: 500;
   color: #8b909f;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ck-caret {
+  margin-left: 2px;
+  opacity: 0.6;
 }
 
 .ck-tab-sep {
