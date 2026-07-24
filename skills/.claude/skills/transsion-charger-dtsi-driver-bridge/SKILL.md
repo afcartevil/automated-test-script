@@ -6,8 +6,6 @@ description: >-
   「chg_fun」「JEITA」「pcb 热限流」「tran_auto_test→tc_auto_test」「smart_charging→tc_charger 内嵌」「water_detect（transsion, water_detect）scheme 5.10↔6.12 数值映射、bootmode 弃用」「pid_chg（tran,pid_chg_algo→tc,pid_chg_algo）与 ambient_temp/target_temp_array」「ambient_detect / temp_forecast（transsion,*→tc,*）与 pa_temp_gap、machine_gap」  「support_alg 子节点（&pe2/&tc30/&hvdcp20/&pdc→tc_pe2/tc_30/tc_hvdcp20/tc_pd、chr_volt*、vbat_threshold µV）」「extcon_usb（6.12 Tran extcon vs mediatek、charger→tc_chgtype、remote-endpoint 跟芯片基准 dtsi）」、以及「tran_battery_aging 新树可删」类迁移、对照 5.10 与 6.12、或需要写 DTSI 变更说明与 SOURCE/CONVERT 注释时使用。
   含「tran_otg（tran,otg_fun）」仅老→新：compatible 核对、otg_boost_*→tc_otg_boost_* 等改名、老树未配项用模板默认补全与 [REVIEW] 标注。含「老 mediatek `&charger` 忽略项 / `single_batt` USER / `dynamic_mivr_vol` / `max_charger_voltage` / `ambient_temp`→`pid_chg`」见正文 **「老 `&charger`（mediatek,charger）→ 6.12 `tc,charger`」**。含「tran_auto_test→tc_auto_test」：compatible tran,auto_test→tc,auto_test 与节点/phandle 更名。含「extcon_usb」：新分支为准、remote-endpoint 以 SoC 基准 dtsi 解析。
 disable-model-invocation: true
-funcType: "AI自动化适配"
-category: "驱动"
 ---
 
 # Transsion 充电 DTSI ↔ 驱动对照与新老转换

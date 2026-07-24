@@ -1,11 +1,29 @@
 ---
 name: mtk-adapt-template-device-charger-ic
 description: MTK 项目 charger IC 适配模板，覆盖 kernel dtsi、内核构建与打包、dws/pinctrl 以及 bootloader（lk/preloader）联动点。
-funcType: "AI自动化适配"
-category: "驱动"
 ---
 
 # MTK 器件模板：Charger IC
+
+## 三柱入口契约（柱 1）
+
+本 skill 是 **`mtk-adapt-pillar1-router`** 柱 1 的下游模板。进入本 skill 前，应经 **`mtk-adapt-template-router`** 调度，且已有 `Adaptation Input Packet` 的 `Pillar 1 Device Inputs`；若来自老分支升级，该输入由 `mtk-adapt-upgrade-branch-orchestrator` / Inventory 生成。
+
+### 输入
+
+- `charger_ic`：器件型号与驱动模块名
+- `bus_irq_gpio_power`：I2C、地址、IRQ、EN/CE、供电
+- `Evidence`：`project_config`、`kernel_dws`、`preloader_codegen_dws`、`lk2_project_mk`、`tc_charger_lk_dtsi`
+- 老树升级时：老侧 charger IC 节点、preloader/LK 宏、DWS 证据
+
+### 输出
+
+按 `Pillar Handoff Output` 输出：
+- `pillar: 1`
+- `downstream_skill: mtk-adapt-template-device-charger-ic`
+- `Changes To Apply` 中列 kernel dtsi、DWS、preloader、LK、构建/打包项
+- `source` 标注 BOM/原理图/老树证据/平台基准
+- `review_tag` 标注需硬件或实机确认的 IRQ、EN、OTG、preloader 识别项
 
 ## 适用范围
 

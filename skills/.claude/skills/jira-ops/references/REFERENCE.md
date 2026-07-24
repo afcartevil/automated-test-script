@@ -66,17 +66,6 @@ python scripts/api_jira.py setup-check
 ```
 
 Returns `data.ready` and per-item `checks[]` with `required` flag.
-Includes required check `jira_connectivity` (calls Jira `/myself` with saved credentials).
-Also returns `data.jira_connectivity` with `connected` / `display_name` / `error`.
-
-### config verify
-
-```bash
-python scripts/api_jira.py config verify
-```
-
-Live connectivity test only. Success: `data.connected=true` and `display_name`.
-Failure: `ok=false`, `error.code=JIRA_CONNECTIVITY_FAILED`.
 
 ### env
 
@@ -98,7 +87,7 @@ Wraps `download-logs`. `--http-only` / `--unc-only` map to channel subsets.
 
 ## Other commands
 
-See prior sections: `config set` / `config show` / `config verify`, `get-issue`, `add-comment`, `download-attachments`, `get-changelog`.
+See prior sections: `config`, `get-issue`, `add-comment`, `download-attachments`, `get-changelog`.
 
 ## Output contract
 

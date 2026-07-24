@@ -1,11 +1,29 @@
 ---
 name: mtk-adapt-template-device-charge-pump
 description: MTK 项目 charge pump 适配模板，覆盖 kernel dtsi 参数、构建与打包、dws/pinctrl 映射以及 bootloader 依赖。
-funcType: "AI自动化适配"
-category: "驱动"
 ---
 
 # MTK 器件模板：Charge Pump
+
+## 三柱入口契约（柱 1）
+
+本 skill 是 **`mtk-adapt-pillar1-router`** 柱 1 的下游模板。进入本 skill 前，应经 **`mtk-adapt-template-router`** 调度，且已有 `Adaptation Input Packet` 的 `Pillar 1 Device Inputs`；若来自老分支升级，该输入由 `mtk-adapt-upgrade-branch-orchestrator` / Inventory 生成。
+
+### 输入
+
+- `charge_pump`：器件型号、primary/secondary/third 角色、关联协议
+- `bus_irq_gpio_power`：I2C、地址、IRQ、EN/RESET、供电
+- `Evidence`：`project_config`、`kernel_dws`、`preloader_codegen_dws`、`lk2_project_mk`、`charge_overlay`
+- 若含 TFCP / `protocol_ta.dtsi`：对应 I2C 的 SCL/SDA GPIO 与 DWS 证据
+
+### 输出
+
+按 `Pillar Handoff Output` 输出：
+- `pillar: 1`
+- `downstream_skill: mtk-adapt-template-device-charge-pump`
+- `Changes To Apply` 中列 DVCHG/CP dtsi、protocol_ta、DWS、preloader reset、构建/打包项
+- `source` 标注 BOM/原理图/老树证据/平台基准
+- `review_tag` 标注需确认的主从地址、IRQ、TFCP I2C、dual/third CP 角色项
 
 ## 适用范围
 

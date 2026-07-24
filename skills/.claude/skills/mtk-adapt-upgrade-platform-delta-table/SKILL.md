@@ -1,8 +1,6 @@
 ---
 name: mtk-adapt-upgrade-platform-delta-table
 description: 老分支→新分支平台级差分规则表（骨架）。版本对版本闸门、不可机械拷贝项按表预留，细则链接到现有模板与 bridge skill。
-funcType: "AI自动化适配"
-category: "驱动"
 ---
 
 # MTK 升级适配：Platform Delta 表（骨架）

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import base64
-import http.cookiejar
 import json
 import os
 import platform
@@ -30,25 +29,11 @@ class AuthConfig:
     host: str
     user: str
     password: str
-    fallback_password: str | None = None
-    login_password: str | None = None
 
     @property
     def auth_header(self) -> str:
         token = base64.b64encode(f"{self.user}:{self.password}".encode("utf-8")).decode("ascii")
         return f"Basic {token}"
-
-    def with_password(self, password: str) -> AuthConfig:
-        return AuthConfig(
-            host=self.host,
-            user=self.user,
-            password=password,
-            fallback_password=None,
-            login_password=self.login_password,
-        )
-
-
-_COOKIE_SESSIONS: dict[tuple[str, str], http.cookiejar.CookieJar] = {}
 
 
 @dataclass(frozen=True)
@@ -66,54 +51,24 @@ def strip_json_xssi_prefix(raw: str) -> str:
 
 def load_auth(cred_file: Path | None = None) -> AuthConfig:
     env_user = os.getenv("GERRIT_USER", "").strip()
-    env_userpassword = os.getenv("GERRIT_USER_PASSWORD", "").strip()
-    env_http_password = os.getenv("GERRIT_HTTP_PASSWORD", "").strip()
-    env_password = env_userpassword or env_http_password
+    env_password = os.getenv("GERRIT_HTTP_PASSWORD", "").strip()
     if env_user and env_password:
         host = os.getenv("GERRIT_HOST", "https://gerrit.transsion.com").strip().rstrip("/")
-        fallback = (
-            env_http_password
-            if env_userpassword and env_http_password and env_http_password != env_userpassword
-            else None
-        )
-        return AuthConfig(
-            host=host,
-            user=env_user,
-            password=env_userpassword or env_http_password,
-            fallback_password=fallback,
-            login_password=env_userpassword or None,
-        )
+        return AuthConfig(host=host, user=env_user, password=env_password)
 
     path = cred_file or DEFAULT_CRED_FILE
     if not path.exists():
         raise FileNotFoundError(
             f"Credential file not found: {path}. "
-            "Set GERRIT_USER and GERRIT_USER_PASSWORD (or GERRIT_HTTP_PASSWORD), or create cred.json."
+            "Set GERRIT_USER and GERRIT_HTTP_PASSWORD, or create cred.json."
         )
     data = json.loads(path.read_text(encoding="utf-8"))
     host = str(data.get("host", "https://gerrit.transsion.com")).strip().rstrip("/")
     user = str(data.get("user", "")).strip()
-    userpassword = str(data.get("userpassword", "")).strip()
-    http_password = str(data.get("password", "")).strip()
-    if userpassword:
-        password = userpassword
-        fallback = http_password if http_password and http_password != userpassword else None
-        login_password = userpassword
-    else:
-        password = http_password
-        fallback = None
-        login_password = None
+    password = str(data.get("password", "")).strip()
     if not user or not password:
-        raise ValueError(
-            f"Invalid credential file {path}: user and userpassword (or password) are required."
-        )
-    return AuthConfig(
-        host=host,
-        user=user,
-        password=password,
-        fallback_password=fallback,
-        login_password=login_password,
-    )
+        raise ValueError(f"Invalid credential file {path}: user and password are required.")
+    return AuthConfig(host=host, user=user, password=password)
 
 
 def normalize_topic_name(raw_topic: str, *, from_url: bool = False) -> str:
@@ -164,65 +119,7 @@ def parse_input(raw: str) -> ParsedInput:
     return ParsedInput("change", text)
 
 
-def _cookie_session_key(auth: AuthConfig) -> tuple[str, str]:
-    return (auth.host, auth.user)
-
-
-def _cookie_opener(auth: AuthConfig) -> urllib.request.OpenerDirector:
-    key = _cookie_session_key(auth)
-    if key not in _COOKIE_SESSIONS:
-        _COOKIE_SESSIONS[key] = http.cookiejar.CookieJar()
-    jar = _COOKIE_SESSIONS[key]
-    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-
-
-def _cookie_login(auth: AuthConfig) -> None:
-    if not auth.login_password:
-        raise RuntimeError("LDAP login password is not configured.")
-    opener = _cookie_opener(auth)
-    payload = urllib.parse.urlencode(
-        {
-            "username": auth.user,
-            "password": auth.login_password,
-            "rememberme": "1",
-        }
-    ).encode("utf-8")
-    request = urllib.request.Request(
-        url=f"{auth.host}/login/%2F",
-        data=payload,
-        method="POST",
-    )
-    request.add_header("Content-Type", "application/x-www-form-urlencoded")
-    try:
-        with opener.open(request, timeout=60) as response:
-            response.read()
-    except urllib.error.HTTPError as err:
-        if err.code == 401:
-            raise RuntimeError(
-                "Gerrit LDAP login failed: invalid username or login password."
-            ) from err
-        body = err.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Gerrit LDAP login HTTP {err.code}: {err.reason} {body[:200]}") from err
-    except urllib.error.URLError as err:
-        raise RuntimeError(f"Gerrit LDAP login network error: {err}") from err
-
-
-def _request_text_with_cookie(auth: AuthConfig, url: str, *, method: str = "GET") -> str:
-    opener = _cookie_opener(auth)
-    request = urllib.request.Request(url=url, method=method)
-    request.add_header("Content-Type", "application/json; charset=UTF-8")
-    try:
-        with opener.open(request, timeout=60) as response:
-            return response.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as err:
-        body = err.read().decode("utf-8", errors="replace")
-        detail = strip_json_xssi_prefix(body).strip()
-        raise RuntimeError(f"Gerrit HTTP {err.code}: {err.reason} {detail}") from err
-    except urllib.error.URLError as err:
-        raise RuntimeError(f"Gerrit network error: {err}") from err
-
-
-def _request_text_basic(auth: AuthConfig, url: str, *, method: str = "GET") -> str:
+def _request_text(auth: AuthConfig, url: str, *, method: str = "GET") -> str:
     request = urllib.request.Request(url=url, method=method)
     request.add_header("Authorization", auth.auth_header)
     request.add_header("Content-Type", "application/json; charset=UTF-8")
@@ -230,20 +127,11 @@ def _request_text_basic(auth: AuthConfig, url: str, *, method: str = "GET") -> s
         with urllib.request.urlopen(request, timeout=60) as response:
             return response.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as err:
-        if err.code == 401 and auth.fallback_password:
-            return _request_text_basic(auth.with_password(auth.fallback_password), url, method=method)
-        if err.code == 401 and auth.login_password:
-            _cookie_login(auth)
-            return _request_text_with_cookie(auth, url, method=method)
         body = err.read().decode("utf-8", errors="replace")
         detail = strip_json_xssi_prefix(body).strip()
         raise RuntimeError(f"Gerrit HTTP {err.code}: {err.reason} {detail}") from err
     except urllib.error.URLError as err:
         raise RuntimeError(f"Gerrit network error: {err}") from err
-
-
-def _request_text(auth: AuthConfig, url: str, *, method: str = "GET") -> str:
-    return _request_text_basic(auth, url, method=method)
 
 
 def _request_json(auth: AuthConfig, url: str) -> Any:

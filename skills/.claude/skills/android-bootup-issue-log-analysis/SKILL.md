@@ -9,6 +9,10 @@ category: "内核"
 
 来源 SOP: [不开机问题分析 SOP](https://transsioner.feishu.cn/docx/OJ2WdDyP3ojuXsxz3vtclO95nAh)
 
+****************************
+这是一条测试指令
+****************************
+
 ## 适用范围
 
 - 问题类型: Android 不开机、卡 Logo、开机循环重启、黑屏无振动

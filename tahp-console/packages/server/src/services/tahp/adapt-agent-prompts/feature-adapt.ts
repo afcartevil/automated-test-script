@@ -27,6 +27,20 @@ function buildFeatureAdaptWorkflowHint(domainId: string, primarySkill: string): 
       '- 按 `audio-feature-adaptation` 完成特性移植；完成后可用 `audio-feature-selfcheck` 做只读自检',
       '- 核对 vnd 路径、编译选项与 ADSP 选项后再动手',
     )
+  } else if (domainId === 'memory') {
+    lines.push(
+      '',
+      '# 主控 Skill 工作流（内存 SPD 特性检查）',
+      '- 以 `spd-memory-feature-check` 为主控，按需协同 `spd-shared`（如 TOS 版本检测）',
+      '- 确认 adb 设备后按 Skill SOP 执行内存维度巡检，输出 PASS/FAIL/BLOCKED 报告',
+    )
+  } else if (domainId === 'scheduling') {
+    lines.push(
+      '',
+      '# 主控 Skill 工作流（调度 SPD 特性检查）',
+      '- 以 `spd-cpu-feature-check` 为主控，按需协同 `spd-shared`（如 TOS 版本检测）',
+      '- 确认 adb 设备后按 Skill SOP 执行 CPU/调度维度巡检，输出 PASS/FAIL/BLOCKED 报告',
+    )
   } else {
     lines.push(
       '',

@@ -1,8 +1,6 @@
 ---
 name: mtk-adapt-upgrade-branch-orchestrator
-description: 老分支升级新分支编排器：柱0信源与路径纪律→柱1器件→柱2参数（§5–§13/bridge/tran_battery/pe5-migrate）→柱3特性占位；柱3正文 handoff 至 transsion-sunmao40-customization-features-adapt。handoff 到 mtk-adapt-template-router 与 mtk-adapt-template-*。PE5 须 Read transsion-pe5-migrate-dual-cp-k612。
-funcType: "AI自动化适配"
-category: "驱动"
+description: 老分支升级新分支编排器：完成柱 0 信源与路径纪律、Inventory 证据整理，并输出可被 mtk-adapt-template-router 消费的 Adaptation Input Packet。柱 1 器件、柱 2 参数、柱 3 客制化仍回到三柱总入口执行；PE5 须 Read transsion-pe5-migrate-dual-cp-k612。
 ---
 
 # MTK 老分支升级新分支：编排器
@@ -13,16 +11,103 @@ category: "驱动"
 
 ## 三柱升级模型（与新分支适配 skill 对齐）
 
-新分支上「怎么适配」已由 **`mtk-adapt-template-router`** 按 **器件 → 基本充电能力参数 → 客制化特性** 三柱写清（`mtk-adapt-template-device-*`、`mtk-adapt-template-basic-charging-capability`、**`transsion-sunmao40-customization-features-adapt`**）。**老分支升级新分支**不另起第四套流程，而是：
+新分支上「怎么适配」已由 **`mtk-adapt-template-router`**（总编排）串行调度 **`mtk-adapt-pillar{1,2,3}-router`**，再进入各柱下游 skill。
 
 | 柱 | 含义 | 本编排器 + 其它 skill 的职责 |
 |----|------|--------------------------------|
 | **柱 0** | **新老信源与对照** | 用户给出老侧 **`OLD_TRAN_ROOT`**（如 `tran_projects/.../lj9`）；新侧路径按 **下文「路径解析纪律」** + `mtk-adapt-upgrade-inventory-checklist` 列举老文件、拼 `project_full` / DWS / LK / charge overlay。**不**全树 `grep` 反推项目。 |
-| **柱 1** | **器件适配** | 从老树 dtsi/include/`compatible`/I2C **归纳器件列表** → **`Read` `mtk-adapt-template-router`** → 各 **`mtk-adapt-template-device-*`**，与绿场 **同一套** SKILL 落盘。编排器 **不写** IC 寄存器级细节。**RFC / TA 硬件**：**先按 `mtk-adapt-template-device-charge-pump`**（与 `protocol_ta` / TFCP / DWS 联动）；不足由项目补充。**柱 1 还须核对 Preloader / LK2 顶层 `*.mk`**（见 **`mtk-adapt-upgrade-inventory-checklist` B.1.2**）：实际参与编译的 **preloader `custom/<project_full>/` 主 mk**、**`lk2/project/<project_full>.mk`** 与老分支 **overlay→主 mk 更名** 是否一致，且 **`TRAN_*` / `CUSTOM_*` / `tc_charger_lk.dtsi` include** 与 **器件清单、DWS** 无冲突。 |
-| **柱 2** | **参数适配** | 从老树 **抽 dtsi 参数**，按 **路径纪律 §5～§13**、`transsion-charger-dtsi-driver-bridge`、`transsion-tran-battery-to-tc-charger-dtsi`、`transsion-pe5-migrate-dual-cp-k612` 等映射到新 KDM 节点，并汇入 **`mtk-adapt-template-basic-charging-capability`**。器件节点内专属数值随 **柱 1** 所选 device skill。 |
-| **柱 3** | **特性适配** | **先占位**：柱 2 完成后经 **`mtk-adapt-template-router`**；**柱 3 输入**以 **用户口述** 为主（见 **`transsion-sunmao40-customization-features-adapt`** **RULE-0**），可选 **`pillar3-customization-input.md`**；**仅**处理口述中 **「要做」** 的条目并 **`Read` 合并 skill**；未声明「要做」的不改码（无工作量时 **「此项特性无适配工作量」**）；收尾 **提示未声明项**；口述与表均未给出「要做」则停柱 3 反问用户。 |
+| **柱 1** | **器件适配** | 从老树归纳器件 → **`mtk-adapt-template-router`** → **`mtk-adapt-pillar1-router`** → 各 **`mtk-adapt-template-device-*`** |
+| **柱 2** | **参数适配** | **`mtk-adapt-pillar2-router`** → bridge/migrate → **`mtk-adapt-template-basic-charging-capability`** |
+| **柱 3** | **特性适配** | 柱 2 完成后经 **`mtk-adapt-pillar3-router`**（总编排 **`mtk-adapt-template-router`**） |
 
 **执行顺序**：柱 0 → 柱 1 → 柱 2 → 柱 3。下文 **§路径解析纪律** 为 **柱 0 新侧** 子集；**§5～§13** 为 **柱 2** 节点级规则索引。
+
+## 输出给三柱入口：Adaptation Input Packet
+
+本编排器的核心输出不是直接落盘，而是把老分支证据整理成 **`mtk-adapt-template-router` 可直接消费的 Adaptation Input Packet**。完成柱 0 Inventory 后，必须输出以下结构；字段无法确认时写 `unknown`，并在 `pending_questions` 中列出。
+
+```markdown
+## Adaptation Input Packet
+
+### Scope
+- mode: upgrade
+- project_full:
+- platform:
+- kernel_version:
+- aosp_root:
+- old_tran_root:
+
+### Pillar Selection
+- pillar1_device: required | skip | unknown
+- pillar2_parameters: required | skip | unknown
+- pillar3_customization: required | skip | unknown
+
+### Evidence
+- project_config:
+- kernel_dws:
+- preloader_codegen_dws:
+- lk2_project_mk:
+- tc_charger_lk_dtsi:
+- charge_overlay:
+- old_kernel_dtsi:
+- old_lk_project_mk:
+- old_preloader_mk:
+- old_dws:
+
+### Pillar 1 Device Inputs
+- charger_ic:
+- pd_ic:
+- charge_pump:
+- gauge:
+- bus_irq_gpio_power:
+- source_files:
+
+### Pillar 2 Parameter Inputs
+- tc_charger_lk_targets:
+- tc_charger_dtsi_targets:
+- legacy_nodes:
+- required_bridge_skills:
+- source_files:
+
+### Pillar 3 Customization Inputs
+- requested_features:
+- explicitly_not_required:
+- pending_questions:
+```
+
+生成规则：
+- `mtk-adapt-upgrade-inventory-checklist` 的输出必须先归类为 `pillar1_device`、`pillar2_parameters`、`pillar3_customization_candidate`。
+- 柱 0 只负责证据压缩、路径可信度、闸门标注；不替代三柱落盘。
+- 输出输入包后，必须 handoff 到 `mtk-adapt-template-router`，由总编排串行调度 `mtk-adapt-pillar1-router` → `mtk-adapt-pillar2-router` → `mtk-adapt-pillar3-router`。
+- 若命中 `tran_battery` / `&pe5` / `mtk_pe50.dtsi` 等强制 Read 场景，把对应 skill 写入 `required_bridge_skills`。
+- 若用户尚未声明柱 3 要做项，`pillar3_customization` 写 `unknown` 或 `skip`，不得代开任何 RULE / SM40。
+
+## 升级 Handoff 输出格式
+
+交回 `mtk-adapt-template-router` 前，使用以下固定摘要，避免升级结论与三柱执行结论混在一起。
+
+```markdown
+## Upgrade Handoff To Three Pillars
+
+### Inventory Status
+- status: ready | blocked | partial
+- blocked_reason:
+
+### Packet
+- adaptation_input_packet: <见上方完整结构>
+
+### Mandatory Reads
+- pillar1:
+- pillar2:
+- pillar3:
+
+### Review Tags
+- [REVIEW]:
+
+### Next
+- handoff_to: mtk-adapt-template-router
+- first_pillar: 1 | 2 | 3
+```
 
 ### 与原「阶段」编号对照（便于检索旧文）
 

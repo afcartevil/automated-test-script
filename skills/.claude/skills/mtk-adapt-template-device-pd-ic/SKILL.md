@@ -1,11 +1,29 @@
 ---
 name: mtk-adapt-template-device-pd-ic
 description: MTK 项目 PD IC 适配模板，覆盖 kernel dtsi、TCPC/PD 构建开关、ko 打包、dws/pinctrl 以及 bootloader 联动点。
-funcType: "AI自动化适配"
-category: "驱动"
 ---
 
 # MTK 器件模板：PD IC
+
+## 三柱入口契约（柱 1）
+
+本 skill 是 **`mtk-adapt-pillar1-router`** 柱 1 的下游模板。进入本 skill 前，应经 **`mtk-adapt-template-router`** 调度，且已有 `Adaptation Input Packet` 的 `Pillar 1 Device Inputs`；若来自老分支升级，该输入由 `mtk-adapt-upgrade-branch-orchestrator` / Inventory 生成。
+
+### 输入
+
+- `pd_ic`：器件型号、TCPC/PD 角色、PDO/PD 策略
+- `bus_irq_gpio_power`：I2C、地址、IRQ、CC/控制脚、供电
+- `Evidence`：`project_config`、`kernel_dws`、`preloader_codegen_dws`、`lk2_project_mk`、`charge_overlay`
+- 老树升级时：老侧 TCPC/PD 节点、DWS、ProjectConfig/LK/PL 宏证据
+
+### 输出
+
+按 `Pillar Handoff Output` 输出：
+- `pillar: 1`
+- `downstream_skill: mtk-adapt-template-device-pd-ic`
+- `Changes To Apply` 中列 TCPC/PD dtsi、DWS、构建开关、ko 打包、LK/PL 联动项
+- `source` 标注原理图/老树证据/平台基准
+- `review_tag` 标注需确认的 IRQ、CC、PDO、DRP/默认角色、DP AltMode 项
 
 ## 适用范围
 

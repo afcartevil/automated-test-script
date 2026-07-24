@@ -1,11 +1,29 @@
 ---
 name: mtk-adapt-template-device-gauge
 description: MTK 项目 gauge 器件配置模板，覆盖 kernel dtsi、构建集成、可选模块打包、按需 dws/pinctrl；LK 中与 gauge 类型相关的 Tran 宏（TRAN_SINGLE_GAUGE / TRAN_DUAL_BATTERY / TRAN_LOW_BATTERY_SUPPORT）语义与核对纪律见 § Bootloader。
-funcType: "AI自动化适配"
-category: "驱动"
 ---
 
 # MTK 器件模板：Gauge
+
+## 三柱入口契约（柱 1）
+
+本 skill 是 **`mtk-adapt-pillar1-router`** 柱 1 的下游模板。进入本 skill 前，应经 **`mtk-adapt-template-router`** 调度，且已有 `Adaptation Input Packet` 的 `Pillar 1 Device Inputs`；若来自老分支升级，该输入由 `mtk-adapt-upgrade-branch-orchestrator` / Inventory 生成。
+
+### 输入
+
+- `gauge`：平台 gauge / 三方 gauge 类型、器件型号、单双电池信息
+- `bus_irq_gpio_power`：I2C/通信接口、IRQ/检测脚、供电或电池检测相关脚位
+- `Evidence`：`project_config`、`kernel_dws`、`preloader_codegen_dws`、`lk2_project_mk`、`charge_overlay`
+- 老树升级时：老侧 battery/gauge dtsi、LK/PL 宏、DWS 证据
+
+### 输出
+
+按 `Pillar Handoff Output` 输出：
+- `pillar: 1`
+- `downstream_skill: mtk-adapt-template-device-gauge`
+- `Changes To Apply` 中列 gauge/battery_prop dtsi、DWS、构建/打包、LK/PL 宏项
+- `source` 标注电池规格/平台基准/老树证据
+- `review_tag` 标注需确认的单双电、低电支持、gauge 类型、电池表来源项
 
 ## 通用规则
 

@@ -10,8 +10,6 @@ description: >-
   老树独有不同步；**§1.6 扩展无视项**；**§1.7** `ambient_temp`→`pid_chg`；**§1.8** ult-lt→ffc_level 电池表注释；
   禁×3、conversion_ratio 与 bridge 分工。
 disable-model-invocation: true
-funcType: "AI自动化适配"
-category: "驱动"
 ---
 
 # Transsion PE5：`mtk_pe50` → `tc_pe5`（柱 2 · 参数对照与转换策略）
@@ -24,7 +22,7 @@ category: "驱动"
 | **内核代际** | **老：`kernel-5.10`**（`mtk_pe5.c`）；**新：`kernel_device_modules-*`（如 6.12）**（`transsion/tc_pe5.c`）。仅在新分支上改 `tc_pe5.dtsi`、**非自 5.10 升级**时，可参考下表规则，**不作强制 Read 本 skill**。 |
 | **本 skill 不写的内容** | **`compatible` / phandle / `support_alg` 里 `&pe2`→`&tc_pe2`** 等节点级改名：**`transsion-charger-dtsi-driver-bridge`**。 |
 
-**写入或审查 `tc_pe5.dtsi` 前**：柱 2 且 **5.10→新 KDM** 的 **`mtk_pe50`→`tc_pe5`** 任务须 **`Read` 本文件全文**（与 **`mtk-adapt-upgrade-branch-orchestrator` §13**、**`mtk-adapt-template-router`** 强制 Read 一致）。
+**写入或审查 `tc_pe5.dtsi` 前**：柱 2 且 **5.10→新 KDM** 的 **`mtk_pe50`→`tc_pe5`** 任务须 **`Read` 本文件全文**（与 **`mtk-adapt-upgrade-branch-orchestrator` §13**、**`mtk-adapt-pillar2-router`** 强制 Read 一致）。
 
 ---
 
@@ -32,7 +30,7 @@ category: "驱动"
 
 | 上游 skill | 关系 |
 |------------|------|
-| **`mtk-adapt-template-router`** | 老分支→新分支，命中 **`&pe5`/`mtk_pe50`** 写 **`tc_pe5`** 时 **Read** 本 skill。 |
+| **`mtk-adapt-pillar2-router`** | 柱 2 命中 **`&pe5`/`mtk_pe50`** 写 **`tc_pe5`** 时 **Read** 本 skill。 |
 | **`mtk-adapt-upgrade-branch-orchestrator`** | **§13**：柱 2 闸门；**`mtk_pe50`→`tc_pe5（热限语义）`**。 |
 | **`mtk-adapt-upgrade-inventory-checklist`** | **A.3**：清单命中 **`mtk_pe50.dtsi`** 且 **5.10→新 KDM** 时，handoff 注明已按本 skill 做 **柱 2 参数对照**。 |
 | **`mtk-adapt-upgrade-platform-delta-table`** | **表 3**：热限不可盲拷的索引。 |

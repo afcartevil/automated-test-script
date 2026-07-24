@@ -2,8 +2,6 @@
 name: tran-projects-config-migrate-dtsi-dws
 description: 将 tran_projects 老路径配置迁移到新 vendor 路径，覆盖 DTSI include、DWS（kernel/preloader）、Preloader `<BOARD>.mk`、LK2 `project/<BOARD>.mk`（gauge/KPOC 等 Tran 宏）、Tran `ProjectConfig.mk`（关机充电 logo/KPOC）、GPIO 与 KO 核对。用户提到 tran_projects 老分支、路径重映射、dtsi/dws/bootloader/迁移或新老对齐时使用。
 disable-model-invocation: true
-funcType: "AI自动化适配"
-category: "驱动"
 ---
 
 # Tran Projects 配置迁移（DTSI + DWS + Bootloader 要点）

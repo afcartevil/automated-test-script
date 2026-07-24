@@ -1,8 +1,6 @@
 ---
 name: mtk-adapt-template-basic-charging-capability
 description: MTK 基本充电能力参数适配模板。LK tc_charger_lk.dtsi 强约束、tran_otg 常态保留、`temp_forecast`/`pa_temp_gap` 默认 500 等见正文。老 mediatek `&charger`→`tc,charger` 的 DROP/`single_batt` USER/`dynamic_mivr_vol` 等见 **`transsion-charger-dtsi-driver-bridge`**「老 `&charger`」节。`tc_charger.dtsi`：`ftm_cp_num`（CP 颗数）、`batt_ht/lt`+vote+`kpoc_batt_*`+`*_dis_chg` 模板与电池温区待对齐（TODO）、`&u2port0` 眼图参数从老树同步、`&mt6375_chg` 禁用随器件适配。其余含电压电流阈值、温区策略、满充与保护策略等。
-funcType: "AI自动化适配"
-category: "驱动"
 ---
 
 # MTK 模板：基本充电能力参数适配
@@ -27,6 +25,34 @@ category: "驱动"
 - 参数变更目标列表（字段名 + 目标值/目标行为）：
 - 约束来源（电池规格书/客户需求/历史项目）：
 - 生效范围（kernel/lk/preloader）：
+
+## 三柱入口契约（柱 2）
+
+本 skill 是 **`mtk-adapt-pillar2-router`** 柱 2 的主模板。进入本 skill 前，应经 **`mtk-adapt-template-router`** 调度，且已有 `Adaptation Input Packet` 的 `Pillar 2 Parameter Inputs`；若来自老分支升级，`legacy_nodes` 与 `required_bridge_skills` 由 `mtk-adapt-upgrade-branch-orchestrator` / Inventory 生成。
+
+### 输入
+
+- `tc_charger_lk_targets`：LK 侧电压、电流、温度阈值目标
+- `tc_charger_dtsi_targets`：kernel 侧 `&charger` / `&odm` / 相关 fragment 目标
+- `legacy_nodes`：老树命中的 `tran_battery`、老 `&charger`、`&pe5`、`support_alg`、`tran_otg`、`water_detect`、`pid_chg`、`ambient_detect`、`temp_forecast`、`extcon_usb` 等
+- `required_bridge_skills`：本柱前必须 Read 的 bridge / migrate skill
+- 柱 1 handoff：器件、CP 颗数、PD/charger/gauge 事实以及 DWS/LK/PL 证据
+
+### 强制 Read 闸门
+
+- `tran_battery` / `tran,chg_fun` / `jeita_*_chg_cur` / `pcb_*` → `transsion-tran-battery-to-tc-charger-dtsi`
+- `&pe5` / `mtk_pe50.dtsi` / `mediatek,charger,pe5` → `transsion-pe5-migrate-dual-cp-k612`
+- 广义 DTSI↔驱动语义或节点改名 → `transsion-charger-dtsi-driver-bridge`
+- 工程路径 / DWS / DTSI 合入纪律 → `tran-projects-config-migrate-dtsi-dws`
+
+### 输出
+
+按 `Pillar Handoff Output` 输出：
+- `pillar: 2`
+- `downstream_skill: mtk-adapt-template-basic-charging-capability`
+- `Changes To Apply` 中列 `tc_charger_lk.dtsi`、`tc_charger.dtsi`、`tc_pe5.dtsi`、`support_alg`、`tran_otg`、`u2port0` 等落点
+- `source` 标注电池规格/客户需求/平台基准/老树证据/bridge 转换来源
+- `review_tag` 标注温区、电池表、PE5 热限、USB2 眼图、OTG/反向充电、extcon graph 等需实机复核项
 
 ## 通用执行步骤
 
@@ -124,7 +150,7 @@ category: "驱动"
 
 ### 4) 客制化块（按需启用）
 
-**合并摘录**：经 **`mtk-adapt-template-router`** 柱 3 做「客制化特性」落盘时，**默认以用户口述为准**（见 **`transsion-sunmao40-customization-features-adapt`** **RULE-0**）；可选 **`pillar3-customization-input.md`**；可优先 **`Read` 同文件** **RULE-4**（与本节规则、示例同步）；**温区、算法、LK `tc_charger_lk.dtsi` 强约束等柱 2 条文仍以本 skill 全文为准。**
+**合并摘录**：经 **`mtk-adapt-pillar3-router`** 柱 3 做「客制化特性」落盘时，**默认以用户口述为准**（见 **`transsion-sunmao40-customization-features-adapt`** **RULE-0**）；可选 **`pillar3-customization-input.md`**；可优先 **`Read` 同文件** **RULE-4**（与本节规则、示例同步）；**温区、算法、LK `tc_charger_lk.dtsi` 强约束等柱 2 条文仍以本 skill 全文为准。**
 
 - `water_detect` / `tc_audio`：
   - 归类为“防水检测/进水检测/进液检测”

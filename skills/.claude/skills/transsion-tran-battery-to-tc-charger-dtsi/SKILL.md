@@ -9,8 +9,6 @@ description: >-
   在阶段 3/3B 中 Read 后执行；用户也可单独 @ 本 skill 做即席转换。不依赖先读
   transsion-charger-dtsi-driver-bridge。
 disable-model-invocation: true
-funcType: "AI自动化适配"
-category: "驱动"
 ---
 
 # tran_battery → `&charger`（6.12）独立转换 skill
@@ -25,7 +23,7 @@ category: "驱动"
 |--------|-------------------------|
 | **`mtk-adapt-upgrade-branch-orchestrator`** | 编排 **分支迁移/升级适配** 且信源或批次涉及 **`tran_battery`（`compatible = "tran,chg_fun"`）**、或同文件 **`jeita_*_chg_cur` / `pcb_*`** 等需并入 **6.12 `&charger`** 时；在写 **`tc_charger.dtsi` 的 `&charger` 合并片段** 或 **阶段 3B「tran_battery / JEITA·PCB」批** 之前 **必须 Read**。不得依赖用户再单独 @ 本 skill。 |
 | **`mtk-adapt-upgrade-inventory-checklist`** | 若清单模板将 **`tran_battery`→`&charger`** 列为交付物或检查项，在让执行者「出转换片段」时 **应写明：按 `transsion-tran-battery-to-tc-charger-dtsi` Read 并执行**（与编排器衔接）。 |
-| **`mtk-adapt-template-router`** | 当路由结论为 **「5.10 `tran_battery` 策略迁到 6.12 `tc_charger`」** 且非仅器件脚位时，handoff 中 **应指向 Read 本 skill**（可与 `mtk-adapt-template-basic-charging-capability` 并列）。 |
+| **`mtk-adapt-pillar2-router`** | 当路由结论为 **「5.10 `tran_battery` 策略迁到 6.12 `tc_charger`」** 时，handoff 中 **应指向 Read 本 skill** |
 | **用户 / 其它 skill** | 即席「只转这一块 DTS」、无编排器时，由用户 **@ 本 skill 名** 或说明「按 tran_battery 转换 skill」，助手同样 **Read** 后执行。 |
 
 ### 与 `transsion-charger-dtsi-driver-bridge` 的分工

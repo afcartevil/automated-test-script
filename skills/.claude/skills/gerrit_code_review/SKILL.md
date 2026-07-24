@@ -26,7 +26,7 @@ Also accepts: pure change number (`1540692`), `topic:xxx`.
 
 ## Authentication
 
-Gerrit HTTP API uses Basic Auth (`user` + password). Configure **login password** as `userpassword` in cred file (or `GERRIT_USER_PASSWORD` env). Transsion Gerrit uses **LDAP** for web login; REST Basic Auth typically accepts only the **HTTP Password** from **Settings → HTTP Password**. When Basic Auth fails, the client automatically tries **LDAP web login + session cookie** (if `userpassword` is set), then falls back to `password` (HTTP Password) when configured.
+Gerrit HTTP API uses Basic Auth (`user` + HTTP Password from Gerrit **Settings → HTTP Password**).
 
 Do not paste HTTP passwords into chat or SKILL.md. Reset via Gerrit **Settings → HTTP Password** if leaked.
 
@@ -34,7 +34,7 @@ Do not paste HTTP passwords into chat or SKILL.md. Reset via Gerrit **Settings �
 
 1. **`--cred-file` on `fetch_review_bundle.py`** — highest priority when explicitly passed
 2. **TAHP Console Gerrit 账号** (recommended for tahp-console / AI 自检)
-3. Environment variables `GERRIT_USER` + `GERRIT_USER_PASSWORD` (or legacy `GERRIT_HTTP_PASSWORD`; optional `GERRIT_HOST`)
+3. Environment variables `GERRIT_USER` + `GERRIT_HTTP_PASSWORD` (optional `GERRIT_HOST`)
 4. [`cred.json`](cred.json) in this skill directory (local / legacy fallback)
 
 ### TAHP Console credential paths
@@ -61,12 +61,9 @@ JSON shape (same as `cred.json`):
 {
   "host": "https://gerrit.transsion.com",
   "user": "<gerrit-login>",
-  "userpassword": "<login-password>",
-  "password": "<http-password-optional-fallback>"
+  "password": "<http-password>"
 }
 ```
-
-When `userpassword` fails with 401, `password` (HTTP Password) is retried automatically if present.
 
 **TAHP Agent rule**: If instructions include `--cred-file <absolute-path>`, use that path. Otherwise, if `.tahp-config/gerrit-cred.runtime.json` or `.tahp-config/gerrit.json` exists under `<TAHP_PROJECT_ROOT>`, pass it to `fetch_review_bundle.py` with `--cred-file`. If neither exists, tell the user to configure **设置 → Gerrit 账号** in tahp-console.
 

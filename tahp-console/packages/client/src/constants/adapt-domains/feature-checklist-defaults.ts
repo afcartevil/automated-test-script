@@ -77,3 +77,23 @@ shipmode	SF-202507-002558
 电池信息显示（欧盟电池加密）	SF-202507-002559
 电池健康度	SF-202507-002560
 灯效响应性能	SF-202507-002660`
+
+/** 内存模块 — 特性适配默认清单（占位编码，待业务侧替换） */
+export const FEATURE_CHECKLIST_MEMORY = `内存融合2.2/2.3	SF-TODO-MEM-001
+内存压缩	SF-TODO-MEM-002
+内存压缩2.0（新内存融合）	SF-TODO-MEM-003
+kswapd绑中小核	SF-TODO-MEM-004
+shrink_slab	SF-TODO-MEM-005
+look around	SF-TODO-MEM-006
+kswapd回收效率log	SF-TODO-MEM-007
+TOP10 page fault	SF-TODO-MEM-008
+内存管理Quantus框架	SF-TODO-MEM-009
+内存配置参数(kswapd水位)	SF-TODO-MEM-010
+内存配置参数(lmkd 参数)	SF-TODO-MEM-011
+内存分配	SF-TODO-MEM-012`
+
+/** 调度模块 — 特性适配默认清单（占位编码，待业务侧替换） */
+export const FEATURE_CHECKLIST_SCHEDULING = `感知调度 3.0	SF-TODO-SCH-001
+性能统计 perf log	SF-TODO-SCH-002
+CPU 调度健康标准	SF-TODO-SCH-003
+cgroup 分组策略	SF-TODO-SCH-004`

@@ -1,8 +1,6 @@
 ---
 name: mtk-adapt-upgrade-inventory-checklist
 description: 老分支升级柱0信源清单：OLD_TRAN_ROOT 与新侧路径拼凑、DWS 映射与 GPIO 溯源；A.3 柱2节点闸门索引；A.4 柱2映射完成后反填 rg。与编排器三柱模型对齐。
-funcType: "AI自动化适配"
-category: "驱动"
 ---
 
 # MTK 升级适配：Inventory 清单
@@ -15,7 +13,71 @@ category: "驱动"
 
 本 skill 主要服务 **`mtk-adapt-upgrade-branch-orchestrator` 柱 0**：**老新信源对照**与**可追溯文件列表**，供 **柱 1（器件）**、**柱 2（参数）** handoff。
 
-- **柱 1～3 的落盘步骤**：一律经 **`mtk-adapt-template-router`** → `mtk-adapt-template-device-*` / `mtk-adapt-template-basic-charging-capability` / **`transsion-sunmao40-customization-features-adapt`**（**柱 3** 以 **口述** 为主、可选 **`pillar3-customization-input.md`**，见合并 skill **RULE-0**；口述与表均未给出「要做」项则停柱 3）。本清单 **不**重复器件 IC 细节或特性实现。
+- **柱 1～3 的落盘步骤**：一律经 **`mtk-adapt-template-router`** → **`mtk-adapt-pillar{1,2,3}-router`** → 各柱下游 skill（`device-*` / `basic-charging` / bridge / **`transsion-sunmao40-customization-features-adapt`**）。
+
+## 输出格式：Inventory Evidence Block
+
+Inventory 结果必须输出为可导入 `mtk-adapt-upgrade-branch-orchestrator` 的 evidence block。每条证据都要标注归属柱，避免后续把器件事实、参数迁移和客制化特性混在一起。
+
+```markdown
+## Inventory Evidence Block
+
+### Scope
+- old_tran_root:
+- new_aosp_root:
+- project_full:
+- platform:
+- kernel_version:
+
+### Evidence Items
+- id:
+  pillar: pillar1_device | pillar2_parameters | pillar3_customization_candidate | global
+  side: old | new | both
+  file:
+  anchor:
+  role:
+  status: found | missing | conflict | review
+  handoff:
+
+### Pillar 1 Device Evidence
+- charger_ic:
+- pd_ic:
+- charge_pump:
+- gauge:
+- bus_irq_gpio_power:
+- required_device_skills:
+
+### Pillar 2 Parameter Evidence
+- legacy_nodes:
+- parameter_blocks:
+- required_bridge_skills:
+- review_tags:
+
+### Pillar 3 Customization Candidates
+- detected_features:
+- user_declared_requested_features:
+- explicitly_not_required:
+- pending_questions:
+
+### Packet Contribution
+- scope_fields:
+- evidence_fields:
+- pillar1_device_inputs:
+- pillar2_parameter_inputs:
+- pillar3_customization_inputs:
+```
+
+归属规则：
+- **pillar1_device**：charger IC / PD IC / charge pump / gauge、I2C、IRQ、enable GPIO、DWS、preloader/LK 器件宏。
+- **pillar2_parameters**：`tran_battery`、老 `&charger`、`&pe5`、`support_alg`、`tran_otg`、`water_detect`、`pid_chg`、`ambient_detect`、`temp_forecast`、`extcon_usb`、温区、电流、电压、眼图等。
+- **pillar3_customization_candidate**：疑似 RULE / SM40 特性证据，只能作为候选；是否执行仍以用户口述的 `requested_features` 为准。
+- **global**：`ProjectConfig.mk`、平台名、路径、编译入口等会被多个柱使用的证据。
+
+handoff 规则：
+- 命中 `tran_battery` / `tran,chg_fun`：`required_bridge_skills` 必须包含 `transsion-tran-battery-to-tc-charger-dtsi`。
+- 命中 `&pe5` / `mtk_pe50.dtsi` / `mediatek,charger,pe5`：必须包含 `transsion-pe5-migrate-dual-cp-k612`。
+- 命中广义 DTSI 语义迁移：按需包含 `transsion-charger-dtsi-driver-bridge`。
+- 命中客制化候选但用户未口述要做：只写入 `pillar3_customization_candidate`，不得写入 `requested_features`。
 
 ### 路径与搜索纪律（与编排器一致）
 
