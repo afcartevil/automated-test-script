@@ -197,7 +197,7 @@ function onFlowStage(tab: string) {
         @enter="emit('goGerrit')"
       >
         <p class="panel-desc ea-muted">
-          基于 Gerrit 变更进行 Code Review，并推荐关联测试用例。
+          Gerrit 链接 → 启动识别「必测项」 → 从用例库推荐测试用例（带覆盖度评分）→ 覆盖不足时 AI 生成用例
         </p>
       </SelfCheckOverviewCard>
     </div>

@@ -193,7 +193,7 @@ test('self-check page renders tabs and workspaces', async ({ page }) => {
   await expect(reviewCardHead).not.toBeVisible()
 
   await page.getByRole('button', { name: '评审补全' }).click()
-  await expect(page.getByText('输入gerrit链接，AI生成测试用例&AI推荐测试用例')).toBeVisible()
+  await expect(page.getByText('Gerrit 链接 → 启动识别「必测项」 → 从用例库推荐测试用例（带覆盖度评分）→ 覆盖不足时 AI 生成用例')).toBeVisible()
   await expect(page.getByText('Code Review 对话')).toBeVisible()
   await expect(page.getByText('必须测试')).toBeVisible()
 

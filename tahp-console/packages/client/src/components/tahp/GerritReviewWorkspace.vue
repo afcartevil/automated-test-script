@@ -68,7 +68,7 @@ onActivated(restoreWorkspace)
         <div class="review-card-head-row">
           <div class="review-card-head-main">
             <p class="review-card-head-desc">
-              输入gerrit链接，AI生成测试用例&AI推荐测试用例
+              Gerrit 链接 → 启动识别「必测项」 → 从用例库推荐测试用例（带覆盖度评分）→ 覆盖不足时 AI 生成用例
             </p>
           </div>
           <span v-if="isRunning" class="phase-hint">
