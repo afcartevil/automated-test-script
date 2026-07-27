@@ -33,6 +33,7 @@ jira_workspace/
 .tahp/skill-pkg-hash-cache.json
 .tahp/skill-bundles.cache.json
 .tahp/jira-user-config.json
+.tahp/bug-analysis-config.json
 .tahp/unified-config.json
 # TranCopilot 项目规则文件夹
 *.copilot

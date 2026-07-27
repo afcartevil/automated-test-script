@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   NInput, NButton, NSpin, NEmpty, NAlert,
   NModal, NScrollbar, NProgress, useMessage, NTooltip,
-  NSpace,
+  NSpace, NSwitch,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
@@ -20,6 +20,7 @@ import {
   previewJira, previewJql, getBugReport, getBugLog, cancelBugTask,
   listBugReports, deleteBugReport, respondBugApproval, submitBugUserInput, postJiraComment,
   fetchJiraConfigStatus, getBugTaskContinueStatus,
+  fetchChannelConfig, saveChannelConfig,
   type JiraIssueDetail, type JqlPreview, type BugReport, type BugReportSummary,
 } from '@/api/tahp/bug-analysis'
 import {
@@ -125,6 +126,62 @@ async function loadJiraStatus() {
     jiraStatus.value = { configured: false, connected: false }
   } finally {
     jiraStatusLoading.value = false
+  }
+}
+
+// 远程分析渠道开关（仅单条/批量 Jira；默认全关）
+const channelBugfix = ref(false)
+const channelLoginsight = ref(false)
+const channelBugfixFound = ref(false)
+const channelLoginsightFound = ref(false)
+const channelConfigLoading = ref(false)
+const channelConfigSaving = ref(false)
+let channelHydrating = false
+
+const showRemoteChannelPanel = computed(() => mode.value === 'single' || mode.value === 'batch')
+
+async function loadChannelConfig() {
+  channelConfigLoading.value = true
+  channelHydrating = true
+  try {
+    const data = await fetchChannelConfig()
+    channelBugfix.value = data.remote_channels.bugfix_analysis.enabled
+    channelLoginsight.value = data.remote_channels.loginsight_remote.enabled
+    channelBugfixFound.value = data.remote_channels.bugfix_analysis.skill_found
+    channelLoginsightFound.value = data.remote_channels.loginsight_remote.skill_found
+  } catch {
+    // 保持默认全关
+    channelBugfix.value = false
+    channelLoginsight.value = false
+  } finally {
+    channelConfigLoading.value = false
+    // 等下一 tick 再允许保存，避免 NSwitch 回填触发 PUT
+    await nextTick()
+    channelHydrating = false
+  }
+}
+
+async function persistChannelConfig() {
+  if (channelHydrating || channelConfigLoading.value) return
+  channelConfigSaving.value = true
+  channelHydrating = true
+  try {
+    const data = await saveChannelConfig({
+      bugfix_analysis: channelBugfix.value,
+      loginsight_remote: channelLoginsight.value,
+    })
+    channelBugfix.value = data.remote_channels.bugfix_analysis.enabled
+    channelLoginsight.value = data.remote_channels.loginsight_remote.enabled
+    channelBugfixFound.value = data.remote_channels.bugfix_analysis.skill_found
+    channelLoginsightFound.value = data.remote_channels.loginsight_remote.skill_found
+    message.success('远程分析渠道已保存')
+  } catch (err) {
+    message.error((err as Error).message || '保存渠道开关失败')
+    await loadChannelConfig()
+  } finally {
+    channelConfigSaving.value = false
+    await nextTick()
+    channelHydrating = false
   }
 }
 
@@ -1471,6 +1528,7 @@ async function stopOrCancelCurrentTask() {
 // ─────────────────────────────────────────────────────────────────────────────
 onMounted(async () => {
   void loadJiraStatus()
+  void loadChannelConfig()
   store.ensureSocket()
   await store.refresh()
   await loadHistoryReports()
@@ -1593,6 +1651,38 @@ watch(
                 @click="mode = 'local'"
               >本地日志分析</button>
             </div>
+          </div>
+
+          <!-- 远程分析渠道：仅单条 / 批量 -->
+          <div v-if="showRemoteChannelPanel" class="channel-panel">
+            <div class="channel-panel-head">
+              <strong>远程分析渠道</strong>
+              <span class="channel-panel-hint">关闭后跳过该平台；失败仍回退本地 Agent</span>
+            </div>
+            <NSpin :show="channelConfigLoading || channelConfigSaving">
+              <div class="channel-row">
+                <div class="channel-label">
+                  <span>Bugfix AI（通用缺陷）</span>
+                  <span v-if="channelBugfix && !channelBugfixFound" class="channel-warn">Skill 未找到</span>
+                </div>
+                <NSwitch
+                  v-model:value="channelBugfix"
+                  :disabled="channelConfigLoading || channelConfigSaving"
+                  @update:value="persistChannelConfig"
+                />
+              </div>
+              <div class="channel-row">
+                <div class="channel-label">
+                  <span>LogInsight（稳定性优先）</span>
+                  <span v-if="channelLoginsight && !channelLoginsightFound" class="channel-warn">Skill 未找到</span>
+                </div>
+                <NSwitch
+                  v-model:value="channelLoginsight"
+                  :disabled="channelConfigLoading || channelConfigSaving"
+                  @update:value="persistChannelConfig"
+                />
+              </div>
+            </NSpin>
           </div>
 
           <!-- 单条模式 -->
@@ -2468,6 +2558,49 @@ watch(
 .mode-toggle {
   display: flex; gap: 4px; background: var(--surface-2); padding: 3px; border-radius: 10px;
   .mode-idle { background: none; border: none; color: var(--muted); cursor: pointer; font-family: inherit; font-weight: 600; }
+}
+
+.channel-panel {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  background: var(--surface-2, #f8fafc);
+}
+
+.channel-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.channel-panel-hint {
+  font-size: 12px;
+  color: var(--faint, #94a3b8);
+}
+
+.channel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.channel-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.channel-warn {
+  font-size: 11px;
+  color: var(--warn, #d97706);
 }
 
 .field-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }

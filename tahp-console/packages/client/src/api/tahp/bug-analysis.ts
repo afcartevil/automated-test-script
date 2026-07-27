@@ -266,6 +266,36 @@ export function syncJiraUserConfig(jiraConfig: JiraUserConfig): Promise<{ userna
   return tahpPut('/api/tahp/bug-analysis/jira-user-config', jiraConfig)
 }
 
+export interface RemoteChannelStatus {
+  enabled: boolean
+  skill_id: string
+  skill_path: string
+  skill_found: boolean
+}
+
+export interface BugAnalysisChannelConfigResp {
+  remote_channels: {
+    bugfix_analysis: RemoteChannelStatus
+    loginsight_remote: RemoteChannelStatus
+  }
+  updated_at?: string
+}
+
+/** 读取远程分析渠道开关（Bugfix / LogInsight） */
+export function fetchChannelConfig(): Promise<BugAnalysisChannelConfigResp> {
+  return tahpGet<BugAnalysisChannelConfigResp>('/api/tahp/bug-analysis/channel-config')
+}
+
+/** 保存远程分析渠道开关 */
+export function saveChannelConfig(payload: {
+  bugfix_analysis?: boolean
+  loginsight_remote?: boolean
+  bugfix_skill_path?: string
+  loginsight_skill_path?: string
+}): Promise<BugAnalysisChannelConfigResp> {
+  return tahpPut<BugAnalysisChannelConfigResp>('/api/tahp/bug-analysis/channel-config', payload)
+}
+
 export function previewJira(input: string, jiraConfig?: JiraUserConfig): Promise<JiraIssueDetail> {
   return tahpGet<JiraIssueDetail>(`/api/tahp/bug-analysis/jira/${encodeURIComponent(input)}`, { headers: jiraHeaders(jiraConfig) })
 }

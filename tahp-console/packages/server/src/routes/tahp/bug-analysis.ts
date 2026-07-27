@@ -38,6 +38,11 @@ import {
   hasJiraBasicCredentials,
   writeJiraUserConfig,
 } from '../../services/tahp/jira-user-config'
+import {
+  readBugAnalysisChannelConfig,
+  writeBugAnalysisChannelConfig,
+  resolveRemoteSkillPath,
+} from '../../services/tahp/bug-analysis-config'
 import { readBugLog, recordDistillRequest, listDistillRequests } from '../../services/tahp/bug-analysis-logger'
 import { depositDistilledEntry, type DepositDistilledResult } from './knowledge'
 import {
@@ -370,6 +375,74 @@ tahpBugAnalysisRoutes.post('/:taskId/distill', async (ctx) => {
       })
     } catch { /* ignore */ }
     ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+// ─── 远程分析渠道开关 ───────────────────────────────────────────────────────
+//
+// GET /api/tahp/bug-analysis/channel-config
+tahpBugAnalysisRoutes.get('/channel-config', async (ctx) => {
+  const cfg = readBugAnalysisChannelConfig()
+  const bugfix = cfg.remote_channels.bugfix_analysis
+  const loginsight = cfg.remote_channels.loginsight_remote
+  ctx.body = {
+    success: true,
+    data: {
+      remote_channels: {
+        bugfix_analysis: {
+          enabled: bugfix.enabled,
+          skill_id: bugfix.skill_id,
+          skill_path: bugfix.skill_path || '',
+          skill_found: resolveRemoteSkillPath(bugfix).found,
+        },
+        loginsight_remote: {
+          enabled: loginsight.enabled,
+          skill_id: loginsight.skill_id,
+          skill_path: loginsight.skill_path || '',
+          skill_found: resolveRemoteSkillPath(loginsight).found,
+        },
+      },
+      updated_at: cfg.updated_at,
+    },
+  }
+})
+
+// PUT /api/tahp/bug-analysis/channel-config
+// Body: { bugfix_analysis?: boolean, loginsight_remote?: boolean, bugfix_skill_path?, loginsight_skill_path? }
+tahpBugAnalysisRoutes.put('/channel-config', async (ctx) => {
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  try {
+    const cfg = writeBugAnalysisChannelConfig({
+      bugfix_analysis: typeof body.bugfix_analysis === 'boolean' ? body.bugfix_analysis : undefined,
+      loginsight_remote: typeof body.loginsight_remote === 'boolean' ? body.loginsight_remote : undefined,
+      bugfix_skill_path: typeof body.bugfix_skill_path === 'string' ? body.bugfix_skill_path : undefined,
+      loginsight_skill_path: typeof body.loginsight_skill_path === 'string' ? body.loginsight_skill_path : undefined,
+    })
+    const bugfix = cfg.remote_channels.bugfix_analysis
+    const loginsight = cfg.remote_channels.loginsight_remote
+    ctx.body = {
+      success: true,
+      data: {
+        remote_channels: {
+          bugfix_analysis: {
+            enabled: bugfix.enabled,
+            skill_id: bugfix.skill_id,
+            skill_path: bugfix.skill_path || '',
+            skill_found: resolveRemoteSkillPath(bugfix).found,
+          },
+          loginsight_remote: {
+            enabled: loginsight.enabled,
+            skill_id: loginsight.skill_id,
+            skill_path: loginsight.skill_path || '',
+            skill_found: resolveRemoteSkillPath(loginsight).found,
+          },
+        },
+        updated_at: cfg.updated_at,
+      },
+    }
+  } catch (err) {
+    ctx.status = 400
     ctx.body = { success: false, error: (err as Error).message }
   }
 })

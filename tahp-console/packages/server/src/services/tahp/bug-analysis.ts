@@ -53,6 +53,12 @@ import {
 } from './jira'
 import { logBug, appendBugLog, deleteBugLog, removeDistillRequestsForTask, bugLogPath } from './bug-analysis-logger'
 import { buildFullTahpSystemContext, getTahpSkillsRootForPrompt, tahpSkillMdRelativePath } from './context-injector'
+import {
+  buildRemoteChannelDirective,
+  listEnabledRemotePreferredSkillIds,
+  readBugAnalysisChannelConfig,
+  snapshotRemoteChannelsForReport,
+} from './bug-analysis-config'
 import { saveAgentPromptLog } from './prompt-log'
 import {
   BUG_UI_PHASE_PROGRESS,
@@ -839,14 +845,16 @@ const AGENT_INSTRUCTIONS_BASE = `你是 TAHP（TECNO AI Harness Platform）"智�
 3. 完成后**立即**输出阶段标记 \`fetch_jira\`（见下文格式），\`status\` 填 \`success\` 或 \`failed\`。
 
 ## Step 2 — 下载 JIRA 日志
-1. 继续遵循已 Read 的 \`jira-ops\` SKILL.md。
-2. 从 Step 1 的 Issue 信息与 JIRA 附件中，下载/提取日志包（含描述中的 http(s) / UNC 日志链接）。
-3. 完成后**立即**输出阶段标记 \`download_logs\`；若确无日志可下载，\`logs_downloaded: false\` 并说明原因，仍可 \`success\` 进入下一步。
+1. **先检查系统提示词中的「远程分析渠道」硬规则**：若有 enabled 渠道且适用，须先尝试远程分析；远程成功时可跳过本步（输出 \`download_logs\` 并说明原因）。
+2. 远程失败 / 渠道全关 / 本地回退时：继续遵循已 Read 的 \`jira-ops\` SKILL.md。
+3. 从 Step 1 的 Issue 信息与 JIRA 附件中，下载/提取日志包（含描述中的 http(s) / UNC 日志链接）。
+4. 完成后**立即**输出阶段标记 \`download_logs\`；若确无日志可下载，\`logs_downloaded: false\` 并说明原因，仍可 \`success\` 进入下一步。
 
 ## Step 3 — 匹配分析 Skill
-1. 结合 JIRA **标题 + 描述 + 评论** 与已下载日志类型，在工程 Skill 根目录 \`__TAHP_SKILLS_REL_ROOT__\` 下**自主匹配** 1～3 个最相关的分析 Skill（参考系统提示词末尾「已扫描到的 Skills」索引，禁止编造 skillId）。
-2. 对每个匹配到的 skillId，**必须 Read** \`__TAHP_SKILLS_REL_ROOT__/<skillId>/SKILL.md\` 全文。
-3. 完成后**立即**输出阶段标记 \`match_skills\`，在 \`matched_skills\` 中列出匹配到的 skillId（逗号分隔）；若未匹配到，\`skills_matched: false\` 并说明原因。
+1. 若远程渠道已成功产出报告：\`matched_skills\` 填远程 skillId，再进入整理 9 节报告（可与 Step 4～5 合并输出标记）。
+2. 否则结合 JIRA **标题 + 描述 + 评论** 与已下载日志类型，在工程 Skill 根目录 \`__TAHP_SKILLS_REL_ROOT__\` 下**自主匹配** 1～3 个最相关的分析 Skill（参考系统提示词末尾「已扫描到的 Skills」索引，禁止编造 skillId）。
+3. 对每个匹配到的 skillId，**必须 Read** \`__TAHP_SKILLS_REL_ROOT__/<skillId>/SKILL.md\` 全文。
+4. 完成后**立即**输出阶段标记 \`match_skills\`，在 \`matched_skills\` 中列出匹配到的 skillId（逗号分隔）；若未匹配到，\`skills_matched: false\` 并说明原因。
 
 ## Step 4 — 大模型分析
 1. 依据 Step 1～3 的 JIRA 信息、日志与已 Read 的 Skill SOP，执行根因分析。
@@ -1105,6 +1113,7 @@ function buildBugAnalysisInstructions(userMessage: string, ctx: BugAnalysisTaskC
   if (ctx.analysisMode === 'local') {
     const skillsRel = getTahpSkillsRootForPrompt()
     const base = AGENT_INSTRUCTIONS_LOCAL.replace(/__TAHP_SKILLS_REL_ROOT__/g, skillsRel)
+    // 本地模式：不注入远程渠道，不优先远程 Skill
     const tahpCtx = buildFullTahpSystemContext(userMessage, { scenario: 'bug_analysis' })
     return tahpCtx ? `${base}\n\n${tahpCtx}` : base
   }
@@ -1113,8 +1122,15 @@ function buildBugAnalysisInstructions(userMessage: string, ctx: BugAnalysisTaskC
   const base = AGENT_INSTRUCTIONS_BASE
     .replace(/__TAHP_SKILLS_REL_ROOT__/g, skillsRel)
     .replace(/__JIRA_OPS_SKILL__/g, jiraOpsSkill)
-  const tahpCtx = buildFullTahpSystemContext(userMessage, { scenario: 'bug_analysis' })
-  return tahpCtx ? `${base}\n\n${tahpCtx}` : base
+  const channelCfg = readBugAnalysisChannelConfig()
+  const remoteDirective = buildRemoteChannelDirective(channelCfg)
+  const preferredSkillIds = listEnabledRemotePreferredSkillIds(channelCfg)
+  const tahpCtx = buildFullTahpSystemContext(userMessage, {
+    scenario: 'bug_analysis',
+    preferredSkillIds,
+  })
+  const parts = [base, remoteDirective, tahpCtx].filter(p => p.trim().length > 0)
+  return parts.join('\n\n')
 }
 
 function buildAgentUserMessage(ctx: BugAnalysisTaskCtx): string {
@@ -1138,7 +1154,10 @@ function buildAgentUserMessage(ctx: BugAnalysisTaskCtx): string {
   }
 
   blocks.push('')
-  blocks.push('请严格按系统提示词的五步工作流执行：jira-ops 拉 JIRA → jira-ops 下载日志 → 匹配 Skill → 分析 → 输出 9 节报告；每步完成后输出 TAHP_STAGE 标记。')
+  blocks.push(
+    '请严格按系统提示词执行：先 jira-ops 拉 JIRA；再按「远程分析渠道」硬规则尝试远程平台（若开关开启）；'
+    + '远程失败或渠道关闭时回退本地：jira-ops 下载日志 → 匹配领域 Skill → 分析 → 输出 9 节报告；每步完成后输出 TAHP_STAGE 标记。',
+  )
 
   return blocks.join('\n')
 }
@@ -1555,6 +1574,9 @@ async function runSingleBugAnalysis(
       llm_response: fullResponse,
       report_body: reportBody,
       jira: buildReportJiraSection(ctx),
+      remote_channels: ctx.analysisMode === 'local'
+        ? undefined
+        : snapshotRemoteChannelsForReport(readBugAnalysisChannelConfig()),
       user_input_responses: (existingReport?.user_input_responses as UserInputResponseRecord[] | undefined) || undefined,
     }
     try {
