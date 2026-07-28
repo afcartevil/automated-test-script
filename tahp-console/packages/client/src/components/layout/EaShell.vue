@@ -32,9 +32,8 @@ const publicNav = [
 
 const secondaryNav = [
   { name: 'tahp.reports', label: '报告' },
-  { name: 'tahp.knowledge', label: '知识库' },
-  { name: 'hermes.skills', label: 'Skills 库' },
-  { name: 'hermes.chat', label: '对话' },
+  { name: 'hermes.skills', label: 'Skills' },
+  { name: 'hermes.chat', label: '对话搜索' },
 ]
 
 const systemNav = [
