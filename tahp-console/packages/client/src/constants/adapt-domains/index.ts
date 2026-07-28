@@ -14,8 +14,8 @@ export { FULL_ADAPT_DOMAINS } from './full-domains'
 export const ADAPT_WORKSPACES: AdaptWorkspaceDef[] = [
   {
     id: 'adapt-debug',
-    label: 'AI适配调试',
-    subtitle: '保留原有 AI 适配调试能力，模块与表单配置独立存放',
+    label: '功能适配',
+    subtitle: '将源版本的功能改动适配到目标版本',
     allowDynamicDomains: true,
   },
   {

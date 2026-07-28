@@ -21,9 +21,12 @@ const CONFIG_ROUTE_NAMES = new Set([
 const coreNav = [
   { name: 'tahp.dashboard', label: '首页' },
   { name: 'tahp.adapt-debug', label: 'AI 适配调试' },
-  { name: 'tahp.bug-analysis', label: '智能诊断' },
-  { name: 'tahp.modem-baseline.workbench', label: 'Modem基线' },
+  { name: 'tahp.modem-baseline.workbench', label: 'Modem升级' },
   { name: 'tahp.gki-patch.dashboard', label: 'GKI 升级' },
+]
+
+const publicNav = [
+  { name: 'tahp.bug-analysis', label: '智能诊断' },
   { name: 'tahp.self-check', label: '质量验测' },
 ]
 
@@ -72,11 +75,17 @@ const systemOptions = systemNav.map(item => ({
   key: item.name,
 }))
 
+const publicOptions = publicNav.map(item => ({
+  label: item.label,
+  key: item.name,
+}))
+
 const secondaryOptions = secondaryNav.map(item => ({
   label: item.label,
   key: item.name,
 }))
 
+const isPublicActive = computed(() => publicNav.some(item => isActive(item.name)))
 const isSecondaryActive = computed(() => secondaryNav.some(item => isActive(item.name)))
 
 function goHome() {
@@ -88,6 +97,10 @@ function nav(name: string) {
 }
 
 function onSystemSelect(key: string) {
+  router.push({ name: key })
+}
+
+function onPublicSelect(key: string) {
   router.push({ name: key })
 }
 
@@ -123,6 +136,27 @@ async function handleUpdate() {
         </button>
 
         <span class="ck-tab-sep" />
+
+        <NDropdown trigger="click" :options="publicOptions" @select="onPublicSelect">
+          <button
+            type="button"
+            class="ck-tab ck-tab-sub"
+            :class="{ active: isPublicActive }"
+          >
+            公共能力
+            <svg
+              class="ck-caret"
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.4"
+            >
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+        </NDropdown>
 
         <NDropdown trigger="click" :options="secondaryOptions" @select="onSecondarySelect">
           <button

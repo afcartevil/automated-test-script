@@ -21,8 +21,8 @@ function nav(name: string) {
   <div class="page page-wide modem-page">
     <div class="ea-page-head">
       <div>
-        <h1>Modem基线</h1>
-        <div class="sub">Modem基线升级、Modem Patch自动化合入，自动编译烧录验证。</div>
+        <h1>Modem升级</h1>
+        <div class="sub">Modem基线Patch自动合入并提交，人工审核通过后入库</div>
       </div>
 
       <div class="ea-head-actions ea-wrap">

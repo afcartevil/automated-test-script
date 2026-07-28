@@ -21,36 +21,22 @@ const coreCards = [
     tone: 'ea-t-indigo',
     icon: 'play',
     title: 'AI 适配调试',
-    summary: '把源版本的驱动 / 框架改动自动适配到目标版本，Agent 产出补丁与自检报告。',
+    summary: '将源版本的功能、特性及运营商定制改动自动适配到目标版本，并将底软升级中的适配、验证、入库全流程串联为自动化流水线',
     large: true,
-  },
-  {
-    route: 'tahp.bug-analysis',
-    tone: 'ea-t-sky',
-    icon: 'stethoscope',
-    title: '智能诊断',
-    summary: '输入 JIRA Key 或日志，Agent 自动拉单、调 Skill、定位根因并给修复路径。',
   },
   {
     route: 'tahp.modem-baseline.workbench',
     tone: 'ea-t-amber',
     icon: 'branch',
-    title: 'Modem基线',
-    summary: 'Modem基线升级、Modem Patch自动化合入，自动编译烧录验证。',
+    title: 'Modem升级',
+    summary: 'Modem基线Patch自动合入并提交，人工审核通过后入库',
   },
   {
     route: 'tahp.gki-patch.dashboard',
-    tone: 'ea-t-violet',
+    tone: 'ea-t-emerald',
     icon: 'kernel',
     title: 'GKI 升级',
-    summary: 'GKI 内核 patch 区间分析、风险评估与 vendor 合入。',
-  },
-  {
-    route: 'tahp.self-check',
-    tone: 'ea-t-emerald',
-    icon: 'shield',
-    title: '质量验测',
-    summary: '项目自动规划 → 自动烧录 → 自动测试 → 评审补全 → 人工复核报告',
+    summary: 'GKI Patch质量分析、稳定性验证并选取最优Tag，自动合入并提交，人工审核通过后入库',
   },
 ]
 
@@ -212,7 +198,7 @@ const currentModelName = computed(() =>
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  min-height: 168px;
+  min-height: 180px;
 }
 
 .hm-sm h3 { font-size: 19px; font-weight: 700; margin: 14px 0 6px; }
@@ -253,10 +239,6 @@ const currentModelName = computed(() =>
   border: 1px solid var(--accent); padding: 1px 7px; border-radius: 999px;
 }
 .mdl-item.selected .mdl-badge { background: var(--accent); color: #fff; }
-
-@media (min-width: 1100px) {
-  .hm-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
 
 @media (max-width: 720px) {
   .hm-row, .mdl-grid { grid-template-columns: 1fr; }

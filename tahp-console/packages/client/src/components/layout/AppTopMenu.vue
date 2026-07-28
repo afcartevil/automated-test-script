@@ -17,7 +17,7 @@ const groups = [
     items: [
       { name: 'tahp.dashboard', label: '仪表盘', icon: 'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z' },
       { name: 'tahp.bug-analysis', label: '智能诊断', icon: 'M12 9c-1.6-.6-3.2-.9-4-.9C5 8.1 3 10 3 12s2 3.9 5 3.9c.8 0 2.4-.3 4-.9M12 9c1.6-.6 3.2-.9 4-.9 3 0 5 1.9 5 3.9s-2 3.9-5 3.9c-.8 0-2.4-.3-4-.9M12 3v18' },
-      { name: 'tahp.adapt-debug', label: 'AI适配调试', icon: 'M5 3l14 9-14 9V3z' },
+      { name: 'tahp.adapt-debug', label: 'AI 适配调试', icon: 'M5 3l14 9-14 9V3z' },
       { name: 'tahp.knowledge', label: '知识库', icon: 'M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2zM22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z' },
       { name: 'tahp.reports', label: '报告', icon: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8' },
     ],

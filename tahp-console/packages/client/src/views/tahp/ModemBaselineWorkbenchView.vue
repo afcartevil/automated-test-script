@@ -99,7 +99,7 @@ async function handleLoadDefaults() {
 async function handleStart() {
   try {
     await startRun()
-    message.success('已启动 Modem 基线任务')
+    message.success('已启动 Modem升级任务')
   } catch (error) {
     message.error(String((error as Error)?.message ?? error))
   }

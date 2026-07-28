@@ -113,7 +113,7 @@ export function getStatusMeta(status?: ModemBaselineStatus, error?: string, phas
     }
     return { label: '执行中', tone: 'info', summary: '正在执行预检、合并或后续处理，请关注实时日志。' }
   }
-  return { label: '待启动', tone: 'muted', summary: '加载默认配置后即可启动 Modem 基线升级。' }
+  return { label: '待启动', tone: 'muted', summary: '加载默认配置后即可启动 Modem升级。' }
 }
 
 export function buildStageItems(status?: ModemBaselineStatus, error?: string, phase?: ModemBaselinePhase): StageItem[] {
