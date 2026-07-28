@@ -174,7 +174,7 @@ async function persistChannelConfig() {
     channelLoginsight.value = data.remote_channels.loginsight_remote.enabled
     channelBugfixFound.value = data.remote_channels.bugfix_analysis.skill_found
     channelLoginsightFound.value = data.remote_channels.loginsight_remote.skill_found
-    message.success('远程分析渠道已保存')
+    message.success('AI2D故障分析能力已保存')
   } catch (err) {
     message.error((err as Error).message || '保存渠道开关失败')
     await loadChannelConfig()
@@ -1653,34 +1653,43 @@ watch(
             </div>
           </div>
 
-          <!-- 远程分析渠道：仅单条 / 批量 -->
-          <div v-if="showRemoteChannelPanel" class="channel-panel">
-            <div class="channel-panel-head">
-              <strong>远程分析渠道</strong>
-              <span class="channel-panel-hint">关闭后跳过该平台；失败仍回退本地 Agent</span>
-            </div>
+          <!-- AI2D故障分析能力：仅单条 / 批量 -->
+          <div v-if="showRemoteChannelPanel" class="ea-field ai2d-field">
+            <label>
+              AI2D故障分析能力
+              <NTooltip placement="top" trigger="hover">
+                <template #trigger>
+                  <svg class="info-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+                  </svg>
+                </template>
+                远程接入AI2D故障分析能力，失败则调用本地故障分析skill
+              </NTooltip>
+            </label>
             <NSpin :show="channelConfigLoading || channelConfigSaving">
-              <div class="channel-row">
-                <div class="channel-label">
-                  <span>Bugfix AI（通用缺陷）</span>
-                  <span v-if="channelBugfix && !channelBugfixFound" class="channel-warn">Skill 未找到</span>
+              <div class="ai2d-box">
+                <div class="ai2d-row">
+                  <div class="ai2d-label">
+                    <span>Bugfix AI（通用缺陷）</span>
+                    <span v-if="channelBugfix && !channelBugfixFound" class="ai2d-warn">Skill 未找到</span>
+                  </div>
+                  <NSwitch
+                    v-model:value="channelBugfix"
+                    :disabled="channelConfigLoading || channelConfigSaving"
+                    @update:value="persistChannelConfig"
+                  />
                 </div>
-                <NSwitch
-                  v-model:value="channelBugfix"
-                  :disabled="channelConfigLoading || channelConfigSaving"
-                  @update:value="persistChannelConfig"
-                />
-              </div>
-              <div class="channel-row">
-                <div class="channel-label">
-                  <span>LogInsight（稳定性优先）</span>
-                  <span v-if="channelLoginsight && !channelLoginsightFound" class="channel-warn">Skill 未找到</span>
+                <div class="ai2d-row">
+                  <div class="ai2d-label">
+                    <span>LogInsight（稳定性优先）</span>
+                    <span v-if="channelLoginsight && !channelLoginsightFound" class="ai2d-warn">Skill 未找到</span>
+                  </div>
+                  <NSwitch
+                    v-model:value="channelLoginsight"
+                    :disabled="channelConfigLoading || channelConfigSaving"
+                    @update:value="persistChannelConfig"
+                  />
                 </div>
-                <NSwitch
-                  v-model:value="channelLoginsight"
-                  :disabled="channelConfigLoading || channelConfigSaving"
-                  @update:value="persistChannelConfig"
-                />
               </div>
             </NSpin>
           </div>
@@ -2560,29 +2569,22 @@ watch(
   .mode-idle { background: none; border: none; color: var(--muted); cursor: pointer; font-family: inherit; font-weight: 600; }
 }
 
-.channel-panel {
-  margin-bottom: 14px;
-  padding: 10px 12px;
-  border: 1px solid var(--border, #e5e7eb);
+.ai2d-field {
+  margin-bottom: 16px;
+
+  label {
+    color: var(--accent);
+  }
+}
+
+.ai2d-box {
+  border: 1px solid var(--accent);
   border-radius: 8px;
-  background: var(--surface-2, #f8fafc);
+  padding: 6px 10px;
+  background: var(--accent-soft);
 }
 
-.channel-panel-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 8px;
-  font-size: 13px;
-}
-
-.channel-panel-hint {
-  font-size: 12px;
-  color: var(--faint, #94a3b8);
-}
-
-.channel-row {
+.ai2d-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2591,14 +2593,14 @@ watch(
   font-size: 13px;
 }
 
-.channel-label {
+.ai2d-label {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
-.channel-warn {
+.ai2d-warn {
   font-size: 11px;
   color: var(--warn, #d97706);
 }
