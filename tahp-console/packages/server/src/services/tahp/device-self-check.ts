@@ -4,7 +4,7 @@
 import { spawn, spawnSync } from 'child_process'
 import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'fs'
 import type { ServerResponse } from 'http'
-import { join, resolve } from 'path'
+import { join, resolve, basename } from 'path'
 import AdmZip from 'adm-zip'
 import {
   type DeviceFlashOptions,
@@ -23,6 +23,10 @@ import {
   loadAiGeneratedCaseConfig,
 } from './gerrit-ai-generated-cases'
 import { createManualNlUiCase, updateManualNlUiCase } from './ai-nl-ui-cases'
+import {
+  resolveSelfCheckProjectContext,
+  uploadSelfCheckReportToCentral,
+} from './quality-run-upload'
 
 // 类型定义
 export type DeviceRole = '未分配' | '测试机' | '辅测机'
@@ -2729,7 +2733,16 @@ async function generateTestReport(
       powerArtifactPath = copyPowerArtifactToReport(resultDir)
     }
 
-    // 写入摘要
+    // 写入摘要（含项目归属，供中心看板上报 / 事后补传）
+    const projectCtx = await resolveSelfCheckProjectContext({
+      deviceId,
+      deviceName: device.deviceName,
+      scheduleKey: session.scheduleKey,
+    }).catch((): import('./quality-run-upload').ResolvedProjectContext => ({
+      project_code: '_unassigned',
+      source: 'unassigned',
+    }))
+
     const summary = {
       deviceId,
       deviceName: device.deviceName,
@@ -2743,6 +2756,10 @@ async function generateTestReport(
       passedCases: orderedResults.filter(r => r.status === '通过').length,
       failedCases: orderedResults.filter(r => r.status === '失败').length,
       skippedCases: orderedResults.filter(r => r.status === '跳过' || r.status === 'NA').length,
+      project_code: projectCtx.project_code,
+      ...(projectCtx.campaign_id ? { campaign_id: projectCtx.campaign_id } : {}),
+      ...(projectCtx.brand ? { brand: projectCtx.brand } : {}),
+      project_source: projectCtx.source,
       ...(session.scheduleKey
         ? { aiPlanned: true, scheduleKey: session.scheduleKey }
         : {}),
@@ -2785,6 +2802,34 @@ async function generateTestReport(
     device.resultDir = resultDir
     console.log(`[device-self-check] Report generated: ${resultDir}`)
     emitEvent('report_ready', { deviceId, resultDir })
+
+    // 自动上报中心质量看板（失败不影响本地报告）
+    const reportRelPath = join('self-check', deviceId, basename(resultDir)).replace(/\\/g, '/')
+    void uploadSelfCheckReportToCentral({
+      summary: {
+        deviceId: summary.deviceId,
+        deviceName: summary.deviceName,
+        testType: summary.testType,
+        startTime: summary.startTime,
+        endTime: summary.endTime,
+        status: summary.status,
+        totalCases: summary.totalCases,
+        passedCases: summary.passedCases,
+        failedCases: summary.failedCases,
+        skippedCases: summary.skippedCases,
+        aiSummary: detailPayload.aiSummary,
+        aiPlanned: summary.aiPlanned,
+        scheduleKey: summary.scheduleKey,
+        project_code: summary.project_code,
+        campaign_id: summary.campaign_id,
+        brand: summary.brand,
+      },
+      detail: detailPayload,
+      resultDir,
+      reportRelPath,
+    }).catch(err => {
+      console.warn('[device-self-check] quality upload failed:', (err as Error).message)
+    })
   } catch (e) {
     console.error('[device-self-check] Report generation error:', e)
   }

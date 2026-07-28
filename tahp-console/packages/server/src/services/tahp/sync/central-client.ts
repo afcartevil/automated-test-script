@@ -193,4 +193,52 @@ export const centralClient = {
     if (opts.domain_id) qs.set('domain_id', opts.domain_id)
     return request(`/api/tahp/sync/adapt-prereqs/resolve?${qs}`, { headers: headers() })
   },
+
+  /** 质量看板：上报连通性 */
+  async qualityPing(): Promise<{ pong: boolean; actor?: string; runs_total?: number }> {
+    return request('/api/tahp/sync/quality/ping', { headers: headers() })
+  },
+
+  /**
+   * 质量看板：上报一次或多次执行结果（幂等 run_id）。
+   * 对应中心 POST /api/tahp/sync/quality/runs
+   */
+  async uploadQualityRun(
+    run: QualityRunPayload | { runs: QualityRunPayload[] },
+  ): Promise<{ results: Array<{ run_id?: string; action?: string; ok: boolean; error?: string }> }> {
+    return request('/api/tahp/sync/quality/runs', {
+      method: 'POST',
+      headers: headers({ 'content-type': 'application/json' }),
+      body: JSON.stringify(run),
+    })
+  },
+}
+
+/** 与 easyadapter_bff quality-store IngestRunInput 对齐 */
+export interface QualityRunPayload {
+  run_id: string
+  dimension: string
+  project_code?: string
+  campaign_id?: string
+  workspace_id?: string
+  domain_id?: string
+  owner?: string
+  device?: { id?: string; name?: string }
+  status?: string
+  started_at?: string
+  ended_at?: string
+  metrics?: Record<string, number>
+  issues?: Array<{
+    key: string
+    title: string
+    module?: string
+    owner?: string
+    severity?: string
+    status?: string
+    message?: string
+  }>
+  artifacts?: Array<{ type: string; name: string; ref?: string; inline?: boolean }>
+  ai_summary?: string
+  source?: { tool?: string; version?: string; host?: string }
+  schema_version?: number
 }
