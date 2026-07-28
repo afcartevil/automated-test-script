@@ -1,115 +1,100 @@
-# Bugfix AI API 参考（本 skill 已实现部分）
+# 故障分析核心 API（本 skill 已实现）
 
-来源：[AI2D故障分析平台API接口文档 V1.0.0](https://transsioner.feishu.cn/wiki/EbtbwN3B5iRUGEkVTHLcXfExnrj)（**v1.1**，2026-07-22）
+来源：[故障分析核心 API](https://transsioner.feishu.cn/wiki/ZNlYwLZBWi3dD1kwKUUcmCTInVb)
 
-- **Base URL**: `https://chat.transsion.com/bugfix`
-- **前缀**: `/api/v1`（网关）；应用内亦挂载 `/bugfix/api/v1`
-- **认证**: `Authorization: Bearer <access_token>`（本 skill 可通过 `auth_required=false` 跳过）
+- **Base**：`https://chat.transsion.com/bugfix`
+- **前缀**：`/api/v1`（亦支持 `/bugfix/api/v1`）
+- **格式**：`application/json`
 
-## 结果 vs 过程
+## 三接口总览
 
-| 层级 | 结果 | 过程 |
-|------|------|------|
-| 落库 `analysis_task_records` | `analysis_markdown` | `process_markdown` / `process_messages` |
-| 列表 `GET /analysis-task-records` | `analysis_markdown_preview` | **不含**完整 `process_*` |
-| 详情 `GET /analysis-task-records/{id}` | `analysis_markdown` | `process_markdown` / `process_messages` |
+| 能力 | 接口 | 关键字段 |
+|------|------|----------|
+| 问题分析 | `POST /jira-mcp/analyze` | 触发分析，同步返回报告 |
+| 分析过程 | `GET /analysis-task-records/{id}` | `process_markdown` / `process_messages` |
+| 报告获取 | `GET /analysis-task-records/{id}` | `analysis_markdown` |
 
-列表里的 `agent_summary` **不等于**详情中的完整过程；查过程请用 `get-report`。
+过程与报告在同一详情接口；先列表拿 `id`，再查详情。
 
-## 配置项
+## CLI ↔ API
 
-| 字段 | 默认 | 说明 |
-|------|------|------|
-| `auth_required` | `false` | `false` 跳过登录；`true` 启用 Bearer 认证 |
-| `base_url` | `https://chat.transsion.com/bugfix` | API 根地址 |
+| CLI | HTTP | 路径 | 鉴权 |
+|-----|------|------|------|
+| `analyze` | POST | `/api/v1/jira-mcp/analyze` | **当前无需 JWT** |
+| `get-progress` | GET | `/api/v1/analysis-task-records` | Bearer（`admin:all` / `module:analyze`） |
+| `get-report` | GET | `/api/v1/analysis-task-records/{id}` | 同上 |
+| `login` | POST | `/api/v1/auth/login` | 否（仅 records 需要时启用） |
 
-## CLI ↔ API 映射
-
-| CLI 命令 | HTTP | 路径 |
-|----------|------|------|
-| `login` | POST | `/api/v1/auth/login` |
-| `login`（附带） | GET | `/api/v1/users/me` |
-| `analyze` | POST | `/api/v1/jira-mcp/analyze` |
-| `get-progress` | GET | `/api/v1/analysis-task-records` |
-| `get-report` | GET | `/api/v1/analysis-task-records/{record_id}` |
-
-## 1. 用户登录
-
-```
-POST /api/v1/auth/login
-```
-
-请求体：`username`、`password`（均必填）。
-
-响应 200：`access_token`、`token_type`。
-
-## 2. Jira 通用缺陷分析
+## 1. 问题分析
 
 ```
 POST /api/v1/jira-mcp/analyze
 ```
 
-### 请求体（v1.1）
-
-| 字段 | 必填 | 默认 | 说明 |
+| 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `jira_number` | 是 | — | Jira 工单号 |
-| `gerrit_project` | 否 | `""` | 空则从工单关键词匹配 `module_repo_mapping` |
-| `branch` | 否 | `""` | 分支名 |
-| `keywords` | 否 | `""` | 英文逗号分隔，用于落库 mapping |
-| `code_root_relative` | 否 | `""` | 代码子目录；空=整仓 |
-| `auto_comment` | 否 | `true` | 是否写回 Jira |
-| `skip_if_marker_present` | 否 | `true` | 已有标记评论则跳过 |
-| `comment_marker` | 否 | `[AUTO-ANALYSIS]` | 去重标记 |
-| `business_type` | 否 | `""` | `communication` / `stability` / `general` / `diruan` |
+| `jira_number` | string | 是 | 工单号 |
+| `business_type` | string | **是** | `communication` / `stability` / `general` / `diruan` |
+| `gerrit_project` | string | 否 | 空则按工单关键词自动匹配 |
+| `branch` | string | 否 | |
+| `keywords` | string | 否 | 逗号分隔 |
+| `auto_comment` | bool | 否 | 默认 true |
+| `skip_if_marker_present` | bool | 否 | 默认 true |
+| `comment_marker` | string | 否 | 默认 `[AUTO-ANALYSIS]` |
 
-**已移除**：`skill_id_override`（当前请求模型不再支持）。
+**相对旧版变更**：`business_type` 从可选改为**必填**；文档不再包含 `code_root_relative` / `skill_id_override`。
 
-### 响应 200 主要字段
+响应节选：`analysis_markdown`、`jira_number` / `gerrit_project` / `branch` / `skill_id`、`comment_added` / `comment_skipped_reason`、`mcp_failed`。
 
-| 字段 | 说明 |
-|------|------|
-| `jira_number` / `gerrit_project` / `branch` | 实际使用的坐标 |
-| `analysis_markdown` | **结果**报告 |
-| `skill_id` | 使用的分析技能 |
-| `clone_path` | 代码克隆/缓存路径 |
-| `comment_added` / `comment_skipped_reason` | Jira 评论状态 |
-| `opencode_request_id` | OpenCode 请求 ID |
-| `opencode_prompt_tokens` / `opencode_completion_tokens` / `opencode_total_tokens` | Token 统计 |
-| `mcp_failed` | 新链路恒为 `false`（兼容字段） |
+同步响应**不含**分析过程。
 
-建议超时 ≥ 600 秒。
-
-## 3. 分析进展获取
-
-```
-GET /api/v1/analysis-task-records?jira_issue_key=...&preview_chars=...
+```bash
+curl -X POST "https://chat.transsion.com/bugfix/api/v1/jira-mcp/analyze" \
+  -H "Content-Type: application/json" \
+  -d '{"jira_number":"BUG-12345","business_type":"stability"}'
 ```
 
-Query 至少提供其一：`jira_issue_key`、`gerrit_project`、`gerrit_project_prefix`。
+## 2. 分析过程 / 3. 报告获取
 
-- `preview_chars`：0–8000，默认 500
-- 列表项含 `analysis_markdown_preview`、`success`、`jira_error_type` 等
-- **不含**完整 `process_*`
+### Step 1 — 按工单查记录 ID
 
-## 4. 分析报告获取
+```
+GET /api/v1/analysis-task-records?jira_issue_key={工单号}
+```
+
+Query 三选一至少一个：`jira_issue_key` / `gerrit_project` / `gerrit_project_prefix`。  
+可选：`page_num`（默认 1）、`page_size`（默认 20）。
+
+响应 `items[].id` = `record_id`。列表只有报告预览，不含完整过程。
+
+### Step 2 — 详情
 
 ```
 GET /api/v1/analysis-task-records/{record_id}
 ```
 
-详情字段：
-
-| 字段 | 说明 |
+| 字段 | 用途 |
 |------|------|
-| `analysis_markdown` | **结果**终稿 |
-| `process_markdown` | **过程**会话转 Markdown |
-| `process_messages` | **过程**OpenCode session messages |
-| `extra_json` | 扩展；常见 `process_source`、`process_incomplete`、`opencode_token_usage` |
-| `success` / `error_message` / `comment_skipped_reason` | 状态与说明 |
+| `analysis_markdown` | **报告** |
+| `process_markdown` | **过程**（会话转 Markdown） |
+| `process_messages` | **过程**（OpenCode 原始 messages） |
+| `success` / `skipped` / `error_message` | 状态 |
+| `jira_error_type` | `0`未知 `1`ANR `2`JE `3`SWT `4`KE |
 
-## 通用错误
+## 推荐对接流程
+
+```
+1. POST /jira-mcp/analyze
+2. GET  /analysis-task-records?jira_issue_key=...
+3. GET  /analysis-task-records/{id}
+      → analysis_markdown = 报告
+      → process_markdown  = 过程
+```
+
+## 错误
 
 ```json
-{"detail": "错误描述信息"}
+{"detail":"..."}
 ```
+
+常见码：`200` / `400` / `401` / `403` / `404` / `500`。

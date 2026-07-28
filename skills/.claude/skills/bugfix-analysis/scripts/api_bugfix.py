@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bugfix AI 分析平台 CLI — 对接 chat.transsion.com/bugfix API v1."""
+"""Bugfix AI 分析平台 CLI — 对接故障分析核心 API（三接口）。"""
 
 from __future__ import annotations
 
@@ -14,8 +14,10 @@ from typing import Any, Callable, Dict, Optional
 DEFAULT_BASE_URL = "https://chat.transsion.com/bugfix"
 CONFIG_PATH = Path.home() / ".bugfix_cli_config.json"
 DEFAULT_ANALYZE_TIMEOUT = 600
-# 默认关闭登录；平台要求认证时执行 config set --auth-required true
+# analyze 当前无需 JWT；过程/报告接口文档要求 Bearer。
+# 默认关闭；对 records 接口遇 401/403 时再 config set --auth-required true
 DEFAULT_AUTH_REQUIRED = False
+BUSINESS_TYPES = ("communication", "stability", "general", "diruan")
 
 
 def ok(data: Any) -> Dict[str, Any]:
@@ -250,8 +252,15 @@ def command_login(args: argparse.Namespace) -> Dict[str, Any]:
 
 def command_analyze(args: argparse.Namespace) -> Dict[str, Any]:
     config = load_config()
+    business_type = args.business_type.strip()
+    if business_type not in BUSINESS_TYPES:
+        raise ValueError(
+            f"business_type 必须是 {', '.join(BUSINESS_TYPES)} 之一，收到: {business_type}"
+        )
+
     body: Dict[str, Any] = {
         "jira_number": args.jira_number.strip(),
+        "business_type": business_type,
     }
     if args.gerrit_project is not None:
         body["gerrit_project"] = args.gerrit_project.strip()
@@ -259,10 +268,6 @@ def command_analyze(args: argparse.Namespace) -> Dict[str, Any]:
         body["branch"] = args.branch.strip()
     if args.keywords:
         body["keywords"] = args.keywords.strip()
-    if args.code_root_relative is not None:
-        body["code_root_relative"] = args.code_root_relative
-    if args.business_type:
-        body["business_type"] = args.business_type.strip()
     if args.auto_comment is not None:
         body["auto_comment"] = args.auto_comment
     if args.skip_if_marker_present is not None:
@@ -270,10 +275,10 @@ def command_analyze(args: argparse.Namespace) -> Dict[str, Any]:
     if args.comment_marker:
         body["comment_marker"] = args.comment_marker.strip()
 
-    status, payload = auth_request(
-        config,
+    # 文档：analyze 当前无需 JWT，始终裸调（不带 Bearer）
+    status, payload = request_json(
         "POST",
-        "/api/v1/jira-mcp/analyze",
+        f"{base_url(config)}/api/v1/jira-mcp/analyze",
         body=body,
         timeout=args.timeout,
     )
@@ -298,6 +303,10 @@ def command_get_progress(args: argparse.Namespace) -> Dict[str, Any]:
         query["gerrit_project"] = args.gerrit_project.strip()
     if args.gerrit_project_prefix:
         query["gerrit_project_prefix"] = args.gerrit_project_prefix.strip()
+    if args.page_num is not None:
+        query["page_num"] = args.page_num
+    if args.page_size is not None:
+        query["page_size"] = args.page_size
     if args.preview_chars is not None:
         query["preview_chars"] = args.preview_chars
 
@@ -315,6 +324,13 @@ def command_get_progress(args: argparse.Namespace) -> Dict[str, Any]:
         query=query,
         timeout=args.timeout,
     )
+    if status in (401, 403) and not auth_enabled(config):
+        return err(
+            "AUTH_REQUIRED_FOR_RECORDS",
+            "过程/报告接口需要 Bearer Token（权限 admin:all 或 module:analyze）。"
+            "请执行: config set --auth-required true --username <u> --password <p> && login",
+            status=status,
+        )
     if status != 200:
         detail = payload.get("detail") if isinstance(payload, dict) else payload
         return err("PROGRESS_QUERY_FAILED", str(detail), status=status)
@@ -333,6 +349,13 @@ def command_get_report(args: argparse.Namespace) -> Dict[str, Any]:
     if status == 404:
         detail = payload.get("detail") if isinstance(payload, dict) else "记录不存在"
         return err("RECORD_NOT_FOUND", str(detail), status=status)
+    if status in (401, 403) and not auth_enabled(config):
+        return err(
+            "AUTH_REQUIRED_FOR_RECORDS",
+            "过程/报告接口需要 Bearer Token（权限 admin:all 或 module:analyze）。"
+            "请执行: config set --auth-required true --username <u> --password <p> && login",
+            status=status,
+        )
     if status != 200:
         detail = payload.get("detail") if isinstance(payload, dict) else payload
         return err("REPORT_QUERY_FAILED", str(detail), status=status)
@@ -384,37 +407,30 @@ def build_parser() -> argparse.ArgumentParser:
     login.add_argument("--username", help="覆盖用户名")
     login.add_argument("--password", help="覆盖密码")
 
-    analyze = sub.add_parser("analyze", help="Jira 通用缺陷分析（同步，可能耗时数分钟）")
-    analyze.add_argument("--jira-number", required=True, help="Jira 工单号，如 TOS163-123")
+    analyze = sub.add_parser("analyze", help="问题分析（同步返回报告，可能耗时数分钟）")
+    analyze.add_argument("--jira-number", required=True, help="Jira 工单号，如 BUG-12345")
+    analyze.add_argument(
+        "--business-type",
+        required=True,
+        choices=list(BUSINESS_TYPES),
+        help="业务类型（必填）：communication / stability / general / diruan",
+    )
     analyze.add_argument(
         "--gerrit-project",
         default=None,
-        help="Gerrit 工程路径；省略则服务端按工单关键词匹配 module_repo_mapping",
+        help="Gerrit 工程路径；省略则按工单关键词自动匹配",
     )
-    analyze.add_argument(
-        "--branch",
-        default=None,
-        help="分支名；省略则传空串由服务端决定",
-    )
-    analyze.add_argument(
-        "--keywords",
-        help="关键词（英文逗号分隔），用于落库 mapping",
-    )
-    analyze.add_argument(
-        "--business-type",
-        choices=["communication", "stability", "general", "diruan"],
-        help="业务类型：communication/stability/general/diruan；省略走原有路由",
-    )
-    analyze.add_argument("--code-root-relative", default=None, help="代码子目录（相对仓库根）；省略不传")
+    analyze.add_argument("--branch", default=None, help="分支名")
+    analyze.add_argument("--keywords", help="关键词（逗号分隔）")
     analyze.add_argument(
         "--auto-comment",
         type=_optional_bool,
-        help="是否自动写回 Jira 评论，true/false",
+        help="是否自动写回 Jira 评论，true/false（默认 true）",
     )
     analyze.add_argument(
         "--skip-if-marker-present",
         type=_optional_bool,
-        help="存在标记评论时跳过，true/false",
+        help="已有标记评论则跳过，true/false（默认 true）",
     )
     analyze.add_argument("--comment-marker", help="去重标记，默认 [AUTO-ANALYSIS]")
     analyze.add_argument(
@@ -425,21 +441,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyze.add_argument("--output-file", help="将 analysis_markdown 写入本地文件")
 
-    progress = sub.add_parser("get-progress", help="查询分析进展（分析任务记录列表，仅预览）")
+    progress = sub.add_parser("get-progress", help="按工单查分析记录列表（拿 record_id）")
     progress.add_argument("--jira-issue-key", help="Jira 工单号")
     progress.add_argument("--gerrit-project", help="Gerrit 工程路径（精确匹配）")
     progress.add_argument("--gerrit-project-prefix", help="Gerrit 工程路径前缀")
-    progress.add_argument(
-        "--preview-chars",
-        type=int,
-        help="结果 Markdown 预览长度（0-8000），默认 500",
-    )
+    progress.add_argument("--page-num", type=int, help="页码，默认 1")
+    progress.add_argument("--page-size", type=int, help="每页条数，默认 20")
+    progress.add_argument("--preview-chars", type=int, help="结果 Markdown 预览长度")
     progress.add_argument("--timeout", type=int, default=60, help="请求超时秒数")
 
-    report = sub.add_parser("get-report", help="获取分析报告详情（含结果与过程）")
+    report = sub.add_parser("get-report", help="获取分析详情（报告 + 过程）")
     report.add_argument("--record-id", required=True, help="分析记录 ID")
     report.add_argument("--timeout", type=int, default=60, help="请求超时秒数")
-    report.add_argument("--output-file", help="将 analysis_markdown（结果）写入本地文件")
+    report.add_argument("--output-file", help="将 analysis_markdown（报告）写入本地文件")
     report.add_argument("--output-process-file", help="将 process_markdown（过程）写入本地文件")
 
     return parser
