@@ -1,0 +1,227 @@
+
+
+/* 公共样式 */
+QMainWindow
+{
+	font-family: SimSun;
+	background-color: #f2f4f7;
+}
+#EasyReadDialog
+{
+	background-color: #f2f4f7;
+}
+
+
+QPushButton {
+    background-color: #a7d6ab; /* Green */
+	border-radius: 30px;
+	/*border:1px solid #999999;
+	border-top: 5px solid qlineargradient(y0:0, y1:1,stop: 0 #ececef, stop: 1 white);
+	border-left: 5px solid qlineargradient(x0:0, x1:1,stop: 0 #ececef, stop: 1 white);
+	border-bottom: 5px solid qlineargradient(y0:0, y1:1,stop: 0 white, stop: 1  #ececef);
+	border-right: 5px solid qlineargradient(x0:0, x1:1,stop:  0 white, stop: 1 #ececef);*/
+    color: black;
+    padding: 8px 18px;
+    text-align: center;
+    text-decoration: none;
+    font-size: 14px;
+}
+QPushButton:disabled 
+{
+    background-color: #6C6C6D;
+}
+
+
+QPlainTextEdit:disabled
+{
+    background-color: white;
+}
+QListView:disabled
+{
+    background-color: white;
+}
+QPushButton:hover {
+    background-color: #84ba7b;
+}
+#line_left
+{
+	border: none;
+}
+#line_right
+{
+	border: none;
+}
+/* 左部样式 */
+#tree_devices
+{
+	border: none;
+}
+QTreeWidget:disabled 
+{ 
+	background-color: white; 
+}
+
+/* 中间样式 */
+#widget
+{
+	/* 中间最顶部样式 */
+	background-color: #FFFFFF;
+	border-radius: 10px;
+	border-top: 5px solid qlineargradient(y0:0, y1:1,stop: 0 #eff1f2, stop: 1 #f2f4f7);
+	border-left: 5px solid qlineargradient(x0:0, x1:1,stop: 0 #eff1f2, stop: 1 #f2f4f7);
+	border-bottom: 5px solid qlineargradient(y0:0, y1:1,stop: 0 #f2f4f7, stop: 1  #eff1f2);
+	border-right: 5px solid qlineargradient(x0:0, x1:1,stop:  0 #f2f4f7, stop: 1 #eff1f2);
+}
+QTabWidget
+{
+	border: none;
+}
+QWidget::tab::selected
+{
+	width: 110px;
+	height: 35px;
+	font-size: 14px;
+	font-weight: bold;
+	border-bottom: 5px solid qlineargradient(y0:0, y1:1,stop: 0 #84ba7b, stop: 1  #84ba7b);
+	font-family: 微软雅黑;
+}
+QWidget::tab:!selected
+{
+	width: 110px;
+	height: 35px;
+	font-size: 13px;
+	border: none;
+	font-weight: bold;
+	font-family: 微软雅黑;
+}
+QWidget::tab:hover
+{
+	border-bottom: 5px solid qlineargradient(y0:0, y1:1,stop: 0 #dadadf, stop: 1  #dadadf);
+	font-size: 14px;
+}
+/*
+#mygroup1,#mygroup3,#mygroup5
+{
+	background-color: #eff1f2;
+}*/
+
+/* 右侧样式 */
+#scrollAreaWidgetContents
+{
+	background-color:#f2f4f7;
+}
+#scrollArea
+{
+	border: none;
+}
+#mywidget_3
+{
+	background-color:#FFFFFF;
+	border-radius: 10px;
+	/*border: 1px dashed black;*/
+	border: none;
+}
+#mywidget_2
+{
+	background-color:#FFFFFF;
+	border-radius: 10px;
+	border: none;
+}
+
+
+/*other page*/
+#scrollArea
+{
+	border: none;
+}
+
+QScrollBar:vertical {
+    border-width: 0px;
+    border: none;
+    background:rgba(64, 65, 79, 0);
+    width:12px;
+    margin: 0px 0px 0px 0px;
+}
+QScrollBar::handle:vertical {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+    stop: 0  #84ba7b, stop: 0.5  #84ba7b, stop:1  #84ba7b);
+    min-height: 20px;
+    max-height: 20px;
+    margin: 0 0px 0 0px;
+    border-radius: 6px;
+}
+QScrollBar::add-line:vertical {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+    stop: 0 rgba(64, 65, 79, 0), stop: 0.5 rgba(64, 65, 79, 0),  stop:1 rgba(64, 65, 79, 0));
+    height: 0px;
+    border: none;
+    subcontrol-position: bottom;
+    subcontrol-origin: margin;
+}
+QScrollBar::sub-line:vertical {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+    stop: 0  rgba(64, 65, 79, 0), stop: 0.5 rgba(64, 65, 79, 0),  stop:1 rgba(64, 65, 79, 0));
+    height: 0 px;
+    border: none;
+    subcontrol-position: top;
+    subcontrol-origin: margin;
+}
+QScrollBar::sub-page:vertical {
+    background: rgba(64, 65, 79, 0);
+}
+
+QScrollBar::add-page:vertical {
+    background: rgba(64, 65, 79, 0);
+}
+
+QLineEdit
+{
+    border: 1px solid #d5d5d5;
+    height: 15px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+}
+QComboBox{
+  color:#666666;
+  font-size:12px;
+  padding: 1px 15px 1px 3px;
+  border:1px solid rgba(228,228,228,1);
+  border-radius:0px 0px 0px 0px;
+  height:22px
+} 
+ 
+QComboBox::drop-down {
+  subcontrol-origin: padding;
+  subcontrol-position: top right;
+  width: 15px;
+  border:none;
+}
+ 
+QComboBox::down-arrow {
+  image: url(modules/ui/res/down.png);
+  width: 20px;
+  height: 20px;
+  margin-right: 20px;
+}
+QComboBox QAbstractItemView::item{
+	height:36px;
+	min-height:30px;
+	padding-left:9px;
+	background-color:#FFFFFF;
+}
+QComboBox QAbstractItemView::item:hover{
+  background-color:#409CE1;
+  color:#ffffff;
+}
+QComboBox QAbstractItemView::item:selected{
+  background-color:#409CE1;
+  color:#ffffff;
+}
+#scrollAreaDeploy
+{
+	border: none;
+}
+QWidget
+{
+	font-family: 微软雅黑;
+}

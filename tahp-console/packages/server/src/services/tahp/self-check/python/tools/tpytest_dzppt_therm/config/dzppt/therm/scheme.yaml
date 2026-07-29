@@ -1,0 +1,13 @@
+# ------ 测试方案元配置 ------
+
+# 测试方案的名称
+name: 'therm'
+
+# 测试方案所属团队名
+team: 'dzppt'
+
+# 测试方案需要继承的元配置方案名，支持多级配置比如继承自'dzppt/therm'（可不配置）
+parent: 'dzppt'
+
+# 测试方案需要优先启动的环境类全名
+env_class: tests.dzppt.therm.therm_env.ThermEnv

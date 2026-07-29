@@ -1,0 +1,7 @@
+apkutils2
+requests
+schedule
+tqdm
+uiautomator2
+powertrde
+tpytest

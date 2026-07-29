@@ -1,0 +1,4 @@
+cases:
+  - test_therm_mock_1
+  - test_therm_mock_2(loop=1)
+#  - TestThermScenes(class=True)

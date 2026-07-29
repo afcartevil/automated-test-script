@@ -1,0 +1,33 @@
+pyyaml
+openpyxl
+typing_extensions
+uiautomator2==3.2.6
+psutil
+pyqt6
+qasync
+pytest
+apkutils2
+thrift
+mss
+opencv-contrib-python
+pillow
+scipy
+numpy
+pandas
+xlrd
+ruamel.yaml
+appdirs
+packaging
+onnxruntime
+rapidocr
+certifi
+requests
+pyserial
+colorlog
+pytest-rerunfailures
+pycryptodome
+perfetto # pftrace_utils
+pyecharts # benckmark
+deprecated
+func-timeout
+rapidfuzz

@@ -1,0 +1,78 @@
+# 测试用例用例集名称
+case_set: mock
+
+# 调试模式标记
+debug_modes:
+- placeholder
+#- fallback # 打开该选项，则将实现录制节点的 fallback，方便进行快速开发，正式测试不需要打开，让其自动报错
+#- no_sim # 是否不检查sim卡
+#- setup_case # 即使在单条调试时，也会进入setup等装饰器控制状态
+#- short_test # 在正式测试用例时，将使用很短的测试时长，快速跑测
+#- no_unlink_usb # 不在Pretest结束时断连USB
+#- mock_pretest # 使用模拟的方式快速通过预测试，不打开任何App，比0级预测试还快
+
+# 主干标记，用于控制某些代码的开启和关闭
+trunk_flags:
+- placeholder
+- use_feishu_static_table # 是否在使用了FeishuStaticTableLoaderInjectionFactory的静态表中使用飞书表格
+#- feishu_static_table_fallback_local # 当飞书静态表格不可用时，是否fallback到本地表
+
+# 预测试等级：0基本不预测试，1快速预测试，2完整预测试
+pretest_level: 2
+
+# 预测试自动跳过已测试通过并且没过期的用例，这里配置过期时间（小时）
+pretest_skip_pass_hours: 0
+
+# 测试轮次（大循环）
+test_loop: 1
+
+# 单用例测试轮次（小循环）
+small_test_loop: 1
+
+# 资源提供路径
+res_provider_path: '\\10.205.101.200\nas2\resource\ppt_test_resources'
+res_provider_username: ''
+res_provider_password: ''
+
+# 日志报告上传路径
+logs_uploader_path: '\\10.205.101.200\nas2\tmp\dzppt\logs_reports\therm'
+logs_uploader_username: ''
+logs_uploader_password: ''
+
+# 飞书相关配置
+feishu:
+  # 飞书机器人AppID和AppSecret
+  feishu_app_id: cli_a88b4d15dc70100b
+  feishu_app_secret: ''
+
+  # 飞书在线表配置
+  feishu_root_table_tokens:
+    default: WbRxsI5uahP45Ntl8aTcXu2Anec # https://transsioner.feishu.cn/sheets/WbRxsI5uahP45Ntl8aTcXu2Anec
+    # therm: xxxxxxxxxxxxxxxx
+
+  # 飞书云文件配置
+  feishu_root_folder_tokens:
+    default: FcFefmW17lcqGjd9KnUcj9oynUf # https://transsioner.feishu.cn/drive/folder/FcFefmW17lcqGjd9KnUcj9oynUf
+    app_repo: RvJ2f0723lX8lCdgR0UckPAhnZc # https://transsioner.feishu.cn/drive/folder/RvJ2f0723lX8lCdgR0UckPAhnZc
+    # therm: xxxxxxxxxxxxxxxx
+
+
+# 账号配置
+accounts:
+  google_email: xxxx@gmail.com
+  google_password: xxxx
+
+# 背景App配置
+back_apps:
+- placeholder
+
+# git自动发版更新配置
+git_updater:
+  repo_url: "http://gitlab.transsion.com/automation/tuts/pptgroup/ppt-release/tpytest_dzppt_therm.git"
+  branch: "master"
+  project_id: 2952
+  project: "tpytest_dzppt_therm"
+  namespace: "automation/tuts/pptgroup/ppt-release"
+  file_path: "therm_version.yaml"
+  encrypt_token: VBki8ZhIwh8hy77IWhsD3w==:lWaVQbFcH5VbAyzLGIBB+ugw8ud5OrzdOkwEDDSkfPA=
+

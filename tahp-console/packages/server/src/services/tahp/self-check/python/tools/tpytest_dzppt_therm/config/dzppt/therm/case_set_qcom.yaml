@@ -1,0 +1,28 @@
+cases:
+  - test_therm_generated_platform_thermal_qcom           # thermal zone, cooling device是否正常生成
+  - test_therm_read_ntc_temp_qcom                        # NTC温度是否正常读取
+  - test_therm_working_thermal_framework_qcom            # Thermal框架是否正常工作
+  - test_therm_working_qt_service_qcom                   # qt-setvice是否工作正常
+  - test_therm_step_freq_cpu_qthermal_cfg_qcom           # 阶梯控频_CPU多阶调频_高通thermal通用配置
+  - test_therm_step_freq_cpu_camera_qcom                 # 阶梯控频_CPU多阶调频_高通thermal_客制化_相机
+  - test_therm_step_freq_cpu_video_qcom                  # 阶梯控频_CPU多阶调频_高通thermal_客制化_视频
+  - test_therm_step_freq_cpu_video_call_qcom             # 阶梯控频_CPU多阶调频_高通thermal_客制化_视频通话
+  - test_therm_step_freq_cpu_game_qcom                   # 阶梯控频_CPU多阶调频_高通thermal_客制化_游戏
+  - test_therm_step_freq_benchmark_score_qcom            # 阶梯控频_CPU多阶调频_高通thermal_客制化_跑分
+  - test_therm_core_iso_cpu_mtkthermal_cfg_qcom          # 核心隔离_CPU核心隔离_高通thermal通用配置
+  - test_therm_high_temp_backlight_disp_all_qcom         # 高温背光_display_all
+  - test_therm_hbm_high_temp_ctrl_disp_outdoor_high_qcom # HBM高温控制_display_户外高亮
+  - test_therm_screen_brightness_limit_disp_mtk_cfg_qcom # 屏幕亮度限制_display_高通thermal通用配置
+  - test_therm_smart_temp_rise_dyn_limit_charging_qcom   # 智能温升动态限流_充电_充电
+  - test_therm_three_level_charging_qcom                 # 三档充电
+  - test_therm_charging_temp_limit_charging_camera_qcom  # 高通thermal充电限流_相机
+  - test_therm_charging_temp_limit_charging_video_qcom   # 高通thermal充电限流_视频
+  - test_therm_charging_temp_limit_charging_video_call_qcom # 高通thermal充电限流_视频通话
+  - test_therm_charging_temp_limit_charging_game_qcom    # 高通thermal充电限流_游戏
+  - test_therm_game_thermal_ctrl_engine_1_0_game_qcom    # 游戏温控引擎1.0_游戏_游戏
+  - test_therm_game_QFPS_game_qcom                       # QFPS_游戏
+  - test_therm_camera_high_temp_protection_sys_camera_qcom # Camera高温保护策略_camera_系统相机
+  - test_therm_video_power_saving_mode_v1_0_sys_camera_qcom # Video省电模式V1.0_camera_系统相机
+  - test_therm_image_smart_temp_ctrl_v1_0_sys_camera_qcom # 影像智能温控V1.0_camera_系统相机
+  - test_therm_smart_flash_ctrl_v1_0_sys_camera_qcom     # 智能闪光灯控制V1.0_camera_系统相机
+  - test_therm_video_chat_third_party_camera_qcom        # 视频畅聊_camera_三方相机

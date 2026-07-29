@@ -1,0 +1,10 @@
+assert_chuangui: __pic__TikTok_assert_chuangui.png
+assert_plus: __pic__TikTok_assert_plus.png
+btn_live:
+- 0.06759259259259259
+- 0.07625
+btn_search:
+- 0.92
+- 0.07
+create: __pic__Tiktok_create.png
+icon: __pic__Tiktok_icon.png

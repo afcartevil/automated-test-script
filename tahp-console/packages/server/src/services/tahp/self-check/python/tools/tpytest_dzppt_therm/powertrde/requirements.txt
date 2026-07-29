@@ -1,0 +1,6 @@
+openpyxl
+apkutils2
+mss
+packaging
+
+#Crypto # encryption_utils.py 加密用，非强制

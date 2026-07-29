@@ -1,0 +1,2 @@
+class EnvChecker:
+    pass

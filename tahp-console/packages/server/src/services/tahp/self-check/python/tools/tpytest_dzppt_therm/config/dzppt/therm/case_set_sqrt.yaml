@@ -1,0 +1,31 @@
+cases:
+  - test_therm_generated_platform_thermal_sqrt           # thermal zone, cooling device是否正常生成
+  - test_therm_read_ntc_temp_sqrt                      # NTC温度是否正常读取
+  - test_therm_working_thermal_framework_sqrt          # Thermal框架是否正常工作
+  - test_therm_kswapd_bind_small_cpu_all_sqrt          # Kswapd绑小核_CPU_all
+  - test_therm_short_video_bind_cpu_feat_sqrt          # 短视频绑核方案_CPU_feature
+  - test_therm_step_freq_cpu_qthermal_cfg_sqrt         # 阶梯控频_CPU多阶调频_展锐thermal通用配置
+  - test_therm_step_freq_cpu_camera_sqrt               # 阶梯控频_CPU多阶调频_展锐thermal_场景识别_相机
+  - test_therm_step_freq_cpu_video_sqrt                # 阶梯控频_CPU多阶调频_展锐thermal_场景识别_视频
+  - test_therm_step_freq_cpu_video_call_sqrt           # 阶梯控频_CPU多阶调频_展锐thermal_场景识别_视频通话
+  - test_therm_step_freq_cpu_game_sqrt                 # 阶梯控频_CPU多阶调频_展锐thermal_场景识别_游戏
+  - test_therm_core_iso_cpu_thermal_cfg_sqrt           # 核心隔离_CPU核心隔离_thermal通用配置
+  - test_therm_high_temp_backlight_disp_all_sqrt       # 高温背光_display_all
+  - test_therm_hbm_high_temp_ctrl_disp_outdoor_high_sqrt # HBM高温控制_display_户外高亮
+  - test_therm_screen_brightness_limit_disp_sqrt_cfg_sqrt # 屏幕亮度限制_display_展锐thermal通用配置
+  - test_therm_smart_temp_rise_dyn_limit_charging_sqrt # 智能温升动态限流_充电_充电
+  - test_therm_three_level_charging_sqrt               # 三档充电
+  - test_therm_charging_temp_limit_charging_camera_sqrt # 展锐thermal充电限流_相机
+  - test_therm_charging_temp_limit_charging_video_sqrt # 展锐thermal充电限流_视频
+  - test_therm_charging_temp_limit_charging_video_call_sqrt # 展锐thermal充电限流_视频通话
+  - test_therm_charging_temp_limit_charging_game_sqrt  # 展锐thermal充电限流_游戏
+  - test_therm_wifi_high_temp_speed_limit_wifi_all_sqrt # WiFi高温限速_wifi_all
+  - test_therm_game_thermal_ctrl_engine_1_0_game_sqrt  # 游戏温控引擎1.0_游戏_游戏
+  - test_therm_drt_game_whitelist_game_sqrt            # DRT_游戏_白名单游戏
+  - test_therm_frs_stable_frame_game_sqrt              # FRS稳帧_游戏_游戏
+  - test_therm_camera_high_temp_protection_sys_camera_sqrt # Camera高温保护策略_camera_系统相机
+  - test_therm_video_power_saving_mode_v1_0_sys_camera_sqrt # Video省电模式V1.0_camera_系统相机
+  - test_therm_image_smart_temp_ctrl_v1_0_sys_camera_sqrt # 影像智能温控V1.0_camera_系统相机
+  - test_therm_smart_flash_ctrl_v1_0_sys_camera_sqrt   # 智能闪光灯控制V1.0_camera_系统相机
+  - test_therm_video_chat_third_party_camera_sqrt      # 视频畅聊_camera_三方相机
+

@@ -1,0 +1,590 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>DefaultGuiMainWindow</class>
+ <widget class="QMainWindow" name="DefaultGuiMainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1120</width>
+    <height>886</height>
+   </rect>
+  </property>
+  <property name="sizePolicy">
+   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+    <horstretch>0</horstretch>
+    <verstretch>0</verstretch>
+   </sizepolicy>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>1120</width>
+    <height>730</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>2000</width>
+    <height>2000</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>MainWindow</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <widget class="QLabel" name="textTitle">
+    <property name="geometry">
+     <rect>
+      <x>0</x>
+      <y>0</y>
+      <width>361</width>
+      <height>51</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <pointsize>14</pointsize>
+      <bold>true</bold>
+     </font>
+    </property>
+    <property name="text">
+     <string>性能动态模型测试执行器</string>
+    </property>
+    <property name="alignment">
+     <set>Qt::AlignCenter</set>
+    </property>
+   </widget>
+   <widget class="QGroupBox" name="controlBoxGroup">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>40</y>
+      <width>341</width>
+      <height>301</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string>执行控制</string>
+    </property>
+    <widget class="QPushButton" name="startTestButton">
+     <property name="geometry">
+      <rect>
+       <x>190</x>
+       <y>239</y>
+       <width>121</width>
+       <height>31</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>开始测试</string>
+     </property>
+    </widget>
+    <widget class="QWidget" name="formLayoutWidget">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>20</y>
+       <width>321</width>
+       <height>216</height>
+      </rect>
+     </property>
+     <layout class="QFormLayout" name="formLayout">
+      <item row="0" column="0">
+       <widget class="QLabel" name="caseSetLabel">
+        <property name="text">
+         <string>用例集配置</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QComboBox" name="caseSetComboBox"/>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="pretestLevelLabel">
+        <property name="text">
+         <string>预测试等级</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QComboBox" name="pretestLevelComboBox"/>
+      </item>
+      <item row="2" column="0">
+       <widget class="QLabel" name="appPretestLabel">
+        <property name="text">
+         <string>App预测试</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QComboBox" name="appPretestComboBox"/>
+      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="testPhoneLabel">
+        <property name="text">
+         <string>测试机[S688LN]</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QComboBox" name="testPhoneComboBox"/>
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="copilotPhoneLabel">
+        <property name="text">
+         <string>辅助机[CL8]</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="QComboBox" name="copilotPhoneComboBox"/>
+      </item>
+      <item row="7" column="0">
+       <widget class="QLabel" name="taskIDLabel">
+        <property name="text">
+         <string>任务ID[TaskID]</string>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="1">
+       <layout class="QHBoxLayout" name="horizontalLayout_2">
+        <item>
+         <widget class="QLineEdit" name="taskIDLineEdit"/>
+        </item>
+        <item>
+         <widget class="QPushButton" name="fillLastTimeButton">
+          <property name="maximumSize">
+           <size>
+            <width>80</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="contextMenuPolicy">
+           <enum>Qt::DefaultContextMenu</enum>
+          </property>
+          <property name="layoutDirection">
+           <enum>Qt::LeftToRight</enum>
+          </property>
+          <property name="autoFillBackground">
+           <bool>true</bool>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">font: 8pt &quot;Microsoft YaHei UI&quot;;</string>
+          </property>
+          <property name="text">
+           <string>填入上次</string>
+          </property>
+          <property name="iconSize">
+           <size>
+            <width>16</width>
+            <height>16</height>
+           </size>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="disableButton">
+          <property name="enabled">
+           <bool>true</bool>
+          </property>
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Minimum" vsizetype="Maximum">
+            <horstretch>0</horstretch>
+            <verstretch>10</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>70</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="font">
+           <font>
+            <family>Microsoft YaHei UI</family>
+            <pointsize>8</pointsize>
+            <italic>false</italic>
+            <bold>false</bold>
+           </font>
+          </property>
+          <property name="autoFillBackground">
+           <bool>true</bool>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">font: 8pt &quot;Microsoft YaHei UI&quot;;</string>
+          </property>
+          <property name="text">
+           <string>禁用</string>
+          </property>
+          <property name="shortcut">
+           <string>Ctrl+S</string>
+          </property>
+          <property name="autoExclusive">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item row="5" column="0">
+       <widget class="QLabel" name="powerMonitorLabel">
+        <property name="text">
+         <string>PowerMonitor</string>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="1">
+       <widget class="QComboBox" name="powerMonitorComboBox"/>
+      </item>
+      <item row="6" column="0">
+       <widget class="QLabel" name="hVPMLabel">
+        <property name="text">
+         <string>HVPM</string>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="1">
+       <widget class="QLineEdit" name="hVPMLineEdit"/>
+      </item>
+     </layout>
+    </widget>
+    <widget class="QPushButton" name="refreshDeviceButton">
+     <property name="geometry">
+      <rect>
+       <x>30</x>
+       <y>239</y>
+       <width>121</width>
+       <height>31</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>刷新设备</string>
+     </property>
+    </widget>
+   </widget>
+   <widget class="QGroupBox" name="caseBoxGroup">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>352</y>
+      <width>341</width>
+      <height>471</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string>用例信息</string>
+    </property>
+    <widget class="QListWidget" name="caseListWidget">
+     <property name="geometry">
+      <rect>
+       <x>10</x>
+       <y>20</y>
+       <width>321</width>
+       <height>441</height>
+      </rect>
+     </property>
+    </widget>
+   </widget>
+   <widget class="QGroupBox" name="log_group">
+    <property name="geometry">
+     <rect>
+      <x>360</x>
+      <y>7</y>
+      <width>748</width>
+      <height>821</height>
+     </rect>
+    </property>
+    <property name="title">
+     <string>执行信息</string>
+    </property>
+    <layout class="QVBoxLayout" name="verticalLayout" stretch="1,18,18,0">
+     <item>
+      <widget class="QGroupBox" name="groupBox_5">
+       <property name="styleSheet">
+        <string notr="true">QGroupBox{
+	border:None;
+}</string>
+       </property>
+       <property name="title">
+        <string/>
+       </property>
+       <layout class="QHBoxLayout" name="horizontalLayout" stretch="18,2,0,0">
+        <property name="spacing">
+         <number>0</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="bottomMargin">
+         <number>6</number>
+        </property>
+        <item>
+         <widget class="QProgressBar" name="test_progress_bar">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>0</height>
+           </size>
+          </property>
+          <property name="layoutDirection">
+           <enum>Qt::LeftToRight</enum>
+          </property>
+          <property name="value">
+           <number>0</number>
+          </property>
+          <property name="textVisible">
+           <bool>true</bool>
+          </property>
+          <property name="format">
+           <string>%p%</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="test_progress_desc">
+          <property name="text">
+           <string>60/90, Pass/Fail: 15/1</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="horizontalSpacer">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>28</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item>
+         <widget class="QCheckBox" name="only_show_error">
+          <property name="layoutDirection">
+           <enum>Qt::RightToLeft</enum>
+          </property>
+          <property name="text">
+           <string>Only Show Error</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPlainTextEdit" name="log_plain">
+       <property name="enabled">
+        <bool>true</bool>
+       </property>
+       <property name="readOnly">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPlainTextEdit" name="log_plain_error">
+       <property name="enabled">
+        <bool>true</bool>
+       </property>
+       <property name="readOnly">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="horizontalLayout_5" stretch="0">
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <item>
+        <widget class="QPushButton" name="open_log_dir">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="layoutDirection">
+          <enum>Qt::LeftToRight</enum>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QPushButton {
+                border: none;
+                background-color: transparent;
+                color: black;  /* 设置文本颜色，如果需要 */
+text-align: right;  /* 设置文本靠右 */
+                padding-right: 20px;  /* 添加一些右边距 */
+
+            }
+            QPushButton:hover {
+                color: blue;  /* 悬停时改变文本颜色 */
+            }</string>
+         </property>
+         <property name="text">
+          <string>最近报告路径: none</string>
+         </property>
+         <property name="flat">
+          <bool>false</bool>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </widget>
+   <widget class="QLabel" name="textStage">
+    <property name="geometry">
+     <rect>
+      <x>540</x>
+      <y>6</y>
+      <width>130</width>
+      <height>31</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <pointsize>10</pointsize>
+     </font>
+    </property>
+    <property name="text">
+     <string>已停止</string>
+    </property>
+    <property name="alignment">
+     <set>Qt::AlignCenter</set>
+    </property>
+   </widget>
+   <widget class="QLabel" name="textTimer">
+    <property name="geometry">
+     <rect>
+      <x>540</x>
+      <y>60</y>
+      <width>101</width>
+      <height>16</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <pointsize>8</pointsize>
+     </font>
+    </property>
+    <property name="text">
+     <string>12:21:34</string>
+    </property>
+    <property name="alignment">
+     <set>Qt::AlignCenter</set>
+    </property>
+   </widget>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+  <widget class="QMenuBar" name="menuBar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>1120</width>
+     <height>21</height>
+    </rect>
+   </property>
+   <widget class="QMenu" name="menuOpen">
+    <property name="title">
+     <string>打开</string>
+    </property>
+    <addaction name="actionOpenLastReport"/>
+    <addaction name="actionOpenConfigDir"/>
+   </widget>
+   <widget class="QMenu" name="menuControl">
+    <property name="title">
+     <string>控制</string>
+    </property>
+    <addaction name="actionStopTest"/>
+   </widget>
+   <widget class="QMenu" name="menuRetest">
+    <property name="title">
+     <string>复测</string>
+    </property>
+    <addaction name="actionOpenLatestRetest"/>
+    <addaction name="actionOpenCustomizeRetest"/>
+    <addaction name="actionResultUpload"/>
+   </widget>
+   <widget class="QMenu" name="menuAbout">
+    <property name="title">
+     <string>关于</string>
+    </property>
+    <addaction name="actionRelease"/>
+    <addaction name="actionCheckUpdate"/>
+    <addaction name="actionHelp"/>
+    <addaction name="actionSOP"/>
+   </widget>
+   <widget class="QMenu" name="menuFeedback">
+    <property name="title">
+     <string>反馈</string>
+    </property>
+    <addaction name="actionOneClickUpload"/>
+   </widget>
+   <addaction name="menuAbout"/>
+   <addaction name="menuOpen"/>
+   <addaction name="menuControl"/>
+   <addaction name="menuRetest"/>
+   <addaction name="menuFeedback"/>
+  </widget>
+  <action name="actionOpenLastReport">
+   <property name="text">
+    <string>最近一次报告目录</string>
+   </property>
+  </action>
+  <action name="actionStopTest">
+   <property name="text">
+    <string>停止测试</string>
+   </property>
+  </action>
+  <action name="actionOpenConfigDir">
+   <property name="text">
+    <string>配置文件夹</string>
+   </property>
+  </action>
+  <action name="actionOpenLatestRetest">
+   <property name="text">
+    <string>执行最近一次报告复测</string>
+   </property>
+  </action>
+  <action name="actionOpenCustomizeRetest">
+   <property name="text">
+    <string>自定义选择报告复测</string>
+   </property>
+  </action>
+  <action name="actionRelease">
+   <property name="text">
+    <string>版本信息</string>
+   </property>
+  </action>
+  <action name="actionCheckUpdate">
+   <property name="text">
+    <string>检查更新</string>
+   </property>
+  </action>
+  <action name="actionHelp">
+   <property name="text">
+    <string>关于我们</string>
+   </property>
+  </action>
+  <action name="actionResultUpload">
+   <property name="text">
+    <string>结果上传</string>
+   </property>
+  </action>
+  <action name="actionSOP">
+   <property name="text">
+    <string>SOP文档</string>
+   </property>
+  </action>
+  <action name="actionOneClickUpload">
+   <property name="text">
+    <string>一键上传</string>
+   </property>
+  </action>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
