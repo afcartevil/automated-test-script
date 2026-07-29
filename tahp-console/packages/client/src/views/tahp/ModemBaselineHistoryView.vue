@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NButton, NInput, NSelect, useMessage } from 'naive-ui'
 import {
+  continueModemBaselineRun,
   getModemBaselineLog,
   getModemBaselineRun,
   listModemBaselineRuns,
   openModemBaselineConflictFile,
+  refreshModemBaselineConflicts,
   type ModemBaselineRunMeta,
 } from '@/api/tahp/modem-baseline'
-import ModemBaselineLogFilterBar from '@/components/tahp/modem-baseline/ModemBaselineLogFilterBar.vue'
+import ModemBaselineProgressPanel from '@/components/tahp/modem-baseline/ModemBaselineProgressPanel.vue'
+import { takeModemLogTail } from '@/utils/modemBaselineLog'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,6 +20,8 @@ const message = useMessage()
 
 const loadingRuns = ref(false)
 const loadingDetail = ref(false)
+const refreshingConflicts = ref(false)
+const continuing = ref(false)
 const runs = ref<ModemBaselineRunMeta[]>([])
 
 const statusFilter = ref<'all' | ModemBaselineRunMeta['status']>('all')
@@ -25,12 +30,7 @@ const keyword = ref('')
 const selectedRunId = ref('')
 const selectedRun = ref<ModemBaselineRunMeta | null>(null)
 const logContent = ref('')
-
-const onlyErrors = ref(false)
-const onlyConflicts = ref(false)
-const logScroller = ref<HTMLElement | null>(null)
-const shouldStickToBottom = ref(true)
-const LOG_BOTTOM_THRESHOLD = 24
+let detailRequestSeq = 0
 
 const statusOptions = [
   { label: '全部状态', value: 'all' },
@@ -93,42 +93,6 @@ const filteredRuns = computed(() => {
 
 const filteredCountLabel = computed(() => `${filteredRuns.value.length} / ${runs.value.length}`)
 
-const filteredLog = computed(() => {
-  const raw = logContent.value || ''
-  if (!onlyErrors.value && !onlyConflicts.value) return raw
-  const lines = raw.split(/\r?\n/)
-  const out = lines.filter((line) => {
-    if (onlyErrors.value && (/\berror\b/i.test(line) || /\bfailed\b/i.test(line))) return true
-    if (onlyConflicts.value && (/\bconflict\b/i.test(line) || /\[conflicts\]/i.test(line))) return true
-    return false
-  })
-  return out.join('\n')
-})
-
-function isNearBottom(el: HTMLElement) {
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= LOG_BOTTOM_THRESHOLD
-}
-
-function scrollLogToBottom() {
-  if (logScroller.value) {
-    logScroller.value.scrollTop = logScroller.value.scrollHeight
-  }
-}
-
-function handleLogScroll() {
-  if (!logScroller.value) return
-  shouldStickToBottom.value = isNearBottom(logScroller.value)
-}
-
-watch(logContent, async (_, previous) => {
-  const shouldAutoScroll = shouldStickToBottom.value || !previous
-  await nextTick()
-  if (shouldAutoScroll) {
-    scrollLogToBottom()
-    shouldStickToBottom.value = true
-  }
-})
-
 async function reloadRuns() {
   loadingRuns.value = true
   try {
@@ -141,27 +105,39 @@ async function reloadRuns() {
 }
 
 async function loadDetail(runId: string) {
+  const requestSeq = ++detailRequestSeq
   loadingDetail.value = true
+  // 先清空旧日志，避免切换时短暂渲染上一份大日志
+  logContent.value = ''
   try {
     const [run, log] = await Promise.all([
       getModemBaselineRun(runId),
       getModemBaselineLog(runId),
     ])
+    if (requestSeq !== detailRequestSeq) return
     selectedRun.value = run
-    logContent.value = log.content || ''
+    logContent.value = takeModemLogTail(log.content || '')
   } catch (error) {
+    if (requestSeq !== detailRequestSeq) return
     selectedRun.value = null
     logContent.value = ''
     message.error(String((error as Error)?.message ?? error))
   } finally {
-    loadingDetail.value = false
+    if (requestSeq === detailRequestSeq) {
+      loadingDetail.value = false
+    }
   }
 }
 
 function selectRun(runId: string) {
-  if (!runId) return
+  if (!runId || runId === selectedRunId.value) return
   selectedRunId.value = runId
-  router.replace({ name: 'tahp.modem-baseline.history', params: { runId } })
+  // 用 meta 先填充详情头，减少空白闪烁；日志异步加载
+  selectedRun.value = runs.value.find(item => item.runId === runId) ?? selectedRun.value
+  const current = route.params.runId
+  if (current !== runId) {
+    router.replace({ name: 'tahp.modem-baseline.history', params: { runId } })
+  }
   void loadDetail(runId)
 }
 
@@ -172,6 +148,44 @@ async function openConflictFile(file: string) {
     message.success('已尝试打开冲突文件')
   } catch (error) {
     message.error(String((error as Error)?.message ?? error))
+  }
+}
+
+async function refreshConflicts() {
+  if (!selectedRun.value) return
+  refreshingConflicts.value = true
+  try {
+    const result = await refreshModemBaselineConflicts(selectedRun.value.runId)
+    await loadDetail(selectedRun.value.runId)
+    await reloadRuns()
+    message.success(
+      result.files.length
+        ? `仍有 ${result.files.length} 个冲突待处理`
+        : '冲突已清空，可以继续执行',
+    )
+  } catch (error) {
+    message.error(String((error as Error)?.message ?? error))
+  } finally {
+    refreshingConflicts.value = false
+  }
+}
+
+async function continueSelectedRun() {
+  if (!selectedRun.value) return
+  if (selectedRun.value.status !== 'conflict') {
+    message.warning('当前任务不在冲突停驻状态')
+    return
+  }
+  continuing.value = true
+  try {
+    await continueModemBaselineRun(selectedRun.value.runId)
+    message.success('已发送继续执行请求')
+    await loadDetail(selectedRun.value.runId)
+    await reloadRuns()
+  } catch (error) {
+    message.error(String((error as Error)?.message ?? error))
+  } finally {
+    continuing.value = false
   }
 }
 
@@ -207,7 +221,7 @@ onMounted(async () => {
 
 <template>
   <div class="history-grid">
-    <div class="ea-card ea-stack list-card">
+    <div class="ea-card list-card">
       <div class="card-head">
         <div>
           <div class="ea-section-title">运行历史</div>
@@ -251,98 +265,130 @@ onMounted(async () => {
           </div>
         </button>
 
-        <div v-if="!filteredRuns.length" class="empty-note">暂无匹配记录</div>
+        <div v-if="!filteredRuns.length" class="empty-note list-empty">暂无匹配记录</div>
       </div>
     </div>
 
-    <div class="ea-card ea-stack detail-card">
-      <div class="card-head">
+    <div class="detail-column">
+      <div v-if="!selectedRun" class="ea-card detail-empty">
         <div>
-          <div class="ea-section-title">运行详情</div>
-          <h3>{{ selectedRun ? `Run ${selectedRun.runId}` : '选择任务查看' }}</h3>
-        </div>
-        <div class="detail-actions">
-          <span v-if="selectedRun" :class="toneClass(selectedRun.status)">{{ statusLabel(selectedRun.status) }}</span>
-          <NButton secondary size="small" :disabled="!selectedRunId" :loading="loadingDetail" @click="refreshSelected">
-            刷新
-          </NButton>
+          <strong>运行详情</strong>
+          <span>选择左侧任务查看执行流程与日志。</span>
         </div>
       </div>
 
-      <div v-if="selectedRun" class="detail-body">
-        <div class="kv-grid">
-          <div class="kv-item">
-            <span class="kv-k">JIRA</span>
-            <span class="kv-v">{{ selectedRun.config.JIRAID || '—' }}</span>
+      <template v-else>
+        <div class="ea-card ea-stack detail-card">
+          <div class="card-head">
+            <div>
+              <div class="ea-section-title">运行详情</div>
+              <h3>Run {{ selectedRun.runId }}</h3>
+            </div>
+            <div class="detail-actions">
+              <span :class="toneClass(selectedRun.status)">{{ statusLabel(selectedRun.status) }}</span>
+              <NButton secondary size="small" :loading="loadingDetail" @click="refreshSelected">
+                刷新
+              </NButton>
+              <template v-if="selectedRun.status === 'conflict'">
+                <NButton
+                  secondary
+                  size="small"
+                  :loading="refreshingConflicts"
+                  @click="refreshConflicts"
+                >
+                  刷新冲突
+                </NButton>
+                <NButton
+                  type="primary"
+                  size="small"
+                  :loading="continuing"
+                  @click="continueSelectedRun"
+                >
+                  继续执行
+                </NButton>
+              </template>
+            </div>
           </div>
-          <div class="kv-item">
-            <span class="kv-k">AP label</span>
-            <span class="kv-v">{{ selectedRun.config.AP_lable || '—' }}</span>
-          </div>
-          <div class="kv-item">
-            <span class="kv-k">NODE_BRANCH</span>
-            <span class="kv-v">{{ selectedRun.config.NODE_BRANCH || '—' }}</span>
-          </div>
-          <div class="kv-item">
-            <span class="kv-k">target_BRANCH</span>
-            <span class="kv-v">{{ selectedRun.config.target_BRANCH || '—' }}</span>
-          </div>
-          <div class="kv-item">
-            <span class="kv-k">工作区</span>
-            <span class="kv-v">{{ selectedRun.config.work_dir || '—' }}</span>
-          </div>
-          <div class="kv-item">
-            <span class="kv-k">报告</span>
-            <span class="kv-v">{{ selectedRun.reportPath || '—' }}</span>
-          </div>
-          <div class="kv-item">
-            <span class="kv-k">创建时间</span>
-            <span class="kv-v">{{ selectedRun.createdAt || '—' }}</span>
-          </div>
-          <div class="kv-item">
-            <span class="kv-k">开始时间</span>
-            <span class="kv-v">{{ selectedRun.startedAt || '—' }}</span>
-          </div>
-          <div class="kv-item">
-            <span class="kv-k">结束时间</span>
-            <span class="kv-v">{{ selectedRun.finishedAt || '—' }}</span>
+
+          <div class="detail-body">
+            <div class="kv-grid">
+              <div class="kv-item">
+                <span class="kv-k">JIRA</span>
+                <span class="kv-v">{{ selectedRun.config.JIRAID || '—' }}</span>
+              </div>
+              <div class="kv-item">
+                <span class="kv-k">AP label</span>
+                <span class="kv-v">{{ selectedRun.config.AP_lable || '—' }}</span>
+              </div>
+              <div class="kv-item">
+                <span class="kv-k">NODE_BRANCH</span>
+                <span class="kv-v">{{ selectedRun.config.NODE_BRANCH || '—' }}</span>
+              </div>
+              <div class="kv-item">
+                <span class="kv-k">target_BRANCH</span>
+                <span class="kv-v">{{ selectedRun.config.target_BRANCH || '—' }}</span>
+              </div>
+              <div class="kv-item">
+                <span class="kv-k">工作区</span>
+                <span class="kv-v">{{ selectedRun.config.work_dir || '—' }}</span>
+              </div>
+              <div class="kv-item">
+                <span class="kv-k">报告</span>
+                <span class="kv-v">{{ selectedRun.reportPath || '—' }}</span>
+              </div>
+              <div class="kv-item">
+                <span class="kv-k">创建时间</span>
+                <span class="kv-v">{{ selectedRun.createdAt || '—' }}</span>
+              </div>
+              <div class="kv-item">
+                <span class="kv-k">开始时间</span>
+                <span class="kv-v">{{ selectedRun.startedAt || '—' }}</span>
+              </div>
+              <div class="kv-item">
+                <span class="kv-k">结束时间</span>
+                <span class="kv-v">{{ selectedRun.finishedAt || '—' }}</span>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div class="ea-divider" />
-
-        <div class="ea-section-title">冲突文件</div>
-        <div v-if="(selectedRun.conflictFiles || []).length" class="conflict-list">
-          <button
-            v-for="file in selectedRun.conflictFiles || []"
-            :key="file"
-            type="button"
-            class="conflict-item"
-            @click="openConflictFile(file)"
-          >
-            <strong>{{ file }}</strong>
-            <span class="ea-pill-warn">打开</span>
-          </button>
-        </div>
-        <div v-else class="empty-note">无冲突文件</div>
-
-        <div class="ea-divider" />
-
-        <div class="log-head">
-          <div class="ea-section-title">运行日志</div>
-          <span class="ea-pill-muted">Log</span>
-        </div>
-        <ModemBaselineLogFilterBar
-          v-model:only-errors="onlyErrors"
-          v-model:only-conflicts="onlyConflicts"
-          @jump-latest="scrollLogToBottom"
+        <ModemBaselineProgressPanel
+          :key="selectedRun.runId"
+          :run="selectedRun"
+          :log-content="logContent"
         />
-        <div ref="logScroller" class="ea-mon-output" @scroll="handleLogScroll">
-          {{ filteredLog || '暂无日志输出' }}
-        </div>
-      </div>
 
-      <div v-else class="empty-note">选择左侧任务查看详情</div>
+        <div class="ea-card ea-stack">
+          <div class="conflict-head">
+            <div class="ea-section-title">冲突文件</div>
+            <div v-if="selectedRun.status === 'conflict'" class="conflict-head-actions">
+              <NButton secondary size="small" :loading="refreshingConflicts" @click="refreshConflicts">
+                刷新冲突
+              </NButton>
+              <NButton type="primary" size="small" :loading="continuing" @click="continueSelectedRun">
+                继续执行
+              </NButton>
+            </div>
+          </div>
+          <div v-if="(selectedRun.conflictFiles || []).length" class="conflict-list">
+            <button
+              v-for="file in selectedRun.conflictFiles || []"
+              :key="file"
+              type="button"
+              class="conflict-item"
+              @click="openConflictFile(file)"
+            >
+              <strong>{{ file }}</strong>
+              <span class="ea-pill-warn">打开</span>
+            </button>
+          </div>
+          <div v-else class="empty-note">
+            {{ selectedRun.status === 'conflict'
+              ? '冲突已清空。确认无误后点击「继续执行」。'
+              : '无冲突文件' }}
+          </div>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -352,7 +398,51 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: minmax(320px, 0.9fr) minmax(520px, 1.3fr);
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
+  height: calc(100vh - 148px);
+  min-height: 520px;
+}
+
+.list-card,
+.detail-column {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.list-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.detail-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 36px;
+  color: var(--muted);
+  text-align: center;
+
+  strong {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text);
+    font-size: 17px;
+  }
+
+  span {
+    font-size: 13px;
+    line-height: 1.5;
+  }
 }
 
 .card-head {
@@ -360,6 +450,7 @@ onMounted(async () => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  flex: 0 0 auto;
 
   h3 {
     font-size: 18px;
@@ -368,14 +459,7 @@ onMounted(async () => {
   }
 }
 
-.head-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
+.head-actions,
 .detail-actions {
   display: flex;
   align-items: center;
@@ -392,18 +476,15 @@ onMounted(async () => {
 }
 
 .list-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--surface);
+  flex: 0 0 auto;
 }
 
 .run-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex: 1;
   min-height: 0;
-  max-height: calc(100vh - 270px);
   overflow: auto;
   padding-right: 4px;
 }
@@ -490,6 +571,12 @@ onMounted(async () => {
   background: color-mix(in srgb, var(--surface) 70%, transparent);
 }
 
+.list-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+}
+
 .detail-body {
   display: flex;
   flex-direction: column;
@@ -523,6 +610,19 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conflict-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.conflict-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .conflict-list {
@@ -562,20 +662,24 @@ onMounted(async () => {
   gap: 12px;
 }
 
-.ea-mon-output {
-  height: 360px;
-  min-height: 360px;
-  max-height: 360px;
-  overflow: auto;
-}
-
 @media (max-width: 1100px) {
   .history-grid {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
+  }
+
+  .list-card,
+  .detail-column {
+    height: auto;
   }
 
   .run-list {
-    max-height: none;
+    max-height: 420px;
+  }
+
+  .detail-empty {
+    min-height: 280px;
   }
 }
 

@@ -245,8 +245,22 @@ export function getModemBaselineRun(runId: string): Promise<ModemBaselineRunMeta
   return tahpGet<ModemBaselineRunMeta>(`/api/tahp/modem-baseline/runs/${encodeURIComponent(runId)}`)
 }
 
-export function getModemBaselineLog(runId: string): Promise<{ content: string }> {
-  return tahpGet<{ content: string }>(`/api/tahp/modem-baseline/runs/${encodeURIComponent(runId)}/log`)
+export function getModemBaselineLog(runId: string): Promise<{
+  content: string
+  truncated?: boolean
+  totalBytes?: number
+  returnedBytes?: number
+}> {
+  const query = new URLSearchParams({
+    tailLines: '800',
+    maxBytes: String(512 * 1024),
+  })
+  return tahpGet<{
+    content: string
+    truncated?: boolean
+    totalBytes?: number
+    returnedBytes?: number
+  }>(`/api/tahp/modem-baseline/runs/${encodeURIComponent(runId)}/log?${query.toString()}`)
 }
 
 export function createModemBaselineRun(config: ModemBaselineConfig): Promise<{ runId: string; status: ModemBaselineStatus }> {

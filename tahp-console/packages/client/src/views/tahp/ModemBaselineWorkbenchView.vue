@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NButton, useMessage } from 'naive-ui'
+import ModemBaselineAdvancedConfig from '@/components/tahp/modem-baseline/ModemBaselineAdvancedConfig.vue'
 import ModemBaselineConfigCard from '@/components/tahp/modem-baseline/ModemBaselineConfigCard.vue'
+import ModemBaselineHistoryPanel from '@/components/tahp/modem-baseline/ModemBaselineHistoryPanel.vue'
 import ModemBaselineLogFilterBar from '@/components/tahp/modem-baseline/ModemBaselineLogFilterBar.vue'
 import ModemBaselineStagePanel from '@/components/tahp/modem-baseline/ModemBaselineStagePanel.vue'
 import { useModemBaseline } from '@/composables/useModemBaseline'
+import { takeModemLogTail } from '@/utils/modemBaselineLog'
 
 const message = useMessage()
 const {
@@ -13,7 +16,9 @@ const {
   noticeParsed,
   recommendation,
   selectedRepo,
+  runs,
   selectedRun,
+  selectedRunId,
   conflictFiles,
   logContent,
   loading,
@@ -32,6 +37,8 @@ const {
   loadBuildProjects,
   requestRecommend,
   applyRecommendation,
+  selectRun,
+  reloadRuns,
   startRun,
   continueRun,
   refreshConflicts,
@@ -45,6 +52,8 @@ const shouldStickToBottom = ref(true)
 const LOG_BOTTOM_THRESHOLD = 24
 const onlyErrors = ref(false)
 const onlyConflicts = ref(false)
+const refreshingRuns = ref(false)
+const showConfigPanel = ref(true)
 type RecommendationFeedback = {
   tone: 'success' | 'warning'
   title: string
@@ -53,7 +62,7 @@ type RecommendationFeedback = {
 }
 
 const filteredLog = computed(() => {
-  const raw = logContent.value || ''
+  const raw = takeModemLogTail(logContent.value || '')
   if (!onlyErrors.value && !onlyConflicts.value) return raw
   const lines = raw.split(/\r?\n/)
   const out = lines.filter((line) => {
@@ -226,9 +235,49 @@ function showRecommendationToast(feedback: RecommendationFeedback) {
 async function handleStart() {
   try {
     await startRun()
+    showConfigPanel.value = false
     message.success('已启动 Modem升级任务')
   } catch (error) {
     message.error(String((error as Error)?.message ?? error))
+  }
+}
+
+async function handleSelectRun(runId: string) {
+  try {
+    showConfigPanel.value = false
+    await selectRun(runId)
+  } catch (error) {
+    message.error(String((error as Error)?.message ?? error))
+  }
+}
+
+function openConfigPanel() {
+  showConfigPanel.value = true
+}
+
+function closeConfigPanel() {
+  showConfigPanel.value = false
+}
+
+function toggleConfigPanel() {
+  if (showConfigPanel.value) {
+    closeConfigPanel()
+    return
+  }
+  openConfigPanel()
+}
+
+async function handleRefreshRuns() {
+  refreshingRuns.value = true
+  try {
+    await reloadRuns()
+    if (selectedRunId.value) {
+      await selectRun(selectedRunId.value)
+    }
+  } catch (error) {
+    message.error(String((error as Error)?.message ?? error))
+  } finally {
+    refreshingRuns.value = false
   }
 }
 
@@ -285,100 +334,333 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="main-grid">
-    <div class="ea-stack">
+  <div class="workspace-layout">
+    <div class="workspace-left">
       <ModemBaselineConfigCard
-        :model-value="config"
-        :build-projects="buildProjects"
-        :build-projects-warning="buildProjectsWarning"
-        :loading-build-projects="loadingBuildProjects"
         :loading="starting || loading"
         :notice-text="noticeText"
         :parsing="parsingNotice"
         :recommending="recommending"
-        @update:model-value="applyConfig"
+        :config-active="showConfigPanel"
         @update:notice-text="noticeText = $event"
-        @refresh-projects="loadBuildProjects()"
         @parse-and-apply="handleParseAndApply"
+        @toggle-config="toggleConfigPanel"
         @start="handleStart"
       />
-    </div>
 
-    <div class="ea-stack">
-      <ModemBaselineStagePanel
-        v-if="selectedRun"
-        :run="selectedRun"
-        :items="stageItems"
-        :summary="summaryText"
-        :refreshing="refreshing"
-        :continuing="continuing"
-        @refresh-conflicts="handleRefreshConflicts"
-        @continue-run="handleContinueRun"
+      <ModemBaselineHistoryPanel
+        :runs="runs"
+        :selected-run-id="showConfigPanel ? '' : selectedRunId"
+        :loading="refreshingRuns || loading"
+        @select="handleSelectRun"
+        @refresh="handleRefreshRuns"
       />
-
-      <div v-else class="ea-card conflict-empty">暂无运行记录，填写配置后可直接启动首个基线任务。</div>
-
-      <div class="ea-card ea-stack">
-        <div class="console-head">
-          <div>
-            <div class="ea-section-title">实时日志</div>
-            <h3>执行输出</h3>
-          </div>
-          <span class="ea-pill-muted">Run {{ selectedRun?.runId || '—' }}</span>
-        </div>
-        <ModemBaselineLogFilterBar
-          v-model:only-errors="onlyErrors"
-          v-model:only-conflicts="onlyConflicts"
-          @jump-latest="scrollLogToBottom"
-        />
-        <div ref="logScroller" class="ea-mon-output" @scroll="handleLogScroll">
-          {{ filteredLog || '暂无日志输出' }}
-        </div>
-      </div>
-
-      <div class="ea-card ea-stack">
-        <div class="console-head">
-          <div>
-            <div class="ea-section-title">冲突工作区</div>
-            <h3>待处理文件</h3>
-          </div>
-          <span :class="conflictFiles.length ? 'ea-pill-warn' : 'ea-pill-ok'">
-            {{ conflictFiles.length ? `${conflictFiles.length} 个条目` : '当前无冲突' }}
-          </span>
-        </div>
-
-        <div v-if="conflictFiles.length" class="conflict-list">
-          <div v-for="file in conflictFiles" :key="file" class="conflict-item">
-            <div>
-              <strong>{{ file }}</strong>
-              <p>研发手动处理完成后，请先点“刷新冲突”，确认清空后再继续执行。</p>
-            </div>
-            <div class="conflict-actions">
-              <span class="ea-pill-warn">待处理</span>
-              <NButton secondary size="small" @click="handleOpenConflictFile(file)">打开文件</NButton>
-            </div>
-          </div>
-        </div>
-
-        <div v-else class="conflict-empty">
-          当前任务没有冲突文件；如果刚处理过冲突，请点击“刷新冲突”确认状态。
-        </div>
-      </div>
 
       <div v-if="errorMessage" class="preview-note">
         <strong>接入异常</strong>
         <span>{{ errorMessage }}</span>
       </div>
     </div>
+
+    <aside class="workspace-detail">
+      <ModemBaselineAdvancedConfig
+        v-if="showConfigPanel"
+        :model-value="config"
+        :build-projects="buildProjects"
+        :build-projects-warning="buildProjectsWarning"
+        :loading-build-projects="loadingBuildProjects"
+        :loading="starting || loading"
+        @update:model-value="applyConfig"
+        @refresh-projects="loadBuildProjects()"
+        @close="closeConfigPanel"
+      />
+
+      <div v-else-if="selectedRun" class="detail-stack ea-stack">
+        <div class="ea-card detail-summary">
+          <div class="detail-head">
+            <div class="detail-title">
+              <h2>{{ selectedRun.config.NODE_BRANCH || '—' }} → {{ selectedRun.config.target_BRANCH || '—' }}</h2>
+              <p class="detail-id">{{ selectedRun.runId }}</p>
+            </div>
+            <div class="detail-meta">
+              <span
+                :class="{
+                  'ea-pill-ok': selectedRun.status === 'success',
+                  'ea-pill-warn': selectedRun.status === 'conflict',
+                  'ea-pill-err': selectedRun.status === 'failed',
+                  'ea-pill-info': selectedRun.status === 'running',
+                  'ea-pill-muted': !['success', 'conflict', 'failed', 'running'].includes(selectedRun.status),
+                }"
+              >
+                {{ statusMeta.label }}
+              </span>
+              <NButton secondary size="small" @click="handleSelectRun(selectedRun.runId)">刷新</NButton>
+            </div>
+          </div>
+
+          <div class="summary-strip">
+            <div class="summary-item">
+              <span class="summary-label">JIRA</span>
+              <span class="summary-value">{{ selectedRun.config.JIRAID || '—' }}</span>
+            </div>
+            <span class="summary-divider" />
+            <div class="summary-item">
+              <span class="summary-label">冲突</span>
+              <span class="summary-value">{{ conflictFiles.length }}</span>
+            </div>
+            <span class="summary-divider" />
+            <div class="summary-item summary-grow">
+              <span class="summary-label">工作区</span>
+              <span class="summary-value" :title="selectedRun.config.work_dir || ''">
+                {{ selectedRun.config.work_dir || '—' }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <ModemBaselineStagePanel
+          :run="selectedRun"
+          :items="stageItems"
+          :summary="summaryText"
+          :refreshing="refreshing"
+          :continuing="continuing"
+          @refresh-conflicts="handleRefreshConflicts"
+          @continue-run="handleContinueRun"
+        />
+
+        <div class="ea-card ea-stack">
+          <div class="console-head">
+            <div>
+              <div class="ea-section-title">执行日志</div>
+              <h3>实时输出</h3>
+            </div>
+            <span class="ea-pill-muted">Run {{ selectedRun.runId }}</span>
+          </div>
+          <ModemBaselineLogFilterBar
+            v-model:only-errors="onlyErrors"
+            v-model:only-conflicts="onlyConflicts"
+            @jump-latest="scrollLogToBottom"
+          />
+          <div ref="logScroller" class="ea-mon-output" @scroll="handleLogScroll">
+            {{ filteredLog || '暂无日志输出' }}
+          </div>
+        </div>
+
+        <div class="ea-card ea-stack">
+          <div class="console-head">
+            <div>
+              <div class="ea-section-title">冲突工作区</div>
+              <h3>待处理文件</h3>
+            </div>
+            <div class="conflict-head-actions">
+              <span :class="conflictFiles.length ? 'ea-pill-warn' : 'ea-pill-ok'">
+                {{ conflictFiles.length ? `${conflictFiles.length} 个条目` : '当前无冲突' }}
+              </span>
+              <template v-if="selectedRun.status === 'conflict'">
+                <NButton secondary size="small" :loading="refreshing" @click="handleRefreshConflicts">
+                  刷新冲突
+                </NButton>
+                <NButton type="primary" size="small" :loading="continuing" @click="handleContinueRun">
+                  继续执行
+                </NButton>
+              </template>
+            </div>
+          </div>
+
+          <div v-if="conflictFiles.length" class="conflict-list">
+            <div v-for="file in conflictFiles" :key="file" class="conflict-item">
+              <div>
+                <strong>{{ file }}</strong>
+                <p>研发手动处理完成后，请先点“刷新冲突”，确认清空后再继续执行。</p>
+              </div>
+              <div class="conflict-actions">
+                <span class="ea-pill-warn">待处理</span>
+                <NButton secondary size="small" @click="handleOpenConflictFile(file)">打开文件</NButton>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="conflict-empty">
+            {{ selectedRun.status === 'conflict'
+              ? '冲突已清空。确认无误后点击上方「继续执行」。'
+              : '当前任务没有冲突文件；如果刚处理过冲突，请点击“刷新冲突”确认状态。' }}
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="ea-card detail-empty">
+        <div>
+          <strong>右侧工作区</strong>
+          <span>选择左侧历史任务查看执行流程与日志，或点击「基础配置」填写分支与路径参数。</span>
+        </div>
+      </div>
+    </aside>
   </div>
 </template>
 
 <style scoped lang="scss">
-.main-grid {
+.workspace-layout {
   display: grid;
-  grid-template-columns: minmax(320px, 0.95fr) minmax(420px, 1.2fr);
+  grid-template-columns: minmax(360px, 460px) minmax(0, 1fr);
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
+  height: calc(100vh - 148px);
+  min-height: 520px;
+}
+
+.workspace-left,
+.workspace-detail {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.workspace-left {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.workspace-left > :deep(.create-card),
+.workspace-left > .preview-note {
+  flex: 0 0 auto;
+}
+
+.workspace-left > :deep(.history-panel) {
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace-detail {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-detail > :deep(.basic-config-card),
+.workspace-detail > .detail-stack,
+.workspace-detail > .detail-empty {
+  flex: 1;
+  min-height: 0;
+}
+
+.detail-stack {
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.detail-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detail-title {
+  min-width: 0;
+  flex: 1;
+
+  h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--head);
+    line-height: 1.3;
+    word-break: break-word;
+  }
+}
+
+.detail-id {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.detail-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.summary-strip {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.summary-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 12px;
+
+  &:first-child {
+    padding-left: 0;
+  }
+}
+
+.summary-grow {
+  flex: 1;
+}
+
+.summary-label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.summary-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--line);
+  flex: 0 0 auto;
+}
+
+.detail-empty {
+  display: grid;
+  place-items: center;
+  padding: 36px;
+  color: var(--muted);
+  text-align: center;
+
+  strong {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text);
+    font-size: 17px;
+  }
+
+  span {
+    font-size: 13px;
+    line-height: 1.5;
+  }
 }
 
 .console-head {
@@ -392,12 +674,6 @@ onUnmounted(() => {
     font-weight: 700;
     color: var(--head);
   }
-
-  p {
-    margin-top: 4px;
-    font-size: 13px;
-    color: var(--muted);
-  }
 }
 
 .ea-mon-output {
@@ -405,6 +681,13 @@ onUnmounted(() => {
   min-height: 320px;
   max-height: 320px;
   overflow: auto;
+}
+
+.conflict-head-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .conflict-list {
@@ -481,17 +764,34 @@ onUnmounted(() => {
 }
 
 @media (max-width: 1200px) {
-  .main-grid {
+  .workspace-layout {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
+  }
+
+  .workspace-left,
+  .workspace-detail {
+    height: auto;
+  }
+
+  .workspace-detail {
+    overflow: visible;
+  }
+
+  .workspace-detail > :deep(.basic-config-card),
+  .workspace-detail > .detail-stack,
+  .workspace-detail > .detail-empty {
+    flex: none;
+    min-height: 360px;
   }
 }
 
 @media (max-width: 720px) {
-  .repo-summary,
   .conflict-item,
   .conflict-actions,
-  .console-head {
-    grid-template-columns: 1fr;
+  .console-head,
+  .detail-head {
     flex-direction: column;
     align-items: stretch;
   }

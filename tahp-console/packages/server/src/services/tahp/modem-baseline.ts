@@ -1659,6 +1659,71 @@ export function readModemBaselineLog(runId: string) {
   return fs.readFileSync(meta.logPath, 'utf-8')
 }
 
+const DEFAULT_LOG_TAIL_BYTES = 512 * 1024
+const DEFAULT_LOG_TAIL_LINES = 800
+
+function readFileTailBytes(filePath: string, maxBytes: number): { text: string; totalBytes: number; truncatedBytes: boolean } {
+  const totalBytes = fs.statSync(filePath).size
+  if (totalBytes <= 0) return { text: '', totalBytes, truncatedBytes: false }
+  if (totalBytes <= maxBytes) {
+    return { text: fs.readFileSync(filePath, 'utf-8'), totalBytes, truncatedBytes: false }
+  }
+
+  const fd = fs.openSync(filePath, 'r')
+  try {
+    const start = totalBytes - maxBytes
+    const buffer = Buffer.alloc(maxBytes)
+    fs.readSync(fd, buffer, 0, maxBytes, start)
+    let text = buffer.toString('utf-8')
+    const firstNl = text.indexOf('\n')
+    if (firstNl >= 0 && firstNl + 1 < text.length) {
+      text = text.slice(firstNl + 1)
+    }
+    return { text, totalBytes, truncatedBytes: true }
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+function takeLastLines(text: string, maxLines: number): { text: string; truncated: boolean } {
+  if (!text || maxLines <= 0) return { text: '', truncated: Boolean(text) }
+  let idx = text.length
+  let lines = 0
+  while (lines < maxLines) {
+    const prev = text.lastIndexOf('\n', idx - 1)
+    if (prev < 0) return { text, truncated: false }
+    lines += 1
+    idx = prev
+  }
+  return { text: text.slice(idx + 1), truncated: true }
+}
+
+export function readModemBaselineLogTail(
+  runId: string,
+  options?: { maxBytes?: number; maxLines?: number },
+): { content: string; truncated: boolean; totalBytes: number; returnedBytes: number } {
+  const meta = readModemBaselineRun(runId)
+  if (!meta?.logPath || !fs.existsSync(meta.logPath)) {
+    return { content: '', truncated: false, totalBytes: 0, returnedBytes: 0 }
+  }
+
+  const maxBytes = Math.max(16 * 1024, Math.min(2 * 1024 * 1024, Number(options?.maxBytes) || DEFAULT_LOG_TAIL_BYTES))
+  const maxLines = Math.max(50, Math.min(5000, Number(options?.maxLines) || DEFAULT_LOG_TAIL_LINES))
+  const tailed = readFileTailBytes(meta.logPath, maxBytes)
+  const lined = takeLastLines(tailed.text, maxLines)
+  let content = lined.text
+  const truncated = tailed.truncatedBytes || lined.truncated
+  if (truncated) {
+    content = `… 日志较大，仅展示最近约 ${maxLines} 行（进入页面已截断，避免卡顿） …\n\n${content}`
+  }
+  return {
+    content,
+    truncated,
+    totalBytes: tailed.totalBytes,
+    returnedBytes: Buffer.byteLength(content, 'utf-8'),
+  }
+}
+
 function sendEvent(res: ServerResponse, event: string, data: unknown) {
   res.write(`event: ${event}\n`)
   res.write(`data: ${JSON.stringify(data)}\n\n`)
@@ -1928,8 +1993,8 @@ export function registerModemBaselineSseClient(runId: string, res: ServerRespons
 
   sendEvent(res, 'status', { status: meta.status, phase: meta.phase, reportPath: meta.reportPath, error: meta.error })
   if (meta.logPath && fs.existsSync(meta.logPath)) {
-    const text = fs.readFileSync(meta.logPath, 'utf-8')
-    if (text) sendEvent(res, 'log', { line: text, full: true })
+    const view = readModemBaselineLogTail(runId)
+    if (view.content) sendEvent(res, 'log', { line: view.content, full: true, truncated: view.truncated })
   }
   if (meta.conflictFiles?.length) {
     sendEvent(res, 'conflicts', { files: meta.conflictFiles })

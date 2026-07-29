@@ -40,6 +40,7 @@ import {
   type ScannedRepoCandidate,
   type UserWorkspaceProfile,
 } from '@/api/tahp/modem-baseline'
+import { appendModemLogTail, takeModemLogTail } from '@/utils/modemBaselineLog'
 
 export type StageItem = {
   key: string
@@ -348,7 +349,10 @@ export function useModemBaseline() {
   const selectedBranchTemplate = computed(
     () => branchTemplates.value.find(item => item.templateId === selectedBranchTemplateId.value) ?? null,
   )
-  const selectedRun = computed(() => runs.value.find(item => item.runId === selectedRunId.value) ?? runs.value[0] ?? null)
+  const selectedRun = computed(() => {
+    if (!selectedRunId.value) return null
+    return runs.value.find(item => item.runId === selectedRunId.value) ?? null
+  })
   const statusMeta = computed(() => getStatusMeta(selectedRun.value?.status, selectedRun.value?.error, selectedRun.value?.phase))
   const stageItems = computed(() => buildStageItems(selectedRun.value?.status, selectedRun.value?.error, selectedRun.value?.phase))
   const conflictFiles = computed(() => selectedRun.value?.conflictFiles ?? [])
@@ -480,11 +484,10 @@ export function useModemBaseline() {
   async function reloadRuns() {
     const nextRuns = await listModemBaselineRuns()
     runs.value = nextRuns
-    if (!selectedRunId.value && nextRuns.length) {
-      selectedRunId.value = nextRuns[0].runId
-    }
     if (selectedRunId.value && !nextRuns.find(item => item.runId === selectedRunId.value)) {
-      selectedRunId.value = nextRuns[0]?.runId ?? ''
+      selectedRunId.value = ''
+      logContent.value = ''
+      closeEventSource()
     }
   }
 
@@ -570,7 +573,7 @@ export function useModemBaseline() {
 
   async function loadLog(runId: string) {
     const data = await getModemBaselineLog(runId)
-    logContent.value = data.content || ''
+    logContent.value = takeModemLogTail(data.content || '')
   }
 
   function subscribe(runId: string) {
@@ -606,9 +609,9 @@ export function useModemBaseline() {
         const payload = JSON.parse((event as MessageEvent).data) as { line?: string; full?: boolean }
         if (!payload.line) return
         if (payload.full || !logContent.value) {
-          logContent.value = payload.line
+          logContent.value = takeModemLogTail(payload.line)
         } else {
-          logContent.value += payload.line
+          logContent.value = appendModemLogTail(logContent.value, payload.line)
         }
       } catch {}
     })
@@ -669,9 +672,6 @@ export function useModemBaseline() {
 
     try {
       await reloadRuns()
-      if (selectedRunId.value) {
-        await selectRun(selectedRunId.value)
-      }
     } finally {
       loading.value = false
     }
@@ -1072,6 +1072,7 @@ export function useModemBaseline() {
     clearSelectedRepo,
     loadBuildProjects,
     runPrecheck,
+    reloadRuns,
     selectRun,
     startRun,
     continueRun,

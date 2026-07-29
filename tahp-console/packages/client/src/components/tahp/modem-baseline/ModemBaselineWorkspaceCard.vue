@@ -165,7 +165,7 @@ function isScannedRepoImported(localPath: string) {
 </script>
 
 <template>
-  <div class="ea-card ea-stack">
+  <div class="ea-card workspace-panel">
     <div class="cfg-head">
       <div>
         <div class="ea-section-title">工作区与仓库</div>
@@ -214,48 +214,50 @@ function isScannedRepoImported(localPath: string) {
       <NButton secondary @click="emit('open-manual-add')">手动新增Modem仓库</NButton>
     </div>
 
-    <div v-if="scanWarnings?.length" class="warning-list">
-      <div v-for="warning in scanWarnings" :key="warning" class="warning-item">{{ warning }}</div>
-    </div>
+    <div class="workspace-body">
+      <div v-if="scanWarnings?.length" class="warning-list">
+        <div v-for="warning in scanWarnings" :key="warning" class="warning-item">{{ warning }}</div>
+      </div>
 
-    <div v-if="sortedScanResults.length" class="scan-list">
-      <div class="ea-section-title">扫描结果</div>
-      <div
-        v-for="item in sortedScanResults"
-        :key="item.localPath"
-        class="scan-item"
-        :class="{ 'scan-item--imported': isScannedRepoImported(item.localPath) }"
-      >
-        <div>
-          <strong>{{ item.repoName }}</strong>
-          <p>{{ item.localPath }}</p>
-          <p v-if="inferPlatformFromPath(item.localPath)" class="scan-platform">
-            推断平台：{{ inferPlatformFromPath(item.localPath) }}
-          </p>
-          <p v-if="isScannedRepoImported(item.localPath)" class="scan-status">已导入到仓库清单</p>
-        </div>
-        <div class="scan-actions">
-          <NButton
-            secondary
-            size="small"
-            :disabled="isScannedRepoImported(item.localPath)"
-            @click="openScanImportDialog(item)"
-          >
-            修改后导入
-          </NButton>
-          <NButton
-            type="primary"
-            size="small"
-            :loading="savingRepo"
-            :disabled="isScannedRepoImported(item.localPath) || !inferPlatformFromPath(item.localPath)"
-            @click="emit('save-repo', {
-              label: inferPlatformFromPath(item.localPath),
-              localPath: item.localPath,
-              platform: inferPlatformFromPath(item.localPath),
-            })"
-          >
-            快速导入
-          </NButton>
+      <div v-if="sortedScanResults.length" class="scan-list">
+        <div class="ea-section-title">扫描结果</div>
+        <div
+          v-for="item in sortedScanResults"
+          :key="item.localPath"
+          class="scan-item"
+          :class="{ 'scan-item--imported': isScannedRepoImported(item.localPath) }"
+        >
+          <div>
+            <strong>{{ item.repoName }}</strong>
+            <p>{{ item.localPath }}</p>
+            <p v-if="inferPlatformFromPath(item.localPath)" class="scan-platform">
+              推断平台：{{ inferPlatformFromPath(item.localPath) }}
+            </p>
+            <p v-if="isScannedRepoImported(item.localPath)" class="scan-status">已导入到仓库清单</p>
+          </div>
+          <div class="scan-actions">
+            <NButton
+              secondary
+              size="small"
+              :disabled="isScannedRepoImported(item.localPath)"
+              @click="openScanImportDialog(item)"
+            >
+              修改后导入
+            </NButton>
+            <NButton
+              type="primary"
+              size="small"
+              :loading="savingRepo"
+              :disabled="isScannedRepoImported(item.localPath) || !inferPlatformFromPath(item.localPath)"
+              @click="emit('save-repo', {
+                label: inferPlatformFromPath(item.localPath),
+                localPath: item.localPath,
+                platform: inferPlatformFromPath(item.localPath),
+              })"
+            >
+              快速导入
+            </NButton>
+          </div>
         </div>
       </div>
     </div>
@@ -291,11 +293,35 @@ function isScannedRepoImported(localPath: string) {
 </template>
 
 <style scoped lang="scss">
+.workspace-panel {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+
+  > .ea-field,
+  > .cfg-head,
+  > .cfg-actions {
+    flex: 0 0 auto;
+  }
+}
+
+.workspace-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .cfg-head {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
+  flex: 0 0 auto;
 
   h3 {
     font-size: 18px;
@@ -312,9 +338,9 @@ function isScannedRepoImported(localPath: string) {
 
 .cfg-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 10px;
   flex-wrap: wrap;
+  gap: 10px;
+  flex: 0 0 auto;
 }
 
 .warning-list {

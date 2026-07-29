@@ -9,6 +9,8 @@ const props = defineProps<{
   updating?: boolean
   removing?: boolean
   refreshingBranches?: boolean
+  /** 右侧等高滚动模式：展示全部过滤结果，列表区域内部滚动 */
+  fillHeight?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -79,6 +81,7 @@ const filteredRepos = computed(() => {
 
 const total = computed(() => filteredRepos.value.length)
 const pagedRepos = computed(() => {
+  if (props.fillHeight) return filteredRepos.value
   const start = (page.value - 1) * pageSize
   return filteredRepos.value.slice(start, start + pageSize)
 })
@@ -185,7 +188,7 @@ function branchTemplateTagLabel(status?: RepoProfile['branchTemplateStatus']) {
 </script>
 
 <template>
-  <div class="ea-card ea-stack">
+  <div class="ea-card repo-list-card" :class="{ 'is-fill': fillHeight }">
     <div class="list-head">
       <div>
         <div class="ea-section-title">仓库清单</div>
@@ -204,63 +207,65 @@ function branchTemplateTagLabel(status?: RepoProfile['branchTemplateStatus']) {
       <NInput v-model:value="keyword" placeholder="搜索平台 / 路径" clearable />
     </div>
 
-    <NEmpty v-if="!repos.length" description="当前还没有已登记仓库，先在上方新增或扫描导入。" />
-    <NEmpty v-else-if="!filteredRepos.length" description="未找到匹配仓库，换个关键词试试。" />
+    <div class="repo-scroll">
+      <NEmpty v-if="!repos.length" description="当前还没有已登记仓库，先在左侧新增或扫描导入。" />
+      <NEmpty v-else-if="!filteredRepos.length" description="未找到匹配仓库，换个关键词试试。" />
 
-    <div v-else class="repo-list">
-      <div
-        v-for="repo in pagedRepos"
-        :key="repo.repoId"
-        class="repo-item"
-        :class="{ 'repo-item--active': repo.repoId === selectedRepoId }"
-      >
-        <div class="repo-meta">
-          <div class="repo-head">
-            <div class="repo-title">
-              <strong>{{ repo.label }}</strong>
-              <NTag v-if="repo.repoId === selectedRepoId" size="small" type="success" round>当前选中</NTag>
-              <NTag
-                v-if="repo.branchTemplateStatus"
-                size="small"
-                :type="branchTemplateTagType(repo.branchTemplateStatus)"
-                round
-                :title="repo.branchTemplateError || ''"
-              >
-                {{ branchTemplateTagLabel(repo.branchTemplateStatus) }}
-              </NTag>
+      <div v-else class="repo-list">
+        <div
+          v-for="repo in pagedRepos"
+          :key="repo.repoId"
+          class="repo-item"
+          :class="{ 'repo-item--active': repo.repoId === selectedRepoId }"
+        >
+          <div class="repo-meta">
+            <div class="repo-head">
+              <div class="repo-title">
+                <strong>{{ repo.label }}</strong>
+                <NTag v-if="repo.repoId === selectedRepoId" size="small" type="success" round>当前选中</NTag>
+                <NTag
+                  v-if="repo.branchTemplateStatus"
+                  size="small"
+                  :type="branchTemplateTagType(repo.branchTemplateStatus)"
+                  round
+                  :title="repo.branchTemplateError || ''"
+                >
+                  {{ branchTemplateTagLabel(repo.branchTemplateStatus) }}
+                </NTag>
+              </div>
+              <div class="repo-actions">
+                <NButton secondary size="small" @click="emit('choose', repo.repoId)">设为当前</NButton>
+                <NButton secondary size="small" :loading="refreshingBranches" @click="emit('refreshBranches', repo.repoId)">刷新分支</NButton>
+                <NButton secondary size="small" @click="openEdit(repo)">编辑</NButton>
+                <NButton tertiary size="small" type="error" :loading="removing" @click="emit('remove', repo.repoId)">删除</NButton>
+              </div>
             </div>
-            <div class="repo-actions">
-              <NButton secondary size="small" @click="emit('choose', repo.repoId)">设为当前</NButton>
-              <NButton secondary size="small" :loading="refreshingBranches" @click="emit('refreshBranches', repo.repoId)">刷新分支</NButton>
-              <NButton secondary size="small" @click="openEdit(repo)">编辑</NButton>
-              <NButton tertiary size="small" type="error" :loading="removing" @click="emit('remove', repo.repoId)">删除</NButton>
+            <p>{{ repo.localPath }}</p>
+            <div class="repo-extra">
+              <span class="ea-pill-muted">平台 {{ repo.platform || repo.label }}</span>
+              <span class="ea-pill-muted">映射 {{ repo.mappedPrefix }} → {{ repo.remotePrefix }}</span>
             </div>
-          </div>
-          <p>{{ repo.localPath }}</p>
-          <div class="repo-extra">
-            <span class="ea-pill-muted">平台 {{ repo.platform || repo.label }}</span>
-            <span class="ea-pill-muted">映射 {{ repo.mappedPrefix }} → {{ repo.remotePrefix }}</span>
-          </div>
-          <div v-if="getRepoBranchSummary(repo)" class="repo-branches">
-            <div class="repo-branches__row">
-              <NTag size="small" type="info" round>主干</NTag>
-              <span
-                class="repo-branches__text"
-                :title="getRepoBranchSummary(repo)?.trunk || ''"
-              >
-                {{ getRepoBranchSummary(repo)?.trunk || '—' }}
-              </span>
-            </div>
-            <div v-for="mp in getRepoBranchSummary(repo)?.mpItems || []" :key="mp.tos" class="repo-branches__row">
-              <NTag size="small" type="info" round>{{ mp.tos }}</NTag>
-              <span class="repo-branches__text" :title="mp.text">{{ mp.text }}</span>
+            <div v-if="getRepoBranchSummary(repo)" class="repo-branches">
+              <div class="repo-branches__row">
+                <NTag size="small" type="info" round>主干</NTag>
+                <span
+                  class="repo-branches__text"
+                  :title="getRepoBranchSummary(repo)?.trunk || ''"
+                >
+                  {{ getRepoBranchSummary(repo)?.trunk || '—' }}
+                </span>
+              </div>
+              <div v-for="mp in getRepoBranchSummary(repo)?.mpItems || []" :key="mp.tos" class="repo-branches__row">
+                <NTag size="small" type="info" round>{{ mp.tos }}</NTag>
+                <span class="repo-branches__text" :title="mp.text">{{ mp.text }}</span>
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <div v-if="filteredRepos.length > pageSize" class="pagination-wrap">
+    <div v-if="!fillHeight && filteredRepos.length > pageSize" class="pagination-wrap">
       <NPagination v-model:page="page" :page-size="pageSize" :item-count="total" />
     </div>
 
@@ -314,11 +319,23 @@ function branchTemplateTagLabel(status?: RepoProfile['branchTemplateStatus']) {
 </template>
 
 <style scoped lang="scss">
+.repo-list-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+
+  &.is-fill {
+    height: 100%;
+  }
+}
+
 .list-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  flex: 0 0 auto;
 
   h3 {
     font-size: 18px;
@@ -331,6 +348,17 @@ function branchTemplateTagLabel(status?: RepoProfile['branchTemplateStatus']) {
     font-size: 13px;
     color: var(--muted);
   }
+}
+
+.search-row {
+  flex: 0 0 auto;
+}
+
+.repo-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .repo-list {
@@ -435,6 +463,7 @@ function branchTemplateTagLabel(status?: RepoProfile['branchTemplateStatus']) {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+  flex: 0 0 auto;
 }
 
 .repo-actions {

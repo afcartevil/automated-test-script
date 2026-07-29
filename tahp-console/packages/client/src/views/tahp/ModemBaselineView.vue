@@ -78,6 +78,7 @@ function nav(name: string) {
 .modem-shell {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
+  height: calc(100vh - 120px);
   min-height: calc(100vh - 120px);
   margin: -8px -28px -40px;
   background: var(--bg);
@@ -223,12 +224,22 @@ function nav(name: string) {
 
 .modem-main {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 12px 16px 16px;
+  overflow: hidden;
 }
 
 .modem-main-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modem-main-body > :deep(*) {
   flex: 1;
   min-height: 0;
 }

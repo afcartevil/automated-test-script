@@ -10,6 +10,7 @@ const props = defineProps<{
   summary: string
   refreshing?: boolean
   continuing?: boolean
+  showActions?: boolean
 }>()
 
 defineEmits<{
@@ -18,6 +19,7 @@ defineEmits<{
 }>()
 
 const unresolvedCount = computed(() => props.run.conflictFiles?.length ?? 0)
+const actionsVisible = computed(() => props.showActions !== false)
 </script>
 
 <template>
@@ -25,11 +27,11 @@ const unresolvedCount = computed(() => props.run.conflictFiles?.length ?? 0)
     <div class="stage-top">
       <div>
         <div class="ea-section-title">执行流程</div>
-        <h3>基线升级工作台</h3>
+        <h3>阶段进度</h3>
         <p>{{ summary }}</p>
       </div>
 
-      <div class="stage-actions">
+      <div v-if="actionsVisible" class="stage-actions">
         <NButton secondary :loading="refreshing" @click="$emit('refresh-conflicts')">刷新冲突</NButton>
         <NButton
           type="primary"

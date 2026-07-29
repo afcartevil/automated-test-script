@@ -17,7 +17,7 @@ import {
   openModemBaselineConflictFile,
   parseModemPatchNotice,
   precheckModemPatchConfig,
-  readModemBaselineLog,
+  readModemBaselineLogTail,
   readModemBaselineRun,
   recommendModemPatchConfig,
   refreshModemBaselineConflicts,
@@ -322,7 +322,14 @@ tahpModemBaselineRoutes.get('/runs/:runId/log', async (ctx) => {
     ctx.body = { success: false, error: 'not_found' }
     return
   }
-  ctx.body = { success: true, data: { content: readModemBaselineLog(ctx.params.runId) } }
+  const query = ctx.query as Record<string, string | string[] | undefined>
+  const rawLines = Array.isArray(query.tailLines) ? query.tailLines[0] : query.tailLines
+  const rawBytes = Array.isArray(query.maxBytes) ? query.maxBytes[0] : query.maxBytes
+  const view = readModemBaselineLogTail(ctx.params.runId, {
+    maxLines: rawLines ? Number(rawLines) : undefined,
+    maxBytes: rawBytes ? Number(rawBytes) : undefined,
+  })
+  ctx.body = { success: true, data: view }
 })
 
 tahpModemBaselineRoutes.get('/runs/:runId/events', async (ctx) => {

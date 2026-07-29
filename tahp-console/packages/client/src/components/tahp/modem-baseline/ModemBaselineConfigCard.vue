@@ -1,47 +1,44 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { NButton, NInput, NSelect } from 'naive-ui'
-import type { ModemBaselineConfig } from '@/api/tahp/modem-baseline'
+import { NButton, NInput } from 'naive-ui'
 
 const props = defineProps<{
-  modelValue: ModemBaselineConfig
-  buildProjects?: string[]
-  buildProjectsWarning?: string
-  loadingBuildProjects?: boolean
   loading?: boolean
   noticeText: string
   parsing?: boolean
   recommending?: boolean
+  configActive?: boolean
 }>()
 
 const emit = defineEmits<{
-  'update:modelValue': [value: ModemBaselineConfig]
   'update:noticeText': [value: string]
-  'refresh-projects': []
   'parse-and-apply': []
+  'toggle-config': []
   'start': []
 }>()
-
-function updateField<K extends keyof ModemBaselineConfig>(key: K, value: ModemBaselineConfig[K]) {
-  emit('update:modelValue', { ...props.modelValue, [key]: value })
-}
-
-const projectOptions = computed(() =>
-  (props.buildProjects ?? []).map(name => ({ label: name, value: name })),
-)
 
 const processing = computed(() => Boolean(props.parsing || props.recommending))
 </script>
 
 <template>
-  <div class="ea-card ea-stack">
-    <div class="cfg-head inner-head">
+  <div class="ea-card ea-stack create-card">
+    <div class="cfg-head">
       <div>
-        <div class="ea-section-title">通知解析与推荐</div>
-        <h3>自动推荐</h3>
+        <div class="ea-section-title">新建升级任务</div>
+        <h3>通知解析</h3>
       </div>
       <div class="cfg-actions">
-        <NButton type="primary" secondary :loading="processing" @click="$emit('parse-and-apply')">解析并应用</NButton>
+        <NButton
+          secondary
+          size="small"
+          :type="configActive ? 'primary' : 'default'"
+          @click="$emit('toggle-config')"
+        >
+          基础配置
+        </NButton>
+        <NButton type="primary" secondary size="small" :loading="processing" @click="$emit('parse-and-apply')">
+          解析并应用
+        </NButton>
       </div>
     </div>
 
@@ -50,171 +47,50 @@ const processing = computed(() => Boolean(props.parsing || props.recommending))
       <NInput
         :value="noticeText"
         type="textarea"
-        :autosize="{ minRows: 4, maxRows: 7 }"
+        :autosize="{ minRows: 3, maxRows: 5 }"
         placeholder="例如：7月基线升级 GEN99-V V11.35"
         @update:value="$emit('update:noticeText', $event)"
       />
     </div>
 
-    <div class="ea-divider" />
-
-    <div class="cfg-head">
-      <div>
-        <div class="ea-section-title">基线配置</div>
-        <h3>执行参数</h3>
-      </div>
-      <div class="cfg-actions">
-        <NButton type="primary" :loading="loading" @click="$emit('start')">启动基线升级</NButton>
-      </div>
-    </div>
-
-    <div class="ea-form-grid2">
-      <div class="ea-field">
-        <label>源分支</label>
-        <NInput
-          :value="modelValue.NODE_BRANCH"
-          placeholder="例如 master"
-          @update:value="updateField('NODE_BRANCH', $event)"
-        />
-      </div>
-
-      <div class="ea-field">
-        <label>目标分支</label>
-        <NInput
-          :value="modelValue.target_BRANCH"
-          placeholder="例如 PRODUCT_V_v0mp1rc_NR15_common"
-          @update:value="updateField('target_BRANCH', $event)"
-        />
-      </div>
-    </div>
-
-    <div class="ea-form-grid2">
-      <div class="ea-field">
-        <label>描述</label>
-        <NInput
-          :value="modelValue.DESCRIPTION"
-          placeholder="例如 BASELINE_UPGRADE"
-          @update:value="updateField('DESCRIPTION', $event)"
-        />
-      </div>
-
-      <div class="ea-field">
-        <label>编译项目</label>
-        <div class="project-row">
-          <NSelect
-            :value="modelValue.build_project || null"
-            :options="projectOptions"
-            :loading="loadingBuildProjects"
-            clearable
-            filterable
-            placeholder="从 work_dir/projects 自动识别"
-            @update:value="updateField('build_project', $event ? String($event) : undefined)"
-          />
-          <NButton secondary :disabled="loading || loadingBuildProjects" @click="$emit('refresh-projects')">
-            刷新项目
-          </NButton>
-        </div>
-        <p class="field-hint">
-          继续执行成功后自动运行 <code>./tools/bld_modem.sh &lt;项目名&gt;</code>
-        </p>
-        <p v-if="buildProjectsWarning" class="field-warn">{{ buildProjectsWarning }}</p>
-      </div>
-    </div>
-
-    <div class="ea-form-grid2">
-      <div class="ea-field">
-        <label>AP 标签</label>
-        <NInput
-          :value="modelValue.AP_lable"
-          placeholder="例如 V13.29"
-          @update:value="updateField('AP_lable', $event)"
-        />
-      </div>
-
-      <div class="ea-field">
-        <label>JIRA ID</label>
-        <NInput
-          :value="modelValue.JIRAID"
-          placeholder="例如 AR-UIF-0001-001-010"
-          @update:value="updateField('JIRAID', $event)"
-        />
-      </div>
-    </div>
-
-    <div class="ea-field">
-      <label>工作区目录</label>
-      <NInput
-        :value="modelValue.work_dir"
-        placeholder="例如 Z:\modem\workspace"
-        @update:value="updateField('work_dir', $event)"
-      />
-    </div>
+    <NButton type="primary" class="start-btn" :loading="loading" @click="$emit('start')">
+      启动基线升级
+    </NButton>
   </div>
 </template>
 
 <style scoped lang="scss">
+.create-card {
+  padding: 14px 16px;
+}
+
 .cfg-head {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   align-items: flex-start;
 
   h3 {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--head);
-  }
-
-  p {
-    font-size: 13px;
-    color: var(--muted);
-    margin-top: 4px;
   }
 }
 
 .cfg-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
-.inner-head {
-  margin-top: 2px;
-}
-
-.project-row {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-
-  :deep(.n-select) {
-    flex: 1;
-    min-width: 0;
-  }
-}
-
-.field-hint {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--muted);
-
-  code {
-    font-size: 12px;
-  }
-}
-
-.field-warn {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #b45309;
-  word-break: break-all;
+.start-btn {
+  width: 100%;
 }
 
 @media (max-width: 720px) {
   .cfg-head,
-  .cfg-actions,
-  .project-row {
+  .cfg-actions {
     flex-direction: column;
     align-items: stretch;
   }
