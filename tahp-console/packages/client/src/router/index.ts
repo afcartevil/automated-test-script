@@ -32,6 +32,11 @@ const router = createRouter({
       component: () => import('@/views/tahp/AdaptDebugView.vue'),
     },
     {
+      path: '/tahp/pipeline',
+      name: 'tahp.pipeline',
+      component: () => import('@/views/tahp/AdaptPipelineView.vue'),
+    },
+    {
       path: '/tahp/bug-analysis',
       name: 'tahp.bug-analysis',
       component: () => import('@/views/tahp/BugAnalysisView.vue'),

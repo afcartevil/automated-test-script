@@ -1,0 +1,875 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>适配流水线 · UX 预览 · EasyAdapter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+/* EasyAdapter V26 Soft Fill — 与 variables.scss / ea-v26.scss 对齐 */
+:root {
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #f1f3f7;
+  --text: #232735;
+  --head: #1b1e2b;
+  --muted: #6d7384;
+  --faint: #9aa0b0;
+  --line: #e8eaf0;
+  --line-strong: #dde0e8;
+  --accent: #5256d4;
+  --accent-soft: #ecedfb;
+  --success: #0f7a5a;
+  --success-soft: #e8f4ee;
+  --info: #0b74b8;
+  --info-soft: #e9f3fb;
+  --warn: #b45309;
+  --warn-soft: #fbf1e3;
+  --error: #d33b3b;
+  --error-soft: #fbeaea;
+  --shadow: 0 1px 2px rgba(20,24,40,.03), 0 10px 26px -18px rgba(20,24,40,.16);
+  --shadow-lg: 0 16px 40px -24px rgba(20,24,40,.3);
+  --indigo-bg: #eef0fb; --indigo-fg: #3f43b5; --indigo-ic: #5256d4;
+  --sky-bg: #e9f3fb; --sky-fg: #0c6aa6; --sky-ic: #0b84cf;
+  --emerald-bg: #e8f4ee; --emerald-fg: #0c6b4f; --emerald-ic: #129b71;
+  --amber-bg: #fbf2e2; --amber-fg: #9a5a06; --amber-ic: #d98014;
+  --violet-bg: #f1ecfb; --violet-fg: #6b3fb5; --violet-ic: #8b5cf6;
+  --rose-bg: #fbecef; --rose-fg: #b03351; --rose-ic: #e0567a;
+  --r-sm: 9px; --r-md: 12px; --r-lg: 18px; --r-xl: 20px;
+  --font: 'Plus Jakarta Sans', system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; font-family: var(--font); color: var(--text);
+  background: var(--bg); font-size: 13.5px; line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select { font-family: inherit; }
+
+/* —— Top nav（对齐首页壳） —— */
+.topbar {
+  height: 56px; background: var(--surface); border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; padding: 0 20px; gap: 8px;
+  position: sticky; top: 0; z-index: 30;
+}
+.logo {
+  display: flex; align-items: center; gap: 10px; margin-right: 18px;
+  color: var(--head); font-weight: 800; font-size: 15px; letter-spacing: -.02em;
+}
+.logo-mark {
+  width: 30px; height: 30px; border-radius: 10px;
+  background: linear-gradient(145deg, #6366f1, #5256d4);
+  color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 800;
+  box-shadow: 0 4px 12px -4px rgba(82,86,212,.55);
+}
+.nav { display: flex; align-items: center; gap: 4px; flex: 1; }
+.nav a {
+  text-decoration: none; color: var(--muted); padding: 7px 14px;
+  border-radius: 999px; font-size: 13.5px; font-weight: 600;
+}
+.nav a:hover { color: var(--text); background: var(--surface-2); }
+.nav a.active { background: var(--accent); color: #fff; }
+.top-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.btn-feedback {
+  background: var(--accent-soft); color: var(--accent); border: none;
+  padding: 7px 14px; border-radius: 999px; font-weight: 700; font-size: 12.5px; cursor: pointer;
+}
+.model-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line); background: #fff; border-radius: 999px;
+  padding: 6px 12px; font-size: 12.5px; color: var(--text); font-weight: 600;
+}
+.dot-live {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--success);
+  box-shadow: 0 0 0 3px rgba(15,122,90,.15); animation: blink 1.6s infinite;
+}
+@keyframes blink { 50% { opacity: .4; } }
+.gear {
+  width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line);
+  background: #fff; display: grid; place-items: center; color: var(--muted); cursor: pointer;
+}
+
+/* —— Page head —— */
+.page-wrap { max-width: 1320px; margin: 0 auto; padding: 18px 24px 40px; }
+.page-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 16px; margin-bottom: 14px;
+}
+.page-head h1 {
+  margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -.02em; color: var(--head);
+}
+.page-head .sub { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.inner-tabs { display: flex; gap: 6px; background: var(--surface-2); padding: 4px; border-radius: 12px; }
+.inner-tab {
+  border: 0; background: transparent; padding: 8px 14px; border-radius: 9px;
+  color: var(--muted); font-weight: 700; font-size: 13px; cursor: pointer;
+}
+.inner-tab.active { background: #fff; color: var(--accent); box-shadow: var(--shadow); }
+.badge-warn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--warn-soft); color: var(--warn); border: 1px solid color-mix(in srgb, var(--amber-ic) 22%, transparent);
+  padding: 7px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  animation: breathe 1.8s ease-in-out infinite;
+}
+@keyframes breathe { 50% { opacity: .78; } }
+
+.scene-bar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-bottom: 14px; padding: 10px 12px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow);
+}
+.scene-bar > span { color: var(--faint); font-size: 12px; font-weight: 700; margin-right: 4px; }
+.scene-btn {
+  border: 1px solid var(--line); background: var(--bg); border-radius: 999px;
+  padding: 6px 12px; color: var(--muted); font-weight: 650; font-size: 12.5px; cursor: pointer;
+}
+.scene-btn:hover { border-color: var(--line-strong); color: var(--text); }
+.scene-btn.active {
+  background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  color: var(--accent);
+}
+
+/* —— Board —— */
+.board {
+  display: grid; grid-template-columns: 220px minmax(0,1fr); gap: 14px;
+  min-height: calc(100vh - 210px);
+}
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-xl); box-shadow: var(--shadow);
+}
+.run-list { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.run-list h3 {
+  margin: 0 0 6px; font-size: 12px; font-weight: 800; color: var(--faint);
+  letter-spacing: .04em; text-transform: uppercase;
+}
+.run-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 12px; border-radius: 14px; border: 1px solid transparent; cursor: pointer;
+  background: var(--bg); text-align: left; width: 100%; color: inherit;
+}
+.run-item:hover { border-color: var(--line-strong); }
+.run-item.selected {
+  background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.run-item .left { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; }
+.btn-new {
+  margin-top: auto; border: 1px dashed var(--line-strong); background: transparent;
+  padding: 12px; border-radius: 14px; color: var(--muted); font-weight: 700; cursor: pointer;
+}
+.btn-new:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+.detail { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.run-header {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding: 16px 18px;
+}
+.run-header h2 { margin: 0; font-size: 17px; font-weight: 800; color: var(--head); letter-spacing: -.01em; }
+.meta { color: var(--muted); font-size: 12.5px; }
+.header-actions { margin-left: auto; display: flex; gap: 8px; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 700;
+}
+.pill-ok { background: var(--success-soft); color: var(--success); }
+.pill-info { background: var(--info-soft); color: var(--info); }
+.pill-warn { background: var(--warn-soft); color: var(--warn); }
+.pill-err { background: var(--error-soft); color: var(--error); }
+.pill-muted { background: var(--surface-2); color: var(--muted); }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border-radius: var(--r-md); border: 1px solid var(--line-strong);
+  background: #fff; color: var(--text); font-weight: 700; font-size: 12.5px; cursor: pointer;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover:not(:disabled) { filter: brightness(1.06); color: #fff; }
+.btn-soft { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.btn-danger { color: var(--error); border-color: color-mix(in srgb, var(--error) 28%, transparent); }
+.btn-danger:hover:not(:disabled) { background: var(--error-soft); color: var(--error); }
+
+/* —— Stepper soft-fill cards —— */
+.stepper-wrap { padding: 16px 18px 14px; }
+.stepper { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.step {
+  min-width: 104px; flex: 1; max-width: 130px; border-radius: 16px;
+  padding: 12px 10px; border: 1px solid transparent; cursor: pointer;
+  text-align: left; transition: transform .12s, box-shadow .12s;
+  background: var(--surface-2); color: var(--muted);
+}
+.step:hover { transform: translateY(-1px); }
+.step .ico {
+  width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center;
+  background: rgba(255,255,255,.72); font-size: 13px; margin-bottom: 8px; font-weight: 700;
+}
+.step .name { font-weight: 800; font-size: 13px; margin-bottom: 2px; }
+.step .dur { font-size: 11.5px; opacity: .85; }
+.step .sum { font-size: 11px; margin-top: 4px; font-weight: 700; opacity: .9; }
+.step.active-sel { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+.step.done { background: var(--emerald-bg); color: var(--emerald-fg); border-color: color-mix(in srgb, var(--emerald-ic) 16%, transparent); }
+.step.running {
+  background: var(--indigo-bg); color: var(--indigo-fg);
+  border-color: color-mix(in srgb, var(--indigo-ic) 22%, transparent);
+  animation: softPulse 1.6s ease-in-out infinite;
+}
+.step.waiting {
+  background: var(--amber-bg); color: var(--amber-fg);
+  border-color: color-mix(in srgb, var(--amber-ic) 22%, transparent);
+  animation: breathe 1.6s ease-in-out infinite;
+}
+.step.failed { background: var(--rose-bg); color: var(--rose-fg); border-color: color-mix(in srgb, var(--rose-ic) 18%, transparent); }
+.step.skipped { background: var(--surface-2); color: var(--faint); border-style: dashed; border-color: var(--line-strong); text-decoration: line-through; }
+.step.pending { background: #f4f5f8; color: var(--faint); }
+
+@keyframes softPulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(82,86,212,.18); }
+  50% { box-shadow: 0 0 0 5px rgba(82,86,212,.04); }
+}
+.loop-arc {
+  margin-top: 12px; text-align: center; font-size: 12px; font-weight: 700;
+  color: var(--amber-fg); background: var(--amber-bg); border-radius: 999px;
+  padding: 6px 12px; display: inline-block; width: 100%;
+}
+
+/* —— 三栏 —— */
+.cols {
+  display: grid; grid-template-columns: 200px minmax(0,1fr) 300px; gap: 12px;
+  padding: 0 0 4px; flex: 1; min-height: 380px;
+}
+.col-card { padding: 14px; min-height: 0; overflow: auto; }
+.col-card h3 {
+  margin: 0 0 10px; font-size: 12px; font-weight: 800; color: var(--faint);
+  letter-spacing: .04em; text-transform: uppercase;
+}
+.tree-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border-radius: 10px; cursor: pointer; font-weight: 650; color: var(--text);
+}
+.tree-item:hover { background: var(--bg); }
+.tree-item.sel { background: var(--accent-soft); color: var(--accent); }
+.tree-item.child { padding-left: 28px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.st-ico {
+  width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center;
+  font-size: 11px; font-weight: 800; flex-shrink: 0;
+}
+.st-done { background: var(--success-soft); color: var(--success); }
+.st-running { background: var(--accent-soft); color: var(--accent); }
+.st-waiting { background: var(--warn-soft); color: var(--warn); }
+.st-failed { background: var(--error-soft); color: var(--error); }
+.st-pending { background: var(--surface-2); color: var(--faint); }
+.st-skipped { background: var(--surface-2); color: var(--faint); }
+
+.panel-title { font-size: 15px; font-weight: 800; color: var(--head); margin: 0 0 12px; }
+.kv { display: grid; grid-template-columns: 84px 1fr; gap: 8px 12px; margin-bottom: 14px; }
+.kv .k { color: var(--muted); font-weight: 600; }
+.kv .emph {
+  display: inline-block; background: var(--amber-bg); color: var(--amber-fg);
+  border-radius: 8px; padding: 2px 8px; font-weight: 700; font-size: 12.5px;
+}
+.phases { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.phase {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 12px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line);
+  font-weight: 650;
+}
+.phase.running { background: var(--indigo-bg); border-color: color-mix(in srgb, var(--indigo-ic) 18%, transparent); color: var(--indigo-fg); }
+.log {
+  height: 168px; overflow: auto; background: #1b1e2b; color: #c8ccd8;
+  border-radius: 14px; padding: 12px 14px; font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px; line-height: 1.55;
+}
+.log .ok { color: #7ddea0; }
+.log .err { color: #ff8a9a; }
+
+/* —— Human / resume —— */
+.human-card {
+  border-radius: 16px; padding: 14px; margin-bottom: 10px;
+  background: var(--amber-bg); border: 1px solid color-mix(in srgb, var(--amber-ic) 20%, transparent);
+  color: var(--amber-fg);
+}
+.human-card.fail {
+  background: var(--rose-bg); border-color: color-mix(in srgb, var(--rose-ic) 20%, transparent);
+  color: var(--rose-fg);
+}
+.human-card.indigo {
+  background: var(--indigo-bg); border-color: color-mix(in srgb, var(--indigo-ic) 18%, transparent);
+  color: var(--indigo-fg);
+}
+.human-card h4 { margin: 0 0 4px; font-size: 13.5px; font-weight: 800; }
+.human-card .sub { opacity: .8; font-size: 12px; margin-bottom: 8px; font-weight: 600; }
+.human-card .msg { margin-bottom: 12px; font-size: 13px; line-height: 1.5; color: var(--text); }
+.human-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.change-banner {
+  display: flex; justify-content: space-between; align-items: center;
+  background: rgba(255,255,255,.65); border-radius: 10px; padding: 8px 10px;
+  margin-bottom: 10px; font-weight: 700; font-size: 12.5px; color: var(--text);
+}
+.change-banner a { color: var(--accent); font-weight: 800; text-decoration: none; }
+.resume-opts { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; }
+.opt {
+  display: flex; align-items: flex-start; gap: 10px;
+  border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+  cursor: pointer; background: #fff; color: var(--text);
+}
+.opt:hover { border-color: var(--line-strong); }
+.opt.selected {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+}
+.opt.unsafe { opacity: .85; }
+.opt.unsafe .hint { color: var(--warn); font-size: 12px; font-weight: 700; margin-top: 2px; }
+.badge-rec {
+  margin-left: auto; background: #fff; color: var(--accent);
+  border: 1px solid var(--accent); font-size: 10.5px; font-weight: 800;
+  padding: 2px 7px; border-radius: 999px; white-space: nowrap;
+}
+.opt.selected .badge-rec { background: var(--accent); color: #fff; }
+.scope { display: flex; gap: 14px; margin-bottom: 12px; color: var(--muted); font-size: 12.5px; align-items: center; }
+.scope label { display: flex; gap: 6px; align-items: center; color: var(--text); font-weight: 650; cursor: pointer; }
+.empty-human {
+  text-align: center; padding: 36px 16px; color: var(--muted);
+  background: var(--bg); border-radius: 16px; border: 1px dashed var(--line-strong);
+  font-weight: 650;
+}
+.file-list {
+  display: none; margin: -2px 0 10px; padding: 10px 12px; border-radius: 10px;
+  background: rgba(255,255,255,.7); font-size: 12px; color: var(--muted); line-height: 1.6;
+}
+.file-list.show { display: block; }
+
+/* —— Iteration —— */
+.iter {
+  display: flex; align-items: center; gap: 14px; padding: 12px 18px;
+}
+.iter .label { color: var(--faint); font-weight: 800; font-size: 12px; letter-spacing: .04em; white-space: nowrap; }
+.iter-track { display: flex; align-items: center; flex: 1; gap: 0; }
+.iter-node { display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; min-width: 90px; }
+.iter-node .dot {
+  width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line-strong); background: #fff;
+}
+.iter-node.failed .dot { background: var(--error); border-color: var(--error); }
+.iter-node.running .dot { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px rgba(82,86,212,.15); }
+.iter-node span { font-size: 11.5px; font-weight: 700; color: var(--muted); }
+.iter-line { height: 2px; flex: 1; max-width: 100px; background: var(--line); margin: 0 4px 20px; border-radius: 2px; }
+.iter-line.solid { background: color-mix(in srgb, var(--error) 55%, var(--line)); }
+.iter-line.dash { background: repeating-linear-gradient(90deg, var(--faint) 0 4px, transparent 4px 8px); }
+.iter-cap { color: var(--faint); font-size: 12px; font-weight: 650; }
+
+/* —— Wizard / workflow —— */
+.panel-page { padding: 22px; }
+.steps-row { display: flex; gap: 8px; margin-bottom: 20px; }
+.wstep {
+  flex: 1; text-align: center; padding: 10px; border-radius: 12px;
+  background: var(--bg); color: var(--faint); font-size: 12.5px; font-weight: 700;
+}
+.wstep.on { background: var(--accent-soft); color: var(--accent); }
+.wstep.done { background: var(--success-soft); color: var(--success); }
+.form-row { margin-bottom: 14px; }
+.form-row label { display: block; margin-bottom: 5px; color: var(--muted); font-weight: 700; font-size: 12.5px; }
+.warn-box {
+  background: var(--amber-bg); color: var(--amber-fg); border-radius: 14px;
+  padding: 14px 16px; margin: 14px 0; font-weight: 650; line-height: 1.55;
+  border: 1px solid color-mix(in srgb, var(--amber-ic) 18%, transparent);
+}
+.wf-row {
+  display: grid; grid-template-columns: 28px 1.4fr 100px 90px 48px;
+  gap: 8px; align-items: center; padding: 12px 4px; border-bottom: 1px solid var(--line);
+  font-weight: 650;
+}
+.tone-chip {
+  display: inline-flex; padding: 3px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 800;
+}
+.tone-ok { background: var(--success-soft); color: var(--success); }
+.tone-mute { background: var(--surface-2); color: var(--muted); }
+
+.overlay {
+  display: none; position: fixed; inset: 0; background: rgba(27,30,43,.4);
+  align-items: center; justify-content: center; z-index: 50; backdrop-filter: blur(2px);
+}
+.overlay.show { display: flex; }
+.modal {
+  background: #fff; border-radius: 20px; width: 440px; max-width: 92vw;
+  padding: 22px; box-shadow: var(--shadow-lg); border: 1px solid var(--line);
+}
+.modal h3 { margin: 0 0 10px; font-size: 17px; font-weight: 800; color: var(--head); }
+.modal ul { margin: 8px 0 14px; padding-left: 18px; color: var(--error); font-weight: 650; }
+.toast {
+  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(8px);
+  background: var(--head); color: #fff; padding: 12px 18px; border-radius: 14px;
+  opacity: 0; pointer-events: none; transition: .2s; z-index: 60; font-weight: 650;
+  box-shadow: var(--shadow-lg);
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.drawer {
+  display: none; position: fixed; top: 0; right: 0; width: 340px; height: 100%;
+  background: #fff; border-left: 1px solid var(--line); z-index: 40;
+  padding: 18px; box-shadow: -12px 0 40px rgba(20,24,40,.08); overflow: auto;
+}
+.drawer.show { display: block; }
+.hint-strip {
+  background: var(--indigo-bg); color: var(--indigo-fg); font-size: 12px; font-weight: 650;
+  padding: 8px 20px; text-align: center; border-bottom: 1px solid color-mix(in srgb, var(--indigo-ic) 12%, transparent);
+}
+.hint-strip b { font-weight: 800; }
+.hidden { display: none !important; }
+
+@media (max-width: 1400px) {
+  .cols { grid-template-columns: 180px minmax(0,1fr); }
+  .human-col { display: none; }
+}
+@media (max-width: 900px) {
+  .board { grid-template-columns: 1fr; }
+  .run-list { flex-direction: row; flex-wrap: wrap; }
+  .btn-new { margin-top: 0; width: 100%; }
+}
+</style>
+</head>
+<body>
+
+<div class="hint-strip">UX 预览 · 视觉对齐 EasyAdapter V26 Soft Fill · 线框见 <b>ux-wireframe.xml</b></div>
+
+<header class="topbar">
+  <div class="logo"><span class="logo-mark">EA</span>EasyAdapter</div>
+  <nav class="nav">
+    <a href="#">首页</a>
+    <a href="#">AI 适配调试</a>
+    <a class="active" href="#">适配流水线</a>
+    <a href="#">Modem升级</a>
+    <a href="#">GKI升级</a>
+    <a href="#">公共能力 ▾</a>
+    <a href="#">运营监控 ▾</a>
+  </nav>
+  <div class="top-right">
+    <button class="btn-feedback" type="button">反馈问题</button>
+    <div class="model-pill"><span class="dot-live"></span>deepseek-v4-flash</div>
+    <button class="gear" type="button" aria-label="设置">⚙</button>
+  </div>
+</header>
+
+<main class="page-wrap">
+  <div class="page-head">
+    <div>
+      <h1>适配流水线</h1>
+      <p class="sub">适配 → 编译 → 烧录 → 自检 → 分析 → 审核 → 提交 · 实时进度与断点恢复</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div class="inner-tabs">
+        <button class="inner-tab active" data-tab="board">运行看板</button>
+        <button class="inner-tab" data-tab="create">新建运行</button>
+        <button class="inner-tab" data-tab="workflow">流程编排</button>
+      </div>
+      <div id="pendingBadge" class="badge-warn">⚠ 2 项待人工处理</div>
+    </div>
+  </div>
+
+  <div class="scene-bar" id="sceneBar">
+    <span>场景预览</span>
+    <button class="scene-btn active" data-scene="running">编译进行中</button>
+    <button class="scene-btn" data-scene="gate">能力未接入</button>
+    <button class="scene-btn" data-scene="resume-safe">失败恢复 · 未改代码</button>
+    <button class="scene-btn" data-scene="resume-force">失败恢复 · 已改代码</button>
+    <button class="scene-btn" data-scene="review">人工审核</button>
+  </div>
+
+  <div id="tab-board">
+    <div class="board">
+      <aside class="card run-list">
+        <h3>运行列表</h3>
+        <button class="run-item selected" type="button">
+          <span class="left"><span class="st-ico st-running">●</span>KM9 · 第2轮</span>
+          <span class="pill pill-info">运行</span>
+        </button>
+        <button class="run-item" type="button">
+          <span class="left"><span class="st-ico st-done">✓</span>X6885</span>
+          <span class="pill pill-ok">通过</span>
+        </button>
+        <button class="run-item" type="button">
+          <span class="left"><span class="st-ico st-failed">✗</span>LJ8</span>
+          <span class="pill pill-err">失败</span>
+        </button>
+        <button class="run-item" type="button">
+          <span class="left"><span class="st-ico st-pending">○</span>CM5</span>
+          <span class="pill pill-muted">草稿</span>
+        </button>
+        <button class="btn-new" id="btnGotoCreate" type="button">+ 新建运行</button>
+      </aside>
+
+      <section class="detail">
+        <div class="card run-header">
+          <h2>KM9 · tOS16.3.0</h2>
+          <span class="pill pill-info" id="runStatus">● 运行中</span>
+          <span class="meta" id="runMeta">第2轮 / 共3轮 · 已运行 3h12m</span>
+          <div class="header-actions">
+            <button class="btn" type="button" onclick="toast('已暂停（示意）')">暂停</button>
+            <button class="btn btn-danger" type="button" onclick="toast('终止需二次确认（示意）')">终止</button>
+            <button class="btn btn-soft" id="btnResumeHeader" type="button" disabled>从…恢复</button>
+          </div>
+        </div>
+
+        <div class="card stepper-wrap">
+          <div class="stepper" id="stepper"></div>
+          <div class="loop-arc" id="loopArc">第2轮回环 · 审核完成后按产物新鲜度推荐恢复点</div>
+        </div>
+
+        <div class="cols">
+          <div class="card col-card" id="nodeTree"></div>
+          <div class="card col-card" id="nodePanel"></div>
+          <div class="card col-card human-col" id="humanPanel"></div>
+        </div>
+
+        <div class="card iter" id="iterBar">
+          <span class="label">迭代收敛</span>
+          <div class="iter-track">
+            <div class="iter-node failed" onclick="toast('打开第1轮只读归档（示意）')">
+              <div class="dot"></div><span>第1轮 · 3 失败</span>
+            </div>
+            <div class="iter-line solid"></div>
+            <div class="iter-node running">
+              <div class="dot"></div><span>第2轮 · 进行中</span>
+            </div>
+            <div class="iter-line dash"></div>
+            <div class="iter-node">
+              <div class="dot"></div><span>第3轮</span>
+            </div>
+          </div>
+          <span class="iter-cap">上限 3 轮</span>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="tab-create" class="hidden">
+    <div class="card panel-page">
+      <div class="steps-row">
+        <div class="wstep done">① 选项目</div>
+        <div class="wstep done">② 确认前置</div>
+        <div class="wstep done">③ 配置执行</div>
+        <div class="wstep on">④ 确认启动</div>
+      </div>
+      <h2 style="margin:0 0 16px;font-size:18px;font-weight:800;color:var(--head)">确认启动计划</h2>
+      <div class="form-row"><label>项目</label><div style="font-weight:700">KM9 · tOS16.3.0 → tOS16.4.0</div></div>
+      <div class="form-row"><label>启用域</label><div style="font-weight:650">TP · LCM · 充电 · Sensor（音频已取消）</div></div>
+      <div class="form-row"><label>编译</label><div style="font-weight:650">Z:\ · project/KM9_NEW · userdebug · 增量 krn,vext</div></div>
+      <div class="form-row"><label>设备 / 用例</label><div style="font-weight:650">device-88A1 · 推荐策略</div></div>
+      <div class="warn-box">
+        <b>启动前须知</b><br/>
+        · 编译：能力未接入，将在该节点等待人工确认<br/>
+        · 提交 Gerrit：能力未接入，将在该节点转人工
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn" type="button">上一步</button>
+        <button class="btn btn-primary" type="button" onclick="toast('创建 run 并启动（示意）')">启动流水线</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-workflow" class="hidden">
+    <div class="card panel-page">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h2 style="margin:0;font-size:18px;font-weight:800;color:var(--head)">标准适配流水线 · v1</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn" type="button">恢复默认</button>
+          <button class="btn btn-primary" type="button" onclick="toast('校验后保存 workflow（示意）')">保存</button>
+        </div>
+      </div>
+      <p class="meta" style="margin-bottom:12px">初版仅开关与不可用策略；不做拖拽排序</p>
+      <div class="wf-row" style="color:var(--faint);font-size:12px;font-weight:800">
+        <span></span><span>节点</span><span>不可用时</span><span>能力</span><span>启用</span>
+      </div>
+      <div class="wf-row"><span>①</span><span>前置信息</span><span>失败</span><span class="tone-chip tone-ok">可用</span><input type="checkbox" checked/></div>
+      <div class="wf-row"><span>②</span><span>AI 适配</span><span>失败</span><span class="tone-chip tone-ok">可用</span><input type="checkbox" checked/></div>
+      <div class="wf-row"><span>③</span><span>编译</span><span>转人工</span><span class="tone-chip tone-mute">未接入</span><input type="checkbox" checked/></div>
+      <div class="wf-row"><span>④</span><span>烧录</span><span>转人工</span><span class="tone-chip tone-ok">可用</span><input type="checkbox" checked/></div>
+      <div class="wf-row"><span>⑤</span><span>AI 自检</span><span>转人工</span><span class="tone-chip tone-ok">可用</span><input type="checkbox" checked/></div>
+      <div class="wf-row"><span>⑥</span><span>故障分析</span><span>跳过</span><span class="tone-chip tone-ok">可用</span><input type="checkbox" checked/></div>
+      <div class="wf-row"><span>⑦</span><span>人工审核</span><span>—</span><span class="tone-chip tone-ok">可用</span><input type="checkbox" checked/></div>
+      <div class="wf-row"><span>⑧</span><span>提交 Gerrit</span><span>转人工</span><span class="tone-chip tone-mute">未接入</span><input type="checkbox"/></div>
+      <div class="form-row" style="margin-top:16px;max-width:160px">
+        <label>最大迭代轮次</label>
+        <input type="number" value="3" style="width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg)"/>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="overlay" id="forceModal">
+  <div class="modal">
+    <h3>确认从过期产物继续？</h3>
+    <p style="color:var(--muted);margin:0">选中节点依赖以下过期/缺失产物：</p>
+    <ul id="forceMissing"></ul>
+    <p style="color:var(--muted);font-size:12.5px">继续可能导致自检结论不可信。此操作会记入本轮 note。</p>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+      <button class="btn" type="button" onclick="closeForce()">取消</button>
+      <button class="btn btn-danger" type="button" onclick="confirmForce()">仍要继续</button>
+    </div>
+  </div>
+</div>
+
+<div class="drawer" id="humanDrawer">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <b style="font-size:15px;font-weight:800">人工介入</b>
+    <button class="btn" type="button" onclick="document.getElementById('humanDrawer').classList.remove('show')">关闭</button>
+  </div>
+  <div id="drawerBody"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const NODES = [
+  { key:'prereq', label:'前置', idx:'①' },
+  { key:'adapt', label:'适配', idx:'②' },
+  { key:'build', label:'编译', idx:'③' },
+  { key:'flash', label:'烧录', idx:'④' },
+  { key:'selfcheck', label:'自检', idx:'⑤' },
+  { key:'triage', label:'分析', idx:'⑥' },
+  { key:'human_review', label:'审核', idx:'⑦' },
+  { key:'gerrit', label:'提交', idx:'⑧' },
+];
+const SCENES = {
+  running: {
+    statusText:'● 运行中', statusClass:'pill-info', meta:'第2轮 / 共3轮 · 已运行 3h12m',
+    resumeEnabled:false, pending:0,
+    states:{ prereq:'done', adapt:'done', build:'running', flash:'pending', selfcheck:'pending', triage:'pending', human_review:'pending', gerrit:'pending' },
+    active:'build', durations:{ prereq:'14s', adapt:'1h48m', build:'52m' },
+    summaries:{ prereq:'5域', adapt:'5/5域', build:'52%' }, human:'empty-running',
+  },
+  gate: {
+    statusText:'⚠ 待人工', statusClass:'pill-warn', meta:'第1轮 / 共3轮 · 卡在编译人工门',
+    resumeEnabled:true, pending:1,
+    states:{ prereq:'done', adapt:'done', build:'waiting', flash:'pending', selfcheck:'pending', triage:'pending', human_review:'pending', gerrit:'pending' },
+    active:'build', durations:{ prereq:'14s', adapt:'1h48m', build:'12m' },
+    summaries:{ build:'未接入' }, human:'gate',
+  },
+  'resume-safe': {
+    statusText:'⚠ 待人工', statusClass:'pill-warn', meta:'第1轮 · 烧录失败 · 代码未变更',
+    resumeEnabled:true, pending:1,
+    states:{ prereq:'done', adapt:'done', build:'done', flash:'failed', selfcheck:'pending', triage:'pending', human_review:'pending', gerrit:'pending' },
+    active:'flash', durations:{ prereq:'14s', adapt:'1h48m', build:'4h02m', flash:'3m' },
+    summaries:{ build:'全量', flash:'USB断开' }, human:'resume-safe',
+  },
+  'resume-force': {
+    statusText:'⚠ 待人工', statusClass:'pill-warn', meta:'第2轮 · 自检失败后已改代码',
+    resumeEnabled:true, pending:2,
+    states:{ prereq:'done', adapt:'done', build:'done', flash:'done', selfcheck:'failed', triage:'done', human_review:'waiting', gerrit:'pending' },
+    active:'human_review', durations:{ prereq:'14s', adapt:'1h48m', build:'52m', flash:'18m', selfcheck:'1h02m', triage:'22m' },
+    summaries:{ selfcheck:'3失败', triage:'已出结论' }, human:'resume-force',
+  },
+  review: {
+    statusText:'⚠ 待人工', statusClass:'pill-warn', meta:'第2轮 · 等待审核修改',
+    resumeEnabled:true, pending:1,
+    states:{ prereq:'done', adapt:'done', build:'done', flash:'done', selfcheck:'failed', triage:'done', human_review:'waiting', gerrit:'pending' },
+    active:'human_review', durations:{ selfcheck:'1h02m', triage:'22m' },
+    summaries:{ selfcheck:'3失败' }, human:'review',
+  },
+};
+let scene='running', selectedNode='build', resumePick='build', resumeScope='continue', filesOpen=false;
+
+function toast(msg){ const el=document.getElementById('toast'); el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2200); }
+function icon(st){ return ({done:'✓',running:'◐',waiting:'⚠',failed:'✗',skipped:'−',pending:'○'})[st]||'○'; }
+
+function renderStepper(s){
+  const root=document.getElementById('stepper');
+  root.innerHTML=NODES.map(n=>{
+    const st=s.states[n.key];
+    const dur=s.durations[n.key]?`${s.durations[n.key]}`:'';
+    const sum=s.summaries[n.key]?`<div class="sum">${s.summaries[n.key]}</div>`:'';
+    return `<div class="step ${st} ${selectedNode===n.key?'active-sel':''}" data-key="${n.key}">
+      <div class="ico">${icon(st)}</div>
+      <div class="name">${n.idx} ${n.label}</div>
+      <div class="dur">${dur||'等待'}</div>${sum}
+    </div>`;
+  }).join('');
+  root.querySelectorAll('.step').forEach(el=>{
+    el.onclick=()=>{ selectedNode=el.dataset.key; renderAll(); toast(`中栏切换 → ${el.dataset.key}`); };
+  });
+}
+
+function renderTree(s){
+  const items=[['prereq','前置 (5域)'],['adapt','适配'],['build','编译'],['flash','烧录'],['selfcheck','自检'],['triage','分析'],['human_review','审核'],['gerrit','提交']];
+  let html='<h3>节点</h3>';
+  items.forEach(([k,label])=>{
+    const st=s.states[k];
+    html+=`<div class="tree-item ${selectedNode===k?'sel':''}" data-key="${k}"><span class="st-ico st-${st}">${icon(st)}</span>${label}</div>`;
+    if(k==='adapt'&&(scene==='running'||scene==='gate')){
+      ['TP','LCM','充电','Sensor'].forEach(c=>html+=`<div class="tree-item child"><span class="st-ico st-done">✓</span>${c}</div>`);
+      html+=`<div class="tree-item child"><span class="st-ico st-skipped">−</span>音频</div>`;
+    }
+  });
+  document.getElementById('nodeTree').innerHTML=html;
+  document.querySelectorAll('#nodeTree .tree-item[data-key]').forEach(el=>{
+    el.onclick=()=>{ selectedNode=el.dataset.key; renderAll(); };
+  });
+}
+
+function renderPanel(s){
+  const key=selectedNode, st=s.states[key];
+  let body='';
+  if(key==='build'){
+    body=`<div class="kv">
+      <div class="k">模式</div><div>${scene==='resume-safe'?'全量':'增量'}</div>
+      <div class="k">本轮组件</div><div><span class="emph">krn, vext</span> · 须核对防漏编</div>
+    </div>
+    <div class="phases">
+      <div class="phase"><span>repo</span><span style="color:var(--success)">✓ 完成 6m</span></div>
+      <div class="phase ${st==='running'?'running':''}"><span>build</span><span>${st==='running'?'◐ 进行中 46m':'✓ 完成'}</span></div>
+      <div class="phase"><span>package</span><span>${st==='running'?'○ 等待':'✓ 完成'}</span></div>
+    </div>
+    <div class="log"><div>[repo] sync done</div><div class="ok">[build] ninja: build started</div><div>[build] target kernel... 52%</div>
+    ${st==='waiting'||st==='failed'?'<div class="err">[build] capability unavailable — waiting human</div>':''}</div>`;
+  } else if(key==='flash'){
+    body=`<div class="kv"><div class="k">设备</div><div>device-88A1</div><div class="k">包路径</div><div>Z:\\out\\...\\daily.zip</div></div>
+      <div class="log"><div>[flash] device_update start</div>${st==='failed'?'<div class="err">[flash] USB disconnect — failed</div>':'<div>[flash] writing system...</div>'}</div>`;
+  } else if(key==='selfcheck'){
+    body=`<div class="kv"><div class="k">通过</div><div style="color:var(--success);font-weight:800">42</div>
+      <div class="k">失败</div><div style="color:var(--error);font-weight:800">${st==='failed'?'3':'0'}</div>
+      <div class="k">进行中</div><div>${st==='running'?'5':'0'}</div></div>
+      ${st==='failed'?'<div class="human-card fail"><h4>失败用例</h4><div class="msg">· tp_gesture_swipe<br/>· lcm_aod_enter<br/>· charge_temp_protect</div></div>':''}`;
+  } else if(key==='human_review'||key==='triage'){
+    body=`<div class="human-card indigo"><h4>AI 故障分析结论（摘要）</h4>
+      <div class="msg">TP 手势在 AOD 场景下中断；疑似 dtsi interrupt 极性与基线不一致。建议对照参考机 dtsi 并回归 gesture 用例。</div></div>
+      <div class="meta">完整结论可跳转智能诊断页（示意）</div>`;
+  } else {
+    body=`<div class="kv"><div class="k">状态</div><div>${st}</div><div class="k">说明</div><div>DefaultPanel：摘要 + 日志 + refs</div></div>
+      <div class="log"><div>该节点暂无更多专用渲染（示意）</div></div>`;
+  }
+  const labelMap={done:'已完成',running:'进行中',waiting:'待人工处理',failed:'失败',pending:'等待中',skipped:'已跳过'};
+  document.getElementById('nodePanel').innerHTML=
+    `<div class="panel-title">${NODES.find(n=>n.key===key).label} · ${labelMap[st]}</div>`+body;
+}
+
+function resumeOptionsHtml(mode){
+  const opts=mode==='safe'?[
+    {v:'flash',label:'烧录',safety:'safe',rec:true},
+    {v:'selfcheck',label:'AI 自检',safety:'unsafe',hint:'设备镜像可能未刷新（烧录未成功）'},
+    {v:'build',label:'编译',safety:'safe'},
+  ]:[
+    {v:'build',label:'编译',safety:'safe',rec:true},
+    {v:'flash',label:'烧录',safety:'unsafe',hint:'编译产物已过期'},
+    {v:'selfcheck',label:'AI 自检',safety:'unsafe',hint:'设备镜像已过期'},
+  ];
+  if(!opts.find(o=>o.v===resumePick)) resumePick=opts.find(o=>o.rec)?.v||opts[0].v;
+  return opts.map(o=>`<div class="opt ${resumePick===o.v?'selected':''} ${o.safety==='unsafe'?'unsafe':''}" data-v="${o.v}" data-safety="${o.safety}" data-hint="${o.hint||''}">
+    <input type="radio" name="rp" ${resumePick===o.v?'checked':''}/>
+    <div style="flex:1"><div style="font-weight:800">${o.label}</div>${o.hint?`<div class="hint">⚠ ${o.hint}</div>`:''}</div>
+    ${o.rec?'<span class="badge-rec">推荐</span>':''}
+  </div>`).join('');
+}
+
+function bindResume(root){
+  root.querySelectorAll('.opt').forEach(el=>{ el.onclick=()=>{ resumePick=el.dataset.v; renderAll(); }; });
+  const view=root.querySelector('#viewFiles');
+  if(view) view.onclick=e=>{ e.preventDefault(); filesOpen=!filesOpen; root.querySelector('#fileList')?.classList.toggle('show',filesOpen); };
+  root.querySelectorAll('input[name=scope]').forEach(el=>{ el.onchange=()=>{ resumeScope=el.value; }; });
+  const go=root.querySelector('#btnResumeGo');
+  if(go) go.onclick=()=>{
+    const opt=root.querySelector(`.opt[data-v="${resumePick}"]`);
+    if(opt?.dataset.safety==='unsafe'){
+      document.getElementById('forceMissing').innerHTML=`<li>${opt.dataset.hint||'产物过期'}</li>`;
+      document.getElementById('forceModal').classList.add('show');
+    } else toast(`POST /resume { node: '${resumePick}', scope: '${resumeScope}' }`);
+  };
+}
+
+function humanHtml(s){
+  if(s.human==='empty-running') return `<h3>人工介入</h3><div class="empty-human">当前无需人工介入<br/><span style="color:var(--faint)">正在编译</span></div>`;
+  if(s.human==='gate') return `<h3>人工介入</h3><div class="human-card"><h4>⚠ 编译能力尚未接入</h4>
+    <div class="sub">节点：编译 · 等待 12m</div>
+    <div class="msg">请在构建机手工完成编译后继续。</div>
+    <div class="human-actions">
+      <button class="btn btn-primary" type="button" onclick="toast('POST /human-action confirm_done → 进入烧录')">已手工完成，继续</button>
+      <button class="btn" type="button" onclick="toast('节点 skipped → 下一节点')">跳过</button>
+    </div></div>`;
+  if(s.human==='resume-safe'){
+    if(scene==='resume-safe'&&resumePick==='build') resumePick='flash';
+    return `<h3>人工介入</h3><div class="human-card fail"><h4>⚠ 烧录失败 · 等待人工处理</h4>
+      <div class="sub">节点：烧录 · 等待 8m</div>
+      <div class="change-banner" style="background:var(--success-soft);color:var(--success)"><span>代码未变更 · 编译产物仍可用</span></div>
+      <div style="margin-bottom:4px;font-weight:800;color:var(--muted);font-size:12px">从哪里继续</div>
+      <div class="resume-opts">${resumeOptionsHtml('safe')}</div>
+      <div class="scope"><span>范围</span>
+        <label><input type="radio" name="scope" value="continue" checked/> 增量续跑</label>
+        <label><input type="radio" name="scope" value="restart"/> 全部重来</label></div>
+      <div class="human-actions">
+        <button class="btn btn-primary" type="button" id="btnResumeGo">继续</button>
+        <button class="btn btn-danger" type="button" onclick="toast('终止流水线')">终止流水线</button>
+      </div></div>`;
+  }
+  if(s.human==='resume-force'||s.human==='review'){
+    return `<h3>人工介入</h3><div class="human-card"><h4>⚠ 请审核分析结论并完成修改</h4>
+      <div class="sub">节点：人工审核 · 等待中</div>
+      <div class="change-banner"><span>检测到代码已变更（12 个文件）</span><a href="#" id="viewFiles">查看</a></div>
+      <div class="file-list" id="fileList">· kernel/.../tp_common.c<br/>· vendor/.../lcm_drv.c<br/>· …</div>
+      <div class="msg">是否改过代码由 git 指纹判定，无需勾选。完成后选择恢复点。</div>
+      <div style="margin-bottom:4px;font-weight:800;color:var(--muted);font-size:12px">从哪里继续</div>
+      <div class="resume-opts">${resumeOptionsHtml('force')}</div>
+      <div class="scope"><span>范围</span>
+        <label><input type="radio" name="scope" value="continue" ${resumeScope==='continue'?'checked':''}/> 增量续跑</label>
+        <label><input type="radio" name="scope" value="restart" ${resumeScope==='restart'?'checked':''}/> 全部重来</label></div>
+      <div class="human-actions">
+        <button class="btn btn-primary" type="button" id="btnResumeGo">继续</button>
+        <button class="btn btn-danger" type="button" onclick="toast('终止流水线')">终止流水线</button>
+      </div></div>
+      ${s.pending>1?'<div class="human-card fail"><h4>⚠ 3 用例失败待审</h4><div class="human-actions"><button class="btn" type="button" onclick="selectedNode=\'triage\';renderAll()">查看结论</button></div></div>':''}`;
+  }
+  return '';
+}
+
+function renderHuman(s){
+  const panel=document.getElementById('humanPanel');
+  panel.innerHTML=humanHtml(s); bindResume(panel);
+  document.getElementById('drawerBody').innerHTML=humanHtml(s); bindResume(document.getElementById('drawerBody'));
+}
+
+function renderAll(){
+  const s=SCENES[scene];
+  const status=document.getElementById('runStatus');
+  status.className='pill '+s.statusClass; status.textContent=s.statusText;
+  document.getElementById('runMeta').textContent=s.meta;
+  document.getElementById('btnResumeHeader').disabled=!s.resumeEnabled;
+  const badge=document.getElementById('pendingBadge');
+  if(s.pending>0){ badge.style.display=''; badge.textContent=`⚠ ${s.pending} 项待人工处理`; }
+  else badge.style.display='none';
+  if(!s.states[selectedNode]) selectedNode=s.active;
+  renderStepper(s); renderTree(s); renderPanel(s); renderHuman(s);
+  document.getElementById('loopArc').style.display=(scene==='running'||scene==='resume-force'||scene==='review')?'':'none';
+  document.title=s.pending>0?`(${s.pending}) 适配流水线 · EasyAdapter`:'适配流水线 · UX 预览 · EasyAdapter';
+}
+function closeForce(){ document.getElementById('forceModal').classList.remove('show'); }
+function confirmForce(){ closeForce(); toast(`POST /resume { node: '${resumePick}', scope: '${resumeScope}', force: true }`); }
+
+document.querySelectorAll('.inner-tab').forEach(tab=>{
+  tab.onclick=()=>{
+    document.querySelectorAll('.inner-tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    const id=tab.dataset.tab;
+    document.getElementById('tab-board').classList.toggle('hidden', id!=='board');
+    document.getElementById('tab-create').classList.toggle('hidden', id!=='create');
+    document.getElementById('tab-workflow').classList.toggle('hidden', id!=='workflow');
+    document.getElementById('sceneBar').classList.toggle('hidden', id!=='board');
+  };
+});
+document.getElementById('btnGotoCreate').onclick=()=>document.querySelector('.inner-tab[data-tab="create"]').click();
+document.querySelectorAll('.scene-btn').forEach(btn=>{
+  btn.onclick=()=>{
+    document.querySelectorAll('.scene-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active'); scene=btn.dataset.scene; selectedNode=SCENES[scene].active; filesOpen=false;
+    if(scene==='resume-safe') resumePick='flash';
+    if(scene==='resume-force'||scene==='review') resumePick='build';
+    renderAll();
+  };
+});
+document.getElementById('pendingBadge').onclick=()=>{ document.getElementById('humanDrawer').classList.add('show'); toast('窄屏：右栏收为抽屉'); };
+document.getElementById('btnResumeHeader').onclick=()=>{
+  if(document.getElementById('btnResumeHeader').disabled) return;
+  document.getElementById('humanDrawer').classList.add('show'); toast('「从…恢复」打开同一选择器');
+};
+renderAll();
+</script>
+</body>
+</html>

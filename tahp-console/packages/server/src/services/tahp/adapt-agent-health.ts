@@ -1,5 +1,8 @@
 /**
  * Agent 运行健康检查：模型额度/API 错误友好化、空跑检测。
+ *
+ * 注意：勿对 Agent 完整输出做宽泛关键词匹配——Skill SOP、路径报错里常出现
+ * "does not exist" / "401" 等字样，会误判为模型额度问题（智能诊断不走此检测）。
  */
 
 const QUOTA_PATTERNS = [
@@ -12,31 +15,27 @@ const QUOTA_PATTERNS = [
   /exceeded.*limit/i,
   /rate.?limit/i,
   /too many requests/i,
-  /429/,
-  /402/,
   /billing/i,
-  /credit/i,
   /out of credits/i,
   /api[_ ]?key.*invalid/i,
   /invalid.*api[_ ]?key/i,
   /authentication.*fail/i,
   /unauthorized/i,
-  /401/,
-  /permission denied/i,
   /model.*not found/i,
-  /does not exist/i,
-  /无权限/,
   /鉴权失败/,
 ]
+
+const HUMANIZED_PREFIX = '当前大模型不可用'
 
 /** 将 Bridge / 模型原始错误转为用户可操作的提示 */
 export function humanizeAgentError(raw: string): string {
   const text = raw.trim()
   if (!text) return 'Agent 运行出错，请检查模型配置与网络连接'
+  if (text.startsWith(HUMANIZED_PREFIX)) return text
 
   if (QUOTA_PATTERNS.some(re => re.test(text))) {
     return [
-      '当前大模型不可用（常见原因：额度不足、余额耗尽、API Key 无效或触发限流）。',
+      `${HUMANIZED_PREFIX}（常见原因：额度不足、余额耗尽、API Key 无效或触发限流）。`,
       '请在控制台「模型管理」切换其他模型或检查 Provider 配置后重试。',
       `原始信息：${truncate(text, 280)}`,
     ].join('\n')
@@ -49,10 +48,10 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`
 }
 
-/** 从 Agent 输出文本中嗅探模型侧错误 */
+/** 从 Bridge / API 短错误文本中嗅探模型侧错误（不用于 Agent 长报告正文） */
 export function detectModelErrorInText(text: string): string | undefined {
   const t = text.trim()
-  if (!t) return undefined
+  if (!t || t.length > 600) return undefined
   if (QUOTA_PATTERNS.some(re => re.test(t))) {
     return humanizeAgentError(t)
   }
@@ -74,9 +73,6 @@ export function detectUnhealthyAgentRun(input: AgentRunHealthInput): string | un
   if (input.bridgeError?.trim()) {
     return humanizeAgentError(input.bridgeError)
   }
-
-  const textErr = detectModelErrorInText(input.fullResponse)
-  if (textErr) return textErr
 
   const textLen = input.fullResponse.trim().length
   const noTools = input.toolsUsedCount === 0

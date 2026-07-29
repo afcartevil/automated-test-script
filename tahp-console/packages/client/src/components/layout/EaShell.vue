@@ -21,6 +21,7 @@ const CONFIG_ROUTE_NAMES = new Set([
 const coreNav = [
   { name: 'tahp.dashboard', label: '首页' },
   { name: 'tahp.adapt-debug', label: 'AI 适配调试' },
+  { name: 'tahp.pipeline', label: '适配流水线' },
   { name: 'tahp.modem-baseline.workbench', label: 'Modem升级' },
   { name: 'tahp.gki-patch.dashboard', label: 'GKI 升级' },
 ]

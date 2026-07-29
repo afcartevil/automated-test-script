@@ -1,0 +1,338 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TAHP AI 适配流水线 — UX 线框与交互说明
+  配套：ui-spec.md · 可视化预览：ux-preview.html（用浏览器打开）
+  原则：UI 由 timeline.nodes[] 驱动，不硬编码节点列表
+-->
+<ux product="TAHP" feature="adapt-pipeline" route="/#/tahp/pipeline" version="1.0">
+
+  <!-- ========== 全局壳 ========== -->
+  <shell>
+    <nav>
+      <item>仪表盘</item>
+      <item>智能诊断</item>
+      <item>AI 适配调试</item>
+      <item active="true">适配流水线</item>
+      <item>AI 自检</item>
+      <item>报告</item>
+    </nav>
+    <page-tabs>
+      <tab key="board" label="运行看板" default="true"/>
+      <tab key="create" label="新建运行"/>
+      <tab key="workflow" label="流程编排"/>
+      <badge id="pending-human" when="pending_human_count &gt; 0" tone="warning">
+        ⚠ {N} 项待人工处理
+      </badge>
+    </page-tabs>
+  </shell>
+
+  <!-- ========== 场景 A：运行看板 · 编译进行中 ========== -->
+  <screen id="board-running" tab="board" title="运行看板 · 编译进行中">
+    <layout>
+      <region name="run-list" width="240" collapsible="48">
+        <run-item status="running" selected="true">KM9 · 第2轮</run-item>
+        <run-item status="passed">X6885</run-item>
+        <run-item status="failed">LJ8</run-item>
+        <run-item status="draft">CM5</run-item>
+        <action id="create-run">+ 新建</action>
+      </region>
+
+      <region name="run-detail">
+        <header>
+          <title>KM9 · tOS16.3.0</title>
+          <status tone="info">● 运行中</status>
+          <meta>第2轮 / 共3轮 · 已运行 3h12m</meta>
+          <actions>
+            <button>暂停</button>
+            <button danger="true">终止</button>
+            <button id="open-resume" enabled-when="waiting_human|failed">从…恢复</button>
+          </actions>
+        </header>
+
+        <!-- 步进条：纯展示，点击切中栏 -->
+        <stepper component="EaStageStepper">
+          <node key="prereq"    label="前置"  index="1" status="done"           duration="14s"   summary="5域"/>
+          <node key="adapt"     label="适配"  index="2" status="done"           duration="1h48m" summary="5/5域"/>
+          <node key="build"     label="编译"  index="3" status="running"        duration="52m"   summary="52%" active="true"/>
+          <node key="flash"     label="烧录"  index="4" status="pending"/>
+          <node key="selfcheck" label="自检"  index="5" status="pending"/>
+          <node key="triage"    label="分析"  index="6" status="pending"/>
+          <node key="human_review" label="审核" index="7" status="pending"/>
+          <node key="gerrit"    label="提交"  index="8" status="pending"/>
+          <loop-arc from="human_review" to="build" visible-when="iteration &gt; 1" label="第2轮回环"/>
+        </stepper>
+
+        <columns>
+          <column name="node-tree" width="220">
+            <tree>
+              <item status="done">前置 (5域)</item>
+              <item status="done" expandable="true">
+                适配
+                <child status="done">TP</child>
+                <child status="done">LCM</child>
+                <child status="done">充电</child>
+                <child status="done">Sensor</child>
+                <child status="skipped">音频</child>
+              </item>
+              <item status="running" selected="true">编译</item>
+              <item status="pending">烧录</item>
+              <item status="pending">自检</item>
+              <item status="pending">分析</item>
+              <item status="pending">审核</item>
+              <item status="pending">提交</item>
+            </tree>
+          </column>
+
+          <column name="node-panel" flex="1">
+            <panel renderer="BuildPanel">
+              <kv>
+                <row k="模式" v="增量"/>
+                <row k="本轮组件" v="krn, vext" emphasis="true" note="必须显式展示，防漏编"/>
+              </kv>
+              <subphases>
+                <phase name="repo"    status="done"    duration="6m"/>
+                <phase name="build"   status="running" duration="46m"/>
+                <phase name="package" status="pending"/>
+              </subphases>
+              <log-viewer component="EaLogViewer" virtual-scroll="true" buffer="2000"/>
+            </panel>
+          </column>
+
+          <column name="human" width="300" collapse-below="1400" as="drawer">
+            <empty>当前无需人工介入 · 正在编译</empty>
+          </column>
+        </columns>
+
+        <iteration-bar visible-when="iterations.length &gt; 1">
+          <round index="1" verdict="failed" label="✗ 3 失败"/>
+          <round index="2" verdict="running" label="● 进行中" current="true"/>
+          <cap>上限 3 轮</cap>
+        </iteration-bar>
+      </region>
+    </layout>
+
+    <interactions>
+      <interaction trigger="click stepper.node">
+        中栏切换到该节点详情；URL 追加 ?node={key}
+      </interaction>
+      <interaction trigger="click iteration.round[history]">
+        中栏进入「第 N 轮 · 历史」只读归档，操作按钮禁用
+      </interaction>
+      <interaction trigger="hover stepper.node">
+        tooltip：全称 / 状态 / 起止时间 / summary / 不可用原因
+      </interaction>
+      <interaction trigger="socket pipeline.node_progress">
+        2s 内刷新步进条与中栏进度；断线降级 5s 轮询 timeline
+      </interaction>
+    </interactions>
+  </screen>
+
+  <!-- ========== 场景 B：能力未接入 · 人工门 ========== -->
+  <screen id="board-manual-gate" tab="board" title="运行看板 · 编译能力未接入">
+    <stepper>
+      <node key="build" status="waiting_human" blink="true" tone="warning"/>
+    </stepper>
+    <human-card reason="capability_unavailable" wait="12m">
+      <title>⚠ 编译能力尚未接入</title>
+      <meta>节点：编译 · 等待 12m</meta>
+      <message>请在构建机手工完成编译后继续。产物路径稍后可在烧录节点确认。</message>
+      <actions>
+        <button action="confirm_done">已手工完成，继续</button>
+        <button action="skip">跳过</button>
+      </actions>
+    </human-card>
+    <interactions>
+      <interaction trigger="click confirm_done">
+        POST /human-action → 节点 done → 进入 flash
+      </interaction>
+      <interaction trigger="click skip">
+        节点 skipped → 进入下一 enabled 节点
+      </interaction>
+      <interaction trigger="badge pending-human">
+        窄屏时打开右栏抽屉
+      </interaction>
+    </interactions>
+  </screen>
+
+  <!-- ========== 场景 C：失败恢复 · 恢复点选择器（核心交互） ========== -->
+  <screen id="board-resume" tab="board" title="运行看板 · 失败后从…恢复">
+    <context>
+      <fact>烧录失败后人工已介入；系统按产物新鲜度计算恢复点</fact>
+      <variant id="code-unchanged" recommended="flash">
+        未改代码 → build 仍新鲜 → 推荐烧录（省 4–8h 编译）
+      </variant>
+      <variant id="code-changed" recommended="build" default-demo="true">
+        检测到代码变更（12 文件）→ build/flashed/testresult 过期 → 推荐编译
+      </variant>
+    </context>
+
+    <resume-picker component="PipelineResumePicker">
+      <header>
+        <title>⚠ 烧录失败 · 等待人工处理</title>
+        <meta>节点：烧录 · 等待 8m</meta>
+      </header>
+
+      <source-change detected="true" files="12">
+        检测到代码已变更（12 个文件）
+        <action id="view-files">查看</action>
+        <expand>
+          <file>kernel/drivers/input/touchscreen/tp_common.c</file>
+          <file>vendor/transsion/lcm/.../lcm_drv.c</file>
+          <file>…</file>
+        </expand>
+      </source-change>
+
+      <field name="resume_node" label="从哪里继续">
+        <option value="build"     safety="safe"   recommended="true">编译</option>
+        <option value="flash"     safety="unsafe" hint="编译产物已过期">烧录</option>
+        <option value="selfcheck" safety="unsafe" hint="设备镜像已过期">AI 自检</option>
+        <option value="adapt"     safety="safe"   hidden-from-recommend="true">AI 适配</option>
+      </field>
+
+      <field name="resume_scope" label="范围" visible-when="node in [adapt, build]">
+        <option value="continue" default="true">增量续跑</option>
+        <option value="restart">全部重来</option>
+      </field>
+
+      <actions>
+        <button primary="true" action="resume">继续</button>
+        <button danger="true" action="abort">终止流水线</button>
+      </actions>
+    </resume-picker>
+
+    <dialog id="force-confirm" when="selected.safety == unsafe">
+      <title>确认从过期产物继续？</title>
+      <body>
+        选中节点依赖以下过期/缺失产物：
+        <missing kind="build">编译产物已过期（代码已变更）</missing>
+        <missing kind="flashed">设备镜像已过期</missing>
+        继续可能导致自检结论不可信。
+      </body>
+      <actions>
+        <button>取消</button>
+        <button danger="true" submit-force="true">仍要继续</button>
+      </actions>
+    </dialog>
+
+    <interactions>
+      <interaction trigger="open resume-picker">
+        GET /runs/:id/resume-points；默认选中 recommended（必为 safe）
+      </interaction>
+      <interaction trigger="select safe option">
+        可直接点「继续」→ POST /resume { node, scope }
+      </interaction>
+      <interaction trigger="select unsafe option">
+        选项灰显仍可选 → 点继续 → 弹出 force-confirm → 确认后 POST /resume { force:true }
+      </interaction>
+      <interaction trigger="click 从…恢复 in header">
+        同一组件以弹窗形式打开（waiting_human | failed 可用）
+      </interaction>
+      <interaction trigger="click view-files">
+        展开变更文件列表（git 快照差集）
+      </interaction>
+    </interactions>
+  </screen>
+
+  <!-- ========== 场景 D：人工审核 + 动态恢复点 ========== -->
+  <screen id="board-human-review" tab="board" title="人工审核">
+    <panel renderer="DefaultPanel + triage summary">
+      <section>AI 故障分析结论摘要（Markdown）</section>
+      <section>失败用例列表</section>
+    </panel>
+    <human-card reason="awaiting_review">
+      <title>⚠ 请审核分析结论并完成修改</title>
+      <message>完成后选择从哪个节点继续。是否改过代码由系统比对 git 指纹判定，无需勾选。</message>
+      <resume-picker embed="true"/>
+    </human-card>
+  </screen>
+
+  <!-- ========== 场景 E：新建运行向导 ========== -->
+  <screen id="create-wizard" tab="create" title="新建运行">
+    <wizard steps="4">
+      <step n="1" title="选项目">
+        <field>项目下拉（adapt-prereqs/projects）</field>
+        <field>战役选择</field>
+        <validate>必选项目</validate>
+      </step>
+      <step n="2" title="确认前置">
+        <domain-panels>
+          <note>incomplete_required 红标可就地补填；可勾选/取消域</note>
+        </domain-panels>
+        <validate>启用域必填项非空</validate>
+      </step>
+      <step n="3" title="配置执行">
+        <field>编译上下文 mapped_root / workspace / components / variant</field>
+        <field>目标设备</field>
+        <field>用例策略 推荐 | 固定</field>
+        <field>迭代上限</field>
+        <validate>路径必须在 mapped_root 下</validate>
+      </step>
+      <step n="4" title="确认启动">
+        <readonly>
+          <list>域清单</list>
+          <list>流程节点（标注当前不可用将转人工）</list>
+          <list>预计人工介入点</list>
+        </readonly>
+        <warning must-show="true">
+          编译：能力未接入，将在该节点等待人工确认
+        </warning>
+        <action>启动流水线</action>
+      </step>
+    </wizard>
+  </screen>
+
+  <!-- ========== 场景 F：流程编排 ========== -->
+  <screen id="workflow-editor" tab="workflow" title="流程编排（初版：开关 + 只读）">
+    <list>
+      <row enabled="true"  key="prereq"       onUnavailable="fail"         probe="可用"/>
+      <row enabled="true"  key="adapt"        onUnavailable="fail"         probe="可用"/>
+      <row enabled="true"  key="build"        onUnavailable="manual_gate"  probe="未接入"/>
+      <row enabled="true"  key="flash"        onUnavailable="manual_gate"  probe="可用"/>
+      <row enabled="true"  key="selfcheck"    onUnavailable="manual_gate"  probe="可用"/>
+      <row enabled="true"  key="triage"       onUnavailable="skip"         probe="可用"/>
+      <row enabled="true"  key="human_review" onUnavailable="—"            probe="可用"/>
+      <row enabled="false" key="gerrit"       onUnavailable="manual_gate"  probe="未接入"/>
+    </list>
+    <field>最大迭代轮次</field>
+    <actions>
+      <button>恢复默认</button>
+      <button primary="true">保存</button>
+    </actions>
+    <note>不做拖拽排序；顺序变更走 workflow.json</note>
+  </screen>
+
+  <!-- ========== 状态视觉令牌（EasyAdapter V26 Soft Fill） ========== -->
+  <design-tokens source="tahp-console/packages/client/src/styles/variables.scss">
+    <token name="accent" value="#5256d4"/>
+    <token name="bg" value="#f7f8fa"/>
+    <token name="card-radius" value="20px"/>
+    <status name="pending"         soft="#f4f5f8" fg="#9aa0b0" icon="○"/>
+    <status name="running"         soft="#eef0fb" fg="#3f43b5" icon="◐" motion="softPulse"/>
+    <status name="waiting_human"   soft="#fbf2e2" fg="#9a5a06" icon="⚠" motion="breathe" weight="highest"/>
+    <status name="done"            soft="#e8f4ee" fg="#0c6b4f" icon="✓"/>
+    <status name="failed"          soft="#fbecef" fg="#b03351" icon="✗"/>
+    <status name="skipped"         soft="#f1f3f7" fg="#9aa0b0" icon="−" strike="true"/>
+    <button kind="primary" bg="#5256d4" fg="#fff"/>
+    <button kind="soft" bg="#ecedfb" fg="#5256d4"/>
+  </design-tokens>
+
+  <!-- ========== 关键交互地图（给评审用） ========== -->
+  <interaction-map>
+    <flow name="happy-path">
+      新建 → 启动态 → 步进条推进 → 不可用节点停人工门 → 确认 → … → gerrit → passed
+    </flow>
+    <flow name="fail-resume-safe">
+      节点失败 → 右栏恢复点 → 默认选 recommended(safe) → 继续 → 从该节点往下跑
+    </flow>
+    <flow name="fail-resume-force">
+      选 unsafe → 二次确认列出 missing → force → 继续（记入 iteration.note）
+    </flow>
+    <flow name="code-change-auto">
+      human_review 进入打快照A → 确认打快照B → 指纹变化自动失效下游产物 → 推荐点变化
+    </flow>
+    <flow name="narrow-screen">
+      宽&lt;1400 → 右栏收抽屉 → 点页头徽章打开
+    </flow>
+  </interaction-map>
+
+</ux>

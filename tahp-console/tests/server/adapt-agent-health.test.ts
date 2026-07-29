@@ -34,4 +34,32 @@ describe('adapt-agent-health', () => {
     })
     expect(err).toBeUndefined()
   })
+
+  it('detectUnhealthyAgentRun does not treat path errors in agent output as quota errors', () => {
+    const planning = [
+      '## 任务规划',
+      '',
+      '### 已读取文件',
+      '- comm-framework-agent-test',
+      '',
+      'prj_path Y:\\\\ does not exist',
+    ].join('\n')
+    const err = detectUnhealthyAgentRun({
+      fullResponse: planning,
+      toolsUsedCount: 2,
+      durationMs: 127_000,
+    })
+    expect(err).toBeUndefined()
+  })
+
+  it('detectModelErrorInText ignores long agent reports', () => {
+    const long = `## 任务规划\n${'x'.repeat(700)}\npath does not exist`
+    expect(detectModelErrorInText(long)).toBeUndefined()
+  })
+
+  it('humanizeAgentError does not double-wrap', () => {
+    const once = humanizeAgentError('Error: insufficient quota')
+    const twice = humanizeAgentError(once)
+    expect(twice).toBe(once)
+  })
 })

@@ -33,6 +33,14 @@ const coreItems = [
     icon: `<polygon points="5 3 19 12 5 21 5 3"/>`,
   },
   {
+    name: 'tahp.pipeline',
+    label: '适配流水线',
+    color: '#5256d4',
+    icon: `<rect x="3" y="5" width="6" height="14" rx="2"/>
+           <rect x="11" y="5" width="6" height="14" rx="2"/>
+           <rect x="19" y="5" width="2" height="14" rx="1"/>`,
+  },
+  {
     name: 'tahp.reports',
     label: '报告',
     color: '#18a058',

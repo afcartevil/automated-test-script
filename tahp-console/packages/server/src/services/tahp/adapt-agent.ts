@@ -164,6 +164,25 @@ function isInteractiveAdaptComplete(fullResponse: string): boolean {
     && /##\s*文件修改清单/.test(fullResponse)
 }
 
+const PATH_ISSUE_RE = /(?:路径|path|prj_path|目录|文件).{0,48}(?:不存在|无法访问|无效|未找到)|(?:does not exist|ENOENT|no such file)/i
+
+function detectAdaptExecutionFailure(ctx: AdaptAgentTaskCtx, fullResponse: string): string | undefined {
+  if (ctx.fileChanges.length > 0) return undefined
+
+  if (PATH_ISSUE_RE.test(fullResponse)) {
+    const line = fullResponse.split('\n').map(l => l.trim()).find(l => PATH_ISSUE_RE.test(l))
+    return line || '项目路径无效或不可访问，请检查表单中的 prj_path 是否存在于映射工作区内'
+  }
+
+  const hasPlanning = /##\s*任务规划/.test(fullResponse)
+  const hasResult = /##\s*(?:执行结果|文件修改清单|任务规划回顾)/.test(fullResponse)
+  if (ctx.toolsUsed.length > 0 && hasPlanning && !hasResult) {
+    return 'Agent 仅完成规划未产生文件修改，请检查 prj_path 是否在映射工作区（mapped_root）内且可写'
+  }
+
+  return undefined
+}
+
 function buildAdaptUserInputResumeMessage(
   request: ParsedUserInputRequest,
   values: Record<string, string>,
@@ -838,6 +857,9 @@ async function runAdaptAgentTask(taskId: string, turn: AdaptTurnOptions = { mode
       bridgeError,
     })
     if (unhealthy) throw new Error(unhealthy)
+
+    const executionFailure = detectAdaptExecutionFailure(ctx, fullResponse)
+    if (executionFailure) throw new Error(executionFailure)
 
     const reportText = ctx.transcript?.trim() || fullResponse
     await finalizeAdaptAgentTask(taskId, ctx, reportText, taskStartMs)

@@ -29,6 +29,7 @@ import { setupTahpRunSocket } from './routes/tahp/tahp-run'
 import { initDeviceSelfCheck } from './services/tahp/device-self-check'
 import { startSyncScheduler } from './services/tahp/sync'
 import { startPlanExecutor } from './services/tahp/test-plan-executor'
+import { bootstrapAdaptPipeline } from './routes/tahp/adapt-pipeline'
 import { bootstrapGkiPatchServer } from './services/tahp/gki-patch'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
@@ -257,6 +258,12 @@ export async function bootstrap() {
     startPlanExecutor()
   } catch (err) {
     logger.warn({ err }, '[bootstrap] plan executor failed to start')
+  }
+
+  try {
+    await bootstrapAdaptPipeline()
+  } catch (err) {
+    logger.warn({ err }, '[bootstrap] adapt-pipeline recover failed')
   }
 
   try {
