@@ -145,6 +145,8 @@ tahpModemBaselineRoutes.put('/repos/:repoId', async (ctx) => {
   } catch (error) {
     const message = (error as Error).message
     ctx.status = message === 'invalid_repo_profile'
+      || message === 'repo_branches_trunk_required'
+      || message === 'repo_branches_mp_required'
       ? 400
       : message === 'repo_not_found' || message === 'repo_path_not_found'
         ? 404

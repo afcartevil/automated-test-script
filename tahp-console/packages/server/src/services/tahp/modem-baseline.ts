@@ -108,6 +108,7 @@ export type BranchRule = {
 export type BranchTemplate = {
   templateId: string
   owner: string
+  repoId?: string
   tos: string
   platform: string
   nodeBranch: string
@@ -476,13 +477,52 @@ function updateRepoBranchTemplateState(
   return nextItem
 }
 
+function normalizeRepoBranches(value: unknown): RepoProfile['branches'] | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const input = value as any
+  const trunkInput = input.trunk
+  const mpInput = input.mp
+
+  let trunk: { nodeBranch: string; trunkBranch: string } | undefined
+  if (trunkInput && typeof trunkInput === 'object') {
+    const nodeBranch = String(trunkInput.nodeBranch ?? '').trim()
+    const trunkBranch = String(trunkInput.trunkBranch ?? '').trim()
+    const enabled = nodeBranch || trunkBranch
+    if (enabled) {
+      if (!nodeBranch || !trunkBranch) throw new Error('repo_branches_trunk_required')
+      trunk = { nodeBranch, trunkBranch }
+    }
+  }
+
+  let mp: Array<{ tos: string; mpNodeBranch: string; mpBranch: string }> | undefined
+  if (Array.isArray(mpInput)) {
+    const items: Array<{ tos: string; mpNodeBranch: string; mpBranch: string }> = []
+    for (const entry of mpInput) {
+      if (!entry || typeof entry !== 'object') continue
+      const tos = String((entry as any).tos ?? '').trim().replace(/^tos/i, 'tOS')
+      const mpNodeBranch = String((entry as any).mpNodeBranch ?? '').trim()
+      const mpBranch = String((entry as any).mpBranch ?? '').trim()
+      const enabled = tos || mpNodeBranch || mpBranch
+      if (!enabled) continue
+      if (!tos || !mpNodeBranch || !mpBranch) throw new Error('repo_branches_mp_required')
+      items.push({ tos, mpNodeBranch, mpBranch })
+    }
+    if (items.length) mp = items
+  }
+
+  const result: RepoProfile['branches'] = {}
+  if (trunk) result.trunk = trunk
+  if (mp) result.mp = mp
+  return Object.keys(result).length ? result : undefined
+}
+
 export function updateModemPatchRepo(
   repoId: string,
   input: {
     label?: string
     localPath?: string
     platform?: string
-    branches?: RepoProfile['branches']
+    branches?: unknown
   },
   owner = currentOwner(),
 ): RepoProfile {
@@ -501,7 +541,9 @@ export function updateModemPatchRepo(
   const platform = input.platform !== undefined
     ? String(input.platform).trim()
     : (current.platform ?? '')
-  const branches = input.branches !== undefined ? input.branches : current.branches
+  const branches = input.branches !== undefined
+    ? normalizeRepoBranches(input.branches)
+    : current.branches
 
   if (!label || !localPath || !platform) {
     throw new Error('invalid_repo_profile')
@@ -523,18 +565,43 @@ export function updateModemPatchRepo(
   items.splice(index, 1, nextItem)
   writeRepoProfiles(items, owner)
   if (input.branches !== undefined) {
-    syncBranchTemplatesFromRepoBranches(platform, branches, owner)
+    syncBranchTemplatesFromRepoBranches(repoId, platform, localPath, branches, owner)
   }
   return nextItem
 }
 
+function purgeBranchTemplatesForRepo(repo: RepoProfile, owner = currentOwner()) {
+  const templates = listModemPatchBranchTemplates(owner)
+  if (!templates.length) return
+  const repoId = repo.repoId
+  const normalizedPlatform = normalizeBranchTemplatePlatform(repo.platform || repo.label)
+  const localPath = path.win32.normalize(String(repo.localPath || '').trim())
+  const nextTemplates = templates.filter((item) => {
+    if ((item as any).repoId) return (item as any).repoId !== repoId
+    if (normalizeBranchTemplatePlatform(item.platform) !== normalizedPlatform) return true
+    if (item.sourceSheet === 'manual') return false
+    if ((item.sourceSheet || '').startsWith('auto:')) {
+      const sourceFile = path.win32.normalize(String(item.sourceFile || '').trim())
+      if (sourceFile && localPath && sourceFile === localPath) return false
+    }
+    return true
+  })
+  if (nextTemplates.length === templates.length) return
+  writeModemPatchBranchTemplates(nextTemplates, owner)
+}
+
 export function deleteModemPatchRepo(repoId: string, owner = currentOwner()) {
   const items = listModemPatchRepos(owner)
+  const current = items.find(item => item.repoId === repoId)
+  if (!current) {
+    throw new Error('repo_not_found')
+  }
   const nextItems = items.filter(item => item.repoId !== repoId)
   if (nextItems.length === items.length) {
     throw new Error('repo_not_found')
   }
   writeRepoProfiles(nextItems, owner)
+  purgeBranchTemplatesForRepo(current, owner)
   return { success: true as const }
 }
 
@@ -784,6 +851,26 @@ function findBranchTemplateMatches(
     if (!normalizedPlatform) return true
     return normalizeBranchTemplatePlatform(item.platform) === normalizedPlatform
   })
+}
+
+function findBranchTemplateMatchesForRepo(
+  templates: BranchTemplate[],
+  repo: RepoProfile,
+  tosVersion?: string,
+) {
+  const repoId = repo.repoId
+  const repoLocalPath = path.win32.normalize(String(repo.localPath || '').trim())
+  const normalizedTos = normalizeTosVersion(tosVersion)
+  const repoIdMatches = templates.filter((item) => (item as any).repoId && (item as any).repoId === repoId)
+  const scoped = repoIdMatches.length
+    ? repoIdMatches
+    : templates.filter((item) => {
+      const sourceFile = path.win32.normalize(String(item.sourceFile || '').trim())
+      return sourceFile && repoLocalPath && sourceFile === repoLocalPath
+    })
+
+  if (!normalizedTos) return scoped
+  return scoped.filter((item) => normalizeTosVersion(item.tos) === normalizedTos)
 }
 
 function parseModemPatchBranchTemplatesFromExcel(
@@ -1078,7 +1165,9 @@ export function recommendModemPatchConfig(input: {
   const targetMode = parsed?.targetMode || 'trunk'
   const rules = listModemPatchRules(owner).filter(item => item.enabled)
   const templates = listModemPatchBranchTemplates(owner)
-  const templateMatches = findBranchTemplateMatches(templates, parsed?.tosVersion, platformSource)
+  const templateMatches = repo
+    ? findBranchTemplateMatchesForRepo(templates, repo, parsed?.tosVersion)
+    : findBranchTemplateMatches(templates, parsed?.tosVersion, platformSource)
   const uniqueTemplateMatches = templateMatches.length > 1
     ? Array.from(new Map(
       templateMatches.map(item => [
@@ -1140,7 +1229,7 @@ export function recommendModemPatchConfig(input: {
     })[0]?.rule || null
 
   if (templateAmbiguous) warnings.push('branch_template_ambiguous')
-  else if (!uniqueTemplateMatches.length && parsed?.platform) warnings.push('branch_template_not_found')
+  else if (!uniqueTemplateMatches.length && (repo || parsed?.platform)) warnings.push('branch_template_not_found')
   if (!selectedTemplate && !selectedTemplateNodeBranch && !matched) warnings.push('no_rule_matched')
   const vars: Record<string, string> = {
     platform: platform || basePlatform,
@@ -1364,10 +1453,11 @@ function mergeBranchTemplatesForPlatform(
 }
 
 function syncBranchTemplatesFromRepoBranches(
+  repoId: string,
   repoPlatform: string,
+  repoLocalPath: string,
   branches: RepoProfile['branches'] | undefined,
   owner = currentOwner(),
-  baselineKey = 'tOS16.3',
 ) {
   if (!branches?.trunk?.trunkBranch) return
   const trunkNode = String(branches.trunk.nodeBranch || 'master').trim() || 'master'
@@ -1375,24 +1465,33 @@ function syncBranchTemplatesFromRepoBranches(
   if (!trunkBranch) return
   const mp = Array.isArray(branches.mp) ? branches.mp : []
   const updatedAt = nowIso()
+  const sourceFile = path.win32.normalize(String(repoLocalPath || '').trim())
   const nextTemplates: BranchTemplate[] = mp
     .map(item => ({
       templateId: crypto.randomBytes(8).toString('hex'),
       owner,
+      repoId,
       tos: String(item.tos || '').trim(),
       platform: repoPlatform,
       nodeBranch: trunkNode,
       trunkBranch,
       mpBranch: String(item.mpBranch || '').trim(),
-      mpNodeBranch: String(item.mpNodeBranch || '').trim() || 'master',
-      sourceFile: '',
+      mpNodeBranch: String(item.mpNodeBranch || '').trim(),
+      sourceFile,
       sourceSheet: 'manual',
       updatedAt,
     }))
-    .filter(item => item.tos && item.mpBranch)
+    .filter(item => item.tos && item.mpNodeBranch && item.mpBranch)
 
   if (!nextTemplates.length) return
-  mergeBranchTemplatesForPlatform(repoPlatform, baselineKey, nextTemplates, owner)
+  const normalizedPlatform = normalizeBranchTemplatePlatform(repoPlatform)
+  const existing = listModemPatchBranchTemplates(owner)
+  const preserved = existing.filter((item) => {
+    if (item.sourceSheet !== 'manual') return true
+    if ((item as any).repoId) return (item as any).repoId !== repoId
+    return normalizeBranchTemplatePlatform(item.platform) !== normalizedPlatform
+  })
+  writeModemPatchBranchTemplates(preserved.concat(nextTemplates), owner)
 }
 
 export function autoExtractBranchTemplatesForRepo(
@@ -1449,6 +1548,7 @@ export function autoExtractBranchTemplatesForRepo(
         return {
           templateId: crypto.randomBytes(8).toString('hex'),
           owner,
+          repoId,
           tos: item.tos,
           platform,
           nodeBranch: templateTrunk.nodeBranch || 'master',

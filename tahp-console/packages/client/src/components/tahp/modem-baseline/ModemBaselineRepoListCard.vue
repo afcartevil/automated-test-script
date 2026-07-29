@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { NButton, NEmpty, NInput, NModal, NPagination, NTag } from 'naive-ui'
+import { NButton, NEmpty, NInput, NModal, NPagination, NTag, useMessage } from 'naive-ui'
 import type { RepoProfile } from '@/api/tahp/modem-baseline'
+
+const message = useMessage()
 
 const props = defineProps<{
   repos: RepoProfile[]
@@ -29,7 +31,7 @@ const pendingSave = ref<{ repoId: string; localPath: string; platform: string } 
 const editForm = reactive({
   localPath: '',
   platform: '',
-  trunkNodeBranch: 'master',
+  trunkNodeBranch: '',
   trunkBranch: '',
   mp: [] as Array<{ tos: string; mpNodeBranch: string; mpBranch: string }>,
 })
@@ -51,7 +53,7 @@ function compareTos(left: string, right: string) {
 
 function getRepoBranchSummary(repo: RepoProfile) {
   const trunk = repo.branches?.trunk?.trunkBranch
-    ? `${repo.branches?.trunk?.nodeBranch || 'master'} -> ${repo.branches?.trunk?.trunkBranch}`
+    ? `${String(repo.branches?.trunk?.nodeBranch || '').trim() || '—'} -> ${repo.branches?.trunk?.trunkBranch}`
     : ''
   const mpItems = Array.isArray(repo.branches?.mp) ? [...repo.branches!.mp!] : []
   mpItems.sort((left, right) => compareTos(left.tos, right.tos))
@@ -60,7 +62,7 @@ function getRepoBranchSummary(repo: RepoProfile) {
       trunk,
       mpItems: mpItems.map(item => ({
         tos: item.tos,
-        text: `${item.mpNodeBranch || 'master'} -> ${item.mpBranch}`,
+        text: `${String(item.mpNodeBranch || '').trim() || '—'} -> ${item.mpBranch}`,
       })),
     }
     : null
@@ -121,12 +123,12 @@ function openEdit(repo: RepoProfile) {
   editingRepoId.value = repo.repoId
   editForm.localPath = repo.localPath
   editForm.platform = repo.platform || repo.label
-  editForm.trunkNodeBranch = repo.branches?.trunk?.nodeBranch || 'master'
+  editForm.trunkNodeBranch = repo.branches?.trunk?.nodeBranch || ''
   editForm.trunkBranch = repo.branches?.trunk?.trunkBranch || ''
   editForm.mp = Array.isArray(repo.branches?.mp)
     ? repo.branches!.mp!.map(item => ({
       tos: item.tos,
-      mpNodeBranch: item.mpNodeBranch || 'master',
+      mpNodeBranch: item.mpNodeBranch || '',
       mpBranch: item.mpBranch,
     })).sort((left, right) => compareTos(left.tos, right.tos))
     : []
@@ -135,7 +137,7 @@ function openEdit(repo: RepoProfile) {
 }
 
 function addMpRow() {
-  editForm.mp.push({ tos: '', mpNodeBranch: 'master', mpBranch: '' })
+  editForm.mp.push({ tos: '', mpNodeBranch: '', mpBranch: '' })
 }
 
 function removeMpRow(index: number) {
@@ -148,6 +150,25 @@ function submitEdit() {
   const platform = editForm.platform.trim()
   const localPath = editForm.localPath.trim()
   if (!platform || !localPath) return
+  const trunkNodeBranch = editForm.trunkNodeBranch.trim()
+  const trunkBranch = editForm.trunkBranch.trim()
+  const trunkEnabled = trunkNodeBranch || trunkBranch
+  if (trunkEnabled && (!trunkNodeBranch || !trunkBranch)) {
+    message.error('主干节点分支与主干分支需同时填写')
+    return
+  }
+  for (let index = 0; index < editForm.mp.length; index += 1) {
+    const item = editForm.mp[index]
+    const tos = item.tos.trim()
+    const mpNodeBranch = item.mpNodeBranch.trim()
+    const mpBranch = item.mpBranch.trim()
+    const enabled = tos || mpNodeBranch || mpBranch
+    if (!enabled) continue
+    if (!tos || !mpNodeBranch || !mpBranch) {
+      message.error(`MP 第 ${index + 1} 行需填写 tOS / 节点分支 / 量产分支`)
+      return
+    }
+  }
   pendingSave.value = {
     repoId,
     localPath,
@@ -158,19 +179,32 @@ function submitEdit() {
     localPath,
     platform,
     branches: {
-      trunk: editForm.trunkBranch.trim()
-        ? { nodeBranch: editForm.trunkNodeBranch.trim() || 'master', trunkBranch: editForm.trunkBranch.trim() }
-        : undefined,
+      trunk: trunkEnabled ? { nodeBranch: trunkNodeBranch, trunkBranch } : undefined,
       mp: editForm.mp
         .map(item => ({
           tos: item.tos.trim(),
-          mpNodeBranch: item.mpNodeBranch.trim() || 'master',
+          mpNodeBranch: item.mpNodeBranch.trim(),
           mpBranch: item.mpBranch.trim(),
         }))
-        .filter(item => item.tos && item.mpBranch),
+        .filter(item => item.tos && item.mpNodeBranch && item.mpBranch),
     },
   })
 }
+
+const canSubmitEdit = computed(() => {
+  if (!editForm.platform.trim() || !editForm.localPath.trim()) return false
+  const trunkNodeBranch = editForm.trunkNodeBranch.trim()
+  const trunkBranch = editForm.trunkBranch.trim()
+  const trunkEnabled = trunkNodeBranch || trunkBranch
+  if (trunkEnabled && (!trunkNodeBranch || !trunkBranch)) return false
+  return editForm.mp.every((item) => {
+    const tos = item.tos.trim()
+    const mpNodeBranch = item.mpNodeBranch.trim()
+    const mpBranch = item.mpBranch.trim()
+    const enabled = tos || mpNodeBranch || mpBranch
+    return !enabled || (tos && mpNodeBranch && mpBranch)
+  })
+})
 
 function branchTemplateTagType(status?: RepoProfile['branchTemplateStatus']) {
   if (status === 'running') return 'info'
@@ -283,7 +317,7 @@ function branchTemplateTagLabel(status?: RepoProfile['branchTemplateStatus']) {
           <div class="ea-section-title">分支信息</div>
           <div class="ea-field">
             <label>主干节点分支</label>
-            <NInput v-model:value="editForm.trunkNodeBranch" placeholder="master" />
+            <NInput v-model:value="editForm.trunkNodeBranch" placeholder="例如 master" />
           </div>
           <div class="ea-field">
             <label>主干分支</label>
@@ -296,7 +330,7 @@ function branchTemplateTagLabel(status?: RepoProfile['branchTemplateStatus']) {
             </div>
             <div v-for="(item, index) in editForm.mp" :key="index" class="mp-row">
               <NInput v-model:value="item.tos" placeholder="tOS16.3 / tOS17.0" />
-              <NInput v-model:value="item.mpNodeBranch" placeholder="节点分支（没有则 master）" />
+              <NInput v-model:value="item.mpNodeBranch" placeholder="节点分支" />
               <NInput v-model:value="item.mpBranch" placeholder="量产分支（tOSxx.x release）" />
               <NButton tertiary size="small" type="error" @click="removeMpRow(index)">删除</NButton>
             </div>
@@ -307,7 +341,7 @@ function branchTemplateTagLabel(status?: RepoProfile['branchTemplateStatus']) {
           <NButton
             type="primary"
             :loading="updating"
-            :disabled="!editForm.platform.trim() || !editForm.localPath.trim()"
+            :disabled="!canSubmitEdit"
             @click="submitEdit"
           >
             保存修改

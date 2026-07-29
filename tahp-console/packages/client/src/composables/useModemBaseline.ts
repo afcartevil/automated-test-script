@@ -436,6 +436,35 @@ export function useModemBaseline() {
     return normalizePlatformToken(String(text ?? '').replace(/\s*\([^)]*\)\s*$/, ''))
   }
 
+  function normalizeTosVersion(text?: string) {
+    return String(text ?? '').trim().replace(/^tos/i, 'tOS')
+  }
+
+  function pickRepoBranchFallback(
+    repo: RepoProfile | null,
+    input: { targetMode?: 'trunk' | 'mp'; tosVersion?: string },
+  ) {
+    if (!repo?.branches) return null
+    const targetMode = input.targetMode
+    if (targetMode === 'mp') {
+      const tos = normalizeTosVersion(input.tosVersion || selectedTosVersion.value)
+      if (!tos) return null
+      const mp = Array.isArray(repo.branches.mp) ? repo.branches.mp : []
+      const match = mp.find(item => normalizeTosVersion(item.tos) === tos) ?? null
+      if (!match) return null
+      const nodeBranch = String(match.mpNodeBranch ?? '').trim()
+      const targetBranch = String(match.mpBranch ?? '').trim()
+      if (!nodeBranch && !targetBranch) return null
+      return { nodeBranch, targetBranch }
+    }
+    const trunk = repo.branches.trunk
+    if (!trunk) return null
+    const nodeBranch = String(trunk.nodeBranch ?? '').trim()
+    const targetBranch = String(trunk.trunkBranch ?? '').trim()
+    if (!nodeBranch && !targetBranch) return null
+    return { nodeBranch, targetBranch }
+  }
+
   function matchBranchTemplates(tosVersion?: string, platform?: string) {
     const tos = String(tosVersion ?? '').trim()
     const resolved = resolveRepoByPlatform(repoProfiles.value, platform)
@@ -794,8 +823,16 @@ export function useModemBaseline() {
     }
 
     const next: ModemBaselineConfig = { ...config.value }
-    if (recommendation.value.nodeBranch) next.NODE_BRANCH = recommendation.value.nodeBranch
-    if (recommendation.value.targetBranch) next.target_BRANCH = recommendation.value.targetBranch
+    const repo = selectedRepo.value
+    const targetMode = recommendation.value.targetMode ?? noticeParsed.value?.targetMode
+    const fallback = pickRepoBranchFallback(repo, {
+      targetMode,
+      tosVersion: noticeParsed.value?.tosVersion,
+    })
+    if (fallback?.nodeBranch) next.NODE_BRANCH = fallback.nodeBranch
+    else if (recommendation.value.nodeBranch) next.NODE_BRANCH = recommendation.value.nodeBranch
+    if (fallback?.targetBranch) next.target_BRANCH = fallback.targetBranch
+    else if (recommendation.value.targetBranch) next.target_BRANCH = recommendation.value.targetBranch
     if (recommendation.value.apLabel) next.AP_lable = recommendation.value.apLabel
     config.value = next
     precheck.value = null

@@ -101,6 +101,7 @@ export type BranchRule = {
 export type BranchTemplate = {
   templateId: string
   owner: string
+  repoId?: string
   tos: string
   platform: string
   nodeBranch: string
