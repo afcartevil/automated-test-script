@@ -61,8 +61,8 @@ export function emptyModemBaselineConfig(): ModemBaselineConfig {
     DESCRIPTION: '',
     JIRAID: '',
     work_dir: '',
-    mapped_prefix: 'Z:',
-    remote_prefix: '/work/user/code',
+    mapped_prefix: '',
+    remote_prefix: '',
     build_project: undefined,
   }
 }
@@ -187,22 +187,115 @@ function withString(value?: string) {
 }
 
 function normalizePlatformToken(text?: string) {
-  const raw = String(text ?? '').trim().toUpperCase().replace(/[_\s]+/g, '')
-  if (!raw) return ''
-  const unified = raw.replace(/-([STUVW])$/, '$1')
-  const matched = unified.match(/^(GEN\d+)(?:-?R(\d+))?([STUVW])?$/)
-  if (!matched) return unified
-  const family = matched[1]
-  const release = matched[2] ? `R${matched[2]}` : ''
-  const suffix = matched[3] ?? ''
-  return `${family}${release}${suffix}`
+  const compact = String(text ?? '').trim().toUpperCase().replace(/[-_\s]+/g, '')
+  if (!compact) return ''
+
+  let matched = compact.match(/^(GEN\d+)R(\d+)([STUVW])$/)
+  if (matched) {
+    const [, family, release, suffix] = matched
+    return `${family}R${release}${suffix}`
+  }
+
+  matched = compact.match(/^(GEN\d+)([STUVW])R(\d+)$/)
+  if (matched) {
+    const [, family, suffix, release] = matched
+    return `${family}R${release}${suffix}`
+  }
+
+  matched = compact.match(/^(GEN\d+)R(\d+)$/)
+  if (matched) {
+    const [, family, release] = matched
+    return `${family}R${release}`
+  }
+
+  matched = compact.match(/^(GEN\d+)([STUVW])$/)
+  if (matched) {
+    const [, family, suffix] = matched
+    return `${family}${suffix}`
+  }
+
+  matched = compact.match(/^(GEN\d+)$/)
+  if (matched) {
+    return matched[1]
+  }
+
+  return compact
 }
 
-function platformBucketToken(text?: string) {
+type ParsedPlatformToken = {
+  normalized: string
+  family: string
+  release: number | null
+  suffix: string
+  bucket: string
+}
+
+function parsePlatformToken(text?: string): ParsedPlatformToken | null {
   const normalized = normalizePlatformToken(text)
-  const matched = normalized.match(/^(GEN\d+)(?:R\d+)?([STUVW])?$/)
-  if (!matched) return normalized
-  return `${matched[1]}${matched[2] ?? ''}`
+  if (!normalized) return null
+  const matched = normalized.match(/^(GEN\d+)(?:R(\d+))?([STUVW])?$/)
+  if (!matched) return null
+  const family = matched[1]
+  const release = matched[2] ? Number(matched[2]) : null
+  const suffix = matched[3] ?? ''
+  return {
+    normalized,
+    family,
+    release: Number.isFinite(release) ? release : null,
+    suffix,
+    bucket: `${family}${suffix}`,
+  }
+}
+
+function comparePlatformCandidate(left: ParsedPlatformToken, right: ParsedPlatformToken) {
+  const leftRelease = left.release ?? 1
+  const rightRelease = right.release ?? 1
+  if (leftRelease !== rightRelease) return leftRelease - rightRelease
+  return left.normalized.localeCompare(right.normalized)
+}
+
+function findRepoCandidatesByPlatform(repos: RepoProfile[], platformText?: string) {
+  const requested = parsePlatformToken(platformText)
+  if (!requested) return { requested: null, exact: [], bucket: [] as Array<RepoProfile & { normalizedPlatform: string }> }
+
+  const bucket = repos
+    .map((repo) => {
+      const parsed = parsePlatformToken(repo.platform || repo.label)
+      if (!parsed || parsed.bucket !== requested.bucket) return null
+      return {
+        ...repo,
+        normalizedPlatform: parsed.normalized,
+        parsedPlatform: parsed,
+      }
+    })
+    .filter((item): item is RepoProfile & { normalizedPlatform: string; parsedPlatform: ParsedPlatformToken } => Boolean(item))
+    .sort((left, right) => comparePlatformCandidate(left.parsedPlatform, right.parsedPlatform))
+
+  const exact = bucket.filter(item => item.normalizedPlatform === requested.normalized)
+  return { requested, exact, bucket }
+}
+
+function resolveRepoByPlatform(repos: RepoProfile[], platformText?: string) {
+  const candidates = findRepoCandidatesByPlatform(repos, platformText)
+  const { requested, exact, bucket } = candidates
+  if (!requested) return { ...candidates, matched: null as (RepoProfile & { normalizedPlatform: string }) | null, status: 'no_platform' as const }
+  if (exact.length === 1) return { ...candidates, matched: exact[0], status: 'exact' as const }
+  if (exact.length > 1) return { ...candidates, matched: null, status: 'ambiguous' as const }
+  if (requested.release !== null) return { ...candidates, matched: null, status: 'no_match' as const }
+  if (bucket.length === 1) return { ...candidates, matched: bucket[0], status: 'single' as const }
+
+  const defaultCandidates = bucket.filter(item => (item.parsedPlatform.release ?? 1) === 1)
+  if (defaultCandidates.length === 1) {
+    return { ...candidates, matched: defaultCandidates[0], status: 'default_release' as const }
+  }
+
+  const minRelease = bucket.reduce((min, item) => Math.min(min, item.parsedPlatform.release ?? 1), Number.POSITIVE_INFINITY)
+  const lowestRelease = bucket.filter(item => (item.parsedPlatform.release ?? 1) === minRelease)
+  if (lowestRelease.length === 1) {
+    return { ...candidates, matched: lowestRelease[0], status: 'lowest_release' as const }
+  }
+
+  return { ...candidates, matched: null, status: bucket.length ? 'ambiguous' as const : 'no_match' as const }
 }
 
 export function useModemBaseline() {
@@ -269,10 +362,10 @@ export function useModemBaseline() {
 
   function applyWorkspaceProfileToConfig(profile: UserWorkspaceProfile | null) {
     if (!profile) return
-    if (!config.value.mapped_prefix || config.value.mapped_prefix === 'Z:') {
+    if (!config.value.mapped_prefix) {
       config.value = { ...config.value, mapped_prefix: profile.mappedPrefix }
     }
-    if (!config.value.remote_prefix || config.value.remote_prefix === '/work/user/code') {
+    if (!config.value.remote_prefix) {
       config.value = { ...config.value, remote_prefix: profile.remotePrefix }
     }
   }
@@ -341,7 +434,8 @@ export function useModemBaseline() {
 
   function matchBranchTemplates(tosVersion?: string, platform?: string) {
     const tos = String(tosVersion ?? '').trim()
-    const platformToken = normalizeBranchTemplatePlatform(platform)
+    const resolved = resolveRepoByPlatform(repoProfiles.value, platform)
+    const platformToken = normalizeBranchTemplatePlatform(resolved.matched?.platform || platform)
     return branchTemplates.value.filter((item) => {
       if (tos && item.tos !== tos) return false
       if (!platformToken) return true
@@ -396,7 +490,13 @@ export function useModemBaseline() {
 
   async function loadDefaults() {
     const data = await getModemBaselineDefaults()
-    config.value = { ...data.config }
+    config.value = {
+      ...data.config,
+      work_dir: selectedRepo.value?.localPath || '',
+      mapped_prefix: workspaceProfile.value?.mappedPrefix || String(data.config.mapped_prefix ?? '').trim(),
+      remote_prefix: workspaceProfile.value?.remotePrefix || String(data.config.remote_prefix ?? '').trim(),
+      build_project: undefined,
+    }
     toolRoot.value = data.toolRoot
     applyWorkspaceProfileToConfig(workspaceProfile.value)
     precheck.value = null
@@ -660,30 +760,26 @@ export function useModemBaseline() {
     const platform = normalizePlatformToken(noticeParsed.value?.platform || '')
     let repoAction: RecommendationApplyResult['repoAction']
     if (platform) {
-      const platformBucket = platformBucketToken(platform)
-      const candidates = repoProfiles.value
-        .filter((repo) => {
-          const token = normalizePlatformToken(repo.platform || repo.label)
-          if (!token) return false
-          if (token === platform) return true
-          return platformBucketToken(token) === platformBucket
-        })
-        .map(repo => ({
-          repoId: repo.repoId,
-          label: repo.label,
-          platform: repo.platform,
-          localPath: repo.localPath,
-        }))
+      const resolved = resolveRepoByPlatform(repoProfiles.value, platform)
+      const candidates = (resolved.exact.length ? resolved.exact : resolved.bucket).map(repo => ({
+        repoId: repo.repoId,
+        label: repo.label,
+        platform: repo.platform,
+        localPath: repo.localPath,
+      }))
 
       if (!candidates.length) {
+        if (resolved.requested?.release !== null) {
+          return { applied: true, repoAction: 'no_match' }
+        }
         if (currentRepo) {
           applyRepoToConfig(currentRepo)
           repoAction = 'fallback_selected'
         } else {
           return { applied: true, repoAction: 'no_match' }
         }
-      } else if (candidates.length === 1) {
-        chooseRepo(candidates[0].repoId)
+      } else if (resolved.matched) {
+        chooseRepo(resolved.matched.repoId)
         repoAction = currentRepo && selectedRepo.value?.repoId === currentRepo.repoId
           ? 'synced_selected'
           : 'auto_selected'

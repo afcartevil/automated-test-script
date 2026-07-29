@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NButton, useMessage } from 'naive-ui'
 import ModemBaselineConfigCard from '@/components/tahp/modem-baseline/ModemBaselineConfigCard.vue'
 import ModemBaselineLogFilterBar from '@/components/tahp/modem-baseline/ModemBaselineLogFilterBar.vue'
-import ModemBaselineNoticeRecommendCard from '@/components/tahp/modem-baseline/ModemBaselineNoticeRecommendCard.vue'
 import ModemBaselineStagePanel from '@/components/tahp/modem-baseline/ModemBaselineStagePanel.vue'
 import { useModemBaseline } from '@/composables/useModemBaseline'
 
@@ -13,6 +12,7 @@ const {
   noticeText,
   noticeParsed,
   recommendation,
+  selectedRepo,
   selectedRun,
   conflictFiles,
   logContent,
@@ -29,7 +29,6 @@ const {
   statusMeta,
   stageItems,
   initialize,
-  loadDefaults,
   loadBuildProjects,
   requestRecommend,
   applyRecommendation,
@@ -46,6 +45,12 @@ const shouldStickToBottom = ref(true)
 const LOG_BOTTOM_THRESHOLD = 24
 const onlyErrors = ref(false)
 const onlyConflicts = ref(false)
+type RecommendationFeedback = {
+  tone: 'success' | 'warning'
+  title: string
+  successes: string[]
+  failures: string[]
+}
 
 const filteredLog = computed(() => {
   const raw = logContent.value || ''
@@ -87,13 +92,135 @@ function applyConfig(nextValue: typeof config.value) {
   config.value = { ...nextValue }
 }
 
-async function handleLoadDefaults() {
-  try {
-    await loadDefaults()
-    message.success('已重新加载默认配置')
-  } catch (error) {
-    message.error(String((error as Error)?.message ?? error))
+function withText(value?: string) {
+  return String(value ?? '').trim()
+}
+
+function warningLabel(code: string) {
+  switch (code) {
+    case 'no_platform_detected':
+      return '平台未识别'
+    case 'no_version_detected':
+      return '版本未识别'
+    case 'branch_template_not_found':
+      return '未找到对应分支模板'
+    case 'branch_template_ambiguous':
+      return '匹配到多个分支模板'
+    case 'no_rule_matched':
+      return '未匹配到分支规则'
+    case 'unresolved_placeholders_in_node':
+      return 'NODE_BRANCH 仍含未替换占位符'
+    case 'unresolved_placeholders_in_target':
+      return 'target_BRANCH 仍含未替换占位符'
+    default:
+      return code
   }
+}
+
+function buildRecommendationFeedback(
+  apply: ReturnType<typeof applyRecommendation>,
+): RecommendationFeedback {
+  const successes: string[] = []
+  const failures: string[] = []
+
+  if (withText(noticeParsed.value?.platform)) successes.push(`平台：${noticeParsed.value?.platform}`)
+  else failures.push('平台：未识别')
+
+  if (withText(noticeParsed.value?.tosVersion)) successes.push(`tOS：${noticeParsed.value?.tosVersion}`)
+  else failures.push('tOS：未识别')
+
+  if (withText(noticeParsed.value?.version)) successes.push(`版本：${noticeParsed.value?.version}`)
+  else failures.push('版本：未识别')
+
+  if (noticeParsed.value?.targetMode) {
+    successes.push(`目标模式：${noticeParsed.value.targetMode === 'mp' ? 'MP' : '主干'}`)
+  }
+
+  const currentRepoLabel = selectedRepo.value?.platform || selectedRepo.value?.label || ''
+  if (apply.repoAction === 'ambiguous') {
+    const list = (apply.candidates ?? []).slice(0, 4).map(item => item.platform || item.label).join('、')
+    failures.push(`仓库：匹配到多个候选（${(apply.candidates ?? []).length}）${list ? `，候选 ${list}` : ''}`)
+  } else if (apply.repoAction === 'no_platform') {
+    failures.push('仓库：未识别平台，无法自动同步')
+  } else if (apply.repoAction === 'no_match') {
+    failures.push('仓库：未匹配到对应仓库')
+  } else if (apply.repoAction === 'fallback_selected') {
+    failures.push(`仓库：未精确匹配，已回退到当前仓库${currentRepoLabel ? `（${currentRepoLabel}）` : ''}`)
+  } else if (currentRepoLabel) {
+    successes.push(`仓库：${currentRepoLabel}`)
+  }
+
+  if (withText(recommendation.value?.nodeBranch)) successes.push(`NODE_BRANCH：${recommendation.value?.nodeBranch}`)
+  else failures.push('NODE_BRANCH：未匹配')
+
+  if (withText(recommendation.value?.targetBranch)) successes.push(`target_BRANCH：${recommendation.value?.targetBranch}`)
+  else failures.push('target_BRANCH：未匹配')
+
+  if (withText(recommendation.value?.apLabel)) successes.push(`AP 标签：${recommendation.value?.apLabel}`)
+  else failures.push('AP 标签：未回填')
+
+  const warnings = [
+    ...(noticeParsed.value?.warnings ?? []),
+    ...(recommendation.value?.warnings ?? []),
+  ]
+  const extraWarnings = Array.from(new Set(warnings.map(warningLabel)))
+  for (const warning of extraWarnings) {
+    const exists = failures.some(item => item.includes(warning))
+    if (!exists) failures.push(`提示：${warning}`)
+  }
+
+  const tone: RecommendationFeedback['tone'] = failures.length ? 'warning' : 'success'
+  const title = failures.length
+    ? (successes.length ? '已部分解析并应用推荐' : '解析完成，但未成功回填推荐')
+    : '已解析并应用推荐'
+
+  return {
+    tone,
+    title,
+    successes,
+    failures,
+  }
+}
+
+function showRecommendationToast(feedback: RecommendationFeedback) {
+  const renderSection = (title: string, items: string[], tone: 'success' | 'warning') => {
+    if (!items.length) return null
+    return h('div', { style: 'margin-top: 8px;' }, [
+      h(
+        'div',
+        {
+          style: `font-size: 12px; font-weight: 600; margin-bottom: 4px; color: ${
+            tone === 'success' ? 'var(--ok-fg)' : 'var(--amber-fg)'
+          };`,
+        },
+        title,
+      ),
+      ...items.map(item =>
+        h(
+          'div',
+          {
+            style: 'font-size: 12px; line-height: 1.5; word-break: break-word;',
+          },
+          item,
+        ),
+      ),
+    ])
+  }
+
+  message.create(
+    () =>
+      h('div', { style: 'max-width: 560px;' }, [
+        h('div', { style: 'font-weight: 600; line-height: 1.5;' }, feedback.title),
+        renderSection('已识别 / 已回填', feedback.successes, 'success'),
+        renderSection('未识别 / 未回填', feedback.failures, 'warning'),
+      ]),
+    {
+      type: feedback.tone,
+      duration: 8000,
+      closable: true,
+      keepAliveOnHover: true,
+    },
+  )
 }
 
 async function handleStart() {
@@ -141,41 +268,8 @@ async function handleParseAndApply() {
     await requestRecommend()
     const apply = applyRecommendation()
     if (!apply.applied) return
-    const hasRecommendedBranches = Boolean(recommendation.value?.nodeBranch && recommendation.value?.targetBranch)
-    if (apply.repoAction === 'ambiguous') {
-      const list = (apply.candidates ?? []).slice(0, 4).map(item => item.platform || item.label).join('、')
-      message.warning(`匹配到多个候选仓库（${(apply.candidates ?? []).length}）：${list}。请先到配置中心设为当前仓库`)
-      return
-    }
-    if (apply.repoAction === 'no_platform') {
-      message.warning('通知中未解析出平台，无法自动同步仓库与执行参数')
-      return
-    }
-    if (apply.repoAction === 'no_match') {
-      message.warning('未匹配到推荐平台对应仓库，无法自动同步仓库与执行参数')
-      return
-    }
-    if (apply.repoAction === 'auto_selected') {
-      message.success('已解析并应用推荐（自动同步仓库路径）')
-      return
-    }
-    if (apply.repoAction === 'synced_selected') {
-      message.success('已解析并应用推荐（同步当前仓库路径）')
-      return
-    }
-    if (apply.repoAction === 'fallback_selected') {
-      message.warning('未匹配到推荐平台对应仓库，已回退为当前仓库路径并应用推荐')
-      return
-    }
-    if (!hasRecommendedBranches) {
-      message.warning('已解析平台和版本，但未匹配到可用分支模板或规则，请手动选择分支模板或直接填写分支')
-      return
-    }
-    if (recommendation.value?.branchSource === 'template') {
-      message.success(`已解析并应用导入模板（${recommendation.value.targetMode === 'mp' ? 'MP' : '主干'}）`)
-      return
-    }
-    message.success('已解析并应用推荐')
+    const feedback = buildRecommendationFeedback(apply)
+    showRecommendationToast(feedback)
   } catch (error) {
     message.error(String((error as Error)?.message ?? error))
   }
@@ -199,20 +293,14 @@ onUnmounted(() => {
         :build-projects-warning="buildProjectsWarning"
         :loading-build-projects="loadingBuildProjects"
         :loading="starting || loading"
-        @update:model-value="applyConfig"
-        @load-defaults="handleLoadDefaults"
-        @refresh-projects="loadBuildProjects()"
-        @start="handleStart"
-      />
-
-      <ModemBaselineNoticeRecommendCard
         :notice-text="noticeText"
-        :parsed="noticeParsed"
-        :recommendation="recommendation"
         :parsing="parsingNotice"
         :recommending="recommending"
+        @update:model-value="applyConfig"
         @update:notice-text="noticeText = $event"
+        @refresh-projects="loadBuildProjects()"
         @parse-and-apply="handleParseAndApply"
+        @start="handleStart"
       />
     </div>
 

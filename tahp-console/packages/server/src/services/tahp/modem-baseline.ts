@@ -901,17 +901,108 @@ function normalizeOperationType(text: string): ModemPatchOperationType {
 }
 
 function normalizePlatformToken(text?: string) {
-  const raw = String(text ?? '').trim().toUpperCase().replace(/[_\s]+/g, '')
-  if (!raw) return ''
-  const unified = raw.replace(/-([STUVW])$/, '$1')
-  const matched = unified.match(/^(GEN\d+(?:-R\d+)?)([STUVW])?$/)
-  if (!matched) return unified
-  return `${matched[1]}${matched[2] ?? ''}`
+  const compact = String(text ?? '').trim().toUpperCase().replace(/[-_\s]+/g, '')
+  if (!compact) return ''
+
+  let matched = compact.match(/^(GEN\d+)R(\d+)([STUVW])$/)
+  if (matched) {
+    const [, family, release, suffix] = matched
+    return `${family}R${release}${suffix}`
+  }
+
+  matched = compact.match(/^(GEN\d+)([STUVW])R(\d+)$/)
+  if (matched) {
+    const [, family, suffix, release] = matched
+    return `${family}R${release}${suffix}`
+  }
+
+  matched = compact.match(/^(GEN\d+)R(\d+)$/)
+  if (matched) {
+    const [, family, release] = matched
+    return `${family}R${release}`
+  }
+
+  matched = compact.match(/^(GEN\d+)([STUVW])$/)
+  if (matched) {
+    const [, family, suffix] = matched
+    return `${family}${suffix}`
+  }
+
+  matched = compact.match(/^(GEN\d+)$/)
+  if (matched) {
+    return matched[1]
+  }
+
+  return compact
+}
+
+type ParsedPlatformToken = {
+  normalized: string
+  family: string
+  release: number | null
+  suffix: string
+  bucket: string
+}
+
+function parsePlatformToken(text?: string): ParsedPlatformToken | null {
+  const normalized = normalizePlatformToken(text)
+  if (!normalized) return null
+  const matched = normalized.match(/^(GEN\d+)(?:R(\d+))?([STUVW])?$/)
+  if (!matched) return null
+  const family = matched[1]
+  const release = matched[2] ? Number(matched[2]) : null
+  const suffix = matched[3] ?? ''
+  return {
+    normalized,
+    family,
+    release: Number.isFinite(release) ? release : null,
+    suffix,
+    bucket: `${family}${suffix}`,
+  }
+}
+
+function comparePlatformCandidate(left: ParsedPlatformToken, right: ParsedPlatformToken) {
+  const leftRelease = left.release ?? 1
+  const rightRelease = right.release ?? 1
+  if (leftRelease !== rightRelease) return leftRelease - rightRelease
+  return left.normalized.localeCompare(right.normalized)
+}
+
+function resolveRepoByPlatform(
+  repos: RepoProfile[],
+  platformText?: string,
+): { matched: RepoProfile | null; status: 'no_platform' | 'exact' | 'single' | 'default_release' | 'lowest_release' | 'ambiguous' | 'no_match' } {
+  const requested = parsePlatformToken(platformText)
+  if (!requested) return { matched: null, status: 'no_platform' }
+
+  const bucket = repos
+    .map((repo) => {
+      const parsed = parsePlatformToken(repo.platform || repo.label)
+      if (!parsed || parsed.bucket !== requested.bucket) return null
+      return { repo, parsed }
+    })
+    .filter((item): item is { repo: RepoProfile; parsed: ParsedPlatformToken } => Boolean(item))
+    .sort((left, right) => comparePlatformCandidate(left.parsed, right.parsed))
+
+  const exact = bucket.filter(item => item.parsed.normalized === requested.normalized)
+  if (exact.length === 1) return { matched: exact[0].repo, status: 'exact' }
+  if (exact.length > 1) return { matched: null, status: 'ambiguous' }
+  if (requested.release !== null) return { matched: null, status: 'no_match' }
+  if (bucket.length === 1) return { matched: bucket[0].repo, status: 'single' }
+
+  const defaultCandidates = bucket.filter(item => (item.parsed.release ?? 1) === 1)
+  if (defaultCandidates.length === 1) return { matched: defaultCandidates[0].repo, status: 'default_release' }
+
+  const minRelease = bucket.reduce((min, item) => Math.min(min, item.parsed.release ?? 1), Number.POSITIVE_INFINITY)
+  const lowestRelease = bucket.filter(item => (item.parsed.release ?? 1) === minRelease)
+  if (lowestRelease.length === 1) return { matched: lowestRelease[0].repo, status: 'lowest_release' }
+
+  return { matched: null, status: bucket.length ? 'ambiguous' : 'no_match' }
 }
 
 function basePlatformToken(text?: string) {
   const normalized = normalizePlatformToken(text)
-  const matched = normalized.match(/^(GEN\d+(?:-R\d+)?)([STUVW])?$/)
+  const matched = normalized.match(/^(GEN\d+)(?:R\d+)?([STUVW])?$/)
   return matched?.[1] ?? normalized
 }
 
@@ -919,7 +1010,7 @@ export function parseModemPatchNotice(text: string): NoticeParseResult {
   const rawText = String(text ?? '').trim()
   const warnings: string[] = []
   const platforms = Array.from(new Set(
-    (rawText.match(/GEN\d+(?:-R\d+)?(?:-?[STUVW])?/gi) || [])
+    (rawText.match(/\bGEN\d+(?:(?:[\s_-]*R\d+[\s_-]*[STUVW])|(?:[\s_-]*[STUVW][\s_-]*R\d+)|(?:[\s_-]*R\d+)|(?:[\s_-]*[STUVW]))?\b/gi) || [])
       .map(item => normalizePlatformToken(item))
       .filter(Boolean),
   ))
@@ -976,15 +1067,18 @@ export function recommendModemPatchConfig(input: {
   const warnings: string[] = []
   const parsed = input.noticeText ? parseModemPatchNotice(input.noticeText) : null
   const repos = listModemPatchRepos(owner)
-  const repo = input.repoId ? repos.find(item => item.repoId === input.repoId) : null
-  const platform = normalizePlatformToken(parsed?.platform || repo?.platform || '')
+  const currentRepo = input.repoId ? repos.find(item => item.repoId === input.repoId) : null
+  const resolvedRepo = parsed?.platform ? resolveRepoByPlatform(repos, parsed.platform).matched : null
+  const repo = parsed?.platform ? (resolvedRepo ?? null) : (currentRepo ?? null)
+  const platformSource = parsed?.platform ? (repo?.platform || parsed.platform) : (repo?.platform || '')
+  const platform = normalizePlatformToken(platformSource)
   const basePlatform = basePlatformToken(platform)
   const vendor = (repo?.vendor || '').trim()
   const operationType = parsed?.operationType || 'baseline_upgrade'
   const targetMode = parsed?.targetMode || 'trunk'
   const rules = listModemPatchRules(owner).filter(item => item.enabled)
   const templates = listModemPatchBranchTemplates(owner)
-  const templateMatches = findBranchTemplateMatches(templates, parsed?.tosVersion, parsed?.platform || repo?.platform)
+  const templateMatches = findBranchTemplateMatches(templates, parsed?.tosVersion, platformSource)
   const uniqueTemplateMatches = templateMatches.length > 1
     ? Array.from(new Map(
       templateMatches.map(item => [

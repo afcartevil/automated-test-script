@@ -9,12 +9,16 @@ const props = defineProps<{
   buildProjectsWarning?: string
   loadingBuildProjects?: boolean
   loading?: boolean
+  noticeText: string
+  parsing?: boolean
+  recommending?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: ModemBaselineConfig]
-  'load-defaults': []
+  'update:noticeText': [value: string]
   'refresh-projects': []
+  'parse-and-apply': []
   'start': []
 }>()
 
@@ -25,17 +29,42 @@ function updateField<K extends keyof ModemBaselineConfig>(key: K, value: ModemBa
 const projectOptions = computed(() =>
   (props.buildProjects ?? []).map(name => ({ label: name, value: name })),
 )
+
+const processing = computed(() => Boolean(props.parsing || props.recommending))
 </script>
 
 <template>
   <div class="ea-card ea-stack">
-    <div>
-      <div class="ea-section-title">基线配置</div>
-      <div class="cfg-head">
-        <div>
-          <h3>执行参数</h3>
-          <p>字段与外部 Modem 基线工具保持一致，直接用于真实任务启动。</p>
-        </div>
+    <div class="cfg-head inner-head">
+      <div>
+        <div class="ea-section-title">通知解析与推荐</div>
+        <h3>自动推荐</h3>
+      </div>
+      <div class="cfg-actions">
+        <NButton type="primary" secondary :loading="processing" @click="$emit('parse-and-apply')">解析并应用</NButton>
+      </div>
+    </div>
+
+    <div class="ea-field">
+      <label>通知内容</label>
+      <NInput
+        :value="noticeText"
+        type="textarea"
+        :autosize="{ minRows: 4, maxRows: 7 }"
+        placeholder="例如：7月基线升级 GEN99-V V11.35"
+        @update:value="$emit('update:noticeText', $event)"
+      />
+    </div>
+
+    <div class="ea-divider" />
+
+    <div class="cfg-head">
+      <div>
+        <div class="ea-section-title">基线配置</div>
+        <h3>执行参数</h3>
+      </div>
+      <div class="cfg-actions">
+        <NButton type="primary" :loading="loading" @click="$emit('start')">启动基线升级</NButton>
       </div>
     </div>
 
@@ -56,6 +85,39 @@ const projectOptions = computed(() =>
           placeholder="例如 PRODUCT_V_v0mp1rc_NR15_common"
           @update:value="updateField('target_BRANCH', $event)"
         />
+      </div>
+    </div>
+
+    <div class="ea-form-grid2">
+      <div class="ea-field">
+        <label>描述</label>
+        <NInput
+          :value="modelValue.DESCRIPTION"
+          placeholder="例如 BASELINE_UPGRADE"
+          @update:value="updateField('DESCRIPTION', $event)"
+        />
+      </div>
+
+      <div class="ea-field">
+        <label>编译项目</label>
+        <div class="project-row">
+          <NSelect
+            :value="modelValue.build_project || null"
+            :options="projectOptions"
+            :loading="loadingBuildProjects"
+            clearable
+            filterable
+            placeholder="从 work_dir/projects 自动识别"
+            @update:value="updateField('build_project', $event ? String($event) : undefined)"
+          />
+          <NButton secondary :disabled="loading || loadingBuildProjects" @click="$emit('refresh-projects')">
+            刷新项目
+          </NButton>
+        </div>
+        <p class="field-hint">
+          继续执行成功后自动运行 <code>./tools/bld_modem.sh &lt;项目名&gt;</code>
+        </p>
+        <p v-if="buildProjectsWarning" class="field-warn">{{ buildProjectsWarning }}</p>
       </div>
     </div>
 
@@ -87,50 +149,6 @@ const projectOptions = computed(() =>
         @update:value="updateField('work_dir', $event)"
       />
     </div>
-
-    <div class="ea-field">
-      <label>编译项目</label>
-      <div class="project-row">
-        <NSelect
-          :value="modelValue.build_project || null"
-          :options="projectOptions"
-          :loading="loadingBuildProjects"
-          clearable
-          filterable
-          placeholder="从 work_dir/projects 识别，冲突继续后自动编译"
-          @update:value="updateField('build_project', $event ? String($event) : undefined)"
-        />
-        <NButton secondary :disabled="loading || loadingBuildProjects" @click="$emit('refresh-projects')">
-          刷新项目
-        </NButton>
-      </div>
-      <p class="field-hint">
-        继续执行成功后将自动运行
-        <code>./tools/bld_modem.sh &lt;项目名&gt;</code>
-        ；未选择则跳过编译。
-      </p>
-      <p v-if="buildProjectsWarning" class="field-warn">{{ buildProjectsWarning }}</p>
-    </div>
-
-    <div class="ea-field">
-      <label>描述</label>
-      <NInput
-        :value="modelValue.DESCRIPTION"
-        placeholder="例如 BASELINE_UPGRADE"
-        @update:value="updateField('DESCRIPTION', $event)"
-      />
-    </div>
-
-    <div class="mapping-summary">
-      <span class="ea-pill-muted">路径映射</span>
-      <strong>{{ modelValue.mapped_prefix || '—' }} → {{ modelValue.remote_prefix || '—' }}</strong>
-      <p>低频路径配置已迁移到配置中心；工作台仅展示当前生效映射。</p>
-    </div>
-
-    <div class="cfg-actions">
-      <NButton secondary :disabled="loading" @click="$emit('load-defaults')">重新加载默认配置</NButton>
-      <NButton type="primary" :loading="loading" @click="$emit('start')">启动基线升级</NButton>
-    </div>
   </div>
 </template>
 
@@ -158,6 +176,11 @@ const projectOptions = computed(() =>
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+.inner-head {
+  margin-top: 2px;
 }
 
 .project-row {
@@ -186,27 +209,6 @@ const projectOptions = computed(() =>
   font-size: 12px;
   color: #b45309;
   word-break: break-all;
-}
-
-.mapping-summary {
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-
-  strong {
-    display: block;
-    margin-top: 8px;
-    font-size: 14px;
-    color: var(--text);
-    word-break: break-word;
-  }
-
-  p {
-    margin-top: 6px;
-    font-size: 12px;
-    color: var(--muted);
-  }
 }
 
 @media (max-width: 720px) {

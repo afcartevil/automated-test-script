@@ -48,6 +48,11 @@ const router = createRouter({
           component: () => import('@/views/tahp/ModemBaselineWorkbenchView.vue'),
         },
         {
+          path: 'history/:runId?',
+          name: 'tahp.modem-baseline.history',
+          component: () => import('@/views/tahp/ModemBaselineHistoryView.vue'),
+        },
+        {
           path: 'settings',
           name: 'tahp.modem-baseline.settings',
           component: () => import('@/views/tahp/ModemBaselineSettingsView.vue'),
