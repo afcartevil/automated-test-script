@@ -76,6 +76,8 @@ export interface UnifiedConfigField {
   description?: string
   shared?: boolean
   default?: string
+  doc_url?: string
+  doc_label?: string
 }
 
 export interface UnifiedConfigForm {

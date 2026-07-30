@@ -4,6 +4,7 @@ import { join, resolve } from 'path'
 import { getActiveProfileDir } from './hermes-profile'
 import { logger } from '../logger'
 import { tahpPaths, hasTahpProject } from '../tahp/paths'
+import { isOfficialHarnessSkillId } from '../tahp/harness-host-skills'
 
 export interface SkillInjectionResult {
   sourceDir: string
@@ -77,6 +78,10 @@ export class HermesSkillInjector {
     const entries = await readdir(this.sourceDir, { withFileTypes: true })
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+      if (isOfficialHarnessSkillId(entry.name)) {
+        result.skipped.push(entry.name)
+        continue
+      }
       if (filter && !filter.has(entry.name)) continue
       const sourceSkillDir = join(this.sourceDir, entry.name)
       const targetSkillDir = join(this.targetDir, entry.name)

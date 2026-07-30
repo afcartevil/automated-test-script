@@ -1,0 +1,7 @@
+{
+  "minimum_cli": "1.3.1",
+  "channel": "stable",
+  "sop_doc": "docs/agent-npx-cli-sop.md",
+  "config_guidance": "请打开「配置 → 一键配置表单」确认 harness 工具项后，点击「启动skill配置检查」，完成清单中的「Transsion Harness 安装」。",
+  "description": "TAHP 使用 harness CLI / 官方 harness-* skill 的最低版本。官方 skill 仅安装在本机客户端目录，不随工程 skills/ 分发。"
+}

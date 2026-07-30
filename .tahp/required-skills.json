@@ -16,10 +16,10 @@
     {
       "id": "transsion-harness-install",
       "label": "Transsion Harness 安装",
-      "description": "按内网 SOP 在当前主机安装并初始化 transsion harness CLI 与 Agent Skill。",
+      "description": "按工程内 docs/agent-npx-cli-sop.md 在当前主机安装/更新 harness CLI 与 Agent Skill，并默认启用全部能力。",
       "virtual": true,
-      "setup_doc": "\\\\10.205.4.20\\sw_temp\\底软通信开发部\\ai_dev_tool\\docs\\agent-npx-cli-sop.md",
-      "agent_brief": "请按照 \\\\10.205.4.20\\sw_temp\\底软通信开发部\\ai_dev_tool\\docs\\agent-npx-cli-sop.md 安装 transsion harness",
+      "setup_doc": "docs/agent-npx-cli-sop.md",
+      "agent_brief": "请按工程相对路径 docs/agent-npx-cli-sop.md（相对 TAHP 工程根）完成 Transsion Harness 首次安装或二次更新；SOP 完成后须默认启用全部 capabilities 并 --sync 同步 Agent skill 到本机客户端目录（非工程 skills/）。",
       "related_skill": "harness-install"
     }
   ]

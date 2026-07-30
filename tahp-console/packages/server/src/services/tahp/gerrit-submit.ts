@@ -20,6 +20,7 @@ import {
 } from './context-injector'
 import { saveAgentPromptLog } from './prompt-log'
 import { humanizeAgentError } from './adapt-agent-health'
+import { assertHarnessCliReady } from './harness-version-gate'
 import {
   isGerritConfigured,
   writeRuntimeCredFile,
@@ -265,6 +266,12 @@ async function runAgentChat(
 export function startGerritDomainSubmit(
   input: GerritDomainSubmitInput,
 ): { ok: true; taskId: string } | { ok: false; error: string } {
+  try {
+    assertHarnessCliReady()
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+
   const files = input.domain.changed_files ?? []
   if (!files.length) {
     return { ok: false, error: `域 ${input.domain.domain_id} 无变更文件` }

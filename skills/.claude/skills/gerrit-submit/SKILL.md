@@ -15,7 +15,7 @@ description: >-
 
 按 [研发代码提交规范](https://transsioner.feishu.cn/wiki/VMclwfBRxi65BNks0dSc2aGynid) 填模板、commit，再 push 到 Gerrit review 分支。字段细则见 [commit-template.md](commit-template.md)。Windows/映射盘远程执行细节见 [remote-harness.md](remote-harness.md)。
 
-与 `harness-gerrit` 的边界：那边只做 CR **查询**；**本 skill 负责按本模板生成 message + commit + 上传**。不要用 `harness gerrit commit-message` 渲染（扩展字段不同）。
+与官方 `harness-gerrit` 的边界：那边只做 CR **查询**（本机 `$HOME/.claude/skills/harness-gerrit` 等，由 `harness install` 安装，**不在**工程 `skills/`）；**本 skill 负责按本模板生成 message + commit + 上传**。不要用 `harness gerrit commit-message` 渲染（扩展字段不同）。
 
 ## 必要输入与「不打断」原则
 
@@ -225,6 +225,7 @@ python <skill_dir>/scripts/harness_remote.py submit \
 ## 依赖
 
 - 本机：`git`；可选 `repo`；远程另需 `python` + `node` + `@transsion/harness-cli`
-- 远程：齐治 Bridge（runner 拉起/恢复时）、remote-runner；可读 [harness-runner](../harness-runner/SKILL.md)（若本机 skills 树中有）
+- 远程：齐治 Bridge（runner 拉起/恢复时）、remote-runner；官方 `harness-runner` Skill 在本机客户端目录（`$HOME/.claude/skills/harness-runner` 等），勿引用工程 `skills/` 下已移除的副本
+- **前置**：本机 `harness` CLI 须满足工程 `.tahp/harness-requirement.json` 的 `minimum_cli`；否则引导用户「配置 → 启动skill配置检查」
 - **不依赖** `harness gerrit commit-message`
 - 固定脚本：`scripts/harness_remote.py`（随 skill 分发；可设 `HARNESS_JS` 指向 harness.js）

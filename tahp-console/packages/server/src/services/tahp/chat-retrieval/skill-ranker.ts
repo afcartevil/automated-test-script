@@ -5,6 +5,7 @@ import { tahpPaths } from '../paths'
 import { TAHP_SKILLS_REL_ROOT, tahpSkillMdRelativePath } from '../context-injector'
 import { tokenize } from '../kb-search/bm25'
 import type { SkillHit } from './types'
+import { isOfficialHarnessSkillId } from '../harness-host-skills'
 
 const DOMAIN_ROUTERS: Array<{ patterns: RegExp[]; skillId: string }> = [
   { patterns: [/通信|modem|vowifi|vozwifi|sim|rat|telephony/i], skillId: 'com-comm-analysis-foundation' },
@@ -49,6 +50,7 @@ function loadSkills(): SkillIndexItem[] {
     return items
   }
   for (const name of readdirSync(skillsDir)) {
+    if (isOfficialHarnessSkillId(name)) continue
     const md = join(skillsDir, name, 'SKILL.md')
     if (!existsSync(md)) continue
     try {

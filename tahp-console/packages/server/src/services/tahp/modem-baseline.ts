@@ -2115,6 +2115,9 @@ async function sleep(ms: number) {
 }
 
 async function harnessExec(command: string, opts?: { timeoutMs?: number }): Promise<HarnessResult> {
+  const { assertHarnessCliReady } = await import('./harness-version-gate')
+  assertHarnessCliReady()
+
   const timeoutMs = opts?.timeoutMs ?? 5 * 60 * 1000
   // harness --timeout 单位为秒；比本地 timer 略短，让 bridge 先返回而非被本地 SIGKILL
   const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000))

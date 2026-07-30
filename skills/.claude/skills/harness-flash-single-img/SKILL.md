@@ -10,6 +10,18 @@ disable-model-invocation: true
 
 原理：harness fastboot 后端在目录里没有 `android-info.txt` / `flash_all.*` 时进入 auto 模式，按文件名 `<partition>.img` 逐分区刷。因此把目标 img 复制成 `<partition>.img` 放进一个**只含这一个文件**的临时目录，再指定该目录刷机，就只会刷这一个分区。
 
+## 与新版 harness（capabilities / 本机官方 Skill）的关系
+
+- 官方 `harness-device` / `transsion-harness` **不在工程** `skills/.claude/skills/`；由 `harness install` 装到本机 `$HOME/.claude/skills` / `$HOME/.cursor/skills` 等。本 skill 是工程内自研封装，只依赖本机 `harness` CLI。
+- 使用前须满足工程 `.tahp/harness-requirement.json` 的 `minimum_cli`。不满足时停止，引导用户打开「配置 → 一键配置表单」后点击「启动skill配置检查」完成「Transsion Harness 安装」。
+- 本 skill 依赖能力 **`harness-device`**。若 `harness --json config capabilities list` 中该能力为 `enabled: false`，先执行：
+  ```text
+  harness --json config capabilities set harness-device --enabled --sync
+  ```
+  再继续；未启用时 Agent 可能没有本机 `harness-device` 子 skill，但 CLI `device flash` 通常仍可用——仍须先打开能力以免路由/环境不一致。
+- **不要**对本场景跑 `harness plugin route flash`：那是「整包固件 / 下载刷写」插件优先路径。本 skill 是**本地单分区 .img 选择性刷入**，固定走内置 `device flash --backend fastboot`。
+- CLI 契约（`--sn` / `--rom-path` / `--backend fastboot` / `--dry-run` / `--require-oem-unlock`）以本机 `harness --json commands describe device flash` 为准；勿引用工程内已删除的官方 harness skill 路径。
+
 ## 何时使用
 
 - 用户给出单个本地镜像路径（如 `D:\imgs\boot.img` 或任意文件名 `xxx.img`）并指明要刷到哪个分区；
@@ -23,6 +35,7 @@ disable-model-invocation: true
 
 ## 前置条件
 
+- 能力 `harness-device` 已启用（见上）；
 - 设备已 **OEM 解锁**（locked bootloader 下 fastboot flash 会失败）；
 - 设备能被识别（`harness device probe` 能看到，或能被拉进 fastboot）。
 
@@ -35,6 +48,7 @@ disable-model-invocation: true
 ## 工作流（复制此清单并逐项跟踪）
 
 ```
+- [ ] 0. 确认 harness CLI 版本与 harness-device 能力
 - [ ] 1. 确定 SN（缺省则自动探测）
 - [ ] 2. 校验分区在支持列表内
 - [ ] 3. staging：临时目录内放 <partition>.img
@@ -42,6 +56,16 @@ disable-model-invocation: true
 - [ ] 5. 预检通过即正式刷入（无需用户确认）
 - [ ] 6. 清理临时目录
 ```
+
+**0. 版本与能力检查**
+
+```text
+harness --json version check
+harness --json config capabilities list
+```
+
+- CLI 版本须 ≥ 工程 `.tahp/harness-requirement.json` 的 `minimum_cli`；否则停止并引导「配置 → 启动skill配置检查」。
+- 若 `harness-device.enabled != true`，先 `harness --json config capabilities set harness-device --enabled --sync`，再继续。
 
 **1. 确定 SN**
 
@@ -103,11 +127,12 @@ Remove-Item $stage -Recurse -Force
 
 | 现象 / error_code | 含义 | 给出的指示 |
 |---|---|---|
+| capability disabled | harness-device 未启用 | `config capabilities set harness-device --enabled --sync` 后重试 |
 | probe 零设备 | 设备未连接/未识别 | 提示插好 USB、开 USB 调试或进 fastboot，重试 |
 | probe 多设备 | SN 不明确 | 列出所有 SN，请用户指定 `--sn` |
 | 分区不支持 / userdata / cache | 路线 A 不覆盖 | 说明不支持，建议整包刷或提 feedback |
 | `ROM_PATH_NOT_FOUND` | staging 目录/路径错误 | 检查源 img 路径与 staging 是否生成成功 |
-| `FASTBOOT_TOOL_NOT_FOUND` / `FLASH_TOOLKIT_NOT_AVAILABLE` | harness 刷机后端缺失 | 运行 `harness doctor`，必要时重装 harness CLI |
+| `FASTBOOT_TOOL_NOT_FOUND` / `FLASH_TOOLKIT_NOT_AVAILABLE` | harness 刷机后端缺失 | 运行 `harness doctor`，必要时按工程相对路径 `docs/agent-npx-cli-sop.md` 经「启动skill配置检查」重装 CLI |
 | `DEVICE_OFFLINE` / `FASTBOOT_DEVICE_NOT_FOUND` | 进不了 fastboot | 手动 `reboot bootloader` 或检查驱动，重试 |
 | `BOOTLOADER_LOCKED` / `BOOTLOADER_UNLOCK_FAIL` | 未解锁 | 加 `--require-oem-unlock`（会清 userdata），或先手动解锁 |
 | `PARTITION_FAIL` / `PARTITION_STALLED` | 分区刷入失败 | 回显 fastboot 原始输出，提示 img 与分区/机型是否匹配 |
@@ -118,12 +143,13 @@ Remove-Item $stage -Recurse -Force
 - 本 skill 默认**全自动、不等确认**。`modem`、`persist`、`preloader` 属高风险分区，刷错可能变砖——自动刷入前在回复里明确标注是高风险分区（告知即可，不阻塞流程）。
 - 一个 staging 目录只放一个 `<partition>.img`；不要把多个 img 放进同一目录，否则会一次刷多个分区。
 - 不要绕过 harness 直接调 `fastboot` / `adb` / SP Flash Tool。
-- 本 skill 只处理 **fastboot 可刷的分区镜像**；MTK scatter 整包刷机仍走 `harness-device` 的 device_update 后端。
+- 本 skill 只处理 **fastboot 可刷的分区镜像**；MTK scatter 整包刷机仍走 `harness-device` 的 device_update 后端；整包固件下载刷写才考虑 `plugin route flash`。
 
 ## 依赖
 
 - **harness CLI**：命令 `harness` 可用，且 `device flash` / `device probe` 存在（`harness --json commands list` 可核对）。这是唯一的功能性依赖。
-- **harness 内置刷机后端**：CLI wheel 自带 `flash_toolkit` 与 `fastboot.exe` / `device_update.exe`。缺失时命令会报 `FLASH_TOOLKIT_NOT_AVAILABLE` / `FASTBOOT_TOOL_NOT_FOUND`，用 `harness doctor` 检查、必要时重装 CLI。**不需要**用户单独装 platform-tools / adb / fastboot。
+- **能力开关**：`harness-device` 已启用并（建议）`--sync` 过 Agent skill。
+- **harness 内置刷机后端**：CLI 自带 `flash_toolkit` 与 `fastboot.exe` / `device_update.exe`。缺失时命令会报 `FLASH_TOOLKIT_NOT_AVAILABLE` / `FASTBOOT_TOOL_NOT_FOUND`，用 `harness doctor` 检查、必要时重装 CLI。**不需要**用户单独装 platform-tools / adb / fastboot。
 - **运行环境**：Windows + PowerShell（用于 staging 的 `New-Item -ItemType HardLink` / `Copy-Item`）。硬链接要求源 img 与 staging 目录在**同一 NTFS 盘**；跨盘或非 NTFS 时自动回落到复制。
 - **设备侧**：设备已连接且可被 adb/fastboot 识别、已 OEM 解锁（或允许用 `--require-oem-unlock` 自动解锁）。
 - 本 skill 自身**无脚本、无 Python 包、无网络依赖**，只有一个 `SKILL.md`；所有实际能力来自 harness CLI。

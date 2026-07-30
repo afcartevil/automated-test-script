@@ -13,13 +13,14 @@ const HARNESS_GERRIT_BASE_URL = 'https://gerrit.transsion.com'
 
 /** harness env.yaml 模板默认值（表单未覆盖的项） */
 export const HARNESS_ENV_TEMPLATE_DEFAULTS: Record<string, string> = {
-  HARNESS_UPDATE_MANIFEST_URL: '\\\\10.205.4.20\\sw_temp\\底软通信开发部\\ai_dev_tool\\stable\\manifest.json',
+  HARNESS_UPDATE_REGISTRY: 'https://artifact.transsion.com/artifactory/api/npm/tr-npm-releases/',
   HARNESS_UPDATE_CHANNEL: 'stable',
   HARNESS_QIZHI_USER: '',
   HARNESS_QIZHI_TARGET_HOST: '',
   HARNESS_QIZHI_TARGET_PASSWORD: '',
   HARNESS_QIZHI_BASTION_PASSWORD: '',
   HARNESS_QIZHI_SAMBA_PASSWORD: '',
+  HARNESS_QIZHI_OTP_SECRET: '',
   HARNESS_MAP_DRIVE_ROOT: 'Z:\\',
   HARNESS_MAP_DRIVE_REMOTE_SHARE: '',
   HARNESS_MAP_DRIVE_PERSISTENT: 'true',
@@ -57,6 +58,7 @@ export function hasHarnessRelatedUnifiedConfig(values: UnifiedConfigValues): boo
     'linux_server_ip',
     'linux_server_password',
     'windows_map_drive',
+    'qizhi_totp_secret',
   ]
   return keys.some(k => (values[k] || '').trim().length > 0)
 }
@@ -108,6 +110,7 @@ export function buildHarnessEnvOverrides(values: UnifiedConfigValues): Record<st
   const host = (values.linux_server_ip || '').trim()
   const linuxPassword = (values.linux_server_password || '').trim()
   const mapDrive = normalizeMapDriveRoot(values.windows_map_drive || '')
+  const totpSecret = (values.qizhi_totp_secret || '').trim().replace(/\s+/g, '')
 
   if (account) {
     overrides.HARNESS_QIZHI_USER = account
@@ -136,6 +139,9 @@ export function buildHarnessEnvOverrides(values: UnifiedConfigValues): Record<st
   if (mapDrive) {
     overrides.HARNESS_MAP_DRIVE_ROOT = mapDrive
     overrides.HARNESS_REMOTE_RUNNER_MAPPED_ROOT = mapDrive
+  }
+  if (totpSecret) {
+    overrides.HARNESS_QIZHI_OTP_SECRET = totpSecret
   }
 
   return overrides

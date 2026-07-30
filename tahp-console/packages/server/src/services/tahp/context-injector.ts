@@ -13,6 +13,11 @@ import { tahpPaths, hasTahpProject } from './paths'
 import { invalidateKbSearchIndex } from './kb-search'
 import { buildUnifiedConfigDirective } from './unified-config'
 import { logger } from '../logger'
+import {
+  buildHarnessHostSkillsDirective,
+  isOfficialHarnessSkillId,
+} from './harness-host-skills'
+import { checkHarnessCliRequirement } from './harness-version-gate'
 
 // ---------------------------------------------------------------------------
 // 类型定义
@@ -154,10 +159,11 @@ function loadKbDataEntryItems(): ContextItem[] {
 function buildIndex(): ContextItem[] {
   const items: ContextItem[] = []
 
-  // ── 1. Skills ─────────────────────────────────────────────────────────────
+  // ── 1. Skills（跳过官方 harness-*：不在工程内分发）────────────────────────
   const skillsDir = join(tahpPaths.projectRoot, 'skills', '.claude', 'skills')
   if (existsSync(skillsDir)) {
     for (const skillName of safeReadDir(skillsDir)) {
+      if (isOfficialHarnessSkillId(skillName)) continue
       const skillMdPath = join(skillsDir, skillName, 'SKILL.md')
       if (!existsSync(skillMdPath)) continue
       try {
@@ -338,8 +344,9 @@ export function buildSkillExecutionDirective(options?: {
     `TAHP 工程根目录（绝对路径，解析下列相对路径的基准）: \`${tahpPaths.projectRoot}\``,
     '> 注意：Agent 当前工作目录不一定是工程根。下方所有相对路径（如 `.tahp/...`、`skills/.claude/skills/...`）均相对上述**工程根绝对路径**；访问前请拼成绝对路径，不要相对当前 CWD 解析。',
     '',
-    `工程内 Skill 根目录（唯一权威来源，相对工程根）: \`${skillsDir}\``,
-    '每个 Skill 为 `<skillId>/SKILL.md`。**按需**选择 1～3 个相关 Skill，禁止编造不存在的 skillId。',
+    `工程内业务 Skill 根目录（相对工程根）: \`${skillsDir}\``,
+    '每个业务 Skill 为 `<skillId>/SKILL.md`。**按需**选择 1～3 个相关 Skill，禁止编造不存在的 skillId。',
+    '**例外**：官方 `transsion-harness` / `harness-*` **不在**工程内（自研 `harness-flash-single-img` 除外），见下文「Harness 官方 Skill」。',
     '',
     '## 如何使用工程内 Skill',
     '1. 若下方预检索已给出知识库命中，先引用知识库结论；Skill 仅作补充。',
@@ -369,13 +376,30 @@ export function buildSkillExecutionDirective(options?: {
   lines.push('')
 
   const preferred = [...new Set((options?.preferredSkillIds ?? []).filter(Boolean))]
-  if (preferred.length > 0) {
-    lines.push('## 优先 Skill（须最先 Read 并遵循）')
-    for (const id of preferred) {
+  const preferredHostHarness = preferred.filter(id => isOfficialHarnessSkillId(id))
+  const preferredProject = preferred.filter(id => !isOfficialHarnessSkillId(id))
+  if (preferredProject.length > 0) {
+    lines.push('## 优先 Skill（工程内，须最先 Read 并遵循）')
+    for (const id of preferredProject) {
       lines.push(`- **${id}**: \`${tahpSkillMdRelativePath(id)}\``)
     }
     lines.push('')
   }
+  if (preferredHostHarness.length > 0) {
+    lines.push('## 优先 Harness 官方 Skill（本机客户端目录，勿在工程 skills/ 查找）')
+    for (const id of preferredHostHarness) {
+      lines.push(`- **${id}**: 在 \`$HOME/.claude/skills/${id}/SKILL.md\` 或 \`$HOME/.cursor/skills/${id}/SKILL.md\` 等本机安装路径 Read`)
+    }
+    lines.push('')
+  }
+
+  lines.push(buildHarnessHostSkillsDirective())
+  lines.push('')
+  try {
+    const gate = checkHarnessCliRequirement()
+    lines.push(gate.agentDirective)
+    lines.push('')
+  } catch { /* ignore probe failures in prompt build */ }
 
   // 缺配置时优先复用「一键配置表单」，而非直接向用户索要（req 5）
   try {

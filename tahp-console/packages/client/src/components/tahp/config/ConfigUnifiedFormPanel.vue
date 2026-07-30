@@ -240,6 +240,14 @@ onMounted(() => {
                 >
                   <label class="form-field__label" :for="`uf-${field.key}`">
                     <span>{{ field.label }}</span>
+                    <a
+                      v-if="field.doc_url"
+                      class="form-field__doc"
+                      :href="field.doc_url"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      @click.stop
+                    >{{ field.doc_label || '文档' }}</a>
                     <span
                       v-if="isFieldSaved(field.key)"
                       class="form-field__saved"
@@ -288,6 +296,14 @@ onMounted(() => {
                   >
                     <label class="form-field__label" :for="`uf-${field.key}`">
                       <span>{{ field.label }}</span>
+                      <a
+                        v-if="field.doc_url"
+                        class="form-field__doc"
+                        :href="field.doc_url"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        @click.stop
+                      >{{ field.doc_label || '文档' }}</a>
                       <span
                         v-if="isFieldSaved(field.key)"
                         class="form-field__saved"
@@ -564,6 +580,19 @@ onMounted(() => {
   font-size: 12px;
   font-weight: 600;
   color: var(--head, var(--text));
+}
+
+.form-field__doc {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }
 
 .form-field__saved {

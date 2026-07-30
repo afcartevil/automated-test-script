@@ -35,6 +35,9 @@ export interface UnifiedConfigField {
   /** 域账号 / 域密码：Jira / Gerrit / OpenGrok 共用 */
   shared?: boolean
   default?: string
+  /** 字段旁文档超链接（如获取 TOTP 指引） */
+  doc_url?: string
+  doc_label?: string
 }
 
 const GROUP_DOMAIN = '域账号'
@@ -96,6 +99,16 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     group: GROUP_HARNESS,
     placeholder: 'Z:\\',
     description: 'HARNESS_MAP_DRIVE_ROOT、HARNESS_REMOTE_RUNNER_MAPPED_ROOT',
+  },
+  {
+    key: 'qizhi_totp_secret',
+    label: '齐治 TOTP secret',
+    type: 'password',
+    group: GROUP_HARNESS,
+    placeholder: '齐治堡垒机 TOTP base32 secret',
+    description: 'HARNESS_QIZHI_OTP_SECRET（Bridge 自动生成动态口令）',
+    doc_url: 'https://transsioner.feishu.cn/wiki/TslFwtsCuiroMVkXhlCc4YGGn50',
+    doc_label: '如何获取',
   },
   {
     key: 'feishu_app_id',
@@ -190,6 +203,7 @@ const FIELD_ENV_KEYS: Record<string, string[]> = {
   linux_server_ip: ['HARNESS_QIZHI_TARGET_HOST'],
   linux_server_password: ['HARNESS_QIZHI_TARGET_PASSWORD'],
   windows_map_drive: ['HARNESS_MAP_DRIVE_ROOT'],
+  qizhi_totp_secret: ['HARNESS_QIZHI_OTP_SECRET'],
   feishu_app_id: ['FEISHU_APP_ID'],
   feishu_app_secret: ['FEISHU_APP_SECRET'],
   workspace_root: ['WORKSPACE_ROOT'],
@@ -405,9 +419,10 @@ export function buildUnifiedConfigDirective(): string {
     `- 表单落盘文件（含明文，可直接 Read）: \`${join(tahpPaths.projectRoot, '.tahp', 'unified-config.json')}\`（工程根下 \`.tahp/unified-config.json\`）`,
     `- JIRA 日志工作区（WORKSPACE_ROOT）: \`${getJiraWorkspaceRoot().replace(/\\/g, '/')}\`；下载目录为 \`{WORKSPACE_ROOT}/<JIRA_KEY>/\``,
     '- 域账号/域密码在 Jira、Gerrit、OpenGrok、harness（HARNESS_QIZHI_USER / HARNESS_QIZHI_BASTION_PASSWORD 及 Jira/OpenGrok/Gerrit/Spug 凭据）间通用。',
-    '- harness 工具：Linux 服务器 IP → `HARNESS_QIZHI_TARGET_HOST`；Linux 服务器密码 → `HARNESS_QIZHI_TARGET_PASSWORD` / `HARNESS_QIZHI_SAMBA_PASSWORD`；Windows 映射盘 → `HARNESS_MAP_DRIVE_ROOT`。',
+    '- harness 工具：Linux 服务器 IP → `HARNESS_QIZHI_TARGET_HOST`；Linux 服务器密码 → `HARNESS_QIZHI_TARGET_PASSWORD` / `HARNESS_QIZHI_SAMBA_PASSWORD`；Windows 映射盘 → `HARNESS_MAP_DRIVE_ROOT`；齐治 TOTP secret → `HARNESS_QIZHI_OTP_SECRET`。',
+    '- **使用 harness / 官方 harness-* skill 前**：先确认 CLI 版本满足工程 \`.tahp/harness-requirement.json\`；不满足则引导用户打开「配置 → 一键配置表单」后点击「启动skill配置检查」。官方 Skill 在本机 `$HOME/.claude/skills` / `$HOME/.cursor/skills` 等，**不在**工程 `skills/`。',
     `- 保存一键配置表单时 BFF 已自动同步 harness 配置到 \`${getHarnessEnvPath().replace(/\\/g, '/')}\`（模板默认值补全未在表单中的项）。`,
-    '- **使用 harness / harness-* skill 前**：先 `harness --json config show --effective`；若缺凭据或文件不存在，Read 上述 unified-config.json，提示用户保存一键配置表单以触发同步，或按映射手动写入 env.yaml 后再重试。',
+    '- 安装/更新 harness CLI 与 Agent skill：按工程相对路径 `docs/agent-npx-cli-sop.md`（相对 TAHP 工程根）执行；完成后启用全部 capabilities 并 `--sync`。',
     '- 服务器地址为固定值（无需向用户索要）：'
       + `Jira \`${FIXED_SERVER_ADDRESSES.jira_base_url}\`、`
       + `Gerrit \`${FIXED_SERVER_ADDRESSES.gerrit_host}\`、`

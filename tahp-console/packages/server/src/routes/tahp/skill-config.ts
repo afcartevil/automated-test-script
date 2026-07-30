@@ -18,8 +18,24 @@ import {
   writeUnifiedConfig,
   type UnifiedConfigValues,
 } from '../../services/tahp/unified-config'
+import { checkHarnessCliRequirement } from '../../services/tahp/harness-version-gate'
 
 export const tahpSkillConfigRoutes = new Router({ prefix: '/api/tahp/skill-config' })
+
+tahpSkillConfigRoutes.get('/harness-status', async (ctx) => {
+  const gate = checkHarnessCliRequirement()
+  ctx.body = {
+    success: true,
+    data: {
+      ok: gate.ok,
+      current: gate.current,
+      required: gate.required,
+      channel: gate.channel,
+      sop_doc: gate.sopDoc,
+      message: gate.userMessage,
+    },
+  }
+})
 
 tahpSkillConfigRoutes.get('/', async (ctx) => {
   ctx.body = { success: true, data: listRequiredSkills() }

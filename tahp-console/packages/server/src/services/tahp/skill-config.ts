@@ -26,6 +26,8 @@ import {
   APPROVAL_AUTO_ONCE_MS,
   type ApprovalRequestPayload,
 } from './bug-analysis-interaction'
+import { isOfficialHarnessSkillId } from './harness-host-skills'
+import { checkHarnessCliRequirement } from './harness-version-gate'
 
 const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
 
@@ -160,13 +162,22 @@ function buildVirtualPreviewMd(entry: RequiredSkillEntry): string {
     lines.push('## Agent 任务', '', entry.agent_brief, '')
   }
   if (entry.setup_doc) {
-    lines.push('## SOP 文档路径', '', `\`${entry.setup_doc}\``, '')
+    const abs = resolveSetupDocPath(entry.setup_doc)
+    lines.push(
+      '## SOP 文档路径',
+      '',
+      `- 工程相对路径: \`${entry.setup_doc}\``,
+      abs ? `- 绝对路径（相对当前主机工程根解析）: \`${abs}\`` : '',
+      '',
+    )
   }
   if (entry.related_skill) {
     lines.push(
-      '## 参考 Skill',
+      '## 参考',
       '',
-      `安装完成后可参考工程内 \`harness-install\`（\`${entry.related_skill}\`）做 \`doctor\` / \`config\` 等后续配置。`,
+      entry.related_skill === 'harness-install' || isOfficialHarnessSkillId(entry.related_skill)
+        ? `安装完成后在本机客户端 skills 目录查看官方 \`${entry.related_skill}\`（由 \`harness install\` 安装，不在工程 \`skills/\` 下）。`
+        : `安装完成后可参考工程内 Skill \`${tahpSkillMdRelativePath(entry.related_skill)}\`（\`${entry.related_skill}\`）。`,
       '',
     )
   }
@@ -176,6 +187,37 @@ function buildVirtualPreviewMd(entry: RequiredSkillEntry): string {
 function isVirtualEntry(entry: RequiredSkillEntry): boolean {
   return entry.virtual === true
 }
+
+/** 配置/使用这些 Skill 前须满足 harness CLI 最低版本（安装项除外） */
+function skillRequiresHarnessCli(skillId: string): boolean {
+  if (skillId === 'transsion-harness-install') return false
+  if (skillId === 'harness-flash-single-img' || skillId === 'gerrit-submit') return true
+  if (isOfficialHarnessSkillId(skillId)) return true
+  return false
+}
+
+/** 将 required-skills 的 setup_doc 解析为可 Read 的绝对路径（相对路径相对工程根；UNC/绝对路径原样） */
+function resolveSetupDocPath(setupDoc?: string): string {
+  const raw = (setupDoc || '').trim()
+  if (!raw) return ''
+  if (/^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('\\\\') || raw.startsWith('/')) {
+    return raw.replace(/\\/g, '/')
+  }
+  return join(tahpPaths.projectRoot, raw).replace(/\\/g, '/')
+}
+
+/** Transsion Harness 安装完成后：默认启用全部能力并同步 Agent skill */
+const HARNESS_POST_SOP_ENABLE_ALL = `
+# SOP 完成后的强制收尾（TAHP）
+在 \`docs/agent-npx-cli-sop.md\` 第 1–3 步（依赖检查 → npm 安装 CLI → \`harness install --target auto --force\`）成功后，**必须**继续：
+1. \`harness --json config capabilities list\` 列出全部能力；
+2. 对每个 \`enabled: false\` 的能力执行：\`harness --json config capabilities set <id> --enabled\`（不要一次只开一部分）；
+3. 全部置为 enabled 后执行一次同步：\`harness --json install --target auto --force\`（或最后一条 \`set ... --enabled --sync\`），确保各客户端 \`~/.<client>/skills/\` 装上对应子 skill；
+4. 再跑 \`harness --json config capabilities list\` 与 \`harness --json doctor\` 复核；
+5. 凭据（含齐治 TOTP secret）优先来自一键配置表单已同步的 \`~/.tran_harness/env.yaml\`（键 \`HARNESS_QIZHI_OTP_SECRET\`）；不要引导用户 \`setx\` 或手改 yaml。Bridge / 映射盘仍可提示用户在「Harness 配置中心」确认。
+首次安装与二次更新均走同一 SOP：已安装时用 \`npm install -g @transsion/harness-cli@stable\` + \`harness install --force\` 覆盖升级，再执行上述「启用全部能力 + sync」。
+`.trim()
+
 
 function getManifestEntry(skillId: string): RequiredSkillEntry | undefined {
   return readManifest().skills.find(s => s.id === skillId)
@@ -365,9 +407,16 @@ function getSkillConfigLocations(entry: RequiredSkillEntry): string[] {
   const hints: string[] = []
 
   if (isVirtualEntry(entry)) {
-    if (entry.setup_doc) hints.push(`SOP 文档: \`${entry.setup_doc}\``)
-    if (entry.related_skill) {
-      hints.push(`相关 Skill: \`${tahpSkillMdRelativePath(entry.related_skill)}\``)
+    if (entry.setup_doc) {
+      const abs = resolveSetupDocPath(entry.setup_doc)
+      hints.push(`SOP 文档: \`${entry.setup_doc}\`${abs ? `（\`${abs}\`）` : ''}`)
+    }
+      if (entry.related_skill) {
+      if (isOfficialHarnessSkillId(entry.related_skill) || entry.related_skill === 'harness-install') {
+        hints.push(`本机官方 Skill: \`${entry.related_skill}\`（$HOME/.claude/skills 等，非工程 skills/）`)
+      } else {
+        hints.push(`相关 Skill: \`${tahpSkillMdRelativePath(entry.related_skill)}\``)
+      }
       hints.push('`harness config show` / `harness --json doctor` 输出')
     }
     return hints
@@ -514,26 +563,36 @@ function buildSkillConfigInstructions(
 
   let base: string
   if (isVirtualEntry(entry)) {
-    const relatedPath = entry.related_skill ? tahpSkillMdRelativePath(entry.related_skill) : ''
+    const relatedPath = entry.related_skill && !isOfficialHarnessSkillId(entry.related_skill)
+      ? tahpSkillMdRelativePath(entry.related_skill)
+      : ''
+    const setupRel = entry.setup_doc || '(见 agent_brief)'
+    const setupAbs = resolveSetupDocPath(entry.setup_doc)
+    const isHarnessInstall = skillId === 'transsion-harness-install'
     base = `你是 TAHP「常用 Skill 配置」向导，负责在**当前主机**完成 **${skillLabel}**（\`${skillId}\`，虚拟配置项）的安装与初始化。
 
 # 必须遵守
-1. **先 Read** 内网 SOP 文档（UNC/文件路径）：\`${entry.setup_doc || '(见 agent_brief)'}\`
-   - 若路径为 Windows UNC（\\\\server\\share\\...），用 Read 工具直接读取；不可访问时向用户说明并请求可复制到本地的路径。
+1. **先 Read** SOP 文档（相对工程根的相对路径优先，兼容任意主机 clone 路径）：
+   - 相对路径: \`${setupRel}\`
+   - 绝对路径: \`${setupAbs || '(无法解析)'}\`
+   - 用 Read 工具读取上述绝对路径；若文件缺失，确认工程根 \`${tahpPaths.projectRoot}\` 是否正确，并向用户说明。
 2. **严格执行 SOP**：${entry.agent_brief || '按 SOP 安装 transsion harness'}
-3. 在**当前主机**完成：Node/npm 环境检查、harness 包安装、\`harness install\`、\`harness agent install-skill\`（若 SOP 要求）及 \`harness doctor\` 复核。
+3. 在**当前主机**完成：Python/Node/npm 依赖检查、\`@transsion/harness-cli@stable\` 全局安装、\`harness install --target auto --force\`（按 SOP；勿再依赖共享盘 tgz / 旧 UNC SOP）。
 4. 缺少必填参数时一次性列出格式示例；收到用户回复后立即执行安装/配置命令，不要只记在对话里。
 5. 每完成一阶段运行 \`harness --json doctor\`（或 SOP 指定命令）验证。
 6. **全部步骤完成且 doctor 通过后**，输出完成标记块（见下文），并总结安装版本与关键路径。
-${entry.related_skill ? `7. 可参考工程 Skill \`${relatedPath}\`（\`${entry.related_skill}\`）做 \`doctor\` / \`config\` 等后续配置；缺 harness 凭据时先 Read \`${tahpPaths.projectRoot}/.tahp/unified-config.json\`（保存表单已同步 \`~/.tran_harness/env.yaml\`）。` : ''}
-${force ? '\n# 重新配置模式\n用户要求**覆盖/重新安装**，请先检查现有 harness 版本与安装路径，再按 SOP 重新执行。' : ''}
+${entry.related_skill ? (relatedPath
+  ? `7. 可参考工程 Skill \`${relatedPath}\`（\`${entry.related_skill}\`）做后续配置；缺 harness 凭据时先 Read \`${tahpPaths.projectRoot}/.tahp/unified-config.json\`。`
+  : `7. 官方 \`${entry.related_skill}\` 安装在本机 \`$HOME/.claude/skills\` / \`$HOME/.cursor/skills\` 等（由 \`harness install\` 写入，**不在**工程 \`skills/\`）；缺凭据时 Read \`${tahpPaths.projectRoot}/.tahp/unified-config.json\`。`) : ''}
+${isHarnessInstall ? `\n${HARNESS_POST_SOP_ENABLE_ALL}\n` : ''}
+${force ? '\n# 重新配置模式\n用户要求**覆盖/重新安装**，请先检查现有 harness 版本与安装路径，再按同一 SOP 重新执行（二次更新），并再次启用全部能力 + sync。' : ''}
 
 # 完成标记（doctor 通过后必须输出）
 \`\`\`
 === TAHP_SKILL_CONFIG_COMPLETE ===
 skill_id: ${skillId}
 status: success
-message: <一句话说明 harness 安装与 doctor 结果>
+message: <一句话说明 harness 安装/更新、能力全开与 doctor 结果>
 === END_TAHP_SKILL_CONFIG_COMPLETE ===
 \`\`\`
 `
@@ -601,7 +660,7 @@ function buildBatchSkillConfigInstructions(): string {
     const done = isSkillConfiguredInState(state, entry.id) ? '（已配置，可跳过或复核）' : ''
     const deps = entry.depends_on?.length ? `，依赖: ${entry.depends_on.join('、')}` : ''
     const loc = isVirtualEntry(entry)
-      ? `SOP: ${entry.setup_doc || '(见 agent_brief)'}`
+      ? `SOP: \`${entry.setup_doc || '(见 agent_brief)'}\`${entry.setup_doc ? ` → \`${resolveSetupDocPath(entry.setup_doc)}\`` : ''}`
       : `\`${rel}/${entry.id}/SKILL.md\``
     return `${i + 1}. **${entry.label}**（\`${entry.id}\`）${done}${deps} — ${loc}`
   })
@@ -624,9 +683,12 @@ function buildBatchSkillConfigInstructions(): string {
 
 # transsion-harness-install / harness-* 专项
 配置 **transsion-harness-install** 或依赖 harness CLI 的 Skill 时：
-1. 先 \`harness --json config show --effective\`；若缺凭据，Read unified-config.json，确认用户已保存表单（保存时会同步 env.yaml）；仍缺失则提示用户保存一键配置表单后重试。
-2. 域账号/密码 → \`HARNESS_QIZHI_USER\` / \`HARNESS_QIZHI_BASTION_PASSWORD\` 及 Jira/OpenGrok/Gerrit/Spug 同名凭据；Linux 服务器 IP/密码、映射盘见表单 \`linux_server_*\` / \`windows_map_drive\`。
-3. 安装完成后 \`harness --json doctor\` 验证。
+1. **先 Read** 工程相对路径 \`docs/agent-npx-cli-sop.md\`（绝对路径：\`${join(tahpPaths.projectRoot, 'docs/agent-npx-cli-sop.md').replace(/\\/g, '/')}\`），按该 SOP 做首次安装或二次更新（npm registry \`@transsion/harness-cli@stable\` + \`harness install --target auto --force\`）。勿再使用共享盘 UNC 旧 SOP。
+2. SOP 完成后**默认启用全部 capabilities**（\`config capabilities list\` → 对未启用项 \`set <id> --enabled\` → \`install --force\` 或带 \`--sync\`），再 \`doctor\`。
+3. 官方 \`transsion-harness\` / \`harness-*\` Skill **只**落在本机 \`$HOME/.claude/skills\` / \`$HOME/.cursor/skills\` 等，**不要**在工程 \`skills/.claude/skills/\` 查找旧副本。
+4. 先 \`harness --json config show --effective\`；若缺凭据，Read unified-config.json，确认用户已保存表单（保存时会同步 env.yaml，含齐治 TOTP → \`HARNESS_QIZHI_OTP_SECRET\`）；仍缺失则提示用户保存一键配置表单后重试。
+5. 域账号/密码 → \`HARNESS_QIZHI_USER\` / \`HARNESS_QIZHI_BASTION_PASSWORD\` 及 Jira/OpenGrok/Gerrit/Spug 同名凭据；Linux 服务器 IP/密码、映射盘、齐治 TOTP secret 见表单 \`linux_server_*\` / \`windows_map_drive\` / \`qizhi_totp_secret\`。
+6. 安装/更新完成后 \`harness --json doctor\` 与 \`harness --json version check\` 验证（须满足工程 \`.tahp/harness-requirement.json\` 的 \`minimum_cli\`）。
 
 # jira-ops 专项（强制连通性验证）
 配置到 **jira-ops** 时：
@@ -928,6 +990,12 @@ export function startSkillConfigAgent(skillId: string, force = false): {
   if (!entry) return { ok: false, error: `清单中无 Skill: ${skillId}` }
   if (!isVirtualEntry(entry) && !existsSync(join(skillRoot(skillId), 'SKILL.md'))) {
     return { ok: false, error: `Skill 不存在: ${skillId}` }
+  }
+
+  // 依赖 harness CLI 的业务 Skill：版本不足则拦截并引导配置检查（安装项本身除外）
+  if (skillId !== 'transsion-harness-install' && skillRequiresHarnessCli(skillId)) {
+    const gate = checkHarnessCliRequirement()
+    if (!gate.ok) return { ok: false, error: gate.userMessage }
   }
 
   const existing = activeTasks.get(skillId)
