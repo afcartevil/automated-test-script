@@ -314,25 +314,30 @@ function branchTemplateTagLabel(status?: RepoProfile['branchTemplateStatus']) {
           <NInput v-model:value="editForm.localPath" placeholder="例如 Z:\mtk\modem\v\TK_MD..." />
         </div>
         <div class="branch-edit">
-          <div class="ea-section-title">分支信息</div>
-          <div class="ea-field">
-            <label>主干节点分支</label>
-            <NInput v-model:value="editForm.trunkNodeBranch" placeholder="例如 master" />
+          <div class="branch-table__head">
+            <div class="ea-section-title">分支信息</div>
+            <NButton secondary size="small" @click="addMpRow">新增 MP</NButton>
           </div>
-          <div class="ea-field">
-            <label>主干分支</label>
-            <NInput v-model:value="editForm.trunkBranch" placeholder="例如 PRODUCT_W_w0mp1rc_LR13_common" />
-          </div>
-          <div class="mp-editor">
-            <div class="mp-editor__head">
-              <span class="ea-pill-muted">MP 列表</span>
-              <NButton secondary size="small" @click="addMpRow">新增 MP</NButton>
+          <div class="branch-table">
+            <div class="branch-table__row branch-table__row--header">
+              <span>类型 / tOS</span>
+              <span>节点分支</span>
+              <span>目标分支</span>
+              <span class="branch-table__op">操作</span>
             </div>
-            <div v-for="(item, index) in editForm.mp" :key="index" class="mp-row">
+            <div class="branch-table__row">
+              <NInput :value="'主干'" disabled />
+              <NInput v-model:value="editForm.trunkNodeBranch" placeholder="例如 master" />
+              <NInput v-model:value="editForm.trunkBranch" placeholder="例如 PRODUCT_W_w0mp1rc_LR13_common" />
+              <span class="branch-table__op branch-table__op--muted">—</span>
+            </div>
+            <div v-for="(item, index) in editForm.mp" :key="index" class="branch-table__row">
               <NInput v-model:value="item.tos" placeholder="tOS16.3 / tOS17.0" />
               <NInput v-model:value="item.mpNodeBranch" placeholder="节点分支" />
               <NInput v-model:value="item.mpBranch" placeholder="量产分支（tOSxx.x release）" />
-              <NButton tertiary size="small" type="error" @click="removeMpRow(index)">删除</NButton>
+              <div class="branch-table__op">
+                <NButton tertiary size="small" type="error" @click="removeMpRow(index)">删除</NButton>
+              </div>
             </div>
           </div>
         </div>
@@ -516,24 +521,39 @@ function branchTemplateTagLabel(status?: RepoProfile['branchTemplateStatus']) {
   border-top: 1px solid var(--line);
 }
 
-.mp-editor {
+.branch-table {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.mp-editor__head {
+.branch-table__head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
 }
 
-.mp-row {
+.branch-table__row {
   display: grid;
-  grid-template-columns: minmax(110px, 140px) minmax(160px, 1fr) minmax(200px, 1.2fr) auto;
+  grid-template-columns: minmax(110px, 140px) minmax(160px, 1fr) minmax(200px, 1.2fr) minmax(56px, 72px);
   gap: 8px;
   align-items: center;
+}
+
+.branch-table__row--header {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.branch-table__op {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.branch-table__op--muted {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 @media (max-width: 720px) {
@@ -554,7 +574,7 @@ function branchTemplateTagLabel(status?: RepoProfile['branchTemplateStatus']) {
     flex-direction: column;
   }
 
-  .mp-row {
+  .branch-table__row {
     grid-template-columns: 1fr;
   }
 }
