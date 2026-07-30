@@ -1887,6 +1887,237 @@ function evaluateModemBuildResult(result: HarnessResult): boolean {
   return result.status === 'ok' && (result.exit_code === 0 || result.exit_code == null)
 }
 
+type TranModemTargetMode = 'trunk' | 'mp' | 'unknown'
+
+function extractPlatformSuffixToken(text: string) {
+  const normalized = String(text ?? '').toUpperCase()
+  const match = normalized.match(/GEN\s*\d+\s*[-_ ]?\s*([STUVW])\b/)
+  if (match?.[1]) return match[1] as 'S' | 'T' | 'U' | 'V' | 'W'
+  return null
+}
+
+function extractPlatformSuffixFromWorkDir(workDir: string) {
+  return extractPlatformSuffixToken(path.win32.basename(normalizeWinPath(workDir)))
+    || extractPlatformSuffixToken(normalizeWinPath(workDir))
+}
+
+function findRepoProfileByWorkDir(config: ModemBaselineConfig, owner = currentOwner()): RepoProfile | null {
+  const workDir = normalizeWinPath(config.work_dir)
+  const repos = listModemPatchRepos(owner)
+  for (const repo of repos) {
+    if (normalizeWinPath(repo.localPath) === workDir) return repo
+  }
+  return null
+}
+
+function computeRemoteDirForLocalPath(localPath: string, config: ModemBaselineConfig) {
+  return computeRemoteWorkDir({
+    ...config,
+    work_dir: normalizeWinPath(localPath),
+  })
+}
+
+function extractHarnessBlock(text: string, begin: string, end: string) {
+  const normalized = String(text ?? '')
+  const start = normalized.indexOf(begin)
+  if (start < 0) return normalized
+  const afterStart = start + begin.length
+  const endIndex = normalized.indexOf(end, afterStart)
+  const payload = endIndex >= 0 ? normalized.slice(afterStart, endIndex) : normalized.slice(afterStart)
+  return payload
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('Updating files:'))
+    .join('\n')
+    .trim()
+}
+
+function parseModemMpVersionToken(branch: string) {
+  const match = String(branch ?? '').match(/(?:^|[_/-])v(\d+(?:\.\d+)+)(?:$|[_/-])/i)
+  if (!match?.[1]) return null
+  return `v${match[1]}`
+}
+
+function inferTranModemModeFromTemplate(
+  config: ModemBaselineConfig,
+  repo: RepoProfile | null,
+  owner = currentOwner(),
+): { mode: TranModemTargetMode; tos?: string; platform?: string } {
+  const platform = String(repo?.platform || repo?.label || '').trim()
+  if (platform) {
+    const templates = listModemPatchBranchTemplates(owner)
+    const normalizedPlatform = normalizeBranchTemplatePlatform(platform)
+    const byPlatform = templates.filter(item => normalizeBranchTemplatePlatform(item.platform) === normalizedPlatform)
+    const matchedMp = byPlatform.find(item => item.mpBranch === config.target_BRANCH)
+    if (matchedMp) return { mode: 'mp', tos: matchedMp.tos, platform }
+    const matchedTrunk = byPlatform.find(item => item.trunkBranch === config.target_BRANCH)
+    if (matchedTrunk) return { mode: 'trunk', tos: matchedTrunk.tos, platform }
+  }
+  const target = String(config.target_BRANCH ?? '').toUpperCase()
+  if (target.includes('PRODUCT')) return { mode: 'trunk', platform: platform || undefined }
+  if (/_MP\b/.test(target) || target.includes('MP')) return { mode: 'mp', platform: platform || undefined }
+  return { mode: 'unknown', platform: platform || undefined }
+}
+
+async function listRemoteGitBranches(remotePath: string) {
+  const begin = '__TAHP_BRANCHES_BEGIN__'
+  const end = '__TAHP_BRANCHES_END__'
+  const result = await harnessExec(
+    `cd ${shellSingleQuote(remotePath)} && echo ${begin} && (git for-each-ref --format='%(refname:short)' refs/heads refs/remotes/origin 2>/dev/null || true) && echo ${end}`,
+    { timeoutMs: 25_000 },
+  )
+  const block = extractHarnessBlock(result.output ?? '', begin, end)
+  const raw = block
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((name) => {
+      if (name === 'origin/HEAD') return ''
+      if (name.startsWith('origin/')) return name.slice('origin/'.length)
+      return name
+    })
+    .filter(Boolean)
+  return Array.from(new Set(raw)).sort((a, b) => a.localeCompare(b))
+}
+
+async function ensureRemoteGitOnBranch(
+  remotePath: string,
+  expectedBranch: string,
+  appendLog: (line: string) => void,
+): Promise<boolean> {
+  const beginStatus = '__TAHP_GIT_STATUS_BEGIN__'
+  const endStatus = '__TAHP_GIT_STATUS_END__'
+  const statusProbe = await harnessExec(
+    `cd ${shellSingleQuote(remotePath)} && echo ${beginStatus} && (git status --porcelain 2>/dev/null || true) && echo ${endStatus}`,
+    { timeoutMs: 20_000 },
+  )
+  const statusText = extractHarnessBlock(statusProbe.output ?? '', beginStatus, endStatus)
+  if (statusText) {
+    appendLog(`[build][tran] dirty_worktree=1 path=${remotePath}\n${statusText.endsWith('\n') ? statusText : `${statusText}\n`}`)
+    appendLog('[build][tran] aborted: worktree is not clean; please commit/stash changes then retry\n')
+    return false
+  }
+
+  const beginBranch = '__TAHP_GIT_BRANCH_BEGIN__'
+  const endBranch = '__TAHP_GIT_BRANCH_END__'
+  const branchProbe = await harnessExec(
+    `cd ${shellSingleQuote(remotePath)} && echo ${beginBranch} && (git rev-parse --abbrev-ref HEAD 2>/dev/null || true) && echo ${endBranch}`,
+    { timeoutMs: 15_000 },
+  )
+  const currentBranch = extractHarnessBlock(branchProbe.output ?? '', beginBranch, endBranch).split('\n')[0]?.trim() || ''
+  if (currentBranch === expectedBranch) {
+    appendLog(`[build][tran] branch_ok=1 branch=${expectedBranch}\n`)
+    return true
+  }
+  appendLog(`[build][tran] branch_mismatch current=${currentBranch || 'UNKNOWN'} expected=${expectedBranch}\n`)
+
+  const localRefProbe = await harnessExec(
+    `cd ${shellSingleQuote(remotePath)} && git show-ref --verify --quiet ${shellSingleQuote(`refs/heads/${expectedBranch}`)}`,
+    { timeoutMs: 12_000 },
+  )
+  const hasLocalRef = localRefProbe.status === 'ok' && localRefProbe.exit_code === 0
+  const originRefProbe = hasLocalRef
+    ? null
+    : await harnessExec(
+        `cd ${shellSingleQuote(remotePath)} && git show-ref --verify --quiet ${shellSingleQuote(`refs/remotes/origin/${expectedBranch}`)}`,
+        { timeoutMs: 12_000 },
+      )
+  const hasOriginRef = originRefProbe ? originRefProbe.status === 'ok' && originRefProbe.exit_code === 0 : false
+
+  if (!hasLocalRef && !hasOriginRef) {
+    appendLog(`[build][tran] aborted: branch_not_found ${expectedBranch}\n`)
+    return false
+  }
+
+  const checkoutCmd = hasLocalRef
+    ? `git checkout ${shellSingleQuote(expectedBranch)}`
+    : `git checkout -B ${shellSingleQuote(expectedBranch)} ${shellSingleQuote(`origin/${expectedBranch}`)}`
+  appendLog(`[build][tran] checkout cmd=${checkoutCmd}\n`)
+  const checkoutProbe = await harnessExec(`cd ${shellSingleQuote(remotePath)} && ${checkoutCmd}`, { timeoutMs: 60_000 })
+  const output = String(checkoutProbe.output ?? '').trim()
+  const errorText = String(checkoutProbe.error ?? '').trim()
+  if (output) appendLog(`[build][tran] checkout_output:\n${output.endsWith('\n') ? output : `${output}\n`}`)
+  if (errorText) appendLog(`[build][tran] checkout_error:\n${errorText.endsWith('\n') ? errorText : `${errorText}\n`}`)
+  if (!(checkoutProbe.status === 'ok' && checkoutProbe.exit_code === 0)) {
+    appendLog(`[build][tran] aborted: checkout_failed status=${checkoutProbe.status} exit_code=${checkoutProbe.exit_code}\n`)
+    return false
+  }
+
+  appendLog(`[build][tran] checkout_done branch=${expectedBranch}\n`)
+  return true
+}
+
+async function syncTranModemRepoForBuild(config: ModemBaselineConfig, appendLog: (line: string) => void) {
+  const owner = currentOwner()
+  const repo = findRepoProfileByWorkDir(config, owner)
+  const platformSuffix = extractPlatformSuffixToken(repo?.platform || repo?.label || '') || extractPlatformSuffixFromWorkDir(config.work_dir)
+  if (!platformSuffix) {
+    appendLog('[build][tran] skipped: cannot infer platform suffix (S/T/U/V/W)\n')
+    return true
+  }
+
+  const localTranPath = path.win32.resolve(
+    path.win32.dirname(normalizeWinPath(config.work_dir)),
+    `Tran_modem_${platformSuffix}`,
+  )
+  const remoteTranPath = computeRemoteDirForLocalPath(localTranPath, config)
+  const expectedTrunk = `TRAN_MODEM_${platformSuffix}_PRODUCT`
+  const expectedMpFixed = platformSuffix === 'S' ? 'tran_modem_s_mp' : ''
+  const modeInfo = inferTranModemModeFromTemplate(config, repo, owner)
+  const mode = modeInfo.mode
+  const tos = modeInfo.tos
+  const versionToken = parseModemMpVersionToken(config.target_BRANCH)
+
+  appendLog(
+    `[build][tran] plan mode=${mode} platform=${String(modeInfo.platform ?? '')} suffix=${platformSuffix} local=${localTranPath} remote=${remoteTranPath}\n`,
+  )
+
+  const gitProbe = await harnessExec(
+    `cd ${shellSingleQuote(remoteTranPath)} && git rev-parse --is-inside-work-tree 1>/dev/null 2>&1`,
+    { timeoutMs: 15_000 },
+  )
+  if (!(gitProbe.status === 'ok' && gitProbe.exit_code === 0)) {
+    appendLog(`[build][tran] aborted: tran_repo_not_found remote=${remoteTranPath}\n`)
+    return false
+  }
+
+  if (mode === 'trunk') {
+    appendLog(`[build][tran] expected_branch=${expectedTrunk}\n`)
+    return await ensureRemoteGitOnBranch(remoteTranPath, expectedTrunk, appendLog)
+  }
+
+  if (mode === 'mp') {
+    if (expectedMpFixed) {
+      appendLog(`[build][tran] expected_branch=${expectedMpFixed}\n`)
+      return await ensureRemoteGitOnBranch(remoteTranPath, expectedMpFixed, appendLog)
+    }
+    if (!tos) {
+      appendLog('[build][tran] aborted: tos_unknown_for_mp; cannot resolve tran_modem mp branch\n')
+      return false
+    }
+    const branches = await listRemoteGitBranches(remoteTranPath)
+    const lowerSuffix = platformSuffix.toLowerCase()
+    const tosNeedle = tos.toLowerCase()
+    const prefix = `tran_modem_${lowerSuffix}_`
+    const byTos = branches.filter(name => name.toLowerCase().includes(tosNeedle) && name.toLowerCase().startsWith(prefix))
+    const byVersion = versionToken ? byTos.filter(name => name.toLowerCase().includes(versionToken.toLowerCase())) : byTos
+    const candidates = (byVersion.length ? byVersion : byTos).slice(0, 40)
+    if (candidates.length === 1) {
+      appendLog(`[build][tran] expected_branch=${candidates[0]}\n`)
+      return await ensureRemoteGitOnBranch(remoteTranPath, candidates[0], appendLog)
+    }
+    appendLog(
+      `[build][tran] aborted: mp_branch_ambiguous tos=${tos} version=${versionToken ?? ''} candidates=${candidates.length}\n`,
+    )
+    if (candidates.length) appendLog(`[build][tran] candidate_branches:\n${candidates.join('\n')}\n`)
+    else appendLog(`[build][tran] no branch matched tos=${tos} prefix=${prefix}\n`)
+    return false
+  }
+
+  appendLog('[build][tran] skipped: cannot infer trunk/mp mode; treat as non-blocking\n')
+  return true
+}
+
 function filterBuildProjectNames(names: string[]) {
   return Array.from(new Set(
     names
@@ -2036,6 +2267,11 @@ async function runModemBuildAfterResume(
 
   const remote = computeRemoteWorkDir(config)
   updateRunMeta(runId, { status: 'running', phase: 'build', finishedAt: undefined, error: undefined })
+  const tranSynced = await syncTranModemRepoForBuild(config, appendLog)
+  if (!tranSynced) {
+    appendLog('[build] failed: tran_modem_branch_sync_failed\n')
+    return 'failed'
+  }
   appendLog(`[build] start project=${project} cmd=./tools/bld_modem.sh ${project}\n`)
 
   const command = `cd ${shellSingleQuote(remote)} && ./tools/bld_modem.sh ${shellSingleQuote(project)}`
