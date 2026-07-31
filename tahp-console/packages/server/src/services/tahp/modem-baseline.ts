@@ -2939,7 +2939,7 @@ async function postProcessRun(runId: string, config: ModemBaselineConfig, code: 
   let status: ModemBaselineStatus = hasRealConflict ? 'conflict' : code === 1 ? 'failed' : 'success'
   appendLog(`[conflicts] final_status=${status} exit_code=${String(code)} local_merge_head=${Number(localStillInMerge)} remote_merge_head=${Number(remoteMergeHead)}\n`)
 
-  if (status === 'success' && current.phase === 'resume' && sanitizeBuildProjectName(config.build_project)) {
+  if (status === 'success' && sanitizeBuildProjectName(config.build_project)) {
     const buildResult = await runModemBuildAfterResume(runId, config, appendLog)
     if (buildResult === 'failed') {
       const failedMeta: ModemBaselineRunMeta = {
@@ -2969,8 +2969,8 @@ async function postProcessRun(runId: string, config: ModemBaselineConfig, code: 
   if (status === 'success') {
     const built = sanitizeBuildProjectName(config.build_project)
     appendLog(
-      built && current.phase === 'resume'
-        ? `[run] phase=archive status=success summary=resume_and_build_completed project=${built}\n`
+      built
+        ? `[run] phase=archive status=success summary=${current.phase === 'resume' ? 'resume_and_build_completed' : 'merge_and_build_completed'} project=${built}\n`
         : '[run] phase=archive status=success summary=merge_commit_post_merge_completed\n',
     )
   } else if (status === 'conflict') {

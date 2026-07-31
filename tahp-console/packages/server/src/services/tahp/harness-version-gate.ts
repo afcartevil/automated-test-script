@@ -73,29 +73,77 @@ function parseSemver(v: string): [number, number, number] | null {
 }
 
 function probeHarnessCurrentVersion(): string | null {
+  const isWindows = process.platform === 'win32'
+  const appData = process.env.APPDATA || process.env.HOME || ''
+  const npmBinDir = appData
+    ? (isWindows ? join(appData, 'npm') : join(appData, '..', '.npm-global', 'bin'))
+    : ''
+  const env = npmBinDir
+    ? {
+        ...process.env,
+        PATH: `${process.env.PATH || ''}${isWindows ? ';' : ':'}${npmBinDir}`,
+      }
+    : process.env
+
+  const tryParseVersion = (out: string): string | null => {
+    const m = String(out || '').match(/(\d+\.\d+\.\d+)/)
+    return m ? m[1] : null
+  }
+
+  const runHarness = (args: string[]): string | null => {
+    try {
+      if (isWindows && npmBinDir) {
+        const harnessCmd = join(npmBinDir, 'harness.cmd')
+        const harnessPs1 = join(npmBinDir, 'harness.ps1')
+        if (existsSync(harnessCmd)) {
+          return execFileSync('cmd.exe', ['/d', '/s', '/c', harnessCmd, ...args], {
+            encoding: 'utf-8',
+            timeout: 20_000,
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env,
+          })
+        }
+        if (existsSync(harnessPs1)) {
+          return execFileSync(
+            'powershell.exe',
+            ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', harnessPs1, ...args],
+            {
+              encoding: 'utf-8',
+              timeout: 20_000,
+              windowsHide: true,
+              stdio: ['ignore', 'pipe', 'pipe'],
+              env,
+            },
+          )
+        }
+      }
+      return execFileSync('harness', args, {
+        encoding: 'utf-8',
+        timeout: 20_000,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env,
+      })
+    } catch {
+      return null
+    }
+  }
+
   try {
-    const out = execFileSync('harness', ['--json', 'version', 'check'], {
-      encoding: 'utf-8',
-      timeout: 20_000,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const json = JSON.parse(out) as { current?: string; status?: string }
-    if (typeof json.current === 'string' && json.current.trim()) return json.current.trim()
+    const out = runHarness(['--json', 'version', 'check'])
+    if (out) {
+      const json = JSON.parse(out) as { current?: string; status?: string }
+      if (typeof json.current === 'string' && json.current.trim()) return json.current.trim()
+    }
   } catch {
     /* fall through */
   }
-  try {
-    const out = execFileSync('harness', ['--version'], {
-      encoding: 'utf-8',
-      timeout: 10_000,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const m = String(out).match(/(\d+\.\d+\.\d+)/)
-    if (m) return m[1]
-  } catch {
-    /* missing */
+
+  const verOut = runHarness(['--version'])
+  if (verOut) {
+    const parsed = tryParseVersion(verOut)
+    if (parsed) return parsed
   }
   return null
 }

@@ -33,8 +33,7 @@ def run_stop_flow(merger) -> int:
     if not merger.run_md_merge():
         return finish_with_report(merger, 1, report_label=REPORT_LABEL)
 
-    merge_head = merger.run_harness_command(["test", "-f", ".git/MERGE_HEAD"], merger.remote_work_dir, delay_after=merger.short_delay)
-    in_merge = bool(merge_head and merge_head.returncode == 0)
+    in_merge = merger.is_merge_in_progress()
 
     if in_merge:
         log_step(merger, FLOW_LABEL, 4, "Wait for manual conflict resolution")

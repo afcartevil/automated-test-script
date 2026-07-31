@@ -569,6 +569,41 @@ class AutoPatchMerger:
             "ls_files": sorted(set(files)),
             "index_lock": index_lock,
         }
+
+    def is_merge_in_progress(self):
+        """
+        Detect whether repo is still in a merge (MERGE_HEAD present).
+
+        IMPORTANT: harness bridge-exec often returns exit_code=0 for the bridge itself,
+        not the remote shell command. Never treat bare `test -f` returncode as MERGE_HEAD.
+        Prefer mapped worktree fs, then remote echo markers.
+        """
+        mapped_state = self._probe_mapped_repo_state()
+        if mapped_state.get("available") or mapped_state.get("reason") in ("mapped_git_failed",):
+            # mapped path exists: trust local MERGE_HEAD even if ls-files probe failed
+            if self.mapped_work_dir and os.path.exists(self.mapped_work_dir):
+                merge_head = bool(mapped_state.get("merge_head"))
+                self.log(f"[merge-state] mapped MERGE_HEAD={'1' if merge_head else '0'}")
+                return merge_head
+
+        result = self.run_harness_command(
+            [
+                "bash",
+                "-lc",
+                'if [ -f .git/MERGE_HEAD ]; then echo __APM_MERGE_HEAD__; else echo __APM_NO__; fi',
+            ],
+            self.remote_work_dir,
+            delay_after=self.short_delay,
+        )
+        text = (result.stdout or "") if result else ""
+        if "__APM_MERGE_HEAD__" in text:
+            self.log("[merge-state] remote marker=MERGE_HEAD")
+            return True
+        if "__APM_NO__" in text:
+            self.log("[merge-state] remote marker=NO")
+            return False
+        self.log("[merge-state] remote marker missing; assume not in merge")
+        return False
             
     def configure_md_merge(self):
         """Upload and configure non-interactive merge script to remote server"""
@@ -696,8 +731,7 @@ class AutoPatchMerger:
                 self.log(f"Script stderr: {result.stderr}")
             return False
 
-        merge_head_result = self.run_harness_command(['test', '-f', '.git/MERGE_HEAD'], self.remote_work_dir, delay_after=self.short_delay)
-        in_merge = bool(merge_head_result and merge_head_result.returncode == 0)
+        in_merge = self.is_merge_in_progress()
 
         if in_merge:
             self.add_step("运行合并脚本", "warning", "检测到合并冲突，需要研发手动处理")
@@ -2133,9 +2167,7 @@ class AutoPatchMerger:
                     return True
         
         # Method 3: Check for MERGE_HEAD (indicates merge in progress)
-        merge_head_cmd = ['test', '-f', '.git/MERGE_HEAD']
-        merge_head_result = self.run_harness_command(merge_head_cmd, self.remote_work_dir, delay_after=self.short_delay)
-        if merge_head_result and merge_head_result.returncode == 0:
+        if self.is_merge_in_progress():
             self.log("Found MERGE_HEAD, merge in progress")
             return True
         
@@ -2146,10 +2178,7 @@ class AutoPatchMerger:
         self.log("Completing merge commit on remote...")
         
         # First check if we are in a merge state
-        check_cmd = ['test', '-f', '.git/MERGE_HEAD']
-        check_result = self.run_harness_command(check_cmd, self.remote_work_dir, delay_after=self.short_delay)
-        
-        if check_result and check_result.returncode == 0:
+        if self.is_merge_in_progress():
             unmerged_check = self.run_harness_command(['GIT_PAGER=cat', 'git', 'diff', '--name-only', '--diff-filter=U'], self.remote_work_dir, delay_after=self.short_delay)
             if unmerged_check and unmerged_check.returncode == 0 and unmerged_check.stdout:
                 cleaned = re.sub(r'\x1b\[[0-9;]*[A-Za-z]|\x1b.', '', unmerged_check.stdout)
