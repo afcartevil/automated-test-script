@@ -11,6 +11,7 @@ import {
   updateReportCaseResult,
   retestReportCase,
   openSelfCheckReportFile,
+  openSelfCheckCaseFailureLogs,
   type SelfCheckReportSummary,
   type SelfCheckReportDetail,
   type SelfCheckCaseItem,
@@ -115,6 +116,7 @@ function collapseReportPanel() {
 }
 
 const openingReport = ref(false)
+const openingLogs = ref(false)
 
 async function openReportFile() {
   if (!selectedId.value || openingReport.value) return
@@ -127,6 +129,28 @@ async function openReportFile() {
     message.error(text)
   } finally {
     openingReport.value = false
+  }
+}
+
+function canOpenFailureLogs(item: SelfCheckCaseItem | null | undefined): boolean {
+  if (!item) return false
+  return Boolean(item.failureLogDir) || item.status === '失败'
+}
+
+async function openFailureLogs() {
+  if (!selectedId.value || !selectedCaseItem.value || openingLogs.value) return
+  openingLogs.value = true
+  try {
+    const { dirPath } = await openSelfCheckCaseFailureLogs(
+      selectedId.value,
+      selectedCaseItem.value.caseKey,
+    )
+    message.success(`已打开日志目录：${dirPath}`)
+  } catch (err: unknown) {
+    const text = err instanceof Error ? err.message : '打开日志失败'
+    message.error(text)
+  } finally {
+    openingLogs.value = false
   }
 }
 
@@ -476,6 +500,15 @@ onActivated(async () => {
                   </div>
                 </div>
                 <div class="case-detail-actions">
+                  <button
+                    v-if="canOpenFailureLogs(selectedCaseItem)"
+                    type="button"
+                    class="ea-btn-ghost"
+                    :disabled="openingLogs"
+                    @click="openFailureLogs"
+                  >
+                    {{ openingLogs ? '打开中…' : '打开日志' }}
+                  </button>
                   <button type="button" class="ea-btn-primary" @click="openRetestDialog">复测此用例</button>
                   <button type="button" class="ea-btn-ghost" @click="openModifyDialog">修改用例结果</button>
                 </div>

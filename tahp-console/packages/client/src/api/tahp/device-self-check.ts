@@ -74,6 +74,7 @@ export interface CaseResult {
   steps: CaseStep[]
   startTime?: string
   endTime?: string
+  failureLogDir?: string
 }
 
 export interface ModuleProgress {
@@ -542,6 +543,7 @@ export interface SelfCheckCaseItem {
   message: string
   fullAutomation?: boolean
   steps?: { stepDesc: string; status: string; timestamp: string }[]
+  failureLogDir?: string
 }
 
 export interface SelfCheckReportDetail extends SelfCheckReportSummary {
@@ -570,6 +572,26 @@ export function getSelfCheckReportDetail(reportId: string): Promise<SelfCheckRep
 export function openSelfCheckReportFile(reportId: string): Promise<{ filePath: string }> {
   return tahpPost<{ filePath: string }>(
     `/api/tahp/device-self-check/reports/${encodeURIComponent(reportId)}/open`,
+    {},
+  )
+}
+
+export function openSelfCheckCaseFailureLogs(
+  reportId: string,
+  caseKey: string,
+): Promise<{ dirPath: string }> {
+  return tahpPost<{ dirPath: string }>(
+    `/api/tahp/device-self-check/reports/${encodeURIComponent(reportId)}/cases/${encodeURIComponent(caseKey)}/open-logs`,
+    {},
+  )
+}
+
+export function openDeviceCaseFailureLogs(
+  deviceId: string,
+  caseKey: string,
+): Promise<{ dirPath: string }> {
+  return tahpPost<{ dirPath: string }>(
+    `/api/tahp/device-self-check/devices/${encodeURIComponent(deviceId)}/cases/${encodeURIComponent(caseKey)}/open-logs`,
     {},
   )
 }

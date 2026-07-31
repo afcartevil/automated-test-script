@@ -11,6 +11,7 @@ import {
   updateCaseResult,
   retestCase,
   retestReportCase,
+  openDeviceCaseFailureLogs,
   getDevice,
   getTestSession,
   getModuleConditions,
@@ -33,6 +34,7 @@ import {
   listSelfCheckReports,
   getSelfCheckReportDetail,
   openSelfCheckReportXlsx,
+  openSelfCheckCaseFailureLogs,
   submitSelfCheckReportReview,
   updateReportCaseResult,
   type SelfCheckReviewStatus,
@@ -360,6 +362,22 @@ tahpDeviceSelfCheckRoutes.post(
   }
 )
 
+// 打开失败用例日志目录
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/devices/:deviceId/cases/:caseKey/open-logs',
+  async (ctx) => {
+    try {
+      const caseKey = decodeURIComponent(ctx.params.caseKey)
+      const dirPath = openDeviceCaseFailureLogs(ctx.params.deviceId, caseKey)
+      ctx.body = { success: true, data: { dirPath } }
+    } catch (err: any) {
+      const message = err?.message || 'Failed to open failure logs'
+      ctx.status = message.includes('不存在') || message.includes('无测试会话') ? 404 : 400
+      ctx.body = { success: false, error: message }
+    }
+  },
+)
+
 // 提交人工决策
 tahpDeviceSelfCheckRoutes.post(
   '/api/tahp/device-self-check/manual-decision',
@@ -547,6 +565,21 @@ tahpDeviceSelfCheckRoutes.post(
       ctx.body = { success: true, data: { filePath } }
     } catch (err: any) {
       const message = err?.message || 'Failed to open report file'
+      ctx.status = message.includes('不存在') ? 404 : 400
+      ctx.body = { success: false, error: message }
+    }
+  },
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/reports/:reportId/cases/:caseKey/open-logs',
+  async (ctx) => {
+    try {
+      const caseKey = decodeURIComponent(ctx.params.caseKey)
+      const dirPath = await openSelfCheckCaseFailureLogs(ctx.params.reportId, caseKey)
+      ctx.body = { success: true, data: { dirPath } }
+    } catch (err: any) {
+      const message = err?.message || 'Failed to open failure logs'
       ctx.status = message.includes('不存在') ? 404 : 400
       ctx.body = { success: false, error: message }
     }

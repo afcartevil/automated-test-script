@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, ref, watch } from 'vue'
+import { useMessage } from 'naive-ui'
 import type { DeviceInfo, DeviceRole } from '@/api/tahp/device-self-check'
+import { openDeviceCaseFailureLogs } from '@/api/tahp/device-self-check'
 import EaCard from '@/components/layout/EaCard.vue'
 import { DEVICE_SELF_CHECK_KEY } from './self-check-context'
 import {
@@ -197,6 +199,31 @@ const {
   isSelectedCaseInConfig,
   getSelectedCaseName,
 } = inject(DEVICE_SELF_CHECK_KEY)!
+
+const message = useMessage()
+const openingFailureLogs = ref(false)
+
+function canOpenSelectedFailureLogs(): boolean {
+  const result = selectedCaseResult.value
+  if (!result) return false
+  return Boolean(result.failureLogDir) || result.status === '失败'
+}
+
+async function handleOpenFailureLogs() {
+  const deviceId = selectedDevice.value?.device.deviceId
+  const result = selectedCaseResult.value
+  if (!deviceId || !result || openingFailureLogs.value) return
+  const caseKey = `${result.testType}/${result.module}/${result.caseIndex}`
+  openingFailureLogs.value = true
+  try {
+    const { dirPath } = await openDeviceCaseFailureLogs(deviceId, caseKey)
+    message.success(`已打开日志目录：${dirPath}`)
+  } catch (err: unknown) {
+    message.error(err instanceof Error ? err.message : '打开日志失败')
+  } finally {
+    openingFailureLogs.value = false
+  }
+}
 
 const DIRECT_TEST_TYPE_ORDER = STANDARD_TEST_TYPE_ORDER
 
@@ -1500,6 +1527,16 @@ function handleDutRowAction(deviceId: string) {
                       >
                         {{ step.stepDesc }}
                       </div>
+                    </div>
+                    <div v-if="canOpenSelectedFailureLogs()" class="case-detail-actions">
+                      <button
+                        type="button"
+                        class="ea-btn-ghost"
+                        :disabled="openingFailureLogs"
+                        @click="handleOpenFailureLogs"
+                      >
+                        {{ openingFailureLogs ? '打开中…' : '打开日志' }}
+                      </button>
                     </div>
                   </div>
 

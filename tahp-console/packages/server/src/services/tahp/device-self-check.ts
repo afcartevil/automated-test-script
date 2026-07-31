@@ -4,7 +4,7 @@
 import { spawn, spawnSync } from 'child_process'
 import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'fs'
 import type { ServerResponse } from 'http'
-import { join, resolve, basename } from 'path'
+import { join, resolve, basename, sep } from 'path'
 import AdmZip from 'adm-zip'
 import {
   type DeviceFlashOptions,
@@ -13,7 +13,7 @@ import {
 } from './device-flash'
 import { resolvePythonSpawn, tahpPaths } from './paths'
 import { ensurePowerTestPythonDeps } from './self-check-python-deps'
-import { buildSelfCheckDetailPayload, reportAbsoluteDir, type SelfCheckCaseItem, type SelfCheckFailedCaseItem } from './self-check-reports'
+import { buildSelfCheckDetailPayload, openLocalPath, reportAbsoluteDir, type SelfCheckCaseItem, type SelfCheckFailedCaseItem } from './self-check-reports'
 import { markPlanExecutionCompleted } from './test-plan-executions'
 import {
   AI_GENERATED_MODULE,
@@ -107,6 +107,8 @@ export interface CaseResult {
   steps: CaseStep[]
   startTime?: string
   endTime?: string
+  /** 失败时导出的设备日志目录（本机绝对路径） */
+  failureLogDir?: string
 }
 
 export interface ModuleProgress {
@@ -1192,6 +1194,7 @@ async function runCase(
   if (result.status === '失败') {
     const exportedDir = await exportFailureLogsForCase(deviceId, session, caseKey)
     if (exportedDir) {
+      result.failureLogDir = exportedDir
       result.steps.push({
         stepDesc: `失败日志已导出: ${exportedDir}`,
         status: '完成',
@@ -2927,6 +2930,7 @@ async function generateTestReport(
       message: c.message,
       fullAutomation: c.fullAutomation,
       steps: c.steps,
+      failureLogDir: c.failureLogDir,
     }))
 
     const detailPayload = buildSelfCheckDetailPayload(summary, failedCaseItems, allCaseItems)
@@ -3266,6 +3270,7 @@ function caseItemToResult(item: SelfCheckCaseItem): CaseResult {
     message: item.message,
     fullAutomation: item.fullAutomation ?? true,
     steps: (item.steps as CaseStep[]) ?? [],
+    failureLogDir: item.failureLogDir,
   }
 }
 
@@ -3446,6 +3451,34 @@ export function countPendingManualDecisions(): number {
 
 export function getTestSession(deviceId: string): TestSession | undefined {
   return testSessions[deviceId]
+}
+
+/** 打开设备会话中某用例的失败日志目录 */
+export function openDeviceCaseFailureLogs(deviceId: string, caseKey: string): string {
+  const session = testSessions[deviceId]
+  if (!session) {
+    throw new Error('设备无测试会话')
+  }
+  const result = session.caseResults[caseKey]
+    || Object.values(session.caseResults).find(
+      r => formatCaseResultKey(r.testType, r.module, r.caseIndex) === caseKey,
+    )
+  const candidate = result?.failureLogDir
+    || join(getSessionResultDir(deviceId, session), 'failure-logs', sanitizeCaseKeyForPath(caseKey))
+  const reportsRoot = resolve(tahpPaths.reportsDir, 'self-check')
+  const abs = resolve(candidate)
+  const rootPrefix = reportsRoot.endsWith(sep) ? reportsRoot : reportsRoot + sep
+  if (
+    abs.toLowerCase() !== reportsRoot.toLowerCase()
+    && !abs.toLowerCase().startsWith(rootPrefix.toLowerCase())
+  ) {
+    throw new Error('非法日志路径')
+  }
+  if (!existsSync(abs)) {
+    throw new Error('失败日志目录不存在')
+  }
+  openLocalPath(abs)
+  return abs
 }
 
 export function getModuleConditions(): Record<string, ModuleCondition> {

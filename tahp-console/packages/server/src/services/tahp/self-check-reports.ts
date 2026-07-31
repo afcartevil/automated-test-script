@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { spawn } from 'child_process'
 import { platform } from 'os'
-import { join, resolve } from 'path'
+import { join, resolve, sep } from 'path'
 import { getTahpProjectRoot } from './paths'
 import { safeFileStore } from '../safe-file-store'
 
@@ -36,6 +36,8 @@ export interface SelfCheckCaseItem {
   message: string
   fullAutomation?: boolean
   steps?: { stepDesc: string; status: string; timestamp: string }[]
+  /** 失败用例导出的设备日志目录 */
+  failureLogDir?: string
 }
 
 export interface SelfCheckReportSummary {
@@ -391,26 +393,68 @@ export function openSelfCheckReportXlsx(reportId: string): string {
   if (!filePath) {
     throw new Error('报告文件不存在')
   }
-  openLocalFile(filePath)
+  openLocalPath(filePath)
   return filePath
 }
 
-function openLocalFile(filePath: string): void {
+function sanitizeCaseKeyForPath(caseKey: string): string {
+  return caseKey.replace(/[\\/:"*?<>|]+/g, '_')
+}
+
+function assertPathUnderSelfCheckReports(targetPath: string): string {
+  const root = resolve(selfCheckReportsRoot())
+  const abs = resolve(targetPath)
+  const rootPrefix = root.endsWith(sep) ? root : root + sep
+  const absNorm = abs.toLowerCase()
+  const rootNorm = root.toLowerCase()
+  const prefixNorm = rootPrefix.toLowerCase()
+  if (absNorm !== rootNorm && !absNorm.startsWith(prefixNorm)) {
+    throw new Error('非法日志路径')
+  }
+  return abs
+}
+
+/** 打开报告中某用例的失败日志目录 */
+export async function openSelfCheckCaseFailureLogs(reportId: string, caseKey: string): Promise<string> {
+  const detail = await getSelfCheckReportDetail(reportId)
+  if (!detail) {
+    throw new Error('报告不存在')
+  }
+  const item = detail.allCaseItems.find(c => c.caseKey === caseKey)
+  const reportDir = reportAbsoluteDir(reportId)
+  const candidate = item?.failureLogDir
+    || join(reportDir, 'failure-logs', sanitizeCaseKeyForPath(caseKey))
+  const abs = assertPathUnderSelfCheckReports(candidate)
+  if (!existsSync(abs)) {
+    throw new Error('失败日志目录不存在')
+  }
+  openLocalPath(abs)
+  return abs
+}
+
+/** 打开本机路径（文件用默认应用，目录用资源管理器） */
+export function openLocalPath(targetPath: string): void {
+  if (!existsSync(targetPath)) {
+    throw new Error('路径不存在')
+  }
   const plat = platform()
   let child
   if (plat === 'win32') {
-    child = spawn('cmd', ['/c', 'start', '""', filePath], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-    })
+    const isDir = statSync(targetPath).isDirectory()
+    child = isDir
+      ? spawn('explorer', [targetPath], { detached: true, stdio: 'ignore', windowsHide: true })
+      : spawn('cmd', ['/c', 'start', '""', targetPath], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        })
   } else if (plat === 'darwin') {
-    child = spawn('open', [filePath], { detached: true, stdio: 'ignore' })
+    child = spawn('open', [targetPath], { detached: true, stdio: 'ignore' })
   } else {
-    child = spawn('xdg-open', [filePath], { detached: true, stdio: 'ignore' })
+    child = spawn('xdg-open', [targetPath], { detached: true, stdio: 'ignore' })
   }
   child.on('error', (err) => {
-    throw new Error(`无法打开报告文件: ${err.message}`)
+    throw new Error(`无法打开路径: ${err.message}`)
   })
   child.unref()
 }
