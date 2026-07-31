@@ -1875,16 +1875,48 @@ function shellSingleQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
-function evaluateModemBuildResult(result: HarnessResult): boolean {
-  const combined = `${String(result.output ?? '')}\n${String(result.error ?? '')}`
+function evaluateModemBuildResult(result: HarnessResult, extraEvidence = ''): boolean {
+  const combined = `${String(result.output ?? '')}\n${String(result.error ?? '')}\n${extraEvidence}`
   const successMarker = /make\s+modem\s+completed\s+su+cessfully/i.test(combined)
     || /####\s*make\s+modem\s+completed\s+su+cessfully\s*####/i.test(combined)
   const failureMarker = /make\s+modem\s+failed/i.test(combined)
     || /modem\s+build\s+failed/i.test(combined)
+    || /make\s+failed\s+to\s+build\s+some\s+targets/i.test(combined)
+    || /####\s*error:\s*make\s+failed/i.test(combined)
+    || /error:\s*make\s+failed\s+to\s+build/i.test(combined)
+    || /ninja:\s+build\s+stopped/i.test(combined)
+    || /\[build\]\s*failed\b/i.test(combined)
 
-  if (successMarker && !failureMarker) return true
   if (failureMarker) return false
-  return result.status === 'ok' && (result.exit_code === 0 || result.exit_code == null)
+  if (successMarker) return true
+
+  // Harness bridge 经常在远端 make 已失败或输出被截断时仍返回 status=ok/exit_code=0。
+  // 没有明确成功标记时，不能仅凭 bridge 退出码判成功。
+  return false
+}
+
+function collectMappedBuildEvidence(config: ModemBaselineConfig): string {
+  const mapped = computeMappedWorkDir(config)
+  if (!mapped) return ''
+  const candidates = [
+    path.resolve(mapped, 'log', 'md_build.log'),
+    path.resolve(mapped, 'log', 'build.log'),
+    path.resolve(mapped, 'out', 'md_build.log'),
+  ]
+  const chunks: string[] = []
+  for (const filePath of candidates) {
+    if (!fs.existsSync(filePath)) continue
+    try {
+      const text = decodeText(fs.readFileSync(filePath)).trim()
+      if (!text) continue
+      // 只取尾部，避免超大编译日志拖垮判定
+      const tailed = text.length > 200_000 ? text.slice(text.length - 200_000) : text
+      chunks.push(`----- ${filePath} -----\n${tailed}`)
+    } catch {
+      // ignore unreadable evidence files
+    }
+  }
+  return chunks.join('\n')
 }
 
 type TranModemTargetMode = 'trunk' | 'mp' | 'unknown'
@@ -2274,7 +2306,8 @@ async function runModemBuildAfterResume(
   }
   appendLog(`[build] start project=${project} cmd=./tools/bld_modem.sh ${project}\n`)
 
-  const command = `cd ${shellSingleQuote(remote)} && ./tools/bld_modem.sh ${shellSingleQuote(project)}`
+  // 在命令末尾打印真实 shell 退出码，避免 harness bridge 的 exit_code 掩盖 make 失败。
+  const command = `cd ${shellSingleQuote(remote)} && ./tools/bld_modem.sh ${shellSingleQuote(project)}; rc=$?; echo __APM_BUILD_EXIT__:\${rc}; exit \${rc}`
   const BUILD_TIMEOUT_MS = 6 * 60 * 60 * 1000
   appendLog(`[build] harness timeout_sec=${Math.ceil(BUILD_TIMEOUT_MS / 1000)}\n`)
   try {
@@ -2284,13 +2317,29 @@ async function runModemBuildAfterResume(
     if (output) appendLog(`[build] output:\n${output.endsWith('\n') ? output : `${output}\n`}`)
     if (errorText) appendLog(`[build] error:\n${errorText.endsWith('\n') ? errorText : `${errorText}\n`}`)
     appendLog(`[build] done status=${result.status} exit_code=${String(result.exit_code)}\n`)
-    if (evaluateModemBuildResult(result)) {
+
+    const mappedEvidence = collectMappedBuildEvidence(config)
+    if (mappedEvidence) {
+      appendLog(`[build] mapped_evidence_bytes=${Buffer.byteLength(mappedEvidence, 'utf-8')}\n`)
+    }
+
+    const exitMarker = `${output}\n${errorText}`.match(/__APM_BUILD_EXIT__:(\d+)/)
+    if (exitMarker) {
+      appendLog(`[build] shell_exit=${exitMarker[1]}\n`)
+    }
+
+    const passed = evaluateModemBuildResult(result, mappedEvidence)
+      && !(exitMarker && exitMarker[1] !== '0')
+    if (passed) {
       appendLog(`[build] success project=${project}\n`)
       return 'success'
     }
     // bridge 默认 300s 超时会出现此文案；远端编译可能仍在跑
     if (/timed out waiting for bridge response/i.test(`${output}\n${errorText}`)) {
       appendLog('[build] bridge timed out before modem build finished; treat as failed wait (increase harness --timeout)\n')
+    }
+    if (!output && !errorText && !mappedEvidence) {
+      appendLog('[build] no build output/evidence captured; refuse to mark success on bridge ok/0 alone\n')
     }
     appendLog(`[build] failed project=${project}\n`)
     return 'failed'
