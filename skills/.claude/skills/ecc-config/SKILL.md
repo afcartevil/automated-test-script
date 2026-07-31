@@ -1,12 +1,13 @@
 ---
 name: ecc-config
+version: 1.2.0
 description: >-
   Configures ECC emergency numbers for MTK, Unisoc/展锐, or Qualcomm/高通
   repositories from user parameters or Jira issues (number, mccmnc, with/without
   SIM, category, names, blocking). Supports batch edits and multiple languages
   per number. Use when the user mentions MTK ECC, Unisoc/展锐 ECC, Qualcomm/高通
   ECC, EccList, tranecc, emergency number configuration, ecc_list_tran2, mccmnc,
-  or asks to modify ECC based on a Jira ticket.
+  or asks to modify ECC based on a Jira ticket. Jira reads go through harness-jira.
 ---
 
 # 通用 ECC 配置（MTK + 展锐 + 高通）
@@ -21,6 +22,14 @@ description: >-
 | [mapping.md](mapping.md) | MTK/Unisoc/Qualcomm 字段映射与状态决策 |
 | [mcc-language.md](mcc-language.md) | MCC 官方语言网络查询规则 |
 | [examples.md](examples.md) | 典型场景示例 |
+
+## 外部依赖（Harness）
+
+| 依赖 | 用途 |
+|------|------|
+| **harness-jira** | Jira 驱动模式下读取 issue（禁止改用 Jira MCP） |
+
+执行约定：先遵循 `harness-jira` skill，再运行 `harness --json jira ...`；不要 `knowledge route/search`，也不要调用 Jira MCP。
 
 ## 平台检测
 
@@ -92,15 +101,20 @@ Task Progress:
 - [ ] Step 7: 输出变更摘要
 ```
 
-## Jira 驱动模式（新增）
+## Jira 驱动模式
 
-当用户提供 Jira 单号（或明确要求“按 Jira 单处理 ECC”）时，按以下顺序执行：
+当用户提供 Jira 单号 / URL（或明确要求“按 Jira 单处理 ECC”）时，按以下顺序执行：
 
-1. 通过 Jira MCP 工具读取 Jira 单内容。**不能只看标题**，必须结合描述中的下列字段综合判断需求：
-   - **步骤**（操作步骤 / Steps）
-   - **期望结果**（Expected Result）
-   - **测试结果**（Actual / Test Result）
-   - 以及验收条件、评论中的有效补充
+1. **读取 Jira（必须走 harness-jira）**：
+   - 先读取并遵循 **harness-jira** skill，再执行 CLI（优先 `--json`）。
+   - 用户给 issue key：`harness --json jira get --issue <KEY>`
+   - 用户给 URL：`harness --json jira get --url "<URL>"`；需要先提取 key 时用 `harness --json jira parse-key "<URL>"`
+   - **禁止**使用 Jira MCP / 其他 Jira 客户端读取；凭据缺失或 CLI 认证失败时，按 harness-jira 指引处理（如 `config setup-jira`），不要回退到 MCP。
+   - **不能只看标题**，必须结合返回的 description / comments 中下列字段综合判断需求：
+     - **步骤**（操作步骤 / Steps）
+     - **期望结果**（Expected Result）
+     - **测试结果**（Actual / Test Result）
+     - 以及验收条件、评论中的有效补充
 2. 从上述内容（尤其是步骤、期望结果、测试结果的对照）提取结构化 ECC 意图（号码、mccmnc、有卡/无卡、是否要求非紧急、是否要求屏蔽、名称变更等）。
    - 标题仅作概览；**以描述里的期望结果与测试结果为准**界定目标行为。
    - 若期望结果与测试结果冲突或信息不完整，先整理疑问再询问用户，不盲改。
@@ -128,7 +142,7 @@ Jira 模式下，参数来源优先级：
 - MTK：`block: true` 仅当对应侧为非紧急且用户明确要求屏蔽。
 - Unisoc / Qualcomm：忽略 `block` / `simState`（无屏蔽文件），并在摘要中提示。
 - 非紧急规则按 mapping.md 执行（按平台分别处理）。
-- 用户仅说明“有卡是紧急号码”（无卡未指定）时：先查原配置；原配置有卡已紧急则不改，原配置有卡非紧急则改成“有卡假紧急”。
+- 用户仅说明“有卡是紧急号码”（无卡未指定，且未区分真/假紧急）时：先查原配置；原配置有卡已紧急则不改；原配置有卡非紧急时，普通号码改为“有卡假紧急”，**112/911 等 3GPP 国际通用紧急号码**改为“有卡真紧急”（见 mapping.md）。
 - Jira 若明确写“XXX 号码不应是紧急号码”，按 mapping.md 的 Jira 专项规则处理（先读现状，再决定删配置或加屏蔽）。
 
 ### Step 4 — 推导配置值（按平台）
@@ -192,4 +206,5 @@ Jira 模式下，参数来源优先级：
 6. 名称映射文件：MTK/高通=`config.xml`，展锐=`ecc_config_list.xml`。
 7. 名称仅按 MCC 配置，公共号码和单运营商均不可配名称。
 8. MCC 官方语言必须网络查询，不得硬编码。
-9. Jira 驱动：**不能只看标题**；须结合描述中的步骤、期望结果、测试结果整理目标配置。
+9. Jira 驱动：经 **harness-jira**（`harness jira get/parse-key`）读取；**禁止 Jira MCP**；**不能只看标题**；须结合描述中的步骤、期望结果、测试结果整理目标配置。
+10. 用户仅说明“有卡是紧急号码”且未区分真/假紧急时：原配置有卡非紧急 → 普通号码改有卡假紧急；**112/911 等 3GPP 国际通用紧急号码**改有卡真紧急。
