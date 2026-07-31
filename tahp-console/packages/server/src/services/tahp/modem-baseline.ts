@@ -2131,9 +2131,23 @@ async function syncTranModemRepoForBuild(config: ModemBaselineConfig, appendLog:
     const lowerSuffix = platformSuffix.toLowerCase()
     const tosNeedle = tos.toLowerCase()
     const prefix = `tran_modem_${lowerSuffix}_`
-    const byTos = branches.filter(name => name.toLowerCase().includes(tosNeedle) && name.toLowerCase().startsWith(prefix))
-    const byVersion = versionToken ? byTos.filter(name => name.toLowerCase().includes(versionToken.toLowerCase())) : byTos
-    const candidates = (byVersion.length ? byVersion : byTos).slice(0, 40)
+    appendLog(`[build][tran] remote_branch_count=${branches.length}\n`)
+    const byTosStrict = branches.filter(name => name.toLowerCase().includes(tosNeedle) && name.toLowerCase().startsWith(prefix))
+    const tosToken = parseTosToken(tos)
+    const tosSince = tosToken ? { major: tosToken.major, minor: tosToken.minor, patch: tosToken.patch } : null
+    const tosNewNaming = tosSince ? compareTosToken(tosSince, { major: 16, minor: 2, patch: 0 }) >= 0 : false
+    const byTosRelaxed = byTosStrict.length
+      ? byTosStrict
+      : tosNewNaming
+        ? branches.filter(name => name.toLowerCase().includes(tosNeedle) && name.toLowerCase().startsWith('tos'))
+        : branches.filter(name => name.toLowerCase().includes(tosNeedle))
+    if (!byTosStrict.length && byTosRelaxed.length) {
+      appendLog(`[build][tran] relaxed_match=1 reason=prefix_not_found prefix=${prefix} tos_naming=${tosNewNaming ? 'tos_prefix' : 'contains'}\n`)
+    }
+    const byVersion = versionToken
+      ? byTosRelaxed.filter(name => name.toLowerCase().includes(versionToken.toLowerCase()))
+      : byTosRelaxed
+    const candidates = (byVersion.length ? byVersion : byTosRelaxed).slice(0, 40)
     if (candidates.length === 1) {
       appendLog(`[build][tran] expected_branch=${candidates[0]}\n`)
       return await ensureRemoteGitOnBranch(remoteTranPath, candidates[0], appendLog)
