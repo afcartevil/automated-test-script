@@ -24,7 +24,12 @@ import {
 } from './adapt-agent-prompts'
 import { saveAgentPromptLog } from './prompt-log'
 import { DEFAULT_ADAPT_WORKSPACE } from './adapt-layout/types'
-import { isInteractiveCarrierDomain, validateEccConfigForm } from './ecc-config-form'
+import {
+  isInteractiveCarrierDomain,
+  shouldAutoApproveAdaptCommands,
+  validateEccConfigForm,
+  normalizeEccRelatedSkills,
+} from './ecc-config-form'
 import {
   extractAdaptAgentFileChanges,
   extractAdaptAgentSkillRefs,
@@ -212,6 +217,28 @@ function clearApprovalTimers(taskId: string) {
 function registerAdaptApproval(taskId: string, payload: ApprovalRequestPayload) {
   const bucket = getOrCreateApprovalBucket(taskId)
   if (bucket.has(payload.approval_id)) return
+
+  const ctx = taskCtx.get(taskId)
+  const autoApproveNow = !!ctx && shouldAutoApproveAdaptCommands(ctx.domainId)
+
+  if (autoApproveNow) {
+    // ECC 无人值守：立即同意，不弹窗、不等待
+    const timer = setTimeout(() => {}, 0)
+    bucket.set(payload.approval_id, { timer, resolved: false, payload })
+    emit(taskId, 'task.approval_requested', {
+      approval_id: payload.approval_id,
+      command: payload.command,
+      description: payload.description,
+      choices: payload.choices,
+      allow_permanent: payload.allow_permanent !== false,
+      timeout_ms: 0,
+      deadline_at: Date.now(),
+      auto_action: 'once',
+      message: 'ECC 配置无人值守：危险命令已自动同意',
+    })
+    void respondAdaptApproval(taskId, payload.approval_id, 'once')
+    return
+  }
 
   const timeoutMs = payload.timeout_ms && payload.timeout_ms > 0 ? payload.timeout_ms : APPROVAL_AUTO_ONCE_MS
   const deadline = Date.now() + timeoutMs
@@ -530,6 +557,10 @@ export function startAdaptAgentRun(input: AdaptAgentRunInput): { ok: true; taskI
     if (eccErr) return { ok: false, error: eccErr }
   }
 
+  const relatedSkills = input.domainId === 'ecc-config'
+    ? normalizeEccRelatedSkills(input.relatedSkills)
+    : [...input.relatedSkills]
+
   const taskId = genTaskId()
   const ctx: AdaptAgentTaskCtx = {
     taskId,
@@ -537,7 +568,7 @@ export function startAdaptAgentRun(input: AdaptAgentRunInput): { ok: true; taskI
     domainId: input.domainId,
     domainLabel: input.domainLabel,
     module: input.module,
-    relatedSkills: [...input.relatedSkills],
+    relatedSkills,
     formData: { ...input.formData },
     formFields: input.formFields ? [...input.formFields] : undefined,
     userNotes: input.userNotes,

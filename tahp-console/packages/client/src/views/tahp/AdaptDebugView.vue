@@ -36,6 +36,7 @@ import {
   isEccConfigFormComplete,
   isEccEntryFieldName,
   packEccEntriesForAgent,
+  normalizeEccRelatedSkills,
   ECC_ENTRY_FIELD_META,
   type EccEntryFormRow,
 } from '@/constants/adapt-domains/ecc-config-form'
@@ -374,7 +375,9 @@ function applyFieldsToDomain(domainId: string, fields: FieldDef[]) {
 function applyRelatedSkillsToDomain(domainId: string, skills: string[]) {
   const domain = DOMAINS.value.find(d => d.id === domainId)
   if (!domain || !skills.length) return
-  domain.relatedSkills = [...skills]
+  domain.relatedSkills = domainId === 'ecc-config'
+    ? normalizeEccRelatedSkills(skills)
+    : [...skills]
 }
 
 function applyDomainConfigFromRecord(
@@ -1743,10 +1746,14 @@ function buildAgentRunPayload() {
     domain_id: activeDomainId.value,
     domain_label: d.label,
     module: mapDomainToModule(activeDomainId.value),
-    related_skills: d.relatedSkills,
+    related_skills: d.id === 'ecc-config'
+      ? normalizeEccRelatedSkills(d.relatedSkills)
+      : d.relatedSkills,
     form_data,
     form_fields: formFieldsForAgent.value,
-    user_notes: form_data.user_notes || undefined,
+    user_notes: d.id === 'ecc-config'
+      ? (form_data.extra_info || form_data.user_notes || undefined)
+      : (form_data.user_notes || undefined),
     interaction_mode: d.interactionMode === true,
   }
 }
@@ -2235,7 +2242,7 @@ function openSkill(skillName: string) {
                     <NButton secondary @click="addEccEntryGroup">
                       复制一组ECC配置
                     </NButton>
-                    <span class="ea-muted" style="font-size:12px">临时增加一组号码/有卡/无卡/名称/屏蔽/补充信息；仅本页生效，刷新后清空</span>
+                    <span class="ea-muted" style="font-size:12px">临时增加一组号码/有卡/无卡/名称/屏蔽/本组补充；仅本页生效，刷新后清空</span>
                   </div>
                 </template>
 

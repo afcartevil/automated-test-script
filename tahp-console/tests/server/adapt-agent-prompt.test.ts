@@ -117,13 +117,13 @@ describe('adapt-agent prompts', () => {
     expect(userPrompt).toContain('tones-scmp')
   })
 
-  it('includes interactive protocol for ecc-config in carrier-config workspace', () => {
+  it('ecc-config runs unattended without interactive protocol and guides gerrit-submit', () => {
     const { systemPrompt, userPrompt } = buildAdaptAgentPrompts({
       workspaceId: 'carrier-config',
       domainId: 'ecc-config',
       domainLabel: 'ECC配置',
       module: 'telephony',
-      relatedSkills: ['ecc-config', 'jira-ops'],
+      relatedSkills: ['ecc-config', 'gerrit-submit'],
       formData: {
         repo_path_mtk: 'D:\\ecc\\mtk',
         ecc_group_1_number: '998',
@@ -134,13 +134,15 @@ describe('adapt-agent prompts', () => {
         { name: 'repo_path_mtk', label: 'MTK 代码仓路径', required: false },
         { name: 'ecc_group_1_number', label: 'ECC组1 · 号码', required: false },
       ],
-      interactionMode: true,
     })
     expect(systemPrompt).toContain('ecc-config')
-    expect(systemPrompt).toContain('TAHP_USER_INPUT')
+    expect(systemPrompt).toContain('gerrit-submit')
+    expect(systemPrompt).toContain('无人值守')
+    expect(systemPrompt).not.toContain('=== TAHP_USER_INPUT ===')
     expect(systemPrompt).toContain('运营商配置')
     expect(userPrompt).toContain('ECC配置')
     expect(userPrompt).toContain('998')
+    expect(userPrompt).toContain('gerrit-submit')
   })
 
   it('adapt-debug comm-framework emphasizes debug workflow', () => {

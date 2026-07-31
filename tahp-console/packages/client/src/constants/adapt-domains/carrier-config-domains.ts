@@ -28,8 +28,7 @@ export const CARRIER_ADAPT_DOMAINS: AdaptDomainDef[] = [
     color: '#bf3989',
     status: 'pending',
     module: 'telephony',
-    relatedSkills: ['ecc-config', 'jira-ops'],
-    interactionMode: true,
+    relatedSkills: ['ecc-config', 'gerrit-submit'],
     fields: [
       {
         name: 'repo_path_mtk',
@@ -58,6 +57,13 @@ export const CARRIER_ADAPT_DOMAINS: AdaptDomainDef[] = [
         type: 'text',
         required: false,
         placeholder: '选填，如 OS162-12345',
+      },
+      {
+        name: 'extra_info',
+        label: '补充信息',
+        type: 'textarea',
+        required: false,
+        placeholder: '整单补充说明：mccmnc、多语言、语音台、特殊要求等（对所有 ECC 配置组生效）',
       },
       // 下列 6 个字段为一组「ECC 条目」；Console 中可临时复制多组，不落盘
       {
@@ -110,10 +116,10 @@ export const CARRIER_ADAPT_DOMAINS: AdaptDomainDef[] = [
       },
       {
         name: 'user_notes',
-        label: '补充信息',
+        label: '本组补充',
         type: 'textarea',
         required: false,
-        placeholder: 'mccmnc、多语言、语音台等补充说明',
+        placeholder: '仅本组号码的补充说明',
       },
     ],
   },

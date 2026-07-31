@@ -25,8 +25,25 @@ export function validateEccConfigForm(formData: Record<string, unknown>): string
   return null
 }
 
-export const INTERACTIVE_CARRIER_DOMAIN_IDS = new Set(['carrierconfig-tools', 'ecc-config'])
+/** CarrierConfig 等人机协同域；ECC 为无人值守，不在此集合 */
+export const INTERACTIVE_CARRIER_DOMAIN_IDS = new Set(['carrierconfig-tools'])
 
 export function isInteractiveCarrierDomain(domainId: string, interactionMode?: boolean): boolean {
   return interactionMode === true || INTERACTIVE_CARRIER_DOMAIN_IDS.has(domainId)
+}
+
+/** ECC 配置：危险命令立即自动同意，不弹窗 */
+export function shouldAutoApproveAdaptCommands(domainId: string): boolean {
+  return domainId === 'ecc-config'
+}
+
+/**
+ * ECC 默认关联：去掉 jira-ops，保证 ecc-config + gerrit-submit。
+ * 用于覆盖历史 layout 中仍带 jira-ops 的配置。
+ */
+export function normalizeEccRelatedSkills(skills: string[]): string[] {
+  const out = skills.filter((s) => s && s !== 'jira-ops')
+  if (!out.includes('ecc-config')) out.unshift('ecc-config')
+  if (!out.includes('gerrit-submit')) out.push('gerrit-submit')
+  return out
 }

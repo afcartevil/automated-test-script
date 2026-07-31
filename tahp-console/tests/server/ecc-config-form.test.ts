@@ -3,6 +3,8 @@ import {
   hasEccRepoPath,
   validateEccConfigForm,
   isInteractiveCarrierDomain,
+  shouldAutoApproveAdaptCommands,
+  normalizeEccRelatedSkills,
 } from '../../packages/server/src/services/tahp/ecc-config-form'
 import {
   isEccConfigFormComplete,
@@ -46,12 +48,31 @@ describe('ecc-config-form', () => {
     expect(packed.formData.ecc_group_2_block).toBe('yes')
     expect(JSON.parse(packed.formData.ecc_entries_json)).toHaveLength(2)
     expect(packed.formFields.some(f => f.label.includes('ECC组2 · 号码'))).toBe(true)
-    expect(packed.formFields.some(f => f.label.includes('ECC组1 · 补充信息'))).toBe(true)
+    expect(packed.formFields.some(f => f.label.includes('ECC组1 · 本组补充'))).toBe(true)
   })
 
-  it('isInteractiveCarrierDomain includes ecc-config', () => {
-    expect(isInteractiveCarrierDomain('ecc-config', false)).toBe(true)
+  it('isInteractiveCarrierDomain excludes ecc-config (unattended)', () => {
+    expect(isInteractiveCarrierDomain('ecc-config', false)).toBe(false)
+    expect(isInteractiveCarrierDomain('carrierconfig-tools', false)).toBe(true)
     expect(isInteractiveCarrierDomain('apn-config', false)).toBe(false)
     expect(isInteractiveCarrierDomain('apn-config', true)).toBe(true)
+  })
+
+  it('shouldAutoApproveAdaptCommands only for ecc-config', () => {
+    expect(shouldAutoApproveAdaptCommands('ecc-config')).toBe(true)
+    expect(shouldAutoApproveAdaptCommands('carrierconfig-tools')).toBe(false)
+    expect(shouldAutoApproveAdaptCommands('apn-config')).toBe(false)
+  })
+
+  it('normalizeEccRelatedSkills drops jira-ops and ensures gerrit-submit', () => {
+    expect(normalizeEccRelatedSkills(['ecc-config', 'jira-ops'])).toEqual([
+      'ecc-config',
+      'gerrit-submit',
+    ])
+    expect(normalizeEccRelatedSkills(['ecc-config', 'gerrit-submit', 'extra'])).toEqual([
+      'ecc-config',
+      'gerrit-submit',
+      'extra',
+    ])
   })
 })

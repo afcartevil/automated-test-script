@@ -79,9 +79,9 @@ export const ECC_ENTRY_FIELD_META: Array<{
   },
   {
     name: 'user_notes',
-    label: '补充信息',
+    label: '本组补充',
     type: 'textarea',
-    placeholder: 'mccmnc、多语言、语音台等补充说明',
+    placeholder: '仅本组号码的补充说明',
   },
 ]
 
@@ -137,4 +137,15 @@ export function packEccEntriesForAgent(entries: EccEntryFormRow[]): {
   )
 
   return { formData, formFields }
+}
+
+/**
+ * ECC 默认关联：去掉 jira-ops，保证 ecc-config + gerrit-submit。
+ * 用于覆盖历史 layout 中仍带 jira-ops 的配置。
+ */
+export function normalizeEccRelatedSkills(skills: string[]): string[] {
+  const out = skills.filter((s) => s && s !== 'jira-ops')
+  if (!out.includes('ecc-config')) out.unshift('ecc-config')
+  if (!out.includes('gerrit-submit')) out.push('gerrit-submit')
+  return out
 }
