@@ -48,16 +48,18 @@ useKeyboard()
     <NMessageProvider>
       <NDialogProvider>
         <NNotificationProvider>
-          <div v-if="nodeVersionLow && ready && !isLoginPage" class="global-warning-bar">
-            {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
+          <div class="app-frame">
+            <div v-if="nodeVersionLow && ready && !isLoginPage" class="global-warning-bar">
+              {{ t('sidebar.nodeVersionWarning', { version: appStore.nodeVersion }) }}
+            </div>
+            <SkillConfigBanner v-if="ready && !isLoginPage" />
+            <template v-if="ready">
+              <router-view v-if="isLoginPage" />
+              <EaShell v-else>
+                <router-view />
+              </EaShell>
+            </template>
           </div>
-          <SkillConfigBanner v-if="ready && !isLoginPage" />
-          <template v-if="ready">
-            <router-view v-if="isLoginPage" />
-            <EaShell v-else>
-              <router-view />
-            </EaShell>
-          </template>
           <SessionSearchModal />
         </NNotificationProvider>
       </NDialogProvider>
@@ -66,7 +68,16 @@ useKeyboard()
 </template>
 
 <style scoped lang="scss">
+.app-frame {
+  height: calc(100 * var(--vh));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .global-warning-bar {
+  flex-shrink: 0;
   background: var(--warn-soft);
   color: var(--warn);
   text-align: center;

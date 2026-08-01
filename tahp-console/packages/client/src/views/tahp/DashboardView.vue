@@ -184,7 +184,12 @@ const currentModelName = computed(() =>
 .hm-icon-lg { width: 58px; height: 58px; border-radius: 17px; }
 .hm-hero { padding: 28px; margin-bottom: 16px; }
 .hm-hero h2 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin: 16px 0 6px; }
-.hm-hero p { font-size: 15px; opacity: 0.85; max-width: 720px; line-height: 1.55; }
+.hm-hero p {
+  font-size: 15px;
+  opacity: 0.85;
+  line-height: 1.55;
+  white-space: nowrap;
+}
 
 .hm-row {
   display: grid;
@@ -243,5 +248,6 @@ const currentModelName = computed(() =>
 @media (max-width: 720px) {
   .hm-row, .mdl-grid { grid-template-columns: 1fr; }
   .hm-sm { min-height: 0; }
+  .hm-hero p { white-space: normal; }
 }
 </style>

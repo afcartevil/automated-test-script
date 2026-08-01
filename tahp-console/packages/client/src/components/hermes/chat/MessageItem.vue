@@ -30,6 +30,7 @@ const JSON_MAX_ITEMS_PER_ARRAY = 50;
 const JSON_TRUNCATED_KEY = "__truncated__";
 
 const props = defineProps<{ message: Message; highlight?: boolean; headingIdPrefix?: string }>();
+const emit = defineEmits<{ openReader: [messageId: string] }>();
 const { t } = useI18n();
 const toast = useMessage();
 
@@ -198,6 +199,15 @@ const copyableContent = computed(() => {
   if (!content.trim()) return null
   return content
 })
+
+const canOpenReader = computed(
+  () => props.message.role === 'assistant' && !!copyableContent.value && props.message.systemType !== 'error',
+)
+
+function openReader() {
+  if (!canOpenReader.value) return
+  emit('openReader', props.message.id)
+}
 
 async function copyBubbleContent() {
   const text = copyableContent.value
@@ -1022,6 +1032,19 @@ onBeforeUnmount(() => {
               </svg>
             </button>
             <button
+              v-if="canOpenReader"
+              class="copy-bubble-btn"
+              @click="openReader"
+              :title="t('chat.readerOpen')"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3"/>
+                <path d="M16 3h3a2 2 0 0 1 2 2v3"/>
+                <path d="M8 21H5a2 2 0 0 1-2-2v-3"/>
+                <path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+              </svg>
+            </button>
+            <button
               v-if="copyableContent"
               class="copy-bubble-btn"
               @click="copyBubbleContent"
@@ -1080,7 +1103,7 @@ onBeforeUnmount(() => {
     gap: 8px;
 
     .msg-body {
-      max-width: 80%;
+      max-width: min(100%, 1080px);
       position: relative;
       z-index: 1;
     }

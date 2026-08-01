@@ -37,6 +37,7 @@ function goConfigure() {
 
 <style scoped lang="scss">
 .skill-config-warning-bar {
+  flex-shrink: 0;
   background: var(--warn-soft);
   color: var(--warn);
   text-align: center;

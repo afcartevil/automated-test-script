@@ -87,6 +87,7 @@ const secondaryOptions = secondaryNav.map(item => ({
 
 const isPublicActive = computed(() => publicNav.some(item => isActive(item.name)))
 const isSecondaryActive = computed(() => secondaryNav.some(item => isActive(item.name)))
+const flushLayout = computed(() => route.meta.flushLayout === true)
 
 function goHome() {
   router.push({ name: 'tahp.dashboard' })
@@ -211,7 +212,7 @@ async function handleUpdate() {
       </div>
     </header>
 
-    <main class="ck-content">
+    <main class="ck-content" :class="{ 'ck-content--flush': flushLayout }">
       <slot />
     </main>
 
@@ -228,7 +229,9 @@ async function handleUpdate() {
 .ck-shell {
   display: flex;
   flex-direction: column;
-  height: calc(100 * var(--vh));
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   background: var(--bg);
 }
 
@@ -397,6 +400,13 @@ async function handleUpdate() {
   flex: 1;
   overflow-y: auto;
   padding: 8px 28px 40px;
+  min-height: 0;
+
+  &--flush {
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+  }
 }
 
 .model-overlay {

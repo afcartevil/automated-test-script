@@ -2,6 +2,7 @@
 import { ref, computed, watch, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import MessageItem from "./MessageItem.vue";
+import MessageReaderModal from "./MessageReaderModal.vue";
 import { useChatStore } from "@/stores/hermes/chat";
 import thinkingVideoLight from "@/assets/thinking-light.mp4";
 import thinkingVideoDark from "@/assets/thinking-dark.mp4";
@@ -14,6 +15,14 @@ const { t } = useI18n();
 const { isDark } = useTheme();
 const { toolTraceVisible } = useToolTraceVisibility();
 const listRef = ref<HTMLElement>();
+const showScrollToBottom = ref(false);
+const readerOpen = ref(false);
+const readerMessageId = ref<string | null>(null);
+
+function openReader(messageId: string) {
+  readerMessageId.value = messageId;
+  readerOpen.value = true;
+}
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -94,12 +103,25 @@ function isNearBottom(threshold = 200): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
 }
 
+function updateScrollToBottomVisibility() {
+  showScrollToBottom.value = !isNearBottom(160);
+}
+
+function onListScroll() {
+  updateScrollToBottomVisibility();
+}
+
 function scrollToBottom() {
   nextTick(() => {
     if (listRef.value) {
       listRef.value.scrollTop = listRef.value.scrollHeight;
+      showScrollToBottom.value = false;
     }
   });
+}
+
+function handleScrollToBottomClick() {
+  scrollToBottom();
 }
 
 function scrollToMessage(messageId: string) {
@@ -164,7 +186,8 @@ watch(currentToolCalls, () => {
 </script>
 
 <template>
-  <div ref="listRef" class="message-list">
+  <div class="message-list-shell">
+  <div ref="listRef" class="message-list" @scroll="onListScroll">
     <div v-if="chatStore.messages.length === 0" class="empty-state">
       <img src="/logo.png" alt="EasyAdapter" class="empty-logo" />
       <p>{{ t("chat.emptyState") }}</p>
@@ -174,6 +197,7 @@ watch(currentToolCalls, () => {
       :key="msg.id"
       :message="msg"
       :highlight="chatStore.focusMessageId === msg.id"
+      @open-reader="openReader"
     />
     <Transition name="fade">
       <div v-if="chatStore.isRunActive || chatStore.abortState" class="streaming-indicator">
@@ -339,6 +363,7 @@ watch(currentToolCalls, () => {
         </div>
       </div>
     </Transition>
+
     <Transition name="queue-float">
       <div v-if="queuedMessages.length > 0" class="queue-float-panel">
         <div class="queue-float-header">
@@ -372,23 +397,87 @@ watch(currentToolCalls, () => {
       </div>
     </Transition>
   </div>
+
+  <Transition name="fade">
+    <button
+      v-if="showScrollToBottom"
+      type="button"
+      class="scroll-to-bottom-btn"
+      :title="t('chat.scrollToBottom')"
+      @click="handleScrollToBottomClick"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="6 9 12 15 18 9" />
+      </svg>
+      <span>{{ t('chat.scrollToBottom') }}</span>
+    </button>
+  </Transition>
+
+  <MessageReaderModal
+    v-if="readerOpen"
+    v-model:show="readerOpen"
+    v-model:message-id="readerMessageId"
+    :messages="chatStore.messages"
+  />
+  </div>
 </template>
 
 <style scoped lang="scss">
 @use "@/styles/variables" as *;
 
+.message-list-shell {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .message-list {
   flex: 1;
+  height: 100%;
   overflow-y: auto;
-  padding: 20px;
+  overflow-x: hidden;
+  padding: 20px 20px 28px;
   display: flex;
   flex-direction: column;
   gap: 16px;
   background-color: $bg-card;
   position: relative;
+  min-height: 0;
 
   .dark & {
     background-color: #333333;
+  }
+}
+
+.scroll-to-bottom-btn {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  transition: border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16);
   }
 }
 

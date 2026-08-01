@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import ChatPanel from '@/components/hermes/chat/ChatPanel.vue'
-import EaPageHead from '@/components/layout/EaPageHead.vue'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
@@ -25,11 +24,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="page page-wide chat-page">
-    <EaPageHead
-      title="AI 对话"
-      subtitle="在自由对话上下文中继续追问 / 产出补丁 / 沉淀知识（Agent + 完整 Skill）"
-    />
+  <div class="chat-page">
     <div class="chat-wrap">
       <ChatPanel />
     </div>
@@ -40,8 +35,10 @@ onMounted(async () => {
 .chat-page {
   display: flex;
   flex-direction: column;
-  height: calc(100 * var(--vh) - 100px);
+  flex: 1;
   min-height: 0;
+  width: 100%;
+  overflow: hidden;
 }
 
 .chat-wrap {
@@ -55,5 +52,8 @@ onMounted(async () => {
   flex: 1;
   min-height: 0;
   width: 100%;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
 }
 </style>

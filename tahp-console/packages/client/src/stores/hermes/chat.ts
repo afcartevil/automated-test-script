@@ -384,12 +384,6 @@ export const useChatStore = defineStore('chat', () => {
     return sid ? pendingApprovals.value.get(sid) || null : null
   })
 
-  // 自动播放语音开关
-  const autoPlaySpeechEnabled = ref(false)
-
-  function setAutoPlaySpeech(enabled: boolean) {
-    autoPlaySpeechEnabled.value = enabled
-  }
   const isStreaming = computed(() => {
     const sid = activeSessionId.value
     if (sid == null) return false
@@ -1420,18 +1414,6 @@ export const useChatStore = defineStore('chat', () => {
                 playCompletionBellIfEnabled()
               }
 
-              // 自动播放语音
-              if (autoPlaySpeechEnabled.value) {
-                const msgs = getSessionMsgs(sid)
-                const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
-                if (lastAssistant?.content) {
-                  // 延迟一小会儿再播放，确保 UI 更新完成
-                  setTimeout(() => {
-                    playMessageSpeech(lastAssistant.id, lastAssistant.content)
-                  }, 300)
-                }
-              }
-
               if ((evt as any).queue_remaining > 0) {
                 queueLengths.value.set(sid, (evt as any).queue_remaining)
               } else {
@@ -1856,17 +1838,6 @@ export const useChatStore = defineStore('chat', () => {
             playCompletionBellIfEnabled()
           }
 
-          // Auto-play speech for every completed assistant message
-          if (autoPlaySpeechEnabled.value) {
-            const msgs = getSessionMsgs(sid)
-            const lastAssistant = [...msgs].reverse().find(m => m.role === 'assistant')
-            if (lastAssistant?.content) {
-              setTimeout(() => {
-                playMessageSpeech(lastAssistant.id, lastAssistant.content)
-              }, 300)
-            }
-          }
-
           if (!hasQueue) {
             cleanup()
             resetRunAssistState(runAssist)
@@ -2098,7 +2069,6 @@ export const useChatStore = defineStore('chat', () => {
     noteReasoningStart,
     noteReasoningEnd,
     clearThinkingObservationFor,
-    setAutoPlaySpeech,
     playMessageSpeech,
   }
 })

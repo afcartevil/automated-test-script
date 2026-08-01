@@ -5,18 +5,24 @@ import { useAppStore } from '@/stores/hermes/app'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { fetchContextLength } from '@/api/hermes/sessions'
 import { setModelContext } from '@/api/hermes/model-context'
-import { NButton, NTooltip, NSwitch, NModal, NInputNumber, NInput, NForm, NFormItem, NTag, NSelect, useMessage } from 'naive-ui'
+import { NButton, NTooltip, NSwitch, NModal, NInputNumber, NInput, NForm, NFormItem, NTag, NSelect, NPopover, useMessage } from 'naive-ui'
 import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToolTraceVisibility } from '@/composables/useToolTraceVisibility'
 import { useModelProviderReadiness } from '@/composables/useModelProviderReadiness'
 import { saveKnowledgeFromChat, fetchDifyOptions } from '@/api/tahp/knowledge'
 
+const props = withDefaults(defineProps<{
+  centered?: boolean
+}>(), {
+  centered: false,
+})
+
 const chatStore = useChatStore()
 const { t } = useI18n()
 const message = useMessage()
 const { isReady: modelProviderReady } = useModelProviderReadiness()
-const { toolTraceVisible, toggleToolTraceVisible } = useToolTraceVisibility()
+const { toolTraceVisible, setToolTraceVisible } = useToolTraceVisibility()
 const inputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement>()
 const commandDropdownRef = ref<HTMLDivElement>()
@@ -25,6 +31,7 @@ const attachments = ref<Attachment[]>([])
 const isDragging = ref(false)
 const dragCounter = ref(0)
 const isComposing = ref(false)
+const plusMenuOpen = ref(false)
 
 const bridgeCommands = computed(() => [
   { name: 'usage', args: '', description: t('chat.slashCommands.usage') },
@@ -50,50 +57,12 @@ const filteredBridgeCommands = computed(() => {
   )
 })
 
-// 自定义高度拖拽
-const textareaHeight = ref<number | null>(null) // null = auto
-
-function startResize(e: MouseEvent) {
-  e.preventDefault()
-  const el = textareaRef.value
-  if (!el) return
-  // 如果当前是 auto，用实际 clientHeight 作为起始值
-  const startHeight = el.clientHeight
-  const startY = e.clientY
-
-  function onMouseMove(e: MouseEvent) {
-    const deltaY = e.clientY - startY
-    // 往上拖 (deltaY < 0) → 高度增加
-    const newHeight = startHeight - deltaY
-    textareaHeight.value = Math.max(20, Math.min(400, Math.round(newHeight)))
-  }
-
-  function onMouseUp() {
-    document.removeEventListener('mousemove', onMouseMove)
-    document.removeEventListener('mouseup', onMouseUp)
-    document.body.style.cursor = ''
-    document.body.style.userSelect = ''
-  }
-
-  document.body.style.cursor = 'row-resize'
-  document.body.style.userSelect = 'none'
-  document.addEventListener('mousemove', onMouseMove)
-  document.addEventListener('mouseup', onMouseUp)
-}
-
-// 自动播放语音开关
-const autoPlaySpeech = ref(false)
-
 // 对话检索模式（分场景检索）
 type RetrievalModeOption = 'auto' | 'historical' | 'concept' | 'sop' | 'adapt'
 const retrievalMode = ref<RetrievalModeOption>('auto')
 const searchLark = ref(false)
 const searchDify = ref(true) // Mode A: default ON, user can turn off
-const difyKbTag = ref('全局搜索')
 const difyEnabled = ref(false)
-const difyKbTagOptions = ref<Array<{ label: string; value: string }>>([
-  { label: '全局搜索', value: '全局搜索' },
-])
 const retrievalModeOptions = [
   { label: '自动', value: 'auto' },
   { label: '历史案例', value: 'historical' },
@@ -103,11 +72,6 @@ const retrievalModeOptions = [
 ]
 
 onMounted(() => {
-  const saved = localStorage.getItem('autoPlaySpeech')
-  if (saved !== null) {
-    autoPlaySpeech.value = saved === 'true'
-    chatStore.setAutoPlaySpeech(autoPlaySpeech.value)
-  }
   const savedMode = localStorage.getItem('tahp_retrieval_mode') as RetrievalModeOption | null
   if (savedMode && retrievalModeOptions.some(o => o.value === savedMode)) {
     retrievalMode.value = savedMode
@@ -118,17 +82,9 @@ onMounted(() => {
   // Default ON when no preference saved
   if (savedDify !== null) searchDify.value = savedDify === 'true'
   else searchDify.value = true
-  const savedDifyTag = localStorage.getItem('tahp_dify_kb_tag')
-  if (savedDifyTag) difyKbTag.value = savedDifyTag
 
   void fetchDifyOptions().then((opts) => {
     difyEnabled.value = opts.enabled
-    if (opts.kb_tags?.length) {
-      difyKbTagOptions.value = opts.kb_tags.map(tag => ({ label: tag, value: tag }))
-      if (!opts.kb_tags.includes(difyKbTag.value)) {
-        difyKbTag.value = opts.kb_tags[0]
-      }
-    }
     // Server explicitly disabled → force off locally
     if (!opts.enabled) searchDify.value = false
   }).catch(() => {
@@ -153,11 +109,6 @@ onMounted(() => {
 })
 
 // 监听变化并保存
-watch(autoPlaySpeech, (value) => {
-  localStorage.setItem('autoPlaySpeech', String(value))
-  chatStore.setAutoPlaySpeech(value)
-})
-
 watch(retrievalMode, (value) => {
   localStorage.setItem('tahp_retrieval_mode', value)
 })
@@ -168,10 +119,6 @@ watch(searchLark, (value) => {
 
 watch(searchDify, (value) => {
   localStorage.setItem('tahp_search_dify', String(value))
-})
-
-watch(difyKbTag, (value) => {
-  localStorage.setItem('tahp_dify_kb_tag', value)
 })
 
 const canSend = computed(() =>
@@ -393,7 +340,7 @@ function handleSend() {
       retrieval_mode: retrievalMode.value,
       search_lark: searchLark.value,
       search_dify: difyEnabled.value ? searchDify.value : false,
-      dify_kb_tag: difyKbTag.value,
+      // kb_tag omitted: server resolveKbTag() defaults to 全局搜索
     },
   )
   inputText.value = ''
@@ -456,10 +403,13 @@ function handleKeydown(e: KeyboardEvent) {
 function handleInput(e: Event) {
   const el = e.target as HTMLTextAreaElement
   if (!isComposing.value) updateSlashState()
-  // 用户手动拖拽自定义高度时，不覆盖
-  if (textareaHeight.value !== null) return
   el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 100) + 'px'
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px'
+}
+
+function handleAttachFromMenu() {
+  plusMenuOpen.value = false
+  handleAttachClick()
 }
 
 function handleCommandHover(index: number) {
@@ -583,7 +533,7 @@ async function submitKbSave() {
 </script>
 
 <template>
-  <div class="chat-input-area">
+  <div class="chat-input-area" :class="{ centered: props.centered }">
 
     <!-- TAHP 适配调试模式横幅 -->
     <div v-if="tahpCtx" class="tahp-ctx-banner">
@@ -620,79 +570,6 @@ async function submitKbSave() {
       </div>
     </div>
 
-    <!-- Top bar: attach + auto play speech + context info -->
-    <div class="input-top-bar">
-      <NTooltip trigger="hover">
-        <template #trigger>
-          <NButton quaternary size="tiny" @click="handleAttachClick" circle>
-            <template #icon>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-            </template>
-          </NButton>
-        </template>
-        {{ t('chat.attachFiles') }}
-      </NTooltip>
-
-      <div class="auto-play-speech-switch">
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <div class="switch-label">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polygon points="5 3 19 12 5 21 5 3"/>
-              </svg>
-            </div>
-          </template>
-          {{ t('chat.autoPlaySpeech') }}
-        </NTooltip>
-        <NSwitch
-          size="small"
-          v-model:value="autoPlaySpeech"
-          :round="false"
-        />
-      </div>
-
-      <NTooltip trigger="hover">
-        <template #trigger>
-          <NButton
-            quaternary
-            size="tiny"
-            class="tool-trace-toggle"
-            :class="{ active: toolTraceVisible }"
-            :aria-label="toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls')"
-            @click="toggleToolTraceVisible"
-          >
-            <svg class="tool-trace-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14.7 6.3a4.5 4.5 0 0 0-5.8 5.8L3.5 17.5a2.1 2.1 0 0 0 3 3l5.4-5.4a4.5 4.5 0 0 0 5.8-5.8l-3 3-3-3 3-3z"/>
-            </svg>
-          </NButton>
-        </template>
-        {{ toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls') }}
-      </NTooltip>
-
-      <span v-if="totalTokens > 0" class="context-info" :class="{ 'context-warning': usagePercent > 80 }">
-        {{ formatTokens(totalTokens) }} /
-        <NTooltip trigger="hover">
-          <template #trigger>
-            <span class="context-limit-editable" @click="handleEditContextLimit">
-              {{ formatTokens(contextLength) }}
-            </span>
-          </template>
-          <span>{{ t('chat.contextClickToEdit') }}</span>
-        </NTooltip>
-        · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens) }}
-      </span>
-      <div v-if="totalTokens > 0" class="context-bar">
-        <div
-          class="context-bar-fill"
-          :class="{
-            'context-bar-warn': usagePercent > 60 && usagePercent <= 80,
-            'context-bar-danger': usagePercent > 80,
-          }"
-          :style="{ width: `${usagePercent}%` }"
-        />
-      </div>
-    </div>
-
     <!-- Attachment previews -->
     <div v-if="attachments.length > 0" class="attachment-previews">
       <div
@@ -711,7 +588,7 @@ async function submitKbSave() {
             <span class="file-size">{{ formatSize(att.size) }}</span>
           </div>
         </template>
-        <button class="attachment-remove" @click="removeAttachment(att.id)">
+        <button class="attachment-remove" type="button" @click="removeAttachment(att.id)">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
@@ -732,12 +609,88 @@ async function submitKbSave() {
         class="file-input-hidden"
         @change="handleFileChange"
       />
-      <div class="resize-handle" @mousedown="startResize"></div>
+
+      <NPopover
+        v-model:show="plusMenuOpen"
+        trigger="click"
+        placement="top-start"
+        :show-arrow="false"
+        raw
+        class="plus-menu-popover"
+      >
+        <template #trigger>
+          <button
+            type="button"
+            class="pill-icon-btn plus-btn"
+            :aria-label="t('chat.advancedOptions')"
+            :aria-expanded="plusMenuOpen"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </template>
+        <div class="plus-menu">
+          <button type="button" class="plus-menu-item" @click="handleAttachFromMenu">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+            <span>{{ t('chat.attachFiles') }}</span>
+          </button>
+
+          <div class="plus-menu-section">
+            <div class="plus-menu-label">{{ t('chat.retrievalMode') }}</div>
+            <NSelect
+              v-model:value="retrievalMode"
+              :options="retrievalModeOptions"
+              size="small"
+              class="plus-menu-select"
+            />
+          </div>
+
+          <label class="plus-menu-toggle">
+            <span>搜索飞书</span>
+            <NSwitch v-model:value="searchLark" size="small" />
+          </label>
+
+          <label v-if="difyEnabled" class="plus-menu-toggle" title="开启后本地先答，底软通信知识库异步补充参考">
+            <span>底软通信知识库</span>
+            <NSwitch v-model:value="searchDify" size="small" />
+          </label>
+
+          <label class="plus-menu-toggle">
+            <span>{{ toolTraceVisible ? t('chat.hideToolCalls') : t('chat.showToolCalls') }}</span>
+            <NSwitch
+              :value="toolTraceVisible"
+              size="small"
+              @update:value="setToolTraceVisible"
+            />
+          </label>
+
+          <div v-if="totalTokens > 0" class="plus-menu-context">
+            <button type="button" class="plus-menu-context-btn" @click="handleEditContextLimit">
+              {{ formatTokens(totalTokens) }} / {{ formatTokens(contextLength) }}
+              · {{ t('chat.contextRemaining') }} {{ formatTokens(remainingTokens) }}
+            </button>
+            <div class="context-bar">
+              <div
+                class="context-bar-fill"
+                :class="{
+                  'context-bar-warn': usagePercent > 60 && usagePercent <= 80,
+                  'context-bar-danger': usagePercent > 80,
+                }"
+                :style="{ width: `${usagePercent}%` }"
+              />
+            </div>
+          </div>
+        </div>
+      </NPopover>
+
       <textarea
         ref="textareaRef"
         v-model="inputText"
         class="input-textarea"
-        :style="textareaHeight ? { height: textareaHeight + 'px' } : {}"
         :placeholder="t('chat.inputPlaceholder')"
         rows="1"
         @keydown="handleKeydown"
@@ -746,6 +699,7 @@ async function submitKbSave() {
         @input="handleInput"
         @paste="handlePaste"
       ></textarea>
+
       <Transition name="dropdown-fade">
         <div
           v-if="slashActive && filteredBridgeCommands.length > 0"
@@ -766,55 +720,40 @@ async function submitKbSave() {
           </div>
         </div>
       </Transition>
-      <div class="retrieval-toolbar">
-        <NSelect
-          v-model:value="retrievalMode"
-          :options="retrievalModeOptions"
-          size="small"
-          class="retrieval-mode-select"
-          placeholder="检索模式"
-        />
-        <label class="lark-toggle">
-          <NSwitch v-model:value="searchLark" size="small" />
-          <span>搜索飞书</span>
-        </label>
-        <template v-if="difyEnabled">
-          <label class="lark-toggle" title="开启后本地先答，底软通信知识库异步补充参考">
-            <NSwitch v-model:value="searchDify" size="small" />
-            <span>底软通信知识库</span>
-          </label>
-          <NSelect
-            v-if="searchDify"
-            v-model:value="difyKbTag"
-            :options="difyKbTagOptions"
-            size="small"
-            class="retrieval-mode-select"
-            placeholder="知识库范围"
-          />
+
+      <NTooltip v-if="chatStore.isStreaming" trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="pill-action-btn stop"
+            :disabled="chatStore.isAborting"
+            :aria-label="t('chat.stop')"
+            @click="chatStore.stopStreaming()"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+          </button>
         </template>
-      </div>
-      <div class="input-actions">
-        <NButton
-          v-if="chatStore.isStreaming"
-          size="small"
-          type="error"
-          :disabled="chatStore.isAborting"
-          @click="chatStore.stopStreaming()"
-        >
-          {{ t('chat.stop') }}
-        </NButton>
-        <NButton
-          size="small"
-          type="primary"
-          :disabled="!canSend"
-          @click="handleSend"
-        >
-          <template #icon>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-          </template>
-          {{ t('chat.send') }}
-        </NButton>
-      </div>
+        {{ t('chat.stop') }}
+      </NTooltip>
+      <NTooltip v-else trigger="hover">
+        <template #trigger>
+          <button
+            type="button"
+            class="pill-action-btn send"
+            :disabled="!canSend"
+            :aria-label="t('chat.send')"
+            @click="handleSend"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="19" x2="12" y2="5" />
+              <polyline points="5 12 12 5 19 12" />
+            </svg>
+          </button>
+        </template>
+        {{ t('chat.send') }}
+      </NTooltip>
     </div>
 
     <!-- Context Length Edit Modal -->
@@ -906,111 +845,20 @@ async function submitKbSave() {
 @use '@/styles/variables' as *;
 
 .chat-input-area {
-  padding: 12px 20px 16px;
-  border-top: 1px solid $border-color;
-  flex-shrink: 0;
-}
-
-.input-top-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 0 6px;
-}
-
-.auto-play-speech-switch {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 0 0 8px;
-  border-left: 1px solid $border-light;
-  margin-left: 4px;
-
-  .switch-label {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    color: #999999;
-    font-size: 12px;
-
-    svg {
-      opacity: 1;
-    }
-  }
-
-  :deep(.n-switch),
-  :deep(.n-switch__rail) {
-    margin-right: 0;
-  }
-}
-
-.tool-trace-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #999999;
-  width: 24px;
-  min-width: 24px;
-  height: 22px;
-  margin-left: -4px;
   padding: 0;
-  background: transparent !important;
-  opacity: 1;
-
-  :deep(.n-button__state-border),
-  :deep(.n-button__border),
-  :deep(.n-button__ripple) {
-    display: none;
-  }
-
-  .tool-trace-icon {
-    display: block;
-    flex: 0 0 16px;
-    width: 16px;
-    height: 16px;
-  }
-
-  &.active {
-    color: #999999;
-    opacity: 1;
-  }
-
-  &:hover {
-    color: #999999;
-    opacity: 1;
-  }
-}
-
-.context-info {
-  font-size: 11px;
-  color: $text-muted;
-
-  &.context-warning {
-    color: #e8a735;
-  }
-}
-
-.context-limit-editable {
-  cursor: pointer;
-  border-bottom: 1px dashed transparent;
-  transition: all 0.2s ease;
-  padding: 0 2px;
-
-  &:hover {
-    border-bottom-color: $text-muted;
-    background: rgba(128, 128, 128, 0.1);
-    border-radius: 2px;
-  }
+  border-top: none;
+  flex-shrink: 0;
+  width: 100%;
+  background: transparent;
 }
 
 .context-bar {
-  width: 60px;
+  width: 100%;
   height: 4px;
   background: rgba(128, 128, 128, 0.2);
   border-radius: 2px;
   overflow: hidden;
+  margin-top: 8px;
 }
 
 .context-bar-fill {
@@ -1107,88 +955,228 @@ async function submitKbSave() {
 
 .input-wrapper {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  background-color: $bg-input;
-  border: 1px solid $border-color;
-  border-radius: $radius-md;
-  padding: 10px 12px;
+  align-items: flex-end;
+  gap: 8px;
+  min-height: 56px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  padding: 8px 10px 8px 8px;
   position: relative;
-  transition: border-color $transition-fast, background-color $transition-fast;
+  box-shadow: 0 8px 28px rgba(20, 24, 40, 0.08);
+  transition: border-color $transition-fast, box-shadow $transition-fast;
 
   &:focus-within {
-    border-color: $accent-primary;
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+    box-shadow: 0 10px 32px rgba(20, 24, 40, 0.12);
   }
 
   .dark & {
-    background-color: #333333;
+    background: #2a2a2a;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
   }
 }
 
-.resize-handle {
-  position: absolute;
-  top: -4px;
-  left: 0;
-  right: 0;
-  height: 8px;
-  cursor: row-resize;
-  z-index: 2;
+.pill-icon-btn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
 
   &:hover {
-    background: rgba($accent-primary, 0.15);
-    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 }
 
 .input-textarea {
   flex: 1;
+  min-width: 0;
   background: none;
   border: none;
   outline: none;
   color: $text-primary;
   font-family: $font-ui;
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 1.45;
   resize: none;
-  max-height: 400px;
-  min-height: 20px;
+  max-height: 160px;
+  min-height: 24px;
+  padding: 8px 4px;
   overflow-y: auto;
 
   &::placeholder {
     color: $text-muted;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 }
 
-.retrieval-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px 8px 0;
-  flex-shrink: 0;
-}
-
-.retrieval-mode-select {
-  width: 120px;
-}
-
-.lark-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: $text-muted;
+.pill-action-btn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
   cursor: pointer;
-  user-select: none;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+
+  &.send {
+    background: #e8eaed;
+    color: #202124;
+
+    &:hover:not(:disabled) {
+      background: #dadce0;
+    }
+
+    &:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+  }
+
+  &.stop {
+    background: var(--accent);
+    color: #fff;
+
+    &:hover:not(:disabled) {
+      filter: brightness(0.95);
+    }
+
+    &:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .dark &.send {
+    background: #3c4043;
+    color: #e8eaed;
+  }
 }
 
-.input-actions {
+.plus-menu {
+  width: min(280px, calc(100vw - 32px));
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg, 0 16px 40px rgba(0, 0, 0, 0.14));
   display: flex;
-  gap: 6px;
-  flex-shrink: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plus-menu-item,
+.plus-menu-context-btn {
+  display: flex;
   align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 10px;
+  cursor: pointer;
+  text-align: left;
+
+  &:hover {
+    background: var(--bg);
+  }
+}
+
+.plus-menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 4px 0;
+}
+
+.plus-menu-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.plus-menu-select {
+  width: 100%;
+}
+
+.plus-menu-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--bg);
+  }
+}
+
+.plus-menu-context {
+  padding: 4px 4px 2px;
+  border-top: 1px solid var(--line);
+}
+
+.plus-menu-context-btn {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+  padding: 8px 6px;
+}
+
+@media (max-width: $breakpoint-mobile) {
+  .input-wrapper {
+    min-height: 52px;
+    border-radius: 24px;
+    gap: 6px;
+    padding: 6px 8px 6px 6px;
+  }
+
+  .pill-icon-btn,
+  .pill-action-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .input-textarea {
+    font-size: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .input-wrapper,
+  .pill-icon-btn,
+  .pill-action-btn {
+    transition: none;
+  }
 }
 
 .slash-command-dropdown {

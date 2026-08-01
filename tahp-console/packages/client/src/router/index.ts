@@ -131,6 +131,7 @@ const router = createRouter({
       path: '/hermes/chat',
       name: 'hermes.chat',
       component: () => import('@/views/hermes/ChatView.vue'),
+      meta: { flushLayout: true },
     },
     {
       path: '/hermes/history',

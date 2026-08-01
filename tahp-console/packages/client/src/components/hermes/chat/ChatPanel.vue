@@ -40,6 +40,13 @@ const showOutline = ref(false);
 
 const currentMode = ref<"chat" | "live">("chat");
 
+/** Gemini-style: center composer when the active session has no messages yet. */
+const composerCentered = computed(() => {
+  if (currentMode.value !== "chat") return false;
+  if (chatStore.isLoadingMessages) return false;
+  return chatStore.messages.length === 0;
+});
+
 // Batch selection mode
 const isBatchMode = ref(false);
 const selectedSessionIds = ref<Set<string>>(new Set());
@@ -987,17 +994,61 @@ async function handleSessionModelCustomSubmit() {
               <template v-if="!isMobile">{{ t("chat.newChat") }}</template>
             </NButton>
           </template>
+          <NTooltip trigger="hover">
+            <template #trigger>
+              <NButton
+                quaternary
+                size="small"
+                circle
+                @click="showDrawer = true"
+              >
+                <template #icon>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <line x1="9" y1="3" x2="9" y2="21" />
+                    <line x1="15" y1="3" x2="15" y2="21" />
+                  </svg>
+                </template>
+              </NButton>
+            </template>
+            {{ t("chat.openDrawer") }}
+          </NTooltip>
         </div>
       </header>
 
       <ModelProviderBanner class="chat-provider-banner" />
 
       <template v-if="currentMode === 'chat'">
-        <div class="chat-content-wrapper">
-          <div class="chat-main-content">
-            <MessageList />
+        <div
+          class="chat-stage"
+          :class="{ 'is-composer-centered': composerCentered }"
+        >
+          <div class="chat-content-wrapper">
+            <div class="chat-main-content">
+              <MessageList v-show="!composerCentered" />
+              <div
+                v-if="composerCentered"
+                class="composer-welcome"
+              >
+                <img src="/logo.png" alt="" class="composer-welcome-logo" />
+                <p>{{ t("chat.emptyState") }}</p>
+              </div>
+            </div>
+            <OutlinePanel v-if="showOutline" :messages="chatStore.messages" />
           </div>
-          <OutlinePanel v-if="showOutline" :messages="chatStore.messages" />
+          <div
+            class="composer-dock"
+            :class="{ centered: composerCentered }"
+          >
+            <ChatInput :centered="composerCentered" />
+          </div>
         </div>
         <div v-if="visibleApproval" class="approval-bar">
           <div class="approval-icon" aria-hidden="true">
@@ -1059,30 +1110,11 @@ async function handleSessionModelCustomSubmit() {
             </div>
           </div>
         </div>
-        <ChatInput />
       </template>
       <ConversationMonitorPane
         v-else
         :human-only="sessionBrowserPrefsStore.humanOnly"
       />
-    </div>
-
-    <!-- Floating drawer button -->
-    <div class="drawer-button-wrapper">
-      <div class="drawer-button" @click="showDrawer = true">
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.5"
-        >
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-          <line x1="9" y1="3" x2="9" y2="21" />
-          <line x1="15" y1="3" x2="15" y2="21" />
-        </svg>
-      </div>
     </div>
 
     <DrawerPanel v-model:show="showDrawer" :active-tab="drawerActiveTab" />
@@ -1600,6 +1632,7 @@ async function handleSessionModelCustomSubmit() {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  min-height: 0;
   background: var(--surface);
 }
 
@@ -1608,8 +1641,18 @@ async function handleSessionModelCustomSubmit() {
   flex-shrink: 0;
 }
 
+.chat-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
 .chat-content-wrapper {
   flex: 1;
+  min-height: 0;
   display: flex;
   overflow: hidden;
   position: relative;
@@ -1621,6 +1664,110 @@ async function handleSessionModelCustomSubmit() {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+}
+
+.composer-welcome {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--muted);
+  text-align: center;
+  padding: 24px 20px 180px;
+  animation: composer-fade 0.2s ease;
+
+  p {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--head);
+  }
+}
+
+.composer-welcome-logo {
+  width: 48px;
+  height: 48px;
+  opacity: 0.28;
+}
+
+.composer-dock {
+  flex-shrink: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding: 0 16px 16px;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    var(--surface) 28%,
+    var(--surface) 100%
+  );
+  z-index: 6;
+  transition: transform 0.2s ease, opacity 0.18s ease;
+
+  &.centered {
+    position: absolute;
+    left: 50%;
+    top: 52%;
+    bottom: auto;
+    transform: translate(-50%, -50%);
+    width: min(760px, calc(100% - 32px));
+    padding: 0;
+    background: transparent;
+  }
+
+  &:not(.centered) {
+    position: relative;
+  }
+
+  :deep(.chat-input-area) {
+    width: 100%;
+    max-width: 900px;
+  }
+
+  &.centered :deep(.chat-input-area) {
+    max-width: 760px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-welcome,
+  .composer-dock {
+    animation: none;
+    transition: none;
+  }
+}
+
+@keyframes composer-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: $breakpoint-mobile) {
+  .composer-welcome {
+    padding: 16px 12px 160px;
+    justify-content: flex-start;
+    padding-top: min(14vh, 96px);
+  }
+
+  .composer-dock {
+    padding: 0 12px 12px;
+
+    &.centered {
+      width: calc(100% - 24px);
+      top: 42%;
+    }
+  }
 }
 
 .chat-header {
@@ -1693,52 +1840,6 @@ async function handleSessionModelCustomSubmit() {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: default;
-}
-
-// ─── Drawer button ─────────────────────────────────────────────
-
-.drawer-button-wrapper {
-  position: absolute;
-  right: 16px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 100;
-  background: $bg-card;
-  border-radius: 50%;
-  box-shadow:
-    0 0 10px rgba(255, 107, 107, 0.4),
-    0 0 20px rgba(255, 107, 107, 0.2);
-  animation: rainbow-glow 8s linear infinite;
-  transition: all $transition-fast;
-
-  &:hover {
-    animation-play-state: paused;
-    box-shadow:
-      0 0 15px rgba(255, 107, 107, 0.6),
-      0 0 30px rgba(255, 107, 107, 0.3);
-  }
-}
-
-.drawer-button {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: rgba(var(--accent-primary-rgb), 0.1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all $transition-fast;
-
-  svg {
-    width: 18px;
-    height: 18px;
-    color: var(--accent-primary);
-  }
-
-  &:hover {
-    transform: scale(1.1);
-  }
 }
 
 .approval-bar {
@@ -1857,78 +1958,4 @@ async function handleSessionModelCustomSubmit() {
   }
 }
 
-@keyframes rainbow-glow {
-  0% {
-    box-shadow:
-      0 0 0 2px #ff6b6b,
-      0 0 10px rgba(255, 107, 107, 0.4),
-      0 0 20px rgba(255, 107, 107, 0.2);
-    border-color: #ff6b6b;
-    color: #ff6b6b;
-  }
-  16.66% {
-    box-shadow:
-      0 0 0 2px #feca57,
-      0 0 10px rgba(254, 202, 87, 0.4),
-      0 0 20px rgba(254, 202, 87, 0.2);
-    border-color: #feca57;
-    color: #feca57;
-  }
-  33.33% {
-    box-shadow:
-      0 0 0 2px #48dbfb,
-      0 0 10px rgba(72, 219, 251, 0.4),
-      0 0 20px rgba(72, 219, 251, 0.2);
-    border-color: #48dbfb;
-    color: #48dbfb;
-  }
-  50% {
-    box-shadow:
-      0 0 0 2px #ff9ff3,
-      0 0 10px rgba(255, 159, 243, 0.4),
-      0 0 20px rgba(255, 159, 243, 0.2);
-    border-color: #ff9ff3;
-    color: #ff9ff3;
-  }
-  66.66% {
-    box-shadow:
-      0 0 0 2px #54a0ff,
-      0 0 10px rgba(84, 160, 255, 0.4),
-      0 0 20px rgba(84, 160, 255, 0.2);
-    border-color: #54a0ff;
-    color: #54a0ff;
-  }
-  83.33% {
-    box-shadow:
-      0 0 0 2px #5f27cd,
-      0 0 10px rgba(95, 39, 205, 0.4),
-      0 0 20px rgba(95, 39, 205, 0.2);
-    border-color: #5f27cd;
-    color: #5f27cd;
-  }
-  100% {
-    box-shadow:
-      0 0 0 2px #ff6b6b,
-      0 0 10px rgba(255, 107, 107, 0.4),
-      0 0 20px rgba(255, 107, 107, 0.2);
-    border-color: #ff6b6b;
-    color: #ff6b6b;
-  }
-}
-
-@media (max-width: $breakpoint-mobile) {
-  .drawer-button-wrapper {
-    right: 12px;
-  }
-
-  .drawer-button {
-    width: 36px;
-    height: 36px;
-
-    svg {
-      width: 16px;
-      height: 16px;
-    }
-  }
-}
 </style>
