@@ -2059,7 +2059,7 @@ function openSkill(skillName: string) {
                   填写代码仓库路径与补充信息后，由 <code>apn-edit</code> Skill 按 SOP 定位并修改 APN 配置。
                 </template>
                 <template v-else>
-                  以下字段来自 <code>comm-framework-agent-test</code> 测试 Skill 输入；点击「Agent 自动适配」后将按 Skill 分步骤在 PRJ Path 下创建并写入测试文件。
+                  以下字段来自 <code>{{ activeDomain.relatedSkills[0] || 'comm-framework-agent-test' }}</code> 测试 Skill 输入；点击「Agent 自动适配」后将按 Skill 分步骤在 PRJ Path 下创建并写入测试文件。
                 </template>
               </div>
 

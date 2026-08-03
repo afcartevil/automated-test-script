@@ -1,4 +1,4 @@
-  `import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 const getLayoutMock = vi.fn()
 
@@ -47,6 +47,10 @@ describe('adapt-pipeline domain-catalog', () => {
 
     const feature = catalog.workspaces.find(w => w.id === 'feature-adapt')!
     expect(feature.domains.map(d => d.domain_id)).toContain('scheduling')
+    const featureComm = feature.domains.find(d => d.domain_id === 'comm-framework')!
+    expect(featureComm.domain_label).toBe('通信框架')
+    expect(featureComm.module).toBe('telephony')
+    expect(featureComm.related_skills).toContain('comm-framework-agent-test-for-secondWork')
 
     const carrier = catalog.workspaces.find(w => w.id === 'carrier-config')!
     const ecc = carrier.domains.find(d => d.domain_id === 'ecc-config')!

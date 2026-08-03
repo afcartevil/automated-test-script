@@ -88,6 +88,12 @@ const BUILTIN_BY_WORKSPACE: Record<AdaptWorkspaceId, BuiltinDomainSeed[]> = {
     { id: 'sensor', label: 'Sensor', module: 'kernel-driver' },
     { id: 'memory', label: '内存', module: 'kernel-driver' },
     { id: 'scheduling', label: '调度', module: 'kernel-driver' },
+    {
+      id: 'comm-framework',
+      label: '通信框架',
+      module: 'telephony',
+      related_skills: ['comm-framework-agent-test-for-secondWork'],
+    },
   ],
   'carrier-config': [
     {

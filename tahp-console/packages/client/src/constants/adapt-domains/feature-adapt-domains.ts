@@ -228,4 +228,16 @@ export const FEATURE_ADAPT_DOMAINS: AdaptDomainDef[] = [
       },
     ],
   },
+  {
+    id: 'comm-framework',
+    label: '通信框架',
+    icon: 'CMF',
+    color: '#0ea5e9',
+    status: 'pending',
+    relatedSkills: ['comm-framework-agent-test-for-secondWork'],
+    fields: [
+      { name: 'prj_path', label: 'PRJ Path（项目路径）', type: 'text', required: true, placeholder: 'D:\\project\\your_comm_framework\\' },
+      { name: 'user_notes', label: '补充说明', type: 'textarea', required: false, placeholder: '说明要测试的场景、注意事项等' },
+    ],
+  },
 ]
