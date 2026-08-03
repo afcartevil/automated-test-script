@@ -183,7 +183,8 @@ function buildInstructions(
 2. 按 Skill 工作流为当前域生成 commit message 并 push 到 Gerrit
 3. commit message 遵循 skill 内 commit-template.md
 4. 仅提交本域列出的变更文件，不要提交其他域的文件
-5. 完成后在输出中明确打印 Gerrit Change URL 与 Change-Id
+5. commit 模板 \`ID:\` 使用流水线提供的「提交 ID」（多仓相同）；DESCRIPTION 等按本仓 diff
+6. 完成后在输出中明确打印 Gerrit Change URL 与 Change-Id
 ${credLine ? `${credLine}\n` : ''}
 # 工程 Skill 根目录
 \`${skillsDir}\`
@@ -198,6 +199,8 @@ ${credLine ? `${credLine}\n` : ''}
 
 function buildUserMessage(input: GerritDomainSubmitInput): string {
   const files = (input.domain.changed_files ?? []).map(f => `- ${f}`).join('\n')
+  const branch = input.buildContext.target_branch?.trim()
+  const issueId = input.buildContext.gerrit_issue_id?.trim()
   return [
     '# Gerrit 提交任务',
     '',
@@ -205,9 +208,17 @@ function buildUserMessage(input: GerritDomainSubmitInput): string {
     `域：${input.domain.domain_label} (${input.domain.domain_id})`,
     `工作区 mapped_root：${input.buildContext.mapped_root}`,
     `workspace：${input.buildContext.workspace}`,
+    branch ? `目标分支：${branch}（必须使用该分支）` : '目标分支：未指定（按 gerrit-submit Skill 默认推断远程分支）',
+    issueId
+      ? `提交 ID（commit 模板 ID 字段，多仓共用）：${issueId}`
+      : '提交 ID：未指定（若 Skill 要求 ID 则失败并说明）',
     '',
     '## 本域变更文件',
     files || '（无文件列表，请根据 git status 确认）',
+    '',
+    '## 填写要求',
+    '- commit 模板 `ID:` 必须使用上方「提交 ID」（各仓相同）',
+    '- `DESCRIPTION` / `TYPE` / `TEST_SUGGESTIONS` 等按**本仓实际 diff** 填写，不要照搬其它仓',
     '',
     '请使用 gerrit-submit Skill 完成 commit + push，并回报 Change URL。',
   ].join('\n')

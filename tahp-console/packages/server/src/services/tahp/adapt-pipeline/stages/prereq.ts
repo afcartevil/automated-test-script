@@ -2,30 +2,34 @@ import { getAdaptDomainLayout } from '../../adapt-layout/service'
 import type { AdaptLayoutFieldDef } from '../../adapt-layout/types'
 import { centralClient } from '../../sync/central-client'
 import { isCentralConfigured } from '../../runtime-mode'
+import {
+  domainCatalogKey,
+  mapDomainToModule,
+} from '../domain-catalog'
 import { registerStageForTest } from '../registry'
 import type { PipelineDomain, StageContext, StageDefinition } from '../types'
 
-/** 与 AdaptDebugView mapDomainToModule 规则对齐 */
 const DOMAIN_LABELS: Record<string, string> = {
   tp: 'TP触摸屏',
   vib: '振动马达',
   lcm: 'LCM',
+  fp: '指纹',
   charging: '充电',
   sensor: 'Sensor',
   memory: '内存',
+  scheduling: '调度',
   modem: 'Modem',
   'comm-framework': '通信框架',
   audio: '音频',
+  security: '安全',
+  'mini-system': '小系统',
+  'carrierconfig-tools': 'CarrierConfig配置',
   'ecc-config': 'ECC配置',
+  'apn-config': 'APN配置',
 }
 
 function labelForDomain(domainId: string): string {
   return DOMAIN_LABELS[domainId] ?? domainId
-}
-
-function mapDomainToModule(domainId: string): string {
-  if (domainId === 'modem' || domainId === 'comm-framework') return 'telephony'
-  return 'kernel-driver'
 }
 
 const PATH_FIELD_RE = /path|file|dir|dts|firmware|root|project|固件|路径|目录/i
@@ -46,37 +50,99 @@ type CentralDomain = Awaited<ReturnType<typeof centralClient.resolveAdaptPrereqs
 
 export interface InvalidPathEntry {
   domain_id: string
+  workspace_id?: string
   field: string
   value: string
 }
 
+function mergeFormData(
+  central: Record<string, unknown> | undefined,
+  preset: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...(central ?? {}) }
+  for (const [key, raw] of Object.entries(preset ?? {})) {
+    const value = raw === undefined || raw === null ? '' : String(raw)
+    if (value.trim()) {
+      merged[key] = raw
+    } else if (!(key in merged)) {
+      merged[key] = raw
+    }
+  }
+  return merged
+}
+
+function computeIncomplete(
+  formData: Record<string, unknown>,
+  fields: AdaptLayoutFieldDef[],
+  fallback: string[],
+): string[] {
+  if (!fields.length) return [...fallback]
+  const missing: string[] = []
+  for (const field of fields) {
+    if (!field.required) continue
+    const val = String(formData[field.name] ?? '').trim()
+    if (!val) missing.push(field.name)
+  }
+  return missing
+}
+
+/**
+ * 用户勾选域优先；中心仅预填 form_data / incomplete。
+ * 无 preset 时回落为中心域列表（兼容旧调用）。
+ */
 async function normalizeDomains(
   centralDomains: CentralDomain[],
   run: import('../types').PipelineRun,
 ): Promise<PipelineDomain[]> {
   const preset = run.domains
-  const allowedIds = preset.length
-    ? new Set(preset.filter(d => d.enabled).map(d => d.domain_id))
-    : null
+  const centralByKey = new Map(
+    centralDomains.map(d => [domainCatalogKey(d.workspace_id, d.domain_id), d]),
+  )
+
+  if (!preset.length) {
+    const result: PipelineDomain[] = []
+    for (const d of centralDomains) {
+      const layout = await getAdaptDomainLayout(d.domain_id, d.workspace_id)
+      result.push({
+        workspace_id: d.workspace_id,
+        domain_id: d.domain_id,
+        domain_label: labelForDomain(d.domain_id),
+        module: mapDomainToModule(d.domain_id),
+        related_skills: layout?.related_skills?.length
+          ? [...layout.related_skills]
+          : [],
+        form_data: { ...d.form_data },
+        incomplete_required: [...d.incomplete_required],
+        enabled: true,
+        status: 'pending',
+      })
+    }
+    return result
+  }
 
   const result: PipelineDomain[] = []
-  for (const d of centralDomains) {
-    if (allowedIds && !allowedIds.has(d.domain_id)) continue
-
-    const layout = await getAdaptDomainLayout(d.domain_id, d.workspace_id)
-    const presetDomain = preset.find(p => p.domain_id === d.domain_id)
+  for (const p of preset) {
+    const key = domainCatalogKey(p.workspace_id, p.domain_id)
+    const central = centralByKey.get(key)
+    const layout = await getAdaptDomainLayout(p.domain_id, p.workspace_id)
+    const form_data = mergeFormData(central?.form_data, p.form_data)
+    const incomplete_required = computeIncomplete(
+      form_data,
+      layout?.fields ?? [],
+      central?.incomplete_required ?? p.incomplete_required ?? [],
+    )
 
     result.push({
-      workspace_id: d.workspace_id,
-      domain_id: d.domain_id,
-      domain_label: presetDomain?.domain_label ?? labelForDomain(d.domain_id),
-      module: presetDomain?.module ?? mapDomainToModule(d.domain_id),
+      workspace_id: p.workspace_id,
+      domain_id: p.domain_id,
+      domain_label: p.domain_label || labelForDomain(p.domain_id),
+      module: mapDomainToModule(p.domain_id, p.module),
       related_skills: layout?.related_skills?.length
         ? [...layout.related_skills]
-        : (presetDomain?.related_skills ?? []),
-      form_data: { ...d.form_data },
-      incomplete_required: [...d.incomplete_required],
-      enabled: presetDomain?.enabled ?? true,
+        : (p.related_skills ?? []),
+      form_data,
+      incomplete_required,
+      enabled: p.enabled,
       status: 'pending',
     })
   }
@@ -94,7 +160,9 @@ export function collectInvalidPaths(
 
   for (const domain of domains) {
     if (!domain.enabled) continue
-    const fields = fieldDefs.get(domain.domain_id) ?? []
+    const fields = fieldDefs.get(domainCatalogKey(domain.workspace_id, domain.domain_id))
+      ?? fieldDefs.get(domain.domain_id)
+      ?? []
     const pathNames = new Set(
       fields.filter(f => isPathLikeField(f.name, f.label)).map(f => f.name),
     )
@@ -108,7 +176,12 @@ export function collectInvalidPaths(
       const normalized = value.replace(/\\/g, '/').toLowerCase()
       if (normalized === root || normalized.startsWith(`${root}/`)) continue
 
-      invalid.push({ domain_id: domain.domain_id, field, value })
+      invalid.push({
+        domain_id: domain.domain_id,
+        workspace_id: domain.workspace_id,
+        field,
+        value,
+      })
     }
   }
   return invalid
@@ -118,7 +191,11 @@ async function loadFieldDefs(domains: PipelineDomain[]): Promise<Map<string, Ada
   const map = new Map<string, AdaptLayoutFieldDef[]>()
   for (const d of domains) {
     const layout = await getAdaptDomainLayout(d.domain_id, d.workspace_id)
-    map.set(d.domain_id, layout?.fields ?? [])
+    map.set(domainCatalogKey(d.workspace_id, d.domain_id), layout?.fields ?? [])
+    // 兼容旧测试 / 调用方仅按 domain_id 查
+    if (!map.has(d.domain_id)) {
+      map.set(d.domain_id, layout?.fields ?? [])
+    }
   }
   return map
 }

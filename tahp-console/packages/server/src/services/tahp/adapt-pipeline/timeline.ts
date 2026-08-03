@@ -19,16 +19,25 @@ function buildNodeProgress(
   run: PipelineRun,
   state: PipelineRun['stages'][string] | undefined,
 ): TimelineView['nodes'][number]['progress'] | undefined {
-  const progress = state?.progress as {
-    percent?: number
-    text?: string
-    changes?: unknown
-  } | undefined
+  const progress = (state?.progress ?? {}) as Record<string, unknown>
 
   const out: NonNullable<TimelineView['nodes'][number]['progress']> = {}
-  if (progress?.percent != null) out.percent = progress.percent
-  if (progress?.text) out.text = progress.text
-  if (progress?.changes) out.changes = progress.changes
+  const percent = progress.percent ?? progress.progress
+  if (typeof percent === 'number') out.percent = percent
+  if (typeof progress.text === 'string' && progress.text) out.text = progress.text
+  else if (typeof progress.message === 'string' && progress.message) out.text = progress.message
+  if (progress.changes) out.changes = progress.changes
+
+  // 编译 / 烧录 / Gerrit：透传面板所需字段
+  for (const key of [
+    'state', 'phase', 'message', 'error', 'result',
+    'pkg_path', 'pkgPath', 'artifacts_dir',
+    'flash_mode', 'flash_skill_id',
+    'repos', 'queue', 'current_index', 'current_domain_id',
+    'repo_groups', 'changed_files',
+  ] as const) {
+    if (progress[key] !== undefined) (out as Record<string, unknown>)[key] = progress[key]
+  }
 
   if (nodeKey === 'adapt') {
     const domains = run.domains.filter(d => d.enabled).map(serializeDomainForTimeline)

@@ -26,6 +26,10 @@ function clearPoll(runId: string, nodeKey: string): void {
   }
 }
 
+export function clearCapabilityPoll(runId: string, nodeKey: string): void {
+  clearPoll(runId, nodeKey)
+}
+
 export function createCapabilityStage<TInput>(opts: {
   key: string
   label: string
@@ -73,6 +77,12 @@ export function createCapabilityStage<TInput>(opts: {
             result: status.result,
           },
         })
+        if (status.state === 'success' || status.state === 'failed' || status.state === 'cancelled') {
+          // 动态 import 避免与 orchestrator 循环依赖
+          void import('./orchestrator').then(({ advance }) => {
+            void advance(ctx.run.run_id)
+          })
+        }
       }
 
       if (opts.capability.subscribe) {
@@ -112,8 +122,9 @@ export function createCapabilityStage<TInput>(opts: {
       return {
         status: 'running',
         progress: {
-          percent: p?.progress as number | undefined,
-          text: p?.phase as string | undefined,
+          ...(p ?? {}),
+          percent: (p?.progress as number | undefined) ?? (p?.percent as number | undefined),
+          text: String(p?.message ?? p?.text ?? p?.phase ?? opts.label),
         },
       }
     },

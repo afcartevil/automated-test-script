@@ -1,11 +1,15 @@
 import {
   cancelAdaptAgentRun,
+  getAdaptAgentTask,
   startAdaptAgentRun,
 } from '../../adapt-agent'
 import { getAdaptDomainLayout } from '../../adapt-layout/service'
-import { takeSnapshot, diffSnapshots, type GitSnapshot } from '../../git-snapshot'
 import { registerStageForTest } from '../registry'
 import type { ObservedEvent, PipelineDomain, StageContext, StageDefinition } from '../types'
+import {
+  mergeAbsolutePaths,
+  resolveAospWorkspaceRoot,
+} from '../workspace-changed-files'
 
 function enabledDomains(run: import('../types').PipelineRun): PipelineDomain[] {
   return run.domains.filter(d => d.enabled)
@@ -46,25 +50,29 @@ function applyResumeScopeToDomains(ctx: StageContext, domains: PipelineDomain[])
   })
 }
 
-function getWorkspaceRoots(ctx: StageContext): string[] {
-  const root = ctx.run.build_context?.mapped_root
-  return root ? [root] : []
+function aospWorkspaceRoot(ctx: StageContext): string {
+  return resolveAospWorkspaceRoot(
+    ctx.run.build_context?.mapped_root ?? '',
+    ctx.run.build_context?.workspace ?? '',
+  )
+}
+
+function appendChangedFiles(
+  domain: PipelineDomain,
+  paths: string[],
+  workspaceRoot: string,
+): number {
+  const merged = mergeAbsolutePaths(
+    [...(domain.changed_files ?? []), ...paths],
+    workspaceRoot,
+  )
+  const before = domain.changed_files?.length ?? 0
+  domain.changed_files = merged
+  return merged.length - before
 }
 
 async function launchDomain(ctx: StageContext, domain: PipelineDomain): Promise<string | null> {
-  // Take pre-domain snapshot for diff after completion
-  const roots = getWorkspaceRoots(ctx)
-  if (roots.length) {
-    try {
-      const snap = await takeSnapshot(roots)
-      ctx.patchState({
-        progress: {
-          ...ctx.state.progress,
-          [`snapshot_before_${domain.domain_id}`]: snap,
-        },
-      })
-    } catch { /* non-critical */ }
-  }
+  domain.changed_files = domain.changed_files ?? []
 
   const layout = await getAdaptDomainLayout(domain.domain_id, domain.workspace_id)
   const formFields = layout?.fields?.map(f => ({
@@ -136,6 +144,11 @@ function logAdaptTaskEvent(ctx: StageContext, ev: ObservedEvent, running: Pipeli
     case 'task.tool_completed': {
       const tool = String(ev.payload.tool ?? ev.payload.tool_name ?? '').trim()
       if (tool) ctx.log(`${prefix} 工具完成: ${tool}`)
+      break
+    }
+    case 'task.file_change': {
+      const file = String(ev.payload.path ?? '').trim()
+      if (file) ctx.log(`${prefix} 修改文件: ${file}`)
       break
     }
     case 'task.user_input_requested':
@@ -221,6 +234,26 @@ export const adaptStageDefinition: StageDefinition = {
 
     logAdaptTaskEvent(ctx, ev, running)
 
+    const treeRoot = aospWorkspaceRoot(ctx)
+
+    if (ev.type === 'task.file_change') {
+      const path = String(ev.payload.path ?? '').trim()
+      if (path) {
+        const added = appendChangedFiles(running, [path], treeRoot)
+        if (added > 0) {
+          patchDomains(ctx, domains)
+          ctx.patchState({
+            progress: {
+              ...ctx.state.progress,
+              current_domain_id: running.domain_id,
+              changed_files_count: running.changed_files?.length ?? 0,
+            },
+          })
+        }
+      }
+      return
+    }
+
     if (ev.type === 'task.user_input_requested' || ev.type === 'task.approval_requested') {
       ctx.patchState({
         progress: {
@@ -241,23 +274,22 @@ export const adaptStageDefinition: StageDefinition = {
       running.status = 'done'
       running.error = undefined
 
-      // Compute changed_files via git snapshot diff
-      const roots = getWorkspaceRoots(ctx)
-      if (roots.length) {
-        try {
-          const beforeSnap = ctx.state.progress?.[`snapshot_before_${running.domain_id}`] as GitSnapshot[] | undefined
-          const afterSnap = await takeSnapshot(roots)
-          if (beforeSnap) {
-            running.changed_files = diffSnapshots(beforeSnap, afterSnap)
-          }
-        } catch { /* non-critical */ }
-      }
+      const fromPayload = Array.isArray(ev.payload.files_modified)
+        ? (ev.payload.files_modified as unknown[]).map(String)
+        : []
+      const fromTask = (getAdaptAgentTask(running.adapt_task_id)?.fileChanges ?? [])
+        .map(c => c.path)
+      appendChangedFiles(running, [...fromPayload, ...fromTask], treeRoot)
+      ctx.log(
+        `[${running.domain_label || running.domain_id}] 已记录变更文件 ${running.changed_files?.length ?? 0} 个`,
+      )
 
       patchDomains(ctx, domains)
       ctx.patchState({
         progress: {
           ...ctx.state.progress,
           pending_interaction: undefined,
+          changed_files_count: running.changed_files?.length ?? 0,
         },
       })
       await startNextPending(ctx)

@@ -1,6 +1,8 @@
 import { registerStageForTest } from '../registry'
 import { computeResumePoints } from '../orchestrator'
 import { takeSnapshot, fingerprint } from '../../git-snapshot'
+import { groupChangedFilesByRepo } from '../repo-groups'
+import { domainsWithWorkspaceChanges } from '../workspace-changed-files'
 import type { StageContext, StageDefinition, StageVerdict } from '../types'
 
 export const humanReviewStageDefinition: StageDefinition = {
@@ -13,8 +15,9 @@ export const humanReviewStageDefinition: StageDefinition = {
   async start(ctx: StageContext) {
     ctx.log('等待人工审核修改结果')
 
-    // Take "before" snapshot for code-change detection
-    const root = ctx.run.build_context?.mapped_root
+    const mappedRoot = ctx.run.build_context?.mapped_root ?? ''
+    const workspace = ctx.run.build_context?.workspace ?? ''
+    const root = mappedRoot
     if (root) {
       try {
         const snap = await takeSnapshot([root])
@@ -27,22 +30,34 @@ export const humanReviewStageDefinition: StageDefinition = {
       } catch { /* non-critical */ }
     }
 
-    // Attach triage conclusion summary if available
     const triageStage = ctx.run.stages.triage
     const triageSummary = triageStage?.summary as Record<string, unknown> | undefined
-    if (triageSummary?.conclusion) {
-      ctx.patchState({
-        progress: {
-          ...ctx.state.progress as Record<string, unknown>,
-          triage_conclusion: triageSummary.conclusion,
-          triage_evidence: triageSummary.evidence,
-        },
-      })
-    }
+    const filteredDomains = domainsWithWorkspaceChanges(ctx.run.domains, mappedRoot, workspace)
+    const fileGroups = root
+      ? groupChangedFilesByRepo(root, filteredDomains)
+      : []
+    const changedFiles = filteredDomains.flatMap(d =>
+      d.changed_files.map(f => ({
+        domain_id: d.domain_id,
+        domain_label: d.domain_label,
+        file: f,
+      })),
+    )
+
+    ctx.patchState({
+      progress: {
+        ...(ctx.state.progress as Record<string, unknown>),
+        triage_conclusion: triageSummary?.conclusion ?? null,
+        triage_evidence: triageSummary?.evidence ?? null,
+        triage_executed: Boolean(triageStage && triageStage.status === 'done'),
+        changed_files: changedFiles,
+        repo_groups: fileGroups,
+        text: `变更文件 ${changedFiles.length} 个 / 仓库 ${fileGroups.length} 个`,
+      },
+    })
   },
 
   evaluate(ctx: StageContext): StageVerdict {
-    // Compute dynamic resume points based on artifact freshness
     const { points, recommended } = computeResumePoints(ctx.run)
 
     ctx.patchState({
@@ -55,7 +70,7 @@ export const humanReviewStageDefinition: StageDefinition = {
     return {
       status: 'waiting_human',
       reason: 'awaiting_review',
-      message: '请审核 AI 故障分析结论并完成代码修改，完成后选择从哪个节点继续。',
+      message: '请审核流水线修改文件与故障分析结论（如有）。通过后可选择恢复点继续；入库仓库选择在 Gerrit 阶段进行。',
       actions: [
         {
           id: 'confirm_done',
@@ -70,9 +85,8 @@ export const humanReviewStageDefinition: StageDefinition = {
     }
   },
 
-  async handleHumanAction(ctx: StageContext, actionId: string, payload?: Record<string, unknown>) {
+  async handleHumanAction(ctx: StageContext, actionId: string, _payload?: Record<string, unknown>) {
     if (actionId === 'confirm_done') {
-      // Check if code changed by comparing snapshots
       const root = ctx.run.build_context?.mapped_root
       const prevFp = (ctx.state.progress as Record<string, unknown>)?.fingerprint_before as string | undefined
       let codeChanged = false
@@ -82,7 +96,7 @@ export const humanReviewStageDefinition: StageDefinition = {
           const snap = await takeSnapshot([root])
           const currentFp = fingerprint(snap)
           codeChanged = currentFp !== prevFp
-        } catch { /* assume changed to be safe */ codeChanged = true }
+        } catch { codeChanged = true }
       }
 
       ctx.patchState({

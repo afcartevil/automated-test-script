@@ -63,35 +63,37 @@ function onDiscard(ev: Event, runId: string) {
   <aside class="pipeline-run-list card">
     <h3>运行列表</h3>
 
-    <div v-if="loading && !items.length" class="list-empty">加载中…</div>
-    <div v-else-if="!items.length" class="list-empty">还没有运行记录</div>
+    <div class="list-scroll">
+      <div v-if="loading && !items.length" class="list-empty">加载中…</div>
+      <div v-else-if="!items.length" class="list-empty">还没有运行记录</div>
 
-    <div
-      v-for="item in sortedItems"
-      :key="item.run_id"
-      class="run-item"
-      :class="{ selected: selectedId === item.run_id }"
-      role="button"
-      tabindex="0"
-      @click="emit('select', item.run_id)"
-      @keydown.enter="emit('select', item.run_id)"
-    >
-      <div class="run-main">
-        <strong>{{ item.project_code }}</strong>
-        <span class="run-meta">第 {{ item.iteration }} 轮 · {{ fmtRelTime(item.updated_at) }}</span>
-      </div>
-      <div class="run-side">
-        <EaPill :variant="statusVariant(item.status)">{{ statusLabel(item.status) }}</EaPill>
-        <button
-          v-if="item.status === 'draft'"
-          type="button"
-          class="btn-discard"
-          title="删除草稿"
-          :disabled="busy"
-          @click="onDiscard($event, item.run_id)"
-        >
-          删除
-        </button>
+      <div
+        v-for="item in sortedItems"
+        :key="item.run_id"
+        class="run-item"
+        :class="{ selected: selectedId === item.run_id }"
+        role="button"
+        tabindex="0"
+        @click="emit('select', item.run_id)"
+        @keydown.enter="emit('select', item.run_id)"
+      >
+        <div class="run-main">
+          <strong>{{ item.project_code }}</strong>
+          <span class="run-meta">第 {{ item.iteration }} 轮 · {{ fmtRelTime(item.updated_at) }}</span>
+        </div>
+        <div class="run-side">
+          <EaPill :variant="statusVariant(item.status)">{{ statusLabel(item.status) }}</EaPill>
+          <button
+            v-if="item.status === 'draft'"
+            type="button"
+            class="btn-discard"
+            title="删除草稿"
+            :disabled="busy"
+            @click="onDiscard($event, item.run_id)"
+          >
+            删除
+          </button>
+        </div>
       </div>
     </div>
 
@@ -107,7 +109,9 @@ function onDiscard(ev: Event, runId: string) {
   flex-direction: column;
   gap: 8px;
   padding: 14px;
-  min-height: 420px;
+  min-height: 0;
+  max-height: calc(100dvh - 160px);
+  overflow: hidden;
 }
 
 .card {
@@ -124,6 +128,17 @@ h3 {
   color: var(--faint);
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
 }
 
 .list-empty {
@@ -198,7 +213,8 @@ h3 {
 }
 
 .btn-new {
-  margin-top: auto;
+  margin-top: 8px;
+  flex-shrink: 0;
   border: 1px dashed var(--line-strong);
   background: transparent;
   padding: 12px;

@@ -312,6 +312,7 @@ describe('adapt-pipeline F4', () => {
       '/api/tahp/adapt-pipeline/runs/:runId/resume-points',
       '/api/tahp/adapt-pipeline/workflow',
       '/api/tahp/adapt-pipeline/capabilities',
+      '/api/tahp/adapt-pipeline/domain-catalog',
     ]))
   })
 })

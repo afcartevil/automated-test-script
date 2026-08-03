@@ -14,6 +14,7 @@ import {
   createRun,
   getRun,
   resetStoreForTest,
+  saveRun,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/store'
 import { collectInvalidPaths, installPrereqStage } from '../../packages/server/src/services/tahp/adapt-pipeline/stages/prereq'
 import { installAdaptStage } from '../../packages/server/src/services/tahp/adapt-pipeline/stages/adapt'
@@ -35,6 +36,9 @@ const resolveMock = vi.fn()
 const startAdaptMock = vi.fn()
 const isCentralMock = vi.fn()
 const getLayoutMock = vi.fn()
+const { startGerritSubmitMock } = vi.hoisted(() => ({
+  startGerritSubmitMock: vi.fn().mockReturnValue({ ok: false, error: 'mocked' }),
+}))
 
 vi.mock('../../packages/server/src/services/tahp/sync/central-client', () => ({
   centralClient: {
@@ -45,6 +49,7 @@ vi.mock('../../packages/server/src/services/tahp/sync/central-client', () => ({
 vi.mock('../../packages/server/src/services/tahp/adapt-agent', () => ({
   startAdaptAgentRun: (...args: unknown[]) => startAdaptMock(...args),
   cancelAdaptAgentRun: vi.fn().mockResolvedValue({ ok: true }),
+  getAdaptAgentTask: vi.fn().mockReturnValue(undefined),
 }))
 
 vi.mock('../../packages/server/src/services/tahp/runtime-mode', () => ({
@@ -65,9 +70,18 @@ vi.mock('../../packages/server/src/services/tahp/gerrit-submit', () => ({
   probeGerritSubmit: vi.fn().mockResolvedValue({ available: false, reason: 'test: gerrit unavailable' }),
   detectDomainFileConflicts: vi.fn().mockReturnValue([]),
   buildConflictChanges: vi.fn().mockReturnValue([]),
-  startGerritDomainSubmit: vi.fn().mockReturnValue({ ok: false, error: 'mocked' }),
+  startGerritDomainSubmit: (...args: unknown[]) => startGerritSubmitMock(...args),
   parseGerritSubmitResult: vi.fn().mockReturnValue({}),
   getGerritSubmitTask: vi.fn(),
+}))
+vi.mock('../../packages/server/src/services/tahp/adapt-pipeline/build-capability', () => ({
+  buildCapability: {
+    id: 'harness-build-agent',
+    probe: vi.fn().mockResolvedValue({ available: false, reason: 'test: build unavailable' }),
+    start: vi.fn(),
+    getStatus: vi.fn(),
+    cancel: vi.fn(),
+  },
 }))
 
 const PREREQ_ADAPT_WF: WorkflowDefinition = {
@@ -177,6 +191,87 @@ describe('adapt-pipeline stages', () => {
     expect(updated.domains[0].related_skills).toEqual(['tp-adapt-bringup'])
     expect(updated.from_os).toBe('15')
     expect(updated.to_os).toBe('16')
+  })
+
+  it('prereq keeps user-selected multi-workspace domains and merges central form_data', async () => {
+    resolveMock.mockResolvedValue({
+      project_code: 'KM9',
+      campaign_id: 'camp-1',
+      from_os: '15',
+      to_os: '16',
+      domains: [{
+        workspace_id: 'adapt-debug',
+        domain_id: 'tp',
+        revision: 1,
+        schema: [],
+        form_data: { debug_project: 'from-central', old_dts: 'Z:\\touch.dtsi' },
+        stale_fields: [],
+        incomplete_required: [],
+      }],
+    })
+    getLayoutMock.mockImplementation(async (domainId: string) => ({
+      domain_id: domainId,
+      fields: [],
+      related_skills: domainId === 'tp' ? ['tp-adapt-bringup'] : ['feature-skill'],
+      revision: 1,
+      updated_at: new Date().toISOString(),
+      source: 'user',
+      schema_version: 1,
+    }))
+    startAdaptMock.mockReturnValue({ ok: true, taskId: 'task-1' })
+
+    const run = createRun({
+      ...baseInput(),
+      domains: [
+        {
+          workspace_id: 'adapt-debug',
+          domain_id: 'tp',
+          domain_label: 'TP触摸屏',
+          module: 'kernel-driver',
+          related_skills: [],
+          form_data: { debug_project: 'user-override' },
+          incomplete_required: [],
+          enabled: true,
+          status: 'pending',
+        },
+        {
+          workspace_id: 'feature-adapt',
+          domain_id: 'tp',
+          domain_label: 'TP触摸屏',
+          module: 'kernel-driver',
+          related_skills: [],
+          form_data: { feature_checklist: 'feat-a' },
+          incomplete_required: [],
+          enabled: true,
+          status: 'pending',
+        },
+        {
+          workspace_id: 'carrier-config',
+          domain_id: 'ecc-config',
+          domain_label: 'ECC配置',
+          module: 'telephony',
+          related_skills: [],
+          form_data: {},
+          incomplete_required: [],
+          enabled: false,
+          status: 'pending',
+        },
+      ],
+    })
+    await startRun(run.run_id)
+
+    const updated = getRun(run.run_id)!
+    expect(updated.domains).toHaveLength(3)
+    const debugTp = updated.domains.find(d => d.workspace_id === 'adapt-debug' && d.domain_id === 'tp')
+    const featureTp = updated.domains.find(d => d.workspace_id === 'feature-adapt' && d.domain_id === 'tp')
+    const ecc = updated.domains.find(d => d.domain_id === 'ecc-config')
+    expect(debugTp?.form_data.debug_project).toBe('user-override')
+    expect(debugTp?.form_data.old_dts).toBe('Z:\\touch.dtsi')
+    expect(debugTp?.related_skills).toEqual(['tp-adapt-bringup'])
+    expect(featureTp?.enabled).toBe(true)
+    expect(featureTp?.form_data.feature_checklist).toBe('feat-a')
+    expect(ecc?.enabled).toBe(false)
+    expect(ecc?.module).toBe('telephony')
   })
 
   it('stops at waiting_human when incomplete_required is non-empty', async () => {
@@ -328,6 +423,69 @@ describe('adapt-pipeline stages', () => {
     expect(updated.domains.every(d => d.status === 'done')).toBe(true)
   })
 
+  it('adapt accumulates absolute changed_files from task.file_change and files_modified', async () => {
+    resolveMock.mockResolvedValue({
+      project_code: 'KM9',
+      campaign_id: 'camp-1',
+      from_os: '15',
+      to_os: '16',
+      domains: [{
+        workspace_id: 'adapt-debug',
+        domain_id: 'tp',
+        revision: 1,
+        schema: [],
+        form_data: { debug_project: 'A' },
+        stale_fields: [],
+        incomplete_required: [],
+      }],
+    })
+    getLayoutMock.mockResolvedValue({
+      domain_id: 'tp',
+      fields: [{ name: 'x', label: 'x', type: 'text', required: false }],
+      related_skills: ['tp-adapt-bringup'],
+      revision: 1,
+      updated_at: new Date().toISOString(),
+      source: 'user',
+      schema_version: 1,
+    })
+    startAdaptMock.mockReturnValue({ ok: true, taskId: 'task-tp' })
+
+    const run = createRun(baseInput())
+    await startRun(run.run_id)
+
+    const wsFile = 'Z:\\project\\KM9_NEW\\kernel\\drivers\\tp.c'
+    getTaskStream().publish({
+      type: 'task.file_change',
+      task_id: 'task-tp',
+      payload: { path: wsFile, action: 'modify' },
+      ts: Date.now(),
+    })
+    await advance(run.run_id)
+
+    getTaskStream().publish({
+      type: 'task.completed',
+      task_id: 'task-tp',
+      payload: {
+        task_id: 'task-tp',
+        files_modified: ['vendor/mediatek/foo.c', 'D:\\outside\\skip.c'],
+      },
+      ts: Date.now(),
+    })
+    for (let i = 0; i < 5; i++) {
+      await advance(run.run_id)
+      if (getRun(run.run_id)?.domains[0]?.status === 'done') break
+    }
+
+    const files = getRun(run.run_id)!.domains[0].changed_files ?? []
+    expect(files.map(f => f.replace(/\\/g, '/').toLowerCase())).toEqual(
+      expect.arrayContaining([
+        wsFile.replace(/\\/g, '/').toLowerCase(),
+        'z:/project/km9_new/vendor/mediatek/foo.c',
+      ]),
+    )
+    expect(files.some(f => /outside/i.test(f))).toBe(true)
+  })
+
   it('confirm_done on prereq advances past incomplete gate', async () => {
     resolveMock.mockResolvedValue({
       project_code: 'KM9',
@@ -427,6 +585,8 @@ describe('adapt-pipeline F3', () => {
     setWorkflowOverrideForTest(null)
     resolveMock.mockReset()
     startAdaptMock.mockReset()
+    startGerritSubmitMock.mockReset()
+    startGerritSubmitMock.mockReturnValue({ ok: false, error: 'mocked' })
     isCentralMock.mockReset()
     getLayoutMock.mockReset()
     isCentralMock.mockReturnValue(true)
@@ -534,5 +694,68 @@ describe('adapt-pipeline F3', () => {
     expect(state.current_node).toBe('gerrit')
     expect(state.stages.selfcheck?.status).toBe('skipped')
     expect(state.stages.triage?.status).toBe('pending')
+  })
+
+  it('gerrit submit_all_repos clears waiting_human and starts domain submit', async () => {
+    startGerritSubmitMock.mockReturnValue({ ok: true, taskId: 'task-gerrit-1' })
+    installAllStages()
+
+    const run = createRun({
+      ...baseInput(),
+      domains: [{
+        workspace_id: 'adapt-debug',
+        domain_id: 'tp',
+        domain_label: 'TP',
+        module: 'kernel-driver',
+        related_skills: ['tp-adapt-bringup'],
+        form_data: {},
+        incomplete_required: [],
+        enabled: true,
+        status: 'done',
+        changed_files: ['Z:\\project\\KM9_NEW\\kernel\\tp.c'],
+      }],
+      build_context: {
+        ...baseInput().build_context,
+        gerrit_issue_id: 'TOS1501-1',
+      },
+    })
+    run.status = 'waiting_human'
+    run.current_node = 'gerrit'
+    const repo = 'Z:\\project\\KM9_NEW\\kernel'
+    run.stages.gerrit = {
+      key: 'gerrit',
+      status: 'waiting_human',
+      attempt: 1,
+      refs: {},
+      progress: {
+        state: 'awaiting_repo_selection',
+        repos: [{
+          repo,
+          repo_label: 'kernel',
+          files: ['Z:\\project\\KM9_NEW\\kernel\\tp.c'],
+          domain_ids: ['tp'],
+        }],
+      },
+      human: {
+        reason: 'select_repos',
+        message: '请勾选仓库',
+        actions: [
+          { id: 'submit_all_repos', label: '全部仓库入库' },
+          { id: 'submit_selected_repos', label: '提交所选仓库' },
+        ],
+      },
+    }
+    saveRun(run, { immediate: true })
+
+    await submitHumanAction(run.run_id, 'gerrit', 'submit_all_repos')
+
+    const updated = getRun(run.run_id)!
+    expect(updated.gerrit_selected_repos?.length).toBeGreaterThan(0)
+    expect(updated.stages.gerrit?.status).toBe('running')
+    expect(updated.stages.gerrit?.human).toBeUndefined()
+    expect(updated.status).toBe('running')
+    expect(startGerritSubmitMock).toHaveBeenCalled()
+    expect(updated.stages.gerrit?.refs?.gerrit_task_id).toBe('task-gerrit-1')
+    expect((updated.stages.gerrit?.progress as { state?: string })?.state).toBe('submitting')
   })
 })

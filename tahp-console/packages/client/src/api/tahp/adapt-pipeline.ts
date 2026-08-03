@@ -51,6 +51,25 @@ export interface TimelineNode {
     percent?: number
     text?: string
     changes?: unknown
+    state?: string
+    phase?: string
+    message?: string
+    error?: string
+    result?: unknown
+    pkg_path?: string
+    pkgPath?: string
+    artifacts_dir?: string
+    flash_mode?: string
+    flash_skill_id?: string
+    repos?: Array<{
+      repo: string
+      repo_label: string
+      files: string[]
+      domain_ids: string[]
+    }>
+    queue?: string[]
+    current_index?: number
+    current_domain_id?: string
     domains?: AdaptDomainProgress[]
   }
   error?: string
@@ -119,6 +138,17 @@ export interface BuildContext {
   variant: string
   parallel_profile?: 'mtk' | 'qcom'
   markets?: string[]
+  build_kind?: 'whole_device' | 'native_module'
+  build_skill_id?: string
+  pipeline_stages?: string
+  lunch?: string
+  native_target?: string
+  native_component?: string
+  flash_skill_id?: string
+  flash_mode?: 'full_rom' | 'single_img'
+  target_branch?: string
+  /** Gerrit commit 模板 ID（AR/BUG），多仓共用 */
+  gerrit_issue_id?: string
 }
 
 export interface TestPlan {
@@ -234,6 +264,79 @@ export function discardPipelineDraftRun(runId: string): Promise<{ ok: boolean }>
 export function fetchPipelinePrereqs(projectCode: string, campaignId?: string): Promise<PrereqResolveData> {
   const qs = campaignId ? `?campaign_id=${encodeURIComponent(campaignId)}` : ''
   return tahpGet(`/api/tahp/adapt-pipeline/prereqs/${encodeURIComponent(projectCode)}${qs}`)
+}
+
+export interface DomainCatalogField {
+  key: string
+  label: string
+  required?: boolean
+  type?: string
+}
+
+export interface DomainCatalogDomain {
+  workspace_id: string
+  domain_id: string
+  domain_label: string
+  module: string
+  related_skills: string[]
+  schema: DomainCatalogField[]
+}
+
+export interface DomainCatalogWorkspace {
+  id: string
+  label: string
+  subtitle: string
+  domains: DomainCatalogDomain[]
+}
+
+export interface DomainCatalog {
+  workspaces: DomainCatalogWorkspace[]
+}
+
+export function fetchDomainCatalog(): Promise<DomainCatalog> {
+  return tahpGet('/api/tahp/adapt-pipeline/domain-catalog')
+}
+
+export interface HarnessSkillMeta {
+  id: string
+  kind: 'build' | 'flash'
+  label: string
+  description: string
+  path: string
+  root: string
+}
+
+export function fetchHarnessSkills(kind?: 'build' | 'flash'): Promise<{
+  roots: string[]
+  items: HarnessSkillMeta[]
+}> {
+  const qs = kind ? `?kind=${encodeURIComponent(kind)}` : ''
+  return tahpGet(`/api/tahp/adapt-pipeline/harness-skills${qs}`)
+}
+
+export interface WorkspaceBuildOptions {
+  mapped_root: string
+  workspace: string
+  components: string[]
+  markets: string[]
+  recommended_components: string[]
+  recommended_markets: string[]
+  market_presets?: string[]
+  platform?: string
+  project_name?: string
+  source: 'harness_status' | 'pack_json' | 'fallback'
+  warning?: string
+}
+
+export function fetchWorkspaceBuildOptions(
+  mappedRoot: string,
+  workspace: string,
+): Promise<WorkspaceBuildOptions> {
+  const qs = new URLSearchParams({
+    mapped_root: mappedRoot,
+    workspace,
+  })
+  return tahpGet(`/api/tahp/adapt-pipeline/workspace-build-options?${qs}`)
 }
 
 export function runStatusLabel(status: RunStatus): string {

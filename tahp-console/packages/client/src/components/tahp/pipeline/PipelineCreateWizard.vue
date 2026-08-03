@@ -1,24 +1,36 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NAlert, NButton, NInput, NInputNumber, NSelect, NSteps, NStep, useMessage } from 'naive-ui'
+import { NAlert, NButton, NInput, NInputNumber, NSelect, NSpin, NSteps, NStep, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
 import {
   createPipelineRun,
   discardPipelineDraftRun,
   fetchCapabilities,
+  fetchDomainCatalog,
+  fetchHarnessSkills,
   fetchPipelinePrereqs,
+  fetchWorkspaceBuildOptions,
   startPipelineRun,
   type BuildContext,
   type CapabilityItem,
   type CreateRunInput,
+  type DomainCatalog,
+  type DomainCatalogDomain,
   type PipelineDomainInput,
   type PrereqResolveData,
   type TestPlan,
+  type WorkspaceBuildOptions,
 } from '@/api/tahp/adapt-pipeline'
 import { fetchPrereqProjects, type AdaptPrereqProject } from '@/api/tahp/adapt'
-import { listDevices, type DeviceInfo } from '@/api/tahp/device-self-check'
+import { refreshDevices, type DeviceInfo } from '@/api/tahp/device-self-check'
 import { getRuntimeMode } from '@/api/tahp/knowledge'
+import {
+  ADAPT_WORKSPACES,
+  getBuiltinDomainsForWorkspace,
+  type AdaptWorkspaceId,
+  isAdaptWorkspaceId,
+} from '@/constants/adapt-domains'
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 import type { useAdaptPipelineStore } from '@/stores/tahp/adapt-pipeline'
 
@@ -38,24 +50,42 @@ const loading = ref(false)
 const launching = ref(false)
 const centralConfigured = ref(true)
 const capabilities = ref<CapabilityItem[]>([])
+const domainCatalog = ref<DomainCatalog | null>(null)
 
 const projects = ref<AdaptPrereqProject[]>([])
 const devices = ref<DeviceInfo[]>([])
+
+/** 分步加载提示（互不阻塞） */
+const projectsLoading = ref(false)
+const projectsLoadError = ref('')
+const catalogLoading = ref(false)
+const prereqsLoading = ref(false)
+const devicesLoading = ref(false)
+const capsLoading = ref(false)
+
+const DEVICE_POLL_MS = 2000
+let devicePollTimer: ReturnType<typeof setInterval> | null = null
+let devicePollInFlight = false
 
 const projectCode = ref('')
 const manualProjectCode = ref('')
 const campaignId = ref<string | null>(null)
 const prereqData = ref<PrereqResolveData | null>(null)
 
+/** 勾选的工作区；默认功能适配 */
+const selectedWorkspaces = ref<AdaptWorkspaceId[]>(['adapt-debug'])
+
 interface WizardDomain {
   workspace_id: string
   domain_id: string
   domain_label: string
   module: string
+  related_skills: string[]
   enabled: boolean
   schema: Array<{ key: string; label: string; required?: boolean }>
   form_data: Record<string, string>
   incomplete_required: string[]
+  from_central: boolean
 }
 
 const wizardDomains = ref<WizardDomain[]>([])
@@ -65,33 +95,142 @@ const buildContext = reactive<BuildContext>({
   workspace: '',
   components: ['krn'],
   variant: 'userdebug',
+  parallel_profile: 'mtk',
+  markets: ['op'],
+  build_kind: 'whole_device',
+  build_skill_id: 'harness-build-whole-device',
+  pipeline_stages: 'build,package',
+  lunch: 'qssi_64',
+  native_component: 'sys',
+  native_target: '',
+  flash_skill_id: 'harness-device',
+  flash_mode: 'full_rom',
+  target_branch: '',
+  gerrit_issue_id: '',
 })
 
-const componentsText = ref('krn')
+const selectedComponents = ref<string[]>(['sys', 'hal', 'krn', 'vext', 'odm', 'trprd', 'trreg'])
+const selectedMarkets = ref<string[]>(['op'])
+const componentOptions = ref<string[]>(['sys', 'hal', 'krn', 'vext', 'odm', 'trprd', 'trreg'])
+const marketOptions = ref<string[]>(['op', 'eu', 'tr', 'in', 'ru', 'pk', 'eg', 'ng', 'ke', 'za', 'ph', 'id', 'my', 'th', 'vn', 'bd'])
+const buildOptionsLoading = ref(false)
+const buildOptionsWarning = ref('')
+const buildOptionsMeta = ref('')
 const deviceId = ref<string | null>(null)
 const testPlanMode = ref<'recommend' | 'fixed'>('recommend')
 const maxIterations = ref(3)
+const harnessSkillsLoading = ref(false)
+const harnessSkillRoots = ref<string[]>([])
+const hasWholeDeviceSkill = ref(false)
+const hasNativeSkill = ref(false)
+const hasFlashSkill = ref(false)
 
-const DOMAIN_LABELS: Record<string, string> = {
-  tp: 'TP触摸屏',
-  vib: '振动马达',
-  lcm: 'LCM',
-  charging: '充电',
-  sensor: 'Sensor',
-  memory: '内存',
-  modem: 'Modem',
-  'comm-framework': '通信框架',
-  audio: '音频',
-  'ecc-config': 'ECC配置',
+const MARKET_COMPONENTS = new Set(['trreg', 'trcar', 'trcom'])
+
+const needsMarkets = computed(() =>
+  buildContext.build_kind !== 'native_module'
+  && selectedComponents.value.some(c => MARKET_COMPONENTS.has(c)),
+)
+
+const componentSelectOptions = computed(() =>
+  componentOptions.value.map(c => ({ label: c, value: c })),
+)
+
+const marketSelectOptions = computed(() =>
+  marketOptions.value.map(m => ({ label: m, value: m })),
+)
+
+let buildOptionsTimer: ReturnType<typeof setTimeout> | null = null
+
+async function loadWorkspaceBuildOptions() {
+  const root = buildContext.mapped_root.trim()
+  const ws = buildContext.workspace.trim()
+  if (!root || !ws || buildContext.build_kind === 'native_module') return
+
+  buildOptionsLoading.value = true
+  buildOptionsWarning.value = ''
+  try {
+    const data: WorkspaceBuildOptions = await fetchWorkspaceBuildOptions(root, ws)
+    if (data.components.length) {
+      componentOptions.value = data.components
+      selectedComponents.value = data.recommended_components.length
+        ? [...data.recommended_components]
+        : [...data.components]
+    }
+    const markets = uniqMarkets([
+      ...(data.markets ?? []),
+      ...(data.market_presets ?? []),
+      ...marketOptions.value,
+    ])
+    marketOptions.value = markets
+    selectedMarkets.value = data.recommended_markets.length
+      ? data.recommended_markets.map(m => m.toLowerCase())
+      : ['op']
+    buildOptionsWarning.value = data.warning ?? ''
+    buildOptionsMeta.value = [
+      data.project_name,
+      data.platform,
+      data.source === 'harness_status' ? '来源: harness status' : data.source === 'pack_json' ? '来源: pack.json' : '来源: 默认列表',
+    ].filter(Boolean).join(' · ')
+  } catch (err) {
+    buildOptionsWarning.value = (err as Error).message || '解析编译组件失败'
+  } finally {
+    buildOptionsLoading.value = false
+  }
 }
 
-function labelForDomain(id: string): string {
-  return DOMAIN_LABELS[id] ?? id
+function uniqMarkets(items: string[]): string[] {
+  return [...new Set(items.map(m => m.trim().toLowerCase()).filter(Boolean))]
 }
 
-function mapDomainToModule(domainId: string): string {
-  if (domainId === 'modem' || domainId === 'comm-framework') return 'telephony'
+function scheduleLoadBuildOptions() {
+  if (buildOptionsTimer) clearTimeout(buildOptionsTimer)
+  buildOptionsTimer = setTimeout(() => {
+    void loadWorkspaceBuildOptions()
+  }, 400)
+}
+
+watch(
+  () => [buildContext.mapped_root, buildContext.workspace, buildContext.build_kind] as const,
+  () => {
+    if (buildContext.build_kind === 'native_module') return
+    scheduleLoadBuildOptions()
+  },
+)
+
+const TELEPHONY_DOMAINS = new Set([
+  'modem',
+  'comm-framework',
+  'carrierconfig-tools',
+  'ecc-config',
+  'apn-config',
+])
+
+function mapDomainToModule(domainId: string, moduleHint?: string): string {
+  if (moduleHint?.trim()) return moduleHint.trim()
+  if (TELEPHONY_DOMAINS.has(domainId)) return 'telephony'
   return 'kernel-driver'
+}
+
+function domainKey(workspaceId: string, domainId: string): string {
+  return `${workspaceId}::${domainId}`
+}
+
+function schemaFromBuiltin(workspaceId: string, domainId: string) {
+  if (!isAdaptWorkspaceId(workspaceId)) return []
+  const def = getBuiltinDomainsForWorkspace(workspaceId).find(d => d.id === domainId)
+  if (!def) return []
+  return def.fields.map(f => ({
+    key: f.name,
+    label: f.label,
+    required: f.required,
+  }))
+}
+
+function resolveModule(workspaceId: string, domainId: string, hint?: string): string {
+  if (!isAdaptWorkspaceId(workspaceId)) return mapDomainToModule(domainId, hint)
+  const def = getBuiltinDomainsForWorkspace(workspaceId).find(d => d.id === domainId)
+  return mapDomainToModule(domainId, hint ?? def?.module)
 }
 
 const projectOptions = computed(() =>
@@ -113,6 +252,28 @@ const selectedProjectLabel = computed(() => {
 
 const enabledDomains = computed(() => wizardDomains.value.filter(d => d.enabled))
 
+const visibleDomains = computed(() => {
+  const ws = new Set(selectedWorkspaces.value)
+  return wizardDomains.value.filter(d => ws.has(d.workspace_id as AdaptWorkspaceId))
+})
+
+const domainsByWorkspace = computed(() => {
+  const groups: Array<{
+    id: AdaptWorkspaceId
+    label: string
+    domains: WizardDomain[]
+  }> = []
+  for (const ws of ADAPT_WORKSPACES) {
+    if (!selectedWorkspaces.value.includes(ws.id)) continue
+    groups.push({
+      id: ws.id,
+      label: ws.label,
+      domains: wizardDomains.value.filter(d => d.workspace_id === ws.id),
+    })
+  }
+  return groups
+})
+
 const unavailableNodes = computed(() =>
   capabilities.value.filter(c => !c.availability.available),
 )
@@ -122,8 +283,9 @@ const canProceedStep1 = computed(() =>
 )
 
 const canProceedStep2 = computed(() => {
-  if (!centralConfigured.value) return false
+  if (prereqsLoading.value || catalogLoading.value) return false
   if (!wizardDomains.value.length) return false
+  if (!enabledDomains.value.length) return false
   return enabledDomains.value.every(d => d.incomplete_required.length === 0)
 })
 
@@ -145,66 +307,246 @@ function validateBuildPaths(): string | null {
   const root = buildContext.mapped_root.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
   if (!root) return '请填写 mapped_root'
   if (!buildContext.workspace.trim()) return '请填写 workspace'
-  const ws = buildContext.workspace.trim().replace(/\\/g, '/').toLowerCase()
-  if (!ws.startsWith(root) && !root.startsWith(ws.split('/')[0] ?? '')) {
-    // workspace is relative path under mapped_root typically
-    if (!ws.includes('/') && !/^[a-z]:/i.test(ws)) {
-      // ok relative
-    }
-  }
   return null
 }
 
 const canProceedStep3 = computed(() => {
   if (!buildContext.mapped_root.trim() || !buildContext.workspace.trim()) return false
-  if (!componentsText.value.trim()) return false
+  if (!String(buildContext.gerrit_issue_id ?? '').trim()) return false
+  if (buildContext.build_kind === 'native_module') {
+    if (!String(buildContext.native_target ?? '').trim()) return false
+  } else {
+    if (!selectedComponents.value.length) return false
+    if (needsMarkets.value && !selectedMarkets.value.length) return false
+  }
   return validateBuildPaths() === null
 })
 
+function onBuildKindChange(kind: 'whole_device' | 'native_module') {
+  buildContext.build_kind = kind
+  buildContext.build_skill_id = kind === 'native_module'
+    ? 'harness-build-native'
+    : 'harness-build-whole-device'
+  // 刷机仍走 Console device_update；保留默认值供后端兼容
+  buildContext.flash_skill_id = 'harness-device'
+  buildContext.flash_mode = 'full_rom'
+}
+
+async function loadHarnessSkills() {
+  harnessSkillsLoading.value = true
+  try {
+    const [buildRes, flashRes] = await Promise.all([
+      fetchHarnessSkills('build'),
+      fetchHarnessSkills('flash'),
+    ])
+    const buildIds = new Set(buildRes.items.map(s => s.id))
+    hasWholeDeviceSkill.value = buildIds.has('harness-build-whole-device') || buildIds.has('harness-build')
+    hasNativeSkill.value = buildIds.has('harness-build-native') || buildIds.has('harness-build')
+    hasFlashSkill.value = flashRes.items.some(s => s.id === 'harness-device')
+    harnessSkillRoots.value = [...new Set([...(buildRes.roots ?? []), ...(flashRes.roots ?? [])])]
+  } catch {
+    hasWholeDeviceSkill.value = false
+    hasNativeSkill.value = false
+    hasFlashSkill.value = false
+  } finally {
+    harnessSkillsLoading.value = false
+  }
+}
+
+function buildLocalCatalogDomains(): DomainCatalogDomain[] {
+  const list: DomainCatalogDomain[] = []
+  for (const ws of ADAPT_WORKSPACES) {
+    for (const def of getBuiltinDomainsForWorkspace(ws.id)) {
+      list.push({
+        workspace_id: ws.id,
+        domain_id: def.id,
+        domain_label: def.label,
+        module: resolveModule(ws.id, def.id, def.module),
+        related_skills: [...(def.relatedSkills ?? [])],
+        schema: def.fields.map(f => ({
+          key: f.name,
+          label: f.label,
+          required: f.required,
+          type: f.type,
+        })),
+      })
+    }
+  }
+  return list
+}
+
+function buildWizardDomains(
+  catalogDomains: DomainCatalogDomain[],
+  prereq: PrereqResolveData | null,
+): WizardDomain[] {
+  const prereqMap = new Map(
+    (prereq?.domains ?? []).map(d => [domainKey(d.workspace_id, d.domain_id), d]),
+  )
+
+  return catalogDomains.map(cat => {
+    const builtinSchema = schemaFromBuiltin(cat.workspace_id, cat.domain_id)
+    const schema = builtinSchema.length
+      ? builtinSchema
+      : (cat.schema ?? []).map(s => ({
+          key: s.key,
+          label: s.label,
+          required: s.required,
+        }))
+    const central = prereqMap.get(domainKey(cat.workspace_id, cat.domain_id))
+    const formData: Record<string, string> = {}
+    for (const field of schema) {
+      formData[field.key] = ''
+    }
+    if (central?.form_data) {
+      for (const [k, v] of Object.entries(central.form_data)) {
+        formData[k] = String(v ?? '')
+      }
+    }
+
+    const domain: WizardDomain = {
+      workspace_id: cat.workspace_id,
+      domain_id: cat.domain_id,
+      domain_label: cat.domain_label,
+      module: resolveModule(cat.workspace_id, cat.domain_id, cat.module),
+      related_skills: [...(cat.related_skills ?? [])],
+      // 中心有该域则默认勾选；否则需用户显式启用
+      enabled: Boolean(central) && selectedWorkspaces.value.includes(cat.workspace_id as AdaptWorkspaceId),
+      schema,
+      form_data: formData,
+      incomplete_required: [],
+      from_central: Boolean(central),
+    }
+    recomputeIncomplete(domain)
+    return domain
+  })
+}
+
+function rebuildWizardFromSources() {
+  const fromApi = domainCatalog.value?.workspaces.flatMap(w => w.domains) ?? []
+  const catalogDomains = fromApi.length ? fromApi : buildLocalCatalogDomains()
+  wizardDomains.value = buildWizardDomains(catalogDomains, prereqData.value)
+}
+
 async function loadProjects() {
+  if (!centralConfigured.value) {
+    projects.value = []
+    projectsLoadError.value = ''
+    return
+  }
+  projectsLoading.value = true
+  projectsLoadError.value = ''
   try {
     projects.value = await fetchPrereqProjects()
-  } catch {
+  } catch (err) {
     projects.value = []
+    projectsLoadError.value = (err as Error).message || '项目列表加载失败'
+  } finally {
+    projectsLoading.value = false
+  }
+}
+
+async function loadCatalog() {
+  catalogLoading.value = true
+  try {
+    domainCatalog.value = await fetchDomainCatalog()
+  } catch {
+    domainCatalog.value = null
+  } finally {
+    catalogLoading.value = false
+    rebuildWizardFromSources()
   }
 }
 
 async function loadPrereqs() {
   const code = projectCode.value || manualProjectCode.value.trim()
-  if (!code || !centralConfigured.value) return
-  loading.value = true
+  if (!code || !centralConfigured.value) {
+    prereqData.value = null
+    rebuildWizardFromSources()
+    return
+  }
+  prereqsLoading.value = true
   try {
     const data = await fetchPipelinePrereqs(code, campaignId.value ?? undefined)
     prereqData.value = data
     campaignId.value = data.campaign_id
-    wizardDomains.value = data.domains.map(d => {
-      const formData: Record<string, string> = {}
-      for (const [k, v] of Object.entries(d.form_data ?? {})) {
-        formData[k] = String(v ?? '')
-      }
-      const domain: WizardDomain = {
-        workspace_id: d.workspace_id,
-        domain_id: d.domain_id,
-        domain_label: labelForDomain(d.domain_id),
-        module: mapDomainToModule(d.domain_id),
-        enabled: true,
-        schema: (d.schema ?? []).map(s => ({
-          key: s.key,
-          label: s.label,
-          required: s.required,
-        })),
-        form_data: formData,
-        incomplete_required: [...d.incomplete_required],
-      }
-      recomputeIncomplete(domain)
-      return domain
-    })
+    rebuildWizardFromSources()
   } catch (err) {
     message.error((err as Error).message)
     prereqData.value = null
-    wizardDomains.value = []
+    rebuildWizardFromSources()
   } finally {
-    loading.value = false
+    prereqsLoading.value = false
+  }
+}
+
+async function loadDevicesOnce() {
+  if (devicePollInFlight) return
+  devicePollInFlight = true
+  // 仅首次无设备时显示「加载中」，轮询刷新不再闪烁整块
+  if (!devices.value.length) devicesLoading.value = true
+  try {
+    const next = await refreshDevices()
+    devices.value = next
+    if (deviceId.value && !next.some(d => d.deviceId === deviceId.value)) {
+      deviceId.value = null
+    }
+  } catch {
+    // 保留上次列表
+  } finally {
+    devicesLoading.value = false
+    devicePollInFlight = false
+  }
+}
+
+function startDevicePolling() {
+  stopDevicePolling()
+  void loadDevicesOnce()
+  devicePollTimer = setInterval(() => {
+    void loadDevicesOnce()
+  }, DEVICE_POLL_MS)
+}
+
+function stopDevicePolling() {
+  if (devicePollTimer) {
+    clearInterval(devicePollTimer)
+    devicePollTimer = null
+  }
+}
+
+function toggleWorkspace(id: AdaptWorkspaceId, checked: boolean) {
+  if (checked) {
+    if (!selectedWorkspaces.value.includes(id)) {
+      selectedWorkspaces.value = [...selectedWorkspaces.value, id]
+    }
+  } else {
+    if (selectedWorkspaces.value.length <= 1) {
+      message.warning('至少保留一个工作区')
+      return
+    }
+    selectedWorkspaces.value = selectedWorkspaces.value.filter(w => w !== id)
+  }
+  // 切换工作区时：新工作区下中心有数据的域自动启用；移出的工作区域取消启用
+  for (const d of wizardDomains.value) {
+    const inSelected = selectedWorkspaces.value.includes(d.workspace_id as AdaptWorkspaceId)
+    if (!inSelected) {
+      d.enabled = false
+    } else if (d.from_central && !d.enabled) {
+      d.enabled = true
+      recomputeIncomplete(d)
+    }
+  }
+}
+
+function selectAllVisible() {
+  for (const d of visibleDomains.value) {
+    d.enabled = true
+    recomputeIncomplete(d)
+  }
+}
+
+function clearAllVisible() {
+  for (const d of visibleDomains.value) {
+    d.enabled = false
   }
 }
 
@@ -213,20 +555,32 @@ async function goNext() {
     if (!projectCode.value && manualProjectCode.value.trim()) {
       projectCode.value = ''
     }
-    if (centralConfigured.value) {
-      await loadPrereqs()
-    }
+    // 先进入 Step2 展示加载提示，再拉前置（不堵在 Step1）
     step.value = 2
+    // 目录未就绪时先用本地 builtin，目录返回后再 rebuild
+    if (!wizardDomains.value.length) rebuildWizardFromSources()
+    await loadPrereqs()
     return
   }
   if (step.value === 2) {
+    if (prereqsLoading.value || catalogLoading.value) {
+      message.info('前置信息仍在加载，请稍候')
+      return
+    }
     step.value = 3
     return
   }
   if (step.value === 3) {
-    buildContext.components = componentsText.value.split(/[,，\s]+/).map(s => s.trim()).filter(Boolean)
-    const caps = capabilities.value.length ? capabilities.value : await fetchCapabilities()
-    capabilities.value = caps
+    buildContext.components = [...selectedComponents.value]
+    buildContext.markets = [...selectedMarkets.value]
+    if (!capabilities.value.length) {
+      capsLoading.value = true
+      try {
+        capabilities.value = await fetchCapabilities()
+      } finally {
+        capsLoading.value = false
+      }
+    }
     step.value = 4
   }
 }
@@ -241,7 +595,7 @@ function buildDomainsPayload(): PipelineDomainInput[] {
     domain_id: d.domain_id,
     domain_label: d.domain_label,
     module: d.module,
-    related_skills: [],
+    related_skills: [...d.related_skills],
     form_data: { ...d.form_data },
     incomplete_required: [...d.incomplete_required],
     enabled: true,
@@ -261,7 +615,19 @@ function buildCreateInput(): CreateRunInput {
     domain_ids: enabledDomains.value.map(d => d.domain_id),
     build_context: {
       ...buildContext,
-      components: buildContext.components.length ? buildContext.components : ['krn'],
+      components: selectedComponents.value.length ? [...selectedComponents.value] : ['krn'],
+      markets: needsMarkets.value
+        ? (selectedMarkets.value.length ? [...selectedMarkets.value] : ['op'])
+        : (selectedMarkets.value.length ? [...selectedMarkets.value] : undefined),
+      target_branch: buildContext.target_branch?.trim() || undefined,
+      gerrit_issue_id: buildContext.gerrit_issue_id?.trim() || undefined,
+      native_target: buildContext.native_target?.trim() || undefined,
+      lunch: buildContext.lunch?.trim() || undefined,
+      build_skill_id: buildContext.build_kind === 'native_module'
+        ? 'harness-build-native'
+        : 'harness-build-whole-device',
+      flash_skill_id: 'harness-device',
+      flash_mode: 'full_rom',
     },
     device_id: deviceId.value ?? undefined,
     test_plan: testPlan,
@@ -308,23 +674,39 @@ function goConfig() {
 }
 
 onMounted(async () => {
-  loading.value = true
-  try {
-    await props.store.checkRuntimeReadiness()
-    const [mode, caps, devs] = await Promise.all([
-      getRuntimeMode().catch(() => ({ role: 'local' as const, central_configured: false, central_url: null })),
-      fetchCapabilities().catch(() => []),
-      listDevices().catch(() => []),
-    ])
-    centralConfigured.value = mode.central_configured
-    capabilities.value = caps
-    devices.value = devs
-    if (centralConfigured.value) {
-      await loadProjects()
-    }
-  } finally {
-    loading.value = false
-  }
+  // 本地 builtin 先铺模块目录，目录 API / 项目列表并行拉取，缩短下拉出现时间
+  rebuildWizardFromSources()
+  await props.store.checkRuntimeReadiness()
+
+  projectsLoading.value = true
+  catalogLoading.value = true
+  capsLoading.value = true
+  devicesLoading.value = true
+
+  const mode = await getRuntimeMode().catch(() => ({
+    role: 'local' as const,
+    central_configured: false,
+    central_url: null,
+  }))
+  centralConfigured.value = mode.central_configured
+
+  // 项目列表与目录/能力/设备并行，不再等 catalog 结束
+  await Promise.all([
+    loadProjects(),
+    loadCatalog(),
+    loadHarnessSkills(),
+    fetchCapabilities()
+      .then((caps) => { capabilities.value = caps })
+      .catch(() => { capabilities.value = [] })
+      .finally(() => { capsLoading.value = false }),
+    loadDevicesOnce(),
+  ])
+  startDevicePolling()
+})
+
+onUnmounted(() => {
+  stopDevicePolling()
+  if (buildOptionsTimer) clearTimeout(buildOptionsTimer)
 })
 </script>
 
@@ -345,128 +727,366 @@ onMounted(async () => {
     <!-- Step 1 -->
     <div v-if="step === 1" class="step-body">
       <h2>选择项目</h2>
-      <div v-if="centralConfigured && projectOptions.length" class="field">
+      <div v-if="centralConfigured" class="field">
         <label>项目</label>
-        <NSelect
-          v-model:value="projectCode"
-          :options="projectOptions"
-          placeholder="从中心选择项目"
-          filterable
-          @update:value="(v) => { campaignId = projectOptions.find(p => p.value === v)?.campaign ?? null }"
-        />
+        <div v-if="projectsLoading" class="load-hint">
+          <NSpin :size="16" />
+          <span>项目列表加载中…</span>
+        </div>
+        <template v-else>
+          <NSelect
+            v-if="projectOptions.length"
+            v-model:value="projectCode"
+            :options="projectOptions"
+            placeholder="从中心选择项目"
+            filterable
+            @update:value="(v) => { campaignId = projectOptions.find(p => p.value === v)?.campaign ?? null }"
+          />
+          <p v-else-if="projectsLoadError" class="field-error">项目列表加载失败：{{ projectsLoadError }}</p>
+          <p v-else class="muted">中心暂无项目列表，请使用下方手工输入。</p>
+        </template>
       </div>
       <div class="field">
         <label>{{ centralConfigured ? '或手工输入项目码' : '项目码' }}</label>
         <NInput v-model:value="manualProjectCode" placeholder="例如 KM9" :disabled="Boolean(projectCode)" />
       </div>
+      <p v-if="catalogLoading" class="load-hint muted-line">
+        <NSpin :size="14" />
+        <span>模块目录加载中（不影响选项目）…</span>
+      </p>
     </div>
 
     <!-- Step 2 -->
     <div v-else-if="step === 2" class="step-body">
-      <h2>确认前置信息</h2>
-      <p v-if="!centralConfigured" class="muted">请先配置中心连接后再确认前置。</p>
-      <p v-else-if="loading" class="muted">加载前置信息…</p>
-      <div v-else-if="!wizardDomains.length" class="muted">该项目暂无域配置，请返回重选或检查中心数据。</div>
-      <div v-else class="domain-list">
-        <div v-for="domain in wizardDomains" :key="domain.domain_id" class="domain-card">
-          <label class="domain-head">
-            <input v-model="domain.enabled" type="checkbox">
-            <strong>{{ domain.domain_label }}</strong>
-            <span class="domain-id">{{ domain.domain_id }}</span>
-          </label>
-          <div v-if="domain.enabled" class="fields">
-            <div v-for="field in domain.schema" :key="field.key" class="field inline">
-              <label>
-                {{ field.label }}
-                <span v-if="field.required" class="req">*</span>
+      <h2>选择工作区与适配模块</h2>
+      <p class="muted step-hint">
+        目录来自 AI 适配调试三工作区；中心前置仅用于预填表单。默认勾选中心已有数据的域。
+      </p>
+
+      <div v-if="prereqsLoading || catalogLoading" class="load-banner">
+        <NSpin :size="18" />
+        <div>
+          <strong v-if="prereqsLoading">前置信息加载中…</strong>
+          <strong v-else>模块目录加载中…</strong>
+          <p class="muted">可先浏览模块列表；加载完成后表单会自动预填。</p>
+        </div>
+      </div>
+
+      <div class="workspace-bar">
+        <span class="bar-label">工作区</span>
+        <label
+          v-for="ws in ADAPT_WORKSPACES"
+          :key="ws.id"
+          class="ws-chip"
+          :class="{ active: selectedWorkspaces.includes(ws.id) }"
+        >
+          <input
+            type="checkbox"
+            :checked="selectedWorkspaces.includes(ws.id)"
+            @change="toggleWorkspace(ws.id, ($event.target as HTMLInputElement).checked)"
+          >
+          {{ ws.label }}
+        </label>
+        <div class="bar-actions">
+          <button type="button" class="link-btn" @click="selectAllVisible">全选当前</button>
+          <button type="button" class="link-btn" @click="clearAllVisible">清空当前</button>
+        </div>
+      </div>
+
+      <div v-if="!visibleDomains.length && (prereqsLoading || catalogLoading)" class="muted">
+        正在准备模块列表…
+      </div>
+      <div v-else-if="!visibleDomains.length" class="muted">请至少选择一个工作区。</div>
+      <div v-else class="workspace-groups">
+        <div v-for="group in domainsByWorkspace" :key="group.id" class="ws-group">
+          <h3 class="ws-title">{{ group.label }}</h3>
+          <div class="domain-list">
+            <div
+              v-for="domain in group.domains"
+              :key="`${domain.workspace_id}::${domain.domain_id}`"
+              class="domain-card"
+              :class="{ disabled: !domain.enabled }"
+            >
+              <label class="domain-head">
+                <input v-model="domain.enabled" type="checkbox" @change="onDomainFieldChange(domain)">
+                <strong>{{ domain.domain_label }}</strong>
+                <span class="domain-id">{{ domain.domain_id }}</span>
+                <span v-if="domain.from_central" class="pill ok">中心有数据</span>
+                <span v-else class="pill muted-pill">需手工填写</span>
               </label>
-              <NInput
-                v-model:value="domain.form_data[field.key]"
-                :placeholder="field.label"
-                @update:value="onDomainFieldChange(domain)"
-              />
+              <div v-if="domain.enabled" class="fields">
+                <div v-for="field in domain.schema" :key="field.key" class="field inline">
+                  <label>
+                    {{ field.label }}
+                    <span v-if="field.required" class="req">*</span>
+                  </label>
+                  <NInput
+                    v-model:value="domain.form_data[field.key]"
+                    :placeholder="field.label"
+                    @update:value="onDomainFieldChange(domain)"
+                  />
+                </div>
+                <p v-if="!domain.schema.length" class="muted">该域暂无表单字段，可直接启用。</p>
+                <p v-if="domain.incomplete_required.length" class="field-error">
+                  缺少必填项：{{ domain.incomplete_required.join(', ') }}
+                </p>
+              </div>
             </div>
-            <p v-if="domain.incomplete_required.length" class="field-error">
-              缺少必填项：{{ domain.incomplete_required.join(', ') }}
-            </p>
           </div>
         </div>
       </div>
+      <p v-if="!enabledDomains.length && !prereqsLoading" class="field-error">请至少启用一个适配模块。</p>
     </div>
 
     <!-- Step 3 -->
     <div v-else-if="step === 3" class="step-body">
       <h2>配置执行环境</h2>
+      <p class="step-hint">
+        编译走本机 harness Skill（整机 / 模块自动绑定）；烧录走 Console 内置刷机，不要求你再选 Skill。
+        <span v-if="harnessSkillsLoading">正在检测 Skill…</span>
+        <span v-else-if="harnessSkillRoots.length" class="muted">
+          检测：整机 {{ hasWholeDeviceSkill ? '✓' : '✗' }} · 模块 {{ hasNativeSkill ? '✓' : '✗' }} · 刷机工具 {{ hasFlashSkill ? '✓' : '—' }}
+        </span>
+      </p>
+
+      <h3 class="sub-title">代码路径（编译 / 适配 / 入库共用）</h3>
       <div class="field">
-        <label>mapped_root</label>
-        <NInput v-model:value="buildContext.mapped_root" placeholder="Z:\workspace" />
+        <label>mapped_root <span class="req">*</span></label>
+        <NInput v-model:value="buildContext.mapped_root" placeholder="Z:\" />
+        <p class="field-hint">Linux 构建机目录在本机的映射盘根，例如 <code>Z:\</code>。须与 <code>harness remote-runner discover</code> 认可的映射一致。</p>
       </div>
       <div class="field">
-        <label>workspace（相对路径）</label>
+        <label>workspace <span class="req">*</span></label>
         <NInput v-model:value="buildContext.workspace" placeholder="project/KM9_NEW" />
+        <p class="field-hint">相对 mapped_root 的整机/模块代码目录，用正斜杠，例如 <code>project/KM9_NEW</code>。不要写盘符。</p>
       </div>
-      <div class="field-row">
-        <div class="field">
-          <label>编译组件（逗号分隔）</label>
-          <NInput v-model:value="componentsText" placeholder="krn, vext" />
+
+      <h3 class="sub-title">编译</h3>
+      <div class="field">
+        <label>编译类型 <span class="req">*</span></label>
+        <NSelect
+          :value="buildContext.build_kind"
+          :options="[
+            { label: '整机编译 — 出刷机包（改分区/合入后编版本）', value: 'whole_device' },
+            { label: '模块编译 — 只编 APK/JAR/native（改 framework/app）', value: 'native_module' },
+          ]"
+          @update:value="(v: string) => onBuildKindChange(v as 'whole_device' | 'native_module')"
+        />
+        <p class="field-hint">
+          整机 → 自动用 <code>harness-build-whole-device</code>；模块 → 自动用 <code>harness-build-native</code>。
+          适配后要上机验证请选整机；只验证模块编译通过可选模块。
+        </p>
+      </div>
+
+      <template v-if="buildContext.build_kind !== 'native_module'">
+        <div class="field-row">
+          <div class="field">
+            <label>编译组件 <span class="req">*</span></label>
+            <NSelect
+              v-model:value="selectedComponents"
+              multiple
+              filterable
+              :options="componentSelectOptions"
+              :loading="buildOptionsLoading"
+              max-tag-count="responsive"
+              placeholder="填写 mapped_root + workspace 后自动解析"
+            />
+            <p class="field-hint">
+              传给 <code>build pipeline --components</code>。填完 mapped_root / workspace 后会从
+              <code>harness build status</code> 或 <code>pack.json</code> 预加载可选组件，请多选，避免手输拼错。
+              出包建议勾选全部有效组件（含 <code>trprd,trreg</code>）；含 <code>trreg/trcar/trcom</code> 时下方 markets 必填。
+            </p>
+            <p v-if="buildOptionsMeta" class="field-hint">{{ buildOptionsMeta }}</p>
+            <NAlert v-if="buildOptionsWarning" type="warning" :bordered="false" style="margin-top: 6px">
+              {{ buildOptionsWarning }}
+            </NAlert>
+          </div>
+          <div class="field">
+            <label>variant <span class="req">*</span></label>
+            <NSelect
+              v-model:value="buildContext.variant"
+              :options="[
+                { label: 'userdebug（日常调试，推荐）', value: 'userdebug' },
+                { label: 'user（接近量产）', value: 'user' },
+                { label: 'eng（工程调试）', value: 'eng' },
+              ]"
+            />
+            <p class="field-hint">最终产出的编译变体，对应 <code>--variant</code>。</p>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>编译阶段</label>
+            <NSelect
+              v-model:value="buildContext.pipeline_stages"
+              :options="[
+                { label: '已有源码 → 编译+出包（推荐，不 sync）', value: 'build,package' },
+                { label: '先更新代码再编译出包（会 repo sync，可能覆盖本地改动）', value: 'repo,build,package' },
+              ]"
+            />
+            <p class="field-hint">流水线适配后 workspace 通常已有改动：默认选「不 sync」。只有明确要拉最新远端代码时才选第二项。</p>
+          </div>
+          <div class="field">
+            <label>平台并行策略</label>
+            <NSelect
+              v-model:value="buildContext.parallel_profile"
+              :options="[
+                { label: 'MTK', value: 'mtk' },
+                { label: '高通 Qualcomm', value: 'qcom' },
+              ]"
+            />
+            <p class="field-hint">workspace 缺少 <code>.pipe/info.json</code> 时的回退并行表。项目是 MTK 选 MTK，高通选 Qualcomm。</p>
+          </div>
         </div>
         <div class="field">
-          <label>variant</label>
+          <label>markets <span v-if="needsMarkets" class="req">*</span></label>
           <NSelect
-            v-model:value="buildContext.variant"
-            :options="[
-              { label: 'userdebug', value: 'userdebug' },
-              { label: 'user', value: 'user' },
-              { label: 'eng', value: 'eng' },
-            ]"
+            v-model:value="selectedMarkets"
+            multiple
+            filterable
+            :options="marketSelectOptions"
+            :loading="buildOptionsLoading"
+            max-tag-count="responsive"
+            placeholder="选择市场码，如 op / eu / in"
           />
+          <p class="field-hint">
+            harness 常用市场码已预置；workspace 解析到的 markets 会优先加入并可默认勾选。
+            组件含 <code>trreg / trcar / trcom</code> 时必选至少一项。
+          </p>
         </div>
-      </div>
+      </template>
+
+      <template v-else>
+        <div class="field">
+          <label>模块名 / 路径 <span class="req">*</span></label>
+          <NInput v-model:value="buildContext.native_target" placeholder="TeleService" />
+          <p class="field-hint">传给 <code>build native-module --target</code>。make/m 填模块名（如 TeleService）；mm/mmm 可填相对路径。</p>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>所属分区</label>
+            <NSelect
+              v-model:value="buildContext.native_component"
+              :options="[
+                { label: 'sys（framework / 系统应用，最常见）', value: 'sys' },
+                { label: 'hal', value: 'hal' },
+                { label: 'vnd', value: 'vnd' },
+                { label: 'odm', value: 'odm' },
+              ]"
+            />
+            <p class="field-hint">tran_build 上下文分区，默认 sys。不确定时保持 sys。</p>
+          </div>
+          <div class="field">
+            <label>lunch（可选）</label>
+            <NInput v-model:value="buildContext.lunch" placeholder="qssi_64" />
+            <p class="field-hint">对应 <code>--lunch</code>。项目有固定 lunch 时填写；留空则由 Skill/环境默认。</p>
+          </div>
+        </div>
+      </template>
+
+      <h3 class="sub-title">烧录 / 自检 / 入库</h3>
+      <p class="field-hint section-hint">
+        烧录自动使用编译产物路径；当前由 Console 调用 device_update，无需再选刷机 Skill。
+      </p>
       <div class="field-row">
         <div class="field">
-          <label>目标设备</label>
+          <label>
+            目标设备
+            <span v-if="devicesLoading" class="inline-hint">扫描中…</span>
+            <span v-else class="inline-hint muted">每 2 秒刷新</span>
+          </label>
           <NSelect
             v-model:value="deviceId"
             :options="devices.map(d => ({ label: `${d.deviceId} (${d.deviceName})`, value: d.deviceId }))"
             clearable
-            placeholder="选择自检设备"
+            :loading="devicesLoading"
+            :placeholder="devicesLoading ? '正在扫描 ADB 设备…' : (devices.length ? '选择烧录/自检设备' : '未检测到设备')"
           />
+          <p class="field-hint">烧录与 AI 自检共用。不选则烧录阶段会失败并转人工。</p>
         </div>
         <div class="field">
-          <label>用例策略</label>
+          <label>自检用例策略</label>
           <NSelect
             v-model:value="testPlanMode"
             :options="[
-              { label: '推荐策略', value: 'recommend' },
-              { label: '固定用例', value: 'fixed' },
+              { label: '推荐策略（按适配域推断）', value: 'recommend' },
+              { label: '固定用例（后续在自检节点确认）', value: 'fixed' },
             ]"
           />
         </div>
       </div>
-      <div class="field narrow">
-        <label>最大迭代轮次</label>
-        <NInputNumber v-model:value="maxIterations" :min="1" :max="99" />
+      <div class="field-row">
+        <div class="field narrow">
+          <label>最大迭代轮次</label>
+          <NInputNumber v-model:value="maxIterations" :min="1" :max="99" />
+          <p class="field-hint">自检失败→故障分析→改代码→再编译的循环上限。</p>
+        </div>
+        <div class="field">
+          <label>Gerrit 目标分支（可选）</label>
+          <NInput v-model:value="buildContext.target_branch" placeholder="留空=按仓库远程默认分支" />
+          <p class="field-hint">仅入库阶段使用，与编译无关。需要强制推到指定分支时填写。</p>
+        </div>
+      </div>
+      <div class="field">
+        <label>Gerrit 提交 ID <span class="req">*</span></label>
+        <NInput v-model:value="buildContext.gerrit_issue_id" placeholder="如 TOS1501-63219 或 AR-202506-002681" />
+        <p class="field-hint">
+          写入各仓 commit 模板的 <code>ID:</code> 字段（AR/BUG，禁止 task ID）。多仓共用同一 ID；
+          各仓 <code>DESCRIPTION</code> 仍按该仓实际 diff 由 gerrit-submit Skill 填写。
+        </p>
       </div>
     </div>
 
     <!-- Step 4 -->
     <div v-else class="step-body">
       <h2>确认启动计划</h2>
+      <div v-if="capsLoading" class="load-hint">
+        <NSpin :size="16" />
+        <span>能力探测加载中…</span>
+      </div>
       <div class="summary">
         <div class="summary-row"><span class="k">项目</span><span>{{ selectedProjectLabel }}</span></div>
         <div class="summary-row">
+          <span class="k">工作区</span>
+          <span>{{ selectedWorkspaces.map(id => ADAPT_WORKSPACES.find(w => w.id === id)?.label ?? id).join(' · ') }}</span>
+        </div>
+        <div class="summary-row">
           <span class="k">启用域</span>
-          <span>{{ enabledDomains.map(d => d.domain_label).join(' · ') || '—' }}</span>
+          <span>{{ enabledDomains.map(d => `${d.domain_label}(${d.workspace_id})`).join(' · ') || '—' }}</span>
         </div>
         <div class="summary-row">
           <span class="k">编译</span>
-          <span>{{ buildContext.mapped_root }} · {{ buildContext.workspace }} · {{ buildContext.variant }} · {{ componentsText }}</span>
+          <span>
+            {{ buildContext.build_kind === 'native_module' ? '模块' : '整机' }}
+            · {{ buildContext.build_skill_id }}
+            · {{ buildContext.mapped_root }} / {{ buildContext.workspace }}
+            <template v-if="buildContext.build_kind === 'native_module'">
+              · {{ buildContext.native_target || '—' }}
+              · {{ buildContext.native_component || 'sys' }}
+            </template>
+            <template v-else>
+              · {{ buildContext.variant }} · {{ selectedComponents.join(',') || '—' }}
+              <template v-if="selectedMarkets.length"> · markets={{ selectedMarkets.join(',') }}</template>
+              · {{ buildContext.pipeline_stages }}
+            </template>
+          </span>
         </div>
         <div class="summary-row">
-          <span class="k">设备 / 用例</span>
-          <span>{{ deviceId ?? '未指定' }} · {{ testPlanMode === 'recommend' ? '推荐策略' : '固定用例' }}</span>
+          <span class="k">烧录</span>
+          <span>自动使用编译产物 · 设备 {{ deviceId ?? '未指定' }}</span>
         </div>
-        <div class="summary-row"><span class="k">迭代上限</span><span>{{ maxIterations }} 轮</span></div>
+        <div class="summary-row">
+          <span class="k">自检</span>
+          <span>{{ testPlanMode === 'recommend' ? '推荐策略' : '固定用例' }} · 最多 {{ maxIterations }} 轮</span>
+        </div>
+        <div class="summary-row">
+          <span class="k">Gerrit 分支</span>
+          <span>{{ buildContext.target_branch?.trim() || '按仓库默认' }}</span>
+        </div>
+        <div class="summary-row">
+          <span class="k">Gerrit 提交 ID</span>
+          <span>{{ buildContext.gerrit_issue_id?.trim() || '—' }}</span>
+        </div>
       </div>
       <div v-if="unavailableNodes.length" class="warn-box">
         <strong>启动前须知</strong>
@@ -526,6 +1146,80 @@ onMounted(async () => {
   font-size: 18px;
   font-weight: 800;
 }
+.sub-title {
+  margin: 18px 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  code {
+    font-size: 11px;
+    padding: 0 4px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--line) 55%, transparent);
+  }
+}
+.section-hint { margin: 0 0 12px; }
+.step-hint {
+  margin: -8px 0 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.req { color: var(--err); font-weight: 700; }
+.workspace-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--bg));
+}
+.bar-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.ws-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 13px;
+  cursor: pointer;
+  &.active {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+}
+.bar-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+.workspace-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.ws-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--muted);
+}
 .field {
   margin-bottom: 14px;
   label {
@@ -554,16 +1248,34 @@ onMounted(async () => {
   border-radius: 12px;
   padding: 12px;
   background: color-mix(in srgb, var(--surface) 94%, var(--bg));
+  &.disabled {
+    opacity: 0.72;
+  }
 }
 .domain-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   cursor: pointer;
   .domain-id {
     font-size: 12px;
     color: var(--faint);
     font-family: var(--mono, monospace);
+  }
+}
+.pill {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  &.ok {
+    background: color-mix(in srgb, var(--ok, #3fb950) 18%, transparent);
+    color: var(--ok, #2da44e);
+  }
+  &.muted-pill {
+    background: color-mix(in srgb, var(--muted) 16%, transparent);
+    color: var(--muted);
   }
 }
 .fields {
@@ -597,16 +1309,44 @@ onMounted(async () => {
   border-radius: 12px;
   padding: 12px;
   font-size: 13px;
-  color: var(--warn);
   ul { margin: 8px 0 0; padding-left: 18px; }
 }
 .footer {
   display: flex;
   align-items: center;
-  gap: 8px;
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid var(--line);
+  .spacer { flex: 1; }
 }
-.spacer { flex: 1; }
+.load-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  min-height: 34px;
+}
+.muted-line {
+  margin-top: 8px;
+}
+.load-banner {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  strong { display: block; margin-bottom: 4px; }
+  p { margin: 0; font-size: 12px; }
+}
+.inline-hint {
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  &.muted { color: var(--muted); font-weight: 400; }
+}
 </style>

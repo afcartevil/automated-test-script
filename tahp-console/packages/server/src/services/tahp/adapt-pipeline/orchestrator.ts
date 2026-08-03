@@ -1,4 +1,4 @@
-import { getAdaptAgentTask } from '../adapt-agent'
+import { cancelAdaptAgentRun, getAdaptAgentTask } from '../adapt-agent'
 import { appendPipelineLog, emitPipelineEvent } from './events'
 import { getStage, listStages } from './registry'
 import { getRun, listActiveRunIds, saveRun } from './store'
@@ -87,7 +87,9 @@ function createCtx(run: PipelineRun, node: WorkflowNode): StageContext {
   return {
     run,
     node,
-    state: run.stages[nodeKey] ?? freshStageState(nodeKey),
+    get state() {
+      return run.stages[nodeKey] ?? freshStageState(nodeKey)
+    },
     patchState(patch) {
       patchStage(run, nodeKey, patch)
     },
@@ -495,7 +497,13 @@ function applyVerdict(
       patchStage(run, node.key, {
         status: 'running',
         progress: verdict.progress as Record<string, unknown> | undefined,
+        human: undefined,
+        error: undefined,
       })
+      if (run.status === 'waiting_human' || run.status === 'paused') {
+        run.status = 'running'
+        saveRun(run)
+      }
       emitPipeline('pipeline.node_progress', {
         run_id: run.run_id,
         node: node.key,
@@ -584,6 +592,10 @@ async function advanceOnce(runId: string): Promise<void> {
 
   const stage = getStage(node.key)
   if (!stage) return
+
+  const existing = run.stages[node.key]
+  // 人工门等待期间不要再 evaluate，避免把 waiting_human 冲成 running
+  if (existing?.status === 'waiting_human') return
 
   const ctx = createCtx(run, node)
   const verdict = stage.evaluate(ctx)
@@ -751,6 +763,37 @@ export async function submitHumanAction(
     return
   }
 
+  if (actionId === 'go_gerrit') {
+    patchStage(run, nodeKey, {
+      status: 'skipped',
+      finished_at: new Date().toISOString(),
+      progress: {
+        ...(run.stages[nodeKey]?.progress as Record<string, unknown> | undefined),
+        state: 'skipped_to_gerrit',
+        text: '跳过后续节点，前往 Gerrit',
+      },
+      human: undefined,
+    })
+    const skipMap: Record<string, string[]> = {
+      build: ['flash', 'selfcheck', 'triage', 'human_review'],
+      flash: ['selfcheck', 'triage', 'human_review'],
+    }
+    for (const mid of skipMap[nodeKey] ?? ['selfcheck', 'triage', 'human_review']) {
+      const st = run.stages[mid]
+      if (!st || st.status === 'done' || st.status === 'skipped') continue
+      patchStage(run, mid, {
+        status: 'skipped',
+        progress: { text: '因跳转 Gerrit 跳过' },
+      })
+    }
+    run.status = 'running'
+    saveRun(run, { immediate: true })
+    emitPipeline('pipeline.human_resolved', { run_id: runId, node: nodeKey, action_id: actionId })
+    await transition(runId, 'gerrit')
+    await awaitAdvanceIdle(runId)
+    return
+  }
+
   if (actionId === 'retry') {
     await resumeFrom(runId, { node: nodeKey, scope: 'continue' })
     return
@@ -763,7 +806,19 @@ export async function submitHumanAction(
     const ctx = createCtx(run, node)
     await stage.handleHumanAction(ctx, actionId, payload)
     emitPipeline('pipeline.human_resolved', { run_id: runId, node: nodeKey, action_id: actionId })
+
+    // 人工动作可能已启动异步任务或写入新 progress；须解除 waiting_human 闸门才能 re-evaluate
+    const latest = getRun(runId)
+    if (latest) {
+      registerCorrelations(runId, nodeKey, latest.stages[nodeKey]?.refs ?? {})
+      if (latest.stages[nodeKey]?.status === 'waiting_human') {
+        patchStage(latest, nodeKey, { status: 'running', human: undefined })
+        if (latest.status === 'waiting_human') latest.status = 'running'
+        saveRun(latest, { immediate: true })
+      }
+    }
     await advance(runId)
+    await awaitAdvanceIdle(runId)
   }
 }
 
@@ -859,6 +914,33 @@ export async function pauseRun(runId: string): Promise<void> {
 export async function abortRun(runId: string, reason?: string): Promise<void> {
   const run = getRun(runId)
   if (!run) throw new Error(`run not found: ${runId}`)
+
+  const wf = workflowFor(run)
+  // 先取消各阶段外部任务（编译 Agent / 适配 / 刷机等）
+  for (const node of wf.nodes) {
+    const state = run.stages[node.key]
+    if (!state) continue
+    if (state.status !== 'running' && state.status !== 'waiting_human' && state.status !== 'pending') {
+      continue
+    }
+    const stage = getStage(node.key)
+    if (!stage?.cancel) continue
+    try {
+      await stage.cancel(createCtx(run, node))
+    } catch (err) {
+      appendPipelineLog(runId, node.key, `终止时取消阶段失败: ${(err as Error).message}`)
+    }
+  }
+
+  // 兜底：取消仍标记 running 的适配域任务
+  for (const d of run.domains) {
+    if (d.adapt_task_id && (d.status === 'running' || d.status === 'pending')) {
+      try {
+        await cancelAdaptAgentRun(d.adapt_task_id)
+      } catch { /* ignore */ }
+    }
+  }
+
   run.abort_reason = reason
   run.status = 'aborted'
   await enter(runId, 'ABORT')

@@ -6,11 +6,28 @@ import {
   probeGerritSubmit,
   startGerritDomainSubmit,
 } from '../../gerrit-submit'
+import {
+  filterFilesBySelectedRepos,
+  groupChangedFilesByRepo,
+} from '../repo-groups'
+import { domainsWithWorkspaceChanges } from '../workspace-changed-files'
 
 function domainsWithChanges(ctx: StageContext): PipelineDomain[] {
-  return ctx.run.domains.filter(
-    d => d.enabled && d.status === 'done' && (d.changed_files?.length ?? 0) > 0,
-  )
+  const mapped = ctx.run.build_context?.mapped_root ?? ''
+  const workspace = ctx.run.build_context?.workspace ?? ''
+  return domainsWithWorkspaceChanges(ctx.run.domains, mapped, workspace)
+}
+
+function applyRepoFilter(ctx: StageContext, domains: PipelineDomain[]): PipelineDomain[] {
+  const selected = ctx.run.gerrit_selected_repos
+  if (!selected?.length) return domains
+  const root = ctx.run.build_context?.mapped_root ?? ''
+  return domains
+    .map(d => ({
+      ...d,
+      changed_files: filterFilesBySelectedRepos(root, d.changed_files ?? [], selected),
+    }))
+    .filter(d => (d.changed_files?.length ?? 0) > 0)
 }
 
 function summarizeChanges(changes: GerritChangeRef[]): string {
@@ -101,11 +118,50 @@ export const gerritStageDefinition: StageDefinition = {
   },
 
   async start(ctx: StageContext) {
-    const domains = domainsWithChanges(ctx)
+    const domainsRaw = domainsWithChanges(ctx)
 
+    if (!domainsRaw.length) {
+      syncProgress(ctx, {
+        state: 'awaiting_confirm_no_changes',
+        changes: [],
+        repos: [],
+        text: '未检测到 workspace 下的待提交变更',
+      })
+      ctx.log('未检测到 workspace 下的待提交变更，等待人工确认')
+      return
+    }
+
+    // 写回过滤后的绝对路径，供选仓与提交使用
+    const filteredById = new Map(domainsRaw.map(d => [d.domain_id, d.changed_files ?? []]))
+    ctx.patchRun({
+      domains: ctx.run.domains.map(d => {
+        const files = filteredById.get(d.domain_id)
+        return files ? { ...d, changed_files: files } : d
+      }),
+    })
+
+    const root = ctx.run.build_context?.mapped_root ?? ''
+    const repos = groupChangedFilesByRepo(root, domainsRaw)
+
+    if (!ctx.run.gerrit_selected_repos?.length) {
+      syncProgress(ctx, {
+        state: 'awaiting_repo_selection',
+        repos,
+        text: `请选择要入库的仓库（共 ${repos.length} 个）`,
+      })
+      ctx.log(`等待人工选择入库仓库（${repos.length} 个）`)
+      return
+    }
+
+    const domains = applyRepoFilter(ctx, domainsRaw)
     if (!domains.length) {
-      syncProgress(ctx, { state: 'no_changes', changes: [] })
-      ctx.log('无待提交变更文件')
+      syncProgress(ctx, {
+        state: 'awaiting_confirm_no_changes',
+        changes: [],
+        repos,
+        message: '所选仓库无变更',
+        text: '所选仓库无变更',
+      })
       return
     }
 
@@ -126,11 +182,18 @@ export const gerritStageDefinition: StageDefinition = {
       files: d.changed_files ?? [],
     }))
     ctx.patchRun({ gerrit_changes: initialChanges })
+    // 临时域文件列表到 run.domains 供后续 submit 使用
+    const patchedDomains = ctx.run.domains.map(d => {
+      const f = domains.find(x => x.domain_id === d.domain_id)
+      return f ? { ...d, changed_files: f.changed_files } : d
+    })
+    ctx.patchRun({ domains: patchedDomains, gerrit_changes: initialChanges })
     syncProgress(ctx, {
       state: 'submitting',
       queue,
       current_index: 0,
       changes: initialChanges,
+      text: `开始提交 ${domains.length} 个域`,
     })
 
     await startNextDomainSubmit(ctx)
@@ -143,6 +206,28 @@ export const gerritStageDefinition: StageDefinition = {
 
     const p = (ctx.state.progress ?? {}) as Record<string, unknown>
     const domainId = String(ev.payload.domain_id ?? p.current_domain_id ?? '')
+
+    if (ev.type === 'task.started') {
+      ctx.log(`Gerrit Agent 已启动（${taskId}）`)
+      return
+    }
+
+    if (ev.type === 'task.message') {
+      if (ev.payload.level === 'stream') {
+        const text = String(ev.payload.text ?? '').trim()
+        if (text) ctx.log(text.slice(0, 500))
+      } else {
+        const text = String(ev.payload.text ?? ev.payload.message ?? '').trim()
+        if (text) ctx.log(text.slice(0, 500))
+      }
+      return
+    }
+
+    if (ev.type === 'task.tool_completed' || ev.type === 'task.tool_started') {
+      const tool = String(ev.payload.tool ?? ev.payload.tool_name ?? '').trim()
+      if (tool) ctx.log(`[tool] ${tool}`)
+      return
+    }
 
     if (ev.type === 'task.completed') {
       const changes = [...(ctx.run.gerrit_changes ?? [])]
@@ -160,6 +245,7 @@ export const gerritStageDefinition: StageDefinition = {
       const nextIndex = Number(p.current_index ?? 0) + 1
       const queue = (p.queue as string[]) ?? []
       syncProgress(ctx, { current_index: nextIndex, changes })
+      ctx.log(`域 ${domainId || '未知'} Gerrit 提交完成`)
 
       if (nextIndex < queue.length) {
         await startNextDomainSubmit(ctx)
@@ -189,6 +275,42 @@ export const gerritStageDefinition: StageDefinition = {
     const changes = ctx.run.gerrit_changes ?? []
     const queue = (p.queue as string[]) ?? []
     const idx = Number(p.current_index ?? 0)
+
+    if (state === 'awaiting_repo_selection') {
+      return {
+        status: 'waiting_human',
+        reason: 'select_repos',
+        message: '请勾选要提交到 Gerrit 的仓库（支持部分入库），然后继续。',
+        actions: [
+          { id: 'submit_all_repos', label: '全部仓库入库' },
+          {
+            id: 'submit_selected_repos',
+            label: '提交所选仓库',
+            fields: [
+              {
+                name: 'selected_repos',
+                label: '仓库列表（JSON 数组或逗号分隔路径）',
+                required: true,
+              },
+            ],
+          },
+          { id: 'skip', label: '跳过提交', danger: true },
+        ],
+      }
+    }
+
+    if (state === 'awaiting_confirm_no_changes') {
+      return {
+        status: 'waiting_human',
+        reason: 'no_changes',
+        message: '未检测到 AOSP workspace 下的待提交变更（或所选仓库无文件）。可确认跳过提交，或返回重新检查适配记录。',
+        actions: [
+          { id: 'confirm_done', label: '确认无变更并完成' },
+          { id: 'skip', label: '跳过提交' },
+          { id: 'retry', label: '重新统计选仓' },
+        ],
+      }
+    }
 
     if (state === 'blocked_conflict') {
       return {
@@ -233,6 +355,59 @@ export const gerritStageDefinition: StageDefinition = {
         text: summarizeChanges(changes),
         changes,
       },
+    }
+  },
+
+  async handleHumanAction(ctx: StageContext, actionId: string, payload?: Record<string, unknown>) {
+    const domainsRaw = domainsWithChanges(ctx)
+    const root = ctx.run.build_context?.mapped_root ?? ''
+    const repos = groupChangedFilesByRepo(root, domainsRaw)
+
+    if (actionId === 'skip') {
+      syncProgress(ctx, { state: 'no_changes', changes: ctx.run.gerrit_changes ?? [], repos: [] })
+      return
+    }
+
+    if (actionId === 'retry') {
+      ctx.patchRun({ gerrit_selected_repos: undefined })
+      await gerritStageDefinition.start!(ctx)
+      return
+    }
+
+    if (actionId === 'submit_all_repos') {
+      if (!repos.length) {
+        syncProgress(ctx, {
+          state: 'awaiting_confirm_no_changes',
+          repos: [],
+          text: '无可选仓库',
+        })
+        return
+      }
+      ctx.patchRun({ gerrit_selected_repos: repos.map(r => r.repo) })
+      await gerritStageDefinition.start!(ctx)
+      return
+    }
+
+    if (actionId === 'submit_selected_repos') {
+      let selected: string[] = []
+      const raw = payload?.selected_repos
+      if (Array.isArray(raw)) selected = raw.map(String)
+      else if (typeof raw === 'string') {
+        const t = raw.trim()
+        if (t.startsWith('[')) {
+          try { selected = (JSON.parse(t) as unknown[]).map(String) } catch {
+            selected = t.split(/[,;\n]/).map(s => s.trim()).filter(Boolean)
+          }
+        } else {
+          selected = t.split(/[,;\n]/).map(s => s.trim()).filter(Boolean)
+        }
+      }
+      if (!selected.length) {
+        syncProgress(ctx, { state: 'awaiting_repo_selection', repos, message: '未选择仓库' })
+        return
+      }
+      ctx.patchRun({ gerrit_selected_repos: selected })
+      await gerritStageDefinition.start!(ctx)
     }
   },
 }

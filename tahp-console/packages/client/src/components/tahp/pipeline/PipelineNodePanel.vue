@@ -21,7 +21,7 @@ const RENDERERS: Record<string, Component> = {
 const props = defineProps<{
   node: TimelineNode | null
   logs: string[]
-  buildContext?: { components?: string[] }
+  buildContext?: { components?: string[]; build_kind?: string; build_skill_id?: string; native_target?: string; native_component?: string; lunch?: string }
 }>()
 
 const panel = computed(() => (props.node ? RENDERERS[props.node.key] ?? DefaultPanel : DefaultPanel))

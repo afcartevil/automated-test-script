@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPill from '@/components/layout/EaPill.vue'
 import EaStageStepper from '@/components/common/EaStageStepper.vue'
@@ -7,7 +7,6 @@ import PipelineNodeList from './PipelineNodeList.vue'
 import PipelineNodePanel from './PipelineNodePanel.vue'
 import PipelineHumanPanel from './PipelineHumanPanel.vue'
 import PipelineIterationBar from './PipelineIterationBar.vue'
-import PipelineResumePicker from './PipelineResumePicker.vue'
 import {
   formatDurationMs,
   runStatusLabel,
@@ -29,8 +28,6 @@ const emit = defineEmits<{
   discarded: [nextRunId: string | null]
 }>()
 
-const showResume = ref(false)
-
 const selectedNode = computed(() =>
   props.timeline.nodes.find(n => n.key === props.selectedNodeKey) ?? props.timeline.nodes[0] ?? null,
 )
@@ -40,18 +37,12 @@ const selectedNodeLogs = computed(() => {
   return props.store.getNodeLogs(props.timeline.run_id, selectedNode.value.key)
 })
 
-const canPause = computed(() =>
-  props.timeline.status === 'running' || props.timeline.status === 'waiting_human',
-)
-
 const canDiscardDraft = computed(() => props.timeline.status === 'draft')
 
 const canAbort = computed(() =>
   !canDiscardDraft.value
   && !['passed', 'failed', 'aborted'].includes(props.timeline.status),
 )
-
-const canResume = computed(() => !canDiscardDraft.value)
 
 const osLabel = computed(() => {
   if (props.timeline.from_os && props.timeline.to_os) {
@@ -76,12 +67,8 @@ async function loadLogsForNode(nodeKey: string | null) {
   await props.store.loadNodeLogs(props.timeline.run_id, nodeKey, 500)
 }
 
-async function handlePause() {
-  await props.store.pauseRun(props.timeline.run_id)
-}
-
 async function handleAbort() {
-  if (!window.confirm('确认终止该流水线运行？')) return
+  if (!window.confirm('确认终止该流水线？将取消编译/适配/刷机等正在执行的 Agent 与外部任务。')) return
   await props.store.abortRun(props.timeline.run_id, '用户终止')
 }
 
@@ -89,16 +76,6 @@ async function handleDiscardDraft() {
   if (!window.confirm('确认删除该草稿运行？删除后不可恢复。')) return
   const next = await props.store.discardDraftRun(props.timeline.run_id)
   emit('discarded', next)
-}
-
-async function openResume() {
-  showResume.value = true
-  await props.store.loadResumePoints(props.timeline.run_id)
-}
-
-async function onResume(node: string, scope: 'continue' | 'restart', force: boolean) {
-  await props.store.resumeRun(props.timeline.run_id, node, scope, force)
-  showResume.value = false
 }
 
 watch(() => selectedNode.value?.key, (key) => {
@@ -124,15 +101,6 @@ watch(() => selectedNode.value?.key, (key) => {
       </div>
       <div class="head-actions">
         <button
-          v-if="canPause"
-          type="button"
-          class="btn-soft"
-          :disabled="store.runActionBusy"
-          @click="handlePause"
-        >
-          暂停
-        </button>
-        <button
           v-if="canDiscardDraft"
           type="button"
           class="btn-danger"
@@ -149,15 +117,6 @@ watch(() => selectedNode.value?.key, (key) => {
           @click="handleAbort"
         >
           终止
-        </button>
-        <button
-          v-if="canResume"
-          type="button"
-          class="btn-soft"
-          :disabled="store.runActionBusy"
-          @click="openResume"
-        >
-          从…恢复
         </button>
         <button
           v-if="humanDrawer && timeline.pending_human_count > 0"
@@ -205,17 +164,6 @@ watch(() => selectedNode.value?.key, (key) => {
         />
       </EaCard>
     </div>
-
-  <EaCard v-if="showResume" class="resume-card">
-    <h3>选择恢复点</h3>
-    <PipelineResumePicker
-      :data="store.resumePoints"
-      :busy="store.actionBusy"
-      @reload="store.loadResumePoints(timeline.run_id)"
-      @submit="onResume"
-    />
-    <button type="button" class="btn-soft close-resume" @click="showResume = false">关闭</button>
-  </EaCard>
 
     <PipelineIterationBar
       :iterations="timeline.iterations"
@@ -285,12 +233,16 @@ watch(() => selectedNode.value?.key, (key) => {
 }
 .cols {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 300px;
+  grid-template-columns: 220px minmax(0, 1fr) minmax(260px, 320px);
   gap: 12px;
 }
 .col-card {
   padding: 12px;
   min-width: 0;
+  overflow: hidden;
+}
+.human-col {
+  overflow: auto;
 }
 .col-card h3 {
   margin: 0 0 10px;
@@ -299,11 +251,6 @@ watch(() => selectedNode.value?.key, (key) => {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.resume-card {
-  padding: 12px;
-  h3 { margin: 0 0 10px; font-size: 14px; }
-}
-.close-resume { margin-top: 10px; }
 @media (max-width: 1400px) {
   .cols.drawer {
     grid-template-columns: 200px minmax(0, 1fr);

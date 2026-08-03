@@ -38,6 +38,8 @@ export interface PipelineRun {
   iterations: IterationRecord[]
   artifacts: Partial<Record<ArtifactKind, ArtifactState>>
   gerrit_changes?: GerritChangeRef[]
+  /** 人工审核勾选的待入库仓库（绝对路径或仓名） */
+  gerrit_selected_repos?: string[]
 }
 
 export interface PipelineDomain {
@@ -62,6 +64,31 @@ export interface BuildContext {
   variant: string
   parallel_profile?: 'mtk' | 'qcom'
   markets?: string[]
+  /** whole_device=整机 rdtool；native_module=模块编译 */
+  build_kind?: 'whole_device' | 'native_module'
+  /** 默认 harness-build-whole-device / harness-build-native */
+  build_skill_id?: string
+  /** pipeline stages，如 build,package 或 repo,build,package */
+  pipeline_stages?: string
+  /** native：lunch target */
+  lunch?: string
+  /** native：make/mmm 目标模块名 */
+  native_target?: string
+  /** native：分区组件，如 sys */
+  native_component?: string
+  /** 刷机 skill，默认 harness-device */
+  flash_skill_id?: string
+  /** full_rom | single_img */
+  flash_mode?: 'full_rom' | 'single_img'
+  /** 单镜像目标分区（可选，可从文件名推断） */
+  flash_partition?: string
+  /** 提交分支（可选，传给 gerrit） */
+  target_branch?: string
+  /**
+   * Gerrit commit 模板中的 ID 字段（AR/BUG，如 TOS1501-63219）。
+   * 多仓共用同一 ID；DESCRIPTION 仍按各仓实际 diff 填写。
+   */
+  gerrit_issue_id?: string
 }
 
 export interface TestPlan {
@@ -205,6 +232,7 @@ export interface ExternalCapability<TInput = unknown> {
 }
 
 export interface BuildCapabilityInput {
+  pipelineRunId: string
   mappedRoot: string
   workspace: string
   mode: 'full' | 'incremental'
@@ -212,13 +240,21 @@ export interface BuildCapabilityInput {
   variant: string
   parallelProfile?: 'mtk' | 'qcom'
   markets?: string[]
+  buildKind?: 'whole_device' | 'native_module'
+  buildSkillId?: string
+  pipelineStages?: string
+  lunch?: string
+  nativeTarget?: string
+  nativeComponent?: string
 }
 
 export interface BuildCapabilityResult {
   artifactsDir?: string
+  pkgPath?: string
   artifacts?: Array<{ name: string; path: string; sizeBytes?: number }>
   durationMs?: number
   failedStage?: string
+  skillId?: string
 }
 
 export type NodeTarget = string | 'END' | 'ABORT'
@@ -322,6 +358,22 @@ export interface TimelineView {
       percent?: number
       text?: string
       changes?: unknown
+      state?: string
+      phase?: string
+      message?: string
+      error?: string
+      result?: unknown
+      pkg_path?: string
+      pkgPath?: string
+      artifacts_dir?: string
+      flash_mode?: string
+      flash_skill_id?: string
+      repos?: unknown
+      queue?: string[]
+      current_index?: number
+      current_domain_id?: string
+      repo_groups?: unknown
+      changed_files?: unknown
       domains?: Array<{
         domain_id: string
         domain_label: string

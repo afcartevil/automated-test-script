@@ -4,6 +4,12 @@
 import Router from '@koa/router'
 import { centralClient } from '../../services/tahp/sync/central-client'
 import { isCentralConfigured } from '../../services/tahp/runtime-mode'
+import { getDomainCatalog } from '../../services/tahp/adapt-pipeline/domain-catalog'
+import { listHarnessSkills } from '../../services/tahp/adapt-pipeline/harness-skill-registry'
+import {
+  listHarnessMarketPresets,
+  resolveWorkspaceBuildOptions,
+} from '../../services/tahp/adapt-pipeline/workspace-build-options'
 import { readPipelineLogs } from '../../services/tahp/adapt-pipeline/events'
 import {
   abortRun,
@@ -340,6 +346,55 @@ tahpAdaptPipelineRoutes.get('/prereqs/:projectCode', async (ctx) => {
         from_os: data.from_os,
         to_os: data.to_os,
         domains: data.domains,
+      },
+    }
+  } catch (err) {
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+/** 三工作区可适配模块目录（builtin + layout schema） */
+tahpAdaptPipelineRoutes.get('/domain-catalog', async (ctx) => {
+  try {
+    const data = await getDomainCatalog()
+    ctx.body = { success: true, data }
+  } catch (err) {
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+/** harness skill 目录扫描（编译/刷机） */
+tahpAdaptPipelineRoutes.get('/harness-skills', async (ctx) => {
+  const kindRaw = String(ctx.query.kind ?? '').trim()
+  const kind = kindRaw === 'build' || kindRaw === 'flash' ? kindRaw : undefined
+  try {
+    const items = listHarnessSkills(kind)
+    ctx.body = {
+      success: true,
+      data: {
+        roots: [...new Set(items.map(i => i.root))],
+        items,
+      },
+    }
+  } catch (err) {
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+/** 根据 mapped_root + workspace 解析编译组件 / markets 可选值 */
+tahpAdaptPipelineRoutes.get('/workspace-build-options', async (ctx) => {
+  const mappedRoot = String(ctx.query.mapped_root ?? '').trim()
+  const workspace = String(ctx.query.workspace ?? '').trim()
+  try {
+    const data = await resolveWorkspaceBuildOptions(mappedRoot, workspace)
+    ctx.body = {
+      success: true,
+      data: {
+        ...data,
+        market_presets: listHarnessMarketPresets(),
       },
     }
   } catch (err) {

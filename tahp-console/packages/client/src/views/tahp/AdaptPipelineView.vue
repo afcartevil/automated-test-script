@@ -247,7 +247,8 @@ watch(() => store.error, (err) => {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
+  min-height: calc(100dvh - 160px);
 }
 
 .board-main {
@@ -255,6 +256,7 @@ watch(() => store.error, (err) => {
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  min-height: 0;
 }
 
 .card {

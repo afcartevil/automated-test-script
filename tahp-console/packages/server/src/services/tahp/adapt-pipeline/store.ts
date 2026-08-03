@@ -265,10 +265,14 @@ export function findResourceConflict(candidate: PipelineRun): ResourceConflict |
     if (candidateWs) {
       const otherWs = workspaceKey(other)
       if (otherWs && otherWs === candidateWs) {
+        const node = other.current_node || '—'
         return {
           kind: 'workspace',
           holderRunId: other.run_id,
-          detail: `workspace \`${other.build_context.workspace}\` 正被 ${other.run_id} 占用`,
+          detail:
+            `workspace \`${other.build_context.workspace}\` 正被 ${other.run_id} 占用`
+            + `（状态 ${other.status}，节点 ${node}）。`
+            + `请到运行看板打开该任务并「终止」，或等其结束后再启动。`,
         }
       }
     }
@@ -277,7 +281,9 @@ export function findResourceConflict(candidate: PipelineRun): ResourceConflict |
       return {
         kind: 'device',
         holderRunId: other.run_id,
-        detail: `设备 ${other.device_id} 正被 ${other.run_id} 占用`,
+        detail:
+          `设备 ${other.device_id} 正被 ${other.run_id} 占用（状态 ${other.status}）。`
+          + `请终止占用任务或更换设备。`,
       }
     }
 
