@@ -42,6 +42,7 @@ const systemNav = [
 ]
 
 const FEEDBACK_URL = 'https://transsioner.feishu.cn/share/base/form/shrcnDOMx8H12Nm1tcTmIOAHDId'
+const EASY_ADAPTER_SOP_URL = 'https://transsioner.feishu.cn/wiki/BdVUwpCL4ifRZckiQlzcPQoUndg'
 
 const selectedKey = computed(() => {
   const name = route.name?.toString() || ''
@@ -179,6 +180,16 @@ async function handleUpdate() {
             </svg>
           </button>
         </NDropdown>
+
+        <a
+          :href="EASY_ADAPTER_SOP_URL"
+          class="ck-tab ck-tab-sub ck-tab-link"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="EasyAdapter 配置 SOP（飞书文档）"
+        >
+          EasyAdapter配置SOP
+        </a>
       </nav>
 
       <div class="ck-spacer">
@@ -303,6 +314,11 @@ async function handleUpdate() {
   color: #8b909f;
   display: inline-flex;
   align-items: center;
+}
+
+.ck-tab-link {
+  text-decoration: none;
+  box-sizing: border-box;
 }
 
 .ck-caret {
