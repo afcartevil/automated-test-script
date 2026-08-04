@@ -271,6 +271,9 @@ export interface DomainCatalogField {
   label: string
   required?: boolean
   type?: string
+  placeholder?: string
+  options?: Array<{ label: string; value: string }>
+  defaultValue?: string
 }
 
 export interface DomainCatalogDomain {

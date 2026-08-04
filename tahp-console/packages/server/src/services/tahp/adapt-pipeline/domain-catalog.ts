@@ -13,6 +13,9 @@ export interface CatalogFieldSchema {
   label: string
   required?: boolean
   type?: string
+  placeholder?: string
+  options?: Array<{ label: string; value: string }>
+  defaultValue?: string
 }
 
 export interface CatalogDomain {
@@ -157,6 +160,9 @@ export async function getDomainCatalog(): Promise<DomainCatalog> {
         label: f.label,
         required: f.required,
         type: f.type,
+        placeholder: f.placeholder,
+        options: f.options?.map(o => ({ label: o.label, value: o.value })),
+        defaultValue: f.defaultValue,
       }))
       const schema = layoutSchema.length
         ? layoutSchema

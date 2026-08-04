@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NAlert, NButton, NInput, NInputNumber, NSelect, NSpin, NSteps, NStep, useMessage } from 'naive-ui'
+import { NAlert, NButton, NInput, NInputNumber, NSelect, NSpin, NSteps, NStep, NTable, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
 import {
   createPipelineRun,
@@ -17,6 +17,7 @@ import {
   type CreateRunInput,
   type DomainCatalog,
   type DomainCatalogDomain,
+  type DomainCatalogField,
   type PipelineDomainInput,
   type PrereqResolveData,
   type TestPlan,
@@ -28,6 +29,7 @@ import { getRuntimeMode } from '@/api/tahp/knowledge'
 import {
   ADAPT_WORKSPACES,
   getBuiltinDomainsForWorkspace,
+  type AdaptFieldType,
   type AdaptWorkspaceId,
   isAdaptWorkspaceId,
 } from '@/constants/adapt-domains'
@@ -75,6 +77,16 @@ const prereqData = ref<PrereqResolveData | null>(null)
 /** 勾选的工作区；默认功能适配 */
 const selectedWorkspaces = ref<AdaptWorkspaceId[]>(['adapt-debug'])
 
+interface WizardFieldSchema {
+  key: string
+  label: string
+  required?: boolean
+  type: AdaptFieldType
+  placeholder?: string
+  options?: Array<{ label: string; value: string }>
+  defaultValue?: string
+}
+
 interface WizardDomain {
   workspace_id: string
   domain_id: string
@@ -82,10 +94,15 @@ interface WizardDomain {
   module: string
   related_skills: string[]
   enabled: boolean
-  schema: Array<{ key: string; label: string; required?: boolean }>
+  schema: WizardFieldSchema[]
   form_data: Record<string, string>
   incomplete_required: string[]
   from_central: boolean
+}
+
+interface ChecklistRow {
+  name: string
+  code: string
 }
 
 const wizardDomains = ref<WizardDomain[]>([])
@@ -216,7 +233,12 @@ function domainKey(workspaceId: string, domainId: string): string {
   return `${workspaceId}::${domainId}`
 }
 
-function schemaFromBuiltin(workspaceId: string, domainId: string) {
+function normalizeFieldType(raw?: string): AdaptFieldType {
+  if (raw === 'select' || raw === 'textarea' || raw === 'checklist') return raw
+  return 'text'
+}
+
+function schemaFromBuiltin(workspaceId: string, domainId: string): WizardFieldSchema[] {
   if (!isAdaptWorkspaceId(workspaceId)) return []
   const def = getBuiltinDomainsForWorkspace(workspaceId).find(d => d.id === domainId)
   if (!def) return []
@@ -224,7 +246,76 @@ function schemaFromBuiltin(workspaceId: string, domainId: string) {
     key: f.name,
     label: f.label,
     required: f.required,
+    type: f.type,
+    placeholder: f.placeholder,
+    options: f.options?.map(o => ({ label: o.label, value: o.value })),
+    defaultValue: f.defaultValue,
   }))
+}
+
+/** 目录/layout schema 优先；缺 type/options/default 时用内置域补齐（对齐 AI 适配调试） */
+function enrichSchemaFromBuiltin(
+  workspaceId: string,
+  domainId: string,
+  catalogSchema: DomainCatalogField[],
+): WizardFieldSchema[] {
+  const builtin = schemaFromBuiltin(workspaceId, domainId)
+  if (!catalogSchema.length) return builtin
+  const byKey = new Map(builtin.map(f => [f.key, f]))
+  return catalogSchema.map((s) => {
+    const b = byKey.get(s.key)
+    return {
+      key: s.key,
+      label: s.label || b?.label || s.key,
+      required: s.required ?? b?.required ?? false,
+      type: normalizeFieldType(s.type || b?.type),
+      placeholder: s.placeholder ?? b?.placeholder,
+      options: (s.options?.length ? s.options : b?.options)?.map(o => ({
+        label: o.label,
+        value: o.value,
+      })),
+      defaultValue: s.defaultValue ?? b?.defaultValue,
+    }
+  })
+}
+
+function parseChecklistText(text?: string): ChecklistRow[] {
+  if (!text?.trim()) return []
+  return text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const tabIdx = line.indexOf('\t')
+      if (tabIdx >= 0) {
+        return {
+          name: line.slice(0, tabIdx).trim(),
+          code: line.slice(tabIdx + 1).trim(),
+        }
+      }
+      const match = line.match(/^(.*?)[\s\t]+(SF-[\w-]+)\s*$/i)
+      if (match) {
+        return { name: match[1].trim(), code: match[2].trim() }
+      }
+      return { name: line, code: line }
+    })
+    .filter(row => row.name || row.code)
+}
+
+function checklistDisplayText(field: WizardFieldSchema, formData: Record<string, string>): string {
+  const fromForm = String(formData[field.key] ?? '').trim()
+  if (fromForm) return fromForm
+  return field.defaultValue?.trim() || ''
+}
+
+function getSelectFieldValue(domain: WizardDomain, key: string): string | null {
+  const v = domain.form_data[key]
+  return v == null || v === '' ? null : v
+}
+
+function setDomainFieldValue(domain: WizardDomain, key: string, value: string) {
+  domain.form_data[key] = value
+  onDomainFieldChange(domain)
 }
 
 function resolveModule(workspaceId: string, domainId: string, hint?: string): string {
@@ -293,7 +384,9 @@ function recomputeIncomplete(domain: WizardDomain) {
   const missing: string[] = []
   for (const field of domain.schema) {
     if (!field.required) continue
-    const val = String(domain.form_data[field.key] ?? '').trim()
+    const val = field.type === 'checklist'
+      ? checklistDisplayText(field, domain.form_data)
+      : String(domain.form_data[field.key] ?? '').trim()
     if (!val) missing.push(field.key)
   }
   domain.incomplete_required = missing
@@ -368,6 +461,9 @@ function buildLocalCatalogDomains(): DomainCatalogDomain[] {
           label: f.label,
           required: f.required,
           type: f.type,
+          placeholder: f.placeholder,
+          options: f.options?.map(o => ({ label: o.label, value: o.value })),
+          defaultValue: f.defaultValue,
         })),
       })
     }
@@ -384,18 +480,16 @@ function buildWizardDomains(
   )
 
   return catalogDomains.map(cat => {
-    const builtinSchema = schemaFromBuiltin(cat.workspace_id, cat.domain_id)
-    const schema = builtinSchema.length
-      ? builtinSchema
-      : (cat.schema ?? []).map(s => ({
-          key: s.key,
-          label: s.label,
-          required: s.required,
-        }))
+    const schema = enrichSchemaFromBuiltin(
+      cat.workspace_id,
+      cat.domain_id,
+      cat.schema ?? [],
+    )
     const central = prereqMap.get(domainKey(cat.workspace_id, cat.domain_id))
     const formData: Record<string, string> = {}
     for (const field of schema) {
-      formData[field.key] = ''
+      // checklist：与 AI 适配调试一致，默认带上 layout/内置清单内容
+      formData[field.key] = field.type === 'checklist' ? (field.defaultValue ?? '') : ''
     }
     if (central?.form_data) {
       for (const [k, v] of Object.entries(central.form_data)) {
@@ -590,17 +684,26 @@ function goBack() {
 }
 
 function buildDomainsPayload(): PipelineDomainInput[] {
-  return enabledDomains.value.map(d => ({
-    workspace_id: d.workspace_id,
-    domain_id: d.domain_id,
-    domain_label: d.domain_label,
-    module: d.module,
-    related_skills: [...d.related_skills],
-    form_data: { ...d.form_data },
-    incomplete_required: [...d.incomplete_required],
-    enabled: true,
-    status: 'pending' as const,
-  }))
+  return enabledDomains.value.map((d) => {
+    const form_data = { ...d.form_data }
+    for (const field of d.schema) {
+      if (field.type !== 'checklist') continue
+      const text = checklistDisplayText(field, form_data)
+      if (text) form_data[field.key] = text
+      else delete form_data[field.key]
+    }
+    return {
+      workspace_id: d.workspace_id,
+      domain_id: d.domain_id,
+      domain_label: d.domain_label,
+      module: d.module,
+      related_skills: [...d.related_skills],
+      form_data,
+      incomplete_required: [...d.incomplete_required],
+      enabled: true,
+      status: 'pending' as const,
+    }
+  })
 }
 
 function buildCreateInput(): CreateRunInput {
@@ -815,15 +918,69 @@ onUnmounted(() => {
                 <span v-else class="pill muted-pill">需手工填写</span>
               </label>
               <div v-if="domain.enabled" class="fields">
-                <div v-for="field in domain.schema" :key="field.key" class="field inline">
+                <div
+                  v-for="field in domain.schema"
+                  :key="field.key"
+                  class="field"
+                  :class="{
+                    inline: field.type === 'text' || field.type === 'select',
+                    'field-full': field.type === 'textarea' || field.type === 'checklist',
+                  }"
+                >
                   <label>
                     {{ field.label }}
                     <span v-if="field.required" class="req">*</span>
                   </label>
+                  <NSelect
+                    v-if="field.type === 'select'"
+                    :value="getSelectFieldValue(domain, field.key)"
+                    :options="field.options ?? []"
+                    :placeholder="field.placeholder || '请选择'"
+                    clearable
+                    @update:value="(v: string | null) => setDomainFieldValue(domain, field.key, v == null ? '' : String(v))"
+                  />
+                  <div
+                    v-else-if="field.type === 'checklist'"
+                    class="checklist-table-wrap"
+                  >
+                    <NTable
+                      v-if="parseChecklistText(checklistDisplayText(field, domain.form_data)).length"
+                      :bordered="true"
+                      :single-line="false"
+                      size="small"
+                      class="checklist-table"
+                    >
+                      <thead>
+                        <tr>
+                          <th>特性编码</th>
+                          <th>特性名称</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="(row, rowIdx) in parseChecklistText(checklistDisplayText(field, domain.form_data))"
+                          :key="field.key + '-' + rowIdx"
+                        >
+                          <td><code>{{ row.code }}</code></td>
+                          <td>{{ row.name }}</td>
+                        </tr>
+                      </tbody>
+                    </NTable>
+                    <p v-else class="checklist-empty">暂无特性清单（与 AI 适配调试一致，请在适配调试「编辑布局」中配置）</p>
+                  </div>
                   <NInput
-                    v-model:value="domain.form_data[field.key]"
-                    :placeholder="field.label"
-                    @update:value="onDomainFieldChange(domain)"
+                    v-else-if="field.type === 'textarea'"
+                    type="textarea"
+                    :value="domain.form_data[field.key]"
+                    :placeholder="field.placeholder || field.label"
+                    :autosize="{ minRows: 3, maxRows: 6 }"
+                    @update:value="(v: string) => setDomainFieldValue(domain, field.key, v)"
+                  />
+                  <NInput
+                    v-else
+                    :value="domain.form_data[field.key]"
+                    :placeholder="field.placeholder || field.label"
+                    @update:value="(v: string) => setDomainFieldValue(domain, field.key, v)"
                   />
                 </div>
                 <p v-if="!domain.schema.length" class="muted">该域暂无表单字段，可直接启用。</p>
@@ -1282,6 +1439,29 @@ onUnmounted(() => {
   margin-top: 10px;
   display: grid;
   gap: 8px;
+}
+.field-full {
+  grid-column: 1 / -1;
+}
+.checklist-table-wrap {
+  width: 100%;
+  overflow: auto;
+}
+.checklist-table {
+  width: 100%;
+  font-size: 12.5px;
+  th, td {
+    padding: 6px 8px;
+    text-align: left;
+  }
+  code {
+    font-size: 12px;
+  }
+}
+.checklist-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
 }
 .field-error {
   color: var(--err, #b03351);

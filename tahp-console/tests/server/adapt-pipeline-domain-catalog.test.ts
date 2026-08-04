@@ -20,6 +20,27 @@ describe('adapt-pipeline domain-catalog', () => {
           schema_version: 1,
         }
       }
+      if (domainId === 'charging' && workspaceId === 'adapt-debug') {
+        return {
+          domain_id: 'charging',
+          fields: [{
+            name: 'mode',
+            label: '适配类型',
+            type: 'select',
+            required: true,
+            placeholder: '暂时必选upgrade',
+            options: [
+              { label: '老升新', value: 'upgrade' },
+              { label: '全新项目', value: 'greenfield' },
+            ],
+          }],
+          related_skills: ['pillar3-customization-input'],
+          revision: 1,
+          updated_at: new Date().toISOString(),
+          source: 'user',
+          schema_version: 1,
+        }
+      }
       return null
     })
 
@@ -44,6 +65,19 @@ describe('adapt-pipeline domain-catalog', () => {
       { key: 'debug_project', label: '调试项目名', required: true, type: 'text' },
     ])
     expect(tp.related_skills).toEqual(['tp-adapt-bringup'])
+
+    const charging = adaptDebug.domains.find(d => d.domain_id === 'charging')!
+    expect(charging.schema[0]).toMatchObject({
+      key: 'mode',
+      label: '适配类型',
+      type: 'select',
+      required: true,
+      placeholder: '暂时必选upgrade',
+      options: [
+        { label: '老升新', value: 'upgrade' },
+        { label: '全新项目', value: 'greenfield' },
+      ],
+    })
 
     const feature = catalog.workspaces.find(w => w.id === 'feature-adapt')!
     expect(feature.domains.map(d => d.domain_id)).toContain('scheduling')
