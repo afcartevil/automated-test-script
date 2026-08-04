@@ -92,10 +92,6 @@ onUnmounted(() => {
   store.stop()
 })
 
-watch(() => store.pendingHumanTotal, (count) => {
-  document.title = count > 0 ? `(${count}) TAHP 适配流水线` : 'TAHP 适配流水线'
-}, { immediate: true })
-
 watch(() => route.query.run, async (runId) => {
   if (typeof runId === 'string' && runId && runId !== store.selectedRunId) {
     await store.selectRun(runId)
