@@ -9,7 +9,6 @@ import {
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
-import EaPageHead from '@/components/layout/EaPageHead.vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPill from '@/components/layout/EaPill.vue'
 import EaInnerTabs from '@/components/layout/EaInnerTabs.vue'
@@ -105,18 +104,6 @@ const jiraStatus = ref<{ configured: boolean; connected: boolean; detail?: strin
 const jiraStatusLoading = ref(false)
 
 const jiraReady = computed(() => jiraStatus.value.configured && jiraStatus.value.connected)
-
-const jiraPillVariant = computed<'ok' | 'warn' | 'err'>(() => {
-  if (jiraReady.value) return 'ok'
-  if (jiraStatus.value.configured) return 'err'
-  return 'warn'
-})
-
-const jiraPillLabel = computed(() => {
-  if (jiraReady.value) return 'JIRA 已配置'
-  if (jiraStatus.value.configured) return '配置无效'
-  return '需配置 JIRA'
-})
 
 async function loadJiraStatus() {
   jiraStatusLoading.value = true
@@ -1611,20 +1598,6 @@ watch(
   <div class="page page-wide bug-analysis-root">
     <ModelProviderBanner />
 
-    <EaPageHead
-      title="智能诊断"
-      subtitle="基于 JIRA · 自动调用日志/分析 Skill · 实时可观察的根因定位"
-    >
-      <template #actions>
-        <button type="button" class="ea-btn-ghost ea-btn-sm" @click="goConfigureJira">
-          JIRA 配置
-        </button>
-        <EaPill :variant="jiraPillVariant">
-          {{ jiraPillLabel }}
-        </EaPill>
-      </template>
-    </EaPageHead>
-
     <div class="ea-split bug-split">
       <!-- Left: form + task list -->
       <div class="ea-stack bug-left">
@@ -2652,7 +2625,6 @@ watch(
   max-width: 100%;
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 120px);
   overflow: hidden;
 }
 
@@ -2703,11 +2675,6 @@ watch(
 .tab-pane {
   flex: 1; min-height: 0; min-width: 0; overflow: hidden;
   display: flex; flex-direction: column; padding-bottom: 8px;
-}
-.tab-pane-live,
-.tab-pane-report,
-.tab-pane-jira {
-  max-height: min(520px, calc(100vh - 360px));
 }
 
 .live-llm-panel {
@@ -2860,7 +2827,6 @@ watch(
   flex: 1;
   min-height: 0;
   min-width: 0;
-  max-height: min(480px, calc(100vh - 400px));
 }
 .report-markdown-inner {
   padding: 4px 12px 16px 4px;
@@ -2914,7 +2880,6 @@ watch(
 .log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 12px; flex-wrap: wrap; }
 .log-hint code { font-size: 11px; }
 .tab-pane-log {
-  max-height: min(520px, calc(100vh - 360px));
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -2922,7 +2887,6 @@ watch(
 .log-body {
   flex: 1;
   min-height: 0;
-  max-height: min(440px, calc(100vh - 420px));
   overflow: auto;
   background: #1b1e2b;
   color: #e7e9f2;
@@ -3059,6 +3023,26 @@ watch(
 code {
   background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
   font-size: 0.9em; font-family: ui-monospace, monospace;
+}
+
+/* Desktop: left column owns Grid row height; right card fills via absolute inset. */
+@media (min-width: 1101px) {
+  .bug-main-wrap {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .bug-main {
+    position: absolute;
+    inset: 0;
+    flex: none;
+    width: 100%;
+    height: 100%;
+  }
+
+  .bug-detail {
+    min-height: 0;
+  }
 }
 
 @media (max-width: 1100px) {
