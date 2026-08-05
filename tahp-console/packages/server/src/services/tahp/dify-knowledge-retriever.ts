@@ -46,7 +46,7 @@ const MODULE_TO_KB_TAG: Record<string, string> = {
  * On first resolve, encrypted via DPAPI LocalMachine into ~/.tahp-console/secrets.json.
  * Prefer env override TAHP_DIFY_API_KEY for local override; set TAHP_DIFY_SEARCH_ENABLED=0 to disable.
  */
-const DIFY_API_KEY_BOOTSTRAP = 'app-ADhD1rHJ0ndi6UrLTfOX1DyR'
+const DIFY_API_KEY_BOOTSTRAP = 'app-pIT6s5BvzERFSszjXsLo125d'
 
 let cachedKbTags: string[] | null = null
 let cachedKbTagsAt = 0
