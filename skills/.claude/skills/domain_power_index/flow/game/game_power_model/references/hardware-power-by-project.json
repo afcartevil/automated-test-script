@@ -1,0 +1,160 @@
+{
+  "source_url": "https://transsioner.feishu.cn/wiki/NWATwqEJiifoqRkcrygcLHKcnef?table=tbliLOHkosdbCdlQ&view=vewvz2zoGz",
+  "synced_at": "2026-08-03T14:46:28",
+  "notes": [
+    "由 game_power_model 从飞书同步生成；请以飞书表为准",
+    "按对比机型增量更新，未参与对比的机型条目会保留"
+  ],
+  "entries": [
+    {
+      "project": "LK7",
+      "version": "V1.1.5",
+      "config": "一供",
+      "device": "LK7",
+      "modules": {
+        "screen": 140.0,
+        "speaker": 90.0,
+        "cpu": 280.0,
+        "rf": 180.0,
+        "other_hw": 60.0
+      },
+      "note": "",
+      "updated": ""
+    },
+    {
+      "project": "LK6",
+      "version": "V2.0.1",
+      "config": "一供",
+      "device": "LK6",
+      "modules": {
+        "screen": 220.0,
+        "speaker": 150.0,
+        "cpu": 400.0,
+        "rf": 150.0,
+        "other_hw": 100.0
+      },
+      "note": "",
+      "updated": ""
+    },
+    {
+      "project": "LK7K",
+      "version": "V2.0.1",
+      "config": "一供",
+      "device": "LK7K",
+      "modules": {
+        "screen": 225.0,
+        "speaker": 155.0,
+        "cpu": 410.0,
+        "rf": 300.0,
+        "other_hw": 105.0
+      },
+      "note": "",
+      "updated": ""
+    },
+    {
+      "project": "X6877",
+      "version": "V1.9.8",
+      "config": "一供",
+      "device": "X6877",
+      "modules": {
+        "screen": 200.0,
+        "speaker": 130.0,
+        "cpu": 360.0,
+        "rf": 140.0,
+        "other_hw": 90.0
+      },
+      "note": "",
+      "updated": ""
+    },
+    {
+      "project": "X6891",
+      "version": "V3.1.0",
+      "config": "一供",
+      "device": "X6891",
+      "modules": {
+        "screen": 50.0,
+        "speaker": 30.0,
+        "cpu": 80.0,
+        "rf": 40.0,
+        "other_hw": 20.0
+      },
+      "note": "",
+      "updated": ""
+    },
+    {
+      "project": "CN6c",
+      "version": "V3.0.5",
+      "config": "一供",
+      "device": "CN6c",
+      "modules": {
+        "screen": 45.0,
+        "speaker": 25.0,
+        "cpu": 75.0,
+        "rf": 35.0,
+        "other_hw": 18.0
+      },
+      "note": "",
+      "updated": ""
+    },
+    {
+      "project": "KN4",
+      "version": "V4.2.0",
+      "config": "一供",
+      "device": "KN4",
+      "modules": {
+        "screen": 120.0,
+        "speaker": 80.0,
+        "cpu": 250.0,
+        "rf": 60.0,
+        "other_hw": 50.0
+      },
+      "note": "",
+      "updated": ""
+    },
+    {
+      "project": "X6895",
+      "version": "V4.1.8",
+      "config": "一供",
+      "device": "X6895",
+      "modules": {
+        "screen": 115.0,
+        "speaker": 75.0,
+        "cpu": 230.0,
+        "rf": 55.0,
+        "other_hw": 45.0
+      },
+      "note": "",
+      "updated": ""
+    },
+    {
+      "project": "CN6",
+      "version": "V1.2.0",
+      "config": "一供",
+      "device": "CN6",
+      "modules": {
+        "screen": 180.0,
+        "speaker": 120.0,
+        "cpu": 350.0,
+        "rf": 220.0,
+        "other_hw": 80.0
+      },
+      "note": "",
+      "updated": ""
+    },
+    {
+      "project": "X6878",
+      "version": "V1.2.0",
+      "config": "一供",
+      "device": "X6878",
+      "modules": {
+        "screen": 170.0,
+        "speaker": 120.0,
+        "cpu": 320.0,
+        "rf": 220.0,
+        "other_hw": 80.0
+      },
+      "note": "",
+      "updated": ""
+    }
+  ]
+}

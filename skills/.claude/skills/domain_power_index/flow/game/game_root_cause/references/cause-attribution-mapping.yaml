@@ -1,0 +1,129 @@
+# 步骤输出 → 澄清报告归因类别对标
+# 用户叙事步骤编号（日志识别=1…）与 flow SKILL 步骤略有偏移；以本表「narrative_step」为准。
+# 规则实现：cause-judgment-rules.yaml（category_id + pattern id）
+
+taxonomy:
+  diagnosis_categories:
+    - id: test_methodology
+      title: 测试手法不符
+      note: 含子类「日志不全」
+    - id: optimization_strategy
+      title: 软件策略差异
+    - id: feature_difference
+      title: 功能差异
+    - id: abnormal_situation
+      title: 异常问题
+  report_only:
+    - id: hardware_difference
+      title: 器件差异
+      note: 澄清报告器件功耗拆解表；不计入初步诊断四类
+
+mappings:
+  - narrative_step: 1
+    name: 日志识别
+    skill: game_time_window / log_inventory
+    category: test_methodology
+    subcategory: 日志不全
+    patterns: [log_no_logs, log_incomplete]
+    criterion: 监测日志不完整（mobile 核心 + bugreport）
+
+  - narrative_step: 2
+    name: 场景识别
+    skill: game_time_window
+    category: test_methodology
+    subcategory: 日志不全
+    patterns: [log_no_game_scene, log_scene_incomplete, log_duration_short, log_duration_mismatch]
+    criterion: 无测试场景时间段；或场景时长 < 3min；或双机场景时长不一致；或场景覆盖不全
+
+  - narrative_step: 3
+    name: 前置条件
+    skill: game_precondition
+    category: test_methodology
+    subcategory: 前置条件
+    patterns: [precond_mismatch, precond_network_wifi_uses_data, precond_network_data_uses_wifi, precond_auto_brightness_on]
+    criterion: 与测试用例标准不相符
+
+  - narrative_step: 5
+    name: 亮度分析
+    skill: game_brightness
+    items:
+      - category: test_methodology
+        subcategory: 亮度
+        patterns: [method_brightness_testcase, method_brightness_thermal_dim]
+        criterion: 亮度大小不符标准；触发温控降背光
+      - category: optimization_strategy
+        subcategory: 背光策略
+        patterns: [opt_backlight_2_0, opt_aal_strategy, opt_refresh_rate]
+        criterion: 背光2.0（仅最大亮度场景）；AAL 是否生效
+
+  - narrative_step: 6
+    name: 音量分析
+    skill: game_volume
+    category: test_methodology
+    subcategory: 音量
+    patterns: [method_volume_size, method_volume_channel]
+    criterion: 音量大小 / 通道不符测试用例标准
+
+  - narrative_step: 7
+    name: CPU/GPU/DDR分析
+    skill: game_cpu_gpu_ddr
+    items:
+      - category: test_methodology
+        subcategory: CPU/GPU/DDR
+        patterns: [method_cpu_thermal_throttle]
+        criterion: thermal 导致的限频
+      - category: optimization_strategy
+        subcategory: 调度/带宽/帧率
+        patterns: [opt_touch_boost_vs_competitor, opt_ddr_vs_competitor, opt_boost_lockscreen_vs_competitor, opt_fps_vs_competitor]
+        criterion: 滑动提频 / DDR / 提频锁屏 / 帧率与竞品差异（竞品与高帧认证表需 meta）
+
+  - narrative_step: 8
+    name: 异常进程
+    skill: game_kernel_cpu
+    category: abnormal_situation
+    subcategory: 异常进程
+    patterns: [abn_cpu_over_10_not_game, abn_process_over_baseline_20, abn_process_volatile, abn_background_process]
+    criterion: CPU>10% 且不在游戏表；超参考20%；波动大
+
+  - narrative_step: 9
+    name: 后台应用
+    skill: game_background
+    items:
+      - category: test_methodology
+        subcategory: 后台应用
+        patterns: [method_background_download]
+        criterion: 后台下载行为
+      - category: abnormal_situation
+        subcategory: 后台应用
+        patterns: [abn_autostart_too_many, abn_memory_over_10, abn_gc_storm]
+        criterion: 自启动>5或单次>30s；内存超10%；GC风暴
+
+  - narrative_step: 10
+    name: 网络变化分析
+    skill: game_network
+    category: abnormal_situation
+    subcategory: 网络
+    patterns: [abn_wifi_weak_or_volatile, abn_wifi_data_coexist, abn_cell_band_diff, abn_high_data_traffic, abn_weak_rf_power]
+    criterion: 弱信号(WiFi<-90 / 数据RSRP<-110)；WiFi切换+共存；驻网频段；流量过大
+
+  - narrative_step: 11
+    name: thermal影响
+    skill: game_thermal
+    category: optimization_strategy
+    subcategory: thermal策略
+    patterns: [opt_thermal_backlight_dim, opt_thermal_freq_throttle]
+    criterion: >
+      thermal降亮度 / thermal限频是否生效；生效则按档列出生效温度、亮度/限频细节与最高温度，
+      并附 T_game 温度曲线（标注温度数值）
+
+  - narrative_step: feature
+    name: 功能差异排查
+    skill: game_root_cause（关键词扫描）
+    category: feature_difference
+    patterns: [feat_game_assistant, feat_dynamic_island, feat_backlight_effect, feat_elevator_mode, feat_game_ai, feat_immersive_audio, feat_screen_record]
+    criterion: 功能特性异常信息
+
+report_summary:
+  clarify_html_section: 原因分析
+  category_order: [test_methodology, hardware_difference, optimization_strategy, feature_difference, abnormal_situation]
+  preliminary_diagnosis_excludes: [hardware_difference]

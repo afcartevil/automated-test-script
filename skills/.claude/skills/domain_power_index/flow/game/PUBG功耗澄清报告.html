@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PUBG 功耗澄清报告</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.1.0/tabler-icons.min.css">
+<style>
+  :root {
+    --color-background-primary: #ffffff;
+    --color-background-secondary: #f5f4f0;
+    --color-background-tertiary: #ebe9e3;
+    --color-text-primary: #2c2c2a;
+    --color-text-secondary: #5f5e5a;
+    --color-text-tertiary: #888780;
+    --color-text-danger: #a32d2d;
+    --color-text-success: #3b6d11;
+    --color-text-info: #185fa5;
+    --color-border-tertiary: rgba(44,44,42,0.15);
+    --border-radius-md: 8px;
+    --border-radius-lg: 12px;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+    --blue-50:#E6F1FB;   --blue-600:#185FA5;  --blue-800:#0C447C;
+    --purple-50:#EEEDFE; --purple-600:#534AB7; --purple-800:#3C3489;
+    --coral-50:#FAECE7;  --coral-600:#993C1D;  --coral-800:#712B13;
+    --amber-50:#FAEEDA;  --amber-600:#854F0B;  --amber-800:#633806;
+    --teal-50:#E1F5EE;   --teal-600:#0F6E56;   --teal-800:#085041;
+    --green-50:#EAF3DE;  --green-600:#3B6D11;  --green-800:#27500A;
+    --red-50:#FCEBEB;    --red-600:#A32D2D;    --red-800:#791F1F;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-background-primary: #1f1e1c;
+      --color-background-secondary: #2a2926;
+      --color-background-tertiary: #15140f;
+      --color-text-primary: #f1efe8;
+      --color-text-secondary: #b4b2a9;
+      --color-text-tertiary: #888780;
+      --color-text-danger: #f7c1c1;
+      --color-text-success: #c0dd97;
+      --color-text-info: #85b7eb;
+      --color-border-tertiary: rgba(241,239,232,0.15);
+
+      --blue-50:#0C447C;   --blue-600:#85B7EB;  --blue-800:#E6F1FB;
+      --purple-50:#3C3489; --purple-600:#AFA9EC; --purple-800:#EEEDFE;
+      --coral-50:#712B13;  --coral-600:#F0997B;  --coral-800:#FAECE7;
+      --amber-50:#633806;  --amber-600:#EF9F27;  --amber-800:#FAEEDA;
+      --teal-50:#085041;   --teal-600:#5DCAA5;   --teal-800:#E1F5EE;
+      --green-50:#27500A;  --green-600:#97C459;  --green-800:#EAF3DE;
+      --red-50:#791F1F;    --red-600:#F09595;    --red-800:#FCEBEB;
+    }
+    body { background: #15140f; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-text-primary);
+    margin: 0;
+    padding: 2.5rem 1rem;
+    background: var(--color-background-tertiary);
+    display: flex;
+    justify-content: center;
+  }
+  .report-card {
+    width: 100%;
+    max-width: 720px;
+    background: var(--color-background-primary);
+    border-radius: var(--border-radius-lg);
+    border: 0.5px solid var(--color-border-tertiary);
+    overflow: hidden;
+  }
+  .section { padding: 1.1rem 1.5rem; border-bottom: 0.5px solid var(--color-border-tertiary); }
+  .section:last-child { border-bottom: none; }
+  .section-title {
+    font-size: 12px; font-weight: 500; color: var(--color-text-secondary);
+    margin: 0 0 12px; display: flex; align-items: center; gap: 6px;
+  }
+  .section-title i { font-size: 14px; color: var(--color-text-tertiary); }
+  .icon-box {
+    width: 28px; height: 28px; border-radius: var(--border-radius-md);
+    display: flex; align-items: center; justify-content: center; flex: none;
+  }
+  .cond-item {
+    background: var(--color-background-secondary); border-radius: var(--border-radius-md);
+    padding: 8px 10px; display: flex; align-items: center; gap: 8px;
+  }
+  .cond-item i { font-size: 16px; color: var(--color-text-tertiary); flex: none; }
+  .cond-item .label { font-size: 11px; color: var(--color-text-tertiary); margin: 0; }
+  .cond-item .value { font-size: 13px; font-weight: 500; margin: 0; }
+  .metric-card { border-radius: var(--border-radius-md); padding: 10px; text-align: center; }
+  .device-row {
+    display: grid; grid-template-columns: 120px 90px 1fr; align-items: center;
+    background: var(--color-background-secondary); border-radius: var(--border-radius-md);
+    padding: 10px 12px; gap: 8px;
+  }
+  a { color: var(--color-text-info); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="report-card">
+
+  <div class="section" style="padding: 1.5rem 1.5rem 1.25rem; background: var(--color-background-secondary);">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <div class="icon-box" style="width: 38px; height: 38px; background: var(--coral-50); color: var(--coral-600);">
+          <i class="ti ti-device-gamepad-2" style="font-size: 20px;" aria-hidden="true"></i>
+        </div>
+        <span style="font-size: 17px; font-weight: 500;">PUBG 功耗澄清报告</span>
+      </div>
+      <span style="background: var(--red-50); color: var(--red-600); font-size: 12px; font-weight: 500; padding: 5px 14px; border-radius: var(--border-radius-md); display: flex; align-items: center; gap: 5px;">
+        <i class="ti ti-flame" style="font-size: 14px;" aria-hidden="true"></i>P2
+      </span>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 100px 1fr 100px 1fr; gap: 10px 0; align-items: center;">
+      <div style="display: flex; align-items: center; gap: 6px; color: var(--color-text-secondary); font-size: 13px;">
+        <i class="ti ti-hash" style="font-size: 15px;" aria-hidden="true"></i>单号
+      </div>
+      <span style="font-size: 13px; font-weight: 500;">xxxxxxxx</span>
+      <div style="display: flex; align-items: center; gap: 6px; color: var(--color-text-secondary); font-size: 13px;">
+        <i class="ti ti-device-mobile" style="font-size: 15px;" aria-hidden="true"></i>机型
+      </div>
+      <span style="font-size: 13px; font-weight: 500;">xxx / xxx</span>
+
+      <div style="display: flex; align-items: center; gap: 6px; color: var(--color-text-secondary); font-size: 13px;">
+        <i class="ti ti-link" style="font-size: 15px;" aria-hidden="true"></i>问题链接
+      </div>
+      <a href="#" style="font-size: 13px; word-break: break-all; grid-column: span 3;">https://xxxxx.xxx/issue/xxxxxx</a>
+    </div>
+  </div>
+
+  <div class="section">
+    <p class="section-title"><i class="ti ti-settings" aria-hidden="true"></i>测试条件</p>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+      <div class="cond-item"><i class="ti ti-plane" aria-hidden="true"></i><div><p class="label">飞行模式</p><p class="value">关</p></div></div>
+      <div class="cond-item"><i class="ti ti-nfc" aria-hidden="true"></i><div><p class="label">NFC</p><p class="value">开</p></div></div>
+      <div class="cond-item"><i class="ti ti-bluetooth" aria-hidden="true"></i><div><p class="label">蓝牙</p><p class="value">开</p></div></div>
+      <div class="cond-item"><i class="ti ti-hand-stop" aria-hidden="true"></i><div><p class="label">手势</p><p class="value">关</p></div></div>
+      <div class="cond-item"><i class="ti ti-sun-low" aria-hidden="true"></i><div><p class="label">自动背光</p><p class="value">关</p></div></div>
+      <div class="cond-item"><i class="ti ti-sparkles" aria-hidden="true"></i><div><p class="label">灯效</p><p class="value">开</p></div></div>
+      <div class="cond-item"><i class="ti ti-sun" aria-hidden="true"></i><div><p class="label">亮度/音量</p><p class="value">最大</p></div></div>
+      <div class="cond-item"><i class="ti ti-wifi" aria-hidden="true"></i><div><p class="label">网络</p><p class="value">WiFi</p></div></div>
+      <div class="cond-item"><i class="ti ti-sim-card" aria-hidden="true"></i><div><p class="label">SIM卡</p><p class="value">插卡</p></div></div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 12px; color: var(--color-text-tertiary);">
+      <i class="ti ti-clock" style="font-size: 14px;" aria-hidden="true"></i>
+      <span>测试时长 10min（16:05:02 → 16:15:02）</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <p class="section-title"><i class="ti ti-chart-bar" aria-hidden="true"></i>测试数据对比</p>
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+      <div class="metric-card" style="background: var(--color-background-secondary);">
+        <p style="font-size: 11px; color: var(--color-text-tertiary); margin: 0 0 4px;">竞品机</p>
+        <p style="font-size: 16px; font-weight: 500; margin: 0;">xxx</p>
+      </div>
+      <div class="metric-card" style="background: var(--color-background-secondary);">
+        <p style="font-size: 11px; color: var(--color-text-tertiary); margin: 0 0 4px;">测试机</p>
+        <p style="font-size: 16px; font-weight: 500; margin: 0;">xxx</p>
+      </div>
+      <div class="metric-card" style="background: var(--amber-50);">
+        <p style="font-size: 11px; margin: 0 0 4px; color: var(--amber-600);">差异</p>
+        <p style="font-size: 16px; font-weight: 500; margin: 0; color: var(--amber-800);">xx</p>
+      </div>
+      <div class="metric-card" style="background: var(--teal-50);">
+        <p style="font-size: 11px; margin: 0 0 4px; color: var(--teal-600);">去掉器件差异</p>
+        <p style="font-size: 16px; font-weight: 500; margin: 0; color: var(--teal-800);">xx</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <p class="section-title"><i class="ti ti-bolt" aria-hidden="true"></i>器件功耗拆解</p>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div class="device-row">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="icon-box" style="background: var(--blue-50); color: var(--blue-600);"><i class="ti ti-device-mobile" style="font-size: 15px;" aria-hidden="true"></i></div>
+          <span style="font-size: 13px; font-weight: 500;">屏</span>
+        </div>
+        <span style="color: var(--color-text-danger); font-weight: 500; font-size: 13px; display: flex; align-items: center; gap: 3px;">
+          <i class="ti ti-arrow-up" style="font-size: 14px;" aria-hidden="true"></i>xx mA
+        </span>
+        <span style="color: var(--color-text-secondary); font-size: 13px;">xx</span>
+      </div>
+      <div class="device-row">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="icon-box" style="background: var(--purple-50); color: var(--purple-600);"><i class="ti ti-volume" style="font-size: 15px;" aria-hidden="true"></i></div>
+          <span style="font-size: 13px; font-weight: 500;">喇叭</span>
+        </div>
+        <span style="color: var(--color-text-success); font-weight: 500; font-size: 13px; display: flex; align-items: center; gap: 3px;">
+          <i class="ti ti-arrow-down" style="font-size: 14px;" aria-hidden="true"></i>xx mA
+        </span>
+        <span style="color: var(--color-text-secondary); font-size: 13px;">xx</span>
+      </div>
+      <div class="device-row">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="icon-box" style="background: var(--coral-50); color: var(--coral-600);"><i class="ti ti-cpu" style="font-size: 15px;" aria-hidden="true"></i></div>
+          <span style="font-size: 13px; font-weight: 500;">CPU</span>
+        </div>
+        <span style="color: var(--color-text-danger); font-weight: 500; font-size: 13px; display: flex; align-items: center; gap: 3px;">
+          <i class="ti ti-arrow-up" style="font-size: 14px;" aria-hidden="true"></i>xx mA
+        </span>
+        <span style="color: var(--color-text-secondary); font-size: 13px;">xx</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <p class="section-title"><i class="ti ti-bulb" aria-hidden="true"></i>原因分析</p>
+    <div style="display: flex; flex-direction: column; gap: 10px;">
+      <div style="display: flex; gap: 10px; align-items: flex-start;">
+        <span style="background: var(--green-50); color: var(--green-600); border-radius: 50%; width: 22px; height: 22px; min-width: 22px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500;">1</span>
+        <div>
+          <p style="margin: 0; font-size: 14px; font-weight: 500;">测试手法</p>
+          <p style="margin: 3px 0 0; font-size: 13px; color: var(--color-text-secondary);">a. 日志不全</p>
+        </div>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: flex-start;">
+        <span style="background: var(--color-background-secondary); border-radius: 50%; width: 22px; height: 22px; min-width: 22px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; color: var(--color-text-tertiary);">2</span>
+        <p style="margin: 0; font-size: 14px; color: var(--color-text-tertiary);">待补充</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

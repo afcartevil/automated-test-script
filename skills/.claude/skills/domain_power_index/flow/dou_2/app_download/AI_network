@@ -1,0 +1,62 @@
+
+1. ai断网
+- 日志TAG: NetOpt
+- 所属日志类型：mainlog
+
+触发断网（关网）
+- 数据网待机：
+"controlNet data: false"
+
+- wifi待机：
+"controlNet wifi: false"
+
+例：5796  7157 I Usf_NetOpt/NetController: controlNet wifi: false
+
+退出断网（开网）
+- 数据网待机：
+"controlNet data: true"
+
+- wifi待机：
+"controlNet wifi: true"
+
+例：5796  7157 I Usf_NetOpt/NetController: controlNet wifi: true
+
+无法进入断网（阻塞断网执行）
+存在阻塞断网的重要场景，或当前尚不满足断网的条件。
+
+- 睡眠时间未到：
+"not sleeping !"
+例：Usf_NetOpt/AiNetControllerService: not sleeping !
+
+
+
+- 灭屏时间尚未满足：
+"scr_off duration not met !"
+
+
+- 检测到OTA（存在夜间下载ota升级包可能）
+"ota hanging !"
+
+
+- 热点已开启：
+"wifi_ap on !"
+
+
+- pc互联已连接：
+"pc connected!"
+
+
+- 音频播放中：
+"audio playing !"
+
+
+- tranEngine活跃:
+传音自行开发的LOG系统的核心能力，用于将设备中已经打包好的日志信息回传到公司服务器上，
+"tran engine enabled !"
+
+
+断网中断（策略提前退出）
+
+- tranEngine触发上传业务：
+"updateUsfNetPolicyBlockSourceState usfBLockSource : tranengine=1"
+例：21:45:00.071496:5852.I Usf Usf/systemStateManagger: updateUsfNetPolicyBlockSourceState usfBLockSource: tranengine=1

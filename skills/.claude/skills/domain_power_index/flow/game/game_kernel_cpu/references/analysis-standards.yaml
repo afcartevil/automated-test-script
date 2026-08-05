@@ -1,0 +1,12 @@
+# Kernel CPU 分析阈值
+
+version: 1
+evidence_cap: 40
+
+thresholds:
+  spike_usage_pp: 10
+  single_shot_min_usage_pct: 10
+  persistent_min_sample_ratio: 0.4
+  persistent_min_occurrence: 3
+  log_correlation_seconds: 10
+  log_correlation_max_lines_per_source: 5

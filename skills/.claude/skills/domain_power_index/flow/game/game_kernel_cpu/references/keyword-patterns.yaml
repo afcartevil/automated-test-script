@@ -1,0 +1,54 @@
+# Kernel [K] 与 cpufreq 占位关键词；块解析见 game_power_parser.parse_kernel
+
+categories:
+  kernel_perf_block:
+    description: '[K][Perf] TRAN Perf Statistic 块内行'
+    patterns:
+      - id: perf_stat_start
+        status: active
+        logs: [kernel_log]
+        keywords: ['[K][Perf]', 'TRAN Perf Statistic start']
+        regex: '\[K\]\[Perf\]\s+TRAN Perf Statistic start \((?P<ts>[^)]+)\)'
+        example: '[K][Perf] TRAN Perf Statistic start (04-21 10:20:01)'
+
+      - id: perf_thread_usage
+        status: active
+        logs: [kernel_log]
+        keywords: ['[K]', Usage]
+        regex: '\[K\]\s+(?P<usage>\d+)%\s+(?P<pid>\d+)\s+(?P<name>.+?)\s+(?P<total_ns>\d+)\(ns\)\s+(?P<oom_adj>-?\d+)'
+        example: '[K]       24%         1928               system_server           2424297027(ns)                -900'
+
+      - id: cpus_usage
+        status: active
+        logs: [kernel_log]
+        keywords: ['[K]', 'Cpus Usage']
+        regex: '\[K\]\s+Cpus Usage (?P<cpu_usages>.+)'
+        example: '[K]  Cpus Usage [38], [31], [30], [31], [14] [13], [10], [ 7]'
+
+      - id: cpu_total_breakdown
+        status: active
+        logs: [kernel_log]
+        keywords: ['[K]', 'user[']
+        regex: '\[K\]\s+user\[(?P<user>\d+)\],system\[(?P<system>\d+)\],iowait\[(?P<iowait>\d+)\],irq\[(?P<irq>\d+)\],idle\[(?P<idle>\d+)\]'
+        example: '[K]  user[08],system[10],iowait[00],irq[02],idle[77]'
+
+      - id: perf_stat_done
+        status: active
+        logs: [kernel_log]
+        keywords: ['[K][Perf]', done]
+        regex: '\[K\]\[Perf\]\s+TRAN Perf Statistic done'
+
+  cpufreq:
+    description: CPU 频率相关（占位）
+    patterns:
+      - id: mtk_cpufreq
+        status: placeholder
+        logs: [kernel_log]
+        keywords: [mtk_cpufreq, cpufreq]
+        regex: ''
+
+      - id: sched_freq
+        status: placeholder
+        logs: [kernel_log, main_log]
+        keywords: [sched_freq, cpu_frequency]
+        regex: ''

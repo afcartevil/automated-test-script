@@ -1,0 +1,141 @@
+# 温控关键词；阈值见 analysis-standards.yaml
+
+primary_logs: [sys_log]
+supplement_logs: [main_log]
+throttle_statuses: [LIGHT, MODERATE, SEVERE, CRITICAL, EMERGENCY, SHUTDOWN]
+
+categories:
+  temperature_sample:
+    description: 温控温度采样（sys 为主）
+    patterns:
+      - id: thermal_light_level
+        status: active
+        logs: [sys_log]
+        keywords: [thermalLightController, Level-]
+        regex: 'thermalLightController: Level-(?P<level>\d+) :(?P<package>[^,]+), .*?temp=(?P<temp>[\d.]+), level=(?P<level_idx>\d+), isLevelUpgrade=(?P<upgrade>true|false), brightnessNits=(?P<nits>\d+)'
+
+      - id: thermal_skin_temp
+        status: active
+        logs: [main_log, sys_log]
+        # keywords 为 OR：必须用 regex 限定 SKIN，否则 fill_temperatures 的 CPU 行也会命中
+        keywords: [fill_temperatures, SKIN]
+        regex: 'fill_temperatures.*name: (?P<sensor>SKIN)\b.*throttlingStatus: (?P<throttle_status>\w+) value: (?P<temp>[\d.]+)'
+        note: 仅 SKIN 传感器；勿用 \\w+ 以免串入 CPU 造成假锯齿曲线
+
+      - id: thermal_cpu_fill_temp
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [fill_temperatures]
+        regex: 'fill_temperatures.*name: (?P<sensor>CPU|SOC|AP|CPU_BIG|CPU_LITTLE|CPU0|CPU1|Tj|TJ).*throttlingStatus: (?P<throttle_status>\w+) value: (?P<temp>[\d.]+)'
+        note: CPU/SoC 类传感器温度；有则画 CPU 曲线
+
+      - id: tscpu_temp
+        status: active
+        logs: [kernel_log, main_log, sys_log]
+        keywords: [mtktscpu, tscpu]
+        regex: '(?:mtktscpu|tscpu)[^\\n]{0,80}?(?:temp|T)=?\s*(?P<temp>[\d.]+)'
+        note: MTK tscpu 内核/服务温度；值为 ℃ 或需 /1000 的毫℃ 见解析侧
+
+      - id: thermal_engine_tj
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [ThermalEngine, Tcpu, Tj]
+        regex: '(?:Tcpu|Tj|CPU_temp|cpu_temp)\s*[=:]\s*(?P<temp>[\d.]+)'
+
+  thermal_backlight:
+    description: 温控降背光
+    patterns:
+      - id: thermal_light_upgrade
+        status: active
+        logs: [sys_log]
+        keywords: [thermalLightController, isLevelUpgrade=true]
+        regex: 'thermalLightController: Level-(?P<level>\d+) :(?P<package>[^,]+), .*?temp=(?P<temp>[\d.]+), level=(?P<level_idx>\d+), isLevelUpgrade=true, brightnessNits=(?P<nits>\d+)'
+
+      - id: thermal_light_update_brightness
+        status: active
+        logs: [sys_log]
+        keywords: [thermalLightController, updateBrightness]
+        regex: 'thermalLightController: updateBrightness'
+
+      - id: display_power_thermal_light
+        status: active
+        logs: [sys_log]
+        keywords: [DisplayPowerController, thermalLight]
+        regex: 'DisplayPowerController\[\d+\]: thermalLight brightnessState: (?P<brightness>[\d.]+)'
+
+      - id: thermal_light_normal_nits
+        status: active
+        logs: [sys_log]
+        keywords: [thermalLightController, targetNits]
+        regex: 'thermalLightController: Normal: targetNits=(?P<nits>\d+)'
+
+  tran_thermal_engine:
+    description: MTK Usf_ThermalService / tran_thermal_engine 自研温控引擎
+    patterns:
+      - id: tran_thermal_engine_vt_shell
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [Usf_ThermalService, tran_thermal_engine, updateVtShellTemperature]
+        regex: '\[tran_thermal_engine\].*?event=(?P<event>\w+),\s*op=(?P<op>\w+).*?temp=(?P<temp>[\d.]+)C?,\s*level=(?P<level>\d+),\s*scene=(?P<scene>[^,]+),.*?fgPkg=(?P<fg_pkg>[^,]+),.*?fgAct=(?P<fg_act>[^,]+),.*?gameMode=(?P<game_mode>\d+),\s*gameFuncMode=(?P<game_func_mode>\d+),\s*curFps=(?P<cur_fps>\d+),\s*touch=(?P<touch>\w+),.*?limits\{(?P<limits>[^}]+)\}'
+        example: '[tran_thermal_engine] event=updateVtShellTemperature, op=reset, temp=33.282C, level=35, scene=scene_game, fgPkg=com.mobile.legends, limits{cpu=0,gpu=0,...}'
+        # event=updateVtShellTemperature 更新整机壳温；op=reset 重置游戏场景温控参数
+        # temp 壳温(℃)；level 温控分级(越小越宽松)；scene=scene_game 游戏负载
+        # limits 任一项>0 → 对应 CPU/GPU/亮度/刷新率等被温控约束
+
+  thermal_throttle_freq:
+    description: 温控限频
+    patterns:
+      - id: thermal_engine_type_min_cpu
+        status: active
+        logs: [main_log]
+        keywords: [ThermalEngineTypeData, min_cpu_freq]
+        regex: 'ThermalEngineTypeData:\s*setTypePolicy\s+name[：:]\s*min_cpu_freq,\s*value:\s*(?P<value>[^\s]+)'
+
+      - id: thermal_service_throttle
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [thermal-service, throttlingStatus]
+        regex: 'fill_temperatures.*name: (?P<sensor>\w+).*throttlingStatus: (?P<throttle_status>\w+) value: (?P<temp>[\d.]+)'
+
+      - id: thermal_engine_thermalux
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [ThermalEngine, thermalux]
+        regex: 'ThermalEngine: \[thermalux\] cpu: (?P<cpu>\d+), thermal engine request frequency: (?P<thermal_freq>-?\d+), thermalux request frequency: (?P<thermalux_freq>-?\d+)'
+
+      - id: mtk_thermal_ux_policy
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [MtkThermalEngineClient, 'apply thermal ux policy']
+        regex: 'MtkThermalEngineClient: apply thermal ux policy:(?P<policy>\[[^\]]+\]) duration:(?P<duration>\d+)'
+
+      - id: thermal_engine_module
+        status: placeholder
+        logs: [sys_log, main_log]
+        keywords: [ThermalEngineModule, ThermalEngine]
+        regex: ''
+
+      - id: powerhal_thermal_limit
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [libPowerHal, thermal, limit]
+        regex: ''
+
+  investigation:
+    description: 两步温控排查（T_game）
+    patterns:
+      - id: step1_tran_thermal_engine
+        status: active
+        logs: [main_log]
+        keywords: [tran_thermal_engine]
+        category: thermal_engine
+      - id: step1_skin_temp
+        status: active
+        logs: [main_log]
+        keywords: [fill_temperatures, SKIN]
+        category: skin_temperature
+      - id: step2_min_cpu_freq
+        status: active
+        logs: [main_log]
+        keywords: [ThermalEngineTypeData, min_cpu_freq]
+        category: cpu_intervention

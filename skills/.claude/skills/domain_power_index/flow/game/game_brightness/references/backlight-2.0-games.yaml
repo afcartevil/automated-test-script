@@ -1,0 +1,21 @@
+# 背光 2.0 游戏名单（仅最大亮度场景生效）
+# package: 完整包名；brightness_drop_pct: 该游戏背光 2.0 亮度下降比例（%），与 DisplayPowerController brt=(XX%) 对照
+
+version: 1
+
+games:
+  - name: MLBB
+    package: com.mobile.legends
+    brightness_drop_pct: 63.0
+  - name: 王者荣耀
+    package: com.tencent.tmgp.sgame
+    brightness_drop_pct: 63.0
+  - name: 和平精英
+    package: com.tencent.tmgp.pubgmhd
+    brightness_drop_pct: 63.0
+  - name: PUBG Mobile
+    package: com.tencent.ig
+    brightness_drop_pct: 63.0
+  - name: 原神（国际服）
+    package: com.miHoYo.GenshinImpact
+    brightness_drop_pct: 63.0

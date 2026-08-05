@@ -1,0 +1,36 @@
+# 亮度和音量表（本地镜像）
+# 来源：https://transsioner.feishu.cn/wiki/TTAVwmmIrif4uoknp1rcqRatn2V?sheet=4258R0
+#
+# 飞书列映射：
+#   basic（基础场景）← 350nit 列 / 72dB 列
+#     brightness_level ↔ BrightnessCollector 等级（0–255）
+#     volume_index     ↔ TranAuraController volume
+#   nps（NPS场景）← 最大亮度 列 / 最大音量 列
+#     对齐优先级：brightness_level(0-255) > HWC 曲线(0-4095) > brightness_nits
+#     volume_index     ↔ TranAuraController volume（最大音量）
+#
+# 350nit / 72dB 是物理标定说明；基础场景用等级；NPS 最大亮度优先用 level。
+
+source_url: "https://transsioner.feishu.cn/wiki/TTAVwmmIrif4uoknp1rcqRatn2V?sheet=4258R0"
+
+physical_standard:
+  brightness_nits: 350
+  volume_db: 72
+
+default_test_case: basic
+
+projects:
+  项目1:
+    aliases: []
+    basic:
+      brightness_level: 140
+      volume_index: 13
+    nps: {}
+  项目2:
+    aliases: []
+    basic: {}
+    nps: {}
+  项目3:
+    aliases: []
+    basic: {}
+    nps: {}

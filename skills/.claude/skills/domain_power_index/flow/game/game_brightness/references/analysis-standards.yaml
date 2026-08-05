@@ -1,0 +1,23 @@
+# 亮度分析阈值（规则在 YAML，判定在 game_brightness_lib.py）
+# 测试亮度：按飞书「亮度和音量表」项目×用例的 brightness_level 与日志等级比对
+# 表文件：../game_precondition/references/brightness-volume-by-project.yaml
+# 350nit 为物理标定，不直接比对日志。
+
+version: 1
+evidence_cap: 40
+
+thresholds:
+  entry_window_seconds: 60
+  launch_window_seconds: 20
+  thermal_correlation_seconds: 30
+  min_level_delta: 20
+  min_curve_delta: 20
+  merge_burst_seconds: 2
+  # AAL：回看场景起点；间隔超过该阈值视为「进入游戏后」新一段
+  aal_lookback_seconds: 60
+  aal_segment_gap_seconds: 5
+  curve_max: 4095
+  level_max: 255
+  backlight_2_brt_pct_tolerance: 5.0
+  brightness_level_tolerance: 0
+  brightness_nits_tolerance: 20
