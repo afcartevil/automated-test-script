@@ -1887,8 +1887,10 @@ function evaluateModemBuildResult(result: HarnessResult, extraEvidence = ''): bo
     || /ninja:\s+build\s+stopped/i.test(combined)
     || /\[build\]\s*failed\b/i.test(combined)
 
+  const exitOk = /__APM_BUILD_EXIT__:\s*0\b/.test(combined)
+
   if (failureMarker) return false
-  if (successMarker) return true
+  if (successMarker || exitOk) return true
 
   // Harness bridge 经常在远端 make 已失败或输出被截断时仍返回 status=ok/exit_code=0。
   // 没有明确成功标记时，不能仅凭 bridge 退出码判成功。
@@ -2321,9 +2323,11 @@ async function runModemBuildAfterResume(
   appendLog(`[build] start project=${project} cmd=./tools/bld_modem.sh ${project}\n`)
 
   // 在命令末尾打印真实 shell 退出码，避免 harness bridge 的 exit_code 掩盖 make 失败。
-  const command = `cd ${shellSingleQuote(remote)} && ./tools/bld_modem.sh ${shellSingleQuote(project)}; rc=$?; echo __APM_BUILD_EXIT__:\${rc}; exit \${rc}`
+  const buildScript = `set +e; logout(){ :; }; ./tools/bld_modem.sh ${shellSingleQuote(project)} >/dev/null 2>&1; rc=$?; echo __APM_BUILD_EXIT__:$rc; true`
+  const command = `cd ${shellSingleQuote(remote)} && bash -lc ${shellSingleQuote(buildScript)}`
   const BUILD_TIMEOUT_MS = 6 * 60 * 60 * 1000
   appendLog(`[build] harness timeout_sec=${Math.ceil(BUILD_TIMEOUT_MS / 1000)}\n`)
+  appendLog(`[build] modem\u7f16\u8bd1\u4e2d\uff0c\u9884\u8ba110~20\u5206\u949f\uff08\u89c6\u673a\u5668\u8d1f\u8f7d\uff09\n`)
   try {
     const result = await harnessExec(command, { timeoutMs: BUILD_TIMEOUT_MS })
     const output = String(result.output ?? '').trim()
