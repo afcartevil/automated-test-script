@@ -420,7 +420,7 @@ function onBuildKindChange(kind: 'whole_device' | 'native_module') {
   buildContext.build_skill_id = kind === 'native_module'
     ? 'harness-build-native'
     : 'harness-build-whole-device'
-  // 刷机仍走 Console device_update；保留默认值供后端兼容
+  // 整包刷机默认 harness-device（用户 skill 目录）；失败时后端降级 device_update
   buildContext.flash_skill_id = 'harness-device'
   buildContext.flash_mode = 'full_rom'
 }
@@ -999,7 +999,7 @@ onUnmounted(() => {
     <div v-else-if="step === 3" class="step-body">
       <h2>配置执行环境</h2>
       <p class="step-hint">
-        编译走本机 harness Skill（整机 / 模块自动绑定）；烧录走 Console 内置刷机，不要求你再选 Skill。
+        编译走本机 harness Skill（整机 / 模块自动绑定）；整包烧录优先走用户目录下的刷机 Skill（默认 harness-device），失败时自动降级 device_update。
         <span v-if="harnessSkillsLoading">正在检测 Skill…</span>
         <span v-else-if="harnessSkillRoots.length" class="muted">
           检测：整机 {{ hasWholeDeviceSkill ? '✓' : '✗' }} · 模块 {{ hasNativeSkill ? '✓' : '✗' }} · 刷机工具 {{ hasFlashSkill ? '✓' : '—' }}
@@ -1143,7 +1143,7 @@ onUnmounted(() => {
 
       <h3 class="sub-title">烧录 / 自检 / 入库</h3>
       <p class="field-hint section-hint">
-        烧录自动使用编译产物路径；当前由 Console 调用 device_update，无需再选刷机 Skill。
+        整包烧录使用 build_context.flash_skill_id（默认 harness-device）；单镜像走 harness-flash-single-img。无 harness 时自动改用 device_update。
       </p>
       <div class="field-row">
         <div class="field">

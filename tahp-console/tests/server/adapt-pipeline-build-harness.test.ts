@@ -4,8 +4,11 @@ import { join, normalize } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   defaultBuildSkillId,
+  defaultFlashSkillId,
   listHarnessSkillRoots,
   listHarnessSkills,
+  listUserHarnessSkillRoots,
+  resolveUserHarnessSkillPath,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/harness-skill-registry'
 import {
   normalizeBuildResult,
@@ -70,6 +73,21 @@ describe('harness-skill-registry', () => {
     expect(defaultBuildSkillId('whole_device')).toBe('harness-build-whole-device')
     expect(defaultBuildSkillId('native_module')).toBe('harness-build-native')
     expect(defaultBuildSkillId(undefined)).toBe('harness-build')
+  })
+
+  it('resolveUserHarnessSkillPath reads user skill roots excluding project skills dir', () => {
+    expect(defaultFlashSkillId()).toBe('harness-device')
+    expect(listUserHarnessSkillRoots()).toContain(root)
+    const onlyInTemp = 'harness-flash-registry-test'
+    mkdirSync(join(root, onlyInTemp))
+    writeFileSync(
+      join(root, onlyInTemp, 'SKILL.md'),
+      `---\nname: ${onlyInTemp}\ndescription: test\n---\n`,
+    )
+    const resolved = resolveUserHarnessSkillPath(onlyInTemp)
+    expect(resolved).not.toBeNull()
+    expect(resolved!.replace(/\\/g, '/')).toContain(`${root.replace(/\\/g, '/')}/${onlyInTemp}/SKILL.md`)
+    expect(resolveUserHarnessSkillPath('missing-skill-xyz')).toBeNull()
   })
 })
 

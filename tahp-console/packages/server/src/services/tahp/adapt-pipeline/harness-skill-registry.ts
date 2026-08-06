@@ -121,6 +121,23 @@ export function resolveHarnessSkillPath(skillId: string): string | null {
   return null
 }
 
+/** 用户本机 skill 根（~/.claude/skills 与 TAHP_HARNESS_SKILL_ROOTS），不含工程 skills 目录 */
+export function listUserHarnessSkillRoots(): string[] {
+  const projectKey = tahpPaths.skillsDir.replace(/\\/g, '/').toLowerCase()
+  return listHarnessSkillRoots().filter(
+    r => r.replace(/\\/g, '/').toLowerCase() !== projectKey,
+  )
+}
+
+/** 整包刷机等：优先用户目录下的 harness skill */
+export function resolveUserHarnessSkillPath(skillId: string): string | null {
+  for (const root of listUserHarnessSkillRoots()) {
+    const p = join(root, skillId, 'SKILL.md')
+    if (existsSync(p)) return p
+  }
+  return null
+}
+
 export function defaultBuildSkillId(buildKind: 'whole_device' | 'native_module' | undefined): string {
   if (buildKind === 'native_module') return 'harness-build-native'
   if (buildKind === 'whole_device') return 'harness-build-whole-device'

@@ -1,8 +1,9 @@
 /**
- * 烧录降级 / 单镜像：Agent + harness skill
- * - 整包降级：harness-device（%USERPROFILE%\.claude\skills）
- * - 单镜像：工程 skills/.claude/skills/harness-flash-single-img
+ * 烧录 harness 路径：Agent + 用户目录 harness skill
+ * - 整包：build_context.flash_skill_id（默认 harness-device）
+ * - 单镜像：harness-flash-single-img（用户目录优先，工程 skills 回退）
  */
+import { existsSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { join } from 'path'
 import { logger } from '../../logger'
@@ -16,7 +17,10 @@ import { filterBridgeToolCallMarkupDelta } from '../../hermes/run-chat/bridge-de
 import { assertHarnessCliReady } from '../harness-version-gate'
 import { humanizeAgentError } from '../adapt-agent-health'
 import { tahpPaths } from '../paths'
-import { resolveHarnessSkillPath } from './harness-skill-registry'
+import {
+  defaultFlashSkillId,
+  resolveUserHarnessSkillPath,
+} from './harness-skill-registry'
 
 const bridgeClient = new AgentBridgeClient({ timeoutMs: 2 * 60 * 60_000 })
 
@@ -26,6 +30,8 @@ export interface HarnessFlashInput {
   pipelineRunId: string
   mode: HarnessFlashMode
   deviceId: string
+  /** 整包刷机 skill（默认 harness-device，来自 build_context.flash_skill_id） */
+  flashSkillId?: string
   /** 整包：ROM 目录/zip/scatter */
   romPath?: string
   /** 单镜像源路径 */
@@ -41,17 +47,31 @@ export interface HarnessFlashResult {
   logs: string[]
 }
 
-function resolveFlashSkill(mode: HarnessFlashMode): { skillId: string; skillPath: string } {
+function resolveSingleImgSkillPath(skillId: string): string | null {
+  return resolveUserHarnessSkillPath(skillId)
+    ?? (existsSync(join(tahpPaths.skillsDir, skillId, 'SKILL.md'))
+      ? join(tahpPaths.skillsDir, skillId, 'SKILL.md')
+      : null)
+}
+
+function resolveFlashSkill(
+  mode: HarnessFlashMode,
+  flashSkillId?: string,
+): { skillId: string; skillPath: string } {
   if (mode === 'single_img') {
     const skillId = 'harness-flash-single-img'
-    const skillPath = resolveHarnessSkillPath(skillId)
-      ?? join(tahpPaths.skillsDir, skillId, 'SKILL.md')
+    const skillPath = resolveSingleImgSkillPath(skillId)
+    if (!skillPath) {
+      throw new Error(`未找到单镜像刷机 Skill：${skillId}`)
+    }
     return { skillId, skillPath }
   }
-  const skillId = 'harness-device'
-  const skillPath = resolveHarnessSkillPath(skillId)
+  const skillId = flashSkillId?.trim() || defaultFlashSkillId()
+  const skillPath = resolveUserHarnessSkillPath(skillId)
   if (!skillPath) {
-    throw new Error(`未找到刷机 Skill：${skillId}（请检查 %USERPROFILE%\\.claude\\skills）`)
+    throw new Error(
+      `未找到刷机 Skill：${skillId}（请在用户 skill 目录安装，例如执行 harness install）`,
+    )
   }
   return { skillId, skillPath }
 }
@@ -86,7 +106,7 @@ TAHP_FLASH_RESULT
   }
 
   return `
-你是 TAHP 适配流水线的整包刷机助手（device_update 失败后的降级路径）。必须严格按 Skill 执行。
+你是 TAHP 适配流水线的整包刷机助手。必须严格按 Skill 执行。
 
 # Skill
 - Skill ID: \`${skillId}\`
@@ -134,7 +154,10 @@ function parseFlashResult(text: string): { status: 'pass' | 'fail'; error?: stri
   }
 }
 
-export async function probeHarnessFlash(): Promise<{ available: boolean; reason?: string }> {
+export async function probeHarnessFlash(
+  skillId?: string,
+): Promise<{ available: boolean; reason?: string }> {
+  const id = skillId?.trim() || defaultFlashSkillId()
   try {
     assertHarnessCliReady()
   } catch (err) {
@@ -142,6 +165,12 @@ export async function probeHarnessFlash(): Promise<{ available: boolean; reason?
   }
   if (!getAgentBridgeManager().running) {
     return { available: false, reason: 'Agent Bridge 未就绪' }
+  }
+  if (!resolveUserHarnessSkillPath(id)) {
+    return {
+      available: false,
+      reason: `未找到刷机 Skill：${id}（请在用户 skill 目录安装）`,
+    }
   }
   return { available: true }
 }
@@ -158,14 +187,13 @@ export async function runHarnessFlash(
 
   let skillId = ''
   try {
-    const resolved = resolveFlashSkill(input.mode)
+    const resolved = resolveFlashSkill(input.mode, input.flashSkillId)
     skillId = resolved.skillId
     if (input.mode === 'single_img') {
       if (!input.imgPath) throw new Error('单镜像刷机缺少 imgPath')
       if (!input.partition) throw new Error('单镜像刷机缺少 partition')
-      const { existsSync } = await import('fs')
       if (!existsSync(resolved.skillPath)) {
-        throw new Error(`未找到单镜像 Skill：${resolved.skillPath}`)
+        throw new Error(`未找到单镜像 Skill：${skillId}`)
       }
     } else if (!input.romPath) {
       throw new Error('整包刷机缺少 romPath')
@@ -179,7 +207,7 @@ export async function runHarnessFlash(
     const instructions = buildInstructions(input, resolved.skillId, resolved.skillPath)
     const userMessage = input.mode === 'single_img'
       ? `# 单镜像刷机\nsn=${input.deviceId}\nimg=${input.imgPath}\npartition=${input.partition}`
-      : `# 整包刷机（降级）\nsn=${input.deviceId}\nrom-path=${input.romPath}\nvariant=${input.variant ?? ''}`
+      : `# 整包刷机\nsn=${input.deviceId}\nrom-path=${input.romPath}\nvariant=${input.variant ?? ''}\nskill=${resolved.skillId}`
 
     log(`启动 harness 刷机 Agent skill=${resolved.skillId}`)
     const started: AgentBridgeChatStarted = await bridgeClient.chat(
@@ -217,7 +245,6 @@ export async function runHarnessFlash(
     if (parsed?.status === 'fail') {
       return { success: false, skillId, logs, error: parsed.error }
     }
-    // 兜底：文本含明显成功信号
     if (/刷机完成|flash.*success|"status"\s*:\s*"ok"/i.test(full)) {
       return { success: true, skillId, logs }
     }

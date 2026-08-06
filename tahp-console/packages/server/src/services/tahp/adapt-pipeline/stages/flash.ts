@@ -18,6 +18,7 @@ import {
   probeHarnessFlash,
   runHarnessFlash,
 } from '../harness-flash-capability'
+import { defaultFlashSkillId } from '../harness-skill-registry'
 
 let flashPromise: Promise<DeviceFlashResult> | null = null
 let harnessBusy = false
@@ -88,23 +89,130 @@ async function markSuccess(ctx: StageContext, pkgPath: string, via: string, retu
   })
 }
 
+function resolveFlashSkillId(ctx: StageContext): string {
+  return ctx.run.build_context?.flash_skill_id?.trim() || defaultFlashSkillId()
+}
+
+async function runDeviceUpdateFlash(
+  ctx: StageContext,
+  pkgPath: string,
+  deviceId: string,
+  phase: string,
+  priorHarnessError?: string,
+): Promise<boolean> {
+  let deviceUpdateAvailable = false
+  try {
+    const { resolveDeviceUpdateExe } = await import('../../device-flash')
+    deviceUpdateAvailable = existsSync(resolveDeviceUpdateExe())
+  } catch { /* ignore */ }
+
+  if (!deviceUpdateAvailable) {
+    const harnessPart = priorHarnessError
+      ? `harness 失败: ${priorHarnessError}；`
+      : ''
+    ctx.patchState({
+      progress: {
+        state: 'failed',
+        error: `${harnessPart}device_update 不可用`,
+        via: priorHarnessError ? resolveFlashSkillId(ctx) : 'device_update',
+      },
+    })
+    return false
+  }
+
+  ctx.patchState({
+    progress: {
+      state: 'flashing',
+      phase,
+      pkg_path: pkgPath,
+      message: priorHarnessError ? 'harness 失败，降级 device_update' : 'device_update 刷写整包',
+      harness_error: priorHarnessError,
+      text: pkgPath,
+    },
+  })
+  const logPrefix = priorHarnessError ? 'harness 刷机失败，降级 device_update' : '开始刷机(device_update)'
+  ctx.log(`${logPrefix}: ${pkgPath} → ${deviceId}`)
+
+  flashPromise = runDeviceFlash([deviceId], { pkgPath }, line => ctx.log(line))
+  try {
+    const result = await flashPromise
+    flashPromise = null
+    if (result.success) {
+      await markSuccess(ctx, pkgPath, 'device_update', result.returnCode)
+      return true
+    }
+    const flashSkillId = resolveFlashSkillId(ctx)
+    const err = priorHarnessError
+      ? `harness (${flashSkillId}) 与 device_update 均失败: ${result.error ?? `exit ${result.returnCode}`}`
+      : (result.error ?? `device_update 失败 (exit ${result.returnCode})`)
+    ctx.patchState({
+      progress: {
+        state: 'failed',
+        error: err,
+        via: 'device_update',
+      },
+    })
+    return false
+  } catch (err) {
+    flashPromise = null
+    ctx.patchState({
+      progress: { state: 'failed', error: String(err) },
+    })
+    return false
+  }
+}
+
+async function runHarnessFullRomFlash(
+  ctx: StageContext,
+  pkgPath: string,
+  deviceId: string,
+  flashSkillId: string,
+): Promise<{ success: boolean; error?: string }> {
+  ctx.patchState({
+    progress: {
+      state: 'flashing',
+      phase: 'harness',
+      skill_id: flashSkillId,
+      pkg_path: pkgPath,
+      message: `${flashSkillId} 刷写整包`,
+      text: pkgPath,
+    },
+  })
+  ctx.log(`开始刷机(harness): skill=${flashSkillId} ${pkgPath} → ${deviceId}`)
+  harnessBusy = true
+  try {
+    const result = await runHarnessFlash({
+      pipelineRunId: ctx.run.run_id,
+      mode: 'full_rom',
+      deviceId,
+      romPath: pkgPath,
+      variant: ctx.run.build_context?.variant,
+      flashSkillId,
+    }, line => ctx.log(line))
+    return { success: result.success, error: result.error }
+  } finally {
+    harnessBusy = false
+  }
+}
+
 export const flashStageDefinition: StageDefinition = {
   key: 'flash',
   label: '烧录',
   consumes: ['build'],
   produces: ['flashed'],
 
-  async probe() {
+  async probe({ run }) {
+    const flashSkillId = run.build_context?.flash_skill_id?.trim() || defaultFlashSkillId()
+    const harness = await probeHarnessFlash(flashSkillId)
+    if (harness.available) return { available: true }
     try {
       const { resolveDeviceUpdateExe } = await import('../../device-flash')
       const exe = resolveDeviceUpdateExe()
       if (existsSync(exe)) return { available: true }
     } catch { /* fall through */ }
-    const harness = await probeHarnessFlash()
-    if (harness.available) return { available: true }
     return {
       available: false,
-      reason: harness.reason ?? 'device_update 与 harness 刷机均不可用',
+      reason: harness.reason ?? 'harness 刷机与 device_update 均不可用',
     }
   },
 
@@ -193,7 +301,7 @@ export const flashStageDefinition: StageDefinition = {
       return
     }
 
-    // —— 完整包：先 device_update，失败再降级 harness-device ——
+    // —— 完整包：先 harness（flash_skill_id），失败再降级 device_update ——
     const pkgPath = classified.pkgPath!
     const validation = validateFlashPkgPath(pkgPath)
     if (!validation.valid) {
@@ -207,75 +315,37 @@ export const flashStageDefinition: StageDefinition = {
       return
     }
 
-    ctx.patchState({
-      progress: {
-        state: 'flashing',
-        phase: 'device_update',
-        pkg_path: pkgPath,
-        message: 'device_update 刷写整包',
-        text: pkgPath,
-      },
-    })
-    ctx.log(`开始刷机(device_update): ${pkgPath} → ${deviceId}`)
+    const flashSkillId = resolveFlashSkillId(ctx)
+    const harnessProbe = await probeHarnessFlash(flashSkillId)
 
-    flashPromise = runDeviceFlash([deviceId], { pkgPath }, line => ctx.log(line))
+    if (harnessProbe.available) {
+      try {
+        const harnessResult = await runHarnessFullRomFlash(ctx, pkgPath, deviceId, flashSkillId)
+        if (harnessResult.success) {
+          await markSuccess(ctx, pkgPath, flashSkillId)
+          return
+        }
+        ctx.log(`harness 刷机失败: ${harnessResult.error ?? 'unknown'}，降级 device_update…`)
+        await runDeviceUpdateFlash(
+          ctx,
+          pkgPath,
+          deviceId,
+          'device_update_fallback',
+          harnessResult.error,
+        )
+      } catch (err) {
+        harnessBusy = false
+        ctx.patchState({
+          progress: { state: 'failed', error: String(err) },
+        })
+      }
+      return
+    }
+
+    ctx.log(`harness 不可用 (${harnessProbe.reason ?? 'unknown'})，使用 device_update`)
     try {
-      const result = await flashPromise
-      flashPromise = null
-      if (result.success) {
-        await markSuccess(ctx, pkgPath, 'device_update', result.returnCode)
-        return
-      }
-
-      ctx.log(`device_update 失败 (exit ${result.returnCode})，降级 harness-device…`)
-      ctx.patchState({
-        progress: {
-          state: 'flashing',
-          phase: 'harness_fallback',
-          pkg_path: pkgPath,
-          message: 'device_update 失败，降级 harness-device',
-          device_update_error: result.error ?? `exit ${result.returnCode}`,
-          text: pkgPath,
-        },
-      })
-
-      const harnessOk = await probeHarnessFlash()
-      if (!harnessOk.available) {
-        ctx.patchState({
-          progress: {
-            state: 'failed',
-            error: `device_update 失败且 harness 不可用: ${harnessOk.reason ?? result.error}`,
-            via: 'device_update',
-          },
-        })
-        return
-      }
-
-      harnessBusy = true
-      const harnessResult = await runHarnessFlash({
-        pipelineRunId: ctx.run.run_id,
-        mode: 'full_rom',
-        deviceId,
-        romPath: pkgPath,
-        variant: ctx.run.build_context?.variant,
-      }, line => ctx.log(line))
-      harnessBusy = false
-
-      if (harnessResult.success) {
-        await markSuccess(ctx, pkgPath, 'harness-device')
-      } else {
-        ctx.patchState({
-          progress: {
-            state: 'failed',
-            error: harnessResult.error
-              ?? `device_update 与 harness-device 均失败`,
-            via: 'harness-device',
-          },
-        })
-      }
+      await runDeviceUpdateFlash(ctx, pkgPath, deviceId, 'device_update')
     } catch (err) {
-      flashPromise = null
-      harnessBusy = false
       ctx.patchState({
         progress: { state: 'failed', error: String(err) },
       })
