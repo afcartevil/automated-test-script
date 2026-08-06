@@ -134,7 +134,13 @@ const buildOptionsLoading = ref(false)
 const buildOptionsWarning = ref('')
 const buildOptionsMeta = ref('')
 const deviceId = ref<string | null>(null)
-const testPlanMode = ref<'recommend' | 'fixed'>('recommend')
+const testPlanMode = ref<'smoke' | 'recommend' | 'fixed'>('smoke')
+
+const TEST_PLAN_MODE_LABELS: Record<'smoke' | 'recommend' | 'fixed', string> = {
+  smoke: '冒烟用例测试',
+  recommend: '推荐策略',
+  fixed: '固定用例',
+}
 const maxIterations = ref(3)
 const harnessSkillsLoading = ref(false)
 const harnessSkillRoots = ref<string[]>([])
@@ -708,7 +714,10 @@ function buildDomainsPayload(): PipelineDomainInput[] {
 
 function buildCreateInput(): CreateRunInput {
   const code = projectCode.value || manualProjectCode.value.trim()
-  const testPlan: TestPlan = { mode: testPlanMode.value }
+  const testPlan: TestPlan = {
+    mode: testPlanMode.value,
+    ...(testPlanMode.value === 'smoke' ? { test_type: 'smoke' } : {}),
+  }
   return {
     project_code: code,
     campaign_id: prereqData.value?.campaign_id ?? campaignId.value ?? undefined,
@@ -1166,10 +1175,12 @@ onUnmounted(() => {
           <NSelect
             v-model:value="testPlanMode"
             :options="[
+              { label: '冒烟用例测试（仅执行冒烟用例）', value: 'smoke' },
               { label: '推荐策略（按适配域推断）', value: 'recommend' },
               { label: '固定用例（后续在自检节点确认）', value: 'fixed' },
             ]"
           />
+          <p class="field-hint">默认仅跑冒烟用例；推荐/固定策略可覆盖更广的自检范围。</p>
         </div>
       </div>
       <div class="field-row">
@@ -1234,7 +1245,7 @@ onUnmounted(() => {
         </div>
         <div class="summary-row">
           <span class="k">自检</span>
-          <span>{{ testPlanMode === 'recommend' ? '推荐策略' : '固定用例' }} · 最多 {{ maxIterations }} 轮</span>
+          <span>{{ TEST_PLAN_MODE_LABELS[testPlanMode] }} · 最多 {{ maxIterations }} 轮</span>
         </div>
         <div class="summary-row">
           <span class="k">Gerrit 分支</span>

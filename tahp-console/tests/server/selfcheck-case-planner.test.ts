@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest'
-import { buildMustTestItems } from '../../packages/server/src/services/tahp/selfcheck-case-planner'
+import { beforeAll, describe, it, expect } from 'vitest'
+import {
+  buildMustTestItems,
+  listSmokeCaseKeys,
+  planCases,
+} from '../../packages/server/src/services/tahp/selfcheck-case-planner'
+import { initDeviceSelfCheck } from '../../packages/server/src/services/tahp/device-self-check'
 import type { PipelineRun } from '../../packages/server/src/services/tahp/adapt-pipeline/types'
 
 function makeRun(overrides: Partial<PipelineRun> = {}): PipelineRun {
@@ -115,5 +120,39 @@ describe('buildMustTestItems', () => {
       ],
     })
     expect(buildMustTestItems(run)).toEqual([])
+  })
+})
+
+describe('planCases smoke mode', () => {
+  beforeAll(() => {
+    initDeviceSelfCheck()
+  })
+
+  it('lists smoke catalog keys', () => {
+    const cases = listSmokeCaseKeys()
+    expect(cases.length).toBeGreaterThan(0)
+    expect(cases.every(c => c.caseKey.startsWith('smoke/'))).toBe(true)
+    expect(cases.some(c => c.caseKey === 'smoke/usd/1')).toBe(true)
+  })
+
+  it('plans only smoke cases when mode=smoke', async () => {
+    const run = makeRun({
+      test_plan: { mode: 'smoke' },
+      domains: [
+        {
+          domain_id: 'telephony', domain_label: '通信', module: 'telephony',
+          enabled: true, status: 'done', workspace_id: 'ws1', form_data: {},
+          related_skills: [],
+        },
+      ],
+    })
+    const result = await planCases(run)
+    expect(result.source).toBe('smoke')
+    expect(result.plan.mode).toBe('smoke')
+    expect(result.plan.test_type).toBe('smoke')
+    expect(result.cases.length).toBeGreaterThan(0)
+    expect(result.plan.selected_cases).toEqual(result.cases.map(c => c.caseKey))
+    expect(result.cases.every(c => c.caseKey.startsWith('smoke/'))).toBe(true)
+    expect(result.cases.every(c => !c.caseKey.startsWith('week/') && !c.caseKey.startsWith('str4/'))).toBe(true)
   })
 })

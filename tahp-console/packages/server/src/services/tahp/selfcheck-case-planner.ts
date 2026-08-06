@@ -1,5 +1,6 @@
 import type { PipelineRun, TestPlan } from './adapt-pipeline/types'
 import { recommendTestCasesWithMeta } from './gerrit-case-recommendation'
+import { getCaseCatalogDetail } from './device-self-check'
 
 /**
  * Build must-test items from pipeline run context.
@@ -7,7 +8,8 @@ import { recommendTestCasesWithMeta } from './gerrit-case-recommendation'
  *
  * Known limitation: recommendation engine candidate pool only covers
  * week_driver / week_tdd / str4_driver_component.
- * monkey / smoke / gms / power cases cannot be recommended — use TestPlan.mode='fixed'.
+ * monkey / smoke / gms / power cases cannot be recommended —
+ * use TestPlan.mode='smoke'（仅冒烟）或 mode='fixed' 手工指定。
  */
 export function buildMustTestItems(run: PipelineRun): string[] {
   const items: string[] = []
@@ -30,6 +32,15 @@ export function buildMustTestItems(run: PipelineRun): string[] {
   return [...new Set(items)]
 }
 
+/** Collect all catalog case keys under testType `smoke` (e.g. smoke/usd/1). */
+export function listSmokeCaseKeys(): Array<{ caseKey: string; caseName: string; score: number }> {
+  return getCaseCatalogDetail('smoke').map(item => ({
+    caseKey: item.key,
+    caseName: item.caseName,
+    score: 1,
+  }))
+}
+
 export interface CasePlanResult {
   plan: TestPlan
   cases: Array<{ caseKey: string; caseName: string; score: number }>
@@ -42,6 +53,22 @@ export interface CasePlanResult {
  * If mustTestItems is empty, degrades to 'fixed' mode (never silently runs empty).
  */
 export async function planCases(run: PipelineRun): Promise<CasePlanResult> {
+  // Smoke-only strategy: execute every smoke catalog case, nothing else.
+  if (run.test_plan?.mode === 'smoke') {
+    const cases = listSmokeCaseKeys()
+    const selectedCases = cases.map(c => c.caseKey)
+    return {
+      plan: {
+        mode: 'smoke',
+        test_type: 'smoke',
+        selected_cases: selectedCases,
+      },
+      cases,
+      source: selectedCases.length ? 'smoke' : 'smoke_empty',
+      aiGeneratedCases: [],
+    }
+  }
+
   // If run already has a fixed plan with selected cases, use it directly
   if (run.test_plan?.mode === 'fixed' && run.test_plan.selected_cases?.length) {
     return {

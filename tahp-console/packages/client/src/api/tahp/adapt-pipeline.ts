@@ -152,7 +152,8 @@ export interface BuildContext {
 }
 
 export interface TestPlan {
-  mode: 'recommend' | 'fixed'
+  /** smoke=仅冒烟用例；recommend=按适配域推荐；fixed=手工/预选固定用例 */
+  mode: 'smoke' | 'recommend' | 'fixed'
   test_type?: string
   selected_cases?: string[]
   must_test_items?: string[]
