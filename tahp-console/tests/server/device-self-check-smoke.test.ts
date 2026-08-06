@@ -24,10 +24,11 @@ describe('device self-check smoke usd catalog', () => {
       module: 'usd',
       moduleLabel: 'USD冒烟测试',
       caseName: 'USD冒烟测试',
-      preconditions: '',
-      manualSteps: '',
-      expectedResult: '',
+      automationMode: 'full',
     })
+    expect(typeof detail[0]?.preconditions).toBe('string')
+    expect(typeof detail[0]?.manualSteps).toBe('string')
+    expect(typeof detail[0]?.expectedResult).toBe('string')
     expect(getSettings().smokeUsdSkipSpdInfo).toBe(false)
   })
 })

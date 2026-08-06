@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onActivated, watch, inject } from 'vue'
 import { NEmpty, NButton, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
 import { DEVICE_SELF_CHECK_KEY } from './self-check-context'
-import { getCaseResultColor, getTestTypeLabel, reportTitle, displayReportStatus, reportStatusKind } from './self-check-utils'
+import { getCaseResultColor, getTestTypeLabel, reportTitle, displayReportStatus, reportStatusKind, getAutomationModeIcon, getAutomationModeLabel, normalizeAutomationMode } from './self-check-utils'
 import {
   listSelfCheckReports,
   getSelfCheckReportDetail,
@@ -78,6 +78,14 @@ const caseGroups = computed(() => {
 const selectedCaseItem = computed(() =>
   reportDetail.value?.allCaseItems.find(c => c.caseKey === selectedCaseKey.value) ?? null,
 )
+
+function resolveCaseAutomationMode(item: SelfCheckCaseItem): 'full' | 'semi' | 'manual' {
+  if (item.automationMode) return normalizeAutomationMode(item.automationMode)
+  const moduleKey = `${item.testType}/${item.module}`
+  const meta = ctx.moduleConditions.value[moduleKey]?.cases.find(c => c.caseIndex === item.caseIndex)
+  if (meta?.automationMode) return normalizeAutomationMode(meta.automationMode)
+  return item.fullAutomation === false ? 'manual' : 'full'
+}
 
 const availableAuxForRetest = computed(() =>
   ctx.devices.value.filter(d =>
@@ -463,7 +471,12 @@ onActivated(async () => {
                   :style="{ color: getCaseResultColor(item.status) }"
                   @click="selectCase(item.caseKey)"
                 >
-                  {{ item.caseName }}
+                  <span
+                    class="auto-mode-icon"
+                    :class="`auto-mode-icon--${resolveCaseAutomationMode(item)}`"
+                    :title="getAutomationModeLabel(resolveCaseAutomationMode(item))"
+                  >{{ getAutomationModeIcon(resolveCaseAutomationMode(item)) }}</span>
+                  <span class="case-item-name">{{ item.caseName }}</span>
                 </div>
               </div>
             </div>
@@ -475,6 +488,16 @@ onActivated(async () => {
             <template v-if="selectedCaseItem">
               <div class="case-detail-header">
                 <span class="catalog-case-title">{{ selectedCaseItem.caseName }}</span>
+                <span
+                  class="auto-mode-badge"
+                  :class="`auto-mode-badge--${resolveCaseAutomationMode(selectedCaseItem)}`"
+                >
+                  <span
+                    class="auto-mode-icon"
+                    :class="`auto-mode-icon--${resolveCaseAutomationMode(selectedCaseItem)}`"
+                  >{{ getAutomationModeIcon(resolveCaseAutomationMode(selectedCaseItem)) }}</span>
+                  {{ getAutomationModeLabel(resolveCaseAutomationMode(selectedCaseItem)) }}
+                </span>
               </div>
               <div class="case-detail-content">
                 <div class="case-info">
@@ -937,8 +960,11 @@ $report-pane-height: calc(100vh - 48px);
 }
 
 .case-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
-  padding: 6px 8px 6px 20px;
+  padding: 6px 8px 6px 12px;
   border-radius: 6px;
   cursor: pointer;
 
@@ -949,6 +975,69 @@ $report-pane-height: calc(100vh - 48px);
   &.selected {
     background: var(--accent-soft);
   }
+}
+
+.case-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auto-mode-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.auto-mode-icon--full {
+  background: #d1fae5;
+  color: #047857;
+}
+
+.auto-mode-icon--semi {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.auto-mode-icon--manual {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.auto-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 4px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.auto-mode-badge--full {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.auto-mode-badge--semi {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.auto-mode-badge--manual {
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .detail-main {
@@ -979,6 +1068,10 @@ $report-pane-height: calc(100vh - 48px);
 }
 
 .case-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 12px;
   flex-shrink: 0;
 }

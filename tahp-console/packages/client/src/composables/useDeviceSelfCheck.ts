@@ -1785,7 +1785,7 @@ const getCaseGroups = computed(() => {
     const groups: Record<string, {
       label: string
       moduleKey: string
-      cases: { caseIndex: number; caseName: string; testType: string; module: string }[]
+      cases: { caseIndex: number; caseName: string; testType: string; module: string; automationMode?: string }[]
     }> = {}
 
     for (const caseKey of session.selectedCases) {
@@ -1809,6 +1809,7 @@ const getCaseGroups = computed(() => {
         caseName: result?.caseName || config?.cases.find(c => c.caseIndex === caseIndex)?.caseName || `用例${caseIndex}`,
         testType: tt,
         module,
+        automationMode: config?.cases.find(c => c.caseIndex === caseIndex)?.automationMode || 'full',
       })
     }
 
@@ -1818,18 +1819,25 @@ const getCaseGroups = computed(() => {
         const orderB = MODULE_ORDER[b[1].cases[0]?.module] ?? 50
         return orderA - orderB
       })
-      .map(([moduleKey, group]) => [group.label, [{
-        testType: group.cases[0]?.testType || 'str4',
-        module: group.cases[0]?.module || '',
-        moduleLabel: group.label,
-        moduleKey,
-        cases: group.cases.map(c => ({
-          caseIndex: c.caseIndex,
-          caseName: c.caseName,
-          mode: '',
-          canReuse: false,
-        })),
-      }]] as [string, (ModuleCondition & { moduleKey: string })[]])
+      .map(([moduleKey, group]) => {
+        const moduleConfig = moduleConditions.value[moduleKey]
+        return [group.label, [{
+          testType: group.cases[0]?.testType || 'str4',
+          module: group.cases[0]?.module || '',
+          moduleLabel: group.label,
+          moduleKey,
+          cases: group.cases.map(c => {
+            const caseMeta = moduleConfig?.cases.find(x => x.caseIndex === c.caseIndex)
+            return {
+              caseIndex: c.caseIndex,
+              caseName: c.caseName,
+              mode: '',
+              canReuse: false,
+              automationMode: caseMeta?.automationMode || c.automationMode || 'full',
+            }
+          }),
+        }]] as [string, (ModuleCondition & { moduleKey: string })[]]
+      })
   }
 
   const modules: Record<string, ModuleCondition[]> = {}

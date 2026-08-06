@@ -10,6 +10,11 @@
   "defaultCaseMode": "solo",
   "customOnly": true,
   "cases": [
-    { "caseIndex": 1, "caseName": "CTS通信测试", "canReuse": false }
+    {
+      "caseIndex": 1,
+      "caseName": "CTS通信测试",
+      "canReuse": false,
+      "automationMode": "full"
+    }
   ]
 }

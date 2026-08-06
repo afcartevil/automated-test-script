@@ -9,9 +9,29 @@
   },
   "defaultCaseMode": "solo",
   "cases": [
-    { "caseIndex": 1, "caseName": "CTS指纹测试", "canReuse": false },
-    { "caseIndex": 2, "caseName": "CTS传感器测试", "canReuse": false },
-    { "caseIndex": 3, "caseName": "CTS多媒体测试", "canReuse": false },
-    { "caseIndex": 4, "caseName": "CTS安全测试", "canReuse": false }
+    {
+      "caseIndex": 1,
+      "caseName": "CTS指纹测试",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 2,
+      "caseName": "CTS传感器测试",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 3,
+      "caseName": "CTS多媒体测试",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 4,
+      "caseName": "CTS安全测试",
+      "canReuse": false,
+      "automationMode": "full"
+    }
   ]
 }

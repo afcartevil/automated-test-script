@@ -12,7 +12,8 @@
     {
       "caseIndex": 1,
       "caseName": "monkey测试",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     }
   ]
 }

@@ -35,6 +35,7 @@ export interface SelfCheckCaseItem {
   status: string
   message: string
   fullAutomation?: boolean
+  automationMode?: 'full' | 'semi' | 'manual'
   steps?: { stepDesc: string; status: string; timestamp: string }[]
   /** 失败用例导出的设备日志目录 */
   failureLogDir?: string

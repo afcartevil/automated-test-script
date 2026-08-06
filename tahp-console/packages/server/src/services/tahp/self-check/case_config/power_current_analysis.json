@@ -12,7 +12,8 @@
     {
       "caseIndex": 1,
       "caseName": "功耗电流分析环境",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     }
   ]
 }

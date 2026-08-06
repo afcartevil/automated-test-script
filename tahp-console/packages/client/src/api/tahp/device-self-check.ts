@@ -40,11 +40,15 @@ export interface CaseCondition {
   auxSimCount: number
 }
 
+export type AutomationMode = 'full' | 'semi' | 'manual'
+
 export interface CaseInfo {
   caseIndex: number
   caseName: string
   mode: string
   canReuse: boolean
+  automationMode?: AutomationMode
+  execMode?: 'manual' | 'nl_ui'
 }
 
 export interface ModuleCondition {
@@ -71,6 +75,7 @@ export interface CaseResult {
   status: '未开始' | '进行中' | '通过' | '失败' | '部分通过' | '待确认' | 'NA' | '跳过'
   message: string
   fullAutomation: boolean
+  automationMode?: AutomationMode
   steps: CaseStep[]
   startTime?: string
   endTime?: string
@@ -106,6 +111,7 @@ export interface CaseCatalogItem {
   caseIndex: number
   caseName: string
   canReuse: boolean
+  automationMode: AutomationMode
 }
 
 export interface CaseCatalog {
@@ -135,6 +141,7 @@ export interface CaseCatalogDetailItem {
   caseIndex: number
   caseName: string
   canReuse: boolean
+  automationMode: AutomationMode
   preconditions: string
   manualSteps: string
   expectedResult: string
@@ -542,6 +549,7 @@ export interface SelfCheckCaseItem {
   status: string
   message: string
   fullAutomation?: boolean
+  automationMode?: AutomationMode
   steps?: { stepDesc: string; status: string; timestamp: string }[]
   failureLogDir?: string
 }

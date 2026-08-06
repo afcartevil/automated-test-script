@@ -12,367 +12,440 @@
     {
       "caseIndex": 1,
       "caseName": "检查语音通路call type",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 2,
       "caseName": "检查用户不可以关闭双卡手机的DSDS能力",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 3,
       "caseName": "开关飞行模式正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 4,
       "caseName": "用户在一定时间内连续开关漫游开关，UE不会出现逻辑异常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 5,
       "caseName": "插入双SIM卡-移动数据开关开关，关闭，切换数据卡正常，用户能自行进行数据卡切换，关闭，开启等操作",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 6,
       "caseName": "自定义SIM卡名字正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 7,
       "caseName": "检查数据开关-SIM卡与网络设置",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 8,
       "caseName": "检查数据开关-SIM卡与网络设置",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 9,
       "caseName": "检查数据切换-SIM卡与网络设置",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 10,
       "caseName": "检查数据切换-移动网络设置",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 11,
       "caseName": "测试机器已打开OMAPI接口功能",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 12,
       "caseName": "检查重开机系统时间更新-IMS",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 13,
       "caseName": "检查首次开机最高制式网络NTP方式系统时间及时区更新",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 14,
       "caseName": "检查UE WIFI网络NTP方式系统时间及时区更新",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 15,
       "caseName": "检查UE双卡最高制式热插拔漫游驻网功能 Check the UE highest standard hot-swappable roaming network function",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 16,
       "caseName": "检查UE卡1最高制式开机漫游驻网功能 Check the UE SIM 1 maximum standard boot roaming network function",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 17,
       "caseName": "5G SA下单条短信发送&接收能力",
-      "canReuse": true
+      "canReuse": true,
+      "automationMode": "full"
     },
     {
       "caseIndex": 18,
       "caseName": "4G下单条短信发送&接收能力",
-      "canReuse": true
+      "canReuse": true,
+      "automationMode": "full"
     },
     {
       "caseIndex": 19,
       "caseName": "确保能收到三方应用台发送的验证短信",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 20,
       "caseName": "5G SA下内容为图片的彩信发送&接收能力",
-      "canReuse": true
+      "canReuse": true,
+      "automationMode": "full"
     },
     {
       "caseIndex": 21,
       "caseName": "4G网络下发送&接收内容为图片的彩信",
-      "canReuse": true
+      "canReuse": true,
+      "automationMode": "full"
     },
     {
       "caseIndex": 22,
       "caseName": "用户插入SIM卡后可以自行设定相应的网络模式，优选驻留对应的网络上",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 23,
       "caseName": "检查测试网页数据链接-IPV4/6",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 24,
       "caseName": "检查测试网页数据链接-IPV4 only",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 25,
       "caseName": "检查VPN快捷下拉菜单",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 26,
       "caseName": "检查蜂窝USB网络共享功能检查",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 27,
       "caseName": "检查UE蜂窝热点超出限额后提醒并关闭热点或仅提醒功能",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 28,
       "caseName": "检查UE双卡LTE蜂窝热点功能",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 29,
       "caseName": "插入双SIM卡到测试机后，用户开关该sim操作正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 30,
       "caseName": "用户可以进入对应SIM卡的流量使用页面查看对应阶段的数据使用状态",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 31,
       "caseName": "用户关闭4G通话后,UE注册网络无异常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 32,
       "caseName": "设置SIM卡PIN码开启，需要输入相关SIM PIN密码",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 33,
       "caseName": "用户重启手机或热插SIM卡时在PIN码界面检查测试机信号状态及提示语正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 34,
       "caseName": "验证5G 快捷图标开关后，首选网络类型模式显示正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 35,
       "caseName": "检查单卡机器不能出现双卡功能交互菜单",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 36,
       "caseName": "T卡包升级后SIM卡联系人加载正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 37,
       "caseName": "用户可以删除手机联系人和SIM卡联系人",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 38,
       "caseName": "设置默认存储联系人位置到SIM卡后拔出SIM卡，重新新建联系人成功，且存储默认设定在手机",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 39,
       "caseName": "设置默认存储联系人位置到SIM1,SIM2正常后重启手机后默认存储设定正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 40,
       "caseName": "重启手机后STK（SIM卡工具包）能正常启动",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 41,
       "caseName": "2张卡进行热插拔sim卡，开关飞行模式后，STK（SIM卡工具包）启动正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 42,
       "caseName": "STK（SIM卡工具包）各级子菜单能够响应对应的功能反馈",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 43,
       "caseName": "检查5G网络下国际通用ECC list遍历",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 44,
       "caseName": "检查5G SA语音通话功能（主被叫）",
-      "canReuse": true
+      "canReuse": true,
+      "automationMode": "full"
     },
     {
       "caseIndex": 45,
       "caseName": "检查5G SA视频通话功能（主被叫）",
-      "canReuse": true
+      "canReuse": true,
+      "automationMode": "full"
     },
     {
       "caseIndex": 46,
       "caseName": "检查5G NSA语音通话功能（主被叫）",
-      "canReuse": true
+      "canReuse": true,
+      "automationMode": "full"
     },
     {
       "caseIndex": 47,
       "caseName": "检查4G语音通话功能（主被叫）",
-      "canReuse": true
+      "canReuse": true,
+      "automationMode": "full"
     },
     {
       "caseIndex": 48,
       "caseName": "检查4G视频通话功能（主被叫）",
-      "canReuse": true
+      "canReuse": true,
+      "automationMode": "full"
     },
     {
       "caseIndex": 49,
       "caseName": "检查3G CS语音通话功能（主被叫）",
-      "canReuse": true
+      "canReuse": true,
+      "automationMode": "full"
     },
     {
       "caseIndex": 50,
       "caseName": "检查语音通话与视频通话切换功能验证",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 51,
       "caseName": "检查4G网络下国际通用ECC list遍历",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 52,
       "caseName": "检查LTE CSFB to 3G call功能兼容",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 53,
       "caseName": "2/3G网络下国际通用ECC list遍历",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 54,
       "caseName": "检查无卡时当地ECC号码列表通话功能",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 55,
       "caseName": "插拔卡通话界面UI一致性",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 56,
       "caseName": "支持XCAP时，4G网络下验证始终转接是否设置成功 When XCAP is supported, verify whether always forwarding is successful on a 4G network 说明：运营商是否支持XCAP，可以用对比机确认设置呼叫转移时是否回落低制式，不回落即支持XCAP,回落即不支持XCAP Note：If the carrier supports XCAP, you can use the reference phone to check whether the call CSFB to lower RAT during call forward setting. If the call not perform CSFB, XCAP is supported, and if CSFB to lower RAT, XCAP is not supported",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 57,
       "caseName": "4G网络下验证三方语音通话是否成功建立 Verify that a three-party voice call is successfully established on a 4G network",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 58,
       "caseName": "4G网络下验证来电等待是否设置成功 NOTE:进入呼叫等待界面，会查询CLIR，查询时是否回落，涉及到TB和NB需求，当不确认网络行为时，用支持Volte的竞品机对比验证 Verify that call waiting is set successfully on a 4G network Note:when enter call waiting settings,it all query CLIR.to confirm whether perform CSFB，need know the requirement of TB or NB，if not sure，you can compare with reference phone",
-      "canReuse": true
+      "canReuse": true,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 59,
       "caseName": "4G网络下检查三方通话UI是否显示为\"会议电话\" On 4G network, check whether the three-party call UI is displayed as \"Conference Call\".",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 60,
       "caseName": "4G 网络下验证来电等待是否设置成功 NOTE:进入呼叫等待界面，会查询CLIR，查询时是否回落，涉及到TB和NB需求，当不确认网络行为时，用支持Volte的竞品机关闭volte对比验证 Verify that call waiting is set successfully on a 4G network Note:when enter call waiting settings,it all query CLIR.to confirm whether perform CSFB，need know the requirement of TB or NB，When network behavior is not confirmed, turn off volte comparison verification with competing products that support volte",
-      "canReuse": true
+      "canReuse": true,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 61,
       "caseName": "验证手机在发送不支持的USSD代码时错误弹框是否正确 Verify that the error box is correct when the phone sends an unsupported USSD code",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 62,
       "caseName": "4G网络下拨打服务号码，检查DTMF字符响应是否正确（ 0~ 9, *, #） Dial the service number on 4G network, check whether the DTMF character response is correct (0~ 9, *, #)",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 63,
       "caseName": "验证已存储的联系人以及电话号码在进行通话时能够准确匹配",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 64,
       "caseName": "支持视频通话功能的SIM卡插入测试机中可以拨打视频电话",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 65,
       "caseName": "STK应用检查",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 66,
       "caseName": "mStkMenu.title运营商名称",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 67,
       "caseName": "SIM卡工具包（STK）前进、后退功能能正常响应",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 68,
       "caseName": "检查VoNR call with VoNR功能兼容",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 69,
       "caseName": "检查VoNR call with VoLTE功能兼容",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 70,
       "caseName": "检查VoNR call with 3G功能兼容",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 71,
       "caseName": "检查VoNR call with 2G功能兼容",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 72,
       "caseName": "检查UE双卡SA飞模驻网功能",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 73,
       "caseName": "检查UE双卡SA手动驻网功能",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     }
   ]
 }

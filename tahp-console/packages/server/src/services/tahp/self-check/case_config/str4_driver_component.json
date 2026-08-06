@@ -12,262 +12,314 @@
     {
       "caseIndex": 1,
       "caseName": "TP固件版本和算法版本",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 2,
       "caseName": "按键",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 3,
       "caseName": "马达",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 4,
       "caseName": "TP报点",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 5,
       "caseName": "TP双击唤醒",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 6,
       "caseName": "开机工模触摸屏",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 7,
       "caseName": "TP唤醒休眠能正常使用",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 8,
       "caseName": "TP大面积灭屏",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 9,
       "caseName": "设置中开启指针位置以及显示点按操作反馈",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 10,
       "caseName": "开机工模色彩",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 11,
       "caseName": "开机工模背光",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 12,
       "caseName": "闪屏场景",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 13,
       "caseName": "检查深色模式（暗环境下操作）",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 14,
       "caseName": "检查页面初始化",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 15,
       "caseName": "USB功能正常充电",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "full"
     },
     {
       "caseIndex": 16,
       "caseName": "开机状态充电",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 17,
       "caseName": "关机状态充电",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 18,
       "caseName": "反向充电",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 19,
       "caseName": "MTP能正常枚举",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 20,
       "caseName": "OTG基本功能",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 21,
       "caseName": "灯效",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 22,
       "caseName": "方向传感器功能正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 23,
       "caseName": "加速度功能正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 24,
       "caseName": "光感功能正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 25,
       "caseName": "地磁功能正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 26,
       "caseName": "SensorTest-V0.3",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 27,
       "caseName": "Gsensor基本功能",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 28,
       "caseName": "距离传感器正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 29,
       "caseName": "通话亮灭屏",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 30,
       "caseName": "抬手亮屏",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 31,
       "caseName": "陀螺仪零飘测试",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 32,
       "caseName": "SAR sensor校准",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 33,
       "caseName": "肩键功能正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 34,
       "caseName": "红外功能正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 35,
       "caseName": "心率血氧校准",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 36,
       "caseName": "hal sensor校准",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 37,
       "caseName": "flicker sensor校准",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 38,
       "caseName": "电梯模式导入",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 39,
       "caseName": "乘车模式导入",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 40,
       "caseName": "防误触功能导入",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 41,
       "caseName": "开机工模指纹",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 42,
       "caseName": "开机工模指纹(屏下)",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "semi"
     },
     {
       "caseIndex": 43,
       "caseName": "指纹功能正常",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 44,
       "caseName": "OOBE指纹",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 45,
       "caseName": "快速触摸解锁指纹（先注册指纹）",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 46,
       "caseName": "纯白和纯黑壁纸解锁（屏下指纹）",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 47,
       "caseName": "正常通话",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 48,
       "caseName": "耳朵与听筒之间切换",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 49,
       "caseName": "耳朵与扬声器之间切换",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 50,
       "caseName": "喇叭，听筒，麦克，耳机基本功能",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 51,
       "caseName": "使用主流音乐软件播放音乐",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     },
     {
       "caseIndex": 52,
       "caseName": "超声距感",
-      "canReuse": false
+      "canReuse": false,
+      "automationMode": "manual"
     }
   ]
 }

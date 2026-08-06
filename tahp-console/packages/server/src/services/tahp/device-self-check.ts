@@ -73,11 +73,17 @@ export interface CaseCondition {
   auxSimCount: number
 }
 
+/** 用例自动化形态：全自动 / 半自动 / 人工 */
+export type AutomationMode = 'full' | 'semi' | 'manual'
+
 export interface CaseInfo {
   caseIndex: number
   caseName: string
   mode: string
   canReuse: boolean
+  automationMode?: AutomationMode
+  /** AI 生成用例执行方式（nl_ui=全自动，manual=半自动引导） */
+  execMode?: 'manual' | 'nl_ui'
 }
 
 export interface ModuleCondition {
@@ -104,6 +110,8 @@ export interface CaseResult {
   status: '未开始' | '进行中' | '通过' | '失败' | '部分通过' | '待确认' | 'NA' | '跳过'
   message: string
   fullAutomation: boolean
+  /** 静态/运行时自动化形态：全自动 / 半自动 / 人工 */
+  automationMode?: AutomationMode
   steps: CaseStep[]
   startTime?: string
   endTime?: string
@@ -144,6 +152,7 @@ export interface CaseCatalogItem {
   caseIndex: number
   caseName: string
   canReuse: boolean
+  automationMode: AutomationMode
 }
 
 export interface CaseCatalog {
@@ -211,6 +220,7 @@ export interface CaseCatalogDetailItem {
   caseIndex: number
   caseName: string
   canReuse: boolean
+  automationMode: AutomationMode
   preconditions: string
   manualSteps: string
   expectedResult: string
@@ -273,6 +283,64 @@ function resolveCaseInfoItem(caseInfoList: any[], caseIndex: number): any | null
     return caseInfoList[caseIndex - 1]
   }
   return null
+}
+
+/**
+ * 静态判定用例自动化形态（用于目录展示与筛选，不依赖运行时结果）。
+ * - manual：无脚本，或脚本为「需人工测试」占位
+ * - semi：脚本含 manual_confirm，或步骤关键词需人工判断（通信 tdd 模块除外）
+ * - full：其余有脚本可自动执行的用例
+ *
+ * 说明：str4/week 通信（tdd）无半自动；跳过占位一律人工，有脚本一律全自动。
+ */
+export function resolveCaseAutomationMode(
+  testType: string,
+  module: string,
+  caseIndex: number,
+  options?: { manualSteps?: string; execMode?: 'manual' | 'nl_ui' },
+): AutomationMode {
+  if (options?.execMode === 'nl_ui') return 'full'
+  if (options?.execMode === 'manual') return 'semi'
+
+  const scriptPath = join(PYTHON_DIR, 'cases', testType, module, `case${caseIndex}.py`)
+  if (!existsSync(scriptPath)) return 'manual'
+
+  let scriptContent = ''
+  try {
+    scriptContent = readFileSync(scriptPath, 'utf-8')
+  } catch {
+    return 'manual'
+  }
+
+  if (scriptContent.includes('需人工测试')) return 'manual'
+
+  // 通信模块（str4/week tdd）不存在半自动：有可执行脚本即全自动
+  if (module === 'tdd' && (testType === 'str4' || testType === 'week')) {
+    return 'full'
+  }
+
+  if (scriptContent.includes('manual_confirm')) return 'semi'
+
+  const steps = options?.manualSteps ?? ''
+  if (steps && !isFullAutomation(steps)) return 'semi'
+  return 'full'
+}
+
+function automationModeLabel(mode?: AutomationMode): string {
+  if (mode === 'semi') return '半自动'
+  if (mode === 'manual') return '人工'
+  return '全自动'
+}
+
+function enrichModuleCasesAutomationMode(config: ModuleCondition): void {
+  const caseInfoList = loadCaseInfoList(config.testType, config.module)
+  for (const c of config.cases) {
+    const info = resolveCaseInfoItem(caseInfoList, c.caseIndex)
+    c.automationMode = resolveCaseAutomationMode(config.testType, config.module, c.caseIndex, {
+      manualSteps: info?.['测试步骤'] || '',
+      execMode: c.execMode,
+    })
+  }
 }
 
 async function retestFailedAutoCasesInModule(
@@ -384,6 +452,7 @@ function loadCaseConfigs(): void {
       const content = readFileSync(filePath, 'utf-8')
       const config = JSON.parse(content) as ModuleCondition
       const key = `${config.testType}/${config.module}`
+      enrichModuleCasesAutomationMode(config)
       moduleConditions[key] = config
       console.log(`[device-self-check] Loaded config: ${key}`)
     } catch (e) {
@@ -404,6 +473,7 @@ function syncAiGeneratedCaseConfig(): void {
     cases: [],
   }
   // loadAiGeneratedCaseConfig 已 bootstrap 权威目录并镜像到运行时
+  enrichModuleCasesAutomationMode(config)
   moduleConditions[key] = config
 }
 
@@ -1007,6 +1077,7 @@ async function runCase(
     status: '进行中',
     message: '',
     fullAutomation: false,
+    automationMode: 'manual',
     steps: [{
       stepDesc: '正在加载用例...',
       status: '进行中',
@@ -1030,7 +1101,6 @@ async function runCase(
       if (Array.isArray(caseInfoList) && caseIndex > 0 && caseIndex <= caseInfoList.length) {
         caseInfoItems = caseInfoList[caseIndex - 1]
         result.caseName = caseInfoItems['用例名'] || caseInfoItems.case_name || `用例${caseIndex}`
-        result.fullAutomation = isFullAutomation(caseInfoItems['测试步骤'] || '')
         // 解析测试步骤到子步骤
         const testSteps = caseInfoItems['测试步骤'] || ''
         if (testSteps) {
@@ -1040,11 +1110,20 @@ async function runCase(
     } catch {}
   }
 
+  const caseMeta = moduleConditions[`${testType}/${module}`]?.cases.find(c => c.caseIndex === caseIndex)
+  result.automationMode = caseMeta?.automationMode ?? resolveCaseAutomationMode(testType, module, caseIndex, {
+    manualSteps: caseInfoItems?.['测试步骤'] || '',
+    execMode: caseMeta?.execMode,
+  })
+  result.fullAutomation = result.automationMode === 'full'
+
   // 检查是否有对应的 .py 脚本
   const caseScript = join(PYTHON_DIR, 'cases', testType, module, `case${caseIndex}.py`)
   if (!existsSync(caseScript)) {
     result.status = '待确认'
     result.message = '需人工测试'
+    result.automationMode = 'manual'
+    result.fullAutomation = false
     result.steps = [
       { stepDesc: '加载用例信息', status: '完成', timestamp: startTime },
       { stepDesc: '此用例无自动化脚本', status: '未开始', timestamp: new Date().toISOString() },
@@ -1137,7 +1216,19 @@ async function runCase(
       : pythonResult.status === 'skip' ? '跳过'
       : '跳过'
     result.message = pythonResult.message || ''
-    result.fullAutomation = pythonResult.fullAutomation !== false
+    if ((pythonResult.message || '').includes('需人工测试')) {
+      result.automationMode = 'manual'
+      result.fullAutomation = false
+    } else if (
+      pythonResult.fullAutomation === false
+      && result.automationMode === 'full'
+      && !(module === 'tdd' && (testType === 'str4' || testType === 'week'))
+    ) {
+      result.automationMode = 'semi'
+      result.fullAutomation = false
+    } else {
+      result.fullAutomation = result.automationMode === 'full' && pythonResult.fullAutomation !== false
+    }
     result.steps.push({
       stepDesc: `结果: ${result.message || result.status}`,
       status: result.status,
@@ -2802,7 +2893,7 @@ async function generateTestReport(
     const sheets: { name: string; rows: string[][]; styles: ('green' | 'red' | 'yellow' | '')[] }[] = []
 
     if (session.testType === 'custom') {
-      const rows: string[][] = [['序号', '用例名称', '所属模块', '状态', '结论', '是否全自动', '执行时间']]
+      const rows: string[][] = [['序号', '用例名称', '所属模块', '状态', '结论', '自动化类型', '执行时间']]
       const styles: ('green' | 'red' | 'yellow' | '')[] = ['']
 
       for (const c of orderedResults) {
@@ -2817,7 +2908,7 @@ async function generateTestReport(
           moduleLabel,
           c.status,
           c.message,
-          c.fullAutomation ? '是' : '否',
+          automationModeLabel(c.automationMode ?? (c.fullAutomation ? 'full' : 'manual')),
           duration,
         ])
         const statusStyle = c.status === '通过' ? 'green' : c.status === '失败' ? 'red' : c.status === '部分通过' ? 'yellow' : ''
@@ -2835,7 +2926,7 @@ async function generateTestReport(
         cases.sort((a, b) => a.caseIndex - b.caseIndex)
         const sheetName = (moduleConditions[moduleKey]?.moduleLabel || moduleKey.split('/').pop() || moduleKey)
           .slice(0, 31)
-        const rows: string[][] = [['序号', '用例名称', '状态', '结论', '是否全自动', '执行时间']]
+        const rows: string[][] = [['序号', '用例名称', '状态', '结论', '自动化类型', '执行时间']]
         const styles: ('green' | 'red' | 'yellow' | '')[] = ['']
         for (const c of cases) {
           const duration = c.startTime && c.endTime
@@ -2846,7 +2937,7 @@ async function generateTestReport(
             c.caseName,
             c.status,
             c.message,
-            c.fullAutomation ? '是' : '否',
+            automationModeLabel(c.automationMode ?? (c.fullAutomation ? 'full' : 'manual')),
             duration,
           ])
           const statusStyle = c.status === '通过' ? 'green' : c.status === '失败' ? 'red' : c.status === '部分通过' ? 'yellow' : ''
@@ -2929,6 +3020,7 @@ async function generateTestReport(
       status: c.status,
       message: c.message,
       fullAutomation: c.fullAutomation,
+      automationMode: c.automationMode ?? (c.fullAutomation ? 'full' : 'manual'),
       steps: c.steps,
       failureLogDir: c.failureLogDir,
     }))
@@ -3261,6 +3353,8 @@ export async function retestCase(
 }
 
 function caseItemToResult(item: SelfCheckCaseItem): CaseResult {
+  const automationMode = item.automationMode
+    ?? (item.fullAutomation === false ? 'manual' : 'full')
   return {
     testType: item.testType,
     module: item.module,
@@ -3268,7 +3362,8 @@ function caseItemToResult(item: SelfCheckCaseItem): CaseResult {
     caseName: item.caseName,
     status: item.status as CaseResult['status'],
     message: item.message,
-    fullAutomation: item.fullAutomation ?? true,
+    fullAutomation: item.fullAutomation ?? automationMode === 'full',
+    automationMode,
     steps: (item.steps as CaseStep[]) ?? [],
     failureLogDir: item.failureLogDir,
   }
@@ -3532,6 +3627,9 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
         caseIndex: c.caseIndex,
         caseName: c.caseName,
         canReuse: c.canReuse,
+        automationMode: c.automationMode ?? resolveCaseAutomationMode(testType, module, c.caseIndex, {
+          execMode: c.execMode,
+        }),
       })),
     })
   }
@@ -3571,6 +3669,7 @@ export function getCaseCatalogDetail(testType: string): CaseCatalogDetailItem[] 
         caseIndex: c.caseIndex,
         caseName: c.caseName,
         canReuse: c.canReuse,
+        automationMode: c.automationMode,
         preconditions: info?.['前置条件'] || '',
         manualSteps: info?.['测试步骤'] || '',
         expectedResult: info?.['期望结果'] || '',

@@ -126,6 +126,34 @@ export const DEVICE_LIST_FILTER_OPTIONS = [
 
 export type DeviceListFilterKey = typeof DEVICE_LIST_FILTER_OPTIONS[number]['key']
 
+export const AUTOMATION_MODE_FILTER_OPTIONS = [
+  { key: 'all', label: '全部' },
+  { key: 'full', label: '全自动' },
+  { key: 'semi', label: '半自动' },
+  { key: 'manual', label: '人工' },
+] as const
+
+export type AutomationModeFilterKey = typeof AUTOMATION_MODE_FILTER_OPTIONS[number]['key']
+
+export function getAutomationModeLabel(mode?: string): string {
+  if (mode === 'full') return '全自动'
+  if (mode === 'semi') return '半自动'
+  if (mode === 'manual') return '人工'
+  return '全自动'
+}
+
+/** 列表用单字图标：自 / 半 / 人 */
+export function getAutomationModeIcon(mode?: string): string {
+  if (mode === 'semi') return '半'
+  if (mode === 'manual') return '人'
+  return '自'
+}
+
+export function normalizeAutomationMode(mode?: string): 'full' | 'semi' | 'manual' {
+  if (mode === 'semi' || mode === 'manual') return mode
+  return 'full'
+}
+
 /** 参与测试中的辅测机（待命/占用中等）；已释放为空闲的不算 */
 export function isActiveAuxiliaryDevice(device: DeviceInfo): boolean {
   return device.role === '辅测机' && device.status !== '空闲'

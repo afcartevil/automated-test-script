@@ -9,10 +9,35 @@
   },
   "defaultCaseMode": "solo",
   "cases": [
-    { "caseIndex": 1, "caseName": "GTS指纹测试", "canReuse": false },
-    { "caseIndex": 2, "caseName": "GTS传感器测试", "canReuse": false },
-    { "caseIndex": 3, "caseName": "GTS通信测试", "canReuse": false },
-    { "caseIndex": 4, "caseName": "GTS多媒体测试", "canReuse": false },
-    { "caseIndex": 5, "caseName": "GTS安全测试", "canReuse": false }
+    {
+      "caseIndex": 1,
+      "caseName": "GTS指纹测试",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 2,
+      "caseName": "GTS传感器测试",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 3,
+      "caseName": "GTS通信测试",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 4,
+      "caseName": "GTS多媒体测试",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 5,
+      "caseName": "GTS安全测试",
+      "canReuse": false,
+      "automationMode": "full"
+    }
   ]
 }

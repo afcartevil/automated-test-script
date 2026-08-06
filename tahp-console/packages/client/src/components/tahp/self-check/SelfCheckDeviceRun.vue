@@ -6,18 +6,23 @@ import { openDeviceCaseFailureLogs } from '@/api/tahp/device-self-check'
 import EaCard from '@/components/layout/EaCard.vue'
 import { DEVICE_SELF_CHECK_KEY } from './self-check-context'
 import {
+  AUTOMATION_MODE_FILTER_OPTIONS,
   DEVICE_LIST_FILTER_OPTIONS,
   formatCatalogAutomation,
   formatCatalogModuleScope,
   formatCatalogPrereq,
   deviceMatchesListFilter,
+  getAutomationModeIcon,
+  getAutomationModeLabel,
   getDeviceListFilterKey,
   getModuleLabel,
   isActiveAuxiliaryDevice,
+  normalizeAutomationMode,
   parseManualSteps,
   STANDARD_TEST_TYPE_ORDER,
 } from './self-check-utils'
-import type { DeviceListFilterKey } from './self-check-utils'
+import type { AutomationModeFilterKey, DeviceListFilterKey } from './self-check-utils'
+import type { CaseCatalogGroup } from '@/api/tahp/device-self-check'
 
 const catalogPanelRef = ref<HTMLElement | null>(null)
 const deviceListAnchorRef = ref<HTMLElement | null>(null)
@@ -26,6 +31,7 @@ const deviceDetailBodyRef = ref<HTMLElement | null>(null)
 const customTestPanelRef = ref<HTMLElement | null>(null)
 const aiNlProcessLogRef = ref<HTMLElement | null>(null)
 const deviceListFilter = ref<DeviceListFilterKey>('all')
+const customAutomationFilter = ref<AutomationModeFilterKey>('all')
 
 function getScrollParent(el: HTMLElement): HTMLElement | Window {
   let node: HTMLElement | null = el.parentElement
@@ -202,6 +208,42 @@ const {
 
 const message = useMessage()
 const openingFailureLogs = ref(false)
+
+const filteredCustomCatalogGroups = computed((): CaseCatalogGroup[] => {
+  const filter = customAutomationFilter.value
+  if (filter === 'all') return caseCatalogGroups.value
+  return caseCatalogGroups.value
+    .map(group => ({
+      ...group,
+      modules: group.modules
+        .map(mod => ({
+          ...mod,
+          cases: mod.cases.filter(c => normalizeAutomationMode(c.automationMode) === filter),
+        }))
+        .filter(mod => mod.cases.length > 0),
+    }))
+    .filter(group => group.modules.length > 0)
+})
+
+const customAutomationFilterCounts = computed(() => {
+  const counts = { all: 0, full: 0, semi: 0, manual: 0 }
+  for (const group of caseCatalogGroups.value) {
+    for (const mod of group.modules) {
+      for (const c of mod.cases) {
+        counts.all += 1
+        counts[normalizeAutomationMode(c.automationMode)] += 1
+      }
+    }
+  }
+  return counts
+})
+
+watch(
+  () => viewMode.value === 'customTest',
+  (isCustom) => {
+    if (isCustom) customAutomationFilter.value = 'all'
+  },
+)
 
 function canOpenSelectedFailureLogs(): boolean {
   const result = selectedCaseResult.value
@@ -421,9 +463,31 @@ function handleDutRowAction(deviceId: string) {
                     已选 {{ selectedCases.size }} 个
                   </span>
                 </div>
+                <div class="automation-mode-filters">
+                  <button
+                    v-for="opt in AUTOMATION_MODE_FILTER_OPTIONS"
+                    :key="opt.key"
+                    type="button"
+                    class="automation-filter-chip"
+                    :class="[
+                      `automation-filter-chip--${opt.key}`,
+                      { active: customAutomationFilter === opt.key },
+                    ]"
+                    @click="customAutomationFilter = opt.key"
+                  >
+                    <span v-if="opt.key !== 'all'" class="auto-mode-icon" :class="`auto-mode-icon--${opt.key}`">
+                      {{ getAutomationModeIcon(opt.key) }}
+                    </span>
+                    {{ opt.label }}
+                    <span class="automation-filter-count">{{ customAutomationFilterCounts[opt.key] }}</span>
+                  </button>
+                </div>
               </div>
               <div class="custom-test-case-scroll catalog-list">
-                <div v-for="group in caseCatalogGroups" :key="group.testType" class="catalog-type-group">
+                <div v-if="filteredCustomCatalogGroups.length === 0" class="ea-muted catalog-empty-cases">
+                  当前筛选下无用例
+                </div>
+                <div v-for="group in filteredCustomCatalogGroups" :key="group.testType" class="catalog-type-group">
                   <div class="catalog-type-header" @click="toggleCatalogType(group.testType)">
                     <span class="catalog-toggle">{{ expandedCatalogTypes.has(group.testType) ? '▼' : '▶' }}</span>
                     <span class="catalog-type-label">{{ group.label }}</span>
@@ -469,6 +533,11 @@ function handleDutRowAction(deviceId: string) {
                             @click.stop
                             @change="toggleCase(catalog.key + '/' + c.caseIndex)"
                           />
+                          <span
+                            class="auto-mode-icon"
+                            :class="`auto-mode-icon--${normalizeAutomationMode(c.automationMode)}`"
+                            :title="getAutomationModeLabel(c.automationMode)"
+                          >{{ getAutomationModeIcon(c.automationMode) }}</span>
                           <span class="case-name">{{ c.caseIndex }}. {{ c.caseName }}</span>
                           <span v-if="c.canReuse" class="case-tag">可复用</span>
                         </div>
@@ -935,6 +1004,11 @@ function handleDutRowAction(deviceId: string) {
                           @click.stop
                           @change.stop="toggleAiGeneratedCaseForDelete(item.key)"
                         />
+                        <span
+                          class="auto-mode-icon"
+                          :class="`auto-mode-icon--${normalizeAutomationMode(item.automationMode)}`"
+                          :title="getAutomationModeLabel(item.automationMode)"
+                        >{{ getAutomationModeIcon(item.automationMode) }}</span>
                         <span class="case-item-name">{{ item.caseName }}</span>
                         <button
                           v-if="isAiGeneratedCatalog()"
@@ -956,6 +1030,16 @@ function handleDutRowAction(deviceId: string) {
                 <EaCard class="catalog-case-detail-card">
                   <div v-if="selectedCatalogItem" class="case-detail-header">
                     <span class="catalog-case-title">{{ selectedCatalogItem.caseName }}</span>
+                    <span
+                      class="auto-mode-badge"
+                      :class="`auto-mode-badge--${normalizeAutomationMode(selectedCatalogItem.automationMode)}`"
+                    >
+                      <span
+                        class="auto-mode-icon"
+                        :class="`auto-mode-icon--${normalizeAutomationMode(selectedCatalogItem.automationMode)}`"
+                      >{{ getAutomationModeIcon(selectedCatalogItem.automationMode) }}</span>
+                      {{ getAutomationModeLabel(selectedCatalogItem.automationMode) }}
+                    </span>
                   </div>
                   <div v-if="selectedCatalogItem" class="case-detail-content">
                     <div v-if="selectedCatalogItem.preconditions" class="case-info">
@@ -1227,7 +1311,12 @@ function handleDutRowAction(deviceId: string) {
                             :class="{ selected: isCaseSelected(config, caseItem.caseIndex) }"
                             @click="selectCaseItem(config.module, caseItem.caseIndex, config.testType)"
                           >
-                            {{ caseItem.caseName }}
+                            <span
+                              class="auto-mode-icon"
+                              :class="`auto-mode-icon--${normalizeAutomationMode(caseItem.automationMode)}`"
+                              :title="getAutomationModeLabel(caseItem.automationMode)"
+                            >{{ getAutomationModeIcon(caseItem.automationMode) }}</span>
+                            <span class="case-item-name">{{ caseItem.caseName }}</span>
                           </div>
                         </template>
                         <template v-else>
@@ -1242,7 +1331,12 @@ function handleDutRowAction(deviceId: string) {
                             :style="getCaseItemStyle(config, caseItem.caseIndex)"
                             @click="selectCaseItem(config.module, caseItem.caseIndex, config.testType)"
                           >
-                            {{ caseItem.caseName }}
+                            <span
+                              class="auto-mode-icon"
+                              :class="`auto-mode-icon--${normalizeAutomationMode(caseItem.automationMode)}`"
+                              :title="getAutomationModeLabel(caseItem.automationMode)"
+                            >{{ getAutomationModeIcon(caseItem.automationMode) }}</span>
+                            <span class="case-item-name">{{ caseItem.caseName }}</span>
                           </div>
                         </template>
                       </div>
@@ -2974,10 +3068,141 @@ $catalog-pane-height: calc(100vh - 48px);
 
 .custom-test-case-header {
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .custom-test-case-title {
   margin-bottom: 0;
+}
+
+.automation-mode-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.automation-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--filter-border, var(--line));
+  background: var(--filter-bg, var(--bg));
+  color: var(--filter-fg, var(--text));
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1.2;
+
+  &:hover {
+    filter: brightness(0.97);
+  }
+
+  &.active {
+    border-color: var(--filter-active-border, var(--accent));
+    background: var(--filter-active-bg, var(--accent-soft));
+    color: var(--filter-active-fg, var(--accent));
+  }
+}
+
+.automation-filter-chip--all {
+  --filter-border: #94a3b8;
+  --filter-bg: #f8fafc;
+  --filter-fg: #475569;
+  --filter-active-border: #64748b;
+  --filter-active-bg: #e2e8f0;
+  --filter-active-fg: #334155;
+}
+
+.automation-filter-chip--full {
+  --filter-border: #34d399;
+  --filter-bg: #ecfdf5;
+  --filter-fg: #047857;
+  --filter-active-border: #10b981;
+  --filter-active-bg: #d1fae5;
+  --filter-active-fg: #065f46;
+}
+
+.automation-filter-chip--semi {
+  --filter-border: #fbbf24;
+  --filter-bg: #fffbeb;
+  --filter-fg: #b45309;
+  --filter-active-border: #d97706;
+  --filter-active-bg: #fef3c7;
+  --filter-active-fg: #92400e;
+}
+
+.automation-filter-chip--manual {
+  --filter-border: #94a3b8;
+  --filter-bg: #f1f5f9;
+  --filter-fg: #475569;
+  --filter-active-border: #64748b;
+  --filter-active-bg: #e2e8f0;
+  --filter-active-fg: #334155;
+}
+
+.automation-filter-count {
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--filter-fg, var(--text)) 12%, var(--filter-bg, var(--bg)));
+}
+
+.auto-mode-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.auto-mode-icon--full {
+  background: #d1fae5;
+  color: #047857;
+}
+
+.auto-mode-icon--semi {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.auto-mode-icon--manual {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.auto-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 4px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.auto-mode-badge--full {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.auto-mode-badge--semi {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.auto-mode-badge--manual {
+  background: #f1f5f9;
+  color: #475569;
 }
 
 .custom-test-case-scroll {
