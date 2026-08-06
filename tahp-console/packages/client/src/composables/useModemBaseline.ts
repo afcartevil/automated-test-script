@@ -709,10 +709,14 @@ export function useModemBaseline() {
   async function startRun() {
     starting.value = true
     try {
-      const check = await runPrecheck()
-      if (!check.canStart) {
-        const blocking = check.items.find(item => item.level === 'error')
-        throw new Error(blocking?.detail || '执行前检查未通过')
+      const cfg = config.value
+      const missingFields: string[] = []
+      if (!cfg.NODE_BRANCH?.trim()) missingFields.push('NODE_BRANCH')
+      if (!cfg.target_BRANCH?.trim()) missingFields.push('target_BRANCH')
+      if (!cfg.JIRAID?.trim()) missingFields.push('JIRAID')
+      if (!cfg.work_dir?.trim()) missingFields.push('work_dir')
+      if (missingFields.length) {
+        throw new Error(`缺少必要配置字段：${missingFields.join('、')}`)
       }
       const result = await createModemBaselineRun(config.value)
       await reloadRuns()
