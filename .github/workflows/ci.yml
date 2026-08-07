@@ -25,6 +25,10 @@ jobs:
           npm ci
           npm test
 
+      - name: Retrieval eval CI gate
+        working-directory: tahp-console
+        run: npm run eval:retrieval:ci
+
       - name: Skills structure check
         shell: bash
         run: |

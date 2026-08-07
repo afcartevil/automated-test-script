@@ -1,0 +1,58 @@
+{
+  "_comment": "适配评测评分模板。真实用例落本机 .tahp-config/evals/adapt/，不入库。",
+  "agent_rubric": [
+    {
+      "id": "adapt_completed",
+      "weight": 3,
+      "must": true,
+      "scoring": "objective",
+      "criterion": "适配 Agent 任务成功完成（status=completed）"
+    },
+    {
+      "id": "has_changes",
+      "weight": 2,
+      "must": true,
+      "scoring": "objective",
+      "criterion": "产生了至少一个文件变更"
+    },
+    {
+      "id": "skill_hit",
+      "weight": 1,
+      "scoring": "objective",
+      "criterion": "实际使用的 skill 与期望 related_skills 有交集"
+    }
+  ],
+  "pipeline_rubric": [
+    {
+      "id": "adapt_completed",
+      "weight": 2,
+      "must": true,
+      "scoring": "objective",
+      "criterion": "适配阶段完成且有文件变更"
+    },
+    {
+      "id": "build_pass",
+      "weight": 3,
+      "must": true,
+      "scoring": "objective",
+      "criterion": "编译通过且产出产物路径"
+    },
+    {
+      "id": "selfcheck_pass",
+      "weight": 3,
+      "must": true,
+      "scoring": "objective",
+      "criterion": "自检全部通过（failed=0）"
+    },
+    {
+      "id": "pipeline_passed",
+      "weight": 1,
+      "scoring": "objective",
+      "criterion": "整条流水线最终状态为 passed"
+    }
+  ],
+  "modes": {
+    "rerun": "重跑 adapt agent，客观打分（默认，agent 用例）",
+    "offline": "不重跑，对冻结信号 / 已有产物打客观分（默认，pipeline 用例）"
+  }
+}

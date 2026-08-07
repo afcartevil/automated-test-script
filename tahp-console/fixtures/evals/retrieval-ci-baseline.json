@@ -1,0 +1,354 @@
+{
+  "format": "tahp-eval-bundle-v1",
+  "version": 1,
+  "suite": "retrieval",
+  "exported_at": "2026-08-07T00:00:00.000Z",
+  "redacted": true,
+  "cases": [
+    {
+      "id": "retrieval-port-burn-history",
+      "suite": "retrieval",
+      "title": "端口防烧现象 → historical_case",
+      "source": {
+        "type": "retrieval_query",
+        "query": "插入充电器充电，小板NTC加热至70°C触发端口防烧，但通知栏不显示通知",
+        "problem_description": "插入充电器充电，小板NTC加热至70°C触发端口防烧，但通知栏不显示通知",
+        "expected_intent": "historical_case",
+        "expected_top1_skill": null,
+        "expected_top_k_skills": [],
+        "retrieval_mode": "auto",
+        "preferred_skill_ids": [],
+        "expect_skill_ranking": false
+      },
+      "rubric": [
+        {
+          "id": "intent_match",
+          "weight": 3,
+          "must": true,
+          "scoring": "objective",
+          "criterion": "routeIntent（含 slash 剥离）得到的 intent 与期望一致"
+        },
+        {
+          "id": "top1_skill",
+          "weight": 3,
+          "must": true,
+          "scoring": "objective",
+          "criterion": "rankSkills 的 top-1 skill_id 与期望一致（不适用时记 N/A）"
+        },
+        {
+          "id": "topk_skill_hit",
+          "weight": 2,
+          "scoring": "objective",
+          "criterion": "期望 skill 集合被 top-k 覆盖的比例"
+        },
+        {
+          "id": "preferred_skill_boost",
+          "weight": 1,
+          "scoring": "objective",
+          "criterion": "声明的 preferred_skill_ids 出现在 top-k（relevance 顶置）"
+        },
+        {
+          "id": "mode_override",
+          "weight": 1,
+          "scoring": "objective",
+          "criterion": "retrieval_mode ≠ auto 时，intent 被强制为对应映射且 explicit_override=true"
+        }
+      ],
+      "labels": [
+        "ci",
+        "seed",
+        "baseline"
+      ],
+      "created_at": "2026-08-07T00:00:00.000Z",
+      "mode": "offline"
+    },
+    {
+      "id": "retrieval-vowifi-history",
+      "suite": "retrieval",
+      "title": "历史 Bug 关键词 → historical_case",
+      "source": {
+        "type": "retrieval_query",
+        "query": "有没有类似的 VozWiFi 历史 Bug",
+        "problem_description": "有没有类似的 VozWiFi 历史 Bug",
+        "expected_intent": "historical_case",
+        "expected_top1_skill": null,
+        "expected_top_k_skills": [],
+        "retrieval_mode": "auto",
+        "preferred_skill_ids": [],
+        "expect_skill_ranking": false
+      },
+      "rubric": [
+        {
+          "id": "intent_match",
+          "weight": 3,
+          "must": true,
+          "scoring": "objective",
+          "criterion": "routeIntent（含 slash 剥离）得到的 intent 与期望一致"
+        },
+        {
+          "id": "top1_skill",
+          "weight": 3,
+          "must": true,
+          "scoring": "objective",
+          "criterion": "rankSkills 的 top-1 skill_id 与期望一致（不适用时记 N/A）"
+        },
+        {
+          "id": "topk_skill_hit",
+          "weight": 2,
+          "scoring": "objective",
+          "criterion": "期望 skill 集合被 top-k 覆盖的比例"
+        },
+        {
+          "id": "preferred_skill_boost",
+          "weight": 1,
+          "scoring": "objective",
+          "criterion": "声明的 preferred_skill_ids 出现在 top-k（relevance 顶置）"
+        },
+        {
+          "id": "mode_override",
+          "weight": 1,
+          "scoring": "objective",
+          "criterion": "retrieval_mode ≠ auto 时，intent 被强制为对应映射且 explicit_override=true"
+        }
+      ],
+      "labels": [
+        "ci",
+        "seed",
+        "baseline"
+      ],
+      "created_at": "2026-08-07T00:00:00.000Z",
+      "mode": "offline"
+    },
+    {
+      "id": "retrieval-vowifi-concept",
+      "suite": "retrieval",
+      "title": "是什么 → concept_reference",
+      "source": {
+        "type": "retrieval_query",
+        "query": "VozWiFi 是什么",
+        "problem_description": "VozWiFi 是什么",
+        "expected_intent": "concept_reference",
+        "expected_top1_skill": null,
+        "expected_top_k_skills": [],
+        "retrieval_mode": "auto",
+        "preferred_skill_ids": [],
+        "expect_skill_ranking": false
+      },
+      "rubric": [
+        {
+          "id": "intent_match",
+          "weight": 3,
+          "must": true,
+          "scoring": "objective",
+          "criterion": "routeIntent（含 slash 剥离）得到的 intent 与期望一致"
+        },
+        {
+          "id": "top1_skill",
+          "weight": 3,
+          "must": true,
+          "scoring": "objective",
+          "criterion": "rankSkills 的 top-1 skill_id 与期望一致（不适用时记 N/A）"
+        },
+        {
+          "id": "topk_skill_hit",
+          "weight": 2,
+          "scoring": "objective",
+          "criterion": "期望 skill 集合被 top-k 覆盖的比例"
+        },
+        {
+          "id": "preferred_skill_boost",
+          "weight": 1,
+          "scoring": "objective",
+          "criterion": "声明的 preferred_skill_ids 出现在 top-k（relevance 顶置）"
+        },
+        {
+          "id": "mode_override",
+          "weight": 1,
+          "scoring": "objective",
+          "criterion": "retrieval_mode ≠ auto 时，intent 被强制为对应映射且 explicit_override=true"
+        }
+      ],
+      "labels": [
+        "ci",
+        "seed",
+        "baseline"
+      ],
+      "created_at": "2026-08-07T00:00:00.000Z",
+      "mode": "offline"
+    },
+    {
+      "id": "retrieval-jira-direct",
+      "suite": "retrieval",
+      "title": "JIRA Key → direct_lookup",
+      "source": {
+        "type": "retrieval_query",
+        "query": "DEMO-[REDACTED] 详情",
+        "problem_description": "DEMO-[REDACTED] 详情",
+        "expected_intent": "direct_lookup",
+        "expected_top1_skill": null,
+        "expected_top_k_skills": [],
+        "retrieval_mode": "auto",
+        "preferred_skill_ids": [],
+        "expect_skill_ranking": false
+      },
+      "rubric": [
+        {
+          "id": "intent_match",
+          "weight": 3,
+          "must": true,
+          "scoring": "objective",
+          "criterion": "routeIntent（含 slash 剥离）得到的 intent 与期望一致"
+        },
+        {
+          "id": "top1_skill",
+          "weight": 3,
+          "must": true,
+          "scoring": "objective",
+          "criterion": "rankSkills 的 top-1 skill_id 与期望一致（不适用时记 N/A）"
+        },
+        {
+          "id": "topk_skill_hit",
+          "weight": 2,
+          "scoring": "objective",
+          "criterion": "期望 skill 集合被 top-k 覆盖的比例"
+        },
+        {
+          "id": "preferred_skill_boost",
+          "weight": 1,
+          "scoring": "objective",
+          "criterion": "声明的 preferred_skill_ids 出现在 top-k（relevance 顶置）"
+        },
+        {
+          "id": "mode_override",
+          "weight": 1,
+          "scoring": "objective",
+          "criterion": "retrieval_mode ≠ auto 时，intent 被强制为对应映射且 explicit_override=true"
+        }
+      ],
+      "labels": [
+        "ci",
+        "seed",
+        "baseline"
+      ],
+      "created_at": "2026-08-07T00:00:00.000Z",
+      "mode": "offline"
+    },
+    {
+      "id": "retrieval-mode-sop-override",
+      "suite": "retrieval",
+      "title": "UI mode=sop 强制覆盖",
+      "source": {
+        "type": "retrieval_query",
+        "query": "任意问题",
+        "problem_description": "任意问题",
+        "expected_intent": "analysis_sop",
+        "expected_top1_skill": null,
+        "expected_top_k_skills": [],
+        "retrieval_mode": "sop",
+        "preferred_skill_ids": [],
+        "expect_skill_ranking": false
+      },
+      "rubric": [
+        {
+          "id": "intent_match",
+          "weight": 3,
+          "must": true,
+          "scoring": "objective",
+          "criterion": "routeIntent（含 slash 剥离）得到的 intent 与期望一致"
+        },
+        {
+          "id": "top1_skill",
+          "weight": 3,
+          "must": true,
+          "scoring": "objective",
+          "criterion": "rankSkills 的 top-1 skill_id 与期望一致（不适用时记 N/A）"
+        },
+        {
+          "id": "topk_skill_hit",
+          "weight": 2,
+          "scoring": "objective",
+          "criterion": "期望 skill 集合被 top-k 覆盖的比例"
+        },
+        {
+          "id": "preferred_skill_boost",
+          "weight": 1,
+          "scoring": "objective",
+          "criterion": "声明的 preferred_skill_ids 出现在 top-k（relevance 顶置）"
+        },
+        {
+          "id": "mode_override",
+          "weight": 1,
+          "scoring": "objective",
+          "criterion": "retrieval_mode ≠ auto 时，intent 被强制为对应映射且 explicit_override=true"
+        }
+      ],
+      "labels": [
+        "ci",
+        "seed",
+        "baseline"
+      ],
+      "created_at": "2026-08-07T00:00:00.000Z",
+      "mode": "offline"
+    },
+    {
+      "id": "retrieval-slash-history",
+      "suite": "retrieval",
+      "title": "斜杠 /历史",
+      "source": {
+        "type": "retrieval_query",
+        "query": "/历史 VozWiFi",
+        "problem_description": "/历史 VozWiFi",
+        "expected_intent": "historical_case",
+        "expected_top1_skill": null,
+        "expected_top_k_skills": [],
+        "retrieval_mode": "auto",
+        "preferred_skill_ids": [],
+        "expect_skill_ranking": false
+      },
+      "rubric": [
+        {
+          "id": "intent_match",
+          "weight": 3,
+          "must": true,
+          "scoring": "objective",
+          "criterion": "routeIntent（含 slash 剥离）得到的 intent 与期望一致"
+        },
+        {
+          "id": "top1_skill",
+          "weight": 3,
+          "must": true,
+          "scoring": "objective",
+          "criterion": "rankSkills 的 top-1 skill_id 与期望一致（不适用时记 N/A）"
+        },
+        {
+          "id": "topk_skill_hit",
+          "weight": 2,
+          "scoring": "objective",
+          "criterion": "期望 skill 集合被 top-k 覆盖的比例"
+        },
+        {
+          "id": "preferred_skill_boost",
+          "weight": 1,
+          "scoring": "objective",
+          "criterion": "声明的 preferred_skill_ids 出现在 top-k（relevance 顶置）"
+        },
+        {
+          "id": "mode_override",
+          "weight": 1,
+          "scoring": "objective",
+          "criterion": "retrieval_mode ≠ auto 时，intent 被强制为对应映射且 explicit_override=true"
+        }
+      ],
+      "labels": [
+        "ci",
+        "seed",
+        "baseline"
+      ],
+      "created_at": "2026-08-07T00:00:00.000Z",
+      "mode": "offline"
+    }
+  ],
+  "redaction_notes": [
+    "retrieval-jira-direct.source.query"
+  ]
+}

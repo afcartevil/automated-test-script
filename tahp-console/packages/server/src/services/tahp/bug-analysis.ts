@@ -1913,6 +1913,14 @@ export async function continueBugAnalysis(taskId: string, input: ContinueAnalysi
     jira_url: ctx.jiraUrl,
     message: `补充信息继续分析（第 ${ctx.corrections.length} 轮）: ${ctx.jiraKey}`,
   })
+
+  // 用户补充说明首轮没达标 —— 评估层据此挑选评测用例候选
+  emit(taskId, 'task.correction', {
+    round: ctx.corrections.length,
+    correction: additionalInfo,
+    jira_key: ctx.jiraKey,
+    eval_candidate: true,
+  })
   logBug(taskId, 'info', `task.continue_started round=${ctx.corrections.length} jira=${ctx.jiraKey}`)
 
   setImmediate(() => {

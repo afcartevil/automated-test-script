@@ -17,6 +17,7 @@ import { tahpTestPlanningRoutes } from './test-planning'
 import { tahpModemBaselineRoutes } from './modem-baseline'
 import { tahpGkiPatchRoutes } from './gki-patch'
 import { tahpAdaptPipelineRoutes } from './adapt-pipeline'
+import { tahpEvalRoutes } from './eval'
 
 export function registerTahpRoutes(app: Koa) {
   app.use(tahpKnowledgeRoutes.routes())
@@ -35,4 +36,5 @@ export function registerTahpRoutes(app: Koa) {
   app.use(tahpModemBaselineRoutes.routes())
   app.use(tahpGkiPatchRoutes.routes())
   app.use(tahpAdaptPipelineRoutes.routes())
+  app.use(tahpEvalRoutes.routes())
 }

@@ -20,6 +20,7 @@ const groups = [
       { name: 'tahp.adapt-debug', label: 'AI 适配调试', icon: 'M5 3l14 9-14 9V3z' },
       { name: 'tahp.knowledge', label: '知识库', icon: 'M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2zM22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z' },
       { name: 'tahp.reports', label: '报告', icon: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8' },
+      { name: 'tahp.evals', label: '质量评测', icon: 'M9 11l3 3 8-8M20 12v7a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2h9' },
     ],
   },
   {

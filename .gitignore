@@ -12,6 +12,8 @@ Thumbs.db
 *.key
 *.pem
 docs/
+!tahp-console/docs/
+!tahp-console/docs/DESIGN-evals.md
 reports/
 .adapt-config/domain-layouts/Untitled
 knowledge-base/.kb-data/
