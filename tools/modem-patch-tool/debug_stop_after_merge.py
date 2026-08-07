@@ -1,7 +1,6 @@
 from debug_flow_common import (
     create_merger,
     ensure_bridge_ready,
-    fail_step,
     finish_with_report,
     log_step,
     load_runtime_config,
@@ -24,12 +23,12 @@ REPORT_LABEL = "Initial flow report"
 
 
 def run_stop_flow(merger) -> int:
-    log_step(merger, FLOW_LABEL, 2, "Upload non-interactive merge script")
-    if not merger.configure_md_merge():
+    log_step(merger, FLOW_LABEL, 2, "Prepare in-repo tools/md_merge.sh")
+    if not merger.configure_md_merge(mode="merge"):
         return finish_with_report(merger, 1, report_label=REPORT_LABEL)
     merger.wait(merger.medium_delay)
 
-    log_step(merger, FLOW_LABEL, 3, "Run non-interactive merge")
+    log_step(merger, FLOW_LABEL, 3, "Run tools/md_merge.sh")
     if not merger.run_md_merge():
         return finish_with_report(merger, 1, report_label=REPORT_LABEL)
 
@@ -40,19 +39,17 @@ def run_stop_flow(merger) -> int:
         return warn_step(
             merger,
             "Wait for manual conflict resolution",
-            "Conflicts detected (MERGE_HEAD exists). Resolve them manually, then click Continue to run commit, post-merge, and push steps.",
+            "Conflicts detected (MERGE_HEAD exists). Resolve them manually, then click Continue "
+            "(equiv. typing y in md_merge.sh) to commit and run check_diff_file / update_before_node_commit_id.",
             report_label=REPORT_LABEL,
         )
 
-    log_step(merger, FLOW_LABEL, 5, "Run post-merge steps")
-    if not merger.upload_scripts():
-        return finish_with_report(merger, 1, report_label=REPORT_LABEL)
-    merger.wait(merger.short_delay)
-
-    post = merger.run_harness_command(["bash", "tools/md_post_merge.sh"], merger.remote_work_dir, delay_after=merger.medium_delay)
-    if not (post and post.returncode == 0):
-        return fail_step(merger, "Run post-merge steps", "Post-merge steps failed", "post_merge_failed", report_label=REPORT_LABEL)
-    merger.add_step("Run post-merge steps", "success", "Post-merge steps completed")
+    log_step(merger, FLOW_LABEL, 5, "Post-merge already handled by md_merge.sh")
+    merger.add_step(
+        "Run post-merge steps",
+        "success",
+        "No conflict; in-repo md_merge.sh already finished check_diff_file / update_before_node_commit_id",
+    )
     return finish_with_report(merger, 0, log_execution=True, report_label=REPORT_LABEL)
 
 
@@ -71,4 +68,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

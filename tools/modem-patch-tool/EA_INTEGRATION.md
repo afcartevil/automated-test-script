@@ -9,6 +9,7 @@
 
 ### 使用约定
 - 默认配置来源：`config/baseline_upgrade.json`
+- 合入入口：目标 modem 仓内 `tools/md_merge.sh`（工具只做填参 + 冲突非交互化 + `--apm-continue`）
 - 启动脚本：
   - `debug_stop_after_merge.py`
   - `debug_continue_after_merge.py`

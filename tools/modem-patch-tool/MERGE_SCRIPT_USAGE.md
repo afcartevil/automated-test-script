@@ -1,14 +1,21 @@
 # Merge Script Usage Guide
 
+> **2026-08 更新（主流程）**：`AutoPatchMerger` / Console Modem 基线已改为优先使用**目标仓内**的 `tools/md_merge.sh`，不再上传独立的 `md_merge_noninteractive.sh` 作为合入入口。
+>
+> - 合入前：读取仓内脚本 → 填写头部变量 → 将冲突处的 `read y` 改为 `exit 1`（保留 MERGE_HEAD）
+> - 有冲突：工具暂停，等同脚本停在「请输入 y」之前
+> - 续跑：`bash tools/md_merge.sh --apm-continue`，等同输入 `y`，随后走仓内 `check_diff_file` / `update_before_node_commit_id`
+> - 下方关于 `md_merge_noninteractive.sh` / `md_continue_after_conflict.sh` / `md_post_merge.sh` 的说明保留作遗留/手工参考
+
 ## 1. 文档目的
 
-本文档说明以下 3 个脚本的用途、执行时机、前置条件、使用方法、返回码和典型流程：
+本文档说明以下 3 个**遗留**脚本的用途、执行时机、前置条件、使用方法、返回码和典型流程：
 
 - `md_merge_noninteractive.sh`
 - `md_continue_after_conflict.sh`
 - `md_post_merge.sh`
 
-这 3 个脚本原本是给网页模式和 `AutoPatchMerger` 主流程调用的模板脚本。正常情况下，`auto_patch_merger.py` 会先把脚本头部变量填好，再上传到远端 `modem` 仓库的 `tools/` 目录执行。
+这 3 个脚本原本是给网页模式和 `AutoPatchMerger` 主流程调用的模板脚本。当前主流程已改为直接编排仓内 `tools/md_merge.sh`；下列内容仍可用于理解历史行为或手工排障。
 
 如果需要单独使用，也可以手工复制到目标仓库执行，但需要先理解它们的运行假设和风险。
 

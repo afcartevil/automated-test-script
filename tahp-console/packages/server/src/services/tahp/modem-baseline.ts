@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import os from 'os'
-import { spawn, spawnSync } from 'child_process'
+import { spawn, spawnSync, type ChildProcess } from 'child_process'
 import type { ServerResponse } from 'http'
 import * as XLSX from 'xlsx'
 import { config as serverConfig } from '../../config'
@@ -38,6 +38,8 @@ export type ModemBaselineRunMeta = {
   reportPath?: string
   conflictFiles?: string[]
   error?: string
+  /** Python worker pid while status=running; used to detect orphaned runs after BFF restart */
+  pid?: number
 }
 
 export type UserWorkspaceProfile = {
@@ -170,9 +172,15 @@ type RunRuntime = {
 }
 
 const runtimes = new Map<string, RunRuntime>()
+/** In-memory child processes for modem baseline runs (lost on BFF restart). */
+const activeChildProcesses = new Map<string, ChildProcess>()
+/** If a running run has no live worker and log is silent longer than this, treat as orphaned. */
+const ORPHAN_LOG_SILENCE_MS = 3 * 60 * 1000
 const BRIDGE_PROBE_CACHE_TTL_MS = 90_000
 let lastBridgeProbeSuccessAt = 0
 let lastBridgeProbeSummary = ''
+let orphanReconcileQueued = false
+let orphanReconciling = false
 
 function nowIso() {
   return new Date().toISOString()
@@ -1732,6 +1740,7 @@ export function scanModemPatchReposMulti(
 }
 
 export function readModemBaselineRun(runId: string): ModemBaselineRunMeta | null {
+  reconcileOrphanedModemBaselineRuns()
   const metaPath = runMetaPath(runId)
   if (!fs.existsSync(metaPath)) return null
   try {
@@ -1741,17 +1750,127 @@ export function readModemBaselineRun(runId: string): ModemBaselineRunMeta | null
   }
 }
 
-export function listModemBaselineRuns(): ModemBaselineRunMeta[] {
+function listModemBaselineRunsRaw(): ModemBaselineRunMeta[] {
   ensureDataDirs()
   const items: ModemBaselineRunMeta[] = []
+  if (!fs.existsSync(runsRootDir())) return items
   const entries = fs.readdirSync(runsRootDir(), { withFileTypes: true })
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
-    const meta = readModemBaselineRun(entry.name)
-    if (meta) items.push(meta)
+    const metaPath = runMetaPath(entry.name)
+    if (!fs.existsSync(metaPath)) continue
+    try {
+      items.push(JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as ModemBaselineRunMeta)
+    } catch {
+      // ignore corrupt meta
+    }
   }
   return items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
 }
+
+export function listModemBaselineRuns(): ModemBaselineRunMeta[] {
+  reconcileOrphanedModemBaselineRuns()
+  return listModemBaselineRunsRaw()
+}
+
+function isPidAlive(pid: number | undefined): boolean {
+  if (!pid || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function isModemBaselineWorkerActive(runId: string, meta: ModemBaselineRunMeta): boolean {
+  const child = activeChildProcesses.get(runId)
+  if (child && child.exitCode === null && !child.killed) return true
+  if (meta.pid && isPidAlive(meta.pid)) return true
+  return false
+}
+
+function logSilenceMs(meta: ModemBaselineRunMeta): number {
+  if (!meta.logPath || !fs.existsSync(meta.logPath)) return Number.POSITIVE_INFINITY
+  try {
+    return Date.now() - fs.statSync(meta.logPath).mtimeMs
+  } catch {
+    return Number.POSITIVE_INFINITY
+  }
+}
+
+function finalizeOrphanedModemBaselineRun(meta: ModemBaselineRunMeta) {
+  const runId = meta.runId
+  const logPath = meta.logPath || runLogPath(runId)
+  const inferred = meta.logPath ? inferRunFailureError(meta.logPath) : undefined
+  const error = inferred || 'orphaned_running_process'
+  // Resume/conflict orphans: restore conflict so UI can retry「继续执行」
+  const restoreConflict = meta.phase === 'resume' || meta.phase === 'conflict' || meta.phase === 'merge'
+  const nextStatus: ModemBaselineStatus = restoreConflict ? 'conflict' : 'failed'
+  const nextMeta: ModemBaselineRunMeta = {
+    ...meta,
+    status: nextStatus,
+    phase: nextStatus === 'conflict' ? 'conflict' : inferPhaseFromStatus(nextStatus, meta.phase),
+    finishedAt: nowIso(),
+    error,
+    pid: undefined,
+  }
+  // Write meta first to avoid re-entrant reconcile while appending logs
+  writeRunMeta(nextMeta)
+  broadcast(runId, 'status', {
+    status: nextMeta.status,
+    phase: nextMeta.phase,
+    reportPath: nextMeta.reportPath,
+    error: nextMeta.error,
+  })
+  try {
+    appendRunLog(
+      runId,
+      logPath,
+      `[reconcile] orphaned running run detected; worker gone. status=${nextStatus} error=${error}\n`,
+    )
+  } catch {
+    // ignore log append failures
+  }
+}
+
+export function reconcileOrphanedModemBaselineRuns(): number {
+  if (orphanReconciling) return 0
+  orphanReconciling = true
+  let fixed = 0
+  try {
+    for (const meta of listModemBaselineRunsRaw()) {
+      if (meta.status !== 'running') continue
+      if (isModemBaselineWorkerActive(meta.runId, meta)) continue
+      const silence = logSilenceMs(meta)
+      // No pid (legacy) or dead pid: require log silence to avoid spawn race
+      if (!meta.pid && silence < ORPHAN_LOG_SILENCE_MS) continue
+      if (meta.pid && !isPidAlive(meta.pid) && silence < 15_000) continue
+      finalizeOrphanedModemBaselineRun(meta)
+      fixed += 1
+    }
+  } finally {
+    orphanReconciling = false
+  }
+  return fixed
+}
+
+function scheduleOrphanedRunReconcile() {
+  if (orphanReconcileQueued) return
+  orphanReconcileQueued = true
+  setTimeout(() => {
+    orphanReconcileQueued = false
+    try {
+      reconcileOrphanedModemBaselineRuns()
+    } catch {
+      // ignore
+    }
+  }, 0)
+}
+
+// Kick once on module load so stuck runs recover after BFF restart without waiting for UI.
+scheduleOrphanedRunReconcile()
+
 
 export function readModemBaselineLog(runId: string) {
   const meta = readModemBaselineRun(runId)
@@ -3101,7 +3220,7 @@ function inferRunFailureError(logPath: string) {
     const firstRemoteCmdIdx = lines.findIndex(line => /Running remote command:.*bridge-exec/.test(line))
     const headHarnessError = /\[Harness\]\s+status:\s*error/i.test(headBlock)
     const hasReportGenerated = /report generated locally:/i.test(headBlock)
-    const hasAnyBridgeOutput = /__APM_MERGE_HEAD__|__APM_NO__|git status --porcelain|tools\/md_merge_noninteractive/i.test(headBlock)
+    const hasAnyBridgeOutput = /__APM_MERGE_HEAD__|__APM_NO__|git status --porcelain|tools\/md_merge(?:_noninteractive|\.sh)|--apm-continue/i.test(headBlock)
     if (
       firstRemoteCmdIdx >= 0 &&
       headHarnessError &&
@@ -3134,6 +3253,7 @@ function markRunFailed(runId: string, error: string) {
     phase: inferPhaseFromStatus('failed', current.phase),
     finishedAt: nowIso(),
     error,
+    pid: undefined,
   }
   writeRunMeta(nextMeta)
   broadcast(runId, 'status', { status: nextMeta.status, phase: nextMeta.phase, reportPath: nextMeta.reportPath, error: nextMeta.error })
@@ -3192,7 +3312,7 @@ async function startBackgroundRun(runId: string, config: ModemBaselineConfig, sc
   try {
     const current = readModemBaselineRun(runId)
     const nextPhase = current?.phase === 'resume' ? 'resume' : 'merge'
-    updateRunMeta(runId, { status: 'running', phase: nextPhase })
+    updateRunMeta(runId, { status: 'running', phase: nextPhase, finishedAt: undefined, error: undefined })
   } catch (error) {
     appendRunLog(runId, logPath, `[start] update run meta failed: ${String((error as Error)?.message ?? error)}\n`)
   }
@@ -3206,20 +3326,41 @@ async function startBackgroundRun(runId: string, config: ModemBaselineConfig, sc
     env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' },
     windowsHide: true,
   })
+  activeChildProcesses.set(runId, processRef)
+  const pid = processRef.pid
+  if (pid) {
+    try {
+      updateRunMeta(runId, { pid })
+    } catch {
+      // ignore
+    }
+  }
   // #region debug-point modem-python-spawned
-  appendRunLog(runId, logPath, `[debug] startBackgroundRun spawned pid=${String(processRef.pid ?? '')} script=${scriptName}\n`)
+  appendRunLog(runId, logPath, `[debug] startBackgroundRun spawned pid=${String(pid ?? '')} script=${scriptName}\n`)
   // #endregion
 
+  const clearActive = () => {
+    const current = activeChildProcesses.get(runId)
+    if (current === processRef) activeChildProcesses.delete(runId)
+  }
+
   processRef.on('error', (error) => {
+    clearActive()
     appendRunLog(runId, logPath, `[spawn] failed: ${String((error as Error)?.message ?? error)}\n`)
     markRunFailed(runId, 'spawn_failed')
   })
   processRef.stdout.on('data', chunk => appendRunLog(runId, logPath, chunk.toString()))
   processRef.stderr.on('data', chunk => appendRunLog(runId, logPath, chunk.toString()))
   processRef.on('close', async (code) => {
+    clearActive()
     // #region debug-point modem-python-close
-    appendRunLog(runId, logPath, `[debug] startBackgroundRun close pid=${String(processRef.pid ?? '')} code=${String(code)} script=${scriptName}\n`)
+    appendRunLog(runId, logPath, `[debug] startBackgroundRun close pid=${String(pid ?? '')} code=${String(code)} script=${scriptName}\n`)
     // #endregion
+    try {
+      updateRunMeta(runId, { pid: undefined })
+    } catch {
+      // ignore
+    }
     await postProcessRun(runId, config, code, line => appendRunLog(runId, logPath, line))
   })
 }

@@ -4,11 +4,11 @@ Auto Patch Merger - Remote Execution Version
 
 This script automates the process of merging MTK modem patches:
 1. Connects to Linux fortress machine via harness
-2. Uploads and configures non-interactive merge script on remote
-3. Runs non-interactive merge script on remote server
-4. Automatically resolves merge conflicts on remote
-5. Generates report on remote server
-6. Completes all steps except final push
+2. Prepares the in-repo tools/md_merge.sh (fill vars + noninteractive conflict exit)
+3. Runs tools/md_merge.sh on remote server
+4. On conflict: pause for manual resolve (equiv. script waiting for y)
+5. On continue: re-run md_merge.sh --apm-continue (equiv. ENTER y)
+6. Generates report on local / mapped output
 """
 
 import os
@@ -641,126 +641,296 @@ class AutoPatchMerger:
         self.log("[merge-state] remote marker missing; assume not in merge")
         return False
             
-    def configure_md_merge(self):
-        """Upload and configure non-interactive merge script to remote server"""
-        self.log("Uploading and configuring non-interactive merge script...")
-        
-        node_branch = self.config.get("NODE_BRANCH", "master")
-        node_ref, current_commit = self._fetch_remote_node_ref(node_branch)
-        if not node_ref:
-            self.add_step("更新节点分支引用", "failed", f"git fetch origin {node_branch} 失败")
-            self.report_data['errors'].append(f"Failed to fetch remote node branch: {node_branch}")
-            return False
-        self.add_step("更新节点分支引用", "success", f"已刷新 {node_ref}")
-        if not current_commit:
-            self.log("Warning: Could not get current commit ID")
-            
-        # Read local non-interactive script template
-        local_script_path = os.path.join(os.path.dirname(__file__), 'md_merge_noninteractive.sh')
-        with open(local_script_path, 'r', encoding='utf-8') as f:
-            script_content = f.read()
-        
-        # Replace placeholders with actual values
-        script_content = script_content.replace('NODE_BRANCH=', f'NODE_BRANCH={self.config.get("NODE_BRANCH", "master")}')
-        script_content = script_content.replace('NODE_REF=', f'NODE_REF={node_ref}')
-        script_content = script_content.replace('target_BRANCH=', f'target_BRANCH={self.config.get("target_BRANCH")}')
-        script_content = script_content.replace('AP_lable=', f'AP_lable={self.config.get("AP_lable")}')
-        script_content = script_content.replace('DESCRIPTION=基线升级', f'DESCRIPTION={self.config.get("DESCRIPTION", "基线升级")}')
-        script_content = script_content.replace('JIRAID=', f'JIRAID={self.config.get("JIRAID")}')
-        if current_commit:
-            script_content = script_content.replace('before_node_commit_id=', f'before_node_commit_id={current_commit}')
-        
-        # Try to copy via mapped directory first
-        success = self.copy_file_via_mapped_dir(None, "tools/md_merge_noninteractive.sh", content=script_content)
-        
-        if not success:
-            # Fallback to base64 method
-            self.log("Falling back to base64 upload method...")
-            remote_script_path = f"{self.remote_work_dir}/tools/md_merge_noninteractive.sh"
-            content_base64 = base64.b64encode(script_content.encode('utf-8')).decode('utf-8')
-            write_cmd = [f"mkdir -p {self.remote_work_dir}/tools"]
-            self.run_harness_command(write_cmd, self.remote_work_dir, delay_after=self.short_delay)
-            write_cmd = [f'echo "{content_base64}" | base64 -d > "{remote_script_path}"']
-            result = self.run_harness_command(write_cmd, self.remote_work_dir, delay_after=self.short_delay)
-            success = result and result.returncode == 0
-        
+    def _replace_shell_assign(self, content, key, value):
+        """Replace the first KEY=... assignment in a shell script."""
+        if value is None:
+            return content
+        value = str(value).replace("\r", "").replace("\n", " ").strip()
+        pattern = re.compile(rf"^{re.escape(key)}=.*$", re.M)
+        if not pattern.search(content):
+            self.log(f"Warning: assignment {key}= not found in md_merge.sh")
+            return content
+        return pattern.sub(f"{key}={value}", content, count=1)
+
+    def _read_repo_file(self, relative_path):
+        """Read a file from mapped worktree or remote repo."""
+        if self.mapped_work_dir:
+            mapped_path = os.path.join(self.mapped_work_dir, relative_path.replace("/", os.sep))
+            if os.path.exists(mapped_path):
+                with open(mapped_path, "r", encoding="utf-8", errors="replace") as f:
+                    return f.read()
+        result = self.run_harness_command(["cat", relative_path], self.remote_work_dir, delay_after=self.short_delay)
+        if result and result.returncode == 0 and result.stdout is not None:
+            return result.stdout
+        return None
+
+    def _write_repo_file(self, relative_path, content):
+        """Write content to mapped worktree or remote repo."""
+        success = self.copy_file_via_mapped_dir(None, relative_path, content=content)
         if success:
-            self.add_step("上传非交互式脚本", "success", "已上传并配置非交互式合并脚本")
-            self.log("Non-interactive merge script uploaded successfully")
             return True
+        self.log(f"Falling back to base64 upload for {relative_path}...")
+        remote_full = f"{self.remote_work_dir}/{relative_path}"
+        remote_dir = os.path.dirname(relative_path).replace("\\", "/")
+        content_base64 = base64.b64encode(content.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")).decode("utf-8")
+        self.run_harness_command(
+            [f"mkdir -p {self.remote_work_dir}/{remote_dir}"],
+            self.remote_work_dir,
+            delay_after=self.short_delay,
+        )
+        result = self.run_harness_command(
+            [f'echo "{content_base64}" | base64 -d > "{remote_full}"'],
+            self.remote_work_dir,
+            delay_after=self.short_delay,
+        )
+        return bool(result and result.returncode == 0)
+
+    def _sync_local_node_branch(self, node_branch, node_ref):
+        """Point local NODE_BRANCH at fetched origin tip for in-repo md_merge.sh."""
+        self.log(f"Syncing local branch {node_branch} -> {node_ref}")
+        result = self.run_harness_command(
+            ["git", "branch", "-f", node_branch, node_ref],
+            self.remote_work_dir,
+            delay_after=self.short_delay,
+        )
+        if result and result.returncode == 0:
+            return True
+        create = self.run_harness_command(
+            ["git", "branch", node_branch, node_ref],
+            self.remote_work_dir,
+            delay_after=self.short_delay,
+        )
+        return bool(create and create.returncode == 0)
+
+    def _fill_md_merge_header_vars(self, content):
+        """Fill executor fields in repo md_merge.sh; keep before_node_commit_id unless configured."""
+        content = self._replace_shell_assign(content, "NODE_BRANCH", self.config.get("NODE_BRANCH", "master"))
+        content = self._replace_shell_assign(content, "target_BRANCH", self.config.get("target_BRANCH"))
+        content = self._replace_shell_assign(content, "AP_lable", self.config.get("AP_lable"))
+        content = self._replace_shell_assign(content, "DESCRIPTION", self.config.get("DESCRIPTION", "基线升级"))
+        content = self._replace_shell_assign(content, "JIRAID", self.config.get("JIRAID"))
+        if self.config.get("before_node_commit_id"):
+            content = self._replace_shell_assign(
+                content, "before_node_commit_id", self.config.get("before_node_commit_id")
+            )
         else:
-            self.add_step("上传非交互式脚本", "failed", "脚本上传失败")
-            self.report_data['errors'].append("Failed to upload non-interactive merge script")
+            self.log("Keeping in-repo before_node_commit_id (not overridden by config)")
+        return content
+
+    def _patch_md_merge_noninteractive(self, content):
+        """
+        Make in-repo md_merge.sh automation-safe:
+        - persist target_before_commit_id for continue
+        - replace interactive `read y` waits with exit 1 (keep MERGE_HEAD)
+        - inject --apm-continue entry (equiv. ENTER y)
+        """
+        # Persist target tip before merge for continue/diff
+        content, n_persist = re.subn(
+            r"(target_before_commit_id=\$\(git\s+rev-parse\s+HEAD\))",
+            r"\1\n"
+            r"        echo ${target_before_commit_id} > .git/.md_merge_target_before_commit_id\n"
+            r"        mkdir -p log\n"
+            r"        echo ${target_before_commit_id} > log/target_before_commit_id",
+            content,
+            count=1,
+        )
+        if n_persist:
+            self.log("Patched target_before_commit_id persistence")
+        else:
+            self.log("Warning: could not patch target_before_commit_id persistence")
+
+        conflict_wait_re = re.compile(
+            r"[ \t]*echo if you resolve this merge conflict,please ENTER y\n"
+            r"(?:[ \t]*#[^\n]*\n)?"
+            r"[ \t]*for i in \{1\.\.5\}\n"
+            r"[ \t]*do\n"
+            r".*?"
+            r"[ \t]*done\n",
+            re.DOTALL,
+        )
+        replacement = (
+            '            echo "APM: merge conflict; stop for manual resolve (equiv. wait for y)" | tee -a log/md_build.log\n'
+            "            exit 1\n"
+        )
+        content, n_wait = conflict_wait_re.subn(replacement, content)
+        self.log(f"Patched {n_wait} interactive conflict wait block(s)")
+        if n_wait == 0:
+            self.log("Warning: no interactive conflict wait blocks found; script may already be noninteractive")
+
+        content, n_exhaust = re.subn(
+            r"[ \t]*if \[ \$\{i\} == 5 \];then\n.*?[ \t]*fi\n",
+            "    # APM: removed interactive input exhaustion check\n",
+            content,
+            count=1,
+            flags=re.DOTALL,
+        )
+        if n_exhaust:
+            self.log("Removed interactive input exhaustion check")
+
+        if "AUG--apm-continue" not in content:
+            continue_block = r'''
+# ---- APM continue entry (equiv. ENTER y after manual conflict resolve) ----
+if [ "AUG$1" = "AUG--apm-continue" ]; then
+    if [ -d tools/ ]; then
+        echo location is right, keep build
+    else
+        cd ..
+    fi
+    if [ ! -d log/ ]; then
+        mkdir -p log/
+    fi
+
+    TARGET_BEFORE_COMMIT_FILE=.git/.md_merge_target_before_commit_id
+    if [ -f ${TARGET_BEFORE_COMMIT_FILE} ]; then
+        target_before_commit_id=$(cat ${TARGET_BEFORE_COMMIT_FILE} | tail -n 1)
+    elif [ -f log/target_before_commit_id ]; then
+        target_before_commit_id=$(cat log/target_before_commit_id | tail -n 1)
+    elif [ -f .git/MERGE_HEAD ]; then
+        target_before_commit_id=$(git rev-parse HEAD)
+    else
+        target_before_commit_id=$(git rev-parse HEAD^1 2>/dev/null || git rev-parse HEAD)
+    fi
+
+    if [ -f .git/MERGE_HEAD ]; then
+        unmerged=$(GIT_PAGER=cat git diff --name-only --diff-filter=U)
+        if [ -n "${unmerged}" ]; then
+            git grep -n '^<<<<<<<' -- $(echo "${unmerged}" | tr '\n' ' ') >/dev/null 2>&1
+            if [ $? -eq 0 ]; then
+                echo "Conflict markers remain, cannot continue" | tee -a log/md_build.log
+                exit 2
+            fi
+        fi
+        echo "APM continue: simulating ENTER y" | tee -a log/md_build.log
+        echo "line_result = y" | tee -a log/md_build.log
+        # Drop APM runtime patches before staging resolved files
+        git checkout HEAD -- tools/md_merge.sh 2>/dev/null || true
+        git add --all
+        unmerged_after=$(GIT_PAGER=cat git diff --name-only --diff-filter=U)
+        if [ -n "${unmerged_after}" ]; then
+            echo "Unmerged files remain after git add" | tee -a log/md_build.log
+            echo "${unmerged_after}" | tee -a log/md_build.log
+            exit 2
+        fi
+        git commit -m "BUG ID: ${JIRAID}
+DESCRIPTION: MTK Patch ${AP_lable} ${DESCRIPTION} " | tee -a log/merge_conflict.log
+        commit_rc=${PIPESTATUS[0]}
+        if [ ${commit_rc} -ne 0 ]; then
+            echo "git commit failed" | tee -a log/md_build.log
+            exit 1
+        fi
+        git merge --quit >/dev/null 2>&1 || true
+    else
+        echo "MERGE_HEAD not found; assume merge commit already done" | tee -a log/md_build.log
+        git checkout HEAD -- tools/md_merge.sh 2>/dev/null || true
+    fi
+
+    current_commit_id=$(git rev-parse HEAD)
+    : > log/merge_file.log
+    : > log/product.diff
+    : > log/compare.diff
+    git diff --name-only ${target_before_commit_id} ${current_commit_id} >> log/merge_file.log
+    git diff ${target_before_commit_id} ${current_commit_id} >> log/product.diff
+    if [ -f log/node.diff ]; then
+        diff log/node.diff log/product.diff >> log/compare.diff
+    fi
+
+    check_diff_file
+    update_before_node_commit_id
+    exit $?
+fi
+# ---- end APM continue ----
+'''
+            if re.search(r"\nmain \$1\n", content):
+                content = re.sub(r"\nmain \$1\n", "\n" + continue_block + "\nmain $1\n", content, count=1)
+                self.log("Injected --apm-continue entrypoint")
+            else:
+                content = content.rstrip() + "\n" + continue_block + "\nmain $1\n"
+                self.log("Appended --apm-continue entrypoint (main $1 pattern not found)")
+
+        return content
+
+    def configure_md_merge(self, mode="merge"):
+        """
+        Prepare in-repo tools/md_merge.sh for automation.
+
+        mode=merge: fill vars + noninteractive conflict exit
+        mode=continue: same prep, used before --apm-continue (equiv. ENTER y)
+        """
+        mode = (mode or "merge").strip().lower()
+        self.log(f"Preparing in-repo tools/md_merge.sh (mode={mode})...")
+
+        node_branch = self.config.get("NODE_BRANCH", "master")
+        if mode == "merge":
+            node_ref, current_commit = self._fetch_remote_node_ref(node_branch)
+            if not node_ref:
+                self.add_step("更新节点分支引用", "failed", f"git fetch origin {node_branch} 失败")
+                self.report_data["errors"].append(f"Failed to fetch remote node branch: {node_branch}")
+                return False
+            self.add_step("更新节点分支引用", "success", f"已刷新 {node_ref}")
+            if not current_commit:
+                self.log("Warning: Could not get current commit ID for node ref")
+            if not self._sync_local_node_branch(node_branch, node_ref):
+                self.log(f"Warning: failed to sync local branch {node_branch} to {node_ref}")
+
+        script_content = self._read_repo_file("tools/md_merge.sh")
+        if not script_content:
+            self.add_step("准备合入脚本", "failed", "未找到 tools/md_merge.sh，请确认目标仓 tools 目录")
+            self.report_data["errors"].append("tools/md_merge.sh not found in target repo")
             return False
-    
+
+        script_content = self._fill_md_merge_header_vars(script_content)
+        script_content = self._patch_md_merge_noninteractive(script_content)
+
+        if not self._write_repo_file("tools/md_merge.sh", script_content):
+            self.add_step("准备合入脚本", "failed", "写入 tools/md_merge.sh 失败")
+            self.report_data["errors"].append("Failed to write prepared tools/md_merge.sh")
+            return False
+
+        self.add_step(
+            "准备合入脚本",
+            "success",
+            f"已基于仓内 tools/md_merge.sh 完成配置 (mode={mode})",
+        )
+        self.log("In-repo md_merge.sh prepared successfully")
+        return True
+
     def upload_scripts(self):
-        """Upload helper scripts to remote server"""
-        self.log("Uploading helper scripts to remote...")
-        
-        scripts = [
-            ("md_post_merge.sh", "tools/md_post_merge.sh"),
-            ("md_continue_after_conflict.sh", "tools/md_continue_after_conflict.sh"),
-        ]
-        all_ok = True
-        
-        for local_name, remote_rel in scripts:
-            try:
-                local_path = os.path.join(os.path.dirname(__file__), local_name)
-                with open(local_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                
-                content = content.replace("NODE_BRANCH=", f'NODE_BRANCH={self.config.get("NODE_BRANCH", "master")}')
-                content = content.replace("target_BRANCH=", f'target_BRANCH={self.config.get("target_BRANCH")}')
-                content = content.replace("AP_lable=", f'AP_lable={self.config.get("AP_lable")}')
-                content = content.replace("DESCRIPTION=基线升级", f'DESCRIPTION={self.config.get("DESCRIPTION", "基线升级")}')
-                content = content.replace("JIRAID=", f'JIRAID={self.config.get("JIRAID")}')
-                
-                success = self.copy_file_via_mapped_dir(None, remote_rel, content=content)
-                if not success:
-                    remote_full = f"{self.remote_work_dir}/{remote_rel}"
-                    content_base64 = base64.b64encode(content.encode("utf-8")).decode("utf-8")
-                    self.run_harness_command([f"mkdir -p {self.remote_work_dir}/tools"], self.remote_work_dir, delay_after=self.short_delay)
-                    result = self.run_harness_command([f'echo "{content_base64}" | base64 -d > "{remote_full}"'], self.remote_work_dir, delay_after=self.short_delay)
-                    success = bool(result and result.returncode == 0)
-                
-                if not success:
-                    all_ok = False
-            except Exception as e:
-                self.log(f"Failed to upload helper script {local_name}: {e}")
-                all_ok = False
-        
-        if all_ok:
-            self.add_step("上传脚本", "success", "后续流程脚本已上传")
-            self.log("Helper scripts uploaded successfully")
-            return True
-        
-        self.add_step("上传脚本", "failed", "后续流程脚本上传失败")
-        self.report_data["errors"].append("Failed to upload helper scripts")
-        return False
-    
+        """
+        Legacy helper upload (md_post_merge / md_continue_after_conflict).
+
+        Primary flow now uses in-repo tools/md_merge.sh (+ --apm-continue).
+        Kept for backward compatibility / manual fallback only.
+        """
+        self.log("Skipping legacy helper script upload; using in-repo tools/md_merge.sh")
+        self.add_step("上传脚本", "info", "已改用仓内 md_merge.sh，跳过遗留 helper 上传")
+        return True
+
     def run_md_merge(self):
-        """Run non-interactive merge script on remote server"""
-        self.log("Running non-interactive merge script on remote server...")
+        """Run in-repo tools/md_merge.sh on remote server."""
+        self.log("Running in-repo tools/md_merge.sh on remote server...")
 
         before_head = self._mapped_git_rev_parse("HEAD", timeout=2)
         if before_head:
             self.log(f"Current HEAD before merge (mapped): {before_head}")
         else:
-            before_head_result = self.run_harness_command(['git', 'rev-parse', 'HEAD'], self.remote_work_dir, delay_after=self.short_delay)
+            before_head_result = self.run_harness_command(
+                ["git", "rev-parse", "HEAD"], self.remote_work_dir, delay_after=self.short_delay
+            )
             if before_head_result and before_head_result.returncode == 0 and before_head_result.stdout:
                 before_head = before_head_result.stdout.strip().splitlines()[-1].strip()
 
-        cmd = ['bash', 'tools/md_merge_noninteractive.sh']
+        cmd = ["bash", "tools/md_merge.sh"]
         result = self.run_harness_command(cmd, self.remote_work_dir, delay_after=self.long_delay)
 
         if not result:
             self.add_step("运行合并脚本", "failed", "脚本执行超时或失败")
-            self.report_data['errors'].append("Merge script execution failed")
+            self.report_data["errors"].append("Merge script execution failed")
             return False
 
+        # exit 1 = conflict pause (equiv. waiting for y); other non-zero = hard failure
         if result.returncode not in (0, 1):
             self.add_step("运行合并脚本", "failed", f"脚本执行失败，返回码: {result.returncode}")
-            self.report_data['errors'].append(f"Merge script execution failed with code {result.returncode}")
+            self.report_data["errors"].append(f"Merge script execution failed with code {result.returncode}")
             if result.stdout:
                 self.log(f"Script stdout: {result.stdout}")
             if result.stderr:
@@ -769,15 +939,17 @@ class AutoPatchMerger:
 
         in_merge = self.is_merge_in_progress()
 
-        if in_merge:
-            self.add_step("运行合并脚本", "warning", "检测到合并冲突，需要研发手动处理")
-            self.log("Merge conflict detected, manual resolution is required")
+        if in_merge or result.returncode == 1:
+            self.add_step("运行合并脚本", "warning", "检测到合并冲突，需要研发手动处理（等同脚本等待输入 y）")
+            self.log("Merge conflict detected, manual resolution is required (equiv. wait for y)")
             return True
 
         self._wait_for_remote_repo_stable()
 
-        status_porcelain = ''
-        status_result = self.run_harness_command(['git', 'status', '--porcelain'], self.remote_work_dir, delay_after=self.short_delay)
+        status_porcelain = ""
+        status_result = self.run_harness_command(
+            ["git", "status", "--porcelain"], self.remote_work_dir, delay_after=self.short_delay
+        )
         if status_result and status_result.returncode == 0 and status_result.stdout:
             status_porcelain = status_result.stdout.strip()
 
@@ -785,36 +957,67 @@ class AutoPatchMerger:
         if after_head:
             self.log(f"Current HEAD after merge (mapped): {after_head}")
         else:
-            after_head_result = self.run_harness_command(['git', 'rev-parse', 'HEAD'], self.remote_work_dir, delay_after=self.short_delay)
+            after_head_result = self.run_harness_command(
+                ["git", "rev-parse", "HEAD"], self.remote_work_dir, delay_after=self.short_delay
+            )
             if after_head_result and after_head_result.returncode == 0 and after_head_result.stdout:
                 after_head = after_head_result.stdout.strip().splitlines()[-1].strip()
 
-        merge_has_effect = bool(in_merge or status_porcelain or (before_head and after_head and before_head != after_head))
+        merge_has_effect = bool(
+            in_merge or status_porcelain or (before_head and after_head and before_head != after_head)
+        )
 
         if merge_has_effect:
-            self.add_step("运行合并脚本", "success", "合并脚本执行完成")
+            self.add_step("运行合并脚本", "success", "仓内 md_merge.sh 执行完成（含后处理）")
             return True
 
         self.log("Warning: No merge effect detected. Check if branches already merged or script did not perform merge.")
         self.add_step("运行合并脚本", "warning", "合并脚本执行完成，但未检测到合并变更")
         return True
-    
+
+    def run_md_merge_continue(self):
+        """
+        Continue after manual conflict resolve.
+        Equivalent to typing `y` in the interactive md_merge.sh prompt.
+        """
+        self.log("Running md_merge.sh --apm-continue (equiv. ENTER y)...")
+        if not self.configure_md_merge(mode="continue"):
+            return None
+
+        result = self.run_harness_command(
+            ["bash", "tools/md_merge.sh", "--apm-continue"],
+            self.remote_work_dir,
+            delay_after=self.medium_delay,
+        )
+        return result
+
     def _cleanup_helper_scripts(self):
-        """Clean up helper scripts so they don't get committed"""
-        self.log("Cleaning up helper scripts...")
-        scripts_to_clean = ['tools/md_merge_noninteractive.sh']
+        """Clean up legacy helper scripts and restore in-repo md_merge.sh if still patched."""
+        self.log("Cleaning up helper scripts / APM runtime patches...")
+        scripts_to_clean = [
+            "tools/md_merge_noninteractive.sh",
+            "tools/md_post_merge.sh",
+            "tools/md_continue_after_conflict.sh",
+            "tools/apm_refresh_conflicts.sh",
+        ]
         for script in scripts_to_clean:
-            rm_cmd = ['rm', '-f', script]
-            self.run_harness_command(rm_cmd, self.remote_work_dir, delay_after=self.short_delay)
+            self.run_harness_command(["rm", "-f", script], self.remote_work_dir, delay_after=self.short_delay)
             if self.mapped_work_dir:
-                # Also clean up via mapped path
-                mapped_script = os.path.join(self.mapped_work_dir, script.replace('/', os.sep))
+                mapped_script = os.path.join(self.mapped_work_dir, script.replace("/", os.sep))
                 try:
                     if os.path.exists(mapped_script):
                         os.remove(mapped_script)
                         self.log(f"Removed local mapped script: {mapped_script}")
                 except Exception as e:
                     self.log(f"Warning: Could not remove {mapped_script}: {e}")
+
+        # Restore md_merge.sh working tree to HEAD (drop APM patches); intentional
+        # before_node_commit_id updates are done by update_before_node_commit_id itself.
+        self.run_harness_command(
+            ["git", "checkout", "HEAD", "--", "tools/md_merge.sh"],
+            self.remote_work_dir,
+            delay_after=self.short_delay,
+        )
 
     def _finalize_and_generate_report(self):
         self.report_data['end_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -2381,50 +2584,64 @@ class AutoPatchMerger:
             return False
         self.add_step("检测 Harness 桥接", "success", "桥接连接正常")
         
-        # Step 2: Upload non-interactive merge script
-        self.log("\n[Step 2] Uploading non-interactive merge script...")
-        if not self.configure_md_merge():
+        # Step 2: Prepare in-repo md_merge.sh
+        self.log("\n[Step 2] Preparing in-repo tools/md_merge.sh...")
+        if not self.configure_md_merge(mode="merge"):
             return False
         self.wait(self.medium_delay)
-            
-        # Step 3: Upload scripts
-        self.log("\n[Step 3] Uploading scripts to remote...")
-        self.upload_scripts()
-        self.wait(self.short_delay)
-        
-        # Step 4: Run non-interactive merge script
-        self.log("\n[Step 4] Running non-interactive merge script...")
+
+        # Step 3: Run in-repo merge script
+        self.log("\n[Step 3] Running tools/md_merge.sh...")
         if not self.run_md_merge():
             report_path = self._finalize_and_generate_report()
             if report_path:
                 self.log(f"Report: {report_path}")
             return False
-        # Note: long delay already added in run_md_merge
-            
-        # Step 5: Resolve conflicts on remote
-        self.log("\n[Step 5] Resolving conflicts on remote...")
+
+        # Step 4: Resolve conflicts on remote (may pause for manual)
+        self.log("\n[Step 4] Resolving conflicts on remote...")
         if not self.resolve_conflicts():
             report_path = self._finalize_and_generate_report()
             if report_path:
                 self.log(f"Report: {report_path}")
             self.close_log_file()
             return False
-        
-        # Step 6: Complete merge
-        self.log("\n[Step 6] Completing merge...")
-        if not self.continue_merge():
-            report_path = self._finalize_and_generate_report()
-            if report_path:
-                self.log(f"Report: {report_path}")
-            self.close_log_file()
-            return False
-        
-        # Step 7: Get final git status
-        self.log("\n[Step 7] Getting final git status...")
-        status_result = self.run_harness_command(['git', 'status'], self.remote_work_dir, delay_after=self.short_delay)
-        
+
+        # Step 5: Continue (= ENTER y) when still in merge
+        self.log("\n[Step 5] Completing merge (md_merge.sh --apm-continue)...")
+        if self.is_merge_in_progress():
+            cont = self.run_md_merge_continue()
+            if not cont:
+                report_path = self._finalize_and_generate_report()
+                if report_path:
+                    self.log(f"Report: {report_path}")
+                self.close_log_file()
+                return False
+            if cont.returncode == 2:
+                self.add_step("完成合并提交", "warning", "冲突仍未解决，请手动处理后继续")
+                report_path = self._finalize_and_generate_report()
+                if report_path:
+                    self.log(f"Report: {report_path}")
+                self.close_log_file()
+                return False
+            if cont.returncode != 0:
+                self.add_step("完成合并提交", "failed", f"--apm-continue 失败，返回码: {cont.returncode}")
+                self.report_data["errors"].append(f"md_merge --apm-continue failed: {cont.returncode}")
+                report_path = self._finalize_and_generate_report()
+                if report_path:
+                    self.log(f"Report: {report_path}")
+                self.close_log_file()
+                return False
+            self.add_step("完成合并提交", "success", "已模拟输入 y 并完成仓内后处理")
+        else:
+            self.add_step("完成合并提交", "info", "无冲突，md_merge.sh 已完成全流程")
+
+        # Step 6: Get final git status
+        self.log("\n[Step 6] Getting final git status...")
+        status_result = self.run_harness_command(["git", "status"], self.remote_work_dir, delay_after=self.short_delay)
+
         report_path = self._finalize_and_generate_report()
-        
+
         self.log("\n" + "=" * 60)
         self.log("Auto Patch Merger Completed!")
         self.log("=" * 60)
@@ -2434,7 +2651,7 @@ class AutoPatchMerger:
         self.log("\nNext steps:")
         self.log("1. Review the changes on remote server")
         self.log("2. Resolve any remaining conflicts manually if needed")
-        self.log("3. If the continue flow finishes successfully, commit and push are already done automatically")
+        self.log("3. Continue flow runs tools/md_merge.sh --apm-continue (equiv. ENTER y)")
         
         # Close log file
         self.close_log_file()

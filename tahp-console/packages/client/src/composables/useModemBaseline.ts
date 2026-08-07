@@ -90,7 +90,12 @@ export function getStatusMeta(status?: ModemBaselineStatus, error?: string, phas
     return { label: '执行完成', tone: 'success', summary: '流程已完成，可查看日志、报告与冲突结果。' }
   }
   if (status === 'conflict') {
-    return { label: '等待人工处理', tone: 'warn', summary: '检测到冲突，需研发手动处理后点击继续执行。' }
+    const summary = error === 'bridge_not_ready'
+      ? '继续执行因 Harness bridge 未就绪中断。请确认 bridge-serve 后再次点击继续执行。'
+      : error === 'orphaned_running_process'
+        ? '后台进程已中断，任务已恢复为待继续状态。确认冲突已处理后可再次点击继续执行。'
+        : '检测到冲突，需研发手动处理后点击继续执行。'
+    return { label: '等待人工处理', tone: 'warn', summary }
   }
   if (status === 'failed') {
     const summary = error === 'bridge_not_ready'

@@ -24,34 +24,50 @@ REPORT_LABEL = "Continue flow report"
 
 
 def run_continue_flow(merger) -> int:
-    log_step(merger, FLOW_LABEL, 7, "Upload helper scripts")
-    if not merger.upload_scripts():
-        return finish_with_report(merger, 1, report_label=REPORT_LABEL)
-    merger.wait(merger.short_delay)
-
-    log_step(merger, FLOW_LABEL, 8, "Run continue script")
-    result = merger.run_harness_command(
-        ["bash", "tools/md_continue_after_conflict.sh"], merger.remote_work_dir, delay_after=merger.medium_delay
-    )
+    log_step(merger, FLOW_LABEL, 7, "Prepare md_merge.sh --apm-continue (equiv. ENTER y)")
+    result = merger.run_md_merge_continue()
     if not result:
-        return fail_step(merger, "Continue flow", "Continue script failed", "continue_script_failed", report_label=REPORT_LABEL)
+        return fail_step(
+            merger,
+            "Continue flow",
+            "Failed to prepare/run md_merge.sh --apm-continue",
+            "continue_script_failed",
+            report_label=REPORT_LABEL,
+        )
 
     if result.returncode == 2:
-        return warn_step(merger, "Continue flow", "Conflicts still remain. Resolve them manually and click Continue again.", report_label=REPORT_LABEL)
+        return warn_step(
+            merger,
+            "Continue flow",
+            "Conflicts still remain. Resolve them manually and click Continue again.",
+            report_label=REPORT_LABEL,
+        )
 
     out = (result.stdout or "") if hasattr(result, "stdout") else ""
     if "Unmerged files remain" in out or "Conflict markers remain" in out:
-        return warn_step(merger, "Continue flow", "Conflicts still remain. Resolve them manually and click Continue again.", report_label=REPORT_LABEL)
+        return warn_step(
+            merger,
+            "Continue flow",
+            "Conflicts still remain. Resolve them manually and click Continue again.",
+            report_label=REPORT_LABEL,
+        )
 
-    log_step(merger, FLOW_LABEL, 9, "Verify repository stable state")
+    log_step(merger, FLOW_LABEL, 8, "Verify repository stable state")
     stable_probe = merger._wait_for_remote_repo_stable()
     in_merge = bool(stable_probe.get("merge_head"))
-    unmerged_files = sorted(set((stable_probe.get("diff_files") or []) + (stable_probe.get("ls_files") or [])))
+    unmerged_files = sorted(
+        set((stable_probe.get("diff_files") or []) + (stable_probe.get("ls_files") or []))
+    )
     if in_merge or unmerged_files:
         if unmerged_files:
             merger.log("Remaining unmerged files after continue:")
             merger.log("\n".join(unmerged_files))
-        return warn_step(merger, "Continue flow", "Conflicts still remain. Resolve them manually and click Continue again.", report_label=REPORT_LABEL)
+        return warn_step(
+            merger,
+            "Continue flow",
+            "Conflicts still remain. Resolve them manually and click Continue again.",
+            report_label=REPORT_LABEL,
+        )
 
     if result.returncode != 0:
         return fail_step(
@@ -62,7 +78,7 @@ def run_continue_flow(merger) -> int:
             report_label=REPORT_LABEL,
         )
 
-    merger.add_step("Continue flow", "success", "Continue flow completed")
+    merger.add_step("Continue flow", "success", "Continue flow completed (equiv. ENTER y)")
     return finish_with_report(merger, 0, log_execution=True, report_label=REPORT_LABEL)
 
 
