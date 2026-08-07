@@ -1,0 +1,19 @@
+{
+  "testType": "power_feature",
+  "module": "wbs",
+  "moduleLabel": "功耗特性检测",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "功耗特性自检",
+      "canReuse": false,
+      "automationMode": "full"
+    }
+  ]
+}

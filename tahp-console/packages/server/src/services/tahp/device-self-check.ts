@@ -43,7 +43,7 @@ export type DeviceStatus =
   | '待命'
   | '刷机中'
 
-export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'ai_generated'
+export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'ai_generated'
 export type DeviceTestType = StandardTestType | 'custom'
 
 export interface SimCardInfo {
@@ -253,6 +253,7 @@ function getAutoRetestConfig(testType: string): { enabled: boolean; count: numbe
     testType === 'smoke' ||
     testType === 'gms' ||
     testType === 'power' ||
+    testType === 'power_feature' ||
     testType === 'ai_generated'
   ) {
     return { enabled: false, count: 0 }
@@ -440,6 +441,7 @@ function loadCaseConfigs(): void {
     'gms_gts.json',
     'gms_vts.json',
     'power_current_analysis.json',
+    'power_feature_wbs.json',
   ]
   
   for (const file of configFiles) {
@@ -1055,6 +1057,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'smoke') return ['usd']
   if (testType === 'gms') return ['cts', 'gts', 'vts']
   if (testType === 'power') return ['current_analysis']
+  if (testType === 'power_feature') return ['wbs']
   if (testType === 'ai_generated') return [AI_GENERATED_MODULE]
   return ['driver', 'tdd']
 }
@@ -1487,6 +1490,7 @@ async function stopMonkeyForDevice(deviceId: string): Promise<void> {
 const POWER_TOOLS_DIR = join(PYTHON_DIR, 'tools', 'tpower_auto')
 const POWER_OUTPUT_DIR = join(POWER_TOOLS_DIR, 'output')
 const POWER_EXEC_TIMEOUT_MS = 86_400_000 // 24h，功耗任务由飞书表驱动，长时间运行
+const POWER_FEATURE_EXEC_TIMEOUT_MS = 30 * 60_000 // 功耗特性自检（含 APK 安装）
 
 function summarizePowerReportFromXlsx(): {
   ok: boolean
@@ -1698,6 +1702,10 @@ function resolveCaseExecTimeoutMs(testType: string, module: string): number {
   if (testType === 'power' && module === 'current_analysis') {
     const raw = Number(process.env.TAHP_POWER_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : POWER_EXEC_TIMEOUT_MS
+  }
+  if (testType === 'power_feature' && module === 'wbs') {
+    const raw = Number(process.env.TAHP_POWER_FEATURE_TIMEOUT_MS)
+    return Number.isFinite(raw) && raw > 0 ? raw : POWER_FEATURE_EXEC_TIMEOUT_MS
   }
   if (testType === 'ai_generated' && module === AI_GENERATED_MODULE) {
     const raw = Number(process.env.TAHP_NL_UI_TIMEOUT_MS)
@@ -3590,6 +3598,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     smoke: '冒烟测试',
     gms: 'GMS测试',
     power: '功耗自动化测试',
+    power_feature: '功耗特性自检',
     ai_generated: 'AI用例',
   }
   const MODULE_ORDER: Record<string, number> = {
@@ -3603,6 +3612,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     vts: 12,
     cts_tele: 13,
     current_analysis: 14,
+    wbs: 15,
     [AI_GENERATED_MODULE]: 20,
     tdd: 99,
   }
@@ -3634,7 +3644,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', AI_GENERATED_TEST_TYPE]
+  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', AI_GENERATED_TEST_TYPE]
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),

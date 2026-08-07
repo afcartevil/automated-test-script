@@ -1,0 +1,9 @@
+[
+  {
+    "caseIndex": 1,
+    "caseName": "功耗特性自检",
+    "前置条件": "DUT 已连接 ADB；tools/wbs_checker/res 下具备 pvzfree_row.apk、Nana-Lonely.mp3（weibo.apk 可选，短视频项当前未启用）",
+    "测试步骤": "按序执行 gift、TP 报点率、视频畅聊、睡眠待机、软硬件资源管控、应用冻结/断网、AAL、感知调度、异常管控、自适应背光、静音关 PA、高温背光等自动化检测项",
+    "期望结果": "全部检测项 Pass；任一项 Fail 则用例失败并在消息中列出失败项"
+  }
+]

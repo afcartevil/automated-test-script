@@ -5,7 +5,7 @@ import { tahpGet, tahpPost } from './client'
 
 export type ProjectNodeKey = 'STR4' | 'STR4A' | 'STR5' | 'STR6'
 
-export type PlanTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power'
+export type PlanTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature'
 
 export type PlanRuntimeStatus = 'pending' | 'no_device' | 'running' | 'completed'
 

@@ -56,6 +56,7 @@ const toneByType: Record<string, string> = {
   smoke: 'ea-t-emerald',
   monkey: 'ea-t-amber',
   power: 'ea-t-rose',
+  power_feature: 'ea-t-violet',
   ai_generated: 'ea-t-cyan',
 }
 
