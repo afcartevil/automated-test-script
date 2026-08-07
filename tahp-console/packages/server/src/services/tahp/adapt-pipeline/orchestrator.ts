@@ -959,7 +959,7 @@ function handleObservedEvent(ev: ObservedEvent): void {
   if (!run || run.status !== 'running') return
 
   const stage = getStage(ref.nodeKey)
-  if (!stage?.observe) return
+  if (!stage) return
 
   const wf = workflowFor(run)
   const node = wf.nodes.find(n => n.key === ref.nodeKey)
@@ -967,8 +967,12 @@ function handleObservedEvent(ev: ObservedEvent): void {
 
   const ctx = createCtx(run, node)
   void (async () => {
-    await stage.observe!(ctx, ev)
-    registerCorrelations(ref.runId, ref.nodeKey, getRun(ref.runId)?.stages[ref.nodeKey]?.refs ?? {})
+    if (stage.observe) {
+      await stage.observe(ctx, ev)
+      registerCorrelations(ref.runId, ref.nodeKey, getRun(ref.runId)?.stages[ref.nodeKey]?.refs ?? {})
+    }
+    // 即便无 observe（或 observe 已写完终态），也需 advance 驱动转移；
+    // 否则自检等异步节点会停在 running。
     await advance(ref.runId)
   })()
 }

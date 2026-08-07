@@ -1,12 +1,76 @@
 import { registerStageForTest } from '../registry'
-import type { StageContext, StageDefinition, StageVerdict } from '../types'
+import type { ObservedEvent, StageContext, StageDefinition, StageVerdict } from '../types'
 import { planCases } from '../../selfcheck-case-planner'
 import {
   startCustomTest,
-  onEvent,
   type CaseResult,
   type TestSession,
 } from '../../device-self-check'
+
+function deviceIdOf(ctx: StageContext): string | undefined {
+  return ctx.run.device_id
+    ?? (ctx.state.refs?.selfcheck_device_id as string | undefined)
+}
+
+function applyCaseCompleted(ctx: StageContext, data: Record<string, unknown>): void {
+  const deviceId = deviceIdOf(ctx)
+  if (!deviceId || data.deviceId !== deviceId) return
+  const result = data.result as CaseResult | undefined
+  if (!result) return
+
+  const prev = (ctx.state.progress ?? {}) as Record<string, unknown>
+  const passed = (Number(prev.passed) || 0) + (result.status === '通过' ? 1 : 0)
+  const failed = (Number(prev.failed) || 0) + (result.status === '失败' ? 1 : 0)
+  const failedCases = [...((prev.failed_cases ?? []) as Array<{ name: string; message?: string }>)]
+  if (result.status === '失败') {
+    failedCases.push({ name: result.caseName ?? String(data.caseKey), message: result.message })
+  }
+
+  ctx.patchState({
+    progress: {
+      ...prev,
+      state: 'running',
+      passed,
+      failed,
+      running: Math.max(0, (Number(prev.total) || 0) - passed - failed),
+      failed_cases: failedCases,
+    },
+  })
+  ctx.log(`[${result.status}] ${result.caseName ?? data.caseKey}`)
+}
+
+function applyTestTerminal(ctx: StageContext, data: Record<string, unknown>, kind: 'completed' | 'error'): void {
+  const deviceId = deviceIdOf(ctx)
+  if (!deviceId || data.deviceId !== deviceId) return
+
+  const prev = (ctx.state.progress ?? {}) as Record<string, unknown>
+  if (kind === 'error') {
+    ctx.patchState({
+      progress: {
+        ...prev,
+        state: 'infra_error',
+        error: String(data.message ?? data.error ?? '自检流程异常'),
+        running: 0,
+      },
+    })
+    ctx.log(`自检异常: ${String(data.message ?? data.error ?? '')}`)
+    return
+  }
+
+  const session = data.session as TestSession | undefined
+  const failedCount = Number(prev.failed) || 0
+  const isInfraError = session && !session.isRunning && failedCount === 0
+    && (Number(prev.passed) || 0) === 0
+
+  ctx.patchState({
+    progress: {
+      ...prev,
+      state: failedCount > 0 ? 'case_failed' : (isInfraError ? 'infra_error' : 'success'),
+      running: 0,
+      ...(isInfraError ? { error: '自检未产生用例结果（可能基础设施异常）' } : {}),
+    },
+  })
+}
 
 export const selfcheckStageDefinition: StageDefinition = {
   key: 'selfcheck',
@@ -55,60 +119,16 @@ export const selfcheckStageDefinition: StageDefinition = {
     const selectedCases = planResult.plan.selected_cases ?? planResult.cases.map(c => c.caseKey)
     ctx.log(`共 ${selectedCases.length} 条用例，启动自检…`)
 
-    // Subscribe to self-check events for this device
-    const handleCaseCompleted = (data: Record<string, unknown>) => {
-      if (data.deviceId !== deviceId) return
-      const result = data.result as CaseResult | undefined
-      if (!result) return
-
-      const prev = (ctx.state.progress ?? {}) as Record<string, unknown>
-      const passed = (Number(prev.passed) || 0) + (result.status === '通过' ? 1 : 0)
-      const failed = (Number(prev.failed) || 0) + (result.status === '失败' ? 1 : 0)
-      const failedCases = [...((prev.failed_cases ?? []) as Array<{ name: string; message?: string }>)]
-      if (result.status === '失败') {
-        failedCases.push({ name: result.caseName ?? String(data.caseKey), message: result.message })
-      }
-
-      ctx.patchState({
-        progress: {
-          ...prev,
-          state: 'running',
-          passed,
-          failed,
-          running: Math.max(0, (Number(prev.total) || 0) - passed - failed),
-          failed_cases: failedCases,
-        },
-      })
-      ctx.log(`[${result.status}] ${result.caseName ?? data.caseKey}`)
-    }
-
-    const handleTestCompleted = (data: Record<string, unknown>) => {
-      if (data.deviceId !== deviceId) return
-      const session = data.session as TestSession | undefined
-      const prev = (ctx.state.progress ?? {}) as Record<string, unknown>
-
-      const failedCount = Number(prev.failed) || 0
-      const isInfraError = session && !session.isRunning && failedCount === 0
-        && (Number(prev.passed) || 0) === 0
-
-      ctx.patchState({
-        progress: {
-          ...prev,
-          state: failedCount > 0 ? 'case_failed' : (isInfraError ? 'infra_error' : 'success'),
-          running: 0,
-        },
-      })
-    }
-
-    onEvent('case_completed', handleCaseCompleted)
-    onEvent('test_completed', handleTestCompleted)
-
+    // 先写入 correlation refs，再启动外部任务；完成事件经 observe() → orchestrator.advance()
     ctx.patchState({
       progress: {
         ...(ctx.state.progress as Record<string, unknown>),
         state: 'running',
         total: selectedCases.length,
+        passed: 0,
+        failed: 0,
         running: selectedCases.length,
+        failed_cases: [],
       },
       refs: {
         ...ctx.state.refs,
@@ -118,7 +138,18 @@ export const selfcheckStageDefinition: StageDefinition = {
     })
 
     try {
-      await startCustomTest(deviceId, selectedCases, [])
+      const detail = await startCustomTest(deviceId, selectedCases, [])
+      if (!detail) {
+        ctx.patchState({
+          progress: {
+            ...(ctx.state.progress as Record<string, unknown>),
+            state: 'infra_error',
+            error: '自检启动失败（设备非空闲或不可用）',
+            running: 0,
+          },
+        })
+        ctx.log('自检启动失败：startCustomTest 返回空')
+      }
     } catch (err) {
       ctx.patchState({
         progress: {
@@ -129,6 +160,21 @@ export const selfcheckStageDefinition: StageDefinition = {
         },
       })
       ctx.log(`自检启动失败: ${err}`)
+    }
+  },
+
+  observe(ctx: StageContext, ev: ObservedEvent) {
+    if (ev.source !== 'self-check') return
+    if (ev.type === 'case_completed') {
+      applyCaseCompleted(ctx, ev.payload)
+      return
+    }
+    if (ev.type === 'test_completed') {
+      applyTestTerminal(ctx, ev.payload, 'completed')
+      return
+    }
+    if (ev.type === 'test_error') {
+      applyTestTerminal(ctx, ev.payload, 'error')
     }
   },
 
@@ -162,7 +208,8 @@ export const selfcheckStageDefinition: StageDefinition = {
       return {
         status: 'failed',
         error: `${p?.failed ?? 0} 条用例失败`,
-        retryable: true,
+        // 走 onFail → triage，不在本节点自动重试
+        retryable: false,
         produced: ['testresult'],
       }
     }
@@ -171,8 +218,7 @@ export const selfcheckStageDefinition: StageDefinition = {
       return {
         status: 'failed',
         error: String(p?.error ?? '自检基础设施错误'),
-        retryable: true,
-        // No testresult produced — triage will be unsafe
+        retryable: false,
       }
     }
 
