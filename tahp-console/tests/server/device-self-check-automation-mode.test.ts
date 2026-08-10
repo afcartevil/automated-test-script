@@ -49,4 +49,13 @@ describe('device self-check automationMode', () => {
     })).toBe('full')
     expect(resolveCaseAutomationMode('str4', 'tdd', 15)).toBe('manual')
   })
+
+  it('week/driver cases 1-6 are annotated semi', () => {
+    initDeviceSelfCheck()
+    const weekDetail = getCaseCatalogDetail('week')
+    for (const caseIndex of [1, 2, 3, 4, 5, 6]) {
+      const item = weekDetail.find(c => c.module === 'driver' && c.caseIndex === caseIndex)
+      expect(item?.automationMode, `week/driver/${caseIndex}`).toBe('semi')
+    }
+  })
 })

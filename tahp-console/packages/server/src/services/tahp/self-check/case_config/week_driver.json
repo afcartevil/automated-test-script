@@ -13,37 +13,37 @@
       "caseIndex": 1,
       "caseName": "按键",
       "canReuse": false,
-      "automationMode": "full"
+      "automationMode": "semi"
     },
     {
       "caseIndex": 2,
       "caseName": "马达",
       "canReuse": false,
-      "automationMode": "full"
+      "automationMode": "semi"
     },
     {
       "caseIndex": 3,
       "caseName": "TP报点",
       "canReuse": false,
-      "automationMode": "full"
+      "automationMode": "semi"
     },
     {
       "caseIndex": 4,
       "caseName": "TP双击唤醒",
       "canReuse": false,
-      "automationMode": "full"
+      "automationMode": "semi"
     },
     {
       "caseIndex": 5,
       "caseName": "开机工模触摸屏",
       "canReuse": false,
-      "automationMode": "full"
+      "automationMode": "semi"
     },
     {
       "caseIndex": 6,
       "caseName": "TP唤醒休眠能正常使用",
       "canReuse": false,
-      "automationMode": "full"
+      "automationMode": "semi"
     },
     {
       "caseIndex": 7,
@@ -91,7 +91,7 @@
       "caseIndex": 14,
       "caseName": "USB功能正常充电",
       "canReuse": false,
-      "automationMode": "full"
+      "automationMode": "semi"
     },
     {
       "caseIndex": 15,

@@ -13,7 +13,7 @@
       "caseIndex": 1,
       "caseName": "开机状态充电",
       "canReuse": false,
-      "automationMode": "full"
+      "automationMode": "semi"
     },
     {
       "caseIndex": 2,

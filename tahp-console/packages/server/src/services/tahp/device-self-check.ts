@@ -336,6 +336,10 @@ function automationModeLabel(mode?: AutomationMode): string {
 function enrichModuleCasesAutomationMode(config: ModuleCondition): void {
   const caseInfoList = loadCaseInfoList(config.testType, config.module)
   for (const c of config.cases) {
+    // case_config 显式标注优先（半自动等需人工配合的脚本，启发式会误判为 full）
+    if (c.automationMode === 'full' || c.automationMode === 'semi' || c.automationMode === 'manual') {
+      continue
+    }
     const info = resolveCaseInfoItem(caseInfoList, c.caseIndex)
     c.automationMode = resolveCaseAutomationMode(config.testType, config.module, c.caseIndex, {
       manualSteps: info?.['测试步骤'] || '',
