@@ -18,16 +18,30 @@ describe('device self-check power catalog', () => {
     expect(powerGroup?.label).toBe('功耗自动化测试')
     expect(powerGroup?.modules).toHaveLength(1)
     expect(powerGroup?.modules[0]?.module).toBe('current_analysis')
-    expect(powerGroup?.modules[0]?.cases[0]?.caseName).toBe('功耗电流分析环境')
+    expect(powerGroup?.modules[0]?.moduleLabel).toBe('场景功耗测量')
+    expect(powerGroup?.modules[0]?.cases.map(item => item.caseName)).toEqual([
+      '复杂待机',
+      '基础场景',
+      'DOU',
+      'PFMMod',
+    ])
 
     const detail = getCaseCatalogDetail('power')
-    expect(detail).toHaveLength(1)
+    expect(detail).toHaveLength(4)
+    expect(detail.map(item => item.caseName)).toEqual([
+      '复杂待机',
+      '基础场景',
+      'DOU',
+      'PFMMod',
+    ])
     expect(detail[0]).toMatchObject({
       testType: 'power',
       module: 'current_analysis',
-      moduleLabel: '电流分析',
-      caseName: '功耗电流分析环境',
+      moduleLabel: '场景功耗测量',
+      caseName: '复杂待机',
+      key: 'power/current_analysis/1',
     })
+    expect(detail[0]?.manualSteps).toContain('TPower')
 
     const runner = join(
       tahpPaths.projectRoot,

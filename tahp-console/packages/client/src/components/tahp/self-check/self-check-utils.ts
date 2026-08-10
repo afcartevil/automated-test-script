@@ -71,7 +71,7 @@ export function getModuleLabel(module: string): string {
     cts: 'CTS',
     gts: 'GTS',
     vts: 'VTS',
-    current_analysis: '电流分析',
+    current_analysis: '场景功耗测量',
     wbs: '功耗特性检测',
     scheme: '温升方案检测',
     generated: 'AI生成用例',
@@ -199,6 +199,9 @@ export function deviceMatchesListFilter(
 
 /** 用例大类卡片：模块覆盖范围 */
 export function formatCatalogModuleScope(group: CaseCatalogGroup): string {
+  if (group.testType === 'power') {
+    return '电流场景测试包括不限于（待机、基础场景、DOU、PFMMod）'
+  }
   if (!group.modules.length) return '暂无用例'
   return group.modules.map(m => m.moduleLabel).join('、')
 }
@@ -213,6 +216,9 @@ export function formatCatalogAutomation(group: CaseCatalogGroup): string {
   }
   if (group.testType === 'gms') {
     return '脚本全自动（Tradefed CTS/GTS/VTS）'
+  }
+  if (group.testType === 'power') {
+    return '脚本自动化'
   }
   if (group.testType === 'power_feature') {
     return '脚本全自动（WBS 特性检测）'
@@ -231,6 +237,9 @@ export function formatCatalogAutomation(group: CaseCatalogGroup): string {
 
 /** 用例大类卡片：聚合各模块最高前置要求 */
 export function formatCatalogPrereq(group: CaseCatalogGroup): string {
+  if (group.testType === 'power') {
+    return 'ADB 连接测试机+TPower测量仪器'
+  }
   const parts: string[] = ['ADB 连接测试机']
   const maxDutSim = Math.max(0, ...group.modules.map(m => m.conditions.dutSimCount))
   const maxAux = Math.max(0, ...group.modules.map(m => m.conditions.auxRequired))

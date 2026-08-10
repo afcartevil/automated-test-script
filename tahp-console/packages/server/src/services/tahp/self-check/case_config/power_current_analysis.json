@@ -1,7 +1,7 @@
 {
   "testType": "power",
   "module": "current_analysis",
-  "moduleLabel": "电流分析",
+  "moduleLabel": "场景功耗测量",
   "conditions": {
     "dutSimCount": 0,
     "auxRequired": 0,
@@ -11,7 +11,25 @@
   "cases": [
     {
       "caseIndex": 1,
-      "caseName": "功耗电流分析环境",
+      "caseName": "复杂待机",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 2,
+      "caseName": "基础场景",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 3,
+      "caseName": "DOU",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 4,
+      "caseName": "PFMMod",
       "canReuse": false,
       "automationMode": "full"
     }

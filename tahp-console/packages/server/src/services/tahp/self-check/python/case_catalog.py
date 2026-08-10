@@ -54,7 +54,7 @@ MODULE_LABELS = {
     "cts_tele": "CTS通信",
     "gts": "GTS",
     "vts": "VTS",
-    "current_analysis": "电流分析",
+    "current_analysis": "场景功耗测量",
     "wbs": "功耗特性检测",
     "scheme": "温升方案检测",
 }

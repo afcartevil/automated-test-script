@@ -116,6 +116,10 @@ def run_daemon() -> int:
     os.chdir(PROJ_DIR)
     from tests.current_analysis.task_proc import task_proc_thread
 
+    scene = (os.environ.get("TAHP_POWER_SCENE") or "").strip()
+    if scene:
+        print(f"[TAHP] power scene={scene}", flush=True)
+
     task_proc_thread()
     return 0
 
@@ -132,7 +136,7 @@ def _register_shutdown_handlers() -> None:
             pass
 
 
-def cmd_run_foreground(serial: str | None) -> int:
+def cmd_run_foreground(serial: str | None, scene: str | None = None) -> int:
     """前台运行 task_proc（子线程调度），供自检用例阻塞等待；stop 命令可终止。"""
     setup_env()
     try:
@@ -141,10 +145,15 @@ def cmd_run_foreground(serial: str | None) -> int:
         print(json.dumps({"ok": False, "message": str(exc)}, ensure_ascii=False))
         return 1
 
+    scene_name = (scene or "").strip()
+    if scene_name:
+        os.environ["TAHP_POWER_SCENE"] = scene_name
+
     save_state(
         {
             "daemon_pid": os.getpid(),
             "serial": serial or "",
+            "scene": scene_name,
             "start_time": time.strftime("%Y-%m-%d %H:%M:%S"),
             "output_dir": str(OUTPUT_DIR),
             "mode": "foreground",
@@ -319,12 +328,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="TAHP power current_analysis env")
     parser.add_argument("command", choices=["start", "stop", "status", "daemon", "run", "latest-xlsx", "summarize-xlsx"])
     parser.add_argument("-s", "--serial", default="")
+    parser.add_argument("--scene", default="", help="场景子项：复杂待机 / 基础场景 / DOU / PFMMod")
     args = parser.parse_args()
 
     if args.command == "daemon":
         return run_daemon()
     if args.command == "run":
-        return cmd_run_foreground(args.serial or None)
+        return cmd_run_foreground(args.serial or None, args.scene or None)
     if args.command == "start":
         return cmd_start(args.serial or None)
     if args.command == "stop":
