@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
-import type { TimelineNode } from '@/api/tahp/adapt-pipeline'
+import type { BuildContext, TimelineNode } from '@/api/tahp/adapt-pipeline'
 import DefaultPanel from './stage-panels/DefaultPanel.vue'
 import AdaptPanel from './stage-panels/AdaptPanel.vue'
 import BuildPanel from './stage-panels/BuildPanel.vue'
@@ -21,7 +21,7 @@ const RENDERERS: Record<string, Component> = {
 const props = defineProps<{
   node: TimelineNode | null
   logs: string[]
-  buildContext?: { components?: string[]; build_kind?: string; build_skill_id?: string; native_target?: string; native_component?: string; lunch?: string }
+  buildContext?: BuildContext
 }>()
 
 const panel = computed(() => (props.node ? RENDERERS[props.node.key] ?? DefaultPanel : DefaultPanel))

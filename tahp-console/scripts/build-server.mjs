@@ -38,6 +38,16 @@ cpSync(
 )
 chmodSync(resolve(bridgeOutDir, 'hermes_bridge.py'), 0o755)
 
+const ezBuildSrc = resolve(
+  rootDir,
+  'packages/server/src/services/tahp/adapt-pipeline/assets/ez-build.sh',
+)
+const ezBuildOutDir = resolve(serverOutDir, 'adapt-pipeline/assets')
+mkdirSync(ezBuildOutDir, { recursive: true })
+if (existsSync(ezBuildSrc)) {
+  cpSync(ezBuildSrc, resolve(ezBuildOutDir, 'ez-build.sh'))
+}
+
 const selfCheckOutDir = resolve(serverOutDir, 'self-check')
 mkdirSync(selfCheckOutDir, { recursive: true })
 cpSync(

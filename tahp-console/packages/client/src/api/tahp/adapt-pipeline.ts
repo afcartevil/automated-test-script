@@ -134,8 +134,15 @@ export interface ResumeRequest {
 export interface BuildContext {
   mapped_root: string
   workspace: string
-  components: string[]
+  /** @deprecated harness 组件列表；ez-build 用 build_targets */
+  components?: string[]
   variant: string
+  project?: string
+  build_flag?: string
+  system_path?: string
+  vendor_path?: string
+  build_targets?: string[]
+  need_pack?: boolean
   parallel_profile?: 'mtk' | 'qcom'
   markets?: string[]
   build_kind?: 'whole_device' | 'native_module'

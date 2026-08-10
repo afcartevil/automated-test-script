@@ -8,9 +8,7 @@ import {
   discardPipelineDraftRun,
   fetchCapabilities,
   fetchDomainCatalog,
-  fetchHarnessSkills,
   fetchPipelinePrereqs,
-  fetchWorkspaceBuildOptions,
   startPipelineRun,
   type BuildContext,
   type CapabilityItem,
@@ -21,7 +19,6 @@ import {
   type PipelineDomainInput,
   type PrereqResolveData,
   type TestPlan,
-  type WorkspaceBuildOptions,
 } from '@/api/tahp/adapt-pipeline'
 import { fetchPrereqProjects, type AdaptPrereqProject } from '@/api/tahp/adapt'
 import { refreshDevices, type DeviceInfo } from '@/api/tahp/device-self-check'
@@ -110,29 +107,21 @@ const wizardDomains = ref<WizardDomain[]>([])
 const buildContext = reactive<BuildContext>({
   mapped_root: '',
   workspace: '',
-  components: ['krn'],
+  project: '',
   variant: 'userdebug',
-  parallel_profile: 'mtk',
-  markets: ['op'],
-  build_kind: 'whole_device',
-  build_skill_id: 'harness-build-whole-device',
-  pipeline_stages: 'build,package',
-  lunch: 'qssi_64',
-  native_component: 'sys',
-  native_target: '',
+  build_flag: 'staging',
+  system_path: '',
+  vendor_path: '',
+  build_targets: ['sys'],
+  need_pack: false,
   flash_skill_id: 'harness-device',
   flash_mode: 'full_rom',
   target_branch: '',
   gerrit_issue_id: '',
 })
 
-const selectedComponents = ref<string[]>(['sys', 'hal', 'krn', 'vext', 'odm', 'trprd', 'trreg'])
-const selectedMarkets = ref<string[]>(['op'])
-const componentOptions = ref<string[]>(['sys', 'hal', 'krn', 'vext', 'odm', 'trprd', 'trreg'])
-const marketOptions = ref<string[]>(['op', 'eu', 'tr', 'in', 'ru', 'pk', 'eg', 'ng', 'ke', 'za', 'ph', 'id', 'my', 'th', 'vn', 'bd'])
-const buildOptionsLoading = ref(false)
-const buildOptionsWarning = ref('')
-const buildOptionsMeta = ref('')
+const selectedBuildTargets = ref<string[]>(['sys'])
+const needPack = ref<'yes' | 'no'>('no')
 const deviceId = ref<string | null>(null)
 const testPlanMode = ref<'smoke' | 'recommend' | 'fixed'>('smoke')
 
@@ -142,82 +131,21 @@ const TEST_PLAN_MODE_LABELS: Record<'smoke' | 'recommend' | 'fixed', string> = {
   fixed: '固定用例',
 }
 const maxIterations = ref(3)
-const harnessSkillsLoading = ref(false)
-const harnessSkillRoots = ref<string[]>([])
-const hasWholeDeviceSkill = ref(false)
-const hasNativeSkill = ref(false)
-const hasFlashSkill = ref(false)
 
-const MARKET_COMPONENTS = new Set(['trreg', 'trcar', 'trcom'])
-
-const needsMarkets = computed(() =>
-  buildContext.build_kind !== 'native_module'
-  && selectedComponents.value.some(c => MARKET_COMPONENTS.has(c)),
-)
-
-const componentSelectOptions = computed(() =>
-  componentOptions.value.map(c => ({ label: c, value: c })),
-)
-
-const marketSelectOptions = computed(() =>
-  marketOptions.value.map(m => ({ label: m, value: m })),
-)
-
-let buildOptionsTimer: ReturnType<typeof setTimeout> | null = null
-
-async function loadWorkspaceBuildOptions() {
-  const root = buildContext.mapped_root.trim()
-  const ws = buildContext.workspace.trim()
-  if (!root || !ws || buildContext.build_kind === 'native_module') return
-
-  buildOptionsLoading.value = true
-  buildOptionsWarning.value = ''
-  try {
-    const data: WorkspaceBuildOptions = await fetchWorkspaceBuildOptions(root, ws)
-    if (data.components.length) {
-      componentOptions.value = data.components
-      selectedComponents.value = data.recommended_components.length
-        ? [...data.recommended_components]
-        : [...data.components]
-    }
-    const markets = uniqMarkets([
-      ...(data.markets ?? []),
-      ...(data.market_presets ?? []),
-      ...marketOptions.value,
-    ])
-    marketOptions.value = markets
-    selectedMarkets.value = data.recommended_markets.length
-      ? data.recommended_markets.map(m => m.toLowerCase())
-      : ['op']
-    buildOptionsWarning.value = data.warning ?? ''
-    buildOptionsMeta.value = [
-      data.project_name,
-      data.platform,
-      data.source === 'harness_status' ? '来源: harness status' : data.source === 'pack_json' ? '来源: pack.json' : '来源: 默认列表',
-    ].filter(Boolean).join(' · ')
-  } catch (err) {
-    buildOptionsWarning.value = (err as Error).message || '解析编译组件失败'
-  } finally {
-    buildOptionsLoading.value = false
-  }
-}
-
-function uniqMarkets(items: string[]): string[] {
-  return [...new Set(items.map(m => m.trim().toLowerCase()).filter(Boolean))]
-}
-
-function scheduleLoadBuildOptions() {
-  if (buildOptionsTimer) clearTimeout(buildOptionsTimer)
-  buildOptionsTimer = setTimeout(() => {
-    void loadWorkspaceBuildOptions()
-  }, 400)
-}
+const BUILD_TARGET_OPTIONS = [
+  { label: 'sys', value: 'sys' },
+  { label: 'krn', value: 'krn' },
+  { label: 'vext', value: 'vext' },
+  { label: 'hal', value: 'hal' },
+  { label: 'odm', value: 'odm' },
+]
 
 watch(
-  () => [buildContext.mapped_root, buildContext.workspace, buildContext.build_kind] as const,
-  () => {
-    if (buildContext.build_kind === 'native_module') return
-    scheduleLoadBuildOptions()
+  () => projectCode.value || manualProjectCode.value.trim(),
+  (code) => {
+    if (code && !buildContext.project?.trim()) {
+      buildContext.project = code
+    }
   },
 )
 
@@ -412,45 +340,14 @@ function validateBuildPaths(): string | null {
 const canProceedStep3 = computed(() => {
   if (!buildContext.mapped_root.trim() || !buildContext.workspace.trim()) return false
   if (!String(buildContext.gerrit_issue_id ?? '').trim()) return false
-  if (buildContext.build_kind === 'native_module') {
-    if (!String(buildContext.native_target ?? '').trim()) return false
-  } else {
-    if (!selectedComponents.value.length) return false
-    if (needsMarkets.value && !selectedMarkets.value.length) return false
-  }
+  if (!String(buildContext.project ?? '').trim()) return false
+  if (!String(buildContext.system_path ?? '').trim()) return false
+  if (!String(buildContext.vendor_path ?? '').trim()) return false
+  if (!String(buildContext.variant ?? '').trim()) return false
+  if (!String(buildContext.build_flag ?? '').trim()) return false
+  if (!selectedBuildTargets.value.length && needPack.value !== 'yes') return false
   return validateBuildPaths() === null
 })
-
-function onBuildKindChange(kind: 'whole_device' | 'native_module') {
-  buildContext.build_kind = kind
-  buildContext.build_skill_id = kind === 'native_module'
-    ? 'harness-build-native'
-    : 'harness-build-whole-device'
-  // 整包刷机默认 harness-device（用户 skill 目录）；失败时后端降级 device_update
-  buildContext.flash_skill_id = 'harness-device'
-  buildContext.flash_mode = 'full_rom'
-}
-
-async function loadHarnessSkills() {
-  harnessSkillsLoading.value = true
-  try {
-    const [buildRes, flashRes] = await Promise.all([
-      fetchHarnessSkills('build'),
-      fetchHarnessSkills('flash'),
-    ])
-    const buildIds = new Set(buildRes.items.map(s => s.id))
-    hasWholeDeviceSkill.value = buildIds.has('harness-build-whole-device') || buildIds.has('harness-build')
-    hasNativeSkill.value = buildIds.has('harness-build-native') || buildIds.has('harness-build')
-    hasFlashSkill.value = flashRes.items.some(s => s.id === 'harness-device')
-    harnessSkillRoots.value = [...new Set([...(buildRes.roots ?? []), ...(flashRes.roots ?? [])])]
-  } catch {
-    hasWholeDeviceSkill.value = false
-    hasNativeSkill.value = false
-    hasFlashSkill.value = false
-  } finally {
-    harnessSkillsLoading.value = false
-  }
-}
 
 function buildLocalCatalogDomains(): DomainCatalogDomain[] {
   const list: DomainCatalogDomain[] = []
@@ -667,12 +564,14 @@ async function goNext() {
       message.info('前置信息仍在加载，请稍候')
       return
     }
+    const code = projectCode.value || manualProjectCode.value.trim()
+    if (code && !buildContext.project?.trim()) buildContext.project = code
     step.value = 3
     return
   }
   if (step.value === 3) {
-    buildContext.components = [...selectedComponents.value]
-    buildContext.markets = [...selectedMarkets.value]
+    buildContext.build_targets = [...selectedBuildTargets.value]
+    buildContext.need_pack = needPack.value === 'yes'
     if (!capabilities.value.length) {
       capsLoading.value = true
       try {
@@ -726,20 +625,19 @@ function buildCreateInput(): CreateRunInput {
     domains: buildDomainsPayload(),
     domain_ids: enabledDomains.value.map(d => d.domain_id),
     build_context: {
-      ...buildContext,
-      components: selectedComponents.value.length ? [...selectedComponents.value] : ['krn'],
-      markets: needsMarkets.value
-        ? (selectedMarkets.value.length ? [...selectedMarkets.value] : ['op'])
-        : (selectedMarkets.value.length ? [...selectedMarkets.value] : undefined),
-      target_branch: buildContext.target_branch?.trim() || undefined,
-      gerrit_issue_id: buildContext.gerrit_issue_id?.trim() || undefined,
-      native_target: buildContext.native_target?.trim() || undefined,
-      lunch: buildContext.lunch?.trim() || undefined,
-      build_skill_id: buildContext.build_kind === 'native_module'
-        ? 'harness-build-native'
-        : 'harness-build-whole-device',
+      mapped_root: buildContext.mapped_root.trim(),
+      workspace: buildContext.workspace.trim(),
+      project: (buildContext.project || code).trim(),
+      variant: buildContext.variant,
+      build_flag: buildContext.build_flag || 'staging',
+      system_path: String(buildContext.system_path ?? '').trim(),
+      vendor_path: String(buildContext.vendor_path ?? '').trim(),
+      build_targets: selectedBuildTargets.value.length ? [...selectedBuildTargets.value] : [],
+      need_pack: needPack.value === 'yes',
       flash_skill_id: 'harness-device',
       flash_mode: 'full_rom',
+      target_branch: buildContext.target_branch?.trim() || undefined,
+      gerrit_issue_id: buildContext.gerrit_issue_id?.trim() || undefined,
     },
     device_id: deviceId.value ?? undefined,
     test_plan: testPlan,
@@ -806,7 +704,6 @@ onMounted(async () => {
   await Promise.all([
     loadProjects(),
     loadCatalog(),
-    loadHarnessSkills(),
     fetchCapabilities()
       .then((caps) => { capabilities.value = caps })
       .catch(() => { capabilities.value = [] })
@@ -818,7 +715,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopDevicePolling()
-  if (buildOptionsTimer) clearTimeout(buildOptionsTimer)
 })
 </script>
 
@@ -1008,151 +904,92 @@ onUnmounted(() => {
     <div v-else-if="step === 3" class="step-body">
       <h2>配置执行环境</h2>
       <p class="step-hint">
-        编译走本机 harness Skill（整机 / 模块自动绑定）；整包烧录优先走用户目录下的刷机 Skill（默认 harness-device），失败时自动降级 device_update。
-        <span v-if="harnessSkillsLoading">正在检测 Skill…</span>
-        <span v-else-if="harnessSkillRoots.length" class="muted">
-          检测：整机 {{ hasWholeDeviceSkill ? '✓' : '✗' }} · 模块 {{ hasNativeSkill ? '✓' : '✗' }} · 刷机工具 {{ hasFlashSkill ? '✓' : '—' }}
-        </span>
+        编译经 remote-runner 在 Linux <code>~/code/ea-build</code> 执行 <code>ez-build.sh</code>。
+        Windows 盘符路径会换算为 <code>/work/code/$USER/...</code>。请先保持齐治 Bridge READY。
       </p>
 
-      <h3 class="sub-title">代码路径（编译 / 适配 / 入库共用）</h3>
+      <h3 class="sub-title">适配 / 入库路径</h3>
       <div class="field">
         <label>mapped_root <span class="req">*</span></label>
         <NInput v-model:value="buildContext.mapped_root" placeholder="Z:\" />
-        <p class="field-hint">Linux 构建机目录在本机的映射盘根，例如 <code>Z:\</code>。须与 <code>harness remote-runner discover</code> 认可的映射一致。</p>
+        <p class="field-hint">Linux 构建机目录在本机的映射盘根，例如 <code>Z:\</code>。适配与 Gerrit 仍使用此映射。</p>
       </div>
       <div class="field">
         <label>workspace <span class="req">*</span></label>
         <NInput v-model:value="buildContext.workspace" placeholder="project/KM9_NEW" />
-        <p class="field-hint">相对 mapped_root 的整机/模块代码目录，用正斜杠，例如 <code>project/KM9_NEW</code>。不要写盘符。</p>
+        <p class="field-hint">相对 mapped_root 的代码目录，用正斜杠。不要写盘符。</p>
       </div>
 
-      <h3 class="sub-title">编译</h3>
-      <div class="field">
-        <label>编译类型 <span class="req">*</span></label>
-        <NSelect
-          :value="buildContext.build_kind"
-          :options="[
-            { label: '整机编译 — 出刷机包（改分区/合入后编版本）', value: 'whole_device' },
-            { label: '模块编译 — 只编 APK/JAR/native（改 framework/app）', value: 'native_module' },
-          ]"
-          @update:value="(v: string) => onBuildKindChange(v as 'whole_device' | 'native_module')"
-        />
-        <p class="field-hint">
-          整机 → 自动用 <code>harness-build-whole-device</code>；模块 → 自动用 <code>harness-build-native</code>。
-          适配后要上机验证请选整机；只验证模块编译通过可选模块。
-        </p>
-      </div>
-
-      <template v-if="buildContext.build_kind !== 'native_module'">
-        <div class="field-row">
-          <div class="field">
-            <label>编译组件 <span class="req">*</span></label>
-            <NSelect
-              v-model:value="selectedComponents"
-              multiple
-              filterable
-              :options="componentSelectOptions"
-              :loading="buildOptionsLoading"
-              max-tag-count="responsive"
-              placeholder="填写 mapped_root + workspace 后自动解析"
-            />
-            <p class="field-hint">
-              传给 <code>build pipeline --components</code>。填完 mapped_root / workspace 后会从
-              <code>harness build status</code> 或 <code>pack.json</code> 预加载可选组件，请多选，避免手输拼错。
-              出包建议勾选全部有效组件（含 <code>trprd,trreg</code>）；含 <code>trreg/trcar/trcom</code> 时下方 markets 必填。
-            </p>
-            <p v-if="buildOptionsMeta" class="field-hint">{{ buildOptionsMeta }}</p>
-            <NAlert v-if="buildOptionsWarning" type="warning" :bordered="false" style="margin-top: 6px">
-              {{ buildOptionsWarning }}
-            </NAlert>
-          </div>
-          <div class="field">
-            <label>variant <span class="req">*</span></label>
-            <NSelect
-              v-model:value="buildContext.variant"
-              :options="[
-                { label: 'userdebug（日常调试，推荐）', value: 'userdebug' },
-                { label: 'user（接近量产）', value: 'user' },
-                { label: 'eng（工程调试）', value: 'eng' },
-              ]"
-            />
-            <p class="field-hint">最终产出的编译变体，对应 <code>--variant</code>。</p>
-          </div>
-        </div>
-        <div class="field-row">
-          <div class="field">
-            <label>编译阶段</label>
-            <NSelect
-              v-model:value="buildContext.pipeline_stages"
-              :options="[
-                { label: '已有源码 → 编译+出包（推荐，不 sync）', value: 'build,package' },
-                { label: '先更新代码再编译出包（会 repo sync，可能覆盖本地改动）', value: 'repo,build,package' },
-              ]"
-            />
-            <p class="field-hint">流水线适配后 workspace 通常已有改动：默认选「不 sync」。只有明确要拉最新远端代码时才选第二项。</p>
-          </div>
-          <div class="field">
-            <label>平台并行策略</label>
-            <NSelect
-              v-model:value="buildContext.parallel_profile"
-              :options="[
-                { label: 'MTK', value: 'mtk' },
-                { label: '高通 Qualcomm', value: 'qcom' },
-              ]"
-            />
-            <p class="field-hint">workspace 缺少 <code>.pipe/info.json</code> 时的回退并行表。项目是 MTK 选 MTK，高通选 Qualcomm。</p>
-          </div>
+      <h3 class="sub-title">编译（ez-build）</h3>
+      <div class="field-row">
+        <div class="field">
+          <label>project <span class="req">*</span></label>
+          <NInput v-model:value="buildContext.project" placeholder="如 LJ9" />
+          <p class="field-hint">传给脚本 PROJECT；对应 <code>vendor/transsion/projects/&lt;project&gt;</code>。</p>
         </div>
         <div class="field">
-          <label>markets <span v-if="needsMarkets" class="req">*</span></label>
+          <label>variant <span class="req">*</span></label>
           <NSelect
-            v-model:value="selectedMarkets"
-            multiple
-            filterable
-            :options="marketSelectOptions"
-            :loading="buildOptionsLoading"
-            max-tag-count="responsive"
-            placeholder="选择市场码，如 op / eu / in"
+            v-model:value="buildContext.variant"
+            :options="[
+              { label: 'userdebug', value: 'userdebug' },
+              { label: 'user', value: 'user' },
+              { label: 'user_root', value: 'user_root' },
+            ]"
           />
-          <p class="field-hint">
-            harness 常用市场码已预置；workspace 解析到的 markets 会优先加入并可默认勾选。
-            组件含 <code>trreg / trcar / trcom</code> 时必选至少一项。
-          </p>
         </div>
-      </template>
-
-      <template v-else>
+      </div>
+      <div class="field-row">
         <div class="field">
-          <label>模块名 / 路径 <span class="req">*</span></label>
-          <NInput v-model:value="buildContext.native_target" placeholder="TeleService" />
-          <p class="field-hint">传给 <code>build native-module --target</code>。make/m 填模块名（如 TeleService）；mm/mmm 可填相对路径。</p>
+          <label>system 代码路径 <span class="req">*</span></label>
+          <NInput v-model:value="buildContext.system_path" placeholder="Z:\LJ9-sys" />
+          <p class="field-hint">Windows 盘符路径，远端换算为 <code>/work/code/$USER/...</code>。</p>
         </div>
-        <div class="field-row">
-          <div class="field">
-            <label>所属分区</label>
-            <NSelect
-              v-model:value="buildContext.native_component"
-              :options="[
-                { label: 'sys（framework / 系统应用，最常见）', value: 'sys' },
-                { label: 'hal', value: 'hal' },
-                { label: 'vnd', value: 'vnd' },
-                { label: 'odm', value: 'odm' },
-              ]"
-            />
-            <p class="field-hint">tran_build 上下文分区，默认 sys。不确定时保持 sys。</p>
-          </div>
-          <div class="field">
-            <label>lunch（可选）</label>
-            <NInput v-model:value="buildContext.lunch" placeholder="qssi_64" />
-            <p class="field-hint">对应 <code>--lunch</code>。项目有固定 lunch 时填写；留空则由 Skill/环境默认。</p>
-          </div>
+        <div class="field">
+          <label>vendor 代码路径 <span class="req">*</span></label>
+          <NInput v-model:value="buildContext.vendor_path" placeholder="Z:\LJ9-vnd" />
         </div>
-      </template>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>build_flag <span class="req">*</span></label>
+          <NSelect
+            v-model:value="buildContext.build_flag"
+            :options="[
+              { label: 'bleeding_edge', value: 'bleeding_edge' },
+              { label: 'staging', value: 'staging' },
+              { label: 'fooding', value: 'fooding' },
+              { label: 'stable', value: 'stable' },
+            ]"
+          />
+        </div>
+        <div class="field">
+          <label>是否打包</label>
+          <NSelect
+            v-model:value="needPack"
+            :options="[
+              { label: '否', value: 'no' },
+              { label: '是（追加 pack）', value: 'yes' },
+            ]"
+          />
+          <p class="field-hint">选「是」时会在 targets 末尾追加 <code>pack</code>。</p>
+        </div>
+      </div>
+      <div class="field">
+        <label>编译 target <span class="req">*</span></label>
+        <NSelect
+          v-model:value="selectedBuildTargets"
+          multiple
+          :options="BUILD_TARGET_OPTIONS"
+          max-tag-count="responsive"
+          placeholder="sys / krn / vext / hal / odm"
+        />
+        <p class="field-hint">可多选：sys / krn / vext / hal / odm。</p>
+      </div>
 
       <h3 class="sub-title">烧录 / 自检 / 入库</h3>
       <p class="field-hint section-hint">
-        整包烧录使用 build_context.flash_skill_id（默认 harness-device）；单镜像走 harness-flash-single-img。无 harness 时自动改用 device_update。
+        本轮编译不强制产出刷机包路径；烧录仍依赖后续产物或人工。整包烧录默认 harness-device。
       </p>
       <div class="field-row">
         <div class="field">
@@ -1225,18 +1062,11 @@ onUnmounted(() => {
         <div class="summary-row">
           <span class="k">编译</span>
           <span>
-            {{ buildContext.build_kind === 'native_module' ? '模块' : '整机' }}
-            · {{ buildContext.build_skill_id }}
-            · {{ buildContext.mapped_root }} / {{ buildContext.workspace }}
-            <template v-if="buildContext.build_kind === 'native_module'">
-              · {{ buildContext.native_target || '—' }}
-              · {{ buildContext.native_component || 'sys' }}
-            </template>
-            <template v-else>
-              · {{ buildContext.variant }} · {{ selectedComponents.join(',') || '—' }}
-              <template v-if="selectedMarkets.length"> · markets={{ selectedMarkets.join(',') }}</template>
-              · {{ buildContext.pipeline_stages }}
-            </template>
+            ez-build · {{ buildContext.project || '—' }}
+            · {{ buildContext.variant }} / {{ buildContext.build_flag }}
+            · targets={{ selectedBuildTargets.join(',') || '—' }}{{ needPack === 'yes' ? ',pack' : '' }}
+            · sys={{ buildContext.system_path || '—' }}
+            · vnd={{ buildContext.vendor_path || '—' }}
           </span>
         </div>
         <div class="summary-row">

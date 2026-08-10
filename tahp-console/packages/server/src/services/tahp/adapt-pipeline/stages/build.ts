@@ -1,14 +1,7 @@
 import { clearCapabilityPoll, createCapabilityStage } from '../capability'
 import { buildCapability } from '../build-capability'
-import { defaultBuildSkillId } from '../harness-skill-registry'
 import { registerStageForTest } from '../registry'
 import type { BuildCapabilityInput, StageContext, StageDefinition, StageVerdict } from '../types'
-
-function resolveBuildMode(ctx: StageContext): 'full' | 'incremental' {
-  const fromParams = ctx.node.params?.build_mode ?? ctx.state.progress?.build_mode
-  if (fromParams === 'full' || fromParams === 'incremental') return fromParams
-  return ctx.run.iteration === 1 ? 'full' : 'incremental'
-}
 
 const base = createCapabilityStage<BuildCapabilityInput>({
   key: 'build',
@@ -19,22 +12,20 @@ const base = createCapabilityStage<BuildCapabilityInput>({
   pollIntervalMs: 3000,
   buildInput: ctx => {
     const bc = ctx.run.build_context
-    const buildKind = bc.build_kind ?? (bc.native_target ? 'native_module' : 'whole_device')
+    const project = (bc.project || ctx.run.project_code || '').trim()
     return {
       pipelineRunId: ctx.run.run_id,
+      project,
+      variant: bc.variant,
+      buildFlag: bc.build_flag || 'staging',
+      systemPath: bc.system_path || '',
+      vendorPath: bc.vendor_path || '',
+      buildTargets: bc.build_targets?.length
+        ? [...bc.build_targets]
+        : (bc.components ?? []),
+      needPack: Boolean(bc.need_pack),
       mappedRoot: bc.mapped_root,
       workspace: bc.workspace,
-      mode: resolveBuildMode(ctx),
-      components: bc.components ?? [],
-      variant: bc.variant,
-      parallelProfile: bc.parallel_profile,
-      markets: bc.markets,
-      buildKind,
-      buildSkillId: bc.build_skill_id || defaultBuildSkillId(buildKind),
-      pipelineStages: bc.pipeline_stages,
-      lunch: bc.lunch,
-      nativeTarget: bc.native_target,
-      nativeComponent: bc.native_component,
     }
   },
   onSuccess: (ctx, result) => {
@@ -43,7 +34,7 @@ const base = createCapabilityStage<BuildCapabilityInput>({
         artifacts_dir: result.artifactsDir ?? result.artifacts_dir,
         pkg_path: result.pkgPath ?? result.pkg_path,
         artifacts: result.artifacts,
-        skill_id: result.skillId ?? result.skill_id,
+        skill_id: result.skillId ?? result.skill_id ?? 'ez-build',
       },
       progress: {
         ...ctx.state.progress,

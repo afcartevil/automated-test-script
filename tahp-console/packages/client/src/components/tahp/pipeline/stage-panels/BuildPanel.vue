@@ -19,12 +19,11 @@ function result(): Record<string, unknown> {
 function phaseLabel(phase?: unknown): string {
   switch (String(phase ?? '')) {
     case 'init': return '初始化'
+    case 'deploy': return '部署脚本'
+    case 'build': return '编译'
+    case 'done': return '完成'
     case 'agent': return '启动 Agent'
     case 'tool': return '执行工具'
-    case 'repo': return 'repo sync'
-    case 'build': return '编译'
-    case 'package': return '打包'
-    case 'done': return '完成'
     default: return String(phase || '—')
   }
 }
@@ -38,6 +37,14 @@ function stateLabel(state?: unknown): string {
     case 'cancelled': return '已取消'
     default: return String(state || props.node.status)
   }
+}
+
+function targetsLine(): string {
+  const bc = props.buildContext
+  if (!bc) return ''
+  const targets = [...(bc.build_targets ?? [])]
+  if (bc.need_pack && !targets.includes('pack')) targets.push('pack')
+  return targets.join(',') || (bc.components?.join(',') ?? '')
 }
 </script>
 
@@ -58,9 +65,21 @@ function stateLabel(state?: unknown): string {
         <span class="k">消息</span>
         <span class="v">{{ bp().message || bp().text }}</span>
       </div>
-      <div v-if="buildContext?.build_skill_id || buildContext?.build_kind" class="meta-row">
-        <span class="k">Skill</span>
-        <span class="v">{{ buildContext?.build_skill_id || '—' }}（{{ buildContext?.build_kind === 'native_module' ? '模块' : '整机' }}）</span>
+      <div v-if="buildContext?.project" class="meta-row">
+        <span class="k">project</span>
+        <span class="v">{{ buildContext.project }} · {{ buildContext.variant }} / {{ buildContext.build_flag || '—' }}</span>
+      </div>
+      <div v-if="buildContext?.system_path" class="meta-row">
+        <span class="k">system</span>
+        <span class="v mono">{{ buildContext.system_path }}</span>
+      </div>
+      <div v-if="buildContext?.vendor_path" class="meta-row">
+        <span class="k">vendor</span>
+        <span class="v mono">{{ buildContext.vendor_path }}</span>
+      </div>
+      <div v-if="targetsLine()" class="meta-row">
+        <span class="k">targets</span>
+        <span class="v">{{ targetsLine() }}</span>
       </div>
       <div v-if="node.summary_line" class="meta-row">
         <span class="k">摘要</span>
@@ -73,21 +92,6 @@ function stateLabel(state?: unknown): string {
       <div v-if="result().pkg_path || result().pkgPath" class="meta-row">
         <span class="k">刷机包</span>
         <span class="v mono">{{ result().pkg_path || result().pkgPath }}</span>
-      </div>
-    </div>
-
-    <div v-if="buildContext?.components?.length && buildContext.build_kind !== 'native_module'" class="components-box">
-      <span class="k">本轮编译组件</span>
-      <div class="chips">
-        <span v-for="c in buildContext.components" :key="c" class="chip">{{ c }}</span>
-      </div>
-    </div>
-    <div v-else-if="buildContext?.native_target" class="components-box">
-      <span class="k">Native 目标</span>
-      <div class="chips">
-        <span class="chip">{{ buildContext.native_component || 'sys' }}</span>
-        <span class="chip">{{ buildContext.native_target }}</span>
-        <span v-if="buildContext.lunch" class="chip">{{ buildContext.lunch }}</span>
       </div>
     </div>
 
@@ -111,23 +115,6 @@ function stateLabel(state?: unknown): string {
 .emph {
   display: inline-block; background: var(--warn-soft); color: var(--warn);
   border-radius: 8px; padding: 2px 8px; font-weight: 700; font-size: 12.5px;
-}
-.components-box {
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  .k { display: block; margin-bottom: 8px; color: var(--muted); font-weight: 700; font-size: 12px; }
-}
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip {
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
 }
 .error-box {
   background: var(--error-soft); color: var(--error); border-radius: 12px; padding: 10px; margin-bottom: 12px;

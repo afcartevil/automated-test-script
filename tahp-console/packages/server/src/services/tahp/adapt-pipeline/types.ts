@@ -60,13 +60,26 @@ export interface PipelineDomain {
 export interface BuildContext {
   mapped_root: string
   workspace: string
-  components: string[]
+  /** @deprecated harness 整机组件；ez-build 使用 build_targets */
+  components?: string[]
   variant: string
+  /** ez-build PROJECT */
+  project?: string
+  /** ez-build BUILD_FLAG：bleeding_edge | staging | fooding | stable */
+  build_flag?: string
+  /** Windows 盘符路径，如 Z:\LJ9-sys */
+  system_path?: string
+  /** Windows 盘符路径，如 Z:\LJ9-vnd */
+  vendor_path?: string
+  /** 编译 target：sys/krn/vext/hal/odm */
+  build_targets?: string[]
+  /** 是否追加 pack 到 BUILD_TARGET_RAW */
+  need_pack?: boolean
   parallel_profile?: 'mtk' | 'qcom'
   markets?: string[]
-  /** whole_device=整机 rdtool；native_module=模块编译 */
+  /** whole_device=整机 rdtool；native_module=模块编译（legacy） */
   build_kind?: 'whole_device' | 'native_module'
-  /** 默认 harness-build-whole-device / harness-build-native */
+  /** 默认 harness-build-whole-device / harness-build-native（legacy） */
   build_skill_id?: string
   /** pipeline stages，如 build,package 或 repo,build,package */
   pipeline_stages?: string
@@ -234,19 +247,20 @@ export interface ExternalCapability<TInput = unknown> {
 
 export interface BuildCapabilityInput {
   pipelineRunId: string
-  mappedRoot: string
-  workspace: string
-  mode: 'full' | 'incremental'
-  components: string[]
+  /** ez-build PROJECT */
+  project: string
   variant: string
-  parallelProfile?: 'mtk' | 'qcom'
-  markets?: string[]
-  buildKind?: 'whole_device' | 'native_module'
-  buildSkillId?: string
-  pipelineStages?: string
-  lunch?: string
-  nativeTarget?: string
-  nativeComponent?: string
+  buildFlag: string
+  /** Windows 路径，capability 内换算为 Linux */
+  systemPath: string
+  vendorPath: string
+  buildTargets: string[]
+  needPack: boolean
+  /** legacy / 兼容字段 */
+  mappedRoot?: string
+  workspace?: string
+  mode?: 'full' | 'incremental'
+  components?: string[]
 }
 
 export interface BuildCapabilityResult {

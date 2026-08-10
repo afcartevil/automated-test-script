@@ -1,32 +1,38 @@
 /**
- * 编译能力：Agent Bridge + harness-build* Skill，产出固定 build-result.json
+ * 编译能力：remote-runner bridge-exec 部署脚本，tmux 内跑 ez-build.sh，
+ * 再以短 bridge-exec 轮询 tmux 会话 + 日志心跳 / done 文件。
  */
 import { randomBytes } from 'crypto'
 import { join } from 'path'
 import { logger } from '../../logger'
-import {
-  AgentBridgeClient,
-  getAgentBridgeManager,
-  type AgentBridgeChatStarted,
-  type AgentBridgeOutput,
-} from '../../hermes/agent-bridge'
-import { filterBridgeToolCallMarkupDelta } from '../../hermes/run-chat/bridge-delta'
 import { assertHarnessCliReady } from '../harness-version-gate'
-import { humanizeAgentError } from '../adapt-agent-health'
 import { tahpPaths } from '../paths'
 import {
   buildResultFilePath,
-  buildResultPromptBlock,
-  looksLikeBackgroundWaitWithoutResult,
-  parseBuildResultFromText,
-  readBuildResultFile,
   writeBuildResult,
   type BuildResultContract,
 } from './build-result-contract'
 import {
-  defaultBuildSkillId,
-  resolveHarnessSkillPath,
-} from './harness-skill-registry'
+  bridgeCancel,
+  bridgeExec,
+  ensureBridgeReady,
+  loadEzBuildScript,
+} from './harness-bridge-exec'
+import {
+  EA_BUILD_DIR,
+  buildDeployCommand,
+  buildTmuxKillCommand,
+  buildTmuxPollCommand,
+  buildTmuxStartCommand,
+  detectBuildFailureInLog,
+  detectBuildSuccessInLog,
+  parseTmuxPollOutput,
+  tmuxSessionName,
+} from './ez-build-tmux'
+import {
+  composeBuildTargetRaw,
+  winMappedPathToLinuxWorkCode,
+} from './win-path-to-linux'
 import type {
   BuildCapabilityInput,
   CapabilityEvent,
@@ -35,16 +41,29 @@ import type {
   StageAvailability,
 } from './types'
 
-const bridgeClient = new AgentBridgeClient({ timeoutMs: 10 * 60 * 60_000 })
+/** 整机编译可达数小时 */
+const BUILD_TIMEOUT_MS = 8 * 60 * 60 * 1000
+const DEPLOY_TIMEOUT_SEC = 120
+const TMUX_START_TIMEOUT_SEC = 60
+const POLL_TIMEOUT_SEC = 45
+/** ez-build KEEPALIVE_INTERVAL=15，轮询略宽 */
+const POLL_INTERVAL_MS = 20_000
+/** 心跳超时告警（进行中…） */
+const HEARTBEAT_STALE_MS = 5 * 60_000
 
 interface BuildRunCtx {
   runId: string
   pipelineRunId: string
+  project: string
   startedAt: number
   status: CapabilityStatus
   cancelled: boolean
-  sessionId: string
   resultPath: string
+  tmuxSession?: string
+  logFile?: string
+  doneFile?: string
+  lastHeartbeatAt?: number
+  seenLogLines: Set<string>
   listeners: Set<(ev: CapabilityEvent) => void>
 }
 
@@ -78,11 +97,12 @@ function toCapabilityResult(result: BuildResultContract): Record<string, unknown
     failedStage: result.failed_stage,
     skillId: result.skill_id,
     status: result.status,
+    notes: result.notes,
   }
 }
 
 function applyResult(ctx: BuildRunCtx, result: BuildResultContract) {
-  if (result.status === 'pass' && (result.artifacts_dir || result.pkg_path)) {
+  if (result.status === 'pass') {
     ctx.status = {
       state: 'success',
       progress: 100,
@@ -94,179 +114,273 @@ function applyResult(ctx: BuildRunCtx, result: BuildResultContract) {
     ctx.status = {
       state: 'failed',
       phase: result.failed_stage ?? 'build',
-      error: result.error || '编译失败或未产出产物路径',
+      error: result.error || '编译失败',
       result: toCapabilityResult(result),
     }
   }
   emit(ctx)
 }
 
-function buildInstructions(input: BuildCapabilityInput, skillPath: string, resultPath: string): string {
-  const skillId = input.buildSkillId || defaultBuildSkillId(input.buildKind)
-  const kind = input.buildKind ?? 'whole_device'
-  const components = (input.components ?? []).join(',') || '(空)'
-  const markets = (input.markets ?? []).join(',') || ''
-  const stages = input.pipelineStages ?? 'build,package'
-  return `
-你是 TAHP 适配流水线的编译助手。必须严格按指定 harness Skill 执行，禁止在 Windows PowerShell 直接跑 Linux 编译脚本。
-
-# Skill
-- Skill ID: \`${skillId}\`
-- Skill 路径: \`${skillPath}\`
-- 先 Read 该 SKILL.md，再按其中命令执行
-
-# 任务类型
-${kind === 'native_module' ? '模块/Native 编译（harness-build-native）' : '整机编译（harness-build-whole-device / pipeline）'}
-
-# 输入参数
-- mapped_root: ${input.mappedRoot}
-- workspace: ${input.workspace}
-- variant: ${input.variant}
-- mode: ${input.mode}
-- components: ${components}
-- parallel_profile: ${input.parallelProfile ?? ''}
-- markets: ${markets}
-- pipeline_stages: ${stages}
-- lunch: ${input.lunch ?? ''}
-- native_component: ${input.nativeComponent ?? 'sys'}
-- native_target: ${input.nativeTarget ?? ''}
-
-# 执行纪律（违反会导致流水线失败）
-1. **禁止向用户提问 / AskUser / 等待确认**。缺参、缺条件、任务无法完成时：立即失败，并按契约写出 \`status: "fail"\` 的 TAHP_BUILD_RESULT（含 error / failed_stage），然后结束。
-2. 先 \`harness --json remote-runner discover\` / status，确认 bridge READY；若未 READY，按第 1 条失败退出，不要等待用户去开 Bridge。
-3. **整机必须优先一条阻塞命令**：
-   \`harness --json build pipeline --mapped-root ... --workspace ... --confirm-workspace-path --stages ${stages} --components ${components || '<components>'} --variant ${input.variant}${markets ? ` --markets ${markets}` : ''}${input.parallelProfile ? ` --parallel-profile ${input.parallelProfile}` : ''}\`
-   - MTK 含 \`trreg\` 时务必带 \`--markets\`；\`build pipeline\` **内部**会处理 trreg/trprd 分批与 \`--local\`，**不要**自行拆成多个后台 \`batch-build\`。
-   - 该命令会等到整机流水线结束（或失败）才返回；你必须等它返回后再继续。
-4. **严禁**「提交后台 + 等待完成通知 + 结束回合」。禁止在编译未完成时结束对话。若误用了 \`batch-build\`：必须用 \`harness --json build status\` **轮询到全部组件完成/失败**，再 \`build artifacts\`，再写 TAHP_BUILD_RESULT；不得口头说「等待通知」后停止。
-5. 模块：用 \`harness --json build native-module ...\` 或 Skill 规定命令，同样须阻塞到结束。
-6. 编译成功后：\`harness --json build artifacts\`（整机）定位产物目录/主包路径。
-7. ${buildResultPromptBlock(resultPath)}
-`.trim()
+function isKeepaliveLine(line: string): boolean {
+  return /进行中\.\.\./.test(line) || /finished: status=/i.test(line)
 }
 
-function buildUserMessage(input: BuildCapabilityInput): string {
-  const skillId = input.buildSkillId || defaultBuildSkillId(input.buildKind)
-  return [
-    '# 流水线编译任务',
-    '',
-    `请使用 Skill \`${skillId}\` **阻塞执行到编译结束**，并按契约写出 TAHP_BUILD_RESULT。`,
-    '优先使用 `harness --json build pipeline`（一条命令含全部分区；含 trreg 时带 --markets）。',
-    '禁止：把 batch-build 丢到后台后以「等待完成通知」结束；禁止 AskUser。',
-    '缺参或无法完成时直接 fail + TAHP_BUILD_RESULT。',
-    `mapped_root=${input.mappedRoot}`,
-    `workspace=${input.workspace}`,
-    `variant=${input.variant}`,
-    `components=${(input.components ?? []).join(',')}`,
-    `pipeline_stages=${input.pipelineStages ?? 'build,package'}`,
-    input.markets?.length ? `markets=${input.markets.join(',')}` : '',
-    input.parallelProfile ? `parallel_profile=${input.parallelProfile}` : '',
-    input.nativeTarget ? `native_target=${input.nativeTarget}` : '',
-    input.lunch ? `lunch=${input.lunch}` : '',
-  ].filter(Boolean).join('\n')
+function flushNewLogLines(ctx: BuildRunCtx, lines: string[]) {
+  for (const line of lines) {
+    const key = line.slice(0, 240)
+    if (ctx.seenLogLines.has(key)) continue
+    ctx.seenLogLines.add(key)
+    if (ctx.seenLogLines.size > 2000) {
+      const arr = [...ctx.seenLogLines]
+      ctx.seenLogLines = new Set(arr.slice(-1000))
+    }
+    emit(ctx, line.slice(0, 500))
+    if (isKeepaliveLine(line)) {
+      ctx.lastHeartbeatAt = Date.now()
+    }
+  }
 }
 
-async function runAgent(ctx: BuildRunCtx, input: BuildCapabilityInput, skillPath: string): Promise<void> {
-  const manager = getAgentBridgeManager()
-  if (!manager.running) {
-    throw new Error('Agent Bridge 未运行')
+function sleep(ms: number): Promise<void> {
+  return new Promise(r => setTimeout(r, ms))
+}
+
+function flushLogLines(ctx: BuildRunCtx, buf: { text: string }, chunk: string) {
+  buf.text += chunk
+  const parts = buf.text.split(/\r?\n/)
+  buf.text = parts.pop() ?? ''
+  for (const line of parts) {
+    const t = line.trim()
+    if (t) emit(ctx, t.slice(0, 500))
+  }
+}
+
+function bridgeOutput(result: { output?: string; error?: string }): string {
+  return String(result.output || result.error || '')
+}
+
+async function killTmuxSession(session: string, signal?: { cancelled: boolean }): Promise<void> {
+  try {
+    await bridgeExec(buildTmuxKillCommand(session), {
+      timeoutSec: 30,
+      signal,
+    })
+  } catch { /* ignore */ }
+}
+
+async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promise<void> {
+  const started = Date.now()
+  const needPack = Boolean(input.needPack)
+  ctx.status = { state: 'running', progress: 3, phase: 'init', message: '确保齐治 Bridge READY' }
+  emit(ctx, '检查 / 恢复 remote-runner Bridge…')
+
+  const signal = { cancelled: false }
+  const watchCancel = setInterval(() => {
+    if (ctx.cancelled) signal.cancelled = true
+  }, 1000)
+
+  try {
+    await ensureBridgeReady({
+      timeoutMs: 3 * 60_000,
+      signal,
+      onLog: (line) => emit(ctx, line),
+    })
+  } catch (err) {
+    clearInterval(watchCancel)
+    throw err
   }
 
-  const instructions = buildInstructions(input, skillPath, ctx.resultPath)
-  const userMessage = buildUserMessage(input)
+  if (ctx.cancelled) {
+    clearInterval(watchCancel)
+    ctx.status = { state: 'cancelled', error: '已取消' }
+    emit(ctx)
+    return
+  }
 
-  ctx.status = { state: 'running', progress: 5, phase: 'agent', message: '启动编译 Agent' }
-  emit(ctx, '启动编译 Agent…')
+  const systemLinux = winMappedPathToLinuxWorkCode(input.systemPath)
+  const vendorLinux = winMappedPathToLinuxWorkCode(input.vendorPath)
+  const targetRaw = composeBuildTargetRaw(input.buildTargets, input.needPack)
+  const session = tmuxSessionName(ctx.runId, input.project)
+  ctx.tmuxSession = session
+  ctx.logFile = `${EA_BUILD_DIR}/${session}.log`
+  ctx.doneFile = `${EA_BUILD_DIR}/${session}.done`
 
-  const started: AgentBridgeChatStarted = await bridgeClient.chat(
-    ctx.sessionId,
-    userMessage,
-    undefined,
-    instructions,
-    'default',
-  )
+  ctx.status = { state: 'running', progress: 10, phase: 'deploy', message: '部署 ez-build.sh' }
+  emit(ctx, `部署脚本到 ${EA_BUILD_DIR}`)
+  emit(ctx, `system=${systemLinux} vendor=${vendorLinux} targets=${targetRaw}`)
 
-  const markupState: { bridgePendingToolCallMarkup?: string } = {}
-  let full = ''
+  const script = loadEzBuildScript()
+  const scriptB64 = Buffer.from(script, 'utf-8').toString('base64')
 
-  for await (const chunk of bridgeClient.streamOutput(started.run_id, { intervalMs: 500 })) {
+  try {
+    const deployOut = { text: '' }
+    const deploy = await bridgeExec(buildDeployCommand(scriptB64), {
+      timeoutSec: DEPLOY_TIMEOUT_SEC,
+      signal,
+      onStdout: (c) => flushLogLines(ctx, deployOut, c),
+      onStderr: (c) => flushLogLines(ctx, deployOut, c),
+    })
     if (ctx.cancelled) {
-      try { await bridgeClient.interrupt(ctx.sessionId, '流水线取消编译') } catch { /* ignore */ }
       ctx.status = { state: 'cancelled', error: '已取消' }
       emit(ctx)
       return
     }
-
-    const out = chunk as AgentBridgeOutput
-    for (const ev of out.events || []) {
-      if (ev.event === 'tool.started' || ev.event === 'tool.completed') {
-        const name = String(ev.tool_name || 'tool')
-        ctx.status = {
-          ...ctx.status,
-          state: 'running',
-          phase: 'tool',
-          message: name,
-          progress: Math.min(90, (ctx.status.progress ?? 10) + 2),
-        }
-        emit(ctx, `[tool] ${name}`)
-      }
+    if (Number(deploy.exit_code) !== 0 && String(deploy.status).toLowerCase() !== 'ok') {
+      throw new Error(deploy.error || deploy.output || `部署脚本失败 exit=${deploy.exit_code}`)
     }
-    if (out.delta) {
-      const cleaned = filterBridgeToolCallMarkupDelta(markupState, out.delta)
-      if (cleaned) {
-        full += cleaned
-        const line = cleaned.trim()
-        if (line) emit(ctx, line.slice(0, 500))
-      }
-    }
+    if (deploy.output) emit(ctx, String(deploy.output).slice(0, 300))
 
-    // 中途若已落盘结果文件，可提前结束等待
-    const fileHit = readBuildResultFile(ctx.resultPath)
-    if (fileHit && (fileHit.status === 'pass' || fileHit.status === 'fail')) {
-      applyResult(ctx, fileHit)
-      try { await bridgeClient.interrupt(ctx.sessionId, '已拿到编译结果') } catch { /* ignore */ }
+    ctx.status = { state: 'running', progress: 20, phase: 'tmux', message: 'tmux 启动 ez-build' }
+    emit(ctx, `tmux 会话启动: ${session}`)
+
+    const start = await bridgeExec(
+      buildTmuxStartCommand({
+        session,
+        project: input.project,
+        variant: input.variant,
+        buildFlag: input.buildFlag,
+        targetRaw,
+        systemLinux,
+        vendorLinux,
+      }),
+      { timeoutSec: TMUX_START_TIMEOUT_SEC, signal },
+    )
+    const startOut = bridgeOutput(start)
+    if (ctx.cancelled) {
+      await killTmuxSession(session, signal)
+      ctx.status = { state: 'cancelled', error: '已取消' }
+      emit(ctx)
       return
     }
+    if (Number(start.exit_code) !== 0 && String(start.status).toLowerCase() !== 'ok') {
+      throw new Error(start.error || startOut || `tmux 启动失败 exit=${start.exit_code}`)
+    }
+    if (!/TMUX_STARTED:/.test(startOut)) {
+      throw new Error(`tmux 启动未确认: ${startOut.slice(0, 500)}`)
+    }
+    emit(ctx, startOut.split(/\r?\n/).find(l => l.includes('TMUX_STARTED')) || `已启动 ${session}`)
+    emit(ctx, '开始编译（tmux）…')
+    ctx.lastHeartbeatAt = Date.now()
 
-    if (out.done) {
-      if (out.status === 'error') throw new Error(humanizeAgentError(out.error || 'Agent 出错'))
-      if (out.status === 'interrupted') {
-        const again = readBuildResultFile(ctx.resultPath)
-        if (again) {
-          applyResult(ctx, again)
+    ctx.status = { state: 'running', progress: 25, phase: 'build', message: 'tmux 编译中' }
+
+    let deadWithoutDone = 0
+    while (Date.now() - started < BUILD_TIMEOUT_MS) {
+      if (ctx.cancelled) {
+        await killTmuxSession(session, signal)
+        ctx.status = { state: 'cancelled', error: '已取消' }
+        emit(ctx)
+        return
+      }
+
+      let pollRaw = ''
+      try {
+        const poll = await bridgeExec(buildTmuxPollCommand(session), {
+          timeoutSec: POLL_TIMEOUT_SEC,
+          signal,
+        })
+        pollRaw = bridgeOutput(poll)
+        if (Number(poll.exit_code) !== 0 && String(poll.status).toLowerCase() !== 'ok' && !pollRaw) {
+          emit(ctx, `轮询 bridge-exec 异常 exit=${poll.exit_code}`)
+          await sleep(POLL_INTERVAL_MS)
+          continue
+        }
+      } catch (err) {
+        emit(ctx, `轮询失败: ${(err as Error).message}`)
+        await sleep(POLL_INTERVAL_MS)
+        continue
+      }
+
+      const snap = parseTmuxPollOutput(pollRaw)
+      flushNewLogLines(ctx, snap.lines)
+
+      const logFail = detectBuildFailureInLog(snap.lines)
+      const elapsed = Math.round((Date.now() - started) / 1000)
+      const hbAge = ctx.lastHeartbeatAt ? Date.now() - ctx.lastHeartbeatAt : 0
+
+      if (snap.alive && hbAge > HEARTBEAT_STALE_MS) {
+        emit(ctx, `心跳超时告警: ${Math.round(hbAge / 1000)}s 未见「进行中…」(tmux 仍 alive)`)
+        ctx.lastHeartbeatAt = Date.now()
+      }
+
+      // done 文件是权威退出码（避免 bridge-exec 误报 0）
+      if (snap.doneCode != null) {
+        const durationMs = Date.now() - started
+        const success = snap.doneCode === 0 && !logFail
+        if (success) {
+          const pkgPath = `Z:\\ea-build\\output_version_${input.project}`
+          const sawPack = detectBuildSuccessInLog(snap.lines, true)
+          const contract: BuildResultContract = {
+            schema_version: 1,
+            status: 'pass',
+            duration_ms: durationMs,
+            skill_id: 'ez-build',
+            pkg_path: needPack || sawPack ? pkgPath : undefined,
+            artifacts_dir: needPack || sawPack ? pkgPath : undefined,
+            notes: `ea-build tmux=${session} targets=${targetRaw}`,
+          }
+          writeBuildResult(ctx.resultPath, contract)
+          applyResult(ctx, contract)
           return
         }
-        throw new Error('Agent 运行被中断')
+        const contract: BuildResultContract = {
+          schema_version: 1,
+          status: 'fail',
+          failed_stage: 'build',
+          error: logFail || `ez-build 失败 exit_code=${snap.doneCode}`,
+          duration_ms: durationMs,
+          skill_id: 'ez-build',
+          notes: snap.lines.slice(-30).join('\n').slice(0, 2000),
+        }
+        writeBuildResult(ctx.resultPath, contract)
+        applyResult(ctx, contract)
+        return
       }
-      break
-    }
-  }
 
-  const fromFile = readBuildResultFile(ctx.resultPath)
-  const fromText = parseBuildResultFromText(full)
-  const result = fromFile ?? fromText
-  if (!result) {
-    const bgWait = looksLikeBackgroundWaitWithoutResult(full)
-    const error = bgWait
-      ? `编译 Agent 在后台任务未完成时结束，未写入结果文件。请点「重新编译」；Agent 须使用阻塞的 harness build pipeline（勿 batch-build 丢后台后结束）。期望文件：${ctx.resultPath}`
-      : `未解析到编译结果。请确认 Agent 已写入 ${ctx.resultPath}`
-    try {
-      writeBuildResult(ctx.resultPath, {
-        schema_version: 1,
-        status: 'fail',
-        failed_stage: 'agent',
-        error,
-        skill_id: input.buildSkillId || defaultBuildSkillId(input.buildKind),
-        notes: bgWait ? 'agent_ended_while_waiting_background_build' : 'missing_tahp_build_result',
-      })
-    } catch { /* ignore */ }
-    throw new Error(error)
+      if (!snap.alive) {
+        deadWithoutDone += 1
+        if (logFail || deadWithoutDone >= 2) {
+          const contract: BuildResultContract = {
+            schema_version: 1,
+            status: 'fail',
+            failed_stage: 'build',
+            error: logFail || 'tmux 会话已结束，但未找到 done 文件',
+            duration_ms: Date.now() - started,
+            skill_id: 'ez-build',
+            notes: snap.lines.slice(-30).join('\n').slice(0, 2000),
+          }
+          writeBuildResult(ctx.resultPath, contract)
+          applyResult(ctx, contract)
+          return
+        }
+        emit(ctx, `tmux 已结束，等待 done 文件… (${elapsed}s)`)
+      } else {
+        deadWithoutDone = 0
+        const p = Math.min(90, 25 + Math.floor((Date.now() - started) / BUILD_TIMEOUT_MS * 65))
+        ctx.status = {
+          state: 'running',
+          progress: p,
+          phase: 'build',
+          message: `tmux 编译中 ${elapsed}s`
+            + (ctx.lastHeartbeatAt
+              ? ` · 心跳 ${Math.round((Date.now() - ctx.lastHeartbeatAt) / 1000)}s 前`
+              : ''),
+        }
+        emit(ctx)
+      }
+
+      await sleep(POLL_INTERVAL_MS)
+    }
+
+    await killTmuxSession(session, signal)
+    throw new Error(`齐治 tmux 编译超时（>${Math.round(BUILD_TIMEOUT_MS / 3600000)}h） session=${session}`)
+  } finally {
+    clearInterval(watchCancel)
   }
-  applyResult(ctx, result)
 }
 
 export const buildCapability: ExternalCapability<BuildCapabilityInput> = {
-  id: 'harness-build-agent',
+  id: 'ez-build-remote',
 
   async probe(): Promise<StageAvailability> {
     try {
@@ -274,19 +388,20 @@ export const buildCapability: ExternalCapability<BuildCapabilityInput> = {
     } catch (err) {
       return { available: false, reason: (err as Error).message }
     }
-    const manager = getAgentBridgeManager()
-    if (!manager.running) {
-      return { available: false, reason: 'Agent Bridge 未就绪' }
+    try {
+      loadEzBuildScript()
+    } catch (err) {
+      return { available: false, reason: (err as Error).message }
     }
     return { available: true }
   },
 
   async start(input: BuildCapabilityInput): Promise<{ runId: string }> {
-    const skillId = input.buildSkillId || defaultBuildSkillId(input.buildKind)
-    const skillPath = resolveHarnessSkillPath(skillId)
-    if (!skillPath) {
-      throw new Error(`未找到编译 Skill：${skillId}（请检查 %USERPROFILE%\\.claude\\skills）`)
-    }
+    if (!input.project?.trim()) throw new Error('缺少 project')
+    if (!input.systemPath?.trim()) throw new Error('缺少 system 代码路径')
+    if (!input.vendorPath?.trim()) throw new Error('缺少 vendor 代码路径')
+    if (!input.variant?.trim()) throw new Error('缺少 variant')
+    if (!input.buildFlag?.trim()) throw new Error('缺少 build_flag')
 
     const runId = genRunId()
     const resultPath = buildResultFilePath(
@@ -295,21 +410,27 @@ export const buildCapability: ExternalCapability<BuildCapabilityInput> = {
     const ctx: BuildRunCtx = {
       runId,
       pipelineRunId: input.pipelineRunId,
+      project: input.project.trim(),
       startedAt: Date.now(),
       status: { state: 'pending', progress: 0, phase: 'init' },
       cancelled: false,
-      sessionId: `tahp-pipeline-build-${runId}`,
       resultPath,
+      seenLogLines: new Set(),
       listeners: new Set(),
     }
     runs.set(runId, ctx)
 
-    void runAgent(ctx, input, skillPath).catch((err) => {
-      logger.warn({ err: (err as Error).message, runId }, '[build-capability] failed')
-      ctx.status = {
-        state: 'failed',
+    void runEzBuild(ctx, input).catch((err) => {
+      logger.warn({ err: (err as Error).message, runId }, '[build-capability] ez-build failed')
+      const contract: BuildResultContract = {
+        schema_version: 1,
+        status: 'fail',
+        failed_stage: 'build',
         error: (err as Error).message,
+        skill_id: 'ez-build',
       }
+      try { writeBuildResult(ctx.resultPath, contract) } catch { /* ignore */ }
+      applyResult(ctx, contract)
       emit(ctx, (err as Error).message)
     })
 
@@ -319,11 +440,6 @@ export const buildCapability: ExternalCapability<BuildCapabilityInput> = {
   async getStatus(runId: string): Promise<CapabilityStatus> {
     const ctx = runs.get(runId)
     if (!ctx) return { state: 'failed', error: '未知编译任务' }
-    // 轮询时再读一次结果文件（Agent 可能已写完）
-    if (ctx.status.state === 'running' || ctx.status.state === 'pending') {
-      const fileHit = readBuildResultFile(ctx.resultPath)
-      if (fileHit) applyResult(ctx, fileHit)
-    }
     return ctx.status
   },
 
@@ -332,9 +448,10 @@ export const buildCapability: ExternalCapability<BuildCapabilityInput> = {
     if (!ctx) return
     ctx.cancelled = true
     ctx.status = { state: 'cancelled', error: '已取消' }
-    try {
-      await bridgeClient.interrupt(ctx.sessionId, '流水线终止/取消编译')
-    } catch { /* ignore */ }
+    if (ctx.tmuxSession) {
+      try { await killTmuxSession(ctx.tmuxSession) } catch { /* ignore */ }
+    }
+    try { await bridgeCancel() } catch { /* ignore */ }
     emit(ctx)
   },
 
