@@ -32,6 +32,20 @@ const SELFCHECK_FAIL_WF: WorkflowDefinition = {
   ],
 }
 
+/** 与生产默认一致：human_review 停用 → 失败就地人工门 */
+const SELFCHECK_PARK_WF: WorkflowDefinition = {
+  id: 'test-selfcheck-park',
+  version: 1,
+  label: 'selfcheck-park',
+  maxIterations: 3,
+  nodes: [
+    { key: 'selfcheck', enabled: true, onDone: 'gerrit', onFail: 'human_review' },
+    { key: 'triage', enabled: false, onUnavailable: 'skip', onDone: 'human_review', onFail: 'human_review' },
+    { key: 'human_review', enabled: false, onUnavailable: 'fail', onDone: 'build', onDoneEffect: 'increment_iteration' },
+    { key: 'gerrit', enabled: true, onDone: 'END', onFail: 'human_review' },
+  ],
+}
+
 describe('adapt-pipeline selfcheck fail advance', () => {
   let tempDir = ''
   const deviceId = 'DUT-SELFCHECK-1'
@@ -195,5 +209,91 @@ describe('adapt-pipeline selfcheck fail advance', () => {
     expect(state.stages.selfcheck?.progress?.state).toBe('case_failed')
     expect(state.current_node).toBe('triage')
     expect(state.status).toBe('waiting_human')
+  })
+
+  it('parks on selfcheck when human_review is disabled (does not enter gerrit)', async () => {
+    registerStageForTest({
+      key: 'human_review',
+      label: '人工审核',
+      isHumanGate: true,
+      async start() {},
+      evaluate() {
+        return { status: 'running' as const }
+      },
+    })
+    registerStageForTest({
+      key: 'gerrit',
+      label: '提交 Gerrit',
+      async start(ctx) {
+        ctx.patchState({ progress: { state: 'should_not_start' } })
+      },
+      evaluate() {
+        return { status: 'running' as const }
+      },
+    })
+    setWorkflowOverrideForTest(SELFCHECK_PARK_WF)
+
+    const run = createRun({
+      project_code: 'KM9',
+      device_id: deviceId,
+      build_context: {
+        mapped_root: 'Z:\\',
+        workspace: 'project/KM9',
+        components: ['krn'],
+        variant: 'userdebug',
+      },
+      test_plan: { mode: 'fixed', selected_cases: ['smoke/usd/1'] },
+    })
+
+    await startRun(run.run_id)
+
+    const caseCbs = eventHandlers.case_completed ?? []
+    const doneCbs = eventHandlers.test_completed ?? []
+    for (const cb of caseCbs) {
+      cb({
+        deviceId,
+        caseKey: 'smoke/usd/1',
+        result: {
+          testType: 'smoke',
+          module: 'usd',
+          caseIndex: 1,
+          caseName: 'USD冒烟测试',
+          status: '失败',
+          message: 'mock fail',
+          fullAutomation: true,
+          steps: [],
+        },
+      })
+    }
+    for (const cb of doneCbs) {
+      cb({
+        deviceId,
+        session: {
+          deviceId,
+          testType: 'custom',
+          modules: ['usd'],
+          currentModuleIndex: 0,
+          moduleProgress: {},
+          caseResults: {},
+          isRunning: false,
+          auxiliaryDevices: [],
+        },
+      })
+    }
+
+    let state = getRun(run.run_id)!
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 15))
+      state = getRun(run.run_id)!
+      if (state.status === 'waiting_human' && state.stages.selfcheck?.human?.reason === 'stage_failed') break
+      await advance(run.run_id)
+    }
+
+    state = getRun(run.run_id)!
+    expect(state.current_node).toBe('selfcheck')
+    expect(state.status).toBe('waiting_human')
+    expect(state.stages.selfcheck?.human?.reason).toBe('stage_failed')
+    expect(state.stages.gerrit?.progress?.state).not.toBe('should_not_start')
+    expect(state.stages.triage?.status).not.toBe('running')
   })
 })

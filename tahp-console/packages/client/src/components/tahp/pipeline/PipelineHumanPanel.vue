@@ -21,6 +21,10 @@ const waitingNodes = computed(() =>
   props.nodes.filter(n => n.status === 'waiting_human' && n.human),
 )
 
+function needsResumePicker(node: TimelineNode): boolean {
+  return node.key === 'human_review' || node.human?.reason === 'stage_failed'
+}
+
 const selectedRepos = ref<string[]>([])
 
 watch(
@@ -40,10 +44,18 @@ watch(
   () => { selectedRepos.value = [] },
 )
 
-onMounted(async () => {
-  if (waitingNodes.value.some(n => n.key === 'human_review')) {
+async function ensureResumePointsLoaded() {
+  if (waitingNodes.value.some(needsResumePicker)) {
     await props.store.loadResumePoints(props.runId)
   }
+}
+
+onMounted(() => {
+  void ensureResumePointsLoaded()
+})
+
+watch(waitingNodes, () => {
+  void ensureResumePointsLoaded()
 })
 
 function reposFor(node: TimelineNode): RepoGroup[] {
@@ -71,7 +83,9 @@ async function onAction(nodeKey: string, actionId: string) {
     await props.store.submitHumanAction(props.runId, nodeKey, actionId)
     return
   }
-  if (actionId === 'confirm_done' && nodeKey === 'human_review') {
+  // 继续走恢复点选择器，避免无 resume_node 时误标 done 并跳到 onDone（如 gerrit）
+  const node = waitingNodes.value.find(n => n.key === nodeKey)
+  if (actionId === 'confirm_done' && node && needsResumePicker(node)) {
     return
   }
   if (nodeKey === 'gerrit' && actionId === 'submit_selected_repos') {
@@ -130,7 +144,7 @@ async function onResume(node: string, scope: 'continue' | 'restart', force: bool
         </button>
       </div>
       <PipelineResumePicker
-        v-if="node.key === 'human_review'"
+        v-if="needsResumePicker(node)"
         :data="store.resumePoints"
         :busy="store.actionBusy"
         @reload="store.loadResumePoints(runId)"

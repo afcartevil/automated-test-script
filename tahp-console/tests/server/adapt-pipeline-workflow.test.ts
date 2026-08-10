@@ -109,7 +109,7 @@ describe('adapt-pipeline workflow', () => {
       ...DEFAULT_WORKFLOW,
       nodes: DEFAULT_WORKFLOW.nodes.map(n =>
         n.key === 'human_review'
-          ? { ...n, onDone: 'build', onDoneEffect: undefined }
+          ? { ...n, enabled: true, onDone: 'build', onDoneEffect: undefined }
           : n,
       ),
     }
@@ -130,7 +130,9 @@ describe('adapt-pipeline workflow', () => {
       nodes: DEFAULT_WORKFLOW.nodes.map(n =>
         n.key === 'selfcheck'
           ? { ...n, onFail: 'build', onDone: 'gerrit' }
-          : n,
+          : n.key === 'human_review' || n.key === 'triage'
+            ? { ...n, enabled: false }
+            : n,
       ),
     }
     const result = validateWorkflow(wf)
@@ -138,6 +140,15 @@ describe('adapt-pipeline workflow', () => {
     if (!result.ok) {
       expect(result.errors.some(e => e.includes('人工门'))).toBe(true)
     }
+  })
+
+  it('default workflow disables triage and human_review', () => {
+    const triage = DEFAULT_WORKFLOW.nodes.find(n => n.key === 'triage')
+    const review = DEFAULT_WORKFLOW.nodes.find(n => n.key === 'human_review')
+    expect(triage?.enabled).toBe(false)
+    expect(review?.enabled).toBe(false)
+    expect(DEFAULT_WORKFLOW.nodes.find(n => n.key === 'selfcheck')?.onDone).toBe('gerrit')
+    expect(DEFAULT_WORKFLOW.nodes.find(n => n.key === 'selfcheck')?.onFail).toBe('human_review')
   })
 
   it('loadWorkflow falls back when workflow.json is invalid', () => {

@@ -15,9 +15,10 @@ export const DEFAULT_WORKFLOW: WorkflowDefinition = {
     { key: 'adapt', enabled: true, onUnavailable: 'fail' },
     { key: 'build', enabled: true, onUnavailable: 'manual_gate', onFail: 'human_review' },
     { key: 'flash', enabled: true, onUnavailable: 'manual_gate', onFail: 'human_review' },
-    { key: 'selfcheck', enabled: true, onUnavailable: 'manual_gate', onDone: 'gerrit', onFail: 'triage' },
-    { key: 'triage', enabled: true, onUnavailable: 'skip', onDone: 'human_review', onFail: 'human_review' },
-    { key: 'human_review', enabled: true, onUnavailable: 'fail', onDone: 'build', onDoneEffect: 'increment_iteration' },
+    { key: 'selfcheck', enabled: true, onUnavailable: 'manual_gate', onDone: 'gerrit', onFail: 'human_review' },
+    // 故障分析 / 人工审核：默认停用；失败时编排器就地 waiting_human + 恢复点（见 handleStageFailure）
+    { key: 'triage', enabled: false, onUnavailable: 'skip', onDone: 'human_review', onFail: 'human_review' },
+    { key: 'human_review', enabled: false, onUnavailable: 'fail', onDone: 'build', onDoneEffect: 'increment_iteration' },
     { key: 'gerrit', enabled: true, onUnavailable: 'manual_gate', onDone: 'END', onFail: 'human_review' },
   ],
 }

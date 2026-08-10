@@ -1,4 +1,5 @@
 import { cancelAdaptAgentRun, getAdaptAgentTask } from '../adapt-agent'
+import { fingerprint, takeSnapshot } from '../git-snapshot'
 import { appendPipelineLog, emitPipelineEvent } from './events'
 import { getStage, listStages } from './registry'
 import { getRun, listActiveRunIds, saveRun } from './store'
@@ -124,7 +125,134 @@ function clearCorrelationsForNode(runId: string, nodeKey: string): void {
 
 function hasSourceChanged(run: PipelineRun): boolean {
   if (sourceChangedCheckerForTest) return sourceChangedCheckerForTest(run)
-  return false
+  const nodeKey = run.current_node
+  if (!nodeKey) return false
+  const progress = run.stages[nodeKey]?.progress as Record<string, unknown> | undefined
+  return Boolean(progress?.code_changed)
+}
+
+/** onFail 指向已停用节点时，不跳转（避免 skip 进下一 enabled 节点如 gerrit） */
+function failTargetIsEnterable(wf: WorkflowDefinition, target: NodeTarget): boolean {
+  if (target === 'END' || target === 'ABORT') return true
+  const node = wf.nodes.find(n => n.key === target)
+  return Boolean(node?.enabled)
+}
+
+async function captureFingerprintBefore(run: PipelineRun, nodeKey: string): Promise<void> {
+  const root = run.build_context?.mapped_root
+  if (!root) return
+  try {
+    const snap = await takeSnapshot([root])
+    const prev = (run.stages[nodeKey]?.progress as Record<string, unknown> | undefined) ?? {}
+    patchStage(run, nodeKey, {
+      progress: {
+        ...prev,
+        snapshot_before: snap,
+        fingerprint_before: fingerprint(snap),
+      },
+    })
+  } catch {
+    /* non-critical */
+  }
+}
+
+async function detectSourceChangedAsync(run: PipelineRun): Promise<boolean> {
+  if (sourceChangedCheckerForTest) return sourceChangedCheckerForTest(run)
+  const nodeKey = run.current_node
+  if (!nodeKey) return false
+  const progress = run.stages[nodeKey]?.progress as Record<string, unknown> | undefined
+  const prevFp = progress?.fingerprint_before as string | undefined
+  const root = run.build_context?.mapped_root
+  if (root && prevFp) {
+    try {
+      const snap = await takeSnapshot([root])
+      return fingerprint(snap) !== prevFp
+    } catch {
+      return true
+    }
+  }
+  return Boolean(progress?.code_changed)
+}
+
+/**
+ * 方案 A：失败目标不可用（如 human_review 已停用）时，就地人工门 + 恢复点。
+ */
+async function parkFailedNodeForHuman(
+  runId: string,
+  nodeKey: string,
+  error?: string,
+): Promise<void> {
+  const run = getRun(runId)
+  if (!run) return
+
+  await captureFingerprintBefore(run, nodeKey)
+
+  const { points, recommended } = computeResumePoints(run)
+  const recommendedOrSelf =
+    recommended
+    ?? points.find(p => p.node === nodeKey)?.node
+    ?? nodeKey
+
+  const message = error
+    ? `阶段失败：${error}。请选择恢复点继续，或终止流水线。`
+    : '阶段失败，请选择恢复点继续，或终止流水线。'
+
+  const actions = [
+    {
+      id: 'confirm_done',
+      label: '继续',
+      fields: [
+        { name: 'resume_node', label: '从哪里继续', required: true },
+        { name: 'resume_scope', label: '范围' },
+      ],
+    },
+    { id: 'abort', label: '终止流水线', danger: true },
+  ]
+
+  const prev = (run.stages[nodeKey]?.progress as Record<string, unknown> | undefined) ?? {}
+  patchStage(run, nodeKey, {
+    status: 'waiting_human',
+    error,
+    finished_at: new Date().toISOString(),
+    progress: {
+      ...prev,
+      resume_points: { points, recommended: recommendedOrSelf },
+      text: message,
+    },
+    human: {
+      reason: 'stage_failed',
+      message,
+      actions,
+    },
+  })
+  run.status = 'waiting_human'
+  run.current_node = nodeKey
+  saveRun(run, { immediate: true })
+  emitPipeline('pipeline.waiting_human', {
+    run_id: runId,
+    node: nodeKey,
+    reason: 'stage_failed',
+    message,
+    actions,
+  })
+}
+
+async function handleStageFailure(
+  runId: string,
+  nodeKey: string,
+  error?: string,
+): Promise<void> {
+  const run = getRun(runId)
+  if (!run) return
+  const wf = workflowFor(run)
+  const node = wf.nodes.find(n => n.key === nodeKey)
+  const target = node?.onFail ?? 'ABORT'
+
+  if (!failTargetIsEnterable(wf, target)) {
+    await parkFailedNodeForHuman(runId, nodeKey, error)
+    return
+  }
+  await transition(runId, target)
 }
 
 export function refreshArtifacts(
@@ -224,7 +352,11 @@ export function computeResumePoints(run: PipelineRun): {
   if (!recommended) {
     const failed = [...enabled]
       .reverse()
-      .find(n => run.stages[n.key]?.status === 'failed')
+      .find(n => {
+        const st = run.stages[n.key]
+        return st?.status === 'failed'
+          || (st?.status === 'waiting_human' && st.human?.reason === 'stage_failed')
+      })
     if (failed) {
       const point = points.find(p => p.node === failed.key)
       if (point?.safety === 'safe') recommended = failed.key
@@ -330,6 +462,26 @@ async function enter(runId: string, nodeKey: NodeTarget): Promise<void> {
   if (!node.enabled) {
     const enabled = getEnabledNodes(wf)
     const idx = enabled.findIndex(n => n.key === nodeKey)
+    // 停用节点不在 enabled 列表中（idx=-1）时禁止“跳到首个节点”，避免失败误入 gerrit
+    if (idx < 0) {
+      const from = run.current_node
+      if (from) {
+        await parkFailedNodeForHuman(
+          runId,
+          from,
+          run.stages[from]?.error ?? `失败目标节点已停用: ${nodeKey}`,
+        )
+        return
+      }
+      run.status = 'failed'
+      saveRun(run, { immediate: true })
+      emitPipeline('pipeline.run_failed', {
+        run_id: runId,
+        error: `失败目标节点已停用: ${nodeKey}`,
+        node: nodeKey,
+      })
+      return
+    }
     const next = enabled[idx + 1]
     await enter(runId, next ? next.key : 'END')
     return
@@ -368,7 +520,7 @@ async function enter(runId: string, nodeKey: NodeTarget): Promise<void> {
         error: availability.reason ?? '能力不可用',
         availability,
       })
-      await transition(runId, node.onFail ?? 'ABORT')
+      await handleStageFailure(runId, node.key, availability.reason ?? '能力不可用')
       return
     }
     patchStage(run, node.key, {
@@ -630,8 +782,7 @@ async function advanceOnce(runId: string): Promise<void> {
       return
     }
     patchStage(run, nodeKey, { status: 'failed' })
-    const target = node2.onFail ?? 'ABORT'
-    await transition(runId, target)
+    await handleStageFailure(runId, nodeKey, verdict.error ?? run.stages[nodeKey]?.error)
   }
   } finally {
     advancingRuns.delete(runId)
@@ -709,6 +860,16 @@ export async function submitHumanAction(
   if (actionId === 'extend') {
     run.max_iterations += 1
     saveRun(run)
+    const progress = run.stages[nodeKey]?.progress as Record<string, unknown> | undefined
+    const pendingResume = progress?.pending_resume_node
+    if (typeof pendingResume === 'string' && pendingResume) {
+      await resumeFrom(runId, {
+        node: pendingResume,
+        scope: (progress?.pending_resume_scope as 'continue' | 'restart') ?? 'continue',
+        force: Boolean(progress?.pending_resume_force),
+      })
+      return
+    }
     const wf = workflowFor(run)
     const node = wf.nodes.find(n => n.key === nodeKey)
     const target = node?.onDone ?? resolveDefaultOnDone(wf, nodeKey)
@@ -841,10 +1002,15 @@ export async function resumeFrom(runId: string, req: ResumeRequest): Promise<voi
   const fromNode = run.current_node
   let sourceChanged = false
 
-  if (fromNode === 'human_review') {
-    sourceChanged = hasSourceChanged(run)
+  if (fromNode) {
+    sourceChanged = await detectSourceChangedAsync(run)
     if (sourceChanged) {
-      refreshArtifacts(run, node, ['source'])
+      // 标记 source 刷新并由产物图失效下游（编译产物等）
+      const gateNode = wf.nodes.find(n => n.key === fromNode) ?? {
+        key: fromNode,
+        enabled: true,
+      }
+      refreshArtifacts(run, gateNode, ['source'])
     }
   }
 
@@ -852,8 +1018,16 @@ export async function resumeFrom(runId: string, req: ResumeRequest): Promise<voi
     const next = run.iteration + 1
     if (next > run.max_iterations) {
       run.status = 'waiting_human'
-      patchStage(run, 'human_review', {
+      const gateKey = fromNode ?? req.node
+      const prev = (run.stages[gateKey]?.progress as Record<string, unknown> | undefined) ?? {}
+      patchStage(run, gateKey, {
         status: 'waiting_human',
+        progress: {
+          ...prev,
+          pending_resume_node: req.node,
+          pending_resume_scope: req.scope ?? 'continue',
+          pending_resume_force: Boolean(req.force),
+        },
         human: {
           reason: 'max_iterations_exceeded',
           message: `已达最大迭代次数 ${run.max_iterations}`,

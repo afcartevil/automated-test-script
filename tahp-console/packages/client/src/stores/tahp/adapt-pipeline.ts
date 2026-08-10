@@ -305,8 +305,6 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
             key: 'selfcheck', label: '自检', status: 'pending', enabled: true,
             progress: { total: 12, passed: 0, failed: 0, running: 0 } as unknown as { percent?: number; text?: string },
           },
-          { key: 'triage', label: '故障分析', status: 'pending', enabled: true },
-          { key: 'human-review', label: '人工审核', status: 'pending', enabled: true },
           {
             key: 'gerrit', label: '提交 Gerrit', status: 'pending', enabled: true,
             progress: {

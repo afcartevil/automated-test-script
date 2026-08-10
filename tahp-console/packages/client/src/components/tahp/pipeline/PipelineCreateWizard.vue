@@ -1024,7 +1024,7 @@ onUnmounted(() => {
         <div class="field narrow">
           <label>最大迭代轮次</label>
           <NInputNumber v-model:value="maxIterations" :min="1" :max="99" />
-          <p class="field-hint">自检失败→故障分析→改代码→再编译的循环上限。</p>
+          <p class="field-hint">失败后改代码再编译的循环上限（自检通过后直接提交 Gerrit）。</p>
         </div>
         <div class="field">
           <label>Gerrit 目标分支（可选）</label>

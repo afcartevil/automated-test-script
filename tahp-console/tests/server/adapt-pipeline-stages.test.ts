@@ -693,7 +693,8 @@ describe('adapt-pipeline F3', () => {
     const state = getRun(run.run_id)!
     expect(state.current_node).toBe('gerrit')
     expect(state.stages.selfcheck?.status).toBe('skipped')
-    expect(state.stages.triage?.status).toBe('pending')
+    expect(state.stages.triage).toBeUndefined()
+    expect(state.stages.human_review).toBeUndefined()
   })
 
   it('gerrit submit_all_repos clears waiting_human and starts domain submit', async () => {
