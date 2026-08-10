@@ -1,0 +1,9 @@
+[
+  {
+    "caseIndex": 1,
+    "caseName": "温升方案自检",
+    "前置条件": "测试机已通过 ADB 连接",
+    "测试步骤": "启动 tpytest_dzppt_therm CLI（start_therm_cli_python.py），按平台自动选择 MTK/QCOM/SPRD 用例集并执行温升方案检测",
+    "期望结果": "CLI 正常结束（exit 0）；平台用例集全部执行完成"
+  }
+]

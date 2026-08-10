@@ -23,7 +23,7 @@ export const UPCOMING_HORIZON_DAYS = 14
 /** completed 排期在节点日后继续展示的天数（不含节点日当天，至 nodeDate+N 前） */
 export const COMPLETED_RETAIN_DAYS = 7
 
-export type PlanTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature'
+export type PlanTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'therm'
 
 export interface ProjectNodesFile {
   updatedAt: string
@@ -76,6 +76,7 @@ const TEST_TYPE_LABELS: Record<PlanTestType, string> = {
   gms: 'GMS测试',
   power: '功耗自动化测试',
   power_feature: '功耗特性自检',
+  therm: '温升方案自检',
 }
 
 export function getTestTypeLabel(testType: PlanTestType): string {
@@ -95,6 +96,12 @@ export function normalizePlanTestType(raw: unknown): PlanTestType | null {
     || text.includes('wbs')
     || text.includes('特性自检')
   ) return 'power_feature'
+  if (
+    text === 'therm'
+    || text.includes('温升')
+    || text.includes('dzppt_therm')
+    || text.includes('tpytest_dzppt_therm')
+  ) return 'therm'
   if (text === 'power' || text.includes('功耗')) return 'power'
   return null
 }
@@ -337,7 +344,7 @@ export async function getTestPlanRules(): Promise<TestPlanRulesFile> {
 
 export function validateTestPlanRules(rules: TestPlanRule[]): TestPlanRule[] {
   const validNodes = new Set<string>(NODE_KEYS)
-  const validTypes = new Set<string>(['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature'])
+  const validTypes = new Set<string>(['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'therm'])
   const cleaned: TestPlanRule[] = []
 
   for (const rule of rules) {
@@ -351,7 +358,7 @@ export function validateTestPlanRules(rules: TestPlanRule[]): TestPlanRule[] {
     }
     const testType = String(rule.testType || '').trim() as PlanTestType
     if (!validTypes.has(testType)) {
-      throw new Error(`无效测试大类: ${rule.testType}，须为 str4 / week / monkey / smoke / gms / power / power_feature`)
+      throw new Error(`无效测试大类: ${rule.testType}，须为 str4 / week / monkey / smoke / gms / power / power_feature / therm`)
     }
     cleaned.push({ node, offsetDays, testType })
   }

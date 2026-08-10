@@ -1063,7 +1063,7 @@ function handleDutRowAction(deviceId: string) {
                       <div class="detail-value pre-wrap">{{ selectedCatalogItem.expectedResult }}</div>
                     </div>
                     <div
-                      v-if="selectedCatalogTestType !== 'monkey' && selectedCatalogTestType !== 'smoke' && selectedCatalogTestType !== 'gms' && selectedCatalogTestType !== 'power' && selectedCatalogTestType !== 'power_feature' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
+                      v-if="selectedCatalogTestType !== 'monkey' && selectedCatalogTestType !== 'smoke' && selectedCatalogTestType !== 'gms' && selectedCatalogTestType !== 'power' && selectedCatalogTestType !== 'power_feature' && selectedCatalogTestType !== 'therm' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
                       class="ea-muted"
                     >
                       暂无手动测试步骤

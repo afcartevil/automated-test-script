@@ -6,7 +6,7 @@ export const SELF_CHECK_SUBTITLE =
 export const AUTO_RETEST_TOOLTIP = '测试结束后自动复测无人工参与的失败用例'
 
 /** 标准测试大类展示顺序（与用例列表 / 后端 catalog 一致） */
-export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'ai_generated'] as const
+export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'therm', 'ai_generated'] as const
 
 export type StandardTestTypeKey = (typeof STANDARD_TEST_TYPE_ORDER)[number]
 
@@ -22,6 +22,7 @@ export const MODULE_ORDER: Record<string, number> = {
   cts_tele: 13,
   current_analysis: 14,
   wbs: 15,
+  scheme: 16,
   generated: 20,
   tdd: 99,
 }
@@ -34,6 +35,7 @@ export function getTestTypeLabel(testType?: string): string {
   if (testType === 'gms') return 'GMS测试'
   if (testType === 'power') return '功耗自动化测试'
   if (testType === 'power_feature') return '功耗特性自检'
+  if (testType === 'therm') return '温升方案自检'
   if (testType === 'ai_generated') return 'AI用例'
   if (testType === 'custom') return '自定义测试'
   return '未分配'
@@ -70,6 +72,8 @@ export function getModuleLabel(module: string): string {
     gts: 'GTS',
     vts: 'VTS',
     current_analysis: '电流分析',
+    wbs: '功耗特性检测',
+    scheme: '温升方案检测',
     generated: 'AI生成用例',
   }
   return labels[module] || module
@@ -213,6 +217,9 @@ export function formatCatalogAutomation(group: CaseCatalogGroup): string {
   if (group.testType === 'power_feature') {
     return '脚本全自动（WBS 特性检测）'
   }
+  if (group.testType === 'therm') {
+    return '脚本全自动（tpytest_dzppt_therm）'
+  }
   if (group.testType === 'ai_generated') {
     const totalCases = group.modules.reduce((sum, m) => sum + m.cases.length, 0)
     return totalCases > 0 ? 'NL UI 自动化 + 半自动（Gerrit）' : '支持 NL UI 自动化新增'
@@ -267,6 +274,7 @@ export function reportShortType(testType: string): string {
   if (testType === 'monkey') return 'monkey'
   if (testType === 'smoke') return '冒烟'
   if (testType === 'power_feature') return '功耗特性'
+  if (testType === 'therm') return '温升方案'
   if (testType === 'str4') return 'STR4'
   if (testType === 'week') return '周版本'
   if (testType === 'custom') return '自定义'

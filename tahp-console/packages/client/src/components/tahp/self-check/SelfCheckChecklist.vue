@@ -57,6 +57,7 @@ const toneByType: Record<string, string> = {
   monkey: 'ea-t-amber',
   power: 'ea-t-rose',
   power_feature: 'ea-t-violet',
+  therm: 'ea-t-orange',
   ai_generated: 'ea-t-cyan',
 }
 
@@ -117,6 +118,7 @@ function openCatalog(testType: string) {
   &.ea-t-amber { border-top-color: #f59e0b; }
   &.ea-t-violet { border-top-color: #8b5cf6; }
   &.ea-t-rose { border-top-color: #f43f5e; }
+  &.ea-t-orange { border-top-color: #f97316; }
   &.ea-t-cyan { border-top-color: #06b6d4; }
 
   h4 {

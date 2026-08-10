@@ -36,6 +36,7 @@ const WATCH_DIRS = [
   'packages/client',
   'packages/server/src',
 ]
+const CASE_CONFIG_DIR = 'packages/server/src/services/tahp/self-check/case_config'
 
 const SKIP_DIR_NAMES = new Set(['node_modules', '.git', 'dist', '.tahp'])
 
@@ -71,6 +72,16 @@ function computeFingerprint() {
       const relPath = full.slice(root.length + 1).replace(/\\/g, '/')
       const st = statSync(full)
       hash.update(`${relPath}:${st.mtimeMs}:${st.size}\n`)
+    }
+  }
+  const caseConfigDir = join(root, CASE_CONFIG_DIR)
+  if (existsSync(caseConfigDir)) {
+    for (const name of readdirSync(caseConfigDir).sort()) {
+      if (!name.toLowerCase().endsWith('.json')) continue
+      const full = join(caseConfigDir, name)
+      if (!statSync(full).isFile()) continue
+      const st = statSync(full)
+      hash.update(`${CASE_CONFIG_DIR}/${name}:${st.mtimeMs}:${st.size}\n`)
     }
   }
   return hash.digest('hex')
