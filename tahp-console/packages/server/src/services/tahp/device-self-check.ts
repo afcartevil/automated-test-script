@@ -362,11 +362,13 @@ async function retestFailedAutoCasesInModule(
   console.log(`[device-self-check] Retesting ${failedCaseIndexes.length} failed auto cases for ${moduleKey} (max ${count} attempts each)`)
 
   for (const caseIndex of failedCaseIndexes) {
+    if (!session.isRunning) return
     const caseKey = `${moduleKey}/${caseIndex}`
     const existing = session.caseResults[caseKey]
     if (!existing?.fullAutomation || existing.status !== '失败') continue
 
     for (let attempt = 0; attempt < count; attempt++) {
+      if (!session.isRunning) return
       const result = await runCase(deviceId, testType, module, caseIndex, session)
       session.caseResults[caseKey] = result
       if (result.status === '通过') {
@@ -1092,6 +1094,21 @@ async function runCase(
     }],
     startTime
   }
+
+  if (!session.isRunning) {
+    result.status = '跳过'
+    result.message = '测试已终止'
+    result.steps = [{
+      stepDesc: '测试已终止',
+      status: '跳过',
+      timestamp: startTime,
+    }]
+    result.endTime = new Date().toISOString()
+    session.caseResults[caseKey] = result
+    emitEvent('case_completed', { deviceId, caseKey, result })
+    return result
+  }
+
   // 立即存入 session，让前端实时可见
   session.caseResults[caseKey] = result
   // 推送初始状态
@@ -1389,6 +1406,22 @@ function buildDeviceInfo(
   }
 }
 
+/** Windows 上 kill() 只杀直接子进程，用例常再 spawn adb/monkey/tradefed，须杀整棵进程树 */
+function killProcessTree(proc: { pid?: number; killed?: boolean; kill: (signal?: NodeJS.Signals | number) => boolean } | null): void {
+  if (!proc || proc.killed) return
+  const pid = proc.pid
+  if (pid && process.platform === 'win32') {
+    try {
+      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      })
+    } catch { /* ignore */ }
+    return
+  }
+  try { proc.kill() } catch { /* ignore */ }
+}
+
 function spawnPythonProcess(
   args: string[],
   options: {
@@ -1407,7 +1440,7 @@ function spawnPythonProcess(
 
   const cleanup = () => {
     if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
-    if (proc && !proc.killed) { try { proc.kill() } catch {} }
+    killProcessTree(proc)
   }
 
   if (options.timeoutMs && options.timeoutMs > 0) {
@@ -1749,7 +1782,7 @@ async function execPythonCase(
       if (testType === 'power' && module === 'current_analysis') {
         void stopPowerForDevice(deviceId)
       }
-      if (proc && !proc.killed) { try { proc.kill() } catch {} }
+      killProcessTree(proc)
     }
 
     activeCaseCleanups[deviceId] = cleanup
@@ -2042,6 +2075,7 @@ async function runModule(
 
   // 模块初始化（安装 APK、设置权限、亮屏解锁等）
   await execPythonInit(deviceId, testType, module, session)
+  if (!session.isRunning) return
 
   // 加载用例列表
   const caseInfoPath = join(PYTHON_DIR, 'cases', testType, module, 'case_info.json')
@@ -2070,6 +2104,8 @@ async function runModule(
   // 逐个执行用例
   const failedAutoCases: number[] = []
   for (let i = 0; i < totalCases; i++) {
+    if (!session.isRunning) return
+
     const caseIndex = cases[i]?.case_index || (i + 1)
     session.moduleProgress[moduleKey].currentCaseIndex = caseIndex
 
@@ -2109,6 +2145,8 @@ async function runModule(
 
     emitEvent('case_completed', { deviceId, caseKey, result })
 
+    if (!session.isRunning) return
+
     // 结果复用：可复用用例的通过结果镜像到辅测机
     if (result.status === '通过' && session.auxiliaryDevices.length > 0) {
       const caseItem = config.cases.find(c => c.caseIndex === caseIndex)
@@ -2120,11 +2158,14 @@ async function runModule(
     }
   }
 
+  if (!session.isRunning) return
+
   // 处理 can_reuse=false 的双向执行：互为测试机的设备需各自执行不可复用用例
   const peerTesters = session.auxiliaryDevices.filter(
     auxId => devices[auxId]?.role === '测试机'
   )
   for (const peerId of peerTesters) {
+    if (!session.isRunning) return
     const peerSession = testSessions[peerId]
     if (!peerSession) continue
 
@@ -2141,6 +2182,7 @@ async function runModule(
     if (nonReusableCases.length > 0) {
       console.log(`[device-self-check] Executing ${nonReusableCases.length} non-reusable cases for peer ${peerId}`)
       for (const caseIndex of nonReusableCases) {
+        if (!session.isRunning || !peerSession.isRunning) return
         const result = await runCase(peerId, testType, module, caseIndex, peerSession)
         const caseKey = `${moduleKey}/${caseIndex}`
         peerSession.caseResults[caseKey] = result
@@ -2155,7 +2197,10 @@ async function runModule(
     }
   }
 
+  if (!session.isRunning) return
   await retestFailedAutoCasesInModule(deviceId, testType, module, failedAutoCases, session)
+
+  if (!session.isRunning) return
 
   // 释放辅测机（根据角色恢复状态）
   for (const auxId of session.auxiliaryDevices) {
@@ -3208,9 +3253,22 @@ export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
 
   const endedTestType = device.testType || session?.testType
 
+  // 先打断调度循环，再杀进程，避免 close 回调后仍启动下一例
+  if (session) {
+    session.isRunning = false
+  }
+
   if (activeCaseCleanups[deviceId]) {
     activeCaseCleanups[deviceId]()
     delete activeCaseCleanups[deviceId]
+  }
+
+  // 取消该设备上挂起的人工确认，避免结束后弹窗仍阻塞
+  for (const [id, pending] of Object.entries(pendingManualDecisions)) {
+    if (pending.deviceId === deviceId) {
+      try { pending.resolve('fail') } catch { /* ignore */ }
+      delete pendingManualDecisions[id]
+    }
   }
 
   await stopMonkeyForDevice(deviceId)
@@ -3221,7 +3279,6 @@ export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
   }
 
   if (session) {
-    session.isRunning = false
     if (Object.keys(session.caseResults).length > 0) {
       session.endTime = new Date().toISOString()
       device.status = '完成(失败)'
