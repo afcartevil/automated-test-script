@@ -1600,15 +1600,28 @@ async function handleRetestCase() {
 
 async function handleManualDecision(decision: 'pass' | 'fail' | 'ack') {
   if (!manualDecisionId.value || manualSubmitting.value) return
+  const decisionId = manualDecisionId.value
+  const deviceIdForPending = selectedDeviceId.value
   manualSubmitting.value = true
   try {
-    await submitManualDecision(manualDecisionId.value, decision)
-    showManualDialog.value = false
-    manualDecisionId.value = null
-    manualMessage.value = ''
-    manualMode.value = 'decision'
-    manualPassLabel.value = '通过'
-    manualFailLabel.value = '失败'
+    await submitManualDecision(decisionId, decision)
+    // operator_notify(ack) 后 Python 常立刻再发 manual_confirm；
+    // 若提交期间 SSE 已更新弹窗，不能再清空，否则评判界面不会再出现。
+    if (manualDecisionId.value === decisionId) {
+      showManualDialog.value = false
+      manualDecisionId.value = null
+      manualMessage.value = ''
+      manualMode.value = 'decision'
+      manualPassLabel.value = '通过'
+      manualFailLabel.value = '失败'
+    }
+    // 兜底：ack 后下一轮提示偶发丢 SSE 时主动拉取
+    if (decision === 'ack' && deviceIdForPending && !showManualDialog.value) {
+      try {
+        const pending = await getPendingManualDecision(deviceIdForPending)
+        if (pending) applyManualPrompt(pending)
+      } catch {}
+    }
   } catch (e: any) {
     console.error('[DeviceSelfCheck] Error submitting manual decision:', e)
   } finally {
