@@ -17,6 +17,7 @@ const {
   manualSubmitting,
   manualFailLabel,
   manualPassLabel,
+  manualQueueRemaining,
   showGmsTradefedDialog,
   gmsTradefedDraft,
   gmsPathPickingSuite,
@@ -90,6 +91,9 @@ const {
     <div class="modify-dialog">
       <div class="modify-dialog-header">
         <span class="section-title">{{ manualDeviceName || '需人工确认' }}</span>
+        <span v-if="manualQueueRemaining > 0" class="manual-queue-hint">
+          还有 {{ manualQueueRemaining }} 台待确认
+        </span>
       </div>
       <div class="modify-dialog-body">
         <p class="manual-message">{{ manualMessage }}</p>
@@ -260,8 +264,17 @@ const {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 16px 20px;
   border-bottom: 1px solid var(--line);
+}
+
+.manual-queue-hint {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent, #2563eb);
+  white-space: nowrap;
 }
 
 .modify-dialog-body {

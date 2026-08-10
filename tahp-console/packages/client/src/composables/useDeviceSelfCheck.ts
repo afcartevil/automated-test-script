@@ -1492,15 +1492,29 @@ const modifyCaseKey = ref<string | null>(null)
 const modifyStatus = ref('通过')
 const modifyMessage = ref('')
 
-// 人工确认弹窗
-const showManualDialog = ref(false)
-const manualDecisionId = ref<string | null>(null)
-const manualDeviceName = ref('')
-const manualMessage = ref('')
-const manualPassLabel = ref('通过')
-const manualFailLabel = ref('失败')
-const manualMode = ref<'decision' | 'ack'>('decision')
+// 人工确认弹窗（FIFO 队列，避免多机并行时互相覆盖）
+type ManualPrompt = {
+  decisionId: string
+  deviceId?: string
+  deviceName: string
+  message: string
+  passLabel: string
+  failLabel: string
+  mode: 'decision' | 'ack'
+}
+
+const manualQueue = ref<ManualPrompt[]>([])
 const manualSubmitting = ref(false)
+
+const manualHead = computed(() => manualQueue.value[0] ?? null)
+const showManualDialog = computed(() => manualHead.value != null)
+const manualDecisionId = computed(() => manualHead.value?.decisionId ?? null)
+const manualDeviceName = computed(() => manualHead.value?.deviceName ?? '')
+const manualMessage = computed(() => manualHead.value?.message ?? '')
+const manualPassLabel = computed(() => manualHead.value?.passLabel ?? '通过')
+const manualFailLabel = computed(() => manualHead.value?.failLabel ?? '失败')
+const manualMode = computed(() => manualHead.value?.mode ?? 'decision')
+const manualQueueRemaining = computed(() => Math.max(0, manualQueue.value.length - 1))
 
 function applyManualPrompt(data: {
   decisionId: string
@@ -1511,17 +1525,23 @@ function applyManualPrompt(data: {
   failLabel?: string
   mode?: 'decision' | 'ack'
 }) {
-  manualDecisionId.value = data.decisionId
-  manualDeviceName.value =
-    data.deviceName ||
-    devices.value.find((d) => d.deviceId === data.deviceId)?.deviceName ||
-    data.deviceId ||
-    ''
-  manualMessage.value = data.message || '需人工确认'
-  manualPassLabel.value = data.passLabel || '通过'
-  manualFailLabel.value = data.failLabel || '失败'
-  manualMode.value = data.mode === 'ack' ? 'ack' : 'decision'
-  showManualDialog.value = true
+  if (!data.decisionId) return
+  if (manualQueue.value.some((item) => item.decisionId === data.decisionId)) return
+
+  const prompt: ManualPrompt = {
+    decisionId: data.decisionId,
+    deviceId: data.deviceId,
+    deviceName:
+      data.deviceName ||
+      devices.value.find((d) => d.deviceId === data.deviceId)?.deviceName ||
+      data.deviceId ||
+      '',
+    message: data.message || '需人工确认',
+    passLabel: data.passLabel || '通过',
+    failLabel: data.failLabel || '失败',
+    mode: data.mode === 'ack' ? 'ack' : 'decision',
+  }
+  manualQueue.value = [...manualQueue.value, prompt]
 }
 
 function openModifyDialog(caseKey: string) {
@@ -1599,24 +1619,22 @@ async function handleRetestCase() {
 }
 
 async function handleManualDecision(decision: 'pass' | 'fail' | 'ack') {
-  if (!manualDecisionId.value || manualSubmitting.value) return
-  const decisionId = manualDecisionId.value
-  const deviceIdForPending = selectedDeviceId.value
+  const head = manualHead.value
+  if (!head || manualSubmitting.value) return
+  const decisionId = head.decisionId
+  const deviceIdForPending = head.deviceId
   manualSubmitting.value = true
   try {
     await submitManualDecision(decisionId, decision)
     // operator_notify(ack) 后 Python 常立刻再发 manual_confirm；
-    // 若提交期间 SSE 已更新弹窗，不能再清空，否则评判界面不会再出现。
-    if (manualDecisionId.value === decisionId) {
-      showManualDialog.value = false
-      manualDecisionId.value = null
-      manualMessage.value = ''
-      manualMode.value = 'decision'
-      manualPassLabel.value = '通过'
-      manualFailLabel.value = '失败'
+    // 提交期间新入队的项必须保留，只移除刚提交的那条。
+    if (manualQueue.value[0]?.decisionId === decisionId) {
+      manualQueue.value = manualQueue.value.slice(1)
+    } else {
+      manualQueue.value = manualQueue.value.filter((item) => item.decisionId !== decisionId)
     }
-    // 兜底：ack 后下一轮提示偶发丢 SSE 时主动拉取
-    if (decision === 'ack' && deviceIdForPending && !showManualDialog.value) {
+    // 兜底：ack 后下一轮提示偶发丢 SSE 时主动拉取（仅队列已空时，避免覆盖其它机）
+    if (decision === 'ack' && deviceIdForPending && manualQueue.value.length === 0) {
       try {
         const pending = await getPendingManualDecision(deviceIdForPending)
         if (pending) applyManualPrompt(pending)
@@ -2211,6 +2229,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     manualPassLabel,
     manualFailLabel,
     manualMode,
+    manualQueueRemaining,
     manualSubmitting,
     showRetestDialog,
     retestCaseKey,
