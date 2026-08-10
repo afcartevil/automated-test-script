@@ -32,6 +32,14 @@ function npmHarnessPs1(): string | null {
   return existsSync(ps1) ? ps1 : null
 }
 
+/** npm 全局包里的 harness.js；直接 node 调用可避免 PowerShell -File 拆坏 --command */
+export function resolveHarnessJs(): string | null {
+  const appData = process.env.APPDATA
+  if (!appData) return null
+  const js = resolve(appData, 'npm', 'node_modules', '@transsion', 'harness-cli', 'bin', 'harness.js')
+  return existsSync(js) ? js : null
+}
+
 function harnessEnv(): NodeJS.ProcessEnv {
   const isWindows = process.platform === 'win32'
   const appData = process.env.APPDATA
@@ -46,6 +54,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms))
 }
 
+/**
+ * Windows 优先: node harness.js + argv 数组（保留 --command 整串）。
+ * 回退: harness.ps1 / PATH 中的 harness（PowerShell -File 会拆带引号的长命令）。
+ */
+export function resolveHarnessSpawn(args: string[]): { command: string; argv: string[] } {
+  const isWindows = process.platform === 'win32'
+  const harnessJs = resolveHarnessJs()
+  if (isWindows && harnessJs) {
+    return { command: process.execPath, argv: [harnessJs, ...args] }
+  }
+  const ps1 = npmHarnessPs1()
+  if (isWindows && ps1) {
+    return {
+      command: 'powershell.exe',
+      argv: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1, ...args],
+    }
+  }
+  return { command: 'harness', argv: args }
+}
+
 export function spawnHarness(
   args: string[],
   opts?: {
@@ -57,24 +85,16 @@ export function spawnHarness(
   },
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   const timeoutMs = opts?.timeoutMs ?? 5 * 60 * 1000
-  const isWindows = process.platform === 'win32'
-  const ps1 = npmHarnessPs1()
   const env = harnessEnv()
+  const { command, argv } = resolveHarnessSpawn(args)
 
   return new Promise((resolvePromise, reject) => {
-    const processRef = isWindows && ps1
-      ? spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1, ...args], {
-          stdio: opts?.detached ? 'ignore' : ['ignore', 'pipe', 'pipe'],
-          env,
-          windowsHide: !opts?.detached,
-          detached: Boolean(opts?.detached),
-        })
-      : spawn('harness', args, {
-          stdio: opts?.detached ? 'ignore' : ['ignore', 'pipe', 'pipe'],
-          env,
-          windowsHide: !opts?.detached,
-          detached: Boolean(opts?.detached),
-        })
+    const processRef = spawn(command, argv, {
+      stdio: opts?.detached ? 'ignore' : ['ignore', 'pipe', 'pipe'],
+      env,
+      windowsHide: !opts?.detached,
+      detached: Boolean(opts?.detached),
+    })
 
     if (opts?.detached) {
       try { processRef.unref() } catch { /* ignore */ }
@@ -209,24 +229,14 @@ export function discoverBridgeReady(): BridgeStatus {
   }
 
   try {
-    const isWindows = process.platform === 'win32'
-    const ps1 = npmHarnessPs1()
     const env = harnessEnv()
-    let out: string
-    if (isWindows && ps1) {
-      out = execFileSync(
-        'powershell.exe',
-        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1, '--json', 'remote-runner', 'discover'],
-        { encoding: 'utf-8', timeout: 60_000, env, windowsHide: true },
-      )
-    } else {
-      out = execFileSync('harness', ['--json', 'remote-runner', 'discover'], {
-        encoding: 'utf-8',
-        timeout: 60_000,
-        env,
-        windowsHide: true,
-      })
-    }
+    const { command, argv } = resolveHarnessSpawn(['--json', 'remote-runner', 'discover'])
+    const out = execFileSync(command, argv, {
+      encoding: 'utf-8',
+      timeout: 60_000,
+      env,
+      windowsHide: true,
+    })
     const parsed = parseJsonLoose(out)
     if (!parsed) return { ready: false, error: 'discover 返回非 JSON' }
     return bridgeFromPayload(parsed)

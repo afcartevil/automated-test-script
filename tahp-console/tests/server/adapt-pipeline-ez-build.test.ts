@@ -6,10 +6,12 @@ import {
 import { loadEzBuildScript, resolveEzBuildScriptPath } from '../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec'
 import {
   buildTmuxStartCommand,
+  buildTmuxPollCommand,
   parseTmuxPollOutput,
   detectBuildFailureInLog,
   detectBuildSuccessInLog,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/ez-build-tmux'
+import { resolveHarnessSpawn } from '../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec'
 
 describe('winMappedPathToLinuxWorkCode', () => {
   it('converts Z:\\foo to /work/code/$USER/foo', () => {
@@ -86,8 +88,41 @@ describe('tmux poll helpers', () => {
     expect(done.doneCode).toBe(1)
     expect(detectBuildFailureInLog(done.lines)).toMatch(/project dir not found/)
 
+    expect(parseTmuxPollOutput('done_code=0 \n---LOG_TAIL---\nok').doneCode).toBe(0)
+
     expect(detectBuildSuccessInLog(['pack success, log: /tmp/x'], true)).toBe(true)
     expect(detectBuildSuccessInLog(['all requested compile targets succeeded, no pack requested'], false)).toBe(true)
+  })
+
+  it('poll command avoids nested quotes that break PowerShell -File forwarding', () => {
+    const cmd = buildTmuxPollCommand('ezb-lj9_h972-9141775966')
+    expect(cmd).toContain('done_code=$(cat ~/code/ea-build/ezb-lj9_h972-9141775966.done)')
+    expect(cmd).not.toContain('[:space:]')
+    expect(cmd).not.toContain('"')
+  })
+})
+
+describe('resolveHarnessSpawn', () => {
+  it('keeps --command as a single argv element on Windows when harness.js exists', () => {
+    const longCmd = "echo ---POLL---; if [ -f ~/x.done ]; then echo done_code=$(cat ~/x.done); else echo done_code=; fi"
+    const spawned = resolveHarnessSpawn([
+      '--json',
+      'remote-runner',
+      'bridge-exec',
+      '--i-understand-this-runs-raw-shell',
+      '--timeout',
+      '30',
+      '--command',
+      longCmd,
+    ])
+    if (process.platform === 'win32' && spawned.command === process.execPath) {
+      expect(spawned.argv[spawned.argv.length - 2]).toBe('--command')
+      expect(spawned.argv[spawned.argv.length - 1]).toBe(longCmd)
+      expect(spawned.argv.join('\0')).not.toContain('powershell')
+    } else {
+      expect(spawned.argv.includes('--command')).toBe(true)
+      expect(spawned.argv.includes(longCmd)).toBe(true)
+    }
   })
 })
 

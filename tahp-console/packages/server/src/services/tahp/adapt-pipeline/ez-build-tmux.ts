@@ -85,11 +85,13 @@ export function buildTmuxStartCommand(opts: {
 export function buildTmuxPollCommand(session: string): string {
   const logFile = `${EA_BUILD_DIR}/${session}.log`
   const doneFile = `${EA_BUILD_DIR}/${session}.done`
+  // 避免双引号内再套 '[:space:]'：经 Windows PowerShell -File 转发时会被拆成 harness 未知参数。
+  // $(cat …) 本身会去掉尾部换行；parseTmuxPollOutput 再 trim 空白。
   return [
-    `echo '---POLL---'`,
-    `if tmux has-session -t ${shellQuote(session)} 2>/dev/null; then echo 'tmux=alive'; else echo 'tmux=dead'; fi`,
-    `if [ -f ${doneFile} ]; then echo "done_code=$(cat ${doneFile} | tr -d '[:space:]')"; else echo 'done_code='; fi`,
-    `echo '---LOG_TAIL---'`,
+    `echo ---POLL---`,
+    `if tmux has-session -t ${shellQuote(session)} 2>/dev/null; then echo tmux=alive; else echo tmux=dead; fi`,
+    `if [ -f ${doneFile} ]; then echo done_code=$(cat ${doneFile}); else echo done_code=; fi`,
+    `echo ---LOG_TAIL---`,
     `tail -n 50 ${logFile} 2>/dev/null || true`,
   ].join('; ')
 }
@@ -101,11 +103,14 @@ export function buildTmuxKillCommand(session: string): string {
 export function parseTmuxPollOutput(raw: string): TmuxPollSnapshot {
   const text = String(raw || '')
   const alive = /(?:^|\n)tmux=alive(?:\n|$)/.test(text)
-  const doneMatch = text.match(/(?:^|\n)done_code=([0-9]*)(?:\n|$)/)
+  const doneMatch = text.match(/(?:^|\n)done_code=([^\n\r]*)/)
   let doneCode: number | null = null
-  if (doneMatch && doneMatch[1] !== '') {
-    doneCode = Number(doneMatch[1])
-    if (!Number.isFinite(doneCode)) doneCode = null
+  if (doneMatch) {
+    const rawCode = String(doneMatch[1] ?? '').replace(/\s+/g, '')
+    if (rawCode !== '') {
+      doneCode = Number(rawCode)
+      if (!Number.isFinite(doneCode)) doneCode = null
+    }
   }
   const tailIdx = text.indexOf('---LOG_TAIL---')
   const logTail = tailIdx >= 0 ? text.slice(tailIdx + '---LOG_TAIL---'.length).trim() : ''
