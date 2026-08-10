@@ -1,5 +1,5 @@
 {
-  "testType": "therm",
+  "testType": "thermal",
   "module": "scheme",
   "moduleLabel": "温升方案检测",
   "conditions": {

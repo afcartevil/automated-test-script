@@ -57,7 +57,7 @@ const toneByType: Record<string, string> = {
   monkey: 'ea-t-amber',
   power: 'ea-t-rose',
   power_feature: 'ea-t-violet',
-  therm: 'ea-t-orange',
+  thermal: 'ea-t-orange',
   ai_generated: 'ea-t-cyan',
 }
 

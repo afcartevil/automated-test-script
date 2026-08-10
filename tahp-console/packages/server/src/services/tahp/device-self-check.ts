@@ -2,7 +2,7 @@
  * 设备自动化自检服务
  */
 import { spawn, spawnSync } from 'child_process'
-import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'fs'
+import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, cpSync, readdirSync, statSync } from 'fs'
 import type { ServerResponse } from 'http'
 import { join, resolve, basename, sep } from 'path'
 import AdmZip from 'adm-zip'
@@ -43,7 +43,7 @@ export type DeviceStatus =
   | '待命'
   | '刷机中'
 
-export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'therm' | 'ai_generated'
+export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'ai_generated'
 export type DeviceTestType = StandardTestType | 'custom'
 
 export interface SimCardInfo {
@@ -254,7 +254,7 @@ function getAutoRetestConfig(testType: string): { enabled: boolean; count: numbe
     testType === 'gms' ||
     testType === 'power' ||
     testType === 'power_feature' ||
-    testType === 'therm' ||
+    testType === 'thermal' ||
     testType === 'ai_generated'
   ) {
     return { enabled: false, count: 0 }
@@ -449,7 +449,7 @@ function loadCaseConfigs(): void {
     'gms_vts.json',
     'power_current_analysis.json',
     'power_feature_wbs.json',
-    'therm_scheme.json',
+    'thermal_scheme.json',
   ]
   
   for (const file of configFiles) {
@@ -1066,7 +1066,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'gms') return ['cts', 'gts', 'vts']
   if (testType === 'power') return ['current_analysis']
   if (testType === 'power_feature') return ['wbs']
-  if (testType === 'therm') return ['scheme']
+  if (testType === 'thermal') return ['scheme']
   if (testType === 'ai_generated') return [AI_GENERATED_MODULE]
   return ['driver', 'tdd']
 }
@@ -1406,6 +1406,18 @@ function buildDeviceInfo(
       module &&
       session?.initializedPythonModules?.includes(`${testType}/${module}`)
     ),
+    ...(session?.startTime
+      ? (() => {
+          const resultDir = getSessionResultDir(deviceId, session)
+          const thermalLogParentDir = join(resultDir, 'thermal')
+          try {
+            mkdirSync(thermalLogParentDir, { recursive: true })
+          } catch {
+            // ignore
+          }
+          return { resultDir, thermalLogParentDir, thermLogParentDir: thermalLogParentDir }
+        })()
+      : {}),
   }
 }
 
@@ -1529,6 +1541,8 @@ async function stopMonkeyForDevice(deviceId: string): Promise<void> {
 
 const POWER_TOOLS_DIR = join(PYTHON_DIR, 'tools', 'tpower_auto')
 const POWER_OUTPUT_DIR = join(POWER_TOOLS_DIR, 'output')
+const THERM_TOOLS_DIR = join(PYTHON_DIR, 'tools', 'tpytest_dzppt_therm')
+const THERM_DEFAULT_RUNTIME_LOG = join(THERM_TOOLS_DIR, '.runtime', 'log')
 const POWER_EXEC_TIMEOUT_MS = 86_400_000 // 24h，功耗任务由飞书表驱动，长时间运行
 const POWER_FEATURE_EXEC_TIMEOUT_MS = 30 * 60_000 // 功耗特性自检（含 APK 安装）
 const THERM_EXEC_TIMEOUT_MS = 86_400_000 // 24h，温升方案用例集较长
@@ -1606,6 +1620,67 @@ function findLatestPowerReportXlsx(): string | null {
     }
   }
   return latest?.path ?? null
+}
+
+function listThermSessionDirs(parent: string): string[] {
+  if (!existsSync(parent)) return []
+  return readdirSync(parent)
+    .map(name => join(parent, name))
+    .filter(full => {
+      try {
+        return statSync(full).isDirectory() && /_therm_/i.test(basename(full))
+      } catch {
+        return false
+      }
+    })
+    .sort((a, b) => {
+      try {
+        return statSync(b).mtimeMs - statSync(a).mtimeMs
+      } catch {
+        return 0
+      }
+    })
+}
+
+function copyThermArtifactsToReport(resultDir: string): string | null {
+  const destParent = join(resultDir, 'thermal')
+  mkdirSync(destParent, { recursive: true })
+
+  let sessions = [
+    ...listThermSessionDirs(destParent),
+    ...listThermSessionDirs(join(resultDir, 'therm')),
+  ]
+  if (!sessions.length) {
+    const latest = listThermSessionDirs(THERM_DEFAULT_RUNTIME_LOG)[0]
+    if (latest) {
+      const dest = join(destParent, basename(latest))
+      try {
+        cpSync(latest, dest, { recursive: true })
+      } catch (err) {
+        console.warn('[device-self-check] copy therm runtime failed:', err)
+      }
+      sessions = listThermSessionDirs(destParent)
+    }
+  }
+
+  const latestSession = sessions[0]
+  if (!latestSession) return null
+
+  const xlsx = join(latestSession, 'testReport.xlsx')
+  if (existsSync(xlsx)) {
+    try {
+      copyFileSync(xlsx, join(resultDir, 'thermal_testReport.xlsx'))
+    } catch {
+      // ignore
+    }
+  }
+  return latestSession
+}
+
+function sessionHasThermCases(session: TestSession): boolean {
+  const testType = String(session.testType)
+  if (testType === 'thermal' || testType === 'therm') return true
+  return Object.keys(session.caseResults).some(key => key.startsWith('thermal/') || key.startsWith('therm/'))
 }
 
 function copyPowerArtifactToReport(resultDir: string): string | null {
@@ -1748,8 +1823,8 @@ function resolveCaseExecTimeoutMs(testType: string, module: string): number {
     const raw = Number(process.env.TAHP_POWER_FEATURE_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : POWER_FEATURE_EXEC_TIMEOUT_MS
   }
-  if (testType === 'therm' && module === 'scheme') {
-    const raw = Number(process.env.TAHP_THERM_TIMEOUT_MS)
+  if ((testType === 'thermal' || testType === 'therm') && module === 'scheme') {
+    const raw = Number(process.env.TAHP_THERMAL_TIMEOUT_MS || process.env.TAHP_THERM_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : THERM_EXEC_TIMEOUT_MS
   }
   if (testType === 'ai_generated' && module === AI_GENERATED_MODULE) {
@@ -2945,8 +3020,7 @@ async function generateTestReport(
     const device = devices[deviceId]
     if (!device) return
 
-    const resultDir = existingResultDir
-      ?? join(tahpPaths.reportsDir, 'self-check', deviceId, session.startTime?.replace(/[:.]/g, '-') || '')
+    const resultDir = existingResultDir ?? getSessionResultDir(deviceId, session)
     mkdirSync(resultDir, { recursive: true })
 
     if (session.testType === 'power') {
@@ -3025,6 +3099,11 @@ async function generateTestReport(
       powerArtifactPath = copyPowerArtifactToReport(resultDir)
     }
 
+    let thermalArtifactPath: string | null = null
+    if (sessionHasThermCases(session)) {
+      thermalArtifactPath = copyThermArtifactsToReport(resultDir)
+    }
+
     // 写入摘要（含项目归属，供中心看板上报 / 事后补传）
     const projectCtx = await resolveSelfCheckProjectContext({
       deviceId,
@@ -3059,6 +3138,7 @@ async function generateTestReport(
         ? { selectedCases: session.selectedCases }
         : {}),
       ...(powerArtifactPath ? { powerArtifactPath } : {}),
+      ...(thermalArtifactPath ? { thermalArtifactPath } : {}),
     }
     writeFileSync(join(resultDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8')
 
@@ -3668,6 +3748,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     gms: 'GMS测试',
     power: '功耗自动化测试',
     power_feature: '功耗特性自检',
+    thermal: '温升方案自检',
     therm: '温升方案自检',
     ai_generated: 'AI用例',
   }
@@ -3715,7 +3796,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'therm', AI_GENERATED_TEST_TYPE]
+  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'thermal', AI_GENERATED_TEST_TYPE]
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),

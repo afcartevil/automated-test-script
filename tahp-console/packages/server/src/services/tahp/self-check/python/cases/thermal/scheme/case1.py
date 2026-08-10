@@ -81,9 +81,24 @@ def run(device_info=None, step_update=None, **_context):
     add_step(f"准备启动温升方案自检，设备: {serial}")
     add_step(f"启动 tpytest_dzppt_therm: {launcher.name}")
 
+    cmd = [sys.executable, "-u", str(launcher), "--device-id", serial]
+    log_parent = str(
+        info.get("thermalLogParentDir")
+        or info.get("thermLogParentDir")
+        or info.get("resultDir")
+        or ""
+    ).strip()
+    if log_parent:
+        parent = Path(log_parent)
+        if parent.name.lower() not in ("thermal", "therm"):
+            parent = parent / "thermal"
+        parent.mkdir(parents=True, exist_ok=True)
+        cmd.extend(["--log-parent-dir", str(parent)])
+        add_step(f"温升产物目录: {parent}")
+
     try:
         proc = subprocess.Popen(
-            [sys.executable, "-u", str(launcher), "--device-id", serial],
+            cmd,
             cwd=str(tool_root),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

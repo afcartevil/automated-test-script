@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import {
   getAllCaseCatalogs,
@@ -9,11 +9,11 @@ import {
 import { normalizePlanTestType, validateTestPlanRules } from '../../packages/server/src/services/tahp/test-planning'
 import { tahpPaths } from '../../packages/server/src/services/tahp/paths'
 
-describe('device self-check therm catalog', () => {
-  it('loads therm scheme catalog next to power types', () => {
+describe('device self-check thermal catalog', () => {
+  it('loads thermal scheme catalog next to power types', () => {
     initDeviceSelfCheck()
 
-    const group = getAllCaseCatalogs().find(g => g.testType === 'therm')
+    const group = getAllCaseCatalogs().find(g => g.testType === 'thermal')
     expect(group?.label).toBe('温升方案自检')
     expect(group?.modules).toHaveLength(1)
     expect(group?.modules[0]?.module).toBe('scheme')
@@ -23,16 +23,16 @@ describe('device self-check therm catalog', () => {
 
     const catalogs = getAllCaseCatalogs()
     const typeOrder = catalogs.map(g => g.testType)
-    expect(typeOrder.indexOf('power_feature')).toBeLessThan(typeOrder.indexOf('therm'))
+    expect(typeOrder.indexOf('power_feature')).toBeLessThan(typeOrder.indexOf('thermal'))
 
-    const detail = getCaseCatalogDetail('therm')
+    const detail = getCaseCatalogDetail('thermal')
     expect(detail).toHaveLength(1)
     expect(detail[0]).toMatchObject({
-      testType: 'therm',
+      testType: 'thermal',
       module: 'scheme',
       moduleLabel: '温升方案检测',
       caseName: '温升方案自检',
-      key: 'therm/scheme/1',
+      key: 'thermal/scheme/1',
       automationMode: 'full',
     })
     expect(detail[0]?.preconditions).toContain('ADB')
@@ -44,15 +44,25 @@ describe('device self-check therm catalog', () => {
       'tahp-console/packages/server/src/services/tahp/self-check/python/tools/tpytest_dzppt_therm/launchers/dzppt/therm/start_therm_cli_python.py',
     )
     expect(existsSync(launcher)).toBe(true)
+    expect(readFileSync(launcher, 'utf-8')).toContain('--log-parent-dir')
+
+    const case1 = join(
+      tahpPaths.projectRoot,
+      'tahp-console/packages/server/src/services/tahp/self-check/python/cases/thermal/scheme/case1.py',
+    )
+    const case1Text = readFileSync(case1, 'utf-8')
+    expect(case1Text).toContain('thermalLogParentDir')
+    expect(case1Text).toContain('--log-parent-dir')
   })
 
-  it('normalizes plan test type aliases for therm before power', () => {
-    expect(normalizePlanTestType('therm')).toBe('therm')
-    expect(normalizePlanTestType('温升方案自检')).toBe('therm')
-    expect(normalizePlanTestType('tpytest_dzppt_therm')).toBe('therm')
+  it('normalizes plan test type aliases for thermal before power', () => {
+    expect(normalizePlanTestType('thermal')).toBe('thermal')
+    expect(normalizePlanTestType('therm')).toBe('thermal')
+    expect(normalizePlanTestType('温升方案自检')).toBe('thermal')
+    expect(normalizePlanTestType('tpytest_dzppt_therm')).toBe('thermal')
     expect(normalizePlanTestType('功耗自动化测试')).toBe('power')
     expect(validateTestPlanRules([
-      { node: 'STR4A', offsetDays: -1, testType: 'therm' },
-    ])).toEqual([{ node: 'STR4A', offsetDays: -1, testType: 'therm' }])
+      { node: 'STR4A', offsetDays: -1, testType: 'thermal' },
+    ])).toEqual([{ node: 'STR4A', offsetDays: -1, testType: 'thermal' }])
   })
 })

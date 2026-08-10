@@ -179,8 +179,8 @@ describe('test-planning schedule', () => {
       { node: 'STR4A', offsetDays: -1, testType: 'power' },
     ])).toEqual([{ node: 'STR4A', offsetDays: -1, testType: 'power' }])
     expect(validateTestPlanRules([
-      { node: 'STR4A', offsetDays: -1, testType: 'therm' },
-    ])).toEqual([{ node: 'STR4A', offsetDays: -1, testType: 'therm' }])
+      { node: 'STR4A', offsetDays: -1, testType: 'thermal' },
+    ])).toEqual([{ node: 'STR4A', offsetDays: -1, testType: 'thermal' }])
   })
 
   it('matches project code in device name', () => {
@@ -198,7 +198,7 @@ describe('test-planning schedule', () => {
     expect(normalizePlanTestType('冒烟测试')).toBe('smoke')
     expect(normalizePlanTestType('GMS测试')).toBe('gms')
     expect(normalizePlanTestType('功耗自动化测试')).toBe('power')
-    expect(normalizePlanTestType('温升方案自检')).toBe('therm')
+    expect(normalizePlanTestType('温升方案自检')).toBe('thermal')
   })
 })
 

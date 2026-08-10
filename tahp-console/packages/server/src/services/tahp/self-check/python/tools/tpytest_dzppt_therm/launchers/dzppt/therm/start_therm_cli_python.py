@@ -49,6 +49,7 @@ def _detect_case_set(device_id):
 def _parse_cli_args():
     case_set = None
     device_id = None
+    log_parent_dir = None
     passthrough = []
     args = sys.argv[1:]
     index = 0
@@ -66,6 +67,11 @@ def _parse_cli_args():
         elif arg == '--device-id' and index + 1 < len(args):
             device_id = args[index + 1].strip()
             index += 1
+        elif arg.startswith('--log-parent-dir='):
+            log_parent_dir = arg.split('=', 1)[1].strip()
+        elif arg == '--log-parent-dir' and index + 1 < len(args):
+            log_parent_dir = args[index + 1].strip()
+            index += 1
         elif arg.startswith('--config='):
             passthrough.extend([arg])
         elif arg == '--config' and index + 1 < len(args):
@@ -74,7 +80,7 @@ def _parse_cli_args():
         else:
             passthrough.append(arg)
         index += 1
-    return case_set, device_id, passthrough
+    return case_set, device_id, log_parent_dir, passthrough
 
 
 def _count_case_set_cases(case_set_name: str) -> int:
@@ -100,7 +106,7 @@ if __name__ == '__main__':
     from powertrde.env import PROJ_DIR
     from pretests.dzppt.therm.therm_pretest import ThermPretest
 
-    case_set_override, device_id_override, passthrough_args = _parse_cli_args()
+    case_set_override, device_id_override, log_parent_dir, passthrough_args = _parse_cli_args()
     sys.argv = [sys.argv[0], *passthrough_args]
 
     devices = adb.adb_devices()
@@ -111,17 +117,24 @@ if __name__ == '__main__':
     device_id = _pick_test_device(devices, device_id_override)
     case_set = case_set_override or _detect_case_set(device_id)
     case_count = _count_case_set_cases(case_set)
+    if log_parent_dir:
+        os.makedirs(log_parent_dir, exist_ok=True)
 
     print('=' * 48, flush=True)
     print('  THERM CLI One-Click Test', flush=True)
     print(f'  Device   : {device_id}', flush=True)
     print(f'  Platform : {case_set}', flush=True)
     print(f'  Cases    : {case_count}', flush=True)
+    if log_parent_dir:
+        print(f'  Log dir  : {log_parent_dir}', flush=True)
     print('=' * 48, flush=True)
     print(flush=True)
 
     os.chdir(PROJ_DIR)
-    ThermPretest.get_instance().with_scheme_env_kwargs(
-        case_set=case_set,
-        device_id=device_id,
-    ).start()
+    env_kwargs = {
+        'case_set': case_set,
+        'device_id': device_id,
+    }
+    if log_parent_dir:
+        env_kwargs['log_parent_dir'] = log_parent_dir
+    ThermPretest.get_instance().with_scheme_env_kwargs(**env_kwargs).start()

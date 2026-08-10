@@ -90,7 +90,7 @@ const selectedDevice = ref<DeviceDetail | null>(null)
 const moduleConditions = ref<Record<string, ModuleCondition>>({})
 
 // 测试类型选择
-const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'therm' | 'ai_generated'>('week')
+const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'ai_generated'>('week')
 /** 空闲设备开始测试前的角色意向（仅 UI，选中设备时默认测试机；点击开始测试时才落盘） */
 const startTestIntentRole = ref<DeviceRole>('测试机')
 
@@ -793,10 +793,10 @@ async function openCaseCatalog(testType: string) {
       [...new Set(detail.map(item => `${testType}/${item.module}`))]
     )
     catalogTypeSettings.value = {
-      autoRetestEnabled: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'therm' || testType === 'ai_generated'
+      autoRetestEnabled: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'ai_generated'
         ? false
         : (settingsData.autoRetestEnabled?.[testType] ?? true),
-      autoRetestCount: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'therm' || testType === 'ai_generated'
+      autoRetestCount: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'ai_generated'
         ? 0
         : (settingsData.autoRetestCount?.[testType] ?? 1),
       monkeyDuration: settingsData.monkeyDuration || '7d',

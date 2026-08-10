@@ -27,7 +27,7 @@ const TEST_TYPE_OPTIONS: { label: string; value: PlanTestType }[] = [
   { label: getTestTypeLabel('gms'), value: 'gms' },
   { label: getTestTypeLabel('power'), value: 'power' },
   { label: getTestTypeLabel('power_feature'), value: 'power_feature' },
-  { label: getTestTypeLabel('therm'), value: 'therm' },
+  { label: getTestTypeLabel('thermal'), value: 'thermal' },
 ]
 
 const EXAMPLE_RULES: TestPlanRule[] = [
