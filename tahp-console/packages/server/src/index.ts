@@ -177,7 +177,8 @@ export async function bootstrap() {
     if (!ctx.path.startsWith('/api') &&
       ctx.path !== '/health' &&
       ctx.path !== '/upload' &&
-      ctx.path !== '/webhook') {
+      ctx.path !== '/webhook' &&
+      !ctx.path.startsWith('/webhook/')) {
       await send(ctx, 'index.html', { root: distDir })
     }
   })

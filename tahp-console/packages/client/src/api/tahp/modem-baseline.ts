@@ -125,6 +125,22 @@ export type NoticeParseResult = {
   warnings: string[]
 }
 
+export type ModemExternalNoticeStatus = 'pending' | 'applied' | 'dismissed'
+
+export type ModemExternalNotice = {
+  noticeId: string
+  status: ModemExternalNoticeStatus
+  text: string
+  title?: string
+  source: string
+  sourceId?: string
+  platform?: string
+  version?: string
+  tosVersion?: string
+  receivedAt: string
+  updatedAt: string
+}
+
 export type RecommendationResult = {
   nodeBranch?: string
   targetBranch?: string
@@ -228,6 +244,27 @@ export function deleteModemPatchRule(ruleId: string): Promise<{ success: true }>
 
 export function parseModemPatchNotice(text: string): Promise<NoticeParseResult> {
   return tahpPost<NoticeParseResult>('/api/tahp/modem-baseline/parse-notice', { text })
+}
+
+export function listModemBaselineNotices(
+  status: ModemExternalNoticeStatus | 'all' = 'pending',
+): Promise<{ items: ModemExternalNotice[] }> {
+  const query = new URLSearchParams({ status })
+  return tahpGet<{ items: ModemExternalNotice[] }>(`/api/tahp/modem-baseline/notices?${query.toString()}`)
+}
+
+export function applyModemBaselineNotice(noticeId: string): Promise<ModemExternalNotice> {
+  return tahpPost<ModemExternalNotice>(
+    `/api/tahp/modem-baseline/notices/${encodeURIComponent(noticeId)}/apply`,
+    {},
+  )
+}
+
+export function dismissModemBaselineNotice(noticeId: string): Promise<ModemExternalNotice> {
+  return tahpPost<ModemExternalNotice>(
+    `/api/tahp/modem-baseline/notices/${encodeURIComponent(noticeId)}/dismiss`,
+    {},
+  )
 }
 
 export function recommendModemPatch(input: {
