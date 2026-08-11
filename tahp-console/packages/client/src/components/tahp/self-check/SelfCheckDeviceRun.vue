@@ -14,6 +14,7 @@ import {
   deviceMatchesListFilter,
   getAutomationModeIcon,
   getAutomationModeLabel,
+  getCurrentCaseStepIndex,
   getDeviceListFilterKey,
   getModuleLabel,
   isActiveAuxiliaryDevice,
@@ -208,6 +209,42 @@ const {
 
 const message = useMessage()
 const openingFailureLogs = ref(false)
+/** 用例详情右侧可滚动区（真正挡住子步骤的是这个，不是内层列表） */
+const caseDetailScrollRef = ref<HTMLElement | null>(null)
+
+const currentCaseStepIndex = computed(() =>
+  getCurrentCaseStepIndex(selectedCaseResult.value?.steps, selectedCaseResult.value?.status),
+)
+
+watch(
+  () => [
+    selectedCaseResult.value?.testType,
+    selectedCaseResult.value?.module,
+    selectedCaseResult.value?.caseIndex,
+    currentCaseStepIndex.value,
+    selectedCaseResult.value?.steps?.length,
+  ],
+  async ([, , , currentIndex, stepsLen]) => {
+    if (typeof currentIndex !== 'number' || currentIndex < 0) return
+    await nextTick()
+    const scrollEl = caseDetailScrollRef.value
+    if (!scrollEl) return
+    const maxScroll = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight)
+    // 最新一步：滚到详情区底部，露出完整最新子步骤
+    if (typeof stepsLen === 'number' && currentIndex >= stepsLen - 1) {
+      scrollEl.scrollTo({ top: maxScroll, behavior: 'smooth' })
+      return
+    }
+    const currentEl = scrollEl.querySelector(
+      `[data-step-idx="${currentIndex}"]`,
+    ) as HTMLElement | null
+    if (!currentEl) return
+    const scrollRect = scrollEl.getBoundingClientRect()
+    const elRect = currentEl.getBoundingClientRect()
+    const top = scrollEl.scrollTop + (elRect.top - scrollRect.top) - (scrollEl.clientHeight - elRect.height) / 2
+    scrollEl.scrollTo({ top: Math.max(0, Math.min(top, maxScroll)), behavior: 'smooth' })
+  },
+)
 
 const filteredCustomCatalogGroups = computed((): CaseCatalogGroup[] => {
   const filter = customAutomationFilter.value
@@ -1594,7 +1631,11 @@ function handleDutRowAction(deviceId: string) {
                       </button>
                     </div>
 
-                  <div v-if="selectedCaseResult" class="device-detail-main-scroll case-detail-content">
+                  <div
+                    v-if="selectedCaseResult"
+                    ref="caseDetailScrollRef"
+                    class="device-detail-main-scroll case-detail-content"
+                  >
                     <div class="case-info">
                       <div class="detail-item">
                         <span class="detail-label">用例模块</span>
@@ -1618,6 +1659,8 @@ function handleDutRowAction(deviceId: string) {
                         v-for="(step, idx) in selectedCaseResult.steps"
                         :key="idx"
                         class="step-item"
+                        :class="{ 'is-current': idx === currentCaseStepIndex }"
+                        :data-step-idx="idx"
                       >
                         {{ step.stepDesc }}
                       </div>
@@ -2902,6 +2945,16 @@ $catalog-pane-height: calc(100vh - 48px);
 
   &:last-child {
     border-bottom: none;
+  }
+
+  &.is-current {
+    margin: 0 -8px;
+    padding: 8px;
+    border-radius: 8px;
+    border-bottom-color: transparent;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    font-weight: 600;
+    color: var(--accent);
   }
 }
 

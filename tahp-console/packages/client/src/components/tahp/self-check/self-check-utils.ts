@@ -116,6 +116,21 @@ export function getCaseResultColor(status: string): string {
   return colors[status] || 'var(--muted)'
 }
 
+/** 当前执行到的子步骤下标：执行中始终跟最新一步（列表末尾） */
+export function getCurrentCaseStepIndex(
+  steps: { status: string }[] | undefined | null,
+  caseStatus?: string,
+): number {
+  const list = Array.isArray(steps) ? steps : []
+  if (!list.length) return -1
+  // 用例执行中：高亮/跟随最后一步（避免前面残留的「正在执行…」抢高亮）
+  if (caseStatus === '进行中') return list.length - 1
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].status === '进行中') return i
+  }
+  return -1
+}
+
 export function parseManualSteps(steps: string): string[] {
   if (!steps.trim()) return []
   return steps.split('\n').map(line => line.trim()).filter(Boolean)
