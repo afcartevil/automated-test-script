@@ -478,3 +478,71 @@ TONES SLA 文案建议：**「通知已进入 EasyAdapter 中心」**，非「�
 |------|------|
 | 2026-08-12 | 初版定稿：Socket.IO 推送 + 分批全量补推 + install 后缀 actor；NOTIFY_TOKEN 可选 |
 | 2026-08-12 | 一期实现：BFF webhook/store/hub + Console baseline-notify-client；单测与 build 通过 |
+| 2026-08-12 | 增补 §16：中心后台 Patch 管理（`/patch-manage`）设计拍板 |
+| 2026-08-12 | 实现 `/patch-manage`：delivery 快照、管理 API、模拟发送 |
+
+---
+
+## 16. 中心后台 Patch 管理模块（`/patch-manage`）
+
+> **状态**：已实现（管理后台 `/patch-manage`）  
+> **仓**：仅 `easyadapter_bff`（管理后台 + 管理 API）  
+> **拍板**：历史全员可看；路由 `/patch-manage`；delivery 快照写入 notice；模拟发送 **仅 admin**
+
+### 16.1 目标
+
+| 能力 | 说明 |
+|------|------|
+| 接收记录 | 展示 TONES / 模拟入口写入中心的 patch 通知 |
+| 下发状态 | 广播时在线数/actors 快照；粗算已 ack actor 数 |
+| 历史 | 可筛选列表 + 详情 |
+| 模拟发送 | 后台表单走通「入库 → Socket 推送」，验证通路 |
+
+非目标：GKI、本机合入状态回传、替代 TONES 公开 webhook。
+
+### 16.2 页面
+
+- 侧栏：**Patch 管理** → `/patch-manage`
+- 角色：`admin` / `reviewer` / `business_owner` 可进页、看历史与总览
+- Tab：总览 | 历史记录 | 模拟发送（模拟 Tab 仅 admin 可见/可点）
+
+### 16.3 Delivery 快照（写入 notice）
+
+```ts
+delivery?: {
+  broadcastAt?: string
+  onlineCount: number
+  onlineActors: string[]  // 最多 50
+  mode: 'broadcast' | 'idempotent_skip'
+}
+```
+
+- 新建并广播：写 `mode:'broadcast'` + 当时在线快照  
+- 幂等未再广播：可选写/保留 `idempotent_skip`（不覆盖已有 broadcast 快照）  
+- 历史「下发」列：`已广播(N在线)` / `幂等未再广播` / `广播时无在线(待补推)`  
+- UI 注明：仅中心送达，不含本机「采用并填入」状态
+
+### 16.4 管理 API（登录态）
+
+前缀：`/api/tahp/baseline-notices`
+
+| 方法 | 路径 | 权限 | 用途 |
+|------|------|------|------|
+| GET | `/status` | 全员登录 | 在线数、actors、最近 notice |
+| GET | `/` | 全员登录 | 历史列表（筛选） |
+| GET | `/:noticeId` | 全员登录 | 详情 + ack 粗算 |
+| POST | `/simulate` | **admin** | 模拟发送（source 固定 `simulate`） |
+
+公开 TONES 口仍为：`POST /webhook/modem-baseline/notify`。
+
+### 16.5 实现文件（预估）
+
+- `baseline-notices-store.ts`：delivery、list/get、ack 统计  
+- `baseline-notify-hub.ts`：`getOnlineSnapshot`；broadcast 写 delivery  
+- `routes/baseline-notices-admin.ts`：管理 API  
+- `client`：`PatchManageView.vue` + router + App 侧栏 + api.ts  
+- 本 DESIGN 本节
+
+### 16.6 验收
+
+登录后台 → 模拟发送 → 历史出现且带 delivery → 已连中心的本机 Console inbox 收到。
