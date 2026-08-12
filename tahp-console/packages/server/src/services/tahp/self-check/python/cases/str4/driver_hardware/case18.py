@@ -96,11 +96,12 @@ def run(category=None, case_index=None, device_info=None, **context):
         on_step("属性确认支持超声距感", True)
     else:
         on_step("属性确认支持超声距感", False)
-        sub_steps += "\n属性显示不支持超声距感，需人工二次确认"
+        notice = "未找到超声距感属性，请判断是否支持超声距感"
+        sub_steps += f"\n需人工确认：{notice}"
         update(sub_steps)
         if callable(manual_confirm):
             confirm_status = manual_confirm(
-                "设备属性显示不支持超声距感，请确认本项目是否支持超声距感功能。",
+                notice,
                 pass_label="支持",
                 fail_label="不支持",
             )

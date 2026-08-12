@@ -4,6 +4,7 @@ import time
 import xml.etree.ElementTree as ET
 from typing import Callable
 
+from utils.driver.support_confirm import ask_feature_support, missing_item_notice, missing_prop_notice
 from utils.driver.tranfacmode_ui import adb, dump, tap_xml
 from utils.tdd.ui_automatic import (
     DEFAULT_SLEEP_AFTER_SWIPE,
@@ -49,7 +50,6 @@ def _confirm_mode_support_when_prop_disabled(
     *,
     on_step: Callable[[str, bool], None] | None,
     append_note: Callable[[str], None] | None,
-    operator_notify,
     manual_confirm,
 ) -> dict[str, str] | None:
     """属性未声明支持时人工确认；不支持则 skip，支持则继续检测。"""
@@ -66,19 +66,13 @@ def _confirm_mode_support_when_prop_disabled(
 
     if callable(on_step):
         on_step(f"属性声明不支持{mode_label}", False)
-    notice = (
-        f"属性 {support_prop} 显示不支持{mode_label}，请人工确认本机是否支持{mode_label}。"
-    )
+    notice = missing_prop_notice(mode_label)
     if callable(append_note):
         append_note(f"需人工确认：{notice}")
-    if callable(operator_notify):
-        operator_notify(notice)
-    if not callable(manual_confirm):
-        return {"status": "pending", "message": f"需确认设备是否支持{mode_label}"}
 
-    status = manual_confirm(
-        f"请确认本机是否支持{mode_label}（不支持请选择 fail）。"
-    )
+    status = ask_feature_support(manual_confirm, notice)
+    if status == "pending":
+        return {"status": "pending", "message": notice}
     if status != "pass":
         return {"status": "skip", "message": f"设备不支持{mode_label}，已跳过"}
     return None
@@ -195,8 +189,8 @@ def run_qsensor_mode_import_check(
     support_prop: str | None = None,
     on_step: Callable[[str, bool], None] | None = None,
     append_note: Callable[[str], None] | None = None,
-    operator_notify=None,
     manual_confirm=None,
+    **_unused,
 ) -> dict[str, str]:
     def step(label: str, ok: bool) -> None:
         if callable(on_step):
@@ -209,7 +203,6 @@ def run_qsensor_mode_import_check(
             mode_label,
             on_step=on_step,
             append_note=append_note,
-            operator_notify=operator_notify,
             manual_confirm=manual_confirm,
         )
         if prop_result is not None:
@@ -238,7 +231,16 @@ def run_qsensor_mode_import_check(
             "status": "pass",
             "message": f"{mode_label}已导入（在 {source} 中找到 {marker}）",
         }
+
+    notice = missing_item_notice(mode_label)
+    if callable(append_note):
+        append_note(f"需人工确认：{notice}")
+    status = ask_feature_support(manual_confirm, notice)
+    if status == "pending":
+        return {"status": "pending", "message": notice}
+    if status != "pass":
+        return {"status": "skip", "message": f"设备不支持{mode_label}，已跳过"}
     return {
         "status": "fail",
-        "message": f"未找到 {marker}，{mode_label}未导入",
+        "message": f"未找到 {marker}，{mode_label}未导入（人工确认支持{mode_label}）",
     }

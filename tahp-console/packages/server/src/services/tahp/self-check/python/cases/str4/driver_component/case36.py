@@ -1,5 +1,10 @@
 """STR4 驱动器件：hal sensor（Sensor 工模 HAL Sensor 测试）。"""
 
+from utils.driver.support_confirm import (
+    ask_feature_support,
+    is_item_not_found_message,
+    missing_item_notice,
+)
 from utils.driver.tranfacmode_config import HAL_SENSOR_CALI_KEYWORDS, SENSOR
 from utils.driver.ui_tranfacmode import run_tranfacmode_group_items_test
 
@@ -16,7 +21,6 @@ def _get_dut_device_id(device_info):
 
 def run(category=None, case_index=None, device_info=None, **context):
     step_update = context.get("step_update")
-    operator_notify = context.get("operator_notify")
     manual_confirm = context.get("manual_confirm")
     device_info = device_info or context.get("device_info") or {}
     sub_steps = ""
@@ -45,21 +49,15 @@ def run(category=None, case_index=None, device_info=None, **context):
     )
     if result["status"] == "pass":
         return {"status": "pass", "message": f"hal sensor: {result['message']}"}
-    if "未找到hal sensor测试项" not in result.get("message", ""):
+    if not is_item_not_found_message(result.get("message")):
         return result
 
-    notice = "Sensor 工模未找到 hal sensor 测试项，请确认本机是否支持 HAL Sensor。"
-    if callable(operator_notify):
-        operator_notify(notice)
+    notice = missing_item_notice("HAL Sensor")
     sub_steps += f"\n需人工确认：{notice}"
     update(sub_steps)
-    if not callable(manual_confirm):
-        return {"status": "pending", "message": "需确认设备是否支持 HAL Sensor"}
-    status = manual_confirm(
-        "Sensor 工模未找到 hal sensor 测试项，请确认本机是否支持 HAL Sensor。",
-        pass_label="支持",
-        fail_label="不支持",
-    )
+    status = ask_feature_support(manual_confirm, notice)
+    if status == "pending":
+        return {"status": "pending", "message": notice}
     on_step("人工确认 HAL Sensor 支持", status == "pass")
     if status == "pass":
         return {

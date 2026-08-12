@@ -1264,6 +1264,10 @@ async function runCase(
     // 待确认的用例：暂停测试，等待前端人工决策
     if (result.status === '待确认') {
       const decisionId = `pending_${caseKey}_${Date.now()}`
+      const pendingMessage = result.message || '需人工评判'
+      const isSupportConfirm = /是否支持|请判断是否支持/.test(pendingMessage)
+      const passLabel = isSupportConfirm ? '支持' : undefined
+      const failLabel = isSupportConfirm ? '不支持' : undefined
       const pendingPromise = new Promise<string>((res) => {
         const handler = (decision: string) => {
           res(decision)
@@ -1272,12 +1276,19 @@ async function runCase(
         pendingManualDecisions[decisionId] = {
           deviceId,
           caseKey,
-          message: result.message || '需人工评判',
+          message: pendingMessage,
+          passLabel,
+          failLabel,
           resolve: (decision: string) => {
             handler(decision)
-            // 更新结果
-            result.status = decision === 'pass' ? '通过' : '失败'
-            result.message = decision === 'pass' ? '人工确认通过' : '人工确认失败'
+            // 更新结果：支持确认选「不支持」记为跳过
+            if (isSupportConfirm && decision !== 'pass') {
+              result.status = '跳过'
+              result.message = '设备不支持，已跳过'
+            } else {
+              result.status = decision === 'pass' ? '通过' : '失败'
+              result.message = decision === 'pass' ? '人工确认通过' : '人工确认失败'
+            }
             result.steps.push({
               stepDesc: `人工确认: ${result.message}`,
               status: result.status,
@@ -1292,7 +1303,9 @@ async function runCase(
         deviceId,
         deviceName: devices[deviceId]?.deviceName || deviceId,
         caseKey,
-        message: result.message || '需人工评判'
+        message: pendingMessage,
+        passLabel,
+        failLabel,
       })
       await pendingPromise
     }

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from utils.driver.support_confirm import ask_feature_support, missing_item_notice
 from utils.driver.tranfacmode_group_result import FAIL_TEXTS, PASS_TEXTS
 
 SENSOR_ITEMS_JSON = "tranfacmode_sensor_items.json"
@@ -160,7 +161,6 @@ def run_reuse_sensor_item_with_support_check(
 ) -> dict[str, str]:
     """复用 sensor 工模结果；未找到子项时人工确认是否支持该功能。"""
     sub_steps = ""
-    operator_notify = context.get("operator_notify")
     manual_confirm = context.get("manual_confirm")
 
     def update(steps: str) -> None:
@@ -185,22 +185,13 @@ def run_reuse_sensor_item_with_support_check(
     if not _is_sensor_item_not_found(message):
         return result
 
-    notice = (
-        f"Sensor 工模结果中未找到{item_label}，请确认本机是否支持{feature_name}。"
-    )
+    notice = missing_item_notice(feature_name)
     sub_steps += f"\n需人工确认：{notice}"
     update(sub_steps)
-    if callable(operator_notify):
-        operator_notify(notice)
 
-    if not callable(manual_confirm):
-        return {"status": "pending", "message": f"需确认设备是否支持{feature_name}"}
-
-    status = manual_confirm(
-        f"Sensor 工模未找到{item_label}，请确认本机是否支持{feature_name}。",
-        pass_label="支持",
-        fail_label="不支持",
-    )
+    status = ask_feature_support(manual_confirm, notice)
+    if status == "pending":
+        return {"status": "pending", "message": notice}
     if status != "pass":
         return {
             "status": "skip",

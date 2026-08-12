@@ -1072,7 +1072,7 @@ def run_other_tab_item_test(
             (
                 f"选择{item.label}测试项",
                 lambda: tap_other_list_item(device_id, item.item_text),
-                f"未找到 {item.item_text} 测试项",
+                f"未找到{item.label}测试项",
             ),
         ],
     ):

@@ -19,7 +19,6 @@ def _get_dut_device_id(device_info):
 
 def run(category=None, case_index=None, device_info=None, **context):
     step_update = context.get("step_update")
-    operator_notify = context.get("operator_notify")
     manual_confirm = context.get("manual_confirm")
     device_info = device_info or context.get("device_info") or {}
 
@@ -50,6 +49,5 @@ def run(category=None, case_index=None, device_info=None, **context):
         support_prop=VEHICLE_MODE_SUPPORT_PROP,
         on_step=on_step,
         append_note=append_note,
-        operator_notify=operator_notify,
         manual_confirm=manual_confirm,
     )

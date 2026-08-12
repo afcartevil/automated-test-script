@@ -95,11 +95,12 @@ def run(category=None, case_index=None, device_info=None, **context):
         on_step("属性确认支持屏下指纹", True)
     else:
         on_step("属性确认支持屏下指纹", False)
-        sub_steps += "\n设备属性显示不支持屏下指纹，需人工二次确认"
+        notice = "未找到屏下指纹属性，请判断是否支持屏下指纹"
+        sub_steps += f"\n需人工确认：{notice}"
         update(sub_steps)
         if callable(manual_confirm):
             confirm_status = manual_confirm(
-                "设备属性显示不支持屏下指纹，请确认本项目是否支持屏下指纹功能。",
+                notice,
                 pass_label="支持",
                 fail_label="不支持",
             )

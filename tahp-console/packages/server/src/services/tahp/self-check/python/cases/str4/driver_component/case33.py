@@ -1,39 +1,33 @@
 """STR4 驱动器件：肩键功能（工模 Other 页肩键校准 + 肩键测试）。"""
 
+from utils.driver.support_confirm import (
+    ask_feature_support,
+    is_item_not_found_message,
+    missing_item_notice,
+)
 from utils.driver.tranfacmode_config import SHOULDER_KEY, SHOULDER_KEY_CALI
 from utils.driver.ui_tranfacmode import run_other_tab_item_test
-
-
-def _is_item_not_found(result: dict) -> bool:
-    message = (result.get("message") or "").strip()
-    return "未找到" in message and "测试项" in message
 
 
 def _handle_missing_item(
     result: dict,
     item_label: str,
     *,
-    operator_notify,
     manual_confirm,
     sub_steps: str,
     update,
 ) -> dict | None:
     """未找到工模项时人工确认是否支持肩键；不支持则 skip，支持则返回 None 由调用方 fail。"""
-    if not _is_item_not_found(result):
+    if not is_item_not_found_message(result.get("message")):
         return result
 
-    notice = f"工模 Other 页未找到{item_label}，请确认本机是否支持肩键功能。"
+    notice = missing_item_notice("肩键")
     sub_steps += f"\n需人工确认：{notice}"
     update(sub_steps)
-    if callable(operator_notify):
-        operator_notify(notice)
 
-    if not callable(manual_confirm):
-        return {"status": "pending", "message": "需确认设备是否支持肩键"}
-
-    status = manual_confirm(
-        f"工模未找到{item_label}，请确认本机是否支持肩键功能（不支持请选择 fail）。"
-    )
+    status = ask_feature_support(manual_confirm, notice)
+    if status == "pending":
+        return {"status": "pending", "message": notice}
     if status != "pass":
         return {
             "status": "skip",
@@ -54,7 +48,6 @@ def _get_dut_device_id(device_info):
 
 def run(category=None, case_index=None, device_info=None, **context):
     step_update = context.get("step_update")
-    operator_notify = context.get("operator_notify")
     manual_confirm = context.get("manual_confirm")
     device_info = device_info or context.get("device_info") or {}
 
@@ -85,7 +78,6 @@ def run(category=None, case_index=None, device_info=None, **context):
         handled = _handle_missing_item(
             cali_result,
             SHOULDER_KEY_CALI.label,
-            operator_notify=operator_notify,
             manual_confirm=manual_confirm,
             sub_steps=sub_steps,
             update=update,
@@ -107,7 +99,6 @@ def run(category=None, case_index=None, device_info=None, **context):
         handled = _handle_missing_item(
             test_result,
             SHOULDER_KEY.label,
-            operator_notify=operator_notify,
             manual_confirm=manual_confirm,
             sub_steps=sub_steps,
             update=update,

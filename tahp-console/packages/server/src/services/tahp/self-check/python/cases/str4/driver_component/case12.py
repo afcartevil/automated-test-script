@@ -99,17 +99,18 @@ def run(category=None, case_index=None, device_info=None, **context):
     if supported:
         sub_steps += "\n设备声明支持屏下指纹"
     else:
-        sub_steps += "\n设备属性显示不支持屏下指纹，请人工确认"
+        sub_steps += "\n未找到屏下指纹属性，请判断是否支持屏下指纹"
     update(sub_steps)
 
     if not supported:
+        notice = "未找到屏下指纹属性，请判断是否支持屏下指纹"
         if callable(manual_confirm):
             status = manual_confirm(
-                "设备属性显示不支持屏下指纹，请确认是否仍继续本用例。",
-                pass_label="继续",
-                fail_label="不继续",
+                notice,
+                pass_label="支持",
+                fail_label="不支持",
             )
-            sub_steps += f"\n人工确认是否继续本用例-{'继续' if status == 'pass' else '不继续'}"
+            sub_steps += f"\n人工确认屏下指纹支持-{'支持' if status == 'pass' else '不支持'}"
             update(sub_steps)
             if status != "pass":
                 return {"status": "skip", "message": "设备不支持屏下指纹，已跳过"}

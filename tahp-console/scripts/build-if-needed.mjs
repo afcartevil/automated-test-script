@@ -16,7 +16,7 @@ const stampPath = join(stampDir, 'build.stamp')
 const distEntry = join(root, 'dist', 'server', 'index.js')
 const logPrefix = '[EasyAdapter]'
 
-const WATCH_EXTENSIONS = new Set(['.ts', '.tsx', '.vue', '.js', '.mjs', '.scss', '.sass', '.css', '.html'])
+const WATCH_EXTENSIONS = new Set(['.ts', '.tsx', '.vue', '.js', '.mjs', '.scss', '.sass', '.css', '.html', '.json', '.py'])
 const WATCH_FILES = [
   'package.json',
   'package-lock.json',
