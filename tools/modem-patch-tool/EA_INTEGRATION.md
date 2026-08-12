@@ -17,12 +17,16 @@
 
 ### 外部通知接入（基线完成后推送）
 
-其它工具完成基线升级后，调用 EasyAdapter **公开接口**推送通知；**不会自动启动** Modem 升级。研发在 Console「Modem升级」页「采用并填入」后仍保留在待确认；核对并启动后需再点「确认完成」才会从列表消失。
+> **生产扇出（已拍板设计）**：TONES → **中心 `easyadapter_bff`** 一次 POST → 中心经 Socket.IO `/baseline-notify` 推到各本机 Console；离线靠重连分批全量补推。  
+> 完整方案见：[BASELINE_NOTIFY_PUSH_DESIGN.md](./BASELINE_NOTIFY_PUSH_DESIGN.md)（同步副本：`easyadapter_bff/docs/baseline-notify/DESIGN.md`）。  
+> 下文 **本机** `POST /webhook/modem-baseline/notify` 仅用于 **单机调试**；TONES 生产请打中心同名路径。
+
+其它工具完成基线升级后推送通知；**不会自动启动** Modem 升级。研发在 Console「Modem升级」页「采用并填入」后仍保留在待确认；核对并启动后需再点「确认完成」才会从列表消失。
 
 ```http
 POST /webhook/modem-baseline/notify
 Content-Type: application/json
-Authorization: Bearer <MODEM_BASELINE_NOTIFY_TOKEN>   # 若已配置该环境变量则必填
+Authorization: Bearer <MODEM_BASELINE_NOTIFY_TOKEN>   # 若已配置该环境变量则校验；未配置则放行（内网）
 # 或 Header: X-Modem-Notify-Token: <token>
 ```
 
@@ -45,7 +49,7 @@ Authorization: Bearer <MODEM_BASELINE_NOTIFY_TOKEN>   # 若已配置该环境变
 - 成功：`201`（新建）或 `200`（幂等命中）
 - 浏览器 GET 同路径可探测接口说明（不是网页业务页）
 
-环境变量：`MODEM_BASELINE_NOTIFY_TOKEN`（建议生产必配；未配置时开发态不校验 token）
+环境变量：`MODEM_BASELINE_NOTIFY_TOKEN`（可选；未配置时不校验 token）
 
 ### 维护约束
 - 该目录作为 EA 内集成版本，后续对 Modem Patch Tool 的修改应优先在这里进行

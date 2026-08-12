@@ -1,6 +1,7 @@
 import { logger } from './logger'
 import { closeDb } from '../db'
 import { isGkiPatchAutoStartEnabled, stopGkiPatchServer } from './tahp/gki-patch'
+import { stopBaselineNotifyClient } from './tahp/sync'
 
 export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?: any, agentBridgeManager?: any): void {
   let isShuttingDown = false
@@ -16,6 +17,9 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
     console.log(`[shutdown] Received signal: ${signal}`)
 
     try {
+      stopBaselineNotifyClient()
+      logger.info('Baseline notify client stopped')
+
       if (isGkiPatchAutoStartEnabled()) {
         stopGkiPatchServer()
         logger.info('GKI patch server stopped')

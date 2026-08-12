@@ -83,6 +83,33 @@ describe('modem-baseline external notices', () => {
     expect(() => ingestModemBaselineNotice({}, { storePath })).toThrow('notice_text_required')
   })
 
+  it('adopts preferNoticeId and is idempotent on noticeId', () => {
+    const storePath = tempStorePath()
+    const first = ingestModemBaselineNotice(
+      {
+        text: '中心推送 GEN99-V V11.35',
+        source: 'tones',
+        sourceId: 'job-central-1',
+      },
+      { storePath, preferNoticeId: 'nb-fixed-1', preferReceivedAt: '2026-08-12T01:00:00.000Z' },
+    )
+    expect(first.created).toBe(true)
+    expect(first.notice.noticeId).toBe('nb-fixed-1')
+    expect(first.notice.receivedAt).toBe('2026-08-12T01:00:00.000Z')
+
+    const second = ingestModemBaselineNotice(
+      {
+        text: '重复推送应幂等',
+        source: 'tones',
+        sourceId: 'other-source-id',
+      },
+      { storePath, preferNoticeId: 'nb-fixed-1' },
+    )
+    expect(second.created).toBe(false)
+    expect(second.notice.noticeId).toBe('nb-fixed-1')
+    expect(listModemBaselineNotices({ status: 'all' }, { storePath })).toHaveLength(1)
+  })
+
   it('verifies notify token when configured', () => {
     expect(verifyModemNotifyToken('any', {})).toBe(true)
     expect(verifyModemNotifyToken('secret', { MODEM_BASELINE_NOTIFY_TOKEN: 'secret' })).toBe(true)

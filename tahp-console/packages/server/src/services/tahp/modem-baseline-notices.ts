@@ -40,6 +40,14 @@ export type IngestModemNoticeInput = {
   [key: string]: unknown
 }
 
+export type IngestModemNoticeOptions = {
+  storePath?: string
+  /** 采用中心下发的 noticeId（Socket 推送场景） */
+  preferNoticeId?: string
+  /** 采用中心 receivedAt，便于 ack 水位与中心一致 */
+  preferReceivedAt?: string
+}
+
 function noticesRootDir(dataDir = serverConfig.dataDir) {
   return path.resolve(dataDir, 'modem-patch')
 }
@@ -112,7 +120,7 @@ export function extractModemNotifyToken(headers: Record<string, unknown>, queryT
 
 export function ingestModemBaselineNotice(
   raw: IngestModemNoticeInput | string,
-  options?: { storePath?: string },
+  options?: IngestModemNoticeOptions,
 ): { notice: ModemExternalNotice; created: boolean } {
   const storePath = options?.storePath || defaultNoticesStorePath()
   const input: IngestModemNoticeInput = typeof raw === 'string'
@@ -126,7 +134,16 @@ export function ingestModemBaselineNotice(
 
   const source = asTrimmedString(input.source) || 'tones'
   const sourceId = asTrimmedString(input.sourceId) || undefined
+  const preferNoticeId = asTrimmedString(options?.preferNoticeId)
+  const preferReceivedAt = asTrimmedString(options?.preferReceivedAt)
   const items = readStore(storePath)
+
+  if (preferNoticeId) {
+    const byId = items.find(item => item.noticeId === preferNoticeId)
+    if (byId) {
+      return { notice: byId, created: false }
+    }
+  }
 
   if (sourceId) {
     const existing = items.find(item => item.source === source && item.sourceId === sourceId)
@@ -137,7 +154,7 @@ export function ingestModemBaselineNotice(
 
   const now = new Date().toISOString()
   const notice: ModemExternalNotice = {
-    noticeId: `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+    noticeId: preferNoticeId || `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
     status: 'pending',
     text,
     title: asTrimmedString(input.title) || undefined,
@@ -147,7 +164,7 @@ export function ingestModemBaselineNotice(
     version: asTrimmedString(input.version) || undefined,
     tosVersion: asTrimmedString(input.tosVersion) || asTrimmedString(input.tos) || undefined,
     payload: typeof raw === 'string' ? { text: raw } : { ...input },
-    receivedAt: now,
+    receivedAt: preferReceivedAt || now,
     updatedAt: now,
   }
 
