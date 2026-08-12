@@ -119,6 +119,11 @@ const router = createRouter({
       component: () => import('@/views/tahp/DeviceSelfCheckView.vue'),
     },
     {
+      path: '/tahp/code-pull',
+      name: 'tahp.code-pull',
+      component: () => import('@/views/tahp/CodePullView.vue'),
+    },
+    {
       path: '/tahp/config',
       name: 'tahp.config',
       component: () => import('@/views/tahp/ConfigView.vue'),
