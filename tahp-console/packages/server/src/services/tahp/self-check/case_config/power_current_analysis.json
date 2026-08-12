@@ -11,7 +11,7 @@
   "cases": [
     {
       "caseIndex": 1,
-      "caseName": "复杂待机",
+      "caseName": "通用全域测试",
       "canReuse": false,
       "automationMode": "full"
     },
@@ -23,15 +23,21 @@
     },
     {
       "caseIndex": 3,
-      "caseName": "DOU",
+      "caseName": "待机",
       "canReuse": false,
       "automationMode": "full"
     },
     {
       "caseIndex": 4,
+      "caseName": "DOU",
+      "canReuse": false,
+      "automationMode": "semi"
+    },
+    {
+      "caseIndex": 5,
       "caseName": "PFMMod",
       "canReuse": false,
-      "automationMode": "full"
+      "automationMode": "semi"
     }
   ]
 }

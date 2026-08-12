@@ -11,4 +11,4 @@ from power_scene_runner import run_scene
 
 
 def run(**context):
-    return run_scene(scene="DOU", **context)
+    return run_scene(scene="待机", **context)

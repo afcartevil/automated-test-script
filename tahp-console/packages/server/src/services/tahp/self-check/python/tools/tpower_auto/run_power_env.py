@@ -328,7 +328,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="TAHP power current_analysis env")
     parser.add_argument("command", choices=["start", "stop", "status", "daemon", "run", "latest-xlsx", "summarize-xlsx"])
     parser.add_argument("-s", "--serial", default="")
-    parser.add_argument("--scene", default="", help="场景子项：复杂待机 / 基础场景 / DOU / PFMMod")
+    parser.add_argument("--scene", default="", help="场景子项：通用全域测试 / 基础场景 / 待机（DOU、PFMMod 暂不实现）")
     args = parser.parse_args()
 
     if args.command == "daemon":

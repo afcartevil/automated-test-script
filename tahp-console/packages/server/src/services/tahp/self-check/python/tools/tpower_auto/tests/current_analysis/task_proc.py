@@ -17,11 +17,45 @@ from tests.current_analysis.device import Device
 from tests.current_analysis.phoneconfig import PhoneConfig
 from powertrde.env import PROJ_DIR
 
+# UI 场景模式完成信号：复杂待机 / 基础场景跑完后退出常驻循环
+_scene_exit = threading.Event()
+
+
+def resolve_power_scene_mode(raw=None):
+    """Map Console --scene / TAHP_POWER_SCENE to scheduler mode.
+
+    - standby: 仅定时/普通待机（wifi + data）
+    - base: 仅 task_base（最多 3 轮）
+    - full: 通用全域测试（刷机 + 待机 + 基础，原全量调度）
+    - unsupported: DOU / PFMMod 等暂不实现
+    - '' : 无 UI 场景标签时的实验室常驻全量循环
+    """
+    text = (raw if raw is not None else os.environ.get("TAHP_POWER_SCENE") or "").strip()
+    if text in ("复杂待机", "待机"):
+        return "standby"
+    if text == "基础场景":
+        return "base"
+    if text in ("通用全域测试", "全域测试", "全量"):
+        return "full"
+    if text in ("DOU", "PFMMod"):
+        return "unsupported"
+    return ""
+
+
 def task_proc_thread():
     device_threads = {}
     debug = False # 是否为测试环境
     tabletask = TableTask(debug)
     device = Device()
+    scene_mode = resolve_power_scene_mode()
+    _scene_exit.clear()
+    if scene_mode == "unsupported":
+        scene_label = (os.environ.get("TAHP_POWER_SCENE") or "").strip() or "未知场景"
+        logs_p().log(f"{scene_label} 暂不实现，退出功耗环境")
+        print(f"[TAHP] {scene_label} 暂不实现", flush=True)
+        return
+    if scene_mode:
+        logs_p().log(f"功耗场景模式启动: {scene_mode} (TAHP_POWER_SCENE={os.environ.get('TAHP_POWER_SCENE', '')})")
     #device.test("default")
     # 补传日志
     out_dir = os.path.join(PROJ_DIR, "output")
@@ -36,6 +70,13 @@ def task_proc_thread():
                     tabletask.add_upload_powercloud(file.split('-')[0].upper(), f"{out_dir}/{file.split('.zip')[0]}")
     while True:
         tabletask.upload_powercloud()
+        if scene_mode and _scene_exit.is_set():
+            for thread in list(device_threads.values()):
+                if thread.is_alive():
+                    thread.join(timeout=30)
+            tabletask.upload_powercloud()
+            logs_p().log(f"场景模式({scene_mode})任务完成，退出功耗环境")
+            return
         device_list = device.update()
         # 1. 移除已断开连接的设备线程
         for pmsn in list(device_threads.keys()):
@@ -54,19 +95,20 @@ def task_proc_thread():
             time.sleep(1)
             continue
         
-        # 2. 为新设备创建线程
-        for pmsn, device_info in device_list.items():
-            if pmsn not in device_threads:  # 设备未创建线程
-                device.unlock(pmsn)
-                # 创建线程，目标函数为 device_task_loop，传入设备参数
-                thread = threading.Thread(
-                    target=device_task_loop,
-                    args=(pmsn, tabletask, debug),
-                    daemon=True  # 主线程退出时自动结束子线程
-                )
-                thread.start()
-                device_threads[pmsn] = thread
-        time.sleep(60)  # 确保扫描间隔不低于1分钟
+        # 2. 为新设备创建线程（场景完成后不再拉起）
+        if not (scene_mode and _scene_exit.is_set()):
+            for pmsn, device_info in device_list.items():
+                if pmsn not in device_threads:  # 设备未创建线程
+                    device.unlock(pmsn)
+                    # 创建线程，目标函数为 device_task_loop，传入设备参数
+                    thread = threading.Thread(
+                        target=device_task_loop,
+                        args=(pmsn, tabletask, debug),
+                        daemon=True  # 主线程退出时自动结束子线程
+                    )
+                    thread.start()
+                    device_threads[pmsn] = thread
+        time.sleep(5 if scene_mode else 60)  # 场景模式加快轮询；实验室保持 1 分钟
 
 def device_task_loop(pmsn, tabletask: TableTask, debug: bool):
     try:
@@ -120,7 +162,11 @@ def device_task_loop(pmsn, tabletask: TableTask, debug: bool):
             phone.logerror(f"任务执行失败, 异常信息: {e}")
         if taskmanager.reboot:
             break
-        time.sleep(60)
+        if taskmanager.scene_finished:
+            phone.loginfo(f"场景任务完成({taskmanager.scene_mode})，结束本设备调度")
+            _scene_exit.set()
+            break
+        time.sleep(5 if taskmanager.scene_mode else 60)
 
 class TaskManager:
     def __init__(self, phone: PhoneConfig, tabletask: TableTask):
@@ -128,6 +174,8 @@ class TaskManager:
         self.tabletask = tabletask
         self.weekday = -1
         self.reboot = False
+        self.scene_mode = resolve_power_scene_mode()
+        self.scene_finished = False
         
     def update_time(self):
         self.time = datetime.now().time()
@@ -144,6 +192,49 @@ class TaskManager:
         self.plan = self.tabletask.get_test_plan(self.phone.model, self.phone.pmsn)
         assert self.plan is not None, "获取测试计划失败"
         self.update_time()
+        mode = self.scene_mode
+        if mode == "standby":
+            # UI「复杂待机/待机」：只跑定时/普通待机 wifi+data，不刷机、不跑 task_base
+            self.phone.loginfo("场景模式=待机：仅执行 wifi/data 待机任务")
+            self.priority = 2
+            self.run_ontime_standby_task()
+            self.run_common_standby_task()
+            if not self.datastandby and not self.wifistandby:
+                self.scene_finished = True
+            return
+        if mode == "base":
+            # UI「基础场景」：只跑 task_base，最多 3 轮
+            self.phone.loginfo("场景模式=基础场景：仅执行 task_base（最多3轮）")
+            self.priority = 2
+            self.run_base_task()
+            if not self.basetest:
+                self.scene_finished = True
+            elif not self.tabletask.get_tasks_base():
+                self.phone.loginfo("task_base 为空，结束基础场景")
+                self.basetest = False
+                self.scene_finished = True
+            return
+        if mode == "full":
+            # UI「通用全域测试」：原全量调度（刷机 + 待机 + 基础）
+            self.phone.loginfo("场景模式=通用全域测试：执行全量调度")
+            self.run_update_rom()
+            if self.reboot:
+                self.phone.loginfo(f"重启手机")
+                adb.reboot_phone(self.phone.serial)
+                return
+            self.priority = 2
+            self.run_ontime_standby_task()
+            self.run_base_task()
+            self.run_common_standby_task()
+            if (
+                not self.romupdate
+                and not self.basetest
+                and not self.datastandby
+                and not self.wifistandby
+            ):
+                self.scene_finished = True
+            return
+        # 无 UI 场景标签：实验室常驻全量循环（不自动退出）
         self.run_update_rom()
         if self.reboot:
             self.phone.loginfo(f"重启手机")

@@ -8,7 +8,7 @@ from powertrde.framework.tran_logger import t_log
 from powertrde.utils.trde import adb
 from powertrde.utils.u2_extends import u2utils
 
-DEFAULT_WIFI_PASSWORD = '147258369'
+DEFAULT_WIFI_PASSWORD = '1234567809'
 
 
 def check_device_to_link_pc_current_wifi(u2d, wifi_password_if_needed: str = DEFAULT_WIFI_PASSWORD, check_wifi_internet: bool = False):
