@@ -15,6 +15,38 @@
   - `debug_continue_after_merge.py`
 - 运行数据、日志、任务记录不写回本目录，而是由 `tahp-console` 服务端写入自己的数据目录
 
+### 外部通知接入（基线完成后推送）
+
+其它工具完成基线升级后，调用 EasyAdapter **公开接口**推送通知；**不会自动启动** Modem 升级。研发在 Console「Modem升级」页「采用并填入」后仍保留在待确认；核对并启动后需再点「确认完成」才会从列表消失。
+
+```http
+POST /webhook/modem-baseline/notify
+Content-Type: application/json
+Authorization: Bearer <MODEM_BASELINE_NOTIFY_TOKEN>   # 若已配置该环境变量则必填
+# 或 Header: X-Modem-Notify-Token: <token>
+```
+
+请求体示例：
+
+```json
+{
+  "source": "tones",
+  "sourceId": "baseline-job-20260811-001",
+  "title": "基线升级完成",
+  "platform": "GEN99-V",
+  "version": "V11.35",
+  "tosVersion": "tOS16.3.0",
+  "text": "7月基线升级 GEN99-V V11.35"
+}
+```
+
+- `text` / `message` 优先；缺省时由 `title + platform + version + tosVersion` 拼接
+- 相同 `source` + `sourceId` 幂等，重复推送返回已有 `noticeId`
+- 成功：`201`（新建）或 `200`（幂等命中）
+- 浏览器 GET 同路径可探测接口说明（不是网页业务页）
+
+环境变量：`MODEM_BASELINE_NOTIFY_TOKEN`（建议生产必配；未配置时开发态不校验 token）
+
 ### 维护约束
 - 该目录作为 EA 内集成版本，后续对 Modem Patch Tool 的修改应优先在这里进行
 - 不提交本机缓存、运行历史、`node_modules`、`__pycache__`、`.env` 等运行态文件

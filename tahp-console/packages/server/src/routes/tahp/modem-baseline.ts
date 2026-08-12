@@ -30,6 +30,10 @@ import {
   updateModemPatchRule,
   unregisterModemBaselineSseClient,
 } from '../../services/tahp/modem-baseline'
+import {
+  listModemBaselineNotices,
+  updateModemBaselineNoticeStatus,
+} from '../../services/tahp/modem-baseline-notices'
 
 export const tahpModemBaselineRoutes = new Router({ prefix: '/api/tahp/modem-baseline' })
 
@@ -255,6 +259,40 @@ tahpModemBaselineRoutes.delete('/rules/:ruleId', async (ctx) => {
   } catch (error) {
     const message = (error as Error).message
     ctx.status = message === 'rule_not_found' ? 404 : 400
+    ctx.body = { success: false, error: message }
+  }
+})
+
+tahpModemBaselineRoutes.get('/notices', async (ctx) => {
+  const statusRaw = String(ctx.query.status || 'pending').trim()
+  const status = (statusRaw === 'all' || statusRaw === 'pending' || statusRaw === 'applied' || statusRaw === 'dismissed')
+    ? statusRaw
+    : 'pending'
+  ctx.body = { success: true, data: { items: listModemBaselineNotices({ status }) } }
+})
+
+tahpModemBaselineRoutes.post('/notices/:noticeId/apply', async (ctx) => {
+  try {
+    ctx.body = {
+      success: true,
+      data: updateModemBaselineNoticeStatus(ctx.params.noticeId, 'applied'),
+    }
+  } catch (error) {
+    const message = (error as Error).message
+    ctx.status = message === 'notice_not_found' ? 404 : 400
+    ctx.body = { success: false, error: message }
+  }
+})
+
+tahpModemBaselineRoutes.post('/notices/:noticeId/dismiss', async (ctx) => {
+  try {
+    ctx.body = {
+      success: true,
+      data: updateModemBaselineNoticeStatus(ctx.params.noticeId, 'dismissed'),
+    }
+  } catch (error) {
+    const message = (error as Error).message
+    ctx.status = message === 'notice_not_found' ? 404 : 400
     ctx.body = { success: false, error: message }
   }
 })

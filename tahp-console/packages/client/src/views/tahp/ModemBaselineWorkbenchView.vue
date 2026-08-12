@@ -5,6 +5,7 @@ import ModemBaselineAdvancedConfig from '@/components/tahp/modem-baseline/ModemB
 import ModemBaselineConfigCard from '@/components/tahp/modem-baseline/ModemBaselineConfigCard.vue'
 import ModemBaselineHistoryPanel from '@/components/tahp/modem-baseline/ModemBaselineHistoryPanel.vue'
 import ModemBaselineLogFilterBar from '@/components/tahp/modem-baseline/ModemBaselineLogFilterBar.vue'
+import ModemBaselinePendingNoticesCard from '@/components/tahp/modem-baseline/ModemBaselinePendingNoticesCard.vue'
 import ModemBaselineStagePanel from '@/components/tahp/modem-baseline/ModemBaselineStagePanel.vue'
 import { useModemBaseline } from '@/composables/useModemBaseline'
 import { takeModemLogTail } from '@/utils/modemBaselineLog'
@@ -31,6 +32,12 @@ const {
   buildProjectsWarning,
   loadingBuildProjects,
   errorMessage,
+  pendingNotices,
+  loadingNotices,
+  applyingNoticeId,
+  confirmingNoticeId,
+  dismissingNoticeId,
+  filledNoticeIds,
   statusMeta,
   stageItems,
   initialize,
@@ -43,7 +50,11 @@ const {
   continueRun,
   refreshConflicts,
   openConflictFile,
-  closeEventSource,
+  reloadPendingNotices,
+  applyExternalNotice,
+  confirmExternalNotice,
+  dismissExternalNotice,
+  disposeModemBaseline,
 } = useModemBaseline()
 
 const summaryText = computed(() => statusMeta.value.summary)
@@ -324,18 +335,66 @@ async function handleParseAndApply() {
   }
 }
 
+async function handleApplyExternalNotice(noticeId: string) {
+  try {
+    const apply = await applyExternalNotice(noticeId)
+    if (!apply.applied) {
+      message.warning('通知已填入，但推荐未完全应用，请核对基础配置；完成后请点「确认完成」')
+      openConfigPanel()
+      return
+    }
+    const feedback = buildRecommendationFeedback(apply)
+    showRecommendationToast(feedback)
+    openConfigPanel()
+    message.success('已填入表单（通知仍保留）。核对并启动后，请点「确认完成」才会从待确认消失')
+  } catch (error) {
+    message.error(String((error as Error)?.message ?? error))
+  }
+}
+
+async function handleConfirmExternalNotice(noticeId: string) {
+  try {
+    await confirmExternalNotice(noticeId)
+    message.success('已确认完成，通知已从待确认移除')
+  } catch (error) {
+    message.error(String((error as Error)?.message ?? error))
+  }
+}
+
+async function handleDismissExternalNotice(noticeId: string) {
+  try {
+    await dismissExternalNotice(noticeId)
+    message.success('已忽略该通知')
+  } catch (error) {
+    message.error(String((error as Error)?.message ?? error))
+  }
+}
+
 onMounted(() => {
   void initialize()
 })
 
 onUnmounted(() => {
-  closeEventSource()
+  disposeModemBaseline()
 })
 </script>
 
 <template>
   <div class="workspace-layout">
     <div class="workspace-left">
+      <ModemBaselinePendingNoticesCard
+        :notices="pendingNotices"
+        :loading="loadingNotices"
+        :applying-id="applyingNoticeId"
+        :confirming-id="confirmingNoticeId"
+        :dismissing-id="dismissingNoticeId"
+        :filled-ids="filledNoticeIds"
+        @refresh="reloadPendingNotices"
+        @apply="handleApplyExternalNotice"
+        @confirm="handleConfirmExternalNotice"
+        @dismiss="handleDismissExternalNotice"
+      />
+
       <ModemBaselineConfigCard
         :loading="starting || loading"
         :notice-text="noticeText"

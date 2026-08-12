@@ -25,12 +25,16 @@ import {
   saveWorkspaceProfile,
   scanRepoProfiles,
   subscribeModemBaselineEvents,
+  listModemBaselineNotices,
+  applyModemBaselineNotice,
+  dismissModemBaselineNotice,
   updateRepoProfile,
   updateModemPatchRule,
   type ModemBaselineConfig,
   type ModemBaselinePhase,
   type ModemBaselineRunMeta,
   type ModemBaselineStatus,
+  type ModemExternalNotice,
   type BranchRule,
   type BranchTemplate,
   type NoticeParseResult,
@@ -349,6 +353,14 @@ export function useModemBaseline() {
   const repoHadRunning = ref(false)
   const errorMessage = ref('')
   const eventSource = ref<EventSource | null>(null)
+  const pendingNotices = ref<ModemExternalNotice[]>([])
+  const loadingNotices = ref(false)
+  const applyingNoticeId = ref('')
+  const confirmingNoticeId = ref('')
+  const dismissingNoticeId = ref('')
+  /** Session-local: filled into form but still awaiting「确认完成」. */
+  const filledNoticeIds = ref<string[]>([])
+  const noticesPollTimer = ref<number | null>(null)
 
   const selectedRepo = computed(() => repoProfiles.value.find(item => item.repoId === selectedRepoId.value) ?? null)
   const selectedBranchTemplate = computed(
@@ -499,6 +511,76 @@ export function useModemBaseline() {
   function closeEventSource() {
     eventSource.value?.close()
     eventSource.value = null
+  }
+
+  function stopNoticesPolling() {
+    if (noticesPollTimer.value != null) {
+      window.clearInterval(noticesPollTimer.value)
+      noticesPollTimer.value = null
+    }
+  }
+
+  function startNoticesPolling() {
+    stopNoticesPolling()
+    noticesPollTimer.value = window.setInterval(() => {
+      void reloadPendingNotices().catch(() => {})
+    }, 30_000)
+  }
+
+  function disposeModemBaseline() {
+    closeEventSource()
+    stopNoticesPolling()
+  }
+
+  async function reloadPendingNotices() {
+    loadingNotices.value = true
+    try {
+      const result = await listModemBaselineNotices('pending')
+      pendingNotices.value = result.items || []
+    } finally {
+      loadingNotices.value = false
+    }
+  }
+
+  /** Fill form only — keep notice in pending until operator confirms done. */
+  async function applyExternalNotice(noticeId: string) {
+    const notice = pendingNotices.value.find(item => item.noticeId === noticeId)
+    if (!notice) throw new Error('notice_not_found')
+    applyingNoticeId.value = noticeId
+    try {
+      noticeText.value = notice.text
+      await requestRecommend()
+      const apply = applyRecommendation()
+      if (!filledNoticeIds.value.includes(noticeId)) {
+        filledNoticeIds.value = [...filledNoticeIds.value, noticeId]
+      }
+      return apply
+    } finally {
+      applyingNoticeId.value = ''
+    }
+  }
+
+  /** Manual ack: remove from pending inbox. */
+  async function confirmExternalNotice(noticeId: string) {
+    confirmingNoticeId.value = noticeId
+    try {
+      await applyModemBaselineNotice(noticeId)
+      filledNoticeIds.value = filledNoticeIds.value.filter(id => id !== noticeId)
+      await reloadPendingNotices()
+    } finally {
+      confirmingNoticeId.value = ''
+    }
+  }
+
+  async function dismissExternalNotice(noticeId: string) {
+    dismissingNoticeId.value = noticeId
+    try {
+      await dismissModemBaselineNotice(noticeId)
+      filledNoticeIds.value = filledNoticeIds.value.filter(id => id !== noticeId)
+      await reloadPendingNotices()
+    } finally {
+      dismissingNoticeId.value = ''
+    }
   }
 
   function mergeRun(nextRun: ModemBaselineRunMeta) {
@@ -700,6 +782,10 @@ export function useModemBaseline() {
       await loadRules().catch(() => {
         rules.value = []
       })
+      await reloadPendingNotices().catch(() => {
+        pendingNotices.value = []
+      })
+      startNoticesPolling()
     } catch (error) {
       errorMessage.value = String((error as Error)?.message ?? error)
     }
@@ -1091,6 +1177,12 @@ export function useModemBaseline() {
     continuing,
     refreshing,
     errorMessage,
+    pendingNotices,
+    loadingNotices,
+    applyingNoticeId,
+    confirmingNoticeId,
+    dismissingNoticeId,
+    filledNoticeIds,
     statusMeta,
     stageItems,
     metrics,
@@ -1101,6 +1193,10 @@ export function useModemBaseline() {
     parseNotice,
     requestRecommend,
     applyRecommendation,
+    reloadPendingNotices,
+    applyExternalNotice,
+    confirmExternalNotice,
+    dismissExternalNotice,
     importBranchTemplateFile,
     createRule,
     updateRule,
@@ -1125,5 +1221,6 @@ export function useModemBaseline() {
     refreshConflicts,
     openConflictFile,
     closeEventSource,
+    disposeModemBaseline,
   }
 }
