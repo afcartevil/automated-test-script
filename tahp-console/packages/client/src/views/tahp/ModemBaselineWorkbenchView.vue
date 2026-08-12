@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NButton, useMessage } from 'naive-ui'
 import ModemBaselineAdvancedConfig from '@/components/tahp/modem-baseline/ModemBaselineAdvancedConfig.vue'
+import type { ConfigFieldErrors } from '@/components/tahp/modem-baseline/ModemBaselineAdvancedConfig.vue'
 import ModemBaselineConfigCard from '@/components/tahp/modem-baseline/ModemBaselineConfigCard.vue'
+import type { ParseFeedback } from '@/components/tahp/modem-baseline/ModemBaselineConfigCard.vue'
 import ModemBaselineHistoryPanel from '@/components/tahp/modem-baseline/ModemBaselineHistoryPanel.vue'
 import ModemBaselineLogFilterBar from '@/components/tahp/modem-baseline/ModemBaselineLogFilterBar.vue'
 import ModemBaselinePendingNoticesCard from '@/components/tahp/modem-baseline/ModemBaselinePendingNoticesCard.vue'
@@ -57,6 +59,10 @@ const {
   disposeModemBaseline,
 } = useModemBaseline()
 
+function withText(value?: string) {
+  return String(value ?? '').trim()
+}
+
 const summaryText = computed(() => statusMeta.value.summary)
 const logScroller = ref<HTMLElement | null>(null)
 const shouldStickToBottom = ref(true)
@@ -65,12 +71,39 @@ const onlyErrors = ref(false)
 const onlyConflicts = ref(false)
 const refreshingRuns = ref(false)
 const showConfigPanel = ref(true)
-type RecommendationFeedback = {
-  tone: 'success' | 'warning'
-  title: string
-  successes: string[]
-  failures: string[]
-}
+const parseFeedback = ref<ParseFeedback>(null)
+const startAttempted = ref(false)
+const lastFailedLogRunId = ref('')
+
+const hasRunningRun = computed(() => runs.value.some(item => item.status === 'running'))
+
+const fieldErrors = computed<ConfigFieldErrors>(() => {
+  if (!startAttempted.value) return {}
+  const errors: ConfigFieldErrors = {}
+  if (!withText(config.value.NODE_BRANCH)) errors.NODE_BRANCH = '请填写源分支'
+  if (!withText(config.value.target_BRANCH)) errors.target_BRANCH = '请填写目标分支'
+  if (!withText(config.value.work_dir)) errors.work_dir = '请填写工作区目录'
+  return errors
+})
+
+const configReady = computed(
+  () =>
+    Boolean(
+      withText(config.value.NODE_BRANCH)
+      && withText(config.value.target_BRANCH)
+      && withText(config.value.work_dir),
+    ),
+)
+
+const startDisabled = computed(() => Boolean(starting.value || loading.value || hasRunningRun.value))
+
+const startDisabledReason = computed(() => {
+  if (hasRunningRun.value) return '已有任务执行中，请等待完成后再启动新升级'
+  if (!withText(config.value.NODE_BRANCH) || !withText(config.value.target_BRANCH) || !withText(config.value.work_dir)) {
+    return '请先填写源分支、目标分支与工作区目录'
+  }
+  return ''
+})
 
 const filteredLog = computed(() => {
   const raw = takeModemLogTail(logContent.value || '')
@@ -108,12 +141,19 @@ watch(logContent, async (_, previous) => {
   }
 })
 
+watch(
+  () => selectedRun.value?.runId,
+  (runId) => {
+    if (!runId) return
+    // 切换任务时重置日志筛选，避免上一个失败任务的「只看错误」带到新任务
+    onlyErrors.value = selectedRun.value?.status === 'failed'
+    onlyConflicts.value = false
+    lastFailedLogRunId.value = selectedRun.value?.status === 'failed' ? runId : ''
+  },
+)
+
 function applyConfig(nextValue: typeof config.value) {
   config.value = { ...nextValue }
-}
-
-function withText(value?: string) {
-  return String(value ?? '').trim()
 }
 
 function warningLabel(code: string) {
@@ -139,7 +179,7 @@ function warningLabel(code: string) {
 
 function buildRecommendationFeedback(
   apply: ReturnType<typeof applyRecommendation>,
-): RecommendationFeedback {
+): NonNullable<ParseFeedback> {
   const successes: string[] = []
   const failures: string[] = []
 
@@ -189,7 +229,7 @@ function buildRecommendationFeedback(
     if (!exists) failures.push(`提示：${warning}`)
   }
 
-  const tone: RecommendationFeedback['tone'] = failures.length ? 'warning' : 'success'
+  const tone: NonNullable<ParseFeedback>['tone'] = failures.length ? 'warning' : 'success'
   const title = failures.length
     ? (successes.length ? '已部分解析并应用推荐' : '解析完成，但未成功回填推荐')
     : '已解析并应用推荐'
@@ -202,52 +242,30 @@ function buildRecommendationFeedback(
   }
 }
 
-function showRecommendationToast(feedback: RecommendationFeedback) {
-  const renderSection = (title: string, items: string[], tone: 'success' | 'warning') => {
-    if (!items.length) return null
-    return h('div', { style: 'margin-top: 8px;' }, [
-      h(
-        'div',
-        {
-          style: `font-size: 12px; font-weight: 600; margin-bottom: 4px; color: ${
-            tone === 'success' ? 'var(--ok-fg)' : 'var(--amber-fg)'
-          };`,
-        },
-        title,
-      ),
-      ...items.map(item =>
-        h(
-          'div',
-          {
-            style: 'font-size: 12px; line-height: 1.5; word-break: break-word;',
-          },
-          item,
-        ),
-      ),
-    ])
-  }
-
-  message.create(
-    () =>
-      h('div', { style: 'max-width: 560px;' }, [
-        h('div', { style: 'font-weight: 600; line-height: 1.5;' }, feedback.title),
-        renderSection('已识别 / 已回填', feedback.successes, 'success'),
-        renderSection('未识别 / 未回填', feedback.failures, 'warning'),
-      ]),
-    {
-      type: feedback.tone,
-      duration: 8000,
-      closable: true,
-      keepAliveOnHover: true,
-    },
-  )
+function showRecommendationToast(feedback: NonNullable<ParseFeedback>) {
+  message.create(feedback.title, {
+    type: feedback.tone,
+    duration: 3500,
+    closable: true,
+  })
 }
 
 async function handleStart() {
+  startAttempted.value = true
+  if (!configReady.value) {
+    openConfigPanel()
+    message.warning('请先补齐必填项后再启动升级')
+    return
+  }
+  if (hasRunningRun.value) {
+    message.warning('已有任务执行中，请等待完成后再启动')
+    return
+  }
   try {
     await startRun()
+    startAttempted.value = false
     showConfigPanel.value = false
-    message.success('已启动 Modem升级任务')
+    message.success('已启动 Modem 升级任务')
   } catch (error) {
     message.error(String((error as Error)?.message ?? error))
   }
@@ -270,12 +288,31 @@ function closeConfigPanel() {
   showConfigPanel.value = false
 }
 
-function toggleConfigPanel() {
+const parseHighlight = ref(false)
+let parseHighlightTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 历史区「新建升级」：切到配置面板；已在配置页时聚焦通知输入并高亮提示 */
+function handleCreateUpgrade() {
   if (showConfigPanel.value) {
-    closeConfigPanel()
+    message.info('当前已在新建升级面板，可直接填写通知内容后启动')
+    parseHighlight.value = true
+    if (parseHighlightTimer) clearTimeout(parseHighlightTimer)
+    parseHighlightTimer = setTimeout(() => {
+      parseHighlight.value = false
+      parseHighlightTimer = null
+    }, 1400)
+    void nextTick(() => {
+      const el = document.querySelector('.config-stack .notice-input textarea, .config-stack .notice-input input') as HTMLElement | null
+      el?.focus()
+    })
     return
   }
-  openConfigPanel()
+  showConfigPanel.value = true
+  message.success('已打开新建升级面板')
+  void nextTick(() => {
+    const el = document.querySelector('.config-stack .notice-input textarea, .config-stack .notice-input input') as HTMLElement | null
+    el?.focus()
+  })
 }
 
 async function handleRefreshRuns() {
@@ -329,7 +366,9 @@ async function handleParseAndApply() {
     const apply = applyRecommendation()
     if (!apply.applied) return
     const feedback = buildRecommendationFeedback(apply)
+    parseFeedback.value = feedback
     showRecommendationToast(feedback)
+    openConfigPanel()
   } catch (error) {
     message.error(String((error as Error)?.message ?? error))
   }
@@ -339,11 +378,18 @@ async function handleApplyExternalNotice(noticeId: string) {
   try {
     const apply = await applyExternalNotice(noticeId)
     if (!apply.applied) {
+      parseFeedback.value = {
+        tone: 'warning',
+        title: '通知已填入，但推荐未完全应用',
+        successes: [],
+        failures: ['请核对基础配置后启动；完成后请点「确认完成」'],
+      }
       message.warning('通知已填入，但推荐未完全应用，请核对基础配置；完成后请点「确认完成」')
       openConfigPanel()
       return
     }
     const feedback = buildRecommendationFeedback(apply)
+    parseFeedback.value = feedback
     showRecommendationToast(feedback)
     openConfigPanel()
     message.success('已填入表单（通知仍保留）。核对并启动后，请点「确认完成」才会从待确认消失')
@@ -370,11 +416,27 @@ async function handleDismissExternalNotice(noticeId: string) {
   }
 }
 
+function handleReopenFromRun(runId: string) {
+  const run = runs.value.find(item => item.runId === runId)
+  if (!run) {
+    message.warning('未找到该历史任务')
+    return
+  }
+  config.value = {
+    ...config.value,
+    ...run.config,
+  }
+  startAttempted.value = false
+  openConfigPanel()
+  message.success('已基于该任务回填配置，请核对后启动升级')
+}
+
 onMounted(() => {
   void initialize()
 })
 
 onUnmounted(() => {
+  if (parseHighlightTimer) clearTimeout(parseHighlightTimer)
   disposeModemBaseline()
 })
 </script>
@@ -382,6 +444,11 @@ onUnmounted(() => {
 <template>
   <div class="workspace-layout">
     <div class="workspace-left">
+      <div v-if="errorMessage" class="preview-note">
+        <strong>接入异常</strong>
+        <span>{{ errorMessage }}</span>
+      </div>
+
       <ModemBaselinePendingNoticesCard
         :notices="pendingNotices"
         :loading="loadingNotices"
@@ -395,49 +462,70 @@ onUnmounted(() => {
         @dismiss="handleDismissExternalNotice"
       />
 
-      <ModemBaselineConfigCard
-        :loading="starting || loading"
-        :notice-text="noticeText"
-        :parsing="parsingNotice"
-        :recommending="recommending"
-        :config-active="showConfigPanel"
-        @update:notice-text="noticeText = $event"
-        @parse-and-apply="handleParseAndApply"
-        @toggle-config="toggleConfigPanel"
-        @start="handleStart"
-      />
-
       <ModemBaselineHistoryPanel
         :runs="runs"
         :selected-run-id="showConfigPanel ? '' : selectedRunId"
         :loading="refreshingRuns || loading"
         @select="handleSelectRun"
         @refresh="handleRefreshRuns"
+        @reopen="handleReopenFromRun"
+        @create="handleCreateUpgrade"
       />
-
-      <div v-if="errorMessage" class="preview-note">
-        <strong>接入异常</strong>
-        <span>{{ errorMessage }}</span>
-      </div>
     </div>
 
     <aside class="workspace-detail">
-      <ModemBaselineAdvancedConfig
-        v-if="showConfigPanel"
-        :model-value="config"
-        :build-projects="buildProjects"
-        :build-projects-warning="buildProjectsWarning"
-        :loading-build-projects="loadingBuildProjects"
-        :loading="starting || loading"
-        @update:model-value="applyConfig"
-        @refresh-projects="loadBuildProjects()"
-        @close="closeConfigPanel"
-      />
+      <div v-if="showConfigPanel" class="config-stack" :class="{ 'parse-flash': parseHighlight }">
+        <ModemBaselineConfigCard
+          :notice-text="noticeText"
+          :parsing="parsingNotice"
+          :recommending="recommending"
+          :parse-feedback="parseFeedback"
+          @update:notice-text="noticeText = $event"
+          @parse-and-apply="handleParseAndApply"
+        />
+
+        <ModemBaselineAdvancedConfig
+          :model-value="config"
+          :build-projects="buildProjects"
+          :build-projects-warning="buildProjectsWarning"
+          :loading-build-projects="loadingBuildProjects"
+          :loading="loading"
+          :starting="starting"
+          :field-errors="fieldErrors"
+          :start-disabled="startDisabled"
+          :start-disabled-reason="startDisabledReason"
+          :show-close="Boolean(selectedRunId)"
+          close-label="查看运行详情"
+          @update:model-value="applyConfig"
+          @refresh-projects="loadBuildProjects()"
+          @close="closeConfigPanel"
+          @start="handleStart"
+        />
+      </div>
 
       <div v-else-if="selectedRun" class="detail-stack ea-stack">
+        <div
+          v-if="selectedRun.status === 'conflict'"
+          class="conflict-banner"
+        >
+          <div>
+            <strong>冲突停驻</strong>
+            <span>{{ conflictFiles.length }} 个待处理文件 · {{ summaryText }}</span>
+          </div>
+          <div class="conflict-banner-actions">
+            <NButton secondary size="small" :loading="refreshing" @click="handleRefreshConflicts">
+              刷新冲突
+            </NButton>
+            <NButton type="primary" size="small" :loading="continuing" @click="handleContinueRun">
+              继续执行
+            </NButton>
+          </div>
+        </div>
+
         <div class="ea-card detail-summary">
           <div class="detail-head">
             <div class="detail-title">
+              <div class="ea-section-title">运行详情</div>
               <h2>{{ selectedRun.config.NODE_BRANCH || '—' }} → {{ selectedRun.config.target_BRANCH || '—' }}</h2>
               <p class="detail-id">{{ selectedRun.runId }}</p>
             </div>
@@ -453,6 +541,12 @@ onUnmounted(() => {
               >
                 {{ statusMeta.label }}
               </span>
+              <NButton type="primary" secondary size="small" @click="handleCreateUpgrade">
+                新建升级
+              </NButton>
+              <NButton secondary size="small" @click="handleReopenFromRun(selectedRun.runId)">
+                基于此再开
+              </NButton>
               <NButton secondary size="small" @click="handleSelectRun(selectedRun.runId)">刷新</NButton>
             </div>
           </div>
@@ -550,8 +644,9 @@ onUnmounted(() => {
       <div v-else class="ea-card detail-empty">
         <div>
           <strong>右侧工作区</strong>
-          <span>选择左侧历史任务查看执行流程与日志，或点击「基础配置」填写分支与路径参数。</span>
+          <span>点击左侧「新建升级」填写通知与配置，或选择历史任务查看运行详情。</span>
         </div>
+        <NButton type="primary" class="empty-action" @click="handleCreateUpgrade">新建升级</NButton>
       </div>
     </aside>
   </div>
@@ -577,16 +672,18 @@ onUnmounted(() => {
 .workspace-left {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+  overflow: hidden;
 }
 
-.workspace-left > :deep(.create-card),
 .workspace-left > .preview-note {
   flex: 0 0 auto;
 }
 
+/* 外部通知与历史各占一半，内容各自滚动 */
+.workspace-left > :deep(.pending-card),
 .workspace-left > :deep(.history-panel) {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
 }
 
@@ -596,7 +693,42 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.workspace-detail > :deep(.basic-config-card),
+.config-stack {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+
+  &.parse-flash {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+
+    :deep(.parse-card) {
+      background: color-mix(in srgb, var(--accent) 6%, transparent);
+      border-radius: 10px;
+      margin: -4px -6px 0;
+      padding: 4px 6px 14px;
+    }
+  }
+}
+
+.config-stack > :deep(.parse-card) {
+  flex: 0 0 auto;
+}
+
+.config-stack > :deep(.basic-config-card) {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-top: 12px;
+}
+
 .workspace-detail > .detail-stack,
 .workspace-detail > .detail-empty {
   flex: 1;
@@ -613,6 +745,38 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 12px;
   padding: 16px 18px;
+}
+
+.conflict-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--amber-fg, #b45309) 35%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--amber-fg, #b45309) 10%, var(--bg));
+
+  strong {
+    display: block;
+    font-size: 13px;
+    color: var(--amber-fg, #b45309);
+  }
+
+  span {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.4;
+  }
+}
+
+.conflict-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 .detail-head {
@@ -704,7 +868,9 @@ onUnmounted(() => {
 
 .detail-empty {
   display: grid;
-  place-items: center;
+  place-content: center;
+  justify-items: center;
+  gap: 16px;
   padding: 36px;
   color: var(--muted);
   text-align: center;
@@ -720,6 +886,10 @@ onUnmounted(() => {
     font-size: 13px;
     line-height: 1.5;
   }
+}
+
+.empty-action {
+  min-width: 140px;
 }
 
 .console-head {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NButton } from 'naive-ui'
-import type { ModemBaselineRunMeta } from '@/api/tahp/modem-baseline'
+import { computed, ref } from 'vue'
+import { NButton, NSelect } from 'naive-ui'
+import type { ModemBaselineRunMeta, ModemBaselineStatus } from '@/api/tahp/modem-baseline'
+import { getRunStatusBrief } from '@/composables/useModemBaseline'
 
 const props = defineProps<{
   runs: ModemBaselineRunMeta[]
@@ -13,9 +14,28 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [runId: string]
   refresh: []
+  reopen: [runId: string]
+  create: []
 }>()
 
-const visibleRuns = computed(() => props.runs.slice(0, props.limit ?? 50))
+type StatusFilter = 'all' | ModemBaselineStatus
+
+const statusFilter = ref<StatusFilter>('all')
+
+const filterOptions = [
+  { label: '全部', value: 'all' },
+  { label: '执行中', value: 'running' },
+  { label: '冲突', value: 'conflict' },
+  { label: '失败', value: 'failed' },
+  { label: '已完成', value: 'success' },
+]
+
+const filteredRuns = computed(() => {
+  const list = statusFilter.value === 'all'
+    ? props.runs
+    : props.runs.filter(item => item.status === statusFilter.value)
+  return list.slice(0, props.limit ?? 50)
+})
 
 function toneClass(status: ModemBaselineRunMeta['status']) {
   switch (status) {
@@ -50,6 +70,34 @@ function statusLabel(status: ModemBaselineRunMeta['status']) {
 function shortId(runId: string) {
   return runId.length > 18 ? `${runId.slice(0, 8)}…${runId.slice(-6)}` : runId
 }
+
+/** 中间省略，适合长分支名 */
+function middleEllipsis(text: string, head = 10, tail = 10) {
+  const value = String(text || '').trim()
+  if (!value) return '—'
+  if (value.length <= head + tail + 1) return value
+  return `${value.slice(0, head)}…${value.slice(-tail)}`
+}
+
+function branchTitle(item: ModemBaselineRunMeta) {
+  const from = item.config.NODE_BRANCH || '—'
+  const to = item.config.target_BRANCH || '—'
+  return `${from} → ${to}`
+}
+
+function briefOf(item: ModemBaselineRunMeta) {
+  return getRunStatusBrief(
+    item.status,
+    item.error,
+    item.phase,
+    item.conflictFiles?.length,
+  )
+}
+
+function onReopen(event: Event, runId: string) {
+  event.stopPropagation()
+  emit('reopen', runId)
+}
 </script>
 
 <template>
@@ -57,14 +105,25 @@ function shortId(runId: string) {
     <div class="panel-head">
       <div>
         <div class="ea-section-title">历史升级任务</div>
-        <h3 class="panel-title">最近 {{ visibleRuns.length }} 条</h3>
+        <h3 class="panel-title">最近 {{ filteredRuns.length }} 条</h3>
       </div>
-      <NButton secondary size="small" :loading="loading" @click="emit('refresh')">刷新</NButton>
+      <div class="panel-actions">
+        <NSelect
+          v-model:value="statusFilter"
+          size="small"
+          :options="filterOptions"
+          class="status-filter"
+        />
+        <NButton type="primary" size="small" title="打开右侧新建升级配置" @click="emit('create')">
+          新建升级
+        </NButton>
+        <NButton secondary size="small" :loading="loading" @click="emit('refresh')">刷新</NButton>
+      </div>
     </div>
 
-    <div v-if="visibleRuns.length" class="task-list">
+    <div v-if="filteredRuns.length" class="task-list">
       <button
-        v-for="item in visibleRuns"
+        v-for="item in filteredRuns"
         :key="item.runId"
         type="button"
         class="task-item"
@@ -72,14 +131,28 @@ function shortId(runId: string) {
         @click="emit('select', item.runId)"
       >
         <div class="task-main">
-          <strong>{{ item.config.NODE_BRANCH || '—' }} → {{ item.config.target_BRANCH || '—' }}</strong>
+          <strong :title="branchTitle(item)">
+            {{ middleEllipsis(item.config.NODE_BRANCH || '') }}
+            →
+            {{ middleEllipsis(item.config.target_BRANCH || '') }}
+          </strong>
           <span class="task-id">{{ shortId(item.runId) }}</span>
           <span class="task-line">{{ item.config.JIRAID || item.config.AP_lable || '未填写标识' }}</span>
+          <span v-if="briefOf(item)" class="task-brief">{{ briefOf(item) }}</span>
         </div>
-        <span :class="toneClass(item.status)">{{ statusLabel(item.status) }}</span>
+        <div class="task-side">
+          <span :class="toneClass(item.status)">{{ statusLabel(item.status) }}</span>
+          <NButton size="tiny" secondary @click="onReopen($event, item.runId)">
+            基于此再开
+          </NButton>
+        </div>
       </button>
     </div>
-    <div v-else class="empty-note">暂无历史升级任务，填写配置后启动首个基线任务。</div>
+    <div v-else class="empty-note">
+      {{ statusFilter === 'all'
+        ? '暂无历史升级任务，填写配置后启动首个升级任务。'
+        : '当前筛选条件下暂无任务。' }}
+    </div>
   </div>
 </template>
 
@@ -90,6 +163,7 @@ function shortId(runId: string) {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: hidden;
 }
 
 .panel-head {
@@ -98,6 +172,19 @@ function shortId(runId: string) {
   justify-content: space-between;
   gap: 12px;
   flex: 0 0 auto;
+}
+
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.status-filter {
+  width: 96px;
 }
 
 .panel-title {
@@ -151,7 +238,9 @@ function shortId(runId: string) {
   strong {
     font-size: 13px;
     color: var(--text);
-    word-break: break-word;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
@@ -167,6 +256,20 @@ function shortId(runId: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.task-brief {
+  font-size: 12px;
+  color: var(--amber-fg, #b45309);
+  line-height: 1.35;
+}
+
+.task-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
 }
 
 .empty-note {

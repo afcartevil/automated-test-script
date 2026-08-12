@@ -174,8 +174,12 @@ type RunRuntime = {
 const runtimes = new Map<string, RunRuntime>()
 /** In-memory child processes for modem baseline runs (lost on BFF restart). */
 const activeChildProcesses = new Map<string, ChildProcess>()
+/** postProcess（含自动编译）进行中的 run，避免孤儿回收误杀长编译任务 */
+const activePostProcessRuns = new Set<string>()
 /** If a running run has no live worker and log is silent longer than this, treat as orphaned. */
 const ORPHAN_LOG_SILENCE_MS = 3 * 60 * 1000
+/** build 阶段日志沉默阈值（编译可能 10~20 分钟无输出） */
+const BUILD_ORPHAN_LOG_SILENCE_MS = 45 * 60 * 1000
 const BRIDGE_PROBE_CACHE_TTL_MS = 90_000
 let lastBridgeProbeSuccessAt = 0
 let lastBridgeProbeSummary = ''
@@ -1784,6 +1788,7 @@ function isPidAlive(pid: number | undefined): boolean {
 }
 
 function isModemBaselineWorkerActive(runId: string, meta: ModemBaselineRunMeta): boolean {
+  if (activePostProcessRuns.has(runId)) return true
   const child = activeChildProcesses.get(runId)
   if (child && child.exitCode === null && !child.killed) return true
   if (meta.pid && isPidAlive(meta.pid)) return true
@@ -1843,9 +1848,12 @@ export function reconcileOrphanedModemBaselineRuns(): number {
       if (meta.status !== 'running') continue
       if (isModemBaselineWorkerActive(meta.runId, meta)) continue
       const silence = logSilenceMs(meta)
+      const silenceLimit = meta.phase === 'build' ? BUILD_ORPHAN_LOG_SILENCE_MS : ORPHAN_LOG_SILENCE_MS
       // No pid (legacy) or dead pid: require log silence to avoid spawn race
-      if (!meta.pid && silence < ORPHAN_LOG_SILENCE_MS) continue
-      if (meta.pid && !isPidAlive(meta.pid) && silence < 15_000) continue
+      if (!meta.pid && silence < silenceLimit) continue
+      if (meta.pid && !isPidAlive(meta.pid) && silence < Math.min(15_000, silenceLimit)) continue
+      // build 阶段即使 pid 已清空（python 已退出、正在 harness 编译），也要等更长沉默
+      if (meta.phase === 'build' && silence < silenceLimit) continue
       finalizeOrphanedModemBaselineRun(meta)
       fixed += 1
     }
@@ -2421,6 +2429,35 @@ export async function listModemBuildProjects(input: {
   }
 }
 
+function appendMappedBuildLogTail(config: ModemBaselineConfig, appendLog: (line: string) => void, maxLines = 40) {
+  const mapped = computeMappedWorkDir(config)
+  if (!mapped) {
+    appendLog('[build] mapped_build_log=unavailable (no mapped work_dir)\n')
+    return
+  }
+  const candidates = [
+    path.resolve(mapped, 'log', 'md_build.log'),
+    path.resolve(mapped, 'log', 'build.log'),
+    path.resolve(mapped, 'out', 'md_build.log'),
+  ]
+  for (const filePath of candidates) {
+    if (!fs.existsSync(filePath)) continue
+    try {
+      const text = decodeText(fs.readFileSync(filePath)).replace(/\r\n/g, '\n').trim()
+      if (!text) continue
+      const lines = text.split('\n')
+      const tail = lines.slice(Math.max(0, lines.length - maxLines)).join('\n')
+      appendLog(`[build] ===== md_build.log 尾部 (${path.basename(filePath)}, last ${Math.min(maxLines, lines.length)} lines) =====\n`)
+      appendLog(`${tail.endsWith('\n') ? tail : `${tail}\n`}`)
+      appendLog('[build] ===== md_build.log 尾部结束 =====\n')
+      return
+    } catch (error) {
+      appendLog(`[build] read md_build.log failed: ${String((error as Error)?.message ?? error)}\n`)
+    }
+  }
+  appendLog('[build] md_build.log not found under mapped work_dir/log\n')
+}
+
 async function runModemBuildAfterResume(
   runId: string,
   config: ModemBaselineConfig,
@@ -2433,10 +2470,11 @@ async function runModemBuildAfterResume(
   }
 
   const remote = computeRemoteWorkDir(config)
-  updateRunMeta(runId, { status: 'running', phase: 'build', finishedAt: undefined, error: undefined })
+  updateRunMeta(runId, { status: 'running', phase: 'build', finishedAt: undefined, error: undefined, pid: undefined })
   const tranSynced = await syncTranModemRepoForBuild(config, appendLog)
   if (!tranSynced) {
     appendLog('[build] failed: tran_modem_branch_sync_failed\n')
+    appendLog(`[build] ===== 编译失败 project=${project} reason=tran_modem_branch_sync_failed =====\n`)
     return 'failed'
   }
   appendLog(`[build] start project=${project} cmd=./tools/bld_modem.sh ${project}\n`)
@@ -2446,7 +2484,16 @@ async function runModemBuildAfterResume(
   const command = `cd ${shellSingleQuote(remote)} && bash -lc ${shellSingleQuote(buildScript)}`
   const BUILD_TIMEOUT_MS = 6 * 60 * 60 * 1000
   appendLog(`[build] harness timeout_sec=${Math.ceil(BUILD_TIMEOUT_MS / 1000)}\n`)
-  appendLog(`[build] modem\u7f16\u8bd1\u4e2d\uff0c\u9884\u8ba110~20\u5206\u949f\uff08\u89c6\u673a\u5668\u8d1f\u8f7d\uff09\n`)
+  appendLog(`[build] modem编译中，预计10~20分钟（视机器负载）；请关注下方心跳与最终 success/failed 摘要\n`)
+
+  const heartbeat = setInterval(() => {
+    try {
+      appendLog(`[build] heartbeat still_running project=${project}\n`)
+    } catch {
+      // ignore
+    }
+  }, 120_000)
+
   try {
     const result = await harnessExec(command, { timeoutMs: BUILD_TIMEOUT_MS })
     const output = String(result.output ?? '').trim()
@@ -2467,8 +2514,10 @@ async function runModemBuildAfterResume(
 
     const passed = evaluateModemBuildResult(result, mappedEvidence)
       && !(exitMarker && exitMarker[1] !== '0')
+    appendMappedBuildLogTail(config, appendLog)
     if (passed) {
       appendLog(`[build] success project=${project}\n`)
+      appendLog(`[build] ===== 编译成功 project=${project} shell_exit=${exitMarker?.[1] ?? 'n/a'} =====\n`)
       return 'success'
     }
     // bridge 默认 300s 超时会出现此文案；远端编译可能仍在跑
@@ -2479,10 +2528,15 @@ async function runModemBuildAfterResume(
       appendLog('[build] no build output/evidence captured; refuse to mark success on bridge ok/0 alone\n')
     }
     appendLog(`[build] failed project=${project}\n`)
+    appendLog(`[build] ===== 编译失败 project=${project} shell_exit=${exitMarker?.[1] ?? 'n/a'} =====\n`)
     return 'failed'
   } catch (error) {
     appendLog(`[build] failed: ${String((error as Error)?.message ?? error)}\n`)
+    appendLog(`[build] ===== 编译失败 project=${project} reason=exception =====\n`)
+    appendMappedBuildLogTail(config, appendLog)
     return 'failed'
+  } finally {
+    clearInterval(heartbeat)
   }
 }
 
@@ -3010,6 +3064,21 @@ async function postProcessRun(runId: string, config: ModemBaselineConfig, code: 
   const current = readModemBaselineRun(runId)
   if (!current) return
 
+  activePostProcessRuns.add(runId)
+  try {
+    await postProcessRunBody(runId, config, code, appendLog, current)
+  } finally {
+    activePostProcessRuns.delete(runId)
+  }
+}
+
+async function postProcessRunBody(
+  runId: string,
+  config: ModemBaselineConfig,
+  code: number | null,
+  appendLog: (line: string) => void,
+  current: ModemBaselineRunMeta,
+) {
   // #region debug-point modem-postprocess-enter
   appendLog(`[debug] postProcessRun enter runId=${runId} code=${String(code)}\n`)
   // #endregion
@@ -3155,6 +3224,11 @@ async function postProcessRun(runId: string, config: ModemBaselineConfig, code: 
       built
         ? `[run] phase=archive status=success summary=${current.phase === 'resume' ? 'resume_and_build_completed' : 'merge_and_build_completed'} project=${built}\n`
         : '[run] phase=archive status=success summary=merge_commit_post_merge_completed\n',
+    )
+    appendLog(
+      built
+        ? `[run] ===== 任务完成：合并成功 + 编译成功（${built}） =====\n`
+        : '[run] ===== 任务完成：合并成功（未选择编译项目，已跳过自动编译） =====\n',
     )
   } else if (status === 'conflict') {
     appendLog(`[run] phase=conflict status=conflict summary=manual_resolution_required files=${conflictFiles.length}\n`)

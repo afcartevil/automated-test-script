@@ -89,6 +89,36 @@ function saveSelectedRepoId(repoId: string) {
   } catch {}
 }
 
+/** 历史列表用的一行状态摘要（失败/冲突优先） */
+export function getRunStatusBrief(
+  status?: ModemBaselineStatus,
+  error?: string,
+  phase?: ModemBaselinePhase,
+  conflictCount?: number,
+) {
+  if (status === 'conflict') {
+    const n = conflictCount ?? 0
+    if (error === 'bridge_not_ready') return '冲突停驻 · bridge 未就绪'
+    if (error === 'orphaned_running_process') return '冲突停驻 · 进程已中断'
+    return n > 0 ? `冲突停驻 · ${n} 个文件` : '冲突停驻'
+  }
+  if (status === 'failed') {
+    if (error === 'bridge_not_ready') return 'bridge 未就绪'
+    if (error === 'build_failed' || phase === 'build') return '编译失败'
+    if (phase === 'resume') return '继续执行失败'
+    if (phase === 'precheck') return '预检失败'
+    return '执行失败'
+  }
+  if (status === 'running') {
+    if (phase === 'build') return '自动编译中'
+    if (phase === 'resume') return '继续执行中'
+    if (phase === 'precheck') return '预检中'
+    return '执行中'
+  }
+  if (status === 'success') return '已完成'
+  return ''
+}
+
 export function getStatusMeta(status?: ModemBaselineStatus, error?: string, phase?: ModemBaselinePhase) {
   if (status === 'success') {
     return { label: '执行完成', tone: 'success', summary: '流程已完成，可查看日志、报告与冲突结果。' }
@@ -123,7 +153,7 @@ export function getStatusMeta(status?: ModemBaselineStatus, error?: string, phas
     }
     return { label: '执行中', tone: 'info', summary: '正在执行预检、合并或后续处理，请关注实时日志。' }
   }
-  return { label: '待启动', tone: 'muted', summary: '加载默认配置后即可启动 Modem升级。' }
+  return { label: '待启动', tone: 'muted', summary: '加载默认配置后即可启动 Modem 升级。' }
 }
 
 export function buildStageItems(status?: ModemBaselineStatus, error?: string, phase?: ModemBaselinePhase): StageItem[] {
