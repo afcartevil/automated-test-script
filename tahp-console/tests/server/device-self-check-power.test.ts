@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'child_process'
 import { join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import {
   getAllCaseCatalogs,
   getCaseCatalogDetail,
@@ -20,17 +20,19 @@ describe('device self-check power catalog', () => {
     expect(powerGroup?.modules[0]?.module).toBe('current_analysis')
     expect(powerGroup?.modules[0]?.moduleLabel).toBe('场景功耗测量')
     expect(powerGroup?.modules[0]?.cases.map(item => item.caseName)).toEqual([
-      '复杂待机',
+      '通用全域测试',
       '基础场景',
+      '待机',
       'DOU',
       'PFMMod',
     ])
 
     const detail = getCaseCatalogDetail('power')
-    expect(detail).toHaveLength(4)
+    expect(detail).toHaveLength(5)
     expect(detail.map(item => item.caseName)).toEqual([
-      '复杂待机',
+      '通用全域测试',
       '基础场景',
+      '待机',
       'DOU',
       'PFMMod',
     ])
@@ -38,9 +40,14 @@ describe('device self-check power catalog', () => {
       testType: 'power',
       module: 'current_analysis',
       moduleLabel: '场景功耗测量',
-      caseName: '复杂待机',
+      caseName: '通用全域测试',
       key: 'power/current_analysis/1',
     })
+    expect(detail[0]?.preconditions).toContain('SSID:power_cloud')
+    expect(detail[0]?.preconditions).toContain('PSW:1234567809')
+    expect(detail[2]?.caseName).toBe('待机')
+    expect(detail[3]?.preconditions).toContain('暂不实现')
+    expect(detail[4]?.preconditions).toContain('暂不实现')
     expect(detail[0]?.manualSteps).toContain('TPower')
 
     const runner = join(
@@ -66,5 +73,49 @@ describe('device self-check power catalog', () => {
       total: 0,
       message: expect.stringContaining('xlsx'),
     })
+  })
+
+  it('maps power UI scenes to standby/base/full scheduler modes in task_proc', () => {
+    const taskProc = join(
+      tahpPaths.projectRoot,
+      'tahp-console/packages/server/src/services/tahp/self-check/python/tools/tpower_auto/tests/current_analysis/task_proc.py',
+    )
+    const src = readFileSync(taskProc, 'utf-8')
+    expect(src).toContain('def resolve_power_scene_mode')
+    expect(src).toContain('("复杂待机", "待机")')
+    expect(src).toContain('return "standby"')
+    expect(src).toContain('text == "基础场景"')
+    expect(src).toContain('return "base"')
+    expect(src).toContain('通用全域测试')
+    expect(src).toContain('return "full"')
+    expect(src).toContain('return "unsupported"')
+    expect(src).toContain('场景模式=待机')
+    expect(src).toContain('场景模式=基础场景')
+    expect(src).toContain('场景模式=通用全域测试')
+    expect(src).toContain('暂不实现')
+    expect(src).toContain('scene_finished')
+
+    const phoneConfig = join(
+      tahpPaths.projectRoot,
+      'tahp-console/packages/server/src/services/tahp/self-check/python/tools/tpower_auto/tests/current_analysis/phoneconfig.py',
+    )
+    expect(readFileSync(phoneConfig, 'utf-8')).toContain('check_device_to_link_wifi(self.u2d, "power_cloud", "1234567809")')
+
+    expect(readFileSync(join(
+      tahpPaths.projectRoot,
+      'tahp-console/packages/server/src/services/tahp/self-check/python/cases/power/current_analysis/case1.py',
+    ), 'utf-8')).toContain('通用全域测试')
+    expect(readFileSync(join(
+      tahpPaths.projectRoot,
+      'tahp-console/packages/server/src/services/tahp/self-check/python/cases/power/current_analysis/case3.py',
+    ), 'utf-8')).toContain('待机')
+    expect(readFileSync(join(
+      tahpPaths.projectRoot,
+      'tahp-console/packages/server/src/services/tahp/self-check/python/cases/power/current_analysis/case4.py',
+    ), 'utf-8')).toContain('DOU 暂不实现')
+    expect(readFileSync(join(
+      tahpPaths.projectRoot,
+      'tahp-console/packages/server/src/services/tahp/self-check/python/cases/power/current_analysis/case5.py',
+    ), 'utf-8')).toContain('PFMMod 暂不实现')
   })
 })

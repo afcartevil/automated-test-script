@@ -11,4 +11,4 @@ from power_scene_runner import run_scene
 
 
 def run(**context):
-    return run_scene(scene="复杂待机", **context)
+    return run_scene(scene="通用全域测试", **context)

@@ -496,7 +496,7 @@ class PhoneConfig():
 
     def pre_phone_check_wifi_connection(self):
         # 不要自动打开wifi
-        check_device_to_link_wifi(self.u2d, "power_cloud")
+        check_device_to_link_wifi(self.u2d, "power_cloud", "1234567809")
         try:
             self.u2d_helper.check_network_connections(True)
         except Exception:
