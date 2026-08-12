@@ -22,7 +22,9 @@ export {
   buildRepoSyncTmuxStart,
   detectRepoSyncFailureInLog,
   formatRepoSyncFailure,
+  parseFailedReposFromLog,
 } from './repo-sync-tmux'
+export type { FailedRepoItem } from './repo-sync-tmux'
 export { normalizeMappedRoot, joinWinCodePath } from './result-parse'
 export type {
   CodePullInput,

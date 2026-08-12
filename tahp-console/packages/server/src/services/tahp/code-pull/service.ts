@@ -52,6 +52,9 @@ function applyPathFields(
   }
   if (result.vendor_path_win) patch.vendor_path_win = String(result.vendor_path_win)
   if (result.vendor_path_linux) patch.vendor_path_linux = String(result.vendor_path_linux)
+  if (Array.isArray(result.failed_repos)) {
+    patch.failed_repos = result.failed_repos as CodePullRunRecord['failed_repos']
+  }
 }
 
 function bindCapability(run: CodePullRunRecord, capabilityRunId: string) {
@@ -110,6 +113,7 @@ function bindCapability(run: CodePullRunRecord, capabilityRunId: string) {
       const saved = patchCodePullRun(run.run_id, patch)
       emit(run.run_id, st.state === 'cancelled' ? 'task.cancelled' : 'task.failed', {
         error: st.error,
+        failed_repos: patch.failed_repos,
       })
       if (saved) saveCodePullRun(saved)
       unsubs.get(run.run_id)?.()

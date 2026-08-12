@@ -5,7 +5,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  NAlert, NButton, NEmpty, NInput, NProgress, NScrollbar, NSpin, useMessage,
+  NAlert, NButton, NEmpty, NInput, NProgress, NSpin, useMessage,
 } from 'naive-ui'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
 import EaCard from '@/components/layout/EaCard.vue'
@@ -35,10 +35,20 @@ const statusLabel = computed(() => {
   return '未开始'
 })
 
+const failedRepos = computed(() => store.currentRun?.failed_repos || [])
+
+async function scrollLogToBottom() {
+  await nextTick()
+  await nextTick()
+  const el = logBox.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+
 async function onStart() {
   await store.start()
   if (store.error) message.error(store.error)
   else message.success('已开始拉取')
+  await scrollLogToBottom()
 }
 
 async function onCancel() {
@@ -46,18 +56,25 @@ async function onCancel() {
   message.info('已请求取消')
 }
 
+async function onOpenRun(runId: string) {
+  await store.openRun(runId)
+  await scrollLogToBottom()
+}
+
 watch(
-  () => store.liveLines.length,
+  () => [store.liveLines.length, store.currentRunId, store.currentRun?.log_tail?.length] as const,
   async () => {
-    await nextTick()
-    const el = logBox.value
-    if (el) el.scrollTop = el.scrollHeight
+    await scrollLogToBottom()
   },
 )
 
 onMounted(async () => {
   await store.refreshProbe()
   await store.refreshHistory()
+  const running = store.history.find(h => h.status === 'running' || h.status === 'pending')
+  if (running) {
+    await onOpenRun(running.run_id)
+  }
 })
 
 onBeforeUnmount(() => {
@@ -69,7 +86,7 @@ onBeforeUnmount(() => {
   <div class="code-pull-page">
     <EaPageHead
       title="代码拉取"
-      subtitle="在堡垒机上对 system / vendor 分别执行 repo init 与 repo sync -c；自动拉起 Bridge，全程免确认"
+      subtitle="在堡垒机上对 system / vendor 分别执行 repo init 与 repo sync -c -j64；自动拉起 Bridge，全程免确认"
     />
 
     <NAlert
@@ -105,7 +122,7 @@ onBeforeUnmount(() => {
 
         <p class="hint">
           目录约定：<code>/work/code/$USER/code-pull/&lt;runId&gt;/system|vendor</code>
-          （Windows 对应 mapped-root 下同名相对路径）。先 system 后 vendor，各执行 init 再 <code>repo sync -c</code>。
+          （Windows 对应 mapped-root 下同名相对路径）。先 system 后 vendor，各执行 init 再 <code>repo sync -c -j64</code>。全部仓库成功才算完成。
         </p>
 
         <div class="actions">
@@ -135,7 +152,7 @@ onBeforeUnmount(() => {
             type="button"
             class="history-item"
             :class="{ active: item.run_id === store.currentRunId }"
-            @click="store.openRun(item.run_id)"
+            @click="onOpenRun(item.run_id)"
           >
             <span class="hi-name">{{ item.project_name }}</span>
             <EaPill>{{ item.status }}</EaPill>
@@ -190,12 +207,24 @@ onBeforeUnmount(() => {
           :title="store.currentRun.error"
         />
 
+        <NAlert
+          v-if="failedRepos.length"
+          type="warning"
+          class="mb"
+          :title="`未成功拉取的仓库（${failedRepos.length}）— 任务仍计为失败`"
+        >
+          <ul class="failed-list">
+            <li v-for="item in failedRepos" :key="`${item.scope}-${item.project}`">
+              <code>{{ item.scope ? `[${item.scope}] ` : '' }}{{ item.project }}</code>
+              <span class="failed-reason">{{ item.reason }}</span>
+            </li>
+          </ul>
+        </NAlert>
+
         <h3 class="section-title">实时日志</h3>
         <div ref="logBox" class="log-box">
           <NEmpty v-if="!store.liveLines.length" description="开始拉取后显示 Bridge / repo init / sync 进度" />
-          <NScrollbar v-else style="max-height: 100%">
-            <pre class="log-pre">{{ store.liveLines.join('\n') }}</pre>
-          </NScrollbar>
+          <pre v-else class="log-pre">{{ store.liveLines.join('\n') }}</pre>
         </div>
       </EaCard>
     </div>
@@ -291,6 +320,23 @@ onBeforeUnmount(() => {
   font-size: 13px;
   code {
     word-break: break-all;
+  }
+}
+.failed-list {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 220px;
+  overflow: auto;
+  li {
+    margin-bottom: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .failed-reason {
+    display: block;
+    color: var(--ea-text-secondary, #666);
+    margin-top: 2px;
+    word-break: break-word;
   }
 }
 .log-box {

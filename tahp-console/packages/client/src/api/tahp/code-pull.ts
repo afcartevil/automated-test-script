@@ -19,6 +19,13 @@ export interface CodePullRunSummary {
   completed_at?: string
 }
 
+export interface FailedRepoItem {
+  project: string
+  reason: string
+  kind: 'fetch' | 'checkout' | 'other'
+  scope?: string
+}
+
 export interface CodePullRunDetail extends CodePullRunSummary {
   error?: string
   mapped_root?: string
@@ -27,6 +34,7 @@ export interface CodePullRunDetail extends CodePullRunSummary {
   system_path_linux?: string
   vendor_path_linux?: string
   capability_run_id?: string
+  failed_repos?: FailedRepoItem[]
   log_tail: string[]
   duration_ms?: number
 }

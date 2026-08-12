@@ -2,6 +2,9 @@
  * 代码拉取能力契约（可复用 ExternalCapability，后期可挂适配流水线）。
  */
 import type { CapabilityStatus } from '../adapt-pipeline/types'
+import type { FailedRepoItem } from './repo-sync-tmux'
+
+export type { FailedRepoItem }
 
 export interface CodePullInput {
   systemRepoInit: string
@@ -21,6 +24,8 @@ export interface CodePullResult {
   code_path_win?: string
   code_path_linux?: string
   duration_ms: number
+  /** sync 失败时的仓库清单（任务仍算失败） */
+  failed_repos?: FailedRepoItem[]
 }
 
 export type CodePullRunStatus =
@@ -51,6 +56,8 @@ export interface CodePullRunRecord {
   code_path_linux?: string
   capability_run_id?: string
   active_tmux_session?: string
+  /** sync 失败仓库清单 */
+  failed_repos?: FailedRepoItem[]
   log_tail: string[]
   created_at: string
   updated_at: string

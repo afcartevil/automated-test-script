@@ -9,6 +9,7 @@ import {
   codePullWinPath,
   detectRepoSyncFailureInLog,
   formatRepoSyncFailure,
+  parseFailedReposFromLog,
   pickMappedRootFromDiscover,
   validateRepoInitCommand,
 } from '../../packages/server/src/services/tahp/code-pull'
@@ -52,13 +53,13 @@ describe('repo command builders', () => {
     expect(cmd).toContain('$(whoami)')
   })
 
-  it('starts tmux repo sync -c', () => {
+  it('starts tmux repo sync -c -j64', () => {
     const cmd = buildRepoSyncTmuxStart({
       session: 'cps-sys-abc',
       linuxPath: '/work/code/$(whoami)/code-pull/r1/system',
     })
     expect(cmd).toContain('TMUX_STARTED')
-    expect(cmd).toContain('repo sync -c')
+    expect(cmd).toContain('repo sync -c -j64')
   })
 })
 
@@ -102,5 +103,22 @@ describe('detectRepoSyncFailureInLog', () => {
       fallback: 'tmux 已结束但未找到 done 文件',
     })
     expect(text).toBe('vendor tmux 已结束但未找到 done 文件')
+  })
+})
+
+describe('parseFailedReposFromLog', () => {
+  it('collects fetch/checkout failures into a list', () => {
+    const list = parseFailedReposFromLog([
+      'error: Cannot fetch MTK_CODE/platform/external/libcups (UnicodeDecodeError: bad)',
+      'error: Cannot fetch MTK_CODE/platform/external/freetype from ssh://gerrit',
+      'error: Cannot checkout MTK_CODE/platform/external/freetype: ManifestInvalidRevisionError: revision x not found',
+      'error: Exited sync due to checkout errors',
+    ])
+    expect(list.map(x => x.project).sort()).toEqual([
+      'MTK_CODE/platform/external/freetype',
+      'MTK_CODE/platform/external/libcups',
+    ])
+    const ft = list.find(x => x.project.includes('freetype'))
+    expect(ft?.kind).toBe('checkout')
   })
 })

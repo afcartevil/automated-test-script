@@ -26,13 +26,16 @@ import {
   buildRepoInitCommand,
   buildRepoSyncTmuxPoll,
   buildRepoSyncTmuxStart,
+  CODE_PULL_REMOTE_DIR,
   codePullLinuxPath,
   codePullRunRel,
   codePullWinPath,
   formatRepoSyncFailure,
+  parseFailedReposFromLog,
   parseTmuxPollOutput,
   tmuxRepoSession,
   validateRepoInitCommand,
+  type FailedRepoItem,
 } from './repo-sync-tmux'
 import { normalizeMappedRoot } from './result-parse'
 import type { CodePullInput, CodePullResult } from './types'
@@ -55,6 +58,8 @@ interface CodePullRunCtx {
   vendorPathWin?: string
   vendorPathLinux?: string
   activeSession?: string
+  failedRepos: FailedRepoItem[]
+  syncLogAccum: string[]
   seenLogLines: Set<string>
   listeners: Set<(ev: CapabilityEvent) => void>
 }
@@ -142,6 +147,10 @@ function flushNewLogLines(ctx: CodePullRunCtx, lines: string[]) {
     if (ctx.seenLogLines.size > 2000) {
       ctx.seenLogLines = new Set([...ctx.seenLogLines].slice(-1000))
     }
+    ctx.syncLogAccum.push(line)
+    if (ctx.syncLogAccum.length > 5000) {
+      ctx.syncLogAccum = ctx.syncLogAccum.slice(-4000)
+    }
     emit(ctx, line.slice(0, 500))
   }
 }
@@ -163,7 +172,40 @@ function partialResult(ctx: CodePullRunCtx): Record<string, unknown> {
     vendor_path_linux: ctx.vendorPathLinux,
     code_path_win: ctx.systemPathWin,
     code_path_linux: ctx.systemPathLinux,
+    failed_repos: ctx.failedRepos.length ? ctx.failedRepos : undefined,
   }
+}
+
+async function collectFailedReposFromSession(
+  ctx: CodePullRunCtx,
+  kind: 'system' | 'vendor',
+  session: string,
+  pollLines: string[],
+): Promise<FailedRepoItem[]> {
+  const merged = [...ctx.syncLogAccum, ...pollLines]
+  try {
+    const logFile = `${CODE_PULL_REMOTE_DIR}/${session}.log`
+    const grep = await bridgeExec(
+      `grep -E -i "Cannot fetch|Cannot checkout|ManifestInvalidRevisionError|no space left|ENOSPC|Exited sync" ${logFile} 2>/dev/null | tail -n 200 || true`,
+      { timeoutSec: 60 },
+    )
+    const extra = String(grep.output || grep.error || '')
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(Boolean)
+    merged.push(...extra)
+  } catch { /* ignore */ }
+
+  const parsed = parseFailedReposFromLog(merged).map(item => ({
+    ...item,
+    scope: kind,
+  }))
+  const byKey = new Map(ctx.failedRepos.map(f => [`${f.scope || ''}:${f.project}`, f]))
+  for (const item of parsed) {
+    byKey.set(`${item.scope}:${item.project}`, item)
+  }
+  ctx.failedRepos = [...byKey.values()]
+  return parsed
 }
 
 async function runRepoInit(
@@ -187,11 +229,20 @@ async function runRepoInit(
     emit(ctx, `[${kind}:init] ${line.slice(0, 400)}`)
   }
   if (ctx.cancelled) throw new Error('已取消')
-  if (Number(res.exit_code) !== 0 && String(res.status).toLowerCase() !== 'ok') {
-    throw new Error(`${kind} repo init 失败: ${res.error || out.slice(0, 500) || `exit=${res.exit_code}`}`)
+  // bridge-exec 常把 transport 标成 status=ok，必须以 REPO_INIT_OK 为准
+  if (!/REPO_INIT_OK/.test(out)) {
+    const disk = /no space left on device|disk quota|ENOSPC/i.test(out)
+    const detail = out.trim().split(/\r?\n/).filter(Boolean).slice(-5).join(' | ').slice(0, 400)
+      || res.error
+      || `exit=${res.exit_code}`
+    throw new Error(
+      disk
+        ? `${kind} repo init 失败（磁盘空间不足）: ${detail}`
+        : `${kind} repo init 失败: ${detail}`,
+    )
   }
-  if (!/REPO_INIT_OK/.test(out) && Number(res.exit_code) !== 0) {
-    throw new Error(`${kind} repo init 未确认成功`)
+  if (Number(res.exit_code) !== 0 && Number.isFinite(Number(res.exit_code))) {
+    throw new Error(`${kind} repo init 失败 exit=${res.exit_code}`)
   }
   emit(ctx, `[${kind}] repo init 完成`)
 }
@@ -210,21 +261,22 @@ async function runRepoSyncTmux(
     state: 'running',
     phase: `${kind}_sync`,
     progress: progressBase,
-    message: `${kind} repo sync -c`,
+    message: `${kind} repo sync -c -j64`,
     result: partialResult(ctx),
-  }, `[${kind}] 启动 tmux repo sync -c …`)
+  }, `[${kind}] 启动 tmux repo sync -c -j64 …`)
 
   const start = await bridgeExec(buildRepoSyncTmuxStart({ session, linuxPath }), {
-    timeoutSec: 60,
+    timeoutSec: 120,
     signal,
   })
   const startOut = bridgeOutput(start)
   emit(ctx, startOut.split(/\r?\n/).find(l => l.includes('TMUX_STARTED')) || `[${kind}] tmux 已请求启动`)
+  if (!/TMUX_STARTED:/.test(startOut)) {
+    const detail = start.error || startOut.slice(0, 400) || `exit=${start.exit_code}`
+    throw new Error(`${kind} sync 启动失败: ${detail}`)
+  }
   if (Number(start.exit_code) !== 0 && String(start.status).toLowerCase() !== 'ok') {
     throw new Error(`${kind} sync 启动失败: ${start.error || startOut.slice(0, 400)}`)
-  }
-  if (!/TMUX_STARTED:/.test(startOut)) {
-    throw new Error(`${kind} sync tmux 未确认启动: ${startOut.slice(0, 400)}`)
   }
 
   const watchStarted = Date.now()
@@ -258,21 +310,31 @@ async function runRepoSyncTmux(
         ctx.activeSession = undefined
         return
       }
+      const failed = await collectFailedReposFromSession(ctx, kind, session, snap.lines)
+      for (const f of failed) {
+        emit(ctx, `[${kind}] 失败仓: ${f.project} — ${f.reason}`)
+      }
       throw new Error(formatRepoSyncFailure({
         kind,
         lines: snap.lines,
         doneCode: snap.doneCode,
         fallback: `repo sync 失败 exit=${snap.doneCode}`,
+        failedRepos: failed,
       }))
     }
 
     if (!snap.alive) {
       deadWithoutDone += 1
       if (deadWithoutDone >= 2) {
+        const failed = await collectFailedReposFromSession(ctx, kind, session, snap.lines)
+        for (const f of failed) {
+          emit(ctx, `[${kind}] 失败仓: ${f.project} — ${f.reason}`)
+        }
         throw new Error(formatRepoSyncFailure({
           kind,
           lines: snap.lines,
           fallback: 'tmux 已结束但未找到 done 文件',
+          failedRepos: failed,
         }))
       }
       emit(ctx, `[${kind}] tmux 已结束，等待 done…`)
@@ -395,6 +457,8 @@ export const codePullCapability: ExternalCapability<CodePullInput> = {
       mappedRoot: input.mappedRoot ? normalizeMappedRoot(input.mappedRoot) : undefined,
       systemInit,
       vendorInit,
+      failedRepos: [],
+      syncLogAccum: [],
       seenLogLines: new Set(),
       listeners: new Set(),
     }

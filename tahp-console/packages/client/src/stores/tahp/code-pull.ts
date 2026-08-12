@@ -2,7 +2,7 @@
  * 代码拉取页面 store：REST + /tahp-run Socket 实时日志
  */
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { waitForTahpSocketReady } from '@/api/tahp/socket'
 import { useTahpTasksStore } from '@/stores/tahp/tasks'
 import {
@@ -13,7 +13,10 @@ import {
   startCodePull,
   type CodePullRunDetail,
   type CodePullRunSummary,
+  type FailedRepoItem,
 } from '@/api/tahp/code-pull'
+
+const TERMINAL = new Set(['task.completed', 'task.failed', 'task.cancelled'])
 
 export const useCodePullStore = defineStore('tahp-code-pull', () => {
   const tasks = useTahpTasksStore()
@@ -28,6 +31,7 @@ export const useCodePullStore = defineStore('tahp-code-pull', () => {
   const error = ref<string | null>(null)
 
   let pollTimer: ReturnType<typeof setInterval> | null = null
+  let lastTerminalAt = 0
 
   const isRunning = computed(() => {
     const s = currentRun.value?.status
@@ -54,6 +58,36 @@ export const useCodePullStore = defineStore('tahp-code-pull', () => {
     }
     return merged.slice(-500)
   })
+
+  /** 终态事件立刻刷新详情（含 failed_repos），不必等 8s 轮询 */
+  watch(
+    () => {
+      const id = currentRunId.value
+      if (!id) return null
+      const stream = tasks.getStream(id)
+      const terminal = [...stream].reverse().find(e => TERMINAL.has(e.type))
+      return terminal
+        ? { ts: terminal.ts, type: terminal.type, payload: terminal.payload }
+        : null
+    },
+    (term) => {
+      if (!term || term.ts === lastTerminalAt) return
+      lastTerminalAt = term.ts
+      if (term.type === 'task.failed' && currentRun.value) {
+        const repos = term.payload?.failed_repos
+        if (Array.isArray(repos)) {
+          currentRun.value = {
+            ...currentRun.value,
+            status: 'failed',
+            error: String(term.payload?.error || currentRun.value.error || ''),
+            failed_repos: repos as FailedRepoItem[],
+          }
+        }
+      }
+      void refreshCurrent()
+      void refreshHistory()
+    },
+  )
 
   async function refreshProbe() {
     try {

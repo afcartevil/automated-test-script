@@ -64,7 +64,7 @@ export function buildRepoInitCommand(linuxPath: string, repoInitCmd: string): st
   ].join(' && ')
 }
 
-/** 在目标目录 tmux 启动 repo sync -c */
+/** 在目标目录 tmux 启动 repo sync（-c 仅当前分支；-j64 并行作业加速） */
 export function buildRepoSyncTmuxStart(opts: {
   session: string
   linuxPath: string
@@ -76,7 +76,7 @@ export function buildRepoSyncTmuxStart(opts: {
   // inner 里路径已双引号；再整体 shellQuote 交给 bash -lc
   const inner = [
     `cd ${p}`,
-    `repo sync -c >${CODE_PULL_REMOTE_DIR}/${session}.log 2>&1`,
+    `repo sync -c -j64 >${CODE_PULL_REMOTE_DIR}/${session}.log 2>&1`,
     `echo $? > ${CODE_PULL_REMOTE_DIR}/${session}.done`,
   ].join('; ')
 
@@ -112,6 +112,69 @@ function stripKindPrefix(line: string): string {
   return line.replace(/^\[[^\]]+\]\s*/, '').trim()
 }
 
+export interface FailedRepoItem {
+  project: string
+  reason: string
+  kind: 'fetch' | 'checkout' | 'other'
+  /** system | vendor */
+  scope?: string
+}
+
+/**
+ * 从 repo sync 日志解析失败仓库清单（去重，按首次出现保留）。
+ */
+export function parseFailedReposFromLog(lines: string[]): FailedRepoItem[] {
+  const byProject = new Map<string, FailedRepoItem>()
+
+  const upsert = (project: string, reason: string, kind: FailedRepoItem['kind']) => {
+    const p = project.trim()
+    if (!p) return
+    const prev = byProject.get(p)
+    if (!prev) {
+      byProject.set(p, { project: p, reason: reason.slice(0, 300), kind })
+      return
+    }
+    // 已有 fetch，后续 checkout 信息更具体则升级
+    if (prev.kind === 'fetch' && kind === 'checkout') {
+      byProject.set(p, { project: p, reason: reason.slice(0, 300), kind })
+    } else if (reason.length > prev.reason.length) {
+      byProject.set(p, { ...prev, reason: reason.slice(0, 300) })
+    }
+  }
+
+  for (const raw of lines) {
+    const line = stripKindPrefix(raw)
+    if (!line) continue
+
+    let m = line.match(/error:\s*Cannot fetch\s+(\S+?)(?:\s+\(|\s+from\s+|\s*$)/i)
+    if (m) {
+      const reasonMatch = line.match(/Cannot fetch\s+\S+\s*(.*)$/i)
+      upsert(m[1].replace(/:$/, ''), (reasonMatch?.[1] || line).trim() || 'Cannot fetch', 'fetch')
+      continue
+    }
+
+    m = line.match(/error:\s*Cannot checkout\s+([^:]+):\s*(.*)$/i)
+    if (m) {
+      upsert(m[1].trim(), (m[2] || line).trim(), 'checkout')
+      continue
+    }
+
+    m = line.match(/ManifestInvalidRevisionError:\s*(.+)$/i)
+    if (m) {
+      const proj = m[1].match(/in\s+(\S+)\s+not found/i)?.[1]
+        || m[1].match(/in\s+(\S+)/i)?.[1]
+      if (proj) upsert(proj, m[1].trim(), 'checkout')
+      continue
+    }
+
+    if (/no space left on device|disk quota exceeded|ENOSPC/i.test(line)) {
+      upsert('(disk)', line.slice(0, 240), 'other')
+    }
+  }
+
+  return [...byProject.values()].sort((a, b) => a.project.localeCompare(b.project))
+}
+
 /**
  * 从 repo sync 日志尾提取可读失败原因（优先磁盘满 / checkout 失败）。
  * 自后向前扫描，返回第一条命中的原文（截断）。
@@ -139,19 +202,28 @@ export function formatRepoSyncFailure(opts: {
   lines: string[]
   doneCode?: number | null
   fallback: string
+  failedRepos?: FailedRepoItem[]
 }): string {
+  const failed = opts.failedRepos?.length
+    ? opts.failedRepos
+    : parseFailedReposFromLog(opts.lines)
   const fromLog = detectRepoSyncFailureInLog(opts.lines)
   const prefix = `${opts.kind} repo sync 失败`
+  const listHint = failed.length
+    ? `；失败仓库 ${failed.length} 个：${failed.slice(0, 5).map(f => f.project).join(', ')}${failed.length > 5 ? '…' : ''}`
+    : ''
+
   if (fromLog) {
     const hint = /no space left|disk quota|ENOSPC/i.test(fromLog)
       ? '（磁盘空间不足，请清理堡垒机 /work/code 后重试）'
       : ''
-    return `${prefix}: ${fromLog}${hint}`
+    return `${prefix}: ${fromLog}${hint}${listHint}`
   }
   if (opts.doneCode != null && opts.doneCode !== 0) {
-    return `${prefix} exit=${opts.doneCode}`
+    return `${prefix} exit=${opts.doneCode}${listHint}`
   }
-  return opts.fallback.startsWith(opts.kind) ? opts.fallback : `${opts.kind} ${opts.fallback}`
+  const base = opts.fallback.startsWith(opts.kind) ? opts.fallback : `${opts.kind} ${opts.fallback}`
+  return `${base}${listHint}`
 }
 
 export { parseTmuxPollOutput, shellQuote }
