@@ -200,6 +200,33 @@ const historyTask = ref<import('@/api/tahp/bug-analysis').BugTask | null>(null)
 const historyStageDetails = ref<Record<string, HistoryStageDetail>>({})
 const isHistoryView = computed(() => !!historySelectedId.value)
 
+const searchExpanded = ref(false)
+const searchKeyword = ref('')
+const searchInputRef = ref<{ focus: () => void } | null>(null)
+
+const kw = computed(() => searchKeyword.value.trim().toLowerCase())
+const isSearching = computed(() => searchExpanded.value && kw.value.length > 0)
+
+const filteredRecent = computed(() => {
+  if (!kw.value) return store.recentTasks
+  const k = kw.value
+  return store.recentTasks.filter(t =>
+    t.jira_key?.toLowerCase().includes(k)
+    || (t.title || '').toLowerCase().includes(k)
+    || t.task_id.toLowerCase().includes(k),
+  )
+})
+
+const filteredHistory = computed(() => {
+  if (!kw.value) return historyReports.value
+  const k = kw.value
+  return historyReports.value.filter(r =>
+    (r.jira_key || r.task_id).toLowerCase().includes(k)
+    || (r.title || '').toLowerCase().includes(k)
+    || r.task_id.toLowerCase().includes(k),
+  )
+})
+
 const currentTaskId = computed(() =>
   isHistoryView.value ? historySelectedId.value : store.selectedTaskId,
 )
@@ -949,6 +976,19 @@ async function loadHistoryReports() {
     message.error((err as Error).message)
   } finally {
     historyListLoading.value = false
+  }
+}
+
+async function toggleSearch() {
+  searchExpanded.value = !searchExpanded.value
+  if (searchExpanded.value) {
+    if (!historyReports.value.length && !historyListLoading.value) {
+      await loadHistoryReports()
+    }
+    await nextTick()
+    searchInputRef.value?.focus()
+  } else {
+    searchKeyword.value = ''
   }
 }
 
@@ -1859,13 +1899,108 @@ watch(
                 @click="switchTaskListMode('history')"
               >历史任务</button>
             </div>
-            <EaPill variant="muted">
-              {{ taskListMode === 'recent' ? store.recentTasks.length : historyReports.length }} 条
-            </EaPill>
+            <div class="ea-row" style="gap: 6px">
+              <button
+                type="button"
+                class="search-toggle-btn"
+                :class="{ active: searchExpanded }"
+                title="搜索任务"
+                @click="toggleSearch"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="11" cy="11" r="7" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+              </button>
+              <EaPill v-if="!isSearching" variant="muted">
+                {{ taskListMode === 'recent' ? store.recentTasks.length : historyReports.length }} 条
+              </EaPill>
+            </div>
+          </div>
+
+          <div v-if="searchExpanded" class="task-search-bar">
+            <NInput
+              ref="searchInputRef"
+              v-model:value="searchKeyword"
+              size="small"
+              placeholder="搜索"
+              clearable
+            />
           </div>
 
           <div class="task-list-body">
-          <template v-if="taskListMode === 'recent'">
+          <template v-if="isSearching">
+            <NScrollbar class="task-scroll" trigger="none">
+              <div class="ea-tasklist">
+                <div v-if="filteredRecent.length" class="search-group">
+                  <div class="search-group-title">最近任务 ({{ filteredRecent.length }})</div>
+                  <button
+                    v-for="t in filteredRecent"
+                    :key="`recent-${t.task_id}`"
+                    type="button"
+                    class="ea-task-item"
+                    :class="{ active: !isHistoryView && currentTaskId === t.task_id, [`status-${t.status}`]: true }"
+                    @click="selectTask(t.task_id)"
+                  >
+                    <div class="ti-top">
+                      <span class="ti-key">{{ t.jira_key }}</span>
+                      <EaPill :variant="statusPillVariant(t.status)">{{ t.status }}</EaPill>
+                    </div>
+                    <div class="ti-title">{{ t.title || '(等待获取标题)' }}</div>
+                    <div class="ti-meta">
+                      <span
+                        class="ea-dot"
+                        :class="{ 'ea-dot-live': t.status === 'running' }"
+                        :style="t.status !== 'running' ? { background: phaseColor(t.phase) } : undefined"
+                      />
+                      <span>{{ phaseLabel(t.phase) }}</span>
+                      <span v-if="t.skills_used?.length" class="ti-badge">{{ t.skills_used.length }} skill</span>
+                      <span v-if="t.parent_job_id" class="ti-badge ti-batch">批量</span>
+                    </div>
+                  </button>
+                </div>
+                <div v-if="filteredHistory.length" class="search-group">
+                  <div class="search-group-title">历史任务 ({{ filteredHistory.length }})</div>
+                  <div
+                    v-for="r in filteredHistory"
+                    :key="`history-${r.task_id}`"
+                    class="history-task-row"
+                  >
+                    <button
+                      type="button"
+                      class="ea-task-item"
+                      :class="{ active: historySelectedId === r.task_id, [`status-${r.status || 'completed'}`]: true }"
+                      @click="selectHistoryTask(r.task_id)"
+                    >
+                      <div class="ti-top">
+                        <span class="ti-key">{{ r.jira_key || r.task_id }}</span>
+                        <EaPill :variant="statusPillVariant(r.status)">{{ r.status || 'completed' }}</EaPill>
+                      </div>
+                      <div class="ti-title">{{ r.title || r.task_id }}</div>
+                      <div class="ti-meta">
+                        <span class="ea-muted">{{ r.completed_at?.slice(0, 16) || r.started_at?.slice(0, 16) || '-' }}</span>
+                        <span v-if="r.skills_used?.length" class="ti-badge">{{ r.skills_used.length }} skill</span>
+                      </div>
+                    </button>
+                    <NButton
+                      size="tiny"
+                      quaternary
+                      type="error"
+                      class="history-del-btn"
+                      @click="deleteHistoryTask(r.task_id, $event)"
+                    >删除</NButton>
+                  </div>
+                </div>
+                <NEmpty
+                  v-if="!filteredRecent.length && !filteredHistory.length"
+                  description="没有匹配的任务"
+                  size="small"
+                />
+              </div>
+            </NScrollbar>
+          </template>
+
+          <template v-else-if="taskListMode === 'recent'">
             <NEmpty v-if="!store.recentTasks.length" size="small" description="还没有任务" />
             <NScrollbar v-else class="task-scroll" trigger="none">
               <div class="ea-tasklist">
@@ -2502,6 +2637,52 @@ watch(
 .task-list-head {
   flex-shrink: 0;
   margin-bottom: 12px;
+}
+
+.search-toggle-btn {
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  padding: 0;
+  /* 默认：柔和品牌色 chip，明显是可点 */
+  color: var(--accent);
+  background: var(--accent-soft);
+  transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+  &:hover {
+    background: linear-gradient(135deg, var(--accent), var(--violet-ic));
+    color: #fff;
+    box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+  &.active {
+    background: linear-gradient(135deg, var(--accent), var(--violet-ic));
+    color: #fff;
+    box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+}
+
+.task-search-bar {
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+
+.search-group {
+  margin-bottom: 8px;
+}
+
+.search-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 8px;
+  position: sticky;
+  top: 0;
+  background: var(--surface-1);
+  z-index: 1;
 }
 
 .task-list-body {
