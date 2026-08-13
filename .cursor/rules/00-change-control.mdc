@@ -16,7 +16,7 @@ alwaysApply: true
 - **禁止**：顺手重构、批量格式化、改与需求无关的命名或注释
 - **禁止**：未读调用链就改 `paths.ts`、`unified-config.ts`、`jira-workspace.ts`、`agent-bridge`
 - **禁止**：同时改 `hermes-agent-main/` 与 TAHP 业务，除非任务明确要求
-- **禁止**：提交 `.env`、`.tahp/unified-config.json`、凭据、本机 `jira_workspace/` 数据
+- **禁止**：提交 `.env`、`.tahp/unified-config.json`、凭据、本机 `jira_workspace/` 数据、`skills/.claude/skills/`（中心分发）、`knowledge-base/.kb-data/`（本机重建）
 
 ## 两类 Skill 勿混淆
 

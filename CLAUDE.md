@@ -93,7 +93,7 @@ npm run build && npm run start
 
 - 可操作: `skills/`, `knowledge-base/`, `tahp-console/`, `scripts/`, `reports/`
 - 谨慎: 路径链文件（`paths.ts`, `jira-workspace.ts`, `unified-config.ts`）
-- 禁止: `.git/`, 凭据 `.env`, `hermes-agent-main/` 大范围功能开发, `knowledge-base/.kb-data/` 手改
+- 禁止: `.git/`, 凭据 `.env`, `hermes-agent-main/` 大范围功能开发, `knowledge-base/.kb-data/` 手改, 将 `skills/.claude/skills/` 提交 Git
 
 ---
 

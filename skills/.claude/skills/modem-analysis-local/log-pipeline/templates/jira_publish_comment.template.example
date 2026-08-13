@@ -1,3 +1,0 @@
-[MtkModemLogPipelineExportFlag] log 已导出: $unc_base
-
-此评论由 modem-log-pipeline 自动生成，仅作为「日志已就绪」的标志位，不包含任何分析结论。请在分析端调用 modem-analysis-unified skill，从 Jira 评论中的 zip 路径拉取并解压后执行 L0~L3 分析。

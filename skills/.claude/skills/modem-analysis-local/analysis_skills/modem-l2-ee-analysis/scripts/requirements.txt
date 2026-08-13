@@ -1,2 +1,0 @@
-# 已统一到 skill 根目录 requirements.txt（便于单独拷贝本 skill 安装）
--r ../../../requirements.txt
