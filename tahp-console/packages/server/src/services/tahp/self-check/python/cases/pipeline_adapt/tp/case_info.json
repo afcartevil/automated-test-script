@@ -1,0 +1,8 @@
+[
+  {
+    "用例名": "TP适配检查",
+    "前置条件": "测试机已通过 ADB 连接且状态为 device；MTK 平台；工模可用（容值项）；建议 userdebug/eng 或已 adb root（SE 检查）。",
+    "测试步骤": "1、读取 /sys/devices/platform/mtk-tpd/tp_firmware_version 并校验格式\n2、读取 /sys/devices/platform/mtk-tpd/tp_vendor 并校验格式\n3、执行 getevent -li，确认包含 mtk-tpd\n4、检查 /proc 下 TP 节点存在性与 SELinux 标签\n5、进入工模 screen 测试组执行触摸屏自检（容值）",
+    "期望结果": "五项检查全部通过：固件/供应商格式正确、mtk-tpd 已加载、SE 节点无标签未打标或读权限失败、触摸屏自检结果为 Pass"
+  }
+]

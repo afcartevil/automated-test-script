@@ -43,7 +43,7 @@ export type DeviceStatus =
   | '待命'
   | '刷机中'
 
-export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'ai_generated'
+export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated'
 export type DeviceTestType = StandardTestType | 'custom'
 
 export interface SimCardInfo {
@@ -450,6 +450,7 @@ function loadCaseConfigs(): void {
     'power_current_analysis.json',
     'power_feature_wbs.json',
     'thermal_scheme.json',
+    'pipeline_adapt_tp.json',
   ]
   
   for (const file of configFiles) {
@@ -1067,6 +1068,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'power') return ['current_analysis']
   if (testType === 'power_feature') return ['wbs']
   if (testType === 'thermal') return ['scheme']
+  if (testType === 'pipeline_adapt') return ['tp']
   if (testType === 'ai_generated') return [AI_GENERATED_MODULE]
   return ['driver', 'tdd']
 }
@@ -3830,6 +3832,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     power_feature: '功耗特性自检',
     thermal: '温升方案自检',
     therm: '温升方案自检',
+    pipeline_adapt: '流水线适配自动化测试',
     ai_generated: 'AI用例',
   }
   const MODULE_ORDER: Record<string, number> = {
@@ -3845,6 +3848,10 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     current_analysis: 14,
     wbs: 15,
     scheme: 16,
+    tp: 30,
+    motor: 31,
+    lcm: 32,
+    charger: 33,
     [AI_GENERATED_MODULE]: 20,
     tdd: 99,
   }
@@ -3876,7 +3883,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'thermal', AI_GENERATED_TEST_TYPE]
+  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'thermal', 'pipeline_adapt', AI_GENERATED_TEST_TYPE]
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),

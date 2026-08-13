@@ -1,0 +1,19 @@
+{
+  "testType": "pipeline_adapt",
+  "module": "tp",
+  "moduleLabel": "TP",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "TP适配检查",
+      "canReuse": false,
+      "automationMode": "full"
+    }
+  ]
+}

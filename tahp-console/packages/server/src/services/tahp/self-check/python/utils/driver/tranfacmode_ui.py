@@ -19,6 +19,8 @@ def adb(device_id: str, *args: str) -> subprocess.CompletedProcess[str]:
         ["adb", "-s", device_id, *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
         check=False,
     )

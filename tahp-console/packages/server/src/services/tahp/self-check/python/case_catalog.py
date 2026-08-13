@@ -26,6 +26,7 @@ SHEET_TO_MODULE: dict[str, tuple[str, str]] = {
     "power_current_analysis": ("power", "current_analysis"),
     "power_feature_wbs": ("power_feature", "wbs"),
     "thermal_scheme": ("thermal", "scheme"),
+    "pipeline_adapt_tp": ("pipeline_adapt", "tp"),
 }
 
 MODULE_TO_SHEET: dict[tuple[str, str], str] = {
@@ -41,6 +42,7 @@ TEST_TYPE_LABELS = {
     "power": "功耗自动化测试",
     "power_feature": "功耗特性自检",
     "thermal": "温升方案自检",
+    "pipeline_adapt": "流水线适配自动化测试",
 }
 
 MODULE_LABELS = {
@@ -57,10 +59,14 @@ MODULE_LABELS = {
     "current_analysis": "场景功耗测量",
     "wbs": "功耗特性检测",
     "scheme": "温升方案检测",
+    "tp": "TP",
+    "motor": "马达",
+    "lcm": "LCM",
+    "charger": "Charger",
 }
 
-TEST_TYPE_ORDER = ("str4", "week", "monkey", "smoke", "gms", "power", "power_feature", "thermal")
-MODULE_ORDER = ("driver_component", "driver_hardware", "driver", "monkey", "usd", "cts", "gts", "vts", "cts_tele", "current_analysis", "wbs", "scheme", "tdd")
+TEST_TYPE_ORDER = ("str4", "week", "monkey", "smoke", "gms", "power", "power_feature", "thermal", "pipeline_adapt")
+MODULE_ORDER = ("driver_component", "driver_hardware", "driver", "monkey", "usd", "cts", "gts", "vts", "cts_tele", "current_analysis", "wbs", "scheme", "tp", "motor", "lcm", "charger", "tdd")
 
 
 def make_category_key(test_type: str, module: str) -> str:
