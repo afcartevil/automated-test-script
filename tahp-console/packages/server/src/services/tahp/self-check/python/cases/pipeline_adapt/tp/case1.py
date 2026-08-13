@@ -11,7 +11,7 @@ for _path in (_DIR, _DIR.parent, _DIR.parents[2]):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from _common import get_dut_device_id
+from _common import emit, get_dut_device_id
 from test_cases import run_all_test_cases
 
 
@@ -22,7 +22,7 @@ def run(device_info=None, step_update=None, **context):
             step_update(error)
         return {"status": "fail", "message": error, "full_automation": True}
 
-    results = run_all_test_cases(
+    results, steps = run_all_test_cases(
         serial,
         step_update=step_update,
         result_dir=context.get("result_dir"),
@@ -34,13 +34,12 @@ def run(device_info=None, step_update=None, **context):
     if not failed:
         hint = f"，跳过 {skip_n} 项" if skip_n else ""
         msg = f"TP 适配检查通过，共 {total} 项{hint}"
-        if callable(step_update):
-            step_update(msg)
+        # 追加汇总，勿整段覆盖（否则报告子步骤只剩这一行）
+        emit(step_update, steps, msg)
         return {"status": "pass", "message": msg, "full_automation": True}
 
     first = failed[0]
     reason = f"{first.get('name')}: {first.get('message')}"
     msg = f"{len(failed)}/{total} 项失败; {reason}"
-    if callable(step_update):
-        step_update(msg)
+    emit(step_update, steps, msg)
     return {"status": "fail", "message": msg, "full_automation": True}

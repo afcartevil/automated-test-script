@@ -205,17 +205,28 @@ TP_TEST_CASES = (
     test_factory_capacitance,
 )
 
+_STATUS_SUFFIX = {
+    "pass": "成功",
+    "fail": "失败",
+    "skip": "跳过",
+}
+
 
 def run_all_test_cases(
     serial: str,
     *,
     step_update: StepFn | None = None,
     result_dir=None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[str]]:
     steps = [f"设备: {serial}", "开始执行 TP 流水线适配检查"]
     if callable(step_update):
         step_update("\n".join(steps))
-    return [
-        fn(serial, steps=steps, step_update=step_update, result_dir=result_dir)
-        for fn in TP_TEST_CASES
-    ]
+
+    results: list[dict[str, Any]] = []
+    for fn in TP_TEST_CASES:
+        result = fn(serial, steps=steps, step_update=step_update, result_dir=result_dir)
+        results.append(result)
+        # 报告「子步骤」依赖「标题-成功/失败」格式；每项结束落一条汇总
+        suffix = _STATUS_SUFFIX.get(str(result.get("status")), str(result.get("status")))
+        emit(step_update, steps, f"{result.get('name')}-{suffix}")
+    return results, steps
