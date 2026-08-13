@@ -2027,25 +2027,328 @@ function evaluateModemBuildResult(result: HarnessResult, extraEvidence = ''): bo
 function collectMappedBuildEvidence(config: ModemBaselineConfig): string {
   const mapped = computeMappedWorkDir(config)
   if (!mapped) return ''
-  const candidates = [
-    path.resolve(mapped, 'log', 'md_build.log'),
-    path.resolve(mapped, 'log', 'build.log'),
-    path.resolve(mapped, 'out', 'md_build.log'),
-  ]
+
+  function scanModuleErrorLogs(buildRoot: string): Array<{ full: string; mtime: number; size: number }> {
+    const hits: Array<{ full: string; mtime: number; size: number }> = []
+    const errorRe = /error|failed|failure|fail X|link fail|recipe for target|undefined|no such file|not existed|Error\s+\d+/i
+    if (!fs.existsSync(buildRoot)) return hits
+    const stack: string[] = [buildRoot]
+    while (stack.length) {
+      const dir = stack.pop()!
+      let entries: Array<fs.Dirent>
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { continue }
+      for (const ent of entries) {
+        const full = path.join(dir, ent.name)
+        if (ent.isDirectory()) {
+          // 只进 build/*/bin/log 这种路径，避免扫源码目录
+          const rel = path.relative(buildRoot, full)
+          if (rel.split(path.sep).filter(s => s.toLowerCase() === 'log').length <= 2) stack.push(full)
+          continue
+        }
+        if (!ent.isFile()) continue
+        if (!/\.log$|\.err$/i.test(ent.name)) continue
+        let st: fs.Stats
+        try { st = fs.statSync(full) } catch { continue }
+        if (!st.size || st.size <= 0) continue
+        const rel = path.relative(buildRoot, full)
+        // 只收 build/**/bin/log 下的（modem parallel build 模块日志）
+        if (!/(?:^|[\\/])bin[\\/]log(?:[\\/]|$)/i.test(rel)) continue
+        const base = ent.name.toLowerCase()
+        let keep = /error|fail|link\.log|custom_protocol|protocol|codegen|sys_mem_gen/i.test(base)
+        if (!keep) {
+          let head = '', tail = ''
+          try {
+            const fd = fs.openSync(full, 'r')
+            try {
+              const b = Buffer.alloc(4096)
+              const n = fs.readSync(fd, b, 0, 4096, 0)
+              head = b.slice(0, n).toString('utf-8', 0, n)
+            } finally { fs.closeSync(fd) }
+          } catch {}
+          if (!errorRe.test(head)) {
+            try {
+              const fd = fs.openSync(full, 'r')
+              try {
+                const b = Buffer.alloc(4096)
+                const off = Math.max(0, st.size - 4096)
+                const n = fs.readSync(fd, b, 0, 4096, off)
+                tail = b.slice(0, n).toString('utf-8', 0, n)
+              } finally { fs.closeSync(fd) }
+            } catch {}
+          }
+          keep = errorRe.test(head) || errorRe.test(tail)
+        }
+        if (keep) hits.push({ full, mtime: st.mtimeMs, size: st.size })
+      }
+    }
+    return hits
+  }
+
   const chunks: string[] = []
-  for (const filePath of candidates) {
-    if (!fs.existsSync(filePath)) continue
+  // 1) 先拿我们自己写的 .tahp/modem-baseline/build-logs 最新 3 份（这是 bld_modem.sh 完整 stdout/stderr）
+  const ownBuildLogDir = path.resolve(mapped, '.tahp', 'modem-baseline', 'build-logs')
+  if (fs.existsSync(ownBuildLogDir)) {
     try {
-      const text = decodeText(fs.readFileSync(filePath)).trim()
-      if (!text) continue
-      // 只取尾部，避免超大编译日志拖垮判定
-      const tailed = text.length > 200_000 ? text.slice(text.length - 200_000) : text
-      chunks.push(`----- ${filePath} -----\n${tailed}`)
-    } catch {
-      // ignore unreadable evidence files
+      const items = fs.readdirSync(ownBuildLogDir, { withFileTypes: true })
+        .filter(e => e.isFile() && /^modem-build-.*\.log$/i.test(e.name))
+        .map(e => {
+          const full = path.join(ownBuildLogDir, e.name)
+          return { full, mtime: fs.statSync(full).mtimeMs }
+        })
+        .sort((a, b) => b.mtime - a.mtime)
+        .slice(0, 3)
+      for (const it of items) {
+        try {
+          const text = decodeText(fs.readFileSync(it.full)).replace(/\r\n/g, '\n')
+          if (!text) continue
+          const tailed = text.length > 300_000 ? text.slice(text.length - 300_000) : text
+          chunks.push(`----- own build log ${it.full} -----\n${tailed}`)
+        } catch {}
+      }
+    } catch {}
+  }
+  // 2) 再拿 mapped 下 build/**/bin/log 的模块错误日志最新 4 份
+  const buildRoot = path.resolve(mapped, 'build')
+  try {
+    const modHits = scanModuleErrorLogs(buildRoot)
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 4)
+    for (const h of modHits) {
+      try {
+        const text = decodeText(fs.readFileSync(h.full)).replace(/\r\n/g, '\n')
+        if (!text) continue
+        const tailed = text.length > 200_000 ? text.slice(text.length - 200_000) : text
+        chunks.push(`----- module log ${h.full} -----\n${tailed}`)
+      } catch {}
+    }
+  } catch {}
+  return chunks.join('\n')
+}
+
+function archiveBuildLogsToRunDir(runId: string, config: ModemBaselineConfig): string[] {
+  const mapped = computeMappedWorkDir(config)
+  if (!mapped) return []
+
+  function scanModuleErrorLogs(buildRoot: string): Array<{ full: string; mtime: number }> {
+    const hits: Array<{ full: string; mtime: number }> = []
+    const errorRe = /error|failed|failure|fail X|link fail|recipe for target|undefined|no such file|not existed|Error\s+\d+/i
+    if (!fs.existsSync(buildRoot)) return hits
+    const stack: string[] = [buildRoot]
+    while (stack.length) {
+      const dir = stack.pop()!
+      let entries: Array<fs.Dirent>
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { continue }
+      for (const ent of entries) {
+        const full = path.join(dir, ent.name)
+        if (ent.isDirectory()) {
+          const rel = path.relative(buildRoot, full)
+          if (rel.split(path.sep).filter(s => s.toLowerCase() === 'log').length <= 2) stack.push(full)
+          continue
+        }
+        if (!ent.isFile()) continue
+        if (!/\.log$|\.err$/i.test(ent.name)) continue
+        let st: fs.Stats
+        try { st = fs.statSync(full) } catch { continue }
+        if (!st.size || st.size <= 0) continue
+        const rel = path.relative(buildRoot, full)
+        if (!/(?:^|[\\/])bin[\\/]log(?:[\\/]|$)/i.test(rel)) continue
+        const base = ent.name.toLowerCase()
+        let keep = /error|fail|link\.log|custom_protocol|protocol|codegen|sys_mem_gen/i.test(base)
+        if (!keep) {
+          let head = '', tail = ''
+          try {
+            const fd = fs.openSync(full, 'r')
+            try {
+              const b = Buffer.alloc(4096)
+              const n = fs.readSync(fd, b, 0, 4096, 0)
+              head = b.slice(0, n).toString('utf-8', 0, n)
+            } finally { fs.closeSync(fd) }
+          } catch {}
+          if (!errorRe.test(head)) {
+            try {
+              const fd = fs.openSync(full, 'r')
+              try {
+                const b = Buffer.alloc(4096)
+                const off = Math.max(0, st.size - 4096)
+                const n = fs.readSync(fd, b, 0, 4096, off)
+                tail = b.slice(0, n).toString('utf-8', 0, n)
+              } finally { fs.closeSync(fd) }
+            } catch {}
+          }
+          keep = errorRe.test(head) || errorRe.test(tail)
+        }
+        if (keep) hits.push({ full, mtime: st.mtimeMs })
+      }
+    }
+    return hits
+  }
+
+  const dstDir = path.resolve(runDir(runId), 'artifacts', 'build-logs')
+  try { ensureDir(dstDir) } catch { return [] }
+  const archived: string[] = []
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+
+  const ownBuildLogDir = path.resolve(mapped, '.tahp', 'modem-baseline', 'build-logs')
+  const candidates: Array<{ full: string; prefix: 'own_' | 'mod_' }> = []
+  if (fs.existsSync(ownBuildLogDir)) {
+    try {
+      fs.readdirSync(ownBuildLogDir, { withFileTypes: true })
+        .filter(e => e.isFile() && /^modem-build-.*\.log$/i.test(e.name))
+        .map(e => ({ name: e.name, full: path.join(ownBuildLogDir, e.name) }))
+        .map(x => ({ ...x, mtime: fs.statSync(x.full).mtimeMs }))
+        .sort((a, b) => b.mtime - a.mtime)
+        .slice(0, 3)
+        .forEach(x => candidates.push({ full: x.full, prefix: 'own_' }))
+    } catch {}
+  }
+  const buildRoot = path.resolve(mapped, 'build')
+  try {
+    scanModuleErrorLogs(buildRoot)
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 4)
+      .forEach(x => candidates.push({ full: x.full, prefix: 'mod_' }))
+  } catch {}
+
+  if (!candidates.length) return []
+  for (const c of candidates) {
+    if (!fs.existsSync(c.full)) continue
+    const base = path.basename(c.full)
+    const slug = c.full.startsWith(mapped)
+      ? path.relative(mapped, c.full).replace(/[\\/:*?"<>|]/g, '_')
+      : base
+    const dstBase = (slug.length < 120 ? slug : base) || base
+    const dst = path.resolve(dstDir, `${ts}__${c.prefix}${dstBase}`)
+    try {
+      fs.copyFileSync(c.full, dst)
+      archived.push(dst)
+    } catch {}
+  }
+  return archived
+}
+
+async function fetchRemoteBuildEvidenceFallback(config: ModemBaselineConfig, remoteBuildLogHint: string): Promise<{ remoteLog: string; tail: string }> {
+  const remote = computeRemoteWorkDir(config)
+  const arcDir = `${remote.replace(/\/+$/, '')}/.tahp/modem-baseline/build-logs`
+  const tailLines = 120
+  const modTailBytes = 40 * 1024
+  const findScript = [
+    '#!/usr/bin/env bash',
+    'set +e',
+    `REMOTE_LOG=""`,
+    `if [ -n "${shellSingleQuote(remoteBuildLogHint)}" ] && [ -f "${shellSingleQuote(remoteBuildLogHint)}" ]; then`,
+    `  REMOTE_LOG="${shellSingleQuote(remoteBuildLogHint)}"`,
+    `elif [ -d ${shellSingleQuote(arcDir)} ]; then`,
+    `  REMOTE_LOG=$(ls -1t ${shellSingleQuote(arcDir)}/modem-build-*.log 2>/dev/null | head -n 1)`,
+    'fi',
+    'MAIN_TAIL=""',
+    '[ -n "$REMOTE_LOG" ] && MAIN_TAIL=$(tail -n ' + String(tailLines) + ' "$REMOTE_LOG" 2>/dev/null || true)',
+    'echo "__APM_REMOTE_FB_BEGIN__"',
+    '[ -n "$REMOTE_LOG" ] && echo "__APM_REMOTE_LOG__:$REMOTE_LOG"',
+    'echo "__APM_MAIN_TAIL_BEGIN__"',
+    'echo "$MAIN_TAIL"',
+    'echo "__APM_MAIN_TAIL_END__"',
+    `MOD_LIST=''`,
+    `if [ -d build ]; then`,
+    `  MOD_LIST=$(find build -type f -path '*/bin/log/*.log' -size +0c \\`,
+    `    \\( -name '*error*' -o -name '*fail*' -o -name '*.err' \\`,
+    `       -o -name 'link.log' -o -name 'custom_protocol.log' \\`,
+    `       -o -name 'protocol*.log' -o -name 'sys_mem_gen*' -o -name 'codegen*' \\`,
+    `       -o \\( -exec grep -l -E 'error|failed|fail X|link fail|undefined|recipe for target|not existed' {} \\; \\) \\`,
+    `    2>/dev/null | head -n 4)`,
+    'fi',
+    `IFS='\n' read -r -d '' -a modArr <<<"$MOD_LIST" || true`,
+    'for m in "${modArr[@]}"; do',
+    '  [ -n "$m" ] || continue',
+    '  echo ">>> MOD_LOG: $m"',
+    `  tail -c ${String(modTailBytes)} "$m" 2>/dev/null || true`,
+    '  echo "<<< MOD_LOG_END"',
+    'done',
+    'echo "__APM_REMOTE_FB_END__"',
+    'true',
+  ].join('\n')
+  const b64 = Buffer.from(findScript, 'utf-8').toString('base64')
+  const WRAPPER = '/tmp/_tahp_mdm_fb.sh'
+  const command = `cd ${shellSingleQuote(remote)} ; base64 -d <<<${shellSingleQuote(b64)} > ${WRAPPER} ; bash ${WRAPPER} ; rm -f ${WRAPPER} ; true`
+  try {
+    const result = await harnessExec(command, { timeoutMs: 90_000 })
+    const raw = `${String(result.output ?? '')}\n${String(result.error ?? '')}`
+    const begin = raw.indexOf('__APM_REMOTE_FB_BEGIN__')
+    const end = raw.indexOf('__APM_REMOTE_FB_END__', begin >= 0 ? begin : 0)
+    const body = begin >= 0 ? (end >= 0 ? raw.slice(begin + '__APM_REMOTE_FB_BEGIN__'.length, end) : raw.slice(begin + '__APM_REMOTE_FB_BEGIN__'.length)) : raw
+    const logMatch = body.match(/__APM_REMOTE_LOG__:([^\s]+)/)
+    const tailBlock = body.match(/__APM_MAIN_TAIL_BEGIN__\n([\s\S]*?)\n__APM_MAIN_TAIL_END__/)
+    const tail = tailBlock?.[1] ? tailBlock[1].replace(/\r/g, '') : ''
+    return { remoteLog: logMatch?.[1] ?? '', tail }
+  } catch {
+    return { remoteLog: '', tail: '' }
+  }
+}
+
+function extractBuildErrorSummary(text: string): string {
+  const raw = String(text ?? '')
+  if (!raw) return ''
+  const body = raw.length > 1_500_000 ? raw.slice(raw.length - 1_500_000) : raw
+  const lines = body.split(/\r?\n/)
+  const errorPatterns: Array<{ label: string; re: RegExp }> = [
+    { label: 'conflict_marker', re: /^\s*(?:<{7,}|={7,}\s*$|>{7,})/ },
+    { label: 'compiler_error', re: /\berror\s*[CDEF]\d+\s*:/i },
+    { label: 'gcc_error', re: /:\s*error\s*:/i },
+    { label: 'clang_error', re: /:\s*fatal\s+error\s*:/i },
+    { label: 'syntax_error', re: /\bsyntax\s+error\b/i },
+    { label: 'parse_error', re: /\bparse\s+error\b/i },
+    { label: 'assert_fail', re: /\bassert(?:ion)?\s+failed\b/i },
+    { label: 'undefined_ref', re: /\bundefined\s+reference\s+to\b/i },
+    { label: 'undefined_sym', re: /\bundefined\s+(?:symbol|identifier|macro)\b/i },
+    { label: 'redef_err', re: /\bredefinition\s+of\b/i },
+    { label: 'no_match_rule', re: /\bno\s+rule\s+to\s+make\s+target\b/i },
+    { label: 'cannot_find', re: /\bc(?:annot|an't)\s+(?:open|find|locate|read)\b/i },
+    { label: 'no_such_file', re: /\bno\s+such\s+file\b/i },
+    { label: 'file_not_found', re: /\bfile\s+not\s+found\b/i },
+    { label: 'invalid_value', re: /\binvalid\b.+(?:value|argument|option|syntax|format|field)\b/i },
+    { label: 'missing_file', re: /\bmissing\b.+(?:file|directory|operator|separator)\b/i },
+    { label: 'mod_error_log', re: /\b(?:error|fail)\s*log\s*:\s*\S+\.log\b/i },
+    { label: 'parallel_fail', re: /\b(?:Fail\s*X|FAILED|exit\s+code\s*[1-9]\d*|exit\s+status\s*[1-9]\d*)\b/ },
+    { label: 'link_error', re: /\blink\s+(?:fail|failed|error|halt|stop)\b/i },
+    { label: 'elf_not_exist', re: /\b\.elf\s+is\s+not\s+existed\b/i },
+    { label: 'make_recipe_fail', re: /recipe\s+for\s+target\s+['"][^'"]+['"]\s+failed/i },
+    { label: 'make_star_error', re: /make(?:\[\d+\])?:\s*\*\*\*.*Error\s+\d+/i },
+    { label: 'make_stop', re: /^\s*make(?:\[\d+\])?:\s*\*\*\*\s*No\s+rule\s+to\s+make\s+target/i },
+    { label: 'make_halt', re: /^\s*Stop\.\s*$/i },
+    { label: 'make_error', re: /\bmake\b.*\b(error|failed)\b/i },
+    { label: 'ninja_error', re: /\bninja\b.*\b(error|stopped)\b/i },
+    { label: 'cmd_exit_err', re: /\b(?:exited|terminated)\s+with\s+(?:status|code)\s+[1-9]\d*/i },
+    { label: 'returned_err', re: /\breturned\s+(?:non-?zero|exit\s+code\s+[1-9])/i },
+  ]
+  const configLikeExt = /\.(?:def|cfg|conf|config|ini|json|yaml|yml|xml|mk|make|kconfig|inc|ld|lds|ldscript|dts|dtsi|dtbo|py|pl|pm|tcl|sh|bash|bat|cmd|rc)\b/i
+  const srcLikeExt = /\.(?:c|cc|cpp|cxx|c\+\+|h|hh|hpp|hxx|h\+\+|s|S|asm|java|kt|kts|rs|go|m|mm|swift|cs|sql|proto|thrift|aidl|hal|fs|ver|v|sv|svh)\b/i
+  const hitSet = new Set<string>()
+  const hits: Array<{ idx: number; label: string; line: string }> = []
+  for (let i = 0; i < lines.length; i++) {
+    const orig = lines[i]
+    if (!orig) continue
+    const line = orig.trim()
+    let matchedLabel: string | null = null
+    for (const p of errorPatterns) {
+      if (p.re.test(line)) { matchedLabel = p.label; break }
+    }
+    if (!matchedLabel && /\b(error|err|failed|failure|invalid|syntax|parse|fatal|undefined|missing|cannot)\b/i.test(line)) {
+      if (configLikeExt.test(line)) matchedLabel = 'config_file_err'
+      else if (srcLikeExt.test(line) && /(?:^|[\s:,"'`(])/.test(line)) matchedLabel = 'src_file_err'
+    }
+    if (matchedLabel) {
+      const key = `${matchedLabel}::${line}`
+      if (!hitSet.has(key)) { hitSet.add(key); hits.push({ idx: i, label: matchedLabel, line }) }
     }
   }
-  return chunks.join('\n')
+  if (!hits.length) return ''
+  const MAX = 50
+  const picked = hits.slice(0, MAX)
+  const linesOut: string[] = picked.map(h => {
+    const trimmed = h.line.length > 360 ? `${h.line.slice(0, 360)}…(+${h.line.length - 360}chars)` : h.line
+    return `  [${h.label}] ${trimmed}`
+  })
+  if (hits.length > MAX) linesOut.push(`  … 另有 ${hits.length - MAX} 条错误匹配，已省略，请直接查看 archived_logs 完整文件`)
+  return linesOut.join('\n')
 }
 
 type TranModemTargetMode = 'trunk' | 'mp' | 'unknown'
@@ -2435,27 +2738,37 @@ function appendMappedBuildLogTail(config: ModemBaselineConfig, appendLog: (line:
     appendLog('[build] mapped_build_log=unavailable (no mapped work_dir)\n')
     return
   }
-  const candidates = [
-    path.resolve(mapped, 'log', 'md_build.log'),
-    path.resolve(mapped, 'log', 'build.log'),
-    path.resolve(mapped, 'out', 'md_build.log'),
-  ]
-  for (const filePath of candidates) {
-    if (!fs.existsSync(filePath)) continue
-    try {
-      const text = decodeText(fs.readFileSync(filePath)).replace(/\r\n/g, '\n').trim()
+  const ownBuildLogDir = path.resolve(mapped, '.tahp', 'modem-baseline', 'build-logs')
+  if (!fs.existsSync(ownBuildLogDir)) {
+    appendLog('[build] mapped own build-logs dir not yet synced; retry this run later or inspect remote .tahp/modem-baseline/build-logs directly\n')
+    return
+  }
+  try {
+    const items = fs.readdirSync(ownBuildLogDir, { withFileTypes: true })
+      .filter(e => e.isFile() && /^modem-build-.*\.log$/i.test(e.name))
+      .map(e => {
+        const full = path.join(ownBuildLogDir, e.name)
+        return { full, name: e.name, mtime: fs.statSync(full).mtimeMs }
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, 1)
+    if (!items.length) {
+      appendLog('[build] mapped own build-logs empty; retry this run later or inspect remote directly\n')
+      return
+    }
+    for (const it of items) {
+      const text = decodeText(fs.readFileSync(it.full)).replace(/\r\n/g, '\n')
       if (!text) continue
       const lines = text.split('\n')
       const tail = lines.slice(Math.max(0, lines.length - maxLines)).join('\n')
-      appendLog(`[build] ===== md_build.log 尾部 (${path.basename(filePath)}, last ${Math.min(maxLines, lines.length)} lines) =====\n`)
+      appendLog(`[build] ===== modem-build 尾部 (${it.name}, last ${Math.min(maxLines, lines.length)} lines) =====\n`)
       appendLog(`${tail.endsWith('\n') ? tail : `${tail}\n`}`)
-      appendLog('[build] ===== md_build.log 尾部结束 =====\n')
+      appendLog('[build] ===== modem-build 尾部结束 =====\n')
       return
-    } catch (error) {
-      appendLog(`[build] read md_build.log failed: ${String((error as Error)?.message ?? error)}\n`)
     }
+  } catch (error) {
+    appendLog(`[build] read mapped own build-log failed: ${String((error as Error)?.message ?? error)}\n`)
   }
-  appendLog('[build] md_build.log not found under mapped work_dir/log\n')
 }
 
 async function runModemBuildAfterResume(
@@ -2479,61 +2792,193 @@ async function runModemBuildAfterResume(
   }
   appendLog(`[build] start project=${project} cmd=./tools/bld_modem.sh ${project}\n`)
 
-  // 在命令末尾打印真实 shell 退出码，避免 harness bridge 的 exit_code 掩盖 make 失败。
-  const buildScript = `set +e; logout(){ :; }; ./tools/bld_modem.sh ${shellSingleQuote(project)} >/dev/null 2>&1; rc=$?; echo __APM_BUILD_EXIT__:$rc; true`
-  const command = `cd ${shellSingleQuote(remote)} && bash -lc ${shellSingleQuote(buildScript)}`
+  const remoteBuildLogDir = `${remote.replace(/\/+$/, '')}/.tahp/modem-baseline/build-logs`
+  const TAIL_LINES = 120
+  const buildScriptRaw = [
+    '#!/usr/bin/env bash',
+    'set +e',
+    'logout(){ :; }',
+    `TMP_LOG=/tmp/_tahp_mdm_build.log`,
+    `ARC_DIR=${shellSingleQuote(remoteBuildLogDir)}`,
+    `mkdir -p "$ARC_DIR"`,
+    `if [ ! -d "$ARC_DIR" ]; then`,
+    `  echo "__APM_ARC_DIR_WARN__: mkdir failed ARC_DIR=$ARC_DIR" >&2`,
+    `fi`,
+    `: > "$TMP_LOG"`,
+    `echo "BUILD start $(date) project=${project}" >> "$TMP_LOG"`,
+    `./tools/bld_modem.sh ${shellSingleQuote(project)} >> "$TMP_LOG" 2>&1`,
+    'rc=$?',
+    `echo "BUILD end $(date) rc=$rc" >> "$TMP_LOG"`,
+    `TS=$(date +%Y%m%d-%H%M%S)`,
+    `ARC_LOG="$ARC_DIR/modem-build-$TS.log"`,
+    `if cp -f "$TMP_LOG" "$ARC_LOG" 2>/dev/null; then`,
+    `  echo "__APM_REMOTE_LOG__:$ARC_LOG"`,
+    `else`,
+    `  FALLBACK_LOG="/tmp/_tahp_mdm_build-$TS.log"`,
+    `  cp -f "$TMP_LOG" "$FALLBACK_LOG" 2>/dev/null || true`,
+    `  if [ -f "$FALLBACK_LOG" ]; then`,
+    `    echo "__APM_REMOTE_LOG__:$FALLBACK_LOG"`,
+    `  else`,
+    `    echo "__APM_REMOTE_LOG__:$TMP_LOG"`,
+    `  fi`,
+    `  echo "__APM_CP_WARN__: cp to ARC_DIR failed; use /tmp fallback remote log" >&2`,
+    `fi`,
+    `echo "__APM_TMP_LOG__:$TMP_LOG"`,
+    'echo "__APM_BUILD_TAIL_BEGIN__"',
+    `tail -n ${TAIL_LINES} "$TMP_LOG" || true`,
+    'echo "__APM_BUILD_TAIL_END__"',
+    'echo "__APM_BUILD_EXIT__:$rc"',
+    'true',
+  ].join('\n')
+  const buildScriptB64 = Buffer.from(buildScriptRaw, 'utf-8').toString('base64')
+  const TMP_WRAPPER = '/tmp/_tahp_mdm_bld.sh'
+  const command = `cd ${shellSingleQuote(remote)} ; base64 -d <<<${shellSingleQuote(buildScriptB64)} > ${TMP_WRAPPER} ; bash ${TMP_WRAPPER} ; rm -f ${TMP_WRAPPER} ; true`
   const BUILD_TIMEOUT_MS = 6 * 60 * 60 * 1000
   appendLog(`[build] harness timeout_sec=${Math.ceil(BUILD_TIMEOUT_MS / 1000)}\n`)
   appendLog(`[build] modem编译中，预计10~20分钟（视机器负载）；请关注下方心跳与最终 success/failed 摘要\n`)
 
   const heartbeat = setInterval(() => {
-    try {
-      appendLog(`[build] heartbeat still_running project=${project}\n`)
-    } catch {
-      // ignore
-    }
+    try { appendLog(`[build] heartbeat still_running project=${project}\n`) } catch {}
   }, 120_000)
+
+  let archivedPaths: string[] = []
+  let bridgeBuildTail = ''
+  let remoteFallbackTail = ''
 
   try {
     const result = await harnessExec(command, { timeoutMs: BUILD_TIMEOUT_MS })
     const output = String(result.output ?? '').trim()
     const errorText = String(result.error ?? '').trim()
-    if (output) appendLog(`[build] output:\n${output.endsWith('\n') ? output : `${output}\n`}`)
-    if (errorText) appendLog(`[build] error:\n${errorText.endsWith('\n') ? errorText : `${errorText}\n`}`)
+
+    const stripBuildMarkers = (text: string) => text
+      .replace(/\n?__APM_BUILD_TAIL_BEGIN__\n[\s\S]*?\n__APM_BUILD_TAIL_END__/g, '')
+      .replace(/\n?__APM_REMOTE_LOG__:[^\n]*/g, '')
+      .replace(/\n?__APM_TMP_LOG__:[^\n]*/g, '')
+      .replace(/\n?__APM_BUILD_EXIT__:\d+/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+    const visibleOutput = stripBuildMarkers(output)
+    const visibleError = stripBuildMarkers(errorText)
+    if (visibleOutput) appendLog(`[build] output:\n${visibleOutput.endsWith('\n') ? visibleOutput : `${visibleOutput}\n`}`)
+    if (visibleError) appendLog(`[build] error:\n${visibleError.endsWith('\n') ? visibleError : `${visibleError}\n`}`)
     appendLog(`[build] done status=${result.status} exit_code=${String(result.exit_code)}\n`)
 
+    const combinedStream = `${output}\n${errorText}`
+    const tailMatch = combinedStream.match(/__APM_BUILD_TAIL_BEGIN__\n([\s\S]*?)\n__APM_BUILD_TAIL_END__/)
+    if (tailMatch?.[1]) {
+      bridgeBuildTail = tailMatch[1].replace(/\r/g, '')
+      appendLog(`[build] bridge_tail_bytes=${Buffer.byteLength(bridgeBuildTail, 'utf-8')}\n`)
+    }
+
+    const remoteLogMatch = combinedStream.match(/__APM_REMOTE_LOG__:([^\s]+)/)
+    if (remoteLogMatch?.[1]) appendLog(`[build] remote_build_log=${remoteLogMatch[1]}\n`)
+
+    let resolvedRemoteLog = remoteLogMatch?.[1] ?? ''
+    if (!bridgeBuildTail || !resolvedRemoteLog) {
+      const fallback = await fetchRemoteBuildEvidenceFallback(config, resolvedRemoteLog)
+      if (!resolvedRemoteLog && fallback.remoteLog) {
+        resolvedRemoteLog = fallback.remoteLog
+        appendLog(`[build] remote_build_log=${resolvedRemoteLog}\n`)
+      }
+      if (!bridgeBuildTail && fallback.tail) {
+        remoteFallbackTail = fallback.tail
+        appendLog(`[build] remote_fallback_tail_bytes=${Buffer.byteLength(remoteFallbackTail, 'utf-8')}\n`)
+      }
+    }
+
     const mappedEvidence = collectMappedBuildEvidence(config)
-    if (mappedEvidence) {
-      appendLog(`[build] mapped_evidence_bytes=${Buffer.byteLength(mappedEvidence, 'utf-8')}\n`)
+    const effectiveBuildTail = bridgeBuildTail || remoteFallbackTail
+    const effectiveTailLabel = bridgeBuildTail ? '__APM_BUILD_TAIL__ from bridge' : 'remote build tail fallback'
+    const evidenceCombined = effectiveBuildTail
+      ? `----- ${effectiveTailLabel} -----\n${effectiveBuildTail}\n${mappedEvidence ? `${mappedEvidence}\n` : ''}`
+      : mappedEvidence
+    if (evidenceCombined) {
+      appendLog(`[build] evidence_bytes=${Buffer.byteLength(evidenceCombined, 'utf-8')} (bridge_tail=${Buffer.byteLength(bridgeBuildTail, 'utf-8')} remote_tail=${Buffer.byteLength(remoteFallbackTail, 'utf-8')} mapped=${Buffer.byteLength(mappedEvidence, 'utf-8')})\n`)
     }
 
-    const exitMarker = `${output}\n${errorText}`.match(/__APM_BUILD_EXIT__:(\d+)/)
-    if (exitMarker) {
-      appendLog(`[build] shell_exit=${exitMarker[1]}\n`)
+    const exitMarker = combinedStream.match(/__APM_BUILD_EXIT__:(\d+)/)
+    if (exitMarker) appendLog(`[build] shell_exit=${exitMarker[1]}\n`)
+
+    archivedPaths = archiveBuildLogsToRunDir(runId, config)
+    if (effectiveBuildTail && archivedPaths.every(p => !/own_modem-build|bridge[-_]tail|remote[-_]build[-_]tail/i.test(path.basename(p)))) {
+      try {
+        const dstDir = path.resolve(runDir(runId), 'artifacts', 'build-logs')
+        ensureDir(dstDir)
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+        const dstName = bridgeBuildTail ? `${ts}__bridge-build-tail.log` : `${ts}__remote-build-tail.log`
+        const dst = path.resolve(dstDir, dstName)
+        fs.writeFileSync(dst, effectiveBuildTail, 'utf-8')
+        archivedPaths.unshift(dst)
+      } catch {}
+    }
+    if (archivedPaths.length) {
+      appendLog(`[build] archived_logs=${archivedPaths.length} paths:\n${archivedPaths.map(p => `  - ${p}`).join('\n')}\n`)
     }
 
-    const passed = evaluateModemBuildResult(result, mappedEvidence)
+    const passed = evaluateModemBuildResult(result, evidenceCombined)
       && !(exitMarker && exitMarker[1] !== '0')
-    appendMappedBuildLogTail(config, appendLog)
+
     if (passed) {
       appendLog(`[build] success project=${project}\n`)
       appendLog(`[build] ===== 编译成功 project=${project} shell_exit=${exitMarker?.[1] ?? 'n/a'} =====\n`)
       return 'success'
     }
-    // bridge 默认 300s 超时会出现此文案；远端编译可能仍在跑
-    if (/timed out waiting for bridge response/i.test(`${output}\n${errorText}`)) {
+
+    if (/timed out waiting for bridge response/i.test(combinedStream)) {
       appendLog('[build] bridge timed out before modem build finished; treat as failed wait (increase harness --timeout)\n')
     }
-    if (!output && !errorText && !mappedEvidence) {
+    if (!output && !errorText && !evidenceCombined) {
       appendLog('[build] no build output/evidence captured; refuse to mark success on bridge ok/0 alone\n')
+    }
+    if (!archivedPaths.length && !mappedEvidence) {
+      appendLog('[build] note: mapped .tahp/modem-baseline/build-logs may not be synced yet; retry this run or inspect remote build-logs directly\n')
+    }
+    if (effectiveBuildTail) {
+      appendLog(`[build] key_tail (bld_modem.sh 最后关键信息):\n${effectiveBuildTail.endsWith('\n') ? effectiveBuildTail : `${effectiveBuildTail}\n`}`)
+    } else {
+      appendMappedBuildLogTail(config, appendLog)
+    }
+    const bodiesForSummary: string[] = [bridgeBuildTail, remoteFallbackTail, mappedEvidence]
+    for (const p of archivedPaths) {
+      if (!fs.existsSync(p)) continue
+      try { bodiesForSummary.push(fs.readFileSync(p, 'utf-8')) } catch {}
+    }
+    const errorSummary = extractBuildErrorSummary(bodiesForSummary.filter(Boolean).join('\n=====\n'))
+    if (errorSummary) {
+      appendLog(`[build] error_summary (可能的编译报错，完整日志见下方 archived_logs):\n${errorSummary}\n`)
+    } else {
+      appendLog('[build] error_summary: 未自动匹配到典型报错模式，请直接打开 archived_logs 中以 own_modem-build、bridge-build-tail 或 remote-build-tail 结尾的文件查看完整上下文\n')
     }
     appendLog(`[build] failed project=${project}\n`)
     appendLog(`[build] ===== 编译失败 project=${project} shell_exit=${exitMarker?.[1] ?? 'n/a'} =====\n`)
     return 'failed'
   } catch (error) {
+    if (!archivedPaths.length) {
+      archivedPaths = archiveBuildLogsToRunDir(runId, config)
+      const effectiveBuildTail = bridgeBuildTail || remoteFallbackTail
+      if (effectiveBuildTail && archivedPaths.every(p => !/bridge[-_]tail|remote[-_]build[-_]tail/i.test(path.basename(p)))) {
+        try {
+          const dstDir = path.resolve(runDir(runId), 'artifacts', 'build-logs')
+          ensureDir(dstDir)
+          const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+          const dstName = bridgeBuildTail ? `${ts}__bridge-build-tail.log` : `${ts}__remote-build-tail.log`
+          const dst = path.resolve(dstDir, dstName)
+          fs.writeFileSync(dst, effectiveBuildTail, 'utf-8')
+          archivedPaths.unshift(dst)
+        } catch {}
+      }
+      if (archivedPaths.length) {
+        appendLog(`[build] archived_logs_on_error=${archivedPaths.length} paths:\n${archivedPaths.map(p => `  - ${p}`).join('\n')}\n`)
+      }
+    }
+    const effectiveBuildTail = bridgeBuildTail || remoteFallbackTail
+    if (effectiveBuildTail) {
+      appendLog(`[build] key_tail (bld_modem.sh 最后关键信息):\n${effectiveBuildTail.endsWith('\n') ? effectiveBuildTail : `${effectiveBuildTail}\n`}`)
+    } else {
+      appendMappedBuildLogTail(config, appendLog)
+    }
     appendLog(`[build] failed: ${String((error as Error)?.message ?? error)}\n`)
     appendLog(`[build] ===== 编译失败 project=${project} reason=exception =====\n`)
-    appendMappedBuildLogTail(config, appendLog)
     return 'failed'
   } finally {
     clearInterval(heartbeat)
