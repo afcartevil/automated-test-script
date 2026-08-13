@@ -1,0 +1,16 @@
+<template>
+    <gpio_config>
+        <gpio>
+            <number></number>
+            <category></category>
+            <eint_mode></eint_mode>
+            <def_mode></def_mode>
+            <inpull_en></inpull_en>
+            <inpull_selhigh></inpull_selhigh>
+            <def_dir></def_dir>
+            <out_high></out_high>
+            <smt></smt>
+            <ies></ies>
+        </gpio>
+    </gpio_config>
+</template>

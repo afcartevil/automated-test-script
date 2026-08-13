@@ -1,0 +1,6 @@
+.env
+.loginsight_cli.json
+out/
+__pycache__/
+*.pyc
+*.html

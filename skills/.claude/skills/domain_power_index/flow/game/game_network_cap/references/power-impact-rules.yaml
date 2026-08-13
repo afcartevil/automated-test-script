@@ -1,0 +1,13 @@
+# 抓包功耗影响判定阈值
+
+version: 1
+
+thresholds:
+  # T_game 内平均包速率（包/秒）超过此值 → 标记高活跃数传
+  high_packet_rate_pps: 200
+  # 重叠段数据字节率（字节/秒）超过此值 → 标记高吞吐
+  high_byte_rate_bps: 200000
+  # 重叠时长占 T_game 比例低于此值 → 标记抓包覆盖不足
+  min_coverage_ratio: 0.5
+  # 接口索引包数占比低于此值的视为噪声接口
+  iface_noise_ratio: 0.01

@@ -1,0 +1,18 @@
+# game_trace / perf-statistic.html 判定阈值
+version: 1
+
+trace:
+  status: implemented
+  input: perf-statistic.html
+
+# 频率驻留判定（ratio 单位：百分比 0-100，与 HTML running 列一致）
+fixed_freq_ratio_pct: 75.0
+high_freq_peak_ratio_pct: 30.0
+high_band_ratio_pct: 40.0
+high_band_relative: 0.8
+raised_floor_mhz: 1000.0
+raised_floor_low_band_max_pct: 25.0
+
+# CPU 动态功耗（aitools/trace_compare 同源能效表）
+energy_xlsx: energy_efficiency.xlsx
+default_vdd_v: 4.0

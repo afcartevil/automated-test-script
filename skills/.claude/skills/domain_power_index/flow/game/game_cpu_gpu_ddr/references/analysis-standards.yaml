@@ -1,0 +1,17 @@
+# 图层帧率与排查阈值
+
+version: 1
+
+standard_ui_layers: StatusBar,Taskbar,NotificationShade,ColorFade,FramebufferSurface,SmartPanel,TrEdgeBackGestureHandler,SnapshotStartingWindow,Splash Screen
+
+frame_rate:
+  below_avg_min_consecutive_samples: 3
+  # 图层持续低帧（各采样 fps≤此值）则不纳入统计
+  low_fps_exclude_threshold: 5.0
+  # 帧率分布直方图桶（fps 上界，不含）
+  distribution_buckets: [5, 15, 30, 45, 60, 90, 120, 999]
+
+trace:
+  # 由 game_trace 解析 MTK perf-statistic.html
+  status: implemented
+  input: perf-statistic.html

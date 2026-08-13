@@ -1,0 +1,55 @@
+# 游戏硬件功耗台账 — 飞书数据源配置
+# 当前为 Wiki 内嵌「多维表格」(bitable)。
+#
+# 链接：https://transsioner.feishu.cn/wiki/NWATwqEJiifoqRkcrygcLHKcnef?table=tbliLOHkosdbCdlQ&view=vewvz2zoGz
+#
+# 实际字段：
+#   项目(=机型代号 CN6/X6878) | 版本 | 配置(一供/二供…) | 屏_mA | 喇叭_mA | CPU_mA | RF_mA | 其它_mA | 备注
+# 说明：无单独「机型」列，「项目」即机型/工程代号；匹配用 --test-device/--compare-device。
+
+version: 1
+
+source_url: "https://transsioner.feishu.cn/wiki/NWATwqEJiifoqRkcrygcLHKcnef?table=tbliLOHkosdbCdlQ&view=vewvz2zoGz"
+wiki_token: "NWATwqEJiifoqRkcrygcLHKcnef"
+table_id: "tbliLOHkosdbCdlQ"
+view_id: "vewvz2zoGz"
+app_token: ""
+sheet_id: ""
+
+cell_range: "A1:ZZ500"
+header_row: 0
+prefer_live: true
+write_cache_on_success: true
+offline_cache: "hardware-power-by-project.json"
+
+modules:
+  screen:
+    label: 屏
+    columns: [屏_mA, 屏, screen_ma, screen]
+  speaker:
+    label: 喇叭
+    columns: [喇叭_mA, 喇叭, speaker_ma, speaker]
+  cpu:
+    label: CPU平台
+    columns: [CPU_mA, CPU, cpu_ma, cpu]
+  rf:
+    label: 射频
+    columns: [RF_mA, 射频, WiFi_mA, Modem_mA, rf_ma, rf]
+  other_hw:
+    label: 其它硬件
+    columns: [其它_mA, 其它硬件, other_hw_ma, other_hw]
+
+dimension_columns:
+  project: [项目, project, 工程, 项目名]
+  version: [版本, version, 软件版本, SW版本, rom]
+  config: [配置, config, 场景, 配置项, test_case, 供货]
+  device: [机型, device, 设备, device_model, 机型名, 项目]
+  note: [备注, note, 说明]
+  updated: [更新日期, updated, 更新时间, date]
+
+config_aliases:
+  basic: [basic, 基础, 基础场景, basic场景]
+  nps: [nps, NPS, NPS场景, 最大亮度]
+  一供: [一供, 1供, 一供配置]
+  二供: [二供, 2供, 二供配置]
+  default: [default, 默认, 通用, ""]

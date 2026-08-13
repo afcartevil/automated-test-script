@@ -186,7 +186,7 @@ Skill 覆盖通信、充电/功耗、触控、振动、USB、传感器等子领�
 
 - **Node.js** >= 20
 - **Python** 3.11+（`hermes-agent-main` 使用，可通过 `TAHP_PYTHON` 指定）
-- 仓库根目录包含 `hermes-agent-main/`；业务 Skill 目录 `skills/.claude/skills/` 由 Console 同步中心拉取（Git 不跟踪正文）
+- 仓库根目录包含 `hermes-agent-main/` 与 `skills/.claude/skills/`
 - AI 测试自规划可选：本地放置 `docs/升级项目关键信息表.xlsx`
 
 ### 安装与启动
@@ -283,8 +283,7 @@ Console「报告」页与上述目录内容对应。
 | `.tahp/required-skills.json` | 必选 Skill 清单（团队共享） | 是 |
 | `.tahp/skill-config-state.json` | 本机 Skill 配置完成状态 | 否 |
 | `.tahp/jira-user-config.json` | 智能诊断同步的 Jira 凭据 | 否 |
-| `knowledge-base/.kb-data/` | 知识库条目、文档、搜索索引（本机/同步重建） | 否 |
-| `skills/.claude/skills/` | 业务 Skill（Console 同步中心落盘） | 否 |
+| `knowledge-base/.kb-data/` | 知识库条目与文档 | 是 |
 | `docs/升级项目关键信息表.xlsx` | 升级项目节点源表（飞书导出） | 否（`docs/` gitignore） |
 
 ---
@@ -298,15 +297,13 @@ Console「报告」页与上述目录内容对应。
 3. **最小变更**：只修改与任务直接相关的代码
 4. **Console 入口**：同事日常使用 `tahp-console`，而非独立 CLI
 
-### 新增 / 更新 Skill
+### 新增 Skill
 
-业务 Skill **不通过 Git 分发**。本机目录仍是 `skills/.claude/skills/<skill-name>/`，但入库与同事同步只走 Console「同步中心」：
+1. 在 `skills/.claude/skills/<skill-name>/` 创建 `SKILL.md`
+2. YAML frontmatter 建议包含：`name`、`description`、`module`、`funcType`、`version`
+3. 在 Console Skills 库或 Agent 配置中引用；适配域可通过知识库 metadata 关联
 
-1. 在该目录创建或修改 `SKILL.md`（YAML：`name`、`description`、`module`、`funcType`、`version`）
-2. Console → 同步中心 → **提交服务器**（待审）
-3. 中心审核通过后，同事 **同步全部 / 同步此包** → **应用到 Agent**
-
-详见 [skills/README.md](skills/README.md)。
+示例结构参考 `skills/.claude/skills/telephony-bug-analyzer/SKILL.md`。
 
 ### TAHP REST API 概览
 

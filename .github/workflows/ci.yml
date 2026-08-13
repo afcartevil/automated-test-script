@@ -28,3 +28,12 @@ jobs:
       - name: Retrieval eval CI gate
         working-directory: tahp-console
         run: npm run eval:retrieval:ci
+
+      - name: Skills structure check
+        shell: bash
+        run: |
+          missing=0
+          for skill in skills/.claude/skills/*/; do
+            [ -f "${skill}SKILL.md" ] || { echo "Missing SKILL.md in ${skill}"; missing=1; }
+          done
+          exit $missing

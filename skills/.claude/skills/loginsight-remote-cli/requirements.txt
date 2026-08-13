@@ -1,0 +1,2 @@
+# Stdlib only (Python 3.10+). No pip packages required.
+# Keep this file so agents can run `pip install -r requirements.txt` harmlessly.

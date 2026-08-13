@@ -1,0 +1,3 @@
+# 仅标准库，无第三方依赖。
+# 若 ~/.integration_bug_tool/env.yaml 存在，可选安装 PyYAML 以读取 bugfix 段：
+# pip install pyyaml

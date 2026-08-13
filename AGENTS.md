@@ -31,7 +31,7 @@ TAHP 服务于传音 Android 底软集成部，覆盖通信、驱动、内核、
 | 智能诊断 (Bug 分析) | `/tahp/bug-analysis` | `tahp-skills-hermes` |
 | AI 适配调试 | `/tahp/adapt-debug` | `tahp-console-dev` |
 | 知识库管理 | `knowledge-base/` + `/tahp/knowledge` | `00-change-control` |
-| Skill 维护 | Console 同步中心 → 本机 `skills/.claude/skills/`（不入库） | `tahp-skills-hermes` |
+| Skill 维护 | `skills/.claude/skills/` | `tahp-skills-hermes` |
 | 配置 / JIRA 路径 | 配置 UI + `.tahp/` | `tahp-paths-config` |
 | AI 自检 | `/tahp/self-check` | `tahp-self-check` + `device-self-check` skill |
 | 查看报告 | `reports/` + `/tahp/reports` | — |
@@ -41,7 +41,7 @@ TAHP 服务于传音 Android 底软集成部，覆盖通信、驱动、内核、
 ## 仓库结构
 
 ```
-skills/              ← 业务 Skill 运行时目录（Console 同步中心落盘，不入库）
+skills/              ← Agent Skills（业务规则与执行规范）
 knowledge-base/      ← 知识库（文件存储 + BM25 检索）
 hermes-agent-main/   ← Hermes Agent 运行时（默认少改）
 tahp-console/        ← Web 控制台（BFF + Vue UI）

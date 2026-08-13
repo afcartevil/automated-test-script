@@ -41,7 +41,6 @@
 | 9 | P3 历史 UI | 客户端每个 Skill 可查 commit 历史 |
 | 10 | 知识库 | 与 Skill 同轨：审过 → 发布 + 推 Git + 镜像 |
 | 11 | P4 范围 | **仅**本机 `submitted_pending`/`rejected` + 文档；不做 ahead/conflict/审计报表 |
-| 12 | 主仓 Git | 业务 Skill **不入库**；同事只通过 Console 同步中心拉取。P3「镜像主仓 skills/」对客户端分发不再适用 |
 
 ## 当前进度
 

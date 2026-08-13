@@ -1,0 +1,49 @@
+# 与 game_precondition/references 对齐的共享副本
+# 亮度/音量设定见 game_precondition/references/brightness-volume-by-project.yaml
+
+scope:
+  enabled_items: [brightness]
+  deferred_items: [airplane, data, wifi, bt, gps, nfc, sim, auto_rotate, auto_brightness, volume, refresh_rate, gesture_nav, logger]
+
+standards:
+  bt:
+    label_ok: "BT OFF"
+    label_on: "BT ON"
+    standard: "OFF"
+    match: ["OFF", "关闭"]
+  airplane:
+    label_ok: "Airplane Mode OFF"
+    label_on: "Airplane Mode ON"
+    standard: "OFF"
+    match: ["OFF", "关闭"]
+  wifi:
+    label_ok: "WiFi ON"
+    label_off: "WiFi OFF"
+    standard: "ON"
+    match: ["ON", "开启"]
+  nfc:
+    label_ok: "NFC OFF"
+    label_on: "NFC ON"
+    standard: "OFF"
+    match: ["OFF", "关闭"]
+  volume:
+    standard: "按项目×用例查表 volume_index"
+    deferred: true
+  brightness:
+    standard: "按项目×用例查表 brightness_level"
+    level_max: 255
+    level_tolerance: 0
+    lcm_max_level: 2047
+  refresh_rate:
+    standard: "Auto"
+    bad_fixed_hz: [120, 144]
+    ok_hz_max: 90
+  gesture_nav:
+    label_ok: "Gesture Navigation ON"
+    standard: "ON"
+    match: ["ON", "开启"]
+  logger:
+    label_ok: "Logger OFF"
+    label_on: "Logger ON"
+    standard: "OFF"
+    match: ["OFF", "关闭"]

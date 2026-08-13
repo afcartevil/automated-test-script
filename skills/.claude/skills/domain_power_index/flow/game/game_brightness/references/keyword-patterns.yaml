@@ -1,0 +1,237 @@
+# 亮度相关日志关键词（机器可读）；status: active | placeholder
+# 背光曲线 brightness_val / LCM level / AAL BL：0-4095（ratio = val/4095）
+# 亮度等级 BrightnessCollector：0-255
+# 解析实现见 scripts/brightness_readings_lib.py、game_brightness_lib.py
+
+categories:
+  brightness_readings:
+    description: 统一亮度采样（等级 0-255 + 背光曲线 0-4095）
+    patterns:
+      - id: brightness_collector
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [BrightnessCollector]
+        regex: 'TAB\.BrightnessCollector:\s*brightness:\s*(?P<level>\d+)'
+        value_kind: level_255
+        example: 'TAB.BrightnessCollector: brightness: 255'
+
+      - id: brightness_synchronizer
+        status: active
+        logs: [sys_log, main_log]
+        keywords: [BrightnessSynchronizer]
+        regex: 'BrightnessSynchronizer:\s+Swallowing update of\s+(?P<level>\d+)'
+        value_kind: level_255
+        example: 'BrightnessSynchronizer: Swallowing update of 104(i) by update: ...'
+
+      - id: hwc_brightness_val
+        status: active
+        logs: [main_log]
+        keywords: [brightness, calculateBrightness]
+        regex: '\[LEDDEV\]\s+calculateBrightness:\s*brightness\((?P<ratio>[\d.]+)\)\s*brightness_val\((?P<curve>\d+)\)'
+        value_kind: curve_4095
+        example: 'hwcomposer: [LEDDEV]  calculateBrightness: brightness(0.706143) brightness_val(2891)'
+        note: >-
+          brightness(ratio)=打折率；brightness_val=曲线亮度(0-4095或0-5119)。
+          连续变光数秒后，以停止变化的最后一行为准确值。
+
+      - id: lcm_backlight_curve
+        status: active
+        logs: [kernel_log]
+        keywords: [lcm_setbacklight, "[LCM]"]
+        regex: 'lcm_setbacklight(?:_cmdq(?:_v2)?)?\s+level\s*=\s*(?P<curve>\d+)\s*,\s*mapped_level\s*=\s*(?P<mapped>\d+)'
+        value_kind: curve_4095
+        example: '[LCM] lcm_setbacklight_cmdq_v2 level = 1915, mapped_level = 1645, dim_state = 1'
+
+      - id: aal_service_bl
+        status: active
+        logs: [main_log]
+        keywords: [AALService]
+        regex: 'AALService:.*?(?:BL|EL)=\s*(?P<curve>\d+)'
+        value_kind: curve_4095
+        example: 'AALService: [CRTC_115] 06-22 08:12:54.295 BL=1915,ESS= 256,'
+        note: main log 出现 AALService 即判定生效；代表亮度取末次或间隔≥2s 稳定值
+
+  pre_test_brightness:
+    description: 测试前设置的亮度与显示策略
+    patterns:
+      - id: lcm_backlight
+        status: active
+        logs: [kernel_log]
+        keywords: [lcm_setbacklight, "[LCM]"]
+        regex: 'lcm_setbacklight(?:_cmdq(?:_v2)?)?\s+level\s*=\s*(?P<level>\d+)\s*,\s*mapped_level\s*=\s*(?P<mapped>\d+)'
+        fields: [level, mapped_level]
+      - id: hwc_brightness
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [calculateBrightness, "[LEDDEV]"]
+        regex: '\[LEDDEV\]\s+calculateBrightness:\s*brightness\((?P<ratio>[\d.]+)\)\s*brightness_val\((?P<val>\d+)\)'
+        fields: [brightness_ratio, brightness_val]
+      - id: screen_brightness_setting
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [SCREEN_BRIGHTNESS, screen_brightness]
+        regex: ''
+        note: 待补充 Settings/DisplayManager 设置亮度行格式
+      - id: auto_brightness_mode
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [screen_brightness_mode]
+        regex: 'screen_brightness_mode'
+        fields: []
+
+      - id: sensor_auto_brightness_enable
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [SensorService]
+        regex: 'SensorService:\s+enable:.*?activate\s*=\s*(?P<activate>true|false)'
+        fields: [activate]
+        example: 'SensorService: enable: connectionPackage = com.android.server.display.AutomaticBrightnessController; activate = true'
+
+      - id: sensor_auto_brightness_disable
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [SensorService]
+        regex: 'SensorService:\s+disable:.*?activate\s*=\s*(?P<activate>true|false)'
+        fields: [activate]
+        example: 'SensorService: disable: connectionPackage = com.android.server.display.AutomaticBrightnessController; activate = false'
+
+      - id: kernel_mtk_drm_cwb
+        status: active
+        logs: [kernel_log]
+        keywords: [mtk_drm_cwb]
+        regex: 'mtk_drm_cwb'
+        fields: []
+
+      - id: kernel_cwb_work_enable
+        status: active
+        logs: [kernel_log]
+        keywords: [cwb_work]
+        regex: 'cwb_work_func \[tran_sensor\]cwb enable end \[(?:sucess|success)\].*?cwb_ctrl\.stat(?:ue|us) = 1.*?cwb_ctrl\.qw_flag = 0'
+        fields: []
+
+  game_entry_brightness:
+    description: 进入游戏后因 AAL、背光优化方案导致的亮度变化（T_start 后短时窗）
+    patterns:
+      - id: aal_adaptive
+        status: active
+        logs: [main_log]
+        keywords: [AALService]
+        regex: 'AALService:.*?(?:BL|EL)=\s*(?P<curve>\d+)'
+        note: 详细解析见 brightness_readings.aal_service_bl；进游戏后生效看 T_game 是否仍有采样
+      - id: display_power_brightness_event
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [DisplayPowerController, BrightnessEvent]
+        regex: 'DisplayPowerController\[\d+\]:\s+BrightnessEvent:\s+brt=(?P<brt>[\d.]+)\s*\((?P<brt_pct>[\d.]+)%\),\s*nits=\s*(?P<nits>[\d.]+)'
+        fields: [brt, brt_pct, nits]
+        example: 'DisplayPowerController[0]: BrightnessEvent: brt=0.14476912 (63.0%), nits= 99.38402, lux=124.0, ...'
+
+      - id: backlight_optimization
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [backlight optim, BL_OPT, SmartBacklight]
+        regex: ''
+        note: 背光2.0 见 display_power_brightness_event + backlight-2.0-games.yaml
+      - id: entry_lcm_ramp
+        status: active
+        logs: [kernel_log]
+        keywords: [lcm_setbacklight]
+        regex: 'lcm_setbacklight'
+        note: 由库在 T_start~T_start+60s 内与基线对比归类
+
+  in_game_brightness:
+    description: 游戏过程中的亮度变化
+    patterns:
+      - id: lcm_transition
+        status: active
+        logs: [kernel_log]
+        keywords: [lcm_setbacklight]
+        regex: 'lcm_setbacklight'
+        note: 复用 display_brightness transitions
+      - id: hwc_transition
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [calculateBrightness]
+        regex: 'calculateBrightness'
+        note: 复用 hwcomposer transitions
+
+  thermal_brightness:
+    description: thermal 导致的降亮/限亮
+    patterns:
+      - id: thermal_light
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [thermalLightController]
+        regex: 'thermalLightController:\s+Level-(?P<level>\d+)\s*:(?P<package>[^,]+),.*?temp=(?P<temp>[\d.]+),.*?brightnessNits=(?P<nits>\d+)'
+        fields: [level, package, temp, nits]
+        example: 'thermalLightController: Level-2 :com.whatsapp, autoBackLight=false, screenType=OLED, temp=41.038, level=2, isLevelUpgrade=true, brightnessNits=350'
+      - id: display_power_thermal
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [DisplayPowerController, thermal]
+        regex: ''
+        note: 待补充 DPC 温控降亮样例
+      - id: thermal_engine_dim
+        status: placeholder
+        logs: [main_log, sys_log, kernel_log]
+        keywords: [ThermalEngine, dim, brightness]
+        regex: ''
+        note: 待补充温控与背光联动关键词
+
+  refresh_rate:
+    description: 刷新率（与显示功耗相关）
+    patterns:
+      - id: powerhal_update_fps
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [updateFps]
+        regex: 'PowerHalWrapper.*updateFps\(\):\s*(?P<hz>[\d.]+)'
+        example: "PowerHalWrapper: updateFps(): 45"
+        fields: [hz]
+      - id: hwc_update_fps
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [updateFps, HWCDisplay]
+        regex: 'updateFps\(\):[\d]+.*fps:(?P<hz>[\d.]+)'
+        example: "hwcomposer: [HWCDisplay] (0 updateFps():4413), fps:54.543114"
+        fields: [hz]
+      - id: frame_rate_vote
+        status: active
+        logs: [main_log, sys_log, events_log]
+        keywords: [updateFrameRateVote, refreshRate]
+        regex: 'updateFrameRateVote.*?refreshRate\s*=\s*(?P<hz>[\d.]+)'
+        fields: [hz]
+      - id: refresh_rate_selector
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [RefreshRateSelector]
+        regex: 'RefreshRateSelector: Current:.*?render=\[(?P<hz>[\d.]+)\s*Hz'
+        fields: [hz]
+      - id: render_frame_rate
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [renderFrameRate]
+        regex: 'renderFrameRate\s*=\s*(?P<hz>[\d.]+)'
+        fields: [hz]
+
+  color_mode:
+    description: 色彩模式、HDR、画质增强（影响显示功耗）
+    patterns:
+      - id: color_mode
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [colormode, color_mode, ColorMode]
+        regex: ''
+        note: 待补充 colormode 行格式
+      - id: hdr_mode
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [HDR, hdr_enabled]
+        regex: ''
+        note: 待补充 HDR 状态关键词
+      - id: display_color_enhance
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [color enhancement, DCI-P3, wide_color]
+        regex: ''
+        note: 待补充色彩增强关键词

@@ -1,0 +1,16 @@
+# 温控分析阈值
+
+version: 1
+evidence_cap: 40
+
+thresholds:
+  rise_delta_c_default: 3.0
+
+throttle_rank:
+  NONE: 0
+  LIGHT: 1
+  MODERATE: 2
+  SEVERE: 3
+  CRITICAL: 4
+  EMERGENCY: 5
+  SHUTDOWN: 6

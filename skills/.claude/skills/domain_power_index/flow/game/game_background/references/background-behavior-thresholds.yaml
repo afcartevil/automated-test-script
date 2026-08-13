@@ -1,0 +1,59 @@
+# 后台行为量化阈值（flow 步骤 8 / game_background）
+#
+# boost_ratio = t_game_rate_per_min / max(t_pre_rate_per_min, min_rate_floor)
+# 游戏相关判定需同时满足频次与 boost_ratio 条件。
+
+version: 1
+
+min_rate_floor: 0.1   # 避免 T_pre 为 0 时除零；分母下限（次/分钟）
+
+# 分段对比：T_game 相对 T_pre 的增强倍数
+boost_ratio:
+  suspect: 3.0
+  abnormal: 5.0
+
+# 各 category 在 T_game 内的最低事件数（未达则仅 observe）
+min_t_game_count:
+  default: 3
+  process_start: 2
+  broadcast: 5
+  alarm: 3
+  wakelock: 2
+  gc: 10
+  binder: 20
+
+# 各 category 在 T_game 内的速率阈值（次/分钟，超过标 suspect）
+rate_per_min_suspect:
+  process_start: 2.0
+  broadcast: 10.0
+  alarm: 5.0
+  job: 3.0
+  wakelock: 5.0
+  gc: 15.0
+  binder: 30.0
+
+# WakeLock 未释放时长（秒）
+wakelock_unreleased_seconds_suspect: 30
+
+# 游戏自身过滤：以下 category 若包名为游戏包则跳过计数（仍可选写入 notes）
+game_self_filter_categories:
+  - gc
+  - wakelock
+  - service_start
+  - service_bind
+
+# 高置信主因候选：需同时满足游戏相关 + CPU 关联
+high_confidence_requires:
+  boost_ratio_min: 3.0
+  t_game_count_min: 5
+  related_cpu_usage: true
+
+# 优先级映射（写入 top_background_packages.priority）
+priority_rules:
+  P0:
+    boost_ratio_min: 5.0
+    related_cpu_usage: true
+  P1:
+    boost_ratio_min: 3.0
+  P2:
+    t_game_rate_per_min_min: 2.0

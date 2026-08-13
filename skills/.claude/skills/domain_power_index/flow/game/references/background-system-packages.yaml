@@ -1,0 +1,50 @@
+# 步骤 2 系统核心包白名单（P3 工程化）
+#
+# 命中白名单的包在 T_pre 已存在且 T_game 未明显增强时，默认标为 observe，
+# 不作为游戏触发主因；仍写入时序供审计。
+
+version: 1
+
+# exact = 完全匹配；prefix = 包名前缀匹配
+system_core_packages:
+  - name: com.android.systemui
+    match: exact
+  - name: com.android.phone
+    match: exact
+  - name: com.android.bluetooth
+    match: exact
+  - name: com.android.networkstack
+    match: prefix
+  - name: com.google.android.networkstack
+    match: prefix
+  - name: com.mediatek.ims
+    match: exact
+  - name: com.android.se
+    match: exact
+  - name: com.transsion.launcher3
+    match: exact
+  - name: com.transsion.usf
+    match: exact
+  - name: com.transsion.rms
+    match: exact
+  - name: com.transsion.systemserver
+    match: exact
+  - name: com.transsion.sru
+    match: exact
+  - name: system
+    match: exact
+
+# 传音 OEM 功能包：游戏相关增强时标 software_feature，不直接定责为异常
+oem_feature_packages:
+  - com.transsion.gamemode
+  - com.transsion.gamespace.app
+  - com.transsion.smartpanel
+  - com.transsion.teop
+  - com.transsion.tgpa
+
+# 截断进程名 → 完整包名提示（与步骤 1 [K] 进程名交叉验证时优先）
+process_name_hints:
+  - fragment: "encent.ig"
+    package: com.tencent.ig
+  - fragment: "g.tencent"
+    package: com.tencent.ig

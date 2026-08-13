@@ -1,0 +1,7 @@
+jira>=3.5.0,<4
+requests>=2.28.0
+python-dotenv>=0.20.0
+
+# 可选：FRBOX/SGBOX 浏览器兜底下载
+# playwright>=1.40.0
+# python -m playwright install chromium

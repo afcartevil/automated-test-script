@@ -1,0 +1,166 @@
+# 音量关键词与 stream 配置；阈值见 analysis-standards.yaml
+# 游戏测试音量判定四源（合并 T_pre 时间线后取最后一次 STREAM_MUSIC 档位）：
+#   1. events_log  volume_changed              按键调节音量
+#   2. events_log  updateFrameRateVote        调音量时刷新率投票（TrVolumeDialogImpl）
+#   3. main_log    TranAuraController          媒体音量变化
+#   4. main_log    ThermalEngine volume_range  温控策略音量区间
+
+default_music_stream_id: 3
+max_index_assumed: 15
+
+# Android 音频流类型（streamType / stream id）
+audio_stream_types:
+  0: STREAM_VOICE_CALL   # 通话
+  1: STREAM_SYSTEM       # 系统提示音
+  2: STREAM_RING         # 铃声
+  3: STREAM_MUSIC        # 媒体音乐流（视频、游戏、音乐音量）
+
+# 音频输出设备 ID（device，AudioSystem.DEVICE_OUT_* 常见值）
+audio_output_devices:
+  1: 听筒
+  2: 内置扬声器（外放喇叭）
+  4: 有线耳机
+  8: 蓝牙 A2DP 等
+
+categories:
+  volume_setting:
+    description: 游戏测试音量四源（events + main）；解析后合并取 T_pre 最后一次 STREAM_MUSIC 档位
+    patterns:
+      - id: event_volume_changed
+        status: active
+        logs: [events_log]
+        contributes_index: true
+        keywords: [volume_changed]
+        regex: 'volume_changed:\s*\[(?P<stream>\d+),(?P<new_volume>\d+),(?P<old_volume>\d+),(?P<max_index>\d+),[^\]]*\]'
+        example: 'volume_changed: [3,10,11,15,android]'
+        # stream=3 STREAM_MUSIC；new_volume=调节后档位；old_volume=调节前档位；max_index=最大档位
+        volume_field: new_volume
+        stream_field: stream
+
+      - id: event_volume_framerate_vote
+        status: active
+        logs: [events_log]
+        contributes_index: false
+        keywords: [updateFrameRateVote, TrVolumeDialogImpl]
+        regex: 'updateFrameRateVote \[pkg = (?P<pkg>[^ ]+) title = (?P<title>[^]]+?) refreshRate = (?P<refresh_rate>[\d.]+).*?peak = (?P<peak>[\d.]+).*?mTopApp = (?P<mTopApp>[^\]]+)\]'
+        example: 'snet_event_log: updateFrameRateVote [pkg = com.android.systemui title = TrVolumeDialogImpl refreshRate = 90.0 modeId = 3 setting =10000 peak = 120.0 mTopApp = com.transsion.launcher3]'
+        # 调节音量时 SystemUI 刷新率投票；mTopApp=顶层 APP；refreshRate=投票刷新率；peak=理论峰值刷新率
+
+      - id: tran_aura_volume_change
+        status: active
+        logs: [main_log]
+        contributes_index: true
+        keywords: [TranAuraController, onAudioVolumeChange]
+        regex: 'TranAuraController: onAudioVolumeChange: streamType=(?P<streamType>\d+), volume=(?P<volume>\d+), device=(?P<device>\d+), packageName=(?P<packageName>[^,]+), flags=(?P<flags>\d+)'
+        example: 'TranAuraController: onAudioVolumeChange: streamType=3, volume=9, device=2, packageName=null, flags=4112'
+        # streamType=3 STREAM_MUSIC；volume=档位；device 见 audio_output_devices；packageName=null 表示按键调音
+        volume_field: volume
+        stream_field: streamType
+
+      - id: thermal_volume_range
+        status: active
+        logs: [main_log, sys_log]
+        contributes_index: false
+        keywords: [ThermalEngineTypeData, volume_range]
+        regex: 'setTypePolicy name[：:]\s*volume_range,\s*value:\s*(?P<volume_min>\d+),(?P<volume_max>\d+)'
+        example: 'rms_TranAppm/ThermalEngineTypeData: setTypePolicy name： volume_range, value: 11,15'
+        # 温控策略音量区间（非实时档位，作辅助对照）
+
+  volume_index:
+    description: STREAM_MUSIC 音量档位采样（T_pre / T_game 共用解析，兼容旧 pattern id）
+    patterns:
+      - id: tran_aura_volume_change
+        status: active
+        logs: [main_log]
+        contributes_index: true
+        keywords: [TranAuraController, onAudioVolumeChange]
+        regex: 'TranAuraController: onAudioVolumeChange: streamType=(?P<streamType>\d+), volume=(?P<volume>\d+), device=(?P<device>\d+), packageName=(?P<packageName>[^,]+), flags=(?P<flags>\d+)'
+        example: 'TranAuraController: onAudioVolumeChange: streamType=3, volume=9, device=2, packageName=null, flags=4112'
+        # streamType=3 STREAM_MUSIC；volume=档位；device 见 audio_output_devices；packageName=null 表示按键调音
+        volume_field: volume
+        stream_field: streamType
+
+      - id: policy_set_stream_volume
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [AudioPolicyInterfaceImpl, setStreamVolumeIndex]
+        regex: 'AudioPolicyInterfaceImpl: setStreamVolumeIndex\(\), stream (?P<stream>\d+), index (?P<index>\d+)'
+        example: 'AudioPolicyInterfaceImpl: setStreamVolumeIndex(), stream 3, index 8'
+
+      - id: volume_slider_icon
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [TrVolumeSliderController, checkVolumeIcon]
+        regex: 'TrVolumeSliderController: checkVolumeIcon assetName: volume_change/volume_(?:up|down)_(?P<index>\d+)\.png'
+        example: 'TrVolumeSliderController: checkVolumeIcon assetName: volume_change/volume_down_1.png'
+        assume_stream: 3
+
+      - id: vol_events_stream_music
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [vol.Events, STREAM_MUSIC]
+        regex: 'vol\.Events: writeEvent level_changed STREAM_MUSIC (?P<index>\d+)'
+        example: 'vol.Events: writeEvent level_changed STREAM_MUSIC 8'
+        assume_stream: 3
+
+      - id: set_stream_volume_generic
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [setStreamVolume]
+        regex: ''
+
+      - id: audio_service_adjust
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [AudioService, adjustVolume, adjustSuggestedStreamVolume]
+        regex: ''
+
+  audio_route:
+    description: 外放 / 耳机 / 蓝牙通路
+    patterns:
+      - id: tran_aura_volume_change
+        status: active
+        logs: [main_log, sys_log]
+        keywords: [TranAuraController, onAudioVolumeChange]
+        regex: ''
+        note: '见 volume_index.tran_aura_volume_change；通路信息由 device / packageName 解析'
+
+      - id: apm_set_output_devices
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [setOutputDevices, MTK_APM_Route]
+        regex: ''
+
+      - id: audio_device_route
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [AudioDevice, HEADSET, SPEAKER, BT_A2DP]
+        regex: ''
+
+  mute_and_policy:
+    patterns:
+      - id: mute_stream
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [setStreamMute, STREAM_MUSIC, mute]
+        regex: ''
+
+      - id: safe_volume
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [safe volume, SafeVolume, CSD]
+        regex: ''
+
+  background_audio:
+    patterns:
+      - id: audio_flinger_track
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [AudioFlinger, track]
+        regex: ''
+
+      - id: audio_service_focus
+        status: placeholder
+        logs: [main_log, sys_log]
+        keywords: [AudioService, requestAudioFocus, abandonAudioFocus]
+        regex: ''
