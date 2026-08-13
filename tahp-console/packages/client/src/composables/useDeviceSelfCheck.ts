@@ -1471,9 +1471,14 @@ async function handleEndTest(deviceId: string) {
     clearFlashPanel()
     clearFlashFormForDevice(deviceId)
     const result = await endTest(deviceId)
+    if (!result?.device) {
+      message.error('结束测试失败：设备不存在或已释放')
+      await loadDevices()
+      return
+    }
     patchDeviceInList(result.device)
     await loadDevices()
-    message.success('测试已终止，设备已恢复空闲')
+    message.success('测试已终止，报告将记为失败')
     if (result.device.role === '辅测机' && (result.device.status as string) === '待命') {
       selectedDeviceId.value = deviceId
       selectedDevice.value = result
@@ -1483,6 +1488,8 @@ async function handleEndTest(deviceId: string) {
     }
   } catch (e: any) {
     console.error('[DeviceSelfCheck] Error ending test:', e)
+    message.error(e?.message || '结束测试失败')
+    await loadDevices()
   }
 }
 

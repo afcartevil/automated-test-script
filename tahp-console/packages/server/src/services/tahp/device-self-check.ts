@@ -1439,15 +1439,25 @@ function killProcessTree(proc: { pid?: number; killed?: boolean; kill: (signal?:
   if (!proc || proc.killed) return
   const pid = proc.pid
   if (pid && process.platform === 'win32') {
+    let taskkillOk = false
     try {
-      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      const result = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
         windowsHide: true,
         stdio: 'ignore',
+        timeout: 8_000,
       })
+      taskkillOk = result.status === 0
     } catch { /* ignore */ }
+    if (!taskkillOk) {
+      try { proc.kill() } catch { /* ignore */ }
+    }
     return
   }
-  try { proc.kill() } catch { /* ignore */ }
+  try {
+    proc.kill('SIGKILL')
+  } catch {
+    try { proc.kill() } catch { /* ignore */ }
+  }
 }
 
 function spawnPythonProcess(
@@ -1868,17 +1878,29 @@ async function execPythonCase(
     const finish = (result: { status: string; message: string; steps: CaseStep[]; fullAutomation?: boolean }) => {
       if (settled) return
       settled = true
-      cleanup()
-      delete activeCaseCleanups[deviceId]
-      resolve(result)
-    }
-
-    const cleanup = () => {
       if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
       if (testType === 'power' && module === 'current_analysis') {
         void stopPowerForDevice(deviceId)
       }
       killProcessTree(proc)
+      delete activeCaseCleanups[deviceId]
+      resolve(result)
+    }
+
+    /** 结束测试 / 超时杀进程：先杀树，再保留短超时兜底 settle（避免清掉长超时后 Promise 永久挂起） */
+    const cleanup = () => {
+      if (testType === 'power' && module === 'current_analysis') {
+        void stopPowerForDevice(deviceId)
+      }
+      killProcessTree(proc)
+      if (settled) {
+        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
+        return
+      }
+      if (timeoutId) clearTimeout(timeoutId)
+      timeoutId = setTimeout(() => {
+        finish({ status: 'fail', message: '测试已终止', steps: [] })
+      }, 5_000)
     }
 
     activeCaseCleanups[deviceId] = cleanup
@@ -2680,6 +2702,151 @@ export function collectOrderedCaseResults(session: TestSession): CaseResult[] {
 
 const TERMINAL_CASE_STATUSES = new Set(['通过', '失败', '部分通过', 'NA', '跳过'])
 
+/** 用户点「结束测试」时：未终态用例一律记为失败，保证报告呈现失败 */
+function markCasesFailedOnUserAbort(deviceId: string, session: TestSession): void {
+  const now = new Date().toISOString()
+  for (const [caseKey, result] of Object.entries(session.caseResults)) {
+    if (TERMINAL_CASE_STATUSES.has(result.status)) continue
+    result.status = '失败'
+    result.message = '用户结束测试'
+    result.endTime = now
+    result.steps = [
+      ...(result.steps || []),
+      { stepDesc: '用户结束测试', status: '失败', timestamp: now },
+    ]
+    emitEvent('case_completed', { deviceId, caseKey, result })
+  }
+  // 按结果重算模块失败/通过计数，避免「进行中」中止后统计不准
+  for (const [moduleKey, prog] of Object.entries(session.moduleProgress)) {
+    let passed = 0
+    let failed = 0
+    let completed = 0
+    for (const result of Object.values(session.caseResults)) {
+      if (`${result.testType}/${result.module}` !== moduleKey) continue
+      if (!TERMINAL_CASE_STATUSES.has(result.status) && result.status !== '待确认') continue
+      completed++
+      if (result.status === '通过') passed++
+      else if (result.status === '失败' || result.status === '部分通过' || result.status === '待确认') failed++
+    }
+    prog.passedCases = passed
+    prog.failedCases = failed
+    prog.completedCases = Math.max(prog.completedCases, completed)
+  }
+}
+
+// 结束测试（终止当前执行、释放资源，并停止后台 Monkey）
+export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
+  const device = devices[deviceId]
+  const session = testSessions[deviceId]
+  if (!device) return null
+
+  const endedTestType = device.testType || session?.testType
+
+  // 先打断调度循环，再杀进程，避免 close 回调后仍启动下一例
+  if (session) {
+    session.isRunning = false
+  }
+
+  if (activeCaseCleanups[deviceId]) {
+    activeCaseCleanups[deviceId]()
+    delete activeCaseCleanups[deviceId]
+  }
+
+  // 取消该设备上挂起的人工确认，避免结束后弹窗仍阻塞
+  for (const [id, pending] of Object.entries(pendingManualDecisions)) {
+    if (pending.deviceId === deviceId) {
+      try { pending.resolve('fail') } catch { /* ignore */ }
+      delete pendingManualDecisions[id]
+    }
+  }
+
+  // 不阻塞结束路径：monkey/power 停止最多各 30s
+  void stopMonkeyForDevice(deviceId)
+  void stopPowerForDevice(deviceId)
+
+  if (session) {
+    finalizePowerCaseResults(deviceId, session)
+  }
+
+  if (session && Object.keys(session.caseResults).length > 0) {
+    markCasesFailedOnUserAbort(deviceId, session)
+    session.endTime = new Date().toISOString()
+    const testDuration = Math.round(
+      (Date.now() - new Date(device.testStartTime || Date.now()).getTime()) / 1000
+    )
+    device.testDuration = testDuration
+    // 报告异步生成：不得 await（UNC/ADB 会拖死 /test/end）
+    // 快照 session 引用 + 显式 reportStatus，避免随后置空闲后摘要状态错乱
+    const reportSession = session
+    void generateTestReport(deviceId, reportSession, undefined, {
+      reportStatus: '完成(失败)',
+      testDuration,
+    }).catch((e) => {
+      console.warn('[device-self-check] Failed to generate partial report on end:', e)
+    })
+    emitEvent('test_completed', { deviceId, session: reportSession })
+  }
+
+  // 清理与其他测试机的双向绑定：从其他 session 的 auxiliaryDevices 中移除本设备
+  for (const [, sess] of Object.entries(testSessions)) {
+    if (sess.auxiliaryDevices?.includes(deviceId)) {
+      sess.auxiliaryDevices = sess.auxiliaryDevices.filter(aid => aid !== deviceId)
+    }
+  }
+
+  // 辅测机待命状态：直接回到空闲
+  if (device.status === '待命' && device.role === '辅测机') {
+    device.status = '空闲'
+    device.testType = undefined
+    device.testStartTime = undefined
+    device.testDuration = 0
+    delete testSessions[deviceId]
+    emitEvent('device_updated', { device })
+    emitEvent('test_ended', { deviceId })
+    if (endedTestType) {
+      releaseAuxDevicesIfNoActiveDut(endedTestType)
+    }
+    return { device }
+  }
+
+  // 释放辅测机（根据角色恢复状态）
+  if (session?.auxiliaryDevices?.length) {
+    if (session.testType === 'custom') {
+      releaseCustomAuxDevices(session)
+    } else {
+      for (const auxId of session.auxiliaryDevices) {
+        if (devices[auxId]) {
+          if (devices[auxId].role === '测试机') {
+            devices[auxId].status = '等待测试开始'
+          } else if (devices[auxId].status === '占用中') {
+            devices[auxId].status = '待命'
+          }
+          devices[auxId].isMirroredResult = false
+          emitEvent('device_updated', { device: devices[auxId] })
+        }
+      }
+    }
+  }
+
+  // 重置测试机状态（立刻空闲，不等待报告）
+  device.status = '空闲'
+  device.testType = undefined
+  device.currentModule = undefined
+  device.testStartTime = undefined
+  device.testDuration = 0
+  device.isMirroredResult = false
+  delete testSessions[deviceId]
+
+  emitEvent('device_updated', { device })
+  emitEvent('test_ended', { deviceId })
+
+  if (endedTestType) {
+    releaseAuxDevicesIfNoActiveDut(endedTestType)
+  }
+
+  return { device }
+}
+
 async function runTestFlow(
   deviceId: string,
   testType: StandardTestType,
@@ -3028,6 +3195,7 @@ async function generateTestReport(
   deviceId: string,
   session: TestSession,
   existingResultDir?: string,
+  options?: { reportStatus?: string; testDuration?: number },
 ): Promise<void> {
   try {
     const device = devices[deviceId]
@@ -3118,14 +3286,23 @@ async function generateTestReport(
     }
 
     // 写入摘要（含项目归属，供中心看板上报 / 事后补传）
-    const projectCtx = await resolveSelfCheckProjectContext({
-      deviceId,
-      deviceName: device.deviceName,
-      scheduleKey: session.scheduleKey,
-    }).catch((): import('./quality-run-upload').ResolvedProjectContext => ({
-      project_code: '_unassigned',
-      source: 'unassigned',
-    }))
+    // 项目解析（含 UNC 网络盘）限时，避免拖死报告落盘
+    const projectCtx = await Promise.race([
+      resolveSelfCheckProjectContext({
+        deviceId,
+        deviceName: device.deviceName,
+        scheduleKey: session.scheduleKey,
+      }).catch((): import('./quality-run-upload').ResolvedProjectContext => ({
+        project_code: '_unassigned',
+        source: 'unassigned',
+      })),
+      new Promise<import('./quality-run-upload').ResolvedProjectContext>((resolve) => {
+        setTimeout(() => resolve({ project_code: '_unassigned', source: 'unassigned' }), 3_000)
+      }),
+    ])
+
+    const reportStatus = options?.reportStatus ?? device.status
+    const reportDuration = options?.testDuration ?? device.testDuration
 
     const summary = {
       deviceId,
@@ -3133,8 +3310,8 @@ async function generateTestReport(
       testType: session.testType,
       startTime: session.startTime,
       endTime: session.endTime,
-      duration: device.testDuration,
-      status: device.status,
+      duration: reportDuration,
+      status: reportStatus,
       modules: session.moduleProgress,
       totalCases: orderedResults.length,
       passedCases: orderedResults.filter(r => r.status === '通过').length,
@@ -3344,116 +3521,6 @@ function releaseAuxDevicesIfNoActiveDut(testType: string): void {
       `[device-self-check] Auto-released aux ${dev.deviceId} (no active DUT for ${testType})`
     )
   }
-}
-
-// 结束测试（终止当前执行、释放资源，并停止后台 Monkey）
-export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
-  const device = devices[deviceId]
-  const session = testSessions[deviceId]
-  if (!device) return null
-
-  const endedTestType = device.testType || session?.testType
-
-  // 先打断调度循环，再杀进程，避免 close 回调后仍启动下一例
-  if (session) {
-    session.isRunning = false
-  }
-
-  if (activeCaseCleanups[deviceId]) {
-    activeCaseCleanups[deviceId]()
-    delete activeCaseCleanups[deviceId]
-  }
-
-  // 取消该设备上挂起的人工确认，避免结束后弹窗仍阻塞
-  for (const [id, pending] of Object.entries(pendingManualDecisions)) {
-    if (pending.deviceId === deviceId) {
-      try { pending.resolve('fail') } catch { /* ignore */ }
-      delete pendingManualDecisions[id]
-    }
-  }
-
-  await stopMonkeyForDevice(deviceId)
-  await stopPowerForDevice(deviceId)
-
-  if (session) {
-    finalizePowerCaseResults(deviceId, session)
-  }
-
-  if (session) {
-    if (Object.keys(session.caseResults).length > 0) {
-      session.endTime = new Date().toISOString()
-      device.status = '完成(失败)'
-      device.testDuration = Math.round(
-        (Date.now() - new Date(device.testStartTime || Date.now()).getTime()) / 1000
-      )
-      emitEvent('device_updated', { device })
-      emitEvent('test_completed', { deviceId, session })
-      try {
-        await generateTestReport(deviceId, session)
-      } catch (e) {
-        console.warn('[device-self-check] Failed to generate partial report on end:', e)
-      }
-    }
-  }
-
-  // 清理与其他测试机的双向绑定：从其他 session 的 auxiliaryDevices 中移除本设备
-  for (const [, sess] of Object.entries(testSessions)) {
-    if (sess.auxiliaryDevices?.includes(deviceId)) {
-      sess.auxiliaryDevices = sess.auxiliaryDevices.filter(aid => aid !== deviceId)
-    }
-  }
-
-  // 辅测机待命状态：直接回到空闲
-  if (device.status === '待命' && device.role === '辅测机') {
-    device.status = '空闲'
-    device.testType = undefined
-    device.testStartTime = undefined
-    device.testDuration = 0
-    delete testSessions[deviceId]
-    emitEvent('device_updated', { device })
-    emitEvent('test_ended', { deviceId })
-    if (endedTestType) {
-      releaseAuxDevicesIfNoActiveDut(endedTestType)
-    }
-    return { device }
-  }
-
-  // 释放辅测机（根据角色恢复状态）
-  if (session?.auxiliaryDevices?.length) {
-    if (session.testType === 'custom') {
-      releaseCustomAuxDevices(session)
-    } else {
-      for (const auxId of session.auxiliaryDevices) {
-        if (devices[auxId]) {
-          if (devices[auxId].role === '测试机') {
-            devices[auxId].status = '等待测试开始'
-          } else if (devices[auxId].status === '占用中') {
-            devices[auxId].status = '待命'
-          }
-          devices[auxId].isMirroredResult = false
-          emitEvent('device_updated', { device: devices[auxId] })
-        }
-      }
-    }
-  }
-
-  // 重置测试机状态
-  device.status = '空闲'
-  device.testType = undefined
-  device.currentModule = undefined
-  device.testStartTime = undefined
-  device.testDuration = 0
-  device.isMirroredResult = false
-  delete testSessions[deviceId]
-
-  emitEvent('device_updated', { device })
-  emitEvent('test_ended', { deviceId })
-
-  if (endedTestType) {
-    releaseAuxDevicesIfNoActiveDut(endedTestType)
-  }
-
-  return { device }
 }
 
 // 复测单个用例
