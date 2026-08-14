@@ -340,6 +340,7 @@ watch(customTestDutDeviceId, (deviceId, prevId) => {
   }
 })
 const customTestStarting = ref(false)
+const prioritizeTddManual = ref(false)
 const gerritPreselectCount = ref(0)
 const launchStore = useDeviceSelfCheckLaunchStore()
 
@@ -1418,7 +1419,13 @@ async function handleStartTest(deviceId: string) {
       flashProgressState.value = createFlashProgressState()
       appendFlashLog('[刷机] 已提交刷机任务，等待设备进入刷机流程...')
     }
-    const result = await startTest(deviceId, selectedTestType.value, flash)
+    const result = await startTest(
+      deviceId,
+      selectedTestType.value,
+      flash,
+      undefined,
+      prioritizeTddManual.value,
+    )
     if (result) {
       selectedDevice.value = result
       followCurrent.value = true
@@ -1766,7 +1773,8 @@ async function handleStartCustomTest() {
     const result = await startCustomTest(
       customTestDutDeviceId.value,
       Array.from(selectedCases.value),
-      Array.from(customTestAuxDeviceIds.value)
+      Array.from(customTestAuxDeviceIds.value),
+      prioritizeTddManual.value,
     )
     viewMode.value = 'list'
     catalogPanelExpanded.value = false
@@ -1965,6 +1973,17 @@ const pageTitle = computed(() => {
     return selectedCatalogGroup.value.label
   }
   return '质量验测'
+})
+
+const showStandardTddManualPriority = computed(() =>
+  selectedTestType.value === 'str4' || selectedTestType.value === 'week',
+)
+
+const hasSelectedStr4WeekTdd = computed(() => {
+  for (const key of selectedCases.value) {
+    if (/^(str4|week)\/tdd\/\d+$/.test(key)) return true
+  }
+  return false
 })
 
 const isTestComplete = computed(() => {
@@ -2219,6 +2238,9 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     customTestDutDeviceId,
     customTestAuxDeviceIds,
     customTestStarting,
+    prioritizeTddManual,
+    showStandardTddManualPriority,
+    hasSelectedStr4WeekTdd,
     gerritPreselectCount,
     availableCustomAux,
     availableCustomDut,

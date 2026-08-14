@@ -116,12 +116,16 @@ tahpDeviceSelfCheckRoutes.post(
   async (ctx) => {
     try {
       const deviceId = ctx.params.deviceId
-      const { testType, flash, scheduleKey } = ctx.request.body as {
+      const { testType, flash, scheduleKey, prioritizeTddManual } = ctx.request.body as {
         testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated'
         flash?: StartTestFlashPayload
         scheduleKey?: string
+        prioritizeTddManual?: boolean
       }
-      const result = await startTest(deviceId, testType, flash, { scheduleKey })
+      const result = await startTest(deviceId, testType, flash, {
+        scheduleKey,
+        prioritizeTddManual: Boolean(prioritizeTddManual),
+      })
       ctx.body = {
         success: true,
         data: result,
@@ -286,11 +290,17 @@ tahpDeviceSelfCheckRoutes.post(
   async (ctx) => {
     try {
       const deviceId = ctx.params.deviceId
-      const { selectedCases, customAuxDeviceIds } = ctx.request.body as {
+      const { selectedCases, customAuxDeviceIds, prioritizeTddManual } = ctx.request.body as {
         selectedCases: string[]
         customAuxDeviceIds: string[]
+        prioritizeTddManual?: boolean
       }
-      const result = await startCustomTest(deviceId, selectedCases || [], customAuxDeviceIds || [])
+      const result = await startCustomTest(
+        deviceId,
+        selectedCases || [],
+        customAuxDeviceIds || [],
+        { prioritizeTddManual: Boolean(prioritizeTddManual) },
+      )
       if (!result) {
         ctx.status = 400
         ctx.body = { success: false, error: '设备不可用或不在空闲状态' }

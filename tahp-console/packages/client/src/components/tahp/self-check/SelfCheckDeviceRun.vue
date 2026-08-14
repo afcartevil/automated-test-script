@@ -102,6 +102,9 @@ const {
   customTestAuxDeviceIds,
   availableCustomAux,
   customTestStarting,
+  prioritizeTddManual,
+  showStandardTddManualPriority,
+  hasSelectedStr4WeekTdd,
   selectedDevice,
   selectedDeviceId,
   getCaseGroups,
@@ -612,6 +615,19 @@ function handleDutRowAction(deviceId: string) {
                 <dd>{{ customTestAuxDeviceIds.size }} 个</dd>
               </div>
             </dl>
+            <label
+              v-if="hasSelectedStr4WeekTdd"
+              class="checkbox-label tdd-manual-priority"
+            >
+              <input type="checkbox" v-model="prioritizeTddManual" />
+              <span>优先测试通信的人工用例</span>
+            </label>
+            <p
+              v-if="hasSelectedStr4WeekTdd"
+              class="custom-run-hint ea-muted"
+            >
+              仅调整执行顺序，结果列表与报告顺序不变
+            </p>
             <button
               type="button"
               class="ea-btn-primary ea-btn-lg custom-run-start"
@@ -1587,6 +1603,14 @@ function handleDutRowAction(deviceId: string) {
                         />
                         <button type="button" class="ea-btn-ghost ea-btn-sm" @click.stop>浏览</button>
                       </template>
+                    </div>
+
+                    <div v-if="showStandardTddManualPriority" class="form-group">
+                      <label class="checkbox-label">
+                        <input type="checkbox" v-model="prioritizeTddManual" />
+                        <span>优先测试通信的人工用例</span>
+                      </label>
+                      <p class="flash-options-hint ea-muted">仅调整执行顺序，结果列表与报告顺序不变</p>
                     </div>
 
                     <button
@@ -3316,6 +3340,10 @@ $catalog-pane-height: calc(100vh - 48px);
   margin: 8px 0 0;
   font-size: 12px;
   text-align: center;
+}
+
+.tdd-manual-priority {
+  margin-top: 12px;
 }
 
 .catalog-type-group {

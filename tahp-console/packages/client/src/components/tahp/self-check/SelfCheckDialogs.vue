@@ -88,7 +88,7 @@ const {
   </div>
 
   <div v-if="showManualDialog" class="modify-overlay">
-    <div class="modify-dialog">
+    <div class="modify-dialog manual-confirm-dialog">
       <div class="modify-dialog-header">
         <span class="section-title">{{ manualDeviceName || '需人工确认' }}</span>
         <span v-if="manualQueueRemaining > 0" class="manual-queue-hint">
@@ -295,6 +295,12 @@ const {
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
+  max-height: min(50vh, 420px);
+  overflow-y: auto;
+}
+
+.manual-confirm-dialog {
+  width: 560px;
 }
 
 .gms-tradefed-dialog {

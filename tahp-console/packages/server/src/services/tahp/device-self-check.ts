@@ -146,6 +146,8 @@ export interface TestSession {
   flashOptions?: DeviceFlashOptions
   scheduleKey?: string
   errorReason?: string
+  /** 通信（str4/week tdd）人工用例优先执行；报告/列表仍按原顺序 */
+  prioritizeTddManual?: boolean
 }
 
 export interface CaseCatalogItem {
@@ -332,6 +334,104 @@ function automationModeLabel(mode?: AutomationMode): string {
   if (mode === 'semi') return '半自动'
   if (mode === 'manual') return '人工'
   return '全自动'
+}
+
+export interface TddPriorityCase {
+  testType: string
+  module: string
+  caseIndex: number
+  automationMode?: AutomationMode
+}
+
+export function isStr4WeekTddModule(testType: string, module: string): boolean {
+  return (testType === 'str4' || testType === 'week') && module === 'tdd'
+}
+
+/**
+ * 仅重排 str4/week 通信（tdd）槽位：人工用例稳定提前，其余相对顺序不变。
+ * 非通信项位置不动。不修改入参数组。
+ */
+export function prioritizeTddManualCases<T extends TddPriorityCase>(caseList: readonly T[]): T[] {
+  const result = caseList.slice()
+  const tddIndices: number[] = []
+  for (let i = 0; i < result.length; i++) {
+    if (isStr4WeekTddModule(result[i].testType, result[i].module)) {
+      tddIndices.push(i)
+    }
+  }
+  if (tddIndices.length <= 1) return result
+
+  const tddCases = tddIndices.map(i => result[i])
+  const manuals: T[] = []
+  const rest: T[] = []
+  for (const item of tddCases) {
+    if (item.automationMode === 'manual') manuals.push(item)
+    else rest.push(item)
+  }
+  const reordered = manuals.concat(rest)
+  tddIndices.forEach((slot, j) => {
+    result[slot] = reordered[j]
+  })
+  return result
+}
+
+function resolveCaseAutomationModeForPriority(
+  testType: string,
+  module: string,
+  caseIndex: number,
+): AutomationMode {
+  const meta = moduleConditions[`${testType}/${module}`]?.cases.find(c => c.caseIndex === caseIndex)
+  if (meta?.automationMode === 'full' || meta?.automationMode === 'semi' || meta?.automationMode === 'manual') {
+    return meta.automationMode
+  }
+  return resolveCaseAutomationMode(testType, module, caseIndex)
+}
+
+function applyTddManualPriority<T extends TddPriorityCase>(caseList: T[]): T[] {
+  return prioritizeTddManualCases(
+    caseList.map(item => ({
+      ...item,
+      automationMode: item.automationMode ?? resolveCaseAutomationModeForPriority(
+        item.testType,
+        item.module,
+        item.caseIndex,
+      ),
+    })),
+  )
+}
+
+export function shouldAwaitTddManualConfirm(
+  prioritizeTddManual: boolean | undefined,
+  testType: string,
+  module: string,
+  automationMode?: AutomationMode,
+): boolean {
+  return Boolean(prioritizeTddManual)
+    && isStr4WeekTddModule(testType, module)
+    && automationMode === 'manual'
+}
+
+export function buildManualCaseConfirmMessage(options: {
+  caseName: string
+  preconditions?: string
+  manualSteps?: string
+  expectedResult?: string
+}): string {
+  const parts = [`用例「${options.caseName}」需要人工测试。`]
+  const preconditions = options.preconditions?.trim()
+  if (preconditions) {
+    parts.push('', '前置条件：', preconditions)
+  }
+  const manualSteps = options.manualSteps?.trim()
+  if (manualSteps) {
+    parts.push('', '测试步骤：', manualSteps)
+  }
+  const expectedResult = options.expectedResult?.trim()
+  if (expectedResult) {
+    parts.push('', '期望结果：', expectedResult)
+  }
+  parts.push('', '请按步骤完成测试后确认结果。')
+  return parts.join('\n')
 }
 
 function enrichModuleCasesAutomationMode(config: ModuleCondition): void {
@@ -1127,13 +1227,14 @@ async function runCase(
   if (existsSync(caseInfoPath)) {
     try {
       const caseInfoList = JSON.parse(readFileSync(caseInfoPath, 'utf-8'))
-      if (Array.isArray(caseInfoList) && caseIndex > 0 && caseIndex <= caseInfoList.length) {
-        caseInfoItems = caseInfoList[caseIndex - 1]
-        result.caseName = caseInfoItems['用例名'] || caseInfoItems.case_name || `用例${caseIndex}`
-        // 解析测试步骤到子步骤
-        const testSteps = caseInfoItems['测试步骤'] || ''
-        if (testSteps) {
-          result.steps = parseTestSteps(testSteps)
+      if (Array.isArray(caseInfoList)) {
+        caseInfoItems = resolveCaseInfoItem(caseInfoList, caseIndex)
+        if (caseInfoItems) {
+          result.caseName = caseInfoItems['用例名'] || caseInfoItems.case_name || `用例${caseIndex}`
+          const testSteps = caseInfoItems['测试步骤'] || ''
+          if (testSteps) {
+            result.steps = parseTestSteps(testSteps)
+          }
         }
       }
     } catch {}
@@ -1145,6 +1246,21 @@ async function runCase(
     execMode: caseMeta?.execMode,
   })
   result.fullAutomation = result.automationMode === 'full'
+
+  if (shouldAwaitTddManualConfirm(session.prioritizeTddManual, testType, module, result.automationMode)) {
+    const message = buildManualCaseConfirmMessage({
+      caseName: result.caseName,
+      preconditions: caseInfoItems?.['前置条件'] || '',
+      manualSteps: caseInfoItems?.['测试步骤'] || '',
+      expectedResult: caseInfoItems?.['期望结果'] || '',
+    })
+    result.steps = [
+      { stepDesc: '加载用例信息', status: '完成', timestamp: startTime },
+      { stepDesc: '等待人工测试确认', status: '进行中', timestamp: new Date().toISOString() },
+    ]
+    await awaitTddManualConfirm({ deviceId, caseKey, result, message })
+    return result
+  }
 
   // 检查是否有对应的 .py 脚本
   const caseScript = join(PYTHON_DIR, 'cases', testType, module, `case${caseIndex}.py`)
@@ -2061,6 +2177,50 @@ const pendingManualDecisions: Record<string, {
   mode?: 'decision' | 'ack'
 }> = {}
 
+async function awaitTddManualConfirm(options: {
+  deviceId: string
+  caseKey: string
+  result: CaseResult
+  message: string
+}): Promise<void> {
+  const { deviceId, caseKey, result, message } = options
+  result.status = '待确认'
+  result.message = message
+  result.automationMode = 'manual'
+  result.fullAutomation = false
+  emitEvent('case_completed', { deviceId, caseKey, result })
+
+  const decisionId = `pending_${caseKey}_${Date.now()}`
+  const pendingPromise = new Promise<string>((res) => {
+    pendingManualDecisions[decisionId] = {
+      deviceId,
+      caseKey,
+      message,
+      resolve: (decision: string) => {
+        res(decision)
+        delete pendingManualDecisions[decisionId]
+        result.status = decision === 'pass' ? '通过' : '失败'
+        result.message = decision === 'pass' ? '人工测试通过' : '人工测试失败'
+        result.steps.push({
+          stepDesc: `人工确认: ${result.message}`,
+          status: result.status,
+          timestamp: new Date().toISOString(),
+        })
+        result.endTime = new Date().toISOString()
+        emitEvent('case_completed', { deviceId, caseKey, result })
+      },
+    }
+  })
+  emitEvent('manual_confirm', {
+    decisionId,
+    deviceId,
+    deviceName: devices[deviceId]?.deviceName || deviceId,
+    caseKey,
+    message,
+  })
+  await pendingPromise
+}
+
 export function submitManualDecision(decisionId: string, decision: string): boolean {
   const pending = pendingManualDecisions[decisionId]
   if (pending) {
@@ -2210,6 +2370,24 @@ async function runModule(
   }
   if (!cases.length && config.cases?.length) {
     cases = config.cases.map(c => ({ case_index: c.caseIndex, 用例名: c.caseName }))
+  }
+
+  if (
+    session.prioritizeTddManual
+    && isStr4WeekTddModule(testType, module)
+    && cases.length > 1
+  ) {
+    const mapped = cases.map((c: { case_index?: number; caseIndex?: number }, i: number) => {
+      const caseIndex = Number(c?.case_index ?? c?.caseIndex ?? (i + 1))
+      return {
+        testType,
+        module,
+        caseIndex,
+        automationMode: resolveCaseAutomationModeForPriority(testType, module, caseIndex),
+        raw: c,
+      }
+    })
+    cases = prioritizeTddManualCases(mapped).map(item => item.raw)
   }
 
   const totalCases = cases.length || 0
@@ -2436,6 +2614,7 @@ async function runFlashBeforeTest(deviceId: string, session: TestSession): Promi
 
 export interface StartTestOptions {
   scheduleKey?: string
+  prioritizeTddManual?: boolean
 }
 
 function bindCustomAuxDevices(auxIds: string[], dutId: string, session: TestSession): void {
@@ -2526,6 +2705,7 @@ export async function startTest(
       initializedPythonModules: [],
       flashOptions,
       scheduleKey: options?.scheduleKey,
+      prioritizeTddManual: Boolean(options?.prioritizeTddManual),
     }
 
     testSessions[deviceId] = session
@@ -2551,7 +2731,8 @@ export async function startTest(
 export async function startCustomTest(
   deviceId: string,
   selectedCases: string[],
-  customAuxDeviceIds: string[]
+  customAuxDeviceIds: string[],
+  options?: { prioritizeTddManual?: boolean },
 ): Promise<DeviceDetail | null> {
   try {
     const device = devices[deviceId]
@@ -2585,6 +2766,10 @@ export async function startCustomTest(
       caseList.push({ testType, module, caseIndex })
     }
     const modules = Array.from(modulesSet)
+    const prioritizeTddManual = Boolean(options?.prioritizeTddManual)
+    const executionCaseList = prioritizeTddManual
+      ? applyTddManualPriority(caseList)
+      : caseList
 
     const session: TestSession = {
       deviceId,
@@ -2599,6 +2784,7 @@ export async function startCustomTest(
       selectedCases,
       customAuxDevices: auxIds,
       initializedPythonModules: [],
+      prioritizeTddManual,
     }
 
     testSessions[deviceId] = session
@@ -2609,7 +2795,7 @@ export async function startCustomTest(
       .catch(() => {})
     void startDeviceFailureLogCapture(deviceId)
 
-    runCustomTestFlow(deviceId, session, caseList).catch(e => {
+    runCustomTestFlow(deviceId, session, executionCaseList).catch(e => {
       markTestFlowError(deviceId, e, 'custom')
     })
 
@@ -3458,8 +3644,11 @@ export async function resumeTest(deviceId: string): Promise<DeviceDetail | null>
         finishTest(deviceId, session)
         return { device: devices[deviceId]!, session }
       }
+      const executionRemaining = session.prioritizeTddManual
+        ? applyTddManualPriority(remaining)
+        : remaining
       bindCustomAuxDevices(session.auxiliaryDevices, deviceId, session)
-      runCustomTestFlow(deviceId, session, remaining, { skipDeviceInit: false }).catch(e => {
+      runCustomTestFlow(deviceId, session, executionRemaining, { skipDeviceInit: false }).catch(e => {
         markTestFlowError(deviceId, e, 'custom')
       })
     } else {

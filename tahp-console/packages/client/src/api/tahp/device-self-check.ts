@@ -105,6 +105,7 @@ export interface TestSession {
   selectedCases?: string[]
   customAuxDevices?: string[]
   errorReason?: string
+  prioritizeTddManual?: boolean
 }
 
 export interface CaseCatalogItem {
@@ -193,10 +194,11 @@ export async function startTest(
   testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated',
   flash?: StartTestFlashPayload,
   scheduleKey?: string,
+  prioritizeTddManual?: boolean,
 ): Promise<DeviceDetail> {
   return await tahpPost<DeviceDetail>(
     `/api/tahp/device-self-check/devices/${deviceId}/test/start`,
-    { testType, flash, scheduleKey }
+    { testType, flash, scheduleKey, prioritizeTddManual },
   )
 }
 
@@ -301,11 +303,12 @@ export async function getCaseCatalogDetail(testType: string): Promise<CaseCatalo
 export async function startCustomTest(
   deviceId: string,
   selectedCases: string[],
-  customAuxDeviceIds: string[]
+  customAuxDeviceIds: string[],
+  prioritizeTddManual?: boolean,
 ): Promise<DeviceDetail> {
   return await tahpPost<DeviceDetail>(
     `/api/tahp/device-self-check/devices/${deviceId}/test/custom-start`,
-    { selectedCases, customAuxDeviceIds }
+    { selectedCases, customAuxDeviceIds, prioritizeTddManual },
   )
 }
 
