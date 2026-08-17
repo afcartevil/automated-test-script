@@ -46,6 +46,10 @@ const systemNav = [
 const FEEDBACK_URL = 'https://transsioner.feishu.cn/share/base/form/shrcnDOMx8H12Nm1tcTmIOAHDId'
 const EASY_ADAPTER_SOP_URL = 'https://transsioner.feishu.cn/wiki/BdVUwpCL4ifRZckiQlzcPQoUndg'
 
+const manualNav = [
+  { label: 'EasyAdapter配置SOP', url: EASY_ADAPTER_SOP_URL },
+]
+
 const selectedKey = computed(() => {
   const name = route.name?.toString() || ''
   if (CONFIG_ROUTE_NAMES.has(name)) return CONFIG_ROUTE_NAME
@@ -88,6 +92,11 @@ const secondaryOptions = secondaryNav.map(item => ({
   key: item.name,
 }))
 
+const manualOptions = manualNav.map((item, idx) => ({
+  label: item.label,
+  key: `manual:${idx}`,
+}))
+
 const isPublicActive = computed(() => publicNav.some(item => isActive(item.name)))
 const isSecondaryActive = computed(() => secondaryNav.some(item => isActive(item.name)))
 const flushLayout = computed(() => route.meta.flushLayout === true)
@@ -110,6 +119,12 @@ function onPublicSelect(key: string) {
 
 function onSecondarySelect(key: string) {
   router.push({ name: key })
+}
+
+function onManualSelect(key: string) {
+  const idx = Number(key.split(':')[1])
+  const item = manualNav[idx]
+  if (item?.url) window.open(item.url, '_blank', 'noopener,noreferrer')
 }
 
 async function handleUpdate() {
@@ -183,15 +198,25 @@ async function handleUpdate() {
           </button>
         </NDropdown>
 
-        <a
-          :href="EASY_ADAPTER_SOP_URL"
-          class="ck-tab ck-tab-sub ck-tab-link"
-          target="_blank"
-          rel="noopener noreferrer"
-          title="EasyAdapter 配置 SOP（飞书文档）"
-        >
-          EasyAdapter配置SOP
-        </a>
+        <NDropdown trigger="click" :options="manualOptions" @select="onManualSelect">
+          <button
+            type="button"
+            class="ck-tab ck-tab-sub"
+          >
+            使用手册
+            <svg
+              class="ck-caret"
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.4"
+            >
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+        </NDropdown>
       </nav>
 
       <div class="ck-spacer">
@@ -316,11 +341,6 @@ async function handleUpdate() {
   color: #8b909f;
   display: inline-flex;
   align-items: center;
-}
-
-.ck-tab-link {
-  text-decoration: none;
-  box-sizing: border-box;
 }
 
 .ck-caret {
