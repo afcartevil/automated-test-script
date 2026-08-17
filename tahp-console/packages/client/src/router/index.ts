@@ -129,6 +129,11 @@ const router = createRouter({
       component: () => import('@/views/tahp/ConfigView.vue'),
     },
     {
+      path: '/tahp/manual',
+      name: 'tahp.manual',
+      component: () => import('@/views/tahp/ManualView.vue'),
+    },
+    {
       path: '/tahp/skill-config',
       name: 'tahp.skill-config',
       redirect: (to) => ({

@@ -44,10 +44,9 @@ const systemNav = [
 ]
 
 const FEEDBACK_URL = 'https://transsioner.feishu.cn/share/base/form/shrcnDOMx8H12Nm1tcTmIOAHDId'
-const EASY_ADAPTER_SOP_URL = 'https://transsioner.feishu.cn/wiki/BdVUwpCL4ifRZckiQlzcPQoUndg'
 
-const manualNav = [
-  { label: 'EasyAdapter配置SOP', url: EASY_ADAPTER_SOP_URL },
+const manualNav: Array<{ label: string; name?: string; url?: string }> = [
+  { label: 'EasyAdapter 使用手册', name: 'tahp.manual' },
 ]
 
 const selectedKey = computed(() => {
@@ -99,6 +98,7 @@ const manualOptions = manualNav.map((item, idx) => ({
 
 const isPublicActive = computed(() => publicNav.some(item => isActive(item.name)))
 const isSecondaryActive = computed(() => secondaryNav.some(item => isActive(item.name)))
+const isManualActive = computed(() => selectedKey.value === 'tahp.manual')
 const flushLayout = computed(() => route.meta.flushLayout === true)
 
 function goHome() {
@@ -124,7 +124,9 @@ function onSecondarySelect(key: string) {
 function onManualSelect(key: string) {
   const idx = Number(key.split(':')[1])
   const item = manualNav[idx]
-  if (item?.url) window.open(item.url, '_blank', 'noopener,noreferrer')
+  if (!item) return
+  if (item.name) router.push({ name: item.name })
+  else if (item.url) window.open(item.url, '_blank', 'noopener,noreferrer')
 }
 
 async function handleUpdate() {
@@ -202,6 +204,7 @@ async function handleUpdate() {
           <button
             type="button"
             class="ck-tab ck-tab-sub"
+            :class="{ active: isManualActive }"
           >
             使用手册
             <svg
