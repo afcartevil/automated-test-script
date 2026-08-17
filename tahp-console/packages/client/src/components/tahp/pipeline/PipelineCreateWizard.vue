@@ -20,9 +20,8 @@ import {
   type PrereqResolveData,
   type TestPlan,
 } from '@/api/tahp/adapt-pipeline'
-import { fetchPrereqProjects, type AdaptPrereqProject } from '@/api/tahp/adapt'
+import { fetchPrereqProjects, peekPrereqProjects, type AdaptPrereqProject } from '@/api/tahp/adapt'
 import { refreshDevices, type DeviceInfo } from '@/api/tahp/device-self-check'
-import { getRuntimeMode } from '@/api/tahp/knowledge'
 import {
   ADAPT_WORKSPACES,
   getBuiltinDomainsForWorkspace,
@@ -51,11 +50,12 @@ const centralConfigured = ref(true)
 const capabilities = ref<CapabilityItem[]>([])
 const domainCatalog = ref<DomainCatalog | null>(null)
 
-const projects = ref<AdaptPrereqProject[]>([])
+const projects = ref<AdaptPrereqProject[]>(peekPrereqProjects() ?? [])
 const devices = ref<DeviceInfo[]>([])
 
 /** 分步加载提示（互不阻塞） */
 const projectsLoading = ref(false)
+const projectsRefreshing = ref(false)
 const projectsLoadError = ref('')
 const catalogLoading = ref(false)
 const prereqsLoading = ref(false)
@@ -425,21 +425,48 @@ function rebuildWizardFromSources() {
   wizardDomains.value = buildWizardDomains(catalogDomains, prereqData.value)
 }
 
-async function loadProjects() {
-  if (!centralConfigured.value) {
-    projects.value = []
-    projectsLoadError.value = ''
-    return
+async function loadProjects(force = false) {
+  if (!force) {
+    const cached = peekPrereqProjects()
+    if (cached) {
+      projects.value = cached
+      projectsLoadError.value = ''
+      projectsLoading.value = false
+      return
+    }
   }
-  projectsLoading.value = true
+  if (!projects.value.length) projectsLoading.value = true
   projectsLoadError.value = ''
   try {
-    projects.value = await fetchPrereqProjects()
+    projects.value = await fetchPrereqProjects({ force })
+    projectsLoadError.value = ''
   } catch (err) {
-    projects.value = []
-    projectsLoadError.value = (err as Error).message || '项目列表加载失败'
+    if (!projects.value.length) {
+      projectsLoadError.value = (err as Error).message || '项目列表加载失败'
+    }
+    if (force) throw err
   } finally {
     projectsLoading.value = false
+  }
+}
+
+async function refreshProjectConfig() {
+  if (projectsRefreshing.value) return
+  projectsRefreshing.value = true
+  try {
+    await loadProjects(true)
+    const code = projectCode.value || manualProjectCode.value.trim()
+    if (code) {
+      const data = await fetchPipelinePrereqs(code, campaignId.value ?? undefined, { force: true })
+      prereqData.value = data
+      campaignId.value = data.campaign_id
+      rebuildWizardFromSources()
+    }
+    message.success('已拉取最新项目配置')
+  } catch (err) {
+    message.error((err as Error).message || '刷新项目配置失败')
+  } finally {
+    projectsRefreshing.value = false
   }
 }
 
@@ -684,34 +711,26 @@ function goConfig() {
   router.push({ name: CONFIG_ROUTE_NAME })
 }
 
-onMounted(async () => {
-  // 本地 builtin 先铺模块目录，目录 API / 项目列表并行拉取，缩短下拉出现时间
+onMounted(() => {
   rebuildWizardFromSources()
-  await props.store.checkRuntimeReadiness()
-
-  projectsLoading.value = true
-  catalogLoading.value = true
-  capsLoading.value = true
-  devicesLoading.value = true
-
-  const mode = await getRuntimeMode().catch(() => ({
-    role: 'local' as const,
-    central_configured: false,
-    central_url: null,
-  }))
-  centralConfigured.value = mode.central_configured
-
-  // 项目列表与目录/能力/设备并行，不再等 catalog 结束
-  await Promise.all([
-    loadProjects(),
-    loadCatalog(),
-    fetchCapabilities()
-      .then((caps) => { capabilities.value = caps })
-      .catch(() => { capabilities.value = [] })
-      .finally(() => { capsLoading.value = false }),
-    loadDevicesOnce(),
-  ])
-  startDevicePolling()
+  // 项目列表不依赖就绪检查：有会话缓存则首屏直接出下拉
+  void loadProjects()
+  void (async () => {
+    catalogLoading.value = true
+    capsLoading.value = true
+    devicesLoading.value = true
+    await props.store.checkRuntimeReadiness()
+    centralConfigured.value = props.store.centralConfigured
+    await Promise.all([
+      loadCatalog(),
+      fetchCapabilities()
+        .then((caps) => { capabilities.value = caps })
+        .catch(() => { capabilities.value = [] })
+        .finally(() => { capsLoading.value = false }),
+      loadDevicesOnce(),
+    ])
+    startDevicePolling()
+  })()
 })
 
 onUnmounted(() => {
@@ -737,8 +756,19 @@ onUnmounted(() => {
     <div v-if="step === 1" class="step-body">
       <h2>选择项目</h2>
       <div v-if="centralConfigured" class="field">
-        <label>项目</label>
-        <div v-if="projectsLoading" class="load-hint">
+        <div class="field-head">
+          <label>项目</label>
+          <NButton
+            size="small"
+            secondary
+            :loading="projectsRefreshing"
+            :disabled="projectsRefreshing"
+            @click="refreshProjectConfig"
+          >
+            刷新
+          </NButton>
+        </div>
+        <div v-if="projectsLoading && !projectOptions.length" class="load-hint">
           <NSpin :size="16" />
           <span>项目列表加载中…</span>
         </div>
@@ -756,30 +786,26 @@ onUnmounted(() => {
         </template>
       </div>
       <div class="field">
-        <label>{{ centralConfigured ? '或手工输入项目码' : '项目码' }}</label>
+        <div class="field-head">
+          <label>{{ centralConfigured ? '或手工输入项目码' : '项目码' }}</label>
+          <NButton
+            v-if="!centralConfigured"
+            size="small"
+            secondary
+            :loading="projectsRefreshing"
+            :disabled="projectsRefreshing"
+            @click="refreshProjectConfig"
+          >
+            刷新
+          </NButton>
+        </div>
         <NInput v-model:value="manualProjectCode" placeholder="例如 KM9" :disabled="Boolean(projectCode)" />
       </div>
-      <p v-if="catalogLoading" class="load-hint muted-line">
-        <NSpin :size="14" />
-        <span>模块目录加载中（不影响选项目）…</span>
-      </p>
     </div>
 
     <!-- Step 2 -->
     <div v-else-if="step === 2" class="step-body">
       <h2>选择工作区与适配模块</h2>
-      <p class="muted step-hint">
-        目录来自 AI 适配调试三工作区；中心前置仅用于预填表单。默认勾选中心已有数据的域。
-      </p>
-
-      <div v-if="prereqsLoading || catalogLoading" class="load-banner">
-        <NSpin :size="18" />
-        <div>
-          <strong v-if="prereqsLoading">前置信息加载中…</strong>
-          <strong v-else>模块目录加载中…</strong>
-          <p class="muted">可先浏览模块列表；加载完成后表单会自动预填。</p>
-        </div>
-      </div>
 
       <div class="workspace-bar">
         <span class="bar-label">工作区</span>
@@ -802,10 +828,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div v-if="!visibleDomains.length && (prereqsLoading || catalogLoading)" class="muted">
-        正在准备模块列表…
-      </div>
-      <div v-else-if="!visibleDomains.length" class="muted">请至少选择一个工作区。</div>
+      <div v-if="!visibleDomains.length" class="muted">请至少选择一个工作区。</div>
       <div v-else class="workspace-groups">
         <div v-for="group in domainsByWorkspace" :key="group.id" class="ws-group">
           <h3 class="ws-title">{{ group.label }}</h3>
@@ -1228,6 +1251,14 @@ onUnmounted(() => {
     color: var(--muted);
     font-weight: 600;
   }
+}
+.field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+  label { margin-bottom: 0; }
 }
 .field-row {
   display: grid;

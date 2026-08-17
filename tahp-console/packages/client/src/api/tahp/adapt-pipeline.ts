@@ -1,3 +1,4 @@
+import { resolvePrereqsFromCenter } from './adapt'
 import { tahpDelete, tahpGet, tahpPost, tahpPut } from './client'
 
 export type RunStatus =
@@ -269,9 +270,22 @@ export function discardPipelineDraftRun(runId: string): Promise<{ ok: boolean }>
   return tahpDelete(`/api/tahp/adapt-pipeline/runs/${encodeURIComponent(runId)}`)
 }
 
-export function fetchPipelinePrereqs(projectCode: string, campaignId?: string): Promise<PrereqResolveData> {
-  const qs = campaignId ? `?campaign_id=${encodeURIComponent(campaignId)}` : ''
-  return tahpGet(`/api/tahp/adapt-pipeline/prereqs/${encodeURIComponent(projectCode)}${qs}`)
+export async function fetchPipelinePrereqs(
+  projectCode: string,
+  campaignId?: string,
+  fetchOpts?: { force?: boolean },
+): Promise<PrereqResolveData> {
+  const data = await resolvePrereqsFromCenter({
+    project_code: projectCode,
+    campaign_id: campaignId,
+  }, fetchOpts)
+  return {
+    project_code: data.project_code,
+    campaign_id: data.campaign_id,
+    from_os: data.from_os,
+    to_os: data.to_os,
+    domains: data.domains,
+  }
 }
 
 export interface DomainCatalogField {
