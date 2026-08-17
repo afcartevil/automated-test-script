@@ -8,6 +8,7 @@ import {
   continueTest,
   resumeTest,
   endTest,
+  skipCurrentCase,
   updateCaseResult,
   retestCase,
   retestReportCase,
@@ -325,6 +326,22 @@ tahpDeviceSelfCheckRoutes.post(
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { success: false, error: err?.message || 'Failed to end test' }
+    }
+  }
+)
+
+// 跳过当前用例（会话继续下一例）
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/devices/:deviceId/test/skip-case',
+  async (ctx) => {
+    try {
+      const deviceId = ctx.params.deviceId
+      const result = skipCurrentCase(deviceId)
+      ctx.body = { success: true, data: result }
+    } catch (err: any) {
+      const message = err?.message || 'Failed to skip case'
+      ctx.status = /不存在|没有可跳过/.test(message) ? 400 : 500
+      ctx.body = { success: false, error: message }
     }
   }
 )

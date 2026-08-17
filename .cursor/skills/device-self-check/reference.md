@@ -15,6 +15,7 @@ Base：`/api/tahp/device-self-check`
 | POST | `/devices/:deviceId/test/continue` | 前置条件满足后继续 |
 | POST | `/devices/:deviceId/test/resume` | 错误状态恢复测试（从当前/报错模块继续） |
 | POST | `/devices/:deviceId/test/end` | 终止当前测试（杀用例进程、停 monkey），生成部分报告后设备恢复空闲 |
+| POST | `/devices/:deviceId/test/skip-case` | 跳过当前用例（记「跳过」/「用户跳过」），会话继续下一例；无进行中/待确认用例时 400 |
 | POST | `/devices/:deviceId/case-result` | 人工改结果 |
 | POST | `/devices/:deviceId/case/retest` | 单用例复测 |
 | GET | `/module-conditions` | 模块配置全集 |

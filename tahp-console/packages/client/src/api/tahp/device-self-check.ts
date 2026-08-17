@@ -400,6 +400,13 @@ export async function endTest(deviceId: string): Promise<DeviceDetail> {
   )
 }
 
+export async function skipCurrentCase(deviceId: string): Promise<DeviceDetail> {
+  return await tahpPost<DeviceDetail>(
+    `/api/tahp/device-self-check/devices/${deviceId}/test/skip-case`,
+    {}
+  )
+}
+
 export async function updateCaseResult(
   deviceId: string,
   testType: string,

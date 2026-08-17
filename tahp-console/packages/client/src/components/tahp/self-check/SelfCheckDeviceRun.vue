@@ -113,6 +113,7 @@ const {
   errorReason,
   errorModuleLabel,
   canEndTest,
+  canSkipCurrentCase,
   needsContinue,
   selectedCase,
   selectedCaseResult,
@@ -158,6 +159,7 @@ const {
   doRefreshDevices,
   loadDevices,
   handleEndTest,
+  handleSkipCurrentCase,
   toggleModule,
   isModuleExpanded,
   selectCaseItem,
@@ -1645,6 +1647,15 @@ function handleDutRowAction(deviceId: string) {
                         @click.stop="handleContinueTest(selectedDevice.device.deviceId)"
                       >
                         继续测试
+                      </button>
+                      <button
+                        v-if="canSkipCurrentCase"
+                        type="button"
+                        class="ea-btn-ghost ea-btn-sm"
+                        title="跳过当前用例并继续"
+                        @click.stop="handleSkipCurrentCase(selectedDevice.device.deviceId)"
+                      >
+                        跳过
                       </button>
                       <button
                         type="button"

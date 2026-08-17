@@ -184,7 +184,8 @@ export interface DeviceDetail {
 // 内存状态存储 - 只使用一个单一的数据源，避免不一致
 let devices: Record<string, DeviceInfo> = {}
 let testSessions: Record<string, TestSession> = {}
-const activeCaseCleanups: Record<string, () => void> = {}
+type CaseAbortReason = 'abort' | 'skip'
+const activeCaseCleanups: Record<string, (reason?: CaseAbortReason) => void> = {}
 let moduleConditions: Record<string, ModuleCondition> = {}
 
 // 配置路径
@@ -1285,8 +1286,10 @@ async function runCase(
         resolve: (decision: string) => {
           res(decision)
           delete pendingManualDecisions[decisionId]
-          result.status = decision === 'pass' ? '通过' : '失败'
-          result.message = decision === 'pass' ? '人工测试通过' : '人工测试失败'
+          applyManualDecisionToResult(result, decision, {
+            passMessage: '人工测试通过',
+            failMessage: '人工测试失败',
+          })
           result.steps.push({
             stepDesc: `人工确认: ${result.message}`,
             status: result.status,
@@ -1399,8 +1402,10 @@ async function runCase(
           failLabel,
           resolve: (decision: string) => {
             handler(decision)
-            // 更新结果：支持确认选「不支持」记为跳过
-            if (isSupportConfirm && decision !== 'pass') {
+            if (decision === 'skip') {
+              applyUserSkipToResult(result)
+            } else if (isSupportConfirm && decision !== 'pass') {
+              // 更新结果：支持确认选「不支持」记为跳过
               result.status = '跳过'
               result.message = '设备不支持，已跳过'
             } else {
@@ -1992,6 +1997,13 @@ async function execPythonCase(
     let proc: any = null
     let timeoutId: NodeJS.Timeout | null = null
     let settled = false
+    let abortReason: CaseAbortReason | undefined
+
+    const abortFinishResult = () => ({
+      status: abortReason === 'skip' ? 'skip' : 'fail',
+      message: abortReason === 'skip' ? '用户跳过' : '测试已终止',
+      steps: [] as CaseStep[],
+    })
 
     const finish = (result: { status: string; message: string; steps: CaseStep[]; fullAutomation?: boolean }) => {
       if (settled) return
@@ -2005,8 +2017,9 @@ async function execPythonCase(
       resolve(result)
     }
 
-    /** 结束测试 / 超时杀进程：先杀树，再保留短超时兜底 settle（避免清掉长超时后 Promise 永久挂起） */
-    const cleanup = () => {
+    /** 结束测试 / 跳过 / 超时杀进程：先杀树，再保留短超时兜底 settle（避免清掉长超时后 Promise 永久挂起） */
+    const cleanup = (reason?: CaseAbortReason) => {
+      if (reason) abortReason = reason
       if (testType === 'power' && module === 'current_analysis') {
         void stopPowerForDevice(deviceId)
       }
@@ -2017,7 +2030,7 @@ async function execPythonCase(
       }
       if (timeoutId) clearTimeout(timeoutId)
       timeoutId = setTimeout(() => {
-        finish({ status: 'fail', message: '测试已终止', steps: [] })
+        finish(abortFinishResult())
       }, 5_000)
     }
 
@@ -2126,6 +2139,10 @@ async function execPythonCase(
           handleLine(lineBuffer)
         }
         if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
+        if (abortReason) {
+          finish(abortFinishResult())
+          return
+        }
         try {
           const resultLine = lastResultLine || (() => {
             const lines = stdout.split('\n').filter((l: string) => l.trim().startsWith('{'))
@@ -2158,6 +2175,10 @@ async function execPythonCase(
       })
 
       proc.on('error', (err: any) => {
+        if (abortReason) {
+          finish(abortFinishResult())
+          return
+        }
         finish({ status: 'fail', message: `启动Python失败: ${err.message}`, steps: [] })
       })
     } catch (err: any) {
@@ -2199,8 +2220,10 @@ async function awaitTddManualConfirm(options: {
       resolve: (decision: string) => {
         res(decision)
         delete pendingManualDecisions[decisionId]
-        result.status = decision === 'pass' ? '通过' : '失败'
-        result.message = decision === 'pass' ? '人工测试通过' : '人工测试失败'
+        applyManualDecisionToResult(result, decision, {
+          passMessage: '人工测试通过',
+          failMessage: '人工测试失败',
+        })
         result.steps.push({
           stepDesc: `人工确认: ${result.message}`,
           status: result.status,
@@ -2890,6 +2913,37 @@ export function collectOrderedCaseResults(session: TestSession): CaseResult[] {
 
 const TERMINAL_CASE_STATUSES = new Set(['通过', '失败', '部分通过', 'NA', '跳过'])
 
+function applyUserSkipToResult(result: CaseResult): void {
+  if (result.status === '跳过' && result.message === '用户跳过') return
+  const now = new Date().toISOString()
+  result.status = '跳过'
+  result.message = '用户跳过'
+  result.endTime = now
+  result.steps = [
+    ...(result.steps || []),
+    { stepDesc: '用户跳过', status: '跳过', timestamp: now },
+  ]
+}
+
+function applyManualDecisionToResult(
+  result: CaseResult,
+  decision: string,
+  labels: { passMessage: string; failMessage: string },
+): void {
+  if (decision === 'skip') {
+    applyUserSkipToResult(result)
+    return
+  }
+  result.status = decision === 'pass' ? '通过' : '失败'
+  result.message = decision === 'pass' ? labels.passMessage : labels.failMessage
+}
+
+function findSkippableCaseEntries(session: TestSession): Array<[string, CaseResult]> {
+  return Object.entries(session.caseResults).filter(
+    ([, result]) => result.status === '进行中' || result.status === '待确认',
+  )
+}
+
 /** 用户点「结束测试」时：未终态用例一律记为失败，保证报告呈现失败 */
 function markCasesFailedOnUserAbort(deviceId: string, session: TestSession): void {
   const now = new Date().toISOString()
@@ -2922,6 +2976,46 @@ function markCasesFailedOnUserAbort(deviceId: string, session: TestSession): voi
   }
 }
 
+// 跳过当前用例（杀进程 / 解除人工确认，会话继续下一例）
+export function skipCurrentCase(deviceId: string): DeviceDetail {
+  const device = devices[deviceId]
+  const session = testSessions[deviceId]
+  if (!device) {
+    throw new Error('设备不存在')
+  }
+  if (!session?.isRunning) {
+    throw new Error('当前没有可跳过的用例')
+  }
+
+  const skippable = findSkippableCaseEntries(session)
+  if (skippable.length === 0) {
+    throw new Error('当前没有可跳过的用例')
+  }
+
+  for (const [caseKey, result] of skippable) {
+    applyUserSkipToResult(result)
+    emitEvent('case_completed', { deviceId, caseKey, result })
+  }
+
+  for (const [id, pending] of Object.entries(pendingManualDecisions)) {
+    if (pending.deviceId !== deviceId) continue
+    if (id.startsWith('manual_')) {
+      // Python stdin 确认：不写 skip 给脚本，由 cleanup 杀进程
+      delete pendingManualDecisions[id]
+      continue
+    }
+    try { pending.resolve('skip') } catch { /* ignore */ }
+    delete pendingManualDecisions[id]
+  }
+
+  if (activeCaseCleanups[deviceId]) {
+    activeCaseCleanups[deviceId]('skip')
+    delete activeCaseCleanups[deviceId]
+  }
+
+  return { device, session }
+}
+
 // 结束测试（终止当前执行、释放资源，并停止后台 Monkey）
 export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
   const device = devices[deviceId]
@@ -2936,7 +3030,7 @@ export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
   }
 
   if (activeCaseCleanups[deviceId]) {
-    activeCaseCleanups[deviceId]()
+    activeCaseCleanups[deviceId]('abort')
     delete activeCaseCleanups[deviceId]
   }
 

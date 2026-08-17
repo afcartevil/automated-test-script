@@ -27,6 +27,7 @@ import {
   continueTest,
   resumeTest,
   endTest,
+  skipCurrentCase,
   updateCaseResult,
   getModuleConditions,
   submitManualDecision,
@@ -1500,6 +1501,24 @@ async function handleEndTest(deviceId: string) {
   }
 }
 
+async function handleSkipCurrentCase(deviceId: string) {
+  try {
+    const result = await skipCurrentCase(deviceId)
+    if (!result?.device) {
+      message.error('跳过失败：设备不存在')
+      return
+    }
+    patchDeviceInList(result.device)
+    if (selectedDeviceId.value === deviceId) {
+      selectedDevice.value = result
+    }
+    message.success('已跳过当前用例')
+  } catch (e: any) {
+    console.error('[DeviceSelfCheck] Error skipping case:', e)
+    message.error(e?.message || '跳过当前用例失败')
+  }
+}
+
 // 修改用例结果
 const showModifyDialog = ref(false)
 const modifyCaseKey = ref<string | null>(null)
@@ -2001,6 +2020,16 @@ const canEndTest = computed(() => {
   return status === '测试中' || status === '初始化中' || status === '等待测试开始' || status === '刷机中' || status === '错误'
 })
 
+const canSkipCurrentCase = computed(() => {
+  const device = selectedDevice.value?.device
+  const session = selectedDevice.value?.session
+  if (!device || device.role === '辅测机') return false
+  if (!session?.isRunning) return false
+  return Object.values(session.caseResults || {}).some(
+    r => r.status === '进行中' || r.status === '待确认',
+  )
+})
+
 const needsContinue = computed(() => {
   const status = selectedDevice.value?.device.status || ''
   return status.includes('不满足前置条件')
@@ -2276,6 +2305,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     pageTitle,
     isTestComplete,
     canEndTest,
+    canSkipCurrentCase,
     needsContinue,
     selectedCaseResult,
     loadDevices,
@@ -2316,6 +2346,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     handleContinueTest,
     handleResumeTest,
     handleEndTest,
+    handleSkipCurrentCase,
     openModifyDialog,
     handleModifyCaseResult,
     openRetestDialog,
