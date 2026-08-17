@@ -1,0 +1,19 @@
+{
+  "testType": "pipeline_adapt",
+  "module": "vibrator",
+  "moduleLabel": "马达",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "马达适配检查",
+      "canReuse": false,
+      "automationMode": "full"
+    }
+  ]
+}
