@@ -241,4 +241,8 @@ export interface QualityRunPayload {
   ai_summary?: string
   source?: { tool?: string; version?: string; host?: string }
   schema_version?: number
+  current_node?: string
+  parent_run_id?: string
+  headline?: string
+  extra?: Record<string, unknown>
 }

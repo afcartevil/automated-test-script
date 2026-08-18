@@ -209,6 +209,9 @@ export function saveRun(run: PipelineRun, opts?: { immediate?: boolean }): void 
     writeRunToDisk(run)
     upsertIndexSummary(toSummary(run))
     pendingWrites.delete(run.run_id)
+    if (run.status === 'passed' || run.status === 'failed' || run.status === 'aborted') {
+      void import('./quality-notify').then(m => m.notifyPipelineQuality(run))
+    }
   }
 
   if (opts?.immediate) {

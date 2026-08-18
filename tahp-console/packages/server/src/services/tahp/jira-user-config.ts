@@ -27,6 +27,18 @@ export function jiraUserConfigPath(): string {
   return join(tahpConfigDir(), 'jira-user-config.json')
 }
 
+export function readJiraUsername(): string | undefined {
+  const p = jiraUserConfigPath()
+  if (!existsSync(p)) return undefined
+  try {
+    const raw = JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>
+    const username = String(raw.username || '').trim()
+    return username || undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function readJiraUserConfig(): JiraUserConfigRecord | null {
   const p = jiraUserConfigPath()
   if (!existsSync(p)) return null
