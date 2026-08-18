@@ -87,9 +87,21 @@ describe('adapt-pipeline domain-catalog', () => {
     expect(featureComm.related_skills).toContain('comm-framework-agent-test-for-secondWork')
 
     const carrier = catalog.workspaces.find(w => w.id === 'carrier-config')!
+    expect(carrier.domains.map(d => d.domain_id)).toEqual([
+      'carrierconfig-tools',
+      'ecc-config',
+      'apn-config',
+      'spn-config',
+    ])
     const ecc = carrier.domains.find(d => d.domain_id === 'ecc-config')!
     expect(ecc.module).toBe('telephony')
+    const spn = carrier.domains.find(d => d.domain_id === 'spn-config')!
+    expect(spn.module).toBe('telephony')
+    expect(spn.related_skills).toContain('spn-workflow-2-2-0')
+    expect(spn.schema.some(f => f.key === 'jira_key' && f.required)).toBe(true)
+    expect(spn.schema.some(f => f.key === 'log_path' && f.required)).toBe(true)
     expect(mapDomainToModule('ecc-config')).toBe('telephony')
+    expect(mapDomainToModule('spn-config')).toBe('telephony')
     expect(mapDomainToModule('tp')).toBe('kernel-driver')
   })
 })

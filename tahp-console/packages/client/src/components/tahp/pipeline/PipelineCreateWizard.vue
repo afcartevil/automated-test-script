@@ -155,6 +155,7 @@ const TELEPHONY_DOMAINS = new Set([
   'carrierconfig-tools',
   'ecc-config',
   'apn-config',
+  'spn-config',
 ])
 
 function mapDomainToModule(domainId: string, moduleHint?: string): string {

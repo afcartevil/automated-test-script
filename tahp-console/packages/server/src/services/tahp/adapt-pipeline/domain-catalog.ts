@@ -3,6 +3,7 @@
  * 与 client constants/adapt-domains 对齐（id / label / module）
  */
 import { getAdaptDomainLayout } from '../adapt-layout/service'
+import { normalizeSpnRelatedSkills } from '../ecc-config-form'
 import {
   ADAPT_WORKSPACE_IDS,
   type AdaptWorkspaceId,
@@ -64,7 +65,7 @@ const WORKSPACE_META: Array<{
   {
     id: 'carrier-config',
     label: '运营商配置',
-    subtitle: '运营商相关配置适配，包含 CarrierConfig 与 APN 配置',
+    subtitle: '运营商相关配置适配，包含 CarrierConfig、ECC、APN 与 SPN',
   },
 ]
 
@@ -120,6 +121,30 @@ const BUILTIN_BY_WORKSPACE: Record<AdaptWorkspaceId, BuiltinDomainSeed[]> = {
       module: 'telephony',
       related_skills: ['apn-config'],
     },
+    {
+      id: 'spn-config',
+      label: 'SPN配置',
+      module: 'telephony',
+      related_skills: ['spn-workflow-2-2-0'],
+      schema: [
+        { key: 'jira_key', label: 'Jira 单号/链接', required: true, type: 'text', placeholder: '如 OS162-12345 或 Jira URL' },
+        { key: 'log_path', label: '日志路径', required: true, type: 'text', placeholder: '用户提供的日志文件、目录或压缩包绝对路径' },
+        { key: 'workspace_path', label: '源码 workspace', required: false, type: 'text', placeholder: '与 Jira 问题版本对应的源码根；缺省可分析但不可改码/提交' },
+        {
+          key: 'task_goal',
+          label: '任务目标',
+          required: false,
+          type: 'select',
+          placeholder: '默认仅分析',
+          options: [
+            { label: '仅分析（不改码）', value: 'analyze' },
+            { label: '分析并改码（提交前确认 diff）', value: 'patch' },
+            { label: '分析、改码并提交 Gerrit', value: 'submit' },
+          ],
+        },
+        { key: 'extra_info', label: '补充信息', required: false, type: 'textarea', placeholder: '运营商、MCCMNC、平台（MTK/QCOM）、现象（状态栏/手动搜网/displayName/MVNO/云网SPN）等' },
+      ],
+    },
   ],
 }
 
@@ -131,6 +156,7 @@ export function mapDomainToModule(domainId: string, moduleHint?: string): string
     || domainId === 'carrierconfig-tools'
     || domainId === 'ecc-config'
     || domainId === 'apn-config'
+    || domainId === 'spn-config'
   ) {
     return 'telephony'
   }
@@ -167,9 +193,15 @@ export async function getDomainCatalog(): Promise<DomainCatalog> {
       const schema = layoutSchema.length
         ? layoutSchema
         : (seed.schema ?? [])
-      const related_skills = layout?.related_skills?.length
-        ? [...layout.related_skills]
-        : (seed.related_skills ?? [])
+      const related_skills = seed.id === 'spn-config'
+        ? normalizeSpnRelatedSkills(
+          layout?.related_skills?.length
+            ? [...layout.related_skills]
+            : (seed.related_skills ?? []),
+        )
+        : (layout?.related_skills?.length
+          ? [...layout.related_skills]
+          : (seed.related_skills ?? []))
 
       domains.push({
         workspace_id: meta.id,

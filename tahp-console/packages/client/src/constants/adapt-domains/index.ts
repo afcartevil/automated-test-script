@@ -27,7 +27,7 @@ export const ADAPT_WORKSPACES: AdaptWorkspaceDef[] = [
   {
     id: 'carrier-config',
     label: '运营商配置',
-    subtitle: '运营商相关配置适配，包含 CarrierConfig 与 APN 配置',
+    subtitle: '运营商相关配置适配，包含 CarrierConfig、ECC、APN 与 SPN',
     allowDynamicDomains: false,
   },
 ]

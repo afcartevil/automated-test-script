@@ -25,8 +25,8 @@ export function validateEccConfigForm(formData: Record<string, unknown>): string
   return null
 }
 
-/** CarrierConfig 等人机协同域；ECC 为无人值守，不在此集合 */
-export const INTERACTIVE_CARRIER_DOMAIN_IDS = new Set(['carrierconfig-tools'])
+/** CarrierConfig / SPN 为人机协同域；ECC / APN 为无人值守 */
+export const INTERACTIVE_CARRIER_DOMAIN_IDS = new Set(['carrierconfig-tools', 'spn-config'])
 
 export function isInteractiveCarrierDomain(domainId: string, interactionMode?: boolean): boolean {
   return interactionMode === true || INTERACTIVE_CARRIER_DOMAIN_IDS.has(domainId)
@@ -46,4 +46,23 @@ export function normalizeEccRelatedSkills(skills: string[]): string[] {
   if (!out.includes('ecc-config')) out.unshift('ecc-config')
   if (!out.includes('gerrit-submit')) out.push('gerrit-submit')
   return out
+}
+
+export const SPN_PRIMARY_SKILL_ID = 'spn-workflow-2-2-0'
+
+export function isSpnWorkflowSkillId(id: string): boolean {
+  const s = String(id || '').trim()
+  return s === SPN_PRIMARY_SKILL_ID || s === 'spn-workflow' || s.startsWith('spn-workflow-')
+}
+
+export function normalizeSpnRelatedSkills(skills: string[]): string[] {
+  const mapped = skills.filter(Boolean).map((s) => (s === 'spn-workflow' ? SPN_PRIMARY_SKILL_ID : s))
+  if (!mapped.some(isSpnWorkflowSkillId)) mapped.unshift(SPN_PRIMARY_SKILL_ID)
+  return [...new Set(mapped)]
+}
+
+export function validateSpnConfigForm(formData: Record<string, unknown>): string | null {
+  if (!String(formData.jira_key ?? '').trim()) return '请填写 Jira 单号或链接'
+  if (!String(formData.log_path ?? '').trim()) return '请填写日志文件、目录或压缩包路径'
+  return null
 }

@@ -26,6 +26,7 @@ const DOMAIN_LABELS: Record<string, string> = {
   'carrierconfig-tools': 'CarrierConfig配置',
   'ecc-config': 'ECC配置',
   'apn-config': 'APN配置',
+  'spn-config': 'SPN配置',
 }
 
 function labelForDomain(domainId: string): string {

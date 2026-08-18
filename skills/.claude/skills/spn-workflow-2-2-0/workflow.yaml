@@ -1,0 +1,136 @@
+schema_version: "1.0"
+module_id: spn
+domain: connectivity/sub/spn
+scenario_id: spn-workflow
+description: >
+  SPN / 运营商名称 / displayName 的 Jira 驱动工作流编排。
+  状态机 INTAKE → ANALYZED → PATCHED → DIFF_APPROVED → BRANCH_RESOLVED → VERIFIED → SUBMITTED；
+  各阶段映射到 Harness 结构化 CLI，禁止跳过门禁。
+
+execution_model:
+  collect: agent_with_harness_cli
+  gate: "human confirm at diff + branch + submit"
+  coding: agent_direct_edit
+  coding_workspace: "Jira 问题版本对应的 workspace manifest"
+  forbidden:
+    - raw_gerrit_push
+    - repo_upload
+    - git_add_dot
+    - patch_without_analysis
+    - submit_without_diff_approval
+
+states:
+  - INTAKE
+  - ANALYZED
+  - PATCHED
+  - DIFF_APPROVED
+  - BRANCH_RESOLVED
+  - VERIFIED
+  - SUBMITTED
+
+phases:
+  - id: intake
+    title: "Phase 1 — Jira intake"
+    state: INTAKE
+    harness_cli: "jira get"
+    example: |
+      harness --json jira get --issue <JIRA_KEY>
+    outputs:
+      - summary
+      - affected_version
+      - operator_mccmnc
+      - attachments
+    notes: "缺日志时只输出采集清单，不猜根因"
+
+  - id: log_platform
+    title: "Phase 2 — 日志清单与平台识别"
+    state: ANALYZED
+    harness_cli: false
+    prerequisite: "用户日志路径可用"
+    sub_skills:
+      - spn-fault-analysis
+      - qcom-spn-fault-analysis
+      - mtk-spn-fault-analysis
+    references:
+      - connectivity/sub/spn/references/mtk.md
+      - connectivity/sub/spn/references/qcom.md
+    notes: "优先 radio/main/properties；平台无法确认时停止源码分流"
+
+  - id: evidence_analysis
+    title: "Phase 3 — 证据化分析"
+    state: ANALYZED
+    harness_cli:
+      - "opengrok search"
+      - "opengrok fetch"
+      - "gerrit search"
+      - "gerrit get"
+    references:
+      - connectivity/sub/spn/references/report-template.md
+      - connectivity/sub/spn/references/dashboard.md
+    gate_rules:
+      - spn.dashboard.record.on.analyzed
+    notes: >
+      每个结论需日志路径、时间戳、断点类/函数；
+      ANALYZED 后必须执行 assets/spn_dashboard_cli.py record --workflow-state ANALYZED
+
+  - id: patch_design
+    title: "Phase 4 — 源码定位与修复"
+    state: PATCHED
+    harness_cli:
+      - "project-info detail"
+      - "coding-standards checklist"
+      - "git repo-status"
+      - "git repo-diff"
+    sub_skills:
+      - spn-code-edit
+    prerequisite: "workspace 与 Jira 版本一致"
+    gate_rules:
+      - spn.no.patch.without.analysis
+      - spn.platform.single.path
+
+  - id: diff_delivery
+    title: "Phase 5 — diff 交付"
+    state: PATCHED
+    harness_cli: "git repo-diff"
+    human_gate: true
+    notes: "不得 stage/commit/push；用户明确确认后才进入 DIFF_APPROVED"
+
+  - id: branch_resolve
+    title: "Phase 6 — 分支解析"
+    state: BRANCH_RESOLVED
+    harness_cli:
+      - "project-info detail"
+      - "version-server list-versions"
+      - "branch-server info"
+      - "git repo-status"
+    references:
+      - connectivity/sub/spn/references/submission.md
+    gate_rules:
+      - spn.branch.single.target
+    human_gate: true
+
+  - id: verify_submit
+    title: "Phase 7 — 自检、编译与 Gerrit"
+    state: SUBMITTED
+    harness_cli:
+      - "coding-standards checklist"
+      - "build native"
+      - "gerrit commit-message"
+      - "gerrit create"
+      - "gerrit upload"
+    sub_skills:
+      - spn-submit
+    references:
+      - connectivity/sub/spn/references/dashboard.md
+    gate_rules:
+      - spn.no.submit.without.diff.approval
+      - spn.no.secret.paths
+      - spn.dashboard.record.on.submitted
+    human_gate: true
+    notes: "Gerrit 成功后必须 record --workflow-state SUBMITTED --change-url <CR>"
+
+intent_bootstrap:
+  command: "knowledge route"
+  examples:
+    - 'harness --json knowledge route --path connectivity/sub/spn --source local'
+    - 'harness --json knowledge read connectivity/sub/spn/workflow.yaml --source local'

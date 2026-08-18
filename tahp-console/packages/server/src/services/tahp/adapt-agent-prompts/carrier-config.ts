@@ -1,8 +1,7 @@
 import type { AdaptAgentPromptInput, AdaptWorkspacePromptProfile } from './types'
 import { buildGenericWorkflowHint } from './shared'
 
-function buildCarrierConfigWorkflowHint(domainId: string, primarySkill: string): string {
-  if (domainId === 'carrierconfig-tools') {
+function buildCarrierConfigWorkflowHint(domainId: string, primarySkill: string): string {  if (domainId === 'carrierconfig-tools') {
     return [
       '# 主控 Skill 工作流（CarrierConfig）',
       '- 从用户「描述」提取 Jira、运营商、mccmnc、变更 key、期望值',
@@ -35,6 +34,19 @@ function buildCarrierConfigWorkflowHint(domainId: string, primarySkill: string):
       '- 输出修改文件清单与验证建议',
     ].join('\n')
   }
+  if (domainId === 'spn-config') {
+    return [
+      '# 主控 Skill 工作流（SPN 配置 · 人机协同）',
+      '- Read 主控 Skill **spn-workflow-2-2-0**（`skills/.claude/skills/spn-workflow-2-2-0/SKILL.md`）全文，严格按状态机执行：INTAKE → ANALYZED → PATCHED → DIFF_APPROVED → BRANCH_RESOLVED → VERIFIED → SUBMITTED',
+      '- 必需输入：表单 `jira_key`、`log_path`。缺少日志只输出采集清单，不猜根因',
+      '- `workspace_path` 与目标分支未明确时：可以完成分析与修复建议，**不得**改码或提交',
+      '- `task_goal`：`analyze` 仅分析；`patch` 改码后展示 diff 等待确认；`submit` 须用户确认 diff 与提交计划后才走 Gerrit',
+      '- 分析请求不自动改码；改码请求不自动提交；未确认 diff 不得 commit/push',
+      '- 工具调用按 SKILL.md「Harness 工具映射」执行；参数不确定时先按 Skill 要求 describe 命令，不得凭记忆猜参数',
+      '- ANALYZED / SUBMITTED 后按 Skill 执行看板上报（spn_dashboard_cli.py）；上报失败保留 pending，不得伪造',
+      '- 需用户确认 diff、分支或提交计划时用 TAHP_USER_INPUT 块请求，勿在对话中裸问',
+    ].join('\n')
+  }
   return buildGenericWorkflowHint(primarySkill)
 }
 
@@ -44,8 +56,10 @@ export const carrierConfigPromptProfile: AdaptWorkspacePromptProfile = {
   contextScenario: 'carrier_config',
 
   isInteractive(input: AdaptAgentPromptInput) {
-    // ECC / APN 无人值守；仅 CarrierConfig（或显式 interactionMode）走人机协同
-    return input.interactionMode === true || input.domainId === 'carrierconfig-tools'
+    // ECC / APN 无人值守；CarrierConfig / SPN（或显式 interactionMode）走人机协同
+    return input.interactionMode === true
+      || input.domainId === 'carrierconfig-tools'
+      || input.domainId === 'spn-config'
   },
 
   buildRoleIntro(input) {
@@ -54,9 +68,14 @@ export const carrierConfigPromptProfile: AdaptWorkspacePromptProfile = {
 
 本任务为 **ECC 无人值守** 模式：根据用户表单输入一次性跑完「改配置 → gerrit-submit 推 Gerrit」，**不要**弹窗、不要 TAHP_USER_INPUT、不要中途等人确认。危险命令由 Console 自动同意。`
     }
+    if (input.domainId === 'spn-config') {
+      return `你是 TAHP「运营商配置 · Agent 自动适配」专家，负责在传音 Android 底软集成部完成 **${input.domainLabel}**（SPN / PLMN / 运营商名称 / displayName）。
+
+本任务来自 **运营商配置** 工作区，主控 Skill 为 **spn-workflow-2-2-0**。须按状态机与门禁执行：分析不自动改码，改码不自动提交，diff / 分支 / 提交计划经 Console 弹窗确认。`
+    }
     return `你是 TAHP「运营商配置 · Agent 自动适配」专家，负责在传音 Android 底软集成部完成 **${input.domainLabel}** 的运营商相关配置任务。
 
-本任务来自 **运营商配置** 工作区：CarrierConfig / ECC / APN 等配置变更须严格按 Skill SOP，关键步骤需用户确认。`
+本任务来自 **运营商配置** 工作区：CarrierConfig / ECC / APN / SPN 等配置变更须严格按 Skill SOP，关键步骤需用户确认。`
   },
 
   buildWorkflowHint: buildCarrierConfigWorkflowHint,
@@ -71,6 +90,13 @@ export const carrierConfigPromptProfile: AdaptWorkspacePromptProfile = {
         '请立即开始：Read 主控 Skill **ecc-config**，按表单参数执行适配（无人值守，勿等待确认）。',
         'ECC 修改完成后，Read 并执行 **gerrit-submit** 将改动提交到 Gerrit，回报 Change URL。',
         '全部完成后输出结构化总结（含文件修改清单、提交结果与风险项）。',
+      ]
+    }
+    if (input.domainId === 'spn-config') {
+      return [
+        '请立即开始：Read 主控 Skill **spn-workflow-2-2-0**，按表单 jira_key / log_path / workspace_path / task_goal 执行。',
+        '需要用户确认 diff、目标分支或提交计划时，**必须**输出 TAHP_USER_INPUT 块并等待 Console 弹窗，勿在对话中裸问。',
+        '全部流程经用户确认后，输出结构化总结（含证据、改动文件、CR 链接、看板上报与风险项）。',
       ]
     }
     if (interactive) {

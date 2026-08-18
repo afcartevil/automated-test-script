@@ -40,6 +40,7 @@ import {
   ECC_ENTRY_FIELD_META,
   type EccEntryFormRow,
 } from '@/constants/adapt-domains/ecc-config-form'
+import { normalizeSpnRelatedSkills } from '@/constants/adapt-domains/spn-config-form'
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 
 const message = useMessage()
@@ -377,7 +378,9 @@ function applyRelatedSkillsToDomain(domainId: string, skills: string[]) {
   if (!domain || !skills.length) return
   domain.relatedSkills = domainId === 'ecc-config'
     ? normalizeEccRelatedSkills(skills)
-    : [...skills]
+    : domainId === 'spn-config'
+      ? normalizeSpnRelatedSkills(skills)
+      : [...skills]
 }
 
 function applyDomainConfigFromRecord(
@@ -1645,6 +1648,9 @@ function mapDomainToModule(id: DomainId): TahpModule {
   // 静态域回退规则
   if (id === 'modem') return 'telephony'
   if (id === 'comm-framework') return 'telephony'
+  if (id === 'carrierconfig-tools' || id === 'ecc-config' || id === 'apn-config' || id === 'spn-config') {
+    return 'telephony'
+  }
   return 'kernel-driver'
 }
 
@@ -1748,7 +1754,9 @@ function buildAgentRunPayload() {
     module: mapDomainToModule(activeDomainId.value),
     related_skills: d.id === 'ecc-config'
       ? normalizeEccRelatedSkills(d.relatedSkills)
-      : d.relatedSkills,
+      : d.id === 'spn-config'
+        ? normalizeSpnRelatedSkills(d.relatedSkills)
+        : d.relatedSkills,
     form_data,
     form_fields: formFieldsForAgent.value,
     user_notes: d.id === 'ecc-config'
@@ -2029,6 +2037,9 @@ function openSkill(skillName: string) {
                   <template v-if="activeDomain.id === 'ecc-config'">
                     MTK / 展锐 / 高通代码仓路径至少填一项；ECC 条目可临时复制多组
                   </template>
+                  <template v-else-if="activeDomain.id === 'spn-config'">
+                    Jira 与日志必填；缺 workspace 可分析不可改码；diff / 提交需确认
+                  </template>
                   <template v-else-if="requiredCount === 0">参考填写，无强制必填项</template>
                   <template v-else>必填项 {{ filledCount }} / {{ requiredCount }} 已完成</template>
                 </div>
@@ -2051,12 +2062,15 @@ function openSkill(skillName: string) {
             <NSpin v-if="!layoutsReady" size="small" style="margin: 24px 0;">正在加载域配置…</NSpin>
 
             <template v-else>
-              <div v-if="activeDomainId === 'modem' || activeDomainId === 'comm-framework' || activeDomainId === 'apn-config'" class="modem-skill-hint">
+              <div v-if="activeDomainId === 'modem' || activeDomainId === 'comm-framework' || activeDomainId === 'apn-config' || activeDomainId === 'spn-config'" class="modem-skill-hint">
                 <template v-if="activeDomainId === 'modem'">
                   以下字段来自 <code>MODEM_P1_Adapt</code> SKILL.md 的必填输入；填完后可用「Agent 自动适配」由桥接 Agent 按 Skill SOP 执行。
                 </template>
                 <template v-else-if="activeDomainId === 'apn-config'">
                   填写代码仓库路径与补充信息后，由 <code>apn-edit</code> Skill 按 SOP 定位并修改 APN 配置。
+                </template>
+                <template v-else-if="activeDomainId === 'spn-config'">
+                  由 <code>spn-workflow-2-2-0</code> Skill 执行 Jira → 日志分析 → 改码 → Gerrit。Jira 单号与日志路径必填；源码 workspace 未填时只分析不改码。关键步骤经弹窗确认。
                 </template>
                 <template v-else>
                   以下字段来自 <code>{{ activeDomain.relatedSkills[0] || 'comm-framework-agent-test' }}</code> 测试 Skill 输入；点击「Agent 自动适配」后将按 Skill 分步骤在 PRJ Path 下创建并写入测试文件。

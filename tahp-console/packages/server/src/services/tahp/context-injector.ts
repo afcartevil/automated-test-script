@@ -364,7 +364,7 @@ export function buildSkillExecutionDirective(options?: {
   } else if (scenario === 'feature_adapt') {
     lines.push('**当前场景**: 特性适配 — 按正式交付 SOP 完成特性适配；优先加载用户指定的关联 Skill；完成后必须 Read `transsion-coding-standards-review` 并输出可交付的结构化报告与自检审核。')
   } else if (scenario === 'carrier_config') {
-    lines.push('**当前场景**: 运营商配置 — CarrierConfig/APN/ECC 等配置变更须严格按 Skill SOP；CarrierConfig 等人机协同域关键步骤经 Console 弹窗确认；其余域按表单直接执行。')
+    lines.push('**当前场景**: 运营商配置 — CarrierConfig/APN/ECC/SPN 等配置变更须严格按 Skill SOP；CarrierConfig / SPN 等人机协同域关键步骤经 Console 弹窗确认；其余域按表单直接执行。')
   } else if (scenario === 'skill_config') {
     lines.push('**当前场景**: 常用 Skill 配置 — 仅引导用户完成指定 Skill 的环境与凭据配置，按 SKILL.md 的 setup / setup-check 章节执行。')
   } else {

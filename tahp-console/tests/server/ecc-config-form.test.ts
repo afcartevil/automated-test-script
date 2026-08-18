@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   hasEccRepoPath,
   validateEccConfigForm,
+  validateSpnConfigForm,
   isInteractiveCarrierDomain,
   shouldAutoApproveAdaptCommands,
   normalizeEccRelatedSkills,
+  normalizeSpnRelatedSkills,
 } from '../../packages/server/src/services/tahp/ecc-config-form'
 import {
   isEccConfigFormComplete,
@@ -56,12 +58,14 @@ describe('ecc-config-form', () => {
     expect(isInteractiveCarrierDomain('carrierconfig-tools', false)).toBe(true)
     expect(isInteractiveCarrierDomain('apn-config', false)).toBe(false)
     expect(isInteractiveCarrierDomain('apn-config', true)).toBe(true)
+    expect(isInteractiveCarrierDomain('spn-config', false)).toBe(true)
   })
 
   it('shouldAutoApproveAdaptCommands only for ecc-config', () => {
     expect(shouldAutoApproveAdaptCommands('ecc-config')).toBe(true)
     expect(shouldAutoApproveAdaptCommands('carrierconfig-tools')).toBe(false)
     expect(shouldAutoApproveAdaptCommands('apn-config')).toBe(false)
+    expect(shouldAutoApproveAdaptCommands('spn-config')).toBe(false)
   })
 
   it('normalizeEccRelatedSkills drops jira-ops and ensures gerrit-submit', () => {
@@ -74,5 +78,20 @@ describe('ecc-config-form', () => {
       'gerrit-submit',
       'extra',
     ])
+  })
+
+  it('normalizeSpnRelatedSkills defaults to spn-workflow-2-2-0', () => {
+    expect(normalizeSpnRelatedSkills([])).toEqual(['spn-workflow-2-2-0'])
+    expect(normalizeSpnRelatedSkills(['spn-workflow'])).toEqual(['spn-workflow-2-2-0'])
+    expect(normalizeSpnRelatedSkills(['spn-workflow-2-2-0', 'extra'])).toEqual([
+      'spn-workflow-2-2-0',
+      'extra',
+    ])
+  })
+
+  it('validateSpnConfigForm requires jira and log path', () => {
+    expect(validateSpnConfigForm({})).toMatch(/Jira/)
+    expect(validateSpnConfigForm({ jira_key: 'OS162-1' })).toMatch(/日志/)
+    expect(validateSpnConfigForm({ jira_key: 'OS162-1', log_path: 'D:\\logs' })).toBeNull()
   })
 })

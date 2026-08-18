@@ -1,0 +1,71 @@
+schema_version: "1.0"
+source: tones
+repos:
+  - tones_project: TRAN_CODE/vendor/transsion/packages/modules/Connectivity/spnoverride
+    role: primary
+    aliases:
+      - spnoverride
+      - TranSpnOverride
+      - spn-override
+    default_validation_profile: android-soong-java
+    components:
+      - id: spnoverride-java
+        description: Tran SPN override Java module and tests
+        paths:
+          - spnoverride/**/*.java
+        scenarios:
+          - spn-workflow-patch
+          - spn-workflow-submit
+        validation_overlays:
+          - spn.minimal.scope
+          - spn.platform.single.path
+  - tones_project: TRAN_CODE/vendor/mediatek/proprietary/packages/apps/MtkTelephony
+    role: supporting
+    aliases:
+      - MtkTelephony
+      - mtk-telephony
+    default_validation_profile: android-soong-app
+    components:
+      - id: mtk-spn-stack
+        description: MTK telephony SPN/MtkSpnOverride/MtkServiceStateTracker
+        paths:
+          - "**/*Spn*.java"
+          - "**/*ServiceStateTracker*.java"
+        scenarios:
+          - spn-workflow-analysis
+          - spn-workflow-patch
+        validation_overlays:
+          - spn.platform.single.path
+  - tones_project: TRAN_CODE/vendor/qcom/proprietary/commons/telephony
+    role: supporting
+    aliases:
+      - qti-telephony
+      - qcom-telephony
+    default_validation_profile: android-soong-java
+    components:
+      - id: qcom-spn-stack
+        description: QCOM QcomSpnOverride/QtiServiceStateTracker
+        paths:
+          - "**/*Spn*.java"
+          - "**/*ServiceStateTracker*.java"
+        scenarios:
+          - spn-workflow-analysis
+          - spn-workflow-patch
+        validation_overlays:
+          - spn.platform.single.path
+  - tones_project: TRAN_CODE/packages/apps/TeleService
+    role: supporting
+    aliases:
+      - TeleService
+      - tran-teleservice
+    default_validation_profile: android-soong-app
+    components:
+      - id: cloud-spn-merge
+        description: QCOM cloud SPN mergeCloudSpn in TeleService
+        paths:
+          - "**/*Spn*.java"
+          - "**/TranPhoneInterfaceManager*.java"
+        scenarios:
+          - spn-workflow-patch
+        validation_overlays:
+          - spn.platform.single.path

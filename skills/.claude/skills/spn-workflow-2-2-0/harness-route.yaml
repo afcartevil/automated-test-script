@@ -1,0 +1,87 @@
+schema_version: "1"
+skillhub:
+  namespace: team-com-dev
+  slug: spn-workflow
+  display_name: SPN Workflow
+  cli_slug: team-com-dev--spn-workflow
+  version: latest
+route:
+  path: connectivity/sub/spn
+  title: SPN Workflow
+  desc: "SPN/运营商名称/displayName Jira 驱动工作流：分析、改码、diff 确认、分支解析与 Gerrit 提交"
+  aliases:
+    - spn-workflow
+    - spn
+    - displayName
+    - operator-name
+    - 运营商名称
+  scenarios:
+    - id: spn-workflow-intake
+      title: SPN Jira 与日志 intake
+      brief: "读取 Jira 与日志清单，进入 INTAKE"
+      keywords:
+        - spn-workflow
+        - jira
+        - displayName
+      languages:
+        - java
+        - kotlin
+      references:
+        - connectivity/sub/spn/references/workflow.md
+        - connectivity/sub/spn/workflow.yaml
+      next_read: connectivity/sub/spn/references/workflow.md
+    - id: spn-workflow-analysis
+      title: SPN 日志分析与平台分流
+      brief: "MTK/QCOM 识别、证据化分析与报告"
+      keywords:
+        - spn-fault-analysis
+        - MtkSpnOverride
+        - QcomSpnOverride
+      languages:
+        - java
+        - kotlin
+      references:
+        - connectivity/sub/spn/references/mtk.md
+        - connectivity/sub/spn/references/qcom.md
+        - connectivity/sub/spn/references/report-template.md
+        - connectivity/sub/spn/references/dashboard.md
+      next_read: connectivity/sub/spn/references/report-template.md
+    - id: spn-workflow-patch
+      title: SPN 源码修复与 diff 交付
+      brief: "根因修复、编码规范与 diff review"
+      keywords:
+        - spn-code-edit
+        - telephony
+      languages:
+        - java
+        - kotlin
+        - xml
+      references:
+        - connectivity/sub/spn/workflow.yaml
+      next_read: connectivity/sub/spn/workflow.yaml
+    - id: spn-workflow-submit
+      title: SPN 分支解析与 Gerrit 提交
+      brief: "分支门禁、自检、编译与 Gerrit create/upload"
+      keywords:
+        - spn-submit
+        - gerrit
+      languages:
+        - java
+        - shell
+      references:
+        - connectivity/sub/spn/references/submission.md
+        - connectivity/sub/spn/references/dashboard.md
+      next_read: connectivity/sub/spn/references/submission.md
+    - id: spn-workflow-dashboard
+      title: SPN 看板上报与查看
+      brief: "ANALYZED/SUBMITTED 后 record 到 spn/dashboard/record，看板副页统计"
+      keywords:
+        - spn-dashboard
+        - dashboard_stats
+        - telemetry
+      languages:
+        - python
+        - shell
+      references:
+        - connectivity/sub/spn/references/dashboard.md
+      next_read: connectivity/sub/spn/references/dashboard.md

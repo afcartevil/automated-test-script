@@ -145,6 +145,32 @@ describe('adapt-agent prompts', () => {
     expect(userPrompt).toContain('gerrit-submit')
   })
 
+  it('spn-config is interactive and requires jira/log workflow', () => {
+    const { systemPrompt, userPrompt } = buildAdaptAgentPrompts({
+      workspaceId: 'carrier-config',
+      domainId: 'spn-config',
+      domainLabel: 'SPN配置',
+      module: 'telephony',
+      relatedSkills: ['spn-workflow-2-2-0'],
+      formData: {
+        jira_key: 'OS162-12345',
+        log_path: 'D:\\logs\\radio.zip',
+        task_goal: 'analyze',
+      },
+      formFields: [
+        { name: 'jira_key', label: 'Jira 单号/链接', required: true },
+        { name: 'log_path', label: '日志路径', required: true },
+      ],
+      interactionMode: true,
+    })
+    expect(systemPrompt).toContain('spn-workflow-2-2-0')
+    expect(systemPrompt).toContain('TAHP_USER_INPUT')
+    expect(systemPrompt).toContain('INTAKE')
+    expect(systemPrompt).toContain('运营商配置')
+    expect(userPrompt).toContain('OS162-12345')
+    expect(userPrompt).toContain('SPN配置')
+  })
+
   it('adapt-debug comm-framework emphasizes debug workflow', () => {
     const { systemPrompt } = buildAdaptAgentPrompts({
       workspaceId: 'adapt-debug',

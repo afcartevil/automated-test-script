@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0",
+  "domain": "connectivity/spn",
+  "projects": [
+    {
+      "path": "vendor/transsion/packages/modules/Connectivity/spnoverride",
+      "type": "java_module",
+      "build_target": "spnoverride",
+      "description": "Tran SPN override 组件，MTK/QCOM 共用注入点之一",
+      "validation_rules": [
+        "spn.minimal.scope",
+        "spn.platform.single.path"
+      ]
+    },
+    {
+      "path": "vendor/mediatek/proprietary/frameworks/opt/telephony",
+      "type": "framework",
+      "description": "MTK telephony：MtkSpnOverride、MtkServiceStateTracker",
+      "validation_rules": [
+        "spn.platform.single.path"
+      ]
+    },
+    {
+      "path": "vendor/qcom/proprietary/commons/telephony",
+      "type": "framework",
+      "description": "QCOM telephony：QcomSpnOverride、QtiServiceStateTracker",
+      "validation_rules": [
+        "spn.platform.single.path"
+      ]
+    },
+    {
+      "path": "frameworks/base/telephony",
+      "type": "framework",
+      "description": "AOSP telephony：SubscriptionManagerService、displayName",
+      "validation_rules": [
+        "spn.no.patch.without.analysis"
+      ]
+    },
+    {
+      "path": "packages/apps/TeleService",
+      "type": "app",
+      "description": "TeleService 云网 SPN merge 与 TranTelephony 桥接",
+      "validation_rules": [
+        "spn.platform.single.path"
+      ]
+    }
+  ],
+  "source_roots": [
+    "vendor/transsion/packages/modules/Connectivity/spnoverride",
+    "vendor/mediatek/proprietary/frameworks/opt/telephony",
+    "vendor/qcom/proprietary/commons/telephony",
+    "frameworks/base/telephony/java/android/telephony",
+    "packages/apps/TeleService"
+  ],
+  "related_domains": [
+    "connectivity",
+    "connectivity/sub/carrierconfig",
+    "common/whole-device"
+  ],
+  "build_system": "soong"
+}

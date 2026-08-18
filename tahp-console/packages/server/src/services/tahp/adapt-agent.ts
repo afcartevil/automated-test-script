@@ -28,7 +28,9 @@ import {
   isInteractiveCarrierDomain,
   shouldAutoApproveAdaptCommands,
   validateEccConfigForm,
+  validateSpnConfigForm,
   normalizeEccRelatedSkills,
+  normalizeSpnRelatedSkills,
 } from './ecc-config-form'
 import {
   extractAdaptAgentFileChanges,
@@ -556,10 +558,16 @@ export function startAdaptAgentRun(input: AdaptAgentRunInput): { ok: true; taskI
     const eccErr = validateEccConfigForm(input.formData)
     if (eccErr) return { ok: false, error: eccErr }
   }
+  if (input.domainId === 'spn-config') {
+    const spnErr = validateSpnConfigForm(input.formData)
+    if (spnErr) return { ok: false, error: spnErr }
+  }
 
   const relatedSkills = input.domainId === 'ecc-config'
     ? normalizeEccRelatedSkills(input.relatedSkills)
-    : [...input.relatedSkills]
+    : input.domainId === 'spn-config'
+      ? normalizeSpnRelatedSkills(input.relatedSkills)
+      : [...input.relatedSkills]
 
   const taskId = genTaskId()
   const ctx: AdaptAgentTaskCtx = {
