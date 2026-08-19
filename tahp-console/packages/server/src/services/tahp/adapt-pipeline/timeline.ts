@@ -73,6 +73,7 @@ function formatSummaryLine(
   state: PipelineRun['stages'][string] | undefined,
 ): string | undefined {
   if (!state?.summary) return undefined
+  if (typeof state.summary === 'string') return state.summary || undefined
   const s = state.summary
   if (typeof s.domain_count === 'number') {
     return `${s.domain_count} 个域`

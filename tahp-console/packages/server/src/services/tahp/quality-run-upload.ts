@@ -213,7 +213,7 @@ export async function uploadAdaptDebugFromCtx(ctx: {
   }
 }
 
-function projectFromCtx(ctx: AdaptAgentTaskCtx): string | undefined {
+function projectFromCtx(ctx: { formData?: Record<string, string> }): string | undefined {
   for (const key of ['project_code', 'project', '项目', 'build_project', 'AP_lable']) {
     const v = ctx.formData?.[key]?.trim()
     if (v) return v

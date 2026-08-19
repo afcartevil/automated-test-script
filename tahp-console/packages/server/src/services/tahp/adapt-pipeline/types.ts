@@ -120,7 +120,7 @@ export interface StageState {
   attempt: number
   refs: StageRefs
   progress?: Record<string, unknown>
-  summary?: Record<string, unknown>
+  summary?: string | Record<string, unknown>
   human?: { reason: string; message: string; actions: HumanAction[] }
   error?: string
   availability?: StageAvailability
