@@ -462,6 +462,13 @@ tahpBugAnalysisRoutes.put('/jira-user-config', async (ctx) => {
   }
   try {
     const record = writeJiraUserConfig({ username, password })
+    void import('../../services/tahp/sync/jira-bind').then(({ scheduleBindJiraToCentral }) => {
+      scheduleBindJiraToCentral({
+        username: record.username,
+        password,
+        baseUrl: record.base_url,
+      })
+    }).catch(() => { /* bind 失败不影响本机保存 */ })
     ctx.body = { success: true, data: { username: record.username, updated_at: record.updated_at } }
   } catch (err) {
     ctx.status = 400
