@@ -17,9 +17,9 @@ import {
   wrapRemoteShellForExitCode,
   asfBridgeWaitSec,
   isTransientAsfBridgeFailure,
+  isAsfBridgeSshDisconnected,
   asfBridgeCliTimeoutMs,
   asfZellijMissingFromDoctor,
-  asfNeedsZellijSetup,
   pickAsfUpSession,
   parseZellijLsShort,
   type RemoteExecFlavor,
@@ -190,6 +190,68 @@ function asfUpReadySession(parsed: Record<string, unknown> | null): number | nul
   return null
 }
 
+async function waitForReadySession(
+  timeoutMs: number,
+  opts?: { signal?: { cancelled: boolean }; onLog?: (line: string) => void },
+): Promise<number | null> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (opts?.signal?.cancelled) throw new Error('已取消')
+    await sleep(2000)
+    const hit = (await listAsfBridgeSessions()).find(s => s.phase === 'ready')
+    if (hit) {
+      asfSession = hit.session
+      opts?.onLog?.(`ASF Bridge session ${hit.session} 已 READY`)
+      return hit.session
+    }
+  }
+  return null
+}
+
+async function reconnectAsfBridgeSession(
+  session: number,
+  opts?: { signal?: { cancelled: boolean }; onLog?: (line: string) => void },
+): Promise<number> {
+  const log = (line: string) => opts?.onLog?.(line)
+  asfSession = null
+  log(`ASF Bridge SSH 已断开，执行 asf --json bridge up --session ${session} 重连…`)
+  const up = await tryAsfBridgeUp(session, { signal: opts?.signal })
+  const ready = asfUpReadySession(up.parsed)
+  if (ready != null) {
+    asfSession = ready
+    log(`ASF Bridge up session=${ready}`)
+    return ready
+  }
+  const hit = await waitForReadySession(60_000, opts)
+  if (hit != null) return hit
+  const detail = asfFailureMessage(up.parsed, up.stderr)
+  throw new Error(
+    `ASF Bridge 重连失败（${detail.slice(0, 400)}）。请手动执行 asf --json bridge up --session ${session} 后重试编译。`,
+  )
+}
+
+/** ls 的 READY 可能是僵尸 mux（OpenSSH 已掉、窗格变成本机 cmd）。status 明确断开才判死。 */
+async function asfSessionSshAlive(
+  session: number,
+  opts?: { signal?: { cancelled: boolean } },
+): Promise<boolean | 'unknown'> {
+  try {
+    const { stdout, stderr } = await spawnHarness(
+      ['--json', 'bridge', 'status', '--session', String(session)],
+      { timeoutMs: 25_000, signal: opts?.signal },
+    )
+    const parsed = parseJsonLoose(stdout) || parseJsonLoose(stderr)
+    const blob = `${asfFailureMessage(parsed, stderr)}\n${stdout}\n${stderr}`
+    if (isAsfBridgeSshDisconnected(blob) || String(parsed?.error_code || '') === 'BRIDGE_SSH_DISCONNECTED') {
+      return false
+    }
+    if (parsed && String(parsed.phase || '') === 'ready') return true
+    return 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
 async function ensureAsfBridgeSession(opts?: {
   signal?: { cancelled: boolean }
   onLog?: (line: string) => void
@@ -200,9 +262,14 @@ async function ensureAsfBridgeSession(opts?: {
   const slots = await listAsfBridgeSessions()
   const existing = slots.find(s => s.phase === 'ready')
   if (existing) {
-    asfSession = existing.session
-    log(`ASF Bridge session ${existing.session} 已 READY`)
-    return existing.session
+    const alive = await asfSessionSshAlive(existing.session, { signal: opts?.signal })
+    if (alive !== false) {
+      asfSession = existing.session
+      log(`ASF Bridge session ${existing.session} 已 READY`)
+      return existing.session
+    }
+    log(`session ${existing.session} 名义 READY 但 SSH 已断开`)
+    return reconnectAsfBridgeSession(existing.session, opts)
   }
 
   const muxNames = await listZellijMuxNames()
@@ -318,6 +385,7 @@ async function asfBridgeCmdOnce(
     }
     const fail = asfFailureMessage(parsed, stderr)
     if (String(parsed.status).toLowerCase() === 'error' || parsed.error_code) {
+      const sessionNum = parsed.session != null ? Number(parsed.session) : NaN
       return {
         status: 'error',
         exit_code: -1,
@@ -325,6 +393,7 @@ async function asfBridgeCmdOnce(
         output: parsed.output != null ? String(parsed.output) : stdout,
         error: fail,
         error_code: parsed.error_code != null ? String(parsed.error_code) : undefined,
+        session: Number.isFinite(sessionNum) && sessionNum > 0 ? sessionNum : undefined,
       }
     }
 
@@ -340,6 +409,7 @@ async function asfBridgeCmdOnce(
         )
         const rp = parseJsonLoose(read.stdout) || parseJsonLoose(read.stderr)
         if (rp && (String(rp.status).toLowerCase() === 'error' || rp.error_code)) {
+          const sessionNum = rp.session != null ? Number(rp.session) : NaN
           return {
             status: 'error',
             exit_code: -1,
@@ -347,6 +417,7 @@ async function asfBridgeCmdOnce(
             output: rp.output != null ? String(rp.output) : output,
             error: asfFailureMessage(rp, read.stderr),
             error_code: rp.error_code != null ? String(rp.error_code) : undefined,
+            session: Number.isFinite(sessionNum) && sessionNum > 0 ? sessionNum : session,
           }
         }
         if (rp?.output != null) output = String(rp.output)
@@ -388,10 +459,11 @@ async function asfBridgeCmd(
   const timeoutSec = Math.max(1, opts?.timeoutSec ?? 300)
   const waitSec = asfBridgeWaitSec(timeoutSec)
   const note = (line: string) => opts?.onStdout?.(`${line}\n`)
-  const session = await ensureAsfBridgeSession({ signal: opts?.signal, onLog: note })
   const wrapped = wrapRemoteShellForExitCode(command)
 
   let last: BridgeExecResult | null = null
+  let session = await ensureAsfBridgeSession({ signal: opts?.signal, onLog: note })
+
   for (let attempt = 1; attempt <= 3; attempt++) {
     const result = await asfBridgeCmdOnce(session, wrapped, {
       waitSec,
@@ -401,10 +473,24 @@ async function asfBridgeCmd(
       signal: opts?.signal,
     })
     const blob = `${result.error || ''}\n${result.output || ''}`
-    if (!isTransientAsfBridgeFailure(blob)) {
+    const failed = String(result.status).toLowerCase() === 'error'
+      || Boolean(result.error_code)
+      || Boolean(result.error)
+    if (!failed) {
       return { ...result, command }
     }
     last = { ...result, command }
+
+    if (isAsfBridgeSshDisconnected(blob) || result.error_code === 'BRIDGE_SSH_DISCONNECTED') {
+      const dead = Number(result.session) || session
+      note(`ASF Bridge SSH 已断开 (${attempt}/3)，按 CLI 要求 bridge up --session ${dead} 重连后重试`)
+      session = await reconnectAsfBridgeSession(dead, { signal: opts?.signal, onLog: note })
+      continue
+    }
+
+    if (!isTransientAsfBridgeFailure(blob)) {
+      return last
+    }
     note(`ASF Bridge 瞬时失败 (${attempt}/3): ${result.error || 'zellij timeout'}，同 session 重试`)
     try {
       await spawnHarness(

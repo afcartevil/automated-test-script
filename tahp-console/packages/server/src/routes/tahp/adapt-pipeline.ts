@@ -6,10 +6,6 @@ import { centralClient } from '../../services/tahp/sync/central-client'
 import { isCentralConfigured } from '../../services/tahp/runtime-mode'
 import { getDomainCatalog } from '../../services/tahp/adapt-pipeline/domain-catalog'
 import { listHarnessSkills } from '../../services/tahp/adapt-pipeline/harness-skill-registry'
-import {
-  listHarnessMarketPresets,
-  resolveWorkspaceBuildOptions,
-} from '../../services/tahp/adapt-pipeline/workspace-build-options'
 import { readPipelineLogs } from '../../services/tahp/adapt-pipeline/events'
 import {
   abortRun,
@@ -23,16 +19,16 @@ import {
 import { getStage, listStages } from '../../services/tahp/adapt-pipeline/registry'
 import '../../services/tahp/adapt-pipeline/stages'
 import {
-  buildRunPreview,
   createRun,
   deleteDraftRun,
-  findResourceConflict,
   getRun,
   listRuns,
 } from '../../services/tahp/adapt-pipeline/store'
+import { parsePathParams } from '../../services/tahp/adapt-pipeline/path-params'
 import { buildTimelineView } from '../../services/tahp/adapt-pipeline/timeline'
 import type {
   CreateRunInput,
+  PathParamInputs,
   PipelineRun,
   ResumeRequest,
   RunStatus,
@@ -89,28 +85,38 @@ function parseOffset(raw: string | undefined): number | undefined {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined
 }
 
+tahpAdaptPipelineRoutes.post('/parse-path-params', async (ctx) => {
+  try {
+    const body = (ctx.request.body ?? {}) as Partial<PathParamInputs>
+    const project_code = String(body.project_code ?? '').trim()
+    const OLD_VENDOR_ROOT = String(body.OLD_VENDOR_ROOT ?? '').trim()
+    const NEW_VENDOR_ROOT = String(body.NEW_VENDOR_ROOT ?? '').trim()
+    if (!project_code || !OLD_VENDOR_ROOT || !NEW_VENDOR_ROOT) {
+      ctx.status = 400
+      ctx.body = { success: false, error: '缺少 project_code / OLD_VENDOR_ROOT / NEW_VENDOR_ROOT' }
+      return
+    }
+    const data = parsePathParams({
+      project_code,
+      OLD_VENDOR_ROOT,
+      NEW_VENDOR_ROOT,
+      NEW_SYSTEM_ROOT: body.NEW_SYSTEM_ROOT,
+      PROJECT_FULL: body.PROJECT_FULL,
+    })
+    ctx.body = { success: true, data }
+  } catch (err) {
+    logger.warn({ err }, '[adapt-pipeline] parse-path-params failed')
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
 tahpAdaptPipelineRoutes.post('/runs', async (ctx) => {
   try {
     const body = (ctx.request.body ?? {}) as CreateRunInput
     if (!body.project_code?.trim()) {
       ctx.status = 400
       ctx.body = { success: false, error: '缺少 project_code' }
-      return
-    }
-    if (!body.build_context?.workspace?.trim() || !body.build_context?.mapped_root?.trim()) {
-      ctx.status = 400
-      ctx.body = { success: false, error: '缺少 build_context.mapped_root / workspace' }
-      return
-    }
-    const preview = buildRunPreview(body)
-    const conflict = findResourceConflict(preview)
-    if (conflict) {
-      ctx.status = 409
-      ctx.body = {
-        success: false,
-        error: conflict.detail,
-        data: { conflict },
-      }
       return
     }
     const run = createRun(body)
@@ -184,16 +190,6 @@ tahpAdaptPipelineRoutes.post('/runs/:runId/start', async (ctx) => {
   if (!run) {
     ctx.status = 404
     ctx.body = { success: false, error: 'run 不存在' }
-    return
-  }
-  const conflict = findResourceConflict(run)
-  if (conflict) {
-    ctx.status = 409
-    ctx.body = {
-      success: false,
-      error: conflict.detail,
-      data: { conflict },
-    }
     return
   }
   try {
@@ -376,25 +372,6 @@ tahpAdaptPipelineRoutes.get('/harness-skills', async (ctx) => {
       data: {
         roots: [...new Set(items.map(i => i.root))],
         items,
-      },
-    }
-  } catch (err) {
-    ctx.status = 500
-    ctx.body = { success: false, error: (err as Error).message }
-  }
-})
-
-/** 根据 mapped_root + workspace 解析编译组件 / markets 可选值 */
-tahpAdaptPipelineRoutes.get('/workspace-build-options', async (ctx) => {
-  const mappedRoot = String(ctx.query.mapped_root ?? '').trim()
-  const workspace = String(ctx.query.workspace ?? '').trim()
-  try {
-    const data = await resolveWorkspaceBuildOptions(mappedRoot, workspace)
-    ctx.body = {
-      success: true,
-      data: {
-        ...data,
-        market_presets: listHarnessMarketPresets(),
       },
     }
   } catch (err) {

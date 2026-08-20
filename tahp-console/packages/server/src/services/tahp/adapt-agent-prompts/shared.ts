@@ -75,7 +75,7 @@ export function buildInteractiveCompletionRules(auditSkillPath: string): string 
   return `5. 适配工作**全部完成**后（经用户确认且无待办项），输出结构化总结，必须包含以下章节：
    - ## 任务规划回顾
    - ## 已使用的 Skill
-   - ## 文件修改清单（路径 + 修改说明；若无修改写「无」）
+   - ## 文件修改清单（每条必须是本机绝对路径 + 修改说明；禁止相对路径；若无修改写「无」）
    - ## 升级/适配结果摘要
    - ## 风险与待用户确认项
 6. **最后一步（全流程完成时）— 自检审核**：Read 审核 Skill 全文 \`${auditSkillPath}\`（\`${ADAPT_AUDIT_SKILL_ID}\`），在**全部适配总结之后**追加审核章节（格式同下）。
@@ -86,7 +86,7 @@ export function buildStandardCompletionRules(auditSkillPath: string): string {
   return `5. 适配工作全部完成后，输出结构化总结，必须包含以下章节：
    - ## 任务规划回顾
    - ## 已使用的 Skill
-   - ## 文件修改清单（路径 + 修改说明；若无修改写「无」）
+   - ## 文件修改清单（每条必须是本机绝对路径 + 修改说明；禁止相对路径；若无修改写「无」）
    - ## 升级/适配结果摘要
    - ## 风险与待用户确认项
 6. **最后一步（不得跳过）— 自检审核**：Read 审核 Skill 全文 \`${auditSkillPath}\`（\`${ADAPT_AUDIT_SKILL_ID}\`），在**全部适配总结之后**追加，且**必须严格按下列顺序与格式**：`
@@ -147,7 +147,7 @@ ${skillPaths}
 4. 涉及代码或配置修改时，使用 Write/Edit 等工具；**禁止编造路径**。
 ${completionRules}
 ${auditBlock}
-8. \`## 文件修改清单\` 中每条路径必须用反引号包裹绝对路径（如 \`D:\\\\path\\\\file.txt\`），便于系统收录。
+8. \`## 文件修改清单\` 中每条路径必须用反引号包裹**本机绝对路径**（Windows 如 \`Z:\\\\code\\\\kernel\\\\foo.c\`，Linux 如 \`/work/kernel/foo.c\`）。禁止 \`vendor/foo.c\` 这类相对路径；系统按该清单收录变更，相对路径会被丢弃。
 ${userInputProtocol}
 ${workflowHint}
 

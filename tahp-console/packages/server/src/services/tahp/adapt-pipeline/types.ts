@@ -10,6 +10,38 @@ export type RunStatus =
 export type StageStatus =
   | 'pending' | 'running' | 'waiting_human' | 'done' | 'failed' | 'skipped'
 
+export interface PathParamInputs {
+  OLD_VENDOR_ROOT: string
+  NEW_VENDOR_ROOT: string
+  NEW_SYSTEM_ROOT?: string
+  project_code: string
+  /** 再次解析时沿用用户已选项目目录 */
+  PROJECT_FULL?: string
+}
+
+export interface PathParamField {
+  key: string
+  label: string
+  kind: 'text' | 'select'
+  ok: boolean
+  parsed_value?: string
+  /** 最终值：解析预填或用户手填覆盖。适配注入与回溯都读这个，不要只用 ok。 */
+  value: string
+  error?: string
+  options?: string[]
+}
+
+/**
+ * 选项目步解析出的统一入参。
+ * 落盘：`{projectRoot}/.tahp-config/adapt-pipeline/runs/{runId}.json` 的 `path_params`。
+ * AI 适配阶段会把 inputs + fields[].value 注入每个域的 formData 传给 Skill。
+ */
+export interface PathParams {
+  inputs: PathParamInputs
+  fields: PathParamField[]
+  parsed_at: string
+}
+
 export interface PipelineRun {
   run_id: string
   workflow_id: string
@@ -31,6 +63,11 @@ export interface PipelineRun {
 
   domains: PipelineDomain[]
   build_context: BuildContext
+  /**
+   * 选项目解析结果（含用户覆盖）。
+   * 启动后写入本 run JSON；AI 适配每个模块都会收到 flatten 后的 formData。
+   */
+  path_params?: PathParams
   device_id?: string
   test_plan?: TestPlan
 
@@ -311,13 +348,14 @@ export interface CreateRunInput {
   campaign_id?: string
   domain_ids?: string[]
   domains?: PipelineDomain[]
-  build_context: BuildContext
+  build_context?: BuildContext
   device_id?: string
   test_plan?: TestPlan
   max_iterations?: number
   workflow_id?: string
   from_os?: string
   to_os?: string
+  path_params?: PathParams
 }
 
 export interface RunSummary {
@@ -328,12 +366,6 @@ export interface RunSummary {
   current_node: string | null
   created_at: string
   updated_at: string
-}
-
-export interface ResourceConflict {
-  kind: 'workspace' | 'device' | 'domain'
-  holderRunId: string
-  detail: string
 }
 
 export interface ResumePoint {

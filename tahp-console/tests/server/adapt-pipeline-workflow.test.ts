@@ -5,10 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { getStage, registerStage, resetRegistryForTest } from '../../packages/server/src/services/tahp/adapt-pipeline/registry'
 import {
   adaptPipelineConfigDir,
-  buildRunPreview,
   createRun,
   deleteDraftRun,
-  findResourceConflict,
   getRun,
   resetStoreForTest,
   saveRun,
@@ -216,33 +214,6 @@ describe('adapt-pipeline store', () => {
 
     const disk = readFileSync(join(adaptPipelineConfigDir(), 'runs', `${run.run_id}.json`), 'utf-8')
     expect(JSON.parse(disk).run_id).toBe(run.run_id)
-  })
-
-  it('buildRunPreview detects workspace conflict without persisting', () => {
-    const holder = createRun({
-      project_code: 'KM9',
-      build_context: {
-        mapped_root: 'D:\\temp',
-        workspace: 'D:\\temp',
-        components: ['krn'],
-        variant: 'userdebug',
-      },
-    })
-    holder.status = 'running'
-    saveRun(holder, { immediate: true })
-
-    const preview = buildRunPreview({
-      project_code: 'KM9',
-      build_context: {
-        mapped_root: 'D:\\temp',
-        workspace: 'D:\\temp',
-        components: ['krn'],
-        variant: 'userdebug',
-      },
-    })
-    const conflict = findResourceConflict(preview)
-    expect(conflict?.kind).toBe('workspace')
-    expect(getRun(preview.run_id)).toBeNull()
   })
 
   it('deleteDraftRun removes draft from disk and index', () => {

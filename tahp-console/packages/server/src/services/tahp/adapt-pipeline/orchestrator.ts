@@ -1,5 +1,4 @@
 import { cancelAdaptAgentRun, getAdaptAgentTask } from '../adapt-agent'
-import { fingerprint, takeSnapshot } from '../git-snapshot'
 import { appendPipelineLog, emitPipelineEvent } from './events'
 import { getStage, listStages } from './registry'
 import { getRun, listActiveRunIds, saveRun } from './store'
@@ -125,10 +124,7 @@ function clearCorrelationsForNode(runId: string, nodeKey: string): void {
 
 function hasSourceChanged(run: PipelineRun): boolean {
   if (sourceChangedCheckerForTest) return sourceChangedCheckerForTest(run)
-  const nodeKey = run.current_node
-  if (!nodeKey) return false
-  const progress = run.stages[nodeKey]?.progress as Record<string, unknown> | undefined
-  return Boolean(progress?.code_changed)
+  return false
 }
 
 /** onFail 指向已停用节点时，不跳转（避免 skip 进下一 enabled 节点如 gerrit） */
@@ -138,40 +134,8 @@ function failTargetIsEnterable(wf: WorkflowDefinition, target: NodeTarget): bool
   return Boolean(node?.enabled)
 }
 
-async function captureFingerprintBefore(run: PipelineRun, nodeKey: string): Promise<void> {
-  const root = run.build_context?.mapped_root
-  if (!root) return
-  try {
-    const snap = await takeSnapshot([root])
-    const prev = (run.stages[nodeKey]?.progress as Record<string, unknown> | undefined) ?? {}
-    patchStage(run, nodeKey, {
-      progress: {
-        ...prev,
-        snapshot_before: snap,
-        fingerprint_before: fingerprint(snap),
-      },
-    })
-  } catch {
-    /* non-critical */
-  }
-}
-
 async function detectSourceChangedAsync(run: PipelineRun): Promise<boolean> {
-  if (sourceChangedCheckerForTest) return sourceChangedCheckerForTest(run)
-  const nodeKey = run.current_node
-  if (!nodeKey) return false
-  const progress = run.stages[nodeKey]?.progress as Record<string, unknown> | undefined
-  const prevFp = progress?.fingerprint_before as string | undefined
-  const root = run.build_context?.mapped_root
-  if (root && prevFp) {
-    try {
-      const snap = await takeSnapshot([root])
-      return fingerprint(snap) !== prevFp
-    } catch {
-      return true
-    }
-  }
-  return Boolean(progress?.code_changed)
+  return hasSourceChanged(run)
 }
 
 /**
@@ -184,8 +148,6 @@ async function parkFailedNodeForHuman(
 ): Promise<void> {
   const run = getRun(runId)
   if (!run) return
-
-  await captureFingerprintBefore(run, nodeKey)
 
   const { points, recommended } = computeResumePoints(run)
   const recommendedOrSelf =

@@ -1,9 +1,9 @@
 /**
- * 将变更文件按 git 仓分组（用于审核选仓入库）
+ * 根据变更文件的绝对路径识别 git 仓，并按仓分组（审核选仓 / 拆 CR）
  */
 import { execFileSync } from 'child_process'
-import { existsSync } from 'fs'
-import { dirname, isAbsolute, join, normalize, relative, sep } from 'path'
+import { dirname, normalize } from 'path'
+import { isAbsFilePath } from './workspace-changed-files'
 
 export interface RepoChangeGroup {
   repo: string
@@ -26,51 +26,38 @@ function tryGitRoot(dir: string): string | null {
   }
 }
 
-function resolveFileAbs(mappedRoot: string, file: string): string {
-  if (isAbsolute(file)) return normalize(file)
-  return normalize(join(mappedRoot, file))
+function lastSegment(p: string): string {
+  const parts = p.replace(/\\/g, '/').split('/').filter(Boolean)
+  return parts[parts.length - 1] || p
 }
 
-/** 自文件路径向上找 git 根；找不到则退回 mapped_root 下首段目录 */
-export function resolveRepoForFile(mappedRoot: string, file: string): string {
-  const abs = resolveFileAbs(mappedRoot, file)
-  let dir = existsSync(abs) ? dirname(abs) : dirname(abs)
-  for (let i = 0; i < 24; i++) {
+/** 从文件绝对路径向上找 git 仓根；找不到则退回文件所在目录 */
+export function resolveRepoForFile(file: string): string {
+  const abs = normalize(file)
+  let dir = dirname(abs)
+  for (let i = 0; i < 48; i++) {
     const root = tryGitRoot(dir)
     if (root) return normalize(root)
     const parent = dirname(dir)
     if (parent === dir) break
     dir = parent
   }
-
-  const rel = relative(mappedRoot, abs).replace(/\\/g, '/')
-  const top = rel.split('/')[0]
-  if (top && top !== '..' && top !== '.') {
-    return normalize(join(mappedRoot, top))
-  }
-  return normalize(mappedRoot)
+  return dirname(normalize(abs))
 }
 
 export function groupChangedFilesByRepo(
-  mappedRoot: string,
   domains: Array<{ domain_id: string; changed_files?: string[]; enabled?: boolean; status?: string }>,
 ): RepoChangeGroup[] {
   const map = new Map<string, RepoChangeGroup>()
-  const root = mappedRoot.trim()
-  if (!root) return []
 
   for (const d of domains) {
     if (d.enabled === false) continue
-    if (d.status && d.status !== 'done' && d.status !== 'pending') {
-      // still include done domains primarily
-    }
     for (const f of d.changed_files ?? []) {
-      if (!f?.trim()) continue
-      const repo = resolveRepoForFile(root, f)
+      if (!f?.trim() || !isAbsFilePath(f.trim())) continue
+      const repo = resolveRepoForFile(f)
       let g = map.get(repo)
       if (!g) {
-        const label = relative(root, repo).replace(/\\/g, '/') || repo.split(/[/\\]/).pop() || repo
-        g = { repo, repo_label: label, files: [], domain_ids: [] }
+        g = { repo, repo_label: lastSegment(repo), files: [], domain_ids: [] }
         map.set(repo, g)
       }
       if (!g.files.includes(f)) g.files.push(f)
@@ -82,14 +69,14 @@ export function groupChangedFilesByRepo(
 }
 
 export function filterFilesBySelectedRepos(
-  mappedRoot: string,
   files: string[],
   selectedRepos: string[],
 ): string[] {
   if (!selectedRepos.length) return files
   const selected = new Set(selectedRepos.map(r => normalize(r).toLowerCase()))
   return files.filter(f => {
-    const repo = resolveRepoForFile(mappedRoot, f)
+    if (!f?.trim()) return false
+    const repo = resolveRepoForFile(f)
     return selected.has(normalize(repo).toLowerCase())
   })
 }

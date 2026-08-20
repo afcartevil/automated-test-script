@@ -1,8 +1,7 @@
 import { registerStageForTest } from '../registry'
 import { computeResumePoints } from '../orchestrator'
-import { takeSnapshot, fingerprint } from '../../git-snapshot'
 import { groupChangedFilesByRepo } from '../repo-groups'
-import { domainsWithWorkspaceChanges } from '../workspace-changed-files'
+import { domainsWithChangedFiles } from '../workspace-changed-files'
 import type { StageContext, StageDefinition, StageVerdict } from '../types'
 
 export const humanReviewStageDefinition: StageDefinition = {
@@ -15,27 +14,10 @@ export const humanReviewStageDefinition: StageDefinition = {
   async start(ctx: StageContext) {
     ctx.log('等待人工审核修改结果')
 
-    const mappedRoot = ctx.run.build_context?.mapped_root ?? ''
-    const workspace = ctx.run.build_context?.workspace ?? ''
-    const root = mappedRoot
-    if (root) {
-      try {
-        const snap = await takeSnapshot([root])
-        ctx.patchState({
-          progress: {
-            snapshot_before: snap,
-            fingerprint_before: fingerprint(snap),
-          },
-        })
-      } catch { /* non-critical */ }
-    }
-
     const triageStage = ctx.run.stages.triage
     const triageSummary = triageStage?.summary as Record<string, unknown> | undefined
-    const filteredDomains = domainsWithWorkspaceChanges(ctx.run.domains, mappedRoot, workspace)
-    const fileGroups = root
-      ? groupChangedFilesByRepo(root, filteredDomains)
-      : []
+    const filteredDomains = domainsWithChangedFiles(ctx.run.domains)
+    const fileGroups = groupChangedFilesByRepo(filteredDomains)
     const changedFiles = filteredDomains.flatMap(d =>
       d.changed_files.map(f => ({
         domain_id: d.domain_id,
@@ -87,31 +69,13 @@ export const humanReviewStageDefinition: StageDefinition = {
 
   async handleHumanAction(ctx: StageContext, actionId: string, _payload?: Record<string, unknown>) {
     if (actionId === 'confirm_done') {
-      const root = ctx.run.build_context?.mapped_root
-      const prevFp = (ctx.state.progress as Record<string, unknown>)?.fingerprint_before as string | undefined
-      let codeChanged = false
-
-      if (root && prevFp) {
-        try {
-          const snap = await takeSnapshot([root])
-          const currentFp = fingerprint(snap)
-          codeChanged = currentFp !== prevFp
-        } catch { codeChanged = true }
-      }
-
       ctx.patchState({
         progress: {
           ...ctx.state.progress as Record<string, unknown>,
-          code_changed: codeChanged,
           resolved: true,
         },
       })
-
-      if (codeChanged) {
-        ctx.log('检测到代码变更，source 产物将标记为过期')
-      } else {
-        ctx.log('未检测到代码变更')
-      }
+      ctx.log('人工审核已确认')
     }
   },
 }
@@ -119,5 +83,3 @@ export const humanReviewStageDefinition: StageDefinition = {
 export function installHumanReviewStage(): void {
   registerStageForTest(humanReviewStageDefinition)
 }
-
-installHumanReviewStage()

@@ -128,7 +128,7 @@ async function onResume(node: string, scope: 'continue' | 'restart', force: bool
             <span class="meta">{{ r.files.length }} 文件 · 域 {{ r.domain_ids.join(', ') || '—' }}</span>
           </span>
         </label>
-        <p v-if="!reposFor(node).length" class="hint">暂无按仓库分组的变更（可能路径未落在 mapped_root 下）</p>
+        <p v-if="!reposFor(node).length" class="hint">暂无按仓库分组的变更（请确认适配阶段返回了文件绝对路径）</p>
       </div>
 
       <div class="actions">

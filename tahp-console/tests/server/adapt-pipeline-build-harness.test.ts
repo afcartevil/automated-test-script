@@ -162,94 +162,90 @@ TAHP_BUILD_RESULT
 })
 
 describe('repo-groups', () => {
-  it('groups by top-level path when git root unavailable', () => {
-    const root = 'Z:\\ws'
-    const groups = groupChangedFilesByRepo(root, [
+  it('groups by parent directory when git root unavailable', () => {
+    const groups = groupChangedFilesByRepo([
       {
         domain_id: 'tp',
         status: 'done',
         enabled: true,
-        changed_files: ['vendor/a/x.c', 'vendor/a/y.c', 'kernel/b.c'],
+        changed_files: [
+          'Q:\\adapt-test\\vendor\\a\\x.c',
+          'Q:\\adapt-test\\vendor\\a\\y.c',
+          'Q:\\adapt-test\\kernel\\b.c',
+        ],
       },
     ])
-    expect(groups.map(g => g.repo_label).sort()).toEqual(['kernel', 'vendor'])
-    expect(groups.find(g => g.repo_label === 'vendor')?.files).toHaveLength(2)
+    expect(groups.map(g => g.repo_label).sort()).toEqual(['a', 'kernel'])
+    expect(groups.find(g => g.repo_label === 'a')?.files).toHaveLength(2)
   })
 
   it('filters files by selected repos', () => {
-    const root = 'Z:\\ws'
-    const selected = [join(root, 'vendor')]
+    const selected = [normalize('Q:\\adapt-test\\vendor')]
     const kept = filterFilesBySelectedRepos(
-      root,
-      ['vendor/a.c', 'kernel/b.c'],
+      ['Q:\\adapt-test\\vendor\\a.c', 'Q:\\adapt-test\\kernel\\b.c'],
       selected,
     )
-    expect(kept).toEqual(['vendor/a.c'])
+    expect(kept).toEqual(['Q:\\adapt-test\\vendor\\a.c'])
+  })
+
+  it('drops relative paths when grouping', () => {
+    const groups = groupChangedFilesByRepo([
+      {
+        domain_id: 'tp',
+        status: 'done',
+        enabled: true,
+        changed_files: ['vendor/a.c', 'Q:\\adapt-test\\kernel\\b.c'],
+      },
+    ])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].files).toEqual(['Q:\\adapt-test\\kernel\\b.c'])
   })
 })
 
 describe('workspace-changed-files', () => {
-  it('resolves aosp workspace under mapped_root', async () => {
-    const {
-      resolveAospWorkspaceRoot,
-      filterFilesUnderWorkspace,
-      mergeAbsolutePaths,
-    } = await import('../../packages/server/src/services/tahp/adapt-pipeline/workspace-changed-files')
-
-    expect(resolveAospWorkspaceRoot('Z:\\map', 'aosp')).toBe(normalize(join('Z:\\map', 'aosp')))
-
-    const tree = resolveAospWorkspaceRoot('Z:\\map', 'aosp')
-    const merged = mergeAbsolutePaths(
-      [
-        join(tree, 'kernel', 'foo.c'),
-        'vendor/bar.c',
-        'D:\\outside\\x.c',
-      ],
-      tree,
+  it('keeps only absolute paths and dedupes', async () => {
+    const { mergeAbsolutePaths } = await import(
+      '../../packages/server/src/services/tahp/adapt-pipeline/workspace-changed-files'
     )
-    expect(merged).toHaveLength(3)
-
-    const filtered = filterFilesUnderWorkspace(
-      [
-        join(tree, 'kernel', 'foo.c'),
-        'vendor/bar.c',
-        'D:\\outside\\x.c',
-        join('Z:\\map', 'other', 'skip.c'),
-      ],
-      'Z:\\map',
-      'aosp',
-    )
-    expect(filtered).toEqual([
-      normalize(join(tree, 'kernel', 'foo.c')),
-      normalize(join(tree, 'vendor', 'bar.c')),
+    const merged = mergeAbsolutePaths([
+      'Q:\\adapt-test\\kernel\\foo.c',
+      'vendor/bar.c',
+      'D:\\outside\\x.c',
+      'Q:\\adapt-test\\kernel\\foo.c',
+    ])
+    expect(merged).toEqual([
+      normalize('Q:\\adapt-test\\kernel\\foo.c'),
+      normalize('D:\\outside\\x.c'),
     ])
   })
 
-  it('domainsWithWorkspaceChanges drops empty and out-of-tree files', async () => {
-    const { domainsWithWorkspaceChanges } = await import(
+  it('domainsWithChangedFiles keeps all absolute paths', async () => {
+    const { domainsWithChangedFiles } = await import(
       '../../packages/server/src/services/tahp/adapt-pipeline/workspace-changed-files'
     )
-    const tree = normalize(join('Z:\\map', 'aosp'))
-    const domains = domainsWithWorkspaceChanges(
-      [
-        {
-          domain_id: 'tp',
-          enabled: true,
-          status: 'done',
-          changed_files: [join(tree, 'drivers', 'a.c'), 'D:\\old\\ref.c'],
-        },
-        {
-          domain_id: 'lcm',
-          enabled: true,
-          status: 'done',
-          changed_files: ['D:\\old\\only.c'],
-        },
-      ],
-      'Z:\\map',
-      'aosp',
-    )
-    expect(domains).toHaveLength(1)
-    expect(domains[0].domain_id).toBe('tp')
-    expect(domains[0].changed_files).toEqual([normalize(join(tree, 'drivers', 'a.c'))])
+    const domains = domainsWithChangedFiles([
+      {
+        domain_id: 'tp',
+        enabled: true,
+        status: 'done',
+        changed_files: ['Q:\\adapt-test\\drivers\\a.c', 'relative/skip.c'],
+      },
+      {
+        domain_id: 'lcm',
+        enabled: true,
+        status: 'done',
+        changed_files: ['D:\\old\\only.c'],
+      },
+      {
+        domain_id: 'fp',
+        enabled: true,
+        status: 'done',
+        changed_files: ['vendor/only-rel.c'],
+      },
+    ])
+    expect(domains.map(d => d.domain_id).sort()).toEqual(['lcm', 'tp'])
+    expect(domains.find(d => d.domain_id === 'tp')?.changed_files).toEqual([
+      normalize('Q:\\adapt-test\\drivers\\a.c'),
+    ])
   })
 })

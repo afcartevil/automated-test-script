@@ -1,48 +1,30 @@
 /**
- * 适配变更文件：绝对路径归一化 + 限制在 AOSP workspace 树下
+ * 适配变更文件：只收录绝对路径（由适配 Agent 在文件修改清单中返回）。
  */
-import { isAbsolute, join, normalize } from 'path'
-
-/** mapped_root + workspace → AOSP 源码树绝对路径 */
-export function resolveAospWorkspaceRoot(mappedRoot: string, workspace: string): string {
-  const root = mappedRoot.trim()
-  const ws = workspace.trim()
-  if (!root) return ''
-  if (!ws) return normalize(root)
-  if (isAbsolute(ws)) return normalize(ws)
-  return normalize(join(root, ws))
-}
+import { isAbsolute, normalize } from 'path'
 
 function normKey(p: string): string {
   return normalize(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
 
-/** 判断 abs 是否落在 root 下（含 root 自身） */
-export function isPathUnderRoot(absPath: string, root: string): boolean {
-  const a = normKey(absPath)
-  const r = normKey(root)
-  if (!a || !r) return false
-  return a === r || a.startsWith(`${r}/`)
+/** Windows 盘符 / UNC 在非 win32 上也视为绝对路径（适配流水线按 Windows 盘符工作） */
+export function isAbsFilePath(p: string): boolean {
+  const t = p.trim()
+  if (!t) return false
+  if (isAbsolute(t)) return true
+  if (/^[A-Za-z]:[\\/]/.test(t)) return true
+  if (t.startsWith('\\\\')) return true
+  return false
 }
 
-/** 相对路径按 workspace 根解析；已是绝对路径则 normalize */
-export function toAbsolutePath(file: string, workspaceRoot: string): string {
-  const t = file.trim().replace(/^["']|["']$/g, '')
-  if (!t) return ''
-  if (isAbsolute(t)) return normalize(t)
-  if (workspaceRoot.trim()) return normalize(join(workspaceRoot, t))
-  return normalize(t)
-}
-
-export function mergeAbsolutePaths(
-  paths: string[],
-  workspaceRoot: string,
-): string[] {
+/** 去重绝对路径；相对路径丢弃（不再用 mapped_root / workspace 拼接） */
+export function mergeAbsolutePaths(paths: string[]): string[] {
   const out: string[] = []
   const seen = new Set<string>()
   for (const raw of paths) {
-    const abs = toAbsolutePath(raw, workspaceRoot)
-    if (!abs) continue
+    const t = raw.trim().replace(/^["']|["']$/g, '')
+    if (!t || !isAbsFilePath(t)) continue
+    const abs = normalize(t)
     const key = normKey(abs)
     if (seen.has(key)) continue
     seen.add(key)
@@ -51,36 +33,20 @@ export function mergeAbsolutePaths(
   return out
 }
 
-/**
- * 保留落在 AOSP workspace 树下的绝对路径（相对路径先按 workspace 解析）。
- * workspace 为空时退回 mapped_root。
- */
-export function filterFilesUnderWorkspace(
-  files: string[],
-  mappedRoot: string,
-  workspace: string,
-): string[] {
-  const tree = resolveAospWorkspaceRoot(mappedRoot, workspace)
-  if (!tree) return []
-  const abs = mergeAbsolutePaths(files, tree)
-  return abs.filter(f => isPathUnderRoot(f, tree))
-}
-
-export function domainsWithWorkspaceChanges<T extends {
+/** 有绝对路径变更的域（供人工审核 / Gerrit） */
+export function domainsWithChangedFiles<T extends {
   domain_id: string
   enabled?: boolean
   status?: string
   changed_files?: string[]
 }>(
   domains: T[],
-  mappedRoot: string,
-  workspace: string,
 ): Array<T & { changed_files: string[] }> {
   return domains
     .filter(d => d.enabled !== false && (!d.status || d.status === 'done'))
     .map(d => ({
       ...d,
-      changed_files: filterFilesUnderWorkspace(d.changed_files ?? [], mappedRoot, workspace),
+      changed_files: mergeAbsolutePaths(d.changed_files ?? []),
     }))
     .filter(d => d.changed_files.length > 0)
 }

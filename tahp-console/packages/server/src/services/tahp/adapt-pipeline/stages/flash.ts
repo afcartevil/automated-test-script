@@ -2,7 +2,6 @@ import { existsSync } from 'node:fs'
 import { registerStageForTest } from '../registry'
 import type { StageContext, StageDefinition, StageVerdict } from '../types'
 import {
-  resolveFlashPkgPath,
   validateFlashPkgPath,
 } from '../../flash-artifact-resolver'
 import {
@@ -36,8 +35,7 @@ function collectBuildArtifacts(ctx: StageContext) {
   const artifacts = (buildSummary?.artifacts ?? buildResult.artifacts) as
     | Array<{ name?: string; path: string }>
     | undefined
-  const mappedRoot = ctx.run.build_context?.mapped_root
-  const resolved = preferredPkg || resolveFlashPkgPath(artifactsDir, mappedRoot) || undefined
+  const resolved = preferredPkg || undefined
   const humanPkg = ctx.state.progress?.human_pkg_path as string | undefined
   const humanImg = ctx.state.progress?.human_img_path as string | undefined
   const humanPartition = ctx.state.progress?.human_partition as string | undefined
