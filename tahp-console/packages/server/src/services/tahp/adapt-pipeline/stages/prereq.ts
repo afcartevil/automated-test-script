@@ -33,28 +33,7 @@ function labelForDomain(domainId: string): string {
   return DOMAIN_LABELS[domainId] ?? domainId
 }
 
-const PATH_FIELD_RE = /path|file|dir|dts|firmware|root|project|固件|路径|目录/i
-
-function isPathLikeField(name: string, label?: string): boolean {
-  return PATH_FIELD_RE.test(name) || (label ? PATH_FIELD_RE.test(label) : false)
-}
-
-function looksLikeFilesystemPath(value: string): boolean {
-  const v = value.trim()
-  if (!v) return false
-  if (/^[A-Za-z]:[\\/]/.test(v)) return true
-  if (v.startsWith('/') || v.startsWith('\\\\')) return true
-  return false
-}
-
 type CentralDomain = Awaited<ReturnType<typeof centralClient.resolveAdaptPrereqs>>['domains'][number]
-
-export interface InvalidPathEntry {
-  domain_id: string
-  workspace_id?: string
-  field: string
-  value: string
-}
 
 function mergeFormData(
   central: Record<string, unknown> | undefined,
@@ -150,57 +129,6 @@ async function normalizeDomains(
   return result
 }
 
-export function collectInvalidPaths(
-  domains: PipelineDomain[],
-  mappedRoot: string,
-  fieldDefs: Map<string, AdaptLayoutFieldDef[]>,
-): InvalidPathEntry[] {
-  const invalid: InvalidPathEntry[] = []
-  const root = mappedRoot.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-  if (!root) return invalid
-
-  for (const domain of domains) {
-    if (!domain.enabled) continue
-    const fields = fieldDefs.get(domainCatalogKey(domain.workspace_id, domain.domain_id))
-      ?? fieldDefs.get(domain.domain_id)
-      ?? []
-    const pathNames = new Set(
-      fields.filter(f => isPathLikeField(f.name, f.label)).map(f => f.name),
-    )
-
-    for (const [field, raw] of Object.entries(domain.form_data)) {
-      if (raw === undefined || raw === null) continue
-      const value = String(raw).trim()
-      if (!value) continue
-      if (!pathNames.has(field) && !looksLikeFilesystemPath(value)) continue
-
-      const normalized = value.replace(/\\/g, '/').toLowerCase()
-      if (normalized === root || normalized.startsWith(`${root}/`)) continue
-
-      invalid.push({
-        domain_id: domain.domain_id,
-        workspace_id: domain.workspace_id,
-        field,
-        value,
-      })
-    }
-  }
-  return invalid
-}
-
-async function loadFieldDefs(domains: PipelineDomain[]): Promise<Map<string, AdaptLayoutFieldDef[]>> {
-  const map = new Map<string, AdaptLayoutFieldDef[]>()
-  for (const d of domains) {
-    const layout = await getAdaptDomainLayout(d.domain_id, d.workspace_id)
-    map.set(domainCatalogKey(d.workspace_id, d.domain_id), layout?.fields ?? [])
-    // 兼容旧测试 / 调用方仅按 domain_id 查
-    if (!map.has(d.domain_id)) {
-      map.set(d.domain_id, layout?.fields ?? [])
-    }
-  }
-  return map
-}
-
 export const prereqStageDefinition: StageDefinition = {
   key: 'prereq',
   label: '前置信息',
@@ -221,8 +149,6 @@ export const prereqStageDefinition: StageDefinition = {
       campaign_id: run.campaign_id,
     })
     const domains = await normalizeDomains(data.domains, run)
-    const fieldDefs = await loadFieldDefs(domains)
-    const invalid_paths = collectInvalidPaths(domains, run.build_context.mapped_root, fieldDefs)
 
     ctx.patchRun({
       domains,
@@ -230,22 +156,11 @@ export const prereqStageDefinition: StageDefinition = {
       to_os: data.to_os,
     })
     ctx.patchState({
-      progress: { invalid_paths },
+      progress: {},
       summary: { domain_count: domains.length, campaign_id: data.campaign_id },
     })
   },
   evaluate(ctx: StageContext) {
-    const invalid = ctx.state.progress?.invalid_paths as InvalidPathEntry[] | undefined
-    if (invalid?.length) {
-      const lines = invalid.map(e => `${e.domain_id}.${e.field}: ${e.value}`)
-      return {
-        status: 'waiting_human' as const,
-        reason: 'invalid_paths',
-        message: `以下路径不在映射盘 ${ctx.run.build_context.mapped_root} 下：\n${lines.join('\n')}`,
-        actions: [{ id: 'confirm_done', label: '已修正，继续' }],
-      }
-    }
-
     const incomplete = ctx.run.domains.filter(d => d.enabled && d.incomplete_required.length > 0)
     if (incomplete.length > 0) {
       const lines = incomplete.flatMap(d =>

@@ -16,7 +16,7 @@ import {
   resetStoreForTest,
   saveRun,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/store'
-import { collectInvalidPaths, installPrereqStage } from '../../packages/server/src/services/tahp/adapt-pipeline/stages/prereq'
+import { installPrereqStage } from '../../packages/server/src/services/tahp/adapt-pipeline/stages/prereq'
 import { installAdaptStage } from '../../packages/server/src/services/tahp/adapt-pipeline/stages/adapt'
 import { resetSourcesForTest } from '../../packages/server/src/services/tahp/adapt-pipeline/sources'
 import { installGerritStage } from '../../packages/server/src/services/tahp/adapt-pipeline/stages/gerrit'
@@ -58,12 +58,6 @@ vi.mock('../../packages/server/src/services/tahp/runtime-mode', () => ({
 
 vi.mock('../../packages/server/src/services/tahp/adapt-layout/service', () => ({
   getAdaptDomainLayout: (...args: unknown[]) => getLayoutMock(...args),
-}))
-
-vi.mock('../../packages/server/src/services/tahp/git-snapshot', () => ({
-  takeSnapshot: vi.fn().mockResolvedValue([]),
-  diffSnapshots: vi.fn().mockReturnValue(['vendor/mock.c']),
-  fingerprint: vi.fn().mockReturnValue('mock-fp'),
 }))
 
 vi.mock('../../packages/server/src/services/tahp/gerrit-submit', () => ({
@@ -193,6 +187,65 @@ describe('adapt-pipeline stages', () => {
     expect(updated.to_os).toBe('16')
   })
 
+  it('injects path_params into each adapt domain formData including manual overrides', async () => {
+    resolveMock.mockResolvedValue({
+      project_code: 'KM9',
+      campaign_id: 'camp-1',
+      from_os: '15',
+      to_os: '16',
+      domains: [{
+        workspace_id: 'adapt-debug',
+        domain_id: 'tp',
+        revision: 1,
+        schema: [],
+        form_data: { debug_project: 'A' },
+        stale_fields: [],
+        incomplete_required: [],
+      }],
+    })
+    startAdaptMock.mockReturnValue({ ok: true, taskId: 'task-tp-path' })
+
+    const run = createRun({
+      ...baseInput(),
+      path_params: {
+        inputs: {
+          project_code: 'KM9',
+          OLD_VENDOR_ROOT: 'Z:\\old\\vendor',
+          NEW_VENDOR_ROOT: 'Z:\\new\\vendor',
+          NEW_SYSTEM_ROOT: 'Z:\\sys',
+        },
+        fields: [
+          {
+            key: 'PROJECT_FULL',
+            label: 'PROJECT_FULL',
+            kind: 'select',
+            ok: true,
+            value: 'km9_h1',
+            parsed_value: 'km9_h1',
+          },
+          {
+            key: 'OLD_KERNEL_DWS_PATH',
+            label: 'OLD_KERNEL_DWS_PATH',
+            kind: 'text',
+            ok: false,
+            value: 'Z:\\manual\\a.dws',
+            error: '文件不存在',
+          },
+        ],
+        parsed_at: new Date().toISOString(),
+      },
+    })
+    await startRun(run.run_id)
+
+    expect(startAdaptMock).toHaveBeenCalled()
+    const formData = startAdaptMock.mock.calls[0][0].formData as Record<string, string>
+    expect(formData.NEW_VENDOR_ROOT).toBe('Z:\\new\\vendor')
+    expect(formData.NEW_SYSTEM_ROOT).toBe('Z:\\sys')
+    expect(formData.PROJECT_FULL).toBe('km9_h1')
+    expect(formData.OLD_KERNEL_DWS_PATH).toBe('Z:\\manual\\a.dws')
+    expect(formData.debug_project).toBe('A')
+  })
+
   it('prereq keeps user-selected multi-workspace domains and merges central form_data', async () => {
     resolveMock.mockResolvedValue({
       project_code: 'KM9',
@@ -299,51 +352,6 @@ describe('adapt-pipeline stages', () => {
     expect(updated.current_node).toBe('prereq')
     expect(updated.stages.prereq?.human?.reason).toBe('incomplete_required')
     expect(startAdaptMock).not.toHaveBeenCalled()
-  })
-
-  it('collectInvalidPaths rejects paths outside mapped_root', () => {
-    const invalid = collectInvalidPaths(
-      [{
-        workspace_id: 'adapt-debug',
-        domain_id: 'tp',
-        domain_label: 'TP',
-        module: 'kernel-driver',
-        related_skills: ['tp-adapt-bringup'],
-        form_data: { old_dts: 'D:\\other\\touch.dtsi' },
-        incomplete_required: [],
-        enabled: true,
-        status: 'pending',
-      }],
-      'Z:\\',
-      new Map([['tp', [{ name: 'old_dts', label: '升级前dts文件', type: 'text', required: true }]]]),
-    )
-    expect(invalid).toHaveLength(1)
-    expect(invalid[0].field).toBe('old_dts')
-  })
-
-  it('prereq blocks when path is outside mapped_root', async () => {
-    resolveMock.mockResolvedValue({
-      project_code: 'KM9',
-      campaign_id: 'camp-1',
-      from_os: '15',
-      to_os: '16',
-      domains: [{
-        workspace_id: 'adapt-debug',
-        domain_id: 'tp',
-        revision: 1,
-        schema: [],
-        form_data: { old_dts: 'D:\\outside\\file.dtsi' },
-        stale_fields: [],
-        incomplete_required: [],
-      }],
-    })
-
-    const run = createRun(baseInput())
-    await startRun(run.run_id)
-
-    const updated = getRun(run.run_id)!
-    expect(updated.status).toBe('waiting_human')
-    expect(updated.stages.prereq?.human?.reason).toBe('invalid_paths')
   })
 
   it('adapt runs domains serially and auto-starts domain 2 after domain 1 completes', async () => {
@@ -477,13 +485,14 @@ describe('adapt-pipeline stages', () => {
     }
 
     const files = getRun(run.run_id)!.domains[0].changed_files ?? []
-    expect(files.map(f => f.replace(/\\/g, '/').toLowerCase())).toEqual(
+    const normalized = files.map(f => f.replace(/\\/g, '/').toLowerCase())
+    expect(normalized).toEqual(
       expect.arrayContaining([
         wsFile.replace(/\\/g, '/').toLowerCase(),
-        'z:/project/km9_new/vendor/mediatek/foo.c',
+        'd:/outside/skip.c',
       ]),
     )
-    expect(files.some(f => /outside/i.test(f))).toBe(true)
+    expect(normalized.some(f => f.includes('vendor/mediatek'))).toBe(false)
   })
 
   it('confirm_done on prereq advances past incomplete gate', async () => {

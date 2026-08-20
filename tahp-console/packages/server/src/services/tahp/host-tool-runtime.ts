@@ -217,6 +217,14 @@ export function isTransientAsfBridgeFailure(text: string): boolean {
   return /BRIDGE_CMD_FAILED|zellij timed out|list-panes|host CLI timeout/i.test(String(text || ''))
 }
 
+/**
+ * asf `bridge cmd/status`：mux 还在但 OpenSSH 已掉，槽已释放。
+ * 须 `asf --json bridge up --session N`（或省略 --session）重连，不能只 interrupt 同 session。
+ */
+export function isAsfBridgeSshDisconnected(text: string): boolean {
+  return /BRIDGE_SSH_DISCONNECTED|OpenSSH is gone|pane_command is local shell/i.test(String(text || ''))
+}
+
 /** doctor.tools 里 zellij.ok !== true → 需要 `asf --json bridge setup` */
 export function asfZellijMissingFromDoctor(parsed: Record<string, unknown> | null): boolean {
   const tools = Array.isArray(parsed?.tools) ? parsed.tools : []

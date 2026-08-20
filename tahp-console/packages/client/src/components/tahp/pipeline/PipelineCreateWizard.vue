@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NAlert, NButton, NInput, NInputNumber, NSelect, NSpin, NSteps, NStep, NTable, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
@@ -10,6 +10,7 @@ import {
   fetchDomainCatalog,
   fetchHarnessSkills,
   fetchPipelinePrereqs,
+  parsePipelinePathParams,
   startPipelineRun,
   type BuildContext,
   type CapabilityItem,
@@ -17,6 +18,8 @@ import {
   type DomainCatalog,
   type DomainCatalogDomain,
   type DomainCatalogField,
+  type PathParamField,
+  type PathParams,
   type PipelineDomainInput,
   type PrereqResolveData,
   type TestPlan,
@@ -72,6 +75,14 @@ const manualProjectCode = ref('')
 const campaignId = ref<string | null>(null)
 const prereqData = ref<PrereqResolveData | null>(null)
 
+const oldVendorRoot = ref('')
+const newVendorRoot = ref('')
+const newSystemRoot = ref('')
+const parsingPaths = ref(false)
+const parsedPathFields = ref<PathParamField[]>([])
+const parsedAt = ref('')
+const lastParsedSignature = ref('')
+
 /** 勾选的工作区；默认功能适配 */
 const selectedWorkspaces = ref<AdaptWorkspaceId[]>(['adapt-debug'])
 
@@ -105,6 +116,14 @@ interface ChecklistRow {
 
 const wizardDomains = ref<WizardDomain[]>([])
 
+const BUILD_TARGET_OPTIONS = [
+  { label: 'sys', value: 'sys' },
+  { label: 'krn', value: 'krn' },
+  { label: 'vext', value: 'vext' },
+  { label: 'hal', value: 'hal' },
+  { label: 'odm', value: 'odm' },
+]
+
 const buildContext = reactive<BuildContext>({
   mapped_root: '',
   workspace: '',
@@ -113,16 +132,16 @@ const buildContext = reactive<BuildContext>({
   build_flag: 'staging',
   system_path: '',
   vendor_path: '',
-  build_targets: ['sys'],
-  need_pack: false,
+  build_targets: BUILD_TARGET_OPTIONS.map(o => o.value),
+  need_pack: true,
   flash_skill_id: '',
   flash_mode: 'full_rom',
   target_branch: '',
   gerrit_issue_id: '',
 })
 
-const selectedBuildTargets = ref<string[]>(['sys'])
-const needPack = ref<'yes' | 'no'>('no')
+const selectedBuildTargets = ref<string[]>(BUILD_TARGET_OPTIONS.map(o => o.value))
+const needPack = ref<'yes' | 'no'>('yes')
 const deviceId = ref<string | null>(null)
 const testPlanMode = ref<'smoke' | 'recommend' | 'fixed'>('smoke')
 
@@ -132,23 +151,6 @@ const TEST_PLAN_MODE_LABELS: Record<'smoke' | 'recommend' | 'fixed', string> = {
   fixed: '固定用例',
 }
 const maxIterations = ref(3)
-
-const BUILD_TARGET_OPTIONS = [
-  { label: 'sys', value: 'sys' },
-  { label: 'krn', value: 'krn' },
-  { label: 'vext', value: 'vext' },
-  { label: 'hal', value: 'hal' },
-  { label: 'odm', value: 'odm' },
-]
-
-watch(
-  () => projectCode.value || manualProjectCode.value.trim(),
-  (code) => {
-    if (code && !buildContext.project?.trim()) {
-      buildContext.project = code
-    }
-  },
-)
 
 const TELEPHONY_DOMAINS = new Set([
   'modem',
@@ -305,16 +307,70 @@ const unavailableNodes = computed(() =>
   capabilities.value.filter(c => !c.availability.available),
 )
 
-const canProceedStep1 = computed(() =>
-  Boolean((projectCode.value || manualProjectCode.value.trim()).length),
+const selectedProjectCode = computed(() =>
+  projectCode.value || manualProjectCode.value.trim(),
 )
 
-const canProceedStep2 = computed(() => {
-  if (prereqsLoading.value || catalogLoading.value) return false
-  if (!wizardDomains.value.length) return false
-  if (!enabledDomains.value.length) return false
-  return enabledDomains.value.every(d => d.incomplete_required.length === 0)
-})
+const pathParseSignature = computed(() =>
+  `${selectedProjectCode.value}||${oldVendorRoot.value.trim()}||${newVendorRoot.value.trim()}`,
+)
+
+const canParsePaths = computed(() =>
+  Boolean(selectedProjectCode.value && oldVendorRoot.value.trim() && newVendorRoot.value.trim()),
+)
+
+const pathParseFresh = computed(() =>
+  Boolean(lastParsedSignature.value) && lastParsedSignature.value === pathParseSignature.value,
+)
+
+const pathParseOkCount = computed(() => parsedPathFields.value.filter(f => f.ok).length)
+const pathParseFailCount = computed(() => parsedPathFields.value.filter(f => !f.ok).length)
+
+const canProceedStep1 = computed(() => canParsePaths.value && pathParseFresh.value)
+
+function selectedProjectFull(): string | undefined {
+  const v = parsedPathFields.value.find(f => f.key === 'PROJECT_FULL')?.value?.trim()
+  return v || undefined
+}
+
+function setParsedFieldValue(key: string, value: string) {
+  parsedPathFields.value = parsedPathFields.value.map((f) =>
+    f.key === key ? { ...f, value } : f,
+  )
+}
+
+function selectFieldOptions(field: PathParamField): Array<{ label: string; value: string }> {
+  return (field.options ?? []).map(v => ({ label: v, value: v }))
+}
+
+async function handleParsePaths() {
+  if (!canParsePaths.value || parsingPaths.value) return
+  parsingPaths.value = true
+  try {
+    const data: PathParams = await parsePipelinePathParams({
+      project_code: selectedProjectCode.value,
+      OLD_VENDOR_ROOT: oldVendorRoot.value.trim(),
+      NEW_VENDOR_ROOT: newVendorRoot.value.trim(),
+      NEW_SYSTEM_ROOT: newSystemRoot.value.trim() || undefined,
+      PROJECT_FULL: selectedProjectFull(),
+    })
+    parsedPathFields.value = data.fields.map(f => ({ ...f }))
+    parsedAt.value = data.parsed_at
+    lastParsedSignature.value = pathParseSignature.value
+    const failed = data.fields.filter(f => !f.ok).length
+    if (failed) {
+      message.warning(`解析完成，${failed} 个字段失败，可手工填写后继续`)
+    } else {
+      message.success('路径参数解析完成')
+    }
+  } catch (err) {
+    message.error((err as Error).message || '路径解析失败')
+  } finally {
+    parsingPaths.value = false
+  }
+}
+
+const canProceedStep2 = computed(() => true)
 
 function recomputeIncomplete(domain: WizardDomain) {
   const missing: string[] = []
@@ -332,23 +388,12 @@ function onDomainFieldChange(domain: WizardDomain) {
   recomputeIncomplete(domain)
 }
 
-function validateBuildPaths(): string | null {
-  const root = buildContext.mapped_root.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-  if (!root) return '请填写 mapped_root'
-  if (!buildContext.workspace.trim()) return '请填写 workspace'
-  return null
-}
-
 const canProceedStep3 = computed(() => {
-  if (!buildContext.mapped_root.trim() || !buildContext.workspace.trim()) return false
   if (!String(buildContext.gerrit_issue_id ?? '').trim()) return false
-  if (!String(buildContext.project ?? '').trim()) return false
-  if (!String(buildContext.system_path ?? '').trim()) return false
-  if (!String(buildContext.vendor_path ?? '').trim()) return false
   if (!String(buildContext.variant ?? '').trim()) return false
   if (!String(buildContext.build_flag ?? '').trim()) return false
   if (!selectedBuildTargets.value.length && needPack.value !== 'yes') return false
-  return validateBuildPaths() === null
+  return true
 })
 
 function buildLocalCatalogDomains(): DomainCatalogDomain[] {
@@ -589,12 +634,6 @@ async function goNext() {
     return
   }
   if (step.value === 2) {
-    if (prereqsLoading.value || catalogLoading.value) {
-      message.info('前置信息仍在加载，请稍候')
-      return
-    }
-    const code = projectCode.value || manualProjectCode.value.trim()
-    if (code && !buildContext.project?.trim()) buildContext.project = code
     step.value = 3
     return
   }
@@ -642,6 +681,9 @@ function buildDomainsPayload(): PipelineDomainInput[] {
 
 function buildCreateInput(): CreateRunInput {
   const code = projectCode.value || manualProjectCode.value.trim()
+  const projectFull = selectedProjectFull() || code
+  const vendorRoot = newVendorRoot.value.trim()
+  const systemRoot = newSystemRoot.value.trim()
   const testPlan: TestPlan = {
     mode: testPlanMode.value,
     ...(testPlanMode.value === 'smoke' ? { test_type: 'smoke' } : {}),
@@ -654,13 +696,13 @@ function buildCreateInput(): CreateRunInput {
     domains: buildDomainsPayload(),
     domain_ids: enabledDomains.value.map(d => d.domain_id),
     build_context: {
-      mapped_root: buildContext.mapped_root.trim(),
-      workspace: buildContext.workspace.trim(),
-      project: (buildContext.project || code).trim(),
+      mapped_root: '',
+      workspace: '',
+      project: projectFull,
       variant: buildContext.variant,
       build_flag: buildContext.build_flag || 'staging',
-      system_path: String(buildContext.system_path ?? '').trim(),
-      vendor_path: String(buildContext.vendor_path ?? '').trim(),
+      system_path: systemRoot,
+      vendor_path: vendorRoot,
       build_targets: selectedBuildTargets.value.length ? [...selectedBuildTargets.value] : [],
       need_pack: needPack.value === 'yes',
       flash_skill_id: (buildContext.flash_skill_id || '').trim() || undefined,
@@ -671,6 +713,19 @@ function buildCreateInput(): CreateRunInput {
     device_id: deviceId.value ?? undefined,
     test_plan: testPlan,
     max_iterations: maxIterations.value,
+    path_params: parsedPathFields.value.length
+      ? {
+          inputs: {
+            project_code: code,
+            OLD_VENDOR_ROOT: oldVendorRoot.value.trim(),
+            NEW_VENDOR_ROOT: newVendorRoot.value.trim(),
+            ...(newSystemRoot.value.trim() ? { NEW_SYSTEM_ROOT: newSystemRoot.value.trim() } : {}),
+            ...(selectedProjectFull() ? { PROJECT_FULL: selectedProjectFull() } : {}),
+          },
+          fields: parsedPathFields.value.map(f => ({ ...f })),
+          parsed_at: parsedAt.value || new Date().toISOString(),
+        }
+      : undefined,
   }
 }
 
@@ -811,6 +866,65 @@ onUnmounted(() => {
         </div>
         <NInput v-model:value="manualProjectCode" placeholder="例如 KM9" :disabled="Boolean(projectCode)" />
       </div>
+
+      <h3 class="sub-title">代码根目录</h3>
+      <div class="field">
+        <label>OLD_VENDOR_ROOT <span class="req">*</span></label>
+        <NInput v-model:value="oldVendorRoot" placeholder="例如 Z:\code-pull\cpull-xxx\vendor" />
+      </div>
+      <div class="field">
+        <label>NEW_VENDOR_ROOT <span class="req">*</span></label>
+        <NInput v-model:value="newVendorRoot" placeholder="例如 Z:\project\CM8\vendor" />
+      </div>
+      <div class="field">
+        <label>NEW_SYSTEM_ROOT</label>
+        <NInput v-model:value="newSystemRoot" placeholder="可选，仅保存不参与本轮解析" />
+      </div>
+      <div class="parse-bar">
+        <NButton
+          type="primary"
+          :disabled="!canParsePaths || parsingPaths"
+          :loading="parsingPaths"
+          @click="handleParsePaths"
+        >
+          解析
+        </NButton>
+        <p v-if="parsedPathFields.length && !pathParseFresh" class="field-error">
+          项目或 vendor 根已变化，请重新解析后再下一步。
+        </p>
+        <p v-else-if="!canParsePaths" class="muted">填写项目与两个必填 vendor 根后可解析。</p>
+      </div>
+
+      <div v-if="parsedPathFields.length" class="parsed-fields">
+        <div
+          v-for="field in parsedPathFields"
+          :key="field.key"
+          class="field"
+          :class="{ inline: true }"
+        >
+          <label>
+            {{ field.label }}
+            <span v-if="field.ok" class="pill ok">解析成功</span>
+            <span v-else class="pill fail">解析失败</span>
+          </label>
+          <NSelect
+            v-if="field.kind === 'select'"
+            :value="field.value || null"
+            :options="selectFieldOptions(field)"
+            filterable
+            clearable
+            placeholder="请选择项目目录"
+            @update:value="(v: string | null) => setParsedFieldValue(field.key, v == null ? '' : String(v))"
+          />
+          <NInput
+            v-else
+            :value="field.value"
+            :placeholder="field.error || field.label"
+            @update:value="(v: string) => setParsedFieldValue(field.key, v)"
+          />
+          <p v-if="!field.ok && field.error" class="field-error">{{ field.error }}</p>
+        </div>
+      </div>
     </div>
 
     <!-- Step 2 -->
@@ -931,7 +1045,7 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-      <p v-if="!enabledDomains.length && !prereqsLoading" class="field-error">请至少启用一个适配模块。</p>
+      <p v-if="!enabledDomains.length && !prereqsLoading" class="muted">当前未启用适配模块，仍可进入下一步。</p>
     </div>
 
     <!-- Step 3 -->
@@ -942,25 +1056,8 @@ onUnmounted(() => {
         Windows 盘符路径会换算为 <code>/work/code/$USER/...</code>。请先保持齐治 Bridge READY。
       </p>
 
-      <h3 class="sub-title">适配 / 入库路径</h3>
-      <div class="field">
-        <label>mapped_root <span class="req">*</span></label>
-        <NInput v-model:value="buildContext.mapped_root" placeholder="Z:\" />
-        <p class="field-hint">Linux 构建机目录在本机的映射盘根，例如 <code>Z:\</code>。适配与 Gerrit 仍使用此映射。</p>
-      </div>
-      <div class="field">
-        <label>workspace <span class="req">*</span></label>
-        <NInput v-model:value="buildContext.workspace" placeholder="project/KM9_NEW" />
-        <p class="field-hint">相对 mapped_root 的代码目录，用正斜杠。不要写盘符。</p>
-      </div>
-
       <h3 class="sub-title">编译（ez-build）</h3>
       <div class="field-row">
-        <div class="field">
-          <label>project <span class="req">*</span></label>
-          <NInput v-model:value="buildContext.project" placeholder="如 LJ9" />
-          <p class="field-hint">传给脚本 PROJECT；对应 <code>vendor/transsion/projects/&lt;project&gt;</code>。</p>
-        </div>
         <div class="field">
           <label>variant <span class="req">*</span></label>
           <NSelect
@@ -972,19 +1069,6 @@ onUnmounted(() => {
             ]"
           />
         </div>
-      </div>
-      <div class="field-row">
-        <div class="field">
-          <label>system 代码路径 <span class="req">*</span></label>
-          <NInput v-model:value="buildContext.system_path" placeholder="Z:\LJ9-sys" />
-          <p class="field-hint">Windows 盘符路径，远端换算为 <code>/work/code/$USER/...</code>。</p>
-        </div>
-        <div class="field">
-          <label>vendor 代码路径 <span class="req">*</span></label>
-          <NInput v-model:value="buildContext.vendor_path" placeholder="Z:\LJ9-vnd" />
-        </div>
-      </div>
-      <div class="field-row">
         <div class="field">
           <label>build_flag <span class="req">*</span></label>
           <NSelect
@@ -997,6 +1081,8 @@ onUnmounted(() => {
             ]"
           />
         </div>
+      </div>
+      <div class="field-row">
         <div class="field">
           <label>是否打包</label>
           <NSelect
@@ -1006,7 +1092,7 @@ onUnmounted(() => {
               { label: '是（追加 pack）', value: 'yes' },
             ]"
           />
-          <p class="field-hint">选「是」时会在 targets 末尾追加 <code>pack</code>。</p>
+          <p class="field-hint">选「是」时会在 targets 末尾追加 <code>pack</code>。project / system / vendor 分别取自 PROJECT_FULL、NEW_SYSTEM_ROOT、NEW_VENDOR_ROOT。</p>
         </div>
       </div>
       <div class="field">
@@ -1096,11 +1182,20 @@ onUnmounted(() => {
         <div class="summary-row">
           <span class="k">编译</span>
           <span>
-            ez-build · {{ buildContext.project || '—' }}
+            ez-build · {{ selectedProjectFull() || '—' }}
             · {{ buildContext.variant }} / {{ buildContext.build_flag }}
             · targets={{ selectedBuildTargets.join(',') || '—' }}{{ needPack === 'yes' ? ',pack' : '' }}
-            · sys={{ buildContext.system_path || '—' }}
-            · vnd={{ buildContext.vendor_path || '—' }}
+            · sys={{ newSystemRoot.trim() || '—' }}
+            · vnd={{ newVendorRoot.trim() || '—' }}
+          </span>
+        </div>
+        <div class="summary-row">
+          <span class="k">路径参数</span>
+          <span>
+            成功 {{ pathParseOkCount }} / 失败 {{ pathParseFailCount }}
+            · OLD={{ oldVendorRoot.trim() || '—' }}
+            · NEW={{ newVendorRoot.trim() || '—' }}
+            <template v-if="newSystemRoot.trim()"> · SYS={{ newSystemRoot.trim() }}</template>
           </span>
         </div>
         <div class="summary-row">
@@ -1276,6 +1371,24 @@ onUnmounted(() => {
   gap: 12px;
   @media (max-width: 720px) { grid-template-columns: 1fr; }
 }
+.parse-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 16px;
+}
+.parsed-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  @media (max-width: 720px) { grid-template-columns: 1fr; }
+}
+.parsed-fields .field label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .field.narrow { max-width: 160px; }
 .muted { color: var(--muted); }
 .domain-list {
@@ -1312,6 +1425,10 @@ onUnmounted(() => {
   &.ok {
     background: color-mix(in srgb, var(--ok, #3fb950) 18%, transparent);
     color: var(--ok, #2da44e);
+  }
+  &.fail {
+    background: color-mix(in srgb, var(--err, #b03351) 16%, transparent);
+    color: var(--err, #b03351);
   }
   &.muted-pill {
     background: color-mix(in srgb, var(--muted) 16%, transparent);

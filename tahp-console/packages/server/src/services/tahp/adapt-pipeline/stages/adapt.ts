@@ -4,12 +4,10 @@ import {
   startAdaptAgentRun,
 } from '../../adapt-agent'
 import { getAdaptDomainLayout } from '../../adapt-layout/service'
+import { flattenPathParams } from '../path-params'
 import { registerStageForTest } from '../registry'
 import type { ObservedEvent, PipelineDomain, StageContext, StageDefinition } from '../types'
-import {
-  mergeAbsolutePaths,
-  resolveAospWorkspaceRoot,
-} from '../workspace-changed-files'
+import { mergeAbsolutePaths } from '../workspace-changed-files'
 
 function enabledDomains(run: import('../types').PipelineRun): PipelineDomain[] {
   return run.domains.filter(d => d.enabled)
@@ -50,22 +48,11 @@ function applyResumeScopeToDomains(ctx: StageContext, domains: PipelineDomain[])
   })
 }
 
-function aospWorkspaceRoot(ctx: StageContext): string {
-  return resolveAospWorkspaceRoot(
-    ctx.run.build_context?.mapped_root ?? '',
-    ctx.run.build_context?.workspace ?? '',
-  )
-}
-
 function appendChangedFiles(
   domain: PipelineDomain,
   paths: string[],
-  workspaceRoot: string,
 ): number {
-  const merged = mergeAbsolutePaths(
-    [...(domain.changed_files ?? []), ...paths],
-    workspaceRoot,
-  )
+  const merged = mergeAbsolutePaths([...(domain.changed_files ?? []), ...paths])
   const before = domain.changed_files?.length ?? 0
   domain.changed_files = merged
   return merged.length - before
@@ -75,13 +62,19 @@ async function launchDomain(ctx: StageContext, domain: PipelineDomain): Promise<
   domain.changed_files = domain.changed_files ?? []
 
   const layout = await getAdaptDomainLayout(domain.domain_id, domain.workspace_id)
-  const formFields = layout?.fields?.map(f => ({
+  const pathFlat = flattenPathParams(ctx.run.path_params)
+  const layoutFields = (layout?.fields ?? []).map(f => ({
     name: f.name,
     label: f.label,
     required: f.required,
   }))
+  const layoutNames = new Set(layoutFields.map(f => f.name))
+  const formFields = [
+    ...pathFlat.formFields.filter(f => !layoutNames.has(f.name)),
+    ...layoutFields,
+  ]
 
-  const formData: Record<string, string> = {}
+  const formData: Record<string, string> = { ...pathFlat.formData }
   for (const [k, v] of Object.entries(domain.form_data)) {
     formData[k] = String(v ?? '')
   }
@@ -234,12 +227,10 @@ export const adaptStageDefinition: StageDefinition = {
 
     logAdaptTaskEvent(ctx, ev, running)
 
-    const treeRoot = aospWorkspaceRoot(ctx)
-
     if (ev.type === 'task.file_change') {
       const path = String(ev.payload.path ?? '').trim()
       if (path) {
-        const added = appendChangedFiles(running, [path], treeRoot)
+        const added = appendChangedFiles(running, [path])
         if (added > 0) {
           patchDomains(ctx, domains)
           ctx.patchState({
@@ -279,7 +270,7 @@ export const adaptStageDefinition: StageDefinition = {
         : []
       const fromTask = (getAdaptAgentTask(running.adapt_task_id)?.fileChanges ?? [])
         .map(c => c.path)
-      appendChangedFiles(running, [...fromPayload, ...fromTask], treeRoot)
+      appendChangedFiles(running, [...fromPayload, ...fromTask])
       ctx.log(
         `[${running.domain_label || running.domain_id}] 已记录变更文件 ${running.changed_files?.length ?? 0} 个`,
       )

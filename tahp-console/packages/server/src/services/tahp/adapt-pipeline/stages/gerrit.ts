@@ -10,22 +10,19 @@ import {
   filterFilesBySelectedRepos,
   groupChangedFilesByRepo,
 } from '../repo-groups'
-import { domainsWithWorkspaceChanges } from '../workspace-changed-files'
+import { domainsWithChangedFiles } from '../workspace-changed-files'
 
 function domainsWithChanges(ctx: StageContext): PipelineDomain[] {
-  const mapped = ctx.run.build_context?.mapped_root ?? ''
-  const workspace = ctx.run.build_context?.workspace ?? ''
-  return domainsWithWorkspaceChanges(ctx.run.domains, mapped, workspace)
+  return domainsWithChangedFiles(ctx.run.domains)
 }
 
 function applyRepoFilter(ctx: StageContext, domains: PipelineDomain[]): PipelineDomain[] {
   const selected = ctx.run.gerrit_selected_repos
   if (!selected?.length) return domains
-  const root = ctx.run.build_context?.mapped_root ?? ''
   return domains
     .map(d => ({
       ...d,
-      changed_files: filterFilesBySelectedRepos(root, d.changed_files ?? [], selected),
+      changed_files: filterFilesBySelectedRepos(d.changed_files ?? [], selected),
     }))
     .filter(d => (d.changed_files?.length ?? 0) > 0)
 }
@@ -55,7 +52,7 @@ function syncProgress(ctx: StageContext, patch: Record<string, unknown>): void {
 
 async function launchDomainSubmit(ctx: StageContext, domain: PipelineDomain): Promise<boolean> {
   const buildContext = ctx.run.build_context
-  if (!buildContext?.mapped_root) {
+  if (!buildContext) {
     ctx.patchState({ progress: { state: 'error', error: '缺少 build_context，无法提交 Gerrit' } })
     ctx.log('缺少 build_context')
     return false
@@ -125,9 +122,9 @@ export const gerritStageDefinition: StageDefinition = {
         state: 'awaiting_confirm_no_changes',
         changes: [],
         repos: [],
-        text: '未检测到 workspace 下的待提交变更',
+        text: '未检测到待提交变更（changed_files 无绝对路径）',
       })
-      ctx.log('未检测到 workspace 下的待提交变更，等待人工确认')
+      ctx.log('未检测到待提交变更，等待人工确认')
       return
     }
 
@@ -140,8 +137,7 @@ export const gerritStageDefinition: StageDefinition = {
       }),
     })
 
-    const root = ctx.run.build_context?.mapped_root ?? ''
-    const repos = groupChangedFilesByRepo(root, domainsRaw)
+    const repos = groupChangedFilesByRepo(domainsRaw)
 
     if (!ctx.run.gerrit_selected_repos?.length) {
       syncProgress(ctx, {
@@ -303,7 +299,7 @@ export const gerritStageDefinition: StageDefinition = {
       return {
         status: 'waiting_human',
         reason: 'no_changes',
-        message: '未检测到 AOSP workspace 下的待提交变更（或所选仓库无文件）。可确认跳过提交，或返回重新检查适配记录。',
+        message: '未检测到待提交变更（changed_files 无绝对路径，或所选仓库无文件）。可确认跳过提交，或返回重新检查适配记录。',
         actions: [
           { id: 'confirm_done', label: '确认无变更并完成' },
           { id: 'skip', label: '跳过提交' },
@@ -360,8 +356,7 @@ export const gerritStageDefinition: StageDefinition = {
 
   async handleHumanAction(ctx: StageContext, actionId: string, payload?: Record<string, unknown>) {
     const domainsRaw = domainsWithChanges(ctx)
-    const root = ctx.run.build_context?.mapped_root ?? ''
-    const repos = groupChangedFilesByRepo(root, domainsRaw)
+    const repos = groupChangedFilesByRepo(domainsRaw)
 
     if (actionId === 'skip') {
       syncProgress(ctx, { state: 'no_changes', changes: ctx.run.gerrit_changes ?? [], repos: [] })

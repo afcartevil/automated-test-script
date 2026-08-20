@@ -19,7 +19,6 @@ import {
 import { registerStage, resetRegistryForTest } from '../../packages/server/src/services/tahp/adapt-pipeline/registry'
 import {
   createRun,
-  findResourceConflict,
   getRun,
   resetStoreForTest,
   saveRun,
@@ -89,10 +88,10 @@ describe('adapt-pipeline F4', () => {
 
     const timeline = buildTimelineView(run)
     expect(timeline.run_id).toBe(run.run_id)
-    expect(timeline.nodes.length).toBe(8)
+    expect(timeline.nodes.length).toBe(DEFAULT_WORKFLOW.nodes.filter(n => n.enabled).length)
     expect(timeline.pending_human_count).toBe(1)
     expect(timeline.nodes.find(n => n.key === 'build')?.human?.reason).toBe('capability_unavailable')
-    expect(timeline.nodes.find(n => n.key === 'build')?.is_loop_target).toBe(true)
+    expect(timeline.nodes.find(n => n.key === 'gerrit')).toBeTruthy()
   })
 
   it('buildTimelineView includes adapt domains and stage error', () => {
@@ -124,25 +123,6 @@ describe('adapt-pipeline F4', () => {
     expect(adaptNode?.error).toBe('当前大模型不可用')
     expect(adaptNode?.progress?.domains).toHaveLength(1)
     expect(adaptNode?.progress?.domains?.[0].domain_id).toBe('comm-framework')
-  })
-
-  it('findResourceConflict rejects same workspace and device', () => {
-    const run1 = createRun({ ...baseInput(), device_id: 'dev-1' })
-    run1.status = 'running'
-    saveRun(run1, { immediate: true })
-
-    const run2 = createRun({ ...baseInput(), device_id: 'dev-1' })
-    const wsConflict = findResourceConflict(run2)
-    expect(wsConflict?.kind).toBe('workspace')
-    expect(wsConflict?.holderRunId).toBe(run1.run_id)
-
-    const run3 = createRun({
-      ...baseInput('project/OTHER'),
-      device_id: 'dev-1',
-    })
-    const deviceConflict = findResourceConflict(run3)
-    expect(deviceConflict?.kind).toBe('device')
-    expect(deviceConflict?.holderRunId).toBe(run1.run_id)
   })
 
   it('appendPipelineLog writes tail lines for logs endpoint', () => {
@@ -305,6 +285,7 @@ describe('adapt-pipeline F4', () => {
     const { tahpAdaptPipelineRoutes } = await import('../../packages/server/src/routes/tahp/adapt-pipeline')
     const paths = tahpAdaptPipelineRoutes.stack.map((entry: { path: string }) => entry.path)
     expect(paths).toEqual(expect.arrayContaining([
+      '/api/tahp/adapt-pipeline/parse-path-params',
       '/api/tahp/adapt-pipeline/runs',
       '/api/tahp/adapt-pipeline/runs/:runId/timeline',
       '/api/tahp/adapt-pipeline/runs/:runId/start',

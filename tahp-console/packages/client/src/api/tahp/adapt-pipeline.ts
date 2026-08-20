@@ -167,6 +167,31 @@ export interface TestPlan {
   must_test_items?: string[]
 }
 
+export interface PathParamInputs {
+  OLD_VENDOR_ROOT: string
+  NEW_VENDOR_ROOT: string
+  NEW_SYSTEM_ROOT?: string
+  project_code: string
+  PROJECT_FULL?: string
+}
+
+export interface PathParamField {
+  key: string
+  label: string
+  kind: 'text' | 'select'
+  ok: boolean
+  parsed_value?: string
+  value: string
+  error?: string
+  options?: string[]
+}
+
+export interface PathParams {
+  inputs: PathParamInputs
+  fields: PathParamField[]
+  parsed_at: string
+}
+
 export interface PipelineDomainInput {
   workspace_id: string
   domain_id: string
@@ -191,6 +216,7 @@ export interface CreateRunInput {
   workflow_id?: string
   from_os?: string
   to_os?: string
+  path_params?: PathParams
 }
 
 export interface CreateRunResponse {
@@ -252,6 +278,10 @@ export function resumePipelineRun(runId: string, input: ResumeRequest): Promise<
 
 export function createPipelineRun(input: CreateRunInput): Promise<CreateRunResponse> {
   return tahpPost('/api/tahp/adapt-pipeline/runs', input)
+}
+
+export function parsePipelinePathParams(input: PathParamInputs): Promise<PathParams> {
+  return tahpPost('/api/tahp/adapt-pipeline/parse-path-params', input)
 }
 
 export function startPipelineRun(runId: string): Promise<{ ok: boolean }> {
@@ -337,31 +367,6 @@ export function fetchHarnessSkills(kind?: 'build' | 'flash'): Promise<{
 }> {
   const qs = kind ? `?kind=${encodeURIComponent(kind)}` : ''
   return tahpGet(`/api/tahp/adapt-pipeline/harness-skills${qs}`)
-}
-
-export interface WorkspaceBuildOptions {
-  mapped_root: string
-  workspace: string
-  components: string[]
-  markets: string[]
-  recommended_components: string[]
-  recommended_markets: string[]
-  market_presets?: string[]
-  platform?: string
-  project_name?: string
-  source: 'harness_status' | 'pack_json' | 'fallback'
-  warning?: string
-}
-
-export function fetchWorkspaceBuildOptions(
-  mappedRoot: string,
-  workspace: string,
-): Promise<WorkspaceBuildOptions> {
-  const qs = new URLSearchParams({
-    mapped_root: mappedRoot,
-    workspace,
-  })
-  return tahpGet(`/api/tahp/adapt-pipeline/workspace-build-options?${qs}`)
 }
 
 export function runStatusLabel(status: RunStatus): string {

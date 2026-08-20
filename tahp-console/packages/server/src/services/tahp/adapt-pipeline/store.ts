@@ -7,7 +7,6 @@ import type {
   CreateRunInput,
   PipelineDomain,
   PipelineRun,
-  ResourceConflict,
   RunStatus,
   RunSummary,
   StageState,
@@ -166,18 +165,18 @@ function buildRunObject(input: CreateRunInput, runId: string): PipelineRun {
     created_at: now,
     updated_at: now,
     domains: filterDomains(input),
-    build_context: input.build_context,
+    build_context: input.build_context ?? {
+      mapped_root: '',
+      workspace: '',
+      variant: 'userdebug',
+    },
+    path_params: input.path_params,
     device_id: input.device_id,
     test_plan: input.test_plan,
     stages,
     iterations: [],
     artifacts: {},
   }
-}
-
-/** 不落盘，仅用于创建前资源冲突预检 */
-export function buildRunPreview(input: CreateRunInput): PipelineRun {
-  return buildRunObject(input, newRunId())
 }
 
 export function createRun(input: CreateRunInput): PipelineRun {
@@ -246,70 +245,6 @@ export function listActiveRunIds(): string[] {
   return readIndex()
     .items.filter(i => ACTIVE_STATUSES.includes(i.status))
     .map(i => i.run_id)
-}
-
-function workspaceKey(run: PipelineRun): string | null {
-  const ws = run.build_context?.workspace?.trim()
-  if (!ws) return null
-  const root = (run.build_context?.mapped_root ?? '').trim().replace(/\\/g, '/').toLowerCase()
-  return `${root}|${ws}`
-}
-
-/** 与 running / waiting_human 的 run 比对独占资源 */
-export function findResourceConflict(candidate: PipelineRun): ResourceConflict | null {
-  const candidateWs = workspaceKey(candidate)
-  const candidateDevice = candidate.device_id?.trim()
-
-  for (const runId of listActiveRunIds()) {
-    if (runId === candidate.run_id) continue
-    const other = getRun(runId)
-    if (!other) continue
-
-    if (candidateWs) {
-      const otherWs = workspaceKey(other)
-      if (otherWs && otherWs === candidateWs) {
-        const node = other.current_node || '—'
-        return {
-          kind: 'workspace',
-          holderRunId: other.run_id,
-          detail:
-            `workspace \`${other.build_context.workspace}\` 正被 ${other.run_id} 占用`
-            + `（状态 ${other.status}，节点 ${node}）。`
-            + `请到运行看板打开该任务并「终止」，或等其结束后再启动。`,
-        }
-      }
-    }
-
-    if (candidateDevice && other.device_id?.trim() === candidateDevice) {
-      return {
-        kind: 'device',
-        holderRunId: other.run_id,
-        detail:
-          `设备 ${other.device_id} 正被 ${other.run_id} 占用（状态 ${other.status}）。`
-          + `请终止占用任务或更换设备。`,
-      }
-    }
-
-    for (const domain of candidate.domains) {
-      if (!domain.enabled) continue
-      const conflict = other.domains.find(d =>
-        d.enabled
-        && d.domain_id === domain.domain_id
-        && d.workspace_id === domain.workspace_id
-        && d.status === 'running'
-        && d.adapt_task_id,
-      )
-      if (conflict) {
-        return {
-          kind: 'domain',
-          holderRunId: other.run_id,
-          detail: `域 ${domain.domain_id} 正被 ${other.run_id} 占用（任务 ${conflict.adapt_task_id}）`,
-        }
-      }
-    }
-  }
-
-  return null
 }
 
 /** 删除未启动的草稿运行（启动失败时清理） */

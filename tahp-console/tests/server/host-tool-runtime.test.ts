@@ -7,6 +7,7 @@ import {
   asfZellijMissingFromDoctor,
   flavorFromHelpText,
   isTransientAsfBridgeFailure,
+  isAsfBridgeSshDisconnected,
   parseWrappedRemoteResult,
   parseZellijLsShort,
   pickAsfUpSession,
@@ -59,6 +60,16 @@ describe('asf bridge wait vs remote timeout', () => {
     )).toBe(true)
     expect(isTransientAsfBridgeFailure('host CLI timeout after 53s')).toBe(true)
     expect(isTransientAsfBridgeFailure('permission denied')).toBe(false)
+  })
+
+  it('detects SSH disconnect that requires bridge up reconnect', () => {
+    expect(isAsfBridgeSshDisconnected(
+      'BRIDGE_SSH_DISCONNECTED: agent_session2 mux still exists but OpenSSH is gone (pane_command is local shell (C:\\windows\\system32\\cmd.exe)). Slot released; run asf bridge up --session 2 (or omit --session) to reconnect.',
+    )).toBe(true)
+    expect(isAsfBridgeSshDisconnected('BRIDGE_CMD_FAILED: zellij timed out')).toBe(false)
+    expect(isTransientAsfBridgeFailure(
+      'BRIDGE_SSH_DISCONNECTED: OpenSSH is gone',
+    )).toBe(false)
   })
 
   it('gives asf CLI enough time for two 30s zellij action timeouts', () => {
