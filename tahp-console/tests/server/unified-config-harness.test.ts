@@ -5,7 +5,7 @@ describe('unified config harness directive', () => {
   it('mentions harness env sync in agent directive', () => {
     const directive = buildUnifiedConfigDirective()
     expect(directive).toContain('harness')
-    expect(directive).toContain('tran_harness/env.yaml')
+    expect(directive).toMatch(/tran_asf\/env\.yaml|tran_harness\/env\.yaml/)
     expect(directive).toContain('HARNESS_QIZHI_TARGET_HOST')
     expect(directive).toContain('HARNESS_QIZHI_OTP_SECRET')
     expect(directive).toContain('docs/agent-npx-cli-sop.md')

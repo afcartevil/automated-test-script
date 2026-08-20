@@ -5,8 +5,11 @@ import { isOfficialHarnessSkillId } from '../../packages/server/src/services/tah
 describe('harness host skills boundary', () => {
   it('treats official harness ids as host-only', () => {
     expect(isOfficialHarnessSkillId('transsion-harness')).toBe(true)
+    expect(isOfficialHarnessSkillId('transsion-asf')).toBe(true)
     expect(isOfficialHarnessSkillId('harness-device')).toBe(true)
+    expect(isOfficialHarnessSkillId('asf-device')).toBe(true)
     expect(isOfficialHarnessSkillId('harness-install')).toBe(true)
+    expect(isOfficialHarnessSkillId('asf-install')).toBe(true)
   })
 
   it('keeps project wrapper and virtual install id out of official set', () => {

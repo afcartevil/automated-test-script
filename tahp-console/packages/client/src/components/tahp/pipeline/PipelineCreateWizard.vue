@@ -8,6 +8,7 @@ import {
   discardPipelineDraftRun,
   fetchCapabilities,
   fetchDomainCatalog,
+  fetchHarnessSkills,
   fetchPipelinePrereqs,
   startPipelineRun,
   type BuildContext,
@@ -114,7 +115,7 @@ const buildContext = reactive<BuildContext>({
   vendor_path: '',
   build_targets: ['sys'],
   need_pack: false,
-  flash_skill_id: 'harness-device',
+  flash_skill_id: '',
   flash_mode: 'full_rom',
   target_branch: '',
   gerrit_issue_id: '',
@@ -635,7 +636,7 @@ function buildCreateInput(): CreateRunInput {
       vendor_path: String(buildContext.vendor_path ?? '').trim(),
       build_targets: selectedBuildTargets.value.length ? [...selectedBuildTargets.value] : [],
       need_pack: needPack.value === 'yes',
-      flash_skill_id: 'harness-device',
+      flash_skill_id: (buildContext.flash_skill_id || '').trim() || undefined,
       flash_mode: 'full_rom',
       target_branch: buildContext.target_branch?.trim() || undefined,
       gerrit_issue_id: buildContext.gerrit_issue_id?.trim() || undefined,
@@ -710,6 +711,15 @@ onMounted(async () => {
       .catch(() => { capabilities.value = [] })
       .finally(() => { capsLoading.value = false }),
     loadDevicesOnce(),
+    fetchHarnessSkills('flash')
+      .then(({ items }) => {
+        const ids = items.map(s => s.id)
+        const preferred = ids.find(id => id === 'asf-device')
+          || ids.find(id => id === 'harness-device')
+          || ids[0]
+        if (preferred) buildContext.flash_skill_id = preferred
+      })
+      .catch(() => { /* 服务端 defaultFlashSkillId 兜底 */ }),
   ])
   startDevicePolling()
 })
@@ -990,7 +1000,7 @@ onUnmounted(() => {
 
       <h3 class="sub-title">烧录 / 自检 / 入库</h3>
       <p class="field-hint section-hint">
-        本轮编译不强制产出刷机包路径；烧录仍依赖后续产物或人工。整包烧录默认 harness-device。
+        本轮编译不强制产出刷机包路径；烧录仍依赖后续产物或人工。整包烧录使用本机已装的 asf-device / harness-device。
       </p>
       <div class="field-row">
         <div class="field">

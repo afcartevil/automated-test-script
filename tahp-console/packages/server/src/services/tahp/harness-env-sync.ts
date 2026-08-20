@@ -1,5 +1,5 @@
 /**
- * 一键配置表单 → harness ~/.tran_harness/env.yaml 同步
+ * 一键配置表单 → ~/.tran_asf/env.yaml（优先）或 ~/.tran_harness/env.yaml 同步
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
@@ -48,7 +48,10 @@ export const HARNESS_ENV_TEMPLATE_DEFAULTS: Record<string, string> = {
 }
 
 export function getHarnessEnvPath(homeDir = homedir()): string {
-  return join(homeDir, '.tran_harness', 'env.yaml')
+  const asf = join(homeDir, '.tran_asf', 'env.yaml')
+  const legacy = join(homeDir, '.tran_harness', 'env.yaml')
+  if (existsSync(join(homeDir, '.tran_asf')) || existsSync(asf)) return asf
+  return legacy
 }
 
 export function hasHarnessRelatedUnifiedConfig(values: UnifiedConfigValues): boolean {
@@ -165,7 +168,7 @@ export interface SyncHarnessEnvResult {
   keysWritten: number
 }
 
-/** 将一键配置表单中 harness 相关项同步到 ~/.tran_harness/env.yaml */
+/** 将一键配置表单中 asf/harness 相关项同步到 env.yaml */
 export function syncHarnessEnvFromUnifiedConfig(
   values: UnifiedConfigValues,
   opts?: { envPath?: string; homeDir?: string },
@@ -183,6 +186,19 @@ export function syncHarnessEnvFromUnifiedConfig(
   const body = yaml.dump(merged, { lineWidth: -1, noRefs: true, sortKeys: false })
   writeFileSync(envPath, body, 'utf-8')
   logger.info({ path: envPath }, '[harness-env-sync] 已同步 harness env.yaml')
+
+  const home = opts?.homeDir ?? homedir()
+  const alt = envPath.replace(/\.tran_asf\\env\.yaml$/i, '.tran_harness\\env.yaml')
+    .replace(/\.tran_asf\/env\.yaml$/i, '.tran_harness/env.yaml')
+  const alt2 = envPath.replace(/\.tran_harness\\env\.yaml$/i, '.tran_asf\\env.yaml')
+    .replace(/\.tran_harness\/env\.yaml$/i, '.tran_asf/env.yaml')
+  for (const extra of [alt, alt2]) {
+    if (extra === envPath) continue
+    const extraDir = join(extra, '..')
+    if (existsSync(extraDir)) {
+      writeFileSync(extra, body, 'utf-8')
+    }
+  }
 
   return { path: envPath, synced: true, keysWritten: Object.keys(merged).length }
 }

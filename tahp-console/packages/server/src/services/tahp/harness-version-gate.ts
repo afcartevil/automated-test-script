@@ -5,6 +5,7 @@ import { execFileSync } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tahpPaths } from './paths'
+import { hostCliEnv, resolveHostCliSpawn } from './host-tool-runtime'
 
 export interface HarnessRequirement {
   minimum_cli: string
@@ -27,7 +28,10 @@ export interface HarnessVersionGateResult {
 const DEFAULT_MINIMUM = '1.3.1'
 const DEFAULT_SOP = 'docs/agent-npx-cli-sop.md'
 const DEFAULT_GUIDANCE =
-  '请打开「配置 → 一键配置表单」确认 harness 工具项后，点击「启动skill配置检查」，完成清单中的「Transsion Harness 安装」。'
+  '请打开「配置 → 一键配置表单」确认 asf/harness 工具项后，点击「启动skill配置检查」，完成清单中的「Transsion ASF / Harness 安装」。'
+
+const PROBE_TTL_MS = 60_000
+let versionProbeCache: { value: string | null; at: number } | null = null
 
 export function harnessRequirementPath(): string {
   return join(tahpPaths.projectRoot, '.tahp', 'harness-requirement.json')
@@ -73,79 +77,58 @@ function parseSemver(v: string): [number, number, number] | null {
 }
 
 function probeHarnessCurrentVersion(): string | null {
-  const isWindows = process.platform === 'win32'
-  const appData = process.env.APPDATA || process.env.HOME || ''
-  const npmBinDir = appData
-    ? (isWindows ? join(appData, 'npm') : join(appData, '..', '.npm-global', 'bin'))
-    : ''
-  const env = npmBinDir
-    ? {
-        ...process.env,
-        PATH: `${process.env.PATH || ''}${isWindows ? ';' : ':'}${npmBinDir}`,
-      }
-    : process.env
+  if (process.env.VITEST) return versionProbeCache?.value ?? null
+  if (versionProbeCache && Date.now() - versionProbeCache.at < PROBE_TTL_MS) {
+    return versionProbeCache.value
+  }
 
   const tryParseVersion = (out: string): string | null => {
     const m = String(out || '').match(/(\d+\.\d+\.\d+)/)
     return m ? m[1] : null
   }
 
-  const runHarness = (args: string[]): string | null => {
+  const runCli = (args: string[]): string | null => {
     try {
-      if (isWindows && npmBinDir) {
-        const harnessCmd = join(npmBinDir, 'harness.cmd')
-        const harnessPs1 = join(npmBinDir, 'harness.ps1')
-        if (existsSync(harnessCmd)) {
-          return execFileSync('cmd.exe', ['/d', '/s', '/c', harnessCmd, ...args], {
-            encoding: 'utf-8',
-            timeout: 20_000,
-            windowsHide: true,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            env,
-          })
-        }
-        if (existsSync(harnessPs1)) {
-          return execFileSync(
-            'powershell.exe',
-            ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', harnessPs1, ...args],
-            {
-              encoding: 'utf-8',
-              timeout: 20_000,
-              windowsHide: true,
-              stdio: ['ignore', 'pipe', 'pipe'],
-              env,
-            },
-          )
-        }
-      }
-      return execFileSync('harness', args, {
+      const { command, argv } = resolveHostCliSpawn(args)
+      return execFileSync(command, argv, {
         encoding: 'utf-8',
-        timeout: 20_000,
+        timeout: 8_000,
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env,
+        env: hostCliEnv(),
       })
-    } catch {
-      return null
+    } catch (err) {
+      const e = err as { stdout?: string; stderr?: string }
+      const blob = `${e.stdout || ''}\n${e.stderr || ''}`
+      return blob.trim() ? blob : null
     }
   }
 
+  let found: string | null = null
   try {
-    const out = runHarness(['--json', 'version', 'check'])
+    const out = runCli(['--json', 'version', 'check'])
     if (out) {
-      const json = JSON.parse(out) as { current?: string; status?: string }
-      if (typeof json.current === 'string' && json.current.trim()) return json.current.trim()
+      const start = out.indexOf('{')
+      const end = out.lastIndexOf('}')
+      if (start >= 0 && end > start) {
+        const json = JSON.parse(out.slice(start, end + 1)) as { current?: string }
+        if (typeof json.current === 'string' && json.current.trim()) {
+          found = json.current.trim()
+        }
+      }
+      if (!found) found = tryParseVersion(out)
     }
   } catch {
     /* fall through */
   }
 
-  const verOut = runHarness(['--version'])
-  if (verOut) {
-    const parsed = tryParseVersion(verOut)
-    if (parsed) return parsed
+  if (!found) {
+    const verOut = runCli(['--version'])
+    if (verOut) found = tryParseVersion(verOut)
   }
-  return null
+
+  versionProbeCache = { value: found, at: Date.now() }
+  return found
 }
 
 function buildMessages(req: HarnessRequirement, current: string | null, ok: boolean): {
@@ -159,20 +142,20 @@ function buildMessages(req: HarnessRequirement, current: string | null, ok: bool
       userMessage: `Harness CLI ${current} 满足最低要求 ${req.minimum_cli}。`,
       agentDirective: [
         '# Harness 版本门禁',
-        `- 当前 CLI \`${current}\` ≥ 要求 \`${req.minimum_cli}\`，可继续使用 harness 能力。`,
-        `- 官方 Skill 仅在本机客户端 skills 目录；SOP：\`${sop}\`。`,
+        `- 当前 CLI \`${current}\` ≥ 要求 \`${req.minimum_cli}\`，可继续使用 asf/harness 能力。`,
+        `- 官方 Skill 仅在本机客户端 skills 目录（asf-* 或 harness-*）；SOP：\`${sop}\`。`,
       ].join('\n'),
     }
   }
-  const cur = current ? `当前 \`${current}\`` : '当前未检测到可用的 `harness` CLI'
+  const cur = current ? `当前 \`${current}\`` : '当前未检测到可用的 `asf`/`harness` CLI'
   const userMessage =
     `Harness 未就绪或版本过低（${cur}，要求 ≥ \`${req.minimum_cli}\`）。${guidance}`
   const agentDirective = [
     '# Harness 版本门禁（未通过 — 禁止继续业务）',
     `- ${cur}；要求 ≥ \`${req.minimum_cli}\`（见工程 \`.tahp/harness-requirement.json\`）。`,
-    `- **立即停止**依赖 harness CLI / 官方 harness-* skill 的业务步骤。`,
+    `- **立即停止**依赖 asf/harness CLI / 官方 asf-* 或 harness-* skill 的业务步骤。`,
     `- 引导用户：${guidance}`,
-    `- SOP 相对工程根：\`${sop}\`（由「Transsion Harness 安装」配置项执行）。`,
+    `- SOP 相对工程根：\`${sop}\`（由「Transsion ASF / Harness 安装」配置项执行）。`,
     '- 不要手写共享盘 UNC 旧安装流程；不要在工程 `skills/` 下找官方 harness skill 副本。',
   ].join('\n')
   return { userMessage, agentDirective }

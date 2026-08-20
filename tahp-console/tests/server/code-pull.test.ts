@@ -73,6 +73,29 @@ describe('pickMappedRootFromDiscover', () => {
     })
     expect(root).toBe('Z:\\')
   })
+
+  it('reads asf remote-runner discover candidates, not bridge ls sessions', () => {
+    expect(pickMappedRootFromDiscover({
+      sessions: [{ session: 2, phase: 'ready' }],
+    })).toBeUndefined()
+    const root = pickMappedRootFromDiscover({
+      status: 'ok',
+      candidates: [
+        {
+          mapped_root: 'Z:\\',
+          approved_for_runner: true,
+          runner_available: true,
+        },
+        {
+          mapped_root: '\\\\10.0.0.1\\user\\tran_harness',
+          approved_for_runner: false,
+          suspicious_runner_root: true,
+        },
+      ],
+      approved_mapped_roots: [],
+    })
+    expect(root).toBe('Z:\\')
+  })
 })
 
 describe('detectRepoSyncFailureInLog', () => {

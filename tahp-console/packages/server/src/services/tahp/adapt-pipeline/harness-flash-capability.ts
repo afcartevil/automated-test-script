@@ -1,6 +1,6 @@
 /**
  * 烧录 harness 路径：Agent + 用户目录 harness skill
- * - 整包：build_context.flash_skill_id（默认 harness-device）
+ * - 整包：build_context.flash_skill_id（默认本机 asf-device / harness-device）
  * - 单镜像：harness-flash-single-img（用户目录优先，工程 skills 回退）
  */
 import { existsSync } from 'fs'
@@ -30,7 +30,7 @@ export interface HarnessFlashInput {
   pipelineRunId: string
   mode: HarnessFlashMode
   deviceId: string
-  /** 整包刷机 skill（默认 harness-device，来自 build_context.flash_skill_id） */
+  /** 整包刷机 skill（默认本机 asf-device / harness-device） */
   flashSkillId?: string
   /** 整包：ROM 目录/zip/scatter */
   romPath?: string
@@ -70,7 +70,7 @@ function resolveFlashSkill(
   const skillPath = resolveUserHarnessSkillPath(skillId)
   if (!skillPath) {
     throw new Error(
-      `未找到刷机 Skill：${skillId}（请在用户 skill 目录安装，例如执行 harness install）`,
+      `未找到刷机 Skill：${skillId}（请在用户 skill 目录安装，例如执行 asf install 或 harness install）`,
     )
   }
   return { skillId, skillPath }

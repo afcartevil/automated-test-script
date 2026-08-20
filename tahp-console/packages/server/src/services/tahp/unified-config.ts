@@ -8,7 +8,7 @@
  * 保存时同步派生：
  *   - .tahp/jira-user-config.json（智能诊断 / jira-ops 复用）
  *   - .tahp-config/gerrit.json（Gerrit Code Review Agent 复用）
- *   - ~/.tran_harness/env.yaml（harness CLI / harness-* skill 复用）
+ *   - ~/.tran_asf/env.yaml 或 ~/.tran_harness/env.yaml（asf/harness CLI 复用）
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
@@ -420,9 +420,9 @@ export function buildUnifiedConfigDirective(): string {
     `- JIRA 日志工作区（WORKSPACE_ROOT）: \`${getJiraWorkspaceRoot().replace(/\\/g, '/')}\`；下载目录为 \`{WORKSPACE_ROOT}/<JIRA_KEY>/\``,
     '- 域账号/域密码在 Jira、Gerrit、OpenGrok、harness（HARNESS_QIZHI_USER / HARNESS_QIZHI_BASTION_PASSWORD 及 Jira/OpenGrok/Gerrit/Spug 凭据）间通用。',
     '- harness 工具：Linux 服务器 IP → `HARNESS_QIZHI_TARGET_HOST`；Linux 服务器密码 → `HARNESS_QIZHI_TARGET_PASSWORD` / `HARNESS_QIZHI_SAMBA_PASSWORD`；Windows 映射盘 → `HARNESS_MAP_DRIVE_ROOT`；齐治 TOTP secret → `HARNESS_QIZHI_OTP_SECRET`。',
-    '- **使用 harness / 官方 harness-* skill 前**：先确认 CLI 版本满足工程 \`.tahp/harness-requirement.json\`；不满足则引导用户打开「配置 → 一键配置表单」后点击「启动skill配置检查」。官方 Skill 在本机 `$HOME/.claude/skills` / `$HOME/.cursor/skills` 等，**不在**工程 `skills/`。',
-    `- 保存一键配置表单时 BFF 已自动同步 harness 配置到 \`${getHarnessEnvPath().replace(/\\/g, '/')}\`（模板默认值补全未在表单中的项）。`,
-    '- 安装/更新 harness CLI 与 Agent skill：按工程相对路径 `docs/agent-npx-cli-sop.md`（相对 TAHP 工程根）执行；完成后启用全部 capabilities 并 `--sync`。',
+    '- **使用 asf / harness / 官方 asf-* 或 harness-* skill 前**：先确认 CLI 版本满足工程 \`.tahp/harness-requirement.json\`；不满足则引导用户打开「配置 → 一键配置表单」后点击「启动skill配置检查」。官方 Skill 在本机 `$HOME/.claude/skills` / `$HOME/.cursor/skills` 等，**不在**工程 `skills/`。',
+    `- 保存一键配置表单时 BFF 已自动同步 CLI 配置到 \`${getHarnessEnvPath().replace(/\\/g, '/')}\`（旧路径 \`~/.tran_harness/env.yaml\` 若仍存在会一并使用；模板默认值补全未在表单中的项）。`,
+    '- 安装/更新 CLI 与 Agent skill：按工程相对路径 `docs/agent-npx-cli-sop.md`（相对 TAHP 工程根）执行；完成后启用全部 capabilities 并 `--sync`。优先命令前缀 `asf`（`harness` 为兼容别名）。',
     '- 服务器地址为固定值（无需向用户索要）：'
       + `Jira \`${FIXED_SERVER_ADDRESSES.jira_base_url}\`、`
       + `Gerrit \`${FIXED_SERVER_ADDRESSES.gerrit_host}\`、`

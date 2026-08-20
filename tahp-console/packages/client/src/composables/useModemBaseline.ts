@@ -125,7 +125,7 @@ export function getStatusMeta(status?: ModemBaselineStatus, error?: string, phas
   }
   if (status === 'conflict') {
     const summary = error === 'bridge_not_ready'
-      ? '继续执行因 Harness bridge 未就绪中断。请确认 bridge-serve 后再次点击继续执行。'
+      ? '继续执行因 ASF Bridge 未就绪中断。请确认一键配置已保存齐治凭据与 TOTP 后重试（静默 asf bridge up，无需打开 Transhell）。'
       : error === 'orphaned_running_process'
         ? '后台进程已中断，任务已恢复为待继续状态。确认冲突已处理后可再次点击继续执行。'
         : '检测到冲突，需研发手动处理后点击继续执行。'
@@ -133,7 +133,7 @@ export function getStatusMeta(status?: ModemBaselineStatus, error?: string, phas
   }
   if (status === 'failed') {
     const summary = error === 'bridge_not_ready'
-      ? 'Harness bridge 未就绪，请先确认 bridge-serve 与权限状态。'
+      ? 'ASF Bridge 未就绪。请确认一键配置已保存齐治凭据与 TOTP 后重试（静默 asf bridge up，无需打开 Transhell）。'
       : error === 'build_failed' || phase === 'build'
         ? '自动编译失败，请结合运行日志确认 ./tools/bld_modem.sh 执行结果。'
         : phase === 'resume'

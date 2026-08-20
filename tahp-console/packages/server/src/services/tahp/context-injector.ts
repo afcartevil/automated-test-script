@@ -346,7 +346,7 @@ export function buildSkillExecutionDirective(options?: {
     '',
     `工程内业务 Skill 根目录（相对工程根）: \`${skillsDir}\``,
     '每个业务 Skill 为 `<skillId>/SKILL.md`。**按需**选择 1～3 个相关 Skill，禁止编造不存在的 skillId。',
-    '**例外**：官方 `transsion-harness` / `harness-*` **不在**工程内（自研 `harness-flash-single-img` 除外），见下文「Harness 官方 Skill」。',
+    '**例外**：官方 `transsion-asf` / `asf-*` / `transsion-harness` / `harness-*` **不在**工程内（自研 `harness-flash-single-img` 除外），见下文「官方 ASF / Harness Skill」。',
     '',
     '## 如何使用工程内 Skill',
     '1. 若下方预检索已给出知识库命中，先引用知识库结论；Skill 仅作补充。',
@@ -386,7 +386,7 @@ export function buildSkillExecutionDirective(options?: {
     lines.push('')
   }
   if (preferredHostHarness.length > 0) {
-    lines.push('## 优先 Harness 官方 Skill（本机客户端目录，勿在工程 skills/ 查找）')
+    lines.push('## 优先官方 Skill（本机客户端目录，勿在工程 skills/ 查找）')
     for (const id of preferredHostHarness) {
       lines.push(`- **${id}**: 在 \`$HOME/.claude/skills/${id}/SKILL.md\` 或 \`$HOME/.cursor/skills/${id}/SKILL.md\` 等本机安装路径 Read`)
     }

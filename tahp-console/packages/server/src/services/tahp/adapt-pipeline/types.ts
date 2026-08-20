@@ -89,7 +89,7 @@ export interface BuildContext {
   native_target?: string
   /** native：分区组件，如 sys */
   native_component?: string
-  /** 刷机 skill，默认 harness-device */
+  /** 刷机 skill，默认本机 asf-device / harness-device */
   flash_skill_id?: string
   /** full_rom | single_img */
   flash_mode?: 'full_rom' | 'single_img'

@@ -1,6 +1,6 @@
 /**
- * 编译能力：remote-runner bridge-exec 部署脚本，tmux 内跑 ez-build.sh，
- * 再以短 bridge-exec 轮询 tmux 会话 + 日志心跳 / done 文件。
+ * 编译能力：经 bridgeExec（升级机 asf bridge cmd，旧机 bridge-exec）部署脚本，
+ * tmux 内跑 ez-build.sh，再以短命令轮询 tmux 会话 + 日志心跳 / done 文件。
  */
 import { randomBytes } from 'crypto'
 import { join } from 'path'
@@ -171,8 +171,8 @@ async function killTmuxSession(session: string, signal?: { cancelled: boolean })
 async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promise<void> {
   const started = Date.now()
   const needPack = Boolean(input.needPack)
-  ctx.status = { state: 'running', progress: 3, phase: 'init', message: '确保齐治 Bridge READY' }
-  emit(ctx, '检查 / 恢复 remote-runner Bridge…')
+  ctx.status = { state: 'running', progress: 3, phase: 'init', message: '确保 ASF Bridge READY' }
+  emit(ctx, '检查 / 静默拉起 ASF Bridge…')
 
   const signal = { cancelled: false }
   const watchCancel = setInterval(() => {

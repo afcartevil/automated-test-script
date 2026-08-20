@@ -12,7 +12,7 @@ import { assertHarnessCliReady } from '../harness-version-gate'
 import {
   bridgeCancel,
   bridgeExec,
-  discoverBridgeReady,
+  discoverRemoteRunner,
   ensureBridgeReady,
 } from '../adapt-pipeline/harness-bridge-exec'
 import { buildTmuxKillCommand } from '../adapt-pipeline/ez-build-tmux'
@@ -112,7 +112,7 @@ export function pickMappedRootFromDiscover(raw: unknown, preferred?: string): st
         const rec = item as Record<string, unknown>
         if (rec.approved_for_runner === false || rec.suspicious_runner_root === true) continue
         const cand = String(
-          rec.mapped_root || rec.mappedRoot || rec.root || rec.path || '',
+          rec.mapped_root || rec.mappedRoot || rec.drive || rec.root || rec.path || '',
         ).trim()
         if (cand) return normalizeMappedRoot(cand)
       }
@@ -122,6 +122,8 @@ export function pickMappedRootFromDiscover(raw: unknown, preferred?: string): st
 
   const direct = tryList(obj.mapped_roots)
     || tryList(obj.mappedRoots)
+    || tryList(obj.approved_mapped_roots)
+    || tryList(obj.approvedMappedRoots)
     || tryList(obj.runners)
     || tryList(obj.candidates)
   if (direct) return direct
@@ -130,6 +132,8 @@ export function pickMappedRootFromDiscover(raw: unknown, preferred?: string): st
   if (data) {
     const fromData = tryList(data.mapped_roots)
       || tryList(data.mappedRoots)
+      || tryList(data.approved_mapped_roots)
+      || tryList(data.approvedMappedRoots)
       || tryList(data.runners)
       || tryList(data.candidates)
     if (fromData) return fromData
@@ -368,7 +372,7 @@ async function runCodePull(ctx: CodePullRunCtx): Promise<void> {
   }, 1000)
 
   try {
-    setStatus(ctx, { state: 'running', progress: 3, phase: 'bridge', message: '确保 Bridge READY' }, '检查/拉起齐治 Bridge…')
+    setStatus(ctx, { state: 'running', progress: 3, phase: 'bridge', message: '确保 ASF Bridge READY' }, '检查 / 静默拉起 ASF Bridge…')
     await ensureBridgeReady({
       timeoutMs: 3 * 60_000,
       onLog: (line) => emit(ctx, line),
@@ -376,8 +380,8 @@ async function runCodePull(ctx: CodePullRunCtx): Promise<void> {
     })
     if (ctx.cancelled) throw new Error('已取消')
 
-    const disc = discoverBridgeReady()
-    const mapped = pickMappedRootFromDiscover(disc.raw, ctx.mappedRoot)
+    const disc = discoverRemoteRunner()
+    const mapped = pickMappedRootFromDiscover(disc, ctx.mappedRoot)
     if (!mapped) {
       throw new Error('未能 discover 到 mapped-root，请确认映射盘 / runner 已部署')
     }

@@ -6,11 +6,18 @@ import { execFile } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logger } from '../../logger'
+import { hostCliEnv, resolveHostCliSpawn } from '../host-tool-runtime'
 
 function execFileCapture(
   file: string,
   args: string[],
-  options: { timeout?: number; windowsHide?: boolean; encoding?: BufferEncoding; maxBuffer?: number },
+  options: {
+    timeout?: number
+    windowsHide?: boolean
+    encoding?: BufferEncoding
+    maxBuffer?: number
+    env?: NodeJS.ProcessEnv
+  },
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     execFile(file, args, options, (err, stdout, stderr) => {
@@ -130,10 +137,19 @@ function fromPackAndInfo(mappedRoot: string, workspace: string): WorkspaceBuildO
 
 async function fromHarnessStatus(mappedRoot: string, workspace: string): Promise<WorkspaceBuildOptions | null> {
   try {
+    const spawned = resolveHostCliSpawn([
+      '--json', 'build', 'status', '--mapped-root', mappedRoot, '--workspace', workspace,
+    ])
     const { stdout } = await execFileCapture(
-      'harness',
-      ['--json', 'build', 'status', '--mapped-root', mappedRoot, '--workspace', workspace],
-      { timeout: 60_000, windowsHide: true, encoding: 'utf-8', maxBuffer: 4 * 1024 * 1024 },
+      spawned.command,
+      spawned.argv,
+      {
+        timeout: 60_000,
+        windowsHide: true,
+        encoding: 'utf-8',
+        maxBuffer: 4 * 1024 * 1024,
+        env: hostCliEnv(),
+      },
     )
     const parsed = JSON.parse(stdout) as {
       status?: string
@@ -208,7 +224,7 @@ export async function resolveWorkspaceBuildOptions(
       ...fromFiles,
       warning: fromCli
         ? undefined
-        : 'harness build status 不可用，已从本地 pack.json / .pipe 解析',
+        : 'build status 不可用，已从本地 pack.json / .pipe 解析',
     }
   }
 

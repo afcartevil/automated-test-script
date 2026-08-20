@@ -3037,93 +3037,19 @@ async function sleep(ms: number) {
 
 async function harnessExec(command: string, opts?: { timeoutMs?: number }): Promise<HarnessResult> {
   const { assertHarnessCliReady } = await import('./harness-version-gate')
+  const { bridgeExec } = await import('./adapt-pipeline/harness-bridge-exec')
   assertHarnessCliReady()
 
   const timeoutMs = opts?.timeoutMs ?? 5 * 60 * 1000
-  // harness --timeout 单位为秒；比本地 timer 略短，让 bridge 先返回而非被本地 SIGKILL
   const timeoutSec = Math.max(1, Math.ceil(timeoutMs / 1000))
-  const localTimeoutMs = timeoutMs + 30_000
-  const isWindows = process.platform === 'win32'
-  const appData = process.env.APPDATA
-  const npmBinDir = appData ? path.resolve(appData, 'npm') : null
-  const harnessPs1 = npmBinDir ? path.resolve(npmBinDir, 'harness.ps1') : null
-
-  return await new Promise<HarnessResult>((resolve, reject) => {
-    const args = [
-      '--json',
-      'remote-runner',
-      'bridge-exec',
-      '--i-understand-this-runs-raw-shell',
-      '--timeout',
-      String(timeoutSec),
-      '--command',
-      command,
-    ]
-
-    const env = isWindows && npmBinDir
-      ? { ...process.env, PATH: `${process.env.PATH ?? ''};${npmBinDir}` }
-      : process.env
-
-    const processRef = isWindows && harnessPs1 && fs.existsSync(harnessPs1)
-      ? spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', harnessPs1, ...args], {
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env,
-          windowsHide: true,
-        })
-      : spawn('harness', args, {
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env,
-          windowsHide: true,
-        })
-
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-
-    const timer = setTimeout(() => {
-      if (settled) return
-      try {
-        processRef.kill('SIGKILL')
-      } catch {}
-      reject(new Error(`harness timeout after ${timeoutSec}s`))
-    }, localTimeoutMs)
-
-    processRef.stdout.on('data', (chunk) => {
-      stdout += chunk.toString()
-      if (settled) return
-      const text = stdout.trim()
-      if (!text.startsWith('{')) return
-      try {
-        const parsed = JSON.parse(text) as HarnessResult
-        settled = true
-        clearTimeout(timer)
-        try {
-          processRef.kill('SIGKILL')
-        } catch {}
-        resolve(parsed)
-      } catch {}
-    })
-
-    processRef.stderr.on('data', (chunk) => {
-      stderr += chunk.toString()
-    })
-
-    processRef.on('error', (error) => {
-      if (settled) return
-      clearTimeout(timer)
-      reject(error)
-    })
-
-    processRef.on('close', () => {
-      if (settled) return
-      clearTimeout(timer)
-      try {
-        resolve(JSON.parse(stdout) as HarnessResult)
-      } catch {
-        reject(new Error(`invalid harness json: ${stderr || stdout}`))
-      }
-    })
-  })
+  const result = await bridgeExec(command, { timeoutSec })
+  return {
+    status: result.status,
+    exit_code: result.exit_code,
+    command: result.command ?? command,
+    output: result.output,
+    error: result.error,
+  }
 }
 
 async function localGitExec(cwd: string, args: string[], opts?: { timeoutMs?: number }): Promise<LocalExecResult> {
@@ -3736,7 +3662,7 @@ function inferRunFailureError(logPath: string) {
     // ran a single remote-side step). This almost always means the
     // bridge-exec channel itself is down.
     const headBlock = lines.slice(0, 120).join('\n')
-    const firstRemoteCmdIdx = lines.findIndex(line => /Running remote command:.*bridge-exec/.test(line))
+    const firstRemoteCmdIdx = lines.findIndex(line => /Running remote command:.*(bridge-exec|bridge cmd)/.test(line))
     const headHarnessError = /\[Harness\]\s+status:\s*error/i.test(headBlock)
     const hasReportGenerated = /report generated locally:/i.test(headBlock)
     const hasAnyBridgeOutput = /__APM_MERGE_HEAD__|__APM_NO__|git status --porcelain|tools\/md_merge(?:_noninteractive|\.sh)|--apm-continue/i.test(headBlock)

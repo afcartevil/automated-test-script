@@ -8,6 +8,7 @@ import {
   listHarnessSkillRoots,
   listHarnessSkills,
   listUserHarnessSkillRoots,
+  pickPreferredSkillId,
   resolveUserHarnessSkillPath,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/harness-skill-registry'
 import {
@@ -44,6 +45,11 @@ describe('harness-skill-registry', () => {
       join(root, 'harness-device', 'SKILL.md'),
       '---\nname: harness-device\ndescription: flash\n---\n',
     )
+    mkdirSync(join(root, 'asf-device'))
+    writeFileSync(
+      join(root, 'asf-device', 'SKILL.md'),
+      '---\nname: asf-device\ndescription: flash asf\n---\n',
+    )
     mkdirSync(join(root, 'unrelated-skill'))
     writeFileSync(join(root, 'unrelated-skill', 'SKILL.md'), '---\nname: x\n---\n')
     process.env.TAHP_HARNESS_SKILL_ROOTS = root
@@ -63,21 +69,39 @@ describe('harness-skill-registry', () => {
       'harness-build-native',
       'harness-build-whole-device',
       'harness-device',
+      'asf-device',
     ]))
     expect(ids).not.toContain('unrelated-skill')
     expect(listHarnessSkills('build').some(s => s.id === 'harness-build-whole-device')).toBe(true)
     expect(listHarnessSkills('flash').some(s => s.id === 'harness-device')).toBe(true)
+    expect(listHarnessSkills('flash').some(s => s.id === 'asf-device')).toBe(true)
   })
 
-  it('defaultBuildSkillId maps kind', () => {
-    expect(defaultBuildSkillId('whole_device')).toBe('harness-build-whole-device')
-    expect(defaultBuildSkillId('native_module')).toBe('harness-build-native')
-    expect(defaultBuildSkillId(undefined)).toBe('harness-build')
+  it('pickPreferredSkillId prefers asf-* when both prefixes are installed', () => {
+    expect(pickPreferredSkillId('flash', ['harness-device', 'asf-device'])).toBe('asf-device')
+    expect(pickPreferredSkillId('flash', ['harness-device'])).toBe('harness-device')
+    expect(pickPreferredSkillId('build', ['harness-build-whole-device', 'asf-build-whole-device'], 'whole_device'))
+      .toBe('asf-build-whole-device')
+    expect(pickPreferredSkillId('build', ['harness-build-whole-device'], 'whole_device'))
+      .toBe('harness-build-whole-device')
+    expect(pickPreferredSkillId('build', ['harness-build-native'], 'native_module')).toBe('harness-build-native')
+    expect(pickPreferredSkillId('build', ['harness-build'], undefined)).toBe('harness-build')
+  })
+
+  it('default skill ids stay within scanned lists', () => {
+    const flashIds = listHarnessSkills('flash').map(s => s.id)
+    const buildIds = listHarnessSkills('build').map(s => s.id)
+    expect(flashIds).toContain(defaultFlashSkillId())
+    expect(['asf-build-whole-device', 'harness-build-whole-device', ...buildIds])
+      .toContain(defaultBuildSkillId('whole_device'))
+    expect(['asf-build-native', 'harness-build-native', ...buildIds])
+      .toContain(defaultBuildSkillId('native_module'))
   })
 
   it('resolveUserHarnessSkillPath reads user skill roots excluding project skills dir', () => {
-    expect(defaultFlashSkillId()).toBe('harness-device')
     expect(listUserHarnessSkillRoots()).toContain(root)
+    expect(resolveUserHarnessSkillPath('asf-device')?.replace(/\\/g, '/')).toMatch(/(asf|harness)-device\/SKILL\.md$/)
+    expect(resolveUserHarnessSkillPath('harness-device')?.replace(/\\/g, '/')).toMatch(/(asf|harness)-device\/SKILL\.md$/)
     const onlyInTemp = 'harness-flash-registry-test'
     mkdirSync(join(root, onlyInTemp))
     writeFileSync(

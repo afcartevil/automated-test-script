@@ -1,10 +1,29 @@
 /**
- * 调用 harness remote-runner bridge-exec / discover / bridge-cancel / bridge-serve
+ * 远程 shell：新 CLI 静默 asf bridge cmd / bridge up；旧 CLI 走 remote-runner bridge-exec。
+ * 不探测、不调用 Transhell 桌面桥。
  */
-import { spawn, execFileSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
 import { resolve } from 'path'
 import { assertHarnessCliReady } from '../harness-version-gate'
+import {
+  detectRemoteExecFlavor,
+  hostCliEnv,
+  parseJsonLoose,
+  parseWrappedRemoteResult,
+  resolveHarnessJs,
+  resolveHostCliSpawn,
+  spawnHostCli,
+  wrapRemoteShellForExitCode,
+  asfBridgeWaitSec,
+  isTransientAsfBridgeFailure,
+  asfBridgeCliTimeoutMs,
+  asfZellijMissingFromDoctor,
+  asfNeedsZellijSetup,
+  pickAsfUpSession,
+  parseZellijLsShort,
+  type RemoteExecFlavor,
+} from '../host-tool-runtime'
 
 export interface BridgeExecResult {
   status: string
@@ -25,53 +44,14 @@ export interface BridgeStatus {
   agentNextAction?: string
 }
 
-function npmHarnessPs1(): string | null {
-  const appData = process.env.APPDATA
-  if (!appData) return null
-  const ps1 = resolve(appData, 'npm', 'harness.ps1')
-  return existsSync(ps1) ? ps1 : null
-}
-
-/** npm 全局包里的 harness.js；直接 node 调用可避免 PowerShell -File 拆坏 --command */
-export function resolveHarnessJs(): string | null {
-  const appData = process.env.APPDATA
-  if (!appData) return null
-  const js = resolve(appData, 'npm', 'node_modules', '@transsion', 'harness-cli', 'bin', 'harness.js')
-  return existsSync(js) ? js : null
-}
-
-function harnessEnv(): NodeJS.ProcessEnv {
-  const isWindows = process.platform === 'win32'
-  const appData = process.env.APPDATA
-  const npmBinDir = appData ? resolve(appData, 'npm') : null
-  if (isWindows && npmBinDir) {
-    return { ...process.env, PATH: `${process.env.PATH ?? ''};${npmBinDir}` }
-  }
-  return process.env
-}
+export { resolveHarnessJs }
 
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms))
 }
 
-/**
- * Windows 优先: node harness.js + argv 数组（保留 --command 整串）。
- * 回退: harness.ps1 / PATH 中的 harness（PowerShell -File 会拆带引号的长命令）。
- */
 export function resolveHarnessSpawn(args: string[]): { command: string; argv: string[] } {
-  const isWindows = process.platform === 'win32'
-  const harnessJs = resolveHarnessJs()
-  if (isWindows && harnessJs) {
-    return { command: process.execPath, argv: [harnessJs, ...args] }
-  }
-  const ps1 = npmHarnessPs1()
-  if (isWindows && ps1) {
-    return {
-      command: 'powershell.exe',
-      argv: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1, ...args],
-    }
-  }
-  return { command: 'harness', argv: args }
+  return resolveHostCliSpawn(args)
 }
 
 export function spawnHarness(
@@ -84,80 +64,13 @@ export function spawnHarness(
     detached?: boolean
   },
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
-  const timeoutMs = opts?.timeoutMs ?? 5 * 60 * 1000
-  const env = harnessEnv()
-  const { command, argv } = resolveHarnessSpawn(args)
-
-  return new Promise((resolvePromise, reject) => {
-    const processRef = spawn(command, argv, {
-      stdio: opts?.detached ? 'ignore' : ['ignore', 'pipe', 'pipe'],
-      env,
-      windowsHide: !opts?.detached,
-      detached: Boolean(opts?.detached),
-    })
-
-    if (opts?.detached) {
-      try { processRef.unref() } catch { /* ignore */ }
-      resolvePromise({ stdout: '', stderr: '', code: 0 })
-      return
-    }
-
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-
-    const timer = setTimeout(() => {
-      if (settled) return
-      settled = true
-      try { processRef.kill('SIGKILL') } catch { /* ignore */ }
-      reject(new Error(`harness timeout after ${Math.round(timeoutMs / 1000)}s`))
-    }, timeoutMs)
-
-    const finish = (code: number | null) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      resolvePromise({ stdout, stderr, code })
-    }
-
-    processRef.stdout?.on('data', (chunk: Buffer) => {
-      const text = chunk.toString()
-      stdout += text
-      opts?.onStdout?.(text)
-      if (opts?.signal?.cancelled) {
-        try { processRef.kill('SIGKILL') } catch { /* ignore */ }
-      }
-    })
-    processRef.stderr?.on('data', (chunk: Buffer) => {
-      const text = chunk.toString()
-      stderr += text
-      opts?.onStderr?.(text)
-    })
-    processRef.on('error', (err) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      reject(err)
-    })
-    processRef.on('close', (code) => finish(code))
-  })
+  return spawnHostCli(args, opts)
 }
 
-function parseJsonLoose(text: string): Record<string, unknown> | null {
-  const trimmed = text.trim()
-  if (!trimmed) return null
-  try {
-    return JSON.parse(trimmed) as Record<string, unknown>
-  } catch {
-    const start = trimmed.indexOf('{')
-    const end = trimmed.lastIndexOf('}')
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(trimmed.slice(start, end + 1)) as Record<string, unknown>
-      } catch { /* ignore */ }
-    }
-  }
-  return null
+let asfSession: number | null = null
+
+function remoteFlavor(): RemoteExecFlavor {
+  return detectRemoteExecFlavor()
 }
 
 function bridgeFromPayload(parsed: Record<string, unknown>): BridgeStatus {
@@ -182,7 +95,288 @@ function bridgeFromPayload(parsed: Record<string, unknown>): BridgeStatus {
   }
 }
 
-export async function bridgeExec(
+function asfSessionsFromPayload(parsed: Record<string, unknown> | null): Array<{
+  session: number
+  phase: string
+  slot?: string
+  message?: string
+}> {
+  const raw = parsed?.sessions
+  if (!Array.isArray(raw)) return []
+  return raw.map((item) => {
+    const row = item as Record<string, unknown>
+    return {
+      session: Number(row.session),
+      phase: String(row.phase || ''),
+      slot: row.slot != null ? String(row.slot) : undefined,
+      message: row.message != null ? String(row.message) : undefined,
+    }
+  }).filter(s => Number.isFinite(s.session) && s.session > 0)
+}
+
+async function listAsfBridgeSessions(): Promise<Array<{ session: number; phase: string; message?: string }>> {
+  const { stdout, stderr } = await spawnHarness(['--json', 'bridge', 'ls'], { timeoutMs: 30_000 })
+  const parsed = parseJsonLoose(stdout) || parseJsonLoose(stderr)
+  return asfSessionsFromPayload(parsed)
+}
+
+async function ensureAsfZellijInstalled(opts?: {
+  signal?: { cancelled: boolean }
+  onLog?: (line: string) => void
+}): Promise<void> {
+  const log = (line: string) => opts?.onLog?.(line)
+  const { stdout, stderr } = await spawnHarness(['--json', 'bridge', 'doctor'], {
+    timeoutMs: 45_000,
+    signal: opts?.signal,
+  })
+  const parsed = parseJsonLoose(stdout) || parseJsonLoose(stderr)
+  if (!parsed || !asfZellijMissingFromDoctor(parsed)) return
+  log('Zellij 未安装，自动执行 asf --json bridge setup…')
+  await spawnHarness(['--json', 'bridge', 'setup'], {
+    timeoutMs: 180_000,
+    signal: opts?.signal,
+    onStdout: (chunk) => {
+      const line = chunk.trim()
+      if (line) log(line.slice(0, 400))
+    },
+  })
+}
+
+async function listZellijMuxNames(): Promise<string[]> {
+  const localApp = process.env.LOCALAPPDATA || ''
+  const candidates = [
+    localApp ? resolve(localApp, 'Zellij', 'zellij.EXE') : '',
+    localApp ? resolve(localApp, 'Zellij', 'zellij.exe') : '',
+    process.env.HOME ? resolve(process.env.HOME, '.local', 'bin', 'zellij') : '',
+  ].filter(Boolean)
+  const bin = candidates.find(p => existsSync(p))
+  if (!bin) return []
+  try {
+    const out = execFileSync(bin, ['list-sessions', '-s'], {
+      encoding: 'utf-8',
+      timeout: 8_000,
+      windowsHide: true,
+    })
+    return parseZellijLsShort(out)
+  } catch {
+    return []
+  }
+}
+
+async function tryAsfBridgeUp(session: number, opts?: {
+  signal?: { cancelled: boolean }
+}): Promise<{ parsed: Record<string, unknown> | null; stdout: string; stderr: string }> {
+  try {
+    const { stdout, stderr } = await spawnHarness(
+      ['--json', 'bridge', 'up', '--session', String(session)],
+      { timeoutMs: 180_000, signal: opts?.signal },
+    )
+    return {
+      parsed: parseJsonLoose(stdout) || parseJsonLoose(stderr),
+      stdout,
+      stderr,
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { parsed: null, stdout: '', stderr: msg }
+  }
+}
+
+function asfUpReadySession(parsed: Record<string, unknown> | null): number | null {
+  const fromUp = parsed?.session != null ? Number(parsed.session) : NaN
+  if (!Number.isFinite(fromUp) || fromUp <= 0) return null
+  const phase = String(parsed?.phase || '')
+  if (phase === 'ready' || !phase) return fromUp
+  return null
+}
+
+async function ensureAsfBridgeSession(opts?: {
+  signal?: { cancelled: boolean }
+  onLog?: (line: string) => void
+}): Promise<number> {
+  const log = (line: string) => opts?.onLog?.(line)
+  await ensureAsfZellijInstalled(opts)
+
+  const slots = await listAsfBridgeSessions()
+  const existing = slots.find(s => s.phase === 'ready')
+  if (existing) {
+    asfSession = existing.session
+    log(`ASF Bridge session ${existing.session} 已 READY`)
+    return existing.session
+  }
+
+  const muxNames = await listZellijMuxNames()
+  const session = pickAsfUpSession({ slots, muxNames })
+  if (session == null) {
+    throw new Error(
+      `ASF Bridge 四个槽的 Zellij 名都被占用（${muxNames.join(', ') || 'unknown'}）。agent_session1 若是幽灵会话，请结束残留 zellij.EXE 后重试。`,
+    )
+  }
+  if (muxNames.includes('agent_session1') || session !== 1) {
+    log(`跳过幽灵/占用 mux，静默 bridge up --session ${session}（zellij ls: ${muxNames.join(', ') || '(empty)'}）`)
+  } else {
+    log(`ASF Bridge 无现成 session，静默 bridge up --session ${session}…`)
+  }
+
+  const signal = { cancelled: false }
+  const pumpCancel = setInterval(() => {
+    if (opts?.signal?.cancelled) signal.cancelled = true
+  }, 400)
+  const upPromise = tryAsfBridgeUp(session, { signal })
+  const upDeadline = Date.now() + 180_000
+  try {
+    while (Date.now() < upDeadline) {
+      if (opts?.signal?.cancelled) throw new Error('已取消')
+      await sleep(2000)
+      const hit = (await listAsfBridgeSessions()).find(s => s.phase === 'ready')
+      if (hit) {
+        signal.cancelled = true
+        asfSession = hit.session
+        log(`ASF Bridge session ${hit.session} 已 READY（up CLI 可能仍阻塞，已继续）`)
+        return hit.session
+      }
+    }
+  } finally {
+    clearInterval(pumpCancel)
+  }
+
+  const up = await upPromise
+  const ready = asfUpReadySession(up.parsed)
+  if (ready != null) {
+    asfSession = ready
+    log(`ASF Bridge up session=${ready}`)
+    return ready
+  }
+
+  for (let i = 0; i < 15; i++) {
+    if (opts?.signal?.cancelled) throw new Error('已取消')
+    await sleep(2000)
+    const again = await listAsfBridgeSessions()
+    const hit = again.find(s => s.phase === 'ready')
+    if (hit) {
+      asfSession = hit.session
+      log(`ASF Bridge session ${hit.session} 已 READY`)
+      return hit.session
+    }
+  }
+  const detail = asfFailureMessage(up.parsed, up.stderr)
+  throw new Error(
+    `ASF Bridge 未能自动登录（${detail.slice(0, 400)}）。请确认一键配置表单已保存齐治凭据与 TOTP。`,
+  )
+}
+
+function asfFailureMessage(parsed: Record<string, unknown> | null, stderr: string): string {
+  if (!parsed) return stderr.trim() || 'asf bridge cmd 无输出'
+  const parts = [parsed.error_code, parsed.message, parsed.error]
+    .filter(v => v != null && String(v).trim())
+    .map(v => String(v))
+  return [...new Set(parts)].join(': ') || stderr.trim() || 'asf bridge cmd 失败'
+}
+
+async function asfBridgeCmdOnce(
+  session: number,
+  wrapped: string,
+  opts: {
+    waitSec: number
+    timeoutSec: number
+    onStdout?: (chunk: string) => void
+    onStderr?: (chunk: string) => void
+    signal?: { cancelled: boolean }
+  },
+): Promise<BridgeExecResult> {
+  const localTimeoutMs = asfBridgeCliTimeoutMs(opts.waitSec)
+  try {
+    const { stdout, stderr } = await spawnHarness(
+      [
+        '--json',
+        'bridge',
+        'cmd',
+        '--session',
+        String(session),
+        '--wait',
+        String(opts.waitSec),
+        '--lines',
+        '200',
+        wrapped,
+      ],
+      {
+        timeoutMs: localTimeoutMs,
+        onStdout: opts.onStdout,
+        onStderr: opts.onStderr,
+        signal: opts.signal,
+      },
+    )
+    const parsed = parseJsonLoose(stdout) || parseJsonLoose(stderr)
+    if (!parsed) {
+      return {
+        status: 'error',
+        exit_code: -1,
+        command: wrapped,
+        output: stdout,
+        error: `invalid asf bridge json: ${stderr || stdout || '(empty)'}`,
+      }
+    }
+    const fail = asfFailureMessage(parsed, stderr)
+    if (String(parsed.status).toLowerCase() === 'error' || parsed.error_code) {
+      return {
+        status: 'error',
+        exit_code: -1,
+        command: wrapped,
+        output: parsed.output != null ? String(parsed.output) : stdout,
+        error: fail,
+        error_code: parsed.error_code != null ? String(parsed.error_code) : undefined,
+      }
+    }
+
+    let output = String(parsed.output || '')
+    let complete = parsed.complete !== false
+    if (!complete && output.indexOf('TAHP_BRIDGE_EXIT:') < 0) {
+      const deadline = Date.now() + opts.timeoutSec * 1000
+      while (Date.now() < deadline && !opts.signal?.cancelled) {
+        await sleep(2000)
+        const read = await spawnHarness(
+          ['--json', 'bridge', 'read', '--session', String(session), '--lines', '400'],
+          { timeoutMs: 30_000, signal: opts.signal },
+        )
+        const rp = parseJsonLoose(read.stdout) || parseJsonLoose(read.stderr)
+        if (rp && (String(rp.status).toLowerCase() === 'error' || rp.error_code)) {
+          return {
+            status: 'error',
+            exit_code: -1,
+            command: wrapped,
+            output: rp.output != null ? String(rp.output) : output,
+            error: asfFailureMessage(rp, read.stderr),
+            error_code: rp.error_code != null ? String(rp.error_code) : undefined,
+          }
+        }
+        if (rp?.output != null) output = String(rp.output)
+        if (output.indexOf('TAHP_BRIDGE_EXIT:') >= 0) {
+          complete = true
+          break
+        }
+      }
+    }
+    const parsedOut = parseWrappedRemoteResult(output)
+    const exit_code = parsedOut.exit_code
+    return {
+      status: String(parsed.status || (complete ? 'ok' : 'error')),
+      exit_code: exit_code == null ? -1 : exit_code,
+      command: wrapped,
+      output: parsedOut.output,
+      error: exit_code == null && !complete ? 'asf bridge cmd 未完成' : undefined,
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return {
+      status: 'error',
+      exit_code: -1,
+      command: wrapped,
+      error: msg,
+    }
+  }
+}
+
+async function asfBridgeCmd(
   command: string,
   opts?: {
     timeoutSec?: number
@@ -191,7 +385,47 @@ export async function bridgeExec(
     signal?: { cancelled: boolean }
   },
 ): Promise<BridgeExecResult> {
-  assertHarnessCliReady()
+  const timeoutSec = Math.max(1, opts?.timeoutSec ?? 300)
+  const waitSec = asfBridgeWaitSec(timeoutSec)
+  const note = (line: string) => opts?.onStdout?.(`${line}\n`)
+  const session = await ensureAsfBridgeSession({ signal: opts?.signal, onLog: note })
+  const wrapped = wrapRemoteShellForExitCode(command)
+
+  let last: BridgeExecResult | null = null
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const result = await asfBridgeCmdOnce(session, wrapped, {
+      waitSec,
+      timeoutSec,
+      onStdout: opts?.onStdout,
+      onStderr: opts?.onStderr,
+      signal: opts?.signal,
+    })
+    const blob = `${result.error || ''}\n${result.output || ''}`
+    if (!isTransientAsfBridgeFailure(blob)) {
+      return { ...result, command }
+    }
+    last = { ...result, command }
+    note(`ASF Bridge 瞬时失败 (${attempt}/3): ${result.error || 'zellij timeout'}，同 session 重试`)
+    try {
+      await spawnHarness(
+        ['--json', 'bridge', 'interrupt', '--session', String(session)],
+        { timeoutMs: 15_000, signal: opts?.signal },
+      )
+    } catch { /* ignore */ }
+    await sleep(1500)
+  }
+  return last!
+}
+
+async function legacyBridgeExec(
+  command: string,
+  opts?: {
+    timeoutSec?: number
+    onStdout?: (chunk: string) => void
+    onStderr?: (chunk: string) => void
+    signal?: { cancelled: boolean }
+  },
+): Promise<BridgeExecResult> {
   const timeoutSec = Math.max(1, opts?.timeoutSec ?? 300)
   const localTimeoutMs = timeoutSec * 1000 + 60_000
   const { stdout, stderr } = await spawnHarness(
@@ -221,21 +455,30 @@ export async function bridgeExec(
   }
 }
 
-export function discoverBridgeReady(): BridgeStatus {
-  try {
-    assertHarnessCliReady()
-  } catch (err) {
-    return { ready: false, error: (err as Error).message }
-  }
+export async function bridgeExec(
+  command: string,
+  opts?: {
+    timeoutSec?: number
+    onStdout?: (chunk: string) => void
+    onStderr?: (chunk: string) => void
+    signal?: { cancelled: boolean }
+  },
+): Promise<BridgeExecResult> {
+  assertHarnessCliReady()
+  const flavor = remoteFlavor()
+  if (flavor === 'legacy-bridge-exec') return legacyBridgeExec(command, opts)
+  if (flavor === 'asf-bridge') return asfBridgeCmd(command, opts)
+  throw new Error('本机 CLI 无 remote-runner bridge-exec，也无 asf bridge cmd，无法执行远程命令')
+}
 
+function discoverLegacyBridgeReady(): BridgeStatus {
   try {
-    const env = harnessEnv()
     const { command, argv } = resolveHarnessSpawn(['--json', 'remote-runner', 'discover'])
     const out = execFileSync(command, argv, {
       encoding: 'utf-8',
       timeout: 60_000,
-      env,
       windowsHide: true,
+      env: hostCliEnv(),
     })
     const parsed = parseJsonLoose(out)
     if (!parsed) return { ready: false, error: 'discover 返回非 JSON' }
@@ -245,7 +488,82 @@ export function discoverBridgeReady(): BridgeStatus {
   }
 }
 
+/** ASF session 是否 READY。不含 mapped_root，代码拉取须用 {@link discoverRemoteRunner}。 */
+function discoverAsfBridgeReady(): BridgeStatus {
+  try {
+    const { command, argv } = resolveHarnessSpawn(['--json', 'bridge', 'ls'])
+    const out = execFileSync(command, argv, {
+      encoding: 'utf-8',
+      timeout: 30_000,
+      windowsHide: true,
+      env: hostCliEnv(),
+    })
+    const parsed = parseJsonLoose(out)
+    const ready = asfSessionsFromPayload(parsed).some(s => s.phase === 'ready')
+    const first = asfSessionsFromPayload(parsed).find(s => s.phase === 'ready')
+    if (first) asfSession = first.session
+    return {
+      ready,
+      raw: parsed || undefined,
+      sessionPhase: first?.phase,
+      error: ready ? undefined : String(parsed?.message || 'ASF Bridge 无 ready session'),
+    }
+  } catch (err) {
+    return { ready: false, error: (err as Error).message }
+  }
+}
+
+export function discoverBridgeReady(): BridgeStatus {
+  try {
+    assertHarnessCliReady()
+  } catch (err) {
+    return { ready: false, error: (err as Error).message }
+  }
+  const flavor = remoteFlavor()
+  if (flavor === 'asf-bridge') return discoverAsfBridgeReady()
+  return discoverLegacyBridgeReady()
+}
+
+/**
+ * 映射盘 / runner 发现。与 {@link discoverBridgeReady} 不是同一件事：
+ * ASF 的 `bridge ls` 只有 session，没有 mapped_root。
+ * `asf` 与旧 `harness` 都保留 `remote-runner discover`。
+ */
+export function discoverRemoteRunner(): Record<string, unknown> | null {
+  try {
+    assertHarnessCliReady()
+    const { command, argv } = resolveHarnessSpawn(['--json', 'remote-runner', 'discover'])
+    const out = execFileSync(command, argv, {
+      encoding: 'utf-8',
+      timeout: 60_000,
+      windowsHide: true,
+      env: hostCliEnv(),
+    })
+    return parseJsonLoose(out)
+  } catch {
+    return null
+  }
+}
+
 export async function diagnoseBridge(): Promise<BridgeStatus> {
+  const flavor = remoteFlavor()
+  if (flavor === 'asf-bridge') {
+    try {
+      const { stdout, stderr } = await spawnHarness(['--json', 'bridge', 'doctor'], { timeoutMs: 60_000 })
+      const parsed = parseJsonLoose(stdout) || parseJsonLoose(stderr)
+      if (!parsed) return { ready: false, error: stderr || stdout || 'doctor 无输出' }
+      const sessions = asfSessionsFromPayload(parsed)
+      const ready = sessions.some(s => s.phase === 'ready')
+      return {
+        ready,
+        raw: parsed,
+        sessionPhase: sessions.find(s => s.phase === 'ready')?.phase,
+        error: ready ? undefined : String(parsed.message || ''),
+      }
+    } catch (err) {
+      return { ready: false, error: (err as Error).message }
+    }
+  }
   try {
     const { stdout, stderr } = await spawnHarness(
       ['--json', 'remote-runner', 'bridge-diagnose'],
@@ -260,6 +578,18 @@ export async function diagnoseBridge(): Promise<BridgeStatus> {
 }
 
 export async function bridgeCancel(): Promise<void> {
+  const flavor = remoteFlavor()
+  if (flavor === 'asf-bridge') {
+    const session = asfSession
+    if (session == null) return
+    try {
+      await spawnHarness(
+        ['--json', 'bridge', 'interrupt', '--session', String(session)],
+        { timeoutMs: 30_000 },
+      )
+    } catch { /* ignore */ }
+    return
+  }
   try {
     await spawnHarness(['--json', 'remote-runner', 'bridge-cancel'], { timeoutMs: 30_000 })
   } catch { /* ignore */ }
@@ -291,10 +621,12 @@ function clearStaleBridgeReadyFlag(): void {
 export function resolveHarnessPython(): string | null {
   const home = process.env.USERPROFILE || process.env.HOME
   if (home) {
-    const tip = resolve(home, '.tran_harness', 'bin', 'sidecar-python.txt')
-    if (existsSync(tip)) {
-      const line = readFileSync(tip, 'utf-8').trim().split(/\r?\n/)[0]?.trim()
-      if (line && existsSync(line)) return line
+    for (const rel of ['.tran_asf/bin/sidecar-python.txt', '.tran_harness/bin/sidecar-python.txt']) {
+      const tip = resolve(home, rel)
+      if (existsSync(tip)) {
+        const line = readFileSync(tip, 'utf-8').trim().split(/\r?\n/)[0]?.trim()
+        if (line && existsSync(line)) return line
+      }
     }
   }
   const local = process.env.LOCALAPPDATA
@@ -385,10 +717,9 @@ export async function startBridgeServe(opts?: { gui?: boolean }): Promise<{ meth
 }
 
 /**
- * 编译前确保 Bridge READY：
- * 1) discover 已 ready → 直接返回
- * 2) phase=exec / busy → bridge-cancel 重试（cancel 无效则强制杀进程）
- * 3) 重启 + 用已存 TOTP secret 自动注入 OTP 并轮询
+ * 编译前确保远程执行通路 READY。
+ * 新 CLI：静默 asf bridge up（凭据在 env.yaml）；旧 CLI：TOTP / bridge-serve。
+ * 不探测、不等待 Transhell 桌面桥。
  */
 export async function ensureBridgeReady(opts?: {
   timeoutMs?: number
@@ -401,6 +732,11 @@ export async function ensureBridgeReady(opts?: {
 
   const checkCancelled = () => {
     if (opts?.signal?.cancelled) throw new Error('已取消')
+  }
+
+  if (remoteFlavor() === 'asf-bridge') {
+    const session = await ensureAsfBridgeSession({ signal: opts?.signal, onLog: log })
+    return { ready: true, sessionPhase: 'ready', agentNextAction: `asf-bridge session ${session}` }
   }
 
   let status = discoverBridgeReady()

@@ -1,10 +1,12 @@
 /**
- * Harness Skill 路径注册：默认 %USERPROFILE%\.claude\skills + 工程 skills/.claude/skills，可追加根目录。
+ * ASF / Harness Skill 路径注册：本机客户端 skills 根 + 工程 skills/.claude/skills。
+ * 按目录名与 capability 惯例识别 build/flash，兼容 harness-* 与 asf-*。
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { tahpPaths } from '../paths'
+import { HARNESS_HOST_SKILL_ROOTS_REL } from '../harness-host-skills'
 
 export type HarnessSkillKind = 'build' | 'flash'
 
@@ -17,13 +19,21 @@ export interface HarnessSkillMeta {
   root: string
 }
 
-const BUILD_ID_RE = /^harness-build/
-const FLASH_ID_RE = /^(harness-device|harness-flash-)/
+const BUILD_ID_RE = /^(harness|asf)-build/
+const FLASH_ID_RE = /^(harness-device|asf-device|harness-flash-|asf-flash-)/
+
+const BUILD_PREF = {
+  native_module: ['asf-build-native', 'harness-build-native'],
+  whole_device: ['asf-build-whole-device', 'harness-build-whole-device'],
+  router: ['asf-build', 'harness-build'],
+} as const
+
+const FLASH_PREF = ['asf-device', 'harness-device']
 
 /** 额外根目录：环境变量 TAHP_HARNESS_SKILL_ROOTS，用 ; 或 | 分隔 */
 export function listHarnessSkillRoots(): string[] {
   const defaults = [
-    join(homedir(), '.claude', 'skills'),
+    ...HARNESS_HOST_SKILL_ROOTS_REL.map(rel => join(homedir(), ...rel.split('/'))),
     tahpPaths.skillsDir,
   ]
   const raw = process.env.TAHP_HARNESS_SKILL_ROOTS?.trim()
@@ -50,7 +60,7 @@ function parseFrontmatter(raw: string): { name?: string; description?: string } 
   return { name, description: descLine }
 }
 
-function classifySkillId(id: string): HarnessSkillKind | null {
+export function classifySkillId(id: string): HarnessSkillKind | null {
   if (BUILD_ID_RE.test(id)) return 'build'
   if (FLASH_ID_RE.test(id)) return 'flash'
   return null
@@ -58,13 +68,38 @@ function classifySkillId(id: string): HarnessSkillKind | null {
 
 function labelFor(id: string): string {
   switch (id) {
-    case 'harness-build': return '编译路由（自动分流）'
-    case 'harness-build-whole-device': return '整机编译（rdtool）'
-    case 'harness-build-native': return '模块/Native 编译'
-    case 'harness-device': return '设备刷机（整包）'
-    case 'harness-flash-single-img': return '单分区镜像刷入'
-    default: return id
+    case 'harness-build':
+    case 'asf-build':
+      return '编译路由（自动分流）'
+    case 'harness-build-whole-device':
+    case 'asf-build-whole-device':
+      return '整机编译（rdtool）'
+    case 'harness-build-native':
+    case 'asf-build-native':
+      return '模块/Native 编译'
+    case 'harness-device':
+    case 'asf-device':
+      return '设备刷机（整包）'
+    case 'harness-flash-single-img':
+    case 'asf-flash-single-img':
+      return '单分区镜像刷入'
+    default:
+      return id
   }
+}
+
+export function pickPreferredSkillId(kind: HarnessSkillKind, installed: string[], buildKind?: 'whole_device' | 'native_module'): string {
+  const set = new Set(installed)
+  if (kind === 'flash') {
+    return FLASH_PREF.find(id => set.has(id)) || installed[0] || 'asf-device'
+  }
+  if (buildKind === 'native_module') {
+    return BUILD_PREF.native_module.find(id => set.has(id)) || 'asf-build-native'
+  }
+  if (buildKind === 'whole_device') {
+    return BUILD_PREF.whole_device.find(id => set.has(id)) || 'asf-build-whole-device'
+  }
+  return BUILD_PREF.router.find(id => set.has(id)) || 'asf-build'
 }
 
 export function listHarnessSkills(kind?: HarnessSkillKind): HarnessSkillMeta[] {
@@ -112,16 +147,28 @@ export function listHarnessSkills(kind?: HarnessSkillKind): HarnessSkillMeta[] {
 }
 
 export function resolveHarnessSkillPath(skillId: string): string | null {
-  const projectPath = join(tahpPaths.skillsDir, skillId, 'SKILL.md')
-  if (existsSync(projectPath)) return projectPath
-  for (const root of listHarnessSkillRoots()) {
-    const p = join(root, skillId, 'SKILL.md')
-    if (existsSync(p)) return p
+  const aliases = skillIdAliases(skillId)
+  for (const id of aliases) {
+    const projectPath = join(tahpPaths.skillsDir, id, 'SKILL.md')
+    if (existsSync(projectPath)) return projectPath
+    for (const root of listHarnessSkillRoots()) {
+      const p = join(root, id, 'SKILL.md')
+      if (existsSync(p)) return p
+    }
   }
   return null
 }
 
-/** 用户本机 skill 根（~/.claude/skills 与 TAHP_HARNESS_SKILL_ROOTS），不含工程 skills 目录 */
+function skillIdAliases(skillId: string): string[] {
+  const id = skillId.trim()
+  if (!id) return []
+  const out = [id]
+  if (id.startsWith('harness-')) out.push(`asf-${id.slice('harness-'.length)}`)
+  if (id.startsWith('asf-')) out.push(`harness-${id.slice('asf-'.length)}`)
+  return [...new Set(out)]
+}
+
+/** 用户本机 skill 根（客户端 skills 与 TAHP_HARNESS_SKILL_ROOTS），不含工程 skills 目录 */
 export function listUserHarnessSkillRoots(): string[] {
   const projectKey = tahpPaths.skillsDir.replace(/\\/g, '/').toLowerCase()
   return listHarnessSkillRoots().filter(
@@ -129,21 +176,24 @@ export function listUserHarnessSkillRoots(): string[] {
   )
 }
 
-/** 整包刷机等：优先用户目录下的 harness skill */
+/** 整包刷机等：优先用户目录下的官方 skill */
 export function resolveUserHarnessSkillPath(skillId: string): string | null {
+  const aliases = skillIdAliases(skillId)
   for (const root of listUserHarnessSkillRoots()) {
-    const p = join(root, skillId, 'SKILL.md')
-    if (existsSync(p)) return p
+    for (const id of aliases) {
+      const p = join(root, id, 'SKILL.md')
+      if (existsSync(p)) return p
+    }
   }
   return null
 }
 
 export function defaultBuildSkillId(buildKind: 'whole_device' | 'native_module' | undefined): string {
-  if (buildKind === 'native_module') return 'harness-build-native'
-  if (buildKind === 'whole_device') return 'harness-build-whole-device'
-  return 'harness-build'
+  const installed = listHarnessSkills('build').map(s => s.id)
+  return pickPreferredSkillId('build', installed, buildKind)
 }
 
 export function defaultFlashSkillId(): string {
-  return 'harness-device'
+  const installed = listHarnessSkills('flash').map(s => s.id)
+  return pickPreferredSkillId('flash', installed)
 }
