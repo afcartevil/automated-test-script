@@ -74,6 +74,7 @@ const applyBusy = ref(false)
 
 const manualNav: Array<{ label: string; name?: string; url?: string }> = [
   { label: 'EasyAdapter 使用手册', name: 'tahp.manual' },
+  { label: '反馈问题', url: FEEDBACK_URL },
 ]
 
 const selectedKey = computed(() => {
@@ -374,15 +375,6 @@ onUnmounted(() => window.clearInterval(inboxTimer))
             <span v-if="taskUnread" class="ck-task-dot">{{ taskUnread > 9 ? '9+' : taskUnread }}</span>
           </button>
         </NDropdown>
-        <a
-          :href="FEEDBACK_URL"
-          class="ck-feedback-btn"
-          target="_blank"
-          rel="noopener noreferrer"
-          title="在飞书多维表格中反馈问题"
-        >
-          反馈问题
-        </a>
 
         <button type="button" class="ck-mini-model" @click="showModelModal = true">
           <span class="ck-mini-dot" :class="{ offline: !appStore.connected }" />
