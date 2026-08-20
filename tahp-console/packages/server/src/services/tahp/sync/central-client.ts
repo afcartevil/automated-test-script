@@ -212,6 +212,40 @@ export const centralClient = {
       body: JSON.stringify(run),
     })
   },
+
+  /** EA 绑定 Jira：中心校验 myself 后开通/刷新账户。body 含密码，勿复用到其它 sync 接口。 */
+  async jiraBind(input: {
+    username: string
+    password: string
+    jira_base_url?: string
+  }): Promise<{
+    token: string
+    user: { username: string; role: string; auth_source?: string; display_name?: string }
+    ticket: string
+    consume_path: string
+  }> {
+    return request('/api/tahp/auth/jira-bind', {
+      method: 'POST',
+      headers: headers({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        username: input.username,
+        password: input.password,
+        jira_base_url: input.jira_base_url,
+      }),
+    }, 20_000)
+  },
+
+  /** 已有中心 session 时签发一次性网页 ticket */
+  async issueAuthTicket(sessionToken: string, next = '/'): Promise<{ ticket: string; consume_path: string }> {
+    return request('/api/tahp/auth/ticket', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${sessionToken}`,
+      },
+      body: JSON.stringify({ next }),
+    })
+  },
 }
 
 /** 与 easyadapter_bff quality-store IngestRunInput 对齐 */
@@ -241,4 +275,8 @@ export interface QualityRunPayload {
   ai_summary?: string
   source?: { tool?: string; version?: string; host?: string }
   schema_version?: number
+  current_node?: string
+  parent_run_id?: string
+  headline?: string
+  extra?: Record<string, unknown>
 }

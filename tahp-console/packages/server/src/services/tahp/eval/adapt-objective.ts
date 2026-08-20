@@ -291,7 +291,7 @@ export function signalsFromPipelineRun(run: {
   stages?: Record<string, {
     status?: string
     progress?: Record<string, unknown>
-    summary?: Record<string, unknown>
+    summary?: string | Record<string, unknown>
   }>
 }): AdaptObjectiveSignals {
   const domains = (run.domains || []).filter(d => d)
@@ -303,7 +303,8 @@ export function signalsFromPipelineRun(run: {
 
   const build = run.stages?.build
   const buildProgress = build?.progress || {}
-  const buildSummary = build?.summary || {}
+  const buildSummaryRaw = build?.summary
+  const buildSummary: Record<string, unknown> = (buildSummaryRaw && typeof buildSummaryRaw === 'object') ? buildSummaryRaw : {}
   const buildState = String(buildProgress.state || '')
   const hasArtifact = !!(buildSummary.artifacts_dir || buildSummary.pkg_path || buildProgress.artifacts_dir)
   const buildPass =

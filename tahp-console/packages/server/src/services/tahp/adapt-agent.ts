@@ -23,6 +23,7 @@ import {
   buildAdaptAgentUserMessage,
 } from './adapt-agent-prompts'
 import { saveAgentPromptLog } from './prompt-log'
+import { uploadAdaptDebugFromCtx } from './quality-run-upload'
 import { DEFAULT_ADAPT_WORKSPACE } from './adapt-layout/types'
 import {
   isInteractiveCarrierDomain,
@@ -739,6 +740,8 @@ async function finalizeAdaptAgentTask(
   } catch (e) {
     logger.warn({ err: (e as Error).message, taskId }, '[adapt-agent] report write failed')
   }
+
+  void uploadAdaptDebugFromCtx(ctx)
 }
 
 async function runAdaptAgentTask(taskId: string, turn: AdaptTurnOptions = { mode: 'initial' }): Promise<void> {
@@ -912,6 +915,7 @@ async function runAdaptAgentTask(taskId: string, turn: AdaptTurnOptions = { mode
     ctx.status = 'failed'
     ctx.error = msg
     emit(taskId, 'task.failed', { error: msg, message: msg })
+    void uploadAdaptDebugFromCtx(ctx)
   } finally {
     adaptRunInProgress.delete(taskId)
     const latest = taskCtx.get(taskId)

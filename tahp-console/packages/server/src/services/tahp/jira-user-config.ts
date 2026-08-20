@@ -27,6 +27,47 @@ export function jiraUserConfigPath(): string {
   return join(tahpConfigDir(), 'jira-user-config.json')
 }
 
+function readUnifiedDomainCredentials(): { username: string; password: string } | null {
+  const p = join(tahpConfigDir(), 'unified-config.json')
+  if (!existsSync(p)) return null
+  try {
+    const raw = JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>
+    const username = String(raw.domain_account || '').trim()
+    const password = String(raw.domain_password || '')
+    if (!username) return null
+    return { username, password }
+  } catch {
+    return null
+  }
+}
+
+export function readJiraUsername(): string | undefined {
+  const p = jiraUserConfigPath()
+  if (existsSync(p)) {
+    try {
+      const raw = JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>
+      const username = String(raw.username || '').trim()
+      if (username) return username
+    } catch {
+      /* fall through to unified-config */
+    }
+  }
+  return readUnifiedDomainCredentials()?.username
+}
+
+/** 若只有一键配置、尚未派生 jira-user-config，则补写一份（供 bind / 在线通道使用） */
+export function ensureDerivedJiraUserConfig(): JiraUserConfigRecord | null {
+  const existing = readJiraUserConfig()
+  if (existing) return existing
+  const fromUnified = readUnifiedDomainCredentials()
+  if (!fromUnified?.password) return null
+  try {
+    return writeJiraUserConfig(fromUnified)
+  } catch {
+    return null
+  }
+}
+
 export function readJiraUserConfig(): JiraUserConfigRecord | null {
   const p = jiraUserConfigPath()
   if (!existsSync(p)) return null

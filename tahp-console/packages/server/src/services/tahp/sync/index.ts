@@ -9,6 +9,13 @@ export {
   getBaselineNotifyActor,
   getOrCreateInstallId,
 } from './baseline-notify-client'
+export {
+  startTaskNotifyClient,
+  stopTaskNotifyClient,
+  reconnectTaskNotifyClient,
+  getTaskNotifyOwner,
+} from './task-notify-client'
+export { bindJiraToCentral, scheduleBindJiraToCentral, bindStoredJiraIfAny } from './jira-bind'
 export { shortHash, sha256, shortHashBuffer } from './hash'
 export {
   getSkillSyncStatus,

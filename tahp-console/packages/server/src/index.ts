@@ -27,7 +27,7 @@ import { logger } from './services/logger'
 // TAHP 桥接
 import { setupTahpRunSocket } from './routes/tahp/tahp-run'
 import { initDeviceSelfCheck } from './services/tahp/device-self-check'
-import { startSyncScheduler, startBaselineNotifyClient } from './services/tahp/sync'
+import { startSyncScheduler, startBaselineNotifyClient, startTaskNotifyClient, bindStoredJiraIfAny } from './services/tahp/sync'
 import { startPlanExecutor } from './services/tahp/test-plan-executor'
 import { bootstrapAdaptPipeline } from './routes/tahp/adapt-pipeline'
 import { bootstrapGkiPatchServer } from './services/tahp/gki-patch'
@@ -261,6 +261,24 @@ export async function bootstrap() {
   } catch (err) {
     logger.warn({ err }, '[bootstrap] baseline-notify client failed to start')
   }
+
+  // 任务通道：按 Jira / 一键配置域账号连 /task-notify；已有凭据则绑定中心账户
+  try {
+    startTaskNotifyClient()
+  } catch (err) {
+    logger.warn({ err }, '[bootstrap] task-notify client failed to start')
+  }
+  void bindStoredJiraIfAny()
+    .catch((err) => {
+      logger.warn({ err }, '[bootstrap] jira-bind on startup failed')
+    })
+    .finally(() => {
+      try {
+        startTaskNotifyClient()
+      } catch (err) {
+        logger.warn({ err }, '[bootstrap] task-notify client failed to start after bind')
+      }
+    })
 
   try {
     startPlanExecutor()

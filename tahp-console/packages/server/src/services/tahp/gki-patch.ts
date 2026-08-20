@@ -24,6 +24,72 @@ export function isGkiPatchAutoStartEnabled() {
 let childProcess: ChildProcess | null = null
 let activePort = DEFAULT_PORT
 let startingPromise: Promise<void> | null = null
+let gkiQualityPollTimer: ReturnType<typeof setInterval> | null = null
+const uploadedGkiJobIds = new Set<string>()
+
+async function fetchGkiUpgradeJobs(): Promise<GkiUpgradeJobRow[]> {
+  const url = `http://127.0.0.1:${activePort}/api/upgrade/jobs?limit=50`
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, { timeout: 10000 }, (res) => {
+      let body = ''
+      res.on('data', chunk => { body += chunk })
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(body) as { jobs?: GkiUpgradeJobRow[] }
+          resolve(parsed.jobs || [])
+        } catch (e) {
+          reject(e)
+        }
+      })
+    })
+    req.on('error', reject)
+    req.on('timeout', () => {
+      req.destroy()
+      reject(new Error('GKI jobs request timeout'))
+    })
+  })
+}
+
+function startGkiQualityPoll() {
+  if (gkiQualityPollTimer) return
+  gkiQualityPollTimer = setInterval(async () => {
+    if (!await probeHealth(activePort)) return
+    try {
+      const { isGkiTerminal } = await import('./quality-run-mapper')
+      const { uploadGkiPatchJobToCentral } = await import('./quality-run-upload')
+      const jobs = await fetchGkiUpgradeJobs()
+      for (const job of jobs) {
+        const id = String(job.id)
+        if (!isGkiTerminal(job.status)) continue
+        if (uploadedGkiJobIds.has(id)) continue
+        const res = await uploadGkiPatchJobToCentral(job)
+        if (res.uploaded) uploadedGkiJobIds.add(id)
+      }
+    } catch (err) {
+      logger.debug({ err: (err as Error).message }, '[gki-patch] quality poll failed')
+    }
+  }, 30000)
+}
+
+function stopGkiQualityPoll() {
+  if (gkiQualityPollTimer) {
+    clearInterval(gkiQualityPollTimer)
+    gkiQualityPollTimer = null
+  }
+}
+
+interface GkiUpgradeJobRow {
+  id: number | string
+  status: string
+  applied_commits?: number
+  total_commits?: number
+  conflict_files?: string[]
+  error_msg?: string
+  created_at?: string
+  completed_at?: string
+  repo?: string
+  options?: string
+}
 
 function toolRootCandidates() {
   const envOverride = process.env.GKI_PATCH_TOOL_ROOT?.trim()
@@ -258,6 +324,7 @@ export async function ensureGkiPatchServer() {
   if (await probeHealth(activePort)) {
     const status = getGkiPatchStatus()
     status.running = true
+    startGkiQualityPoll()
     return status
   }
 
@@ -276,6 +343,7 @@ export async function ensureGkiPatchServer() {
   await startingPromise
   const status = getGkiPatchStatus()
   status.running = true
+  startGkiQualityPoll()
   return status
 }
 
@@ -325,6 +393,7 @@ export async function getGkiPatchStatusAsync() {
 }
 
 export function stopGkiPatchServer() {
+  stopGkiQualityPoll()
   if (!childProcess || childProcess.killed) return
   childProcess.kill('SIGTERM')
   childProcess = null

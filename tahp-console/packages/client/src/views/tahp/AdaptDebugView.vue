@@ -13,7 +13,7 @@ import { useModelProviderReadiness } from '@/composables/useModelProviderReadine
 import { useTahpTasksStore } from '@/stores/tahp/tasks'
 import type { TahpModule } from '@/constants/tahp-modules'
 import { fetchDynamicDomains } from '@/api/tahp/skills'
-import { startAdaptAgentRun, previewAdaptAgentPrompts, submitAdaptUserInput, continueAdaptAgentRun, respondAdaptApproval, completeAdaptAgentRun, cancelAdaptAgentRun, fetchPrereqProjects, resolvePrereqsFromCenter, type AdaptPrereqProject } from '@/api/tahp/adapt'
+import { startAdaptAgentRun, previewAdaptAgentPrompts, submitAdaptUserInput, continueAdaptAgentRun, respondAdaptApproval, completeAdaptAgentRun, cancelAdaptAgentRun, fetchPrereqProjects, peekPrereqProjects, resolvePrereqsFromCenter, type AdaptPrereqProject } from '@/api/tahp/adapt'
 import { listTaskReports, getTaskReport, type TaskReportSummary, type TaskReportDetail } from '@/api/tahp/reports'
 import { waitForTahpSocketReady } from '@/api/tahp/socket'
 import { fetchSkills, type SkillInfo } from '@/api/hermes/skills'
@@ -822,7 +822,7 @@ const detailCache = reactive<Record<string, TaskReportDetail>>({})
 /** 最近回填的字段名，用于表单高亮反馈（1.5s 后清空） */
 const refilledFields = ref<string[]>([])
 const stalePrereqFields = ref<string[]>([])
-const prereqProjects = ref<AdaptPrereqProject[]>([])
+const prereqProjects = ref<AdaptPrereqProject[]>(peekPrereqProjects() ?? [])
 const prereqProjectCode = ref<string | null>(null)
 const prereqLoading = ref(false)
 const prereqFillMode = ref<'empty' | 'overwrite'>('empty')
@@ -1109,8 +1109,10 @@ async function loadPrereqProjects() {
     prereqProjects.value = await fetchPrereqProjects()
     prereqCenterReady.value = true
   } catch (e) {
-    prereqCenterReady.value = false
-    prereqProjects.value = []
+    if (!prereqProjects.value.length) {
+      prereqCenterReady.value = false
+      prereqProjects.value = []
+    }
     // 未配置中心时静默；有中心但失败时提示
     const msg = (e as Error).message || ''
     if (!/未配置中心/.test(msg)) {
@@ -1713,6 +1715,7 @@ async function loadDynamicDomains(workspaceId: AdaptWorkspaceId = activeWorkspac
 }
 
 onMounted(async () => {
+  void loadPrereqProjects()
   const ws = activeWorkspaceId.value
   layoutsReadyByWorkspace[ws] = false
   await loadAdaptLayouts({ workspaceId: ws, showError: true })
@@ -1720,7 +1723,6 @@ onMounted(async () => {
   await loadAdaptLayouts({ workspaceId: ws, showError: false })
   layoutsReadyByWorkspace[ws] = true
   await loadHistory()
-  void loadPrereqProjects()
 })
 
 // ─────────────────────────────────────────────────────────────────────────────

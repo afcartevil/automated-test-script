@@ -350,6 +350,15 @@ async function propagateToDerivedStores(values: UnifiedConfigValues): Promise<vo
         password,
         baseUrl: FIXED_SERVER_ADDRESSES.jira_base_url,
       })
+      void import('./sync/jira-bind').then(({ scheduleBindJiraToCentral }) => {
+        scheduleBindJiraToCentral({
+          username: account,
+          password,
+          baseUrl: FIXED_SERVER_ADDRESSES.jira_base_url,
+        })
+      }).catch((bindErr) => {
+        logger.warn({ err: (bindErr as Error).message }, '[unified-config] jira-bind schedule failed')
+      })
     } catch (err) {
       logger.warn({ err: (err as Error).message }, '[unified-config] jira 派生失败')
     }

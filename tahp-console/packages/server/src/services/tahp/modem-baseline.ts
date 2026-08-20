@@ -368,6 +368,9 @@ function createRunId() {
 function writeRunMeta(meta: ModemBaselineRunMeta) {
   ensureRunDirs(meta.runId)
   fs.writeFileSync(runMetaPath(meta.runId), JSON.stringify(meta, null, 2), 'utf-8')
+  if (meta.status === 'success' || meta.status === 'failed' || meta.status === 'conflict') {
+    void import('./quality-run-upload').then(m => m.uploadModemPatchRunToCentral(meta))
+  }
 }
 
 function readJsonFile<T>(filePath: string, fallback: T): T {
