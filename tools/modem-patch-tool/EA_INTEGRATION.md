@@ -13,6 +13,9 @@
 - 启动脚本：
   - `debug_stop_after_merge.py`
   - `debug_continue_after_merge.py`
+- 远程执行：`harness_bridge.py` 自动探测 CLI 形态
+  - 新 ASF：`asf bridge up` + `asf bridge cmd`（无 `remote-runner bridge-exec`）
+  - 旧 Harness：`remote-runner bridge-exec`
 - 运行数据、日志、任务记录不写回本目录，而是由 `tahp-console` 服务端写入自己的数据目录
 
 ### 外部通知接入（基线完成后推送）

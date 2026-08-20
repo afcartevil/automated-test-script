@@ -20,6 +20,8 @@ import base64
 import time
 from datetime import datetime
 
+from harness_bridge import probe_bridge, run_remote_shell
+
 
 class AutoPatchMerger:
     def __init__(self, config):
@@ -133,329 +135,86 @@ class AutoPatchMerger:
         })
     
     def run_harness_command(self, command, working_dir=None, max_retries=3, retry_delay=10, delay_after=0):
-        """Run command on remote machine via Transsion Harness bridge-exec with retry logic"""
-        import sys
-        # Proper harness command format: harness remote-runner bridge-exec --command "<command>"
-        # For multiple commands or working directory, use bash -c
+        """Run command on remote via ASF bridge cmd (new) or legacy remote-runner bridge-exec."""
         if not getattr(self, 'enable_harness_delay', True):
             delay_after = 0
-        
+
         if working_dir:
             command_str = ' '.join(command)
             remote_cmd = f"cd {working_dir} && {command_str}"
         else:
             remote_cmd = ' '.join(command)
-        
-        # Build argument list or shell command
-        if sys.platform == "win32":
-            # On Windows, escape double quotes properly for shell
-            escaped_remote_cmd = remote_cmd.replace('"', '\\"')
-            full_cmd = f'harness --json remote-runner bridge-exec --i-understand-this-runs-raw-shell --command "{escaped_remote_cmd}"'
-            self.log(f"Running remote command: {full_cmd}")
+
+        self.log(f"Running remote shell: {remote_cmd}")
+        result = run_remote_shell(
+            remote_cmd,
+            timeout_sec=300,
+            max_retries=max_retries,
+            log=self.log,
+        )
+
+        harness_json = getattr(result, "_harness_json", None)
+        if isinstance(harness_json, dict):
+            status = harness_json.get("status", "unknown")
+            exit_code = harness_json.get("exit_code")
+            if exit_code is None:
+                exit_code = 1 if status == "error" else getattr(result, "returncode", 1)
+            error_field = (
+                str(harness_json.get("error", "") or harness_json.get("message", "") or "")
+            ).strip()
+            error_code_field = str(harness_json.get("error_code", "") or "").strip()
+            agent_next_action_field = str(harness_json.get("agent_next_action", "") or "").strip()
+            output_field = str(harness_json.get("output", "") or getattr(result, "stdout", "") or "").strip()
+            self.log(f"[Harness] status: {status}, exit_code: {exit_code}")
+            if error_code_field:
+                self.log(f"[Harness ERROR_CODE] {error_code_field}")
+            if error_field:
+                self.log(f"[Harness ERROR] {error_field}")
+            if agent_next_action_field:
+                self.log(f"[Harness HINT] {agent_next_action_field}")
+            if output_field:
+                self.log(output_field)
         else:
-            full_args = ["harness", "--json", "remote-runner", "bridge-exec", "--i-understand-this-runs-raw-shell", "--command", remote_cmd]
-            self.log(f"Running remote command: {' '.join(full_args)}")
-        
-        last_error = None
-        for attempt in range(1, max_retries + 1):
-            try:
-                if sys.platform == "win32":
-                    result = subprocess.run(
-                        full_cmd,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        shell=True,
-                        timeout=300  # 5 minutes timeout per attempt
-                    )
-                else:
-                    result = subprocess.run(
-                        full_args,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        timeout=300  # 5 minutes timeout per attempt
-                    )
-                
-                # Parse JSON output from harness
-                try:
-                    output_json = json.loads(result.stdout)
+            if getattr(result, "stdout", None):
+                self.log(str(result.stdout).strip())
+            if getattr(result, "stderr", None):
+                self.log(f"STDERR: {str(result.stderr).strip()}")
 
-                    if result.stdout:
-                        status = output_json.get('status', 'unknown')
-                        # Harness JSON has used different exit code keys across
-                        # versions: prefer `exit_code`, fall back to legacy `-1`
-                        # when only an error envelope is returned.
-                        exit_code = (
-                            output_json.get('exit_code')
-                            if output_json.get('exit_code') is not None
-                            else (1 if status == 'error' else 0)
-                        )
-                        error_field = (
-                            output_json.get('error', '')
-                            or output_json.get('message', '')
-                            or ''
-                        ).strip()
-                        error_code_field = (output_json.get('error_code', '') or '').strip()
-                        agent_next_action_field = (output_json.get('agent_next_action', '') or '').strip()
-                        output_field = (output_json.get('output', '') or '').strip()
-                        self.log(f"[Harness] status: {status}, exit_code: {exit_code}")
-                        if error_code_field:
-                            self.log(f"[Harness ERROR_CODE] {error_code_field}")
-                        if error_field:
-                            self.log(f"[Harness ERROR] {error_field}")
-                        if agent_next_action_field:
-                            self.log(f"[Harness HINT] {agent_next_action_field}")
-                        if output_field:
-                            self.log(output_field)
+        if delay_after > 0 and int(getattr(result, "returncode", 1) or 0) == 0:
+            self.wait(delay_after)
+        return result
 
-                    if result.stderr:
-                        self.log(f"[Harness STDERR] {result.stderr.strip()}")
-
-                    # Check for timeout or bridge error
-                    if output_json.get('status') == 'error':
-                        error_msg = (output_json.get('error', '') or output_json.get('message', '') or '').strip()
-                        error_code_msg = (output_json.get('error_code', '') or '').strip()
-                        agent_action_msg = (output_json.get('agent_next_action', '') or '').strip()
-                        bridge_snippet = ''
-                        try:
-                            if isinstance(output_json.get('bridge'), dict):
-                                bridge_obj = output_json.get('bridge') or {}
-                                bridge_bits = []
-                                for key in ('ready', 'transport_ready', 'shell_healthy', 'health_probe',
-                                            'shell_probe_output', 'session_phase', 'session_id',
-                                            'ready_file_exists', 'service_reachable', 'host', 'port'):
-                                    if key in bridge_obj:
-                                        bridge_bits.append(f"{key}={bridge_obj.get(key)}")
-                                if bridge_bits:
-                                    bridge_snippet = 'bridge({' + ', '.join(bridge_bits) + '})'
-                        except Exception:
-                            bridge_snippet = ''
-                        output_msg = (output_json.get('output', '') or '').strip()
-                        stderr_msg = (result.stderr or '').strip()
-                        combined_parts = [error_code_msg, error_msg, agent_action_msg, bridge_snippet,
-                                          output_msg, stderr_msg]
-                        combined_msg = ' '.join(part for part in combined_parts if part).strip() or 'unknown_error'
-                        combined_lower = combined_msg.lower()
-                        # Treat ANY status=error from harness bridge-exec as a bridge
-                        # channel failure candidate; generic bridge_disconnected /
-                        # runner_not_found / timeout / bridge_not_ready / qizhi errors
-                        # do not always contain the literal word "bridge" in the JSON
-                        # payload. Retry only for timeout / bridge-keyed messages;
-                        # otherwise fail fast to surface a clear UI signal.
-                        is_timeout = 'timeout' in combined_lower or 'timed out' in combined_lower
-                        is_bridge_like = is_timeout or (
-                            any(token in combined_lower for token in [
-                                'bridge', 'not ready', 'disconnected', 'runner not found',
-                                'no runner', 'remote runner', 'channel closed',
-                                'serve', 'otp', 'authentication', 'bastion',
-                                'qizhi', 'connect qizhi bridge', 'ready_file',
-                            ])
-                        )
-                        last_error = combined_msg
-                        if attempt < max_retries and is_bridge_like:
-                            self.log(f"Bridge-channel error detected (attempt {attempt}/{max_retries}): {combined_msg}")
-                            delay = 60 - (attempt * 10)  # First: 50s, Second: 40s, Third: 30s
-                            self.log(f"Retrying in {delay} seconds (OTP may be required)...")
-                            import time
-                            time.sleep(delay)
-                            continue
-                        if attempt < max_retries:
-                            self.log(f"Harness status=error without bridge-key token; failing fast instead of retrying: {combined_msg}")
-                        else:
-                            self.log(f"Max retries ({max_retries}) reached. Last error: {combined_msg}")
-                        # Return a wrapper object with error info
-                        wrapper = type('', (), {})()
-                        wrapper.returncode = 1
-                        wrapper.stdout = ''
-                        wrapper.stderr = combined_msg
-                        return wrapper
-
-                    # Create a wrapper object that simulates subprocess.CompletedProcess
-                    wrapper = type('', (), {})()
-                    wrapper.returncode = output_json.get('exit_code', 0 if output_json.get('status') == 'ok' else 1)
-                    wrapper.stdout = output_json.get('output', '')
-                    wrapper.stderr = result.stderr
-                    # Add delay after successful command
-                    if delay_after > 0:
-                        self.wait(delay_after)
-                    return wrapper
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    # Fallback to raw output if JSON parsing fails
-                    if result.stdout:
-                        self.log(result.stdout.strip())
-                    if result.stderr:
-                        self.log(f"STDERR: {result.stderr.strip()}")
-                    
-                    # Check if this looks like a bridge error even without JSON
-                    if result.stderr and ('bridge' in result.stderr.lower() or 'timeout' in result.stderr.lower()):
-                        last_error = result.stderr
-                        if attempt < max_retries:
-                            self.log(f"Bridge error detected (attempt {attempt}/{max_retries}): JSON parse failed")
-                            delay = 60 - (attempt * 10)  # First: 50s, Second: 40s, Third: 30s
-                            self.log(f"Retrying in {delay} seconds (OTP may be required)...")
-                            import time
-                            time.sleep(delay)
-                            continue
-                    
-                    # Add delay after command even if JSON parse fails
-                    if delay_after > 0:
-                        self.wait(delay_after)
-                    return result
-                    
-            except subprocess.TimeoutExpired:
-                last_error = f"Command timed out after 300 seconds (attempt {attempt}/{max_retries})"
-                self.log(last_error)
-                if attempt < max_retries:
-                    delay = 60 - (attempt * 10)  # First: 50s, Second: 40s, Third: 30s
-                    self.log(f"Retrying in {delay} seconds (OTP may be required)...")
-                    import time
-                    time.sleep(delay)
-                continue
-            except Exception as e:
-                last_error = str(e)
-                self.log(f"Error running harness command: {e}")
-                if attempt < max_retries:
-                    delay = 60 - (attempt * 10)  # First: 50s, Second: 40s, Third: 30s
-                    self.log(f"Retrying in {delay} seconds (OTP may be required)...")
-                    import time
-                    time.sleep(delay)
-                    continue
-                else:
-                    self.log(f"Max retries ({max_retries}) reached. Last error: {last_error}")
-                    wrapper = type('', (), {})()
-                    wrapper.returncode = 1
-                    wrapper.stdout = ''
-                    wrapper.stderr = last_error
-                    return wrapper
-        
-        # All retries failed
-        wrapper = type('', (), {})()
-        wrapper.returncode = 1
-        wrapper.stdout = ''
-        wrapper.stderr = last_error or "Max retries exceeded"
-        return wrapper
-    
     def check_bridge_connection(self):
-        """Check if harness bridge to bastion is active (non-blocking; do NOT auto-launch bridge-serve from CLI).
-
-        Bridge connection must be established from within the Harness terminal (harness remote-runner bridge-serve)
-        before this script runs; starting bridge-serve via subprocess is no longer supported as of the 2026-08
-        toolchain update because OTP/auth must be performed interactively inside the Harness terminal.
-        """
-        # Skip bridge check if already confirmed working
+        """Informational bridge probe. New CLI uses asf bridge; legacy used bridge-serve."""
         if os.environ.get('SKIP_BRIDGE_CHECK', '').lower() == 'true':
             self.log("Skipping bridge check (SKIP_BRIDGE_CHECK=true)")
             return True
 
-        self.log("Checking harness bridge connection status...")
-
-        # First check if bridge is already active
+        self.log("Checking harness / ASF bridge connection status...")
         bridge_active = self._test_bridge_connection()
-
         if bridge_active:
             return True
 
-        # Bridge not active: since starting bridge-serve from CLI (subprocess) is no longer supported
-        # (bridge must be connected from inside the Harness terminal), we only log a warning here
-        # and let the first real bridge-exec command surface the actual error (with context).
         self.log("WARNING: Bridge connection not ready at pre-check stage")
-        self.log("  NOTE: bridge-serve cannot be launched automatically from the CLI anymore.")
-        self.log("  Please make sure `harness remote-runner bridge-serve` has been started inside the Harness terminal")
-        self.log("  and that OTP authentication has completed before running this tool.")
+        self.log("  NOTE: New ASF CLI uses `asf bridge up` / `asf bridge cmd` (no remote-runner bridge-exec).")
+        self.log("  If auto bridge up fails, run `asf --json bridge up` once (OTP/env.yaml) then retry.")
+        self.log("  Legacy CLI only: start bridge from Harness terminal; bridge-serve is not launched by this tool.")
         self.log("  Continuing anyway; the first remote command will surface any connectivity error.")
         return True
-    
+
     def _test_bridge_connection(self):
-        """Test if bridge connection is working"""
-        import sys
+        """Test if bridge / ASF session path looks usable."""
         try:
-            self.log("  Testing bridge connection with harness command...")
-            # On Windows, use shell=True to find harness in PATH
-            if sys.platform == "win32":
-                result = subprocess.run(
-                    'harness --json remote-runner bridge-exec --i-understand-this-runs-raw-shell --command "echo bridge_check"',
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    shell=True,
-                    timeout=15
-                )
-            else:
-                result = subprocess.run(
-                    ["harness", "--json", "remote-runner", "bridge-exec", "--i-understand-this-runs-raw-shell", "--command", "echo bridge_check"],
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=15
-                )
-            
-            self.log(f"  Bridge test - return code: {result.returncode}")
-            if result.stdout:
-                self.log(f"  Bridge test - stdout: {result.stdout.strip()}")
-            if result.stderr:
-                self.log(f"  Bridge test - stderr: {result.stderr.strip()}")
-            
-            try:
-                import json
-                output_json = json.loads(result.stdout)
-                
-                status = output_json.get("status", "unknown")
-                exit_code = output_json.get("exit_code", -1)
-                
-                self.log(f"  Bridge test - parsed status: {status}, exit_code: {exit_code}")
-                
-                if status == "ok" and exit_code == 0:
-                    self.log(f"  Bridge connection is active (remote: {output_json.get('output', '').strip()})")
-                    return True
-                else:
-                    self.log(f"  Bridge test failed - status not ok or exit_code != 0")
-                    return False
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
-                self.log(f"  Bridge test - JSON decode error: {e}")
-                return False
-                
-        except subprocess.TimeoutExpired:
-            self.log("  Bridge test - timeout after 30 seconds")
-            return False
+            self.log("  Testing bridge connection...")
+            return probe_bridge(log=self.log)
         except Exception as e:
             self.log(f"  Bridge test - exception: {type(e).__name__}: {e}")
             return False
-    
+
     def _start_bridge_service(self):
-        """Try to start the bridge service in a new window"""
-        try:
-            import sys
-            import os
-            
-            if sys.platform == "win32":
-                # On Windows, start a new PowerShell window
-                subprocess.Popen(
-                    [
-                        "powershell",
-                        "-NoExit",
-                        "-Command",
-                        "harness remote-runner bridge-serve"
-                    ],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE
-                )
-            else:
-                # On other platforms, try to start in background
-                subprocess.Popen(
-                    ["harness", "remote-runner", "bridge-serve"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True
-                )
-            
-            return True
-        except Exception as e:
-            self.log(f"Failed to start bridge automatically: {e}")
-            return False
+        """Deprecated for ASF CLI: prefer silent `asf bridge up` inside run_remote_shell."""
+        self.log("NOTE: _start_bridge_service is a no-op; ASF path uses `asf bridge up` on first remote cmd.")
+        return False
     
     def copy_file_via_mapped_dir(self, local_path, remote_relative_path, content=None):
         """Copy file via mapped network drive if available

@@ -42,3 +42,29 @@ export function appendModemLogTail(
   if (next.length <= maxChars) return next
   return takeModemLogTail(next, maxLines, maxChars)
 }
+
+/** 「只看错误」：覆盖 Gerrit / Change-Id / remote rejected，避免只剩 final_status=failed。 */
+export function isModemErrorLogLine(line: string): boolean {
+  const text = String(line || '')
+  if (!text.trim()) return false
+  // Post-process noise alone is not helpful as the "root" error.
+  if (/\[conflicts\]\s*final_status=failed\b/i.test(text)) return false
+  if (/\[run\]\s*phase=\S+\s+status=failed\b/i.test(text) && !/FAILURE:/i.test(text)) return false
+  if (/summary=post_process_failed\b/i.test(text)) return false
+  return (
+    /\berror\b/i.test(text)
+    || /\bfailed\b/i.test(text)
+    || /\bFAILURE\b/.test(text)
+    || /remote rejected/i.test(text)
+    || /missing\s+Change-Id/i.test(text)
+    || /failed to push/i.test(text)
+    || /\[Harness ERROR/i.test(text)
+    || /exit_code:\s*[1-9]\d*/i.test(text)
+    || /inferred_error=/i.test(text)
+  )
+}
+
+export function isModemConflictLogLine(line: string): boolean {
+  const text = String(line || '')
+  return /\bconflict\b/i.test(text) || /\[conflicts\]/i.test(text)
+}
