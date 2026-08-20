@@ -11,6 +11,13 @@ import { readCentralUserSession } from '../central-user-session'
 let socket: Socket | null = null
 let started = false
 let currentOwner = ''
+const unreadIds = new Set<string>()
+const unreadItems = new Map<string, {
+  package_id: string
+  notice_type?: string
+  title?: string
+  next?: string
+}>()
 
 function resolveOwner(explicit?: string): string {
   const fromArg = String(explicit || '').trim()
@@ -48,6 +55,25 @@ function connect(owner: string): void {
 
   socket.on('disconnect', (reason) => {
     logger.info({ reason }, '[task-notify] disconnected')
+  })
+
+  socket.on('task.package', (payload: {
+    package_id?: string
+    notice_type?: string
+    title?: string
+    next?: string
+  } = {}) => {
+    const id = String(payload.package_id || '').trim()
+    if (!id) return
+    unreadIds.add(id)
+    unreadItems.set(id, {
+      package_id: id,
+      notice_type: payload.notice_type,
+      title: payload.title,
+      next: payload.next,
+    })
+    socket?.emit('task.package.ack', { package_id: id })
+    logger.info({ package_id: id, notice_type: payload.notice_type, unread: unreadIds.size }, '[task-notify] package received')
   })
 }
 
@@ -100,4 +126,27 @@ export function stopTaskNotifyClient(): void {
 
 export function getTaskNotifyOwner(): string {
   return currentOwner
+}
+
+export function getTaskUnreadIds(): string[] {
+  return [...unreadIds]
+}
+
+export function getTaskInboxPatches(): Array<{
+  package_id: string
+  notice_type?: string
+  title?: string
+  next?: string
+}> {
+  return [...unreadItems.values()].filter(item => item.notice_type)
+}
+
+export function clearTaskUnread(packageId?: string): void {
+  if (packageId) {
+    unreadIds.delete(packageId)
+    unreadItems.delete(packageId)
+  } else {
+    unreadIds.clear()
+    unreadItems.clear()
+  }
 }

@@ -10,6 +10,8 @@ import { readCentralUserSession } from '../../services/tahp/central-user-session
 import { isCentralConfigured } from '../../services/tahp/runtime-mode'
 import { bindJiraToCentral } from '../../services/tahp/sync/jira-bind'
 import { centralClient } from '../../services/tahp/sync/central-client'
+import { getTaskInboxPatches, getTaskUnreadIds } from '../../services/tahp/sync/task-notify-client'
+import { clearApplyPrompt, getApplyPrompt } from '../../services/tahp/task-apply-prompt'
 
 export const tahpCentralSsoRoutes = new Router()
 
@@ -74,6 +76,91 @@ tahpCentralSsoRoutes.get('/api/tahp/central/sso-url', async (ctx) => {
   } catch (err) {
     logger.warn({ err: (err as Error).message }, '[central-sso] sso-url failed')
     ctx.status = 502
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+tahpCentralSsoRoutes.get('/api/tahp/task-inbox', async (ctx) => {
+  if (!isCentralConfigured()) {
+    ctx.body = { success: true, data: { packages: [], unread: 0, apply_prompt: getApplyPrompt() } }
+    return
+  }
+  try {
+    let sessionToken = readCentralUserSession()?.token || ''
+    if (!sessionToken) {
+      const jira = readJiraUserConfig()
+      if (jira) {
+        const bound = await bindJiraToCentral({
+          username: jira.username,
+          password: jira.password,
+          baseUrl: jira.base_url,
+        })
+        sessionToken = bound?.token || ''
+      }
+    }
+    if (!sessionToken) {
+      ctx.body = { success: true, data: { packages: getTaskInboxPatches(), unread: getTaskUnreadIds().length, apply_prompt: getApplyPrompt() } }
+      return
+    }
+    const packages = await centralClient.myTaskPackages(sessionToken)
+    const patches = getTaskInboxPatches()
+    const merged = [
+      ...packages,
+      ...patches.filter(p => !packages.some(x => x.package_id === p.package_id)),
+    ]
+    ctx.body = {
+      success: true,
+      data: {
+        packages: merged,
+        unread: merged.filter(p => Boolean(p.notice_type || (p as { unread?: boolean }).unread)).length,
+        apply_prompt: getApplyPrompt(),
+      },
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, '[task-inbox] failed')
+    ctx.body = { success: true, data: { packages: getTaskInboxPatches(), unread: getTaskUnreadIds().length, apply_prompt: getApplyPrompt() } }
+  }
+})
+
+tahpCentralSsoRoutes.post('/api/tahp/task-apply-dismiss', async (ctx) => {
+  clearApplyPrompt()
+  ctx.body = { success: true }
+})
+
+tahpCentralSsoRoutes.post('/api/tahp/task-apply-run', async (ctx) => {
+  const body = (ctx.request.body || {}) as {
+    package_id?: string
+    run_id?: string
+    line_ids?: string[]
+    also_pass?: boolean
+  }
+  try {
+    let sessionToken = readCentralUserSession()?.token || ''
+    if (!sessionToken) {
+      const jira = readJiraUserConfig()
+      if (jira) {
+        const bound = await bindJiraToCentral({
+          username: jira.username,
+          password: jira.password,
+          baseUrl: jira.base_url,
+        })
+        sessionToken = bound?.token || ''
+      }
+    }
+    if (!sessionToken) {
+      ctx.status = 401
+      ctx.body = { success: false, error: '请先绑定中心账号' }
+      return
+    }
+    const data = await centralClient.applyTaskRun(sessionToken, String(body.package_id || ''), {
+      run_id: String(body.run_id || ''),
+      line_ids: Array.isArray(body.line_ids) ? body.line_ids.map(String) : [],
+      also_pass: body.also_pass !== false,
+    })
+    clearApplyPrompt()
+    ctx.body = { success: true, data }
+  } catch (err) {
+    ctx.status = 400
     ctx.body = { success: false, error: (err as Error).message }
   }
 })

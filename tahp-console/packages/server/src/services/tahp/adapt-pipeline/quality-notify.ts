@@ -37,6 +37,10 @@ export async function notifyPipelineQuality(run: PipelineRun): Promise<void> {
       { pipelineRunId: run.run_id, count: runs.length },
       '[quality-upload] adapt-pipeline uploaded',
     )
+    const { offerApplyPrompt } = await import('../task-apply-prompt')
+    for (const row of res.results || []) {
+      if (row.ok && row.run_id) await offerApplyPrompt(row.run_id)
+    }
   } catch (err) {
     logger.warn(
       { pipelineRunId: run.run_id, err: (err as Error).message },

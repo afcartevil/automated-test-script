@@ -246,6 +246,53 @@ export const centralClient = {
       body: JSON.stringify({ next }),
     })
   },
+
+  async myTaskPackages(sessionToken: string): Promise<Array<{
+    package_id: string
+    project_code: string
+    domain_id: string
+    domain_label?: string
+    title: string
+    kind: string
+    unread: boolean
+    unread_count: number
+    notice_type?: string
+    next?: string
+  }>> {
+    return request('/api/tahp/tasks/my-packages', {
+      headers: { authorization: `Bearer ${sessionToken}` },
+    })
+  },
+
+  async applyCandidates(sessionToken: string, runId: string): Promise<{
+    run: { run_id: string; project_code: string; status?: string; dimension?: string; domain_id?: string }
+    packages: Array<{
+      package_id: string
+      title: string
+      domain_label: string
+      pending_items: Array<{ line_id: string; item_id: string; title: string }>
+    }>
+    domain_unspecified?: boolean
+  }> {
+    return request(`/api/tahp/tasks/apply-candidates?run_id=${encodeURIComponent(runId)}`, {
+      headers: { authorization: `Bearer ${sessionToken}` },
+    })
+  },
+
+  async applyTaskRun(sessionToken: string, packageId: string, body: {
+    run_id: string
+    line_ids: string[]
+    also_pass: boolean
+  }): Promise<{ updated: number }> {
+    return request(`/api/tahp/tasks/packages/${encodeURIComponent(packageId)}/apply-run`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${sessionToken}`,
+      },
+      body: JSON.stringify(body),
+    })
+  },
 }
 
 /** 与 easyadapter_bff quality-store IngestRunInput 对齐 */

@@ -168,6 +168,7 @@ export async function uploadSelfCheckReportToCentral(input: {
       { runId: run.run_id, project: run.project_code, status: run.status },
       '[quality-upload] self-check report uploaded',
     )
+    void import('./task-apply-prompt').then(m => m.offerApplyPrompt(run.run_id)).catch(() => undefined)
   }
   return result
 }

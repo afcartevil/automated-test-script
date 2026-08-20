@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NDropdown, useMessage } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
@@ -44,6 +44,33 @@ const systemNav = [
 ]
 
 const FEEDBACK_URL = 'https://transsioner.feishu.cn/share/base/form/shrcnDOMx8H12Nm1tcTmIOAHDId'
+const taskUnread = ref(0)
+const inboxPackages = ref<Array<{
+  package_id: string
+  project_code: string
+  domain_label?: string
+  title: string
+  unread?: boolean
+  unread_count?: number
+  notice_type?: string
+  next?: string
+}>>([])
+type ApplyPrompt = {
+  run: { run_id: string; project_code: string; status?: string; dimension?: string; domain_id?: string }
+  packages: Array<{
+    package_id: string
+    title: string
+    domain_label: string
+    pending_items: Array<{ line_id: string; item_id: string; title: string }>
+  }>
+  also_pass_default?: boolean
+  domain_unspecified?: boolean
+}
+const applyPrompt = ref<ApplyPrompt | null>(null)
+const applyPkgId = ref('')
+const applyChecked = ref<string[]>([])
+const applyAlsoPass = ref(true)
+const applyBusy = ref(false)
 
 const manualNav: Array<{ label: string; name?: string; url?: string }> = [
   { label: 'EasyAdapter 使用手册', name: 'tahp.manual' },
@@ -134,6 +161,118 @@ async function handleUpdate() {
   if (ok) message.success('更新成功', { duration: 5000 })
   else message.error('更新失败')
 }
+
+async function refreshTaskInbox() {
+  try {
+    const res = await fetch('/api/tahp/task-inbox')
+    const json = await res.json() as {
+      success?: boolean
+      data?: { unread?: number; packages?: typeof inboxPackages.value; apply_prompt?: ApplyPrompt | null }
+    }
+    if (!json.success) return
+    taskUnread.value = json.data?.unread || 0
+    inboxPackages.value = json.data?.packages || []
+    const prompt = json.data?.apply_prompt || null
+    if (prompt?.packages?.some(p => p.pending_items?.length) && !applyPrompt.value) {
+      applyPrompt.value = prompt
+      applyPkgId.value = prompt.packages[0]?.package_id || ''
+      const first = prompt.packages[0]
+      applyChecked.value = first?.pending_items.map(i => i.line_id) || []
+      applyAlsoPass.value = prompt.also_pass_default !== false && prompt.run?.status === 'pass'
+      if (prompt.run?.status && prompt.run.status !== 'pass') applyAlsoPass.value = false
+    }
+  } catch {
+    /* 中心不可达时保持原数字 */
+  }
+}
+
+async function openCentral(next: string) {
+  try {
+    const res = await fetch('/api/tahp/central/sso-url?next=' + encodeURIComponent(next))
+    const json = await res.json() as { success?: boolean; data?: { url?: string }; error?: string }
+    if (!json.success || !json.data?.url) {
+      message.error(json.error || '无法打开中心页面')
+      return
+    }
+    window.open(json.data.url, '_blank')
+  } catch (e) {
+    message.error((e as Error).message || '无法打开中心页面')
+  }
+}
+
+const taskOptions = computed(() => {
+  const items = inboxPackages.value.map(p => ({
+    label: p.notice_type
+      ? (p.title || (p.notice_type === 'gki-patch' ? 'GKI Patch' : 'Modem Patch'))
+      : `${p.project_code} · ${p.domain_label || ''} · ${p.title || ''}`.replace(/ · $/, ''),
+    key: p.notice_type ? `patch:${p.package_id}` : `pkg:${p.package_id}`,
+  }))
+  return [
+    ...items,
+    ...(items.length ? [{ type: 'divider', key: 'div' }] : []),
+    { label: '打开我的 Checklist', key: 'all' },
+  ]
+})
+
+function onTaskSelect(key: string) {
+  if (key === 'all') {
+    void openCentral('/tasks/mine')
+    return
+  }
+  if (key.startsWith('patch:')) {
+    void openCentral('/patch-manage')
+    return
+  }
+  if (key.startsWith('pkg:')) {
+    void openCentral('/tasks/mine?package=' + encodeURIComponent(key.slice(4)))
+  }
+}
+
+const applyRows = computed(() =>
+  applyPrompt.value?.packages.find(p => p.package_id === applyPkgId.value)?.pending_items || [],
+)
+
+function toggleApply(id: string, on: boolean) {
+  if (on) applyChecked.value = [...new Set([...applyChecked.value, id])]
+  else applyChecked.value = applyChecked.value.filter(x => x !== id)
+}
+
+async function dismissApply() {
+  applyPrompt.value = null
+  try { await fetch('/api/tahp/task-apply-dismiss', { method: 'POST' }) } catch { /* ignore */ }
+}
+
+async function confirmApply() {
+  if (!applyPrompt.value || !applyPkgId.value || !applyChecked.value.length) return
+  applyBusy.value = true
+  try {
+    const res = await fetch('/api/tahp/task-apply-run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        package_id: applyPkgId.value,
+        run_id: applyPrompt.value.run.run_id,
+        line_ids: applyChecked.value,
+        also_pass: applyAlsoPass.value,
+      }),
+    })
+    const json = await res.json() as { success?: boolean; error?: string }
+    if (!json.success) {
+      message.error(json.error || '勾选失败')
+      return
+    }
+    message.success(applyAlsoPass.value ? '已用本报告勾选通过' : '已关联报告')
+    applyPrompt.value = null
+  } catch (e) {
+    message.error((e as Error).message || '勾选失败')
+  } finally {
+    applyBusy.value = false
+  }
+}
+
+const inboxTimer = window.setInterval(refreshTaskInbox, 15000)
+refreshTaskInbox()
+onUnmounted(() => window.clearInterval(inboxTimer))
 </script>
 
 <template>
@@ -223,6 +362,12 @@ async function handleUpdate() {
       </nav>
 
       <div class="ck-spacer">
+        <NDropdown trigger="click" :options="taskOptions" @select="onTaskSelect">
+          <button type="button" class="ck-feedback-btn" title="打开中心我的 Checklist">
+            我的任务
+            <span v-if="taskUnread" class="ck-task-dot">{{ taskUnread > 9 ? '9+' : taskUnread }}</span>
+          </button>
+        </NDropdown>
         <a
           :href="FEEDBACK_URL"
           class="ck-feedback-btn"
@@ -261,6 +406,39 @@ async function handleUpdate() {
       <div class="model-panel">
         <ModelSelector />
         <button type="button" class="ea-btn-ghost ea-btn-sm model-close" @click="showModelModal = false">关闭</button>
+      </div>
+    </div>
+
+    <div v-if="applyPrompt" class="model-overlay" @click.self="dismissApply">
+      <div class="model-panel ck-apply-panel">
+        <h3>用本报告勾选 Checklist</h3>
+        <p class="ck-apply-meta">
+          {{ applyPrompt.run.project_code }} · {{ applyPrompt.run.run_id }}
+          <span v-if="applyPrompt.domain_unspecified">（报告未标域，请确认不要跨域误挂）</span>
+        </p>
+        <label v-if="applyPrompt.packages.length > 1" class="ck-apply-pkg">
+          工作包
+          <select v-model="applyPkgId" @change="applyChecked = applyRows.map(i => i.line_id)">
+            <option v-for="p in applyPrompt.packages" :key="p.package_id" :value="p.package_id">
+              {{ p.title || p.domain_label }}
+            </option>
+          </select>
+        </label>
+        <label v-for="row in applyRows" :key="row.line_id" class="ck-apply-row">
+          <input type="checkbox" :checked="applyChecked.includes(row.line_id)" @change="toggleApply(row.line_id, ($event.target as HTMLInputElement).checked)">
+          <span>{{ row.item_id }} {{ row.title }}</span>
+        </label>
+        <p v-if="!applyRows.length" class="ck-apply-meta">没有待处理行</p>
+        <label class="ck-apply-row">
+          <input type="checkbox" v-model="applyAlsoPass" :disabled="applyPrompt.run.status !== 'pass'">
+          <span>用本报告勾选通过（失败报告只能关联、不改状态）</span>
+        </label>
+        <div class="ck-apply-actions">
+          <button type="button" class="ea-btn-ghost ea-btn-sm" :disabled="applyBusy" @click="dismissApply">跳过</button>
+          <button type="button" class="ck-feedback-btn" :disabled="applyBusy || !applyChecked.length" @click="confirmApply">
+            {{ applyBusy ? '提交中…' : (applyAlsoPass ? '勾选通过' : '只关联报告') }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -365,6 +543,32 @@ async function handleUpdate() {
   gap: 8px;
   flex-shrink: 0;
 }
+
+.ck-task-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #e11d48;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ck-apply-panel {
+  max-width: 520px;
+  padding: 20px 22px;
+  h3 { margin: 0 0 8px; font-size: 16px; }
+}
+.ck-apply-meta { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+.ck-apply-pkg { display: flex; flex-direction: column; gap: 4px; font-size: 13px; margin-bottom: 10px; }
+.ck-apply-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; margin: 6px 0; }
+.ck-apply-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
 .ck-feedback-btn {
   display: inline-flex;
