@@ -80,11 +80,9 @@ def warn_step(
 def ensure_bridge_ready(merger: AutoPatchMerger, flow_label: str, report_label: Optional[str] = None) -> Optional[int]:
     """Informational bridge probe. No longer a blocking pre-check.
 
-    As of 2026-08 toolchain, bridge-serve can only be connected from inside the
-    Harness terminal (interactive OTP). Starting / polling bridge via subprocess
-    from the CLI is no longer supported, so we only probe + log and never fail
-    the step here. Real connectivity errors will be surfaced by the first
-    actual bridge-exec command with richer context.
+    New ASF CLI: remote shell uses `asf bridge cmd` (auto `bridge up` on first cmd).
+    Legacy CLI: `remote-runner bridge-exec`. This step only probes + logs; real
+    connectivity errors surface on the first remote command.
     """
     log_step(merger, flow_label, 1, "Check Harness bridge (informational)")
     ready = merger.check_bridge_connection()

@@ -10,7 +10,7 @@ import ModemBaselineLogFilterBar from '@/components/tahp/modem-baseline/ModemBas
 import ModemBaselinePendingNoticesCard from '@/components/tahp/modem-baseline/ModemBaselinePendingNoticesCard.vue'
 import ModemBaselineStagePanel from '@/components/tahp/modem-baseline/ModemBaselineStagePanel.vue'
 import { useModemBaseline } from '@/composables/useModemBaseline'
-import { takeModemLogTail } from '@/utils/modemBaselineLog'
+import { isModemConflictLogLine, isModemErrorLogLine, takeModemLogTail } from '@/utils/modemBaselineLog'
 
 const message = useMessage()
 const {
@@ -110,8 +110,8 @@ const filteredLog = computed(() => {
   if (!onlyErrors.value && !onlyConflicts.value) return raw
   const lines = raw.split(/\r?\n/)
   const out = lines.filter((line) => {
-    if (onlyErrors.value && (/\berror\b/i.test(line) || /\bfailed\b/i.test(line))) return true
-    if (onlyConflicts.value && (/\bconflict\b/i.test(line) || /\[conflicts\]/i.test(line))) return true
+    if (onlyErrors.value && isModemErrorLogLine(line)) return true
+    if (onlyConflicts.value && isModemConflictLogLine(line)) return true
     return false
   })
   return out.join('\n')

@@ -3580,8 +3580,12 @@ async function postProcessRunBody(
   const inferredError = status === 'failed'
     ? inferRunFailureError(current.logPath ?? runLogPath(runId))
     : undefined
-  if (inferredError === 'bridge_not_ready') {
-    appendLog('[run] inferred_error=bridge_not_ready source=log_tail\n')
+  if (inferredError) {
+    appendLog(`[run] inferred_error=${inferredError} source=log_tail\n`)
+    const human = describeModemRunFailure(inferredError)
+    if (human) {
+      appendLog(`[run] FAILURE: ${human}\n`)
+    }
   }
 
   const nextMeta: ModemBaselineRunMeta = {
@@ -3631,55 +3635,85 @@ function inferRunFailureError(logPath: string) {
   try {
     if (!logPath || !fs.existsSync(logPath)) return undefined
     const text = fs.readFileSync(logPath, 'utf-8')
-    const lines = text.split(/\r?\n/)
-    const tail = lines.slice(-400).join('\n')
-    const bridgePatterns = [
-      /warning:\s*bridge connection not ready at pre-check stage/i,
-      /\bbridge not ready at pre-check stage\b/i,
-      /\bbridge-serve cannot be launched automatically\b/i,
-      /\bbridge-channel error detected\b/i,
-      /\bbridge error detected\b/i,
-      /\bbridge connection check failed\b/i,
-      /\bbridge connection failed\b/i,
-      /\bbridge\b.*\bnot ready\b/i,
-      /\bQIZHI_BRIDGE_NOT_READY\b/i,
-      /\bQizhi bridge is not ready\b/i,
-      /\bagent_next_action/i,
-      /\bConnect Qizhi bridge before retrying\b/i,
-      /\[Harness ERROR_CODE\]/i,
-      /\[Harness HINT\]/i,
-      /\bready_file_exists\b/i,
-      /\bunknown_error\b.*\bqizhi\b|\bqizhi\b.*\bunknown_error\b/i,
-      /\bmax retries\b.*\blast error:.*\bbridge\b/i,
-    ]
-    const hasHarmlessFetch = /warning:\s*git fetch origin\s+\S+\s+failed/i.test(tail) && /no real remote commit probe available yet/i.test(tail)
-    if (hasHarmlessFetch) return undefined
-    const explicitBridgeHit = bridgePatterns.some(pattern => pattern.test(tail))
-    if (explicitBridgeHit) return 'bridge_not_ready'
-
-    // Heuristic fallback:
-    // A remote command like `git fetch origin <branch>` failed quickly with
-    // harness reporting status=error AND the failure happened in the first
-    // ~50 lines (before any real remote work could have completed) AND there
-    // is no mapped-drive success evidence (i.e. the script never actually
-    // ran a single remote-side step). This almost always means the
-    // bridge-exec channel itself is down.
-    const headBlock = lines.slice(0, 120).join('\n')
-    const firstRemoteCmdIdx = lines.findIndex(line => /Running remote command:.*(bridge-exec|bridge cmd)/.test(line))
-    const headHarnessError = /\[Harness\]\s+status:\s*error/i.test(headBlock)
-    const hasReportGenerated = /report generated locally:/i.test(headBlock)
-    const hasAnyBridgeOutput = /__APM_MERGE_HEAD__|__APM_NO__|git status --porcelain|tools\/md_merge(?:_noninteractive|\.sh)|--apm-continue/i.test(headBlock)
-    if (
-      firstRemoteCmdIdx >= 0 &&
-      headHarnessError &&
-      hasReportGenerated &&
-      !hasAnyBridgeOutput
-    ) {
-      return 'bridge_not_ready'
-    }
-    return undefined
+    return inferModemRunFailureFromLogText(text)
   } catch {
     return undefined
+  }
+}
+
+/** Pure helper for tests + post-process: classify failure from runtime log text. */
+export function inferModemRunFailureFromLogText(text: string): string | undefined {
+  const lines = String(text || '').split(/\r?\n/)
+  const tail = lines.slice(-400).join('\n')
+
+  if (/missing\s+Change-Id/i.test(tail)) return 'gerrit_missing_change_id'
+  if (/remote rejected|failed to push some refs/i.test(tail)) return 'gerrit_push_rejected'
+
+  const bridgePatterns = [
+    /warning:\s*bridge connection not ready at pre-check stage/i,
+    /\bbridge not ready at pre-check stage\b/i,
+    /\bbridge-serve cannot be launched automatically\b/i,
+    /\binvalid choice:\s*'bridge-exec'/i,
+    /\bno remote-runner bridge-exec\b/i,
+    /\bASF Bridge up failed\b/i,
+    /\bbridge-channel error detected\b/i,
+    /\bbridge error detected\b/i,
+    /\bbridge connection check failed\b/i,
+    /\bbridge connection failed\b/i,
+    /\bbridge\b.*\bnot ready\b/i,
+    /\bQIZHI_BRIDGE_NOT_READY\b/i,
+    /\bQizhi bridge is not ready\b/i,
+    /\bagent_next_action/i,
+    /\bConnect Qizhi bridge before retrying\b/i,
+    /\[Harness ERROR_CODE\]/i,
+    /\[Harness HINT\]/i,
+    /\bready_file_exists\b/i,
+    /\bunknown_error\b.*\bqizhi\b|\bqizhi\b.*\bunknown_error\b/i,
+    /\bmax retries\b.*\blast error:.*\bbridge\b/i,
+  ]
+  const hasHarmlessFetch = /warning:\s*git fetch origin\s+\S+\s+failed/i.test(tail) && /no real remote commit probe available yet/i.test(tail)
+  if (hasHarmlessFetch) {
+    // fall through to other classifiers
+  } else {
+    const explicitBridgeHit = bridgePatterns.some(pattern => pattern.test(tail))
+    if (explicitBridgeHit) return 'bridge_not_ready'
+  }
+
+  // Heuristic fallback:
+  // A remote command like `git fetch origin <branch>` failed quickly with
+  // harness reporting status=error AND the failure happened in the first
+  // ~50 lines (before any real remote work could have completed) AND there
+  // is no mapped-drive success evidence (i.e. the script never actually
+  // ran a single remote-side step). This almost always means the
+  // bridge-exec channel itself is down.
+  const headBlock = lines.slice(0, 120).join('\n')
+  const firstRemoteCmdIdx = lines.findIndex(line => /Running remote command:.*(bridge-exec|bridge cmd)/.test(line))
+  const headHarnessError = /\[Harness\]\s+status:\s*error/i.test(headBlock)
+  const hasReportGenerated = /report generated locally:/i.test(headBlock)
+  const hasAnyBridgeOutput = /__APM_MERGE_HEAD__|__APM_NO__|git status --porcelain|tools\/md_merge(?:_noninteractive|\.sh)|--apm-continue/i.test(headBlock)
+  if (
+    firstRemoteCmdIdx >= 0 &&
+    headHarnessError &&
+    hasReportGenerated &&
+    !hasAnyBridgeOutput
+  ) {
+    return 'bridge_not_ready'
+  }
+  return undefined
+}
+
+export function describeModemRunFailure(error?: string): string | undefined {
+  switch (error) {
+    case 'gerrit_missing_change_id':
+      return 'Gerrit 推送失败：commit 缺少 Change-Id。请安装 commit-msg hook 后 git commit --amend --no-edit，再重新 push。'
+    case 'gerrit_push_rejected':
+      return 'Gerrit 推送被拒。请查看日志中 remote rejected / ERROR 行确认原因。'
+    case 'bridge_not_ready':
+      return 'ASF Bridge 未就绪。请确认一键配置已保存齐治凭据与 TOTP 后重试。'
+    case 'build_failed':
+      return '自动编译失败，请结合运行日志确认 ./tools/bld_modem.sh 执行结果。'
+    default:
+      return undefined
   }
 }
 

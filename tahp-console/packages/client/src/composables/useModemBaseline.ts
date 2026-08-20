@@ -104,6 +104,8 @@ export function getRunStatusBrief(
   }
   if (status === 'failed') {
     if (error === 'bridge_not_ready') return 'bridge 未就绪'
+    if (error === 'gerrit_missing_change_id') return 'Gerrit 缺 Change-Id'
+    if (error === 'gerrit_push_rejected') return 'Gerrit 推送被拒'
     if (error === 'build_failed' || phase === 'build') return '编译失败'
     if (phase === 'resume') return '继续执行失败'
     if (phase === 'precheck') return '预检失败'
@@ -134,11 +136,15 @@ export function getStatusMeta(status?: ModemBaselineStatus, error?: string, phas
   if (status === 'failed') {
     const summary = error === 'bridge_not_ready'
       ? 'ASF Bridge 未就绪。请确认一键配置已保存齐治凭据与 TOTP 后重试（静默 asf bridge up，无需打开 Transhell）。'
-      : error === 'build_failed' || phase === 'build'
-        ? '自动编译失败，请结合运行日志确认 ./tools/bld_modem.sh 执行结果。'
-        : phase === 'resume'
-          ? '继续执行阶段失败，请结合运行日志确认 commit、post-merge 或 push 相关步骤。'
-          : '执行失败，请结合运行日志定位失败阶段。'
+      : error === 'gerrit_missing_change_id'
+        ? 'Gerrit 推送失败：commit 缺少 Change-Id。请在远端仓安装 commit-msg hook，执行 git commit --amend --no-edit 后再 push。'
+        : error === 'gerrit_push_rejected'
+          ? 'Gerrit 推送被拒。请在「实时输出」中查看 remote rejected / ERROR 行确认原因。'
+          : error === 'build_failed' || phase === 'build'
+            ? '自动编译失败，请结合运行日志确认 ./tools/bld_modem.sh 执行结果。'
+            : phase === 'resume'
+              ? '继续执行阶段失败，请结合运行日志确认 commit、post-merge 或 push 相关步骤。'
+              : '执行失败，请结合运行日志定位失败阶段。'
     return { label: '执行失败', tone: 'error', summary }
   }
   if (status === 'running') {
