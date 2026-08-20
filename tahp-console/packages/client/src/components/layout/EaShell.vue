@@ -220,7 +220,13 @@ function onTaskSelect(key: string) {
     return
   }
   if (key.startsWith('patch:')) {
-    void openCentral('/patch-manage')
+    const id = key.slice('patch:'.length)
+    const item = inboxPackages.value.find(p => p.package_id === id)
+    if (item?.notice_type === 'gki-patch') {
+      void router.push({ name: 'tahp.gki-patch.dashboard' })
+      return
+    }
+    void router.push({ name: 'tahp.modem-baseline.workbench' })
     return
   }
   if (key.startsWith('pkg:')) {

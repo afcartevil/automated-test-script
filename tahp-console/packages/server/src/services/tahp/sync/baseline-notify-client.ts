@@ -10,6 +10,8 @@ import { config } from '../../../config'
 import { logger } from '../../logger'
 import { ingestModemBaselineNotice } from '../modem-baseline-notices'
 import { getLocalActor, isCentralConfigured, isLocal } from '../runtime-mode'
+import { readJiraUsername } from '../jira-user-config'
+import { readCentralUserSession } from '../central-user-session'
 
 type CentralBaselineNotice = {
   noticeId: string
@@ -75,6 +77,19 @@ export function getBaselineNotifyActor(): string {
   return `${getLocalActor()}:${getOrCreateInstallId()}`
 }
 
+function resolveOwner(): string {
+  const fromSession = String(readCentralUserSession()?.username || '').trim()
+  if (fromSession && !fromSession.includes('@')) return fromSession
+  const fromJira = String(readJiraUsername() || '').trim()
+  if (fromJira && !fromJira.includes('@')) return fromJira
+  return ''
+}
+
+function isGkiNotice(notice: CentralBaselineNotice): boolean {
+  const kind = `${notice.payload?.patch_kind || ''} ${notice.payload?.notice_type || ''}`.toLowerCase()
+  return kind.includes('gki-patch') || kind.trim() === 'gki'
+}
+
 function loadLocalCursor(): LocalDeliveryCursor | undefined {
   const file = cursorPath()
   if (!fs.existsSync(file)) return undefined
@@ -113,6 +128,15 @@ function handleNotice(notice: CentralBaselineNotice, sock: Socket): void {
     return
   }
   try {
+    if (isGkiNotice(notice)) {
+      saveLocalCursor(notice)
+      sock.emit('baseline.ack', {
+        noticeId: notice.noticeId,
+        receivedAt: notice.receivedAt,
+      })
+      logger.info({ noticeId: notice.noticeId }, '[baseline-notify] skip modem inbox for gki-patch')
+      return
+    }
     const { created } = ingestModemBaselineNotice(
       {
         source: notice.source,
@@ -164,12 +188,14 @@ export function startBaselineNotifyClient(): void {
   started = true
   const baseUrl = config.tahp.centralUrl.replace(/\/+$/, '')
   const actor = getBaselineNotifyActor()
+  const owner = resolveOwner()
 
   socket = io(`${baseUrl}/baseline-notify`, {
     path: '/socket.io/',
     auth: {
       token: config.tahp.centralToken,
       actor,
+      owner,
     },
     transports: ['websocket', 'polling'],
     reconnection: true,
@@ -179,8 +205,10 @@ export function startBaselineNotifyClient(): void {
 
   socket.on('connect', () => {
     const cursor = loadLocalCursor()
+    const ownerNow = resolveOwner() || owner
     socket?.emit('baseline.hello', {
       actor,
+      owner: ownerNow,
       clientVersion: 'tahp-console',
       cursor: cursor
         ? {
@@ -189,7 +217,7 @@ export function startBaselineNotifyClient(): void {
           }
         : undefined,
     })
-    logger.info({ url: baseUrl, actor }, '[baseline-notify] connected')
+    logger.info({ url: baseUrl, actor, owner: ownerNow || '-' }, '[baseline-notify] connected')
   })
 
   socket.on('baseline.notice', (notice: CentralBaselineNotice) => {
