@@ -553,6 +553,7 @@ function loadCaseConfigs(): void {
     'thermal_scheme.json',
     'pipeline_adapt_tp.json',
     'pipeline_adapt_vibrator.json',
+    'pipeline_adapt_audio.json',
   ]
   
   for (const file of configFiles) {
@@ -1170,7 +1171,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'power') return ['current_analysis']
   if (testType === 'power_feature') return ['wbs']
   if (testType === 'thermal') return ['scheme']
-  if (testType === 'pipeline_adapt') return ['tp', 'vibrator']
+  if (testType === 'pipeline_adapt') return ['tp', 'vibrator', 'audio']
   if (testType === 'ai_generated') return [AI_GENERATED_MODULE]
   return ['driver', 'tdd']
 }
@@ -4134,8 +4135,9 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     scheme: 16,
     tp: 30,
     vibrator: 31,
-    lcm: 32,
-    charger: 33,
+    audio: 32,
+    lcm: 33,
+    charger: 34,
     [AI_GENERATED_MODULE]: 20,
     tdd: 99,
   }

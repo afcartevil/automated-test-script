@@ -26,8 +26,9 @@ export const MODULE_ORDER: Record<string, number> = {
   generated: 20,
   tp: 30,
   vibrator: 31,
-  lcm: 32,
-  charger: 33,
+  audio: 32,
+  lcm: 33,
+  charger: 34,
   tdd: 99,
 }
 
@@ -81,6 +82,7 @@ export function getModuleLabel(module: string): string {
     scheme: '温升方案检测',
     tp: 'TP',
     vibrator: '马达',
+    audio: '音频',
     lcm: 'LCM',
     charger: 'Charger',
     generated: 'AI生成用例',
@@ -251,7 +253,7 @@ export function formatCatalogAutomation(group: CaseCatalogGroup): string {
     return '脚本全自动（tpytest_dzppt_therm）'
   }
   if (group.testType === 'pipeline_adapt') {
-    return '脚本全自动（节点检查 + 工模）'
+    return '脚本全自动（节点检查 + 工模 + 应用 UI）'
   }
   if (group.testType === 'ai_generated') {
     const totalCases = group.modules.reduce((sum, m) => sum + m.cases.length, 0)

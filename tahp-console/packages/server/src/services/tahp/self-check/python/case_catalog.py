@@ -28,6 +28,7 @@ SHEET_TO_MODULE: dict[str, tuple[str, str]] = {
     "thermal_scheme": ("thermal", "scheme"),
     "pipeline_adapt_tp": ("pipeline_adapt", "tp"),
     "pipeline_adapt_vibrator": ("pipeline_adapt", "vibrator"),
+    "pipeline_adapt_audio": ("pipeline_adapt", "audio"),
 }
 
 MODULE_TO_SHEET: dict[tuple[str, str], str] = {
@@ -62,12 +63,13 @@ MODULE_LABELS = {
     "scheme": "温升方案检测",
     "tp": "TP",
     "vibrator": "马达",
+    "audio": "音频",
     "lcm": "LCM",
     "charger": "Charger",
 }
 
 TEST_TYPE_ORDER = ("str4", "week", "monkey", "smoke", "gms", "power", "power_feature", "thermal", "pipeline_adapt")
-MODULE_ORDER = ("driver_component", "driver_hardware", "driver", "monkey", "usd", "cts", "gts", "vts", "cts_tele", "current_analysis", "wbs", "scheme", "tp", "vibrator", "lcm", "charger", "tdd")
+MODULE_ORDER = ("driver_component", "driver_hardware", "driver", "monkey", "usd", "cts", "gts", "vts", "cts_tele", "current_analysis", "wbs", "scheme", "tp", "vibrator", "audio", "lcm", "charger", "tdd")
 
 
 def make_category_key(test_type: str, module: str) -> str:
