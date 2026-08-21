@@ -433,6 +433,17 @@ function resolveWorkspaceProfileForWrite(owner = currentOwner()) {
   return profile
 }
 
+function inferMappedPrefixFromLocalPath(localPath: string): string {
+  const normalized = path.win32.normalize(String(localPath ?? '').trim())
+  const driveMatch = normalized.match(/^([A-Za-z]):/)
+  return driveMatch ? driveMatch[1].toUpperCase() + ':' : ''
+}
+
+function inferRemotePrefixFromOwner(owner: string): string {
+  const clean = String(owner ?? '').trim()
+  return clean ? `/work/${clean}/code` : ''
+}
+
 export function createModemPatchRepo(
   input: {
     label?: string
@@ -443,7 +454,6 @@ export function createModemPatchRepo(
   },
   owner = currentOwner(),
 ): RepoProfile {
-  const profile = resolveWorkspaceProfileForWrite(owner)
   const label = String(input.label ?? '').trim()
   const localPath = path.win32.normalize(String(input.localPath ?? '').trim())
   if (!label || !localPath) {
@@ -452,6 +462,21 @@ export function createModemPatchRepo(
   if (!fs.existsSync(localPath)) {
     throw new Error('repo_path_not_found')
   }
+
+  let profile = getModemPatchWorkspaceProfile(owner)
+  if (!profile) {
+    const mappedPrefix = inferMappedPrefixFromLocalPath(localPath)
+    const remotePrefix = inferRemotePrefixFromOwner(owner)
+    if (!mappedPrefix || !remotePrefix) {
+      throw new Error('workspace_profile_not_found')
+    }
+    const inferredRoot = path.win32.normalize(path.parse(localPath).root || localPath)
+    profile = saveModemPatchWorkspaceProfile(
+      { mappedPrefix, remotePrefix, roots: [inferredRoot] },
+      owner,
+    )
+  }
+
   const items = listModemPatchRepos(owner)
   const nextItem: RepoProfile = {
     repoId: crypto.randomBytes(8).toString('hex'),
@@ -1656,7 +1681,7 @@ export function scheduleAutoExtractBranchTemplatesForRepo(repoId: string, owner 
 }
 
 export function scanModemPatchRepos(root: string, owner = currentOwner()): { root: string; items: ScannedRepoCandidate[]; warnings: string[] } {
-  const profile = resolveWorkspaceProfileForWrite(owner)
+  const profile = getModemPatchWorkspaceProfile(owner)
   const normalizedRoot = path.win32.normalize(String(root ?? '').trim())
   if (!normalizedRoot) {
     throw new Error('invalid_scan_root')
@@ -1665,9 +1690,11 @@ export function scanModemPatchRepos(root: string, owner = currentOwner()): { roo
   if (!fs.existsSync(normalizedRoot)) {
     throw new Error('scan_root_not_found')
   }
-  const rootAllowed = profile.roots.some(item => path.win32.normalize(item) === normalizedRoot)
-  if (!rootAllowed) {
-    warnings.push('scan_root_not_in_workspace_roots')
+  if (profile) {
+    const rootAllowed = profile.roots.some(item => path.win32.normalize(item) === normalizedRoot)
+    if (!rootAllowed) {
+      warnings.push('scan_root_not_in_workspace_roots')
+    }
   }
 
   const items: ScannedRepoCandidate[] = []

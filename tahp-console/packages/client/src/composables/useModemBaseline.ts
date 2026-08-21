@@ -72,6 +72,29 @@ export function emptyModemBaselineConfig(): ModemBaselineConfig {
   }
 }
 
+function translateModemBaselineError(raw: unknown): string {
+  const message = String((raw as Error)?.message ?? raw ?? '')
+  if (message === 'workspace_profile_not_found') {
+    return '请先填写 Owner 并点击「保存工作区配置」，再进行仓库扫描或新增操作'
+  }
+  if (message === 'invalid_repo_profile') {
+    return '仓库信息不完整：请检查 label（平台名）和本地路径'
+  }
+  if (message === 'repo_path_not_found') {
+    return '本地路径不存在，请确认路径后重试'
+  }
+  if (message === 'scan_root_not_found') {
+    return '仓库根目录不存在，请确认路径后重试'
+  }
+  if (message === 'invalid_scan_root') {
+    return '请填写有效的仓库根目录'
+  }
+  if (message === 'invalid_workspace_profile') {
+    return '工作区配置不完整：请填写 Owner 并确认已保存'
+  }
+  return message
+}
+
 const SELECTED_REPO_STORAGE_KEY = 'tahp_modem_patch_selected_repo'
 
 function loadSelectedRepoId() {
@@ -1029,6 +1052,8 @@ export function useModemBaseline() {
       applyWorkspaceProfileToConfig(workspaceProfile.value)
       precheck.value = null
       return workspaceProfile.value
+    } catch (error) {
+      throw new Error(translateModemBaselineError(error))
     } finally {
       savingWorkspace.value = false
     }
@@ -1049,6 +1074,8 @@ export function useModemBaseline() {
       saveSelectedRepoId(repo.repoId)
       applyRepoToConfig(repo)
       return repo
+    } catch (error) {
+      throw new Error(translateModemBaselineError(error))
     } finally {
       savingRepo.value = false
     }
@@ -1105,9 +1132,18 @@ export function useModemBaseline() {
     scanningRepos.value = true
     try {
       const result = await scanRepoProfiles(roots)
+      const translatedWarnings = (result.warnings ?? []).map((w) => {
+        const m = w.match(/^scan_root_failed:(.+?):(.+)$/)
+        if (!m) return w
+        const [, rootPath, innerErr] = m
+        const translated = translateModemBaselineError(innerErr)
+        return `scan_root_failed:${rootPath}:${translated}`
+      })
       scanResults.value = result.items
-      scanWarnings.value = result.warnings
-      return result
+      scanWarnings.value = translatedWarnings
+      return { ...result, warnings: translatedWarnings }
+    } catch (error) {
+      throw new Error(translateModemBaselineError(error))
     } finally {
       scanningRepos.value = false
     }
