@@ -65,7 +65,7 @@ describe('device self-check pipeline_adapt catalog', () => {
     expect(typeof detail[2]?.expectedResult).toBe('string')
     expect(detail[2]?.expectedResult).toContain('波形')
     expect(detail[2]?.expectedResult).toContain('PA')
-    expect(detail[2]?.expectedResult).toContain('param_path')
+    expect(detail[2]?.expectedResult).toContain('param_path="/odm/etc/vconfig/audio/audio_param"')
     expect(detail[2]?.expectedResult).toContain('tuningPath')
     expect(detail[2]?.expectedResult).toContain('onn-1')
     expect(detail[2]?.manualSteps).toContain('SOUND_SETTINGS')

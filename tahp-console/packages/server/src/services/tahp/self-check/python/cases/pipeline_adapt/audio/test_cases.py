@@ -56,7 +56,7 @@ _DIALOG_TEXTS = (
 
 # --- 参数路径 / DTS / ADSP ---
 _AUDIO_DIR = "/odm/etc/vconfig/audio"
-_EXPECT_PARAM_DIR = "/odm/etc/vconfig/audio"
+_EXPECT_PARAM_DIR = "/odm/etc/vconfig/audio/audio_param"
 _EXPECT_PARAM_PATH = f'param_path="{_EXPECT_PARAM_DIR}"'
 _PARAM_VAL_RE = re.compile(
     r"""param_path\s*=\s*["']([^"']+)["']|<param_path>\s*([^<]+)\s*</param_path>""",
@@ -196,7 +196,7 @@ def test_audio_param_path(
     """
     音频参数路径是否正确检查
     测试步骤: 读取 /odm/etc/vconfig/audio/aurisys_config*.xml 中含 audio_param 的行
-    预期结果: 均为 param_path="/odm/etc/vconfig/audio"
+    预期结果: 均为 param_path="/odm/etc/vconfig/audio/audio_param"
     """
     name = "音频参数路径检查"
     emit(step_update, steps, f"[参数路径] 列出 {_AUDIO_DIR}/aurisys_config*.xml")
@@ -225,7 +225,8 @@ def test_audio_param_path(
             value = ""
             if parsed:
                 value = (parsed.group(1) or parsed.group(2) or "").strip().rstrip("/")
-            ok = value == _EXPECT_PARAM_DIR or _EXPECT_PARAM_PATH in line
+            # 必须整段相等：/odm/etc/vconfig/audio 是 /audio_param 的前缀，不能用 in 判断
+            ok = value == _EXPECT_PARAM_DIR
             if not ok:
                 bad.append(f"{path}: {line}")
         if not matched:
@@ -1015,7 +1016,11 @@ def test_adsp_call_algo(
     """
     name = "实网通话算法ADSP检查"
     emit(step_update, steps, f"[ADSP] 检查目录 {_DSP_DT}")
-    exists = adb_shell(serial, f"[ -d {_DSP_DT} ] && echo 存在")
+    # 必须保留 [ 与 -d、路径与 ] 之间的空格，否则会变成 [-d / ...] 而不是 test
+    exists = adb_shell(
+        serial,
+        "[ -d /proc/device-tree/snd-audio-dsp ] && echo '存在'",
+    )
     if "存在" not in (exists or ""):
         emit(step_update, steps, f"[ADSP] {_DSP_DT} 不存在，跳过")
         return _item(name, "skip", f"{_DSP_DT} 不存在，跳过 ADSP 实网通话检查")

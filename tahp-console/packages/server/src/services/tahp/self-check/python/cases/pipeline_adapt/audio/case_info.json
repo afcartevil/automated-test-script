@@ -3,6 +3,6 @@
     "用例名": "音频适配检查",
     "前置条件": "测试机已通过 ADB 连接且状态为 device；已安装传音录音机；屏幕可亮屏解锁；建议 userdebug/eng 或已 adb root（PA 项 dmesg -C、ADSP 项 debugfs）；运营商通话需可拨 10086。",
     "测试步骤": "参数路径：读取 /odm/etc/vconfig/audio/aurisys_config*.xml 中 audio_param。\nDTS：cat /odm/etc/asset/audio/dts/customer.cfg 取 tuningPath（无文件则跳过）。\n录音功能：打开录音机 → 点红色录音按钮 → 确认波形 → 停止录音。\nPA模式：1、cat /odm/etc/vconfig/audio/TranAudioConfiguration.conf 识别 fsm（FS1599N/FS1589N）或 aw/oca（AW87XXX/OCA72XXX）\n2、每次判定前 dmesg -C；fsm 只 grep fsm_speaker_on（不含 off）\n3、am start -a android.settings.SOUND_SETTINGS，滑动媒体/通知/铃声/闹钟音量条\n4、拨打 10086 听筒，再点扬声器切免提。\nADSP：/proc/device-tree/snd-audio-dsp 存在时拨 10086，再读 adsp_top_dormant/current_state。",
-    "期望结果": "参数路径：均为 param_path=\"/odm/etc/vconfig/audio\"。DTS：tuningPath=/odm/etc/asset/audio/dts。录音：第三步出现波形动画（波形有振幅）。PA：fsm 媒体/通知 scene:0001、铃声/闹钟 scene:0008、听筒 scene:8000、免提 scene:0002；aw/oca 媒体/通知 Music、铃声/闹钟 Ring、听筒 Receiver、免提 Voice。ADSP：current_state 为 onn-1（非 off-0）；无 DSP 节点则跳过。"
+    "期望结果": "参数路径：均为 param_path=\"/odm/etc/vconfig/audio/audio_param\"。DTS：tuningPath=/odm/etc/asset/audio/dts。录音：第三步出现波形动画（波形有振幅）。PA：fsm 媒体/通知 scene:0001、铃声/闹钟 scene:0008、听筒 scene:8000、免提 scene:0002；aw/oca 媒体/通知 Music、铃声/闹钟 Ring、听筒 Receiver、免提 Voice。ADSP：current_state 为 onn-1（非 off-0）；无 DSP 节点则跳过。"
   }
 ]
