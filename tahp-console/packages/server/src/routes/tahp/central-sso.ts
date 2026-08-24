@@ -178,6 +178,7 @@ tahpCentralSsoRoutes.put('/api/tahp/task-context', (ctx) => {
     campaign_id?: string
     domain_id?: string
     kind?: string
+    node_rule_id?: string
   }
   try {
     ctx.body = { success: true, data: setTaskContext(body) }

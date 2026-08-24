@@ -259,6 +259,10 @@ export const centralClient = {
     unread_count: number
     notice_type?: string
     next?: string
+    version_type?: string
+    variant?: string
+    node_rule_id?: string
+    resolved_version?: string
   }>> {
     return request('/api/tahp/tasks/my-packages', {
       headers: { authorization: `Bearer ${sessionToken}` },

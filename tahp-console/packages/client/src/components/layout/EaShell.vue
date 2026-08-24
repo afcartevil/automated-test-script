@@ -56,6 +56,10 @@ const inboxPackages = ref<Array<{
   unread_count?: number
   notice_type?: string
   next?: string
+  version_type?: string
+  variant?: string
+  node_rule_id?: string
+  resolved_version?: string
 }>>([])
 type ApplyPrompt = {
   run: { run_id: string; project_code: string; campaign_id?: string; status?: string; dimension?: string; domain_id?: string }
@@ -230,6 +234,12 @@ const checklistPackages = computed(() => inboxPackages.value.filter(p => !p.noti
 const unfinishedChecklist = computed(() =>
   checklistPackages.value.filter(p => (p.unread_count || 0) > 0),
 )
+const pipelinePackages = computed(() =>
+  unfinishedChecklist.value.filter(p => p.kind === 'adapt-pipeline'),
+)
+const selfCheckPackages = computed(() =>
+  unfinishedChecklist.value.filter(p => p.kind !== 'adapt-pipeline'),
+)
 const patchPackages = computed(() => inboxPackages.value.filter(p => p.notice_type))
 const taskRemain = computed(() => unfinishedChecklist.value.length)
 const taskUnread = computed(() => unfinishedChecklist.value.filter(p => p.unread).length)
@@ -244,13 +254,22 @@ function kindBadge(kind?: string) {
   return '自检'
 }
 
+function nodeLabel(p: (typeof inboxPackages.value)[number]) {
+  const bits = [p.version_type === 'TEST' ? '转测 TEST' : p.version_type, p.variant].filter(Boolean)
+  return bits.join(' · ')
+}
+
 function packageHeadline(p: (typeof inboxPackages.value)[number]) {
+  if (p.kind === 'self-check') {
+    return [p.project_code, nodeLabel(p) || '节点', p.domain_label || p.domain_id].filter(Boolean).join(' · ')
+  }
   return [p.project_code, p.campaign_id, p.domain_label || p.domain_id].filter(Boolean).join(' · ')
 }
 
 function packageMeta(p: (typeof inboxPackages.value)[number]) {
   const bits: string[] = []
   if (p.unread) bits.push('新通知')
+  if (p.kind === 'self-check') bits.push('将拉取最新包')
   bits.push(`${p.unread_count || 0} 项未完成`)
   return bits.join(' · ')
 }
@@ -280,6 +299,11 @@ function openAllChecklist() {
   void openCentral('/tasks/mine')
 }
 
+function openHistory() {
+  closeTaskPop()
+  void openCentral('/tasks/mine?view=history')
+}
+
 function openPatch(pkg: (typeof inboxPackages.value)[number]) {
   closeTaskPop()
   if (pkg.notice_type === 'gki-patch') void router.push({ name: 'tahp.gki-patch.dashboard' })
@@ -288,6 +312,7 @@ function openPatch(pkg: (typeof inboxPackages.value)[number]) {
 
 async function goExecute(pkg: (typeof inboxPackages.value)[number]) {
   closeTaskPop()
+  const selfCheck = pkg.kind === 'self-check'
   try {
     await fetch('/api/tahp/task-context', {
       method: 'PUT',
@@ -295,9 +320,10 @@ async function goExecute(pkg: (typeof inboxPackages.value)[number]) {
       body: JSON.stringify({
         package_id: pkg.package_id,
         project_code: pkg.project_code,
-        campaign_id: pkg.campaign_id || '',
+        campaign_id: selfCheck ? '' : (pkg.campaign_id || ''),
         domain_id: pkg.domain_id || '',
         kind: pkg.kind || 'self-check',
+        node_rule_id: pkg.node_rule_id || '',
       }),
     })
   } catch {
@@ -306,12 +332,18 @@ async function goExecute(pkg: (typeof inboxPackages.value)[number]) {
   const name = pkg.kind === 'adapt-pipeline' ? 'tahp.pipeline' : 'tahp.self-check'
   void router.push({
     name,
-    query: {
-      project_code: pkg.project_code || '',
-      campaign_id: pkg.campaign_id || '',
-      domain_id: pkg.domain_id || '',
-      package_id: pkg.package_id,
-    },
+    query: selfCheck
+      ? {
+          project_code: pkg.project_code || '',
+          domain_id: pkg.domain_id || '',
+          package_id: pkg.package_id,
+        }
+      : {
+          project_code: pkg.project_code || '',
+          campaign_id: pkg.campaign_id || '',
+          domain_id: pkg.domain_id || '',
+          package_id: pkg.package_id,
+        },
   })
   hideContextBanner.value = false
   void refreshTaskInbox()
@@ -465,22 +497,40 @@ onUnmounted(() => {
             <span v-if="taskUnread" class="ck-task-dot" title="未读通知">{{ taskUnread > 9 ? '9+' : taskUnread }}</span>
           </button>
           <div v-if="showTaskPop" class="ck-task-pop">
-            <div class="ck-task-pop-hd">红点=新通知　左侧数字=还有活没干完。打开清单不会把未完成清掉。</div>
-            <div class="ck-task-sec">CHECKLIST</div>
-            <div v-if="!unfinishedChecklist.length" class="ck-task-empty">没有未完成的检查表</div>
-            <div v-for="p in unfinishedChecklist" :key="p.package_id" class="ck-task-item">
-              <div>
+            <div class="ck-task-pop-hd">红点=新通知　左侧数字=流水线+自检未完成包。打开清单不会把未完成清掉。Patch 单独计。</div>
+            <template v-if="pipelinePackages.length">
+              <div class="ck-task-sec">适配流水线</div>
+              <div v-for="p in pipelinePackages" :key="p.package_id" class="ck-task-item">
                 <div>
-                  <span class="ck-task-badge" :class="p.kind === 'adapt-pipeline' ? 'pipe' : 'check'">{{ kindBadge(p.kind) }}</span>
-                  <b>{{ packageHeadline(p) }}</b>
+                  <div>
+                    <span class="ck-task-badge pipe">{{ kindBadge(p.kind) }}</span>
+                    <b>{{ packageHeadline(p) }}</b>
+                  </div>
+                  <div class="ck-task-meta">{{ packageMeta(p) }}</div>
                 </div>
-                <div class="ck-task-meta">{{ packageMeta(p) }}</div>
+                <div class="ck-task-actions">
+                  <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openChecklist(p)">打开清单</button>
+                  <button type="button" class="ck-feedback-btn ck-task-go" @click="goExecute(p)">去执行</button>
+                </div>
               </div>
-              <div class="ck-task-actions">
-                <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openChecklist(p)">打开清单</button>
-                <button type="button" class="ck-feedback-btn ck-task-go" @click="goExecute(p)">去执行</button>
+            </template>
+            <template v-if="selfCheckPackages.length">
+              <div class="ck-task-sec">AI 自检</div>
+              <div v-for="p in selfCheckPackages" :key="p.package_id" class="ck-task-item">
+                <div>
+                  <div>
+                    <span class="ck-task-badge check">{{ kindBadge(p.kind) }}</span>
+                    <b>{{ packageHeadline(p) }}</b>
+                  </div>
+                  <div class="ck-task-meta">{{ packageMeta(p) }}</div>
+                </div>
+                <div class="ck-task-actions">
+                  <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openChecklist(p)">打开清单</button>
+                  <button type="button" class="ck-feedback-btn ck-task-go" @click="goExecute(p)">去执行</button>
+                </div>
               </div>
-            </div>
+            </template>
+            <div v-if="!unfinishedChecklist.length" class="ck-task-empty">没有未完成的检查表</div>
             <template v-if="patchPackages.length">
               <div class="ck-task-sec">PATCH 通知（不计入 Checklist 红点）</div>
               <div v-for="p in patchPackages" :key="p.package_id" class="ck-task-item">
@@ -496,7 +546,10 @@ onUnmounted(() => {
                 </div>
               </div>
             </template>
-            <button type="button" class="ck-task-all" @click="openAllChecklist">打开我的 Checklist</button>
+            <div class="ck-task-foot">
+              <button type="button" class="ck-task-all" @click="openAllChecklist">打开我的 Checklist</button>
+              <button type="button" class="ck-task-all" @click="openHistory">查看历史</button>
+            </div>
           </div>
         </div>
 
@@ -522,9 +575,15 @@ onUnmounted(() => {
 
     <div v-if="taskContext && !hideContextBanner" class="ck-task-ctx">
       当前任务：{{ taskContext.project_code }}
-      <span v-if="taskContext.campaign_id"> · {{ taskContext.campaign_id }}</span>
-      <span v-if="taskContext.domain_id"> · {{ taskContext.domain_id }}</span>
-      · 上报将优先带上该项目/版本
+      <template v-if="taskContext.kind === 'self-check'">
+        <span v-if="taskContext.domain_id"> · {{ taskContext.domain_id }}</span>
+        · 将拉最新包，不预填适配版本
+      </template>
+      <template v-else>
+        <span v-if="taskContext.campaign_id"> · {{ taskContext.campaign_id }}</span>
+        <span v-if="taskContext.domain_id"> · {{ taskContext.domain_id }}</span>
+        · 上报将优先带上该项目/版本
+      </template>
       <button type="button" class="ck-task-ctx-x" @click="hideContextBanner = true">关闭</button>
     </div>
 
@@ -711,7 +770,7 @@ onUnmounted(() => {
   position: absolute;
   right: 0;
   top: calc(100% + 8px);
-  width: min(420px, calc(100vw - 32px));
+  width: min(480px, calc(100vw - 32px));
   background: #fff;
   border: 1px solid var(--line-strong, #e5e7eb);
   border-radius: 12px;
@@ -759,13 +818,20 @@ onUnmounted(() => {
 .ck-task-badge.check { background: #ede9fe; color: #6d28d9; }
 .ck-task-badge.pipe { background: #dbeafe; color: #1d4ed8; }
 .ck-task-badge.patch { background: #ffedd5; color: #c2410c; }
+.ck-task-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid #f1f5f9;
+  margin-top: 4px;
+}
 .ck-task-all {
   display: block;
-  width: calc(100% - 16px);
-  margin: 4px 8px 0;
+  width: auto;
+  flex: 1;
+  margin: 0;
   padding: 8px 10px;
   border: 0;
-  border-top: 1px solid #f1f5f9;
   background: transparent;
   color: var(--accent);
   font-size: 13px;
