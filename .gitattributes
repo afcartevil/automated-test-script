@@ -1,0 +1,12 @@
+# 统一换行策略。优先级高于各人的 core.autocrlf，无需改本机 git config。
+* text=auto eol=lf
+
+# Windows 交付脚本保持 CRLF：cmd 批处理对 goto/标签的 LF 兼容性有边缘问题，
+# PowerShell 5.1 工具链同理。run_adapter.bat 是日常入口，必须稳。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# skills/ 由 Skill Sync 自动重写，落盘一律 LF。此处整体覆盖回 LF，
+# 否则其中的 30 个 .bat/.ps1 每次同步后都会变成幽灵改动。
+skills/** text=auto eol=lf
