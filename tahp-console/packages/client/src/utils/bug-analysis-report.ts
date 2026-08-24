@@ -130,6 +130,7 @@ export function reportToBugTask(report: {
   completed_at?: string
   duration_ms?: number
   skills_used?: string[]
+  skills_improved?: import('@/api/tahp/bug-analysis').SkillImproveRecord[]
   error?: string
   llm_response?: string
   user_description?: string
@@ -150,6 +151,7 @@ export function reportToBugTask(report: {
     started_at: report.started_at,
     completed_at: report.completed_at,
     skills_used: report.skills_used,
+    skills_improved: report.skills_improved,
     title: report.title,
     error: report.error,
     llm_response: report.llm_response,

@@ -12,6 +12,10 @@ import { pinSkill } from '../../services/hermes/hermes-cli'
 import { isPathWithin } from '../../services/hermes/hermes-path'
 import { getSkillUsageStatsFromDb } from '../../db/hermes/sessions-db'
 import { tahpPaths, hasTahpProject } from '../../services/tahp/paths'
+import {
+  listImprovedSkills,
+  removeImprovedProfileCopy as removeImprovedProfileCopyFromRegistry,
+} from '../../services/hermes/skill-improve-registry'
 
 const execFileAsync = promisify(execFile)
 
@@ -543,6 +547,26 @@ export async function list(ctx: any) {
     ctx.status = 500
     ctx.body = { error: `Failed to read TAHP skills: ${err.message}` }
   }
+}
+
+export async function improvedList(ctx: any) {
+  try {
+    ctx.body = { skills: listImprovedSkills() }
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { error: `Failed to list improved skills: ${err.message}` }
+  }
+}
+
+export async function removeImprovedProfileCopy(ctx: any) {
+  const name = String(ctx.params.name || '').trim()
+  const result = removeImprovedProfileCopyFromRegistry(name)
+  if (!result.ok) {
+    ctx.status = result.error?.includes('未在自改进') ? 404 : 400
+    ctx.body = { error: result.error }
+    return
+  }
+  ctx.body = { removed: result.removed }
 }
 
 export async function usageStats(ctx: any) {

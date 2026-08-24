@@ -517,6 +517,7 @@ export default {
     },
     tabs: {
       browse: 'Browse',
+      improved: 'Self-improved',
       sync: 'Sync Center',
     },
     sync: {

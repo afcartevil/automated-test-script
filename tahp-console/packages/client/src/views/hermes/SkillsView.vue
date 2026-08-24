@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { NInput, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
@@ -8,9 +9,11 @@ import SkillGrid from '@/components/hermes/skills/SkillGrid.vue'
 import SkillDetail from '@/components/hermes/skills/SkillDetail.vue'
 import SkillImportModal from '@/components/hermes/skills/SkillImportModal.vue'
 import SkillSyncCenter from '@/components/hermes/skills/SkillSyncCenter.vue'
+import SkillImprovedPanel from '@/components/hermes/skills/SkillImprovedPanel.vue'
 import { fetchSkills, backfillCategories, type SkillCategory, type SkillInfo } from '@/api/hermes/skills'
 
 const { t } = useI18n()
+const route = useRoute()
 const message = useMessage()
 const categories = ref<SkillCategory[]>([])
 const archived = ref<SkillInfo[]>([])
@@ -23,14 +26,20 @@ const funcTypeFilter = ref<string | null>(null)
 const moduleFilter = ref<string | null>(null)
 const showImportModal = ref(false)
 const isFullscreen = ref(false)
-const activeTab = ref<'browse' | 'sync'>('browse')
+const activeTab = ref<'browse' | 'improved' | 'sync'>('browse')
 /** 首次打开同步中心后保持挂载，避免切 Tab 销毁组件导致反复全量加载 */
 const syncEverOpened = ref(false)
+const improvedEverOpened = ref(false)
 let mobileQuery: MediaQueryList | null = null
 
 function openSyncTab() {
   syncEverOpened.value = true
   activeTab.value = 'sync'
+}
+
+function openImprovedTab() {
+  improvedEverOpened.value = true
+  activeTab.value = 'improved'
 }
 
 // ── 所有技能扁平化 ─────────────────────────────────────────────────────────────
@@ -79,6 +88,7 @@ const selectedSkillData = computed<SkillInfo | null>(() => {
 onMounted(() => {
   mobileQuery = window.matchMedia('(max-width: 768px)')
   mobileQuery.addEventListener('change', () => {})
+  applyRouteTab()
   loadSkills()
 })
 
@@ -92,12 +102,66 @@ async function loadSkills() {
     const data = await fetchSkills()
     categories.value = data.categories ?? []
     archived.value = data.archived ?? []
+    applyQuerySkill()
   } catch (err: any) {
     console.error('Failed to load skills:', err)
   } finally {
     loading.value = false
   }
 }
+
+function querySkillName(): string {
+  const raw = route.query.skill
+  return typeof raw === 'string' ? raw.trim() : ''
+}
+
+function queryTab(): string {
+  const raw = route.query.tab
+  return typeof raw === 'string' ? raw.trim() : ''
+}
+
+function applyRouteTab() {
+  const tab = queryTab()
+  if (tab === 'improved') openImprovedTab()
+  else if (tab === 'sync') openSyncTab()
+}
+
+function selectSkillByName(skillName: string): boolean {
+  for (const cat of categories.value) {
+    if (cat.skills.some(s => s.name === skillName)) {
+      selectedCategory.value = cat.name
+      selectedSkill.value = skillName
+      return true
+    }
+  }
+  if (archived.value.some(s => s.name === skillName)) {
+    selectedCategory.value = '.archive'
+    selectedSkill.value = skillName
+    return true
+  }
+  return false
+}
+
+function applyQuerySkill() {
+  applyRouteTab()
+  if (queryTab() === 'improved' || activeTab.value === 'improved') return
+  const name = querySkillName()
+  if (!name) return
+  if (selectSkillByName(name)) {
+    activeTab.value = 'browse'
+    return
+  }
+  // 工程目录找不到时转到自改进 Tab（Agent 新建的 Skill 不在仓库里）
+  openImprovedTab()
+}
+
+watch(() => route.query.skill, () => {
+  if (!loading.value) applyQuerySkill()
+})
+
+watch(() => route.query.tab, () => {
+  applyRouteTab()
+})
 
 function setFuncTypeFilter(ft: string | null) {
   funcTypeFilter.value = ft
@@ -219,6 +283,14 @@ async function handleBackfill() {
       <button
         type="button"
         class="skills-tab"
+        :class="{ active: activeTab === 'improved' }"
+        @click="openImprovedTab"
+      >
+        {{ t('skills.tabs.improved') }}
+      </button>
+      <button
+        type="button"
+        class="skills-tab"
         :class="{ active: activeTab === 'sync' }"
         @click="openSyncTab"
       >
@@ -234,6 +306,7 @@ async function handleBackfill() {
     />
 
     <SkillSyncCenter v-if="syncEverOpened" v-show="activeTab === 'sync'" />
+    <SkillImprovedPanel v-if="improvedEverOpened" v-show="activeTab === 'improved'" />
 
     <template v-if="activeTab === 'browse'">
     <!-- 功能类型 domain-chip 过滤 -->
@@ -380,6 +453,11 @@ async function handleBackfill() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
+}
+
+:deep(.improved-panel) {
+  flex: 1;
   min-height: 0;
 }
 

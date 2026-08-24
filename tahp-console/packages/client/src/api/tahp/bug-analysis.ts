@@ -27,6 +27,13 @@ export type TahpBugModule = 'telephony' | 'kernel-driver' | 'power-mgmt' | 'shar
 
 export type BugAnalysisMode = 'jira_single' | 'jira_batch' | 'local'
 
+export interface SkillImproveRecord {
+  name: string
+  actions: string[]
+  snapshot_dir?: string
+  snapshot_source?: 'runtime' | 'backfill'
+}
+
 export interface BugAnalysisStartResp {
   task_id: string
   jira_key?: string
@@ -57,6 +64,7 @@ export interface BugTask {
   started_at: string
   completed_at?: string
   skills_used?: string[]
+  skills_improved?: SkillImproveRecord[]
   title?: string
   error?: string
   user_description?: string
@@ -150,6 +158,7 @@ export interface BugReport {
   extra_context?: string
   corrections?: string[]
   skills_used?: string[]
+  skills_improved?: SkillImproveRecord[]
   tool_call_count?: number
   llm_response?: string
   /** Step 5 八节报告正文（不含 Agent 过程输出） */
@@ -178,6 +187,7 @@ export interface BugReportSummary {
   completed_at?: string
   duration_ms?: number
   skills_used?: string[]
+  skills_improved?: SkillImproveRecord[]
   correction_of?: string
 }
 
@@ -344,6 +354,21 @@ export function listBugReports(): Promise<BugReportSummary[]> {
 
 export function getBugReport(taskId: string): Promise<BugReport> {
   return tahpGet<BugReport>(`/api/tahp/bug-analysis/reports/${encodeURIComponent(taskId)}`)
+}
+
+export interface BugSkillSnapshot {
+  skill: string
+  skill_md: string
+  truncated: boolean
+  snapshot_source: 'runtime' | 'backfill'
+  snapshot_at: string
+  files: string[]
+}
+
+export function getBugSkillSnapshot(taskId: string, skillName: string): Promise<BugSkillSnapshot> {
+  return tahpGet<BugSkillSnapshot>(
+    `/api/tahp/bug-analysis/reports/${encodeURIComponent(taskId)}/skill-snapshots/${encodeURIComponent(skillName)}`,
+  )
 }
 
 export function deleteBugReport(taskId: string): Promise<{ deleted: boolean; task_id: string }> {

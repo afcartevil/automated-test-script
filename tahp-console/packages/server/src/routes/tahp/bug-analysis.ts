@@ -27,6 +27,7 @@ import {
   getBugJob,
   listBugReports,
   readBugReport,
+  readBugSkillSnapshot,
   deleteBugReport,
   respondBugApproval,
   submitBugUserInput,
@@ -583,6 +584,7 @@ tahpBugAnalysisRoutes.get('/tasks', async (ctx) => {
     started_at: t.startedAt,
     completed_at: t.completedAt,
     skills_used: t.skillsUsed,
+    skills_improved: t.skillsImproved || [],
     title: t.issue?.summary || t.title,
     error: t.error,
     analysis_mode: t.analysisMode,
@@ -624,6 +626,7 @@ tahpBugAnalysisRoutes.get('/tasks/:id', async (ctx) => {
     extra_context: t.extraContext,
     corrections: t.corrections,
     skills_used: t.skillsUsed,
+    skills_improved: t.skillsImproved || [],
     llm_response: t.llmResponse,
     error: t.error,
     issue: t.issue,
@@ -687,6 +690,7 @@ tahpBugAnalysisRoutes.get('/jobs/:id', async (ctx) => {
         progress: t.progress,
         title: t.issue?.summary,
         skills_used: t.skillsUsed,
+        skills_improved: t.skillsImproved || [],
         error: t.error,
       }
     }),
@@ -702,6 +706,16 @@ tahpBugAnalysisRoutes.get('/jobs/:id', async (ctx) => {
 
 tahpBugAnalysisRoutes.get('/reports', async (ctx) => {
   ctx.body = { success: true, data: listBugReports() }
+})
+
+tahpBugAnalysisRoutes.get('/reports/:taskId/skill-snapshots/:skillName', async (ctx) => {
+  const snap = readBugSkillSnapshot(ctx.params.taskId, ctx.params.skillName)
+  if (!snap) {
+    ctx.status = 404
+    ctx.body = { success: false, error: `找不到 Skill 快照: ${ctx.params.skillName}` }
+    return
+  }
+  ctx.body = { success: true, data: snap }
 })
 
 tahpBugAnalysisRoutes.get('/reports/:taskId', async (ctx) => {

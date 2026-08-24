@@ -91,6 +91,36 @@ export async function fetchSkills(): Promise<SkillsData> {
   return { categories: res.categories, archived: res.archived ?? [] }
 }
 
+export type ImprovedSkillStatus = 'agent_only' | 'promoted' | 'at_risk'
+export type ImprovedOverwriteRisk = 'none' | 'will_be_overwritten'
+
+export interface ImprovedSkill {
+  name: string
+  profile_rel_path: string | null
+  profile_abs_path: string | null
+  actions: string[]
+  first_seen_at: string
+  last_updated_at: string
+  task_ids: string[]
+  files: { path: string; sha256: string }[]
+  exists_on_disk: boolean
+  in_repo: boolean
+  overwrite_risk: ImprovedOverwriteRisk
+  status: ImprovedSkillStatus
+}
+
+export async function fetchImprovedSkills(): Promise<ImprovedSkill[]> {
+  const res = await request<{ skills: ImprovedSkill[] }>('/api/hermes/skills/improved')
+  return res.skills ?? []
+}
+
+export async function removeImprovedProfileCopy(name: string): Promise<{ removed: string }> {
+  return request<{ removed: string }>(`/api/hermes/skills/improved/${encodeURIComponent(name)}/remove-profile-copy`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
+}
+
 export async function fetchSkillUsageStats(days = 7): Promise<SkillUsageStats> {
   const params = new URLSearchParams({ days: String(days) })
   return request<SkillUsageStats>(`/api/hermes/skills/usage/stats?${params}`)

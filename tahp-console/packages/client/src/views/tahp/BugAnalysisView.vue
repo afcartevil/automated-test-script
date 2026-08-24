@@ -20,7 +20,9 @@ import {
   listBugReports, deleteBugReport, respondBugApproval, submitBugUserInput, postJiraComment,
   fetchJiraConfigStatus, getBugTaskContinueStatus,
   fetchChannelConfig, saveChannelConfig,
+  getBugSkillSnapshot,
   type JiraIssueDetail, type JqlPreview, type BugReport, type BugReportSummary,
+  type SkillImproveRecord, type BugSkillSnapshot,
 } from '@/api/tahp/bug-analysis'
 import {
   extractBugAnalysisReportBody,
@@ -284,6 +286,59 @@ const reportMarkdown = computed(() => {
   if (!reportDetail.value) return ''
   const raw = reportDetail.value.report_body || reportDetail.value.llm_response || ''
   return extractBugAnalysisReportBody(raw)
+})
+
+const SKILL_IMPROVE_ACTION_LABELS: Record<string, string> = {
+  create: '新建',
+  edit: '整篇改写',
+  patch: '局部补丁',
+  write_file: '附属文件',
+  remove_file: '删除文件',
+  delete: '删除',
+  file_write: '直接改文件',
+}
+
+function skillImproveActionLabel(actions: string[]): string {
+  return actions.map(a => SKILL_IMPROVE_ACTION_LABELS[a] || a).filter(Boolean).join('、')
+}
+
+function improvedSkillRoute(name: string) {
+  return { name: 'hermes.skills', query: { tab: 'improved', skill: name } }
+}
+
+const snapshotModalShow = ref(false)
+const snapshotLoading = ref(false)
+const snapshotError = ref('')
+const snapshotData = ref<BugSkillSnapshot | null>(null)
+const snapshotSkillName = ref('')
+
+async function openSkillSnapshot(rec: SkillImproveRecord) {
+  const tid = reportDetail.value?.task_id || currentTaskId.value || historySelectedId.value || ''
+  if (!tid || !rec.snapshot_dir) {
+    snapshotError.value = '这份报告还没有 Skill 快照。可在 Skills 库「自改进」Tab 查看当前内容。'
+    snapshotData.value = null
+    snapshotSkillName.value = rec.name
+    snapshotModalShow.value = true
+    return
+  }
+  snapshotSkillName.value = rec.name
+  snapshotModalShow.value = true
+  snapshotLoading.value = true
+  snapshotError.value = ''
+  snapshotData.value = null
+  try {
+    snapshotData.value = await getBugSkillSnapshot(tid, rec.name)
+  } catch (err: any) {
+    snapshotError.value = err?.message || '读取快照失败'
+  } finally {
+    snapshotLoading.value = false
+  }
+}
+
+const currentSkillsImproved = computed<SkillImproveRecord[]>(() => {
+  const fromReport = reportDetail.value?.skills_improved || []
+  const fromTask = currentTask.value?.skills_improved || []
+  return fromReport.length >= fromTask.length ? fromReport : fromTask
 })
 
 // 补充信息弹窗
@@ -1224,6 +1279,7 @@ async function submitContinue() {
       started_at: currentTask.value?.started_at || new Date().toISOString(),
       title: currentTask.value?.title,
       skills_used: currentTask.value?.skills_used,
+      skills_improved: currentTask.value?.skills_improved,
     })
     activeReportTab.value = 'live'
     showContinueDialog.value = false
@@ -1955,6 +2011,7 @@ watch(
                       />
                       <span>{{ phaseLabel(t.phase) }}</span>
                       <span v-if="t.skills_used?.length" class="ti-badge">{{ t.skills_used.length }} skill</span>
+                      <span v-if="t.skills_improved?.length" class="ti-badge ti-improve">自改进 {{ t.skills_improved.length }}</span>
                       <span v-if="t.parent_job_id" class="ti-badge ti-batch">批量</span>
                     </div>
                   </button>
@@ -1980,6 +2037,7 @@ watch(
                       <div class="ti-meta">
                         <span class="ea-muted">{{ r.completed_at?.slice(0, 16) || r.started_at?.slice(0, 16) || '-' }}</span>
                         <span v-if="r.skills_used?.length" class="ti-badge">{{ r.skills_used.length }} skill</span>
+                        <span v-if="r.skills_improved?.length" class="ti-badge ti-improve">自改进 {{ r.skills_improved.length }}</span>
                       </div>
                     </button>
                     <NButton
@@ -2025,6 +2083,7 @@ watch(
                     />
                     <span>{{ phaseLabel(t.phase) }}</span>
                     <span v-if="t.skills_used?.length" class="ti-badge">{{ t.skills_used.length }} skill</span>
+                    <span v-if="t.skills_improved?.length" class="ti-badge ti-improve">自改进 {{ t.skills_improved.length }}</span>
                     <span v-if="t.parent_job_id" class="ti-badge ti-batch">批量</span>
                   </div>
                 </button>
@@ -2056,6 +2115,7 @@ watch(
                       <div class="ti-meta">
                         <span class="ea-muted">{{ r.completed_at?.slice(0, 16) || r.started_at?.slice(0, 16) || '-' }}</span>
                         <span v-if="r.skills_used?.length" class="ti-badge">{{ r.skills_used.length }} skill</span>
+                        <span v-if="r.skills_improved?.length" class="ti-badge ti-improve">自改进 {{ r.skills_improved.length }}</span>
                       </div>
                     </button>
                     <NButton
@@ -2177,6 +2237,24 @@ watch(
             </div>
           </div>
 
+          <div v-if="currentSkillsImproved.length && !(activeReportTab === 'report' && reportMarkdown)" class="bug-skill-improve-banner">
+            <strong>本次任务自改进了 {{ currentSkillsImproved.length }} 个 Skill</strong>
+            <ul class="bug-skill-improve-list">
+              <li v-for="s in currentSkillsImproved" :key="s.name">
+                <RouterLink :to="improvedSkillRoute(s.name)" class="bug-skill-improve-link">{{ s.name }}</RouterLink>
+                <span v-if="skillImproveActionLabel(s.actions)">（{{ skillImproveActionLabel(s.actions) }}）</span>
+                <button
+                  v-if="s.snapshot_dir"
+                  type="button"
+                  class="bug-skill-improve-snap"
+                  @click="openSkillSnapshot(s)"
+                >查看快照</button>
+                <span v-if="s.snapshot_source === 'backfill'" class="bug-skill-improve-backfill">事后回填</span>
+              </li>
+            </ul>
+            <p class="bug-skill-improve-hint">改动写在本机 Hermes Skill 目录，可在 Skills 库「自改进」Tab 查看并固化进仓库。</p>
+          </div>
+
           <div v-if="currentTask" class="task-progress">
             <NProgress :percentage="displayProgress" :show-indicator="false" :height="6" :color="phaseColor(currentTask.phase)" />
             <span class="ea-muted tp-text">{{ displayProgress }}%</span>
@@ -2264,6 +2342,23 @@ watch(
               <NSpin :show="reportLoading" class="report-spin-wrap">
                 <NScrollbar v-if="reportDetail && reportMarkdown" class="report-body-scroll" trigger="none">
                   <div class="report-markdown-inner">
+                    <div v-if="currentSkillsImproved.length" class="bug-skill-improve-banner bug-skill-improve-in-report">
+                      <strong>本次任务自改进了 {{ currentSkillsImproved.length }} 个 Skill</strong>
+                      <ul class="bug-skill-improve-list">
+                        <li v-for="s in currentSkillsImproved" :key="'report-' + s.name">
+                          <RouterLink :to="improvedSkillRoute(s.name)" class="bug-skill-improve-link">{{ s.name }}</RouterLink>
+                          <span v-if="skillImproveActionLabel(s.actions)">（{{ skillImproveActionLabel(s.actions) }}）</span>
+                          <button
+                            v-if="s.snapshot_dir"
+                            type="button"
+                            class="bug-skill-improve-snap"
+                            @click="openSkillSnapshot(s)"
+                          >查看快照</button>
+                          <span v-if="s.snapshot_source === 'backfill'" class="bug-skill-improve-backfill">事后回填</span>
+                        </li>
+                      </ul>
+                      <p class="bug-skill-improve-hint">改动写在本机 Hermes Skill 目录，可在 Skills 库「自改进」Tab 查看并固化进仓库。</p>
+                    </div>
                     <MarkdownRenderer :content="reportMarkdown" />
                   </div>
                 </NScrollbar>
@@ -2599,6 +2694,27 @@ watch(
         </NSpace>
       </template>
     </NModal>
+
+    <NModal
+      v-model:show="snapshotModalShow"
+      preset="card"
+      :title="snapshotSkillName ? `Skill 快照 · ${snapshotSkillName}` : 'Skill 快照'"
+      style="width: min(820px, 92vw)"
+    >
+      <NSpin :show="snapshotLoading">
+        <NAlert
+          v-if="snapshotData?.snapshot_source === 'backfill'"
+          type="warning"
+          :bordered="false"
+          style="margin-bottom: 12px"
+        >
+          这是事后回填的快照，内容是回填当时 profile 上的版本，不一定等于任务结束那一刻。
+        </NAlert>
+        <p v-if="snapshotError" class="bug-skill-improve-hint">{{ snapshotError }}</p>
+        <MarkdownRenderer v-else-if="snapshotData?.skill_md" :content="snapshotData.skill_md" />
+        <NEmpty v-else-if="!snapshotLoading" description="没有可显示的快照内容" />
+      </NSpin>
+    </NModal>
   </div>
 </template>
 
@@ -2781,7 +2897,7 @@ watch(
 .ti-key { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 700; color: var(--accent); text-decoration: none; }
 .ti-title { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ti-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--faint); }
-.ti-badge { background: var(--warn-soft); color: var(--warn); padding: 1px 6px; border-radius: 6px; font-weight: 600; &.ti-batch { background: var(--violet-bg); color: var(--violet-fg); } }
+.ti-badge { background: var(--warn-soft); color: var(--warn); padding: 1px 6px; border-radius: 6px; font-weight: 600; &.ti-batch { background: var(--violet-bg); color: var(--violet-fg); } &.ti-improve { background: color-mix(in srgb, var(--success) 16%, var(--surface)); color: var(--success); } }
 
 .bug-main-wrap {
   min-height: 0;
@@ -3189,6 +3305,69 @@ watch(
   background: color-mix(in srgb, var(--error) 12%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
   color: var(--error);
+}
+
+.bug-skill-improve-banner {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--success) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
+  color: var(--text);
+}
+
+.bug-skill-improve-banner strong {
+  display: block;
+  color: var(--success);
+  font-size: 13px;
+}
+
+.bug-skill-improve-in-report {
+  margin-bottom: 18px;
+}
+
+.bug-skill-improve-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.bug-skill-improve-link {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.bug-skill-improve-link:hover {
+  text-decoration: none;
+  border-bottom-style: solid;
+}
+
+.bug-skill-improve-snap {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--success);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.bug-skill-improve-backfill {
+  margin-left: 6px;
+  font-size: 11px;
+  color: #b45309;
+}
+
+.bug-skill-improve-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .bug-error-text {

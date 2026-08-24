@@ -281,6 +281,9 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             break
           }
           case 'task.skill_use':
+            if (Array.isArray(ev.payload?.skills_improved)) {
+              t.skills_improved = ev.payload.skills_improved as BugTask['skills_improved']
+            }
             if (typeof ev.payload?.skill_id === 'string') {
               const list = t.skills_used || []
               if (!list.includes(ev.payload.skill_id)) {
@@ -320,12 +323,18 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             if (Array.isArray(ev.payload?.skills_used)) {
               t.skills_used = ev.payload.skills_used as string[]
             }
+            if (Array.isArray(ev.payload?.skills_improved)) {
+              t.skills_improved = ev.payload.skills_improved as BugTask['skills_improved']
+            }
             break
           case 'task.failed':
             t.status = 'failed'
             t.phase = 'FAILED'
             t.completed_at = new Date(ev.ts).toISOString()
             t.error = (ev.payload?.message as string) || (ev.payload?.error as string)
+            if (Array.isArray(ev.payload?.skills_improved)) {
+              t.skills_improved = ev.payload.skills_improved as BugTask['skills_improved']
+            }
             delete pendingApprovals.value[tid]
             delete pendingUserInputs.value[tid]
             pendingApprovals.value = { ...pendingApprovals.value }
@@ -336,6 +345,9 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             t.phase = 'CANCELLED'
             t.completed_at = new Date(ev.ts).toISOString()
             t.error = (ev.payload?.message as string) || (ev.payload?.error as string)
+            if (Array.isArray(ev.payload?.skills_improved)) {
+              t.skills_improved = ev.payload.skills_improved as BugTask['skills_improved']
+            }
             delete pendingApprovals.value[tid]
             delete pendingUserInputs.value[tid]
             pendingApprovals.value = { ...pendingApprovals.value }

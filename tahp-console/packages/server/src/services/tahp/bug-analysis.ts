@@ -68,6 +68,14 @@ import {
   type ParsedBugStageMarker,
 } from './bug-analysis-stages'
 import {
+  detectSkillImprove,
+  formatSkillImproveSummary,
+  parseSkillImproves,
+  upsertSkillImprove,
+  type SkillImproveRecord,
+} from './bug-analysis-skill-improve'
+import { snapshotImprovedSkills, skillImproveSnapshotRoot, readSkillSnapshot } from './bug-analysis-skill-snapshot'
+import {
   APPROVAL_AUTO_ONCE_MS,
   findUserInputMarkers,
   buildUserInputResumeMessage,
@@ -128,6 +136,8 @@ export interface BugAnalysisTaskCtx {
   prevResponse?: string           // 上一轮 Agent 输出
   corrections: string[]           // 历次补充信息
   skillsUsed: string[]
+  /** 本任务累计（含续跑轮次）Agent 自改进写入的 Skill（skill_manage / 直接改 skills 目录） */
+  skillsImproved?: SkillImproveRecord[]
   llmResponse?: string
   completedAt?: string
   error?: string
@@ -252,6 +262,10 @@ export function readBugReport(taskId: string): unknown {
   try { return JSON.parse(readFileSync(p, 'utf-8')) } catch { return null }
 }
 
+export function readBugSkillSnapshot(taskId: string, skillName: string) {
+  return readSkillSnapshot(tahpPaths.reportsDir, taskId, skillName)
+}
+
 export function listBugReports(): unknown[] {
   const d = reportDir()
   if (!existsSync(d)) return []
@@ -273,6 +287,7 @@ export function listBugReports(): unknown[] {
         completed_at: json.completed_at,
         duration_ms: json.duration_ms,
         skills_used: json.skills_used || [],
+        skills_improved: parseSkillImproves(json.skills_improved),
         correction_of: json.correction_of,
       })
     } catch { /* skip corrupt */ }
@@ -302,6 +317,11 @@ export async function deleteBugReport(taskId: string): Promise<{ ok: boolean; er
     const promptDir = promptDirFor(taskId)
     if (existsSync(promptDir)) {
       rmSync(promptDir, { recursive: true, force: true })
+      deleted = true
+    }
+    const snapDir = skillImproveSnapshotRoot(tahpPaths.reportsDir, taskId)
+    if (existsSync(snapDir)) {
+      rmSync(snapDir, { recursive: true, force: true })
       deleted = true
     }
     if (existsSync(bugLogPath(taskId))) {
@@ -928,6 +948,7 @@ message: <一句话说明本步结果>
 - 不要编造文件 / 函数 / 配置项名
 - 不要给完整 patch，只给修改方向
 - 工具失败时直接报错并停止该步骤
+- 可用 skill_manage 改进领域分析 Skill；入口契约 Skill（jira-ops / bugfix-analysis / loginsight-remote-cli）请谨慎改。自改进不必写进 9 节报告，BFF 会按工具调用在结果页单独展示
 
 # 人机协同：结构化用户配置输入（需要用户填写路径/凭证等时）
 
@@ -1315,6 +1336,7 @@ function restoreCtxFromReport(taskId: string, report: Record<string, unknown>): 
     progress: 100,
     corrections: Array.isArray(report.corrections) ? [...report.corrections as string[]] : [],
     skillsUsed: Array.isArray(report.skills_used) ? [...report.skills_used as string[]] : [],
+    skillsImproved: parseSkillImproves(report.skills_improved),
     prevResponse: typeof report.llm_response === 'string' ? report.llm_response : undefined,
     llmResponse: typeof report.llm_response === 'string' ? report.llm_response : undefined,
     completedAt: typeof report.completed_at === 'string' ? report.completed_at : undefined,
@@ -1344,6 +1366,7 @@ async function runSingleBugAnalysis(
   if (ctx.status === 'cancelled') return
   ctx.status = 'running'
   ctx.skillsUsed = ctx.skillsUsed || []
+  ctx.skillsImproved = ctx.skillsImproved || []
   taskCtx.set(taskId, ctx)
   pruneOldTasks()
 
@@ -1470,6 +1493,11 @@ async function runSingleBugAnalysis(
       onToolStarted: (toolName, args, toolCallId) => {
         toolCallCount += 1
         if (!ctx.skillsUsed.includes(toolName)) ctx.skillsUsed.push(toolName)
+        const improveHit = detectSkillImprove(toolName, args)
+        if (improveHit) {
+          ctx.skillsImproved = upsertSkillImprove(ctx.skillsImproved || [], improveHit)
+          emitBugActivity(taskId, `自改进 Skill：${formatSkillImproveSummary([{ name: improveHit.name, actions: [improveHit.action] }])}`)
+        }
         const argPreview = summarizeArgs(args)
         const activity = `正在调用工具 ${toolName}${argPreview ? ` ${argPreview}` : ''}`
         emit(taskId, 'task.skill_use', {
@@ -1479,6 +1507,7 @@ async function runSingleBugAnalysis(
           args: argPreview,
           purpose: `Agent 真实调用工具 ${toolName}`,
           message: `🛠 Agent 调用：${toolName}${argPreview ? ` ${argPreview}` : ''}`,
+          ...(improveHit ? { skills_improved: ctx.skillsImproved } : {}),
         })
         emitBugActivity(taskId, activity)
       },
@@ -1519,7 +1548,7 @@ async function runSingleBugAnalysis(
     ctx.llmResponse = fullResponse
     ingestStageMarkersFromText(taskId, ctx, fullResponse, stageMarkerState)
 
-    logBug(taskId, 'info', `Agent run complete (${fullResponse.length} chars, tools=${toolCallCount}, skills_recorded=${ctx.skillsUsed.join(',') || 'none'})`)
+    logBug(taskId, 'info', `Agent run complete (${fullResponse.length} chars, tools=${toolCallCount}, skills_recorded=${ctx.skillsUsed.join(',') || 'none'}, skills_improved=${(ctx.skillsImproved || []).map(s => s.name).join(',') || 'none'})`)
 
     ctx.phase = 'GENERATING_REPORT'
     ctx.progress = BUG_UI_PHASE_PROGRESS.GENERATING_REPORT
@@ -1551,6 +1580,19 @@ async function runSingleBugAnalysis(
       ? [...prevRounds, { user: userMessage, assistant: fullResponse }]
       : [{ user: userMessage, assistant: fullResponse }]
 
+    if ((ctx.skillsImproved || []).length) {
+      try {
+        ctx.skillsImproved = await snapshotImprovedSkills({
+          reportsDir: tahpPaths.reportsDir,
+          taskId,
+          records: ctx.skillsImproved || [],
+          source: 'runtime',
+        })
+      } catch (e) {
+        logBug(taskId, 'warn', `skill snapshot failed: ${(e as Error).message}`)
+      }
+    }
+
     const report = {
       task_id: taskId,
       jira_key: ctx.jiraKey,
@@ -1570,6 +1612,7 @@ async function runSingleBugAnalysis(
       corrections: ctx.corrections,
       conversation_rounds: conversationRounds,
       skills_used: ctx.skillsUsed,
+      skills_improved: ctx.skillsImproved || [],
       tool_call_count: toolCallCount,
       llm_response: fullResponse,
       report_body: reportBody,
@@ -1594,6 +1637,7 @@ async function runSingleBugAnalysis(
       module: ctx.module,
       duration_ms: durationMs,
       skills_used: ctx.skillsUsed,
+      skills_improved: ctx.skillsImproved || [],
       response_length: fullResponse.length,
       continue_round: isContinue ? ctx.corrections.length : undefined,
       can_continue_session: sessionAlive,
@@ -1657,14 +1701,24 @@ async function runSingleBugAnalysis(
         message: '补充分析失败，可再次尝试',
       })
     } else if (interruptedByUser) {
-      emit(taskId, 'task.cancelled', { error: msg, message: msg })
+      emit(taskId, 'task.cancelled', { error: msg, message: msg, skills_improved: ctx.skillsImproved || [] })
     } else {
-      emit(taskId, 'task.failed', { error: msg, message: `分析失败: ${msg}` })
+      emit(taskId, 'task.failed', { error: msg, message: `分析失败: ${msg}`, skills_improved: ctx.skillsImproved || [] })
     }
 
     // 写入失败报告（补充继续失败时保留原 completed 报告）
     if (!isContinue) {
       try {
+        if ((ctx.skillsImproved || []).length) {
+          try {
+            ctx.skillsImproved = await snapshotImprovedSkills({
+              reportsDir: tahpPaths.reportsDir,
+              taskId,
+              records: ctx.skillsImproved || [],
+              source: 'runtime',
+            })
+          } catch { /* snapshot is optional */ }
+        }
         const report = {
           task_id: taskId,
           jira_key: ctx.jiraKey,
@@ -1676,6 +1730,8 @@ async function runSingleBugAnalysis(
           completed_at: ctx.completedAt,
           user_description: ctx.userDescription,
           extra_context: ctx.extraContext,
+          skills_used: ctx.skillsUsed,
+          skills_improved: ctx.skillsImproved || [],
         }
         writeFileSync(reportPath(taskId), JSON.stringify(report, null, 2), 'utf-8')
       } catch { /* swallow */ }
@@ -1728,7 +1784,7 @@ function summarizeArgs(args: unknown): string {
   const keys = Object.keys(obj)
   if (keys.length === 0) return ''
   // 抓 1~2 个最关键字段做预览（command/path/url/query/...）
-  const prio = ['command', 'cmd', 'shell', 'tool', 'path', 'file', 'file_path', 'url', 'query', 'jql', 'key', 'issue_key']
+  const prio = ['command', 'cmd', 'shell', 'tool', 'path', 'file', 'file_path', 'url', 'query', 'jql', 'key', 'issue_key', 'name', 'action']
   const picked: string[] = []
   for (const k of prio) {
     if (k in obj) {
@@ -1779,6 +1835,7 @@ export function startSingleBugAnalysis(input: BugAnalysisInput): StartTaskResult
     status: 'running',
     corrections: [],
     skillsUsed: [],
+    skillsImproved: [],
   }
   taskCtx.set(taskId, ctx)
 
@@ -1822,6 +1879,7 @@ export function startLocalLogBugAnalysis(input: LocalBugAnalysisInput): StartTas
     status: 'running',
     corrections: [],
     skillsUsed: [],
+    skillsImproved: [],
   }
   taskCtx.set(taskId, ctx)
 
@@ -1903,6 +1961,7 @@ export async function continueBugAnalysis(taskId: string, input: ContinueAnalysi
   ctx.progress = 0
   ctx.error = undefined
   ctx.skillsUsed = [...(ctx.skillsUsed || [])]
+  ctx.skillsImproved = [...(ctx.skillsImproved || [])]
   taskCtx.set(taskId, ctx)
 
   emit(taskId, 'task.continue_started', {
@@ -1982,6 +2041,7 @@ export async function startBatchBugAnalysis(jql: string, extraContext?: string, 
       status: 'pending',
       corrections: [],
       skillsUsed: [],
+      skillsImproved: [],
       extraContext,
     }
     taskCtx.set(tid, ctx)

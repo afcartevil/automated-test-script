@@ -517,6 +517,7 @@ export default {
     },
     tabs: {
       browse: '库浏览',
+      improved: '自改进',
       sync: '同步中心',
     },
     sync: {

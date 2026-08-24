@@ -64,7 +64,7 @@ if "%TAHP_SILENT%"=="1" (
 if errorlevel 1 (
     echo.
     echo [EasyAdapter] Agent 环境未就绪，无法启动。
-    echo   请安装 Python 3.11+ 后重试，或在 .env 中设置:
+    echo   请安装 Python 3.11–3.13 后重试（推荐 3.12，不要使用 3.14），或在 .env 中设置:
     echo   TAHP_PYTHON=C:\Path\To\Python312\python.exe
     echo   然后执行: npm run setup:agent -- --force
     echo.
@@ -93,6 +93,7 @@ if errorlevel 1 (
 echo.
 echo ========================================
 echo   EasyAdapter Console 后台模式
+node scripts/print-hermes-version.mjs
 echo ========================================
 echo   启动顺序: 构建检查 -^> 停止旧进程 -^> 后台守护 8650 -^> 系统托盘 -^> 打开浏览器
 echo   服务在后台运行，关闭本窗口不会影响使用

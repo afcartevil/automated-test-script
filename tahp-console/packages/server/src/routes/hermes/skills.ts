@@ -4,6 +4,8 @@ import * as ctrl from '../../controllers/hermes/skills'
 export const skillRoutes = new Router()
 
 skillRoutes.get('/api/hermes/skills', ctrl.list)
+skillRoutes.get('/api/hermes/skills/improved', ctrl.improvedList)
+skillRoutes.post('/api/hermes/skills/improved/:name/remove-profile-copy', ctrl.removeImprovedProfileCopy)
 skillRoutes.get('/api/hermes/skills/usage/stats', ctrl.usageStats)
 skillRoutes.put('/api/hermes/skills/toggle', ctrl.toggle)
 skillRoutes.put('/api/hermes/skills/pin', ctrl.pin_)
