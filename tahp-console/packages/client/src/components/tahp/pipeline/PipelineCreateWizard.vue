@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NInput, NInputNumber, NSelect, NSpin, NSteps, NStep, NTable, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
 import {
@@ -46,6 +46,7 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
+const route = useRoute()
 const message = useMessage()
 
 const step = ref(1)
@@ -772,6 +773,12 @@ function goConfig() {
 }
 
 onMounted(() => {
+  const qCode = String(route.query.project_code || '').trim()
+  const qCamp = String(route.query.campaign_id || '').trim()
+  if (!projectCode.value && qCode) {
+    projectCode.value = qCode
+    if (qCamp) campaignId.value = qCamp
+  }
   rebuildWizardFromSources()
   // 项目列表不依赖就绪检查：有会话缓存则首屏直接出下拉
   void loadProjects()

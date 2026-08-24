@@ -12,6 +12,7 @@ import { bindJiraToCentral } from '../../services/tahp/sync/jira-bind'
 import { centralClient } from '../../services/tahp/sync/central-client'
 import { getTaskInboxPatches, getTaskUnreadIds } from '../../services/tahp/sync/task-notify-client'
 import { clearApplyPrompt, getApplyPrompt } from '../../services/tahp/task-apply-prompt'
+import { getTaskContext, setTaskContext } from '../../services/tahp/task-context'
 
 export const tahpCentralSsoRoutes = new Router()
 
@@ -112,8 +113,9 @@ tahpCentralSsoRoutes.get('/api/tahp/task-inbox', async (ctx) => {
       success: true,
       data: {
         packages: merged,
-        unread: merged.filter(p => Boolean(p.notice_type || (p as { unread?: boolean }).unread)).length,
+        unread: packages.filter(p => Boolean(p.unread)).length,
         apply_prompt: getApplyPrompt(),
+        task_context: getTaskContext(),
       },
     }
   } catch (err) {
@@ -155,10 +157,30 @@ tahpCentralSsoRoutes.post('/api/tahp/task-apply-run', async (ctx) => {
     const data = await centralClient.applyTaskRun(sessionToken, String(body.package_id || ''), {
       run_id: String(body.run_id || ''),
       line_ids: Array.isArray(body.line_ids) ? body.line_ids.map(String) : [],
-      also_pass: body.also_pass !== false,
+      also_pass: body.also_pass === true,
     })
     clearApplyPrompt()
     ctx.body = { success: true, data }
+  } catch (err) {
+    ctx.status = 400
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+tahpCentralSsoRoutes.get('/api/tahp/task-context', (ctx) => {
+  ctx.body = { success: true, data: getTaskContext() }
+})
+
+tahpCentralSsoRoutes.put('/api/tahp/task-context', (ctx) => {
+  const body = (ctx.request.body || {}) as {
+    package_id?: string
+    project_code?: string
+    campaign_id?: string
+    domain_id?: string
+    kind?: string
+  }
+  try {
+    ctx.body = { success: true, data: setTaskContext(body) }
   } catch (err) {
     ctx.status = 400
     ctx.body = { success: false, error: (err as Error).message }

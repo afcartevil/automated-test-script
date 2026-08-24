@@ -1,13 +1,13 @@
 /**
- * 自检 / 流水线上报成功后，缓存「用本报告勾选」弹层数据。
- * 无 pending 行则不弹。
+ * 自检 / 流水线上报成功后，缓存「用本报告勾选」弹层队列。
+ * 进程内数组：弹层展示中仍可入队；提交/跳过只出队头。
  */
 import { logger } from '../logger'
 import { readCentralUserSession } from './central-user-session'
 import { centralClient } from './sync/central-client'
 
 export type ApplyPrompt = {
-  run: { run_id: string; project_code: string; status?: string; dimension?: string; domain_id?: string }
+  run: { run_id: string; project_code: string; campaign_id?: string; status?: string; dimension?: string; domain_id?: string }
   packages: Array<{
     package_id: string
     title: string
@@ -16,16 +16,26 @@ export type ApplyPrompt = {
   }>
   also_pass_default: boolean
   domain_unspecified?: boolean
+  campaign_unspecified?: boolean
 }
 
-let lastPrompt: ApplyPrompt | null = null
+const queue: ApplyPrompt[] = []
 
 export function getApplyPrompt(): ApplyPrompt | null {
-  return lastPrompt
+  return queue[0] || null
 }
 
+export function listApplyQueue(): ApplyPrompt[] {
+  return [...queue]
+}
+
+/** 提交或跳过当前头，留下后续 run。 */
 export function clearApplyPrompt(): void {
-  lastPrompt = null
+  queue.shift()
+}
+
+export function resetApplyQueue(): void {
+  queue.length = 0
 }
 
 export async function offerApplyPrompt(runId: string, sessionToken?: string): Promise<void> {
@@ -35,12 +45,14 @@ export async function offerApplyPrompt(runId: string, sessionToken?: string): Pr
     const data = await centralClient.applyCandidates(token, runId)
     const packages = (data.packages || []).filter(p => p.pending_items?.length)
     if (!packages.length) return
-    lastPrompt = {
+    if (queue.some(p => p.run.run_id === runId)) return
+    queue.push({
       run: data.run,
       packages,
-      also_pass_default: data.run?.status === 'pass',
+      also_pass_default: data.run?.status === 'pass' && !data.campaign_unspecified,
       domain_unspecified: data.domain_unspecified,
-    }
+      campaign_unspecified: data.campaign_unspecified,
+    })
   } catch (err) {
     logger.debug({ err: (err as Error).message, runId }, '[task-apply] candidates skipped')
   }

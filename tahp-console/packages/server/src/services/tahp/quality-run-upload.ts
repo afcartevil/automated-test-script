@@ -21,6 +21,7 @@ import {
   type SelfCheckSummaryForUpload,
   type SelfCheckDetailForUpload,
 } from './quality-run-mapper'
+import { getTaskContext, preferTaskContextProject } from './task-context'
 
 export interface ResolvedProjectContext {
   project_code: string
@@ -38,6 +39,8 @@ export function resolveQualityRunOwner(): string | undefined {
 }
 
 async function resolveProjectCode(candidate?: string): Promise<{ project_code: string; campaign_id?: string }> {
+  const preferred = preferTaskContextProject(candidate)
+  if (preferred) return { project_code: preferred.project_code, campaign_id: preferred.campaign_id }
   const raw = candidate?.trim()
   if (!raw) return { project_code: UNASSIGNED_PROJECT }
   if (isCentralConfigured()) {
@@ -83,6 +86,16 @@ export async function resolveSelfCheckProjectContext(input: {
   scheduleKey?: string
   hintProject?: string
 }): Promise<ResolvedProjectContext> {
+  if (!input.hintProject?.trim()) {
+    const preferred = preferTaskContextProject()
+    if (preferred) {
+      return {
+        project_code: preferred.project_code,
+        campaign_id: preferred.campaign_id,
+        source: 'central-match',
+      }
+    }
+  }
   let candidate: string | undefined = input.hintProject?.trim() || undefined
   let brand: string | undefined
   let source: ResolvedProjectContext['source'] = 'unassigned'
@@ -161,6 +174,8 @@ export async function uploadSelfCheckReportToCentral(input: {
     reportRelPath: input.reportRelPath.replace(/\\/g, '/'),
     owner: resolveQualityRunOwner(),
   })
+  const ctx = getTaskContext()
+  if (ctx?.domain_id && !run.domain_id) run.domain_id = ctx.domain_id
 
   const result = await uploadSingleRun(run)
   if (result.uploaded) {

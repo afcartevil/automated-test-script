@@ -250,6 +250,7 @@ export const centralClient = {
   async myTaskPackages(sessionToken: string): Promise<Array<{
     package_id: string
     project_code: string
+    campaign_id?: string
     domain_id: string
     domain_label?: string
     title: string
@@ -265,7 +266,7 @@ export const centralClient = {
   },
 
   async applyCandidates(sessionToken: string, runId: string): Promise<{
-    run: { run_id: string; project_code: string; status?: string; dimension?: string; domain_id?: string }
+    run: { run_id: string; project_code: string; campaign_id?: string; status?: string; dimension?: string; domain_id?: string }
     packages: Array<{
       package_id: string
       title: string
@@ -273,6 +274,7 @@ export const centralClient = {
       pending_items: Array<{ line_id: string; item_id: string; title: string }>
     }>
     domain_unspecified?: boolean
+    campaign_unspecified?: boolean
   }> {
     return request(`/api/tahp/tasks/apply-candidates?run_id=${encodeURIComponent(runId)}`, {
       headers: { authorization: `Bearer ${sessionToken}` },

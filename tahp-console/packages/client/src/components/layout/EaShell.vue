@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NDropdown, useMessage } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
@@ -44,19 +44,21 @@ const systemNav = [
 ]
 
 const FEEDBACK_URL = 'https://transsioner.feishu.cn/share/base/form/shrcnDOMx8H12Nm1tcTmIOAHDId'
-const taskUnread = ref(0)
 const inboxPackages = ref<Array<{
   package_id: string
   project_code: string
+  campaign_id?: string
+  domain_id?: string
   domain_label?: string
   title: string
+  kind?: string
   unread?: boolean
   unread_count?: number
   notice_type?: string
   next?: string
 }>>([])
 type ApplyPrompt = {
-  run: { run_id: string; project_code: string; status?: string; dimension?: string; domain_id?: string }
+  run: { run_id: string; project_code: string; campaign_id?: string; status?: string; dimension?: string; domain_id?: string }
   packages: Array<{
     package_id: string
     title: string
@@ -65,12 +67,24 @@ type ApplyPrompt = {
   }>
   also_pass_default?: boolean
   domain_unspecified?: boolean
+  campaign_unspecified?: boolean
 }
 const applyPrompt = ref<ApplyPrompt | null>(null)
 const applyPkgId = ref('')
 const applyChecked = ref<string[]>([])
-const applyAlsoPass = ref(true)
+const applyAlsoPass = ref(false)
 const applyBusy = ref(false)
+const taskContext = ref<{
+  package_id: string
+  project_code: string
+  campaign_id: string
+  domain_id: string
+  kind: string
+  set_at: string
+} | null>(null)
+const hideContextBanner = ref(false)
+const showTaskPop = ref(false)
+const taskPopWrap = ref<HTMLElement | null>(null)
 
 const manualNav: Array<{ label: string; name?: string; url?: string }> = [
   { label: 'EasyAdapter 使用手册', name: 'tahp.manual' },
@@ -168,19 +182,30 @@ async function refreshTaskInbox() {
     const res = await fetch('/api/tahp/task-inbox')
     const json = await res.json() as {
       success?: boolean
-      data?: { unread?: number; packages?: typeof inboxPackages.value; apply_prompt?: ApplyPrompt | null }
+      data?: {
+        unread?: number
+        packages?: typeof inboxPackages.value
+        apply_prompt?: ApplyPrompt | null
+        task_context?: typeof taskContext.value
+      }
     }
     if (!json.success) return
-    taskUnread.value = json.data?.unread || 0
     inboxPackages.value = json.data?.packages || []
+    const nextCtx = json.data?.task_context || null
+    if (nextCtx?.set_at !== taskContext.value?.set_at) hideContextBanner.value = false
+    taskContext.value = nextCtx
+    if (applyBusy.value) return
     const prompt = json.data?.apply_prompt || null
-    if (prompt?.packages?.some(p => p.pending_items?.length) && !applyPrompt.value) {
-      applyPrompt.value = prompt
-      applyPkgId.value = prompt.packages[0]?.package_id || ''
-      const first = prompt.packages[0]
-      applyChecked.value = first?.pending_items.map(i => i.line_id) || []
-      applyAlsoPass.value = prompt.also_pass_default !== false && prompt.run?.status === 'pass'
-      if (prompt.run?.status && prompt.run.status !== 'pass') applyAlsoPass.value = false
+    if (prompt?.packages?.some(p => p.pending_items?.length)) {
+      if (applyPrompt.value?.run.run_id !== prompt.run.run_id) {
+        applyPrompt.value = prompt
+        applyPkgId.value = prompt.packages[0]?.package_id || ''
+        const first = prompt.packages[0]
+        applyChecked.value = first?.pending_items.map(i => i.line_id) || []
+        applyAlsoPass.value = prompt.run?.status === 'pass' && !prompt.campaign_unspecified
+      }
+    } else {
+      applyPrompt.value = null
     }
   } catch {
     /* 中心不可达时保持原数字 */
@@ -201,38 +226,95 @@ async function openCentral(next: string) {
   }
 }
 
-const taskOptions = computed(() => {
-  const items = inboxPackages.value.map(p => ({
-    label: p.notice_type
-      ? (p.title || (p.notice_type === 'gki-patch' ? 'GKI Patch' : 'Modem Patch'))
-      : `${p.project_code} · ${p.domain_label || ''} · ${p.title || ''}`.replace(/ · $/, ''),
-    key: p.notice_type ? `patch:${p.package_id}` : `pkg:${p.package_id}`,
-  }))
-  return [
-    ...items,
-    ...(items.length ? [{ type: 'divider', key: 'div' }] : []),
-    { label: '打开我的 Checklist', key: 'all' },
-  ]
-})
+const checklistPackages = computed(() => inboxPackages.value.filter(p => !p.notice_type))
+const unfinishedChecklist = computed(() =>
+  checklistPackages.value.filter(p => (p.unread_count || 0) > 0),
+)
+const patchPackages = computed(() => inboxPackages.value.filter(p => p.notice_type))
+const taskRemain = computed(() => unfinishedChecklist.value.length)
+const taskUnread = computed(() => unfinishedChecklist.value.filter(p => p.unread).length)
+const applyCanPass = computed(() =>
+  applyPrompt.value?.run.status === 'pass' && !applyPrompt.value?.campaign_unspecified,
+)
 
-function onTaskSelect(key: string) {
-  if (key === 'all') {
-    void openCentral('/tasks/mine')
-    return
+function kindBadge(kind?: string) {
+  if (kind === 'adapt-pipeline') return '流水线'
+  if (kind === 'gki-patch') return 'GKI'
+  if (kind === 'modem-patch') return 'Modem'
+  return '自检'
+}
+
+function packageHeadline(p: (typeof inboxPackages.value)[number]) {
+  return [p.project_code, p.campaign_id, p.domain_label || p.domain_id].filter(Boolean).join(' · ')
+}
+
+function packageMeta(p: (typeof inboxPackages.value)[number]) {
+  const bits: string[] = []
+  if (p.unread) bits.push('新通知')
+  bits.push(`${p.unread_count || 0} 项未完成`)
+  return bits.join(' · ')
+}
+
+function toggleTaskPop(e: Event) {
+  e.stopPropagation()
+  showTaskPop.value = !showTaskPop.value
+}
+
+function closeTaskPop() {
+  showTaskPop.value = false
+}
+
+function onDocClick(e: MouseEvent) {
+  const el = taskPopWrap.value
+  if (!el) return
+  if (!el.contains(e.target as Node)) showTaskPop.value = false
+}
+
+function openChecklist(pkg: (typeof inboxPackages.value)[number]) {
+  closeTaskPop()
+  void openCentral('/tasks/mine?package=' + encodeURIComponent(pkg.package_id))
+}
+
+function openAllChecklist() {
+  closeTaskPop()
+  void openCentral('/tasks/mine')
+}
+
+function openPatch(pkg: (typeof inboxPackages.value)[number]) {
+  closeTaskPop()
+  if (pkg.notice_type === 'gki-patch') void router.push({ name: 'tahp.gki-patch.dashboard' })
+  else void router.push({ name: 'tahp.modem-baseline.workbench' })
+}
+
+async function goExecute(pkg: (typeof inboxPackages.value)[number]) {
+  closeTaskPop()
+  try {
+    await fetch('/api/tahp/task-context', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        package_id: pkg.package_id,
+        project_code: pkg.project_code,
+        campaign_id: pkg.campaign_id || '',
+        domain_id: pkg.domain_id || '',
+        kind: pkg.kind || 'self-check',
+      }),
+    })
+  } catch {
+    /* 本机 context 写失败仍打开执行页 */
   }
-  if (key.startsWith('patch:')) {
-    const id = key.slice('patch:'.length)
-    const item = inboxPackages.value.find(p => p.package_id === id)
-    if (item?.notice_type === 'gki-patch') {
-      void router.push({ name: 'tahp.gki-patch.dashboard' })
-      return
-    }
-    void router.push({ name: 'tahp.modem-baseline.workbench' })
-    return
-  }
-  if (key.startsWith('pkg:')) {
-    void openCentral('/tasks/mine?package=' + encodeURIComponent(key.slice(4)))
-  }
+  const name = pkg.kind === 'adapt-pipeline' ? 'tahp.pipeline' : 'tahp.self-check'
+  void router.push({
+    name,
+    query: {
+      project_code: pkg.project_code || '',
+      campaign_id: pkg.campaign_id || '',
+      domain_id: pkg.domain_id || '',
+      package_id: pkg.package_id,
+    },
+  })
+  hideContextBanner.value = false
+  void refreshTaskInbox()
 }
 
 const applyRows = computed(() =>
@@ -247,10 +329,12 @@ function toggleApply(id: string, on: boolean) {
 async function dismissApply() {
   applyPrompt.value = null
   try { await fetch('/api/tahp/task-apply-dismiss', { method: 'POST' }) } catch { /* ignore */ }
+  void refreshTaskInbox()
 }
 
 async function confirmApply() {
   if (!applyPrompt.value || !applyPkgId.value || !applyChecked.value.length) return
+  const alsoPass = applyAlsoPass.value && applyCanPass.value
   applyBusy.value = true
   try {
     const res = await fetch('/api/tahp/task-apply-run', {
@@ -260,7 +344,7 @@ async function confirmApply() {
         package_id: applyPkgId.value,
         run_id: applyPrompt.value.run.run_id,
         line_ids: applyChecked.value,
-        also_pass: applyAlsoPass.value,
+        also_pass: alsoPass,
       }),
     })
     const json = await res.json() as { success?: boolean; error?: string }
@@ -268,8 +352,9 @@ async function confirmApply() {
       message.error(json.error || '勾选失败')
       return
     }
-    message.success(applyAlsoPass.value ? '已用本报告勾选通过' : '已关联报告')
+    message.success(alsoPass ? '已用本报告勾选通过' : '已关联报告')
     applyPrompt.value = null
+    await refreshTaskInbox()
   } catch (e) {
     message.error((e as Error).message || '勾选失败')
   } finally {
@@ -279,7 +364,11 @@ async function confirmApply() {
 
 const inboxTimer = window.setInterval(refreshTaskInbox, 15000)
 refreshTaskInbox()
-onUnmounted(() => window.clearInterval(inboxTimer))
+onMounted(() => document.addEventListener('click', onDocClick))
+onUnmounted(() => {
+  document.removeEventListener('click', onDocClick)
+  window.clearInterval(inboxTimer)
+})
 </script>
 
 <template>
@@ -369,12 +458,47 @@ onUnmounted(() => window.clearInterval(inboxTimer))
       </nav>
 
       <div class="ck-spacer">
-        <NDropdown trigger="click" :options="taskOptions" @select="onTaskSelect">
-          <button type="button" class="ck-feedback-btn" title="打开中心我的 Checklist">
+        <div ref="taskPopWrap" class="ck-task-wrap">
+          <button type="button" class="ck-feedback-btn" title="我的任务" @click="toggleTaskPop">
             我的任务
-            <span v-if="taskUnread" class="ck-task-dot">{{ taskUnread > 9 ? '9+' : taskUnread }}</span>
+            <span v-if="taskRemain" class="ck-task-remain" title="未完成工作包">{{ taskRemain > 9 ? '9+' : taskRemain }}</span>
+            <span v-if="taskUnread" class="ck-task-dot" title="未读通知">{{ taskUnread > 9 ? '9+' : taskUnread }}</span>
           </button>
-        </NDropdown>
+          <div v-if="showTaskPop" class="ck-task-pop">
+            <div class="ck-task-pop-hd">红点=新通知　左侧数字=还有活没干完。打开清单不会把未完成清掉。</div>
+            <div class="ck-task-sec">CHECKLIST</div>
+            <div v-if="!unfinishedChecklist.length" class="ck-task-empty">没有未完成的检查表</div>
+            <div v-for="p in unfinishedChecklist" :key="p.package_id" class="ck-task-item">
+              <div>
+                <div>
+                  <span class="ck-task-badge" :class="p.kind === 'adapt-pipeline' ? 'pipe' : 'check'">{{ kindBadge(p.kind) }}</span>
+                  <b>{{ packageHeadline(p) }}</b>
+                </div>
+                <div class="ck-task-meta">{{ packageMeta(p) }}</div>
+              </div>
+              <div class="ck-task-actions">
+                <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openChecklist(p)">打开清单</button>
+                <button type="button" class="ck-feedback-btn ck-task-go" @click="goExecute(p)">去执行</button>
+              </div>
+            </div>
+            <template v-if="patchPackages.length">
+              <div class="ck-task-sec">PATCH 通知（不计入 Checklist 红点）</div>
+              <div v-for="p in patchPackages" :key="p.package_id" class="ck-task-item">
+                <div>
+                  <div>
+                    <span class="ck-task-badge patch">{{ kindBadge(p.notice_type) }}</span>
+                    <b>{{ p.title || (p.notice_type === 'gki-patch' ? 'GKI Patch' : 'Modem Patch') }}</b>
+                  </div>
+                  <div class="ck-task-meta">仅订阅名单 · 点进现有 Patch 页</div>
+                </div>
+                <div class="ck-task-actions">
+                  <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openPatch(p)">打开 Patch</button>
+                </div>
+              </div>
+            </template>
+            <button type="button" class="ck-task-all" @click="openAllChecklist">打开我的 Checklist</button>
+          </div>
+        </div>
 
         <button type="button" class="ck-mini-model" @click="showModelModal = true">
           <span class="ck-mini-dot" :class="{ offline: !appStore.connected }" />
@@ -396,6 +520,14 @@ onUnmounted(() => window.clearInterval(inboxTimer))
       </div>
     </header>
 
+    <div v-if="taskContext && !hideContextBanner" class="ck-task-ctx">
+      当前任务：{{ taskContext.project_code }}
+      <span v-if="taskContext.campaign_id"> · {{ taskContext.campaign_id }}</span>
+      <span v-if="taskContext.domain_id"> · {{ taskContext.domain_id }}</span>
+      · 上报将优先带上该项目/版本
+      <button type="button" class="ck-task-ctx-x" @click="hideContextBanner = true">关闭</button>
+    </div>
+
     <main class="ck-content" :class="{ 'ck-content--flush': flushLayout }">
       <slot />
     </main>
@@ -413,6 +545,7 @@ onUnmounted(() => window.clearInterval(inboxTimer))
         <p class="ck-apply-meta">
           {{ applyPrompt.run.project_code }} · {{ applyPrompt.run.run_id }}
           <span v-if="applyPrompt.domain_unspecified">（报告未标域，请确认不要跨域误挂）</span>
+          <span v-if="applyPrompt.campaign_unspecified">（报告未标适配版本，不能勾选通过）</span>
         </p>
         <label v-if="applyPrompt.packages.length > 1" class="ck-apply-pkg">
           工作包
@@ -428,8 +561,8 @@ onUnmounted(() => window.clearInterval(inboxTimer))
         </label>
         <p v-if="!applyRows.length" class="ck-apply-meta">没有待处理行</p>
         <label class="ck-apply-row">
-          <input type="checkbox" v-model="applyAlsoPass" :disabled="applyPrompt.run.status !== 'pass'">
-          <span>用本报告勾选通过（失败报告只能关联、不改状态）</span>
+          <input type="checkbox" v-model="applyAlsoPass" :disabled="!applyCanPass">
+          <span>用本报告勾选通过（失败或未标版本的报告只能关联、不改状态）</span>
         </label>
         <div class="ck-apply-actions">
           <button type="button" class="ea-btn-ghost ea-btn-sm" :disabled="applyBusy" @click="dismissApply">跳过</button>
@@ -557,7 +690,109 @@ onUnmounted(() => window.clearInterval(inboxTimer))
   font-weight: 700;
   line-height: 1;
 }
+.ck-task-remain {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+.ck-task-wrap { position: relative; }
+.ck-task-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(420px, calc(100vw - 32px));
+  background: #fff;
+  border: 1px solid var(--line-strong, #e5e7eb);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
+  z-index: 40;
+  padding: 10px 0 8px;
+}
+.ck-task-pop-hd {
+  padding: 4px 14px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.ck-task-sec {
+  padding: 8px 14px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.ck-task-empty {
+  padding: 10px 14px 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.ck-task-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+}
+.ck-task-item b { font-size: 13px; }
+.ck-task-meta { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+.ck-task-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.ck-task-go { padding: 5px 10px !important; font-size: 12px !important; }
+.ck-task-badge {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.ck-task-badge.check { background: #ede9fe; color: #6d28d9; }
+.ck-task-badge.pipe { background: #dbeafe; color: #1d4ed8; }
+.ck-task-badge.patch { background: #ffedd5; color: #c2410c; }
+.ck-task-all {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 4px 8px 0;
+  padding: 8px 10px;
+  border: 0;
+  border-top: 1px solid #f1f5f9;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
 
+.ck-task-ctx {
+  margin: 0 28px 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #eef4ff;
+  color: var(--head);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ck-task-ctx-x {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
 .ck-apply-panel {
   max-width: 520px;
   padding: 20px 22px;
