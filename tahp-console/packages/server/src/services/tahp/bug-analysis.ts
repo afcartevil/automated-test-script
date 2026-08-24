@@ -62,9 +62,12 @@ import {
 import { saveAgentPromptLog } from './prompt-log'
 import {
   BUG_UI_PHASE_PROGRESS,
+  BugAnalysisEmptyResultError,
+  evaluateRunOutcome,
+  extractBugAnalysisReportBody,
   findBugStageMarkers,
   formatStageDetailLines,
-  extractBugAnalysisReportBody,
+  truncateForReport,
   type ParsedBugStageMarker,
 } from './bug-analysis-stages'
 import {
@@ -1320,7 +1323,17 @@ function buildConversationHistoryFromReport(
   return history
 }
 
+function restoreReportStatus(raw: unknown): BugAnalysisTaskCtx['status'] {
+  const s = String(raw || '')
+  if (
+    s === 'pending' || s === 'running' || s === 'waiting_user_input'
+    || s === 'completed' || s === 'failed' || s === 'cancelled'
+  ) return s
+  return 'completed'
+}
+
 function restoreCtxFromReport(taskId: string, report: Record<string, unknown>): BugAnalysisTaskCtx {
+  const status = restoreReportStatus(report.status)
   return {
     taskId,
     jiraKey: String(report.jira_key || ''),
@@ -1331,9 +1344,9 @@ function restoreCtxFromReport(taskId: string, report: Record<string, unknown>): 
     userDescription: typeof report.user_description === 'string' ? report.user_description : undefined,
     extraContext: typeof report.extra_context === 'string' ? report.extra_context : undefined,
     startedAt: String(report.started_at || new Date().toISOString()),
-    status: 'completed',
-    phase: 'COMPLETED',
-    progress: 100,
+    status,
+    phase: typeof report.phase === 'string' ? report.phase : (status === 'completed' ? 'COMPLETED' : undefined),
+    progress: typeof report.progress === 'number' ? report.progress : (status === 'completed' ? 100 : 0),
     corrections: Array.isArray(report.corrections) ? [...report.corrections as string[]] : [],
     skillsUsed: Array.isArray(report.skills_used) ? [...report.skills_used as string[]] : [],
     skillsImproved: parseSkillImproves(report.skills_improved),
@@ -1379,6 +1392,7 @@ async function runSingleBugAnalysis(
   const userInputMarkerState = { lastIndex: 0 }
   let succeeded = false
   let pausedForUserInput = false
+  let toolCallCount = 0
 
   try {
     let userMessage: string
@@ -1459,7 +1473,6 @@ async function runSingleBugAnalysis(
     }
 
     let lastSkillHitIdx = 0
-    let toolCallCount = 0
 
     const { fullResponse, interrupted } = await runAgentChat(agentSessionId, userMessage, {
       onText: (delta) => {
@@ -1546,6 +1559,11 @@ async function runSingleBugAnalysis(
     }
 
     ctx.llmResponse = fullResponse
+    const outcome = evaluateRunOutcome(fullResponse, toolCallCount)
+    if (!outcome.ok) {
+      throw new BugAnalysisEmptyResultError(outcome.message)
+    }
+
     ingestStageMarkersFromText(taskId, ctx, fullResponse, stageMarkerState)
 
     logBug(taskId, 'info', `Agent run complete (${fullResponse.length} chars, tools=${toolCallCount}, skills_recorded=${ctx.skillsUsed.join(',') || 'none'}, skills_improved=${(ctx.skillsImproved || []).map(s => s.name).join(',') || 'none'})`)
@@ -1683,14 +1701,18 @@ async function runSingleBugAnalysis(
     }
     const interruptedByUser = control?.interruptRequested === true
     const msg = interruptedByUser ? '任务已被用户中断' : (err as Error).message
+    const keepPriorReport = isContinue || isUserInputResume
+    const failureReason = err instanceof BugAnalysisEmptyResultError ? err.failureReason : undefined
     logger.warn({ taskId, err: msg }, '[bug-analysis] failed')
     logBug(taskId, interruptedByUser ? 'warn' : 'error', `task failed: ${msg}`)
     ctx.status = interruptedByUser ? 'cancelled' : 'failed'
     ctx.error = msg
     ctx.completedAt = new Date().toISOString()
-    if (isContinue && correction) {
-      const idx = ctx.corrections.lastIndexOf(correction)
-      if (idx >= 0) ctx.corrections.splice(idx, 1)
+    if (keepPriorReport) {
+      if (isContinue && correction) {
+        const idx = ctx.corrections.lastIndexOf(correction)
+        if (idx >= 0) ctx.corrections.splice(idx, 1)
+      }
       ctx.status = 'completed'
       ctx.phase = 'COMPLETED'
       ctx.progress = 100
@@ -1706,8 +1728,8 @@ async function runSingleBugAnalysis(
       emit(taskId, 'task.failed', { error: msg, message: `分析失败: ${msg}`, skills_improved: ctx.skillsImproved || [] })
     }
 
-    // 写入失败报告（补充继续失败时保留原 completed 报告）
-    if (!isContinue) {
+    // 写入失败报告（补充继续 / 用户输入续跑失败时保留原 completed 报告）
+    if (!keepPriorReport) {
       try {
         if ((ctx.skillsImproved || []).length) {
           try {
@@ -1726,18 +1748,21 @@ async function runSingleBugAnalysis(
           module: ctx.module,
           status: 'failed',
           error: msg,
+          failure_reason: failureReason,
           started_at: ctx.startedAt,
           completed_at: ctx.completedAt,
           user_description: ctx.userDescription,
           extra_context: ctx.extraContext,
           skills_used: ctx.skillsUsed,
           skills_improved: ctx.skillsImproved || [],
+          tool_call_count: toolCallCount,
+          llm_response: truncateForReport(ctx.llmResponse || ''),
         }
         writeFileSync(reportPath(taskId), JSON.stringify(report, null, 2), 'utf-8')
       } catch { /* swallow */ }
     }
 
-    if (!isContinue && ctx.parentJobId) {
+    if (!keepPriorReport && ctx.parentJobId) {
       const job = jobCtx.get(ctx.parentJobId)
       if (job) {
         job.failed += 1

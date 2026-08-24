@@ -173,3 +173,52 @@ export function extractBugAnalysisReportBody(text: string): string {
   }
   return body
 }
+
+/** 无报告正文时的最小有效输出长度（P0 完成门禁） */
+export const MIN_MEANINGFUL_CHARS = 200
+/** `llm_response` 落盘上限（P0 失败报告截断；P1 成功路径共用） */
+export const LLM_RESPONSE_MAX_BYTES = 65536
+
+export type RunFailureReason = 'empty_response' | 'spin_detected'
+
+export type RunOutcome =
+  | { ok: true }
+  | { ok: false; failureReason: 'empty_response'; message: string }
+
+export class BugAnalysisEmptyResultError extends Error {
+  readonly failureReason: 'empty_response' = 'empty_response'
+  constructor(message: string) {
+    super(message)
+    this.name = 'BugAnalysisEmptyResultError'
+  }
+}
+
+export function evaluateRunOutcome(fullResponse: string, toolCallCount: number): RunOutcome {
+  const produced = fullResponse.trim().length
+  const bodyLen = extractBugAnalysisReportBody(fullResponse).trim().length
+  if (produced === 0 && toolCallCount === 0) {
+    return {
+      ok: false,
+      failureReason: 'empty_response',
+      message: 'Agent 空返回（0 工具调用 / 0 字符输出）',
+    }
+  }
+  if (bodyLen === 0 && produced < MIN_MEANINGFUL_CHARS && toolCallCount === 0) {
+    return {
+      ok: false,
+      failureReason: 'empty_response',
+      message: `Agent 输出过短且无报告正文（${produced} 字符）`,
+    }
+  }
+  return { ok: true }
+}
+
+/** 按 UTF-8 字节截断，避免劈开多字节字符 */
+export function truncateForReport(text: string, maxBytes = LLM_RESPONSE_MAX_BYTES): string {
+  if (!text) return ''
+  const buf = Buffer.from(text, 'utf8')
+  if (buf.length <= maxBytes) return text
+  let end = maxBytes
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end -= 1
+  return `${buf.subarray(0, end).toString('utf8')}\n\n[... 已截断]`
+}
