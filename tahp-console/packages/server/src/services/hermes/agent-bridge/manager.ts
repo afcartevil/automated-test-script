@@ -249,7 +249,13 @@ function tcpEndpointPort(endpoint: string): number | undefined {
 
 function windowsListeningPidsOnPort(port: number): number[] {
   try {
-    const output = execFileSync('netstat.exe', ['-ano', '-p', 'tcp'], { windowsHide: true }).toString('utf8')
+    const timeoutMs = envPositiveInt('TAHP_PORT_SCAN_TIMEOUT_MS') ?? 4000
+    const output = execFileSync('netstat.exe', ['-ano', '-p', 'tcp'], {
+      windowsHide: true,
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).toString('utf8')
     const pids = new Set<number>()
     for (const line of output.split(/\r?\n/)) {
       const parts = line.trim().split(/\s+/)
@@ -283,7 +289,12 @@ async function killWindowsEndpointOccupants(endpoint: string): Promise<void> {
   for (const pid of pids) {
     try {
       logger.warn('[agent-bridge] killing stale process tree pid=%d on bridge port %d', pid, port)
-      execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { encoding: 'utf-8', windowsHide: true })
+      execFileSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+        encoding: 'utf-8',
+        windowsHide: true,
+        timeout: 5000,
+        killSignal: 'SIGKILL',
+      })
     } catch (err) {
       logger.warn(err, '[agent-bridge] failed to kill stale bridge process pid=%d', pid)
     }

@@ -7,12 +7,20 @@
  *   - 默认端口: 8650
  *   - 默认鉴权: 若未设 AUTH_TOKEN/AUTH_DISABLED, 默认走 AUTH_DISABLED=1 (内网团队工具)
  */
-import { spawn, execSync, execFileSync } from 'child_process'
+import { spawn, execSync } from 'child_process'
 import { ensureHermesAgent } from '../scripts/ensure-hermes-agent.mjs'
+import {
+  commandExists,
+  getListeningPids,
+  killListeningPids,
+  parseUnixNetstatListeningPids,
+  portScanTimeoutMs,
+} from '../scripts/lib/port-scan.mjs'
 import { resolve, dirname, join, delimiter } from 'path'
 import { fileURLToPath } from 'url'
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, chmodSync, statSync, existsSync, realpathSync } from 'fs'
 import { randomBytes } from 'crypto'
+import { createServer } from 'net'
 import { homedir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -86,81 +94,18 @@ function getPort() {
   return argPort ?? DEFAULT_PORT
 }
 
-function commandExists(command) {
-  try {
-    if (process.platform === 'win32') execFileSync('where', [command], { stdio: 'ignore', windowsHide: true })
-    else execFileSync('sh', ['-c', `command -v "$1" >/dev/null 2>&1`, 'sh', command], { stdio: 'ignore' })
-    return true
-  } catch { return false }
-}
-
-function parseUnixNetstatListeningPids(out, port) {
-  const pids = []
-  for (const line of out.split(/\r?\n/)) {
-    const parts = line.trim().split(/\s+/)
-    if (parts.length < 6) continue
-    const proto = parts[0]?.toLowerCase()
-    if (!proto?.startsWith('tcp')) continue
-    const localAddress = parts[3]
-    const state = parts.find(p => p.toUpperCase() === 'LISTEN' || p.toUpperCase() === 'LISTENING')
-    if (!state || !localAddress?.endsWith(`:${port}`)) continue
-    const pidPart = parts.find(p => /^\d+\//.test(p))
-    const pid = pidPart ? parseInt(pidPart.split('/')[0], 10) : NaN
-    if (Number.isFinite(pid)) pids.push(pid)
-  }
-  return pids
-}
-
-function getListeningPids(port) {
-  if (!port || isNaN(port)) return []
-  const uniquePids = (pids) => [...new Set(pids.filter(pid => Number.isFinite(pid)))]
-
-  try {
-    if (process.platform === 'win32') {
-      const out = execSync('netstat -aon -p tcp', { encoding: 'utf-8' })
-      return uniquePids(out.split('\n')
-        .map(l => l.trim())
-        .filter(l => l.includes('LISTENING'))
-        .map(l => l.split(/\s+/))
-        .filter(parts => {
-          const addr = parts[1] || ''
-          return parseInt(addr.split(':').pop(), 10) === port
-        })
-        .map(parts => parseInt(parts[parts.length - 1], 10)))
-    }
-  } catch { return [] }
-
-  if (commandExists('ss')) {
-    try {
-      const out = execFileSync('ss', ['-ltnp', `sport = :${port}`], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] })
-      const pids = uniquePids(out.split(/\r?\n/).map(l => l.match(/pid=(\d+)/)?.[1]).map(p => parseInt(p || '', 10)))
-      if (pids.length) return pids
-    } catch {}
-  }
-  if (commandExists('lsof')) {
-    try {
-      const out = execFileSync('lsof', [`-tiTCP:${port}`, '-sTCP:LISTEN'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-      const pids = uniquePids(out.split(/\r?\n/).map(p => parseInt(p, 10)))
-      if (pids.length) return pids
-    } catch {}
-  }
-  if (commandExists('netstat')) {
-    try {
-      const out = execFileSync('netstat', ['-anp', 'tcp'], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] })
-      const pids = uniquePids(parseUnixNetstatListeningPids(out, port))
-      if (pids.length) return pids
-    } catch {}
-  }
-  return []
-}
-
-function killListeningPids(port, pids = getListeningPids(port)) {
-  if (pids.length === 0) return
-  console.log(`  ⚠ 端口 ${port} 被占用 PID: ${pids.join(' ')}，正在终止...`)
-  try {
-    if (process.platform === 'win32') execSync(`taskkill /F /PID ${pids.join(' /PID ')}`, { encoding: 'utf-8' })
-    else execSync(`kill -9 ${pids.join(' ')}`, { encoding: 'utf-8' })
-  } catch {}
+/** 不依赖 netstat：尝试 bind 端口，EADDRINUSE 即占用 */
+function canBindPort(port) {
+  return new Promise((resolvePromise) => {
+    const server = createServer()
+    server.unref()
+    server.once('error', (err) => {
+      resolvePromise(err?.code !== 'EADDRINUSE')
+    })
+    server.listen(port, '127.0.0.1', () => {
+      server.close(() => resolvePromise(true))
+    })
+  })
 }
 
 function recoverPidFromPort() {
@@ -200,7 +145,7 @@ function isRunning(pid) {
 function writePid(pid) { writeFileSync(PID_FILE, String(pid)) }
 function removePid() { try { unlinkSync(PID_FILE) } catch {} }
 
-function startDaemon(port) {
+async function startDaemon(port) {
   const existing = getPid()
   if (existing && isRunning(existing)) {
     console.log(`  ✗ ${CLI_NAME} 已在运行 (PID: ${existing})`)
@@ -213,6 +158,12 @@ function startDaemon(port) {
   if (occupied.length) {
     killListeningPids(port, occupied)
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500)
+  } else if (!(await canBindPort(port))) {
+    console.log(`  ✗ 端口 ${port} 已被占用，但无法通过端口扫描枚举 PID`)
+    console.log(`    可能原因: Windows netstat 查询超时或卡住（TAHP_PORT_SCAN_TIMEOUT_MS=${portScanTimeoutMs()}）`)
+    console.log(`    手动排查: netstat -ano -p tcp | findstr :${port}`)
+    console.log(`    或跳过扫描直接启动: set TAHP_SKIP_PORT_SCAN=1`)
+    process.exit(1)
   }
 
   if (!existsSync(serverEntry)) {
@@ -400,20 +351,22 @@ ${CLI_NAME} v${VERSION}
   TAHP_PROJECT_ROOT  TAHP 仓库根目录 (默认上级)
   TAHP_PYTHON        Python 可执行路径 (默认 python)
   TAHP_OPEN_BROWSER  设为 0 时 start 不自动打开浏览器 (run_adapter.bat 使用)
+  TAHP_SKIP_PORT_SCAN  设为 1 时跳过 netstat 端口扫描（netstat 卡住时的逃生开关）
+  TAHP_PORT_SCAN_TIMEOUT_MS  端口扫描超时毫秒（默认 4000）
 `)
     process.exit(0)
   }
 
   switch (command) {
     case 'start':
-      startDaemon(getPort())
+      void startDaemon(getPort())
       break
     case 'stop':
       stopDaemon()
       break
     case 'restart':
       stopDaemon()
-      setTimeout(() => startDaemon(getPort()), 500)
+      setTimeout(() => { void startDaemon(getPort()) }, 500)
       break
     case 'status':
       showStatus()

@@ -2,33 +2,35 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 type ChildProcessMocks = {
   execFileSync: ReturnType<typeof vi.fn>
-  execSync: ReturnType<typeof vi.fn>
-  spawn: ReturnType<typeof vi.fn>
 }
 
-async function loadCli(overrides: Partial<ChildProcessMocks> = {}) {
+async function loadPortScan(overrides: Partial<ChildProcessMocks> = {}) {
   const execFileSync = overrides.execFileSync ?? vi.fn()
-  const execSync = overrides.execSync ?? vi.fn()
-  const spawn = overrides.spawn ?? vi.fn()
 
   vi.resetModules()
-  vi.doMock('child_process', () => ({ execFileSync, execSync, spawn }))
+  vi.doMock('child_process', () => ({ execFileSync }))
 
-  const mod = await import('../../bin/hermes-web-ui.mjs')
+  const mod = await import('../../scripts/lib/port-scan.mjs')
   return {
     ...mod,
-    mocks: { execFileSync, execSync, spawn },
+    mocks: { execFileSync },
   }
 }
 
 describe('CLI port detection', () => {
   const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+  const originalSkip = process.env.TAHP_SKIP_PORT_SCAN
+  const originalTimeout = process.env.TAHP_PORT_SCAN_TIMEOUT_MS
 
   afterEach(() => {
     vi.doUnmock('child_process')
     if (originalPlatform) {
       Object.defineProperty(process, 'platform', originalPlatform)
     }
+    if (originalSkip === undefined) delete process.env.TAHP_SKIP_PORT_SCAN
+    else process.env.TAHP_SKIP_PORT_SCAN = originalSkip
+    if (originalTimeout === undefined) delete process.env.TAHP_PORT_SCAN_TIMEOUT_MS
+    else process.env.TAHP_PORT_SCAN_TIMEOUT_MS = originalTimeout
   })
 
   it('falls back to lsof without executing ss when ss is unavailable', async () => {
@@ -46,7 +48,7 @@ describe('CLI port detection', () => {
       }
       throw new Error(`unexpected command: ${command}`)
     })
-    const { getListeningPids, mocks } = await loadCli({ execFileSync })
+    const { getListeningPids, mocks } = await loadPortScan({ execFileSync })
 
     expect(getListeningPids(8648)).toEqual([1234])
     expect(mocks.execFileSync).not.toHaveBeenCalledWith(
@@ -57,7 +59,7 @@ describe('CLI port detection', () => {
     expect(mocks.execFileSync).toHaveBeenCalledWith(
       'lsof',
       ['-tiTCP:8648', '-sTCP:LISTEN'],
-      expect.objectContaining({ encoding: 'utf-8' }),
+      expect.objectContaining({ encoding: 'utf-8', timeout: expect.any(Number) }),
     )
   })
 
@@ -73,13 +75,13 @@ describe('CLI port detection', () => {
       }
       throw new Error(`unexpected command: ${command}`)
     })
-    const { getListeningPids } = await loadCli({ execFileSync })
+    const { getListeningPids } = await loadPortScan({ execFileSync })
 
     expect(getListeningPids(8648)).toEqual([4321])
   })
 
   it('parses Linux netstat listener output as a final fallback', async () => {
-    const { parseUnixNetstatListeningPids } = await loadCli()
+    const { parseUnixNetstatListeningPids } = await loadPortScan()
 
     expect(parseUnixNetstatListeningPids(
       [
@@ -88,5 +90,56 @@ describe('CLI port detection', () => {
       ].join('\n'),
       8648,
     )).toEqual([2468])
+  })
+
+  it('uses netstat.exe with timeout on win32', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    process.env.TAHP_PORT_SCAN_TIMEOUT_MS = '2500'
+
+    const execFileSync = vi.fn((command: string) => {
+      if (command === 'netstat.exe') {
+        return [
+          '  TCP    0.0.0.0:8650           0.0.0.0:0              LISTENING       4242',
+          '  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1111',
+        ].join('\r\n')
+      }
+      throw new Error(`unexpected command: ${command}`)
+    })
+    const { getListeningPids, mocks } = await loadPortScan({ execFileSync })
+
+    expect(getListeningPids(8650)).toEqual([4242])
+    expect(mocks.execFileSync).toHaveBeenCalledWith(
+      'netstat.exe',
+      ['-ano', '-p', 'tcp'],
+      expect.objectContaining({
+        encoding: 'utf-8',
+        timeout: 2500,
+        killSignal: 'SIGKILL',
+        windowsHide: true,
+      }),
+    )
+  })
+
+  it('returns empty list when netstat.exe times out on win32', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+
+    const timedOut = Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT' })
+    const execFileSync = vi.fn(() => {
+      throw timedOut
+    })
+    const { getListeningPids } = await loadPortScan({ execFileSync })
+
+    expect(getListeningPids(8650)).toEqual([])
+  })
+
+  it('skips port scan entirely when TAHP_SKIP_PORT_SCAN=1', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    process.env.TAHP_SKIP_PORT_SCAN = '1'
+
+    const execFileSync = vi.fn()
+    const { getListeningPids, mocks } = await loadPortScan({ execFileSync })
+
+    expect(getListeningPids(8650)).toEqual([])
+    expect(mocks.execFileSync).not.toHaveBeenCalled()
   })
 })
