@@ -7,9 +7,6 @@
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
 
-# 该入口 historically 以 CRLF 入库。标 -text 避免 text 过滤器把它变成永久 dirty。
-run_adapter.bat -text
-
 # skills/ 由 Skill Sync 自动重写，落盘一律 LF。此处整体覆盖回 LF，
 # 否则其中的 30 个 .bat/.ps1 每次同步后都会变成幽灵改动。
 skills/** text=auto eol=lf
