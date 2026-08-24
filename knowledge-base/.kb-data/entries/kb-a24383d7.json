@@ -1,0 +1,25 @@
+{
+  "id": "kb-a24383d7",
+  "content": "•\n日志解读\u0001：\u0001\na.首条日志包含漫游状态、注册制式等核心信息，TOS16.2\u0001版本需同时具备数据能力才显示制式\n图标\nb.第二条日志打印\u0001VoWiFi\u0001等增值服务状态，可用于排查图标不显示问题\u0001\n•\n典型案例\u0001：\u0001\n\u0001\u0001\u0001\u0001\u0001http://jira.transsion.com/browse/X6873OS162-302：因网络未返回可用\u0001DNS\u0001地址导致数据能力\n异常\n三、搜网问题\n代码块\u0001\n//手动搜网返回的列表（raido log）\n02-18 12:38:38.722099  2630  2958 D RILJ    : [5145]< MTK: \nQUERY_AVAILABLE_NETWORKS_WITH_ACT [OperatorInfo Jio True5G/Jio \nTrue5G/405858/CURRENT/0, OperatorInfo Jio True5G 4G/Jio True5G \n4G/405858/AVAILABLE/0, OperatorInfo Vi India 4G/Vi India 4G/40401/FORBIDDEN/0, \nOperatorInfo Airtel 4G/Airtel 4G/40496/FORBIDDEN/0, OperatorInfo BSNL MOBILE \n4G/BSNL MOBILE 4G/40451/FORBIDDEN/0, OperatorInfo BSNL MOBILE 4G/BSNL MOBILE \n4G/40434/FORBIDDEN/0, OperatorInfo BSNL MOBILE 3G/BSNL MOBILE \n3G/40434/FORBIDDEN/0, OperatorInfo BSNL MOBILE 2G/BSNL MOBILE \n2G/40434/FORBIDDEN/0, OperatorInfo Vi India 2G/Vi India 2G/40401/FORBIDDEN/0, \nOperatorInfo BSNL MOBILE 2G/BSNL MOBILE 2G/40451/FORBIDDEN/0, OperatorInfo \nAirtel 2G/Airtel 2G/40496/FORBIDDEN/0, OperatorInfo Airtel 5G/Airtel \n5G/40496/FORBIDDEN/0, OperatorInfo Vi India 4G/Vi India 4G/40482/FORBIDDEN/0, \nOperatorInfo Airtel 2G/Airtel 2G/40403/FORBIDDEN/0, OperatorInfo Vi India \n2G/Vi India 2G/40414/FORBIDDEN/0] [PHONE0]\n//手动搜网返回的结果（main log）\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: Sync network scan \ncompleted, cellInfos = {CellType = CellInfoGsm, isRegistered = true, mcc = \n405, mnc = 858, alphaL = Jio True5G, alphaS = Jio True5G}\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: {CellType = \nCellInfoGsm, isRegistered = false, mcc = 405, mnc = 858, alphaL = Jio True5G \n4G, alphaS = Jio True5G 4G}\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: {CellType = \nCellInfoGsm, isRegistered = false, mcc = 404, mnc = 96, alphaL = Airtel 4G, \nalphaS = Airtel 4G}\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: {CellType = \nCellInfoGsm, isRegistered = false, mcc = 404, mnc = 34, alphaL = BSNL MOBILE \n4G, alphaS = BSNL MOBILE 4G}\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: {CellType = \nCellInfoGsm, isRegistered = false, mcc = 404, mnc = 01, alphaL = Vi India 4G, \n1\n2\n3\n4\n5\n6\n7\n8\n9",
+  "category": "其他",
+  "module": "telephony",
+  "func_type": "bug_analysis",
+  "keywords": [
+    "日志解读",
+    "首条日志包含",
+    "漫游状态",
+    "注册制式等核",
+    "心信息",
+    "VoWiFi",
+    "DNS",
+    "RILJ"
+  ],
+  "confidence_score": 0.7999999999999999,
+  "source_file": "网络问题分析SOP.pdf",
+  "source_document_id": "doc-0ce82139",
+  "created_at": "2026-05-29T07:55:16.411Z",
+  "updated_at": "2026-05-29T07:55:16.411Z",
+  "status": "pending_review",
+  "is_verified": false,
+  "usage_count": 0
+}

@@ -1,0 +1,25 @@
+{
+  "id": "kb-a0dc0d77",
+  "content": "alphaS = Vi India 4G}\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: {CellType = \nCellInfoGsm, isRegistered = false, mcc = 404, mnc = 51, alphaL = BSNL MOBILE \n4G, alphaS = BSNL MOBILE 4G}\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: {CellType = \nCellInfoGsm, isRegistered = false, mcc = 404, mnc = 34, alphaL = BSNL MOBILE \n3G, alphaS = BSNL MOBILE 3G}\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: {CellType = \nCellInfoGsm, isRegistered = false, mcc = 404, mnc = 51, alphaL = BSNL MOBILE \n2G, alphaS = BSNL MOBILE 2G}\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: {CellType = \nCellInfoGsm, isRegistered = false, mcc = 404, mnc = 01, alphaL = Vi India 2G, \nalphaS = Vi India 2G}\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: {CellType = \nCellInfoGsm, isRegistered = false, mcc = 404, mnc = 96, alphaL = Airtel 2G, \nalphaS = Airtel 2G}\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: {CellType = \nCellInfoGsm, isRegistered = false, mcc = 404, mnc = 34, alphaL = BSNL MOBILE \n2G, alphaS = BSNL MOBILE 2G}\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: {CellType = \nCellInfoGsm, isRegistered = false, mcc = 404, mnc = 96, alphaL = Airtel 5G, \nalphaS = Airtel 5G}\n02-18 12:38:06.720572 18973  3619 D NetworkScanHelper: {CellType = \nCellInfoGsm, isRegistered = false, mcc = 404, mnc = 03, alphaL = Airtel 2G, \nalphaS = Airtel 2G}\nlog解读：\u0001\n•\n日志解读\u0001：\u0001\na.手动搜网出现重复运营商名称时，需核查plmn值是否一致，不同\u0001PLMN\u0001属于正常网络配置\u0001\nb.CURRENT标记当前驻留网络，AVAILABLE为可接入网络，FORBIDDEN为受限网络\u0001\n•\n典型案例\u0001：\u0001\n\u0001\u0001\u0001\u0001\u0001http://jira.transsion.com/browse/X6873H972-4253：经日志核查为不同\u0001PLMN\u0001的同品牌运营商网\n络\n10\n11\n12\n13\n14\n15\n16\n17",
+  "category": "其他",
+  "module": "telephony",
+  "func_type": "carrier_porting",
+  "keywords": [
+    "解读",
+    "日志解读",
+    "手动搜网出现",
+    "重复运营商名",
+    "称时",
+    "India",
+    "NetworkScanHelper",
+    "CellType"
+  ],
+  "confidence_score": 0.7999999999999999,
+  "source_file": "网络问题分析SOP.pdf",
+  "source_document_id": "doc-0ce82139",
+  "created_at": "2026-05-29T07:55:16.411Z",
+  "updated_at": "2026-05-29T07:55:16.411Z",
+  "status": "pending_review",
+  "is_verified": false,
+  "usage_count": 0
+}

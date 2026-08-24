@@ -1,0 +1,25 @@
+{
+  "id": "kb-693edca0",
+  "content": "4.大数据USIC监控捕获类EE\u0001\n5.非常规EE（IO负载过高、OTA升级被打断等特殊场景导致）\u0001\n2.2\u0001分析流程概览\u0001\n3.标准操作流程\u0001(SOP)\u0001\n3.1\u0001问题确认与复现\u0001\n1.外部因素排查：更换SIM卡、更换网络环境测试，确认问题是否仍然复现，排除运营商网络、SIM\n卡损坏等外部原因\n2.复现路径确认：记录问题触发的操作步骤，确认可稳定复现问题，便于后续复测验证\n3.2\u0001日志抓取\u0001\n完整抓取步骤参考官方指引：Modem\u0001EE问题log抓取SOP，核心步骤如下：\u0001\n1.执行ADB命令开启日志全量打印，重启手机\u0001\n2.按照复现路径执行操作触发Modem\u0001EE\u0001\n3.使用日志导出工具导出全量日志，确认日志包含_EE_INVALIDdump目录、main_log、\nmodem\u0001log、__exp_main.txt等核心文件\u0001\n3.3\u0001日志分析步骤\u0001\n•\n关键日志文件：main_log、modem\u0001dump\u0001log、__exp_main.txt、SYS_KERNEL_LOG、\ntaglog（粉丝日志场景）、minidump（大数据场景）\u0001\n•\n核心关键词：ccci_mdinit、Modem exception、[ASSERT]、[Fatal error\n•\n分析要点：\na.优先查看ASSERT报错的文件路径：rf check目录下报错多为RF配置错误，mml1/目录下\n报错多为射频相关问题",
+  "category": "错误模式",
+  "module": "telephony",
+  "func_type": "bug_analysis",
+  "keywords": [
+    "大数据",
+    "监控捕获类",
+    "非常规",
+    "负载过高",
+    "升级被打断等",
+    "USIC",
+    "OTA",
+    "SOP"
+  ],
+  "confidence_score": 0.85,
+  "source_file": "稳定性问题分析指导SOP（Modem）.pdf",
+  "source_document_id": "doc-c5bf3b84",
+  "created_at": "2026-05-29T06:33:40.610Z",
+  "updated_at": "2026-05-29T06:33:40.610Z",
+  "status": "pending_review",
+  "is_verified": false,
+  "usage_count": 0
+}

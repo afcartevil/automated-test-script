@@ -1,0 +1,25 @@
+{
+  "id": "kb-8967ab63",
+  "content": "09-29 13:57:20.691668 radio  4263  4263 D SST     : [0] updateSpnDisplay: \norigin = Spn=CMCC, DataSpn=CMCC, ShowSpn=true, Plmn=CMCC, ShowPlmn=false\n09-29 13:57:20.691706 radio  4263  4263 D SST     : [0] updateSpnDisplay: rule \n= 1\n09-29 13:57:20.694175 radio  4263  4263 D SST     : [0] TDD updateSpnDisplay \nmSS.getOperatorNumeric() = 46000\n09-29 13:57:20.694248 radio  4263  4263 D SST     : [0] QTI getNumeric \nsimNumeric = 46002, operatorNumeric = 46000\n09-29 13:57:20.694290 radio  4263  4263 D SST     : [0] QTI \ncurrentMccEqualsSimMcc simNumeric = 46002, operatorNumeric = 46000\n09-29 13:57:20.694395 radio  4263  4263 D SST     : [0] updateSpnDisplay: \nspnName = CMCC , mNumeric = 46002\n•\n核心日志文件\u0001：QtiServiceStateTracker.java\u0001\n•\n关键标识\u0001：\u0001\n◦\nSST、updateSpnDisplay为核心关键字\n◦\n[0]对应\u0001SIM\u0001卡\u00011，[1]对应\u0001SIM\u0001卡\u00012\u0001\n•\n异常判断\u0001：与\u0001MTK\u0001平台逻辑一致，对比配置值与实际显示结果即可定位问题\u0001\n三、示例问题\u0001\n示例一：http://jira.transsion.com/browse/S685LNOS15-299通过日志发现\u0001PLMN\u0001下发值为空导致显\n示异常\n\u0001\u00010-android.log\n示例二：http://jira.transsion.com/browse/TOS1510-45066客制化\u0001SPN\u0001配置未覆盖多语言场景\u0001\n二、APN错误\u0001\nAPN问题一般是测试指出APN与对比机不符，需要研发验证需求来源，是否需要修改\u0001\n代码块\u0001\n//当前运营商已配置的APN\n03-19 12:03:46.369427  2549  2549 D DPM-0   : Added [DataProfile=[ApnSetting] \nCSL Data, 2649, 45400, hkcsl, 192.168.59.51, http://192.168.58.171:8002, \n192.168.59.51, 8080, 8080, 0, mms | supl | hipri | default, IP, IP, true, 0, \nfalse, 0, 0, 0, 0, 0, null, , false, UNKNOWN, UNKNOWN, 0, -1, -1, false, 3, \n961, false, UNEDITED, TrafficDescriptor={mDnn=hkcsl, null}, preferred=false]\n03-19 12:03:46.369716  2549  2549 D DPM-0   : Added [DataProfile=[ApnSetting] \nIMS, 2650, 45400, ims, , null, , null, null, 0, ims, IPV6, IPV6, true, 0, \nfalse, 0, 0, 0, 0, 0, null, , false, GPRS|EDGE|UMTS|CDMA|CDMA - EvDo rev. \n0|CDMA - EvDo rev. A|CDMA - 1xRTT|HSDPA|HSUPA|HSPA|CDMA - EvDo rev. B|LTE|CDMA \n12\n13\n14\n15\n16\n17\n1\n2\n3",
+  "category": "错误模式",
+  "module": "telephony",
+  "func_type": "carrier_porting",
+  "keywords": [
+    "核心日志文件",
+    "关键标识",
+    "为核心关键字",
+    "对应",
+    "SST",
+    "Spn",
+    "CMCC",
+    "DataSpn"
+  ],
+  "confidence_score": 0.85,
+  "source_file": "网络问题分析SOP.pdf",
+  "source_document_id": "doc-0ce82139",
+  "created_at": "2026-05-29T07:55:16.411Z",
+  "updated_at": "2026-05-29T07:55:16.411Z",
+  "status": "pending_review",
+  "is_verified": false,
+  "usage_count": 0
+}
