@@ -1,0 +1,8 @@
+[
+  {
+    "用例名": "LCM适配检查",
+    "前置条件": "测试机已通过 ADB 连接且状态为 device；MTK 平台；建议 userdebug/eng 或已 adb root（dmesg -C、SE 节点标签）。",
+    "测试步骤": "1、确认 /sys/kernel/tran_display 存在，读取 lcm_name 并校验格式；lsmod 匹配屏幕名确认 KO 已加载\n2、dmesg -C 后 input keyevent 26 开关屏，检索 lcm_setbacklight_cmdq，并分别读取 /sys/class/leds/lcd-backlight/brightness\n3、ls -lZ 检查 /sys/class/leds/lcd-backlight 下 connector_id、brightness、led_type、led_mode 存在性、SELinux 标签与输出非空",
+    "期望结果": "三项全部通过：lcm_name 符合 IC_分辨率_dsi_(cphy)传输模式(dsc)_模组厂_玻璃(Hz)_项目名 且 KO 已加载；灭屏 brightness=0、亮屏 brightness≠0 且有 lcm_setbacklight_cmdq；brightness 标签为 sysfs_backlight_file，connector_id/led_type/led_mode 为 sysfs_leds，四节点输出均非空"
+  }
+]

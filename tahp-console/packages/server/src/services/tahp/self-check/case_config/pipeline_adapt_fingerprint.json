@@ -1,0 +1,19 @@
+{
+  "testType": "pipeline_adapt",
+  "module": "fingerprint",
+  "moduleLabel": "指纹/人脸",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "指纹/人脸适配检查",
+      "canReuse": false,
+      "automationMode": "full"
+    }
+  ]
+}

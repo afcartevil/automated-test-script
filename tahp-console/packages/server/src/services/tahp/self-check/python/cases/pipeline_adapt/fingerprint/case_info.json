@@ -1,0 +1,8 @@
+[
+  {
+    "用例名": "指纹/人脸适配检查",
+    "前置条件": "测试机已通过 ADB 连接且状态为 device；MTK 平台；建议 userdebug/eng（ps / getevent / sysfs 节点）。",
+    "测试步骤": "1、执行 getevent -li，确认输入设备包含 name: \"tran-keys\"\n2、执行 ps -A，确认存在 android.hardware.biometrics.fingerp\n3、读取 /sys/kernel/tran_fp/vendor_name，确认有输出\n4、读取 /sys/kernel/tran_fp/ic_name，确认有输出\n5、执行 ps -A，确认存在 android.hardware.biometrics.face",
+    "期望结果": "五项全部通过：getevent 含 name: \"tran-keys\"；指纹 HAL 进程含 android.hardware.biometrics.fingerp；vendor_name 与 ic_name 均非空；人脸 HAL 进程含 android.hardware.biometrics.face"
+  }
+]

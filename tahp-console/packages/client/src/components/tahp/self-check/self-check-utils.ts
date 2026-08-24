@@ -28,7 +28,8 @@ export const MODULE_ORDER: Record<string, number> = {
   vibrator: 31,
   audio: 32,
   lcm: 33,
-  charger: 34,
+  fingerprint: 34,
+  charger: 35,
   tdd: 99,
 }
 
@@ -84,6 +85,7 @@ export function getModuleLabel(module: string): string {
     vibrator: '马达',
     audio: '音频',
     lcm: 'LCM',
+    fingerprint: '指纹/人脸',
     charger: 'Charger',
     generated: 'AI生成用例',
   }
