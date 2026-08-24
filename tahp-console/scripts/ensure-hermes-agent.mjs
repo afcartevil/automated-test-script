@@ -95,6 +95,18 @@ function isVenvPythonUsable(pythonPath) {
   return r.status === 0
 }
 
+/** pip 自身能 import（pip 26 + packaging 在部分解释器上会在 import 阶段崩） */
+function isVenvPipUsable(pythonPath) {
+  if (!pythonPath || !existsSync(pythonPath)) return false
+  const r = run(pythonPath, ['-m', 'pip', '--version'])
+  return r.status === 0
+}
+
+function isWindowsAccessViolation(status) {
+  // STATUS_ACCESS_VIOLATION = 0xC0000005 → unsigned 3221225477 / signed -1073741819
+  return status === 3221225477 || status === -1073741819
+}
+
 /** 从其他机器拷贝的 .venv 常指向不存在的 base Python（如 C:\\Python313\\python.exe） */
 function venvNeedsRecreate(agentDir, venvPython) {
   const venvDir = join(agentDir, '.venv')
@@ -102,6 +114,10 @@ function venvNeedsRecreate(agentDir, venvPython) {
   if (!existsSync(venvPython)) return true
   if (!isVenvPythonUsable(venvPython)) {
     warn('  ⚠ 检测到损坏的 .venv（常见于跨电脑拷贝），将用本机 Python 重建')
+    return true
+  }
+  if (!isVenvPipUsable(venvPython)) {
+    warn('  ⚠ 检测到 .venv 内 pip 不可用（常见于 pip 26 / packaging 兼容问题），将重建')
     return true
   }
   const cfgPath = join(venvDir, 'pyvenv.cfg')
@@ -271,8 +287,18 @@ function ensureHermesUserConfig(agentDir) {
 }
 
 function installDependencies(python, agentDir, { full = false } = {}) {
-  log('  → 升级 pip...')
-  run(python, ['-m', 'pip', 'install', '--upgrade', 'pip', 'setuptools', 'wheel'], { inherit: true, cwd: agentDir })
+  // 限制 pip<26：pip 26 内置 packaging 在部分 Windows/预发布 Python 上会
+  // 在 import 阶段抛 InvalidVersion('0.dev0')，导致 setup 全程失败。
+  log('  → 升级 pip（pip<26）...')
+  const upgrade = run(
+    python,
+    ['-m', 'pip', 'install', '--upgrade', 'pip<26', 'setuptools', 'wheel'],
+    { inherit: true, cwd: agentDir },
+  )
+  if (upgrade.status !== 0 || !isVenvPipUsable(python)) {
+    fail('  ✗ pip 升级失败或升级后仍不可用')
+    return false
+  }
 
   const uv = process.env.UV || (process.platform === 'win32' ? 'uv.exe' : 'uv')
   const hasUv = run(uv, ['--version']).status === 0
@@ -298,7 +324,22 @@ function installDependencies(python, agentDir, { full = false } = {}) {
   }
 
   log('  → pip install -e . （核心 Agent 依赖）...')
-  const pip = run(python, ['-m', 'pip', 'install', '-e', '.'], { inherit: true, cwd: agentDir })
+  let pip = run(python, ['-m', 'pip', 'install', '-e', '.'], { inherit: true, cwd: agentDir })
+  if (pip.status === 0) return true
+
+  // Windows 上偶发 ACCESS_VIOLATION（0xC0000005）：再试一次不隔离构建
+  if (isWindowsAccessViolation(pip.status) || process.platform === 'win32') {
+    warn(`  ⚠ pip install -e . 失败 (exit=${pip.status})，尝试 --no-build-isolation 重试...`)
+    run(python, ['-m', 'pip', 'install', '--upgrade', 'setuptools==83.0.0', 'wheel'], {
+      inherit: true,
+      cwd: agentDir,
+    })
+    pip = run(
+      python,
+      ['-m', 'pip', 'install', '--no-build-isolation', '-e', '.'],
+      { inherit: true, cwd: agentDir },
+    )
+  }
   return pip.status === 0
 }
 
@@ -408,7 +449,7 @@ export function ensureHermesAgent(opts = {}) {
   }
   if (!opts.quiet) log(`  ✓ ${(pyVer.stdout || pyVer.stderr || '').trim()}`)
   if (!pythonCommandSupportsHermes(systemPython)) {
-    const msg = `需要 Python ${HERMES_PYTHON_RANGE_LABEL}（hermes-agent 0.20.4 要求 >=3.11,<3.14；不要使用 3.14）。`
+    const msg = `需要 Python ${HERMES_PYTHON_RANGE_LABEL} 正式版（hermes-agent 0.20.4 要求 >=3.11,<3.14；不要使用 3.14 / beta / rc）。`
     fail(`  ✗ ${msg}`)
     return finishOptionalFailure(opts, msg)
   }
@@ -424,11 +465,21 @@ export function ensureHermesAgent(opts = {}) {
     }
   }
 
-  const activeVenvPython = getVenvPython(agentDir)
+  let activeVenvPython = getVenvPython(agentDir)
   if (!installDependencies(activeVenvPython, agentDir, { full: opts.full })) {
-    const msg = 'pip 安装 hermes-agent 失败'
-    fail(`  ✗ ${msg}`)
-    return finishOptionalFailure(opts, msg)
+    // 常见：旧 .venv 装了 pip 26 后半损坏，或 Windows ACCESS_VIOLATION —— 强制重建再试一次
+    warn('  ⚠ 首次 pip 安装失败，强制重建 .venv 后重试一次...')
+    if (!createVenv(systemPython, agentDir)) {
+      const msg = 'pip 安装 hermes-agent 失败（重建 .venv 也失败）'
+      fail(`  ✗ ${msg}`)
+      return finishOptionalFailure(opts, msg)
+    }
+    activeVenvPython = getVenvPython(agentDir)
+    if (!installDependencies(activeVenvPython, agentDir, { full: opts.full })) {
+      const msg = 'pip 安装 hermes-agent 失败'
+      fail(`  ✗ ${msg}`)
+      return finishOptionalFailure(opts, msg)
+    }
   }
 
   if (!verifyAgentImport(activeVenvPython, agentDir)) {

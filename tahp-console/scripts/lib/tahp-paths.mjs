@@ -104,7 +104,7 @@ export function getVenvHermesBin(agentDir) {
 /** Hermes 0.20.4 `requires-python = ">=3.11,<3.14"`（无 cp314 wheel） */
 export const HERMES_PYTHON_MIN = [3, 11, 0]
 export const HERMES_PYTHON_MAX_EXCLUSIVE = [3, 14, 0]
-export const HERMES_PYTHON_RANGE_LABEL = '3.11–3.13'
+export const HERMES_PYTHON_RANGE_LABEL = '3.11-3.13'
 
 /** @param {string} versionStr @returns {[number, number, number] | null} */
 export function parseSemverTriple(versionStr) {
@@ -173,9 +173,10 @@ export function getPythonVersion(cmd) {
 export function pythonCommandSupportsHermes(cmd) {
   if (!cmd?.trim()) return false
   try {
+    // 拒绝 beta/rc：预发布解释器上 pip/packaging/setuptools 易崩溃或误解析版本
     const r = spawnPython(cmd, [
       '-c',
-      'import sys; raise SystemExit(0 if (3, 11) <= sys.version_info < (3, 14) else 1)',
+      'import sys; ok = (3, 11) <= sys.version_info < (3, 14) and sys.version_info.releaselevel == "final"; raise SystemExit(0 if ok else 1)',
     ])
     return r.status === 0
   } catch {
@@ -208,8 +209,9 @@ function discoverWindowsPython() {
 }
 
 export function getSystemPython() {
-  if (process.env.TAHP_PYTHON?.trim() && pythonWorks(process.env.TAHP_PYTHON.trim())) {
-    return process.env.TAHP_PYTHON.trim()
+  const fromEnv = process.env.TAHP_PYTHON?.trim()
+  if (fromEnv && pythonCommandSupportsHermes(fromEnv)) {
+    return fromEnv
   }
   if (process.platform === 'win32') return discoverWindowsPython()
   if (pythonCommandSupportsHermes('python3')) return 'python3'

@@ -4,7 +4,7 @@
  * 供 npm run setup:gki-patch / ensure-startup-deps / run_adapter.bat 调用。
  */
 import { spawnSync } from 'child_process'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync, rmSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import {
@@ -13,6 +13,7 @@ import {
   getSystemPython,
   getTahpProjectRoot,
   getVenvPython,
+  pythonCommandSupportsHermes,
   resolvePythonCommand,
 } from './lib/tahp-paths.mjs'
 
@@ -49,15 +50,67 @@ function listMissingImports(python) {
   return RUNTIME_IMPORTS.filter((item) => !verifyImport(python, item.module))
 }
 
-function ensureVenv(toolRoot, systemPython, quiet) {
-  const venvPython = getVenvPython(toolRoot)
-  if (existsSync(venvPython)) return venvPython
+function removeVenvDir(venvDir) {
+  if (!existsSync(venvDir)) return true
+  try {
+    rmSync(venvDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+    return !existsSync(venvDir)
+  } catch (err) {
+    warn(`  ⚠ 删除 ${venvDir} 失败: ${err?.message || err}`)
+    if (process.platform === 'win32') {
+      const r = spawnSync('cmd.exe', ['/c', 'rmdir', '/s', '/q', venvDir], { windowsHide: true })
+      return r.status === 0 && !existsSync(venvDir)
+    }
+    return false
+  }
+}
 
-  if (!quiet) log(`  → 创建 GKI Patch 虚拟环境: ${join(toolRoot, '.venv')}`)
+function venvNeedsRecreate(toolRoot, venvPython) {
+  const venvDir = join(toolRoot, '.venv')
+  if (!existsSync(venvDir) || !existsSync(venvPython)) return true
+  if (!pythonCommandSupportsHermes(venvPython)) {
+    warn('  ⚠ GKI Patch .venv 解释器不可用或版本不在 3.11-3.13，将重建')
+    return true
+  }
+  const cfgPath = join(venvDir, 'pyvenv.cfg')
+  if (!existsSync(cfgPath)) return false
+  try {
+    const cfg = readFileSync(cfgPath, 'utf-8')
+    const exePath = cfg.match(/^executable\s*=\s*(.+)$/m)?.[1]?.trim()
+    const baseHome = cfg.match(/^home\s*=\s*(.+)$/m)?.[1]?.trim()
+    if ((exePath && !existsSync(exePath)) || (baseHome && !existsSync(baseHome))) {
+      warn(`  ⚠ GKI Patch .venv 指向已不存在的 Python: ${exePath || baseHome}`)
+      return true
+    }
+    const ver = cfg.match(/^version\s*=\s*(.+)$/m)?.[1]?.trim() || ''
+    if (/^3\.1[4-9]\b|^3\.[2-9]\d\b/.test(ver)) {
+      warn(`  ⚠ GKI Patch .venv 基于 Python ${ver}，需要 3.11-3.13，将重建`)
+      return true
+    }
+  } catch { /* ignore */ }
+  return false
+}
+
+function ensureVenv(toolRoot, systemPython, quiet) {
+  const venvDir = join(toolRoot, '.venv')
+  const venvPython = getVenvPython(toolRoot)
+  if (venvNeedsRecreate(toolRoot, venvPython)) {
+    if (existsSync(venvDir)) {
+      if (!quiet) log('  → 删除损坏或版本不匹配的 GKI Patch .venv ...')
+      if (!removeVenvDir(venvDir)) {
+        warn('  ⚠ 无法删除 GKI Patch .venv，请手动删除 tools\\gki-patch-tool\\.venv 后重试')
+        return null
+      }
+    }
+  } else if (existsSync(venvPython)) {
+    return venvPython
+  }
+
+  if (!quiet) log(`  → 创建 GKI Patch 虚拟环境: ${venvDir}`)
   const { command, prefixArgs } = resolvePythonCommand(systemPython)
   const result = spawnSync(
     command,
-    [...prefixArgs, '-m', 'venv', join(toolRoot, '.venv')],
+    [...prefixArgs, '-m', 'venv', venvDir],
     { stdio: quiet ? 'pipe' : 'inherit', cwd: toolRoot, env: process.env },
   )
   if (result.status !== 0 || !existsSync(venvPython)) {
@@ -72,6 +125,11 @@ function pipInstall(python, reqFile, quiet) {
     return false
   }
   const { command, prefixArgs } = resolvePythonCommand(python)
+  spawnSync(
+    command,
+    [...prefixArgs, '-m', 'pip', 'install', '--upgrade', 'pip<26', 'setuptools', 'wheel'],
+    { stdio: quiet ? 'pipe' : 'inherit', cwd: dirname(reqFile), env: process.env },
+  )
   if (!quiet) log(`  → pip install -r requirements.txt ...`)
   const result = spawnSync(
     command,
@@ -84,6 +142,12 @@ function pipInstall(python, reqFile, quiet) {
 function ensurePythonDeps(toolRoot, options = {}) {
   const { quiet = false } = options
   const systemPython = getSystemPython()
+  if (!pythonCommandSupportsHermes(systemPython)) {
+    return {
+      ok: false,
+      error: 'GKI Patch 需要 Python 3.11-3.13 正式版（不要使用 3.14）。请设置 TAHP_PYTHON 后重试: npm run setup:gki-patch',
+    }
+  }
   const python = ensureVenv(toolRoot, systemPython, quiet)
   if (!python) {
     return { ok: false, error: 'GKI Patch Python 虚拟环境创建失败' }
