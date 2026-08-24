@@ -58,17 +58,26 @@ export async function handleAbort(
     flushResponseRunToDb(state, sessionId)
   }
 
+  let synced = false
   if (state.source === 'cli') {
     try {
-      await bridge.interrupt(sessionId, 'Aborted by user', state.profile)
+      const resp = await bridge.interrupt(sessionId, 'Aborted by user', state.profile, true)
+      synced = resp.synced === true
+      if (!synced) {
+        logger.warn(
+          { sessionId, runId, status: resp.status },
+          '[chat-run-socket][abort] interrupt returned but worker run still active; other default-profile tasks will wait',
+        )
+      }
     } catch (err) {
       logger.warn(err, '[chat-run-socket][abort] failed to interrupt CLI bridge for session %s', sessionId)
     }
   } else if (state.abortController) {
     state.abortController.abort()
+    synced = true
   }
 
-  await markAbortCompleted(nsp, socket, sessionId, runId || 'response_stream', sessionMap, runQueuedItem)
+  await markAbortCompleted(nsp, socket, sessionId, runId || 'response_stream', sessionMap, runQueuedItem, synced)
 }
 
 export async function markAbortCompleted(
@@ -78,6 +87,7 @@ export async function markAbortCompleted(
   runId: string,
   sessionMap: Map<string, SessionState>,
   runQueuedItem: (socket: Socket, sessionId: string, next: QueuedRun, fallbackProfile?: string) => void,
+  synced = true,
 ) {
   const state = sessionMap.get(sessionId)
   if (!state) return
@@ -108,13 +118,13 @@ export async function markAbortCompleted(
     replaceState(sessionMap, sessionId, 'abort.completed', {
       event: 'abort.completed',
       run_id: runId,
-      synced: true,
+      synced,
       queue_length: state.queue.length + 1,
     })
     emitToSession(nsp, socket, sessionId, 'abort.completed', {
       event: 'abort.completed',
       run_id: runId,
-      synced: true,
+      synced,
       queue_length: state.queue.length + 1,
     })
     emitToSession(nsp, socket, sessionId, 'run.queued', {
@@ -130,14 +140,14 @@ export async function markAbortCompleted(
   replaceState(sessionMap, sessionId, 'abort.completed', {
     event: 'abort.completed',
     run_id: runId,
-    synced: true,
+    synced,
   })
   emitToSession(nsp, socket, sessionId, 'abort.completed', {
     event: 'abort.completed',
     run_id: runId,
-    synced: true,
+    synced,
   })
-  logger.info({ sessionId, runId, synced: true }, '[chat-run-socket][abort] completed')
+  logger.info({ sessionId, runId, synced }, '[chat-run-socket][abort] completed')
 }
 
 function emitToSession(nsp: ReturnType<Server['of']>, socket: Socket, sessionId: string, event: string, payload: any) {

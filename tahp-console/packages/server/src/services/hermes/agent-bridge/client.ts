@@ -132,12 +132,13 @@ export class AgentBridgeClient {
     if (typeof payload.text === 'string') summary.text_chars = payload.text.length
     if (typeof payload.error === 'string') summary.error = payload.error
     if (payload.force_compress === true) summary.force_compress = true
+    if (typeof payload.hard_cancel === 'boolean') summary.hard_cancel = payload.hard_cancel
     return summary
   }
 
   private summarizeResponse(response: Record<string, unknown>): Record<string, unknown> {
     const summary: Record<string, unknown> = { ok: response.ok === true }
-    for (const key of ['session_id', 'run_id', 'request_id', 'status', 'cursor', 'event_cursor']) {
+    for (const key of ['session_id', 'run_id', 'request_id', 'status', 'cursor', 'event_cursor', 'synced']) {
       if (response[key] != null) summary[key] = response[key]
     }
     if (typeof response.delta === 'string') summary.delta_chars = response.delta.length
@@ -426,11 +427,12 @@ export class AgentBridgeClient {
     return this.request<AgentBridgeRunResult>({ action: 'get_result', run_id: runId }, options)
   }
 
-  interrupt(sessionId: string, message?: string, profile?: string): Promise<AgentBridgeResponse> {
+  interrupt(sessionId: string, message?: string, profile?: string, hardCancel = true): Promise<AgentBridgeResponse> {
     return this.request({
       action: 'interrupt',
       session_id: sessionId,
       message,
+      hard_cancel: hardCancel,
       ...(profile ? { profile } : {}),
     })
   }

@@ -5,21 +5,28 @@
  *
  * 版本要求与工程一致：
  *   - Node.js >= 22.5（packages/server 使用 node:sqlite）
- *   - Python >= 3.11（hermes-agent-main）
+ *   - Python 3.11–3.13（hermes-agent 0.20.4 requires-python >=3.11,<3.14）
  */
 import { spawnSync } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
-import { dirname, join, resolve } from 'path'
+import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { getConsoleRoot, getSystemPython, resolvePythonCommand } from './lib/tahp-paths.mjs'
+import {
+  HERMES_PYTHON_RANGE_LABEL,
+  getConsoleRoot,
+  getSystemPython,
+  hermesPythonInstallHints,
+  isHermesPythonVersion,
+  parseSemverTriple,
+  resolvePythonCommand,
+  versionGte,
+} from './lib/tahp-paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const consoleRoot = getConsoleRoot(__dirname)
 
 /** @type {[number, number, number]} */
 const MIN_NODE = [22, 5, 0]
-/** @type {[number, number, number]} */
-const MIN_PYTHON = [3, 11, 0]
 
 function loadDotEnv(root) {
   const envPath = join(root, '.env')
@@ -37,22 +44,6 @@ function loadDotEnv(root) {
     }
     if (process.env[key] === undefined) process.env[key] = val
   }
-}
-
-/** @param {string} versionStr @returns {[number, number, number] | null} */
-function parseVersion(versionStr) {
-  const m = String(versionStr).trim().match(/(\d+)\.(\d+)(?:\.(\d+))?/)
-  if (!m) return null
-  return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3] || '0', 10)]
-}
-
-/** @param {[number, number, number]} a @param {[number, number, number]} b */
-function versionGte(a, b) {
-  for (let i = 0; i < 3; i++) {
-    if (a[i] > b[i]) return true
-    if (a[i] < b[i]) return false
-  }
-  return true
 }
 
 function formatMin(ver) {
@@ -77,7 +68,7 @@ console.log('EasyAdapter 运行环境检查')
 console.log('─'.repeat(40))
 
 // --- Node.js ---
-const nodeVer = parseVersion(process.versions.node)
+const nodeVer = parseSemverTriple(process.versions.node)
 if (!nodeVer || !versionGte(nodeVer, MIN_NODE)) {
   fail(
     `Node.js ${process.version} 过低，需要 >= ${formatMin(MIN_NODE)}（内置 SQLite 依赖 node:sqlite）`,
@@ -94,32 +85,18 @@ const pythonSpec = getSystemPython()
 const { command: pyCmd, prefixArgs: pyPrefix } = resolvePythonCommand(pythonSpec)
 const pyRun = spawnSync(pyCmd, [...pyPrefix, '--version'], { encoding: 'utf-8', windowsHide: true })
 if (pyRun.status !== 0) {
-  fail(
-    '未找到可用的 Python',
-    [
-      `需要 Python >= ${formatMin(MIN_PYTHON)}（hermes-agent 要求）`,
-      'Windows 可从 https://www.python.org/downloads/ 安装 3.12',
-      '或在 tahp-console\\.env 中设置: TAHP_PYTHON=C:\\Path\\To\\Python312\\python.exe',
-    ],
-  )
+  fail('未找到可用的 Python', hermesPythonInstallHints())
 }
 
 const pyText = (pyRun.stdout || pyRun.stderr || '').trim()
-const pyVer = parseVersion(pyText)
-if (!pyVer || !versionGte(pyVer, MIN_PYTHON)) {
-  fail(
-    `${pyText || pythonSpec} 版本过低，需要 Python >= ${formatMin(MIN_PYTHON)}`,
-    [
-      '请安装 Python 3.11–3.13 后重试',
-      '或在 tahp-console\\.env 中设置 TAHP_PYTHON 指向符合要求的 python.exe',
-    ],
-  )
+const pyVer = parseSemverTriple(pyText)
+if (!isHermesPythonVersion(pyVer)) {
+  const why = pyVer && versionGte(pyVer, [3, 14, 0])
+    ? `${pyText || pythonSpec} 不受支持，需要 Python ${HERMES_PYTHON_RANGE_LABEL}（不要使用 3.14）`
+    : `${pyText || pythonSpec} 版本不在支持范围，需要 Python ${HERMES_PYTHON_RANGE_LABEL}`
+  fail(why, hermesPythonInstallHints().slice(1))
 }
 pass(`${pyText} (${pythonSpec})`)
-
-if (pyVer[0] >= 3 && pyVer[1] >= 14) {
-  console.warn('  ⚠ 当前为 Python 3.14+，hermes-agent 官方测试以 3.11–3.13 为主；若后续安装失败请改用 3.12')
-}
 
 console.log('─'.repeat(40))
 console.log('')

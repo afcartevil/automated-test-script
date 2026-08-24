@@ -57,9 +57,29 @@ function venvHermesBin(agentDir: string): string {
 
 interface AgentPathsFile {
   version?: number
+  hermesVersion?: string
+  lockFingerprint?: string
   agentRoot?: string
   python?: string
   hermesBin?: string
+}
+
+function readPyprojectVersion(agentDir: string): string | undefined {
+  const file = join(agentDir, 'pyproject.toml')
+  if (!existsSync(file)) return undefined
+  try {
+    const match = readFileSync(file, 'utf-8').match(/^version\s*=\s*"([^"]+)"/m)
+    return match?.[1]?.trim()
+  } catch {
+    return undefined
+  }
+}
+
+function isFreshAgentCache(cached: AgentPathsFile | null): boolean {
+  if (!cached?.agentRoot || !cached.python || !existsSync(cached.python)) return false
+  if (!cached.hermesVersion || !cached.lockFingerprint) return false
+  const sourceVersion = readPyprojectVersion(cached.agentRoot)
+  return Boolean(sourceVersion) && cached.hermesVersion === sourceVersion
 }
 
 function readAgentPathsFile(): AgentPathsFile | null {
@@ -89,7 +109,7 @@ export function applyBundledAgentEnv(): { applied: boolean; source?: string } {
   }
 
   const cached = readAgentPathsFile()
-  if (cached?.agentRoot && cached.python && existsSync(cached.python)) {
+  if (isFreshAgentCache(cached) && cached?.agentRoot && cached.python) {
     applyPaths({
       agentRoot: cached.agentRoot,
       python: cached.python,

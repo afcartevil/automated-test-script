@@ -101,17 +101,39 @@ export function getVenvHermesBin(agentDir) {
     : join(agentDir, '.venv', 'bin', 'hermes')
 }
 
-function pythonWorks(cmd) {
-  if (!cmd?.trim()) return false
-  try {
-    const parts = cmd.trim().split(/\s+/).filter(Boolean)
-    const exe = parts[0]
-    const prefixArgs = parts.slice(1)
-    const r = spawnSync(exe, [...prefixArgs, '--version'], { encoding: 'utf-8', windowsHide: true })
-    return r.status === 0
-  } catch {
-    return false
+/** Hermes 0.20.4 `requires-python = ">=3.11,<3.14"`（无 cp314 wheel） */
+export const HERMES_PYTHON_MIN = [3, 11, 0]
+export const HERMES_PYTHON_MAX_EXCLUSIVE = [3, 14, 0]
+export const HERMES_PYTHON_RANGE_LABEL = '3.11–3.13'
+
+/** @param {string} versionStr @returns {[number, number, number] | null} */
+export function parseSemverTriple(versionStr) {
+  const m = String(versionStr).trim().match(/(\d+)\.(\d+)(?:\.(\d+))?/)
+  if (!m) return null
+  return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3] || '0', 10)]
+}
+
+/** @param {[number, number, number]} a @param {[number, number, number]} b */
+export function versionGte(a, b) {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] > b[i]) return true
+    if (a[i] < b[i]) return false
   }
+  return true
+}
+
+/** @param {[number, number, number] | null | undefined} ver */
+export function isHermesPythonVersion(ver) {
+  if (!ver || ver.length < 2) return false
+  return versionGte(ver, HERMES_PYTHON_MIN) && !versionGte(ver, HERMES_PYTHON_MAX_EXCLUSIVE)
+}
+
+export function hermesPythonInstallHints() {
+  return [
+    `需要 Python ${HERMES_PYTHON_RANGE_LABEL}（hermes-agent 0.20.4 要求 >=3.11,<3.14；不要使用 3.14）`,
+    'Windows 可从 https://www.python.org/downloads/ 安装 3.12',
+    '或在 tahp-console\\.env 中设置: TAHP_PYTHON=C:\\Path\\To\\Python312\\python.exe',
+  ]
 }
 
 /** 供 spawnSync / python -m venv 使用的 [command, ...prefixArgs] */
@@ -121,24 +143,66 @@ export function resolvePythonCommand(cmd) {
   return { command: parts[0], prefixArgs: parts.slice(1) }
 }
 
+function spawnPython(cmd, args) {
+  const { command, prefixArgs } = resolvePythonCommand(cmd)
+  return spawnSync(command, [...prefixArgs, ...args], { encoding: 'utf-8', windowsHide: true })
+}
+
+function pythonWorks(cmd) {
+  if (!cmd?.trim()) return false
+  try {
+    const r = spawnPython(cmd, ['--version'])
+    return r.status === 0
+  } catch {
+    return false
+  }
+}
+
+/** @returns {[number, number, number] | null} */
+export function getPythonVersion(cmd) {
+  if (!cmd?.trim()) return null
+  try {
+    const r = spawnPython(cmd, ['--version'])
+    if (r.status !== 0) return null
+    return parseSemverTriple((r.stdout || r.stderr || '').trim())
+  } catch {
+    return null
+  }
+}
+
+export function pythonCommandSupportsHermes(cmd) {
+  if (!cmd?.trim()) return false
+  try {
+    const r = spawnPython(cmd, [
+      '-c',
+      'import sys; raise SystemExit(0 if (3, 11) <= sys.version_info < (3, 14) else 1)',
+    ])
+    return r.status === 0
+  } catch {
+    return false
+  }
+}
+
+function localPythonExe(tag) {
+  if (!process.env.LOCALAPPDATA) return ''
+  return join(process.env.LOCALAPPDATA, 'Programs', 'Python', tag, 'python.exe')
+}
+
 function discoverWindowsPython() {
   const candidates = [
-    process.env.TAHP_PYTHON?.trim(),
     'py -3.12',
+    'py -3.13',
     'py -3.11',
     'py -3',
-    process.env.LOCALAPPDATA
-      ? join(process.env.LOCALAPPDATA, 'Programs', 'Python', 'Python312', 'python.exe')
-      : '',
-    process.env.LOCALAPPDATA
-      ? join(process.env.LOCALAPPDATA, 'Programs', 'Python', 'Python311', 'python.exe')
-      : '',
+    localPythonExe('Python312'),
+    localPythonExe('Python313'),
+    localPythonExe('Python311'),
     'python',
     'python3',
   ].filter(Boolean)
 
   for (const candidate of candidates) {
-    if (pythonWorks(candidate)) return candidate
+    if (pythonCommandSupportsHermes(candidate)) return candidate
   }
   return process.platform === 'win32' ? 'python' : 'python3'
 }
@@ -148,6 +212,8 @@ export function getSystemPython() {
     return process.env.TAHP_PYTHON.trim()
   }
   if (process.platform === 'win32') return discoverWindowsPython()
+  if (pythonCommandSupportsHermes('python3')) return 'python3'
+  if (pythonCommandSupportsHermes('python')) return 'python'
   const fallback = 'python3'
   return pythonWorks(fallback) ? fallback : 'python'
 }

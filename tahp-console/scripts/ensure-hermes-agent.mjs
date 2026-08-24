@@ -12,7 +12,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'fs'
-import { dirname, join, resolve } from 'path'
+import { join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import {
   getAgentPathsFile,
@@ -23,6 +23,8 @@ import {
   getTahpProjectRoot,
   getVenvHermesBin,
   getVenvPython,
+  HERMES_PYTHON_RANGE_LABEL,
+  pythonCommandSupportsHermes,
   resolvePythonCommand,
 } from './lib/tahp-paths.mjs'
 import {
@@ -31,10 +33,16 @@ import {
   runInteractiveHermesSetupWizard,
 } from './lib/hermes-setup-wizard.mjs'
 import { ensureGitBashEnv, mergeConsoleEnvBlock } from './lib/discover-git-bash.mjs'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
-
-const MARKER_VERSION = 1
+import {
+  MARKER_VERSION,
+  TARGET_HERMES_TAG,
+  TARGET_HERMES_VERSION,
+  computeAgentFingerprint,
+  formatHermesVersionBanner,
+  isAgentFileInsideRoot,
+  isCacheFingerprintFresh,
+  shouldColorHermesBanner,
+} from './lib/hermes-agent-fingerprint.mjs'
 
 function log(msg) {
   console.log(msg)
@@ -79,11 +87,6 @@ function run(cmd, args, opts = {}) {
 function runPython(pythonSpec, args, opts = {}) {
   const { command, prefixArgs } = resolvePythonCommand(pythonSpec)
   return run(command, [...prefixArgs, ...args], opts)
-}
-
-function pythonMeetsMinimum(python) {
-  const r = runPython(python, ['-c', 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'])
-  return r.status === 0
 }
 
 function isVenvPythonUsable(pythonPath) {
@@ -163,6 +166,43 @@ function verifyAgentImport(python, agentDir) {
     },
   )
   return r.status === 0 && (r.stdout || '').includes('ok')
+}
+
+function verifyAgentOrigin(python, agentDir, expectedVersion) {
+  const script = [
+    'import importlib.metadata, inspect, json, run_agent',
+    'from pathlib import Path',
+    'ver = importlib.metadata.version("hermes-agent")',
+    'src = str(Path(inspect.getfile(run_agent)).resolve())',
+    'print(json.dumps({"version": ver, "file": src}))',
+  ].join('; ')
+  const r = run(
+    python,
+    ['-c', script],
+    {
+      cwd: agentDir,
+      env: {
+        ...process.env,
+        PYTHONPATH: agentDir,
+      },
+    },
+  )
+  if (r.status !== 0) return { ok: false, error: (r.stderr || r.stdout || '').trim() }
+  try {
+    const payload = JSON.parse((r.stdout || '').trim().split(/\r?\n/).filter(Boolean).pop() || '{}')
+    const versionOk = !expectedVersion || payload.version === expectedVersion
+    const pathOk = isAgentFileInsideRoot(payload.file, agentDir)
+    return {
+      ok: versionOk && pathOk,
+      version: payload.version,
+      file: payload.file,
+      error: versionOk && pathOk
+        ? undefined
+        : `Hermes 来源校验失败: version=${payload.version} expected=${expectedVersion} file=${payload.file}`,
+    }
+  } catch (err) {
+    return { ok: false, error: `无法解析来源校验输出: ${err?.message || err}` }
+  }
 }
 
 function readAgentPaths(consoleRoot) {
@@ -276,19 +316,20 @@ function createVenv(systemPython, agentDir) {
   if (r.status !== 0) return false
   const py = getVenvPython(agentDir)
   if (!isVenvPythonUsable(py)) {
-    fail('  ✗ venv 创建后仍不可用，请检查 TAHP_PYTHON 指向 Python 3.11–3.13')
+    fail(`  ✗ venv 创建后仍不可用，请检查 TAHP_PYTHON 指向 Python ${HERMES_PYTHON_RANGE_LABEL}`)
     return false
   }
   return true
 }
 
-function canUseCachedAgent(cached, agentDir, { skipImportVerify = false } = {}) {
-  if (cached?.version !== MARKER_VERSION) return false
+function canUseCachedAgent(cached, agentDir, fingerprint, { skipImportVerify = false } = {}) {
+  if (!isCacheFingerprintFresh(cached, fingerprint)) return false
   if (cached.agentRoot !== agentDir) return false
   if (!isVenvPythonUsable(cached.python)) return false
   if (!existsSync(join(agentDir, 'run_agent.py'))) return false
   if (skipImportVerify) return true
-  return verifyAgentImport(cached.python, agentDir)
+  if (!verifyAgentImport(cached.python, agentDir)) return false
+  return verifyAgentOrigin(cached.python, agentDir, fingerprint.hermesVersion).ok
 }
 
 /**
@@ -327,8 +368,10 @@ export function ensureHermesAgent(opts = {}) {
   const cached = readAgentPaths(consoleRoot)
   const venvPython = getVenvPython(agentDir)
   const hermesBin = getVenvHermesBin(agentDir)
+  const fingerprint = computeAgentFingerprint(agentDir)
+  const fingerprintChanged = Boolean(cached) && !isCacheFingerprintFresh(cached, fingerprint)
 
-  if (!opts.force && cached && canUseCachedAgent(cached, agentDir, { skipImportVerify })) {
+  if (!opts.force && cached && canUseCachedAgent(cached, agentDir, fingerprint, { skipImportVerify })) {
     if (!opts.quiet) log('  ✓ Agent 环境已就绪（跳过安装）')
     applyToProcessEnv({
       ...cached,
@@ -359,23 +402,21 @@ export function ensureHermesAgent(opts = {}) {
   if (!opts.quiet) log(`  → 系统 Python: ${systemPython}`)
   const pyVer = runPython(systemPython, ['--version'])
   if (pyVer.status !== 0) {
-    const msg = `未找到 Python。请安装 Python 3.11+ 并设置 TAHP_PYTHON。`
+    const msg = `未找到 Python。请安装 Python ${HERMES_PYTHON_RANGE_LABEL} 并设置 TAHP_PYTHON（不要使用 3.14）。`
     fail(`  ✗ ${msg}`)
     return finishOptionalFailure(opts, msg)
   }
   if (!opts.quiet) log(`  ✓ ${(pyVer.stdout || pyVer.stderr || '').trim()}`)
-  if (!pythonMeetsMinimum(systemPython)) {
-    const msg = '需要 Python 3.11 或更高版本（hermes-agent 要求）。'
+  if (!pythonCommandSupportsHermes(systemPython)) {
+    const msg = `需要 Python ${HERMES_PYTHON_RANGE_LABEL}（hermes-agent 0.20.4 要求 >=3.11,<3.14；不要使用 3.14）。`
     fail(`  ✗ ${msg}`)
     return finishOptionalFailure(opts, msg)
   }
 
-  const py314Check = runPython(systemPython, ['-c', 'import sys; raise SystemExit(0 if sys.version_info < (3, 14) else 1)'])
-  if (py314Check.status !== 0) {
-    warn('  ⚠ 当前为 Python 3.14+，hermes-agent 官方测试以 3.11–3.13 为主；若安装失败请安装 3.12 并设 TAHP_PYTHON')
-  }
-
-  if (venvNeedsRecreate(agentDir, venvPython) || opts.force) {
+  if (venvNeedsRecreate(agentDir, venvPython) || opts.force || fingerprintChanged) {
+    if (fingerprintChanged && !opts.quiet) {
+      log(`  → 检测到 Hermes 版本/锁文件变化（${cached?.hermesVersion || 'unknown'} → ${fingerprint.hermesVersion || 'unknown'}），重建 .venv`)
+    }
     if (!createVenv(systemPython, agentDir)) {
       const msg = '创建 .venv 失败'
       fail(`  ✗ ${msg}`)
@@ -396,12 +437,30 @@ export function ensureHermesAgent(opts = {}) {
     return finishOptionalFailure(opts, msg)
   }
 
-  if (!opts.quiet) log('  ✓ run_agent.AIAgent 导入成功')
+  const origin = verifyAgentOrigin(activeVenvPython, agentDir, fingerprint.hermesVersion)
+  if (!origin.ok) {
+    const msg = origin.error || 'Hermes 包版本或来源不是工程内 hermes-agent-main'
+    fail(`  ✗ ${msg}`)
+    return finishOptionalFailure(opts, msg)
+  }
+
+  if (!opts.quiet) {
+    log('  ✓ run_agent.AIAgent 导入成功')
+    log(`  ✓ hermes-agent ${origin.version} @ ${origin.file}`)
+    process.stdout.write(formatHermesVersionBanner({
+      version: origin.version || fingerprint.hermesVersion,
+      targetVersion: TARGET_HERMES_VERSION,
+      targetTag: TARGET_HERMES_TAG,
+      agentDir,
+    }, { color: shouldColorHermesBanner() }))
+  }
 
   ensureHermesUserConfig(agentDir)
 
   const paths = {
     version: MARKER_VERSION,
+    hermesVersion: fingerprint.hermesVersion,
+    lockFingerprint: fingerprint.lockFingerprint,
     agentRoot: agentDir,
     python: activeVenvPython,
     hermesBin: existsSync(hermesBin) ? hermesBin : undefined,

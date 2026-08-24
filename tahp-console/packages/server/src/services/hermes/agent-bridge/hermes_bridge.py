@@ -496,6 +496,46 @@ class AgentSession:
     last_used_at: float = field(default_factory=time.time)
 
 
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _request_agent_interrupt(agent: Any, message: str | None, hard_cancel: bool) -> None:
+    """Stop a live agent turn.
+
+    TAHP user abort/cancel is an explicit stop, not a chat redirect. Hermes 0.20+
+    treats ``interrupt(message)`` as a soft redirect unless ``hard_cancel=True``
+    (or ``hard_interrupt()``). Soft interrupts can leave ``_run_lock`` held while
+    the model stream finishes, which blocks 智能诊断 on the same profile.
+    """
+    interrupt = getattr(agent, "interrupt", None)
+    hard_interrupt = getattr(agent, "hard_interrupt", None)
+    if hard_cancel and callable(hard_interrupt):
+        hard_interrupt(message)
+        return
+    if not callable(interrupt):
+        raise RuntimeError("agent does not support interrupt")
+    if hard_cancel:
+        try:
+            interrupt(message, hard_cancel=True)
+            return
+        except TypeError:
+            interrupt(message)
+            return
+    interrupt(message)
+
+
 class AgentPool:
     def __init__(self) -> None:
         self._sessions: dict[str, AgentSession] = {}
@@ -1103,14 +1143,12 @@ class AgentPool:
                     else:
                         os.environ["HERMES_EXEC_ASK"] = previous_exec_ask
 
-    def interrupt(self, session_id: str, message: str | None = None) -> dict[str, Any]:
+    def interrupt(self, session_id: str, message: str | None = None, hard_cancel: bool = True) -> dict[str, Any]:
         with self._lock:
             session = self._sessions.get(session_id)
         if session is None:
             raise KeyError(f"unknown session: {session_id}")
-        if not hasattr(session.agent, "interrupt"):
-            raise RuntimeError("agent does not support interrupt")
-        session.agent.interrupt(message)
+        _request_agent_interrupt(session.agent, message, hard_cancel)
         deadline = time.time() + 10.0
         synced = False
         while time.time() < deadline:
@@ -1119,7 +1157,7 @@ class AgentPool:
                     synced = True
                     break
             time.sleep(0.05)
-        return {"status": "interrupted", "session_id": session_id, "synced": synced}
+        return {"status": "interrupted", "session_id": session_id, "synced": synced, "hard_cancel": bool(hard_cancel)}
 
     def steer(self, session_id: str, text: str) -> dict[str, Any]:
         with self._lock:
@@ -1217,9 +1255,9 @@ class AgentPool:
             session = self._sessions.pop(session_id, None)
         if session is None:
             return {"session_id": session_id, "destroyed": False}
-        if session.running and hasattr(session.agent, "interrupt"):
+        if session.running:
             try:
-                session.agent.interrupt("Session destroyed")
+                _request_agent_interrupt(session.agent, "Session destroyed", True)
             except Exception:
                 pass
         return {"session_id": session_id, "destroyed": True}
@@ -1341,7 +1379,11 @@ class BridgeServer:
             )
 
         if action == "interrupt":
-            return self.pool.interrupt(str(req.get("session_id") or ""), req.get("message"))
+            return self.pool.interrupt(
+                str(req.get("session_id") or ""),
+                req.get("message"),
+                hard_cancel=_coerce_bool(req.get("hard_cancel"), True),
+            )
 
         if action == "steer":
             text = str(req.get("text") or req.get("message") or "").strip()
@@ -1492,6 +1534,8 @@ class WorkerProcess:
                 **os.environ,
                 "HERMES_AGENT_BRIDGE_ENDPOINT": self.endpoint,
                 "HERMES_AGENT_BRIDGE_WORKER_PROFILE": self.profile,
+                "PYTHONUTF8": "1",
+                "PYTHONIOENCODING": "utf-8",
             }
             self.process = subprocess.Popen(
                 args,
@@ -1501,6 +1545,8 @@ class WorkerProcess:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
             )
             self._pipe_stderr()
@@ -1513,10 +1559,17 @@ class WorkerProcess:
 
         def run() -> None:
             assert proc.stderr is not None
-            for line in proc.stderr:
-                text = line.rstrip()
-                if text:
-                    print(f"[hermes-bridge-worker:{self.profile}] {text}", file=sys.stderr, flush=True)
+            try:
+                for line in proc.stderr:
+                    text = line.rstrip()
+                    if text:
+                        print(f"[hermes-bridge-worker:{self.profile}] {text}", file=sys.stderr, flush=True)
+            except Exception as exc:
+                print(
+                    f"[hermes-bridge-worker:{self.profile}] stderr reader exited: {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
         threading.Thread(target=run, daemon=True, name=f"hermes-bridge-worker-stderr-{self.profile}").start()
 
