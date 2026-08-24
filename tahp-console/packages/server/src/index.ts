@@ -30,6 +30,7 @@ import { initDeviceSelfCheck } from './services/tahp/device-self-check'
 import { startSyncScheduler, startBaselineNotifyClient, startTaskNotifyClient, bindStoredJiraIfAny } from './services/tahp/sync'
 import { startPlanExecutor } from './services/tahp/test-plan-executor'
 import { bootstrapAdaptPipeline } from './routes/tahp/adapt-pipeline'
+import { pullAllWorkspaceLayouts } from './services/tahp/adapt-layout/service'
 import { bootstrapGkiPatchServer } from './services/tahp/gki-patch'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
@@ -290,6 +291,12 @@ export async function bootstrap() {
     await bootstrapAdaptPipeline()
   } catch (err) {
     logger.warn({ err }, '[bootstrap] adapt-pipeline recover failed')
+  }
+
+  try {
+    await pullAllWorkspaceLayouts()
+  } catch (err) {
+    logger.warn({ err }, '[bootstrap] adapt-layout published pull failed')
   }
 
   try {

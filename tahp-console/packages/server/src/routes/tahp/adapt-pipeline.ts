@@ -5,6 +5,7 @@ import Router from '@koa/router'
 import { centralClient } from '../../services/tahp/sync/central-client'
 import { isCentralConfigured } from '../../services/tahp/runtime-mode'
 import { getDomainCatalog } from '../../services/tahp/adapt-pipeline/domain-catalog'
+import { pullAllWorkspaceLayouts } from '../../services/tahp/adapt-layout/service'
 import { listHarnessSkills } from '../../services/tahp/adapt-pipeline/harness-skill-registry'
 import { readPipelineLogs } from '../../services/tahp/adapt-pipeline/events'
 import {
@@ -350,9 +351,10 @@ tahpAdaptPipelineRoutes.get('/prereqs/:projectCode', async (ctx) => {
   }
 })
 
-/** 三工作区可适配模块目录（builtin + layout schema） */
+/** 三工作区可适配模块目录（builtin + layout schema；先拉已发布布局） */
 tahpAdaptPipelineRoutes.get('/domain-catalog', async (ctx) => {
   try {
+    await pullAllWorkspaceLayouts()
     const data = await getDomainCatalog()
     ctx.body = { success: true, data }
   } catch (err) {

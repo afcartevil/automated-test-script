@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, reactive, watch, nextTick, onMounted } from 'vue'
-import { NButton, NSelect, NInput, NProgress, NTag, NSpin, NModal, NTabs, NTabPane, NForm, NFormItem, NSwitch, NTable, useMessage } from 'naive-ui'
+import { NButton, NSelect, NInput, NProgress, NTag, NSpin, NModal, NTabs, NTabPane, NForm, NFormItem, NSwitch, NTable, useMessage, useDialog } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
 import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
@@ -20,8 +20,11 @@ import { fetchSkills, type SkillInfo } from '@/api/hermes/skills'
 import {
   fetchAdaptLayouts,
   saveAdaptDomainConfig,
+  submitAdaptDomainLayout,
+  fetchAdaptDomainLayoutReview,
   type AdaptLayoutFieldDef,
   type AdaptLayoutSyncMeta,
+  type AdaptDomainLayoutRecord,
 } from '@/api/tahp/adapt-layout'
 import {
   ADAPT_WORKSPACES,
@@ -44,6 +47,7 @@ import { normalizeSpnRelatedSkills } from '@/constants/adapt-domains/spn-config-
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 
 const message = useMessage()
+const dialog = useDialog()
 const router = useRouter()
 const tasksStore = useTahpTasksStore()
 const { isReady: modelProviderReady } = useModelProviderReadiness()
@@ -280,10 +284,34 @@ const layoutsReadyByWorkspace = reactive<Record<AdaptWorkspaceId, boolean>>({
   'feature-adapt': false,
   'carrier-config': false,
 })
+const layoutRecordsByWorkspace = reactive<Record<AdaptWorkspaceId, Record<string, AdaptDomainLayoutRecord>>>({
+  'adapt-debug': {},
+  'feature-adapt': {},
+  'carrier-config': {},
+})
 
 const layoutSyncMeta = computed(() => layoutSyncMetaByWorkspace[activeWorkspaceId.value])
 const layoutManifestPath = computed(() => layoutManifestPathByWorkspace[activeWorkspaceId.value])
 const layoutsReady = computed(() => layoutsReadyByWorkspace[activeWorkspaceId.value])
+const activeLayoutRecord = computed(() => (
+  layoutRecordsByWorkspace[activeWorkspaceId.value]?.[activeDomainId.value] ?? null
+))
+const activeLayoutDirty = computed(() => !!activeLayoutRecord.value?.local_dirty)
+const activeLayoutReview = computed(() => activeLayoutRecord.value?.review)
+const layoutCloudEnabled = computed(() => !!layoutSyncMeta.value?.cloud_sync_enabled)
+const layoutReviewPending = computed(() => activeLayoutReview.value?.status === 'pending_review')
+const layoutReviewRejected = computed(() => activeLayoutReview.value?.status === 'rejected')
+const layoutStatusText = computed(() => {
+  const review = activeLayoutReview.value
+  if (review?.status === 'pending_review') {
+    const who = review.submitted_by ? ` · ${review.submitted_by}` : ''
+    return `审核中${who}`
+  }
+  if (review?.status === 'rejected') return '已驳回'
+  if (activeLayoutDirty.value) return '本地未提交'
+  if ((activeLayoutRecord.value?.published_revision ?? 0) > 0) return '已同步'
+  return ''
+})
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 域定义（按工作区独立维护，见 constants/adapt-domains）
@@ -402,6 +430,7 @@ const layoutEditMode = ref(false)
 const layoutDraftFields = ref<FieldDef[]>([])
 const layoutDraftRelatedSkills = ref<string[]>([])
 const layoutSaving = ref(false)
+const layoutSubmitting = ref(false)
 const showSkillSearchModal = ref(false)
 const skillSearchQuery = ref('')
 const allSkillsCatalog = ref<SkillInfo[]>([])
@@ -451,6 +480,7 @@ async function loadAdaptLayouts(options: {
       const res = await fetchAdaptLayouts(ws)
       layoutSyncMetaByWorkspace[ws] = res.sync
       layoutManifestPathByWorkspace[ws] = res.manifest_path || ''
+      layoutRecordsByWorkspace[ws] = { ...(res.layouts || {}) }
       for (const [domainId, record] of Object.entries(res.layouts || {})) {
         if (!record) continue
         applyDomainConfigFromRecord(ws, domainId, {
@@ -687,10 +717,8 @@ async function saveLayout() {
     applyRelatedSkillsToDomain(activeDomainId.value, related_skills)
     layoutEditMode.value = false
     layoutDraftRelatedSkills.value = []
-    if (result.cloud_pushed) {
-      message.success(`布局已保存并同步云端 (rev ${result.revision})`)
-    } else if (result.cloud_error) {
-      message.warning(`布局已保存本地，云端同步失败: ${result.cloud_error}`)
+    if (layoutCloudEnabled.value) {
+      message.success(`布局已保存到本地 (rev ${result.revision})，可提交审核`)
     } else {
       message.success(`布局已保存 (rev ${result.revision})`)
     }
@@ -719,7 +747,7 @@ async function restoreBuiltinLayout() {
     layoutDraftFields.value = fields.map(f => ({ ...f }))
     layoutDraftRelatedSkills.value = [...related_skills]
     layoutEditMode.value = false
-    message.success('已恢复内置默认配置')
+    message.success('已恢复内置默认配置（仅本机；如需全员生效请提交审核）')
     await loadAdaptLayouts()
   } catch (err) {
     message.error(`恢复失败: ${(err as Error).message}`)
@@ -1925,6 +1953,66 @@ function formatPayload(payload: Record<string, unknown>): string {
 // ─────────────────────────────────────────────────────────────────────────────
 function selectDomain(id: DomainId) {
   activeDomainId.value = id
+  void refreshActiveLayoutReview(id)
+}
+
+async function refreshActiveLayoutReview(domainId: string) {
+  if (!layoutCloudEnabled.value) return
+  try {
+    const data = await fetchAdaptDomainLayoutReview(domainId, activeWorkspaceId.value)
+    const current = layoutRecordsByWorkspace[activeWorkspaceId.value][domainId]
+    if (current) {
+      current.review = data.review
+      current.local_dirty = data.local_dirty
+      current.published_revision = data.published_revision
+    } else {
+      layoutRecordsByWorkspace[activeWorkspaceId.value][domainId] = {
+        domain_id: domainId,
+        fields: [],
+        revision: 0,
+        updated_at: '',
+        local_dirty: data.local_dirty,
+        published_revision: data.published_revision,
+        review: data.review,
+      }
+    }
+  } catch {
+    // 审核状态刷新失败不影响填表
+  }
+}
+
+function submitLayoutForReview() {
+  if (!layoutCloudEnabled.value) {
+    message.warning('未配置布局云端服务，无法提交审核')
+    return
+  }
+  if (layoutReviewPending.value) {
+    const who = activeLayoutReview.value?.submitted_by || '他人'
+    message.warning(`该模块已有审核中的布局（${who}）`)
+    return
+  }
+  if (!activeLayoutDirty.value && !layoutReviewRejected.value) {
+    message.info('没有待提交的本地改动')
+    return
+  }
+  dialog.warning({
+    title: '提交布局审核',
+    content: `将提交「${activeWorkspace.value.label} / ${activeDomain.value.label}」的布局到服务器审核。同一模块若已有审核中的任务会被拒绝。`,
+    positiveText: '提交',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      layoutSubmitting.value = true
+      try {
+        const result = await submitAdaptDomainLayout(activeDomainId.value, activeWorkspaceId.value)
+        message.success(`已提交审核（${result.submit_id}）`)
+        await loadAdaptLayouts({ showError: false })
+      } catch (err) {
+        message.error((err as Error).message || '提交审核失败')
+      } finally {
+        layoutSubmitting.value = false
+      }
+    },
+  })
 }
 
 function openSkill(skillName: string) {
@@ -1973,7 +2061,7 @@ function openSkill(skillName: string) {
             从中心载入前置
           </NButton>
         </div>
-        <span v-if="layoutSyncMeta?.cloud_sync_enabled" class="ea-pill-info">云端同步已启用</span>
+        <span v-if="layoutCloudEnabled" class="ea-pill-info">布局同步已启用</span>
         <button
           v-if="activeWorkspace.allowDynamicDomains"
           type="button"
@@ -2049,6 +2137,31 @@ function openSkill(skillName: string) {
               <EaPill v-if="isComplete" variant="ok">前置条件完整</EaPill>
               <EaPill v-else variant="warn">请完成必填项</EaPill>
               <div class="ea-head-actions adapt-domain-actions">
+                <span
+                  v-if="layoutStatusText"
+                  class="layout-status-pill"
+                  :class="{
+                    'is-pending': layoutReviewPending,
+                    'is-rejected': layoutReviewRejected,
+                    'is-dirty': activeLayoutDirty && !layoutReviewPending && !layoutReviewRejected,
+                  }"
+                >{{ layoutStatusText }}</span>
+                <NButton
+                  v-if="!layoutEditMode && layoutCloudEnabled && (activeLayoutDirty || layoutReviewRejected) && !layoutReviewPending"
+                  size="small"
+                  type="primary"
+                  :loading="layoutSubmitting"
+                  @click="submitLayoutForReview"
+                >
+                  {{ layoutReviewRejected ? '重新提交' : '提交审核' }}
+                </NButton>
+                <NButton
+                  v-else-if="!layoutEditMode && layoutCloudEnabled && layoutReviewPending"
+                  size="small"
+                  disabled
+                >
+                  审核中
+                </NButton>
                 <NButton
                   v-if="!layoutEditMode"
                   size="small"
@@ -2062,6 +2175,10 @@ function openSkill(skillName: string) {
             </div>
 
             <NSpin v-if="!layoutsReady" size="small" style="margin: 24px 0;">正在加载域配置…</NSpin>
+
+            <p v-if="layoutReviewRejected && activeLayoutReview?.reject_reason" class="layout-reject-banner">
+              审核驳回：{{ activeLayoutReview.reject_reason }}
+            </p>
 
             <template v-else>
               <div v-if="activeDomainId === 'modem' || activeDomainId === 'comm-framework' || activeDomainId === 'apn-config' || activeDomainId === 'spn-config'" class="modem-skill-hint">
@@ -2083,7 +2200,7 @@ function openSkill(skillName: string) {
               <div v-if="layoutEditMode" class="layout-editor">
                 <div class="layout-editor-head">
                   <span class="layout-editor-title">域配置编辑</span>
-                  <span class="layout-editor-hint">可增删表单字段与关联 Skill；第一项为主控 Skill。保存后写入本地 manifest，重启自动恢复（云端同步接口已预留）。</span>
+                  <span class="layout-editor-hint">可增删表单字段与关联 Skill；第一项为主控 Skill。保存只写入本机，需全员生效时再点「提交审核」。启动与打开页面会拉取已发布布局，本机未提交的改动不会被覆盖。</span>
                 </div>
                 <div class="layout-skills-editor">
                   <span class="layout-skills-label">关联 Skills</span>
@@ -2956,6 +3073,40 @@ function openSkill(skillName: string) {
 
 .adapt-domain-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.layout-status-pill {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--fill);
+}
+
+.layout-status-pill.is-pending {
+  color: var(--info);
+  background: color-mix(in srgb, var(--info) 12%, transparent);
+}
+
+.layout-status-pill.is-rejected {
+  color: var(--error, #d03050);
+  background: color-mix(in srgb, #d03050 12%, transparent);
+}
+
+.layout-status-pill.is-dirty {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.layout-reject-banner {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--error, #d03050);
+  line-height: 1.45;
 }
 
 .ea-field-full {

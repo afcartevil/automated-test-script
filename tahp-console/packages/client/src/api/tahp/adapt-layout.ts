@@ -14,6 +14,19 @@ export interface AdaptLayoutFieldDef {
   defaultValue?: string
 }
 
+export type AdaptLayoutReviewStatus = 'idle' | 'pending_review' | 'approved' | 'rejected'
+
+export interface AdaptLayoutReviewState {
+  status: AdaptLayoutReviewStatus
+  submit_id?: string | null
+  submitted_by?: string | null
+  submitted_at?: string | null
+  comment?: string | null
+  reviewed_by?: string | null
+  reviewed_at?: string | null
+  reject_reason?: string | null
+}
+
 export interface AdaptDomainLayoutRecord {
   domain_id: string
   fields: AdaptLayoutFieldDef[]
@@ -21,6 +34,9 @@ export interface AdaptDomainLayoutRecord {
   revision: number
   updated_at: string
   source?: string
+  published_revision?: number
+  local_dirty?: boolean
+  review?: AdaptLayoutReviewState
 }
 
 export interface AdaptLayoutSyncMeta {
@@ -45,6 +61,25 @@ export interface AdaptDomainConfigSaveResult {
   updated_at: string
   cloud_pushed: boolean
   cloud_error?: string
+  local_dirty?: boolean
+}
+
+export interface AdaptLayoutSubmitResult {
+  submit_id: string
+  workspace_id: string
+  domain_id: string
+  status: 'pending_review'
+  base_revision: number
+  submitted_at: string
+  submitted_by: string
+}
+
+export interface AdaptLayoutReviewQuery {
+  workspace_id: string
+  domain_id: string
+  published_revision: number
+  local_dirty: boolean
+  review: AdaptLayoutReviewState
 }
 
 function workspaceBase(workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE): string {
@@ -81,15 +116,35 @@ export function resetAdaptDomainLayout(
   })
 }
 
+export function submitAdaptDomainLayout(
+  domainId: string,
+  workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE,
+  comment?: string,
+): Promise<AdaptLayoutSubmitResult> {
+  return tahpPost(`${workspaceBase(workspaceId)}/layouts/${encodeURIComponent(domainId)}/submit`, {
+    comment: comment || '',
+  })
+}
+
+export function fetchAdaptDomainLayoutReview(
+  domainId: string,
+  workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE,
+): Promise<AdaptLayoutReviewQuery> {
+  return tahpGet(`${workspaceBase(workspaceId)}/layouts/${encodeURIComponent(domainId)}/review`)
+}
+
 export function pullAdaptLayoutsFromCloud(workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE): Promise<{
   pulled: boolean
   merged_domains: string[]
+  skipped_dirty_domains: string[]
+  published_revisions: Record<string, number>
   cloud_revision?: string
   error?: string
 }> {
   return tahpPost(`${workspaceBase(workspaceId)}/layouts/sync/pull`, {})
 }
 
+/** @deprecated 整包推送已废弃，改用 submitAdaptDomainLayout */
 export function pushAdaptLayoutsToCloud(workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE): Promise<{
   ok: boolean
   cloud_pushed: boolean

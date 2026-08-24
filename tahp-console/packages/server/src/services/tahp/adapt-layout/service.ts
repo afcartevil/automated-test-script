@@ -7,121 +7,168 @@ import {
   writeLocalLayoutManifest,
 } from './local-backend'
 import {
-  fetchCloudLayoutManifest,
+  AdaptLayoutCloudError,
+  fetchDomainReview,
+  fetchPublishedWorkspaceLayouts,
   isAdaptLayoutCloudConfigured,
-  pushCloudLayoutManifest,
+  reviewStateOrIdle,
+  submitDomainLayoutToCloud,
 } from './cloud-backend'
+import { isLocalDirty, mergePublishedIntoLocal } from './merge'
 import { validateLayoutFields, validateRelatedSkills } from './validate'
+import { getLocalActor } from '../runtime-mode'
 import {
   ADAPT_LAYOUT_SCHEMA_VERSION,
+  ADAPT_WORKSPACE_IDS,
   DEFAULT_ADAPT_WORKSPACE,
   type AdaptDomainLayoutRecord,
   type AdaptLayoutFieldDef,
   type AdaptLayoutManifest,
   type AdaptLayoutPullResult,
+  type AdaptLayoutReviewQuery,
   type AdaptLayoutSaveResult,
+  type AdaptLayoutSubmitResult,
 } from './types'
 
-function mergeManifests(
-  local: AdaptLayoutManifest,
-  remote: AdaptLayoutManifest,
-): { merged: AdaptLayoutManifest; updatedDomains: string[] } {
-  const merged: AdaptLayoutManifest = {
-    schema_version: ADAPT_LAYOUT_SCHEMA_VERSION,
-    layouts: { ...local.layouts },
-    sync: {
-      ...local.sync,
-      cloud_sync_enabled: isAdaptLayoutCloudConfigured(),
-      last_cloud_pull: new Date().toISOString(),
-      cloud_revision: remote.sync?.cloud_revision,
-    },
+const PULL_TTL_MS = 20_000
+const lastPullOkAt = new Map<string, number>()
+const lastPullResult = new Map<string, AdaptLayoutPullResult>()
+const pullInflight = new Map<string, Promise<AdaptLayoutPullResult>>()
+
+export function invalidateLayoutPullCache(workspaceId?: string): void {
+  if (workspaceId) {
+    lastPullOkAt.delete(workspaceId)
+    lastPullResult.delete(workspaceId)
+    return
   }
-  const updatedDomains: string[] = []
-
-  for (const [domainId, remoteRecord] of Object.entries(remote.layouts || {})) {
-    const localRecord = local.layouts[domainId]
-    const remoteRev = remoteRecord?.revision ?? 0
-    const localRev = localRecord?.revision ?? 0
-    const remoteTime = Date.parse(remoteRecord?.updated_at || '') || 0
-    const localTime = Date.parse(localRecord?.updated_at || '') || 0
-
-    if (!localRecord || remoteRev > localRev || (remoteRev === localRev && remoteTime >= localTime)) {
-      merged.layouts[domainId] = {
-        ...remoteRecord,
-        related_skills: Array.isArray(remoteRecord.related_skills) ? remoteRecord.related_skills : [],
-        source: 'cloud',
-      }
-      updatedDomains.push(domainId)
-    }
-  }
-
-  return { merged, updatedDomains }
+  lastPullOkAt.clear()
+  lastPullResult.clear()
 }
 
-async function tryPushCloud(
-  manifest: AdaptLayoutManifest,
+function annotateLayouts(
+  layouts: Record<string, AdaptDomainLayoutRecord>,
+): Record<string, AdaptDomainLayoutRecord & { local_dirty: boolean }> {
+  const out: Record<string, AdaptDomainLayoutRecord & { local_dirty: boolean }> = {}
+  for (const [id, record] of Object.entries(layouts)) {
+    out[id] = { ...record, local_dirty: isLocalDirty(record) }
+  }
+  return out
+}
+
+/** 启动时 / 打开页面：按模块拉取已发布布局并合并到本地 */
+export async function pullPublishedAdaptLayouts(
   workspaceId?: string,
-): Promise<{
-  pushed: boolean
-  cloud_revision?: string
-  error?: string
-}> {
-  if (!isAdaptLayoutCloudConfigured()) return { pushed: false }
-  if (workspaceId && workspaceId !== DEFAULT_ADAPT_WORKSPACE) return { pushed: false }
-  try {
-    const { cloud_revision } = await pushCloudLayoutManifest(manifest)
-    manifest.sync.last_cloud_push = new Date().toISOString()
-    manifest.sync.cloud_revision = cloud_revision
-    await writeLocalLayoutManifest(manifest, workspaceId)
-    return { pushed: true, cloud_revision }
-  } catch (err) {
-    const msg = (err as Error).message
-    logger.warn({ err: msg, workspaceId }, '[adapt-layout] cloud push failed')
-    return { pushed: false, error: msg }
-  }
-}
-
-/** 启动时拉取：云端优先合并到本地（revision 高者胜） */
-export async function pullAndMergeAdaptLayouts(workspaceId?: string): Promise<AdaptLayoutPullResult> {
+  options: { force?: boolean } = {},
+): Promise<AdaptLayoutPullResult> {
   const ws = workspaceId || DEFAULT_ADAPT_WORKSPACE
   const cloudEnabled = isAdaptLayoutCloudConfigured()
   const local = await readLocalLayoutManifest(ws)
   local.sync.cloud_sync_enabled = cloudEnabled
 
-  if (!cloudEnabled || ws !== DEFAULT_ADAPT_WORKSPACE) {
-    return { pulled: false, merged_domains: [], error: ws !== DEFAULT_ADAPT_WORKSPACE ? '非默认工作区跳过云端' : '云端未配置' }
+  if (!cloudEnabled) {
+    return {
+      pulled: false,
+      merged_domains: [],
+      skipped_dirty_domains: [],
+      published_revisions: {},
+      error: '云端未配置',
+    }
   }
 
-  try {
-    const remote = await fetchCloudLayoutManifest()
-    if (!remote) {
-      return { pulled: false, merged_domains: [], cloud_revision: local.sync.cloud_revision }
-    }
-    const { merged, updatedDomains } = mergeManifests(local, remote)
-    await writeLocalLayoutManifest(merged, ws)
-    return {
-      pulled: true,
-      merged_domains: updatedDomains,
-      cloud_revision: merged.sync.cloud_revision,
-    }
-  } catch (err) {
-    return { pulled: false, merged_domains: [], error: (err as Error).message }
+  if (!options.force) {
+    const prev = lastPullResult.get(ws)
+    const ts = lastPullOkAt.get(ws) || 0
+    if (prev && Date.now() - ts < PULL_TTL_MS) return prev
+    const inflight = pullInflight.get(ws)
+    if (inflight) return inflight
   }
+
+  const job = (async (): Promise<AdaptLayoutPullResult> => {
+    try {
+      const remote = await fetchPublishedWorkspaceLayouts(ws)
+      if (!remote) {
+        return {
+          pulled: false,
+          merged_domains: [],
+          skipped_dirty_domains: [],
+          published_revisions: {},
+          cloud_revision: local.sync.cloud_revision,
+        }
+      }
+      const { merged, updatedDomains, skippedDirtyDomains } = mergePublishedIntoLocal(local, remote)
+      merged.sync.cloud_sync_enabled = true
+      merged.sync.last_cloud_pull = new Date().toISOString()
+      const publishedRevisions: Record<string, number> = {}
+      for (const [id, rec] of Object.entries(remote.layouts || {})) {
+        publishedRevisions[id] = rec.revision
+      }
+      await writeLocalLayoutManifest(merged, ws)
+      const result: AdaptLayoutPullResult = {
+        pulled: true,
+        merged_domains: updatedDomains,
+        skipped_dirty_domains: skippedDirtyDomains,
+        published_revisions: publishedRevisions,
+        cloud_revision: merged.sync.cloud_revision,
+      }
+      lastPullOkAt.set(ws, Date.now())
+      lastPullResult.set(ws, result)
+      return result
+    } catch (err) {
+      const message = err instanceof AdaptLayoutCloudError ? err.message : (err as Error).message
+      logger.warn({ err: message, workspaceId: ws }, '[adapt-layout] published pull failed')
+      return {
+        pulled: false,
+        merged_domains: [],
+        skipped_dirty_domains: [],
+        published_revisions: {},
+        error: message,
+      }
+    } finally {
+      pullInflight.delete(ws)
+    }
+  })()
+
+  pullInflight.set(ws, job)
+  return job
+}
+
+/** @deprecated 使用 pullPublishedAdaptLayouts */
+export async function pullAndMergeAdaptLayouts(workspaceId?: string): Promise<AdaptLayoutPullResult> {
+  return pullPublishedAdaptLayouts(workspaceId)
+}
+
+export async function pullAllWorkspaceLayouts(): Promise<void> {
+  await Promise.all(ADAPT_WORKSPACE_IDS.map(async (ws) => {
+    try {
+      const result = await pullPublishedAdaptLayouts(ws)
+      if (result.pulled) {
+        logger.info(
+          { workspaceId: ws, updated: result.merged_domains, skipped: result.skipped_dirty_domains },
+          '[adapt-layout] published pull',
+        )
+      } else if (result.error && result.error !== '云端未配置') {
+        logger.warn({ workspaceId: ws, error: result.error }, '[adapt-layout] published pull skipped')
+      }
+    } catch (err) {
+      logger.warn({ err, workspaceId: ws }, '[adapt-layout] published pull failed')
+    }
+  }))
 }
 
 export async function listAdaptDomainLayouts(workspaceId?: string): Promise<{
   workspace_id: string
-  layouts: Record<string, AdaptDomainLayoutRecord>
+  layouts: Record<string, AdaptDomainLayoutRecord & { local_dirty: boolean }>
   sync: AdaptLayoutManifest['sync']
   manifest_path: string
   domain_ids: string[]
 }> {
   const ws = workspaceId || DEFAULT_ADAPT_WORKSPACE
-  await pullAndMergeAdaptLayouts(ws).catch(() => undefined)
+  await pullPublishedAdaptLayouts(ws).catch(() => undefined)
   const manifest = await readLocalLayoutManifest(ws)
+  manifest.sync.cloud_sync_enabled = isAdaptLayoutCloudConfigured()
   return {
     workspace_id: ws,
-    layouts: manifest.layouts,
+    layouts: annotateLayouts(manifest.layouts),
     sync: manifest.sync,
     manifest_path: getAdaptLayoutManifestPath(ws),
     domain_ids: Object.keys(manifest.layouts),
@@ -172,38 +219,158 @@ export async function saveAdaptDomainConfig(
     revision: (existing?.revision ?? 0) + 1,
     updated_at: now,
     source: 'user',
+    published_revision: existing?.published_revision,
+    published_fingerprint: existing?.published_fingerprint,
+    review: existing?.review,
   }
 
   const cloudEnabled = isAdaptLayoutCloudConfigured()
-  const manifest = await upsertLocalDomainLayout(record, cloudEnabled, workspaceId)
-  const push = await tryPushCloud(manifest, workspaceId)
+  await upsertLocalDomainLayout(record, cloudEnabled, workspaceId)
+  invalidateLayoutPullCache(workspaceId || DEFAULT_ADAPT_WORKSPACE)
 
   return {
     domain_id: domainId,
     revision: record.revision,
     updated_at: now,
-    cloud_pushed: push.pushed,
-    cloud_error: push.error,
+    cloud_pushed: false,
+    local_dirty: isLocalDirty(record),
   }
 }
 
 export async function resetAdaptDomainLayout(domainId: string, workspaceId?: string): Promise<void> {
-  const manifest = await deleteLocalDomainLayout(domainId, workspaceId)
-  manifest.sync.cloud_sync_enabled = isAdaptLayoutCloudConfigured()
-  await tryPushCloud(manifest, workspaceId)
+  await deleteLocalDomainLayout(domainId, workspaceId)
+  invalidateLayoutPullCache(workspaceId || DEFAULT_ADAPT_WORKSPACE)
 }
 
-export async function forcePushAdaptLayouts(workspaceId?: string): Promise<AdaptLayoutSaveResult & { ok: boolean }> {
-  const manifest = await readLocalLayoutManifest(workspaceId)
-  manifest.sync.cloud_sync_enabled = isAdaptLayoutCloudConfigured()
-  const push = await tryPushCloud(manifest, workspaceId)
+export async function submitAdaptDomainLayout(
+  domainId: string,
+  workspaceId?: string,
+  comment?: string,
+): Promise<AdaptLayoutSubmitResult> {
+  const ws = workspaceId || DEFAULT_ADAPT_WORKSPACE
+  const existing = await getAdaptDomainLayout(domainId, ws)
+  if (!existing?.fields?.length) {
+    throw new Error('请先保存该模块布局再提交审核')
+  }
+  if (!isLocalDirty(existing) && existing.review?.status !== 'rejected') {
+    throw new Error('没有待提交的本地改动')
+  }
+  if (existing.review?.status === 'pending_review') {
+    const who = existing.review.submitted_by ? `（${existing.review.submitted_by}）` : ''
+    const err = new AdaptLayoutCloudError(
+      `该模块已有审核中的布局${who}`,
+      409,
+      'REVIEW_IN_PROGRESS',
+      {
+        code: 'REVIEW_IN_PROGRESS',
+        workspace_id: ws,
+        domain_id: domainId,
+        submit_id: existing.review.submit_id,
+        submitted_by: existing.review.submitted_by,
+        submitted_at: existing.review.submitted_at,
+      },
+    )
+    throw err
+  }
+
+  if (!existing.related_skills?.length) {
+    throw new Error('至少保留一个关联 Skill')
+  }
+  const relatedSkills = existing.related_skills
+
+  const submitted = await submitDomainLayoutToCloud({
+    workspaceId: ws,
+    domainId,
+    schemaVersion: existing.schema_version ?? ADAPT_LAYOUT_SCHEMA_VERSION,
+    baseRevision: existing.published_revision ?? 0,
+    fields: existing.fields,
+    relatedSkills,
+    comment,
+  })
+
+  existing.review = {
+    status: 'pending_review',
+    submit_id: submitted.submit_id,
+    submitted_by: submitted.submitted_by || getLocalActor(),
+    submitted_at: submitted.submitted_at,
+    comment: comment || null,
+  }
+  existing.source = 'user'
+  await upsertLocalDomainLayout(existing, true, ws)
+  invalidateLayoutPullCache(ws)
+  return submitted
+}
+
+export async function getAdaptDomainLayoutReview(
+  domainId: string,
+  workspaceId?: string,
+): Promise<AdaptLayoutReviewQuery> {
+  const ws = workspaceId || DEFAULT_ADAPT_WORKSPACE
+  const local = await getAdaptDomainLayout(domainId, ws)
+  let review = reviewStateOrIdle(local?.review)
+
+  if (isAdaptLayoutCloudConfigured()) {
+    try {
+      const remote = await fetchDomainReview(ws, domainId)
+      if (remote?.review) {
+        review = reviewStateOrIdle(remote.review)
+        if (remote.review.status === 'approved' || remote.review.status === 'rejected') {
+          const needPull = remote.review.status === 'approved'
+            && (
+              local?.review?.status === 'pending_review'
+              || (local?.published_revision ?? 0) !== (remote.published_revision ?? 0)
+            )
+          if (needPull) {
+            await pullPublishedAdaptLayouts(ws, { force: true })
+            const refreshed = await getAdaptDomainLayout(domainId, ws)
+            return {
+              workspace_id: ws,
+              domain_id: domainId,
+              published_revision: refreshed?.published_revision ?? remote.published_revision ?? 0,
+              local_dirty: isLocalDirty(refreshed),
+              review: reviewStateOrIdle(refreshed?.review ?? review),
+            }
+          }
+        }
+        if (local) {
+          local.review = review
+          if (typeof remote.published_revision === 'number') {
+            local.published_revision = remote.published_revision
+          }
+          await upsertLocalDomainLayout(local, true, ws)
+        }
+        return {
+          workspace_id: ws,
+          domain_id: domainId,
+          published_revision: remote.published_revision ?? local?.published_revision ?? 0,
+          local_dirty: isLocalDirty(local),
+          review,
+        }
+      }
+    } catch (err) {
+      logger.warn({ err, workspaceId: ws, domainId }, '[adapt-layout] review query failed')
+    }
+  }
+
   return {
-    ok: push.pushed,
+    workspace_id: ws,
+    domain_id: domainId,
+    published_revision: local?.published_revision ?? 0,
+    local_dirty: isLocalDirty(local),
+    review,
+  }
+}
+
+/** 整包推送已废弃，改为按模块提交审核 */
+export async function forcePushAdaptLayouts(workspaceId?: string): Promise<AdaptLayoutSaveResult & { ok: boolean }> {
+  void workspaceId
+  return {
+    ok: false,
     domain_id: '*',
     revision: 0,
     updated_at: new Date().toISOString(),
-    cloud_pushed: push.pushed,
-    cloud_error: push.error,
+    cloud_pushed: false,
+    cloud_error: '整包推送已废弃，请对该模块使用「提交审核」',
   }
 }
 

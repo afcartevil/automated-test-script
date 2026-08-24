@@ -26,9 +26,12 @@ import {
   getAdaptDomainLayout,
   saveAdaptDomainConfig,
   resetAdaptDomainLayout,
-  pullAndMergeAdaptLayouts,
+  pullPublishedAdaptLayouts,
   forcePushAdaptLayouts,
+  submitAdaptDomainLayout,
+  getAdaptDomainLayoutReview,
 } from '../../services/tahp/adapt-layout/service'
+import { AdaptLayoutCloudError } from '../../services/tahp/adapt-layout/cloud-backend'
 import { DEFAULT_ADAPT_WORKSPACE, isAdaptWorkspaceId } from '../../services/tahp/adapt-layout/types'
 import { isCentralConfigured } from '../../services/tahp/runtime-mode'
 import { centralClient } from '../../services/tahp/sync/central-client'
@@ -191,6 +194,20 @@ tahpAdaptRoutes.put('/api/tahp/adapt/layouts/:domainId', async (ctx) => {
   await handleSaveDomainLayout(ctx, DEFAULT_ADAPT_WORKSPACE, domainId)
 })
 
+function respondLayoutError(ctx: Context, err: unknown, fallbackStatus = 400): void {
+  if (err instanceof AdaptLayoutCloudError) {
+    ctx.status = err.httpStatus || 502
+    ctx.body = {
+      success: false,
+      error: err.message,
+      data: { code: err.code, ...(err.details || {}) },
+    }
+    return
+  }
+  ctx.status = fallbackStatus
+  ctx.body = { success: false, error: (err as Error).message }
+}
+
 async function handleResetDomainLayout(ctx: Context, workspaceId: string, domainId: string) {
   await resetAdaptDomainLayout(domainId, workspaceId)
   ctx.body = { success: true, data: { deleted: domainId } }
@@ -217,6 +234,48 @@ tahpAdaptRoutes.delete('/api/tahp/adapt/layouts/:domainId', async (ctx) => {
   await handleResetDomainLayout(ctx, DEFAULT_ADAPT_WORKSPACE, domainId)
 })
 
+async function handleSubmitDomainLayout(ctx: Context, workspaceId: string, domainId: string) {
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  const comment = typeof body.comment === 'string' ? body.comment.trim() : undefined
+  try {
+    const data = await submitAdaptDomainLayout(domainId, workspaceId, comment)
+    ctx.body = { success: true, data }
+  } catch (err) {
+    respondLayoutError(ctx, err, 400)
+  }
+}
+
+tahpAdaptRoutes.post('/api/tahp/adapt/workspaces/:workspaceId/layouts/:domainId/submit', async (ctx) => {
+  const workspaceId = parseWorkspaceId(ctx.params.workspaceId)
+  const domainId = ctx.params.domainId
+  if (!workspaceId || !DOMAIN_ID_RE.test(domainId)) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '无效的 workspaceId 或 domainId' }
+    return
+  }
+  await handleSubmitDomainLayout(ctx, workspaceId, domainId)
+})
+
+async function handleGetDomainReview(ctx: Context, workspaceId: string, domainId: string) {
+  try {
+    const data = await getAdaptDomainLayoutReview(domainId, workspaceId)
+    ctx.body = { success: true, data }
+  } catch (err) {
+    respondLayoutError(ctx, err, 500)
+  }
+}
+
+tahpAdaptRoutes.get('/api/tahp/adapt/workspaces/:workspaceId/layouts/:domainId/review', async (ctx) => {
+  const workspaceId = parseWorkspaceId(ctx.params.workspaceId)
+  const domainId = ctx.params.domainId
+  if (!workspaceId || !DOMAIN_ID_RE.test(domainId)) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '无效的 workspaceId 或 domainId' }
+    return
+  }
+  await handleGetDomainReview(ctx, workspaceId, domainId)
+})
+
 tahpAdaptRoutes.post('/api/tahp/adapt/workspaces/:workspaceId/layouts/sync/pull', async (ctx) => {
   const workspaceId = parseWorkspaceId(ctx.params.workspaceId)
   if (!workspaceId) {
@@ -224,7 +283,7 @@ tahpAdaptRoutes.post('/api/tahp/adapt/workspaces/:workspaceId/layouts/sync/pull'
     ctx.body = { success: false, error: '无效的工作区 ID' }
     return
   }
-  const result = await pullAndMergeAdaptLayouts(workspaceId)
+  const result = await pullPublishedAdaptLayouts(workspaceId, { force: true })
   ctx.body = { success: true, data: result }
 })
 
@@ -236,27 +295,19 @@ tahpAdaptRoutes.post('/api/tahp/adapt/workspaces/:workspaceId/layouts/sync/push'
     return
   }
   const result = await forcePushAdaptLayouts(workspaceId)
-  if (!result.cloud_pushed && result.cloud_error) {
-    ctx.status = 502
-    ctx.body = { success: false, error: result.cloud_error, data: result }
-    return
-  }
-  ctx.body = { success: true, data: result }
+  ctx.status = 410
+  ctx.body = { success: false, error: result.cloud_error, data: result }
 })
 
 tahpAdaptRoutes.post('/api/tahp/adapt/layouts/sync/pull', async (ctx) => {
-  const result = await pullAndMergeAdaptLayouts(DEFAULT_ADAPT_WORKSPACE)
+  const result = await pullPublishedAdaptLayouts(DEFAULT_ADAPT_WORKSPACE, { force: true })
   ctx.body = { success: true, data: result }
 })
 
 tahpAdaptRoutes.post('/api/tahp/adapt/layouts/sync/push', async (ctx) => {
   const result = await forcePushAdaptLayouts(DEFAULT_ADAPT_WORKSPACE)
-  if (!result.cloud_pushed && result.cloud_error) {
-    ctx.status = 502
-    ctx.body = { success: false, error: result.cloud_error, data: result }
-    return
-  }
-  ctx.body = { success: true, data: result }
+  ctx.status = 410
+  ctx.body = { success: false, error: result.cloud_error, data: result }
 })
 
 tahpAdaptRoutes.post('/api/tahp/adapt/agent-prompt-preview', async (ctx) => {
