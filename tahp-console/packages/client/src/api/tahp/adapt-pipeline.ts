@@ -159,9 +159,11 @@ export interface BuildContext {
   gerrit_issue_id?: string
 }
 
+export type TestPlanMode = 'smoke' | 'pipeline_adapt' | 'recommend' | 'fixed'
+
 export interface TestPlan {
-  /** smoke=仅冒烟用例；recommend=按适配域推荐；fixed=手工/预选固定用例 */
-  mode: 'smoke' | 'recommend' | 'fixed'
+  /** smoke=仅冒烟；pipeline_adapt=流水线适配自动化；recommend=按适配域推荐；fixed=手工/预选固定用例 */
+  mode: TestPlanMode
   test_type?: string
   selected_cases?: string[]
   must_test_items?: string[]
@@ -445,9 +447,9 @@ export const DEFAULT_WORKFLOW: WorkflowDefinition = {
     { key: 'adapt', enabled: true, onUnavailable: 'fail' },
     { key: 'build', enabled: true, onUnavailable: 'manual_gate', onFail: 'human_review' },
     { key: 'flash', enabled: true, onUnavailable: 'manual_gate', onFail: 'human_review' },
-    { key: 'selfcheck', enabled: true, onUnavailable: 'manual_gate', onDone: 'gerrit', onFail: 'triage' },
-    { key: 'triage', enabled: true, onUnavailable: 'skip', onDone: 'human_review', onFail: 'human_review' },
-    { key: 'human_review', enabled: true, onUnavailable: 'fail', onDone: 'build', onDoneEffect: 'increment_iteration' },
+    { key: 'selfcheck', enabled: true, onUnavailable: 'manual_gate', onDone: 'gerrit', onFail: 'human_review' },
+    { key: 'triage', enabled: false, onUnavailable: 'skip', onDone: 'human_review', onFail: 'human_review' },
+    { key: 'human_review', enabled: false, onUnavailable: 'fail', onDone: 'build', onDoneEffect: 'increment_iteration' },
     { key: 'gerrit', enabled: true, onUnavailable: 'manual_gate', onDone: 'END', onFail: 'human_review' },
   ],
 }

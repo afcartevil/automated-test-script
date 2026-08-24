@@ -141,9 +141,11 @@ export interface BuildContext {
   gerrit_issue_id?: string
 }
 
+export type TestPlanMode = 'smoke' | 'pipeline_adapt' | 'recommend' | 'fixed'
+
 export interface TestPlan {
-  /** smoke=仅冒烟用例；recommend=按适配域推荐；fixed=手工/预选固定用例 */
-  mode: 'smoke' | 'recommend' | 'fixed'
+  /** smoke=仅冒烟；pipeline_adapt=流水线适配自动化；recommend=按适配域推荐；fixed=手工/预选固定用例 */
+  mode: TestPlanMode
   test_type?: string
   selected_cases?: string[]
   must_test_items?: string[]

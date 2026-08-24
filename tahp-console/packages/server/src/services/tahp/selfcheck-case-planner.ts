@@ -8,8 +8,8 @@ import { getCaseCatalogDetail } from './device-self-check'
  *
  * Known limitation: recommendation engine candidate pool only covers
  * week_driver / week_tdd / str4_driver_component.
- * monkey / smoke / gms / power cases cannot be recommended —
- * use TestPlan.mode='smoke'（仅冒烟）或 mode='fixed' 手工指定。
+ * monkey / smoke / gms / power / pipeline_adapt cases cannot be recommended —
+ * use TestPlan.mode='smoke'（冒烟全量）/ 'pipeline_adapt'（按勾选域映射模块）或 mode='fixed'。
  */
 export function buildMustTestItems(run: PipelineRun): string[] {
   const items: string[] = []
@@ -32,13 +32,75 @@ export function buildMustTestItems(run: PipelineRun): string[] {
   return [...new Set(items)]
 }
 
-/** Collect all catalog case keys under testType `smoke` (e.g. smoke/usd/1). */
-export function listSmokeCaseKeys(): Array<{ caseKey: string; caseName: string; score: number }> {
-  return getCaseCatalogDetail('smoke').map(item => ({
+type CatalogCaseRef = { caseKey: string; caseName: string; score: number }
+
+/** adapt-debug / feature-adapt 域 id → pipeline_adapt catalog module */
+const DOMAIN_ID_TO_PIPELINE_MODULE: Record<string, string> = {
+  tp: 'tp',
+  vib: 'vibrator',
+  vibrator: 'vibrator',
+  audio: 'audio',
+  lcm: 'lcm',
+  fp: 'fingerprint',
+  fingerprint: 'fingerprint',
+}
+
+export function mapDomainToPipelineAdaptModule(domainId: string): string | undefined {
+  const id = domainId.trim().toLowerCase()
+  return DOMAIN_ID_TO_PIPELINE_MODULE[id]
+}
+
+/** 与 device-self-check getModulesForTestType('pipeline_adapt') 对齐 */
+const PIPELINE_ADAPT_MODULE_ORDER = ['tp', 'vibrator', 'audio', 'lcm', 'fingerprint'] as const
+
+/** 勾选（enabled）的调试项对应的 pipeline_adapt 模块，保持 catalog 顺序。 */
+export function resolvePipelineAdaptModules(run: PipelineRun): string[] {
+  const mapped = new Set<string>()
+  for (const d of run.domains) {
+    if (!d.enabled) continue
+    const module = mapDomainToPipelineAdaptModule(d.domain_id)
+    if (module) mapped.add(module)
+  }
+  return PIPELINE_ADAPT_MODULE_ORDER.filter(m => mapped.has(m))
+}
+
+/** Collect all catalog case keys under a testType (e.g. smoke/usd/1, pipeline_adapt/tp/1). */
+export function listCatalogCaseKeys(testType: string): CatalogCaseRef[] {
+  return getCaseCatalogDetail(testType).map(item => ({
     caseKey: item.key,
     caseName: item.caseName,
     score: 1,
   }))
+}
+
+/** Collect all catalog case keys under testType `smoke` (e.g. smoke/usd/1). */
+export function listSmokeCaseKeys(): CatalogCaseRef[] {
+  return listCatalogCaseKeys('smoke')
+}
+
+/**
+ * pipeline_adapt catalog keys.
+ * `modules` omitted → 全量；传入数组（含空）→ 只保留这些模块。
+ */
+export function listPipelineAdaptCaseKeys(modules?: readonly string[]): CatalogCaseRef[] {
+  const all = listCatalogCaseKeys('pipeline_adapt')
+  if (modules === undefined) return all
+  const allow = new Set(modules)
+  return all.filter(c => allow.has(c.caseKey.split('/')[1] ?? ''))
+}
+
+function catalogPlanResult(testType: 'smoke' | 'pipeline_adapt', cases: CatalogCaseRef[]): CasePlanResult {
+  const selectedCases = cases.map(c => c.caseKey)
+  return {
+    plan: {
+      mode: testType,
+      test_type: testType,
+      selected_cases: selectedCases,
+    },
+    cases,
+    source: selectedCases.length ? testType : `${testType}_empty`,
+    aiGeneratedCases: [],
+  }
 }
 
 export interface CasePlanResult {
@@ -53,20 +115,15 @@ export interface CasePlanResult {
  * If mustTestItems is empty, degrades to 'fixed' mode (never silently runs empty).
  */
 export async function planCases(run: PipelineRun): Promise<CasePlanResult> {
-  // Smoke-only strategy: execute every smoke catalog case, nothing else.
+  // Smoke: execute every smoke catalog case.
   if (run.test_plan?.mode === 'smoke') {
-    const cases = listSmokeCaseKeys()
-    const selectedCases = cases.map(c => c.caseKey)
-    return {
-      plan: {
-        mode: 'smoke',
-        test_type: 'smoke',
-        selected_cases: selectedCases,
-      },
-      cases,
-      source: selectedCases.length ? 'smoke' : 'smoke_empty',
-      aiGeneratedCases: [],
-    }
+    return catalogPlanResult('smoke', listSmokeCaseKeys())
+  }
+
+  // pipeline_adapt: only modules mapped from enabled (勾选) debug domains.
+  if (run.test_plan?.mode === 'pipeline_adapt') {
+    const modules = resolvePipelineAdaptModules(run)
+    return catalogPlanResult('pipeline_adapt', listPipelineAdaptCaseKeys(modules))
   }
 
   // If run already has a fixed plan with selected cases, use it directly

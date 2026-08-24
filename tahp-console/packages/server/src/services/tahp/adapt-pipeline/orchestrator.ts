@@ -5,7 +5,7 @@ import { getRun, listActiveRunIds, saveRun } from './store'
 import {
   getEnabledNodes,
   loadWorkflow,
-  resolveDefaultOnDone,
+  resolveOnDone,
 } from './workflow'
 import { setPipelineEventHandler, startSources } from './sources'
 import type {
@@ -734,7 +734,7 @@ async function advanceOnce(runId: string): Promise<void> {
   }
 
   if (verdict.status === 'done') {
-    const target = node2.onDone ?? resolveDefaultOnDone(wf2, nodeKey)
+    const target = resolveOnDone(wf2, nodeKey)
     await transition(runId, target, node2.onDoneEffect)
     return
   }
@@ -834,7 +834,7 @@ export async function submitHumanAction(
     }
     const wf = workflowFor(run)
     const node = wf.nodes.find(n => n.key === nodeKey)
-    const target = node?.onDone ?? resolveDefaultOnDone(wf, nodeKey)
+    const target = resolveOnDone(wf, nodeKey)
     await transition(runId, target, node?.onDoneEffect)
     return
   }
@@ -867,7 +867,7 @@ export async function submitHumanAction(
     run.status = 'running'
     saveRun(run, { immediate: true })
     emitPipeline('pipeline.human_resolved', { run_id: runId, node: nodeKey, action_id: actionId })
-    const target = node?.onDone ?? resolveDefaultOnDone(wf, nodeKey)
+    const target = resolveOnDone(wf, nodeKey)
     await transition(runId, target, node?.onDoneEffect)
     await awaitAdvanceIdle(runId)
     return
@@ -879,8 +879,7 @@ export async function submitHumanAction(
     saveRun(run)
     emitPipeline('pipeline.human_resolved', { run_id: runId, node: nodeKey, action_id: actionId })
     const wf = workflowFor(run)
-    const node = wf.nodes.find(n => n.key === nodeKey)
-    const target = node?.onDone ?? resolveDefaultOnDone(wf, nodeKey)
+    const target = resolveOnDone(wf, nodeKey)
     await transition(runId, target)
     await awaitAdvanceIdle(runId)
     return

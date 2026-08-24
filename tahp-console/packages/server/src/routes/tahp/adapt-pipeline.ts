@@ -403,7 +403,11 @@ tahpAdaptPipelineRoutes.put('/workflow', async (ctx) => {
   const result = saveWorkflow(workflow)
   if (!result.ok) {
     ctx.status = 400
-    ctx.body = { success: false, error: 'workflow 校验失败', data: { errors: result.errors } }
+    ctx.body = {
+      success: false,
+      error: `workflow 校验失败：${result.errors.join('；')}`,
+      data: { errors: result.errors },
+    }
     return
   }
   ctx.body = { success: true, data: { workflow } }

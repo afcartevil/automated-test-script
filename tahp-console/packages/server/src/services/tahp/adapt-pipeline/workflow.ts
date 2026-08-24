@@ -50,6 +50,23 @@ export function resolveDefaultOnDone(workflow: WorkflowDefinition, nodeKey: stri
   return next ? next.key : 'END'
 }
 
+function isEnabledKey(workflow: WorkflowDefinition, key: string): boolean {
+  return workflow.nodes.some(n => n.key === key && n.enabled)
+}
+
+/**
+ * 解析实际 onDone：显式目标若已停用，回落到下一个 enabled 节点或 END。
+ * 流程编排只改 enabled 时，selfcheck.onDone 仍可能写着 gerrit。
+ */
+export function resolveOnDone(workflow: WorkflowDefinition, nodeKey: string): NodeTarget {
+  const node = workflow.nodes.find(n => n.key === nodeKey)
+  if (!node) return 'ABORT'
+  const explicit = node.onDone
+  if (explicit === 'END' || explicit === 'ABORT') return explicit
+  if (typeof explicit === 'string' && isEnabledKey(workflow, explicit)) return explicit
+  return resolveDefaultOnDone(workflow, nodeKey)
+}
+
 function nodeIndexMap(workflow: WorkflowDefinition): Map<string, number> {
   const map = new Map<string, number>()
   workflow.nodes.forEach((n, i) => map.set(n.key, i))
@@ -64,7 +81,7 @@ function collectEdges(workflow: WorkflowDefinition): Array<{ from: string; to: N
   const edges: Array<{ from: string; to: NodeTarget; kind: 'onDone' | 'onFail' }> = []
   for (const node of workflow.nodes) {
     if (!node.enabled) continue
-    const onDone = node.onDone ?? resolveDefaultOnDone(workflow, node.key)
+    const onDone = resolveOnDone(workflow, node.key)
     edges.push({ from: node.key, to: onDone, kind: 'onDone' })
     const onFail = node.onFail ?? 'ABORT'
     edges.push({ from: node.key, to: onFail, kind: 'onFail' })

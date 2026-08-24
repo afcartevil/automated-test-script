@@ -179,6 +179,21 @@ def _start_call_10086(serial: str) -> bool:
     return ret.returncode == 0 and "Error" not in out and "Exception" not in out
 
 
+_SIM_READY_STATES = frozenset({"LOADED", "READY"})
+_NO_SIM_SKIP_MSG = "未插入SIM卡，跳过拨打电话"
+
+
+def _sim_state_has_card(raw: str) -> bool:
+    """gsm.sim.state 任一口为 LOADED/READY 即视为已插卡。"""
+    states = [s.strip().upper() for s in (raw or "").replace(";", ",").split(",")]
+    return any(s in _SIM_READY_STATES for s in states if s)
+
+
+def _sim_inserted(serial: str) -> tuple[bool, str]:
+    raw = (adb_shell(serial, "getprop gsm.sim.state") or "").strip()
+    return _sim_state_has_card(raw), raw
+
+
 def _ls_names(serial: str, directory: str) -> list[str]:
     out = adb_shell(serial, f"ls -1 {directory} 2>/dev/null")
     if not out or "no such file" in out.lower():
@@ -858,7 +873,8 @@ def test_pa_mode(
     1. cat /odm/etc/vconfig/audio/TranAudioConfiguration.conf 识别 fsm / aw/oca
     2. 每次判定前 dmesg -C；fsm 只 grep fsm_speaker_on
     3. SOUND_SETTINGS 滑动媒体/通知/铃声/闹钟
-    4. 拨打 10086 听筒再切免提
+    4. 拨号前检查 SIM；未插卡则不拨打：前面已有失败则整项失败，否则跳过并注明原因
+    5. 已插卡则拨打 10086 听筒再切免提
     """
     name = "PA模式检查"
     failed: list[str] = []
@@ -936,62 +952,76 @@ def test_pa_mode(
                 emit(step_update, steps, f"[PA] {label}-失败 未出现 {token}")
                 failed.append(f"{label}未出现 {token}（读到 {hits or '<空>'}）")
 
-        emit(step_update, steps, "[PA] 拨打运营商 10086（听筒）")
-        _end_call(serial)
-        time.sleep(0.4)
-        cleared, clear_msg = _dmesg_clear(serial)
-        if not cleared:
-            failed.append(f"通话前 dmesg -C 失败 {clear_msg}")
-            emit(step_update, steps, "[PA] 通话前 dmesg -C 失败")
-        elif not _start_call_10086(serial):
-            emit(step_update, steps, "[PA] 拨打10086-失败")
-            failed.append("拨打10086失败")
+        emit(step_update, steps, "[PA] 检查 SIM 卡")
+        sim_ok, sim_raw = _sim_inserted(serial)
+        emit(step_update, steps, f"[PA] gsm.sim.state={sim_raw or '<空>'}")
+        call_skipped_no_sim = False
+        if not sim_ok:
+            emit(step_update, steps, "[PA] 未插入SIM卡，跳过拨打电话")
+            call_skipped_no_sim = True
         else:
-            deadline = time.time() + 12.0
-            while time.time() < deadline and not _call_offhook(serial):
-                time.sleep(0.6)
-            offhook = _call_offhook(serial)
-            emit(step_update, steps, f"[PA] 通话状态 offhook={offhook}")
-            hit, hits, preview = _check_after_action(
-                serial, kind, expect["handset"], settle=0.3, timeout=5.0
-            )
-            emit(step_update, steps, f"[PA] 听筒 读到 {hits or '<空>'} | {preview or '<空>'}")
-            if hit:
-                passed.append(f"听筒:{expect['handset']}")
-                emit(step_update, steps, "[PA] 听筒模式-成功")
-            else:
-                failed.append(f"听筒未出现 {expect['handset']}（读到 {hits or '<空>'}）")
-                emit(step_update, steps, "[PA] 听筒模式-失败")
-
-            emit(step_update, steps, "[PA] 切换免提/扬声器")
+            emit(step_update, steps, "[PA] 拨打运营商 10086（听筒）")
+            _end_call(serial)
+            time.sleep(0.4)
             cleared, clear_msg = _dmesg_clear(serial)
             if not cleared:
-                failed.append(f"免提前 dmesg -C 失败 {clear_msg}")
-                emit(step_update, steps, "[PA] 免提前 dmesg -C 失败")
-            elif not _tap_speaker(serial):
-                emit(step_update, steps, "[PA] 未点到扬声器按钮")
-                failed.append("未点到扬声器按钮")
+                failed.append(f"通话前 dmesg -C 失败 {clear_msg}")
+                emit(step_update, steps, "[PA] 通话前 dmesg -C 失败")
+            elif not _start_call_10086(serial):
+                emit(step_update, steps, "[PA] 拨打10086-失败")
+                failed.append("拨打10086失败")
             else:
+                deadline = time.time() + 12.0
+                while time.time() < deadline and not _call_offhook(serial):
+                    time.sleep(0.6)
+                offhook = _call_offhook(serial)
+                emit(step_update, steps, f"[PA] 通话状态 offhook={offhook}")
                 hit, hits, preview = _check_after_action(
-                    serial, kind, expect["speaker"], settle=0.6, timeout=5.0
+                    serial, kind, expect["handset"], settle=0.3, timeout=5.0
                 )
-                emit(step_update, steps, f"[PA] 免提 读到 {hits or '<空>'} | {preview or '<空>'}")
+                emit(step_update, steps, f"[PA] 听筒 读到 {hits or '<空>'} | {preview or '<空>'}")
                 if hit:
-                    passed.append(f"免提:{expect['speaker']}")
-                    emit(step_update, steps, "[PA] 免提模式-成功")
+                    passed.append(f"听筒:{expect['handset']}")
+                    emit(step_update, steps, "[PA] 听筒模式-成功")
                 else:
-                    failed.append(f"免提未出现 {expect['speaker']}（读到 {hits or '<空>'}）")
-                    emit(step_update, steps, "[PA] 免提模式-失败")
-        _end_call(serial)
+                    failed.append(f"听筒未出现 {expect['handset']}（读到 {hits or '<空>'}）")
+                    emit(step_update, steps, "[PA] 听筒模式-失败")
+
+                emit(step_update, steps, "[PA] 切换免提/扬声器")
+                cleared, clear_msg = _dmesg_clear(serial)
+                if not cleared:
+                    failed.append(f"免提前 dmesg -C 失败 {clear_msg}")
+                    emit(step_update, steps, "[PA] 免提前 dmesg -C 失败")
+                elif not _tap_speaker(serial):
+                    emit(step_update, steps, "[PA] 未点到扬声器按钮")
+                    failed.append("未点到扬声器按钮")
+                else:
+                    hit, hits, preview = _check_after_action(
+                        serial, kind, expect["speaker"], settle=0.6, timeout=5.0
+                    )
+                    emit(step_update, steps, f"[PA] 免提 读到 {hits or '<空>'} | {preview or '<空>'}")
+                    if hit:
+                        passed.append(f"免提:{expect['speaker']}")
+                        emit(step_update, steps, "[PA] 免提模式-成功")
+                    else:
+                        failed.append(f"免提未出现 {expect['speaker']}（读到 {hits or '<空>'}）")
+                        emit(step_update, steps, "[PA] 免提模式-失败")
+            _end_call(serial)
 
         if failed:
             emit(step_update, steps, f"[{name}]-失败")
+            extra = f"；{_NO_SIM_SKIP_MSG}" if call_skipped_no_sim else ""
             return _item(
                 name,
                 "fail",
                 f"PA={kind}; 失败: {'; '.join(failed)}"
-                + (f"；通过: {', '.join(passed)}" if passed else ""),
+                + (f"；通过: {', '.join(passed)}" if passed else "")
+                + extra,
             )
+        if call_skipped_no_sim:
+            emit(step_update, steps, f"[{name}]-跳过")
+            hint = f"；通过: {', '.join(passed)}" if passed else ""
+            return _item(name, "skip", f"PA={kind}；{_NO_SIM_SKIP_MSG}{hint}")
         emit(step_update, steps, f"[{name}]-成功")
         return _item(name, "pass", f"PA={kind} {kind_msg}；{', '.join(passed)}")
     finally:
@@ -1011,8 +1041,9 @@ def test_adsp_call_algo(
     """
     实网通话算法检查，是否跑在 adsp 侧
     1. /proc/device-tree/snd-audio-dsp 存在才继续
-    2. 拨打运营商客服 10086
-    3. cat /sys/kernel/debug/pm_genpd/adsp_top_dormant/current_state 应为 onn-1
+    2. 拨号前检查 SIM；未插卡则不拨打并跳过（注明原因）
+    3. 已插卡则拨打运营商客服 10086
+    4. cat /sys/kernel/debug/pm_genpd/adsp_top_dormant/current_state 应为 onn-1
     """
     name = "实网通话算法ADSP检查"
     emit(step_update, steps, f"[ADSP] 检查目录 {_DSP_DT}")
@@ -1031,6 +1062,13 @@ def test_adsp_call_algo(
     emit(step_update, steps, f"[ADSP] adb root: {root_msg or ('ok' if root_ok else '失败')}")
     if not root_ok:
         return _item(name, "skip", f"adb root 失败，无法读 debugfs: {root_msg}")
+
+    emit(step_update, steps, "[ADSP] 检查 SIM 卡")
+    sim_ok, sim_raw = _sim_inserted(serial)
+    emit(step_update, steps, f"[ADSP] gsm.sim.state={sim_raw or '<空>'}")
+    if not sim_ok:
+        emit(step_update, steps, "[ADSP] 未插入SIM卡，跳过拨打电话")
+        return _item(name, "skip", _NO_SIM_SKIP_MSG)
 
     try:
         emit(step_update, steps, "[ADSP] 亮屏解锁")

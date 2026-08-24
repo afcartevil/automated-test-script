@@ -1,8 +1,11 @@
 import { beforeAll, describe, it, expect } from 'vitest'
 import {
   buildMustTestItems,
+  listPipelineAdaptCaseKeys,
   listSmokeCaseKeys,
+  mapDomainToPipelineAdaptModule,
   planCases,
+  resolvePipelineAdaptModules,
 } from '../../packages/server/src/services/tahp/selfcheck-case-planner'
 import { initDeviceSelfCheck } from '../../packages/server/src/services/tahp/device-self-check'
 import type { PipelineRun } from '../../packages/server/src/services/tahp/adapt-pipeline/types'
@@ -154,5 +157,135 @@ describe('planCases smoke mode', () => {
     expect(result.plan.selected_cases).toEqual(result.cases.map(c => c.caseKey))
     expect(result.cases.every(c => c.caseKey.startsWith('smoke/'))).toBe(true)
     expect(result.cases.every(c => !c.caseKey.startsWith('week/') && !c.caseKey.startsWith('str4/'))).toBe(true)
+  })
+})
+
+describe('planCases pipeline_adapt mode', () => {
+  beforeAll(() => {
+    initDeviceSelfCheck()
+  })
+
+  it('lists pipeline_adapt catalog keys', () => {
+    const cases = listPipelineAdaptCaseKeys()
+    expect(cases.map(c => c.caseKey)).toEqual([
+      'pipeline_adapt/tp/1',
+      'pipeline_adapt/vibrator/1',
+      'pipeline_adapt/audio/1',
+      'pipeline_adapt/lcm/1',
+      'pipeline_adapt/fingerprint/1',
+    ])
+    expect(cases.map(c => c.caseName)).toEqual([
+      'TP适配检查',
+      '马达适配检查',
+      '音频适配检查',
+      'LCM适配检查',
+      '指纹/人脸适配检查',
+    ])
+  })
+
+  it('maps debug domain ids to pipeline_adapt modules', () => {
+    expect(mapDomainToPipelineAdaptModule('tp')).toBe('tp')
+    expect(mapDomainToPipelineAdaptModule('vib')).toBe('vibrator')
+    expect(mapDomainToPipelineAdaptModule('audio')).toBe('audio')
+    expect(mapDomainToPipelineAdaptModule('lcm')).toBe('lcm')
+    expect(mapDomainToPipelineAdaptModule('fp')).toBe('fingerprint')
+    expect(mapDomainToPipelineAdaptModule('charging')).toBeUndefined()
+  })
+
+  it('resolves modules from enabled domains only, in catalog order', () => {
+    const run = makeRun({
+      domains: [
+        {
+          domain_id: 'audio', domain_label: '音频', module: 'kernel-driver',
+          enabled: true, status: 'pending', workspace_id: 'ws1', form_data: {},
+          related_skills: [],
+        },
+        {
+          domain_id: 'tp', domain_label: 'TP触摸屏', module: 'kernel-driver',
+          enabled: true, status: 'pending', workspace_id: 'ws1', form_data: {},
+          related_skills: [],
+        },
+        {
+          domain_id: 'vib', domain_label: '振动马达', module: 'kernel-driver',
+          enabled: false, status: 'pending', workspace_id: 'ws1', form_data: {},
+          related_skills: [],
+        },
+        {
+          domain_id: 'charging', domain_label: '充电', module: 'kernel-driver',
+          enabled: true, status: 'pending', workspace_id: 'ws1', form_data: {},
+          related_skills: [],
+        },
+      ],
+    })
+    expect(resolvePipelineAdaptModules(run)).toEqual(['tp', 'audio'])
+  })
+
+  it('plans only cases for enabled debug domains', async () => {
+    const run = makeRun({
+      test_plan: { mode: 'pipeline_adapt' },
+      domains: [
+        {
+          domain_id: 'tp', domain_label: 'TP触摸屏', module: 'kernel-driver',
+          enabled: true, status: 'done', workspace_id: 'ws1', form_data: {},
+          related_skills: [],
+        },
+        {
+          domain_id: 'lcm', domain_label: 'LCM', module: 'kernel-driver',
+          enabled: true, status: 'done', workspace_id: 'ws1', form_data: {},
+          related_skills: [],
+        },
+        {
+          domain_id: 'audio', domain_label: '音频', module: 'kernel-driver',
+          enabled: false, status: 'pending', workspace_id: 'ws1', form_data: {},
+          related_skills: [],
+        },
+      ],
+    })
+    const result = await planCases(run)
+    expect(result.source).toBe('pipeline_adapt')
+    expect(result.plan.mode).toBe('pipeline_adapt')
+    expect(result.plan.test_type).toBe('pipeline_adapt')
+    expect(result.plan.selected_cases).toEqual(['pipeline_adapt/tp/1', 'pipeline_adapt/lcm/1'])
+    expect(result.cases.map(c => c.caseKey)).toEqual(['pipeline_adapt/tp/1', 'pipeline_adapt/lcm/1'])
+  })
+
+  it('maps vib/fp domain ids to vibrator/fingerprint cases', async () => {
+    const run = makeRun({
+      test_plan: { mode: 'pipeline_adapt' },
+      domains: [
+        {
+          domain_id: 'vib', domain_label: '振动马达', module: 'kernel-driver',
+          enabled: true, status: 'done', workspace_id: 'ws1', form_data: {},
+          related_skills: [],
+        },
+        {
+          domain_id: 'fp', domain_label: '指纹', module: 'kernel-driver',
+          enabled: true, status: 'done', workspace_id: 'ws1', form_data: {},
+          related_skills: [],
+        },
+      ],
+    })
+    const result = await planCases(run)
+    expect(result.plan.selected_cases).toEqual([
+      'pipeline_adapt/vibrator/1',
+      'pipeline_adapt/fingerprint/1',
+    ])
+  })
+
+  it('does not run all modules when no enabled domain maps to pipeline_adapt', async () => {
+    const run = makeRun({
+      test_plan: { mode: 'pipeline_adapt' },
+      domains: [
+        {
+          domain_id: 'charging', domain_label: '充电', module: 'kernel-driver',
+          enabled: true, status: 'done', workspace_id: 'ws1', form_data: {},
+          related_skills: [],
+        },
+      ],
+    })
+    const result = await planCases(run)
+    expect(result.source).toBe('pipeline_adapt_empty')
+    expect(result.cases).toEqual([])
+    expect(result.plan.selected_cases).toEqual([])
   })
 })

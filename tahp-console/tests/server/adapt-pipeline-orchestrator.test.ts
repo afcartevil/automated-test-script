@@ -227,6 +227,43 @@ describe('adapt-pipeline orchestrator', () => {
     expect(updated.stages.step_b?.status).toBe('waiting_human')
   })
 
+  it('skips disabled onDone target and finishes at END', async () => {
+    registerStage({
+      key: 'selfcheck',
+      label: 'selfcheck',
+      async start() {},
+      evaluate() {
+        return { status: 'done' as const }
+      },
+    })
+    registerStage({
+      key: 'gerrit',
+      label: 'gerrit',
+      async start() {},
+      evaluate() {
+        return { status: 'done' as const }
+      },
+    })
+    setWorkflowOverrideForTest({
+      id: 'skip-disabled-gerrit',
+      version: 1,
+      label: 'skip gerrit',
+      maxIterations: 3,
+      nodes: [
+        { key: 'selfcheck', enabled: true, onDone: 'gerrit' },
+        { key: 'gerrit', enabled: false, onDone: 'END' },
+      ],
+    })
+
+    const run = createRun(baseRunInput())
+    await startRun(run.run_id)
+
+    const updated = getRun(run.run_id)!
+    expect(updated.status).toBe('passed')
+    expect(updated.stages.selfcheck?.status).toBe('done')
+    expect(updated.stages.gerrit).toBeUndefined()
+  })
+
   it('manual_gate stops with correct actions when probe unavailable', async () => {
     registerUnavailableStage()
     setWorkflowOverrideForTest({

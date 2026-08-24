@@ -14,6 +14,7 @@ import {
 import {
   DEFAULT_WORKFLOW,
   loadWorkflow,
+  resolveOnDone,
   validateWorkflow,
   workflowConfigPath,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/workflow'
@@ -147,6 +148,28 @@ describe('adapt-pipeline workflow', () => {
     expect(review?.enabled).toBe(false)
     expect(DEFAULT_WORKFLOW.nodes.find(n => n.key === 'selfcheck')?.onDone).toBe('gerrit')
     expect(DEFAULT_WORKFLOW.nodes.find(n => n.key === 'selfcheck')?.onFail).toBe('human_review')
+  })
+
+  it('allows disabling explicit onDone target such as gerrit', () => {
+    const wf: WorkflowDefinition = {
+      ...DEFAULT_WORKFLOW,
+      nodes: DEFAULT_WORKFLOW.nodes.map(n =>
+        n.key === 'gerrit' ? { ...n, enabled: false } : n,
+      ),
+    }
+    expect(resolveOnDone(wf, 'selfcheck')).toBe('END')
+    expect(validateWorkflow(wf)).toEqual({ ok: true })
+  })
+
+  it('allows a custom subset that keeps selfcheck but skips compile/flash/gerrit', () => {
+    const keep = new Set(['prereq', 'adapt', 'selfcheck'])
+    const wf: WorkflowDefinition = {
+      ...DEFAULT_WORKFLOW,
+      nodes: DEFAULT_WORKFLOW.nodes.map(n => ({ ...n, enabled: keep.has(n.key) })),
+    }
+    expect(resolveOnDone(wf, 'adapt')).toBe('selfcheck')
+    expect(resolveOnDone(wf, 'selfcheck')).toBe('END')
+    expect(validateWorkflow(wf)).toEqual({ ok: true })
   })
 
   it('loadWorkflow falls back when workflow.json is invalid', () => {

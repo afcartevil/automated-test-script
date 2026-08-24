@@ -23,6 +23,7 @@ import {
   type PipelineDomainInput,
   type PrereqResolveData,
   type TestPlan,
+  type TestPlanMode,
 } from '@/api/tahp/adapt-pipeline'
 import { fetchPrereqProjects, peekPrereqProjects, type AdaptPrereqProject } from '@/api/tahp/adapt'
 import { refreshDevices, type DeviceInfo } from '@/api/tahp/device-self-check'
@@ -143,13 +144,16 @@ const buildContext = reactive<BuildContext>({
 const selectedBuildTargets = ref<string[]>(BUILD_TARGET_OPTIONS.map(o => o.value))
 const needPack = ref<'yes' | 'no'>('yes')
 const deviceId = ref<string | null>(null)
-const testPlanMode = ref<'smoke' | 'recommend' | 'fixed'>('smoke')
+const testPlanMode = ref<TestPlanMode>('smoke')
 
-const TEST_PLAN_MODE_LABELS: Record<'smoke' | 'recommend' | 'fixed', string> = {
+const TEST_PLAN_MODE_LABELS: Record<TestPlanMode, string> = {
   smoke: '冒烟用例测试',
+  pipeline_adapt: '适配流水线用例',
   recommend: '推荐策略',
   fixed: '固定用例',
 }
+
+const CATALOG_PLAN_MODES: TestPlanMode[] = ['smoke', 'pipeline_adapt']
 const maxIterations = ref(3)
 
 const TELEPHONY_DOMAINS = new Set([
@@ -686,7 +690,7 @@ function buildCreateInput(): CreateRunInput {
   const systemRoot = newSystemRoot.value.trim()
   const testPlan: TestPlan = {
     mode: testPlanMode.value,
-    ...(testPlanMode.value === 'smoke' ? { test_type: 'smoke' } : {}),
+    ...(CATALOG_PLAN_MODES.includes(testPlanMode.value) ? { test_type: testPlanMode.value } : {}),
   }
   return {
     project_code: code,
@@ -1133,11 +1137,12 @@ onUnmounted(() => {
             v-model:value="testPlanMode"
             :options="[
               { label: '冒烟用例测试（仅执行冒烟用例）', value: 'smoke' },
+              { label: '适配流水线用例（按勾选域：TP/马达/音频/LCM/指纹）', value: 'pipeline_adapt' },
               { label: '推荐策略（按适配域推断）', value: 'recommend' },
               { label: '固定用例（后续在自检节点确认）', value: 'fixed' },
             ]"
           />
-          <p class="field-hint">默认仅跑冒烟用例；推荐/固定策略可覆盖更广的自检范围。</p>
+          <p class="field-hint">默认仅跑冒烟用例；适配流水线用例只跑勾选调试项对应的模块（TP/马达/音频/LCM/指纹），无对应模块则转人工。</p>
         </div>
       </div>
       <div class="field-row">

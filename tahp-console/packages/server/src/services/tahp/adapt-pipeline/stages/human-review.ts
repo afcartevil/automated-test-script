@@ -83,3 +83,5 @@ export const humanReviewStageDefinition: StageDefinition = {
 export function installHumanReviewStage(): void {
   registerStageForTest(humanReviewStageDefinition)
 }
+
+installHumanReviewStage()
