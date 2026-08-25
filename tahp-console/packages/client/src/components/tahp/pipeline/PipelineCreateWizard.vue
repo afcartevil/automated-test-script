@@ -36,9 +36,15 @@ import {
 } from '@/constants/adapt-domains'
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 import type { useAdaptPipelineStore } from '@/stores/tahp/adapt-pipeline'
+import {
+  overlayCloneDomains,
+  resolveClonedTestPlanMode,
+  type WizardCloneSeed,
+} from '@/utils/pipeline-clone'
 
 const props = defineProps<{
   store: ReturnType<typeof useAdaptPipelineStore>
+  cloneSeed?: WizardCloneSeed | null
 }>()
 
 const emit = defineEmits<{
@@ -145,6 +151,8 @@ const buildContext = reactive<BuildContext>({
 const selectedBuildTargets = ref<string[]>(BUILD_TARGET_OPTIONS.map(o => o.value))
 const needPack = ref<'yes' | 'no'>('yes')
 const deviceId = ref<string | null>(null)
+const keepClonedDeviceId = ref<string | null>(null)
+const skipAutoPrereqFetch = ref(false)
 const testPlanMode = ref<TestPlanMode>('smoke')
 
 const TEST_PLAN_MODE_LABELS: Record<TestPlanMode, string> = {
@@ -394,11 +402,21 @@ function onDomainFieldChange(domain: WizardDomain) {
 }
 
 const canProceedStep3 = computed(() => {
-  if (!String(buildContext.gerrit_issue_id ?? '').trim()) return false
   if (!String(buildContext.variant ?? '').trim()) return false
   if (!String(buildContext.build_flag ?? '').trim()) return false
   if (!selectedBuildTargets.value.length && needPack.value !== 'yes') return false
   return true
+})
+
+const deviceSelectOptions = computed(() => {
+  const opts = devices.value.map(d => ({
+    label: `${d.deviceId} (${d.deviceName})`,
+    value: d.deviceId,
+  }))
+  if (deviceId.value && !opts.some(o => o.value === deviceId.value)) {
+    opts.unshift({ label: `${deviceId.value}（当前未连接）`, value: deviceId.value })
+  }
+  return opts
 })
 
 function buildLocalCatalogDomains(): DomainCatalogDomain[] {
@@ -474,6 +492,66 @@ function rebuildWizardFromSources() {
   const fromApi = domainCatalog.value?.workspaces.flatMap(w => w.domains) ?? []
   const catalogDomains = fromApi.length ? fromApi : buildLocalCatalogDomains()
   wizardDomains.value = buildWizardDomains(catalogDomains, prereqData.value)
+  if (skipAutoPrereqFetch.value && props.cloneSeed) {
+    overlayClonedDomains(props.cloneSeed)
+  }
+}
+
+function overlayClonedDomains(seed: WizardCloneSeed) {
+  overlayCloneDomains(wizardDomains.value, seed.domains, (src, formData) => ({
+    workspace_id: src.workspace_id,
+    domain_id: src.domain_id,
+    domain_label: src.domain_label,
+    module: src.module,
+    related_skills: [...(src.related_skills ?? [])],
+    enabled: src.enabled,
+    schema: [],
+    form_data: formData,
+    incomplete_required: [...(src.incomplete_required ?? [])],
+    from_central: false,
+  }))
+  for (const domain of wizardDomains.value) {
+    recomputeIncomplete(domain)
+  }
+}
+
+function applyCloneSeed(seed: WizardCloneSeed) {
+  skipAutoPrereqFetch.value = true
+  projectCode.value = seed.project_code
+  manualProjectCode.value = ''
+  campaignId.value = seed.campaign_id ?? null
+  if (seed.from_os || seed.to_os || seed.campaign_id) {
+    prereqData.value = {
+      project_code: seed.project_code,
+      campaign_id: seed.campaign_id ?? '',
+      from_os: seed.from_os ?? '',
+      to_os: seed.to_os ?? '',
+      domains: [],
+    }
+  }
+  oldVendorRoot.value = seed.old_vendor_root
+  newVendorRoot.value = seed.new_vendor_root
+  newSystemRoot.value = seed.new_system_root
+  if (seed.path_params?.fields.length) {
+    parsedPathFields.value = seed.path_params.fields.map(f => ({ ...f }))
+    parsedAt.value = seed.path_params.parsed_at
+    lastParsedSignature.value = `${seed.project_code}||${seed.old_vendor_root.trim()}||${seed.new_vendor_root.trim()}`
+  }
+  selectedWorkspaces.value = seed.workspaces.length ? [...seed.workspaces] : ['adapt-debug']
+  overlayClonedDomains(seed)
+
+  Object.assign(buildContext, seed.build_context)
+  buildContext.gerrit_issue_id = seed.build_context.gerrit_issue_id ?? ''
+  buildContext.target_branch = seed.build_context.target_branch ?? ''
+  selectedBuildTargets.value = seed.build_context.build_targets?.length
+    ? [...seed.build_context.build_targets]
+    : BUILD_TARGET_OPTIONS.map(o => o.value)
+  needPack.value = seed.build_context.need_pack === false ? 'no' : 'yes'
+  deviceId.value = seed.device_id ?? null
+  keepClonedDeviceId.value = seed.device_id ?? null
+  testPlanMode.value = resolveClonedTestPlanMode(seed.test_plan?.mode)
+  maxIterations.value = seed.max_iterations
+  step.value = 3
 }
 
 async function loadProjects(force = false) {
@@ -504,6 +582,7 @@ async function loadProjects(force = false) {
 async function refreshProjectConfig() {
   if (projectsRefreshing.value) return
   projectsRefreshing.value = true
+  skipAutoPrereqFetch.value = false
   try {
     await loadProjects(true)
     const code = projectCode.value || manualProjectCode.value.trim()
@@ -534,6 +613,10 @@ async function loadCatalog() {
 }
 
 async function loadPrereqs() {
+  if (skipAutoPrereqFetch.value) {
+    rebuildWizardFromSources()
+    return
+  }
   const code = projectCode.value || manualProjectCode.value.trim()
   if (!code || !centralConfigured.value) {
     prereqData.value = null
@@ -563,7 +646,11 @@ async function loadDevicesOnce() {
   try {
     const next = await refreshDevices()
     devices.value = next
-    if (deviceId.value && !next.some(d => d.deviceId === deviceId.value)) {
+    if (
+      deviceId.value
+      && !next.some(d => d.deviceId === deviceId.value)
+      && deviceId.value !== keepClonedDeviceId.value
+    ) {
       deviceId.value = null
     }
   } catch {
@@ -773,11 +860,16 @@ function goConfig() {
 }
 
 onMounted(() => {
-  const qCode = String(route.query.project_code || '').trim()
-  const qCamp = String(route.query.campaign_id || '').trim()
-  if (!projectCode.value && qCode) {
-    projectCode.value = qCode
-    if (qCamp) campaignId.value = qCamp
+  const seed = props.cloneSeed
+  if (seed) {
+    applyCloneSeed(seed)
+  } else {
+    const qCode = String(route.query.project_code || '').trim()
+    const qCamp = String(route.query.campaign_id || '').trim()
+    if (!projectCode.value && qCode) {
+      projectCode.value = qCode
+      if (qCamp) campaignId.value = qCamp
+    }
   }
   rebuildWizardFromSources()
   // 项目列表不依赖就绪检查：有会话缓存则首屏直接出下拉
@@ -797,6 +889,7 @@ onMounted(() => {
       loadDevicesOnce(),
       fetchHarnessSkills('flash')
         .then(({ items }) => {
+          if (String(buildContext.flash_skill_id || '').trim()) return
           const ids = items.map(s => s.id)
           const preferred = ids.find(id => id === 'asf-device')
             || ids.find(id => id === 'harness-device')
@@ -816,6 +909,9 @@ onUnmounted(() => {
 
 <template>
   <EaCard class="wizard card">
+    <NAlert v-if="cloneSeed" type="info" :bordered="false" class="banner">
+      已从运行 <strong>{{ cloneSeed.project_code }}</strong> 复制全部启动参数，当前在「配置执行」。可返回前两步核对，或直接启动。
+    </NAlert>
     <NAlert v-if="!centralConfigured" type="warning" :bordered="false" class="banner">
       未配置 TAHP 中心连接，无法拉取项目前置。
       <button type="button" class="link-btn" @click="goConfig">前往配置</button>
@@ -1131,7 +1227,7 @@ onUnmounted(() => {
           </label>
           <NSelect
             v-model:value="deviceId"
-            :options="devices.map(d => ({ label: `${d.deviceId} (${d.deviceName})`, value: d.deviceId }))"
+            :options="deviceSelectOptions"
             clearable
             :loading="devicesLoading"
             :placeholder="devicesLoading ? '正在扫描 ADB 设备…' : (devices.length ? '选择烧录/自检设备' : '未检测到设备')"
@@ -1165,11 +1261,11 @@ onUnmounted(() => {
         </div>
       </div>
       <div class="field">
-        <label>Gerrit 提交 ID <span class="req">*</span></label>
-        <NInput v-model:value="buildContext.gerrit_issue_id" placeholder="如 TOS1501-63219 或 AR-202506-002681" />
+        <label>Gerrit 提交 ID</label>
+        <NInput v-model:value="buildContext.gerrit_issue_id" placeholder="可选，如 TOS1501-63219 或 AR-202506-002681" />
         <p class="field-hint">
-          写入各仓 commit 模板的 <code>ID:</code> 字段（AR/BUG，禁止 task ID）。多仓共用同一 ID；
-          各仓 <code>DESCRIPTION</code> 仍按该仓实际 diff 由 gerrit-submit Skill 填写。
+          可选。填写后写入各仓 commit 模板的 <code>ID:</code> 字段（AR/BUG，禁止 task ID）。多仓共用同一 ID；
+          各仓 <code>DESCRIPTION</code> 仍按该仓实际 diff 由 gerrit-submit Skill 填写。未填时入库阶段按 Skill 默认规则处理。
         </p>
       </div>
     </div>

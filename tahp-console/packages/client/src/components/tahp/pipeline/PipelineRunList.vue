@@ -14,6 +14,7 @@ const emit = defineEmits<{
   select: [runId: string]
   create: []
   discard: [runId: string]
+  clone: [runId: string]
 }>()
 
 const sortedItems = computed(() =>
@@ -57,6 +58,11 @@ function onDiscard(ev: Event, runId: string) {
   if (!window.confirm('确认删除该草稿运行？删除后不可恢复。')) return
   emit('discard', runId)
 }
+
+function onClone(ev: Event, runId: string) {
+  ev.stopPropagation()
+  emit('clone', runId)
+}
 </script>
 
 <template>
@@ -83,16 +89,27 @@ function onDiscard(ev: Event, runId: string) {
         </div>
         <div class="run-side">
           <EaPill :variant="statusVariant(item.status)">{{ statusLabel(item.status) }}</EaPill>
-          <button
-            v-if="item.status === 'draft'"
-            type="button"
-            class="btn-discard"
-            title="删除草稿"
-            :disabled="busy"
-            @click="onDiscard($event, item.run_id)"
-          >
-            删除
-          </button>
+          <div class="run-actions">
+            <button
+              type="button"
+              class="btn-clone"
+              title="复制配置到新建运行"
+              :disabled="busy"
+              @click="onClone($event, item.run_id)"
+            >
+              复制
+            </button>
+            <button
+              v-if="item.status === 'draft'"
+              type="button"
+              class="btn-discard"
+              title="删除草稿"
+              :disabled="busy"
+              @click="onDiscard($event, item.run_id)"
+            >
+              删除
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -198,10 +215,16 @@ h3 {
   flex-shrink: 0;
 }
 
+.run-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-clone,
 .btn-discard {
   border: none;
   background: transparent;
-  color: var(--err, #c0392b);
   font-size: 11px;
   font-weight: 700;
   cursor: pointer;
@@ -210,6 +233,14 @@ h3 {
 
   &:hover:not(:disabled) { text-decoration: underline; }
   &:disabled { opacity: 0.5; cursor: not-allowed; }
+}
+
+.btn-clone {
+  color: var(--accent);
+}
+
+.btn-discard {
+  color: var(--err, #c0392b);
 }
 
 .btn-new {

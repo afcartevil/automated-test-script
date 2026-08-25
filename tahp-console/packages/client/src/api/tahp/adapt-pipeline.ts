@@ -221,6 +221,22 @@ export interface CreateRunInput {
   path_params?: PathParams
 }
 
+/** GET /runs/:runId 中向导复制所需的落盘字段（其余 stages 等可忽略） */
+export interface PipelineRunRecord {
+  run_id: string
+  project_code: string
+  campaign_id?: string
+  from_os?: string
+  to_os?: string
+  status: RunStatus
+  max_iterations: number
+  domains: PipelineDomainInput[]
+  build_context: BuildContext
+  path_params?: PathParams
+  device_id?: string
+  test_plan?: TestPlan
+}
+
 export interface CreateRunResponse {
   run_id: string
   domains: PipelineDomainInput[]
@@ -258,6 +274,10 @@ export function fetchPipelineRuns(params?: {
 
 export function fetchPipelineTimeline(runId: string): Promise<TimelineView> {
   return tahpGet(`/api/tahp/adapt-pipeline/runs/${encodeURIComponent(runId)}/timeline`)
+}
+
+export function fetchPipelineRun(runId: string): Promise<PipelineRunRecord> {
+  return tahpGet(`/api/tahp/adapt-pipeline/runs/${encodeURIComponent(runId)}`)
 }
 
 export function fetchPipelineLogs(runId: string, nodeKey: string, tail = 500): Promise<{ lines: string[] }> {

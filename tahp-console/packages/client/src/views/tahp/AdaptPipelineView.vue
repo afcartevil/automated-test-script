@@ -11,6 +11,8 @@ import PipelineCreateWizard from '@/components/tahp/pipeline/PipelineCreateWizar
 import PipelineHumanPanel from '@/components/tahp/pipeline/PipelineHumanPanel.vue'
 import { useAdaptPipelineStore } from '@/stores/tahp/adapt-pipeline'
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
+import { fetchPipelineRun } from '@/api/tahp/adapt-pipeline'
+import { buildWizardCloneSeed, isCloneableRunId, type WizardCloneSeed } from '@/utils/pipeline-clone'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,6 +22,9 @@ const store = useAdaptPipelineStore()
 const activeTab = ref('board')
 const humanDrawerOpen = ref(false)
 const narrow = ref(false)
+const cloneSeed = ref<WizardCloneSeed | null>(null)
+const wizardEpoch = ref(0)
+const cloneBusy = ref(false)
 
 const pageTabs = [
   { key: 'board', label: '运行看板' },
@@ -51,8 +56,31 @@ function handleSelectNode(key: string) {
 }
 
 function handleCreateClick() {
+  cloneSeed.value = null
+  wizardEpoch.value += 1
   activeTab.value = 'create'
   void store.checkRuntimeReadiness()
+}
+
+async function handleCloneRun(runId: string) {
+  if (!isCloneableRunId(runId)) {
+    message.warning('预览数据无法复制配置，请先创建真实运行')
+    return
+  }
+  if (cloneBusy.value) return
+  cloneBusy.value = true
+  try {
+    const run = await fetchPipelineRun(runId)
+    cloneSeed.value = buildWizardCloneSeed(run)
+    wizardEpoch.value += 1
+    activeTab.value = 'create'
+    void store.checkRuntimeReadiness()
+    message.success('已复制运行配置，请核对后启动')
+  } catch (err) {
+    message.error((err as Error).message || '复制配置失败')
+  } finally {
+    cloneBusy.value = false
+  }
 }
 
 async function handleDiscardDraft(runId: string) {
@@ -135,10 +163,11 @@ watch(() => store.error, (err) => {
         :items="store.runItems"
         :selected-id="store.selectedRunId"
         :loading="store.listLoading"
-        :busy="store.runActionBusy"
+        :busy="store.runActionBusy || cloneBusy"
         @select="handleSelectRun"
         @create="handleCreateClick"
         @discard="handleDiscardDraft"
+        @clone="handleCloneRun"
       />
 
       <div class="board-main">
@@ -180,7 +209,9 @@ watch(() => store.error, (err) => {
 
     <PipelineCreateWizard
       v-else-if="activeTab === 'create'"
+      :key="`wizard-${wizardEpoch}`"
       :store="store"
+      :clone-seed="cloneSeed"
       @created="handleCreated"
     />
 

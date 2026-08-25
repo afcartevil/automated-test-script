@@ -183,7 +183,7 @@ function buildInstructions(
 2. 根据本域变更文件的绝对路径识别各自所属 git 仓库，按仓库分别 commit 并 push 到 Gerrit
 3. commit message 遵循 skill 内 commit-template.md
 4. 仅提交本域列出的变更文件，不要提交其他域的文件；禁止跨仓混提
-5. commit 模板 \`ID:\` 使用流水线提供的「提交 ID」（多仓相同）；DESCRIPTION 等按本仓 diff
+5. commit 模板 \`ID:\` 使用流水线提供的「提交 ID」（多仓相同）；若未提供提交 ID 则按 Skill 默认规则处理，不要因此失败；DESCRIPTION 仍按各仓实际 diff 填写
 6. 完成后在输出中明确打印 Gerrit Change URL 与 Change-Id
 ${credLine ? `${credLine}\n` : ''}
 # 工程 Skill 根目录
@@ -209,14 +209,16 @@ function buildUserMessage(input: GerritDomainSubmitInput): string {
     branch ? `目标分支：${branch}（必须使用该分支）` : '目标分支：未指定（按 gerrit-submit Skill 默认推断远程分支）',
     issueId
       ? `提交 ID（commit 模板 ID 字段，多仓共用）：${issueId}`
-      : '提交 ID：未指定（若 Skill 要求 ID 则失败并说明）',
+      : '提交 ID：未指定（可选；未填时按 Skill 默认规则处理 ID 字段，不要因此失败）',
     '',
     '## 本域变更文件（绝对路径）',
     files || '（无文件列表，请根据 git status 确认）',
     '',
     '## 填写要求',
     '- 根据上述绝对路径识别各自所属 git 仓库（从文件路径向上找到仓根），按仓库分别 commit / push，禁止把不同仓库的文件混在一次提交里',
-    '- commit 模板 `ID:` 必须使用上方「提交 ID」（各仓相同）',
+    issueId
+      ? '- commit 模板 `ID:` 必须使用上方「提交 ID」（各仓相同）'
+      : '- commit 模板 `ID:` 未指定，可按 Skill 默认规则填写或留空，不要因此中止提交',
     '- `DESCRIPTION` / `TYPE` / `TEST_SUGGESTIONS` 等按**本仓实际 diff** 填写，不要照搬其它仓',
     '',
     '请使用 gerrit-submit Skill 完成 commit + push，并回报 Change URL。',
