@@ -9,6 +9,7 @@ import {
   removeImprovedProfileCopy,
   taskIdFromSessionId,
   taskSkillsFromLedger,
+  loadCuratorLedger,
 } from '../../packages/server/src/services/hermes/skill-improve-registry'
 
 const tempDirs: string[] = []
@@ -49,6 +50,29 @@ describe('parseCuratorLedger', () => {
     const byTask = taskSkillsFromLedger(entries)
     expect(byTask.get('task-bug-1')).toEqual(['leakdetect-memory-analysis'])
     expect(byTask.get('task-bug-2')).toEqual(['leakdetect-memory-analysis'])
+  })
+
+  it('loadCuratorLedger reads the file and returns [] when missing', async () => {
+    const profile = await tempDir('ledger-load-')
+    const ledgerPath = join(profile, '.curator_ledger.jsonl')
+    expect(loadCuratorLedger({
+      profileSkillsDir: profile,
+      repoSkillsDir: join(profile, 'repo'),
+      ledgerPath: join(profile, 'no-such.jsonl'),
+    })).toEqual([])
+
+    await writeFile(ledgerPath, [
+      '{"action":"create","skill":"android-watchdog-tne-analysis","evidence":{"session_id":"tahp-bug-task-bug-f28078"}}',
+      'not-json',
+    ].join('\n'), 'utf-8')
+    const loaded = loadCuratorLedger({
+      profileSkillsDir: profile,
+      repoSkillsDir: join(profile, 'repo'),
+      ledgerPath,
+    })
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0].skill).toBe('android-watchdog-tne-analysis')
+    expect(taskSkillsFromLedger(loaded).get('task-bug-f28078')).toEqual(['android-watchdog-tne-analysis'])
   })
 })
 

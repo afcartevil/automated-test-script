@@ -2,6 +2,7 @@
  * 从 Agent 工具调用中识别「自改进 Skill」写入（skill_manage 或直接改 skills 目录）。
  * 纯函数，供单测与 bug-analysis 落盘共用。
  */
+import { taskIdFromSessionId, type CuratorLedgerEntry } from '../hermes/skill-improve-registry'
 
 export interface SkillImproveRecord {
   name: string
@@ -96,6 +97,27 @@ export function upsertSkillImprove(
   if (rec.actions.includes(hit.action)) return existing
   const next = existing.slice()
   next[idx] = { ...rec, actions: [...rec.actions, hit.action] }
+  return next
+}
+
+/**
+ * 任务结束时用 curator ledger 补齐本 session 改过的 Skill。
+ * tool.started 可能丢事件，ledger 是徽章/快照的权威源；已有实时命中保留并合并 action。
+ */
+export function mergeLedgerSkillImproves(
+  existing: SkillImproveRecord[],
+  taskId: string,
+  entries: CuratorLedgerEntry[],
+): SkillImproveRecord[] {
+  const tid = String(taskId || '').trim()
+  if (!tid || !entries.length) return existing
+  let next = existing
+  for (const entry of entries) {
+    const entryTid = taskIdFromSessionId(entry.evidence?.session_id || '')
+    if (entryTid !== tid) continue
+    const action = String(entry.action || '').trim() || 'create'
+    next = upsertSkillImprove(next, { name: entry.skill, action })
+  }
   return next
 }
 

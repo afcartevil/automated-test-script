@@ -73,10 +73,12 @@ import {
 import {
   detectSkillImprove,
   formatSkillImproveSummary,
+  mergeLedgerSkillImproves,
   parseSkillImproves,
   upsertSkillImprove,
   type SkillImproveRecord,
 } from './bug-analysis-skill-improve'
+import { loadCuratorLedger } from '../hermes/skill-improve-registry'
 import { snapshotImprovedSkills, skillImproveSnapshotRoot, readSkillSnapshot } from './bug-analysis-skill-snapshot'
 import {
   APPROVAL_AUTO_ONCE_MS,
@@ -139,7 +141,7 @@ export interface BugAnalysisTaskCtx {
   prevResponse?: string           // 上一轮 Agent 输出
   corrections: string[]           // 历次补充信息
   skillsUsed: string[]
-  /** 本任务累计（含续跑轮次）Agent 自改进写入的 Skill（skill_manage / 直接改 skills 目录） */
+  /** 本任务累计自改进 Skill：实时 tool.started + 结束时 curator ledger 合并 */
   skillsImproved?: SkillImproveRecord[]
   llmResponse?: string
   completedAt?: string
@@ -1365,6 +1367,42 @@ interface RunBugAnalysisOptions {
   userInputValues?: Record<string, string>
 }
 
+/** 任务结束落盘前：ledger 补齐自改进 Skill，再快照。实时 detectSkillImprove 只负责活动流。 */
+async function settleSkillImproves(taskId: string, ctx: BugAnalysisTaskCtx): Promise<void> {
+  try {
+    ctx.skillsImproved = mergeLedgerSkillImproves(
+      ctx.skillsImproved || [],
+      taskId,
+      loadCuratorLedger(),
+    )
+  } catch (e) {
+    logBug(taskId, 'warn', `skill ledger merge failed: ${(e as Error).message}`)
+  }
+  if (!(ctx.skillsImproved || []).length) return
+  try {
+    ctx.skillsImproved = await snapshotImprovedSkills({
+      reportsDir: tahpPaths.reportsDir,
+      taskId,
+      records: ctx.skillsImproved || [],
+      source: 'runtime',
+    })
+  } catch (e) {
+    logBug(taskId, 'warn', `skill snapshot failed: ${(e as Error).message}`)
+  }
+}
+
+function persistSkillsImprovedOnExistingReport(taskId: string, records: SkillImproveRecord[]): void {
+  if (!records.length) return
+  const existing = readBugReport(taskId) as Record<string, unknown> | null
+  if (!existing) return
+  existing.skills_improved = records
+  try {
+    writeFileSync(reportPath(taskId), JSON.stringify(existing, null, 2), 'utf-8')
+  } catch (e) {
+    logBug(taskId, 'warn', `skill improve report patch failed: ${(e as Error).message}`)
+  }
+}
+
 // ─── 单条 Bug 分析（核心执行 - Agent 模式） ─────────────────────────────────
 
 async function runSingleBugAnalysis(
@@ -1598,18 +1636,7 @@ async function runSingleBugAnalysis(
       ? [...prevRounds, { user: userMessage, assistant: fullResponse }]
       : [{ user: userMessage, assistant: fullResponse }]
 
-    if ((ctx.skillsImproved || []).length) {
-      try {
-        ctx.skillsImproved = await snapshotImprovedSkills({
-          reportsDir: tahpPaths.reportsDir,
-          taskId,
-          records: ctx.skillsImproved || [],
-          source: 'runtime',
-        })
-      } catch (e) {
-        logBug(taskId, 'warn', `skill snapshot failed: ${(e as Error).message}`)
-      }
-    }
+    await settleSkillImproves(taskId, ctx)
 
     const report = {
       task_id: taskId,
@@ -1708,6 +1735,7 @@ async function runSingleBugAnalysis(
     ctx.status = interruptedByUser ? 'cancelled' : 'failed'
     ctx.error = msg
     ctx.completedAt = new Date().toISOString()
+    await settleSkillImproves(taskId, ctx)
     if (keepPriorReport) {
       if (isContinue && correction) {
         const idx = ctx.corrections.lastIndexOf(correction)
@@ -1716,6 +1744,7 @@ async function runSingleBugAnalysis(
       ctx.status = 'completed'
       ctx.phase = 'COMPLETED'
       ctx.progress = 100
+      persistSkillsImprovedOnExistingReport(taskId, ctx.skillsImproved || [])
       emit(taskId, 'task.continue_failed', { error: msg, message: `补充分析失败: ${msg}` })
       emit(taskId, 'task.phase', {
         phase: 'COMPLETED',
@@ -1731,16 +1760,6 @@ async function runSingleBugAnalysis(
     // 写入失败报告（补充继续 / 用户输入续跑失败时保留原 completed 报告）
     if (!keepPriorReport) {
       try {
-        if ((ctx.skillsImproved || []).length) {
-          try {
-            ctx.skillsImproved = await snapshotImprovedSkills({
-              reportsDir: tahpPaths.reportsDir,
-              taskId,
-              records: ctx.skillsImproved || [],
-              source: 'runtime',
-            })
-          } catch { /* snapshot is optional */ }
-        }
         const report = {
           task_id: taskId,
           jira_key: ctx.jiraKey,

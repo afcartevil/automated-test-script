@@ -75,6 +75,17 @@ export function taskIdFromSessionId(sessionId: string): string | null {
   return null
 }
 
+export function loadCuratorLedger(
+  paths: SkillImproveRegistryPaths = defaultSkillImproveRegistryPaths(),
+): CuratorLedgerEntry[] {
+  const ledgerPath = paths.ledgerPath || join(paths.profileSkillsDir, '.curator_ledger.jsonl')
+  try {
+    return parseCuratorLedger(readFileSync(ledgerPath, 'utf-8'))
+  } catch {
+    return []
+  }
+}
+
 export function parseCuratorLedger(text: string): CuratorLedgerEntry[] {
   const out: CuratorLedgerEntry[] = []
   for (const rawLine of text.split(/\r?\n/)) {

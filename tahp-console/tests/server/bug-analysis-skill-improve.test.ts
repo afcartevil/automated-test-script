@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   detectSkillImprove,
   formatSkillImproveSummary,
+  mergeLedgerSkillImproves,
   parseSkillImproves,
   skillNameFromPath,
   upsertSkillImprove,
 } from '../../packages/server/src/services/tahp/bug-analysis-skill-improve'
+import { parseCuratorLedger } from '../../packages/server/src/services/hermes/skill-improve-registry'
 
 describe('skillNameFromPath', () => {
   it('reads Hermes profile skill path', () => {
@@ -73,6 +75,37 @@ describe('upsertSkillImprove', () => {
     const once = upsertSkillImprove([], { name: 'jira-ops', action: 'patch' })
     const twice = upsertSkillImprove(once, { name: 'jira-ops', action: 'file_write' })
     expect(twice).toEqual([{ name: 'jira-ops', actions: ['patch', 'file_write'] }])
+  })
+})
+
+describe('mergeLedgerSkillImproves', () => {
+  const ledger = parseCuratorLedger([
+    '{"action":"create","skill":"android-hwr-lk-stage-analysis","evidence":{"session_id":"tahp-bug-task-bug-8ef495"}}',
+    '{"action":"patch","skill":"tahp-diagnostic-patterns","evidence":{"session_id":"tahp-bug-task-bug-0152f7"}}',
+    '{"action":"write_file","skill":"tahp-diagnostic-patterns","evidence":{"session_id":"tahp-bug-task-bug-0152f7"}}',
+    '{"action":"create","skill":"other-skill","evidence":{"session_id":"tahp-bug-task-bug-other"}}',
+  ].join('\n'))
+
+  it('fills skills_improved from ledger when tool.started recorded nothing', () => {
+    const merged = mergeLedgerSkillImproves([], 'task-bug-8ef495', ledger)
+    expect(merged).toEqual([{ name: 'android-hwr-lk-stage-analysis', actions: ['create'] }])
+  })
+
+  it('keeps live detect hits and unions ledger actions', () => {
+    const live = [{ name: 'tahp-diagnostic-patterns', actions: ['file_write'] }]
+    const merged = mergeLedgerSkillImproves(live, 'task-bug-0152f7', ledger)
+    expect(merged).toEqual([
+      { name: 'tahp-diagnostic-patterns', actions: ['file_write', 'patch', 'write_file'] },
+    ])
+  })
+
+  it('ignores other tasks and empty ledger', () => {
+    expect(mergeLedgerSkillImproves([], 'task-bug-missing', ledger)).toEqual([])
+    expect(mergeLedgerSkillImproves(
+      [{ name: 'keep-me', actions: ['patch'] }],
+      'task-bug-8ef495',
+      [],
+    )).toEqual([{ name: 'keep-me', actions: ['patch'] }])
   })
 })
 
