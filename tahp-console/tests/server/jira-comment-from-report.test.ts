@@ -125,4 +125,82 @@ describe('composeJiraCommentFromReport', () => {
     expect(out).not.toMatch(/`{3}/)
     expect(out).not.toMatch(/^[-─_]{3,}$/m)
   })
+
+  it('does not drop 【建议】 when 结论依据 contains an inner code fence', () => {
+    const report = `### 9. Jira 备注（结论 / 依据 / 建议）
+
+【分析结论】
+kernel panic 发生在 dump_backtrace。
+
+【结论依据】
+1. Call trace:
+\`\`\`
+[ 1.549149][ T1] Call trace:
+[ 1.549152][ T1] dump_backtrace+0xf4/0x118
+\`\`\`
+
+【建议】
+1. 核对 watchdog 喂狗路径
+2. 补齐 last_kmsg 现场
+`
+    const blocks = extractJiraCommentBlocks(report)
+    expect(blocks!.suggestions).toEqual(['核对 watchdog 喂狗路径', '补齐 last_kmsg 现场'])
+    const out = composeJiraCommentFromReport(report)
+    expect(out).not.toContain('报告 §9 未填写建议')
+    expect(out).toContain('核对 watchdog 喂狗路径')
+  })
+
+  it('parses 建议： headers and 1、 numbering', () => {
+    const report = `### 9. Jira 备注（结论 / 依据 / 建议）
+
+分析结论：ECC 未覆盖当地号码。
+
+结论依据：
+1、ecc_db.xml 缺号段
+
+建议：
+1、补齐 ecc_db.xml
+`
+    const blocks = extractJiraCommentBlocks(report)
+    expect(blocks!.conclusion).toContain('ECC 未覆盖')
+    expect(blocks!.evidence[0]).toContain('ecc_db.xml')
+    expect(blocks!.suggestions[0]).toContain('补齐 ecc_db.xml')
+  })
+
+  it('parses **建议** heading after bold stripping', () => {
+    const report = `### 9. Jira 备注（结论 / 依据 / 建议）
+
+**分析结论**
+kernel panic。
+
+**结论依据**
+Call trace 指向 dump_backtrace。
+
+**建议**
+核对 watchdog 喂狗路径
+`
+    const blocks = extractJiraCommentBlocks(report)
+    expect(blocks!.suggestions[0]).toContain('核对 watchdog 喂狗路径')
+    const out = composeJiraCommentFromReport(report)
+    expect(out).not.toContain('报告 §9 未填写建议')
+  })
+
+  it('falls back to §6 修复建议 when §9 建议 is empty', () => {
+    const report = `### 6. 修复建议
+
+1. 更新 ecc_db.xml 添加马里紧急号码
+
+### 9. Jira 备注（结论 / 依据 / 建议）
+
+【分析结论】
+飞行模式拨号失败。
+
+【结论依据】
+1. RadioLog INVALID_NUMBER
+`
+    const blocks = extractJiraCommentBlocks(report)
+    expect(blocks!.suggestions[0]).toContain('更新 ecc_db.xml')
+    const out = composeJiraCommentFromReport(report)
+    expect(out).not.toContain('报告 §9 未填写建议')
+  })
 })

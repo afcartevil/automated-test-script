@@ -10,16 +10,21 @@ export interface JiraCommentBlocks {
   suggestions: string[]
 }
 
-const BLOCK_SPLIT_RE = /【\s*(分析结论|结论依据|建议)\s*】/
 const SECTION9_HEADING_RE = /^#{1,4}\s*9\.\s*[^\n]*Jira\s*备注/i
 const PLAIN_SECTION9_HEADING_RE = /^【\s*9\.\s*[^\n]*Jira\s*备注/i
 const NEXT_SECTION_RE = /^#{1,4}\s*(?!9\.)[\d]+\.\s/
+const SECTION6_HEADING_RE = /^#{1,4}\s*6\.\s*修复建议/i
 const TOOLS_END_RE = /^===\s*TOOLS_INVOKED/i
+const BLOCK_KEY = '分析结论|结论依据|建议|修复建议'
+const BLOCK_BRACKET_RE = new RegExp(`^【\\s*(${BLOCK_KEY})\\s*】\\s*(.*)$`)
+const BLOCK_MARKUP_RE = new RegExp(`^(?:\\*{1,2}|#{1,4}\\s+)(${BLOCK_KEY})(?:\\*{1,2})?[：:]?\\s*(.*)$`)
+const BLOCK_COLON_RE = new RegExp(`^(${BLOCK_KEY})[：:]\\s*(.*)$`)
+const BLOCK_BARE_RE = new RegExp(`^(${BLOCK_KEY})$`)
 
 export function isMarkdownJunkLine(line: string): boolean {
   const t = line.trim()
   if (!t) return false
-  if (/^`{3,}\s*$/.test(t)) return true
+  if (/^`{3,}[\w-]*\s*$/.test(t)) return true
   if (/^[-─_]{3,}$/.test(t)) return true
   if (/^[│｜|….\s]+$/.test(t)) return true
   if (t === '...' || t === '…' || t === '|') return true
@@ -33,17 +38,11 @@ export function stripMarkdownJunk(text: string): string {
 }
 
 function unwrapCodeFence(text: string): string {
-  const t = text.trim()
+  let t = text.trim()
   if (!t.startsWith('```')) return stripMarkdownJunk(t)
-
-  const openEnd = t.indexOf('\n')
-  if (openEnd < 0) return stripMarkdownJunk(t.replace(/^```[\w-]*\s*/, ''))
-
-  const closeIdx = t.indexOf('\n```', openEnd)
-  if (closeIdx >= 0) {
-    return stripMarkdownJunk(t.slice(openEnd + 1, closeIdx).trim())
-  }
-  return stripMarkdownJunk(t.replace(/^```[\w-]*\n?/, '').replace(/\n?```[\s\S]*$/, '').trim())
+  t = t.replace(/^```[\w-]*[ \t]*\n?/, '')
+  t = t.replace(/\n```[\w-]*[ \t]*$/, '')
+  return stripMarkdownJunk(t)
 }
 
 function prepareSection9Body(content: string): string {
@@ -75,7 +74,7 @@ function parseNumberedItems(text: string): string[] {
       flush()
       continue
     }
-    const numbered = t.match(/^\d+[.)]\s+([\s\S]*)$/)
+    const numbered = t.match(/^(?:\d+[.)、．]|\(\d+\)|（\d+）|[-*•])\s*(.*)$/)
     if (numbered) {
       flush()
       buf.push(numbered[1].trim())
@@ -84,25 +83,65 @@ function parseNumberedItems(text: string): string[] {
     if (buf.length) buf.push(line.replace(/^\s{2,}/, ''))
   }
   flush()
+  if (!items.length) {
+    const plain = stripMarkdownJunk(text)
+    if (plain) items.push(plain)
+  }
   return items
+}
+
+function normalizeBlockKey(raw: string): '分析结论' | '结论依据' | '建议' | null {
+  if (raw === '建议' || raw === '修复建议') return '建议'
+  if (raw === '分析结论' || raw === '结论依据') return raw
+  return null
+}
+
+function matchBlockHeader(line: string): { key: string; rest: string } | null {
+  const t = line.trim()
+  const matched = t.match(BLOCK_BRACKET_RE) || t.match(BLOCK_MARKUP_RE) || t.match(BLOCK_COLON_RE) || t.match(BLOCK_BARE_RE)
+  if (!matched) return null
+  const key = normalizeBlockKey(matched[1] || '')
+  if (!key) return null
+  return { key, rest: (matched[2] || '').trim() }
 }
 
 function splitRemarkBlocks(body: string): Record<string, string> {
   const out: Record<string, string> = {}
-  const parts = body.split(BLOCK_SPLIT_RE)
-  for (let i = 1; i < parts.length; i += 2) {
-    out[parts[i]] = stripMarkdownJunk((parts[i + 1] || '').trim())
+  const lines = body.split(/\r?\n/)
+  let currentKey: string | null = null
+  let buf: string[] = []
+
+  const flush = () => {
+    if (!currentKey) return
+    out[currentKey] = stripMarkdownJunk(buf.join('\n').trim())
+    buf = []
   }
+
+  for (const line of lines) {
+    const header = matchBlockHeader(line)
+    if (header) {
+      flush()
+      currentKey = header.key
+      buf = header.rest ? [header.rest] : []
+      continue
+    }
+    if (currentKey) buf.push(line)
+  }
+  flush()
   return out
 }
 
-function extractSection9Body(reportMarkdown: string): string | null {
+function extractSectionBody(
+  reportMarkdown: string,
+  headingRe: RegExp,
+  extraHeadingRe?: RegExp,
+): string | null {
   const lines = reportMarkdown.replace(/\r\n/g, '\n').split('\n')
   let startIdx = -1
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i].trim()
-    if (SECTION9_HEADING_RE.test(line) || PLAIN_SECTION9_HEADING_RE.test(line)) {
+    if (headingRe.test(line) || (extraHeadingRe && extraHeadingRe.test(line))) {
       startIdx = i + 1
       break
     }
@@ -110,29 +149,19 @@ function extractSection9Body(reportMarkdown: string): string | null {
   if (startIdx < 0) return null
 
   const bodyLines: string[] = []
-  let inFence = false
-
   for (let i = startIdx; i < lines.length; i += 1) {
-    const line = lines[i]
-    const trimmed = line.trim()
-
-    if (!inFence && NEXT_SECTION_RE.test(trimmed)) break
+    const trimmed = lines[i].trim()
+    if (NEXT_SECTION_RE.test(trimmed)) break
     if (TOOLS_END_RE.test(trimmed)) break
-
-    if (/^```/.test(trimmed)) {
-      if (!inFence) {
-        inFence = true
-        continue
-      }
-      break
-    }
-    if (inFence || !isMarkdownJunkLine(line)) {
-      bodyLines.push(line)
-    }
+    bodyLines.push(lines[i])
   }
 
   const body = bodyLines.join('\n').trim()
   return body || null
+}
+
+function extractSection9Body(reportMarkdown: string): string | null {
+  return extractSectionBody(reportMarkdown, SECTION9_HEADING_RE, PLAIN_SECTION9_HEADING_RE)
 }
 
 export function extractJiraCommentBlocks(reportMarkdown: string): JiraCommentBlocks | null {
@@ -146,7 +175,15 @@ export function extractJiraCommentBlocks(reportMarkdown: string): JiraCommentBlo
     (blocks['分析结论'] || '').replace(/^分析结论[：:]\s*/i, '').trim(),
   )
   const evidence = parseNumberedItems(blocks['结论依据'] || '')
-  const suggestions = parseNumberedItems(blocks['建议'] || '')
+  let suggestions = parseNumberedItems(blocks['建议'] || '')
+
+  if (!suggestions.length) {
+    const section6 = extractSectionBody(reportMarkdown, SECTION6_HEADING_RE)
+    if (section6) {
+      const s6 = prepareSection9Body(section6)
+      suggestions = parseNumberedItems(s6)
+    }
+  }
 
   if (!conclusion && !evidence.length && !suggestions.length) return null
 

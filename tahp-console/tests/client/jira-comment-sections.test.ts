@@ -26,7 +26,7 @@ ECC 配置未覆盖当地号码段。
 `
 
 describe('jira comment section picker', () => {
-  it('defaults only Jira 备注 as selected and uses §9 assembled text', () => {
+  it('defaults 根因定位 and Jira 备注 as selected and uses §9 assembled text', () => {
     const sections = buildJiraCommentSections(REPORT)
     expect(sections.map(s => s.title)).toEqual([
       '摘要 / TL;DR',
@@ -34,34 +34,38 @@ describe('jira comment section picker', () => {
       'Jira 备注（结论 / 依据 / 建议）',
     ])
     const selected = sections.filter(s => s.defaultSelected)
-    expect(selected).toHaveLength(1)
-    expect(selected[0].title).toMatch(/Jira 备注/)
-    expect(selected[0].snippet).toContain('*分析结论：*')
-    expect(selected[0].snippet).toContain('飞行模式下马里新紧急号码拨号失败')
-    expect(joinSelectedSnippets(sections, selected.map(s => s.id))).toBe(selected[0].snippet)
+    expect(selected.map(s => s.title)).toEqual([
+      '根因定位（最关键）',
+      'Jira 备注（结论 / 依据 / 建议）',
+    ])
+    const remark = selected.find(s => s.title.includes('Jira 备注'))!
+    expect(remark.snippet).toContain('*分析结论：*')
+    expect(remark.snippet).toContain('飞行模式下马里新紧急号码拨号失败')
+    const joined = joinSelectedSnippets(sections, selected.map(s => s.id))
+    expect(joined).toContain('ECC 配置未覆盖当地号码段')
+    expect(joined).toContain('*分析结论：*')
   })
 
   it('appends a section after the default preview and removes it on uncheck', () => {
     const sections = buildJiraCommentSections(REPORT)
-    const remark = sections.find(s => s.defaultSelected)!
+    const selected = sections.filter(s => s.defaultSelected)
+    const defaultPreview = joinSelectedSnippets(sections, selected.map(s => s.id))
     const summary = sections.find(s => s.title.includes('摘要'))!
-    let preview = remark.snippet
     const checked = toggleJiraCommentSection({
-      preview,
+      preview: defaultPreview,
       snippet: summary.snippet,
       selected: true,
     })
-    preview = checked.preview
-    expect(preview.startsWith(remark.snippet)).toBe(true)
-    expect(preview).toContain('飞行模式下紧急号码拨号失败')
+    expect(checked.preview.startsWith(defaultPreview)).toBe(true)
+    expect(checked.preview).toContain('飞行模式下紧急号码拨号失败')
 
     const unchecked = toggleJiraCommentSection({
-      preview,
+      preview: checked.preview,
       snippet: summary.snippet,
       selected: false,
       inserted: checked.inserted,
     })
-    expect(unchecked.preview).toBe(remark.snippet)
+    expect(unchecked.preview).toBe(defaultPreview)
   })
 
   it('keeps user-edited preview when the inserted snippet no longer matches', () => {
@@ -73,5 +77,26 @@ describe('jira comment section picker', () => {
       inserted: '*分析结论：*\n原始结论',
     })
     expect(result.preview).toBe(edited)
+  })
+
+  it('uses assembled §9 text including suggestions from inner-fenced evidence', () => {
+    const report = `### 9. Jira 备注（结论 / 依据 / 建议）
+
+【分析结论】
+kernel panic。
+
+【结论依据】
+1. Call trace:
+\`\`\`
+dump_backtrace+0xf4/0x118
+\`\`\`
+
+【建议】
+1. 核对 watchdog 喂狗路径
+`
+    const sections = buildJiraCommentSections(report)
+    const remark = sections.find(s => s.defaultSelected)!
+    expect(remark.snippet).toContain('核对 watchdog 喂狗路径')
+    expect(remark.snippet).not.toContain('报告 §9 未填写建议')
   })
 })

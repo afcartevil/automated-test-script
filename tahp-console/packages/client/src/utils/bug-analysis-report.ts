@@ -175,6 +175,14 @@ export function isJiraRemarkTitle(title: string): boolean {
   return /Jira\s*备注/i.test(title)
 }
 
+export function isRootCauseTitle(title: string): boolean {
+  return /根因定位/.test(title)
+}
+
+export function isDefaultJiraCommentSection(title: string): boolean {
+  return isRootCauseTitle(title) || isJiraRemarkTitle(title)
+}
+
 const SECTION_HEADING_RE = /^#{1,4}\s+\d+\.\s+/
 const SECTION_TITLE_RE = /^#{1,4}\s+\d+\.\s+(.+)$/
 
@@ -197,7 +205,7 @@ export function splitReportIntoSections(reportMarkdown: string): ReportSectionBl
         title,
         heading,
         content: `${heading}\n`,
-        defaultSelected: isJiraRemarkTitle(title),
+        defaultSelected: isDefaultJiraCommentSection(title),
       }
     } else if (current) {
       current.content += `${line}\n`

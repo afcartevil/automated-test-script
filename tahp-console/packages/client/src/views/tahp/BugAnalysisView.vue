@@ -2587,7 +2587,7 @@ watch(
       :mask-closable="false"
     >
       <NAlert type="info" :show-icon="false" style="margin-bottom: 12px">
-        默认填入报告<strong>第 9 节「Jira 备注」</strong>（分析结论 / 结论依据 / 建议）。
+        默认填入报告<strong>第 4 节「根因定位」</strong>与<strong>第 9 节「Jira 备注」</strong>（分析结论 / 结论依据 / 建议）。
         勾选其它章节会追加到预览末尾，取消勾选会去掉对应段落；预览可直接删改后写入
         <strong>{{ currentTask?.jira_key }}</strong>。
       </NAlert>

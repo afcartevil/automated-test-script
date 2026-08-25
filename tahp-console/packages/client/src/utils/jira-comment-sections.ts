@@ -1,6 +1,6 @@
 import { composeJiraCommentFromReport } from './compose-jira-comment'
 import { formatBugReportPlainText } from './format-bug-report-plain'
-import { isJiraRemarkTitle, splitReportIntoSections } from './bug-analysis-report'
+import { isDefaultJiraCommentSection, isJiraRemarkTitle, splitReportIntoSections } from './bug-analysis-report'
 
 export interface JiraCommentSection {
   id: string
@@ -26,7 +26,7 @@ export function buildJiraCommentSections(reportMarkdown: string): JiraCommentSec
         id: slugTitle(block.title, index),
         title: block.title,
         snippet: snippet.trim(),
-        defaultSelected: isRemark,
+        defaultSelected: isDefaultJiraCommentSection(block.title),
       }
     })
     .filter(section => section.snippet)
