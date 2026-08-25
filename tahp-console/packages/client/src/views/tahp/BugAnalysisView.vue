@@ -1229,10 +1229,20 @@ async function onApprovalRespond(choice: string) {
     await respondBugApproval(tid, { approval_id: ap.approval_id, choice })
     message.success(choice === 'deny' ? '已拒绝执行' : '已确认')
   } catch (err) {
-    message.error((err as Error).message || '审批提交失败')
+    const msg = (err as Error).message || '审批提交失败'
+    if (msg.includes('不存在或已处理')) {
+      store.clearPendingInteraction(tid)
+      return
+    }
+    message.error(msg)
   } finally {
     interactionSubmitting.value = false
   }
+}
+
+function onInteractionDismiss() {
+  const tid = currentTaskId.value
+  if (tid) store.clearPendingInteraction(tid)
 }
 
 async function onUserInputSubmit(values: Record<string, string>) {
@@ -2513,6 +2523,7 @@ watch(
       :submitting="interactionSubmitting"
       @approval="onApprovalRespond"
       @user-input="onUserInputSubmit"
+      @dismiss="onInteractionDismiss"
     />
 
     <!-- ────── 分析结论回到 jira comment ────── -->

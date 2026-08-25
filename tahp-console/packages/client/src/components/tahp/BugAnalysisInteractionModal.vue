@@ -23,12 +23,18 @@ const emit = defineEmits<{
   userInput: [values: Record<string, string>]
   continueChat: [message: string]
   continueChatDismiss: []
+  dismiss: []
 }>()
 
+/** 超时后请求已被后端自动处理，弹窗仍可能残留；允许用户本地关掉。 */
+const locallyDismissed = ref(false)
+
 const show = computed(() =>
-  !!props.approval
-  || !!props.userInput
-  || (!!props.continueChat && props.showContinueChat === true),
+  !locallyDismissed.value && (
+    !!props.approval
+    || !!props.userInput
+    || (!!props.continueChat && props.showContinueChat === true)
+  ),
 )
 const mode = computed(() => {
   if (props.approval) return 'approval' as const
@@ -63,6 +69,7 @@ function startCountdown(deadlineAt: number) {
 watch(
   () => [props.approval, props.userInput, props.continueChat] as const,
   ([ap, ui, cc]) => {
+    locallyDismissed.value = false
     if (ap) {
       formValues.value = {}
       continueMessage.value = ''
@@ -107,7 +114,24 @@ const countdownPercent = computed(() => {
   return Math.max(0, Math.min(100, Math.round((leftMs / totalMs) * 100)))
 })
 
+const timedOut = computed(() => mode.value !== 'continue_chat' && countdownSec.value <= 0)
+/** 点遮罩 / Esc / 右上角 X：超时后才允许，避免误关仍待确认的危险命令。 */
+const canDismissByMask = computed(() => mode.value === 'continue_chat' || timedOut.value)
+
+function dismissModal() {
+  locallyDismissed.value = true
+  if (mode.value === 'continue_chat') {
+    emit('continueChatDismiss')
+    return
+  }
+  emit('dismiss')
+}
+
 function onApprovalClick(choice: string) {
+  if (timedOut.value) {
+    dismissModal()
+    return
+  }
   emit('approval', choice)
 }
 
@@ -122,9 +146,7 @@ function onSubmitContinue() {
 }
 
 function onModalShowUpdate(visible: boolean) {
-  if (!visible && mode.value === 'continue_chat') {
-    emit('continueChatDismiss')
-  }
+  if (!visible) dismissModal()
 }
 </script>
 
@@ -132,9 +154,9 @@ function onModalShowUpdate(visible: boolean) {
   <NModal
     preset="card"
     :show="show"
-    :mask-closable="mode === 'continue_chat'"
-    :close-on-esc="mode === 'continue_chat'"
-    :closable="mode === 'continue_chat'"
+    :mask-closable="canDismissByMask"
+    :close-on-esc="canDismissByMask"
+    :closable="canDismissByMask"
     :auto-focus="false"
     transform-origin="center"
     class="bug-interaction-modal"
@@ -148,18 +170,23 @@ function onModalShowUpdate(visible: boolean) {
         <span v-if="mode === 'approval'">危险命令确认</span>
         <span v-else-if="mode === 'user_input'">{{ userInput?.title || '配置输入' }}</span>
         <span v-else>{{ continueChat?.title || '补充信息' }}</span>
-        <span
-          v-if="mode !== 'continue_chat'"
-          class="bim-countdown"
-          :class="{ urgent: countdownSec > 0 && countdownSec <= 10 }"
-        >
-          {{ countdownLabel }}
-        </span>
       </div>
+    </template>
+    <template #header-extra>
+      <span
+        v-if="mode !== 'continue_chat'"
+        class="bim-countdown"
+        :class="{ urgent: countdownSec > 0 && countdownSec <= 10, timed: timedOut }"
+      >
+        {{ countdownLabel }}
+      </span>
     </template>
 
     <div v-if="mode === 'approval' && approval" class="bim-body">
-      <NAlert type="warning" :show-icon="true" style="margin-bottom: 12px">
+      <NAlert v-if="timedOut" type="info" :show-icon="true" style="margin-bottom: 12px">
+        审批已超时，系统已自动同意一次。可关闭此窗口。
+      </NAlert>
+      <NAlert v-else type="warning" :show-icon="true" style="margin-bottom: 12px">
         Agent 请求执行可能具有破坏性的命令。60 秒内未操作将<strong>自动同意一次</strong>。
       </NAlert>
       <div class="bim-desc">{{ approval.description }}</div>
@@ -172,18 +199,23 @@ function onModalShowUpdate(visible: boolean) {
         style="margin-top: 14px"
       />
       <NSpace justify="end" style="margin-top: 16px" wrap>
-        <NButton type="primary" :loading="submitting" @click="onApprovalClick('once')">
-          同意一次
-        </NButton>
-        <NButton v-if="approval.allow_permanent !== false" :loading="submitting" @click="onApprovalClick('session')">
-          本次会话允许
-        </NButton>
-        <NButton v-if="approval.allow_permanent !== false" :loading="submitting" @click="onApprovalClick('always')">
-          始终允许
-        </NButton>
-        <NButton type="error" ghost :loading="submitting" @click="onApprovalClick('deny')">
-          拒绝
-        </NButton>
+        <template v-if="timedOut">
+          <NButton @click="dismissModal">关闭</NButton>
+        </template>
+        <template v-else>
+          <NButton type="primary" :loading="submitting" @click="onApprovalClick('once')">
+            同意一次
+          </NButton>
+          <NButton v-if="approval.allow_permanent !== false" :loading="submitting" @click="onApprovalClick('session')">
+            本次会话允许
+          </NButton>
+          <NButton v-if="approval.allow_permanent !== false" :loading="submitting" @click="onApprovalClick('always')">
+            始终允许
+          </NButton>
+          <NButton type="error" ghost :loading="submitting" @click="onApprovalClick('deny')">
+            拒绝
+          </NButton>
+        </template>
       </NSpace>
     </div>
 
@@ -223,7 +255,8 @@ function onModalShowUpdate(visible: boolean) {
         </NFormItem>
       </NForm>
       <NSpace justify="end" style="margin-top: 8px">
-        <NButton type="primary" :loading="submitting" @click="onSubmitUserInput">
+        <NButton v-if="timedOut" @click="dismissModal">关闭</NButton>
+        <NButton v-else type="primary" :loading="submitting" @click="onSubmitUserInput">
           提交并继续分析
         </NButton>
       </NSpace>
@@ -257,9 +290,7 @@ function onModalShowUpdate(visible: boolean) {
 .bim-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  width: 100%;
   font-weight: 600;
 }
 
@@ -270,7 +301,8 @@ function onModalShowUpdate(visible: boolean) {
   font-variant-numeric: tabular-nums;
 }
 
-.bim-countdown.urgent {
+.bim-countdown.urgent,
+.bim-countdown.timed {
   color: #d03050;
 }
 

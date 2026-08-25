@@ -181,7 +181,12 @@ async function onApproval(choice: string) {
     await respondSkillConfigApproval(tid, { approval_id: ap.approval_id, choice })
     pendingApproval.value = null
   } catch (err) {
-    message.error((err as Error).message || '审批失败')
+    const msg = (err as Error).message || '审批失败'
+    if (msg.includes('不存在或已处理')) {
+      pendingApproval.value = null
+      return
+    }
+    message.error(msg)
   } finally {
     approvalSubmitting.value = false
   }
@@ -303,6 +308,7 @@ async function onApproval(choice: string) {
       :user-input="null"
       :submitting="approvalSubmitting"
       @approval="onApproval"
+      @dismiss="pendingApproval = null"
     />
   </div>
 </template>

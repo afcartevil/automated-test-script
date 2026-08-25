@@ -1521,6 +1521,11 @@ function onContinueChatDismiss() {
   showContinueChatModal.value = false
 }
 
+function onAdaptInteractionDismiss() {
+  pendingApproval.value = null
+  pendingUserInput.value = null
+}
+
 watch(stream, () => {
   if (!isInteractiveDomain.value || !launchedTaskId.value) return
   for (const ev of stream.value) {
@@ -1590,7 +1595,12 @@ async function onAdaptApproval(choice: string) {
     await respondAdaptApproval(tid, { approval_id: ap.approval_id, choice })
     pendingApproval.value = null
   } catch (err) {
-    message.error((err as Error).message || '审批提交失败')
+    const msg = (err as Error).message || '审批提交失败'
+    if (msg.includes('不存在或已处理')) {
+      pendingApproval.value = null
+      return
+    }
+    message.error(msg)
   } finally {
     interactionSubmitting.value = false
   }
@@ -2999,6 +3009,7 @@ function openSkill(skillName: string) {
       @user-input="onAdaptUserInput"
       @continue-chat="onAdaptContinueChat"
       @continue-chat-dismiss="onContinueChatDismiss"
+      @dismiss="onAdaptInteractionDismiss"
     />
 
   </div>

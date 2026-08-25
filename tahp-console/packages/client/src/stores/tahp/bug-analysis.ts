@@ -444,6 +444,19 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
     return stream(taskId).filter(e => e.type !== 'task.message' || (e.payload as any)?.level !== 'stream')
   }
 
+  function clearPendingInteraction(taskId: string) {
+    if (pendingApprovals.value[taskId]) {
+      const next = { ...pendingApprovals.value }
+      delete next[taskId]
+      pendingApprovals.value = next
+    }
+    if (pendingUserInputs.value[taskId]) {
+      const next = { ...pendingUserInputs.value }
+      delete next[taskId]
+      pendingUserInputs.value = next
+    }
+  }
+
   function selectTask(taskId: string | null) {
     selectedTaskId.value = taskId
   }
@@ -464,7 +477,7 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
     tasks, jobs, streams, skillCalls, stageDetails, pendingApprovals, pendingUserInputs,
     selectedTaskId, selectedJobId, loading, lastError,
     recentTasks, recentJobs,
-    ensureSocket, refresh, registerTask, registerJob,
+    ensureSocket, refresh, registerTask, registerJob, clearPendingInteraction,
     stream, skillCallList, llmText, reasoningText, stageDetailMap, structuredEvents, selectTask, selectJob,
   }
 })
