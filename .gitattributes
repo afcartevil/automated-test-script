@@ -1,0 +1,2 @@
+# Skill 由同步中心下发，统一为 LF 换行，避免打开 EA 后 Git 把未改内容显示成修改。
+skills/** text=auto eol=lf

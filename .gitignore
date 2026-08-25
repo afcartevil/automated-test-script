@@ -17,10 +17,9 @@ docs/
 reports/
 .adapt-config/domain-layouts/Untitled
 knowledge-base/.kb-data/
-skills/.claude/skills/test_skill/
-skills/.claude/skills/kb-skill-live-test/
-skills/.claude/skills/aikey-adapt-dts-test-skill/
-skills/.claude/skills/**/SKILL - test.md
+# 业务 Skill 由 Console 同步中心分发，不入库（本机仍落盘此目录；未跟踪的本地稿 pull 后保留）
+skills/.claude/skills/**
+!skills/.claude/skills/.gitkeep
 tahp-console/jira_workspace/
 jira_workspace/
 .tahp/unified-config.json

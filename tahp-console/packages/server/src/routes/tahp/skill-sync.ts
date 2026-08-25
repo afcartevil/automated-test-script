@@ -52,7 +52,11 @@ tahpSkillSyncRoutes.post('/api/tahp/skills/sync', async (ctx) => {
     ctx.body = { success: false, error: '中心未配置（TAHP_CENTRAL_URL / TAHP_CENTRAL_TOKEN）' }
     return
   }
-  const body = (ctx.request.body || {}) as { skill_ids?: string[]; bundle_id?: string }
+  const body = (ctx.request.body || {}) as {
+    skill_ids?: string[]
+    bundle_id?: string
+    force?: boolean
+  }
   let skillIds = Array.isArray(body.skill_ids)
     ? body.skill_ids.map(String).filter(Boolean)
     : undefined
@@ -71,6 +75,8 @@ tahpSkillSyncRoutes.post('/api/tahp/skills/sync', async (ctx) => {
     const pull = await runPull(false, {
       reinjectSkillIds: skillIds?.length ? skillIds : undefined,
       onlySkillIds: skillIds?.length ? skillIds : undefined,
+      force: body.force === true,
+      forceSkillIds: body.force === true && skillIds?.length ? skillIds : undefined,
     })
     invalidateSkillSyncStatusCache()
     const status = await getSkillSyncStatus({
@@ -86,6 +92,7 @@ tahpSkillSyncRoutes.post('/api/tahp/skills/sync', async (ctx) => {
         requirements_changed: pull?.requirements_changed || [],
         status: {
           behind_count: status.behind_count,
+          ahead_count: status.ahead_count || 0,
           last_pulled_at: status.last_pulled_at,
           connected: status.connected,
           configured: status.configured,

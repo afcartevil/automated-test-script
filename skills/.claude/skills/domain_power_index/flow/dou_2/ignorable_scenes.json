@@ -1,5 +1,0 @@
-{
-  "description": "脚本问题场景：TopN 选取与 CPU/AI 深度分析时跳过；最终 HTML 仍会列出并标注对亮/灭屏电流影响(mA)。rules 支持 suffix / name / name_contains / desc / desc_contains，可选 reason。",
-  "default_reason": "脚本问题（自动化测试脚本异常，非版本功耗回归）",
-  "rules": []
-}

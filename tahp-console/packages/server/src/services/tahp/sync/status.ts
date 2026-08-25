@@ -9,13 +9,15 @@ import { logger } from '../../logger'
 import { tahpPaths } from '../paths'
 import { getRuntimeModeInfo, isCentralConfigured } from '../runtime-mode'
 import { centralClient } from './central-client'
-import { getLocalPackageHash } from './skill-package'
+import { getLocalPackageHashPair } from './skill-package'
+import { decideSkillApply } from './apply-policy'
 import { shortHash } from './hash'
 import type { ManifestItem } from './manifest'
 
 export type SkillSyncStateName =
   | 'synced'
   | 'behind'
+  | 'ahead'
   | 'local_only'
   | 'unknown'
   | 'submitted_pending'
@@ -50,6 +52,8 @@ export interface SkillSyncStatusResult {
   connected: boolean
   last_pulled_at: string | null
   behind_count: number
+  /** 本机有未提交修改、同步会跳过覆盖 */
+  ahead_count?: number
   /** 待审核条数（submitted_pending） */
   pending_count?: number
   /** 已拒绝条数 */
@@ -100,7 +104,7 @@ export function applySubmissionOverlay(
 
 function needsSubmissionLookup(row: SkillSyncStatusItem): boolean {
   if (!row.local_hash) return false
-  return row.state === 'local_only' || row.state === 'behind' || row.state === 'unknown'
+  return row.state === 'local_only' || row.state === 'behind' || row.state === 'ahead' || row.state === 'unknown'
 }
 
 /** 按需并发查 latest submission；失败单条降级，不打断整页 */
@@ -135,10 +139,11 @@ function sortSkills(skills: SkillSyncStatusItem[]): void {
   const order: Record<SkillSyncStateName, number> = {
     rejected: 0,
     submitted_pending: 1,
-    behind: 2,
-    unknown: 3,
-    local_only: 4,
-    synced: 5,
+    ahead: 2,
+    behind: 3,
+    unknown: 4,
+    local_only: 5,
+    synced: 6,
   }
   skills.sort((a, b) => {
     const d = order[a.state] - order[b.state]
@@ -149,7 +154,13 @@ function sortSkills(skills: SkillSyncStatusItem[]): void {
 
 interface PersistedSyncState {
   last_pulled_at?: string
-  skills?: Record<string, { central_hash?: string; local_hash?: string; state?: string }>
+  skills?: Record<string, {
+    central_hash?: string
+    local_hash?: string
+    state?: string
+    /** 最近一次成功写入本机的中心整包 hash */
+    last_applied_hash?: string
+  }>
   /** 最近一次完整 status 快照（供首屏秒开） */
   last_status?: SkillSyncStatusResult
 }
@@ -190,6 +201,19 @@ export function setLastPulledAt(iso: string): void {
   writePersistedSyncState({ last_pulled_at: iso })
 }
 
+export function getLastAppliedHash(skillId: string): string | null {
+  const hash = readPersistedSyncState().skills?.[skillId]?.last_applied_hash
+  return hash || null
+}
+
+export function recordLastAppliedHash(skillId: string, hash: string): void {
+  if (!skillId || !hash) return
+  const prev = readPersistedSyncState()
+  const skills = { ...(prev.skills || {}) }
+  skills[skillId] = { ...skills[skillId], last_applied_hash: hash }
+  writePersistedSyncState({ skills })
+}
+
 export function invalidateSkillSyncStatusCache(): void {
   memStatus = null
 }
@@ -213,23 +237,25 @@ function parseSkillMeta(raw: string): { name?: string; func_type?: string; modul
   }
 }
 
-function listLocalSkills(forceHash = false): Map<string, { hash: string; meta: ReturnType<typeof parseSkillMeta> }> {
+function listLocalSkills(forceHash = false): Map<string, { hash: string; norm: string; meta: ReturnType<typeof parseSkillMeta> }> {
   const root = tahpPaths.skillsDir
-  const out = new Map<string, { hash: string; meta: ReturnType<typeof parseSkillMeta> }>()
+  const out = new Map<string, { hash: string; norm: string; meta: ReturnType<typeof parseSkillMeta> }>()
   if (!existsSync(root)) return out
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+    if (!/^[a-zA-Z0-9_-]+$/.test(entry.name)) continue
     const md = join(root, entry.name, 'SKILL.md')
     if (!existsSync(md)) continue
     try {
       const raw = readFileSync(md, 'utf-8')
-      const pkgHash = getLocalPackageHash(entry.name, forceHash)
+      const pair = getLocalPackageHashPair(entry.name, forceHash)
       out.set(entry.name, {
-        hash: pkgHash || shortHash(raw),
+        hash: pair?.raw || shortHash(raw),
+        norm: pair?.norm || '',
         meta: parseSkillMeta(raw),
       })
     } catch {
-      out.set(entry.name, { hash: '', meta: {} })
+      out.set(entry.name, { hash: '', norm: '', meta: {} })
     }
   }
   return out
@@ -420,10 +446,22 @@ export async function getSkillSyncStatus(opts?: {
   for (const item of centralSkills) {
     seen.add(item.id)
     const loc = local.get(item.id)
+    const lastApplied = persisted.skills?.[item.id]?.last_applied_hash || null
     let state: SkillSyncStateName
-    if (!loc || !loc.hash) state = 'behind'
-    else if (loc.hash === item.hash) state = 'synced'
-    else state = 'behind'
+    if (!loc || !loc.hash) {
+      state = 'behind'
+    } else {
+      const action = decideSkillApply({
+        localHash: loc.hash,
+        localNormHash: loc.norm,
+        centralHash: item.hash,
+        lastAppliedHash: lastApplied,
+        force: false,
+      })
+      if (action === 'skip_synced') state = 'synced'
+      else if (action === 'apply') state = 'behind'
+      else state = 'ahead'
+    }
 
     const row: SkillSyncStatusItem = {
       id: item.id,
@@ -441,6 +479,7 @@ export async function getSkillSyncStatus(opts?: {
       central_hash: item.hash,
       local_hash: loc?.hash,
       state,
+      last_applied_hash: lastApplied || undefined,
     }
   }
 
@@ -455,7 +494,11 @@ export async function getSkillSyncStatus(opts?: {
       func_type: v.meta.func_type,
       module: v.meta.module,
     })
-    skillMap[id] = { local_hash: v.hash, state: 'local_only' }
+    skillMap[id] = {
+      local_hash: v.hash,
+      state: 'local_only',
+      last_applied_hash: persisted.skills?.[id]?.last_applied_hash,
+    }
   }
 
   // Phase 4 精简：按需查 recent submission → submitted_pending / rejected
@@ -467,6 +510,7 @@ export async function getSkillSyncStatus(opts?: {
 
   const filtered = filterByBundle(enriched, opts?.bundle_id)
   const behind_count = filtered.filter(s => s.state === 'behind').length
+  const ahead_count = filtered.filter(s => s.state === 'ahead').length
   const pending_count = filtered.filter(s => s.state === 'submitted_pending').length
   const rejected_count = filtered.filter(s => s.state === 'rejected').length
   const groups = buildGroupsFromBundles(filtered, bundlesDoc?.bundles || [])
@@ -474,6 +518,7 @@ export async function getSkillSyncStatus(opts?: {
   const result: SkillSyncStatusResult = {
     ...base,
     behind_count,
+    ahead_count,
     pending_count,
     rejected_count,
     skills: filtered,

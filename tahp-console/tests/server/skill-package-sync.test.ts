@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, writeFile, rm } from 'fs/promises'
+import { existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -53,6 +54,32 @@ describe('skill package hash', () => {
     expect(getLocalPackageHash('demo-pack')).not.toBe(hash1)
     applySkillZipToLocal('demo-pack', zip)
     expect(getLocalPackageHash('demo-pack')).toBe(hash1)
+    expect(existsSync(join(root, 'skills', '.claude', 'skills', 'demo-pack.incoming'))).toBe(false)
+  })
+
+  it('treats CRLF and LF copies as the same package hash', async () => {
+    const root = await tempDir('skill-pkg-eol-')
+    const lfDir = join(root, 'skills', '.claude', 'skills', 'lf-pack')
+    const crlfDir = join(root, 'skills', '.claude', 'skills', 'crlf-pack')
+    await mkdir(lfDir, { recursive: true })
+    await mkdir(crlfDir, { recursive: true })
+    await writeFile(join(lfDir, 'SKILL.md'), '---\nname: demo\n---\n\n# demo\n', 'utf-8')
+    await writeFile(join(crlfDir, 'SKILL.md'), '---\r\nname: demo\r\n---\r\n\r\n# demo\r\n', 'utf-8')
+
+    vi.doMock('../../packages/server/src/services/tahp/paths', () => ({
+      tahpPaths: {
+        projectRoot: root,
+        skillsDir: join(root, 'skills', '.claude', 'skills'),
+        knowledgeDir: join(root, 'knowledge-base'),
+      },
+    }))
+
+    const { getLocalPackageHash, getLocalPackageHashPair } = await import('../../packages/server/src/services/tahp/sync/skill-package')
+    const lf = getLocalPackageHashPair('lf-pack')
+    const crlf = getLocalPackageHashPair('crlf-pack')
+    expect(lf && crlf).toBeTruthy()
+    expect(getLocalPackageHash('lf-pack')).not.toBe(getLocalPackageHash('crlf-pack'))
+    expect(crlf!.norm).toBe(lf!.raw)
   })
 
   it('skips jira_workspace when listing package files', async () => {

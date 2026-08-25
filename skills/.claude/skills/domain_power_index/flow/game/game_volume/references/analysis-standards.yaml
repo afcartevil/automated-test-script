@@ -1,8 +1,0 @@
-# 音量分析阈值
-
-version: 1
-evidence_cap: 40
-
-thresholds:
-  merge_burst_seconds: 10
-  entry_window_seconds: 60

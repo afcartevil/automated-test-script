@@ -9,13 +9,14 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'fs'
 import { join, relative, sep } from 'path'
 import AdmZip from 'adm-zip'
-import { shortHashBuffer } from './hash'
+import { shortHashBuffer, shortHashBufferNormalized } from './hash'
 import { tahpPaths } from '../paths'
 
 /** 运行时/依赖目录不参与整包 hash 与 ZIP（含 jira-ops 本机工作区，可达数 GB） */
@@ -43,9 +44,24 @@ export function localSkillDir(id: string): string {
 }
 
 export function listLocalSkillFiles(id: string): SkillFileMeta[] {
+  return listLocalSkillHashRows(id).map(f => ({
+    rel_path: f.rel_path,
+    hash: f.raw,
+    size: f.size,
+  }))
+}
+
+interface SkillHashRow {
+  rel_path: string
+  raw: string
+  norm: string
+  size: number
+}
+
+function listLocalSkillHashRows(id: string): SkillHashRow[] {
   const root = localSkillDir(id)
   if (!existsSync(root)) return []
-  const out: SkillFileMeta[] = []
+  const out: SkillHashRow[] = []
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (shouldSkipName(entry.name)) continue
@@ -58,7 +74,8 @@ export function listLocalSkillFiles(id: string): SkillFileMeta[] {
       const buf = readFileSync(full)
       out.push({
         rel_path: toPosix(relative(root, full)),
-        hash: shortHashBuffer(buf),
+        raw: shortHashBuffer(buf),
+        norm: shortHashBufferNormalized(buf),
         size: buf.length,
       })
     }
@@ -76,9 +93,15 @@ export function computePackageHash(files: SkillFileMeta[]): string {
 interface PkgHashCacheEntry {
   fingerprint: string
   hash: string
+  norm?: string
 }
 
-type PkgHashCacheFile = Record<string, PkgHashCacheEntry>
+type PkgHashCacheFile = {
+  v: number
+  entries: Record<string, PkgHashCacheEntry>
+}
+
+const PKG_HASH_CACHE_VERSION = 3
 
 const memPkgHash = new Map<string, PkgHashCacheEntry>()
 let diskCacheLoaded = false
@@ -95,8 +118,12 @@ function loadDiskPkgHashCache(): void {
   try {
     const p = pkgHashCachePath()
     if (!existsSync(p)) return
-    const raw = JSON.parse(readFileSync(p, 'utf-8')) as PkgHashCacheFile
-    for (const [id, ent] of Object.entries(raw || {})) {
+    const raw = JSON.parse(readFileSync(p, 'utf-8')) as PkgHashCacheFile | Record<string, PkgHashCacheEntry>
+    const entries = (raw as PkgHashCacheFile)?.v === PKG_HASH_CACHE_VERSION
+      ? (raw as PkgHashCacheFile).entries
+      : null
+    if (!entries) return
+    for (const [id, ent] of Object.entries(entries)) {
       if (ent?.fingerprint && ent?.hash) memPkgHash.set(id, ent)
     }
   } catch { /* ignore */ }
@@ -108,9 +135,9 @@ function schedulePersistPkgHashCache(): void {
   persistTimer = setTimeout(() => {
     persistTimer = null
     try {
-      const obj: PkgHashCacheFile = {}
-      for (const [id, ent] of memPkgHash) obj[id] = ent
-      writeFileSync(pkgHashCachePath(), JSON.stringify(obj), 'utf-8')
+      const entries: Record<string, PkgHashCacheEntry> = {}
+      for (const [id, ent] of memPkgHash) entries[id] = ent
+      writeFileSync(pkgHashCachePath(), JSON.stringify({ v: PKG_HASH_CACHE_VERSION, entries }), 'utf-8')
     } catch { /* ignore */ }
   }, 500)
 }
@@ -156,25 +183,37 @@ export function invalidateLocalPackageHashCache(id?: string): void {
   schedulePersistPkgHashCache()
 }
 
+export interface LocalPackageHashes {
+  raw: string
+  norm: string
+}
+
 /**
- * 整包 hash；指纹未变时直接复用缓存（status 热路径）。
- * force=true 时忽略缓存重算。
+ * 整包 hash（原始字节 + 换行归一）。指纹未变时复用缓存。
+ * raw 与中心 manifest 对齐；norm 用于仅换行不同时视为已对齐。
  */
-export function getLocalPackageHash(id: string, force = false): string | null {
+export function getLocalPackageHashPair(id: string, force = false): LocalPackageHashes | null {
   if (!existsSync(join(localSkillDir(id), 'SKILL.md'))) return null
   loadDiskPkgHashCache()
   const fingerprint = getLocalPackageFingerprint(id)
   if (!fingerprint) return null
   if (!force) {
     const hit = memPkgHash.get(id)
-    if (hit && hit.fingerprint === fingerprint) return hit.hash
+    if (hit && hit.fingerprint === fingerprint && hit.norm) {
+      return { raw: hit.hash, norm: hit.norm }
+    }
   }
-  const files = listLocalSkillFiles(id)
-  if (!files.length) return null
-  const hash = computePackageHash(files)
-  memPkgHash.set(id, { fingerprint, hash })
+  const rows = listLocalSkillHashRows(id)
+  if (!rows.length) return null
+  const raw = computePackageHash(rows.map(f => ({ rel_path: f.rel_path, hash: f.raw, size: f.size })))
+  const norm = computePackageHash(rows.map(f => ({ rel_path: f.rel_path, hash: f.norm, size: f.size })))
+  memPkgHash.set(id, { fingerprint, hash: raw, norm })
   schedulePersistPkgHashCache()
-  return hash
+  return { raw, norm }
+}
+
+export function getLocalPackageHash(id: string, force = false): string | null {
+  return getLocalPackageHashPair(id, force)?.raw ?? null
 }
 
 export function buildLocalSkillZipBuffer(id: string): Buffer {
@@ -188,45 +227,68 @@ export function buildLocalSkillZipBuffer(id: string): Buffer {
 }
 
 export function applySkillZipToLocal(id: string, zipBuffer: Buffer): void {
-  if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('无效 skill id')
   const zip = new AdmZip(zipBuffer)
   const entries = zip.getEntries().filter(e => !e.isDirectory)
-  const root = localSkillDir(id)
-  if (existsSync(root)) rmSync(root, { recursive: true, force: true })
-  mkdirSync(root, { recursive: true })
-
-  for (const entry of entries) {
-    let rel = toPosix(entry.entryName)
-    if (rel.startsWith(`${id}/`)) rel = rel.slice(id.length + 1)
-    if (!rel || rel.includes('..')) continue
-    const parts = rel.split('/')
-    if (parts.some(p => SKIP_DIR_NAMES.has(p) || shouldSkipName(p))) continue
-    const dest = join(root, ...parts)
-    mkdirSync(join(dest, '..'), { recursive: true })
-    writeFileSync(dest, entry.getData())
-  }
-  if (!existsSync(join(root, 'SKILL.md'))) {
-    throw new Error(`解压后缺少 SKILL.md: ${id}`)
-  }
-  invalidateLocalPackageHashCache(id)
+  replaceSkillDir(id, staging => {
+    for (const entry of entries) {
+      let rel = toPosix(entry.entryName)
+      if (rel.startsWith(`${id}/`)) rel = rel.slice(id.length + 1)
+      if (!rel || rel.includes('..')) continue
+      const parts = rel.split('/')
+      if (parts.some(p => SKIP_DIR_NAMES.has(p) || shouldSkipName(p))) continue
+      const dest = join(staging, ...parts)
+      mkdirSync(join(dest, '..'), { recursive: true })
+      writeFileSync(dest, entry.getData())
+    }
+  })
 }
 
 export function applyInlineFilesToLocal(
   id: string,
   files: Array<{ rel_path: string; content_b64: string }>,
 ): void {
-  if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('无效 skill id')
   if (!files.some(f => f.rel_path === 'SKILL.md')) throw new Error('缺少 SKILL.md')
+  replaceSkillDir(id, staging => {
+    for (const f of files) {
+      if (!f.rel_path || f.rel_path.includes('..')) continue
+      const parts = f.rel_path.split('/')
+      if (parts.some(p => shouldSkipName(p))) continue
+      const dest = join(staging, ...parts)
+      mkdirSync(join(dest, '..'), { recursive: true })
+      writeFileSync(dest, Buffer.from(f.content_b64, 'base64'))
+    }
+  })
+}
+
+/** 先写入临时目录再替换，失败时尽量还原旧目录，避免先删后写丢稿。 */
+function replaceSkillDir(id: string, populate: (staging: string) => void): void {
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('无效 skill id')
   const root = localSkillDir(id)
-  if (existsSync(root)) rmSync(root, { recursive: true, force: true })
-  mkdirSync(root, { recursive: true })
-  for (const f of files) {
-    if (!f.rel_path || f.rel_path.includes('..')) continue
-    const parts = f.rel_path.split('/')
-    if (parts.some(p => shouldSkipName(p))) continue
-    const dest = join(root, ...parts)
-    mkdirSync(join(dest, '..'), { recursive: true })
-    writeFileSync(dest, Buffer.from(f.content_b64, 'base64'))
+  const staging = `${root}.incoming`
+  const backup = `${root}.bak`
+  try {
+    if (existsSync(staging)) rmSync(staging, { recursive: true, force: true })
+    mkdirSync(staging, { recursive: true })
+    populate(staging)
+    if (!existsSync(join(staging, 'SKILL.md'))) {
+      throw new Error(`解压后缺少 SKILL.md: ${id}`)
+    }
+    if (existsSync(backup)) rmSync(backup, { recursive: true, force: true })
+    if (existsSync(root)) renameSync(root, backup)
+    try {
+      renameSync(staging, root)
+    } catch (err) {
+      if (existsSync(backup) && !existsSync(root)) {
+        try { renameSync(backup, root) } catch { /* 继续抛出原错误 */ }
+      }
+      throw err
+    }
+    if (existsSync(backup)) rmSync(backup, { recursive: true, force: true })
+  } catch (err) {
+    if (existsSync(staging)) {
+      try { rmSync(staging, { recursive: true, force: true }) } catch { /* ignore */ }
+    }
+    throw err
   }
   invalidateLocalPackageHashCache(id)
 }

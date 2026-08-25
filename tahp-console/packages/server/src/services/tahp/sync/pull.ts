@@ -12,12 +12,15 @@ import { HermesSkillInjector } from '../../hermes/skill-injector'
 import { config } from '../../../config'
 import { centralClient } from './central-client'
 import type { PullPayload } from './manifest'
-import { setLastPulledAt } from './status'
+import { setLastPulledAt, getLastAppliedHash, recordLastAppliedHash } from './status'
 import {
   applyInlineFilesToLocal,
   applySkillZipToLocal,
   localRequirementsHash,
+  getLocalPackageHash,
+  getLocalPackageHashPair,
 } from './skill-package'
+import { decideSkillApply } from './apply-policy'
 
 let lastPulledAt = ''
 
@@ -37,6 +40,8 @@ export interface PullResult {
   configs: number
   generated_at: string
   skill_ids: string[]
+  skipped_synced: string[]
+  skipped_dirty: string[]
   reinjected: string[]
   reinject_error?: string
   requirements_changed: string[]
@@ -44,8 +49,34 @@ export interface PullResult {
 
 async function applyOneSkill(
   skill: PullPayload['skills'][number],
-): Promise<{ id: string; reqBefore: string | null; reqAfter: string | null }> {
+  force: boolean,
+): Promise<{
+  id: string
+  action: 'apply' | 'skip_synced' | 'skip_dirty'
+  reqBefore: string | null
+  reqAfter: string | null
+}> {
   const id = skill.id
+  const pair = getLocalPackageHashPair(id)
+  const localHash = pair?.raw ?? null
+  const centralHash = skill.hash || null
+  const lastAppliedHash = getLastAppliedHash(id)
+  const action = decideSkillApply({
+    localHash,
+    localNormHash: pair?.norm ?? null,
+    centralHash,
+    lastAppliedHash,
+    force,
+  })
+
+  if (action === 'skip_synced') {
+    if (localHash) recordLastAppliedHash(id, localHash)
+    return { id, action, reqBefore: null, reqAfter: null }
+  }
+  if (action === 'skip_dirty') {
+    return { id, action, reqBefore: null, reqAfter: null }
+  }
+
   const reqBefore = localRequirementsHash(id)
 
   if (skill.files?.length) {
@@ -61,17 +92,28 @@ async function applyOneSkill(
     throw new Error(`skill ${id} 无 files/package_url/content`)
   }
 
+  if (centralHash) {
+    const after = getLocalPackageHash(id)
+    recordLastAppliedHash(id, after || centralHash)
+  }
   const reqAfter = localRequirementsHash(id)
-  return { id, reqBefore, reqAfter }
+  return { id, action: 'apply', reqBefore, reqAfter }
 }
 
 export async function applyPull(
   payload: PullPayload,
-  options?: { reinjectSkillIds?: string[] | null; onlySkillIds?: string[] | null },
+  options?: {
+    reinjectSkillIds?: string[] | null
+    onlySkillIds?: string[] | null
+    force?: boolean
+    forceSkillIds?: string[] | null
+  },
 ): Promise<PullResult> {
   const only = options?.onlySkillIds?.length
     ? new Set(options.onlySkillIds)
     : null
+  const forceAll = !!options?.force
+  const forceIds = new Set(options?.forceSkillIds || [])
 
   let entryCount = 0
   // 按包同步时不落知识条目，避免误扩大范围
@@ -91,12 +133,24 @@ export async function applyPull(
 
   let skillCount = 0
   const skillIds: string[] = []
+  const skipped_synced: string[] = []
+  const skipped_dirty: string[] = []
   const requirements_changed: string[] = []
   for (const skill of payload.skills) {
     if (!skill.id) continue
     if (only && !only.has(skill.id)) continue
     try {
-      const r = await applyOneSkill(skill)
+      const force = forceAll || forceIds.has(skill.id)
+      const r = await applyOneSkill(skill, force)
+      if (r.action === 'skip_synced') {
+        skipped_synced.push(r.id)
+        continue
+      }
+      if (r.action === 'skip_dirty') {
+        skipped_dirty.push(r.id)
+        logger.info({ id: r.id }, '[sync] skip dirty local skill')
+        continue
+      }
       skillCount++
       skillIds.push(r.id)
       if (r.reqAfter && r.reqBefore !== r.reqAfter) {
@@ -130,6 +184,8 @@ export async function applyPull(
     configs: configCount,
     generated_at: payload.generated_at,
     skill_ids: skillIds,
+    skipped_synced,
+    skipped_dirty,
     reinjected: [],
     requirements_changed,
   }
@@ -158,7 +214,12 @@ export async function applyPull(
 
 export async function runPull(
   incremental = true,
-  options?: { reinjectSkillIds?: string[] | null; onlySkillIds?: string[] | null },
+  options?: {
+    reinjectSkillIds?: string[] | null
+    onlySkillIds?: string[] | null
+    force?: boolean
+    forceSkillIds?: string[] | null
+  },
 ): Promise<PullResult | null> {
   const since = incremental ? lastPulledAt : ''
   const payload = await centralClient.pull(since || undefined)

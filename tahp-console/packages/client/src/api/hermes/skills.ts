@@ -300,6 +300,7 @@ export async function fetchSkillCommitDetail(category: string, skill: string, ha
 export type SkillSyncStateName =
   | 'synced'
   | 'behind'
+  | 'ahead'
   | 'local_only'
   | 'unknown'
   | 'submitted_pending'
@@ -332,6 +333,7 @@ export interface SkillSyncStatus {
   connected: boolean
   last_pulled_at: string | null
   behind_count: number
+  ahead_count?: number
   pending_count?: number
   rejected_count?: number
   skills: SkillSyncStatusItem[]
@@ -346,6 +348,8 @@ export interface SkillSyncResult {
     configs: number
     generated_at: string
     skill_ids: string[]
+    skipped_synced?: string[]
+    skipped_dirty?: string[]
     reinjected: string[]
     reinject_error?: string
     requirements_changed?: string[]
@@ -355,6 +359,7 @@ export interface SkillSyncResult {
   requirements_changed?: string[]
   status: {
     behind_count: number
+    ahead_count?: number
     last_pulled_at: string | null
     connected: boolean
     configured: boolean
@@ -383,12 +388,13 @@ export async function fetchSyncStatus(opts?: {
 
 export async function triggerSync(
   skillIds?: string[],
-  opts?: { bundle_id?: string },
+  opts?: { bundle_id?: string; force?: boolean },
 ): Promise<SkillSyncResult> {
   const { tahpPost } = await import('../tahp/client')
-  const body: { skill_ids?: string[]; bundle_id?: string } = {}
+  const body: { skill_ids?: string[]; bundle_id?: string; force?: boolean } = {}
   if (skillIds?.length) body.skill_ids = skillIds
   if (opts?.bundle_id) body.bundle_id = opts.bundle_id
+  if (opts?.force) body.force = true
   return tahpPost<SkillSyncResult>('/api/tahp/skills/sync', Object.keys(body).length ? body : {})
 }
 

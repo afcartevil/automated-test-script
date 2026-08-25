@@ -26,9 +26,11 @@ const lastResult = ref<{
   reinjected: number
   reinjectError?: string
   requirementsChanged: string[]
+  skippedDirty: string[]
 } | null>(null)
 const publishingId = ref<string | null>(null)
 const publishingBatch = ref(false)
+const overwritingId = ref<string | null>(null)
 const historySkillId = ref<string | null>(null)
 const historyLoading = ref(false)
 const historyCommits = ref<SkillHistoryCommit[]>([])
@@ -64,7 +66,7 @@ function canPublish(s: SkillSyncStatusItem): boolean {
   if (!status.value?.connected) return false
   if (!s.local_hash) return false
   if (s.state === 'synced' || s.state === 'unknown' || s.state === 'submitted_pending') return false
-  return s.state === 'local_only' || s.state === 'behind' || s.state === 'rejected'
+  return s.state === 'local_only' || s.state === 'behind' || s.state === 'ahead' || s.state === 'rejected'
 }
 
 const publishableSkills = computed(() => activeSkills.value.filter(canPublish))
@@ -83,6 +85,7 @@ const allPublishableSelected = computed(() => {
 function stateLabel(state: string): string {
   if (state === 'synced') return t('skills.sync.stateSynced')
   if (state === 'behind') return t('skills.sync.stateBehind')
+  if (state === 'ahead') return t('skills.sync.stateAhead')
   if (state === 'local_only') return t('skills.sync.stateLocalOnly')
   if (state === 'submitted_pending') return t('skills.sync.statePending')
   if (state === 'rejected') return t('skills.sync.stateRejected')
@@ -91,7 +94,7 @@ function stateLabel(state: string): string {
 
 function publishTitleFor(s: SkillSyncStatusItem): string {
   if (s.state === 'rejected') return t('skills.sync.publishTitleRejected')
-  if (s.state === 'behind') return t('skills.sync.publishTitleBehind')
+  if (s.state === 'behind' || s.state === 'ahead') return t('skills.sync.publishTitleBehind')
   return t('skills.sync.publishTitle')
 }
 
@@ -174,6 +177,7 @@ async function onSyncAll() {
       reinjected: res.reinjected?.length ?? 0,
       reinjectError: res.reinject_error || res.pull?.reinject_error,
       requirementsChanged: res.requirements_changed || res.pull?.requirements_changed || [],
+      skippedDirty: res.pull?.skipped_dirty || [],
     }
     if (lastResult.value.requirementsChanged.length) {
       message.warning(t('skills.sync.requirementsHint', {
@@ -181,6 +185,13 @@ async function onSyncAll() {
       }))
     } else if (lastResult.value.reinjectError) {
       message.warning(t('skills.sync.reinjectWarn'))
+    } else if (lastResult.value.skippedDirty.length) {
+      const ids = lastResult.value.skippedDirty.slice(0, 8).join(', ')
+      message.warning(t('skills.sync.syncSuccessWithSkip', {
+        n: lastResult.value.skills,
+        skip: lastResult.value.skippedDirty.length,
+      }))
+      message.info(t('skills.sync.skipDirtyHint', { ids }))
     } else {
       message.success(t('skills.sync.syncSuccess'))
     }
@@ -211,13 +222,41 @@ async function onSyncBundle() {
       reinjected: res.reinjected?.length ?? 0,
       reinjectError: res.reinject_error || res.pull?.reinject_error,
       requirementsChanged: res.requirements_changed || res.pull?.requirements_changed || [],
+      skippedDirty: res.pull?.skipped_dirty || [],
     }
-    message.success(t('skills.sync.syncBundleSuccess', { id: bid, n: lastResult.value.skills }))
+    if (lastResult.value.skippedDirty.length) {
+      message.warning(t('skills.sync.syncSuccessWithSkip', {
+        n: lastResult.value.skills,
+        skip: lastResult.value.skippedDirty.length,
+      }))
+    } else {
+      message.success(t('skills.sync.syncBundleSuccess', { id: bid, n: lastResult.value.skills }))
+    }
     await loadStatus(true)
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.syncFailed'))
   } finally {
     syncing.value = false
+  }
+}
+
+async function onForceOverwrite(skillId: string) {
+  if (syncing.value || overwritingId.value) return
+  if (!window.confirm(t('skills.sync.forceOverwriteConfirm', { id: skillId }))) return
+  overwritingId.value = skillId
+  try {
+    const res = await triggerSync([skillId], { force: true })
+    const skipped = res.pull?.skipped_dirty?.length ?? 0
+    if (skipped) {
+      message.warning(t('skills.sync.forceOverwriteFailed'))
+    } else {
+      message.success(t('skills.sync.syncSuccess'))
+    }
+    await loadStatus(true)
+  } catch (err: any) {
+    message.error(err?.message || t('skills.sync.forceOverwriteFailed'))
+  } finally {
+    overwritingId.value = null
   }
 }
 
@@ -399,6 +438,9 @@ onMounted(loadStatus)
     <div v-else-if="status && (status.pending_count || 0) > 0" class="sync-banner info">
       {{ t('skills.sync.pendingCount', { n: status.pending_count }) }}
     </div>
+    <div v-else-if="status && (status.ahead_count || 0) > 0" class="sync-banner warn">
+      {{ t('skills.sync.aheadCount', { n: status.ahead_count }) }}
+    </div>
     <div v-else-if="status && status.behind_count > 0" class="sync-banner info">
       {{ t('skills.sync.behindCount', { n: status.behind_count }) }}
     </div>
@@ -488,6 +530,16 @@ onMounted(loadStatus)
                 <span v-if="s.local_hash"> L:{{ s.local_hash.slice(0, 8) }}</span>
               </td>
               <td>
+                <button
+                  v-if="s.state === 'ahead'"
+                  type="button"
+                  class="ea-btn-ghost ea-btn-sm"
+                  :disabled="syncing || !!overwritingId || publishingBatch || !status?.configured"
+                  :title="t('skills.sync.forceOverwriteTitle')"
+                  @click="onForceOverwrite(s.id)"
+                >
+                  {{ overwritingId === s.id ? '...' : t('skills.sync.forceOverwrite') }}
+                </button>
                 <button
                   v-if="canPublish(s)"
                   type="button"
@@ -690,6 +742,7 @@ onMounted(loadStatus)
   font-size: 12px;
   &.st-synced { background: #dcfce7; color: #166534; }
   &.st-behind { background: #ffedd5; color: #9a3412; }
+  &.st-ahead { background: #fef3c7; color: #92400e; }
   &.st-local_only { background: #f1f5f9; color: #475569; }
   &.st-unknown { background: #e2e8f0; color: #334155; }
   &.st-submitted_pending { background: #dbeafe; color: #1d4ed8; }

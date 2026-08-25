@@ -16,3 +16,16 @@ export function shortHash(content: string): string {
 export function shortHashBuffer(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex').slice(0, 16)
 }
+
+/**
+ * 文本按 LF 对齐后再 hash，使本机 CRLF 与中心 LF 包能对上。
+ * 含 NUL 的按二进制原样 hash，避免破坏非文本附件。
+ */
+export function normalizeEolBuffer(buf: Buffer): Buffer {
+  if (!buf.length || buf.includes(0) || !buf.includes(0x0d)) return buf
+  return Buffer.from(buf.toString('utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n'), 'utf8')
+}
+
+export function shortHashBufferNormalized(buf: Buffer): string {
+  return shortHashBuffer(normalizeEolBuffer(buf))
+}

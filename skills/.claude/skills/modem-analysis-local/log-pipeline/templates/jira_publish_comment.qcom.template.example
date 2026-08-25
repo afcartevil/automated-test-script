@@ -1,3 +1,0 @@
-[QcomModemLogPipelineExportFlag] log 已导出: $unc_base
-
-此评论由 modem-log-pipeline（QCOM）自动生成，仅作为「日志已就绪」的标志位，不包含任何分析结论。QCOM 自动化分析 skill 尚未上线，请勿按 MTK 流程调用 modem-analysis-unified。

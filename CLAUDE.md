@@ -27,7 +27,7 @@ tahp-console (Vue + Koa BFF :8650)
     └── reports/
     │
     ▼
-skills/.claude/skills/  ← 业务规则与执行 Skill
+skills/.claude/skills/  ← 业务 Skill 运行时目录（同步中心落盘，不入库）
 ```
 
 **生产路径**：智能诊断、AI 适配调试、知识库、报告、AI 自检均通过 Console BFF 驱动 Hermes Agent 或本地服务，不再经过 MCP stdio 桥。
@@ -93,7 +93,7 @@ npm run build && npm run start
 
 - 可操作: `skills/`, `knowledge-base/`, `tahp-console/`, `scripts/`, `reports/`
 - 谨慎: 路径链文件（`paths.ts`, `jira-workspace.ts`, `unified-config.ts`）
-- 禁止: `.git/`, 凭据 `.env`, `hermes-agent-main/` 大范围功能开发, `knowledge-base/.kb-data/` 手改
+- 禁止: `.git/`, 凭据 `.env`, `hermes-agent-main/` 大范围功能开发, `knowledge-base/.kb-data/` 手改, 将 `skills/.claude/skills/` 提交 Git
 
 ---
 
