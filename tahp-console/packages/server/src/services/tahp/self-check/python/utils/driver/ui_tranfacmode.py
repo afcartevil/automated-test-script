@@ -100,11 +100,17 @@ def go_home(device_id: str) -> bool:
     return True
 
 
+LCM_NODE = "/sys/kernel/tran_display/lcm_node"
+RESTORE_BACKLIGHT_CMD = "echo 'tran_backlight_type:0'>" + LCM_NODE
+
+
 def close_tranfacmode(device_id: str) -> bool:
+    """关闭工模，并恢复正常背光类型（工模会改 tran_backlight_type，导致退出后亮度异常）。"""
     ret = adb(device_id, "shell", "am", "force-stop", PKG)
     if ret.returncode != 0:
         return False
     time.sleep(TAP_DELAY)
+    adb(device_id, "shell", RESTORE_BACKLIGHT_CMD)
     return True
 
 

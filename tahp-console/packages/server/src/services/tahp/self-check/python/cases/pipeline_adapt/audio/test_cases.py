@@ -124,7 +124,7 @@ _MACRO_YES_RE = re.compile(
     re.I,
 )
 _SCENE_RE = re.compile(r"scene\s*[=:]\s*(\d+)", re.I)
-_AW_PROFILE_RE = re.compile(r"(?:aw_)?profile\s*[=:]\s*(\w+)", re.I)
+_AW_PROFILE_RE = re.compile(r"(?:aw_|oca_)?profile\s*[=:]\s*(\w+)", re.I)
 
 _STATUS_SUFFIX = {
     "pass": "成功",
@@ -686,15 +686,21 @@ def _dmesg_raw(serial: str) -> str:
     return ((ret.stdout or "") or (ret.stderr or "")).strip()
 
 
+def _aw_oca_log_line(ln: str) -> bool:
+    low = (ln or "").lower()
+    return (
+        "aw_profile" in low
+        or "oca_profile" in low
+        or "set_aw" in low
+        or "set_oca" in low
+    )
+
+
 def _dmesg_pa(serial: str, kind: str) -> str:
     raw = _dmesg_raw(serial)
     if kind == "fsm":
         return _fsm_on_lines(raw)
-    return "\n".join(
-        ln
-        for ln in (raw or "").splitlines()
-        if "aw_profile" in ln.lower() or "set_aw" in ln.lower()
-    )
+    return "\n".join(ln for ln in (raw or "").splitlines() if _aw_oca_log_line(ln))
 
 
 def _read_conf(serial: str) -> tuple[str, str]:
