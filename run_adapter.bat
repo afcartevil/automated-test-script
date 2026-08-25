@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 set "REPO_ROOT=%~dp0"
 cd /d "%REPO_ROOT%"
