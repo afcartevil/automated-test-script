@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   NInput, NButton, NSpin, NEmpty, NAlert,
   NModal, NScrollbar, NProgress, useMessage, NTooltip,
-  NSpace, NSwitch,
+  NSpace, NSwitch, NCheckbox,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
@@ -38,6 +38,12 @@ import {
 } from '@/utils/bug-analysis-activity'
 import { composeJiraCommentFromReport, sanitizeJiraCommentText } from '@/utils/compose-jira-comment'
 import { hasJiraRemarkSection } from '@/utils/jira-comment-from-report'
+import {
+  buildJiraCommentSections,
+  joinSelectedSnippets,
+  toggleJiraCommentSection,
+  type JiraCommentSection,
+} from '@/utils/jira-comment-sections'
 import { prependDistillJiraHeader } from '@/utils/distill-jira-header'
 import { formatBugReportPlainText } from '@/utils/format-bug-report-plain'
 import {
@@ -584,6 +590,9 @@ const canPostJiraComment = computed(() =>
 const showJiraCommentDialog = ref(false)
 const jiraCommentText = ref('')
 const jiraCommentSubmitting = ref(false)
+const jiraCommentSections = ref<JiraCommentSection[]>([])
+const jiraCommentSelectedIds = ref<string[]>([])
+const jiraCommentInserted = ref<Record<string, string>>({})
 
 // ─────────────────────────────────────────────────────────────────────────────
 const PHASE_LABELS: Record<string, { label: string; color: string }> = {
@@ -1342,15 +1351,58 @@ async function openJiraCommentDialog() {
     return
   }
 
-  showJiraCommentDialog.value = true
-  jiraCommentText.value = composeJiraCommentFromReport(reportMarkdown.value)
-  if (!jiraCommentText.value.trim()) {
-    message.warning('报告未包含第 9 节「Jira 备注」，请重新分析后重试')
-    showJiraCommentDialog.value = false
+  const markdown = reportMarkdown.value
+  const sections = buildJiraCommentSections(markdown)
+  const remarkFallback = composeJiraCommentFromReport(markdown)
+  if (!sections.length && !remarkFallback.trim()) {
+    message.warning('报告未包含可回填的章节，请重新分析后重试')
     return
   }
-  if (!hasJiraRemarkSection(reportMarkdown.value)) {
+
+  jiraCommentSections.value = sections
+  const selected = sections.filter(s => s.defaultSelected).map(s => s.id)
+  jiraCommentSelectedIds.value = selected
+  const inserted: Record<string, string> = {}
+  for (const section of sections) {
+    if (selected.includes(section.id)) inserted[section.id] = section.snippet
+  }
+  jiraCommentInserted.value = inserted
+  jiraCommentText.value = sections.length
+    ? joinSelectedSnippets(sections, selected)
+    : remarkFallback
+
+  if (!jiraCommentText.value.trim()) {
+    message.warning('报告未包含第 9 节「Jira 备注」，请勾选其它章节或重新分析')
+  } else if (!hasJiraRemarkSection(markdown)) {
     message.info('当前为旧版报告，建议重新分析以生成标准 §9 Jira 备注')
+  }
+  showJiraCommentDialog.value = true
+}
+
+function isJiraCommentSectionChecked(id: string): boolean {
+  return jiraCommentSelectedIds.value.includes(id)
+}
+
+function onJiraCommentSectionToggle(id: string, checked: boolean) {
+  const section = jiraCommentSections.value.find(s => s.id === id)
+  if (!section) return
+  const next = toggleJiraCommentSection({
+    preview: jiraCommentText.value,
+    snippet: section.snippet,
+    selected: checked,
+    inserted: jiraCommentInserted.value[id],
+  })
+  jiraCommentText.value = next.preview
+  const inserted = { ...jiraCommentInserted.value }
+  if (next.inserted) inserted[id] = next.inserted
+  else delete inserted[id]
+  jiraCommentInserted.value = inserted
+  if (checked) {
+    if (!jiraCommentSelectedIds.value.includes(id)) {
+      jiraCommentSelectedIds.value = [...jiraCommentSelectedIds.value, id]
+    }
+  } else {
+    jiraCommentSelectedIds.value = jiraCommentSelectedIds.value.filter(x => x !== id)
   }
 }
 
@@ -2531,14 +2583,28 @@ watch(
       v-model:show="showJiraCommentDialog"
       preset="card"
       title="分析结论回到jira comment"
-      style="width: 640px"
+      style="width: 720px"
       :mask-closable="false"
     >
       <NAlert type="info" :show-icon="false" style="margin-bottom: 12px">
-        备注内容从报告<strong>第 9 节「Jira 备注」</strong>直接提取（分析阶段已写好结论 / 依据 / 建议）。
-        提交前请核对内容是否准确，可手动微调后写入
+        默认填入报告<strong>第 9 节「Jira 备注」</strong>（分析结论 / 结论依据 / 建议）。
+        勾选其它章节会追加到预览末尾，取消勾选会去掉对应段落；预览可直接删改后写入
         <strong>{{ currentTask?.jira_key }}</strong>。
       </NAlert>
+      <div v-if="jiraCommentSections.length" class="jira-section-block">
+        <div class="modal-body-text">选择章节：</div>
+        <div class="jira-section-checks">
+          <NCheckbox
+            v-for="section in jiraCommentSections"
+            :key="section.id"
+            :checked="isJiraCommentSectionChecked(section.id)"
+            @update:checked="(v: boolean) => onJiraCommentSectionToggle(section.id, v)"
+          >
+            {{ section.title }}
+            <span v-if="section.defaultSelected" class="jira-section-default">默认</span>
+          </NCheckbox>
+        </div>
+      </div>
       <div class="modal-body-text">备注内容（可编辑）：</div>
       <NInput
         v-model:value="jiraCommentText"
@@ -3245,6 +3311,18 @@ watch(
 
 .modal-hint { margin-bottom: 8px; font-size: 12px; color: var(--muted); }
 .modal-body-text { margin-bottom: 8px; font-size: 13px; color: var(--text); }
+
+.jira-section-block { margin-bottom: 12px; }
+.jira-section-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.jira-section-default {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
 
 .assoc-list { display: flex; flex-direction: column; gap: 10px; max-height: 360px; overflow-y: auto; }
 .assoc-item {

@@ -171,6 +171,13 @@ export interface ReportSectionBlock {
   defaultSelected: boolean
 }
 
+export function isJiraRemarkTitle(title: string): boolean {
+  return /Jira\s*备注/i.test(title)
+}
+
+const SECTION_HEADING_RE = /^#{1,4}\s+\d+\.\s+/
+const SECTION_TITLE_RE = /^#{1,4}\s+\d+\.\s+(.+)$/
+
 /** 按报告中的编号标题（### 1. xxx）拆分为可选块 */
 export function splitReportIntoSections(reportMarkdown: string): ReportSectionBlock[] {
   if (!reportMarkdown?.trim()) return []
@@ -178,18 +185,11 @@ export function splitReportIntoSections(reportMarkdown: string): ReportSectionBl
   const blocks: ReportSectionBlock[] = []
   let current: ReportSectionBlock | null = null
 
-  const isSectionHeading = (line: string) => /^#{1,3}\s+\d+\.\s+/.test(line.trim())
-
-  const defaultSelected = (title: string) =>
-    /摘要|TL;DR|tl;dr/i.test(title)
-    || /根因/.test(title)
-    || /修复建议/.test(title)
-
   for (const line of lines) {
-    if (isSectionHeading(line)) {
+    if (SECTION_HEADING_RE.test(line.trim())) {
       if (current) blocks.push(current)
       const heading = line.trim()
-      const m = heading.match(/^#{1,3}\s+\d+\.\s+(.+)$/)
+      const m = heading.match(SECTION_TITLE_RE)
       const title = (m?.[1] || heading).trim()
       const id = title.replace(/\s+/g, '-').slice(0, 48) || `section-${blocks.length + 1}`
       current = {
@@ -197,7 +197,7 @@ export function splitReportIntoSections(reportMarkdown: string): ReportSectionBl
         title,
         heading,
         content: `${heading}\n`,
-        defaultSelected: defaultSelected(title),
+        defaultSelected: isJiraRemarkTitle(title),
       }
     } else if (current) {
       current.content += `${line}\n`
@@ -212,13 +212,10 @@ export function composeReportSections(
   selectedIds: string[],
 ): string {
   const picked = new Set(selectedIds)
-  const parts = sections
+  return sections
     .filter(s => picked.has(s.id))
     .map(s => s.content.trim())
-  const body = parts.join('\n\n')
-  return [
-    '【TAHP 分析结论回到 jira comment】',
-    '',
-    body,
-  ].join('\n').trim()
+    .filter(Boolean)
+    .join('\n\n')
+    .trim()
 }
