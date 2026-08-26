@@ -135,6 +135,7 @@ export function reportToBugTask(report: {
   llm_response?: string
   user_description?: string
   extra_context?: string
+  code_source?: import('@/api/tahp/bug-analysis').CodeSourceSnapshot
   corrections?: string[]
   analysis_mode?: string
   local_log_path?: string
@@ -157,6 +158,7 @@ export function reportToBugTask(report: {
     llm_response: report.llm_response,
     user_description: report.user_description,
     extra_context: report.extra_context,
+    code_source: report.code_source,
     corrections: report.corrections,
     analysis_mode: report.analysis_mode as import('@/api/tahp/bug-analysis').BugTask['analysis_mode'],
     local_log_path: report.local_log_path,

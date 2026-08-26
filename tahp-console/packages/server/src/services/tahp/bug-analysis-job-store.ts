@@ -30,6 +30,8 @@ export interface PersistedBugJob {
   type: 'batch'
   jql?: string
   extra_context?: string
+  /** 指定代码源原始输入（续跑时透传给新 job） */
+  code_source?: string
   resumed_from?: string
   started_at: string
   updated_at: string

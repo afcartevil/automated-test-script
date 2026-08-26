@@ -67,6 +67,15 @@ import {
   readBugAnalysisChannelConfig,
   snapshotRemoteChannelsForReport,
 } from './bug-analysis-config'
+import {
+  buildCodeSourceDirective,
+  buildCodeSourceUserBlock,
+  codeSourcePreferredSkillIds,
+  parseCodeSource,
+  restoreCodeSourceFromReport,
+  snapshotCodeSourceForReport,
+  type CodeSourceRef,
+} from './code-source'
 import { saveAgentPromptLog } from './prompt-log'
 import {
   BUG_UI_PHASE_PROGRESS,
@@ -137,11 +146,13 @@ export interface BugAnalysisInput {
   rawInput: string                // 用户输入: JIRA key 或 URL
   userDescription?: string        // 用户对 Bug 的补充描述
   extraContext?: string           // 其他附加信息
+  codeSource?: string             // 可选 · 指定代码源（本地路径 / OpenGrok 分支 / OpenGrok URL）
 }
 
 export interface LocalBugAnalysisInput {
   logPath: string
   problemDescription: string
+  codeSource?: string             // 可选 · 同上
 }
 
 export interface ContinueAnalysisInput {
@@ -158,6 +169,8 @@ export interface BugAnalysisTaskCtx {
   module?: TahpBugModule          // 可选 · 由 Agent 后续在报告里回填；BFF 不识别
   userDescription?: string
   extraContext?: string
+  /** 用户指定的代码源（可选）；三种分析模式通用 */
+  codeSource?: CodeSourceRef
   startedAt: string
   status: 'pending' | 'running' | 'waiting_user_input' | 'completed' | 'failed' | 'cancelled'
   phase?: string
@@ -182,6 +195,8 @@ export interface BugAnalysisJobCtx {
   type: 'single' | 'batch'
   jql?: string
   extraContext?: string
+  /** 批量任务的指定代码源原始输入，复制给每个子任务 */
+  codeSource?: string
   /** 续跑 / 重跑失败项时指向来源 job */
   resumedFrom?: string
   taskIds: string[]               // 关联的子任务
@@ -267,6 +282,7 @@ function persistJob(job: BugAnalysisJobCtx): void {
     type: 'batch',
     jql: job.jql,
     extra_context: job.extraContext,
+    code_source: job.codeSource,
     resumed_from: job.resumedFrom,
     started_at: job.startedAt,
     updated_at: new Date().toISOString(),
@@ -351,6 +367,7 @@ function writeBugFailureReport(
       completed_at: ctx.completedAt,
       user_description: ctx.userDescription,
       extra_context: ctx.extraContext,
+      code_source: snapshotCodeSourceForReport(ctx.codeSource),
       skills_used: ctx.skillsUsed,
       skills_improved: ctx.skillsImproved || [],
       tool_call_count: opts.toolCallCount,
@@ -429,6 +446,7 @@ function ensureJobsRestored(): void {
         type: 'batch',
         jql: persisted.jql,
         extraContext: persisted.extra_context,
+        codeSource: persisted.code_source,
         resumedFrom: persisted.resumed_from,
         taskIds: tasks.map(t => t.task_id),
         startedAt: persisted.started_at,
@@ -1149,7 +1167,8 @@ const AGENT_INSTRUCTIONS_BASE = `你是 TAHP（TECNO AI Harness Platform）"智�
 
 ## Step 4 — 大模型分析
 1. 依据 Step 1～3 的 JIRA 信息、日志与已 Read 的 Skill SOP，执行根因分析。
-2. 开始分析时输出 \`analyze\` 标记（\`status: running\`）；分析结论就绪后输出 \`analyze\`（\`status: success\`）。
+2. 若系统提示词中有「**指定代码源**」段落：须先按该段落完成源码取证，再下根因结论；报告中的代码引用只能来自该代码源，并写明路径/分支与行号。
+3. 开始分析时输出 \`analyze\` 标记（\`status: running\`）；分析结论就绪后输出 \`analyze\`（\`status: success\`）。
 
 ## Step 5 — 生成分析报告
 1. 输出完整 **9 节** Markdown 报告（结构见下文，**第 9 节 Jira 备注必填**）。
@@ -1271,6 +1290,7 @@ const AGENT_INSTRUCTIONS_LOCAL = `你是 TAHP「智能诊断专家」，当前�
 
 ## Step 4 — 大模型分析
 依据已匹配 Skill 的方法论分析本地日志，输出 \`analyze\` 标记。
+若系统提示词中有「**指定代码源**」段落：须先按该段落完成源码取证，再下根因结论；代码引用只能来自该代码源并写明路径/分支与行号。
 
 ## Step 5 — 生成分析报告
 输出完整 **9 节** Markdown 报告（结构同标准模式，**第 9 节 Jira 备注必填**），输出 \`generate_report\` 标记。
@@ -1399,21 +1419,31 @@ function buildLocalAgentUserMessage(ctx: BugAnalysisTaskCtx): string {
     '# 本地日志分析任务',
     `- 本地日志路径: **${ctx.localLogPath}**`,
     `- 问题描述: ${ctx.userDescription || ''}`,
+  ]
+  blocks.push(...buildCodeSourceUserBlock(ctx.codeSource))
+  blocks.push(
     '',
     '请先输出 fetch_jira 与 download_logs 阶段标记（本地模式跳过，log_paths 使用上述路径），',
     '然后结合问题描述在 Skills 目录匹配 1～3 个分析 Skill 并 Read 全文，输出 match_skills 标记，',
     '再分析本地日志并输出 analyze / generate_report 标记，生成完整 9 节报告。',
-  ]
+  )
   return blocks.join('\n')
 }
 
 function buildBugAnalysisInstructions(userMessage: string, ctx: BugAnalysisTaskCtx): string {
+  // 指定代码源三种模式通用（与远程渠道不同，本地日志模式也注入）
+  const codeSourceDirective = buildCodeSourceDirective(ctx.codeSource)
+  const codeSourceSkillIds = codeSourcePreferredSkillIds(ctx.codeSource)
+
   if (ctx.analysisMode === 'local') {
     const skillsRel = getTahpSkillsRootForPrompt()
     const base = AGENT_INSTRUCTIONS_LOCAL.replace(/__TAHP_SKILLS_REL_ROOT__/g, skillsRel)
     // 本地模式：不注入远程渠道，不优先远程 Skill
-    const tahpCtx = buildFullTahpSystemContext(userMessage, { scenario: 'bug_analysis' })
-    return tahpCtx ? `${base}\n\n${tahpCtx}` : base
+    const tahpCtx = buildFullTahpSystemContext(userMessage, {
+      scenario: 'bug_analysis',
+      preferredSkillIds: codeSourceSkillIds,
+    })
+    return [base, codeSourceDirective, tahpCtx].filter(p => p.trim().length > 0).join('\n\n')
   }
   const skillsRel = getTahpSkillsRootForPrompt()
   const jiraOpsSkill = tahpSkillMdRelativePath('jira-ops')
@@ -1422,12 +1452,14 @@ function buildBugAnalysisInstructions(userMessage: string, ctx: BugAnalysisTaskC
     .replace(/__JIRA_OPS_SKILL__/g, jiraOpsSkill)
   const channelCfg = readBugAnalysisChannelConfig()
   const remoteDirective = buildRemoteChannelDirective(channelCfg)
-  const preferredSkillIds = listEnabledRemotePreferredSkillIds(channelCfg)
+  const preferredSkillIds = [
+    ...new Set([...listEnabledRemotePreferredSkillIds(channelCfg), ...codeSourceSkillIds]),
+  ]
   const tahpCtx = buildFullTahpSystemContext(userMessage, {
     scenario: 'bug_analysis',
     preferredSkillIds,
   })
-  const parts = [base, remoteDirective, tahpCtx].filter(p => p.trim().length > 0)
+  const parts = [base, remoteDirective, codeSourceDirective, tahpCtx].filter(p => p.trim().length > 0)
   return parts.join('\n\n')
 }
 
@@ -1450,6 +1482,7 @@ function buildAgentUserMessage(ctx: BugAnalysisTaskCtx): string {
     blocks.push('## 附加上下文（本地已有的日志摘要等）')
     blocks.push(ctx.extraContext)
   }
+  blocks.push(...buildCodeSourceUserBlock(ctx.codeSource))
 
   blocks.push('')
   blocks.push(
@@ -1617,6 +1650,7 @@ function restoreCtxFromReport(taskId: string, report: Record<string, unknown>): 
     rawInput: typeof report.jira_key === 'string' ? report.jira_key : undefined,
     userDescription: typeof report.user_description === 'string' ? report.user_description : undefined,
     extraContext: typeof report.extra_context === 'string' ? report.extra_context : undefined,
+    codeSource: restoreCodeSourceFromReport(report.code_source),
     startedAt: String(report.started_at || new Date().toISOString()),
     status,
     phase: typeof report.phase === 'string' ? report.phase : (status === 'completed' ? 'COMPLETED' : undefined),
@@ -2016,6 +2050,7 @@ async function runSingleBugAnalysis(
       duration_ms: durationMs,
       user_description: ctx.userDescription,
       extra_context: ctx.extraContext,
+      code_source: snapshotCodeSourceForReport(ctx.codeSource),
       corrections: ctx.corrections,
       conversation_rounds: conversationRounds,
       skills_used: ctx.skillsUsed,
@@ -2188,6 +2223,7 @@ export function startSingleBugAnalysis(input: BugAnalysisInput): StartTaskResult
     rawInput: input.rawInput,
     userDescription: input.userDescription,
     extraContext: input.extraContext,
+    codeSource: parseCodeSource(input.codeSource),
     analysisMode: 'jira_single',
     startedAt: new Date().toISOString(),
     status: 'running',
@@ -2230,6 +2266,7 @@ export function startLocalLogBugAnalysis(input: LocalBugAnalysisInput): StartTas
     jiraUrl: '',
     rawInput: logPath,
     userDescription: problemDescription,
+    codeSource: parseCodeSource(input.codeSource),
     localLogPath: logPath,
     analysisMode: 'local',
     title: `本地日志: ${label}`,
@@ -2407,7 +2444,7 @@ interface BatchCandidate {
  */
 function startBatchQueue(
   candidates: BatchCandidate[],
-  opts: { jql?: string; extraContext?: string; resumedFrom?: string },
+  opts: { jql?: string; extraContext?: string; codeSource?: string; resumedFrom?: string },
 ): StartBatchResult {
   const jobId = genTaskId('task-bugjob')
   const job: BugAnalysisJobCtx = {
@@ -2415,6 +2452,7 @@ function startBatchQueue(
     type: 'batch',
     jql: opts.jql,
     extraContext: opts.extraContext,
+    codeSource: opts.codeSource,
     resumedFrom: opts.resumedFrom,
     taskIds: [],
     startedAt: new Date().toISOString(),
@@ -2424,6 +2462,9 @@ function startBatchQueue(
     failed: 0,
   }
   jobCtx.set(jobId, job)
+
+  // 判型只做一次（含路径存在性探测），所有子任务共享这份只读引用
+  const codeSourceRef = parseCodeSource(opts.codeSource)
 
   const tasks: Array<{ task_id: string; jira_key: string }> = []
   for (const candidate of candidates) {
@@ -2439,6 +2480,7 @@ function startBatchQueue(
       skillsUsed: [],
       skillsImproved: [],
       extraContext: opts.extraContext,
+      codeSource: codeSourceRef,
     }
     taskCtx.set(tid, ctx)
     job.taskIds.push(tid)
@@ -2501,7 +2543,12 @@ function startBatchQueue(
   return { ok: true, jobId, total: candidates.length, tasks }
 }
 
-export async function startBatchBugAnalysis(jql: string, extraContext?: string, jiraCfg?: JiraConfig): Promise<StartBatchResult> {
+export async function startBatchBugAnalysis(
+  jql: string,
+  extraContext?: string,
+  jiraCfg?: JiraConfig,
+  codeSource?: string,
+): Promise<StartBatchResult> {
   if (!jql?.trim()) return { ok: false, error: '空 JQL' }
 
   const search = await searchJQLAll(jql, jiraCfg)
@@ -2513,7 +2560,7 @@ export async function startBatchBugAnalysis(jql: string, extraContext?: string, 
     return { ok: false, error: 'JQL 未匹配到任何 Issue' }
   }
 
-  const result = startBatchQueue(candidates, { jql, extraContext })
+  const result = startBatchQueue(candidates, { jql, extraContext, codeSource })
   if (result.ok && search.data.truncated) {
     logBug(
       result.jobId!,
@@ -2541,7 +2588,7 @@ export function retryFailedBugJob(jobId: string): StartBatchResult {
 function requeueJobTasks(
   sourceJobId: string,
   picked: PersistedBugJobTask[],
-  source: { jql?: string; extra_context?: string },
+  source: { jql?: string; extra_context?: string; code_source?: string },
   emptyError: string,
 ): StartBatchResult {
   const candidates = picked
@@ -2551,6 +2598,7 @@ function requeueJobTasks(
   return startBatchQueue(candidates, {
     jql: source.jql,
     extraContext: source.extra_context,
+    codeSource: source.code_source,
     resumedFrom: sourceJobId,
   })
 }

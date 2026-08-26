@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   NInput, NButton, NSpin, NEmpty, NAlert,
   NModal, NScrollbar, NProgress, useMessage, NTooltip,
-  NSpace, NSwitch, NCheckbox,
+  NSpace, NSwitch, NCheckbox, NAutoComplete,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import BugAnalysisInteractionModal from '@/components/tahp/BugAnalysisInteractionModal.vue'
@@ -19,7 +19,7 @@ import {
   previewJira, previewJql, getBugReport, getBugLog, cancelBugTask,
   listBugReports, deleteBugReport, respondBugApproval, submitBugUserInput, postJiraComment,
   fetchJiraConfigStatus, getBugTaskContinueStatus,
-  fetchChannelConfig, saveChannelConfig,
+  fetchChannelConfig, saveChannelConfig, getCodeSourceOptions,
   getBugSkillSnapshot, resumeBugJob, retryFailedBugJob,
   type JiraIssueDetail, type JqlPreview, type BugReport, type BugReportSummary,
   type SkillImproveRecord, type BugSkillSnapshot,
@@ -78,17 +78,82 @@ const singleForm = ref({
   input: '',
   user_description: '',
   extra_context: '',
+  code_source: '',
 })
 
 const batchForm = ref({
   jql: '',
   extra_context: '',
+  code_source: '',
 })
 
 const localForm = ref({
   log_path: '',
   problem_description: '',
+  code_source: '',
 })
+
+// ─── 指定代码源（可选，三种模式通用）───────────────────────────────────────
+//
+// 判型以服务端 code-source.ts 为准；这里只做输入提示。
+const codeSourceBranches = ref<string[]>([])
+const codeSourceDefaultBranch = ref('tOS_mtk_A16_trunk')
+
+const codeSourceInput = computed(() => {
+  if (mode.value === 'single') return singleForm.value.code_source
+  if (mode.value === 'batch') return batchForm.value.code_source
+  return localForm.value.code_source
+})
+
+const codeSourceHint = computed(() => {
+  const raw = codeSourceInput.value.trim()
+  if (!raw) return ''
+  if (/^https?:\/\//i.test(raw)) {
+    return /\/xref\//i.test(raw) || /opengrok/i.test(raw) || /[?&]project=/i.test(raw)
+      ? '识别为 OpenGrok 代码链接'
+      : '无法判型：不是 OpenGrok 链接，将作为线索传给 Agent'
+  }
+  if (/^[A-Za-z]:[\\/]/.test(raw) || /^\\\\[^\\]/.test(raw) || raw.startsWith('/')) {
+    return '识别为本地/映射盘代码路径'
+  }
+  if (codeSourceBranches.value.includes(raw)) return '识别为 OpenGrok 代码分支'
+  if (/^(tOS|tos|tran|transsion)[A-Za-z0-9._-]*$/.test(raw) || /^A\d{2}$/i.test(raw)) {
+    return '识别为 OpenGrok 代码分支（不在已知清单，Agent 会先核对分支名）'
+  }
+  return '无法判型：将作为代码线索传给 Agent'
+})
+
+const codeSourcePlaceholder = computed(
+  () => `如 ${codeSourceDefaultBranch.value} / D:\\code\\tOS_mtk_A16 / http://opengrok.../xref/...`,
+)
+
+/** 分支候选：输入为路径或链接时不提示分支 */
+const codeSourceSuggestions = computed(() => {
+  const raw = codeSourceInput.value.trim()
+  if (/^https?:\/\//i.test(raw) || /^[A-Za-z]:[\\/]/.test(raw) || /^\\\\/.test(raw) || raw.startsWith('/')) {
+    return []
+  }
+  if (!raw) return codeSourceBranches.value
+  const lower = raw.toLowerCase()
+  return codeSourceBranches.value.filter(b => b.toLowerCase().includes(lower))
+})
+
+function applyDefaultCodeSourceBranch() {
+  const branch = codeSourceDefaultBranch.value
+  if (mode.value === 'single') singleForm.value.code_source = branch
+  else if (mode.value === 'batch') batchForm.value.code_source = branch
+  else localForm.value.code_source = branch
+}
+
+async function loadCodeSourceOptions() {
+  try {
+    const opts = await getCodeSourceOptions()
+    codeSourceBranches.value = opts.branches || []
+    if (opts.default_branch) codeSourceDefaultBranch.value = opts.default_branch
+  } catch {
+    // 分支清单拿不到不影响填写，输入框仍可自由输入
+  }
+}
 
 // JIRA 预览（单条）
 const jiraPreview = ref<JiraIssueDetail | null>(null)
@@ -241,6 +306,17 @@ const currentTaskId = computed(() =>
 const currentTask = computed(() => {
   if (isHistoryView.value) return historyTask.value
   return currentTaskId.value ? store.tasks[currentTaskId.value] : null
+})
+const currentTaskCodeSource = computed(() => currentTask.value?.code_source || null)
+const currentTaskCodeSourceLabel = computed(() => {
+  const cs = currentTaskCodeSource.value
+  if (!cs) return ''
+  switch (cs.kind) {
+    case 'local_path': return '本地路径'
+    case 'opengrok_branch': return cs.branch || 'OpenGrok'
+    case 'opengrok_url': return cs.branch ? `OpenGrok ${cs.branch}` : 'OpenGrok 链接'
+    default: return '代码线索'
+  }
 })
 const currentLlm = computed(() => {
   if (isHistoryView.value) {
@@ -949,6 +1025,7 @@ async function startSingleAnalysis() {
       input: singleForm.value.input.trim(),
       user_description: singleForm.value.user_description || undefined,
       extra_context: singleForm.value.extra_context || undefined,
+      code_source: singleForm.value.code_source.trim() || undefined,
     })
     store.registerTask({
       task_id: resp.task_id,
@@ -1024,6 +1101,7 @@ async function startBatchAnalysis() {
     const resp = await startBatch({
       jql,
       extra_context: batchForm.value.extra_context || undefined,
+      code_source: batchForm.value.code_source.trim() || undefined,
     })
     registerBatchQueue(resp, jql)
     message.success(`批量分析已启动: 共 ${resp.total} 单，串行执行，失败自动跳过`)
@@ -1123,6 +1201,7 @@ async function startLocalAnalysis() {
     const resp = await startLocal({
       log_path: localForm.value.log_path.trim(),
       problem_description: localForm.value.problem_description.trim(),
+      code_source: localForm.value.code_source.trim() || undefined,
     })
     const label = localForm.value.log_path.trim().replace(/[/\\]+$/, '').split(/[/\\]/).pop() || 'local'
     store.registerTask({
@@ -1795,6 +1874,7 @@ async function stopOrCancelCurrentTask() {
 onMounted(async () => {
   void loadJiraStatus()
   void loadChannelConfig()
+  void loadCodeSourceOptions()
   store.ensureSocket()
   await store.refresh()
   await loadHistoryReports()
@@ -1982,9 +2062,27 @@ watch(
               <label>附加上下文（可选）</label>
               <NInput
                 v-model:value="singleForm.extra_context"
-                placeholder="项目代码 / SoC / 版本 / Carrier 等"
+                placeholder="项目代号 / SoC / 版本 / Carrier 等"
                 clearable
               />
+            </div>
+
+            <div class="ea-field">
+              <label>指定代码源（可选）</label>
+              <NAutoComplete
+                v-model:value="singleForm.code_source"
+                :options="codeSourceSuggestions"
+                :placeholder="codeSourcePlaceholder"
+                clearable
+                blur-after-select
+              />
+              <div class="field-hint code-source-hint">
+                <span v-if="codeSourceHint">{{ codeSourceHint }}</span>
+                <span v-else>支持本地/映射盘代码路径、OpenGrok 代码分支或 xref 链接；填写后 Agent 必须结合该代码源取证。</span>
+                <NButton text size="tiny" @click="applyDefaultCodeSourceBranch">
+                  用默认分支 {{ codeSourceDefaultBranch }}
+                </NButton>
+              </div>
             </div>
 
             <div class="ea-row ea-wrap action-row">
@@ -2051,9 +2149,27 @@ watch(
               <label>附加上下文（可选）</label>
               <NInput
                 v-model:value="batchForm.extra_context"
-                placeholder="项目代码 / SoC / 版本 / Carrier 等"
+                placeholder="项目代号 / SoC / 版本 / Carrier 等"
                 clearable
               />
+            </div>
+
+            <div class="ea-field">
+              <label>指定代码源（可选）</label>
+              <NAutoComplete
+                v-model:value="batchForm.code_source"
+                :options="codeSourceSuggestions"
+                :placeholder="codeSourcePlaceholder"
+                clearable
+                blur-after-select
+              />
+              <div class="field-hint code-source-hint">
+                <span v-if="codeSourceHint">{{ codeSourceHint }}</span>
+                <span v-else>本批次所有子任务共用该代码源；Agent 必须结合其中的真实代码取证。</span>
+                <NButton text size="tiny" @click="applyDefaultCodeSourceBranch">
+                  用默认分支 {{ codeSourceDefaultBranch }}
+                </NButton>
+              </div>
             </div>
 
             <div class="ea-row ea-wrap action-row">
@@ -2105,6 +2221,24 @@ watch(
                 placeholder="描述现象、复现条件、关注模块（如 SIM 掉卡、数据不通）..."
                 :autosize="{ minRows: 3, maxRows: 8 }"
               />
+            </div>
+
+            <div class="ea-field">
+              <label>指定代码源（可选）</label>
+              <NAutoComplete
+                v-model:value="localForm.code_source"
+                :options="codeSourceSuggestions"
+                :placeholder="codeSourcePlaceholder"
+                clearable
+                blur-after-select
+              />
+              <div class="field-hint code-source-hint">
+                <span v-if="codeSourceHint">{{ codeSourceHint }}</span>
+                <span v-else>支持本地/映射盘代码路径、OpenGrok 代码分支或 xref 链接；填写后 Agent 必须结合该代码源取证。</span>
+                <NButton text size="tiny" @click="applyDefaultCodeSourceBranch">
+                  用默认分支 {{ codeSourceDefaultBranch }}
+                </NButton>
+              </div>
             </div>
 
             <NAlert type="info" :show-icon="false" style="margin-bottom: 12px">
@@ -2476,6 +2610,13 @@ watch(
             <div class="ea-row">
               <EaPill v-if="queuePosition" variant="info">队列 {{ queuePosition.index }}/{{ queuePosition.total }}</EaPill>
               <EaPill v-if="currentTask.module" variant="muted">{{ currentTask.module }}</EaPill>
+              <NTooltip v-if="currentTaskCodeSource" placement="bottom" trigger="hover">
+                <template #trigger>
+                  <EaPill variant="info">代码源 {{ currentTaskCodeSourceLabel }}</EaPill>
+                </template>
+                {{ currentTaskCodeSource.raw }}
+                <template v-if="currentTaskCodeSource.exists === false">（BFF 探测：路径不可访问）</template>
+              </NTooltip>
               <code class="mono task-id">{{ currentTask.task_id }}</code>
             </div>
           </div>
@@ -3150,6 +3291,7 @@ watch(
 }
 
 .field-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.code-source-hint { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .info-icon { color: var(--faint); cursor: help; margin-left: 4px; vertical-align: middle; }
 .action-row { margin-top: 4px; gap: 8px; }
 .alert-sub { margin-top: 4px; color: var(--muted); font-size: 12px; }

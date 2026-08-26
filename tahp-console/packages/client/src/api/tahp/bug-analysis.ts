@@ -27,6 +27,25 @@ export type TahpBugModule = 'telephony' | 'kernel-driver' | 'power-mgmt' | 'shar
 
 export type BugAnalysisMode = 'jira_single' | 'jira_batch' | 'local'
 
+/** 「指定代码源」判型结果（后端 services/tahp/code-source.ts 判型后回显） */
+export type CodeSourceKind = 'local_path' | 'opengrok_branch' | 'opengrok_url' | 'unknown'
+
+export interface CodeSourceSnapshot {
+  raw: string
+  kind: CodeSourceKind
+  path?: string
+  exists?: boolean
+  branch?: string
+  file_path?: string
+  start_line?: number
+  branch_known?: boolean
+}
+
+export interface CodeSourceOptions {
+  branches: string[]
+  default_branch: string
+}
+
 export interface SkillImproveRecord {
   name: string
   actions: string[]
@@ -69,6 +88,7 @@ export interface BugTask {
   error?: string
   user_description?: string
   extra_context?: string
+  code_source?: CodeSourceSnapshot
   corrections?: string[]
   llm_response?: string
   issue?: JiraIssueDetail
@@ -162,6 +182,7 @@ export interface BugReport {
   duration_ms?: number
   user_description?: string
   extra_context?: string
+  code_source?: CodeSourceSnapshot
   corrections?: string[]
   skills_used?: string[]
   skills_improved?: SkillImproveRecord[]
@@ -203,6 +224,7 @@ export function startSingle(payload: {
   input: string
   user_description?: string
   extra_context?: string
+  code_source?: string
 }, jiraConfig?: JiraUserConfig): Promise<BugAnalysisStartResp> {
   return tahpPost<BugAnalysisStartResp>('/api/tahp/bug-analysis/single', payload, { headers: jiraHeaders(jiraConfig) })
 }
@@ -210,6 +232,7 @@ export function startSingle(payload: {
 export function startBatch(payload: {
   jql: string
   extra_context?: string
+  code_source?: string
 }, jiraConfig?: JiraUserConfig): Promise<BugBatchStartResp> {
   return tahpPost<BugBatchStartResp>('/api/tahp/bug-analysis/batch', payload, { headers: jiraHeaders(jiraConfig) })
 }
@@ -217,8 +240,14 @@ export function startBatch(payload: {
 export function startLocal(payload: {
   log_path: string
   problem_description: string
+  code_source?: string
 }): Promise<BugAnalysisStartResp> {
   return tahpPost<BugAnalysisStartResp>('/api/tahp/bug-analysis/local', payload)
+}
+
+/** OpenGrok 分支清单（后端维护，前端只做下拉与提示） */
+export function getCodeSourceOptions(): Promise<CodeSourceOptions> {
+  return tahpGet<CodeSourceOptions>('/api/tahp/bug-analysis/code-source-options')
 }
 
 export function postJiraComment(

@@ -48,6 +48,11 @@ import {
   writeBugAnalysisChannelConfig,
   resolveRemoteSkillPath,
 } from '../../services/tahp/bug-analysis-config'
+import {
+  OPENGROK_BRANCHES,
+  DEFAULT_OPENGROK_BRANCH,
+  snapshotCodeSourceForReport,
+} from '../../services/tahp/code-source'
 import { readBugLog, recordDistillRequest, listDistillRequests } from '../../services/tahp/bug-analysis-logger'
 import { depositDistilledEntry, type DepositDistilledResult } from './knowledge'
 import {
@@ -84,7 +89,10 @@ function requireJiraUserConfig(ctx: any): JiraConfig | null {
 // ─── 启动单条 Bug 分析 ───────────────────────────────────────────────────────
 //
 // POST /api/tahp/bug-analysis/single
-// Body: { input: "X6873OS162-1079" | URL, user_description?, extra_context? }
+// Body: { input: "X6873OS162-1079" | URL, user_description?, extra_context?, code_source? }
+//
+// code_source：可选的「指定代码源」原始输入（本地/映射盘路径、OpenGrok 分支或 xref 链接）。
+//              判型与提示词注入在 services/tahp/code-source.ts。
 //
 // 注：不再接收 module —— Bug 域识别由 Agent 在拉到 JIRA 后自主完成。
 //     旧客户端若仍传 module 字段，会被静默忽略。
@@ -99,8 +107,9 @@ tahpBugAnalysisRoutes.post('/single', async (ctx) => {
   }
   const userDescription = typeof body.user_description === 'string' ? body.user_description : undefined
   const extraContext    = typeof body.extra_context === 'string'    ? body.extra_context    : undefined
+  const codeSource      = typeof body.code_source === 'string'      ? body.code_source      : undefined
 
-  const result = startSingleBugAnalysis({ rawInput, userDescription, extraContext })
+  const result = startSingleBugAnalysis({ rawInput, userDescription, extraContext, codeSource })
   if (!result.ok) {
     ctx.status = 400
     ctx.body = { success: false, error: result.error }
@@ -120,7 +129,7 @@ tahpBugAnalysisRoutes.post('/single', async (ctx) => {
 // ─── 本地日志分析（跳过 JIRA，从匹配 Skill 开始）────────────────────────────
 //
 // POST /api/tahp/bug-analysis/local
-// Body: { log_path, problem_description }
+// Body: { log_path, problem_description, code_source? }
 tahpBugAnalysisRoutes.post('/local', async (ctx) => {
   const body = (ctx.request.body || {}) as Record<string, unknown>
   const logPath = typeof body.log_path === 'string' ? body.log_path.trim() : ''
@@ -135,7 +144,8 @@ tahpBugAnalysisRoutes.post('/local', async (ctx) => {
     ctx.body = { success: false, error: '缺少 problem_description' }
     return
   }
-  const result = startLocalLogBugAnalysis({ logPath, problemDescription })
+  const codeSource = typeof body.code_source === 'string' ? body.code_source : undefined
+  const result = startLocalLogBugAnalysis({ logPath, problemDescription, codeSource })
   if (!result.ok) {
     ctx.status = 400
     ctx.body = { success: false, error: result.error }
@@ -156,7 +166,7 @@ tahpBugAnalysisRoutes.post('/local', async (ctx) => {
 // ─── 启动批量 Bug 分析 ───────────────────────────────────────────────────────
 //
 // POST /api/tahp/bug-analysis/batch
-// Body: { jql, extra_context? }
+// Body: { jql, extra_context?, code_source? }
 tahpBugAnalysisRoutes.post('/batch', async (ctx) => {
   const jiraCfg = requireJiraUserConfig(ctx)
   if (!jiraCfg) return
@@ -168,8 +178,9 @@ tahpBugAnalysisRoutes.post('/batch', async (ctx) => {
     return
   }
   const extraContext = typeof body.extra_context === 'string' ? body.extra_context : undefined
+  const codeSource = typeof body.code_source === 'string' ? body.code_source : undefined
 
-  const result = await startBatchBugAnalysis(jql, extraContext, jiraCfg)
+  const result = await startBatchBugAnalysis(jql, extraContext, jiraCfg, codeSource)
   if (!result.ok) {
     ctx.status = 400
     ctx.body = { success: false, error: result.error }
@@ -452,6 +463,20 @@ tahpBugAnalysisRoutes.put('/channel-config', async (ctx) => {
   }
 })
 
+// ─── 指定代码源：可选项（OpenGrok 分支清单）────────────────────────────────
+//
+// GET /api/tahp/bug-analysis/code-source-options
+// 分支清单由后端维护，前端只做下拉与提示，避免两边各存一份。
+tahpBugAnalysisRoutes.get('/code-source-options', async (ctx) => {
+  ctx.body = {
+    success: true,
+    data: {
+      branches: [...OPENGROK_BRANCHES],
+      default_branch: DEFAULT_OPENGROK_BRANCH,
+    },
+  }
+})
+
 // ─── 同步页面 JIRA 凭据到服务端（localStorage 镜像）────────────────────────
 //
 // PUT /api/tahp/bug-analysis/jira-user-config
@@ -630,6 +655,7 @@ tahpBugAnalysisRoutes.get('/tasks/:id', async (ctx) => {
     completed_at: t.completedAt,
     user_description: t.userDescription,
     extra_context: t.extraContext,
+    code_source: snapshotCodeSourceForReport(t.codeSource),
     corrections: t.corrections,
     skills_used: t.skillsUsed,
     skills_improved: overlaySkillsImproved(t.taskId, t.skillsImproved),
