@@ -16,6 +16,8 @@ import {
   startSingleBugAnalysis,
   continueBugAnalysis,
   startBatchBugAnalysis,
+  resumeBugJob,
+  retryFailedBugJob,
   startLocalLogBugAnalysis,
   postBugAnalysisJiraComment,
   cancelBugTask,
@@ -34,7 +36,7 @@ import {
   respondBugApproval,
   submitBugUserInput,
 } from '../../services/tahp/bug-analysis'
-import { searchJQL, parseIssueKey, verifyJiraConnectivity } from '../../services/tahp/jira'
+import { searchJQL, searchJQLAll, jqlTotalCap, parseIssueKey, verifyJiraConnectivity } from '../../services/tahp/jira'
 import type { JiraConfig } from '../../services/tahp/jira'
 import {
   resolveJiraConfig,
@@ -563,12 +565,13 @@ tahpBugAnalysisRoutes.post('/jql-preview', async (ctx) => {
     ctx.body = { success: false, error: '缺少 jql' }
     return
   }
-  const r = await searchJQL(jql, jiraCfg)
+  // 与批量分析共用全量枚举：预览看到的清单就是实际会入队的清单
+  const r = await searchJQLAll(jql, jiraCfg)
   if (!r.ok || !r.data) {
     ctx.body = { success: false, error: r.error || 'JQL 查询失败' }
     return
   }
-  ctx.body = { success: true, data: r.data }
+  ctx.body = { success: true, data: { ...r.data, cap: jqlTotalCap() } }
 })
 
 // ─── 任务列表（内存态，最近 200 条） ─────────────────────────────────────────
@@ -659,6 +662,7 @@ tahpBugAnalysisRoutes.get('/jobs', async (ctx) => {
     job_id: j.jobId,
     type: j.type,
     jql: j.jql,
+    resumed_from: j.resumedFrom,
     task_ids: j.taskIds,
     started_at: j.startedAt,
     status: j.status,
@@ -667,6 +671,46 @@ tahpBugAnalysisRoutes.get('/jobs', async (ctx) => {
     failed: j.failed,
   }))
   ctx.body = { success: true, data: jobs }
+})
+
+// 续跑：把未走到终态的子任务重新入队为一个新 job（服务重启后用）
+tahpBugAnalysisRoutes.post('/jobs/:id/resume', async (ctx) => {
+  const result = resumeBugJob(ctx.params.id)
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+  ctx.body = {
+    success: true,
+    data: {
+      job_id: result.jobId,
+      type: 'batch',
+      total: result.total,
+      tasks: result.tasks,
+      resumed_from: ctx.params.id,
+    },
+  }
+})
+
+// 重跑失败项：把 failed 的子任务重新入队为一个新 job
+tahpBugAnalysisRoutes.post('/jobs/:id/retry-failed', async (ctx) => {
+  const result = retryFailedBugJob(ctx.params.id)
+  if (!result.ok) {
+    ctx.status = 400
+    ctx.body = { success: false, error: result.error }
+    return
+  }
+  ctx.body = {
+    success: true,
+    data: {
+      job_id: result.jobId,
+      type: 'batch',
+      total: result.total,
+      tasks: result.tasks,
+      resumed_from: ctx.params.id,
+    },
+  }
 })
 
 tahpBugAnalysisRoutes.get('/jobs/:id', async (ctx) => {
@@ -680,6 +724,7 @@ tahpBugAnalysisRoutes.get('/jobs/:id', async (ctx) => {
     job_id: j.jobId,
     type: j.type,
     jql: j.jql,
+    resumed_from: j.resumedFrom,
     task_ids: j.taskIds,
     tasks: j.taskIds.map(tid => {
       const t = getBugTask(tid)

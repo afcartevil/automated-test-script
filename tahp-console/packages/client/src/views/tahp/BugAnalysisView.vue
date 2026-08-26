@@ -20,7 +20,7 @@ import {
   listBugReports, deleteBugReport, respondBugApproval, submitBugUserInput, postJiraComment,
   fetchJiraConfigStatus, getBugTaskContinueStatus,
   fetchChannelConfig, saveChannelConfig,
-  getBugSkillSnapshot,
+  getBugSkillSnapshot, resumeBugJob, retryFailedBugJob,
   type JiraIssueDetail, type JqlPreview, type BugReport, type BugReportSummary,
   type SkillImproveRecord, type BugSkillSnapshot,
 } from '@/api/tahp/bug-analysis'
@@ -256,6 +256,40 @@ const currentReasoning = computed(() => {
 
 const currentJobId = computed(() => store.selectedJobId)
 const currentJob = computed(() => currentJobId.value ? store.jobs[currentJobId.value] : null)
+
+// 当前任务所属的批量队列（用于从子任务详情返回队列总览）。
+// 按 parent_job_id 反查而不是用 selectedJobId，这样从左侧任务列表直接点进
+// 某个子任务时也能回到它真正所属的队列。
+const parentQueueJob = computed(() => {
+  if (isHistoryView.value) return null
+  const pid = currentTask.value?.parent_job_id
+  return pid ? store.jobs[pid] || null : null
+})
+
+const queuePosition = computed(() => {
+  const job = parentQueueJob.value
+  const tid = currentTaskId.value
+  if (!job || !tid) return null
+  const idx = job.task_ids.indexOf(tid)
+  if (idx < 0) return null
+  return { index: idx + 1, total: job.task_ids.length }
+})
+
+function backToQueue() {
+  const job = parentQueueJob.value
+  if (!job) return
+  selectQueue(job.job_id)
+}
+
+/** 切到某个批量队列的总览（清掉选中的子任务，否则会被任务详情卡片挡住） */
+function selectQueue(jobId: string) {
+  clearHistoryView()
+  store.selectJob(jobId)
+  store.selectTask(null)
+  reportDetail.value = null
+  taskLog.value = ''
+  activeReportTab.value = 'live'
+}
 
 const isRunning = computed(() => !isHistoryView.value && currentTask.value?.status === 'running')
 const isPending = computed(() => !isHistoryView.value && currentTask.value?.status === 'pending')
@@ -849,6 +883,8 @@ function statusPillVariant(status?: string): 'ok' | 'info' | 'warn' | 'err' | 'm
   if (status === 'cancelled') return 'warn'
   if (status === 'running') return 'info'
   if (status === 'pending') return 'warn'
+  if (status === 'waiting_user_input') return 'warn'
+  if (status === 'interrupted') return 'warn'
   return 'muted'
 }
 
@@ -936,6 +972,44 @@ async function startSingleAnalysis() {
   }
 }
 
+/** 注册批量 Job + 其排队中的子任务，并切到队列视图 */
+function registerBatchQueue(
+  resp: { job_id: string; total: number; tasks: Array<{ task_id: string; jira_key: string }> },
+  jql?: string,
+  resumedFrom?: string,
+) {
+  const startedAt = new Date().toISOString()
+  store.registerJob({
+    job_id: resp.job_id,
+    type: 'batch',
+    jql,
+    resumed_from: resumedFrom,
+    task_ids: resp.tasks.map(t => t.task_id),
+    started_at: startedAt,
+    status: 'running',
+    total: resp.total,
+    completed: 0,
+    failed: 0,
+  })
+  for (const t of resp.tasks) {
+    store.registerTask({
+      task_id: t.task_id,
+      jira_key: t.jira_key,
+      jira_url: '',
+      status: 'pending',
+      phase: 'QUEUED',
+      progress: 0,
+      started_at: startedAt,
+      parent_job_id: resp.job_id,
+    })
+  }
+  store.selectJob(resp.job_id)
+  // 长队列停在队列总览而不是跳进第一单，方便观察整体进度
+  store.selectTask(null)
+  clearHistoryView()
+  activeReportTab.value = 'live'
+}
+
 async function startBatchAnalysis() {
   if (!ensureModelProviderOrWarn()) return
   if (!ensureJiraReady()) return
@@ -946,45 +1020,92 @@ async function startBatchAnalysis() {
   submitting.value = true
   try {
     store.ensureSocket()
+    const jql = batchForm.value.jql.trim()
     const resp = await startBatch({
-      jql: batchForm.value.jql.trim(),
+      jql,
       extra_context: batchForm.value.extra_context || undefined,
     })
-    // 注册 Job + 子任务
-    store.registerJob({
-      job_id: resp.job_id,
-      type: 'batch',
-      jql: batchForm.value.jql,
-      task_ids: resp.tasks.map(t => t.task_id),
-      started_at: new Date().toISOString(),
-      status: 'running',
-      total: resp.total,
-      completed: 0,
-      failed: 0,
-    })
-    for (const t of resp.tasks) {
-      store.registerTask({
-        task_id: t.task_id,
-        jira_key: t.jira_key,
-        jira_url: '',
-        status: 'pending',
-        phase: 'QUEUED',
-        progress: 0,
-        started_at: new Date().toISOString(),
-        parent_job_id: resp.job_id,
-      })
-    }
-    store.selectJob(resp.job_id)
-    store.selectTask(resp.tasks[0]?.task_id || null)
-    clearHistoryView()
-    activeReportTab.value = 'live'
-    message.success(`批量分析已启动: 共 ${resp.total} 单`)
+    registerBatchQueue(resp, jql)
+    message.success(`批量分析已启动: 共 ${resp.total} 单，串行执行，失败自动跳过`)
   } catch (err) {
     message.error((err as Error).message)
   } finally {
     submitting.value = false
   }
 }
+
+// ─── 队列续跑 / 重跑失败项 ─────────────────────────────────────────────────
+const jobActionLoading = ref(false)
+
+async function resumeCurrentJob() {
+  const job = currentJob.value
+  if (!job || !ensureModelProviderOrWarn()) return
+  jobActionLoading.value = true
+  try {
+    store.ensureSocket()
+    const resp = await resumeBugJob(job.job_id)
+    registerBatchQueue(resp, job.jql, job.job_id)
+    message.success(`已继续未完成的 ${resp.total} 单`)
+  } catch (err) {
+    message.error((err as Error).message)
+  } finally {
+    jobActionLoading.value = false
+  }
+}
+
+async function retryCurrentJobFailures() {
+  const job = currentJob.value
+  if (!job || !ensureModelProviderOrWarn()) return
+  jobActionLoading.value = true
+  try {
+    store.ensureSocket()
+    const resp = await retryFailedBugJob(job.job_id)
+    registerBatchQueue(resp, job.jql, job.job_id)
+    message.success(`已重跑 ${resp.total} 个失败单`)
+  } catch (err) {
+    message.error((err as Error).message)
+  } finally {
+    jobActionLoading.value = false
+  }
+}
+
+// ─── 队列筛选（上百单时按状态过滤） ───────────────────────────────────────
+type QueueFilter = 'all' | 'pending' | 'running' | 'completed' | 'failed'
+
+const queueFilter = ref<QueueFilter>('all')
+
+const queueCounts = computed(() => {
+  const counts = { all: 0, pending: 0, running: 0, completed: 0, failed: 0 }
+  for (const tid of currentJob.value?.task_ids || []) {
+    const status = store.tasks[tid]?.status || 'pending'
+    counts.all += 1
+    if (status === 'completed') counts.completed += 1
+    else if (status === 'failed' || status === 'cancelled') counts.failed += 1
+    else if (status === 'running' || status === 'waiting_user_input') counts.running += 1
+    else counts.pending += 1
+  }
+  return counts
+})
+
+const filteredQueueTaskIds = computed(() => {
+  const ids = currentJob.value?.task_ids || []
+  if (queueFilter.value === 'all') return ids
+  return ids.filter(tid => {
+    const status = store.tasks[tid]?.status || 'pending'
+    if (queueFilter.value === 'completed') return status === 'completed'
+    if (queueFilter.value === 'failed') return status === 'failed' || status === 'cancelled'
+    if (queueFilter.value === 'running') return status === 'running' || status === 'waiting_user_input'
+    return status === 'pending'
+  })
+})
+
+const QUEUE_FILTERS: Array<{ key: QueueFilter; label: string }> = [
+  { key: 'all', label: '全部' },
+  { key: 'pending', label: '等待中' },
+  { key: 'running', label: '执行中' },
+  { key: 'completed', label: '成功' },
+  { key: 'failed', label: '失败' },
+]
 
 async function startLocalAnalysis() {
   if (!ensureModelProviderOrWarn()) return
@@ -1950,8 +2071,10 @@ watch(
 
             <div v-if="jqlPreview" class="ea-info-soft ea-mt16">
               <div class="jql-summary">
-                匹配 <strong>{{ jqlPreview.issues.length }}</strong> 单（共 {{ jqlPreview.total }}）
-                <EaPill v-if="jqlPreview.truncated" variant="warn">已截断</EaPill>
+                将入队 <strong>{{ jqlPreview.issues.length }}</strong> 单（JQL 命中 {{ jqlPreview.total }}）
+                <EaPill v-if="jqlPreview.truncated" variant="warn">
+                  已截至上限 {{ jqlPreview.cap ?? jqlPreview.issues.length }}
+                </EaPill>
               </div>
               <NScrollbar style="max-height: 220px">
                 <div v-for="iss in jqlPreview.issues" :key="iss.key" class="jql-item">
@@ -2121,9 +2244,32 @@ watch(
           </template>
 
           <template v-else-if="taskListMode === 'recent'">
-            <NEmpty v-if="!store.recentTasks.length" size="small" description="还没有任务" />
+            <NEmpty v-if="!store.recentTasks.length && !store.recentJobs.length" size="small" description="还没有任务" />
             <NScrollbar v-else class="task-scroll" trigger="none">
+              <div v-if="store.recentJobs.length" class="ea-tasklist queue-list">
+                <div class="search-group-title">批量队列 ({{ store.recentJobs.length }})</div>
+                <button
+                  v-for="j in store.recentJobs"
+                  :key="`job-${j.job_id}`"
+                  type="button"
+                  class="ea-task-item"
+                  :class="{ active: !isHistoryView && !currentTaskId && currentJobId === j.job_id, [`status-${j.status}`]: true }"
+                  @click="selectQueue(j.job_id)"
+                >
+                  <div class="ti-top">
+                    <span class="ti-key">批量 {{ j.total }} 单</span>
+                    <EaPill :variant="statusPillVariant(j.status)">{{ j.status }}</EaPill>
+                  </div>
+                  <div class="ti-title">{{ j.jql || j.job_id }}</div>
+                  <div class="ti-meta">
+                    <span class="stat-ok">成功 {{ j.completed }}</span>
+                    <span class="stat-err">失败 {{ j.failed }}</span>
+                    <span class="ea-muted">共 {{ j.total }}</span>
+                  </div>
+                </button>
+              </div>
               <div class="ea-tasklist">
+                <div v-if="store.recentJobs.length" class="search-group-title">最近任务 ({{ store.recentTasks.length }})</div>
                 <button
                   v-for="t in store.recentTasks"
                   :key="t.task_id"
@@ -2234,6 +2380,9 @@ watch(
             </div>
           </div>
           <p class="job-jql"><strong>JQL:</strong> {{ currentJob.jql }}</p>
+          <p v-if="currentJob.resumed_from" class="ea-muted" style="font-size: 12px; margin: -4px 0 8px">
+            续跑自 <code class="mono">{{ currentJob.resumed_from }}</code>
+          </p>
           <div class="job-progress">
             <span class="ea-muted" style="font-size: 12px">进度</span>
             <NProgress :percentage="Math.round(((currentJob.completed + currentJob.failed) / currentJob.total) * 100)" :show-indicator="true" />
@@ -2243,31 +2392,78 @@ watch(
               总 {{ currentJob.total }}
             </div>
           </div>
-          <p class="ea-muted" style="font-size: 12px; margin: 12px 0 6px">点击下方任一子任务查看详情：</p>
-          <div class="job-tasks">
-            <button
-              v-for="tid in currentJob.task_ids"
-              :key="tid"
-              type="button"
-              class="ea-task-item compact"
-              :class="`status-${store.tasks[tid]?.status || 'unknown'}`"
-              @click="selectTask(tid)"
+
+          <NAlert v-if="currentJob.status === 'interrupted'" type="warning" :show-icon="false" style="margin: 12px 0">
+            该队列在服务重启前没跑完，未完成的单子没有结论。点「继续未完成」会用新的子任务重跑它们。
+          </NAlert>
+
+          <div class="ea-row ea-wrap" style="gap: 8px; margin: 12px 0 6px">
+            <NButton
+              v-if="currentJob.status !== 'running'"
+              size="small"
+              type="primary"
+              :loading="jobActionLoading"
+              :disabled="!modelProviderReady"
+              @click="resumeCurrentJob"
             >
-              <div class="ti-top">
-                <span class="ti-key">{{ store.tasks[tid]?.jira_key || tid }}</span>
-                <EaPill :variant="statusPillVariant(store.tasks[tid]?.status)">{{ store.tasks[tid]?.status || '-' }}</EaPill>
-              </div>
-              <div class="ti-meta">
-                <span class="ea-dot" :style="{ background: phaseColor(store.tasks[tid]?.phase) }" />
-                <span>{{ phaseLabel(store.tasks[tid]?.phase) }}</span>
-              </div>
+              继续未完成
+            </NButton>
+            <NButton
+              v-if="currentJob.status !== 'running' && currentJob.failed > 0"
+              size="small"
+              :loading="jobActionLoading"
+              :disabled="!modelProviderReady"
+              @click="retryCurrentJobFailures"
+            >
+              重跑失败项（{{ currentJob.failed }}）
+            </NButton>
+          </div>
+
+          <div class="ea-row ea-wrap queue-filters">
+            <button
+              v-for="f in QUEUE_FILTERS"
+              :key="f.key"
+              type="button"
+              class="queue-filter"
+              :class="{ active: queueFilter === f.key }"
+              @click="queueFilter = f.key"
+            >
+              {{ f.label }} {{ queueCounts[f.key] }}
             </button>
           </div>
+
+          <p class="ea-muted" style="font-size: 12px; margin: 10px 0 6px">点击任一子任务查看详情：</p>
+          <NScrollbar style="max-height: 420px">
+            <div class="job-tasks">
+              <button
+                v-for="tid in filteredQueueTaskIds"
+                :key="tid"
+                type="button"
+                class="ea-task-item compact"
+                :class="`status-${store.tasks[tid]?.status || 'unknown'}`"
+                @click="selectTask(tid)"
+              >
+                <div class="ti-top">
+                  <span class="ti-key">{{ store.tasks[tid]?.jira_key || tid }}</span>
+                  <EaPill :variant="statusPillVariant(store.tasks[tid]?.status)">{{ store.tasks[tid]?.status || '-' }}</EaPill>
+                </div>
+                <div class="ti-meta">
+                  <span class="ea-dot" :style="{ background: phaseColor(store.tasks[tid]?.phase) }" />
+                  <span>{{ phaseLabel(store.tasks[tid]?.phase) }}</span>
+                </div>
+              </button>
+            </div>
+          </NScrollbar>
+          <NEmpty v-if="!filteredQueueTaskIds.length" description="该筛选下没有子任务" style="padding: 16px 0" />
         </EaCard>
 
         <EaCard v-else-if="currentTask" class="bug-main bug-detail">
           <div class="ea-row ea-between task-head">
             <div class="ea-row task-head-left">
+              <button v-if="parentQueueJob" type="button" class="queue-back" @click="backToQueue">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                返回队列
+              </button>
               <EaPill v-if="isHistoryView" variant="muted">历史记录</EaPill>
               <EaPill :variant="statusPillVariant(currentTask.status)">
                 <span v-if="isRunning" class="ea-dot-live" />
@@ -2278,6 +2474,7 @@ watch(
               <span class="ea-muted task-title">{{ currentTask.title || '...' }}</span>
             </div>
             <div class="ea-row">
+              <EaPill v-if="queuePosition" variant="info">队列 {{ queuePosition.index }}/{{ queuePosition.total }}</EaPill>
               <EaPill v-if="currentTask.module" variant="muted">{{ currentTask.module }}</EaPill>
               <code class="mono task-id">{{ currentTask.task_id }}</code>
             </div>
@@ -3036,6 +3233,29 @@ watch(
 .stat-err { color: var(--error); }
 .job-tasks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
 .ea-task-item.compact { padding: 10px 12px; }
+
+.queue-list { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+
+.queue-back {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: transparent; color: var(--muted);
+  &:hover { color: var(--accent, #2080f0); border-color: var(--accent, #2080f0); }
+}
+
+.queue-filters { gap: 6px; }
+.queue-filter {
+  padding: 4px 10px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: transparent; color: var(--muted);
+  &:hover { color: var(--text); }
+  &.active {
+    border-color: var(--accent, #2080f0);
+    color: var(--accent, #2080f0);
+    background: rgba(32, 128, 240, .1);
+  }
+}
 
 .task-head { margin-bottom: 14px; gap: 12px; flex-wrap: wrap; max-width: 100%; min-width: 0; }
 .task-head-left { min-width: 0; gap: 12px; flex-wrap: wrap; flex: 1; }

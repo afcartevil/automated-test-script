@@ -79,10 +79,13 @@ export interface BugJob {
   type: 'batch'
   jql?: string
   module?: TahpBugModule
+  /** 续跑 / 重跑失败项时指向来源 job */
+  resumed_from?: string
   task_ids: string[]
   tasks?: BugTask[]
   started_at: string
-  status: 'running' | 'completed' | 'failed'
+  /** interrupted：服务重启前没跑完的队列，可点「继续未完成」 */
+  status: 'running' | 'completed' | 'failed' | 'interrupted'
   total: number
   completed: number
   failed: number
@@ -139,7 +142,10 @@ export interface JqlPreview {
   total: number
   issues: JiraSearchItem[]
   jql: string
+  /** Jira 命中数超过本次返回条数（被 cap 截断） */
   truncated: boolean
+  /** 服务端全量枚举上限（TAHP_JQL_MAX_ISSUES） */
+  cap?: number
 }
 
 export interface BugReport {
@@ -344,6 +350,16 @@ export function listBugJobs(): Promise<BugJob[]> {
 
 export function getBugJob(jobId: string): Promise<BugJob> {
   return tahpGet<BugJob>(`/api/tahp/bug-analysis/jobs/${encodeURIComponent(jobId)}`)
+}
+
+/** 续跑：把队列里未完成的单子重新入队为新 job */
+export function resumeBugJob(jobId: string): Promise<BugBatchStartResp & { resumed_from: string }> {
+  return tahpPost(`/api/tahp/bug-analysis/jobs/${encodeURIComponent(jobId)}/resume`)
+}
+
+/** 重跑失败项：把队列里 failed 的单子重新入队为新 job */
+export function retryFailedBugJob(jobId: string): Promise<BugBatchStartResp & { resumed_from: string }> {
+  return tahpPost(`/api/tahp/bug-analysis/jobs/${encodeURIComponent(jobId)}/retry-failed`)
 }
 
 // ─── 报告 / 日志 ──────────────────────────────────────────────────────────

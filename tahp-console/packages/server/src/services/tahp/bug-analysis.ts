@@ -48,9 +48,17 @@ import {
 } from '../hermes/agent-bridge'
 import { filterBridgeToolCallMarkupDelta } from '../hermes/run-chat/bridge-delta'
 import {
-  fetchIssue, searchJQL, parseIssueKey,
+  fetchIssue, searchJQL, searchJQLAll, parseIssueKey,
   type JiraIssue, type JiraIssueSummary, type JiraConfig,
 } from './jira'
+import {
+  failedJobTasks,
+  listPersistedBugJobs,
+  readPersistedBugJob,
+  saveBugJob,
+  unfinishedJobTasks,
+  type PersistedBugJobTask,
+} from './bug-analysis-job-store'
 import { logBug, appendBugLog, deleteBugLog, removeDistillRequestsForTask, bugLogPath } from './bug-analysis-logger'
 import { buildFullTahpSystemContext, getTahpSkillsRootForPrompt, tahpSkillMdRelativePath } from './context-injector'
 import {
@@ -106,8 +114,16 @@ import {
 // 任务成功结束后保留 session 供「补充信息继续分析」续聊；失败/中断时 destroy。
 // 补充继续严格要求 session 仍存活，不再从历史报告重建会话。
 //
-// 超时设置较长（30 分钟）：考虑到 Agent 真正会跑日志下载等耗时操作。
-const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: 30 * 60_000 })
+// 超时：单条分析可能跑数小时（日志下载 + 多轮工具调用），批量队列更长，
+// 因此默认不设 RPC 读超时（0 = 不限时）。代价是 bridge 假死时该轮不会自己醒，
+// 需要靠「取消任务」或批量队列的等待预算兜底。要恢复硬超时用
+// TAHP_BUG_BRIDGE_TIMEOUT_MS 显式指定毫秒数。
+function bugBridgeTimeoutMs(): number {
+  const raw = Number(process.env.TAHP_BUG_BRIDGE_TIMEOUT_MS)
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
+}
+
+const sharedBridgeClient = new AgentBridgeClient({ timeoutMs: bugBridgeTimeoutMs() })
 
 // ─── 类型定义 ────────────────────────────────────────────────────────────────
 
@@ -165,9 +181,13 @@ export interface BugAnalysisJobCtx {
   jobId: string
   type: 'single' | 'batch'
   jql?: string
+  extraContext?: string
+  /** 续跑 / 重跑失败项时指向来源 job */
+  resumedFrom?: string
   taskIds: string[]               // 关联的子任务
   startedAt: string
-  status: 'running' | 'completed' | 'failed'
+  /** interrupted：从落盘恢复出来的、上次进程没跑完的队列 */
+  status: 'running' | 'completed' | 'failed' | 'interrupted'
   total: number
   completed: number
   failed: number
@@ -201,10 +221,26 @@ const seenUserInputRequestIds = new Map<string, Set<string>>()
 
 const MAX_KEEP = 200
 
+function isTerminalTaskStatus(status: BugAnalysisTaskCtx['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
+/**
+ * 回收内存里的历史任务。
+ *
+ * 只裁剪已终态的任务：批量队列会一次性建好上百个 pending 子任务，
+ * 若按插入序无条件裁剪，会把本批还没跑的单子删掉 —— 队列静默丢单，
+ * 且 job 的 completed+failed 永远凑不满 total，批量永远结不了。
+ */
 function pruneOldTasks() {
   if (taskCtx.size <= MAX_KEEP) return
-  const ids = Array.from(taskCtx.keys())
-  for (const id of ids.slice(0, taskCtx.size - MAX_KEEP)) taskCtx.delete(id)
+  let over = taskCtx.size - MAX_KEEP
+  for (const [id, ctx] of taskCtx) {
+    if (over <= 0) break
+    if (!isTerminalTaskStatus(ctx.status)) continue
+    taskCtx.delete(id)
+    over -= 1
+  }
 }
 
 // ─── ID 生成 ─────────────────────────────────────────────────────────────────
@@ -224,20 +260,141 @@ function emit(taskId: string, type: string, payload: Record<string, unknown>) {
   })
 }
 
-function settleJobIfDone(job: BugAnalysisJobCtx, aborted = false, abortReason = '') {
+function persistJob(job: BugAnalysisJobCtx): void {
+  if (job.type !== 'batch') return
+  saveBugJob(tahpPaths.reportsDir, {
+    job_id: job.jobId,
+    type: 'batch',
+    jql: job.jql,
+    extra_context: job.extraContext,
+    resumed_from: job.resumedFrom,
+    started_at: job.startedAt,
+    updated_at: new Date().toISOString(),
+    status: job.status,
+    total: job.total,
+    completed: job.completed,
+    failed: job.failed,
+    tasks: job.taskIds.map((tid) => {
+      const t = taskCtx.get(tid)
+      return {
+        task_id: tid,
+        jira_key: t?.jiraKey || '',
+        jira_url: t?.jiraUrl || '',
+        status: t?.status || 'unknown',
+        error: t?.error,
+      }
+    }),
+  })
+}
+
+function settleJobIfDone(job: BugAnalysisJobCtx): void {
+  if (job.status !== 'running') return
   if (job.completed + job.failed < job.total) return
   job.status = job.completed === 0 ? 'failed' : 'completed'
+  persistJob(job)
   emit(job.jobId, 'task.completed', {
     status: job.status,
     type: 'batch',
     total: job.total,
     completed: job.completed,
     failed: job.failed,
-    aborted,
-    message: aborted
-      ? `批量 Bug 分析已终止：成功 ${job.completed} / 失败 ${job.failed}。原因：${abortReason}`
-      : `批量 Bug 分析完成：成功 ${job.completed} / 失败 ${job.failed}`,
+    message: `批量 Bug 分析完成：成功 ${job.completed} / 失败 ${job.failed}`,
   })
+}
+
+/** 推批量进度；凑满 total 时改为结算。 */
+function emitJobProgress(job: BugAnalysisJobCtx): void {
+  if (job.completed + job.failed >= job.total) {
+    settleJobIfDone(job)
+    return
+  }
+  persistJob(job)
+  emit(job.jobId, 'task.phase', {
+    phase: 'BATCH_RUNNING',
+    progress: Math.round(((job.completed + job.failed) / job.total) * 100),
+    message: `批量进度 ${job.completed + job.failed} / ${job.total}`,
+  })
+}
+
+function accountJobChildSuccess(ctx: BugAnalysisTaskCtx): void {
+  if (!ctx.parentJobId) return
+  const job = jobCtx.get(ctx.parentJobId)
+  if (!job) return
+  job.completed += 1
+  emitJobProgress(job)
+}
+
+function accountJobChildFailure(ctx: BugAnalysisTaskCtx): void {
+  if (!ctx.parentJobId) return
+  const job = jobCtx.get(ctx.parentJobId)
+  if (!job) return
+  job.failed += 1
+  emitJobProgress(job)
+}
+
+function writeBugFailureReport(
+  taskId: string,
+  ctx: BugAnalysisTaskCtx,
+  msg: string,
+  opts: { failureReason?: string; toolCallCount?: number } = {},
+): void {
+  try {
+    const report = {
+      task_id: taskId,
+      jira_key: ctx.jiraKey,
+      jira_url: ctx.jiraUrl,
+      module: ctx.module,
+      status: 'failed',
+      error: msg,
+      failure_reason: opts.failureReason,
+      started_at: ctx.startedAt,
+      completed_at: ctx.completedAt,
+      user_description: ctx.userDescription,
+      extra_context: ctx.extraContext,
+      skills_used: ctx.skillsUsed,
+      skills_improved: ctx.skillsImproved || [],
+      tool_call_count: opts.toolCallCount,
+      llm_response: truncateForReport(ctx.llmResponse || ''),
+    }
+    writeFileSync(reportPath(taskId), JSON.stringify(report, null, 2), 'utf-8')
+  } catch { /* swallow */ }
+}
+
+/**
+ * 把一个仍处于非终态的任务直接判失败。
+ *
+ * 用于批量队列兜底：子任务停在 waiting_user_input 超过队列预算，或
+ * runSingleBugAnalysis 在内部 catch 之外抛错。不这么兜的话，
+ * job 的 completed+failed 永远凑不满 total，整条队列会永久停在「执行中」。
+ */
+function forceFailTask(taskId: string, reason: string): void {
+  const ctx = taskCtx.get(taskId)
+  if (!ctx || isTerminalTaskStatus(ctx.status)) return
+
+  const pending = pendingUserInputByTask.get(taskId)
+  if (pending?.timeoutTimer) clearTimeout(pending.timeoutTimer)
+  pendingUserInputByTask.delete(taskId)
+
+  ctx.status = 'failed'
+  ctx.error = reason
+  ctx.completedAt = new Date().toISOString()
+  taskCtx.set(taskId, ctx)
+
+  logBug(taskId, 'warn', `task force-failed: ${reason}`)
+  emit(taskId, 'task.failed', {
+    error: reason,
+    message: reason,
+    skills_improved: ctx.skillsImproved || [],
+  })
+  writeBugFailureReport(taskId, ctx, reason)
+
+  const control = taskRuntime.get(taskId)
+  if (control) {
+    sharedBridgeClient.destroy(control.sessionId).catch(() => {})
+    taskRuntime.delete(taskId)
+  }
+
+  accountJobChildFailure(ctx)
 }
 
 // ─── 状态查询 (供 route 使用) ────────────────────────────────────────────────
@@ -247,14 +404,72 @@ export function getBugTask(taskId: string): BugAnalysisTaskCtx | undefined {
 }
 
 export function listBugTasks(): BugAnalysisTaskCtx[] {
+  ensureJobsRestored()
   return Array.from(taskCtx.values()).sort((a, b) => b.startedAt.localeCompare(a.startedAt))
 }
 
+/**
+ * 从落盘记录恢复批量队列（进程重启后）。
+ *
+ * 恢复出来的 job 只用于「看进度 + 续跑」，不会自动重启执行：
+ * 上次进程里跑着的 Agent 会话已经随进程消失，非终态子任务没有可信结论，
+ * 需要用户显式点续跑（resumeBugJob 会用新的子任务重跑这些单子）。
+ */
+let jobsRestored = false
+
+function ensureJobsRestored(): void {
+  if (jobsRestored) return
+  jobsRestored = true
+  try {
+    for (const persisted of listPersistedBugJobs(tahpPaths.reportsDir)) {
+      if (jobCtx.has(persisted.job_id)) continue
+      const tasks = persisted.tasks || []
+      jobCtx.set(persisted.job_id, {
+        jobId: persisted.job_id,
+        type: 'batch',
+        jql: persisted.jql,
+        extraContext: persisted.extra_context,
+        resumedFrom: persisted.resumed_from,
+        taskIds: tasks.map(t => t.task_id),
+        startedAt: persisted.started_at,
+        status: persisted.status === 'running' ? 'interrupted' : persisted.status,
+        total: persisted.total,
+        completed: persisted.completed,
+        failed: persisted.failed,
+      })
+      for (const t of tasks) {
+        if (!t.task_id || taskCtx.has(t.task_id)) continue
+        taskCtx.set(t.task_id, {
+          taskId: t.task_id,
+          parentJobId: persisted.job_id,
+          jiraKey: t.jira_key,
+          jiraUrl: t.jira_url,
+          startedAt: persisted.started_at,
+          // 上次跑着的子任务进程已消失：落到 cancelled，避免 UI 显示成「执行中」
+          status: isTerminalTaskStatus(t.status as BugAnalysisTaskCtx['status'])
+            ? (t.status as BugAnalysisTaskCtx['status'])
+            : 'cancelled',
+          error: t.error || (isTerminalTaskStatus(t.status as BugAnalysisTaskCtx['status'])
+            ? undefined
+            : '服务重启中断，未完成'),
+          corrections: [],
+          skillsUsed: [],
+          skillsImproved: [],
+        })
+      }
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, '[bug-analysis] restore persisted jobs failed')
+  }
+}
+
 export function getBugJob(jobId: string): BugAnalysisJobCtx | undefined {
+  ensureJobsRestored()
   return jobCtx.get(jobId)
 }
 
 export function listBugJobs(): BugAnalysisJobCtx[] {
+  ensureJobsRestored()
   return Array.from(jobCtx.values()).sort((a, b) => b.startedAt.localeCompare(a.startedAt))
 }
 
@@ -1844,29 +2059,7 @@ async function runSingleBugAnalysis(
     succeeded = true
 
     // ── 更新父 job 状态 ───────────────────────────────────────────────────
-    if (ctx.parentJobId) {
-      const job = jobCtx.get(ctx.parentJobId)
-      if (job) {
-        job.completed += 1
-        if (job.completed + job.failed >= job.total) {
-          job.status = job.failed === 0 ? 'completed' : (job.completed === 0 ? 'failed' : 'completed')
-          emit(job.jobId, 'task.completed', {
-            status: job.status,
-            type: 'batch',
-            total: job.total,
-            completed: job.completed,
-            failed: job.failed,
-            message: `批量 Bug 分析完成：成功 ${job.completed} / 失败 ${job.failed}`,
-          })
-        } else {
-          emit(job.jobId, 'task.phase', {
-            phase: 'BATCH_RUNNING',
-            progress: Math.round(((job.completed + job.failed) / job.total) * 100),
-            message: `批量进度 ${job.completed + job.failed} / ${job.total}`,
-          })
-        }
-      }
-    }
+    accountJobChildSuccess(ctx)
 
   } catch (err) {
     const control = taskRuntime.get(taskId)
@@ -1909,44 +2102,13 @@ async function runSingleBugAnalysis(
 
     // 写入失败报告（补充继续 / 用户输入续跑失败时保留原 completed 报告）
     if (!keepPriorReport) {
-      try {
-        const report = {
-          task_id: taskId,
-          jira_key: ctx.jiraKey,
-          jira_url: ctx.jiraUrl,
-          module: ctx.module,
-          status: 'failed',
-          error: msg,
-          failure_reason: failureReason,
-          started_at: ctx.startedAt,
-          completed_at: ctx.completedAt,
-          user_description: ctx.userDescription,
-          extra_context: ctx.extraContext,
-          skills_used: ctx.skillsUsed,
-          skills_improved: ctx.skillsImproved || [],
-          tool_call_count: toolCallCount,
-          llm_response: truncateForReport(ctx.llmResponse || ''),
-        }
-        writeFileSync(reportPath(taskId), JSON.stringify(report, null, 2), 'utf-8')
-      } catch { /* swallow */ }
+      writeBugFailureReport(taskId, ctx, msg, { failureReason, toolCallCount })
     }
 
     scheduleLateSkillImproveReconcile(taskId)
 
-    if (!keepPriorReport && ctx.parentJobId) {
-      const job = jobCtx.get(ctx.parentJobId)
-      if (job) {
-        job.failed += 1
-        if (job.completed + job.failed >= job.total) {
-          settleJobIfDone(job)
-        } else {
-          emit(job.jobId, 'task.phase', {
-            phase: 'BATCH_RUNNING',
-            progress: Math.round(((job.completed + job.failed) / job.total) * 100),
-            message: `批量进度 ${job.completed + job.failed} / ${job.total}`,
-          })
-        }
-      }
+    if (!keepPriorReport) {
+      accountJobChildFailure(ctx)
     }
   } finally {
     if (!pausedForUserInput) {
@@ -2197,25 +2359,63 @@ export interface StartBatchResult {
   error?: string
 }
 
-const MAX_BATCH_SIZE = 20
+/**
+ * 队列级等待预算：子任务停在 waiting_user_input 时最多等多久。
+ *
+ * 人工输入本身有 `timeout_sec`（默认 300s）自动兜底提交空值，之后 Agent 会续跑，
+ * 所以这里的预算要覆盖「暂停 → 自动兜底 → 续跑到出结论」的整段。超预算则判该单失败，
+ * 队列继续往下走 —— 不允许一次交互挂死整条队列。用 TAHP_BUG_BATCH_TASK_WAIT_MS 覆盖。
+ */
+const DEFAULT_BATCH_TASK_WAIT_MS = 60 * 60_000
 
-export async function startBatchBugAnalysis(jql: string, extraContext?: string, jiraCfg?: JiraConfig): Promise<StartBatchResult> {
-  if (!jql?.trim()) return { ok: false, error: '空 JQL' }
+function batchTaskWaitMs(): number {
+  const raw = Number(process.env.TAHP_BUG_BATCH_TASK_WAIT_MS)
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_BATCH_TASK_WAIT_MS
+}
 
+function delayMs(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/** 等一个已暂停的子任务走到终态；超出预算则判失败。 */
+async function waitForBatchTaskSettled(taskId: string, budgetMs: number): Promise<void> {
+  const deadline = Date.now() + budgetMs
+  for (;;) {
+    const ctx = taskCtx.get(taskId)
+    if (!ctx || isTerminalTaskStatus(ctx.status)) return
+    if (Date.now() >= deadline) {
+      forceFailTask(
+        taskId,
+        `批量队列等待超时（${Math.round(budgetMs / 60_000)} 分钟未完成，可能卡在人工输入），已判失败并继续后续任务`,
+      )
+      return
+    }
+    await delayMs(1000)
+  }
+}
+
+interface BatchCandidate {
+  key: string
+  url: string
+}
+
+/**
+ * 建队列并串行执行。
+ *
+ * 串行是刻意的：单条子任务就是一次完整 Agent 会话，并发跑会互相抢 Agent Pool 与工具链。
+ * 失败**不终止**队列：该单标记失败、写失败报告，队列继续下一单，直到全部走完。
+ */
+function startBatchQueue(
+  candidates: BatchCandidate[],
+  opts: { jql?: string; extraContext?: string; resumedFrom?: string },
+): StartBatchResult {
   const jobId = genTaskId('task-bugjob')
-  const search = await searchJQL(jql, jiraCfg, MAX_BATCH_SIZE)
-  if (!search.ok || !search.data) {
-    return { ok: false, error: search.error || 'JQL 查询失败' }
-  }
-  const candidates = search.data.issues
-  if (!candidates.length) {
-    return { ok: false, error: 'JQL 未匹配到任何 Issue' }
-  }
-
   const job: BugAnalysisJobCtx = {
     jobId,
     type: 'batch',
-    jql,
+    jql: opts.jql,
+    extraContext: opts.extraContext,
+    resumedFrom: opts.resumedFrom,
     taskIds: [],
     startedAt: new Date().toISOString(),
     status: 'running',
@@ -2226,59 +2426,49 @@ export async function startBatchBugAnalysis(jql: string, extraContext?: string, 
   jobCtx.set(jobId, job)
 
   const tasks: Array<{ task_id: string; jira_key: string }> = []
-  for (const issue of candidates) {
+  for (const candidate of candidates) {
     const tid = genTaskId()
     const ctx: BugAnalysisTaskCtx = {
       taskId: tid,
       parentJobId: jobId,
-      jiraKey: issue.key,
-      jiraUrl: issue.url,
+      jiraKey: candidate.key,
+      jiraUrl: candidate.url,
       startedAt: new Date().toISOString(),
       status: 'pending',
       corrections: [],
       skillsUsed: [],
       skillsImproved: [],
-      extraContext,
+      extraContext: opts.extraContext,
     }
     taskCtx.set(tid, ctx)
     job.taskIds.push(tid)
-    tasks.push({ task_id: tid, jira_key: issue.key })
+    tasks.push({ task_id: tid, jira_key: candidate.key })
   }
+  persistJob(job)
 
   emit(jobId, 'task.started', {
     type: 'batch',
-    jql,
+    jql: opts.jql,
     total: candidates.length,
-    truncated: search.data.truncated,
+    resumed_from: opts.resumedFrom,
     tasks,
-    message: `批量 Bug 分析启动：共 ${candidates.length} 单${search.data.truncated ? '（已截断至上限）' : ''}`,
+    message: `批量 Bug 分析启动：共 ${candidates.length} 单（串行，失败自动跳过）`,
   })
-  logBug(jobId, 'info', `batch.started jql=${jql.slice(0, 200)} total=${candidates.length}`)
+  logBug(jobId, 'info', `batch.started total=${candidates.length} jql=${(opts.jql || '').slice(0, 200)}`)
 
-  // 串行执行（避免 Agent 并发过高，且方便用户在 UI 上跟随观察）。
-  // 任一子任务 Agent 失败 → **终止后续任务**（按用户需求，不再继续跑剩下的）。
-  // 剩余未跑的任务会被标记为 cancelled，并在事件流里显示原因。
   setImmediate(async () => {
-    let aborted = false
-    let abortReason = ''
+    const budgetMs = batchTaskWaitMs()
     for (const tid of job.taskIds) {
       const ctx = taskCtx.get(tid)
-      if (!ctx) continue
-      if (ctx.status === 'cancelled') continue
-
-      if (aborted) {
-        ctx.status = 'failed'
-        ctx.error = `批量已终止：${abortReason}`
-        ctx.completedAt = new Date().toISOString()
-        emit(tid, 'task.failed', {
-          parent_job_id: jobId,
-          error: ctx.error,
-          message: `子任务取消（前序任务失败已终止批量）`,
-        })
-        logBug(tid, 'warn', `child task cancelled (batch aborted): ${abortReason}`)
+      if (!ctx) {
+        // ctx 意外缺失（被清理）：仍要计一次失败，否则 job 凑不满 total 永不结算
         job.failed += 1
+        logBug(jobId, 'warn', `child ctx missing, counted as failed: ${tid}`)
+        emitJobProgress(job)
         continue
       }
+      // 用户在排队期间单独取消 / 已跑过：cancelBugTask 已计过数，跳过即可
+      if (isTerminalTaskStatus(ctx.status)) continue
 
       emit(tid, 'task.started', {
         type: 'single',
@@ -2291,38 +2481,78 @@ export async function startBatchBugAnalysis(jql: string, extraContext?: string, 
 
       try {
         await runSingleBugAnalysis(ctx)
-        if (ctx.status === 'failed') {
-          aborted = true
-          abortReason = ctx.error || '子任务执行失败'
-          logger.warn({ jobId, tid, reason: abortReason }, '[bug-analysis] batch aborted due to child failure')
-          emit(jobId, 'task.message', {
-            level: 'warn',
-            text: `子任务 ${ctx.jiraKey} 失败，终止批量后续任务：${abortReason}`,
-          })
-          logBug(jobId, 'warn', `batch aborted by child ${tid}: ${abortReason}`)
-        }
-        const latest = taskCtx.get(tid)
-        if (latest?.status === 'cancelled') {
-          logBug(jobId, 'warn', `child task cancelled by user: ${tid}`)
-        }
       } catch (err) {
-        aborted = true
-        abortReason = (err as Error).message
-        logger.warn({ err: abortReason, tid }, '[bug-analysis] batch child threw')
+        const reason = (err as Error).message
+        logger.warn({ err: reason, tid }, '[bug-analysis] batch child threw')
+        forceFailTask(tid, `子任务异常终止: ${reason}`)
+      }
+
+      // 暂停在人工输入时 runSingleBugAnalysis 会提前 return（此时既未计成功也未计失败），
+      // 必须等它真正落地，否则下一单会与它并发，且 job 永远结不了。
+      const latest = taskCtx.get(tid)
+      if (latest && !isTerminalTaskStatus(latest.status)) {
+        await waitForBatchTaskSettled(tid, budgetMs)
       }
     }
 
-    // 最终态修正（runSingleBugAnalysis 内部会维护正常完成路径的 job.status，
-    // 但若中途 cancel 了剩余任务，状态可能还未到 terminal state）
-    if (job.status === 'running') {
-      const allDone = job.completed + job.failed >= job.total
-      if (allDone) {
-        settleJobIfDone(job, aborted, abortReason)
-      }
-    }
+    settleJobIfDone(job)
   })
 
   return { ok: true, jobId, total: candidates.length, tasks }
+}
+
+export async function startBatchBugAnalysis(jql: string, extraContext?: string, jiraCfg?: JiraConfig): Promise<StartBatchResult> {
+  if (!jql?.trim()) return { ok: false, error: '空 JQL' }
+
+  const search = await searchJQLAll(jql, jiraCfg)
+  if (!search.ok || !search.data) {
+    return { ok: false, error: search.error || 'JQL 查询失败' }
+  }
+  const candidates = search.data.issues.map(i => ({ key: i.key, url: i.url }))
+  if (!candidates.length) {
+    return { ok: false, error: 'JQL 未匹配到任何 Issue' }
+  }
+
+  const result = startBatchQueue(candidates, { jql, extraContext })
+  if (result.ok && search.data.truncated) {
+    logBug(
+      result.jobId!,
+      'warn',
+      `jql matched ${search.data.total} issues, queued ${candidates.length} (capped by TAHP_JQL_MAX_ISSUES)`,
+    )
+  }
+  return result
+}
+
+/** 续跑：把来源 job 中未走到终态的单子重新入队为一个新 job。 */
+export function resumeBugJob(jobId: string): StartBatchResult {
+  const source = readPersistedBugJob(tahpPaths.reportsDir, jobId)
+  if (!source) return { ok: false, error: `找不到批量任务记录: ${jobId}` }
+  return requeueJobTasks(source.job_id, unfinishedJobTasks(source), source, '没有未完成的子任务')
+}
+
+/** 重跑失败项：把来源 job 中 failed 的单子重新入队为一个新 job。 */
+export function retryFailedBugJob(jobId: string): StartBatchResult {
+  const source = readPersistedBugJob(tahpPaths.reportsDir, jobId)
+  if (!source) return { ok: false, error: `找不到批量任务记录: ${jobId}` }
+  return requeueJobTasks(source.job_id, failedJobTasks(source), source, '没有失败的子任务')
+}
+
+function requeueJobTasks(
+  sourceJobId: string,
+  picked: PersistedBugJobTask[],
+  source: { jql?: string; extra_context?: string },
+  emptyError: string,
+): StartBatchResult {
+  const candidates = picked
+    .filter(t => t.jira_key)
+    .map(t => ({ key: t.jira_key, url: t.jira_url }))
+  if (!candidates.length) return { ok: false, error: emptyError }
+  return startBatchQueue(candidates, {
+    jql: source.jql,
+    extraContext: source.extra_context,
+    resumedFrom: sourceJobId,
+  })
 }
 
 // ─── Helper: 从内存或 JIRA fetch 出一份完整的 issue 预览（供前端单独预览） ───
@@ -2356,30 +2586,14 @@ export async function cancelBugTask(taskId: string): Promise<{ ok: boolean; acti
     ctx.completedAt = new Date().toISOString()
     emit(taskId, 'task.cancelled', { error: ctx.error, message: ctx.error })
     logBug(taskId, 'warn', 'task cancelled while pending')
-    if (ctx.parentJobId) {
-      const job = jobCtx.get(ctx.parentJobId)
-      if (job) {
-        job.failed += 1
-        settleJobIfDone(job)
-      }
-    }
+    accountJobChildFailure(ctx)
     return { ok: true, action: 'cancelled_pending' }
   }
 
   if (ctx.status === 'waiting_user_input') {
-    const pending = pendingUserInputByTask.get(taskId)
-    if (pending?.timeoutTimer) clearTimeout(pending.timeoutTimer)
-    pendingUserInputByTask.delete(taskId)
-    ctx.status = 'failed'
-    ctx.error = '用户取消配置等待'
-    ctx.completedAt = new Date().toISOString()
-    emit(taskId, 'task.failed', { error: ctx.error, message: ctx.error })
-    logBug(taskId, 'warn', 'task cancelled while waiting_user_input')
-    const control = taskRuntime.get(taskId)
-    if (control) {
-      sharedBridgeClient.destroy(control.sessionId).catch(() => {})
-      taskRuntime.delete(taskId)
-    }
+    // forceFailTask 会一并写失败报告、销毁会话并更新父 job 计数
+    // （批量场景下漏掉计数会让整条队列永远结不了）
+    forceFailTask(taskId, '用户取消配置等待')
     return { ok: true, action: 'interrupted_running' }
   }
 

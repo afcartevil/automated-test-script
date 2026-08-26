@@ -304,11 +304,21 @@ export async function fetchIssue(key: string, cfg: JiraConfig = getJiraConfig())
 
 const MAX_JQL_ISSUES = 50
 
-/** JQL 批量查询. */
+/** 全量枚举的安全顶：防止误写的 JQL（如漏了 project 条件）一次拉起上万单。 */
+const DEFAULT_JQL_TOTAL_CAP = 500
+
+/** 全量枚举上限，可用 TAHP_JQL_MAX_ISSUES 覆盖。 */
+export function jqlTotalCap(): number {
+  const raw = Number(process.env.TAHP_JQL_MAX_ISSUES)
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_JQL_TOTAL_CAP
+}
+
+/** JQL 批量查询（单页）. */
 export async function searchJQL(
   jql: string,
   cfg: JiraConfig = getJiraConfig(),
   maxResults = MAX_JQL_ISSUES,
+  startAt = 0,
 ): Promise<JiraResult<JiraSearchResult>> {
   if (!jql?.trim()) return { ok: false, error: '空 JQL' }
   const url = `${cfg.baseUrl}/rest/api/2/search`
@@ -319,6 +329,7 @@ export async function searchJQL(
       headers: buildHeaders(cfg),
       body: JSON.stringify({
         jql,
+        startAt: Math.max(0, startAt),
         maxResults: limited,
         fields: ['summary', 'status', 'priority', 'assignee', 'updated'],
       }),
@@ -349,6 +360,48 @@ export async function searchJQL(
   } catch (err) {
     logger.warn({ err: (err as Error).message, jql: jql.slice(0, 120) }, '[jira] searchJQL failed')
     return { ok: false, error: (err as Error).message }
+  }
+}
+
+/**
+ * JQL 全量枚举：按 startAt 翻页取到 total 或触及 cap。
+ *
+ * 批量分析与「预览 JQL」都走这里，保证用户看到的清单就是实际会入队的清单。
+ * `truncated` 表示 Jira 侧命中数超过了本次返回条数（即被 cap 截断）。
+ */
+export async function searchJQLAll(
+  jql: string,
+  cfg: JiraConfig = getJiraConfig(),
+  cap = jqlTotalCap(),
+): Promise<JiraResult<JiraSearchResult>> {
+  if (!jql?.trim()) return { ok: false, error: '空 JQL' }
+  const limit = Math.max(1, cap)
+  const issues: JiraIssueSummary[] = []
+  const seen = new Set<string>()
+  let total = 0
+
+  for (let startAt = 0; issues.length < limit; startAt += MAX_JQL_ISSUES) {
+    const page = await searchJQL(jql, cfg, MAX_JQL_ISSUES, startAt)
+    if (!page.ok || !page.data) {
+      // 首页就失败 → 整体失败；后续页失败 → 用已取到的部分继续，不让整批白跑
+      if (startAt === 0) return page
+      logger.warn({ jql: jql.slice(0, 120), startAt }, '[jira] searchJQLAll partial page failed')
+      break
+    }
+    total = page.data.total
+    if (page.data.issues.length === 0) break
+    for (const issue of page.data.issues) {
+      if (seen.has(issue.key)) continue
+      seen.add(issue.key)
+      issues.push(issue)
+      if (issues.length >= limit) break
+    }
+    if (startAt + page.data.issues.length >= total) break
+  }
+
+  return {
+    ok: true,
+    data: { total, issues, jql, truncated: total > issues.length },
   }
 }
 
