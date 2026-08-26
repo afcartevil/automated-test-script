@@ -16,6 +16,7 @@ import {
   parseUnixNetstatListeningPids,
   portScanTimeoutMs,
 } from '../scripts/lib/port-scan.mjs'
+import { isProcessRunning } from '../scripts/lib/tray-actions.mjs'
 import { resolve, dirname, join, delimiter } from 'path'
 import { fileURLToPath } from 'url'
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, chmodSync, statSync, existsSync, realpathSync } from 'fs'
@@ -138,8 +139,7 @@ function getPid() {
 }
 
 function isRunning(pid) {
-  try { process.kill(pid, 0); return true }
-  catch (err) { return err?.code === 'EPERM' }
+  return isProcessRunning(pid)
 }
 
 function writePid(pid) { writeFileSync(PID_FILE, String(pid)) }
@@ -302,6 +302,11 @@ function stopDaemon() {
     removePid()
     console.log(`  ✓ ${CLI_NAME} 已停止 (PID: ${pid})`)
   } catch (err) {
+    if (!isRunning(pid)) {
+      removePid()
+      console.log(`  ✓ ${CLI_NAME} 未在运行 (已清理过期 PID)`)
+      return
+    }
     console.log(`  ✗ 停止失败: ${err.message}`)
     process.exit(1)
   }

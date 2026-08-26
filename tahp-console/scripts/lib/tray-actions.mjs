@@ -64,13 +64,35 @@ export function readPidFile(path) {
   }
 }
 
-export function isProcessRunning(pid, killProbe = process.kill) {
+function isWindowsPidListed(pid) {
+  try {
+    const result = spawnSync('tasklist', ['/FI', `PID eq ${pid}`, '/NH'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 4000,
+    })
+    const out = `${result.stdout || ''}${result.stderr || ''}`
+    return new RegExp(`(^|[^0-9])${pid}([^0-9]|$)`).test(out)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Unix: EPERM 表示进程存在但无权发信号，视为仍在运行。
+ * Windows: 重启后的幽灵 PID 也常返回 EPERM，必须再用 tasklist 确认。
+ */
+export function isProcessRunning(pid, killProbe = process.kill, opts = {}) {
   if (!pid || !Number.isFinite(pid)) return false
   try {
     killProbe(pid, 0)
     return true
   } catch (err) {
-    return err?.code === 'EPERM'
+    if (err?.code !== 'EPERM') return false
+    const platform = opts.platform ?? process.platform
+    if (platform !== 'win32') return true
+    const pidListed = opts.pidListed ?? isWindowsPidListed
+    return pidListed(pid)
   }
 }
 

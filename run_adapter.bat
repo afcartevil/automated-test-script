@@ -48,18 +48,7 @@ call npm run setup:gki-patch
 if errorlevel 1 goto warn_gki
 
 :after_gki
-echo.
-echo ========================================
-echo   EasyAdapter Console 后台模式
 node scripts/print-hermes-version.mjs
-echo ========================================
-echo   启动顺序: 构建检查 -^> 停止旧进程 -^> 后台守护 8650 -^> 系统托盘 -^> 打开浏览器
-echo   服务在后台运行，关闭本窗口不会影响使用
-echo   日常使用: 任务栏托盘图标 EA 右键菜单
-echo     打开控制台 / 重启 / 更新并重启 / 停止 / 查看日志
-echo   配置 API Key: 系统 - 模型管理
-echo ========================================
-echo.
 
 node scripts/build-if-needed.mjs
 if errorlevel 1 goto err_build

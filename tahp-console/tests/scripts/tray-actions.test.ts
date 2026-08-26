@@ -39,6 +39,17 @@ describe('tray-actions', () => {
     expect(calls).toEqual([[42, 0], [99, 0]])
   })
 
+  it('isProcessRunning does not treat Windows EPERM as alive without tasklist', () => {
+    const kill = () => {
+      const err = new Error('kill EPERM')
+      err.code = 'EPERM'
+      throw err
+    }
+    expect(isProcessRunning(3476, kill, { platform: 'win32', pidListed: () => false })).toBe(false)
+    expect(isProcessRunning(3476, kill, { platform: 'win32', pidListed: () => true })).toBe(true)
+    expect(isProcessRunning(3476, kill, { platform: 'linux' })).toBe(true)
+  })
+
   it('buildTooltip reflects running state', () => {
     expect(buildTooltip({ running: true, pid: 1234 }, 8650)).toContain('running')
     expect(buildTooltip({ running: true, pid: 1234 }, 8650)).toContain('1234')
