@@ -184,7 +184,11 @@ export const centralClient = {
       incomplete_required: string[]
       updated_at?: string
       updated_by?: string
+      line_layout_revision?: number
+      layout_stale?: boolean
     }>
+    line_id?: string
+    layout_stale?: boolean
   }> {
     const qs = new URLSearchParams()
     qs.set('project_code', opts.project_code)
@@ -192,6 +196,23 @@ export const centralClient = {
     if (opts.workspace_id) qs.set('workspace_id', opts.workspace_id)
     if (opts.domain_id) qs.set('domain_id', opts.domain_id)
     return request(`/api/tahp/sync/adapt-prereqs/resolve?${qs}`, { headers: headers() })
+  },
+
+  async fetchPublishedLineLayouts(): Promise<{ lines: Array<{
+    line_id: string
+    from_os: string
+    to_os: string
+    domains: Array<{
+      workspace_id: string
+      domain_id: string
+      revision: number
+      fields: Array<Record<string, unknown>>
+      related_skills: string[]
+      interaction_mode?: boolean
+      updated_at?: string
+    }>
+  }> }> {
+    return request('/api/tahp/sync/adapt-layouts/lines/published', { headers: headers() })
   },
 
   /** 质量看板：上报连通性 */

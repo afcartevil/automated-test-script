@@ -35,6 +35,9 @@ import { AdaptLayoutCloudError } from '../../services/tahp/adapt-layout/cloud-ba
 import { DEFAULT_ADAPT_WORKSPACE, isAdaptWorkspaceId } from '../../services/tahp/adapt-layout/types'
 import { isCentralConfigured } from '../../services/tahp/runtime-mode'
 import { centralClient } from '../../services/tahp/sync/central-client'
+import {
+  pullOrReadLineLayouts,
+} from '../../services/tahp/adapt-layout/line-cache'
 
 export const tahpAdaptRoutes = new Router()
 
@@ -131,6 +134,26 @@ tahpAdaptRoutes.get('/api/tahp/adapt/workspaces/:workspaceId/layouts', async (ct
 
 tahpAdaptRoutes.get('/api/tahp/adapt/layouts', async (ctx) => {
   await handleListLayouts(ctx, DEFAULT_ADAPT_WORKSPACE)
+})
+
+tahpAdaptRoutes.get('/api/tahp/adapt/layouts/lines', async (ctx) => {
+  const fetcher = isCentralConfigured()
+    ? async () => {
+        const data = await centralClient.fetchPublishedLineLayouts()
+        return data
+      }
+    : undefined
+  const result = await pullOrReadLineLayouts(fetcher)
+  ctx.body = {
+    success: true,
+    data: {
+      lines: result.cache?.lines ?? [],
+      pulled: result.pulled,
+      from_cache: !result.pulled,
+      updated_at: result.cache?.updated_at,
+      error: result.error,
+    },
+  }
 })
 
 async function handleGetDomainLayout(ctx: Context, workspaceId: string, domainId: string) {

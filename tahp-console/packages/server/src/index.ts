@@ -31,6 +31,7 @@ import { startSyncScheduler, startBaselineNotifyClient, startTaskNotifyClient, b
 import { startPlanExecutor } from './services/tahp/test-plan-executor'
 import { bootstrapAdaptPipeline } from './routes/tahp/adapt-pipeline'
 import { pullAllWorkspaceLayouts } from './services/tahp/adapt-layout/service'
+import { pullOrReadLineLayouts } from './services/tahp/adapt-layout/line-cache'
 import { bootstrapGkiPatchServer } from './services/tahp/gki-patch'
 
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
@@ -297,6 +298,23 @@ export async function bootstrap() {
     await pullAllWorkspaceLayouts()
   } catch (err) {
     logger.warn({ err }, '[bootstrap] adapt-layout published pull failed')
+  }
+
+  try {
+    const { isCentralConfigured } = await import('./services/tahp/runtime-mode')
+    const { centralClient } = await import('./services/tahp/sync/central-client')
+    const result = await pullOrReadLineLayouts(
+      isCentralConfigured()
+        ? () => centralClient.fetchPublishedLineLayouts()
+        : undefined,
+    )
+    if (result.pulled) {
+      logger.info({ lines: result.cache?.lines.length || 0 }, '[bootstrap] adapt-layout line cache pulled')
+    } else if (result.error) {
+      logger.warn({ error: result.error, cached: !!result.cache }, '[bootstrap] adapt-layout line cache kept previous')
+    }
+  } catch (err) {
+    logger.warn({ err }, '[bootstrap] adapt-layout line cache pull failed')
   }
 
   try {

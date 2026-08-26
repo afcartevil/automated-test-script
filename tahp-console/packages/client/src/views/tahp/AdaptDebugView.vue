@@ -19,6 +19,7 @@ import { waitForTahpSocketReady } from '@/api/tahp/socket'
 import { fetchSkills, type SkillInfo } from '@/api/hermes/skills'
 import {
   fetchAdaptLayouts,
+  fetchAdaptLineLayouts,
   saveAdaptDomainConfig,
   submitAdaptDomainLayout,
   fetchAdaptDomainLayoutReview,
@@ -106,6 +107,7 @@ function parseAdaptUserInputFields(raw: unknown): BugUserInputField[] {
 // 工作区与子界面（AI适配调试 / 特性适配 / 运营商配置）
 // ─────────────────────────────────────────────────────────────────────────────
 const WORKSPACE_STORAGE_KEY = 'tahp-adapt-workspace'
+const LINE_STORAGE_KEY = 'tahp-adapt-line-id'
 
 function readStoredWorkspace(): AdaptWorkspaceId {
   const raw = localStorage.getItem(WORKSPACE_STORAGE_KEY)
@@ -509,6 +511,46 @@ async function loadAdaptLayouts(options: {
   return false
 }
 
+async function applyLineLayoutCache(workspaceId: AdaptWorkspaceId) {
+  try {
+    const res = await fetchAdaptLineLayouts()
+    const lines = res.lines || []
+    if (!lines.length) {
+      lineCacheHint.value = res.error
+        ? `中心不可用，使用内置布局（${res.error}）`
+        : ''
+      return
+    }
+    const preferred = localStorage.getItem(LINE_STORAGE_KEY) || ''
+    const line = lines.find(l => l.line_id === preferred) || lines[lines.length - 1]
+    if (!line) return
+    localStorage.setItem(LINE_STORAGE_KEY, line.line_id)
+    const overlay = layoutRecordsByWorkspace[workspaceId] || {}
+    for (const domain of line.domains) {
+      if (domain.workspace_id !== workspaceId) continue
+      if (overlay[domain.domain_id]?.fields?.length) continue
+      const fields = (domain.fields || []).map(f => ({
+        name: f.key,
+        label: f.label,
+        type: mapPrereqFieldType(f.type),
+        required: !!f.required,
+        placeholder: f.placeholder,
+        options: f.options,
+      }))
+      if (!fields.length) continue
+      applyDomainConfigFromRecord(workspaceId, domain.domain_id, {
+        fields,
+        related_skills: domain.related_skills,
+      })
+    }
+    lineCacheHint.value = res.pulled
+      ? `已缓存跃迁基线 ${line.line_id}`
+      : `离线使用缓存基线 ${line.line_id}`
+  } catch (err) {
+    lineCacheHint.value = `布局缓存不可用，使用内置默认: ${formatLayoutLoadError(err)}`
+  }
+}
+
 async function switchAdaptWorkspace(ws: AdaptWorkspaceId) {
   if (ws === activeWorkspaceId.value) return
   if (layoutEditMode.value) cancelLayoutEdit()
@@ -516,6 +558,7 @@ async function switchAdaptWorkspace(ws: AdaptWorkspaceId) {
   localStorage.setItem(WORKSPACE_STORAGE_KEY, ws)
   if (!layoutsReadyByWorkspace[ws]) {
     await loadAdaptLayouts({ workspaceId: ws, showError: false })
+    await applyLineLayoutCache(ws)
     if (getAdaptWorkspace(ws).allowDynamicDomains) {
       await loadDynamicDomains(ws)
     }
@@ -855,6 +898,8 @@ const prereqProjectCode = ref<string | null>(null)
 const prereqLoading = ref(false)
 const prereqFillMode = ref<'empty' | 'overwrite'>('empty')
 const prereqCenterReady = ref(true)
+const layoutStaleHint = ref('')
+const lineCacheHint = ref('')
 let refillHighlightTimer: ReturnType<typeof setTimeout> | null = null
 
 async function loadHistory() {
@@ -1101,8 +1146,9 @@ function applyRefill(detail: TaskReportDetail) {
 }
 
 function mapPrereqFieldType(t: string): FieldDef['type'] {
-  if (t === 'textarea') return 'textarea'
+  if (t === 'textarea' || t === 'table') return 'textarea'
   if (t === 'select' || t === 'multiselect') return 'select'
+  if (t === 'checklist') return 'checklist'
   return 'text'
 }
 
@@ -1112,24 +1158,27 @@ function ensurePrereqCustomFields(
   schema: Array<{ key: string; label: string; type: string; required?: boolean; options?: Array<{ label: string; value: string }>; placeholder?: string; source?: string }>,
 ) {
   const domain = workspaceDomains[ws]?.find(d => d.id === domainId)
-  if (!domain) return
-  const existing = new Set(domain.fields.map(f => f.name))
-  let added = false
+  if (!domain || !schema.length) return
+  const byName = new Map(domain.fields.map(f => [f.name, f]))
+  const next: FieldDef[] = []
+  const seen = new Set<string>()
   for (const f of schema) {
-    if (!f.key || existing.has(f.key)) continue
-    if (f.source !== 'custom') continue
-    domain.fields.push({
+    if (!f.key || seen.has(f.key)) continue
+    seen.add(f.key)
+    const local = byName.get(f.key)
+    next.push({
       name: f.key,
-      label: `${f.label} [自定义]`,
-      type: mapPrereqFieldType(f.type),
+      label: f.source === 'custom' ? `${f.label} [自定义]` : (f.label || local?.label || f.key),
+      type: mapPrereqFieldType(f.type || local?.type || 'text'),
       required: !!f.required,
-      options: f.options,
-      placeholder: f.placeholder,
+      options: f.options || local?.options,
+      placeholder: f.placeholder || local?.placeholder,
+      defaultValue: local?.defaultValue,
     })
-    existing.add(f.key)
-    added = true
   }
-  if (added) initDomainFormData(domain)
+  if (!next.length) return
+  domain.fields = next
+  syncFormDataForDomain(domain)
 }
 
 async function loadPrereqProjects() {
@@ -1170,6 +1219,10 @@ async function loadPrereqsFromCenter() {
       project_code: code,
       workspace_id: 'adapt-debug',
     })
+    if (result.line_id) localStorage.setItem(LINE_STORAGE_KEY, result.line_id)
+    layoutStaleHint.value = result.layout_stale
+      ? '跃迁基线已更新，当前项目仍使用已发布快照。重新发布后才会吸收新字段。'
+      : ''
     // 切到 AI 适配调试工作区再填表
     if (activeWorkspaceId.value !== 'adapt-debug') {
       await switchAdaptWorkspace('adapt-debug')
@@ -1757,8 +1810,10 @@ onMounted(async () => {
   const ws = activeWorkspaceId.value
   layoutsReadyByWorkspace[ws] = false
   await loadAdaptLayouts({ workspaceId: ws, showError: true })
+  await applyLineLayoutCache(ws)
   await loadDynamicDomains(ws)
   await loadAdaptLayouts({ workspaceId: ws, showError: false })
+  await applyLineLayoutCache(ws)
   layoutsReadyByWorkspace[ws] = true
   await loadHistory()
 })
@@ -2071,6 +2126,8 @@ function openSkill(skillName: string) {
             从中心载入前置
           </NButton>
         </div>
+        <span v-if="lineCacheHint" class="ea-pill-info">{{ lineCacheHint }}</span>
+        <span v-if="layoutStaleHint" class="ea-pill-warn">{{ layoutStaleHint }}</span>
         <span v-if="layoutCloudEnabled" class="ea-pill-info">布局同步已启用</span>
         <button
           v-if="activeWorkspace.allowDynamicDomains"

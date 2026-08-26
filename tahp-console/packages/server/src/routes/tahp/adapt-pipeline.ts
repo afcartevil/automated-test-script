@@ -342,6 +342,9 @@ tahpAdaptPipelineRoutes.get('/prereqs/:projectCode', async (ctx) => {
         campaign_id: data.campaign_id,
         from_os: data.from_os,
         to_os: data.to_os,
+        line_id: data.line_id,
+        layout_stale: data.layout_stale,
+        publication_id: data.publication_id,
         domains: data.domains,
       },
     }

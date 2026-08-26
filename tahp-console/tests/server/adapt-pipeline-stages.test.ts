@@ -354,6 +354,52 @@ describe('adapt-pipeline stages', () => {
     expect(startAdaptMock).not.toHaveBeenCalled()
   })
 
+  it('uses snapshot schema for required fields even when overlay is empty', async () => {
+    resolveMock.mockResolvedValue({
+      project_code: 'KM9',
+      campaign_id: 'camp-1',
+      from_os: '16',
+      to_os: '17',
+      line_id: 'a16-to-a17',
+      domains: [{
+        workspace_id: 'adapt-debug',
+        domain_id: 'tp',
+        revision: 1,
+        schema: [
+          { key: 'debug_project', label: '调试项目名', type: 'text', required: true },
+          { key: 'x_shared_note', label: '共享备注', type: 'text', required: true },
+        ],
+        form_data: { debug_project: 'KM9' },
+        stale_fields: [],
+        incomplete_required: [],
+      }],
+    })
+    getLayoutMock.mockResolvedValue(null)
+
+    const run = createRun({
+      ...baseInput(),
+      domains: [{
+        workspace_id: 'adapt-debug',
+        domain_id: 'tp',
+        domain_label: 'TP触摸屏',
+        module: 'display',
+        related_skills: [],
+        form_data: { debug_project: 'KM9' },
+        incomplete_required: [],
+        enabled: true,
+        status: 'pending',
+      }],
+    })
+    await startRun(run.run_id)
+
+    const updated = getRun(run.run_id)!
+    expect(updated.domains[0].layout_fields?.map(f => f.name)).toEqual(['debug_project', 'x_shared_note'])
+    expect(updated.status).toBe('waiting_human')
+    expect(updated.stages.prereq?.human?.reason).toBe('incomplete_required')
+    expect(updated.domains[0].incomplete_required).toEqual(['x_shared_note'])
+    expect(startAdaptMock).not.toHaveBeenCalled()
+  })
+
   it('adapt runs domains serially and auto-starts domain 2 after domain 1 completes', async () => {
     resolveMock.mockResolvedValue({
       project_code: 'KM9',

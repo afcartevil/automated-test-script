@@ -92,6 +92,8 @@ export interface PipelineDomain {
   adapt_task_id?: string
   changed_files?: string[]
   error?: string
+  /** 发布快照钉死的字段（优先于本机 overlay） */
+  layout_fields?: Array<{ name: string; label: string; required?: boolean }>
 }
 
 export interface BuildContext {

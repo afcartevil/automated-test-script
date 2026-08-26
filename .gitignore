@@ -16,6 +16,8 @@ docs/
 !tahp-console/docs/DESIGN-evals.md
 reports/
 .adapt-config/domain-layouts/Untitled
+# 跃迁基线本机缓存（从中心拉取，勿提交）
+.adapt-config/line-layouts/
 knowledge-base/.kb-data/
 # 业务 Skill 由 Console 同步中心分发，不入库（本机仍落盘此目录；未跟踪的本地稿 pull 后保留）
 skills/.claude/skills/**

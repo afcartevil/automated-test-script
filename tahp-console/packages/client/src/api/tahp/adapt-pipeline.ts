@@ -248,6 +248,9 @@ export interface PrereqResolveData {
   campaign_id: string
   from_os: string
   to_os: string
+  line_id?: string
+  layout_stale?: boolean
+  publication_id?: string
   domains: Array<{
     workspace_id: string
     domain_id: string
@@ -256,6 +259,7 @@ export interface PrereqResolveData {
     form_data: Record<string, unknown>
     stale_fields: string[]
     incomplete_required: string[]
+    layout_stale?: boolean
   }>
 }
 

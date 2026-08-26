@@ -144,6 +144,27 @@ export function pullAdaptLayoutsFromCloud(workspaceId: AdaptWorkspaceId = DEFAUL
   return tahpPost(`${workspaceBase(workspaceId)}/layouts/sync/pull`, {})
 }
 
+export function fetchAdaptLineLayouts(): Promise<{
+  lines: Array<{
+    line_id: string
+    from_os: string
+    to_os: string
+    domains: Array<{
+      workspace_id: string
+      domain_id: string
+      revision: number
+      fields: Array<{ key: string; label: string; type: string; required?: boolean; placeholder?: string; options?: Array<{ label: string; value: string }> }>
+      related_skills: string[]
+    }>
+  }>
+  pulled: boolean
+  from_cache: boolean
+  updated_at?: string
+  error?: string
+}> {
+  return tahpGet('/api/tahp/adapt/layouts/lines')
+}
+
 /** @deprecated 整包推送已废弃，改用 submitAdaptDomainLayout */
 export function pushAdaptLayoutsToCloud(workspaceId: AdaptWorkspaceId = DEFAULT_ADAPT_WORKSPACE): Promise<{
   ok: boolean

@@ -120,6 +120,8 @@ export interface AdaptPrereqResolvedDomain {
   incomplete_required: string[]
   updated_at?: string
   updated_by?: string
+  line_layout_revision?: number
+  layout_stale?: boolean
 }
 
 export interface AdaptPrereqResolveResult {
@@ -128,6 +130,8 @@ export interface AdaptPrereqResolveResult {
   publication_id?: string
   from_os: string
   to_os: string
+  line_id?: string
+  layout_stale?: boolean
   domains: AdaptPrereqResolvedDomain[]
 }
 

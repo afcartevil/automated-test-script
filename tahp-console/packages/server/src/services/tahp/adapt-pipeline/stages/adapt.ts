@@ -63,11 +63,17 @@ async function launchDomain(ctx: StageContext, domain: PipelineDomain): Promise<
 
   const layout = await getAdaptDomainLayout(domain.domain_id, domain.workspace_id)
   const pathFlat = flattenPathParams(ctx.run.path_params)
-  const layoutFields = (layout?.fields ?? []).map(f => ({
+  const snapshotFields = (domain.layout_fields ?? []).map(f => ({
     name: f.name,
     label: f.label,
     required: f.required,
   }))
+  const overlayFields = (layout?.fields ?? []).map(f => ({
+    name: f.name,
+    label: f.label,
+    required: f.required,
+  }))
+  const layoutFields = snapshotFields.length ? snapshotFields : overlayFields
   const layoutNames = new Set(layoutFields.map(f => f.name))
   const formFields = [
     ...pathFlat.formFields.filter(f => !layoutNames.has(f.name)),

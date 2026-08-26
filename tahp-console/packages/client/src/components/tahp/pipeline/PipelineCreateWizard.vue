@@ -230,6 +230,26 @@ function enrichSchemaFromBuiltin(
   })
 }
 
+function mergeSnapshotSchema(
+  schema: WizardFieldSchema[],
+  snapshot: Array<{ key: string; label: string; type?: string; required?: boolean }> | undefined,
+): WizardFieldSchema[] {
+  if (!snapshot?.length) return schema
+  const byKey = new Map(schema.map(f => [f.key, f]))
+  return snapshot.filter(field => !!field.key).map((field) => {
+    const local = byKey.get(field.key)
+    return {
+      key: field.key,
+      label: field.label || local?.label || field.key,
+      required: field.required ?? local?.required ?? false,
+      type: normalizeFieldType(field.type || local?.type),
+      placeholder: local?.placeholder,
+      options: local?.options,
+      defaultValue: local?.defaultValue,
+    }
+  })
+}
+
 function parseChecklistText(text?: string): ChecklistRow[] {
   if (!text?.trim()) return []
   return text
@@ -453,12 +473,15 @@ function buildWizardDomains(
   )
 
   return catalogDomains.map(cat => {
-    const schema = enrichSchemaFromBuiltin(
-      cat.workspace_id,
-      cat.domain_id,
-      cat.schema ?? [],
-    )
     const central = prereqMap.get(domainKey(cat.workspace_id, cat.domain_id))
+    const schema = mergeSnapshotSchema(
+      enrichSchemaFromBuiltin(
+        cat.workspace_id,
+        cat.domain_id,
+        cat.schema ?? [],
+      ),
+      central?.schema,
+    )
     const formData: Record<string, string> = {}
     for (const field of schema) {
       // checklist：与 AI 适配调试一致，默认带上 layout/内置清单内容
@@ -915,6 +938,9 @@ onUnmounted(() => {
     <NAlert v-if="!centralConfigured" type="warning" :bordered="false" class="banner">
       未配置 TAHP 中心连接，无法拉取项目前置。
       <button type="button" class="link-btn" @click="goConfig">前往配置</button>
+    </NAlert>
+    <NAlert v-if="prereqData?.layout_stale" type="warning" :bordered="false" class="banner">
+      跃迁基线已更新，当前项目仍使用已发布快照。重新发布后才会吸收新字段。
     </NAlert>
 
     <NSteps :current="step" class="steps">

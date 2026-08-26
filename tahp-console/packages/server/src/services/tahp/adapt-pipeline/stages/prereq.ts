@@ -66,6 +66,24 @@ function computeIncomplete(
   return missing
 }
 
+function schemaToLayoutFields(schema: unknown): AdaptLayoutFieldDef[] {
+  if (!Array.isArray(schema)) return []
+  const fields: AdaptLayoutFieldDef[] = []
+  for (const raw of schema) {
+    if (!raw || typeof raw !== 'object') continue
+    const rec = raw as Record<string, unknown>
+    const name = String(rec.key || rec.name || '').trim()
+    if (!name) continue
+    fields.push({
+      name,
+      label: String(rec.label || name),
+      type: 'text',
+      required: rec.required === true,
+    })
+  }
+  return fields
+}
+
 /**
  * 用户勾选域优先；中心仅预填 form_data / incomplete。
  * 无 preset 时回落为中心域列表（兼容旧调用）。
@@ -83,6 +101,9 @@ async function normalizeDomains(
     const result: PipelineDomain[] = []
     for (const d of centralDomains) {
       const layout = await getAdaptDomainLayout(d.domain_id, d.workspace_id)
+      const snapshotFields = schemaToLayoutFields(d.schema)
+      const layout_fields = snapshotFields.length ? snapshotFields : (layout?.fields ?? [])
+      const form_data = { ...d.form_data }
       result.push({
         workspace_id: d.workspace_id,
         domain_id: d.domain_id,
@@ -91,10 +112,13 @@ async function normalizeDomains(
         related_skills: layout?.related_skills?.length
           ? [...layout.related_skills]
           : [],
-        form_data: { ...d.form_data },
-        incomplete_required: [...d.incomplete_required],
+        form_data,
+        incomplete_required: snapshotFields.length
+          ? computeIncomplete(form_data, snapshotFields, d.incomplete_required)
+          : [...d.incomplete_required],
         enabled: true,
         status: 'pending',
+        layout_fields,
       })
     }
     return result
@@ -105,10 +129,12 @@ async function normalizeDomains(
     const key = domainCatalogKey(p.workspace_id, p.domain_id)
     const central = centralByKey.get(key)
     const layout = await getAdaptDomainLayout(p.domain_id, p.workspace_id)
+    const snapshotFields = schemaToLayoutFields(central?.schema)
+    const layout_fields = snapshotFields.length ? snapshotFields : (layout?.fields ?? [])
     const form_data = mergeFormData(central?.form_data, p.form_data)
     const incomplete_required = computeIncomplete(
       form_data,
-      layout?.fields ?? [],
+      layout_fields,
       central?.incomplete_required ?? p.incomplete_required ?? [],
     )
 
@@ -124,6 +150,7 @@ async function normalizeDomains(
       incomplete_required,
       enabled: p.enabled,
       status: 'pending',
+      layout_fields,
     })
   }
   return result
