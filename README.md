@@ -283,6 +283,7 @@ Console「报告」页与上述目录内容对应。
 | `.tahp/required-skills.json` | 必选 Skill 清单（团队共享） | 是 |
 | `.tahp/skill-config-state.json` | 本机 Skill 配置完成状态 | 否 |
 | `.tahp/jira-user-config.json` | 智能诊断同步的 Jira 凭据 | 否 |
+| `.tahp/central-user-session.json` | 中心用户 session（无密码，含 token） | 否 |
 | `knowledge-base/.kb-data/` | 知识库条目与文档 | 否（本机/同步重建） |
 | `skills/.claude/skills/` | 业务 Skill（Console 同步中心落盘） | 否 |
 | `docs/升级项目关键信息表.xlsx` | 升级项目节点源表（飞书导出） | 否（`docs/` gitignore） |
