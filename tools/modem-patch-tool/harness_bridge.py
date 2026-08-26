@@ -18,9 +18,68 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 BRIDGE_EXIT_MARKER = "TAHP_BRIDGE_EXIT:"
+_BRIDGE_EXIT_ANY_RE = re.compile(r"^TAHP_BRIDGE_EXIT(?:_[A-Za-z0-9]+)*:(\d+)$")
 FLAVOR_LEGACY = "legacy-bridge-exec"
 FLAVOR_ASF = "asf-bridge"
 FLAVOR_UNAVAILABLE = "unavailable"
+
+def new_bridge_exit_token() -> str:
+    nonce = f"{int(time.time() * 1000):x}_{os.urandom(3).hex()}"
+    return f"TAHP_BRIDGE_EXIT_{nonce}:"
+
+
+def wrap_remote_shell_for_exit_code(command: str, token: Optional[str] = None) -> str:
+    trimmed = re.sub(r";\s*$", "", (command or "").strip())
+    marker = token or BRIDGE_EXIT_MARKER
+    if not marker.endswith(":"):
+        marker = f"{marker}:"
+    return f"{{ {trimmed}; }}; echo {marker}$?"
+
+
+def parse_wrapped_remote_result(
+    output: str,
+    token: Optional[str] = None,
+) -> Tuple[str, Optional[int]]:
+    want = None
+    if token:
+        want = token if token.endswith(":") else f"{token}:"
+    lines = (output or "").splitlines()
+    exit_code: Optional[int] = None
+    kept: List[str] = []
+    for line in lines:
+        trimmed = line.strip()
+        if want:
+            if trimmed.startswith(want):
+                try:
+                    exit_code = int(trimmed[len(want) :])
+                except Exception:
+                    pass
+                continue
+            if _BRIDGE_EXIT_ANY_RE.match(trimmed) or re.match(r"^TAHP_BRIDGE_EXIT:(\d+)$", trimmed):
+                continue
+        else:
+            m = _BRIDGE_EXIT_ANY_RE.match(trimmed) or re.match(r"^TAHP_BRIDGE_EXIT:(\d+)$", trimmed)
+            if m:
+                exit_code = int(m.group(1))
+                continue
+        kept.append(line)
+    text = "\n".join(kept).rstrip("\n")
+    return text, exit_code
+
+
+def has_bridge_exit_token(output: str, token: str) -> bool:
+    want = token if token.endswith(":") else f"{token}:"
+    for line in (output or "").splitlines():
+        trimmed = line.strip()
+        if not trimmed.startswith(want):
+            continue
+        try:
+            int(trimmed[len(want) :])
+            return True
+        except Exception:
+            continue
+    return False
+
 
 LogFn = Callable[[str], None]
 
@@ -121,25 +180,6 @@ def detect_flavor(*, refresh: bool = False) -> str:
     return value
 
 
-def wrap_remote_shell_for_exit_code(command: str) -> str:
-    trimmed = re.sub(r";\s*$", "", (command or "").strip())
-    return f"{{ {trimmed}; }}; echo {BRIDGE_EXIT_MARKER}$?"
-
-
-def parse_wrapped_remote_result(output: str) -> Tuple[str, Optional[int]]:
-    lines = (output or "").splitlines()
-    exit_code: Optional[int] = None
-    kept: List[str] = []
-    for line in lines:
-        m = re.match(r"^TAHP_BRIDGE_EXIT:(\d+)$", line.strip())
-        if m:
-            exit_code = int(m.group(1))
-            continue
-        kept.append(line)
-    text = "\n".join(kept).rstrip("\n")
-    return text, exit_code
-
-
 def parse_json_loose(text: str) -> Optional[Dict[str, Any]]:
     trimmed = (text or "").strip()
     if not trimmed:
@@ -172,6 +212,17 @@ def is_transient_asf_bridge_failure(text: str) -> bool:
     return bool(
         re.search(
             r"BRIDGE_CMD_FAILED|zellij timed out|list-panes|host CLI timeout|timed out",
+            text or "",
+            re.I,
+        )
+    )
+
+
+def is_asf_dead_mux(text: str) -> bool:
+    """ls/status 名义 READY，但 zellij write-chars 报无活动 session（幽灵 mux）。"""
+    return bool(
+        re.search(
+            r"There is no active session|no active session|BRIDGE_SSH_DISCONNECTED|OpenSSH is gone|pane_command is local shell",
             text or "",
             re.I,
         )
@@ -267,7 +318,13 @@ def ensure_asf_bridge_session(log: LogFn = _noop_log) -> int:
         return _asf_session
 
     session = pick_asf_up_session(slots) or 1
-    log(f"ASF Bridge no ready session; claiming session {session} via bridge up…")
+    return claim_asf_bridge_session(session, log=log)
+
+
+def claim_asf_bridge_session(session: int, log: LogFn = _noop_log) -> int:
+    """bridge up --session N and cache the ready slot."""
+    global _asf_session
+    log(f"ASF Bridge claiming session {session} via bridge up…")
     result = run_cli(
         ["--json", "bridge", "up", "--session", str(session)],
         timeout=180,
@@ -281,7 +338,6 @@ def ensure_asf_bridge_session(log: LogFn = _noop_log) -> int:
     except Exception:
         up_n = session
     if phase == "ready" or (parsed and str(parsed.get("status", "")).lower() == "ok" and not parsed.get("error_code")):
-        # Re-list to confirm ready
         slots2 = list_asf_bridge_sessions(log=log)
         ready2 = next((s for s in slots2 if s.get("phase") == "ready"), None)
         if ready2:
@@ -290,7 +346,6 @@ def ensure_asf_bridge_session(log: LogFn = _noop_log) -> int:
         _asf_session = up_n
         return _asf_session
 
-    # Fallback: any ready after up attempt
     slots3 = list_asf_bridge_sessions(log=log)
     ready3 = next((s for s in slots3 if s.get("phase") == "ready"), None)
     if ready3:
@@ -300,6 +355,22 @@ def ensure_asf_bridge_session(log: LogFn = _noop_log) -> int:
     err = (parsed or {}).get("message") or (result.stderr or result.stdout or "bridge up failed")
     raise RuntimeError(f"ASF Bridge up failed: {err}")
 
+
+def reclaim_asf_bridge_session(session: int, log: LogFn = _noop_log) -> int:
+    """Destroy ghost mux then bridge up the same slot (ls READY but write-chars dead)."""
+    global _asf_session
+    _asf_session = None
+    log(f"ASF Bridge mux 已死（no active session），执行 bridge down + up --session {session}…")
+    try:
+        run_cli(
+            ["--json", "bridge", "down", "--session", str(session)],
+            timeout=30,
+            log=log,
+        )
+    except Exception as exc:
+        log(f"bridge down session {session} ignored: {exc}")
+    time.sleep(1)
+    return claim_asf_bridge_session(session, log=log)
 
 def _asf_failure_message(parsed: Dict[str, Any], stderr: str = "") -> str:
     parts = [
@@ -357,6 +428,7 @@ def _run_legacy_bridge_exec(
 def _asf_bridge_cmd_once(
     session: int,
     wrapped: str,
+    exit_token: str,
     *,
     wait_sec: int,
     timeout_sec: float,
@@ -406,13 +478,13 @@ def _asf_bridge_cmd_once(
         return wrapper
 
     output = str(parsed.get("output") or "")
-    complete = parsed.get("complete") is not False
-    if not complete and BRIDGE_EXIT_MARKER not in output:
+    # 必须等到本命令唯一 token，忽略窗格里旧的 TAHP_BRIDGE_EXIT / CLI complete 误报
+    if not has_bridge_exit_token(output, exit_token):
         deadline = time.time() + max(1.0, float(timeout_sec))
         while time.time() < deadline:
             time.sleep(2)
             read = run_cli(
-                ["--json", "bridge", "read", "--session", str(session), "--lines", "400"],
+                ["--json", "bridge", "read", "--session", str(session), "--lines", "800"],
                 timeout=30,
                 log=log,
             )
@@ -429,19 +501,22 @@ def _asf_bridge_cmd_once(
                 return wrapper
             if rp and rp.get("output") is not None:
                 output = str(rp.get("output"))
-            if BRIDGE_EXIT_MARKER in output:
-                complete = True
+            if has_bridge_exit_token(output, exit_token):
                 break
 
-    cleaned, exit_code = parse_wrapped_remote_result(output)
-    if exit_code is None and not complete:
-        wrapper = _make_wrapper(1, cleaned, "asf bridge cmd 未完成")
+    cleaned, exit_code = parse_wrapped_remote_result(output, exit_token)
+    if exit_code is None:
+        wrapper = _make_wrapper(
+            1,
+            cleaned,
+            "asf bridge cmd 未完成（未见到本命令 exit token，可能被窗格旧输出误判）",
+        )
         wrapper._harness_json = {"status": "error", "exit_code": -1, "output": cleaned, "error": wrapper.stderr}
         return wrapper
-    code = 0 if exit_code is None else int(exit_code)
+    code = int(exit_code)
     wrapper = _make_wrapper(code, cleaned, result.stderr or "")
     wrapper._harness_json = {
-        "status": str(parsed.get("status") or ("ok" if complete else "error")),
+        "status": str(parsed.get("status") or "ok"),
         "exit_code": code,
         "output": cleaned,
     }
@@ -456,21 +531,46 @@ def _run_asf_bridge_cmd(
     max_retries: int = 3,
 ) -> Any:
     session = ensure_asf_bridge_session(log=log)
-    wrapped = wrap_remote_shell_for_exit_code(remote_cmd)
+    exit_token = new_bridge_exit_token()
+    wrapped = wrap_remote_shell_for_exit_code(remote_cmd, exit_token)
     wait_sec = asf_bridge_wait_sec(timeout_sec)
     last = None
     for attempt in range(1, max_retries + 1):
         result = _asf_bridge_cmd_once(
             session,
             wrapped,
+            exit_token,
             wait_sec=wait_sec,
             timeout_sec=timeout_sec,
             log=log,
         )
         blob = f"{getattr(result, 'stderr', '')}\n{getattr(result, 'stdout', '')}"
-        if not is_transient_asf_bridge_failure(blob):
+        hj = getattr(result, "_harness_json", None)
+        failed = (
+            int(getattr(result, "returncode", 1) or 0) != 0
+            or (isinstance(hj, dict) and (str(hj.get("status")).lower() == "error" or hj.get("error_code")))
+        )
+        if not failed:
             return result
         last = result
+
+        if is_asf_dead_mux(blob):
+            log(
+                f"ASF Bridge 幽灵 session ({attempt}/{max_retries}): "
+                f"{(result.stderr or 'no active session')[:200]}，down+up 后重试"
+            )
+            try:
+                session = reclaim_asf_bridge_session(session, log=log)
+            except Exception as exc:
+                log(f"ASF Bridge reclaim failed: {exc}")
+                return _make_wrapper(1, "", f"ASF Bridge reclaim failed: {exc}")
+            # 重连后换新 token，避免旧窗格残留干扰
+            exit_token = new_bridge_exit_token()
+            wrapped = wrap_remote_shell_for_exit_code(remote_cmd, exit_token)
+            continue
+
+        if not is_transient_asf_bridge_failure(blob):
+            return result
         log(f"ASF Bridge 瞬时失败 ({attempt}/{max_retries}): {(result.stderr or 'zellij timeout')[:200]}，同 session 重试")
         try:
             run_cli(

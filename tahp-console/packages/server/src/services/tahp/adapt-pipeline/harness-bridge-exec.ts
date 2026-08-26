@@ -11,6 +11,8 @@ import {
   hostCliEnv,
   parseJsonLoose,
   parseWrappedRemoteResult,
+  hasBridgeExitToken,
+  newBridgeExitToken,
   resolveHarnessJs,
   resolveHostCliSpawn,
   spawnHostCli,
@@ -214,7 +216,14 @@ async function reconnectAsfBridgeSession(
 ): Promise<number> {
   const log = (line: string) => opts?.onLog?.(line)
   asfSession = null
-  log(`ASF Bridge SSH 已断开，执行 asf --json bridge up --session ${session} 重连…`)
+  log(`ASF Bridge session ${session} 失效，执行 bridge down + up 重连…`)
+  try {
+    await spawnHarness(
+      ['--json', 'bridge', 'down', '--session', String(session)],
+      { timeoutMs: 30_000, signal: opts?.signal },
+    )
+  } catch { /* ignore */ }
+  await sleep(1000)
   const up = await tryAsfBridgeUp(session, { signal: opts?.signal })
   const ready = asfUpReadySession(up.parsed)
   if (ready != null) {
@@ -226,7 +235,7 @@ async function reconnectAsfBridgeSession(
   if (hit != null) return hit
   const detail = asfFailureMessage(up.parsed, up.stderr)
   throw new Error(
-    `ASF Bridge 重连失败（${detail.slice(0, 400)}）。请手动执行 asf --json bridge up --session ${session} 后重试编译。`,
+    `ASF Bridge 重连失败（${detail.slice(0, 400)}）。请手动执行 asf --json bridge down --session ${session} && asf --json bridge up --session ${session} 后重试。`,
   )
 }
 
@@ -343,6 +352,7 @@ function asfFailureMessage(parsed: Record<string, unknown> | null, stderr: strin
 async function asfBridgeCmdOnce(
   session: number,
   wrapped: string,
+  exitToken: string,
   opts: {
     waitSec: number
     timeoutSec: number
@@ -398,13 +408,13 @@ async function asfBridgeCmdOnce(
     }
 
     let output = String(parsed.output || '')
-    let complete = parsed.complete !== false
-    if (!complete && output.indexOf('TAHP_BRIDGE_EXIT:') < 0) {
+    // 不信任 CLI 的 complete / 窗格里旧的 TAHP_BRIDGE_EXIT；必须等到本命令唯一 token。
+    if (!hasBridgeExitToken(output, exitToken)) {
       const deadline = Date.now() + opts.timeoutSec * 1000
       while (Date.now() < deadline && !opts.signal?.cancelled) {
         await sleep(2000)
         const read = await spawnHarness(
-          ['--json', 'bridge', 'read', '--session', String(session), '--lines', '400'],
+          ['--json', 'bridge', 'read', '--session', String(session), '--lines', '800'],
           { timeoutMs: 30_000, signal: opts.signal },
         )
         const rp = parseJsonLoose(read.stdout) || parseJsonLoose(read.stderr)
@@ -421,20 +431,18 @@ async function asfBridgeCmdOnce(
           }
         }
         if (rp?.output != null) output = String(rp.output)
-        if (output.indexOf('TAHP_BRIDGE_EXIT:') >= 0) {
-          complete = true
-          break
-        }
+        if (hasBridgeExitToken(output, exitToken)) break
       }
     }
-    const parsedOut = parseWrappedRemoteResult(output)
+    const parsedOut = parseWrappedRemoteResult(output, exitToken)
     const exit_code = parsedOut.exit_code
+    const finished = exit_code != null
     return {
-      status: String(parsed.status || (complete ? 'ok' : 'error')),
+      status: String(parsed.status || (finished ? 'ok' : 'error')),
       exit_code: exit_code == null ? -1 : exit_code,
       command: wrapped,
       output: parsedOut.output,
-      error: exit_code == null && !complete ? 'asf bridge cmd 未完成' : undefined,
+      error: finished ? undefined : 'asf bridge cmd 未完成（未见到本命令 exit token，可能被窗格旧输出误判）',
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -459,13 +467,14 @@ async function asfBridgeCmd(
   const timeoutSec = Math.max(1, opts?.timeoutSec ?? 300)
   const waitSec = asfBridgeWaitSec(timeoutSec)
   const note = (line: string) => opts?.onStdout?.(`${line}\n`)
-  const wrapped = wrapRemoteShellForExitCode(command)
+  const exitToken = newBridgeExitToken()
+  const wrapped = wrapRemoteShellForExitCode(command, exitToken)
 
   let last: BridgeExecResult | null = null
   let session = await ensureAsfBridgeSession({ signal: opts?.signal, onLog: note })
 
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const result = await asfBridgeCmdOnce(session, wrapped, {
+    const result = await asfBridgeCmdOnce(session, wrapped, exitToken, {
       waitSec,
       timeoutSec,
       onStdout: opts?.onStdout,
@@ -483,7 +492,7 @@ async function asfBridgeCmd(
 
     if (isAsfBridgeSshDisconnected(blob) || result.error_code === 'BRIDGE_SSH_DISCONNECTED') {
       const dead = Number(result.session) || session
-      note(`ASF Bridge SSH 已断开 (${attempt}/3)，按 CLI 要求 bridge up --session ${dead} 重连后重试`)
+      note(`ASF Bridge session 失效 (${attempt}/3): ${(result.error || 'disconnected').slice(0, 160)}，down+up 后重试`)
       session = await reconnectAsfBridgeSession(dead, { signal: opts?.signal, onLog: note })
       continue
     }

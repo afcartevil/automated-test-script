@@ -220,9 +220,12 @@ export function isTransientAsfBridgeFailure(text: string): boolean {
 /**
  * asf `bridge cmd/status`：mux 还在但 OpenSSH 已掉，槽已释放。
  * 须 `asf --json bridge up --session N`（或省略 --session）重连，不能只 interrupt 同 session。
+ * 另：zellij 名还在但 write-chars 报 no active session（幽灵 mux）也需 down+up。
  */
 export function isAsfBridgeSshDisconnected(text: string): boolean {
-  return /BRIDGE_SSH_DISCONNECTED|OpenSSH is gone|pane_command is local shell/i.test(String(text || ''))
+  return /BRIDGE_SSH_DISCONNECTED|OpenSSH is gone|pane_command is local shell|There is no active session|no active session/i.test(
+    String(text || ''),
+  )
 }
 
 /** doctor.tools 里 zellij.ok !== true → 需要 `asf --json bridge setup` */
@@ -273,25 +276,63 @@ export function asfNeedsZellijSetup(text: string): boolean {
   return /zellij not (found|installed)|install zellij/i.test(String(text || ''))
 }
 
-/** 给 asf bridge cmd 包一层，从 stdout 取远端退出码（新 CLI 不再返回 exit_code） */
-export function wrapRemoteShellForExitCode(command: string): string {
-  const trimmed = command.replace(/;\s*$/, '').trim()
-  return `{ ${trimmed}; }; echo ${BRIDGE_EXIT_MARKER}$?`
+const BRIDGE_EXIT_LINE_RE = /^TAHP_BRIDGE_EXIT(?:_[A-Za-z0-9]+)*:(\d+)$/
+
+/** 每次远程命令唯一标记，避免 Zellij 窗格里旧 TAHP_BRIDGE_EXIT 被误认为本命令已结束。 */
+export function newBridgeExitToken(): string {
+  const nonce = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+  return `TAHP_BRIDGE_EXIT_${nonce}:`
 }
 
-export function parseWrappedRemoteResult(output: string): { output: string; exit_code: number | null } {
+/** 给 asf bridge cmd 包一层，从 stdout 取远端退出码（新 CLI 不再返回 exit_code） */
+export function wrapRemoteShellForExitCode(command: string, token: string = BRIDGE_EXIT_MARKER): string {
+  const trimmed = command.replace(/;\s*$/, '').trim()
+  const marker = token.endsWith(':') ? token : `${token}:`
+  return `{ ${trimmed}; }; echo ${marker}$?`
+}
+
+export function parseWrappedRemoteResult(
+  output: string,
+  token?: string,
+): { output: string; exit_code: number | null } {
+  const want = token
+    ? (token.endsWith(':') ? token : `${token}:`)
+    : null
   const lines = String(output || '').split(/\r?\n/)
   let exit_code: number | null = null
   const kept: string[] = []
   for (const line of lines) {
-    const m = line.trim().match(/^TAHP_BRIDGE_EXIT:(\d+)$/)
-    if (m) {
-      exit_code = Number(m[1])
-      continue
+    const trimmed = line.trim()
+    if (want) {
+      if (trimmed.startsWith(want)) {
+        const code = Number(trimmed.slice(want.length))
+        if (Number.isFinite(code)) exit_code = code
+        continue
+      }
+      // 丢掉窗格里残留的其它 exit 行，避免污染上层日志
+      if (BRIDGE_EXIT_LINE_RE.test(trimmed) || /^TAHP_BRIDGE_EXIT:\d+$/.test(trimmed)) {
+        continue
+      }
+    } else {
+      const m = trimmed.match(/^TAHP_BRIDGE_EXIT(?:_[A-Za-z0-9]+)*:(\d+)$/)
+        || trimmed.match(/^TAHP_BRIDGE_EXIT:(\d+)$/)
+      if (m) {
+        exit_code = Number(m[1])
+        continue
+      }
     }
     kept.push(line)
   }
   return { output: kept.join('\n').replace(/\n+$/, ''), exit_code }
+}
+
+export function hasBridgeExitToken(output: string, token: string): boolean {
+  const want = token.endsWith(':') ? token : `${token}:`
+  return String(output || '').split(/\r?\n/).some((line) => {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith(want)) return false
+    return Number.isFinite(Number(trimmed.slice(want.length)))
+  })
 }
 
 export function parseJsonLoose(text: string): Record<string, unknown> | null {

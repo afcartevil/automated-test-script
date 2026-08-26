@@ -8,6 +8,7 @@ import {
   flavorFromHelpText,
   isTransientAsfBridgeFailure,
   isAsfBridgeSshDisconnected,
+  hasBridgeExitToken,
   parseWrappedRemoteResult,
   parseZellijLsShort,
   pickAsfUpSession,
@@ -35,15 +36,24 @@ describe('host-tool-runtime remote flavor', () => {
 })
 
 describe('host-tool-runtime exit wrapping', () => {
-  it('wraps remote shell with an exit marker', () => {
-    expect(wrapRemoteShellForExitCode('ls /tmp;')).toBe(`{ ls /tmp; }; echo ${BRIDGE_EXIT_MARKER}$?`)
+  it('wraps remote shell with a provided exit marker', () => {
+    expect(wrapRemoteShellForExitCode('ls /tmp;', BRIDGE_EXIT_MARKER)).toBe(`{ ls /tmp; }; echo ${BRIDGE_EXIT_MARKER}$?`)
   })
 
-  it('parses wrapped stdout without inventing exit 0', () => {
-    const parsed = parseWrappedRemoteResult('hello\nTAHP_BRIDGE_EXIT:7\n')
-    expect(parsed.output).toBe('hello')
+  it('parses wrapped stdout for a specific token and ignores stale markers', () => {
+    const token = 'TAHP_BRIDGE_EXIT_abc123:'
+    const parsed = parseWrappedRemoteResult(
+      'hello\nTAHP_BRIDGE_EXIT:0\nstale\nTAHP_BRIDGE_EXIT_abc123:7\n',
+      token,
+    )
+    expect(parsed.output).toBe('hello\nstale')
     expect(parsed.exit_code).toBe(7)
-    expect(parseWrappedRemoteResult('no marker')).toEqual({ output: 'no marker', exit_code: null })
+    expect(parseWrappedRemoteResult('no marker', token)).toEqual({ output: 'no marker', exit_code: null })
+  })
+
+  it('hasBridgeExitToken only matches the command token', () => {
+    expect(hasBridgeExitToken('TAHP_BRIDGE_EXIT:0\n', 'TAHP_BRIDGE_EXIT_x:')).toBe(false)
+    expect(hasBridgeExitToken('TAHP_BRIDGE_EXIT_x:3\n', 'TAHP_BRIDGE_EXIT_x:')).toBe(true)
   })
 })
 
@@ -65,6 +75,9 @@ describe('asf bridge wait vs remote timeout', () => {
   it('detects SSH disconnect that requires bridge up reconnect', () => {
     expect(isAsfBridgeSshDisconnected(
       'BRIDGE_SSH_DISCONNECTED: agent_session2 mux still exists but OpenSSH is gone (pane_command is local shell (C:\\windows\\system32\\cmd.exe)). Slot released; run asf bridge up --session 2 (or omit --session) to reconnect.',
+    )).toBe(true)
+    expect(isAsfBridgeSshDisconnected(
+      'BRIDGE_CMD_FAILED zellij failed (...): There is no active session!',
     )).toBe(true)
     expect(isAsfBridgeSshDisconnected('BRIDGE_CMD_FAILED: zellij timed out')).toBe(false)
     expect(isTransientAsfBridgeFailure(

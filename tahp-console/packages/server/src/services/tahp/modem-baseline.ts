@@ -2945,12 +2945,27 @@ async function runModemBuildAfterResume(
       appendLog(`[build] archived_logs=${archivedPaths.length} paths:\n${archivedPaths.map(p => `  - ${p}`).join('\n')}\n`)
     }
 
+    // 窗格旧 EXIT 误判时可能没有任何 BUILD 标记；没有 __APM_BUILD_EXIT__ 一律不算编过
+    if (!exitMarker) {
+      appendLog('[build] bridge returned without __APM_BUILD_EXIT__ — treat as incomplete wait (stale pane / early complete)\n')
+      if (!output && !errorText && !evidenceCombined) {
+        appendLog('[build] no build output/evidence captured; refuse to mark success on bridge ok/0 alone\n')
+      }
+      if (!archivedPaths.length && !mappedEvidence) {
+        appendLog('[build] note: mapped .tahp/modem-baseline/build-logs may not be synced yet; retry this run or inspect remote build-logs directly\n')
+      }
+      appendMappedBuildLogTail(config, appendLog)
+      appendLog(`[build] failed project=${project}\n`)
+      appendLog(`[build] ===== 编译失败 project=${project} shell_exit=n/a reason=missing_build_exit_marker =====\n`)
+      return 'failed'
+    }
+
     const passed = evaluateModemBuildResult(result, evidenceCombined)
-      && !(exitMarker && exitMarker[1] !== '0')
+      && exitMarker[1] === '0'
 
     if (passed) {
       appendLog(`[build] success project=${project}\n`)
-      appendLog(`[build] ===== 编译成功 project=${project} shell_exit=${exitMarker?.[1] ?? 'n/a'} =====\n`)
+      appendLog(`[build] ===== 编译成功 project=${project} shell_exit=${exitMarker[1]} =====\n`)
       return 'success'
     }
 
@@ -3675,6 +3690,7 @@ export function inferModemRunFailureFromLogText(text: string): string | undefine
 
   if (/missing\s+Change-Id/i.test(tail)) return 'gerrit_missing_change_id'
   if (/remote rejected|failed to push some refs/i.test(tail)) return 'gerrit_push_rejected'
+  if (/There is no active session|no active session/i.test(tail)) return 'bridge_session_dead'
 
   const bridgePatterns = [
     /warning:\s*bridge connection not ready at pre-check stage/i,
@@ -3735,6 +3751,8 @@ export function describeModemRunFailure(error?: string): string | undefined {
       return 'Gerrit 推送失败：commit 缺少 Change-Id。请安装 commit-msg hook 后 git commit --amend --no-edit，再重新 push。'
     case 'gerrit_push_rejected':
       return 'Gerrit 推送被拒。请查看日志中 remote rejected / ERROR 行确认原因。'
+    case 'bridge_session_dead':
+      return 'ASF Bridge 幽灵 session（ls 显示 ready 但 Zellij 无活动会话）。工具会自动 down+up；若仍失败请手动 asf --json bridge down --session N && asf --json bridge up --session N。'
     case 'bridge_not_ready':
       return 'ASF Bridge 未就绪。请确认一键配置已保存齐治凭据与 TOTP 后重试。'
     case 'build_failed':

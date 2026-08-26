@@ -20,6 +20,12 @@ error: failed to push some refs to 'ssh://gerrit.transsion.com:29418/MODEM/x'
     expect(describeModemRunFailure('gerrit_missing_change_id')).toMatch(/Change-Id/)
   })
 
+  it('detects ghost zellij session (ls ready but no active session)', () => {
+    expect(inferModemRunFailureFromLogText(
+      'BRIDGE_CMD_FAILED zellij failed (...): There is no active session!',
+    )).toBe('bridge_session_dead')
+  })
+
   it('detects generic gerrit push rejection', () => {
     expect(inferModemRunFailureFromLogText('! [remote rejected] HEAD -> refs/for/master')).toBe(
       'gerrit_push_rejected',
