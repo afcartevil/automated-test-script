@@ -4,6 +4,7 @@ import {
   formatSkillImproveSummary,
   mergeLedgerSkillImproves,
   parseSkillImproves,
+  skillImprovesNeedUpdate,
   skillNameFromPath,
   upsertSkillImprove,
 } from '../../packages/server/src/services/tahp/bug-analysis-skill-improve'
@@ -106,6 +107,28 @@ describe('mergeLedgerSkillImproves', () => {
       'task-bug-8ef495',
       [],
     )).toEqual([{ name: 'keep-me', actions: ['patch'] }])
+  })
+})
+
+describe('skillImprovesNeedUpdate', () => {
+  it('is false when ledger adds nothing', () => {
+    expect(skillImprovesNeedUpdate([], [])).toBe(false)
+    expect(skillImprovesNeedUpdate(
+      [{ name: 'a', actions: ['create'], snapshot_dir: 'bug-analysis/skills/t/a' }],
+      [{ name: 'a', actions: ['create'] }],
+    )).toBe(false)
+  })
+
+  it('is true for a new skill, extra action, or missing snapshot', () => {
+    expect(skillImprovesNeedUpdate([], [{ name: 'a', actions: ['create'] }])).toBe(true)
+    expect(skillImprovesNeedUpdate(
+      [{ name: 'a', actions: ['create'], snapshot_dir: 'x' }],
+      [{ name: 'a', actions: ['create', 'write_file'] }],
+    )).toBe(true)
+    expect(skillImprovesNeedUpdate(
+      [{ name: 'a', actions: ['create'] }],
+      [{ name: 'a', actions: ['create'] }],
+    )).toBe(true)
   })
 })
 

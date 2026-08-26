@@ -121,6 +121,22 @@ export function mergeLedgerSkillImproves(
   return next
 }
 
+/** ledger 合并后是否比已落盘记录多了 skill / action，或还没有快照。 */
+export function skillImprovesNeedUpdate(
+  existing: SkillImproveRecord[],
+  merged: SkillImproveRecord[],
+): boolean {
+  if (!merged.length) return false
+  const byName = new Map(existing.map(r => [r.name, r]))
+  for (const rec of merged) {
+    const prev = byName.get(rec.name)
+    if (!prev) return true
+    if (rec.actions.some(a => !prev.actions.includes(a))) return true
+    if (!prev.snapshot_dir) return true
+  }
+  return false
+}
+
 export function parseSkillImproves(raw: unknown): SkillImproveRecord[] {
   if (!Array.isArray(raw)) return []
   const out: SkillImproveRecord[] = []

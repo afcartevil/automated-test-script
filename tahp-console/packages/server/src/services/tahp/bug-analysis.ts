@@ -75,11 +75,13 @@ import {
   formatSkillImproveSummary,
   mergeLedgerSkillImproves,
   parseSkillImproves,
+  skillImprovesNeedUpdate,
   upsertSkillImprove,
   type SkillImproveRecord,
 } from './bug-analysis-skill-improve'
 import { loadCuratorLedger } from '../hermes/skill-improve-registry'
 import { snapshotImprovedSkills, skillImproveSnapshotRoot, readSkillSnapshot } from './bug-analysis-skill-snapshot'
+import { scheduleSkillImproveReconcile } from './bug-analysis-skill-reconcile'
 import {
   APPROVAL_AUTO_ONCE_MS,
   findUserInputMarkers,
@@ -277,10 +279,21 @@ export function listBugReports(): unknown[] {
   // 复用 sync API；批量场景这里数量不大，直接 fs readdirSync
   const fs = require('fs') as typeof import('fs')
   const files = fs.readdirSync(d).filter((f: string) => f.endsWith('.json'))
+  const entries = loadCuratorLedger()
   const summaries: any[] = []
   for (const f of files) {
     try {
       const json = JSON.parse(fs.readFileSync(join(d, f), 'utf-8'))
+      const taskId = String(json.task_id || f.replace(/\.json$/, ''))
+      const existing = parseSkillImproves(json.skills_improved)
+      const merged = mergeLedgerSkillImproves(existing, taskId, entries)
+      if (skillImprovesNeedUpdate(existing, merged)) {
+        json.skills_improved = merged
+        try {
+          fs.writeFileSync(join(d, f), JSON.stringify(json, null, 2), 'utf-8')
+        } catch { /* overlay still returned below */ }
+        void reconcileSkillImproveForTask(taskId)
+      }
       summaries.push({
         task_id: json.task_id,
         jira_key: json.jira_key,
@@ -292,7 +305,7 @@ export function listBugReports(): unknown[] {
         completed_at: json.completed_at,
         duration_ms: json.duration_ms,
         skills_used: json.skills_used || [],
-        skills_improved: parseSkillImproves(json.skills_improved),
+        skills_improved: merged,
         correction_of: json.correction_of,
       })
     } catch { /* skip corrupt */ }
@@ -1403,6 +1416,72 @@ function persistSkillsImprovedOnExistingReport(taskId: string, records: SkillImp
   }
 }
 
+const skillImproveReconcileInflight = new Map<string, Promise<SkillImproveRecord[]>>()
+
+/** 结束后补扫 ledger；报告已落盘、curator 后到也能补徽章和快照。 */
+export function reconcileSkillImproveForTask(taskId: string): Promise<SkillImproveRecord[]> {
+  const tid = String(taskId || '').trim()
+  if (!tid) return Promise.resolve([])
+  const running = skillImproveReconcileInflight.get(tid)
+  if (running) return running
+  const work = runSkillImproveReconcile(tid).finally(() => {
+    skillImproveReconcileInflight.delete(tid)
+  })
+  skillImproveReconcileInflight.set(tid, work)
+  return work
+}
+
+async function runSkillImproveReconcile(taskId: string): Promise<SkillImproveRecord[]> {
+  const live = taskCtx.get(taskId)
+  const report = readBugReport(taskId) as Record<string, unknown> | null
+  const existing = live?.skillsImproved || parseSkillImproves(report?.skills_improved)
+  let merged = existing
+  try {
+    merged = mergeLedgerSkillImproves(existing, taskId, loadCuratorLedger())
+  } catch (e) {
+    logBug(taskId, 'warn', `skill ledger reconcile failed: ${(e as Error).message}`)
+    return existing
+  }
+  if (!skillImprovesNeedUpdate(existing, merged)) return existing
+  let records = merged
+  if (records.length) {
+    try {
+      records = await snapshotImprovedSkills({
+        reportsDir: tahpPaths.reportsDir,
+        taskId,
+        records,
+        source: 'runtime',
+      })
+    } catch (e) {
+      logBug(taskId, 'warn', `skill snapshot failed: ${(e as Error).message}`)
+    }
+  }
+  if (live) live.skillsImproved = records
+  persistSkillsImprovedOnExistingReport(taskId, records)
+  emit(taskId, 'task.skill_use', {
+    skills_improved: records,
+    message: records.length
+      ? `自改进 Skill 已回填：${formatSkillImproveSummary(records)}`
+      : undefined,
+  })
+  logBug(taskId, 'info', `skill improve reconciled: ${records.map(r => r.name).join(',') || 'none'}`)
+  return records
+}
+
+function scheduleLateSkillImproveReconcile(taskId: string): void {
+  scheduleSkillImproveReconcile(taskId, async () => {
+    await reconcileSkillImproveForTask(taskId)
+  })
+}
+
+export function overlaySkillsImproved(taskId: string, existing?: SkillImproveRecord[]): SkillImproveRecord[] {
+  try {
+    return mergeLedgerSkillImproves(existing || [], taskId, loadCuratorLedger())
+  } catch {
+    return existing || []
+  }
+}
+
 // ─── 单条 Bug 分析（核心执行 - Agent 模式） ─────────────────────────────────
 
 async function runSingleBugAnalysis(
@@ -1692,6 +1771,8 @@ async function runSingleBugAnalysis(
         : `Bug 分析完成（${ctx.jiraKey}），使用 Skill: ${ctx.skillsUsed.join(', ') || '无'}`,
     })
 
+    scheduleLateSkillImproveReconcile(taskId)
+
     succeeded = true
 
     // ── 更新父 job 状态 ───────────────────────────────────────────────────
@@ -1780,6 +1861,8 @@ async function runSingleBugAnalysis(
         writeFileSync(reportPath(taskId), JSON.stringify(report, null, 2), 'utf-8')
       } catch { /* swallow */ }
     }
+
+    scheduleLateSkillImproveReconcile(taskId)
 
     if (!keepPriorReport && ctx.parentJobId) {
       const job = jobCtx.get(ctx.parentJobId)

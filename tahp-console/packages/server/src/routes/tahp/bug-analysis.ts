@@ -28,6 +28,8 @@ import {
   listBugReports,
   readBugReport,
   readBugSkillSnapshot,
+  reconcileSkillImproveForTask,
+  overlaySkillsImproved,
   deleteBugReport,
   respondBugApproval,
   submitBugUserInput,
@@ -584,7 +586,7 @@ tahpBugAnalysisRoutes.get('/tasks', async (ctx) => {
     started_at: t.startedAt,
     completed_at: t.completedAt,
     skills_used: t.skillsUsed,
-    skills_improved: t.skillsImproved || [],
+    skills_improved: overlaySkillsImproved(t.taskId, t.skillsImproved),
     title: t.issue?.summary || t.title,
     error: t.error,
     analysis_mode: t.analysisMode,
@@ -602,6 +604,7 @@ tahpBugAnalysisRoutes.get('/tasks/:id', async (ctx) => {
   const t = getBugTask(ctx.params.id)
   if (!t) {
     // 回落到报告查询
+    await reconcileSkillImproveForTask(ctx.params.id)
     const r = readBugReport(ctx.params.id)
     if (!r) {
       ctx.status = 404
@@ -626,7 +629,7 @@ tahpBugAnalysisRoutes.get('/tasks/:id', async (ctx) => {
     extra_context: t.extraContext,
     corrections: t.corrections,
     skills_used: t.skillsUsed,
-    skills_improved: t.skillsImproved || [],
+    skills_improved: overlaySkillsImproved(t.taskId, t.skillsImproved),
     llm_response: t.llmResponse,
     error: t.error,
     issue: t.issue,
@@ -690,7 +693,7 @@ tahpBugAnalysisRoutes.get('/jobs/:id', async (ctx) => {
         progress: t.progress,
         title: t.issue?.summary,
         skills_used: t.skillsUsed,
-        skills_improved: t.skillsImproved || [],
+        skills_improved: overlaySkillsImproved(t.taskId, t.skillsImproved),
         error: t.error,
       }
     }),
@@ -719,6 +722,7 @@ tahpBugAnalysisRoutes.get('/reports/:taskId/skill-snapshots/:skillName', async (
 })
 
 tahpBugAnalysisRoutes.get('/reports/:taskId', async (ctx) => {
+  await reconcileSkillImproveForTask(ctx.params.taskId)
   const r = readBugReport(ctx.params.taskId)
   if (!r) {
     ctx.status = 404
