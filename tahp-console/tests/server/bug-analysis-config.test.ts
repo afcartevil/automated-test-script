@@ -73,6 +73,17 @@ describe('bug-analysis-config', () => {
     expect(cfg.remote_channels.loginsight_remote.enabled).toBe(true)
   })
 
+  it('buildRemoteChannelDirective requires waiting for remote report; queue is not failure', () => {
+    const cfg = defaultBugAnalysisChannelConfig()
+    cfg.remote_channels.bugfix_analysis.enabled = false
+    cfg.remote_channels.loginsight_remote.enabled = true
+    const text = buildRemoteChannelDirective(cfg)
+    expect(text).toContain('必须持续 `wait` 直到任务结束并下载到报告')
+    expect(text).toContain('一律不是失败')
+    expect(text).toContain('把排队、预计等待久')
+    expect(text).not.toMatch(/失败判定[\s\S]*超时、无分析正文/)
+  })
+
   it('buildRemoteChannelDirective mentions disabled when both off', () => {
     const cfg = defaultBugAnalysisChannelConfig()
     cfg.remote_channels.bugfix_analysis.enabled = false

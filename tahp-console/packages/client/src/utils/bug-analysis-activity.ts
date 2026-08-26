@@ -91,8 +91,11 @@ export function formatBugActivityLine(ev: BugActivityStreamEntry): string | null
     case 'task.cancelled':
       return `[${ts}] 已取消：${String(p.message || p.error || '')}`
     case 'task.approval_requested':
-      return `[${ts}] 等待命令确认：${String(p.command || '').slice(0, 120)}`
+      return null
+    case 'task.approval_resolved':
+      return `[${ts}] ${typeof p.message === 'string' && p.message.trim() ? p.message.trim() : '已自动同意命令'}`
     case 'task.user_input_requested':
+      if (shouldSuppressBugInteractionModal(ev)) return null
       return `[${ts}] 等待用户补充配置`
     default:
       return null
@@ -102,8 +105,22 @@ export function formatBugActivityLine(ev: BugActivityStreamEntry): string | null
 const ACTIVITY_EVENT_TYPES = new Set([
   'task.started', 'task.continue_started', 'task.phase', 'task.step', 'task.stage_detail',
   'task.skill_use', 'task.tool_completed', 'task.completed', 'task.failed', 'task.cancelled',
-  'task.approval_requested', 'task.user_input_requested', 'task.message',
+  'task.approval_resolved', 'task.user_input_requested', 'task.message',
 ])
+
+export function shouldSuppressBugInteractionModal(ev: {
+  type: string
+  payload?: Record<string, unknown>
+}): boolean {
+  if (ev.type === 'task.approval_requested') return true
+  if (ev.type !== 'task.user_input_requested') return false
+  const p = ev.payload || {}
+  const fieldBlob = Array.isArray(p.fields)
+    ? (p.fields as Array<Record<string, unknown>>).flatMap(f => [f.name, f.label, f.hint, f.placeholder]).join(' ')
+    : ''
+  const blob = [p.title, p.message, p.persist_key, fieldBlob].join(' ').toLowerCase()
+  return /llm|api[\s_-]?key|sw-aimodel|loginsight/.test(blob)
+}
 
 export function buildBugActivityLog(stream: BugActivityStreamEntry[]): string {
   const lines: string[] = []

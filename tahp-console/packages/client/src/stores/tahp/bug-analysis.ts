@@ -13,6 +13,7 @@ import {
   listBugTasks, listBugJobs,
   type BugTask, type BugJob,
 } from '@/api/tahp/bug-analysis'
+import { shouldSuppressBugInteractionModal } from '@/utils/bug-analysis-activity'
 
 interface StreamEntry {
   type: string
@@ -103,6 +104,7 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
   let socketBound = false
 
   function applyInteractionSocketEvent(tid: string, ev: TahpEvent): void {
+    if (shouldSuppressBugInteractionModal(ev)) return
     switch (ev.type) {
       case 'task.approval_requested': {
         const approvalId = String(ev.payload?.approval_id || '')

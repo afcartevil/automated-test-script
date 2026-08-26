@@ -92,6 +92,13 @@ import {
 } from './bug-analysis-interaction'
 import { runJiraOpsAddComment } from './jira-ops-runner'
 import { preprocessJiraCommentForSubmit } from './compose-jira-comment'
+import {
+  buildSilentCredentialResumeMessage,
+  ensureLoginsightCredentialsForBugAnalysis,
+  fillSilentCredentialValues,
+  isLlmCredentialUserInput,
+  redactUserInputValues,
+} from './bug-analysis-credentials'
 
 // ─── Agent Bridge 客户端（单例） ────────────────────────────────────────────
 //
@@ -413,27 +420,14 @@ function registerApprovalRequest(taskId: string, payload: ApprovalRequestPayload
   const bucket = getOrCreateApprovalBucket(taskId)
   if (bucket.has(payload.approval_id)) return
 
-  const timeoutMs = payload.timeout_ms && payload.timeout_ms > 0 ? payload.timeout_ms : APPROVAL_AUTO_ONCE_MS
-  const deadline = Date.now() + timeoutMs
+  // 智能诊断不弹确认窗：后台立即同意一次。适配调试 / Skill 配置仍走各自审批。
+  const preview = (payload.command || payload.description || '').slice(0, 120)
+  logBug(taskId, 'info', `approval.auto_once: ${payload.approval_id} cmd=${preview}`)
+  emitBugActivity(taskId, `已自动同意命令（后台）：${preview || payload.approval_id}`)
 
-  emit(taskId, 'task.approval_requested', {
-    approval_id: payload.approval_id,
-    command: payload.command,
-    description: payload.description,
-    choices: payload.choices,
-    allow_permanent: payload.allow_permanent !== false,
-    timeout_ms: timeoutMs,
-    deadline_at: deadline,
-    auto_action: 'once',
-    message: 'Agent 请求执行危险命令，请在弹窗中确认（60s 无响应将自动同意一次）',
-  })
-  logBug(taskId, 'info', `approval.requested: ${payload.approval_id} cmd=${payload.command.slice(0, 80)}`)
-
-  const timer = setTimeout(() => {
-    void resolveBugApproval(taskId, payload.approval_id, 'once', 'auto')
-  }, timeoutMs)
-
-  bucket.set(payload.approval_id, { timer, resolved: false, payload })
+  const dummyTimer = setTimeout(() => { /* resolved immediately via resolveBugApproval */ }, 0)
+  bucket.set(payload.approval_id, { timer: dummyTimer, resolved: false, payload })
+  void resolveBugApproval(taskId, payload.approval_id, 'once', 'auto')
 }
 
 async function resolveBugApproval(
@@ -464,7 +458,7 @@ async function resolveBugApproval(
     choice,
     source,
     message: source === 'auto'
-      ? `危险命令审批超时，已自动同意一次（${choice}）`
+      ? `危险命令已由智能诊断后台自动同意一次（${choice}）`
       : `危险命令审批：${choice}`,
   })
   logBug(taskId, 'info', `approval.resolved: ${approvalId} choice=${choice} source=${source}`)
@@ -523,6 +517,24 @@ function requestUserInputPause(
   control.userInputPause = request
   taskRuntime.set(taskId, control)
 
+  if (isLlmCredentialUserInput(request)) {
+    // 不弹窗、不改 waiting_user_input；中断本轮后静默复用 Console Provider Key
+    pendingUserInputByTask.set(taskId, { request, expiresAt })
+    emitBugActivity(taskId, '检测到 LLM/LogInsight 凭据请求，已静默复用 Console Provider 并写入工程/Hermes Skill 副本')
+    try {
+      const seed = ensureLoginsightCredentialsForBugAnalysis()
+      logBug(taskId, 'info', `user_input.silent_llm: ${request.requestId} seeded=${seed.seededKey} roots=${seed.writtenRoots.length}`)
+    } catch (err) {
+      logBug(taskId, 'warn', `silent loginsight seed failed: ${(err as Error).message}`)
+    }
+    setImmediate(() => {
+      sharedBridgeClient.interrupt(sessionId, `静默复用 Console LLM 凭据: ${request.title}`).catch((err) => {
+        logBug(taskId, 'warn', `interrupt for silent credential reuse failed: ${(err as Error).message}`)
+      })
+    })
+    return
+  }
+
   const timeoutTimer = setTimeout(() => {
     void autoSubmitEmptyUserInput(taskId, request.requestId)
   }, request.timeoutSec * 1000)
@@ -566,16 +578,18 @@ export async function submitBugUserInput(
   taskId: string,
   requestId: string,
   values: Record<string, string>,
-  source: 'user' | 'auto_timeout' = 'user',
+  source: 'user' | 'auto_timeout' | 'silent_reuse' = 'user',
 ): Promise<{ ok: boolean; error?: string }> {
   const pending = pendingUserInputByTask.get(taskId)
   if (!pending || pending.request.requestId !== requestId) {
     return { ok: false, error: '配置请求不存在或已过期' }
   }
 
-  for (const field of pending.request.fields) {
-    if (field.required && !String(values[field.name] ?? '').trim()) {
-      return { ok: false, error: `请填写必填项：${field.label}` }
+  if (source !== 'silent_reuse') {
+    for (const field of pending.request.fields) {
+      if (field.required && !String(values[field.name] ?? '').trim()) {
+        return { ok: false, error: `请填写必填项：${field.label}` }
+      }
     }
   }
 
@@ -583,20 +597,27 @@ export async function submitBugUserInput(
   const request = pending.request
   pendingUserInputByTask.delete(taskId)
 
+  const persistValues = isLlmCredentialUserInput(request)
+    ? redactUserInputValues(request, values)
+    : { ...values }
   const record: UserInputResponseRecord = {
     request_id: requestId,
     title: request.title,
     persist_key: request.persistKey,
-    values: { ...values },
+    values: persistValues,
     submitted_at: new Date().toISOString(),
   }
   persistPartialUserInput(taskId, record)
 
   emit(taskId, 'task.user_input_submitted', {
     request_id: requestId,
-    values,
+    values: persistValues,
     source,
-    message: source === 'auto_timeout' ? '配置输入超时，已以默认值/空值继续' : '用户已提交配置',
+    message: source === 'auto_timeout'
+      ? '配置输入超时，已以默认值/空值继续'
+      : source === 'silent_reuse'
+        ? '已静默复用 Console Provider 凭据，继续分析'
+        : '用户已提交配置',
   })
   logBug(taskId, 'info', `user_input.submitted: ${requestId} source=${source}`)
 
@@ -615,17 +636,34 @@ export async function submitBugUserInput(
   ctx.error = undefined
   taskCtx.set(taskId, ctx)
 
+  const filled = source === 'silent_reuse' ? fillSilentCredentialValues(request) : null
   setImmediate(() => {
     runSingleBugAnalysis(ctx!, undefined, {
       mode: 'user_input_resume',
       userInputRequest: request,
-      userInputValues: values,
+      userInputValues: persistValues,
+      silentCredentialResume: source === 'silent_reuse' || isLlmCredentialUserInput(request),
+      silentCredentialSeeded: !!filled?.seeded,
     }).catch((err) => {
       logger.error({ err: (err as Error).message, taskId }, '[bug-analysis] user input resume unhandled')
     })
   })
 
   return { ok: true }
+}
+
+function scheduleSilentLlmCredentialResume(taskId: string): void {
+  const pending = pendingUserInputByTask.get(taskId)
+  if (!pending || !isLlmCredentialUserInput(pending.request)) return
+  setImmediate(() => {
+    const filled = fillSilentCredentialValues(pending.request)
+    void submitBugUserInput(
+      taskId,
+      pending.request.requestId,
+      filled?.values || {},
+      'silent_reuse',
+    )
+  })
 }
 
 async function runAgentChat(
@@ -970,7 +1008,13 @@ message: <一句话说明本步结果>
 
 # 人机协同：结构化用户配置输入（需要用户填写路径/凭证等时）
 
-当需要用户在本机提供**无法由 Agent 自行推断**的配置（如日志保存目录、下载路径、环境变量值）时：
+**禁止**为 LogInsight / LLM API Key / sw-aimodel 输出 \`TAHP_USER_INPUT\`。Console 已在分析开始时把已配置的 Provider Key 写入：
+- 工程副本 \`skills/.claude/skills/loginsight-remote-cli/.loginsight_cli.json\`
+- Hermes 运行时副本 \`%LOCALAPPDATA%/hermes/skills/loginsight-remote-cli/.loginsight_cli.json\`（Agent \`cd\` 的通常是这一份）
+
+\`doctor\` 若 \`local_llm_api_key\` 仍为 false：视为远程渠道失败并回退本地分析，**不要弹窗、不要再要 Key**。
+
+当需要用户在本机提供**无法由 Agent 自行推断**的配置（如日志保存目录、下载路径）时：
 
 1. **先输出**以下标记块（字段按实际场景填写），**然后停止本轮输出**，等待用户提交：
 \`\`\`
@@ -1378,6 +1422,8 @@ interface RunBugAnalysisOptions {
   mode?: 'initial' | 'continue' | 'user_input_resume'
   userInputRequest?: ParsedUserInputRequest
   userInputValues?: Record<string, string>
+  silentCredentialResume?: boolean
+  silentCredentialSeeded?: boolean
 }
 
 /** 任务结束落盘前：ledger 补齐自改进 Skill，再快照。实时 detectSkillImprove 只负责活动流。 */
@@ -1512,12 +1558,30 @@ async function runSingleBugAnalysis(
   let toolCallCount = 0
 
   try {
+    if (ctx.analysisMode !== 'local') {
+      try {
+        const seed = ensureLoginsightCredentialsForBugAnalysis()
+        if (seed.writtenRoots.length) {
+          emitBugActivity(
+            taskId,
+            `已写入 LogInsight 凭据到 ${seed.writtenRoots.length} 处 Skill 副本（含 Hermes 运行时）：${seed.writtenRoots.join(' | ')}`,
+          )
+        } else if (!seed.skipped) {
+          emitBugActivity(taskId, `LogInsight 凭据未写入：${seed.reason || 'unknown'}`, 'warn')
+        }
+      } catch (err) {
+        logBug(taskId, 'warn', `loginsight credential seed failed: ${(err as Error).message}`)
+      }
+    }
+
     let userMessage: string
     let instructions: string | undefined
     let conversationHistory: unknown[] | undefined
 
     if (isUserInputResume && options.userInputRequest && options.userInputValues) {
-      userMessage = buildUserInputResumeMessage(options.userInputRequest, options.userInputValues)
+      userMessage = options.silentCredentialResume
+        ? buildSilentCredentialResumeMessage(options.userInputRequest, !!options.silentCredentialSeeded)
+        : buildUserInputResumeMessage(options.userInputRequest, options.userInputValues)
       const sessionAlive = await bridgeSessionAlive(agentSessionId)
       if (sessionAlive) {
         logBug(taskId, 'info', `user_input_resume: reusing bridge session ${agentSessionId}`)
@@ -1529,7 +1593,9 @@ async function runSingleBugAnalysis(
       }
       emit(taskId, 'task.message', {
         level: 'round_divider',
-        text: `\n\n---\n\n**用户配置已提交（${options.userInputRequest.title}）**\n\n`,
+        text: options.silentCredentialResume
+          ? `\n\n---\n\n**已静默复用 Console Provider 凭据（${options.userInputRequest.title}）**\n\n`
+          : `\n\n---\n\n**用户配置已提交（${options.userInputRequest.title}）**\n\n`,
       })
       saveAgentPromptLog(taskId, 'bug-analysis-user-input', instructions || '(session continue)', userMessage)
     } else if (isContinue && correction) {
@@ -1662,6 +1728,7 @@ async function runSingleBugAnalysis(
     if (runtimeAfterChat?.userInputPause || pendingUserInputByTask.has(taskId)) {
       pausedForUserInput = true
       logBug(taskId, 'info', `task paused for user input: ${runtimeAfterChat?.userInputPause?.requestId || 'pending'}`)
+      scheduleSilentLlmCredentialResume(taskId)
       return
     }
 
@@ -1670,6 +1737,7 @@ async function runSingleBugAnalysis(
       if (control?.userInputPause) {
         pausedForUserInput = true
         logBug(taskId, 'info', `task paused for user input (interrupt): ${control.userInputPause.requestId}`)
+        scheduleSilentLlmCredentialResume(taskId)
         return
       }
       throw new Error('Agent 运行被中断')
@@ -1805,6 +1873,7 @@ async function runSingleBugAnalysis(
     if (control?.userInputPause) {
       pausedForUserInput = true
       logBug(taskId, 'info', `task paused for user input (interrupt): ${control.userInputPause.requestId}`)
+      scheduleSilentLlmCredentialResume(taskId)
       return
     }
     const interruptedByUser = control?.interruptRequested === true

@@ -3,6 +3,7 @@ import {
   buildBugActivityLog,
   formatBugActivityLine,
   lastBugActivityHint,
+  shouldSuppressBugInteractionModal,
 } from '../../packages/client/src/utils/bug-analysis-activity'
 
 describe('bug-analysis-activity', () => {
@@ -39,5 +40,43 @@ describe('bug-analysis-activity', () => {
       { type: 'task.message', ts: 2, payload: { level: 'activity', text: '正在调用工具 Read' } },
     ])
     expect(hint).toBe('正在调用工具 Read')
+  })
+
+  it('suppresses approval and LogInsight LLM key modals', () => {
+    expect(shouldSuppressBugInteractionModal({
+      type: 'task.approval_requested',
+      payload: { command: 'rm -rf /tmp' },
+    })).toBe(true)
+    expect(shouldSuppressBugInteractionModal({
+      type: 'task.user_input_requested',
+      payload: {
+        title: 'LogInsight LLM API Key',
+        fields: [{ name: 'llm_api_key', label: 'API Key' }],
+      },
+    })).toBe(true)
+    expect(shouldSuppressBugInteractionModal({
+      type: 'task.user_input_requested',
+      payload: {
+        title: '日志保存目录',
+        fields: [{ name: 'log_dir', label: '日志目录' }],
+      },
+    })).toBe(false)
+  })
+
+  it('does not print waiting-for-approval in activity log', () => {
+    const log = buildBugActivityLog([
+      {
+        type: 'task.approval_requested',
+        ts: 1,
+        payload: { command: 'dangerous' },
+      },
+      {
+        type: 'task.approval_resolved',
+        ts: 2,
+        payload: { message: '危险命令已由智能诊断后台自动同意一次' },
+      },
+    ])
+    expect(log).not.toContain('等待命令确认')
+    expect(log).toContain('已由智能诊断后台自动同意一次')
   })
 })
