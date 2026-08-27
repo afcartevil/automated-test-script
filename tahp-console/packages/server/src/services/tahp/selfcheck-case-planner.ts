@@ -43,6 +43,10 @@ const DOMAIN_ID_TO_PIPELINE_MODULE: Record<string, string> = {
   lcm: 'lcm',
   fp: 'fingerprint',
   fingerprint: 'fingerprint',
+  modem: 'tdd',
+  'comm-framework': 'tdd',
+  telephony: 'tdd',
+  tdd: 'tdd',
 }
 
 export function mapDomainToPipelineAdaptModule(domainId: string): string | undefined {
@@ -51,7 +55,7 @@ export function mapDomainToPipelineAdaptModule(domainId: string): string | undef
 }
 
 /** 与 device-self-check getModulesForTestType('pipeline_adapt') 对齐 */
-const PIPELINE_ADAPT_MODULE_ORDER = ['tp', 'vibrator', 'audio', 'lcm', 'fingerprint'] as const
+const PIPELINE_ADAPT_MODULE_ORDER = ['tp', 'vibrator', 'audio', 'lcm', 'fingerprint', 'tdd'] as const
 
 /** 勾选（enabled）的调试项对应的 pipeline_adapt 模块，保持 catalog 顺序。 */
 export function resolvePipelineAdaptModules(run: PipelineRun): string[] {

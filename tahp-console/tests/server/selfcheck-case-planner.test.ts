@@ -174,6 +174,11 @@ describe('planCases pipeline_adapt mode', () => {
       'pipeline_adapt/audio/1',
       'pipeline_adapt/lcm/1',
       'pipeline_adapt/fingerprint/1',
+      'pipeline_adapt/tdd/1',
+      'pipeline_adapt/tdd/2',
+      'pipeline_adapt/tdd/3',
+      'pipeline_adapt/tdd/4',
+      'pipeline_adapt/tdd/5',
     ])
     expect(cases.map(c => c.caseName)).toEqual([
       'TP适配检查',
@@ -181,6 +186,11 @@ describe('planCases pipeline_adapt mode', () => {
       '音频适配检查',
       'LCM适配检查',
       '指纹/人脸适配检查',
+      '基带版本号检查',
+      'IMEI号检查',
+      '拨打运营商服务号码',
+      '检查收发短信',
+      '检查上网',
     ])
   })
 
@@ -190,6 +200,9 @@ describe('planCases pipeline_adapt mode', () => {
     expect(mapDomainToPipelineAdaptModule('audio')).toBe('audio')
     expect(mapDomainToPipelineAdaptModule('lcm')).toBe('lcm')
     expect(mapDomainToPipelineAdaptModule('fp')).toBe('fingerprint')
+    expect(mapDomainToPipelineAdaptModule('modem')).toBe('tdd')
+    expect(mapDomainToPipelineAdaptModule('comm-framework')).toBe('tdd')
+    expect(mapDomainToPipelineAdaptModule('telephony')).toBe('tdd')
     expect(mapDomainToPipelineAdaptModule('charging')).toBeUndefined()
   })
 

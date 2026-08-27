@@ -1269,12 +1269,12 @@ onUnmounted(() => {
             v-model:value="testPlanMode"
             :options="[
               { label: '冒烟用例测试（仅执行冒烟用例）', value: 'smoke' },
-              { label: '适配流水线用例（按勾选域：TP/马达/音频/LCM/指纹）', value: 'pipeline_adapt' },
+              { label: '适配流水线用例（按勾选域：TP/马达/音频/LCM/指纹/通信）', value: 'pipeline_adapt' },
               { label: '推荐策略（按适配域推断）', value: 'recommend' },
               { label: '固定用例（后续在自检节点确认）', value: 'fixed' },
             ]"
           />
-          <p class="field-hint">默认仅跑冒烟用例；适配流水线用例只跑勾选调试项对应的模块（TP/马达/音频/LCM/指纹），无对应模块则转人工。</p>
+          <p class="field-hint">默认仅跑冒烟用例；适配流水线用例只跑勾选调试项对应的模块（TP/马达/音频/LCM/指纹/通信），无对应模块则转人工。</p>
         </div>
       </div>
       <div class="field-row">

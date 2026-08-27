@@ -1,0 +1,43 @@
+{
+  "testType": "pipeline_adapt",
+  "module": "tdd",
+  "moduleLabel": "通信",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "基带版本号检查",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 2,
+      "caseName": "IMEI号检查",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 3,
+      "caseName": "拨打运营商服务号码",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 4,
+      "caseName": "检查收发短信",
+      "canReuse": false,
+      "automationMode": "full"
+    },
+    {
+      "caseIndex": 5,
+      "caseName": "检查上网",
+      "canReuse": false,
+      "automationMode": "full"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+[
+  {
+    "用例名": "基带版本号检查",
+    "前置条件": "测试机已通过 ADB 连接且状态为 device；可进入设置「我的手机 / 关于手机」。",
+    "测试步骤": "1、打开设置 → 系统 → 关于手机 / 我的手机 → Android 版本\n2、读取「基带版本」摘要文本（复用周版本 week/tdd/case9 的 UI 读取实现）",
+    "期望结果": "成功读到非空基带版本号字符串",
+    "case_index": 1
+  },
+  {
+    "用例名": "IMEI号检查",
+    "前置条件": "测试机已通过 ADB 连接且状态为 device；可启动工模 TranfacMode。",
+    "测试步骤": "1、adb 启动工模主界面 MainActivity\n2、点击右上角更多选项（menu_drawer）\n3、点击「软件信息」\n4、在软件信息页读取「IMEI号」摘要（IMEI1/IMEI2）",
+    "期望结果": "成功读到至少一组 IMEI 号码，且不为空、不能全是0",
+    "case_index": 2
+  },
+  {
+    "用例名": "拨打运营商服务号码",
+    "前置条件": "测试机已通过 ADB 连接且状态为 device；至少插入一张 SIM（优先使用卡1）；可正常拨打电话。",
+    "测试步骤": "1、读取 gsm.sim.state / gsm.sim.operator.alpha / gsm.sim.operator.numeric\n2、优先选择卡1；卡1未就绪则选卡2等第一个就绪卡\n3、按运营商映射服务号码（移动10086 / 联通10010 / 电信10000 / 广电10099）\n4、android.intent.action.DIAL 打开拨号盘预填号码并点击「拨打」\n5、确认进入通话界面 / mCallState 后挂断",
+    "期望结果": "能识别运营商并成功拨通对应服务号码；未插卡则跳过；无法映射运营商则失败",
+    "case_index": 3
+  },
+  {
+    "用例名": "检查收发短信",
+    "前置条件": "测试机已通过 ADB 连接且状态为 device；至少插入一张 SIM（优先使用卡1）；可正常收发短信。",
+    "测试步骤": "1、读取 gsm.sim.state / operator，优先卡1\n2、向对应运营商服务号发送短信（用于验证收发：移动 10086/CXYE；联通 10010/CXYE；电信 10001/101）\n3、android.intent.action.SENDTO 打开短信编辑页并点击发送\n4、通过 content://sms 确认已发送，并等待运营商号码回复",
+    "期望结果": "短信发送成功且收到运营商回复（验证收发短信能力）；未插卡则跳过；无映射则失败",
+    "case_index": 4
+  },
+  {
+    "用例名": "检查上网",
+    "前置条件": "测试机已通过 ADB 连接且状态为 device；至少插入一张可上网的 SIM。",
+    "测试步骤": "1、关闭 Wi‑Fi（adb shell svc wifi disable）\n2、打开移动数据（adb shell svc data enable）\n3、adb shell ping www.baidu.com\n4、adb shell ping www.qq.com",
+    "期望结果": "两个主机均至少收到 1 个 ping 回复；未插卡则跳过",
+    "case_index": 5
+  }
+]

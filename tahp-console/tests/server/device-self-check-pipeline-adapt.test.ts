@@ -6,13 +6,13 @@ import {
 } from '../../packages/server/src/services/tahp/device-self-check'
 
 describe('device self-check pipeline_adapt catalog', () => {
-  it('loads pipeline_adapt TP, vibrator, audio, LCM and fingerprint catalog modules', () => {
+  it('loads pipeline_adapt TP, vibrator, audio, LCM, fingerprint and tdd catalog modules', () => {
     initDeviceSelfCheck()
 
     const group = getAllCaseCatalogs().find(g => g.testType === 'pipeline_adapt')
     expect(group?.label).toBe('流水线适配自动化测试')
     expect(group?.modules.map(m => m.module)).toEqual([
-      'tp', 'vibrator', 'audio', 'lcm', 'fingerprint',
+      'tp', 'vibrator', 'audio', 'lcm', 'fingerprint', 'tdd',
     ])
     expect(group?.modules[0]).toMatchObject({
       module: 'tp',
@@ -44,9 +44,19 @@ describe('device self-check pipeline_adapt catalog', () => {
     })
     expect(group?.modules[4]?.cases).toHaveLength(1)
     expect(group?.modules[4]?.cases[0]?.caseName).toBe('指纹/人脸适配检查')
+    expect(group?.modules[5]).toMatchObject({
+      module: 'tdd',
+      moduleLabel: '通信',
+    })
+    expect(group?.modules[5]?.cases).toHaveLength(5)
+    expect(group?.modules[5]?.cases[0]?.caseName).toBe('基带版本号检查')
+    expect(group?.modules[5]?.cases[1]?.caseName).toBe('IMEI号检查')
+    expect(group?.modules[5]?.cases[2]?.caseName).toBe('拨打运营商服务号码')
+    expect(group?.modules[5]?.cases[3]?.caseName).toBe('检查收发短信')
+    expect(group?.modules[5]?.cases[4]?.caseName).toBe('检查上网')
 
     const detail = getCaseCatalogDetail('pipeline_adapt')
-    expect(detail).toHaveLength(5)
+    expect(detail).toHaveLength(10)
     expect(detail[0]).toMatchObject({
       testType: 'pipeline_adapt',
       module: 'tp',
@@ -80,6 +90,13 @@ describe('device self-check pipeline_adapt catalog', () => {
       module: 'fingerprint',
       moduleLabel: '指纹/人脸',
       caseName: '指纹/人脸适配检查',
+      automationMode: 'full',
+    })
+    expect(detail[5]).toMatchObject({
+      testType: 'pipeline_adapt',
+      module: 'tdd',
+      moduleLabel: '通信',
+      caseName: '基带版本号检查',
       automationMode: 'full',
     })
     expect(typeof detail[0]?.preconditions).toBe('string')
@@ -122,5 +139,71 @@ describe('device self-check pipeline_adapt catalog', () => {
     expect(detail[4]?.expectedResult).toContain('tran-keys')
     expect(detail[4]?.expectedResult).toContain('android.hardware.biometrics.fingerp')
     expect(detail[4]?.expectedResult).toContain('android.hardware.biometrics.face')
+    expect(detail[5]).toMatchObject({
+      testType: 'pipeline_adapt',
+      module: 'tdd',
+      moduleLabel: '通信',
+      caseName: '基带版本号检查',
+      caseIndex: 1,
+      automationMode: 'full',
+    })
+    expect(detail[5]?.manualSteps).toContain('基带版本')
+    expect(detail[5]?.expectedResult).toContain('基带版本')
+    expect(detail[6]).toMatchObject({
+      testType: 'pipeline_adapt',
+      module: 'tdd',
+      moduleLabel: '通信',
+      caseName: 'IMEI号检查',
+      caseIndex: 2,
+      automationMode: 'full',
+    })
+    expect(detail[6]?.manualSteps).toContain('menu_drawer')
+    expect(detail[6]?.manualSteps).toContain('软件信息')
+    expect(detail[6]?.manualSteps).toContain('IMEI')
+    expect(detail[6]?.expectedResult).toContain('IMEI')
+    expect(detail[6]?.expectedResult).toContain('不为空')
+    expect(detail[6]?.expectedResult).toContain('全是0')
+    expect(detail[7]).toMatchObject({
+      testType: 'pipeline_adapt',
+      module: 'tdd',
+      moduleLabel: '通信',
+      caseName: '拨打运营商服务号码',
+      caseIndex: 3,
+      automationMode: 'full',
+    })
+    expect(detail[7]?.manualSteps).toContain('优先')
+    expect(detail[7]?.manualSteps).toContain('10086')
+    expect(detail[7]?.manualSteps).toContain('10010')
+    expect(detail[7]?.manualSteps).toContain('10000')
+    expect(detail[7]?.manualSteps).toContain('DIAL')
+    expect(detail[7]?.expectedResult).toContain('服务号码')
+    expect(detail[8]).toMatchObject({
+      testType: 'pipeline_adapt',
+      module: 'tdd',
+      moduleLabel: '通信',
+      caseName: '检查收发短信',
+      caseIndex: 4,
+      automationMode: 'full',
+    })
+    expect(detail[8]?.manualSteps).toContain('CXYE')
+    expect(detail[8]?.manualSteps).toContain('10086')
+    expect(detail[8]?.manualSteps).toContain('10010')
+    expect(detail[8]?.manualSteps).toContain('10001')
+    expect(detail[8]?.manualSteps).toContain('SENDTO')
+    expect(detail[8]?.expectedResult).toContain('运营商回复')
+    expect(detail[8]?.expectedResult).toContain('收发')
+    expect(detail[9]).toMatchObject({
+      testType: 'pipeline_adapt',
+      module: 'tdd',
+      moduleLabel: '通信',
+      caseName: '检查上网',
+      caseIndex: 5,
+      automationMode: 'full',
+    })
+    expect(detail[9]?.manualSteps).toContain('wifi disable')
+    expect(detail[9]?.manualSteps).toContain('data enable')
+    expect(detail[9]?.manualSteps).toContain('www.baidu.com')
+    expect(detail[9]?.manualSteps).toContain('www.qq.com')
+    expect(detail[9]?.expectedResult).toContain('ping')
   })
 })

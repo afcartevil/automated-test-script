@@ -556,6 +556,7 @@ function loadCaseConfigs(): void {
     'pipeline_adapt_audio.json',
     'pipeline_adapt_lcm.json',
     'pipeline_adapt_fingerprint.json',
+    'pipeline_adapt_tdd.json',
   ]
   
   for (const file of configFiles) {
@@ -1173,7 +1174,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'power') return ['current_analysis']
   if (testType === 'power_feature') return ['wbs']
   if (testType === 'thermal') return ['scheme']
-  if (testType === 'pipeline_adapt') return ['tp', 'vibrator', 'audio', 'lcm', 'fingerprint']
+  if (testType === 'pipeline_adapt') return ['tp', 'vibrator', 'audio', 'lcm', 'fingerprint', 'tdd']
   if (testType === 'ai_generated') return [AI_GENERATED_MODULE]
   return ['driver', 'tdd']
 }
