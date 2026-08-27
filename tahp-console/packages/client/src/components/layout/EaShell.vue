@@ -60,6 +60,7 @@ const inboxPackages = ref<Array<{
   variant?: string
   node_rule_id?: string
   resolved_version?: string
+  track_mode?: 'pipeline' | 'manual'
 }>>([])
 type ApplyPrompt = {
   run: { run_id: string; project_code: string; campaign_id?: string; status?: string; dimension?: string; domain_id?: string }
@@ -269,9 +270,14 @@ function packageHeadline(p: (typeof inboxPackages.value)[number]) {
 function packageMeta(p: (typeof inboxPackages.value)[number]) {
   const bits: string[] = []
   if (p.unread) bits.push('新通知')
+  if (p.track_mode === 'manual') bits.push('人工跟踪')
   if (p.kind === 'self-check') bits.push('将拉取最新包')
   bits.push(`${p.unread_count || 0} 项未完成`)
   return bits.join(' · ')
+}
+
+function canGoExecute(p: (typeof inboxPackages.value)[number]) {
+  return p.track_mode !== 'manual'
 }
 
 function toggleTaskPop(e: Event) {
@@ -510,7 +516,7 @@ onUnmounted(() => {
                 </div>
                 <div class="ck-task-actions">
                   <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openChecklist(p)">打开清单</button>
-                  <button type="button" class="ck-feedback-btn ck-task-go" @click="goExecute(p)">去执行</button>
+                  <button v-if="canGoExecute(p)" type="button" class="ck-feedback-btn ck-task-go" @click="goExecute(p)">去执行</button>
                 </div>
               </div>
             </template>
@@ -526,7 +532,7 @@ onUnmounted(() => {
                 </div>
                 <div class="ck-task-actions">
                   <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openChecklist(p)">打开清单</button>
-                  <button type="button" class="ck-feedback-btn ck-task-go" @click="goExecute(p)">去执行</button>
+                  <button v-if="canGoExecute(p)" type="button" class="ck-feedback-btn ck-task-go" @click="goExecute(p)">去执行</button>
                 </div>
               </div>
             </template>
