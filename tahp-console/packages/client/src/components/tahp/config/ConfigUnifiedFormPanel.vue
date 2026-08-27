@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import {
-  NButton, NSpin, NInput, NCollapse, NCollapseItem, useMessage,
+  NButton, NSpin, NInput, useMessage,
 } from 'naive-ui'
 import {
   fetchUnifiedConfigForm,
@@ -9,8 +9,9 @@ import {
   type UnifiedConfigField,
 } from '@/api/tahp/skill-config'
 import {
-  hasAnySavedFormValue,
-  SKILL_CONFIG_CHECK_BUTTON_LABEL,
+  SAVE_AND_START_SKILL_CHECK_LABEL,
+  formatUnfilledFieldsHint,
+  listUnfilledFormFields,
 } from '@/utils/config-navigation'
 
 const emit = defineEmits<{
@@ -28,19 +29,14 @@ const formSaving = ref(false)
 const saveHint = ref('')
 const saveHintKind = ref<'success' | 'error' | ''>('')
 const activeNav = ref('')
-
-const expandedGroups = reactive<Record<string, boolean>>({})
+const missingKeys = ref<string[]>([])
 
 const formGroups = computed(() => {
-  const groups: Array<{ name: string; fields: UnifiedConfigField[]; optional: boolean }> = []
+  const groups: Array<{ name: string; fields: UnifiedConfigField[] }> = []
   for (const f of formFields.value) {
     let g = groups.find(x => x.name === f.group)
     if (!g) {
-      g = {
-        name: f.group,
-        fields: [],
-        optional: f.group.includes('可选'),
-      }
+      g = { name: f.group, fields: [] }
       groups.push(g)
     }
     g.fields.push(f)
@@ -52,8 +48,8 @@ const filledCount = computed(() =>
   formFields.value.filter(f => (formValues.value[f.key] || '').trim()).length,
 )
 
-const canStartSkillCheck = computed(() =>
-  hasAnySavedFormValue(savedValues.value, formFields.value),
+const allFieldsFilled = computed(() =>
+  formFields.value.length > 0 && filledCount.value === formFields.value.length,
 )
 
 function groupAnchor(name: string): string {
@@ -72,14 +68,15 @@ function groupFilledCount(fields: UnifiedConfigField[]): number {
   return fields.filter(f => (formValues.value[f.key] || '').trim()).length
 }
 
-function isGroupExpanded(name: string, fields: UnifiedConfigField[], optional: boolean): boolean {
-  if (name in expandedGroups) return expandedGroups[name]
-  if (!optional) return true
-  return groupFilledCount(fields) > 0
+function isFieldMissing(key: string): boolean {
+  return missingKeys.value.includes(key)
 }
 
-function setGroupExpanded(name: string, open: boolean) {
-  expandedGroups[name] = open
+function onFieldInput(key: string, value: string) {
+  formValues.value[key] = value
+  if ((value || '').trim()) {
+    missingKeys.value = missingKeys.value.filter(k => k !== key)
+  }
 }
 
 function fieldSpanClass(field: UnifiedConfigField): string {
@@ -92,7 +89,6 @@ function fieldSpanClass(field: UnifiedConfigField): string {
 
 function scrollToGroup(name: string) {
   activeNav.value = name
-  expandedGroups[name] = true
   const el = document.getElementById(groupAnchor(name))
   el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
@@ -112,11 +108,6 @@ async function loadUnifiedForm() {
     if (!activeNav.value && data.fields.length) {
       activeNav.value = data.fields[0].group
     }
-    for (const g of formGroups.value) {
-      if (g.optional && groupFilledCount(g.fields) > 0) {
-        expandedGroups[g.name] = true
-      }
-    }
   } catch (err) {
     message.error((err as Error).message || '加载配置表单失败')
   } finally {
@@ -124,7 +115,27 @@ async function loadUnifiedForm() {
   }
 }
 
-async function saveConfigForm() {
+function validateRequiredFields(): boolean {
+  const missing = listUnfilledFormFields(formValues.value, formFields.value)
+  missingKeys.value = missing.map(f => f.key)
+  if (!missing.length) return true
+  const hint = formatUnfilledFieldsHint(missing)
+  saveHint.value = hint
+  saveHintKind.value = 'error'
+  message.warning(hint, { duration: 6000 })
+  const first = missing[0]
+  if (first) {
+    activeNav.value = first.group
+    void nextTick(() => {
+      const el = document.getElementById(`uf-${first.key}`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el?.focus()
+    })
+  }
+  return false
+}
+
+async function saveConfigForm(): Promise<boolean> {
   formSaving.value = true
   saveHint.value = ''
   saveHintKind.value = ''
@@ -133,28 +144,24 @@ async function saveConfigForm() {
     await loadUnifiedForm()
     saveHint.value = '已保存（含 harness 配置同步）'
     saveHintKind.value = 'success'
-    message.success('配置已保存')
-    window.setTimeout(() => {
-      if (saveHintKind.value === 'success') {
-        saveHint.value = ''
-        saveHintKind.value = ''
-      }
-    }, 4000)
+    return true
   } catch (err) {
     const text = (err as Error).message || '保存失败'
     saveHint.value = text
     saveHintKind.value = 'error'
     message.error(text)
+    return false
   } finally {
     formSaving.value = false
   }
 }
 
-function onStartSkillCheck() {
-  if (!canStartSkillCheck.value) {
-    message.warning('请先填写并保存至少一项配置')
-    return
-  }
+async function saveAndStartSkillCheck() {
+  if (formSaving.value || formLoading.value) return
+  if (!validateRequiredFields()) return
+  const saved = await saveConfigForm()
+  if (!saved) return
+  message.success('配置已保存，正在启动检查')
   emit('startBatch')
 }
 
@@ -175,9 +182,9 @@ onMounted(() => {
         </div>
         <span
           class="form-toolbar__status"
-          :class="canStartSkillCheck ? 'form-toolbar__status--ok' : ''"
+          :class="allFieldsFilled ? 'form-toolbar__status--ok' : ''"
         >
-          {{ canStartSkillCheck ? '可启动检查' : '保存后启用检查' }}
+          {{ allFieldsFilled ? '全部已填写' : '全部为必填' }}
         </span>
         <span
           v-if="saveHint"
@@ -189,16 +196,14 @@ onMounted(() => {
         </span>
       </div>
       <div class="form-toolbar__actions">
-        <NButton type="primary" size="small" :loading="formSaving" @click="saveConfigForm">
-          保存配置
-        </NButton>
         <NButton
-          type="default"
+          type="primary"
           size="small"
-          :disabled="!canStartSkillCheck"
-          @click="onStartSkillCheck"
+          :loading="formSaving"
+          :disabled="formLoading"
+          @click="saveAndStartSkillCheck"
         >
-          {{ SKILL_CONFIG_CHECK_BUTTON_LABEL }}
+          {{ SAVE_AND_START_SKILL_CHECK_LABEL }}
         </NButton>
       </div>
     </header>
@@ -225,103 +230,55 @@ onMounted(() => {
             :id="groupAnchor(group.name)"
             :key="group.name"
             class="form-section"
-            :class="{ 'form-section--optional': group.optional }"
           >
-            <template v-if="!group.optional">
-              <div class="form-section__bar">
-                <h3 class="form-section__title">{{ groupShortName(group.name) }}</h3>
-                <span class="form-section__tag form-section__tag--req">必填</span>
-              </div>
-              <div class="form-fields-grid">
-                <div
-                  v-for="field in group.fields"
-                  :key="field.key"
-                  :class="fieldSpanClass(field)"
-                >
-                  <label class="form-field__label" :for="`uf-${field.key}`">
-                    <span>{{ field.label }}</span>
-                    <a
-                      v-if="field.doc_url"
-                      class="form-field__doc"
-                      :href="field.doc_url"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      @click.stop
-                    >{{ field.doc_label || '文档' }}</a>
-                    <span
-                      v-if="isFieldSaved(field.key)"
-                      class="form-field__saved"
-                      title="已保存"
-                    />
-                  </label>
-                  <NInput
-                    :id="`uf-${field.key}`"
-                    v-model:value="formValues[field.key]"
-                    size="small"
-                    :type="field.type === 'password' ? 'password' : 'text'"
-                    :show-password-on="field.type === 'password' ? 'click' : undefined"
-                    :placeholder="field.placeholder || ''"
+            <div class="form-section__bar">
+              <h3 class="form-section__title">{{ groupShortName(group.name) }}</h3>
+              <a
+                v-if="groupGuide(group.name)"
+                class="form-section__guide"
+                :href="groupGuide(group.name)!.url"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {{ groupGuide(group.name)!.label }}
+              </a>
+              <span class="form-section__tag form-section__tag--req">必填</span>
+            </div>
+            <div class="form-fields-grid">
+              <div
+                v-for="field in group.fields"
+                :key="field.key"
+                :class="[fieldSpanClass(field), { 'form-field--missing': isFieldMissing(field.key) }]"
+              >
+                <label class="form-field__label" :for="`uf-${field.key}`">
+                  <span>{{ field.label }}</span>
+                  <span class="form-field__req" aria-hidden="true">*</span>
+                  <a
+                    v-if="field.doc_url"
+                    class="form-field__doc"
+                    :href="field.doc_url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    @click.stop
+                  >{{ field.doc_label || '文档' }}</a>
+                  <span
+                    v-if="isFieldSaved(field.key)"
+                    class="form-field__saved"
+                    title="已保存"
                   />
-                </div>
+                </label>
+                <NInput
+                  :id="`uf-${field.key}`"
+                  :value="formValues[field.key]"
+                  size="small"
+                  :status="isFieldMissing(field.key) ? 'error' : undefined"
+                  :type="field.type === 'password' ? 'password' : 'text'"
+                  :show-password-on="field.type === 'password' ? 'click' : undefined"
+                  :placeholder="field.placeholder || ''"
+                  @update:value="(v: string) => onFieldInput(field.key, v)"
+                />
               </div>
-            </template>
-
-            <NCollapse
-              v-else
-              :expanded-names="isGroupExpanded(group.name, group.fields, group.optional) ? [group.name] : []"
-              @update:expanded-names="(names: string[]) => setGroupExpanded(group.name, names.includes(group.name))"
-            >
-              <NCollapseItem :name="group.name">
-                <template #header>
-                  <div class="form-section__bar form-section__bar--collapse">
-                    <h3 class="form-section__title">{{ groupShortName(group.name) }}</h3>
-                    <a
-                      v-if="groupGuide(group.name)"
-                      class="form-section__guide"
-                      :href="groupGuide(group.name)!.url"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      @click.stop
-                    >
-                      {{ groupGuide(group.name)!.label }}
-                    </a>
-                    <span class="form-section__tag">{{ groupFilledCount(group.fields) }}/{{ group.fields.length }}</span>
-                  </div>
-                </template>
-                <div class="form-fields-grid">
-                  <div
-                    v-for="field in group.fields"
-                    :key="field.key"
-                    :class="fieldSpanClass(field)"
-                  >
-                    <label class="form-field__label" :for="`uf-${field.key}`">
-                      <span>{{ field.label }}</span>
-                      <a
-                        v-if="field.doc_url"
-                        class="form-field__doc"
-                        :href="field.doc_url"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        @click.stop
-                      >{{ field.doc_label || '文档' }}</a>
-                      <span
-                        v-if="isFieldSaved(field.key)"
-                        class="form-field__saved"
-                        title="已保存"
-                      />
-                    </label>
-                    <NInput
-                      :id="`uf-${field.key}`"
-                      v-model:value="formValues[field.key]"
-                      size="small"
-                      :type="field.type === 'password' ? 'password' : 'text'"
-                      :show-password-on="field.type === 'password' ? 'click' : undefined"
-                      :placeholder="field.placeholder || ''"
-                    />
-                  </div>
-                </div>
-              </NCollapseItem>
-            </NCollapse>
+            </div>
           </section>
         </div>
       </div>
@@ -374,6 +331,9 @@ onMounted(() => {
 
   &--error {
     color: var(--error, #d33b3b);
+    white-space: normal;
+    max-width: 42rem;
+    line-height: 1.4;
   }
 }
 
@@ -488,27 +448,6 @@ onMounted(() => {
   border-radius: 10px;
   background: var(--surface);
   border: 1px solid var(--line, var(--border));
-
-  &--optional {
-    padding: 0;
-    border: none;
-    background: transparent;
-
-    :deep(.n-collapse) {
-      border-radius: 10px;
-      overflow: hidden;
-      border: 1px solid var(--line, var(--border));
-      background: var(--surface);
-    }
-
-    :deep(.n-collapse-item__header) {
-      padding: 12px 16px !important;
-    }
-
-    :deep(.n-collapse-item__content-inner) {
-      padding: 0 16px 14px !important;
-    }
-  }
 }
 
 .form-section__bar {
@@ -517,11 +456,6 @@ onMounted(() => {
   gap: 8px;
   margin-bottom: 12px;
   min-width: 0;
-
-  &--collapse {
-    margin-bottom: 0;
-    flex: 1;
-  }
 }
 
 .form-section__title {
@@ -572,6 +506,10 @@ onMounted(() => {
   grid-column: 1 / -1;
 }
 
+.form-field--missing .form-field__label {
+  color: #c45656;
+}
+
 .form-field__label {
   display: flex;
   align-items: center;
@@ -580,6 +518,12 @@ onMounted(() => {
   font-size: 12px;
   font-weight: 600;
   color: var(--head, var(--text));
+}
+
+.form-field__req {
+  color: #c45656;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .form-field__doc {

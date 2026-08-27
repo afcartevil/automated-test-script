@@ -21,7 +21,7 @@ const activeTab = computed(() => parseConfigTab(route.query.tab))
 
 /** 首次进入 batch 后保持组件挂载，返回表单时会话不丢失 */
 const batchPanelMounted = ref(false)
-/** 每次从表单点击「启动skill配置检查」递增，驱动 batch 面板启动或恢复 */
+/** 每次从表单保存并启动检查时递增，驱动 batch 面板启动或恢复 */
 const batchStartToken = ref(0)
 
 const pageSubtitle = computed(() => {

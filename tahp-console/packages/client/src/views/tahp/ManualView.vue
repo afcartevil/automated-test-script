@@ -402,8 +402,8 @@ onUnmounted(() => {
               <p class="item-desc">首次使用请按以下顺序完成配置（具体参考<span class="hl">飞书 SOP</span>）：</p>
               <ol class="item-steps">
                 <li>先在「<span class="hl">配置 → 模型管理</span>」配好模型 Provider 与 API Key；</li>
-                <li>再到「<span class="hl">配置 → 一键配置表单</span>」按 SOP 填好项目、JIRA、凭据等；</li>
-                <li>最后到「<span class="hl">配置 → 常用 Skill 配置</span>」点「<span class="hl">启动 skill 配置检查</span>」，由 Agent 依次核对各 Skill 配置。</li>
+                <li>再到「<span class="hl">配置 → 一键配置表单</span>」填齐全部配置项，点击「<span class="hl">保存并启动skill配置检查</span>」；</li>
+                <li>Agent 会进入检查页依次核对各 Skill 配置；也可在「<span class="hl">配置 → 常用 Skill 配置</span>」查看单项进展。</li>
               </ol>
               <p class="item-desc">三步都完成后，再回到本手册中的业务入口操作。</p>
             </div>

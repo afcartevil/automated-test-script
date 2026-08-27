@@ -20,7 +20,7 @@ import {
 import { SKILL_CONFIG_CHECK_BUTTON_LABEL } from '@/utils/config-navigation'
 
 const props = defineProps<{
-  /** 从表单点击「启动skill配置检查」时递增，触发启动或恢复 */
+  /** 从表单保存并启动检查时递增，触发启动或恢复 */
   startToken?: number
 }>()
 
