@@ -31,6 +31,7 @@ SHEET_TO_MODULE: dict[str, tuple[str, str]] = {
     "pipeline_adapt_audio": ("pipeline_adapt", "audio"),
     "pipeline_adapt_lcm": ("pipeline_adapt", "lcm"),
     "pipeline_adapt_fingerprint": ("pipeline_adapt", "fingerprint"),
+    "pipeline_adapt_tdd": ("pipeline_adapt", "tdd"),
 }
 
 MODULE_TO_SHEET: dict[tuple[str, str], str] = {
