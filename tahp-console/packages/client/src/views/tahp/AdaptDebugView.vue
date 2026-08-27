@@ -46,6 +46,16 @@ import {
 } from '@/constants/adapt-domains/ecc-config-form'
 import { normalizeSpnRelatedSkills } from '@/constants/adapt-domains/spn-config-form'
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
+import AdaptPathParamsPanel from '@/components/tahp/adapt/AdaptPathParamsPanel.vue'
+import {
+  copyPathParamInputs,
+  createPathParamScope,
+  fillFormDataWithPathParams,
+  flattenAdaptPathParams,
+  isPathParamWorkspace,
+  type AdaptPathParamInputs,
+  type AdaptPathParamScope,
+} from '@/utils/adapt-path-params'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -143,6 +153,42 @@ const activeDomainId = computed({
 
 function formScopeKey(domainId: string): string {
   return `${activeWorkspaceId.value}:${domainId}`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 路径参数解析（复用适配流水线解析服务；功能适配 / 特性适配 按模块独立一份）
+// ─────────────────────────────────────────────────────────────────────────────
+const pathParamScopes = reactive<Record<string, AdaptPathParamScope>>({})
+/** 最近一次解析成功的输入，供其它模块「沿用上次输入」 */
+const lastPathParamInputs = ref<AdaptPathParamInputs | null>(null)
+
+const pathParamsAvailable = computed(() => isPathParamWorkspace(activeWorkspaceId.value))
+
+const activePathParamScope = computed<AdaptPathParamScope | undefined>(() =>
+  pathParamScopes[formScopeKey(activeDomainId.value)],
+)
+
+watch(
+  [activeWorkspaceId, activeDomainId],
+  () => {
+    if (!pathParamsAvailable.value) return
+    const key = formScopeKey(activeDomainId.value)
+    if (!pathParamScopes[key]) pathParamScopes[key] = createPathParamScope()
+  },
+  { immediate: true },
+)
+
+function onPathParamsParsed() {
+  const scope = activePathParamScope.value
+  if (scope) lastPathParamInputs.value = copyPathParamInputs(scope.inputs)
+}
+
+function reuseLastPathParamInputs() {
+  const scope = activePathParamScope.value
+  const last = lastPathParamInputs.value
+  if (!scope || !last) return
+  scope.inputs = copyPathParamInputs(last)
+  message.success('已沿用上次输入，请点击「解析」')
 }
 
 function buildStaticDefaults(ws: AdaptWorkspaceId) {
@@ -838,8 +884,13 @@ const formFieldsForAgent = computed(() => {
       label: f.label,
       required: f.required,
     }))
-  if (activeDomain.value.id !== 'ecc-config') return base
-  return [...base, ...packEccEntriesForAgent(eccEntries.value).formFields]
+  const domainFields = activeDomain.value.id === 'ecc-config'
+    ? [...base, ...packEccEntriesForAgent(eccEntries.value).formFields]
+    : base
+  const known = new Set(domainFields.map(f => f.name))
+  const pathFields = flattenAdaptPathParams(activePathParamScope.value).formFields
+    .filter(f => !known.has(f.name))
+  return [...domainFields, ...pathFields]
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1836,7 +1887,8 @@ function buildAgentFormData(): Record<string, string> {
     }
     Object.assign(data, packEccEntriesForAgent(eccEntries.value).formData)
   }
-  return data
+  // 路径解析结果补位：模块自身已填的同名字段优先
+  return fillFormDataWithPathParams(data, activePathParamScope.value)
 }
 
 function buildAgentRunPayload() {
@@ -2349,6 +2401,16 @@ function openSkill(skillName: string) {
 
               <!-- 填写模式 -->
               <div v-else>
+                <AdaptPathParamsPanel
+                  v-if="pathParamsAvailable && activePathParamScope"
+                  :key="'ppp-' + activeWorkspaceId + '-' + activeDomainId"
+                  :scope="activePathParamScope"
+                  :domain-label="activeDomain.label"
+                  :last-inputs="lastPathParamInputs"
+                  @parsed="onPathParamsParsed"
+                  @reuse-last="reuseLastPathParamInputs"
+                />
+
                 <!-- ECC：共享字段 + 可临时复制的多组条目 -->
                 <template v-if="activeDomain.id === 'ecc-config'">
                   <div class="ea-form-grid2">
