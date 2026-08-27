@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   bugTaskCardPhase,
+  bugTaskDefaultDetailTab,
   bugTaskListTitle,
   bugTaskStatusPhase,
 } from '../../packages/client/src/utils/bug-analysis-task-label'
@@ -27,5 +28,18 @@ describe('bugTaskListTitle', () => {
   it('prefers real title and keeps placeholder while still running', () => {
     expect(bugTaskListTitle({ title: 'kernel panic', status: 'completed', jira_key: 'X-1' })).toBe('kernel panic')
     expect(bugTaskListTitle({ status: 'running', jira_key: 'X-1' })).toBe('(等待获取标题)')
+  })
+})
+
+describe('bugTaskDefaultDetailTab', () => {
+  it('opens the report tab for finished analysis', () => {
+    expect(bugTaskDefaultDetailTab('completed')).toBe('report')
+    expect(bugTaskDefaultDetailTab('failed')).toBe('report')
+  })
+
+  it('keeps live progress for running or cancelled tasks', () => {
+    expect(bugTaskDefaultDetailTab('running')).toBe('live')
+    expect(bugTaskDefaultDetailTab('cancelled')).toBe('live')
+    expect(bugTaskDefaultDetailTab('pending')).toBe('live')
   })
 })

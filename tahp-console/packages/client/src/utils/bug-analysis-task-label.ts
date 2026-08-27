@@ -23,3 +23,8 @@ export function bugTaskListTitle(task: { title?: string; jira_key?: string; stat
   if (task.status && TERMINAL.has(task.status)) return task.jira_key?.trim() || '无标题'
   return '(等待获取标题)'
 }
+
+/** 已出结论的单默认看报告；进行中 / 取消仍看实时进展。 */
+export function bugTaskDefaultDetailTab(status?: string): 'live' | 'report' {
+  return status === 'completed' || status === 'failed' ? 'report' : 'live'
+}

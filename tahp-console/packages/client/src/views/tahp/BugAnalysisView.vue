@@ -32,7 +32,7 @@ import {
   type HistoryStageDetail,
 } from '@/utils/bug-analysis-report'
 import { bugJobSettledCount, countBugJobQueue } from '@/utils/bug-analysis-job-stats'
-import { bugTaskCardPhase, bugTaskListTitle } from '@/utils/bug-analysis-task-label'
+import { bugTaskCardPhase, bugTaskDefaultDetailTab, bugTaskListTitle } from '@/utils/bug-analysis-task-label'
 import {
   buildBugActivityLog,
   formatBugActivityLine,
@@ -1329,7 +1329,9 @@ function selectTask(taskId: string) {
   store.selectTask(taskId)
   reportDetail.value = null
   taskLog.value = ''
-  activeReportTab.value = 'live'
+  const tab = bugTaskDefaultDetailTab(store.tasks[taskId]?.status)
+  activeReportTab.value = tab
+  if (tab === 'report') void loadReport()
 }
 
 async function loadReport() {
@@ -1395,7 +1397,8 @@ watch(
   (status, prev) => {
     if (isHistoryView.value || !currentTaskId.value) return
     if (status === 'completed' && prev === 'running') {
-      if (reportDetail.value || activeReportTab.value === 'report') loadReport()
+      activeReportTab.value = 'report'
+      loadReport()
     }
     void refreshContinueStatus()
   },
