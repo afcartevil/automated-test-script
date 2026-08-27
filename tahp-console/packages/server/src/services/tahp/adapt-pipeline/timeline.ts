@@ -1,8 +1,9 @@
 import { getStage } from './registry'
 import type { PipelineDomain, PipelineRun, TimelineView, WorkflowDefinition } from './types'
+import { resolveAdaptMaxRetries } from './types'
 import { getEnabledNodes, loadWorkflow } from './workflow'
 
-function serializeDomainForTimeline(domain: PipelineDomain) {
+function serializeDomainForTimeline(domain: PipelineDomain, retryMax: number) {
   return {
     domain_id: domain.domain_id,
     domain_label: domain.domain_label,
@@ -11,6 +12,8 @@ function serializeDomainForTimeline(domain: PipelineDomain) {
     related_skills: domain.related_skills,
     error: domain.error,
     adapt_task_id: domain.adapt_task_id,
+    retry_count: domain.retry_count ?? 0,
+    retry_max: retryMax,
   }
 }
 
@@ -40,7 +43,8 @@ function buildNodeProgress(
   }
 
   if (nodeKey === 'adapt') {
-    const domains = run.domains.filter(d => d.enabled).map(serializeDomainForTimeline)
+    const retryMax = resolveAdaptMaxRetries(run.adapt_max_retries)
+    const domains = run.domains.filter(d => d.enabled).map(d => serializeDomainForTimeline(d, retryMax))
     if (domains.length) out.domains = domains
   }
 
@@ -130,6 +134,7 @@ export function buildTimelineView(
     status: run.status,
     iteration: run.iteration,
     max_iterations: run.max_iterations,
+    adapt_max_retries: resolveAdaptMaxRetries(run.adapt_max_retries),
     current_node: run.current_node,
     started_at: startedAt,
     duration_ms: Math.max(0, now - new Date(startedAt).getTime()),

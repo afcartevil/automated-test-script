@@ -30,6 +30,7 @@ export interface WizardCloneSeed {
   device_id?: string
   test_plan?: TestPlan
   max_iterations: number
+  adapt_max_retries: number
 }
 
 export function isCloneableRunId(runId: string): boolean {
@@ -112,6 +113,9 @@ export function buildWizardCloneSeed(run: PipelineRunRecord): WizardCloneSeed {
     device_id: run.device_id,
     test_plan: run.test_plan ? { ...run.test_plan } : undefined,
     max_iterations: run.max_iterations > 0 ? run.max_iterations : 3,
+    adapt_max_retries: typeof run.adapt_max_retries === 'number' && run.adapt_max_retries >= 0
+      ? run.adapt_max_retries
+      : 3,
   }
 }
 

@@ -18,6 +18,7 @@ function sampleRun(overrides: Partial<PipelineRunRecord> = {}): PipelineRunRecor
     to_os: '16.0',
     status: 'failed',
     max_iterations: 4,
+    adapt_max_retries: 2,
     domains: [
       {
         workspace_id: 'adapt-debug',
@@ -97,6 +98,7 @@ describe('pipeline clone seed', () => {
     expect(seed.device_id).toBe('SN123')
     expect(seed.test_plan?.mode).toBe('pipeline_adapt')
     expect(seed.max_iterations).toBe(4)
+    expect(seed.adapt_max_retries).toBe(2)
     seed.build_context.build_targets?.push('odm')
     expect(run.build_context.build_targets).toEqual(['sys', 'krn'])
   })
@@ -106,6 +108,11 @@ describe('pipeline clone seed', () => {
     expect(seed.old_vendor_root).toBe('')
     expect(seed.new_vendor_root).toBe('Z:\\new\\vendor')
     expect(seed.new_system_root).toBe('Z:\\new\\sys')
+  })
+
+  it('defaults adapt_max_retries to 3 when the source run has no value', () => {
+    const seed = buildWizardCloneSeed(sampleRun({ adapt_max_retries: undefined }))
+    expect(seed.adapt_max_retries).toBe(3)
   })
 
   it('picks workspaces from enabled domains, then any domain, then default', () => {

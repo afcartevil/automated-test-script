@@ -114,6 +114,10 @@ function stubOtherStages() {
   }
 }
 
+function mockCallDomainId(call: unknown[]): string {
+  return (call[0] as { domainId?: string } | undefined)?.domainId ?? ''
+}
+
 describe('adapt-pipeline stages', () => {
   let tempDir = ''
 
@@ -565,6 +569,247 @@ describe('adapt-pipeline stages', () => {
 
     expect(startAdaptMock).toHaveBeenCalled()
     expect(getRun(run.run_id)?.current_node).toBe('adapt')
+  })
+
+  async function waitUntil(pred: () => boolean, timeoutMs = 800): Promise<void> {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      if (pred()) return
+      await new Promise(r => setTimeout(r, 20))
+    }
+    throw new Error('waitUntil timed out')
+  }
+
+  function mockSingleAdaptDomain(): void {
+    resolveMock.mockResolvedValue({
+      project_code: 'KM9',
+      campaign_id: 'camp-1',
+      from_os: '15',
+      to_os: '16',
+      domains: [{
+        workspace_id: 'adapt-debug',
+        domain_id: 'tp',
+        revision: 1,
+        schema: [],
+        form_data: { debug_project: 'A' },
+        stale_fields: [],
+        incomplete_required: [],
+      }],
+    })
+  }
+
+  it('defaults adapt_max_retries to 3 on create', () => {
+    const run = createRun(baseInput())
+    expect(run.adapt_max_retries).toBe(3)
+  })
+
+  it('clamps adapt_max_retries to 0..20', () => {
+    expect(createRun({ ...baseInput(), adapt_max_retries: -4 }).adapt_max_retries).toBe(0)
+    expect(createRun({ ...baseInput(), adapt_max_retries: 99 }).adapt_max_retries).toBe(20)
+  })
+
+  it('retries a failed adapt domain then succeeds within the configured budget', async () => {
+    mockSingleAdaptDomain()
+    let n = 0
+    startAdaptMock.mockImplementation(() => {
+      n += 1
+      return { ok: true, taskId: `task-tp-${n}` }
+    })
+
+    const run = createRun({ ...baseInput(), adapt_max_retries: 3 })
+    await startRun(run.run_id)
+    expect(startAdaptMock).toHaveBeenCalledTimes(1)
+
+    getTaskStream().publish({
+      type: 'task.failed',
+      task_id: 'task-tp-1',
+      payload: { error: 'agent crashed' },
+      ts: Date.now(),
+    })
+    await waitUntil(() => startAdaptMock.mock.calls.length >= 2)
+    await advance(run.run_id)
+
+    const mid = getRun(run.run_id)!
+    expect(mid.status).toBe('running')
+    expect(mid.current_node).toBe('adapt')
+    expect(mid.domains[0].status).toBe('running')
+    expect(mid.domains[0].retry_count).toBe(1)
+    expect(mid.domains[0].adapt_task_id).toBe('task-tp-2')
+
+    getTaskStream().publish({
+      type: 'task.completed',
+      task_id: 'task-tp-2',
+      payload: { task_id: 'task-tp-2' },
+      ts: Date.now(),
+    })
+    await waitUntil(() => getRun(run.run_id)?.domains[0]?.status === 'done')
+    for (let i = 0; i < 5; i++) {
+      await advance(run.run_id)
+      if (getRun(run.run_id)?.status === 'passed') break
+    }
+
+    const done = getRun(run.run_id)!
+    expect(done.domains[0].status).toBe('done')
+    expect(done.domains[0].retry_count).toBe(1)
+    expect(done.status).toBe('passed')
+  })
+
+  it('fails the adapt stage after each domain exhausts its retry budget', async () => {
+    mockSingleAdaptDomain()
+    let n = 0
+    startAdaptMock.mockImplementation(() => {
+      n += 1
+      return { ok: true, taskId: `task-tp-${n}` }
+    })
+
+    const run = createRun({ ...baseInput(), adapt_max_retries: 2 })
+    await startRun(run.run_id)
+
+    for (let i = 1; i <= 3; i++) {
+      getTaskStream().publish({
+        type: 'task.failed',
+        task_id: `task-tp-${i}`,
+        payload: { error: `fail-${i}` },
+        ts: Date.now(),
+      })
+      if (i < 3) {
+        await waitUntil(() => getRun(run.run_id)?.domains[0]?.adapt_task_id === `task-tp-${i + 1}`)
+      } else {
+        await waitUntil(() => getRun(run.run_id)?.domains[0]?.status === 'failed')
+      }
+      await advance(run.run_id)
+    }
+
+    const failed = getRun(run.run_id)!
+    expect(startAdaptMock).toHaveBeenCalledTimes(3)
+    expect(failed.domains[0].status).toBe('failed')
+    expect(failed.domains[0].retry_count).toBe(2)
+    expect(failed.status).toBe('failed')
+  })
+
+  it('does not retry when adapt_max_retries is 0', async () => {
+    mockSingleAdaptDomain()
+    startAdaptMock.mockReturnValue({ ok: true, taskId: 'task-tp-1' })
+
+    const run = createRun({ ...baseInput(), adapt_max_retries: 0 })
+    await startRun(run.run_id)
+    expect(run.adapt_max_retries).toBe(0)
+
+    getTaskStream().publish({
+      type: 'task.failed',
+      task_id: 'task-tp-1',
+      payload: { error: 'hard fail' },
+      ts: Date.now(),
+    })
+    await waitUntil(() => getRun(run.run_id)?.domains[0]?.status === 'failed')
+    await advance(run.run_id)
+
+    expect(startAdaptMock).toHaveBeenCalledTimes(1)
+    expect(getRun(run.run_id)?.status).toBe('failed')
+  })
+
+  it('retries launch failures of the same domain before giving up', async () => {
+    mockSingleAdaptDomain()
+    startAdaptMock
+      .mockReturnValueOnce({ ok: false, error: 'busy' })
+      .mockReturnValueOnce({ ok: false, error: 'busy' })
+      .mockReturnValueOnce({ ok: true, taskId: 'task-tp-ok' })
+
+    const run = createRun({ ...baseInput(), adapt_max_retries: 3 })
+    await startRun(run.run_id)
+
+    const updated = getRun(run.run_id)!
+    expect(startAdaptMock).toHaveBeenCalledTimes(3)
+    expect(updated.domains[0].status).toBe('running')
+    expect(updated.domains[0].retry_count).toBe(2)
+    expect(updated.domains[0].adapt_task_id).toBe('task-tp-ok')
+    expect(updated.status).toBe('running')
+  })
+
+  it('retries each failed domain independently and continues to the next domain after success', async () => {
+    resolveMock.mockResolvedValue({
+      project_code: 'KM9',
+      campaign_id: 'camp-1',
+      from_os: '15',
+      to_os: '16',
+      domains: [
+        {
+          workspace_id: 'adapt-debug',
+          domain_id: 'tp',
+          revision: 1,
+          schema: [],
+          form_data: { debug_project: 'A' },
+          stale_fields: [],
+          incomplete_required: [],
+        },
+        {
+          workspace_id: 'adapt-debug',
+          domain_id: 'lcm',
+          revision: 1,
+          schema: [],
+          form_data: { debug_project: 'A' },
+          stale_fields: [],
+          incomplete_required: [],
+        },
+      ],
+    })
+    getLayoutMock.mockImplementation(async (domainId: string) => ({
+      domain_id: domainId,
+      fields: [{ name: 'x', label: 'x', type: 'text', required: false }],
+      related_skills: [domainId === 'tp' ? 'tp-adapt-bringup' : 'display_analyser'],
+      revision: 1,
+      updated_at: new Date().toISOString(),
+      source: 'user',
+      schema_version: 1,
+    }))
+
+    const ids: string[] = []
+    startAdaptMock.mockImplementation((input: { domainId: string }) => {
+      const taskId = `task-${input.domainId}-${ids.filter(id => id.startsWith(input.domainId)).length + 1}`
+      ids.push(input.domainId)
+      return { ok: true, taskId }
+    })
+
+    const run = createRun({ ...baseInput(), adapt_max_retries: 3 })
+    await startRun(run.run_id)
+    expect(mockCallDomainId(startAdaptMock.mock.calls[0])).toBe('tp')
+
+    getTaskStream().publish({
+      type: 'task.completed',
+      task_id: 'task-tp-1',
+      payload: { task_id: 'task-tp-1' },
+      ts: Date.now(),
+    })
+    await waitUntil(() => startAdaptMock.mock.calls.some(c => mockCallDomainId(c) === 'lcm'))
+
+    getTaskStream().publish({
+      type: 'task.failed',
+      task_id: 'task-lcm-1',
+      payload: { error: 'lcm boom' },
+      ts: Date.now(),
+    })
+    await waitUntil(() => startAdaptMock.mock.calls.filter(c => mockCallDomainId(c) === 'lcm').length >= 2)
+
+    getTaskStream().publish({
+      type: 'task.completed',
+      task_id: 'task-lcm-2',
+      payload: { task_id: 'task-lcm-2' },
+      ts: Date.now(),
+    })
+    await waitUntil(() => getRun(run.run_id)?.domains.every(d => d.status === 'done') === true)
+    for (let i = 0; i < 5; i++) {
+      await advance(run.run_id)
+      if (getRun(run.run_id)?.status === 'passed') break
+    }
+
+    const updated = getRun(run.run_id)!
+    const tp = updated.domains.find(d => d.domain_id === 'tp')
+    const lcm = updated.domains.find(d => d.domain_id === 'lcm')
+    expect(tp?.status).toBe('done')
+    expect(tp?.retry_count ?? 0).toBe(0)
+    expect(lcm?.status).toBe('done')
+    expect(lcm?.retry_count).toBe(1)
+    expect(updated.status).toBe('passed')
   })
 })
 

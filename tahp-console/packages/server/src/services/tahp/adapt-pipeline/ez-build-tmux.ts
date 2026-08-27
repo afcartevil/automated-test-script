@@ -6,9 +6,17 @@ export const EA_BUILD_DIR = '~/code/ea-build'
 
 export interface TmuxPollSnapshot {
   alive: boolean
+  /** 输出里有独立一行 tmux=alive|dead（齐治登录界面等垃圾输出则为 false） */
+  recognized: boolean
   doneCode: number | null
   logTail: string
   lines: string[]
+}
+
+export function tmuxStartConfirmed(output: string, session: string): boolean {
+  const name = String(session || '').trim()
+  if (!name) return false
+  return String(output || '').includes(`TMUX_STARTED:${name}`)
 }
 
 export function shellQuote(s: string): string {
@@ -103,6 +111,7 @@ export function buildTmuxKillCommand(session: string): string {
 export function parseTmuxPollOutput(raw: string): TmuxPollSnapshot {
   const text = String(raw || '')
   const alive = /(?:^|\n)tmux=alive(?:\n|$)/.test(text)
+  const recognized = /(?:^|\n)tmux=(?:alive|dead)(?:\n|$)/.test(text)
   const doneMatch = text.match(/(?:^|\n)done_code=([^\n\r]*)/)
   let doneCode: number | null = null
   if (doneMatch) {
@@ -118,7 +127,7 @@ export function parseTmuxPollOutput(raw: string): TmuxPollSnapshot {
     .split(/\r?\n/)
     .map(l => l.replace(/\u001b\[[0-9;]*m/g, '').trim())
     .filter(Boolean)
-  return { alive, doneCode, logTail, lines }
+  return { alive, recognized, doneCode, logTail, lines }
 }
 
 export function detectBuildFailureInLog(lines: string[]): string | null {

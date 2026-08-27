@@ -10,6 +10,7 @@ import {
   parseTmuxPollOutput,
   detectBuildFailureInLog,
   detectBuildSuccessInLog,
+  tmuxStartConfirmed,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/ez-build-tmux'
 import { resolveHarnessSpawn } from '../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec'
 
@@ -80,15 +81,24 @@ describe('tmux poll helpers', () => {
       '[krn][PID:2] 进行中... 12:00:00',
     ].join('\n'))
     expect(snap.alive).toBe(true)
+    expect(snap.recognized).toBe(true)
     expect(snap.doneCode).toBeNull()
     expect(snap.lines.some(l => /进行中/.test(l))).toBe(true)
 
     const done = parseTmuxPollOutput('---POLL---\ntmux=dead\ndone_code=1\n---LOG_TAIL---\n[ERROR] project dir not found: /x')
     expect(done.alive).toBe(false)
+    expect(done.recognized).toBe(true)
     expect(done.doneCode).toBe(1)
     expect(detectBuildFailureInLog(done.lines)).toMatch(/project dir not found/)
 
     expect(parseTmuxPollOutput('done_code=0 \n---LOG_TAIL---\nok').doneCode).toBe(0)
+
+    const qizhi = parseTmuxPollOutput("请选择登录账号：{ echo ---POLL---; if tmux has-session -t 'ezb-x' 2>/dev/null; then echo tmux=alive; else echo tmux=dead; fi")
+    expect(qizhi.recognized).toBe(false)
+    expect(qizhi.alive).toBe(false)
+
+    expect(tmuxStartConfirmed('TMUX_STARTED:ezb-X6850Android16-871819f5f4', 'ezb-X6850Android16-871819f5f4')).toBe(true)
+    expect(tmuxStartConfirmed('TMUX_STARTED:ezb-X6850Android16-60521c0193', 'ezb-X6850Android16-871819f5f4')).toBe(false)
 
     expect(detectBuildSuccessInLog(['pack success, log: /tmp/x'], true)).toBe(true)
     expect(detectBuildSuccessInLog(['all requested compile targets succeeded, no pack requested'], false)).toBe(true)
@@ -160,7 +170,8 @@ describe('buildCapability ez-build path (mocked bridge)', () => {
             return { status: 'ok', exit_code: 0, output: '18718' }
           }
           if (command.includes('tmux new-session')) {
-            return { status: 'ok', exit_code: 0, output: 'TMUX_STARTED:ezb-test\nLOG:x\nDONE:y' }
+            const started = command.match(/TMUX_STARTED:([^\s'";]+)/)?.[1]
+            return { status: 'ok', exit_code: 0, output: `TMUX_STARTED:${started || 'ezb-test'}\nLOG:x\nDONE:y` }
           }
           if (command.includes('---POLL---') || command.includes('done_code=')) {
             polls += 1
@@ -234,7 +245,8 @@ describe('buildCapability ez-build path (mocked bridge)', () => {
         bridgeExec: async (command: string) => {
           if (command.includes('base64 -d')) return { status: 'ok', exit_code: 0, output: '1' }
           if (command.includes('tmux new-session')) {
-            return { status: 'ok', exit_code: 0, output: 'TMUX_STARTED:ezb-x' }
+            const started = command.match(/TMUX_STARTED:([^\s'";]+)/)?.[1]
+            return { status: 'ok', exit_code: 0, output: `TMUX_STARTED:${started || 'ezb-x'}` }
           }
           if (command.includes('---POLL---') || command.includes('done_code=')) {
             return {

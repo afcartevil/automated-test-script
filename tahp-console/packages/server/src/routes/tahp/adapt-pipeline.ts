@@ -54,6 +54,7 @@ function probeContextRun(): Readonly<PipelineRun> {
     current_node: null,
     iteration: 1,
     max_iterations: 3,
+    adapt_max_retries: 3,
     created_at: now,
     updated_at: now,
     domains: [],

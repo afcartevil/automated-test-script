@@ -18,6 +18,7 @@ function makeRun(overrides: Partial<PipelineRun> = {}): PipelineRun {
     current_node: 'selfcheck',
     iteration: 1,
     max_iterations: 3,
+    adapt_max_retries: 3,
     started_at: new Date().toISOString(),
     domains: [],
     stages: {},

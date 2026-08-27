@@ -7,6 +7,7 @@ import { getAdaptDomainLayout } from '../../adapt-layout/service'
 import { flattenPathParams } from '../path-params'
 import { registerStageForTest } from '../registry'
 import type { ObservedEvent, PipelineDomain, StageContext, StageDefinition } from '../types'
+import { resolveAdaptMaxRetries } from '../types'
 import { mergeAbsolutePaths } from '../workspace-changed-files'
 
 function enabledDomains(run: import('../types').PipelineRun): PipelineDomain[] {
@@ -42,6 +43,7 @@ function applyResumeScopeToDomains(ctx: StageContext, domains: PipelineDomain[])
       ...d,
       status: 'pending' as const,
       adapt_task_id: undefined,
+      retry_count: undefined,
       error: undefined,
       changed_files: undefined,
     }
@@ -56,6 +58,46 @@ function appendChangedFiles(
   const before = domain.changed_files?.length ?? 0
   domain.changed_files = merged
   return merged.length - before
+}
+
+function firstErrorLine(error: string): string {
+  return error.split('\n').find(line => line.trim()) ?? error
+}
+
+function maxRetriesOf(ctx: StageContext): number {
+  return resolveAdaptMaxRetries(ctx.run.adapt_max_retries)
+}
+
+/** 消耗一次重试名额；返回 true 表示应再启动该域 */
+function consumeRetrySlot(ctx: StageContext, domain: PipelineDomain, error: string): boolean {
+  const max = maxRetriesOf(ctx)
+  const used = domain.retry_count ?? 0
+  const label = domain.domain_label || domain.domain_id
+  if (used >= max) {
+    domain.status = 'failed'
+    domain.error = error
+    ctx.log(`[${label}] 已达重试上限 ${max} 次，不再重试`)
+    return false
+  }
+  domain.retry_count = used + 1
+  domain.status = 'pending'
+  domain.error = error
+  domain.adapt_task_id = undefined
+  ctx.log(`[${label}] 适配失败，开始第 ${domain.retry_count}/${max} 次重试`)
+  return true
+}
+
+async function launchDomainUntilRunningOrExhausted(
+  ctx: StageContext,
+  domain: PipelineDomain,
+): Promise<string | null> {
+  while (true) {
+    const taskId = await launchDomain(ctx, domain)
+    if (taskId) return taskId
+    const error = domain.error ?? '启动失败'
+    ctx.log(`[${domain.domain_label || domain.domain_id}] 启动失败: ${firstErrorLine(error)}`)
+    if (!consumeRetrySlot(ctx, domain, error)) return null
+  }
 }
 
 async function launchDomain(ctx: StageContext, domain: PipelineDomain): Promise<string | null> {
@@ -193,7 +235,7 @@ async function startNextPending(ctx: StageContext): Promise<void> {
     return
   }
 
-  const taskId = await launchDomain(ctx, next)
+  const taskId = await launchDomainUntilRunningOrExhausted(ctx, next)
   patchDomains(ctx, domains)
   syncRefs(ctx, domains, next.domain_id)
 
@@ -294,15 +336,28 @@ export const adaptStageDefinition: StageDefinition = {
     }
 
     if (ev.type === 'task.failed') {
-      running.status = 'failed'
-      running.error = String(ev.payload.error ?? ev.payload.message ?? '适配失败')
-      patchDomains(ctx, domains)
+      const error = String(ev.payload.error ?? ev.payload.message ?? '适配失败')
       ctx.patchState({
         progress: {
           ...ctx.state.progress,
           pending_interaction: undefined,
         },
       })
+
+      if (consumeRetrySlot(ctx, running, error)) {
+        patchDomains(ctx, domains)
+        const taskId = await launchDomainUntilRunningOrExhausted(ctx, running)
+        patchDomains(ctx, domains)
+        syncRefs(ctx, domains, running.domain_id)
+        if (taskId) {
+          ctx.log(`启动域 ${running.domain_label || running.domain_id} (${taskId})`)
+        }
+        return
+      }
+
+      running.status = 'failed'
+      running.error = error
+      patchDomains(ctx, domains)
     }
   },
   evaluate(ctx: StageContext) {
@@ -341,11 +396,14 @@ export const adaptStageDefinition: StageDefinition = {
     }
 
     const running = domains.find(d => d.status === 'running')
+    const retrying = running?.retry_count
+      ? ` · ${running.domain_label || running.domain_id} 重试 ${running.retry_count}/${resolveAdaptMaxRetries(ctx.run.adapt_max_retries)}`
+      : ''
     return {
       status: 'running' as const,
       progress: {
         percent: total ? Math.round((done / total) * 100) : 0,
-        text: total ? `${done}/${total} 域` : '0/0 域',
+        text: total ? `${done}/${total} 域${retrying}` : '0/0 域',
         current_domain_id: running?.domain_id,
       },
     }

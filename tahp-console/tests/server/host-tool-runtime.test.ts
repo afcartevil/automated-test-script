@@ -12,6 +12,7 @@ import {
   parseWrappedRemoteResult,
   parseZellijLsShort,
   pickAsfUpSession,
+  classifyAsfBridgeSlots,
   wrapRemoteShellForExitCode,
 } from '../../packages/server/src/services/tahp/host-tool-runtime'
 
@@ -79,6 +80,18 @@ describe('asf bridge wait vs remote timeout', () => {
     expect(isAsfBridgeSshDisconnected(
       'BRIDGE_CMD_FAILED zellij failed (...): There is no active session!',
     )).toBe(true)
+    expect(isAsfBridgeSshDisconnected(
+      "BRIDGE_CMD_FAILED: zellij failed (--session agent_session3 action write-chars): Session 'agent_session3' not found. The following sessions are active: agent_session1",
+    )).toBe(true)
+    expect(isAsfBridgeSshDisconnected("qing.li3@10.205.0.143's password:")).toBe(true)
+    expect(isAsfBridgeSshDisconnected('Permission denied, please try again.')).toBe(true)
+    expect(isAsfBridgeSshDisconnected('Invalid password for oid16-60521c0193')).toBe(true)
+    expect(isAsfBridgeSshDisconnected('请选择登录账号：\n无效的输入。请选择账号。')).toBe(true)
+    expect(isAsfBridgeSshDisconnected('Password authentication\nset TERM=xterm&& ssh -tt')).toBe(true)
+    expect(isAsfBridgeSshDisconnected(
+      "qing.li3@10.205.0.143's password:\nPermission denied, please try again.\n---POLL---\ntmux=alive\ndone_code=\n---LOG_TAIL---\n进行中...",
+    )).toBe(false)
+    expect(isAsfBridgeSshDisconnected('[ERROR] Permission denied: cannot write /system')).toBe(false)
     expect(isAsfBridgeSshDisconnected('BRIDGE_CMD_FAILED: zellij timed out')).toBe(false)
     expect(isTransientAsfBridgeFailure(
       'BRIDGE_SSH_DISCONNECTED: OpenSSH is gone',
@@ -119,6 +132,39 @@ describe('asf bridge self-heal', () => {
       ],
       muxNames: ['agent_session1'],
     })).toBe(2)
+  })
+
+  it('does not trust ls READY when zellij has no matching mux (screenshot case)', () => {
+    const classified = classifyAsfBridgeSlots({
+      slots: [
+        { session: 1, phase: 'idle' },
+        { session: 3, phase: 'ready', message: 'agent_session ready' },
+      ],
+      muxNames: ['agent_session1'],
+    })
+    expect(classified.readyWithMux).toEqual([])
+    expect(classified.staleReady).toEqual([3])
+    expect(classified.muxSessions).toEqual([1])
+    expect(classified.upSession).toBe(2)
+    expect(pickAsfUpSession({
+      slots: [
+        { session: 3, phase: 'ready', message: 'agent_session ready' },
+      ],
+      muxNames: ['agent_session1'],
+    })).toBe(2)
+  })
+
+  it('keeps READY only when the matching agent_session mux exists', () => {
+    const classified = classifyAsfBridgeSlots({
+      slots: [
+        { session: 1, phase: 'ready' },
+        { session: 2, phase: 'idle' },
+      ],
+      muxNames: ['agent_session1'],
+    })
+    expect(classified.readyWithMux).toEqual([1])
+    expect(classified.staleReady).toEqual([])
+    expect(classified.upSession).toBe(2)
   })
 
   it('detects setup hint in CLI text', () => {

@@ -40,6 +40,8 @@ export interface AdaptDomainProgress {
   related_skills?: string[]
   error?: string
   adapt_task_id?: string
+  retry_count?: number
+  retry_max?: number
 }
 
 export interface TimelineNode {
@@ -95,6 +97,7 @@ export interface TimelineView {
   status: RunStatus
   iteration: number
   max_iterations: number
+  adapt_max_retries?: number
   current_node: string | null
   started_at: string
   duration_ms: number
@@ -215,6 +218,7 @@ export interface CreateRunInput {
   device_id?: string
   test_plan?: TestPlan
   max_iterations?: number
+  adapt_max_retries?: number
   workflow_id?: string
   from_os?: string
   to_os?: string
@@ -230,6 +234,7 @@ export interface PipelineRunRecord {
   to_os?: string
   status: RunStatus
   max_iterations: number
+  adapt_max_retries?: number
   domains: PipelineDomainInput[]
   build_context: BuildContext
   path_params?: PathParams

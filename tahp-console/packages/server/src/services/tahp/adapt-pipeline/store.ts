@@ -11,6 +11,7 @@ import type {
   RunSummary,
   StageState,
 } from './types'
+import { resolveAdaptMaxRetries } from './types'
 
 interface RunIndexFile {
   version: number
@@ -162,6 +163,7 @@ function buildRunObject(input: CreateRunInput, runId: string): PipelineRun {
     current_node: null,
     iteration: 1,
     max_iterations: input.max_iterations ?? workflow.maxIterations,
+    adapt_max_retries: resolveAdaptMaxRetries(input.adapt_max_retries),
     created_at: now,
     updated_at: now,
     domains: filterDomains(input),
@@ -193,6 +195,7 @@ export function getRun(runId: string): PipelineRun | null {
   if (!existsSync(path)) return null
   try {
     const run = JSON.parse(readFileSync(path, 'utf-8')) as PipelineRun
+    run.adapt_max_retries = resolveAdaptMaxRetries(run.adapt_max_retries)
     memoryRuns.set(runId, run)
     return run
   } catch {

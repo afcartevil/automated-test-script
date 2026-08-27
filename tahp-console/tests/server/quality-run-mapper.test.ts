@@ -42,6 +42,7 @@ function minimalPipelineRun(overrides?: Partial<PipelineRun>): PipelineRun {
     current_node: 'gerrit',
     iteration: 1,
     max_iterations: 3,
+    adapt_max_retries: 3,
     created_at: '2026-08-18T10:00:00.000Z',
     updated_at: '2026-08-18T12:00:00.000Z',
     finished_at: '2026-08-18T12:00:00.000Z',

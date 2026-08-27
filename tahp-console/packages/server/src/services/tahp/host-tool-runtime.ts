@@ -217,15 +217,32 @@ export function isTransientAsfBridgeFailure(text: string): boolean {
   return /BRIDGE_CMD_FAILED|zellij timed out|list-panes|host CLI timeout/i.test(String(text || ''))
 }
 
+const ASF_BRIDGE_SSH_GONE_RE = /BRIDGE_SSH_DISCONNECTED|OpenSSH is gone|pane_command is local shell|There is no active session|no active session|Session ['`]agent_session\d+['`] not found|session ['`]agent_session\d+['`] not found/i
+
+/** 窗格当前停在 SSH/齐治登录 UI（不要用全文匹配，以免历史输出误伤已重连的 shell） */
+const ASF_BRIDGE_LOGIN_UI_RE = /'s password:|Permission denied, please try again|Invalid password for|Password authentication|请选择登录账号|无效的输入[。.]?请选择账号|登录账号列表|set TERM=xterm&& ssh/i
+
 /**
  * asf `bridge cmd/status`：mux 还在但 OpenSSH 已掉，槽已释放。
  * 须 `asf --json bridge up --session N`（或省略 --session）重连，不能只 interrupt 同 session。
- * 另：zellij 名还在但 write-chars 报 no active session（幽灵 mux）也需 down+up。
+ * 另：zellij 名还在但 write-chars 报 no active session（幽灵 mux），
+ * `Session 'agent_sessionN' not found`（ls READY 但 mux 已消失），
+ * 以及窗格末尾已退回 SSH 密码 / 齐治选账号（cmd 把 shell 打进提示符）也需 down+up。
+ * 不匹配编译日志里的泛化 "Permission denied"。
  */
 export function isAsfBridgeSshDisconnected(text: string): boolean {
-  return /BRIDGE_SSH_DISCONNECTED|OpenSSH is gone|pane_command is local shell|There is no active session|no active session/i.test(
-    String(text || ''),
-  )
+  const s = String(text || '')
+  if (ASF_BRIDGE_SSH_GONE_RE.test(s)) return true
+  const tail = s.split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(-16)
+  if (!ASF_BRIDGE_LOGIN_UI_RE.test(tail.join('\n'))) return false
+  for (let i = tail.length - 1; i >= 0; i--) {
+    const line = tail[i]
+    if (/^tmux=(?:alive|dead)$/.test(line)) return false
+    if (/^TAHP_BRIDGE_EXIT(?:_[A-Za-z0-9]+)?:[0-9]+$/.test(line)) return false
+    if (/^---POLL---$/.test(line) || /^---LOG_TAIL---$/.test(line) || /^done_code=/.test(line)) continue
+    if (ASF_BRIDGE_LOGIN_UI_RE.test(line)) return true
+  }
+  return true
 }
 
 /** doctor.tools 里 zellij.ok !== true → 需要 `asf --json bridge setup` */
@@ -247,29 +264,71 @@ export function parseZellijLsShort(text: string): string[] {
     .filter(Boolean)
 }
 
+export function asfMuxName(session: number): string {
+  return `agent_session${session}`
+}
+
+export function parseAsfMuxSession(name: string): number | null {
+  const m = /^agent_session(\d+)$/i.exec(String(name || '').trim())
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isFinite(n) && n >= 1 && n <= 4 ? n : null
+}
+
+export interface AsfBridgeSlotClass {
+  /** ls READY 且 zellij 确有对应 mux */
+  readyWithMux: number[]
+  /** ls READY 但 zellij 没有 agent_sessionN（幽灵元数据，须 down+up） */
+  staleReady: number[]
+  /** zellij 当前列出的槽号 */
+  muxSessions: number[]
+  /** 可 `bridge up` 的空闲槽（跳过已有 mux / list-panes 超时） */
+  upSession: number | null
+}
+
+/**
+ * 对照 asf `bridge ls` 与 `zellij ls`：名义 READY 必须有 mux 才能用。
+ */
+export function classifyAsfBridgeSlots(input: {
+  slots: Array<{ session: number; phase: string; message?: string }>
+  muxNames: string[]
+}): AsfBridgeSlotClass {
+  const muxSessions = [...new Set(
+    input.muxNames.map(parseAsfMuxSession).filter((n): n is number => n != null),
+  )].sort((a, b) => a - b)
+  const muxSet = new Set(muxSessions)
+  const readyWithMux: number[] = []
+  const staleReady: number[] = []
+  for (const s of input.slots) {
+    if (s.phase !== 'ready') continue
+    if (muxSet.has(s.session)) readyWithMux.push(s.session)
+    else staleReady.push(s.session)
+  }
+  const blocked = new Set<number>(muxSet)
+  for (const s of input.slots) {
+    if (/zellij timed out|list-panes/i.test(String(s.message || ''))) blocked.add(s.session)
+  }
+  let upSession: number | null = null
+  for (let n = 1; n <= 4; n++) {
+    if (!blocked.has(n)) {
+      upSession = n
+      break
+    }
+  }
+  return { readyWithMux, staleReady, muxSessions, upSession }
+}
+
 /**
  * 认领 up 槽：跳过 zellij ls 里已存在的 agent_sessionN（含幽灵会话），
  * 以及 ls JSON 里 list-panes 超时的槽。`bridge up` 默认占最小 idle 槽，
  * 会撞上删不掉的 agent_session1。
+ * 不把「ls READY 但无 mux」当成可直接使用的槽。
  */
 export function pickAsfUpSession(input: {
   slots: Array<{ session: number; phase: string; message?: string }>
   muxNames: string[]
 }): number | null {
-  const ready = input.slots.find(s => s.phase === 'ready')
-  if (ready) return ready.session
-  const blocked = new Set<number>()
-  for (const name of input.muxNames) {
-    const m = /^agent_session(\d+)$/i.exec(String(name || ''))
-    if (m) blocked.add(Number(m[1]))
-  }
-  for (const s of input.slots) {
-    if (/zellij timed out|list-panes/i.test(String(s.message || ''))) blocked.add(s.session)
-  }
-  for (let n = 1; n <= 4; n++) {
-    if (!blocked.has(n)) return n
-  }
-  return null
+  return classifyAsfBridgeSlots(input).upSession
 }
 
 export function asfNeedsZellijSetup(text: string): boolean {

@@ -62,7 +62,12 @@ function errorPreview(error?: string): string {
       <tbody>
         <tr v-for="d in getDomains()" :key="d.domain_id" :class="{ failed: d.status === 'failed' }">
           <td class="td-name">{{ d.domain_label || d.domain_id }}</td>
-          <td><EaPill :variant="domainVariant(d.status)">{{ domainLabel(d.status) }}</EaPill></td>
+          <td>
+            <EaPill :variant="domainVariant(d.status)">{{ domainLabel(d.status) }}</EaPill>
+            <span v-if="d.retry_count" class="retry-hint">
+              重试 {{ d.retry_count }}/{{ d.retry_max ?? 3 }}
+            </span>
+          </td>
           <td>{{ d.changed_files?.length ?? '—' }}</td>
           <td class="td-skill">{{ d.related_skills?.join(', ') || '—' }}</td>
           <td class="td-error" :title="d.error">{{ errorPreview(d.error) }}</td>
@@ -106,6 +111,12 @@ function errorPreview(error?: string): string {
   .td-name { font-weight: 700; }
   .td-skill { color: var(--muted); font-size: 12px; }
   .td-error { color: var(--err); font-size: 12px; max-width: 220px; }
+}
+.retry-hint {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--muted);
 }
 .empty { color: var(--faint); margin: 0 0 14px; }
 h4 { margin: 0 0 8px; font-size: 12px; color: var(--faint); letter-spacing: 0.04em; text-transform: uppercase; }

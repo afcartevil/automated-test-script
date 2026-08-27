@@ -22,7 +22,8 @@ import {
   isAsfBridgeSshDisconnected,
   asfBridgeCliTimeoutMs,
   asfZellijMissingFromDoctor,
-  pickAsfUpSession,
+  classifyAsfBridgeSlots,
+  asfMuxName,
   parseZellijLsShort,
   type RemoteExecFlavor,
 } from '../host-tool-runtime'
@@ -200,11 +201,13 @@ async function waitForReadySession(
   while (Date.now() < deadline) {
     if (opts?.signal?.cancelled) throw new Error('已取消')
     await sleep(2000)
-    const hit = (await listAsfBridgeSessions()).find(s => s.phase === 'ready')
-    if (hit) {
-      asfSession = hit.session
-      opts?.onLog?.(`ASF Bridge session ${hit.session} 已 READY`)
-      return hit.session
+    const slots = await listAsfBridgeSessions()
+    const muxNames = await listZellijMuxNames()
+    const hit = classifyAsfBridgeSlots({ slots, muxNames }).readyWithMux[0]
+    if (hit != null) {
+      asfSession = hit
+      opts?.onLog?.(`ASF Bridge session ${hit} 已 READY（zellij ${asfMuxName(hit)} 存在）`)
+      return hit
     }
   }
   return null
@@ -225,17 +228,116 @@ async function reconnectAsfBridgeSession(
   } catch { /* ignore */ }
   await sleep(1000)
   const up = await tryAsfBridgeUp(session, { signal: opts?.signal })
+  const occupied = /BRIDGE_SESSION_OCCUPIED|already occupied/i.test(
+    `${asfFailureMessage(up.parsed, up.stderr)}\n${up.stdout}\n${up.stderr}`,
+  )
+  if (occupied) {
+    log(`session ${session} 仍被占用，改认领空闲槽`)
+    const muxNames = await listZellijMuxNames()
+    const slots = await listAsfBridgeSessions()
+    const next = classifyAsfBridgeSlots({ slots, muxNames }).upSession
+    if (next != null && next !== session) {
+      return claimAsfBridgeByUp(next, muxNames, opts)
+    }
+  }
   const ready = asfUpReadySession(up.parsed)
   if (ready != null) {
-    asfSession = ready
-    log(`ASF Bridge up session=${ready}`)
-    return ready
+    const muxNames = await listZellijMuxNames()
+    if (muxNames.includes(asfMuxName(ready))) {
+      asfSession = ready
+      log(`ASF Bridge up session=${ready}`)
+      return ready
+    }
   }
   const hit = await waitForReadySession(60_000, opts)
   if (hit != null) return hit
   const detail = asfFailureMessage(up.parsed, up.stderr)
   throw new Error(
     `ASF Bridge 重连失败（${detail.slice(0, 400)}）。请手动执行 asf --json bridge down --session ${session} && asf --json bridge up --session ${session} 后重试。`,
+  )
+}
+
+/** cmd 失败后：优先改用 zellij 里仍活着的槽，否则 down+up 原槽 */
+async function recoverAsfBridgeSession(
+  dead: number,
+  opts?: { signal?: { cancelled: boolean }; onLog?: (line: string) => void },
+): Promise<number> {
+  const log = (line: string) => opts?.onLog?.(line)
+  const slots = await listAsfBridgeSessions()
+  const muxNames = await listZellijMuxNames()
+  const cls = classifyAsfBridgeSlots({ slots, muxNames })
+  for (const n of cls.readyWithMux) {
+    if (n === dead) continue
+    const alive = await asfSessionSshAlive(n, { signal: opts?.signal })
+    if (alive !== false) {
+      asfSession = n
+      log(`改用已 READY 的 session ${n}（zellij ${asfMuxName(n)}）`)
+      return n
+    }
+  }
+  for (const n of cls.muxSessions) {
+    if (n === dead) continue
+    if (await asfSessionSshAlive(n, { signal: opts?.signal }) === true) {
+      asfSession = n
+      log(`改用 zellij ${asfMuxName(n)}（status READY）`)
+      return n
+    }
+  }
+  return reconnectAsfBridgeSession(dead, opts)
+}
+
+async function claimAsfBridgeByUp(
+  session: number,
+  muxNames: string[],
+  opts?: { signal?: { cancelled: boolean }; onLog?: (line: string) => void },
+): Promise<number> {
+  const log = (line: string) => opts?.onLog?.(line)
+  if (muxNames.includes('agent_session1') || session !== 1) {
+    log(`跳过幽灵/占用 mux，静默 bridge up --session ${session}（zellij ls: ${muxNames.join(', ') || '(empty)'}）`)
+  } else {
+    log(`ASF Bridge 无现成 session，静默 bridge up --session ${session}…`)
+  }
+
+  const signal = { cancelled: false }
+  const pumpCancel = setInterval(() => {
+    if (opts?.signal?.cancelled) signal.cancelled = true
+  }, 400)
+  const upPromise = tryAsfBridgeUp(session, { signal })
+  const upDeadline = Date.now() + 180_000
+  try {
+    while (Date.now() < upDeadline) {
+      if (opts?.signal?.cancelled) throw new Error('已取消')
+      await sleep(2000)
+      const slots = await listAsfBridgeSessions()
+      const liveMux = await listZellijMuxNames()
+      const hit = classifyAsfBridgeSlots({ slots, muxNames: liveMux }).readyWithMux[0]
+      if (hit != null) {
+        signal.cancelled = true
+        asfSession = hit
+        log(`ASF Bridge session ${hit} 已 READY（up CLI 可能仍阻塞，已继续）`)
+        return hit
+      }
+    }
+  } finally {
+    clearInterval(pumpCancel)
+  }
+
+  const up = await upPromise
+  const ready = asfUpReadySession(up.parsed)
+  if (ready != null) {
+    const liveMux = await listZellijMuxNames()
+    if (liveMux.includes(asfMuxName(ready))) {
+      asfSession = ready
+      log(`ASF Bridge up session=${ready}`)
+      return ready
+    }
+  }
+
+  const hit = await waitForReadySession(30_000, opts)
+  if (hit != null) return hit
+  const detail = asfFailureMessage(up.parsed, up.stderr)
+  throw new Error(
+    `ASF Bridge 未能自动登录（${detail.slice(0, 400)}）。请确认一键配置表单已保存齐治凭据与 TOTP。`,
   )
 }
 
@@ -269,76 +371,42 @@ async function ensureAsfBridgeSession(opts?: {
   await ensureAsfZellijInstalled(opts)
 
   const slots = await listAsfBridgeSessions()
-  const existing = slots.find(s => s.phase === 'ready')
-  if (existing) {
-    const alive = await asfSessionSshAlive(existing.session, { signal: opts?.signal })
+  const muxNames = await listZellijMuxNames()
+  const cls = classifyAsfBridgeSlots({ slots, muxNames })
+
+  for (const n of cls.readyWithMux) {
+    const alive = await asfSessionSshAlive(n, { signal: opts?.signal })
     if (alive !== false) {
-      asfSession = existing.session
-      log(`ASF Bridge session ${existing.session} 已 READY`)
-      return existing.session
+      asfSession = n
+      log(`ASF Bridge session ${n} 已 READY（zellij ${asfMuxName(n)} 存在）`)
+      return n
     }
-    log(`session ${existing.session} 名义 READY 但 SSH 已断开`)
-    return reconnectAsfBridgeSession(existing.session, opts)
+    log(`session ${n} READY+mux 但 SSH 已断开`)
+    return reconnectAsfBridgeSession(n, opts)
   }
 
-  const muxNames = await listZellijMuxNames()
-  const session = pickAsfUpSession({ slots, muxNames })
-  if (session == null) {
+  for (const n of cls.muxSessions) {
+    if (await asfSessionSshAlive(n, { signal: opts?.signal }) === true) {
+      asfSession = n
+      log(`zellij 有 ${asfMuxName(n)} 且 status READY，改用 session ${n}`)
+      return n
+    }
+  }
+
+  if (cls.staleReady[0] != null) {
+    const stale = cls.staleReady[0]
+    log(
+      `session ${stale} 名义 READY 但 zellij 无 ${asfMuxName(stale)}（当前 mux: ${muxNames.join(', ') || '无'}），down+up 恢复`,
+    )
+    return reconnectAsfBridgeSession(stale, opts)
+  }
+
+  if (cls.upSession == null) {
     throw new Error(
       `ASF Bridge 四个槽的 Zellij 名都被占用（${muxNames.join(', ') || 'unknown'}）。agent_session1 若是幽灵会话，请结束残留 zellij.EXE 后重试。`,
     )
   }
-  if (muxNames.includes('agent_session1') || session !== 1) {
-    log(`跳过幽灵/占用 mux，静默 bridge up --session ${session}（zellij ls: ${muxNames.join(', ') || '(empty)'}）`)
-  } else {
-    log(`ASF Bridge 无现成 session，静默 bridge up --session ${session}…`)
-  }
-
-  const signal = { cancelled: false }
-  const pumpCancel = setInterval(() => {
-    if (opts?.signal?.cancelled) signal.cancelled = true
-  }, 400)
-  const upPromise = tryAsfBridgeUp(session, { signal })
-  const upDeadline = Date.now() + 180_000
-  try {
-    while (Date.now() < upDeadline) {
-      if (opts?.signal?.cancelled) throw new Error('已取消')
-      await sleep(2000)
-      const hit = (await listAsfBridgeSessions()).find(s => s.phase === 'ready')
-      if (hit) {
-        signal.cancelled = true
-        asfSession = hit.session
-        log(`ASF Bridge session ${hit.session} 已 READY（up CLI 可能仍阻塞，已继续）`)
-        return hit.session
-      }
-    }
-  } finally {
-    clearInterval(pumpCancel)
-  }
-
-  const up = await upPromise
-  const ready = asfUpReadySession(up.parsed)
-  if (ready != null) {
-    asfSession = ready
-    log(`ASF Bridge up session=${ready}`)
-    return ready
-  }
-
-  for (let i = 0; i < 15; i++) {
-    if (opts?.signal?.cancelled) throw new Error('已取消')
-    await sleep(2000)
-    const again = await listAsfBridgeSessions()
-    const hit = again.find(s => s.phase === 'ready')
-    if (hit) {
-      asfSession = hit.session
-      log(`ASF Bridge session ${hit.session} 已 READY`)
-      return hit.session
-    }
-  }
-  const detail = asfFailureMessage(up.parsed, up.stderr)
-  throw new Error(
-    `ASF Bridge 未能自动登录（${detail.slice(0, 400)}）。请确认一键配置表单已保存齐治凭据与 TOTP。`,
-  )
+  return claimAsfBridgeByUp(cls.upSession, muxNames, opts)
 }
 
 function asfFailureMessage(parsed: Record<string, unknown> | null, stderr: string): string {
@@ -408,6 +476,20 @@ async function asfBridgeCmdOnce(
     }
 
     let output = String(parsed.output || '')
+    const sshLost = (text: string): BridgeExecResult | null => {
+      if (!isAsfBridgeSshDisconnected(text)) return null
+      return {
+        status: 'error',
+        exit_code: -1,
+        command: wrapped,
+        output: text,
+        error: 'BRIDGE_SSH_DISCONNECTED: pane is at SSH/Qizhi login, not a remote shell',
+        error_code: 'BRIDGE_SSH_DISCONNECTED',
+        session,
+      }
+    }
+    const lostNow = sshLost(output)
+    if (lostNow) return lostNow
     // 不信任 CLI 的 complete / 窗格里旧的 TAHP_BRIDGE_EXIT；必须等到本命令唯一 token。
     if (!hasBridgeExitToken(output, exitToken)) {
       const deadline = Date.now() + opts.timeoutSec * 1000
@@ -420,6 +502,9 @@ async function asfBridgeCmdOnce(
         const rp = parseJsonLoose(read.stdout) || parseJsonLoose(read.stderr)
         if (rp && (String(rp.status).toLowerCase() === 'error' || rp.error_code)) {
           const sessionNum = rp.session != null ? Number(rp.session) : NaN
+          const readBlob = `${asfFailureMessage(rp, read.stderr)}\n${rp.output != null ? String(rp.output) : output}`
+          const lostRead = sshLost(readBlob)
+          if (lostRead) return lostRead
           return {
             status: 'error',
             exit_code: -1,
@@ -431,6 +516,8 @@ async function asfBridgeCmdOnce(
           }
         }
         if (rp?.output != null) output = String(rp.output)
+        const lostRead = sshLost(output)
+        if (lostRead) return lostRead
         if (hasBridgeExitToken(output, exitToken)) break
       }
     }
@@ -482,18 +569,20 @@ async function asfBridgeCmd(
       signal: opts?.signal,
     })
     const blob = `${result.error || ''}\n${result.output || ''}`
+    const disconnected = isAsfBridgeSshDisconnected(blob) || result.error_code === 'BRIDGE_SSH_DISCONNECTED'
     const failed = String(result.status).toLowerCase() === 'error'
       || Boolean(result.error_code)
       || Boolean(result.error)
+      || disconnected
     if (!failed) {
       return { ...result, command }
     }
     last = { ...result, command }
 
-    if (isAsfBridgeSshDisconnected(blob) || result.error_code === 'BRIDGE_SSH_DISCONNECTED') {
+    if (disconnected) {
       const dead = Number(result.session) || session
-      note(`ASF Bridge session 失效 (${attempt}/3): ${(result.error || 'disconnected').slice(0, 160)}，down+up 后重试`)
-      session = await reconnectAsfBridgeSession(dead, { signal: opts?.signal, onLog: note })
+      note(`ASF Bridge SSH/齐治登录已断开 (${attempt}/3): ${(result.error || blob).slice(0, 160)}，down+up 后重试`)
+      session = await recoverAsfBridgeSession(dead, { signal: opts?.signal, onLog: note })
       continue
     }
 

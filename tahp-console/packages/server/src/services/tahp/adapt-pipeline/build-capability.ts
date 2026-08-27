@@ -18,6 +18,7 @@ import {
   ensureBridgeReady,
   loadEzBuildScript,
 } from './harness-bridge-exec'
+import { isAsfBridgeSshDisconnected } from '../host-tool-runtime'
 import {
   EA_BUILD_DIR,
   buildDeployCommand,
@@ -28,6 +29,7 @@ import {
   detectBuildSuccessInLog,
   parseTmuxPollOutput,
   tmuxSessionName,
+  tmuxStartConfirmed,
 } from './ez-build-tmux'
 import {
   composeBuildTargetRaw,
@@ -252,11 +254,14 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
       emit(ctx)
       return
     }
+    if (isAsfBridgeSshDisconnected(startOut) || isAsfBridgeSshDisconnected(start.error || '')) {
+      throw new Error(`齐治 SSH 已断开，tmux 未真正启动: ${(start.error || startOut).slice(0, 400)}`)
+    }
     if (Number(start.exit_code) !== 0 && String(start.status).toLowerCase() !== 'ok') {
       throw new Error(start.error || startOut || `tmux 启动失败 exit=${start.exit_code}`)
     }
-    if (!/TMUX_STARTED:/.test(startOut)) {
-      throw new Error(`tmux 启动未确认: ${startOut.slice(0, 500)}`)
+    if (!tmuxStartConfirmed(startOut, session)) {
+      throw new Error(`tmux 启动未确认（须 TMUX_STARTED:${session}）: ${startOut.slice(0, 500)}`)
     }
     emit(ctx, startOut.split(/\r?\n/).find(l => l.includes('TMUX_STARTED')) || `已启动 ${session}`)
     emit(ctx, '开始编译（tmux）…')
@@ -274,12 +279,14 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
       }
 
       let pollRaw = ''
+      let pollError = ''
       try {
         const poll = await bridgeExec(buildTmuxPollCommand(session), {
           timeoutSec: POLL_TIMEOUT_SEC,
           signal,
         })
         pollRaw = bridgeOutput(poll)
+        pollError = String(poll.error || '')
         if (Number(poll.exit_code) !== 0 && String(poll.status).toLowerCase() !== 'ok' && !pollRaw) {
           emit(ctx, `轮询 bridge-exec 异常 exit=${poll.exit_code}`)
           await sleep(POLL_INTERVAL_MS)
@@ -292,10 +299,24 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
       }
 
       const snap = parseTmuxPollOutput(pollRaw)
+      const elapsed = Math.round((Date.now() - started) / 1000)
+      const pollLost = isAsfBridgeSshDisconnected(pollRaw) || isAsfBridgeSshDisconnected(pollError)
+      if (pollLost || !snap.recognized) {
+        emit(
+          ctx,
+          pollLost
+            ? `齐治已回到登录界面，未在远端 shell 中轮询 tmux（${elapsed}s）`
+            : `轮询未得到 tmux=alive/dead（${elapsed}s），忽略本次采样`,
+        )
+        if (pollLost) {
+          throw new Error('齐治 SSH 已断开（密码/账号选择界面）。远端 tmux 可能仍在运行，请确认凭据后重新编译。')
+        }
+        await sleep(POLL_INTERVAL_MS)
+        continue
+      }
       flushNewLogLines(ctx, snap.lines)
 
       const logFail = detectBuildFailureInLog(snap.lines)
-      const elapsed = Math.round((Date.now() - started) / 1000)
       const hbAge = ctx.lastHeartbeatAt ? Date.now() - ctx.lastHeartbeatAt : 0
 
       if (snap.alive && hbAge > HEARTBEAT_STALE_MS) {

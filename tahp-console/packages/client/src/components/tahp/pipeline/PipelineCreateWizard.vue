@@ -164,6 +164,7 @@ const TEST_PLAN_MODE_LABELS: Record<TestPlanMode, string> = {
 
 const CATALOG_PLAN_MODES: TestPlanMode[] = ['smoke', 'pipeline_adapt']
 const maxIterations = ref(3)
+const adaptMaxRetries = ref(3)
 
 const TELEPHONY_DOMAINS = new Set([
   'modem',
@@ -574,6 +575,7 @@ function applyCloneSeed(seed: WizardCloneSeed) {
   keepClonedDeviceId.value = seed.device_id ?? null
   testPlanMode.value = resolveClonedTestPlanMode(seed.test_plan?.mode)
   maxIterations.value = seed.max_iterations
+  adaptMaxRetries.value = seed.adapt_max_retries
   step.value = 3
 }
 
@@ -827,7 +829,8 @@ function buildCreateInput(): CreateRunInput {
     },
     device_id: deviceId.value ?? undefined,
     test_plan: testPlan,
-    max_iterations: maxIterations.value,
+    max_iterations: maxIterations.value ?? 3,
+    adapt_max_retries: adaptMaxRetries.value ?? 3,
     path_params: parsedPathFields.value.length
       ? {
           inputs: {
@@ -1280,11 +1283,16 @@ onUnmounted(() => {
           <NInputNumber v-model:value="maxIterations" :min="1" :max="99" />
           <p class="field-hint">失败后改代码再编译的循环上限（自检通过后直接提交 Gerrit）。</p>
         </div>
-        <div class="field">
-          <label>Gerrit 目标分支（可选）</label>
-          <NInput v-model:value="buildContext.target_branch" placeholder="留空=按仓库远程默认分支" />
-          <p class="field-hint">仅入库阶段使用，与编译无关。需要强制推到指定分支时填写。</p>
+        <div class="field narrow">
+          <label>模块失败重试次数</label>
+          <NInputNumber v-model:value="adaptMaxRetries" :min="0" :max="20" />
+          <p class="field-hint">AI 适配阶段每个失败模块自动重试的次数，默认 3。设为 0 则失败即停。</p>
         </div>
+      </div>
+      <div class="field">
+        <label>Gerrit 目标分支（可选）</label>
+        <NInput v-model:value="buildContext.target_branch" placeholder="留空=按仓库远程默认分支" />
+        <p class="field-hint">仅入库阶段使用，与编译无关。需要强制推到指定分支时填写。</p>
       </div>
       <div class="field">
         <label>Gerrit 提交 ID</label>
@@ -1339,6 +1347,10 @@ onUnmounted(() => {
         <div class="summary-row">
           <span class="k">自检</span>
           <span>{{ TEST_PLAN_MODE_LABELS[testPlanMode] }} · 最多 {{ maxIterations }} 轮</span>
+        </div>
+        <div class="summary-row">
+          <span class="k">适配重试</span>
+          <span>每个失败模块最多 {{ adaptMaxRetries }} 次</span>
         </div>
         <div class="summary-row">
           <span class="k">Gerrit 分支</span>

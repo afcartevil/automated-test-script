@@ -56,6 +56,11 @@ export interface PipelineRun {
   current_node: string | null
   iteration: number
   max_iterations: number
+  /**
+   * AI 适配阶段：每个失败模块（域）自动重试次数，不含首次执行。
+   * 默认 3；0 表示失败即停。
+   */
+  adapt_max_retries: number
   created_at: string
   updated_at: string
   finished_at?: string
@@ -90,6 +95,8 @@ export interface PipelineDomain {
   enabled: boolean
   status: 'pending' | 'running' | 'done' | 'failed' | 'skipped'
   adapt_task_id?: string
+  /** 本域已消耗的失败重试次数（不含首次执行） */
+  retry_count?: number
   changed_files?: string[]
   error?: string
   /** 发布快照钉死的字段（优先于本机 overlay） */
@@ -356,6 +363,7 @@ export interface CreateRunInput {
   device_id?: string
   test_plan?: TestPlan
   max_iterations?: number
+  adapt_max_retries?: number
   workflow_id?: string
   from_os?: string
   to_os?: string
@@ -392,6 +400,7 @@ export interface TimelineView {
   status: RunStatus
   iteration: number
   max_iterations: number
+  adapt_max_retries?: number
   current_node: string | null
   started_at: string
   duration_ms: number
@@ -433,6 +442,8 @@ export interface TimelineView {
         related_skills?: string[]
         error?: string
         adapt_task_id?: string
+        retry_count?: number
+        retry_max?: number
       }>
     }
     error?: string
@@ -443,4 +454,13 @@ export interface TimelineView {
   }>
   iterations: IterationRecord[]
   pending_human_count: number
+}
+
+/** AI 适配阶段每个失败模块的默认自动重试次数（不含首次执行） */
+export const DEFAULT_ADAPT_MAX_RETRIES = 3
+const ADAPT_MAX_RETRIES_CAP = 20
+
+export function resolveAdaptMaxRetries(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_ADAPT_MAX_RETRIES
+  return Math.min(ADAPT_MAX_RETRIES_CAP, Math.max(0, Math.floor(value)))
 }
