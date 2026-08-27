@@ -31,6 +31,8 @@ import {
   reportToBugTask,
   type HistoryStageDetail,
 } from '@/utils/bug-analysis-report'
+import { bugJobSettledCount, countBugJobQueue } from '@/utils/bug-analysis-job-stats'
+import { bugTaskCardPhase, bugTaskListTitle } from '@/utils/bug-analysis-task-label'
 import {
   buildBugActivityLog,
   formatBugActivityLine,
@@ -718,6 +720,7 @@ const PHASE_LABELS: Record<string, { label: string; color: string }> = {
   FAILED:             { label: '失败',           color: 'var(--error)' },
   CANCELLED:          { label: '已取消',         color: 'var(--violet-ic)' },
   QUEUED:             { label: '等待中',         color: 'var(--warn)' },
+  WAITING_USER_INPUT: { label: '等待配置',       color: 'var(--warn)' },
   BATCH_RUNNING:      { label: '批量执行中',     color: 'var(--info)' },
 }
 
@@ -841,8 +844,9 @@ const displayProgress = computed(() => {
   return typeof task.progress === 'number' ? task.progress : 0
 })
 
-function phaseLabel(phase?: string): string {
-  const p = phase || effectiveBugPhase.value
+function phaseLabel(phase?: string, status?: string): string {
+  const resolved = bugTaskCardPhase(status, phase)
+  const p = resolved || effectiveBugPhase.value
   if (!p) return '准备中'
   if (PREP_PHASES.has(p)) {
     const eff = effectiveBugPhase.value
@@ -851,8 +855,9 @@ function phaseLabel(phase?: string): string {
   return PHASE_LABELS[p]?.label || p
 }
 
-function phaseColor(phase?: string): string {
-  const p = phase || effectiveBugPhase.value
+function phaseColor(phase?: string, status?: string): string {
+  const resolved = bugTaskCardPhase(status, phase)
+  const p = resolved || effectiveBugPhase.value
   if (!p) return 'var(--faint)'
   if (PREP_PHASES.has(p)) {
     const eff = effectiveBugPhase.value
@@ -1148,21 +1153,30 @@ async function retryCurrentJobFailures() {
 }
 
 // ─── 队列筛选（上百单时按状态过滤） ───────────────────────────────────────
-type QueueFilter = 'all' | 'pending' | 'running' | 'completed' | 'failed'
+type QueueFilter = 'all' | 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
 
 const queueFilter = ref<QueueFilter>('all')
 
+function jobQueueCountsFor(taskIds: string[]) {
+  const taskMap = store.tasks
+  return countBugJobQueue(taskIds, tid => taskMap[tid]?.status)
+}
+
 const queueCounts = computed(() => {
-  const counts = { all: 0, pending: 0, running: 0, completed: 0, failed: 0 }
-  for (const tid of currentJob.value?.task_ids || []) {
-    const status = store.tasks[tid]?.status || 'pending'
-    counts.all += 1
-    if (status === 'completed') counts.completed += 1
-    else if (status === 'failed' || status === 'cancelled') counts.failed += 1
-    else if (status === 'running' || status === 'waiting_user_input') counts.running += 1
-    else counts.pending += 1
+  const taskMap = store.tasks
+  return countBugJobQueue(currentJob.value?.task_ids || [], tid => taskMap[tid]?.status)
+})
+
+const currentJobSettled = computed(() => bugJobSettledCount(queueCounts.value))
+
+const currentJobFailedOnly = computed(() => queueCounts.value.failed)
+
+const recentJobQueueCounts = computed(() => {
+  const map: Record<string, ReturnType<typeof countBugJobQueue>> = {}
+  for (const j of store.recentJobs) {
+    map[j.job_id] = jobQueueCountsFor(j.task_ids || [])
   }
-  return counts
+  return map
 })
 
 const filteredQueueTaskIds = computed(() => {
@@ -1171,7 +1185,8 @@ const filteredQueueTaskIds = computed(() => {
   return ids.filter(tid => {
     const status = store.tasks[tid]?.status || 'pending'
     if (queueFilter.value === 'completed') return status === 'completed'
-    if (queueFilter.value === 'failed') return status === 'failed' || status === 'cancelled'
+    if (queueFilter.value === 'failed') return status === 'failed'
+    if (queueFilter.value === 'cancelled') return status === 'cancelled'
     if (queueFilter.value === 'running') return status === 'running' || status === 'waiting_user_input'
     return status === 'pending'
   })
@@ -1183,6 +1198,7 @@ const QUEUE_FILTERS: Array<{ key: QueueFilter; label: string }> = [
   { key: 'running', label: '执行中' },
   { key: 'completed', label: '成功' },
   { key: 'failed', label: '失败' },
+  { key: 'cancelled', label: '已取消' },
 ]
 
 async function startLocalAnalysis() {
@@ -2321,14 +2337,14 @@ watch(
                       <span class="ti-key">{{ t.jira_key }}</span>
                       <EaPill :variant="statusPillVariant(t.status)">{{ t.status }}</EaPill>
                     </div>
-                    <div class="ti-title">{{ t.title || '(等待获取标题)' }}</div>
+                    <div class="ti-title">{{ bugTaskListTitle(t) }}</div>
                     <div class="ti-meta">
                       <span
                         class="ea-dot"
                         :class="{ 'ea-dot-live': t.status === 'running' }"
-                        :style="t.status !== 'running' ? { background: phaseColor(t.phase) } : undefined"
+                        :style="t.status !== 'running' ? { background: phaseColor(t.phase, t.status) } : undefined"
                       />
-                      <span>{{ phaseLabel(t.phase) }}</span>
+                      <span>{{ phaseLabel(t.phase, t.status) }}</span>
                       <span v-if="t.skills_used?.length" class="ti-badge">{{ t.skills_used.length }} skill</span>
                       <span v-if="t.skills_improved?.length" class="ti-badge ti-improve">自改进 {{ t.skills_improved.length }}</span>
                       <span v-if="t.parent_job_id" class="ti-badge ti-batch">批量</span>
@@ -2396,8 +2412,11 @@ watch(
                   </div>
                   <div class="ti-title">{{ j.jql || j.job_id }}</div>
                   <div class="ti-meta">
-                    <span class="stat-ok">成功 {{ j.completed }}</span>
-                    <span class="stat-err">失败 {{ j.failed }}</span>
+                    <span class="stat-ok">成功 {{ recentJobQueueCounts[j.job_id]?.completed ?? j.completed }}</span>
+                    <span class="stat-err">失败 {{ recentJobQueueCounts[j.job_id]?.failed ?? j.failed }}</span>
+                    <span v-if="recentJobQueueCounts[j.job_id]?.cancelled" class="stat-warn">
+                      取消 {{ recentJobQueueCounts[j.job_id].cancelled }}
+                    </span>
                     <span class="ea-muted">共 {{ j.total }}</span>
                   </div>
                 </button>
@@ -2416,14 +2435,14 @@ watch(
                     <span class="ti-key">{{ t.jira_key }}</span>
                     <EaPill :variant="statusPillVariant(t.status)">{{ t.status }}</EaPill>
                   </div>
-                  <div class="ti-title">{{ t.title || '(等待获取标题)' }}</div>
+                  <div class="ti-title">{{ bugTaskListTitle(t) }}</div>
                   <div class="ti-meta">
                     <span
                       class="ea-dot"
                       :class="{ 'ea-dot-live': t.status === 'running' }"
-                      :style="t.status !== 'running' ? { background: phaseColor(t.phase) } : undefined"
+                      :style="t.status !== 'running' ? { background: phaseColor(t.phase, t.status) } : undefined"
                     />
-                    <span>{{ phaseLabel(t.phase) }}</span>
+                    <span>{{ phaseLabel(t.phase, t.status) }}</span>
                     <span v-if="t.skills_used?.length" class="ti-badge">{{ t.skills_used.length }} skill</span>
                     <span v-if="t.skills_improved?.length" class="ti-badge ti-improve">自改进 {{ t.skills_improved.length }}</span>
                     <span v-if="t.parent_job_id" class="ti-badge ti-batch">批量</span>
@@ -2519,11 +2538,17 @@ watch(
           </p>
           <div class="job-progress">
             <span class="ea-muted" style="font-size: 12px">进度</span>
-            <NProgress :percentage="Math.round(((currentJob.completed + currentJob.failed) / currentJob.total) * 100)" :show-indicator="true" />
+            <NProgress
+              :percentage="currentJob.total ? Math.round((currentJobSettled / currentJob.total) * 100) : 0"
+              :show-indicator="true"
+            />
             <div class="jp-stats">
-              完成 <strong class="stat-ok">{{ currentJob.completed }}</strong> /
-              失败 <strong class="stat-err">{{ currentJob.failed }}</strong> /
-              总 {{ currentJob.total }}
+              完成 <strong class="stat-ok">{{ queueCounts.completed }}</strong> /
+              失败 <strong class="stat-err">{{ queueCounts.failed }}</strong>
+              <template v-if="queueCounts.cancelled">
+                / 取消 <strong class="stat-warn">{{ queueCounts.cancelled }}</strong>
+              </template>
+              / 总 {{ currentJob.total }}
             </div>
           </div>
 
@@ -2543,13 +2568,13 @@ watch(
               继续未完成
             </NButton>
             <NButton
-              v-if="currentJob.status !== 'running' && currentJob.failed > 0"
+              v-if="currentJob.status !== 'running' && currentJobFailedOnly > 0"
               size="small"
               :loading="jobActionLoading"
               :disabled="!modelProviderReady"
               @click="retryCurrentJobFailures"
             >
-              重跑失败项（{{ currentJob.failed }}）
+              重跑失败项（{{ currentJobFailedOnly }}）
             </NButton>
           </div>
 
@@ -2582,8 +2607,8 @@ watch(
                   <EaPill :variant="statusPillVariant(store.tasks[tid]?.status)">{{ store.tasks[tid]?.status || '-' }}</EaPill>
                 </div>
                 <div class="ti-meta">
-                  <span class="ea-dot" :style="{ background: phaseColor(store.tasks[tid]?.phase) }" />
-                  <span>{{ phaseLabel(store.tasks[tid]?.phase) }}</span>
+                  <span class="ea-dot" :style="{ background: phaseColor(store.tasks[tid]?.phase, store.tasks[tid]?.status) }" />
+                  <span>{{ phaseLabel(store.tasks[tid]?.phase, store.tasks[tid]?.status) }}</span>
                 </div>
               </button>
             </div>
@@ -2601,7 +2626,7 @@ watch(
               <EaPill v-if="isHistoryView" variant="muted">历史记录</EaPill>
               <EaPill :variant="statusPillVariant(currentTask.status)">
                 <span v-if="isRunning" class="ea-dot-live" />
-                {{ phaseLabel(currentTask.phase) }}
+                {{ phaseLabel(currentTask.phase, currentTask.status) }}
               </EaPill>
               <a v-if="currentTask.jira_url" :href="currentTask.jira_url" target="_blank" class="ti-key">{{ currentTask.jira_key }}</a>
               <span v-else class="ti-key">{{ currentTask.jira_key }}</span>
@@ -2656,7 +2681,7 @@ watch(
           </div>
 
           <div v-if="currentTask" class="task-progress">
-            <NProgress :percentage="displayProgress" :show-indicator="false" :height="6" :color="phaseColor(currentTask.phase)" />
+            <NProgress :percentage="displayProgress" :show-indicator="false" :height="6" :color="phaseColor(currentTask.phase, currentTask.status)" />
             <span class="ea-muted tp-text">{{ displayProgress }}%</span>
           </div>
 
@@ -3373,6 +3398,7 @@ watch(
 .jp-stats { margin-top: 6px; font-size: 12px; color: var(--muted); }
 .stat-ok { color: var(--success); }
 .stat-err { color: var(--error); }
+.stat-warn { color: var(--warn); }
 .job-tasks { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
 .ea-task-item.compact { padding: 10px 12px; }
 

@@ -328,6 +328,9 @@ function emitJobProgress(job: BugAnalysisJobCtx): void {
   emit(job.jobId, 'task.phase', {
     phase: 'BATCH_RUNNING',
     progress: Math.round(((job.completed + job.failed) / job.total) * 100),
+    completed: job.completed,
+    failed: job.failed,
+    total: job.total,
     message: `批量进度 ${job.completed + job.failed} / ${job.total}`,
   })
 }
@@ -457,6 +460,9 @@ function ensureJobsRestored(): void {
       })
       for (const t of tasks) {
         if (!t.task_id || taskCtx.has(t.task_id)) continue
+        const restoredStatus = isTerminalTaskStatus(t.status as BugAnalysisTaskCtx['status'])
+          ? (t.status as BugAnalysisTaskCtx['status'])
+          : 'cancelled'
         taskCtx.set(t.task_id, {
           taskId: t.task_id,
           parentJobId: persisted.job_id,
@@ -464,9 +470,14 @@ function ensureJobsRestored(): void {
           jiraUrl: t.jira_url,
           startedAt: persisted.started_at,
           // 上次跑着的子任务进程已消失：落到 cancelled，避免 UI 显示成「执行中」
-          status: isTerminalTaskStatus(t.status as BugAnalysisTaskCtx['status'])
-            ? (t.status as BugAnalysisTaskCtx['status'])
-            : 'cancelled',
+          status: restoredStatus,
+          phase: restoredStatus === 'completed'
+            ? 'COMPLETED'
+            : restoredStatus === 'failed'
+              ? 'FAILED'
+              : restoredStatus === 'cancelled'
+                ? 'CANCELLED'
+                : undefined,
           error: t.error || (isTerminalTaskStatus(t.status as BugAnalysisTaskCtx['status'])
             ? undefined
             : '服务重启中断，未完成'),

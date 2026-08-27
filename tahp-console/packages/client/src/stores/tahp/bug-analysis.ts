@@ -14,6 +14,7 @@ import {
   type BugTask, type BugJob,
 } from '@/api/tahp/bug-analysis'
 import { shouldSuppressBugInteractionModal } from '@/utils/bug-analysis-activity'
+import { overlayBugJobCounts } from '@/utils/bug-analysis-job-stats'
 
 interface StreamEntry {
   type: string
@@ -357,6 +358,13 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
             break
         }
         tasks.value = { ...tasks.value, [tid]: t }
+        if (
+          t.parent_job_id
+          && jobs.value[t.parent_job_id]
+          && (ev.type === 'task.completed' || ev.type === 'task.failed' || ev.type === 'task.cancelled')
+        ) {
+          syncJobChildCounts(t.parent_job_id)
+        }
       }
 
       // Update job state when batch
@@ -364,6 +372,10 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
         const j = { ...jobs.value[tid] }
         if (ev.type === 'task.phase') {
           j.status = 'running'
+          if (ev.payload?.phase === 'BATCH_RUNNING') {
+            if (typeof ev.payload?.completed === 'number') j.completed = ev.payload.completed as number
+            if (typeof ev.payload?.failed === 'number') j.failed = ev.payload.failed as number
+          }
         }
         if (ev.type === 'task.completed') {
           j.status = (ev.payload?.status as BugJob['status']) || 'completed'
@@ -392,7 +404,9 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
       for (const it of t) tmap[it.task_id] = it
       tasks.value = tmap
       const jmap: Record<string, BugJob> = {}
-      for (const it of j) jmap[it.job_id] = it
+      for (const it of j) {
+        jmap[it.job_id] = overlayBugJobCounts(it, id => tmap[id]?.status)
+      }
       jobs.value = jmap
     } catch (err) {
       lastError.value = (err as Error).message
@@ -409,6 +423,14 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
   function registerJob(j: BugJob) {
     if (!streams.value[j.job_id]) streams.value = { ...streams.value, [j.job_id]: [] }
     jobs.value = { ...jobs.value, [j.job_id]: j }
+  }
+
+  function syncJobChildCounts(jobId: string) {
+    const j = jobs.value[jobId]
+    if (!j) return
+    const next = overlayBugJobCounts(j, id => tasks.value[id]?.status)
+    if (next === j) return
+    jobs.value = { ...jobs.value, [jobId]: next }
   }
 
   function stream(taskId: string): StreamEntry[] {
