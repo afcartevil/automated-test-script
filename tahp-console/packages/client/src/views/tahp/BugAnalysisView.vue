@@ -31,7 +31,7 @@ import {
   reportToBugTask,
   type HistoryStageDetail,
 } from '@/utils/bug-analysis-report'
-import { bugJobSettledCount, countBugJobQueue } from '@/utils/bug-analysis-job-stats'
+import { bugJobHasUnfinished, bugJobSettledCount, countBugJobQueue } from '@/utils/bug-analysis-job-stats'
 import { bugTaskCardPhase, bugTaskDefaultDetailTab, bugTaskListTitle } from '@/utils/bug-analysis-task-label'
 import {
   buildBugActivityLog,
@@ -1177,6 +1177,12 @@ const queueCounts = computed(() => {
 const currentJobSettled = computed(() => bugJobSettledCount(queueCounts.value))
 
 const currentJobFailedOnly = computed(() => queueCounts.value.failed)
+
+const canResumeUnfinished = computed(() => {
+  const job = currentJob.value
+  if (!job || job.status === 'running') return false
+  return bugJobHasUnfinished(job.task_ids || [], tid => store.tasks[tid]?.status)
+})
 
 const recentJobQueueCounts = computed(() => {
   const map: Record<string, ReturnType<typeof countBugJobQueue>> = {}
@@ -2583,13 +2589,13 @@ watch(
             </div>
           </div>
 
-          <NAlert v-if="currentJob.status === 'interrupted'" type="warning" :show-icon="false" style="margin: 12px 0">
+          <NAlert v-if="currentJob.status === 'interrupted' && canResumeUnfinished" type="warning" :show-icon="false" style="margin: 12px 0">
             该队列在服务重启前没跑完，未完成的单子没有结论。点「继续未完成」会用新的子任务重跑它们。
           </NAlert>
 
-          <div class="ea-row ea-wrap" style="gap: 8px; margin: 12px 0 6px">
+          <div v-if="canResumeUnfinished || (currentJob.status !== 'running' && currentJobFailedOnly > 0)" class="ea-row ea-wrap" style="gap: 8px; margin: 12px 0 6px">
             <NButton
-              v-if="currentJob.status !== 'running'"
+              v-if="canResumeUnfinished"
               size="small"
               type="primary"
               :loading="jobActionLoading"

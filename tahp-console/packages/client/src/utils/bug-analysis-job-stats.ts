@@ -41,6 +41,20 @@ export function bugJobSettledCount(counts: BugJobQueueCounts): number {
   return counts.completed + counts.failed + counts.cancelled
 }
 
+/**
+ * 是否还有可「继续未完成」的子任务（pending / 执行中）。
+ * 子任务尚未进 store 时不要当成未完成，避免已完成队列误出按钮。
+ */
+export function bugJobHasUnfinished(
+  taskIds: string[],
+  statusOf: (taskId: string) => string | undefined,
+): boolean {
+  if (!taskIds.length) return false
+  if (!taskIds.some(id => statusOf(id) !== undefined)) return false
+  const counts = countBugJobQueue(taskIds, statusOf)
+  return counts.pending > 0 || counts.running > 0
+}
+
 /** 用子任务实时状态覆盖 job 落盘计数（running 中途 completed 不会写回 job.completed）。 */
 export function overlayBugJobCounts<T extends { task_ids?: string[]; completed: number; failed: number }>(
   job: T,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  bugJobHasUnfinished,
   bugJobSettledCount,
   countBugJobQueue,
   overlayBugJobCounts,
@@ -73,5 +74,20 @@ describe('overlayBugJobCounts', () => {
       failed: 1,
     }
     expect(overlayBugJobCounts(job, () => undefined)).toEqual(job)
+  })
+})
+
+describe('bugJobHasUnfinished', () => {
+  it('is false when every child is completed', () => {
+    expect(bugJobHasUnfinished(['t1', 't2'], () => 'completed')).toBe(false)
+  })
+
+  it('is true when a child is still pending after interrupt', () => {
+    const statuses: Record<string, string> = { t1: 'completed', t2: 'pending' }
+    expect(bugJobHasUnfinished(['t1', 't2'], id => statuses[id])).toBe(true)
+  })
+
+  it('is false when child statuses are not loaded yet', () => {
+    expect(bugJobHasUnfinished(['t1', 't2'], () => undefined)).toBe(false)
   })
 })
