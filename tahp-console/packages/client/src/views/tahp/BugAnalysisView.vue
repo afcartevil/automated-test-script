@@ -170,6 +170,13 @@ const jqlPreviewError = ref<string | null>(null)
 // 提交状态
 const submitting = ref(false)
 
+/** 收起「提交分析任务」后，下方任务列表占满左侧剩余高度 */
+const submitFormCollapsed = ref(false)
+
+function toggleSubmitForm() {
+  submitFormCollapsed.value = !submitFormCollapsed.value
+}
+
 // JIRA 配置状态改由服务端统一管理（.tahp/unified-config.json / jira-user-config.json），
 // 页面只读取状态并展示；配置入口跳转「配置 → 一键配置表单」。
 const jiraStatus = ref<{ configured: boolean; connected: boolean; detail?: string; error?: string }>({
@@ -1978,11 +1985,11 @@ watch(
 
     <div class="ea-split bug-split">
       <!-- Left: form + task list -->
-      <div class="ea-stack bug-left">
-        <EaCard>
-          <div class="ea-row ea-between ea-mb0" style="margin-bottom: 14px">
+      <div class="ea-stack bug-left" :class="{ 'submit-collapsed': submitFormCollapsed }">
+        <EaCard class="bug-submit-card">
+          <div class="submit-head ea-row ea-between ea-mb0">
             <strong style="font-size: 14px">提交分析任务</strong>
-            <div class="mode-toggle">
+            <div v-show="!submitFormCollapsed" class="mode-toggle">
               <button
                 type="button"
                 class="ea-btn-sm"
@@ -2004,6 +2011,7 @@ watch(
             </div>
           </div>
 
+          <div v-show="!submitFormCollapsed" class="submit-body">
           <!-- AI2D故障分析能力：仅单条 / 批量 -->
           <div v-if="showRemoteChannelPanel" class="ea-field ai2d-field">
             <label>
@@ -2275,6 +2283,26 @@ watch(
               </NButton>
             </div>
           </template>
+          </div>
+
+          <div class="submit-fold-wrap">
+            <NTooltip placement="bottom" trigger="hover">
+              <template #trigger>
+                <button
+                  type="button"
+                  class="submit-fold-btn"
+                  :aria-label="submitFormCollapsed ? '展开提交分析任务' : '收起提交分析任务，扩大任务列表'"
+                  :aria-expanded="!submitFormCollapsed"
+                  @click="toggleSubmitForm"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                    <polyline points="18 15 12 9 6 15" />
+                  </svg>
+                </button>
+              </template>
+              {{ submitFormCollapsed ? '展开提交分析任务' : '收起，扩大任务列表' }}
+            </NTooltip>
+          </div>
         </EaCard>
 
         <EaCard class="bug-tasks-card">
@@ -3180,9 +3208,108 @@ watch(
 .bug-left {
   min-height: 0;
   min-width: 0;
+
+  &.submit-collapsed {
+    min-height: calc(100vh - 148px);
+    overflow: hidden;
+  }
+}
+
+.bug-submit-card {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.submit-head {
+  margin-bottom: 14px;
+}
+
+.submit-fold-wrap {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  z-index: 3;
+  transform: translate(-50%, 50%);
+}
+
+.submit-fold-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--faint);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+
+  svg {
+    display: block;
+    transition: transform 0.2s ease;
+  }
+
+  &:hover,
+  &:focus-visible {
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+    outline: none;
+  }
+}
+
+.submit-collapsed {
+  .bug-submit-card {
+    padding-top: 14px;
+    padding-bottom: 16px;
+  }
+
+  .submit-head {
+    margin-bottom: 0;
+  }
+
+  .submit-fold-btn svg {
+    transform: rotate(180deg);
+  }
+
+  .bug-tasks-card {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .task-list-spin {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .task-list-body,
+  .task-scroll {
+    flex: 1 1 auto;
+    height: auto;
+    max-height: none;
+    min-height: 0;
+  }
+
+  :deep(.task-scroll) {
+    height: 100%;
+    max-height: none;
+  }
+
+  :deep(.n-scrollbar-container),
+  :deep(.n-spin-content) {
+    height: 100%;
+  }
 }
 
 .bug-tasks-card {
+  position: relative;
+  z-index: 1;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
