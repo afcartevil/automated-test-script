@@ -265,6 +265,7 @@ export interface PrereqResolveData {
     stale_fields: string[]
     incomplete_required: string[]
     layout_stale?: boolean
+    related_skills?: string[]
   }>
 }
 

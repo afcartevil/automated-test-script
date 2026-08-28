@@ -122,6 +122,7 @@ export interface AdaptPrereqResolvedDomain {
   updated_by?: string
   line_layout_revision?: number
   layout_stale?: boolean
+  related_skills?: string[]
 }
 
 export interface AdaptPrereqResolveResult {

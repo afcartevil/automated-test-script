@@ -186,6 +186,7 @@ export const centralClient = {
       updated_by?: string
       line_layout_revision?: number
       layout_stale?: boolean
+      related_skills?: string[]
     }>
     line_id?: string
     layout_stale?: boolean
