@@ -84,8 +84,23 @@ function schemaToLayoutFields(schema: unknown): AdaptLayoutFieldDef[] {
   return fields
 }
 
+function pickFormDataForFields(
+  raw: Record<string, unknown> | undefined,
+  schema: unknown,
+): Record<string, unknown> {
+  if (!raw) return {}
+  const schemaNames = schemaToLayoutFields(schema).map(field => field.name)
+  if (!schemaNames.length) return { ...raw }
+  const allowed = new Set(schemaNames)
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (allowed.has(key)) out[key] = value
+  }
+  return out
+}
+
 /**
- * 用户勾选域优先；中心仅预填 form_data / incomplete。
+ * 用户勾选域优先；中心预填 form_data / incomplete，并覆盖 related_skills（有则用之）。
  * 无 preset 时回落为中心域列表（兼容旧调用）。
  */
 async function normalizeDomains(
@@ -103,15 +118,17 @@ async function normalizeDomains(
       const layout = await getAdaptDomainLayout(d.domain_id, d.workspace_id)
       const snapshotFields = schemaToLayoutFields(d.schema)
       const layout_fields = snapshotFields.length ? snapshotFields : (layout?.fields ?? [])
-      const form_data = { ...d.form_data }
+      const form_data = pickFormDataForFields(d.form_data as Record<string, unknown>, d.schema)
       result.push({
         workspace_id: d.workspace_id,
         domain_id: d.domain_id,
         domain_label: labelForDomain(d.domain_id),
         module: mapDomainToModule(d.domain_id),
-        related_skills: layout?.related_skills?.length
-          ? [...layout.related_skills]
-          : [],
+        related_skills: d.related_skills?.length
+          ? [...d.related_skills]
+          : layout?.related_skills?.length
+            ? [...layout.related_skills]
+            : [],
         form_data,
         incomplete_required: snapshotFields.length
           ? computeIncomplete(form_data, snapshotFields, d.incomplete_required)
@@ -131,7 +148,8 @@ async function normalizeDomains(
     const layout = await getAdaptDomainLayout(p.domain_id, p.workspace_id)
     const snapshotFields = schemaToLayoutFields(central?.schema)
     const layout_fields = snapshotFields.length ? snapshotFields : (layout?.fields ?? [])
-    const form_data = mergeFormData(central?.form_data, p.form_data)
+    const merged = mergeFormData(central?.form_data, p.form_data)
+    const form_data = pickFormDataForFields(merged, central?.schema)
     const incomplete_required = computeIncomplete(
       form_data,
       layout_fields,
@@ -143,9 +161,11 @@ async function normalizeDomains(
       domain_id: p.domain_id,
       domain_label: p.domain_label || labelForDomain(p.domain_id),
       module: mapDomainToModule(p.domain_id, p.module),
-      related_skills: layout?.related_skills?.length
-        ? [...layout.related_skills]
-        : (p.related_skills ?? []),
+      related_skills: central?.related_skills?.length
+        ? [...central.related_skills]
+        : layout?.related_skills?.length
+          ? [...layout.related_skills]
+          : (p.related_skills ?? []),
       form_data,
       incomplete_required,
       enabled: p.enabled,

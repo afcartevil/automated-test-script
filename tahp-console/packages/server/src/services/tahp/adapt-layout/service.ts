@@ -394,12 +394,5 @@ export function resolveFormFieldLabels(
     rows.push({ name, label: labelMap.get(name) || name, value })
   }
 
-  for (const [name, value] of Object.entries(formData)) {
-    if (seen.has(name)) continue
-    const v = String(value ?? '').trim()
-    if (!v) continue
-    rows.push({ name, label: labelMap.get(name) || name, value: v })
-  }
-
   return rows
 }

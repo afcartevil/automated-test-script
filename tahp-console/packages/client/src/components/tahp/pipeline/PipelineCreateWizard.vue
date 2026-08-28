@@ -489,8 +489,9 @@ function buildWizardDomains(
       formData[field.key] = field.type === 'checklist' ? (field.defaultValue ?? '') : ''
     }
     if (central?.form_data) {
+      const schemaKeys = new Set(schema.map(field => field.key))
       for (const [k, v] of Object.entries(central.form_data)) {
-        formData[k] = String(v ?? '')
+        if (schemaKeys.has(k)) formData[k] = String(v ?? '')
       }
     }
 
@@ -499,7 +500,9 @@ function buildWizardDomains(
       domain_id: cat.domain_id,
       domain_label: cat.domain_label,
       module: resolveModule(cat.workspace_id, cat.domain_id, cat.module),
-      related_skills: [...(cat.related_skills ?? [])],
+      related_skills: central?.related_skills?.length
+        ? [...central.related_skills]
+        : [...(cat.related_skills ?? [])],
       // 中心有该域则默认勾选；否则需用户显式启用
       enabled: Boolean(central) && selectedWorkspaces.value.includes(cat.workspace_id as AdaptWorkspaceId),
       schema,
