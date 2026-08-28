@@ -29,11 +29,13 @@ alwaysApply: false
 - **勿把路径/ZIP 导入当日常发布**：`import` 仅用于离线/首次落盘兜底
 - **本机状态（同步中心）**：
   - `synced` 已与中心已发布一致
-  - `behind` 中心有更新可拉
+  - `behind` 中心有更新可拉 → 操作「更新」（拉取覆盖，非提交服务器）
   - `ahead` 本机有未提交修改（同步跳过覆盖）
-  - `local_only` 仅本机
+  - `local_only` 仅本机 → 可直接「删除」本机目录
   - `submitted_pending` 已提交待审（勿重复提交）
-  - `rejected` 最近提交被驳回（可见原因，可改后重提）
+  - `delete_pending` 删除申请待审
+  - `rejected` 最近提交/删除被驳回（可见原因，可改后重提）
+- **删除**：仅本机直删；已上中心的 Skill 走「申请删除」→ 中心审核通过后下线 + pull tombstone 清理各端本机副本
 - 细节与演进见 `.cursor/skill-sync/`（当前精简 Phase 4）
 
 ## 验证

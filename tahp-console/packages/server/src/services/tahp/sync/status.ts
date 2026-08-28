@@ -21,6 +21,7 @@ export type SkillSyncStateName =
   | 'local_only'
   | 'unknown'
   | 'submitted_pending'
+  | 'delete_pending'
   | 'rejected'
 
 export interface SkillSyncStatusItem {
@@ -56,6 +57,8 @@ export interface SkillSyncStatusResult {
   ahead_count?: number
   /** 待审核条数（submitted_pending） */
   pending_count?: number
+  /** 删除待审条数（delete_pending） */
+  delete_pending_count?: number
   /** 已拒绝条数 */
   rejected_count?: number
   skills: SkillSyncStatusItem[]
@@ -102,9 +105,46 @@ export function applySubmissionOverlay(
   return row
 }
 
+/** 用中心最近删除申请覆盖基础态（纯函数，供单测 / enrich） */
+export function applyDeletionOverlay(
+  row: SkillSyncStatusItem,
+  sub: {
+    status?: string
+    comment?: string
+    submit_id?: string
+  } | null | undefined,
+): SkillSyncStatusItem {
+  if (!sub?.status) return row
+  if (sub.status === 'pending_review') {
+    return {
+      ...row,
+      state: 'delete_pending',
+      submit_id: sub.submit_id,
+      reject_reason: undefined,
+    }
+  }
+  if (sub.status === 'rejected') {
+    return {
+      ...row,
+      state: 'rejected',
+      submit_id: sub.submit_id,
+      reject_reason: sub.comment || undefined,
+    }
+  }
+  return row
+}
+
 function needsSubmissionLookup(row: SkillSyncStatusItem): boolean {
   if (!row.local_hash) return false
   return row.state === 'local_only' || row.state === 'behind' || row.state === 'ahead' || row.state === 'unknown'
+}
+
+function needsDeletionLookup(row: SkillSyncStatusItem): boolean {
+  // 中心仍有条目，或本机曾同步过的项：查删除待审
+  return !!row.central_hash
+    || row.state === 'synced'
+    || row.state === 'behind'
+    || row.state === 'ahead'
 }
 
 /** 按需并发查 latest submission；失败单条降级，不打断整页 */
@@ -135,15 +175,47 @@ async function enrichSkillsWithSubmissions(
   return out
 }
 
+/** 按需并发查 latest deletion；删除待审优先于包提交态 */
+async function enrichSkillsWithDeletions(
+  skills: SkillSyncStatusItem[],
+): Promise<SkillSyncStatusItem[]> {
+  const idxs = skills
+    .map((s, i) => (needsDeletionLookup(s) ? i : -1))
+    .filter(i => i >= 0)
+  if (!idxs.length) return skills
+
+  const out = skills.slice()
+  let cursor = 0
+  async function worker(): Promise<void> {
+    while (cursor < idxs.length) {
+      const i = idxs[cursor++]
+      const id = out[i].id
+      try {
+        const sub = await centralClient.latestSkillDeletion(id)
+        // 仅 pending / rejected 覆盖；approved 后中心已无该项，通常不会再查到
+        if (sub?.status === 'pending_review' || sub?.status === 'rejected') {
+          out[i] = applyDeletionOverlay(out[i], sub)
+        }
+      } catch {
+        /* 单条失败保持基础态 */
+      }
+    }
+  }
+  const n = Math.min(SUBMISSION_CONCURRENCY, idxs.length)
+  await Promise.all(Array.from({ length: n }, () => worker()))
+  return out
+}
+
 function sortSkills(skills: SkillSyncStatusItem[]): void {
   const order: Record<SkillSyncStateName, number> = {
     rejected: 0,
-    submitted_pending: 1,
-    ahead: 2,
-    behind: 3,
-    unknown: 4,
-    local_only: 5,
-    synced: 6,
+    delete_pending: 1,
+    submitted_pending: 2,
+    ahead: 3,
+    behind: 4,
+    unknown: 5,
+    local_only: 6,
+    synced: 7,
   }
   skills.sort((a, b) => {
     const d = order[a.state] - order[b.state]
@@ -211,6 +283,16 @@ export function recordLastAppliedHash(skillId: string, hash: string): void {
   const prev = readPersistedSyncState()
   const skills = { ...(prev.skills || {}) }
   skills[skillId] = { ...skills[skillId], last_applied_hash: hash }
+  writePersistedSyncState({ skills })
+}
+
+/** 本机删除 / tombstone 后清掉该 skill 的持久化记录 */
+export function clearSkillSyncRecord(skillId: string): void {
+  if (!skillId) return
+  const prev = readPersistedSyncState()
+  if (!prev.skills?.[skillId]) return
+  const skills = { ...prev.skills }
+  delete skills[skillId]
   writePersistedSyncState({ skills })
 }
 
@@ -502,7 +584,9 @@ export async function getSkillSyncStatus(opts?: {
   }
 
   // Phase 4 精简：按需查 recent submission → submitted_pending / rejected
-  const enriched = await enrichSkillsWithSubmissions(skills)
+  // 再查删除申请 → delete_pending（优先）
+  let enriched = await enrichSkillsWithSubmissions(skills)
+  enriched = await enrichSkillsWithDeletions(enriched)
   for (const row of enriched) {
     if (skillMap[row.id]) skillMap[row.id].state = row.state
   }
@@ -512,6 +596,7 @@ export async function getSkillSyncStatus(opts?: {
   const behind_count = filtered.filter(s => s.state === 'behind').length
   const ahead_count = filtered.filter(s => s.state === 'ahead').length
   const pending_count = filtered.filter(s => s.state === 'submitted_pending').length
+  const delete_pending_count = filtered.filter(s => s.state === 'delete_pending').length
   const rejected_count = filtered.filter(s => s.state === 'rejected').length
   const groups = buildGroupsFromBundles(filtered, bundlesDoc?.bundles || [])
 
@@ -520,6 +605,7 @@ export async function getSkillSyncStatus(opts?: {
     behind_count,
     ahead_count,
     pending_count,
+    delete_pending_count,
     rejected_count,
     skills: filtered,
     groups,

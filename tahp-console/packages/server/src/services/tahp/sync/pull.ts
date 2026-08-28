@@ -12,15 +12,23 @@ import { HermesSkillInjector } from '../../hermes/skill-injector'
 import { config } from '../../../config'
 import { centralClient } from './central-client'
 import type { PullPayload } from './manifest'
-import { setLastPulledAt, getLastAppliedHash, recordLastAppliedHash } from './status'
+import {
+  setLastPulledAt,
+  getLastAppliedHash,
+  recordLastAppliedHash,
+  clearSkillSyncRecord,
+} from './status'
 import {
   applyInlineFilesToLocal,
   applySkillZipToLocal,
   localRequirementsHash,
   getLocalPackageHash,
   getLocalPackageHashPair,
+  removeLocalSkill,
+  localSkillDir,
 } from './skill-package'
 import { decideSkillApply } from './apply-policy'
+import { existsSync } from 'fs'
 
 let lastPulledAt = ''
 
@@ -42,6 +50,8 @@ export interface PullResult {
   skill_ids: string[]
   skipped_synced: string[]
   skipped_dirty: string[]
+  /** tombstone 清理的本机 skill id */
+  deleted: string[]
   reinjected: string[]
   reinject_error?: string
   requirements_changed: string[]
@@ -135,10 +145,30 @@ export async function applyPull(
   const skillIds: string[] = []
   const skipped_synced: string[] = []
   const skipped_dirty: string[] = []
+  const deleted: string[] = []
   const requirements_changed: string[] = []
+
+  // tombstone 优先：中心已下线的 Skill 强制清理本机（含 ahead 脏本地）
+  for (const tomb of payload.deleted_skills || []) {
+    const id = String(tomb.id || '').trim()
+    if (!id) continue
+    if (only && !only.has(id)) continue
+    try {
+      if (!existsSync(localSkillDir(id))) continue
+      if (removeLocalSkill(id)) {
+        clearSkillSyncRecord(id)
+        deleted.push(id)
+        logger.info({ id, deleted_at: tomb.deleted_at }, '[sync] removed local skill via tombstone')
+      }
+    } catch (e) {
+      logger.warn({ id, err: (e as Error).message }, '[sync] tombstone remove failed')
+    }
+  }
+
   for (const skill of payload.skills) {
     if (!skill.id) continue
     if (only && !only.has(skill.id)) continue
+    if (deleted.includes(skill.id)) continue
     try {
       const force = forceAll || forceIds.has(skill.id)
       const r = await applyOneSkill(skill, force)
@@ -186,6 +216,7 @@ export async function applyPull(
     skill_ids: skillIds,
     skipped_synced,
     skipped_dirty,
+    deleted,
     reinjected: [],
     requirements_changed,
   }
@@ -256,4 +287,26 @@ export async function publishSkillPackage(skillId: string): Promise<{
     submit_id: meta.submit_id,
     status: meta.status || 'pending_review',
   }
+}
+
+/** 向中心提交删除申请（待审） */
+export async function requestSkillDelete(skillId: string, message?: string): Promise<{
+  id: string
+  submit_id: string
+  status: string
+  kind: string
+  published_hash?: string | null
+}> {
+  if (!config.tahp.centralUrl || !config.tahp.centralToken) {
+    throw new Error('中心未配置')
+  }
+  return centralClient.requestSkillDelete(skillId, { message })
+}
+
+/** 仅本机删除 Skill 目录 */
+export function deleteLocalSkill(skillId: string): { deleted: string } {
+  const ok = removeLocalSkill(skillId)
+  if (!ok) throw new Error(`本机无 Skill: ${skillId}`)
+  clearSkillSyncRecord(skillId)
+  return { deleted: skillId }
 }

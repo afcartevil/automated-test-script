@@ -1,16 +1,23 @@
 /**
- * Skill 同步 API — Phase 1/2
- *   GET  /api/tahp/skills/sync-status
- *   POST /api/tahp/skills/sync
- *   POST /api/tahp/skills/reinject
- *   POST /api/tahp/skills/publish-package
- *   POST /api/tahp/skills/publish-packages
+ * Skill 同步 API — Phase 1/2 + 删除
+ *   GET    /api/tahp/skills/sync-status
+ *   POST   /api/tahp/skills/sync
+ *   POST   /api/tahp/skills/reinject
+ *   POST   /api/tahp/skills/publish-package
+ *   POST   /api/tahp/skills/publish-packages
+ *   DELETE /api/tahp/skills/local/:id
+ *   POST   /api/tahp/skills/request-delete
  */
 import Router from '@koa/router'
 import { HermesSkillInjector } from '../../services/hermes/skill-injector'
 import { logger } from '../../services/logger'
 import { isCentralConfigured } from '../../services/tahp/runtime-mode'
-import { publishSkillPackage, runPull } from '../../services/tahp/sync/pull'
+import {
+  publishSkillPackage,
+  runPull,
+  requestSkillDelete,
+  deleteLocalSkill,
+} from '../../services/tahp/sync/pull'
 import {
   getCachedSkillSyncStatus,
   getSkillSyncStatus,
@@ -186,6 +193,53 @@ tahpSkillSyncRoutes.post('/api/tahp/skills/publish-packages', async (ctx) => {
       ok,
       failed,
     },
+  }
+})
+
+/** 仅本机删除（local_only） */
+tahpSkillSyncRoutes.delete('/api/tahp/skills/local/:id', async (ctx) => {
+  const id = String(ctx.params.id || '').trim()
+  if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少合法 skill id' }
+    return
+  }
+  try {
+    const data = deleteLocalSkill(id)
+    invalidateSkillSyncStatusCache()
+    ctx.body = { success: true, data }
+  } catch (err) {
+    logger.error({ err, id }, '[skill-sync] delete local failed')
+    ctx.status = 400
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+/** 向中心申请删除（待审） */
+tahpSkillSyncRoutes.post('/api/tahp/skills/request-delete', async (ctx) => {
+  if (!isCentralConfigured()) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '中心未配置（TAHP_CENTRAL_URL / TAHP_CENTRAL_TOKEN）' }
+    return
+  }
+  const body = (ctx.request.body || {}) as { skill_id?: string; message?: string }
+  const skillId = String(body.skill_id || '').trim()
+  if (!skillId || !/^[a-zA-Z0-9_-]+$/.test(skillId)) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少合法 skill_id' }
+    return
+  }
+  try {
+    const data = await requestSkillDelete(
+      skillId,
+      body.message ? String(body.message) : undefined,
+    )
+    invalidateSkillSyncStatusCache()
+    ctx.body = { success: true, data }
+  } catch (err) {
+    logger.error({ err, skillId }, '[skill-sync] request-delete failed')
+    ctx.status = 502
+    ctx.body = { success: false, error: (err as Error).message }
   }
 })
 

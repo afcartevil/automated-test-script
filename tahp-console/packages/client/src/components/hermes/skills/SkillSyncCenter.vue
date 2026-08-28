@@ -9,6 +9,8 @@ import {
   publishSkillPackage,
   publishSkillPackages,
   fetchSkillPackageHistory,
+  deleteLocalSkill,
+  requestSkillDelete,
   type SkillSyncStatusItem,
   type SkillHistoryCommit,
 } from '@/api/hermes/skills'
@@ -28,9 +30,28 @@ const lastResult = ref<{
   requirementsChanged: string[]
   skippedDirty: string[]
 } | null>(null)
-const publishingId = ref<string | null>(null)
+/** 进行中的单条操作按 id 集合跟踪：仅当前行置灰，其它行可继续点 */
+const publishingIds = ref<Set<string>>(new Set())
 const publishingBatch = ref(false)
-const overwritingId = ref<string | null>(null)
+const overwritingIds = ref<Set<string>>(new Set())
+const updatingIds = ref<Set<string>>(new Set())
+const deletingIds = ref<Set<string>>(new Set())
+const requestingDeleteIds = ref<Set<string>>(new Set())
+
+function busyAdd(set: { value: Set<string> }, id: string): boolean {
+  if (set.value.has(id)) return false
+  const next = new Set(set.value)
+  next.add(id)
+  set.value = next
+  return true
+}
+
+function busyRemove(set: { value: Set<string> }, id: string) {
+  if (!set.value.has(id)) return
+  const next = new Set(set.value)
+  next.delete(id)
+  set.value = next
+}
 const historySkillId = ref<string | null>(null)
 const historyLoading = ref(false)
 const historyCommits = ref<SkillHistoryCommit[]>([])
@@ -61,12 +82,37 @@ const activeSkills = computed<SkillSyncStatusItem[]>(() => {
   return status.value.skills.filter(s => set.has(s.id))
 })
 
-/** 本机有内容且未与服务器对齐时可提交（排除 synced / 待审 / 仅服务器有） */
+/** 本机有内容且未与服务器对齐时可提交（排除 synced / 待更新 / 待审 / 删除待审） */
 function canPublish(s: SkillSyncStatusItem): boolean {
   if (!status.value?.connected) return false
   if (!s.local_hash) return false
-  if (s.state === 'synced' || s.state === 'unknown' || s.state === 'submitted_pending') return false
-  return s.state === 'local_only' || s.state === 'behind' || s.state === 'ahead' || s.state === 'rejected'
+  if (
+    s.state === 'synced'
+    || s.state === 'behind'
+    || s.state === 'unknown'
+    || s.state === 'submitted_pending'
+    || s.state === 'delete_pending'
+  ) return false
+  return s.state === 'local_only' || s.state === 'ahead' || s.state === 'rejected'
+}
+
+function canUpdate(s: SkillSyncStatusItem): boolean {
+  return s.state === 'behind' && !!status.value?.configured
+}
+
+function canDeleteLocal(s: SkillSyncStatusItem): boolean {
+  return s.state === 'local_only' && !!s.local_hash
+}
+
+function canRequestDelete(s: SkillSyncStatusItem): boolean {
+  if (!status.value?.connected) return false
+  if (s.state === 'delete_pending' || s.state === 'submitted_pending' || s.state === 'local_only') return false
+  // 中心有条目，或曾与中心对齐过的状态
+  return !!s.central_hash
+    || s.state === 'synced'
+    || s.state === 'behind'
+    || s.state === 'ahead'
+    || (s.state === 'rejected' && !!s.central_hash)
 }
 
 const publishableSkills = computed(() => activeSkills.value.filter(canPublish))
@@ -88,13 +134,14 @@ function stateLabel(state: string): string {
   if (state === 'ahead') return t('skills.sync.stateAhead')
   if (state === 'local_only') return t('skills.sync.stateLocalOnly')
   if (state === 'submitted_pending') return t('skills.sync.statePending')
+  if (state === 'delete_pending') return t('skills.sync.stateDeletePending')
   if (state === 'rejected') return t('skills.sync.stateRejected')
   return t('skills.sync.stateUnknown')
 }
 
 function publishTitleFor(s: SkillSyncStatusItem): string {
   if (s.state === 'rejected') return t('skills.sync.publishTitleRejected')
-  if (s.state === 'behind' || s.state === 'ahead') return t('skills.sync.publishTitleBehind')
+  if (s.state === 'ahead') return t('skills.sync.publishTitleBehind')
   return t('skills.sync.publishTitle')
 }
 
@@ -241,9 +288,9 @@ async function onSyncBundle() {
 }
 
 async function onForceOverwrite(skillId: string) {
-  if (syncing.value || overwritingId.value) return
+  if (syncing.value || overwritingIds.value.has(skillId)) return
   if (!window.confirm(t('skills.sync.forceOverwriteConfirm', { id: skillId }))) return
-  overwritingId.value = skillId
+  if (!busyAdd(overwritingIds, skillId)) return
   try {
     const res = await triggerSync([skillId], { force: true })
     const skipped = res.pull?.skipped_dirty?.length ?? 0
@@ -256,7 +303,59 @@ async function onForceOverwrite(skillId: string) {
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.forceOverwriteFailed'))
   } finally {
-    overwritingId.value = null
+    busyRemove(overwritingIds, skillId)
+  }
+}
+
+async function onUpdate(skillId: string) {
+  if (syncing.value || updatingIds.value.has(skillId)) return
+  if (!busyAdd(updatingIds, skillId)) return
+  try {
+    const res = await triggerSync([skillId])
+    const skipped = res.pull?.skipped_dirty?.length ?? 0
+    if (skipped) {
+      message.warning(t('skills.sync.forceOverwriteFailed'))
+    } else {
+      message.success(t('skills.sync.updateSuccess', { id: skillId }))
+    }
+    await loadStatus(true)
+  } catch (err: any) {
+    message.error(err?.message || t('skills.sync.updateFailed'))
+  } finally {
+    busyRemove(updatingIds, skillId)
+  }
+}
+
+async function onDeleteLocal(skillId: string) {
+  if (deletingIds.value.has(skillId)) return
+  if (!window.confirm(t('skills.sync.deleteLocalConfirm', { id: skillId }))) return
+  if (!busyAdd(deletingIds, skillId)) return
+  try {
+    await deleteLocalSkill(skillId)
+    message.success(t('skills.sync.deleteLocalSuccess', { id: skillId }))
+    await loadStatus(true)
+  } catch (err: any) {
+    message.error(err?.message || t('skills.sync.deleteLocalFailed'))
+  } finally {
+    busyRemove(deletingIds, skillId)
+  }
+}
+
+async function onRequestDelete(skillId: string) {
+  if (requestingDeleteIds.value.has(skillId)) return
+  if (!window.confirm(t('skills.sync.requestDeleteConfirm', { id: skillId }))) return
+  if (!busyAdd(requestingDeleteIds, skillId)) return
+  try {
+    const res = await requestSkillDelete(skillId)
+    message.success(t('skills.sync.requestDeleteSuccess', {
+      id: skillId,
+      submit: res.submit_id || '-',
+    }))
+    await loadStatus(true)
+  } catch (err: any) {
+    message.error(err?.message || t('skills.sync.requestDeleteFailed'))
+  } finally {
+    busyRemove(requestingDeleteIds, skillId)
   }
 }
 
@@ -276,10 +375,10 @@ async function onReinject() {
 }
 
 async function onPublish(skillId: string) {
-  if (publishingId.value || publishingBatch.value) return
+  if (publishingBatch.value || publishingIds.value.has(skillId)) return
   const row = status.value?.skills.find(s => s.id === skillId)
   if (!row || !canPublish(row)) return
-  publishingId.value = skillId
+  if (!busyAdd(publishingIds, skillId)) return
   try {
     const res = await publishSkillPackage(skillId)
     message.success(t('skills.sync.publishPendingSuccess', {
@@ -291,12 +390,12 @@ async function onPublish(skillId: string) {
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.publishFailed'))
   } finally {
-    publishingId.value = null
+    busyRemove(publishingIds, skillId)
   }
 }
 
 async function onPublishBatch() {
-  if (publishingBatch.value || publishingId.value) return
+  if (publishingBatch.value || publishingIds.value.size > 0) return
   const ids = selectedPublishIds.value
   if (!ids.length) {
     message.info(
@@ -393,7 +492,7 @@ onMounted(loadStatus)
         <button
           type="button"
           class="ea-btn-ghost ea-btn-sm"
-          :disabled="!publishableSkills.length || publishingBatch || !!publishingId"
+          :disabled="!publishableSkills.length || publishingBatch"
           :title="t('skills.sync.selectAllUnsyncedTitle')"
           @click="toggleSelectAll(!allPublishableSelected)"
         >
@@ -402,7 +501,7 @@ onMounted(loadStatus)
         <button
           type="button"
           class="ea-btn-ghost ea-btn-sm"
-          :disabled="publishingBatch || !!publishingId || !status?.configured || !status?.connected"
+          :disabled="publishingBatch || publishingIds.size > 0 || !status?.configured || !status?.connected"
           :title="t('skills.sync.publishBatchTitle')"
           @click="onPublishBatch"
         >
@@ -434,6 +533,9 @@ onMounted(loadStatus)
     </div>
     <div v-else-if="status && (status.rejected_count || 0) > 0" class="sync-banner warn">
       {{ t('skills.sync.rejectedCount', { n: status.rejected_count }) }}
+    </div>
+    <div v-else-if="status && (status.delete_pending_count || 0) > 0" class="sync-banner warn">
+      {{ t('skills.sync.deletePendingCount', { n: status.delete_pending_count }) }}
     </div>
     <div v-else-if="status && (status.pending_count || 0) > 0" class="sync-banner info">
       {{ t('skills.sync.pendingCount', { n: status.pending_count }) }}
@@ -501,7 +603,7 @@ onMounted(loadStatus)
                   v-if="canPublish(s)"
                   type="checkbox"
                   :checked="selectedIds.has(s.id)"
-                  :disabled="publishingBatch || !!publishingId"
+                  :disabled="publishingBatch"
                   @change="toggleSelect(s.id, ($event.target as HTMLInputElement).checked)"
                 >
               </td>
@@ -531,24 +633,54 @@ onMounted(loadStatus)
               </td>
               <td>
                 <button
+                  v-if="canUpdate(s)"
+                  type="button"
+                  class="ea-btn-ghost ea-btn-sm"
+                  :disabled="syncing || updatingIds.has(s.id) || publishingBatch || !status?.configured"
+                  :title="t('skills.sync.updateTitle')"
+                  @click="onUpdate(s.id)"
+                >
+                  {{ updatingIds.has(s.id) ? '...' : t('skills.sync.update') }}
+                </button>
+                <button
                   v-if="s.state === 'ahead'"
                   type="button"
                   class="ea-btn-ghost ea-btn-sm"
-                  :disabled="syncing || !!overwritingId || publishingBatch || !status?.configured"
+                  :disabled="syncing || overwritingIds.has(s.id) || publishingBatch || !status?.configured"
                   :title="t('skills.sync.forceOverwriteTitle')"
                   @click="onForceOverwrite(s.id)"
                 >
-                  {{ overwritingId === s.id ? '...' : t('skills.sync.forceOverwrite') }}
+                  {{ overwritingIds.has(s.id) ? '...' : t('skills.sync.forceOverwrite') }}
                 </button>
                 <button
                   v-if="canPublish(s)"
                   type="button"
                   class="ea-btn-ghost ea-btn-sm"
-                  :disabled="!!publishingId || publishingBatch || !status?.configured"
+                  :disabled="publishingIds.has(s.id) || publishingBatch || !status?.configured"
                   :title="publishTitleFor(s)"
                   @click="onPublish(s.id)"
                 >
-                  {{ publishingId === s.id ? '...' : publishLabelFor(s) }}
+                  {{ publishingIds.has(s.id) ? '...' : publishLabelFor(s) }}
+                </button>
+                <button
+                  v-if="canDeleteLocal(s)"
+                  type="button"
+                  class="ea-btn-ghost ea-btn-sm danger-btn"
+                  :disabled="deletingIds.has(s.id)"
+                  :title="t('skills.sync.deleteLocalTitle')"
+                  @click="onDeleteLocal(s.id)"
+                >
+                  {{ deletingIds.has(s.id) ? '...' : t('skills.sync.deleteLocal') }}
+                </button>
+                <button
+                  v-if="canRequestDelete(s)"
+                  type="button"
+                  class="ea-btn-ghost ea-btn-sm danger-btn"
+                  :disabled="requestingDeleteIds.has(s.id) || !status?.configured"
+                  :title="t('skills.sync.requestDeleteTitle')"
+                  @click="onRequestDelete(s.id)"
+                >
+                  {{ requestingDeleteIds.has(s.id) ? '...' : t('skills.sync.requestDelete') }}
                 </button>
                 <button
                   type="button"
@@ -746,7 +878,12 @@ onMounted(loadStatus)
   &.st-local_only { background: #f1f5f9; color: #475569; }
   &.st-unknown { background: #e2e8f0; color: #334155; }
   &.st-submitted_pending { background: #dbeafe; color: #1d4ed8; }
+  &.st-delete_pending { background: #ffe4e6; color: #be123c; }
   &.st-rejected { background: #fee2e2; color: #b91c1c; }
+}
+
+.danger-btn {
+  color: #b91c1c !important;
 }
 
 .state-cell {

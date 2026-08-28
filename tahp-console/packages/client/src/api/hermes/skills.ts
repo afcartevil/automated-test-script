@@ -304,6 +304,7 @@ export type SkillSyncStateName =
   | 'local_only'
   | 'unknown'
   | 'submitted_pending'
+  | 'delete_pending'
   | 'rejected'
 
 export interface SkillSyncStatusItem {
@@ -335,6 +336,7 @@ export interface SkillSyncStatus {
   behind_count: number
   ahead_count?: number
   pending_count?: number
+  delete_pending_count?: number
   rejected_count?: number
   skills: SkillSyncStatusItem[]
   groups: SkillSyncGroup[]
@@ -448,4 +450,28 @@ export async function fetchSkillPackageHistory(skillId: string, limit = 50): Pro
 }> {
   const { tahpGet } = await import('../tahp/client')
   return tahpGet(`/api/tahp/skills/${encodeURIComponent(skillId)}/history?limit=${limit}`)
+}
+
+/** 仅本机删除 Skill 目录（local_only） */
+export async function deleteLocalSkill(skillId: string): Promise<{ deleted: string }> {
+  const { tahpDelete } = await import('../tahp/client')
+  return tahpDelete(`/api/tahp/skills/local/${encodeURIComponent(skillId)}`)
+}
+
+/** 向中心申请删除（待审） */
+export async function requestSkillDelete(
+  skillId: string,
+  message?: string,
+): Promise<{
+  id: string
+  submit_id: string
+  status: string
+  kind: string
+  published_hash?: string | null
+}> {
+  const { tahpPost } = await import('../tahp/client')
+  return tahpPost('/api/tahp/skills/request-delete', {
+    skill_id: skillId,
+    message,
+  })
 }

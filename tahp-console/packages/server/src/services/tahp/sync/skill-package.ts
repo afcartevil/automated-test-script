@@ -43,6 +43,17 @@ export function localSkillDir(id: string): string {
   return join(tahpPaths.skillsDir, id)
 }
 
+/** 删除本机 Skill 目录（仅本机删除 / pull tombstone） */
+export function removeLocalSkill(id: string): boolean {
+  if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+    throw new Error('无效 skill id')
+  }
+  const root = localSkillDir(id)
+  if (!existsSync(root)) return false
+  rmSync(root, { recursive: true, force: true })
+  return true
+}
+
 export function listLocalSkillFiles(id: string): SkillFileMeta[] {
   return listLocalSkillHashRows(id).map(f => ({
     rel_path: f.rel_path,

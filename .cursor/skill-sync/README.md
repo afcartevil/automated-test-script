@@ -64,6 +64,7 @@
 
 | 日期 | 说明 |
 |------|------|
+| 2026-08-28 | SyncCenter：behind→「更新」；本机删除；中心申请删除 + 审核下线 + pull `deleted_skills` tombstone |
 | 2026-07-15 | Phase 4 裁为最小集：仅 submitted_pending/rejected + SOP；砍掉 ahead/conflict/审计报表 |
 | 2026-07-15 | Phase 4 大纲曾细化为满配治理提案（后按用户要求精简） |
 | 2026-07-15 | Phase 3：主仓镜像、Bundle CRUD、kb 审后 Git、SyncCenter「同步此包」 |

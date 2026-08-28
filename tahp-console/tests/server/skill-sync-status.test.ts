@@ -79,6 +79,43 @@ describe('applySubmissionOverlay', () => {
   })
 })
 
+describe('applyDeletionOverlay', () => {
+  it('maps pending_review → delete_pending', async () => {
+    const { applyDeletionOverlay } = await import('../../packages/server/src/services/tahp/sync/status')
+    const row = {
+      id: 'demo',
+      state: 'synced' as const,
+      local_hash: 'abc',
+      central_hash: 'abc',
+      bundle_ids: [] as string[],
+    }
+    const out = applyDeletionOverlay(row, {
+      status: 'pending_review',
+      submit_id: 'sd-1',
+    })
+    expect(out.state).toBe('delete_pending')
+    expect(out.submit_id).toBe('sd-1')
+  })
+
+  it('maps rejected → rejected with reason', async () => {
+    const { applyDeletionOverlay } = await import('../../packages/server/src/services/tahp/sync/status')
+    const row = {
+      id: 'demo',
+      state: 'synced' as const,
+      local_hash: 'abc',
+      central_hash: 'abc',
+      bundle_ids: [] as string[],
+    }
+    const out = applyDeletionOverlay(row, {
+      status: 'rejected',
+      submit_id: 'sd-2',
+      comment: '仍在使用',
+    })
+    expect(out.state).toBe('rejected')
+    expect(out.reject_reason).toBe('仍在使用')
+  })
+})
+
 describe('getSkillSyncStatus (unconfigured)', () => {
   it('returns configured=false and marks local skills as local_only', async () => {
     const root = await tempDir('skill-sync-status-')

@@ -121,6 +121,39 @@ export const centralClient = {
     })
   },
 
+  async requestSkillDelete(
+    id: string,
+    opts?: { message?: string },
+  ): Promise<{
+    id: string
+    submit_id: string
+    status: string
+    kind: string
+    published_hash?: string | null
+  }> {
+    return request(`/api/tahp/sync/skill/${encodeURIComponent(id)}/delete/submit`, {
+      method: 'POST',
+      headers: headers({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ message: opts?.message }),
+    })
+  },
+
+  async latestSkillDeletion(id: string): Promise<{
+    submit_id: string
+    skill_id: string
+    kind: string
+    status: string
+    message?: string
+    published_hash?: string | null
+    comment?: string
+    submitted_at?: string
+    reviewed_at?: string
+  } | null> {
+    return request(`/api/tahp/sync/skill/${encodeURIComponent(id)}/deletion/latest`, {
+      headers: headers(),
+    })
+  },
+
   async skillHistory(id: string, limit = 50): Promise<{
     id: string
     commits: Array<{
@@ -182,6 +215,7 @@ export const centralClient = {
       form_data: Record<string, unknown>
       stale_fields: string[]
       incomplete_required: string[]
+      related_skills?: string[]
       updated_at?: string
       updated_by?: string
       line_layout_revision?: number

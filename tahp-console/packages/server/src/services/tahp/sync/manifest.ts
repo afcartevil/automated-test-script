@@ -36,11 +36,19 @@ export interface PullSkillItem {
   package_url?: string
 }
 
+export interface PullDeletedSkill {
+  id: string
+  deleted_at: string
+  submit_id?: string
+}
+
 export interface PullPayload {
   generated_at: string
   entries: Array<Record<string, unknown>>
   skills: PullSkillItem[]
   configs: Array<{ key: string; rel_path: string; content: string }>
+  /** 中心已审核删除的 Skill（tombstone）；本机应清理对应目录 */
+  deleted_skills?: PullDeletedSkill[]
 }
 
 export type SubmitKind = 'entry' | 'skill_draft'
