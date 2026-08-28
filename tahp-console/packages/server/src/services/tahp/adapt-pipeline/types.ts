@@ -227,6 +227,8 @@ export interface GerritChangeRef {
   change_number?: string
   status: 'pending' | 'submitted' | 'failed' | 'blocked_conflict'
   files: string[]
+  /** 补充说明，如「无新变更，沿用既有 CR」 */
+  note?: string
   error?: string
 }
 

@@ -9,8 +9,29 @@ import {
 import {
   filterFilesBySelectedRepos,
   groupChangedFilesByRepo,
+  resolveRepoForFile,
 } from '../repo-groups'
+import { basename, normalize } from 'path'
 import { domainsWithChangedFiles } from '../workspace-changed-files'
+
+function repoLabelForDomain(
+  domainId: string,
+  files: string[],
+  repoGroups: ReturnType<typeof groupChangedFilesByRepo>,
+  fallback: string,
+): string {
+  for (const g of repoGroups) {
+    if (g.domain_ids.includes(domainId)) {
+      return g.repo_label || basename(normalize(g.repo))
+    }
+  }
+  const first = files[0]
+  if (first) {
+    const root = resolveRepoForFile(first)
+    return basename(normalize(root))
+  }
+  return fallback
+}
 
 function domainsWithChanges(ctx: StageContext): PipelineDomain[] {
   return domainsWithChangedFiles(ctx.run.domains)
@@ -171,9 +192,10 @@ export const gerritStageDefinition: StageDefinition = {
     }
 
     const queue = domains.map(d => d.domain_id)
+    const repoGroupsForSubmit = groupChangedFilesByRepo(domains)
     const initialChanges: GerritChangeRef[] = domains.map(d => ({
       domain_id: d.domain_id,
-      repo: d.workspace_id,
+      repo: repoLabelForDomain(d.domain_id, d.changed_files ?? [], repoGroupsForSubmit, d.workspace_id),
       status: 'pending',
       files: d.changed_files ?? [],
     }))
@@ -226,6 +248,7 @@ export const gerritStageDefinition: StageDefinition = {
     }
 
     if (ev.type === 'task.completed') {
+      const alreadySubmitted = ev.payload.already_submitted === true
       const changes = [...(ctx.run.gerrit_changes ?? [])]
       const changeIdx = changes.findIndex(c => c.domain_id === domainId)
       if (changeIdx >= 0) {
@@ -234,6 +257,7 @@ export const gerritStageDefinition: StageDefinition = {
           status: 'submitted',
           change_url: ev.payload.change_url as string | undefined,
           change_number: ev.payload.change_number as string | undefined,
+          note: alreadySubmitted ? '无新变更，沿用既有 CR' : undefined,
         }
       }
       ctx.patchRun({ gerrit_changes: changes })
@@ -241,7 +265,11 @@ export const gerritStageDefinition: StageDefinition = {
       const nextIndex = Number(p.current_index ?? 0) + 1
       const queue = (p.queue as string[]) ?? []
       syncProgress(ctx, { current_index: nextIndex, changes })
-      ctx.log(`域 ${domainId || '未知'} Gerrit 提交完成`)
+      ctx.log(
+        alreadySubmitted
+          ? `域 ${domainId || '未知'} 无新变更，沿用既有 CR`
+          : `域 ${domainId || '未知'} Gerrit 提交完成`,
+      )
 
       if (nextIndex < queue.length) {
         await startNextDomainSubmit(ctx)

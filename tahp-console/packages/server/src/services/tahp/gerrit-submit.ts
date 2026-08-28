@@ -56,6 +56,7 @@ export interface GerritSubmitTaskCtx {
   changeUrl?: string
   changeNumber?: string
   changeId?: string
+  alreadySubmitted?: boolean
   error?: string
   completedAt?: string
 }
@@ -102,17 +103,37 @@ export function detectDomainFileConflicts(
   return conflicts.sort((a, b) => a.file.localeCompare(b.file))
 }
 
-/** 从 Agent 输出解析 Gerrit CR 信息 */
-export function parseGerritSubmitResult(text: string): {
+export interface GerritSubmitParseResult {
   changeUrl?: string
   changeNumber?: string
   changeId?: string
-} {
-  const result: { changeUrl?: string; changeNumber?: string; changeId?: string } = {}
+  /** push 返回 no new changes：本地 commit 已是 CR 当前 patch set，等价于已提交 */
+  alreadySubmitted?: boolean
+}
 
-  const urlMatch = text.match(/https?:\/\/gerrit[^\s)>'"`]+/i)
-  if (urlMatch) {
-    result.changeUrl = urlMatch[0].replace(/[.,;)\]]+$/g, '')
+function stripUrlTail(url: string): string {
+  return url.replace(/[.,;)\]]+$/g, '')
+}
+
+/**
+ * 从 Agent 输出解析 Gerrit CR 信息。
+ *
+ * Agent 正文常复述历史 CR 链接（补读远端 pane 时也会带出上一次任务的输出），
+ * 因此优先取 skill 约定的 `GERRIT_CHANGE_URL:` 回报行，其次取**最后**一个 URL。
+ */
+export function parseGerritSubmitResult(text: string): GerritSubmitParseResult {
+  const result: GerritSubmitParseResult = {}
+
+  const reported = [...text.matchAll(/GERRIT_CHANGE_URL:\s*(\S+)/gi)].pop()
+  if (reported) {
+    result.changeUrl = stripUrlTail(reported[1])
+  } else {
+    const urls = [...text.matchAll(/https?:\/\/gerrit[^\s)>'"`\]]+/gi)]
+    const last = urls[urls.length - 1]
+    if (last) result.changeUrl = stripUrlTail(last[0])
+  }
+
+  if (result.changeUrl) {
     const numFromUrl = result.changeUrl.match(/\/(\d+)\/?$/)
     if (numFromUrl) result.changeNumber = numFromUrl[1]
   }
@@ -124,6 +145,8 @@ export function parseGerritSubmitResult(text: string): {
     const numMatch = text.match(/Change\s*#?\s*(\d{6,})/i)
     if (numMatch) result.changeNumber = numMatch[1]
   }
+
+  if (/no new changes/i.test(text)) result.alreadySubmitted = true
 
   return result
 }
@@ -184,7 +207,14 @@ function buildInstructions(
 3. commit message 遵循 skill 内 commit-template.md
 4. 仅提交本域列出的变更文件，不要提交其他域的文件；禁止跨仓混提
 5. commit 模板 \`ID:\` 使用流水线提供的「提交 ID」（多仓相同）；若未提供提交 ID 则按 Skill 默认规则处理，不要因此失败；DESCRIPTION 仍按各仓实际 diff 填写
-6. 完成后在输出中明确打印 Gerrit Change URL 与 Change-Id
+6. **push 前先判幂等**（Skill「是否需要 push」）：本地 HEAD 已是该 CR 的当前 patch set 时不要重复 push，直接回报既有 URL；push 输出 \`no new changes\` 属于**已提交成功**，不得记为失败
+7. 回报的 Change URL **只能**来自本次执行的输出，禁止复述历史 CR 链接或旧 CR 号
+8. 每个仓完成后单独一行打印 \`GERRIT_CHANGE_URL: <url>\`，并给出 Change-Id
+
+# 禁止（违反会导致卡死在 less pager、长时间无结果）
+- **禁止**使用 terminal / execute_code / 本机 shell 执行 git 或 asf 命令
+- **必须** Read \`~/.claude/skills/asf-bridge/SKILL.md\`，用 \`asf --json bridge cmd\` 在 Linux 构建机执行；PROBE/SUBMIT 脚本见 Skill 内 remote-harness.md（base64 一次发送，禁止交互式 pager）
+- 若 bridge cmd 返回 \`complete=false\`，按 asf-bridge skill 用 \`bridge read\` 补读，**不要**改用 terminal 重跑
 ${credLine ? `${credLine}\n` : ''}
 # 工程 Skill 根目录
 \`${skillsDir}\`
@@ -220,6 +250,7 @@ function buildUserMessage(input: GerritDomainSubmitInput): string {
       ? '- commit 模板 `ID:` 必须使用上方「提交 ID」（各仓相同）'
       : '- commit 模板 `ID:` 未指定，可按 Skill 默认规则填写或留空，不要因此中止提交',
     '- `DESCRIPTION` / `TYPE` / `TEST_SUGGESTIONS` 等按**本仓实际 diff** 填写，不要照搬其它仓',
+    '- 若某仓工作区已干净且 HEAD 就是待提交的 commit，先查该 Change-Id 对应 CR：已是当前 patch set 就回报既有 URL，不要重复 push',
     '',
     '请使用 gerrit-submit Skill 完成 commit + push，并回报 Change URL。',
   ].join('\n')
@@ -346,6 +377,7 @@ async function runGerritSubmitTask(taskId: string, input: GerritDomainSubmitInpu
     ctx.changeUrl = parsed.changeUrl
     ctx.changeNumber = parsed.changeNumber
     ctx.changeId = parsed.changeId
+    ctx.alreadySubmitted = parsed.alreadySubmitted
     ctx.status = 'completed'
     ctx.completedAt = new Date().toISOString()
 
@@ -355,6 +387,7 @@ async function runGerritSubmitTask(taskId: string, input: GerritDomainSubmitInpu
       change_url: parsed.changeUrl,
       change_number: parsed.changeNumber,
       change_id: parsed.changeId,
+      already_submitted: parsed.alreadySubmitted === true,
       response: fullResponse,
     })
   } catch (err) {

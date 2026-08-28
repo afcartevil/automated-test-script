@@ -61,8 +61,12 @@ function extractSkillIdFromSkillMdPath(filePath: string): string | undefined {
 
 function parsePreviewPath(preview?: string): string | undefined {
   if (!preview) return undefined
-  const m = preview.match(/path=([^)]+)/)
-  return m?.[1]?.trim()
+  // preview 形如 (path=Z:\foo\bar.txt, old_string=...) — 必须在逗号处截断，不能吃到 old_string
+  const m = preview.match(/path=([^,)]+)/)
+  const raw = m?.[1]?.trim()
+  if (!raw || /old_string|new_string|=/.test(raw)) return undefined
+  if (/…|\.\.\.$|\u2026/.test(raw)) return undefined
+  return raw
 }
 
 function parsePreviewSkillName(preview?: string): string | undefined {
@@ -82,12 +86,17 @@ const EXECUTE_CODE_PATH_PATTERNS = [
 /** 从 execute_code 的 code 或 preview 文本中提取可能写入的文件路径 */
 export function extractPathsFromExecuteCode(code?: string): string[] {
   if (!code?.trim()) return []
+  const text = code
+  // 仅当代码里存在写操作时才收录 path=，避免把只读 open/read 误计为变更
+  const hasWriteOp = /open\s*\([^)]*['"][wa+]['"]|\.write\s*\(|write_file\s*\(|shutil\.(copy|move)|os\.replace|Path\s*\([^)]+\)\.write/i.test(text)
+  if (!hasWriteOp) return []
+
   const paths: string[] = []
   const seen = new Set<string>()
   for (const re of EXECUTE_CODE_PATH_PATTERNS) {
     const pattern = new RegExp(re.source, re.flags)
     let m: RegExpExecArray | null
-    while ((m = pattern.exec(code)) !== null) {
+    while ((m = pattern.exec(text)) !== null) {
       const p = m[1]?.trim()
       if (!p || p.endsWith('SKILL.md') || seen.has(p)) continue
       seen.add(p)
@@ -126,10 +135,6 @@ export function extractFilesFromLlmResponse(text: string): AdaptAgentFileChange[
 
   for (const m of text.matchAll(/\*\*绝对路径\*\*[：:]\s*`([^`]+)`/g)) {
     push(m[1], 'create')
-  }
-
-  for (const m of text.matchAll(/open\s*\(\s*r?["']([A-Za-z]:[^"']+\.\w+)["']/g)) {
-    push(m[1], 'modify')
   }
 
   return result

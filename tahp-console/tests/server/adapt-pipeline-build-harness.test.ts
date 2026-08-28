@@ -248,4 +248,34 @@ describe('workspace-changed-files', () => {
       normalize('Q:\\adapt-test\\drivers\\a.c'),
     ])
   })
+
+  it('parsePreviewPath stops before old_string in str_replace preview', async () => {
+    const { extractAdaptAgentFileChanges } = await import(
+      '../../packages/server/src/services/tahp/adapt-agent-report'
+    )
+    const files = extractAdaptAgentFileChanges({
+      toolsUsed: [{
+        name: 'str_replace',
+        preview: '(path=Z:\\\\project\\\\X6850\\\\ATMWifiMeta\\\\agent-test-output\\\\comm_framework_agent_test.txt, old_string=- 状态: 成功)',
+      }],
+      llm_response: '',
+    })
+    expect(files).toHaveLength(1)
+    expect(files[0].path).toContain('comm_framework_agent_test.txt')
+    expect(files[0].path).not.toContain('old_string')
+  })
+
+  it('filterPipelineChangedFiles excludes AAA_TEMP but keeps project agent-test-output', async () => {
+    const { filterPipelineChangedFiles } = await import(
+      '../../packages/server/src/services/tahp/adapt-pipeline/workspace-changed-files'
+    )
+    const full = 'Z:\\project\\X6850\\system\\vendor\\mediatek\\proprietary\\packages\\apps\\AutoDialer\\agent-test-output\\comm_framework_agent_test.txt'
+    const kept = filterPipelineChangedFiles([
+      full,
+      'Z:\\project\\X6850\\system\\vendor\\mediatek\\proprietary\\packages\\apps\\AutoDialer\\age…',
+      'D:\\AAA_TEMP\\agent-test-output\\comm_framework_agent_test.txt',
+      'D:\\Code\\tahp\\skills\\.claude\\skills\\comm-framework-agent-test\\SKILL.md',
+    ])
+    expect(kept).toEqual([normalize(full)])
+  })
 })

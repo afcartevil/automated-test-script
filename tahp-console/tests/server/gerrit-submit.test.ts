@@ -91,4 +91,39 @@ describe('parseGerritSubmitResult', () => {
     expect(parsed.changeId).toBe('Ideadbeef')
     expect(parsed.changeUrl).toBeUndefined()
   })
+
+  it('prefers the reported GERRIT_CHANGE_URL line over quoted history', () => {
+    const text = [
+      '之前那个单是 https://gerrit.transsion.com/c/platform/vendor/+/1111111',
+      'remote: SUCCESS',
+      'remote:   https://gerrit.transsion.com/c/platform/vendor/+/2222222 [NEW]',
+      'GERRIT_CHANGE_URL: https://gerrit.transsion.com/c/platform/vendor/+/2222222',
+    ].join('\n')
+    const parsed = parseGerritSubmitResult(text)
+    expect(parsed.changeUrl).toBe('https://gerrit.transsion.com/c/platform/vendor/+/2222222')
+    expect(parsed.changeNumber).toBe('2222222')
+  })
+
+  it('falls back to the last URL when no report line is present', () => {
+    const text = [
+      '参考历史 CR https://gerrit.transsion.com/c/a/+/1111111',
+      'remote:   https://gerrit.transsion.com/c/a/+/3333333 [NEW]',
+    ].join('\n')
+    expect(parseGerritSubmitResult(text).changeNumber).toBe('3333333')
+  })
+
+  it('flags no-new-changes push as already submitted', () => {
+    const text = [
+      ' ! [remote rejected] HEAD -> refs/for/tOS_mtk_A16_trunk (no new changes)',
+      'GERRIT_CHANGE_URL: https://gerrit.transsion.com/c/a/+/1592130',
+    ].join('\n')
+    const parsed = parseGerritSubmitResult(text)
+    expect(parsed.alreadySubmitted).toBe(true)
+    expect(parsed.changeNumber).toBe('1592130')
+  })
+
+  it('does not flag a normal success as already submitted', () => {
+    const parsed = parseGerritSubmitResult('remote: SUCCESS\nGERRIT_CHANGE_URL: https://gerrit.transsion.com/c/a/+/9/')
+    expect(parsed.alreadySubmitted).toBeUndefined()
+  })
 })

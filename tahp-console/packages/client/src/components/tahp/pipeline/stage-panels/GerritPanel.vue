@@ -14,6 +14,7 @@ interface GerritChange {
   change_url?: string
   change_number?: string
   status: string
+  note?: string
   files?: string[]
   error?: string
 }
@@ -124,7 +125,10 @@ function stateLabel(state?: unknown): string {
           <td class="td-name">{{ c.domain_id }}</td>
           <td>{{ c.repo ?? '—' }}</td>
           <td>{{ c.files?.length ?? '—' }}</td>
-          <td><EaPill :variant="crVariant(c.status)">{{ crLabel(c.status) }}</EaPill></td>
+          <td>
+            <EaPill :variant="crVariant(c.status)" :title="c.note">{{ crLabel(c.status) }}</EaPill>
+            <span v-if="c.note" class="cr-note">{{ c.note }}</span>
+          </td>
           <td>
             <a v-if="c.change_url" :href="c.change_url" target="_blank" rel="noopener noreferrer" class="cr-link">
               {{ c.change_number ?? 'Gerrit' }}
@@ -184,6 +188,7 @@ function stateLabel(state?: unknown): string {
   tr.conflict { background: var(--error-soft); }
 }
 .cr-link { color: var(--accent); text-decoration: none; font-weight: 600; &:hover { text-decoration: underline; } }
+.cr-note { display: block; margin-top: 2px; color: var(--faint); font-size: 12px; }
 .err { color: var(--err); }
 .empty { color: var(--faint); margin: 0 0 14px; }
 h4 { margin: 0 0 8px; font-size: 12px; color: var(--faint); letter-spacing: 0.04em; text-transform: uppercase; }

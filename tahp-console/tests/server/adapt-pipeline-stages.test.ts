@@ -525,7 +525,7 @@ describe('adapt-pipeline stages', () => {
       task_id: 'task-tp',
       payload: {
         task_id: 'task-tp',
-        files_modified: ['vendor/mediatek/foo.c', 'D:\\outside\\skip.c'],
+        files_modified: [wsFile, 'vendor/mediatek/foo.c', 'D:\\outside\\skip.c'],
       },
       ts: Date.now(),
     })

@@ -8,7 +8,7 @@ import { flattenPathParams } from '../path-params'
 import { registerStageForTest } from '../registry'
 import type { ObservedEvent, PipelineDomain, StageContext, StageDefinition } from '../types'
 import { resolveAdaptMaxRetries } from '../types'
-import { mergeAbsolutePaths } from '../workspace-changed-files'
+import { filterPipelineChangedFiles } from '../workspace-changed-files'
 
 function enabledDomains(run: import('../types').PipelineRun): PipelineDomain[] {
   return run.domains.filter(d => d.enabled)
@@ -54,7 +54,7 @@ function appendChangedFiles(
   domain: PipelineDomain,
   paths: string[],
 ): number {
-  const merged = mergeAbsolutePaths([...(domain.changed_files ?? []), ...paths])
+  const merged = filterPipelineChangedFiles([...(domain.changed_files ?? []), ...paths])
   const before = domain.changed_files?.length ?? 0
   domain.changed_files = merged
   return merged.length - before
@@ -314,11 +314,12 @@ export const adaptStageDefinition: StageDefinition = {
       running.error = undefined
 
       const fromPayload = Array.isArray(ev.payload.files_modified)
-        ? (ev.payload.files_modified as unknown[]).map(String)
+        ? filterPipelineChangedFiles((ev.payload.files_modified as unknown[]).map(String))
         : []
-      const fromTask = (getAdaptAgentTask(running.adapt_task_id)?.fileChanges ?? [])
-        .map(c => c.path)
-      appendChangedFiles(running, [...fromPayload, ...fromTask])
+      // 完成时以 Agent 归一化结果为准，避免实时事件 + LLM 回退重复计入测试产物等路径
+      running.changed_files = fromPayload.length
+        ? fromPayload
+        : filterPipelineChangedFiles((getAdaptAgentTask(running.adapt_task_id)?.fileChanges ?? []).map(c => c.path))
       ctx.log(
         `[${running.domain_label || running.domain_id}] 已记录变更文件 ${running.changed_files?.length ?? 0} 个`,
       )

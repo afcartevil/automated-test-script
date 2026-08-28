@@ -38,6 +38,7 @@ import {
   extractAdaptAgentSkillRefs,
   extractPathsFromExecuteCode,
 } from './adapt-agent-report'
+import { filterPipelineChangedFiles } from './adapt-pipeline/workspace-changed-files'
 import { detectUnhealthyAgentRun, humanizeAgentError } from './adapt-agent-health'
 import {
   APPROVAL_AUTO_ONCE_MS,
@@ -393,7 +394,11 @@ function extractFilePathFromArgs(args: unknown): string | undefined {
   const obj = args as Record<string, unknown>
   for (const k of ['path', 'file_path', 'file', 'target_file', 'notebook_path']) {
     const v = obj[k]
-    if (typeof v === 'string' && v.trim()) return v.trim()
+    if (typeof v === 'string' && v.trim()) {
+      const p = v.trim()
+      if (/old_string|new_string/.test(p)) continue
+      return p
+    }
   }
   return undefined
 }
@@ -685,6 +690,7 @@ async function finalizeAdaptAgentTask(
     duration_ms: Date.now() - startMs,
   }
   const normalizedFiles = extractAdaptAgentFileChanges(reportSnapshot as Record<string, unknown>)
+    .filter(fc => filterPipelineChangedFiles([fc.path]).length > 0)
   const normalizedSkills = extractAdaptAgentSkillRefs(reportSnapshot as Record<string, unknown>)
 
   for (const fc of normalizedFiles) {

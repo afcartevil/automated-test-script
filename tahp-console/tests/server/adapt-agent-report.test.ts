@@ -62,6 +62,19 @@ describe('adapt-agent-report', () => {
       ],
       llm_response: '',
     })
+    expect(files).toHaveLength(0)
+  })
+
+  it('extractAdaptAgentFileChanges includes execute_code when code writes', () => {
+    const files = extractAdaptAgentFileChanges({
+      toolsUsed: [
+        {
+          name: 'execute_code',
+          preview: '(code=path = r"F:\\\\AAA_TEMP\\\\out\\\\test.txt"\nwith open(path, "w") as f: f.write("x"))',
+        },
+      ],
+      llm_response: '',
+    })
     expect(files).toHaveLength(1)
     expect(files[0].path).toContain('test.txt')
     expect(files[0].tool).toBe('execute_code')
@@ -119,5 +132,19 @@ describe('adapt-agent-report', () => {
     expect(n.files_modified).toHaveLength(1)
     expect(n.files_modified[0]).toContain('comm_framework_agent_test.txt')
     expect(n.audit_summary![0].status).toBe('pass')
+  })
+
+  it('ignores truncated write_file preview paths ending with ellipsis', () => {
+    const full = 'Z:\\project\\X6850\\system\\vendor\\mediatek\\proprietary\\packages\\apps\\AutoDialer\\agent-test-output\\comm_framework_agent_test.txt'
+    const files = extractAdaptAgentFileChanges({
+      fileChanges: [{ path: full, tool: 'write_file', action: 'create' }],
+      toolsUsed: [{
+        name: 'write_file',
+        preview: '(path=Z:\\\\project\\\\X6850\\\\system\\\\vendor\\\\mediatek\\\\proprietary\\\\packages\\\\apps\\\\AutoDialer\\\\age…)',
+      }],
+      llm_response: '',
+    })
+    expect(files).toHaveLength(1)
+    expect(files[0].path).toBe(full)
   })
 })
