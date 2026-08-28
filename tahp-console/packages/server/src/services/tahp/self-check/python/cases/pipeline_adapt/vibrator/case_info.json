@@ -1,8 +1,8 @@
 [
   {
     "用例名": "马达适配检查",
-    "前置条件": "测试机已通过 ADB 连接且状态为 device；MTK 平台；屏幕可亮屏解锁；建议开启全面屏手势（返回滑动）；转子检查建议 userdebug/eng 或已 adb root（dmesg -C）。",
-    "测试步骤": "1、识别马达类型（转子 / 线性），仅执行对应项\n2、进入设置应用\n3、转子：adb dmesg -C 清除日志后执行返回滑动，检测内核日志关键字\n4、线性：记录 cat /proc/interrupts | grep haptic 后执行返回滑动，再读中断并对比",
-    "期望结果": "转子：有 vibr enable 和 vibr disable 输出；线性：马达中断触发数增加。非本机类型项跳过。"
+    "前置条件": "测试机已通过 ADB 连接且状态为 device；MTK 平台。转子检查建议 userdebug/eng 或已 adb root（dmesg -C），且屏幕可亮屏解锁、建议开启全面屏手势。线性检查需可读 getprop 与 /sys/class/leds/vibrator_single/f0。",
+    "测试步骤": "1、识别马达类型（转子 / 线性），仅执行对应项\n2、转子：进入设置应用，adb dmesg -C 清除日志后执行返回滑动，检测内核日志关键字\n3、线性：读取 ro.vendor.tran.midtest.lra.cali.min 与 ro.vendor.tran.midtest.lra.cali.max，再读取 /sys/class/leds/vibrator_single/f0",
+    "期望结果": "转子：有 vibr enable 和 vibr disable 输出；线性：f0 数值在 cali.min 与 cali.max 闭区间内。非本机类型项跳过。"
   }
 ]

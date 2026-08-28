@@ -8,6 +8,8 @@ from typing import Any
 
 from _common import (
     StepFn,
+    adb_cat,
+    adb_run,
     adb_shell,
     emit,
     open_settings,
@@ -17,7 +19,10 @@ from _common import (
 from utils.tdd.ui_automatic import ensure_screen_on_and_unlocked
 
 _LINEAR_LEDS = frozenset({"vibrator_single", "vibrator_l", "vibrator_r"})
-_IRQ_LINE_RE = re.compile(r"^\s*\d+:\s*(.*)$")
+_NUM_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)")
+_CALI_MIN_PROP = "ro.vendor.tran.midtest.lra.cali.min"
+_CALI_MAX_PROP = "ro.vendor.tran.midtest.lra.cali.max"
+_F0_PATH = "/sys/class/leds/vibrator_single/f0"
 _STATUS_SUFFIX = {
     "pass": "成功",
     "fail": "失败",
@@ -39,24 +44,26 @@ def haptic_interrupt_text(serial: str) -> str:
     return "\n".join(ln for ln in raw.splitlines() if "haptic" in ln.lower())
 
 
-def parse_haptic_irq_count(text: str) -> int | None:
-    """汇总 /proc/interrupts 中含 haptic 行的各 CPU 计数。"""
-    total = 0
-    found = False
-    for raw in (text or "").splitlines():
-        line = raw.strip()
-        if "haptic" not in line.lower():
-            continue
-        found = True
-        rest = _IRQ_LINE_RE.sub(r"\1", line)
-        nums: list[int] = []
-        for token in rest.split():
-            if token.isdigit():
-                nums.append(int(token))
-            else:
-                break
-        total += sum(nums)
-    return total if found else None
+def _getprop(serial: str, prop: str) -> str:
+    ret = adb_run(serial, "shell", "getprop", prop)
+    return ((ret.stdout or "") or (ret.stderr or "")).strip()
+
+
+def _parse_number(raw: str) -> float | None:
+    text = (raw or "").strip()
+    if not text:
+        return None
+    match = _NUM_RE.search(text)
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def _fmt_num(value: float) -> str:
+    return str(int(value)) if value.is_integer() else str(value)
 
 
 def detect_motor_kind(serial: str) -> str:
@@ -182,40 +189,62 @@ def test_linear_vibrate(
     """
     线性振动功能检查
     测试步骤:
-    1. 进入设置应用
-    2. adb shell cat /proc/interrupts | grep haptic 记录当前中断
-    3. 执行返回滑动操作
-    4. 再次读取中断并与步骤 2 对比
-    预期结果: 马达中断触发数增加
+    1. getprop ro.vendor.tran.midtest.lra.cali.min
+    2. getprop ro.vendor.tran.midtest.lra.cali.max
+    3. cat /sys/class/leds/vibrator_single/f0
+    预期结果: f0 数值在 cali.min 与 cali.max 闭区间内
     """
     name = "线性振动功能检查"
     if motor_kind == "rotor":
         emit(step_update, steps, f"[{name}] 当前为转子马达，跳过")
         return _item(name, "skip", "当前设备为转子马达，跳过线性检查")
 
-    for from_right in (False, True):
-        ok, err = _enter_settings(serial, steps=steps, step_update=step_update)
-        if not ok:
-            return _item(name, "fail", err)
-        emit(step_update, steps, "[线性] 读取 /proc/interrupts | grep haptic")
-        before_text = haptic_interrupt_text(serial)
-        before = parse_haptic_irq_count(before_text)
-        emit(step_update, steps, f"[线性] 滑动前: count={before} raw={before_text or '<空>'}")
-        if before is None:
-            emit(step_update, steps, f"[{name}]-失败")
-            return _item(name, "fail", "未找到 haptic 中断行")
-        if not _swipe_back(serial, from_right=from_right, steps=steps, step_update=step_update):
-            return _item(name, "fail", "返回滑动失败")
-        after_text = haptic_interrupt_text(serial)
-        after = parse_haptic_irq_count(after_text)
-        emit(step_update, steps, f"[线性] 滑动后: count={after} raw={after_text or '<空>'}")
-        if after is not None and after > before:
-            emit(step_update, steps, f"[{name}]-成功")
-            return _item(name, "pass", f"haptic 中断 {before} → {after}")
-        emit(step_update, steps, "[线性] 中断未增加，尝试另一侧滑动")
+    emit(step_update, steps, f"[线性] 读取 {_CALI_MIN_PROP}")
+    min_raw = _getprop(serial, _CALI_MIN_PROP)
+    emit(step_update, steps, f"[线性] {_CALI_MIN_PROP}={min_raw or '<空>'}")
+    emit(step_update, steps, f"[线性] 读取 {_CALI_MAX_PROP}")
+    max_raw = _getprop(serial, _CALI_MAX_PROP)
+    emit(step_update, steps, f"[线性] {_CALI_MAX_PROP}={max_raw or '<空>'}")
+
+    cali_min = _parse_number(min_raw)
+    cali_max = _parse_number(max_raw)
+    if cali_min is None or cali_max is None:
+        emit(step_update, steps, f"[{name}]-失败")
+        return _item(
+            name,
+            "fail",
+            f"校准范围属性为空或无法解析: min={min_raw or '<空>'} max={max_raw or '<空>'}",
+        )
+    if cali_min > cali_max:
+        emit(step_update, steps, f"[{name}]-失败")
+        return _item(
+            name,
+            "fail",
+            f"校准范围无效: min={_fmt_num(cali_min)} > max={_fmt_num(cali_max)}",
+        )
+
+    emit(step_update, steps, f"[线性] 读取 {_F0_PATH}")
+    f0_raw = adb_cat(serial, _F0_PATH)
+    low = (f0_raw or "").lower()
+    if not (f0_raw or "").strip() or "permission denied" in low:
+        emit(step_update, steps, "[线性] f0 读取为空或无权限，尝试 adb root 后重读")
+        root_ok, root_msg = try_adb_root(serial)
+        emit(step_update, steps, f"[线性] adb root: {root_msg or ('ok' if root_ok else '失败')}")
+        f0_raw = adb_cat(serial, _F0_PATH)
+    emit(step_update, steps, f"[线性] f0={f0_raw or '<空>'}")
+
+    f0 = _parse_number(f0_raw)
+    if f0 is None:
+        emit(step_update, steps, f"[{name}]-失败")
+        return _item(name, "fail", f"f0 节点为空或无法解析: {f0_raw or '<空>'}")
+
+    range_text = f"[{_fmt_num(cali_min)}, {_fmt_num(cali_max)}]"
+    if cali_min <= f0 <= cali_max:
+        emit(step_update, steps, f"[{name}]-成功")
+        return _item(name, "pass", f"f0={_fmt_num(f0)} 在 {range_text} 内")
 
     emit(step_update, steps, f"[{name}]-失败")
-    return _item(name, "fail", "返回滑动后 haptic 中断计数未增加")
+    return _item(name, "fail", f"f0={_fmt_num(f0)} 不在 {range_text} 内")
 
 
 MOTOR_TEST_CASES = (
