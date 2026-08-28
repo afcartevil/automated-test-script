@@ -215,7 +215,6 @@ export const centralClient = {
       form_data: Record<string, unknown>
       stale_fields: string[]
       incomplete_required: string[]
-      related_skills?: string[]
       updated_at?: string
       updated_by?: string
       line_layout_revision?: number
