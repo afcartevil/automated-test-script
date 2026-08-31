@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NInput, NInputNumber, NSelect, NSpin, NSteps, NStep, NTable, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
@@ -10,8 +10,11 @@ import {
   fetchDomainCatalog,
   fetchHarnessSkills,
   fetchPipelinePrereqs,
+  fetchTrsysBranches,
+  fetchWorkflow,
   parsePipelinePathParams,
   startPipelineRun,
+  DEFAULT_WORKFLOW,
   type BuildContext,
   type CapabilityItem,
   type CreateRunInput,
@@ -24,6 +27,7 @@ import {
   type PrereqResolveData,
   type TestPlan,
   type TestPlanMode,
+  type WorkflowNode,
 } from '@/api/tahp/adapt-pipeline'
 import { fetchPrereqProjects, peekPrereqProjects, type AdaptPrereqProject } from '@/api/tahp/adapt'
 import { refreshDevices, type DeviceInfo } from '@/api/tahp/device-self-check'
@@ -86,6 +90,13 @@ const prereqData = ref<PrereqResolveData | null>(null)
 const oldVendorRoot = ref('')
 const newVendorRoot = ref('')
 const newSystemRoot = ref('')
+const newTrsystemRoot = ref('')
+const trsysBranch = ref('')
+const trsysBranchOptions = ref<Array<{ label: string; value: string }>>([])
+const trsysBranchesLoading = ref(false)
+const trsysBranchesError = ref('')
+const flashPkgPath = ref('')
+const workflowNodes = ref<WorkflowNode[]>(DEFAULT_WORKFLOW.nodes.map(n => ({ ...n })))
 const parsingPaths = ref(false)
 const parsedPathFields = ref<PathParamField[]>([])
 const parsedAt = ref('')
@@ -124,13 +135,27 @@ interface ChecklistRow {
 
 const wizardDomains = ref<WizardDomain[]>([])
 
-const BUILD_TARGET_OPTIONS = [
+const BUILD_TARGET_BASE_OPTIONS = [
   { label: 'sys', value: 'sys' },
   { label: 'krn', value: 'krn' },
   { label: 'vext', value: 'vext' },
   { label: 'hal', value: 'hal' },
   { label: 'odm', value: 'odm' },
 ]
+
+function parseTosMajor(raw?: string): number | null {
+  const s = String(raw ?? '').trim()
+  if (!s) return null
+  const m = s.match(/(?:t\s*os)?\s*(\d+)/i)
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isFinite(n) ? n : null
+}
+
+function needsTrsysForTargetOs(toOs?: string): boolean {
+  const n = parseTosMajor(toOs)
+  return n != null && n >= 17
+}
 
 const buildContext = reactive<BuildContext>({
   mapped_root: '',
@@ -140,7 +165,10 @@ const buildContext = reactive<BuildContext>({
   build_flag: 'staging',
   system_path: '',
   vendor_path: '',
-  build_targets: BUILD_TARGET_OPTIONS.map(o => o.value),
+  trsys_root_path: '',
+  sys_version: '',
+  trsys_branch: '',
+  build_targets: ['sys', 'krn', 'vext', 'hal', 'odm'],
   need_pack: true,
   flash_skill_id: '',
   flash_mode: 'full_rom',
@@ -148,7 +176,7 @@ const buildContext = reactive<BuildContext>({
   gerrit_issue_id: '',
 })
 
-const selectedBuildTargets = ref<string[]>(BUILD_TARGET_OPTIONS.map(o => o.value))
+const selectedBuildTargets = ref<string[]>(['sys', 'krn', 'vext', 'hal', 'odm'])
 const needPack = ref<'yes' | 'no'>('yes')
 const deviceId = ref<string | null>(null)
 const keepClonedDeviceId = ref<string | null>(null)
@@ -313,6 +341,42 @@ const selectedProjectLabel = computed(() => {
   return p ? `${code}${p.name ? ` · ${p.name}` : ''}` : code
 })
 
+const needsTrsysUi = computed(() => needsTrsysForTargetOs(prereqData.value?.to_os))
+const workflowBuildEnabled = computed(() =>
+  workflowNodes.value.find(n => n.key === 'build')?.enabled !== false,
+)
+const showEzBuildSection = computed(() => workflowBuildEnabled.value)
+const packOn = computed(() => needPack.value === 'yes')
+const flashVersionFromBuild = computed(() => showEzBuildSection.value && packOn.value)
+const needManualFlashPkg = computed(() => !flashVersionFromBuild.value)
+const hasSysTarget = computed(() => selectedBuildTargets.value.includes('sys'))
+const hasTrsysTarget = computed(() => needsTrsysUi.value && selectedBuildTargets.value.includes('trsys'))
+const showSystemRoot = computed(() => packOn.value || hasSysTarget.value)
+const showTrsysRoot = computed(() => needsTrsysUi.value && (packOn.value || hasTrsysTarget.value))
+const trsysRootPlaceholder = computed(() =>
+  hasTrsysTarget.value
+    ? '请填入本地trsys编译产物,示例:Z:\\trsys-local。或不填,将会由EA拉取编译参与打包'
+    : '请填入本地trsys编译产物,示例:Z:\\trsys-local。',
+)
+const needTrsysShareConf = computed(() =>
+  showEzBuildSection.value && hasTrsysTarget.value && !newTrsystemRoot.value.trim(),
+)
+
+const BUILD_TARGET_OPTIONS = computed(() =>
+  needsTrsysUi.value
+    ? [...BUILD_TARGET_BASE_OPTIONS, { label: 'trsys', value: 'trsys' }]
+    : BUILD_TARGET_BASE_OPTIONS,
+)
+
+watch(needsTrsysUi, (ok) => {
+  if (ok) return
+  selectedBuildTargets.value = selectedBuildTargets.value.filter(t => t !== 'trsys')
+})
+
+watch(flashVersionFromBuild, (fromBuild) => {
+  if (fromBuild) flashPkgPath.value = ''
+})
+
 const enabledDomains = computed(() => wizardDomains.value.filter(d => d.enabled))
 
 const visibleDomains = computed(() => {
@@ -338,7 +402,9 @@ const domainsByWorkspace = computed(() => {
 })
 
 const unavailableNodes = computed(() =>
-  capabilities.value.filter(c => !c.availability.available),
+  capabilities.value.filter(c =>
+    !c.availability.available && workflowNodes.value.find(n => n.key === c.key)?.enabled !== false,
+  ),
 )
 
 const selectedProjectCode = computed(() =>
@@ -385,7 +451,6 @@ async function handleParsePaths() {
       project_code: selectedProjectCode.value,
       OLD_VENDOR_ROOT: oldVendorRoot.value.trim(),
       NEW_VENDOR_ROOT: newVendorRoot.value.trim(),
-      NEW_SYSTEM_ROOT: newSystemRoot.value.trim() || undefined,
       PROJECT_FULL: selectedProjectFull(),
     })
     parsedPathFields.value = data.fields.map(f => ({ ...f }))
@@ -423,11 +488,49 @@ function onDomainFieldChange(domain: WizardDomain) {
 }
 
 const canProceedStep3 = computed(() => {
-  if (!String(buildContext.variant ?? '').trim()) return false
-  if (!String(buildContext.build_flag ?? '').trim()) return false
-  if (!selectedBuildTargets.value.length && needPack.value !== 'yes') return false
+  if (showEzBuildSection.value) {
+    if (!String(buildContext.variant ?? '').trim()) return false
+    if (!String(buildContext.build_flag ?? '').trim()) return false
+    if (!selectedBuildTargets.value.length && needPack.value !== 'yes') return false
+    if (showSystemRoot.value && !newSystemRoot.value.trim()) return false
+  }
+  if (needManualFlashPkg.value && !flashPkgPath.value.trim()) return false
   return true
 })
+
+async function loadTrsysBranches() {
+  if (!needTrsysShareConf.value || trsysBranchesLoading.value) return
+  trsysBranchesLoading.value = true
+  trsysBranchesError.value = ''
+  try {
+    const data = await fetchTrsysBranches()
+    trsysBranchOptions.value = (data.branches ?? []).map(b => ({
+      label: b.label || b.name,
+      value: b.name,
+    }))
+    if (trsysBranch.value && !trsysBranchOptions.value.some(b => b.value === trsysBranch.value)) {
+      trsysBranch.value = ''
+    }
+    if (!trsysBranch.value && trsysBranchOptions.value.length === 1) {
+      trsysBranch.value = trsysBranchOptions.value[0].value
+    }
+  } catch (err) {
+    trsysBranchOptions.value = []
+    trsysBranchesError.value = (err as Error).message || '无法访问 trsys 共享盘'
+    message.error(trsysBranchesError.value)
+  } finally {
+    trsysBranchesLoading.value = false
+  }
+}
+
+watch(
+  [needTrsysShareConf, step],
+  () => {
+    if (step.value >= 3 && needTrsysShareConf.value) {
+      void loadTrsysBranches()
+    }
+  },
+)
 
 const deviceSelectOptions = computed(() => {
   const opts = devices.value.map(d => ({
@@ -559,6 +662,7 @@ function applyCloneSeed(seed: WizardCloneSeed) {
   oldVendorRoot.value = seed.old_vendor_root
   newVendorRoot.value = seed.new_vendor_root
   newSystemRoot.value = seed.new_system_root
+  newTrsystemRoot.value = seed.new_trsystem_root
   if (seed.path_params?.fields.length) {
     parsedPathFields.value = seed.path_params.fields.map(f => ({ ...f }))
     parsedAt.value = seed.path_params.parsed_at
@@ -572,8 +676,11 @@ function applyCloneSeed(seed: WizardCloneSeed) {
   buildContext.target_branch = seed.build_context.target_branch ?? ''
   selectedBuildTargets.value = seed.build_context.build_targets?.length
     ? [...seed.build_context.build_targets]
-    : BUILD_TARGET_OPTIONS.map(o => o.value)
+    : ['sys', 'krn', 'vext', 'hal', 'odm']
   needPack.value = seed.build_context.need_pack === false ? 'no' : 'yes'
+  buildContext.sys_version = seed.build_context.sys_version ?? ''
+  flashPkgPath.value = seed.build_context.flash_pkg_path ?? ''
+  trsysBranch.value = seed.build_context.trsys_branch ?? ''
   deviceId.value = seed.device_id ?? null
   keepClonedDeviceId.value = seed.device_id ?? null
   testPlanMode.value = resolveClonedTestPlanMode(seed.test_plan?.mode)
@@ -803,7 +910,14 @@ function buildCreateInput(): CreateRunInput {
   const code = projectCode.value || manualProjectCode.value.trim()
   const projectFull = selectedProjectFull() || code
   const vendorRoot = newVendorRoot.value.trim()
-  const systemRoot = newSystemRoot.value.trim()
+  const compileOn = showEzBuildSection.value
+  const systemRoot = compileOn && showSystemRoot.value ? newSystemRoot.value.trim() : ''
+  const trsysOk = needsTrsysForTargetOs(prereqData.value?.to_os)
+  const trsystemRoot = compileOn && showTrsysRoot.value ? newTrsystemRoot.value.trim() : ''
+  const buildTargets = compileOn
+    ? (selectedBuildTargets.value.length ? [...selectedBuildTargets.value] : [])
+      .filter(t => trsysOk || t !== 'trsys')
+    : []
   const testPlan: TestPlan = {
     mode: testPlanMode.value,
     ...(CATALOG_PLAN_MODES.includes(testPlanMode.value) ? { test_type: testPlanMode.value } : {}),
@@ -823,10 +937,14 @@ function buildCreateInput(): CreateRunInput {
       build_flag: buildContext.build_flag || 'staging',
       system_path: systemRoot,
       vendor_path: vendorRoot,
-      build_targets: selectedBuildTargets.value.length ? [...selectedBuildTargets.value] : [],
-      need_pack: needPack.value === 'yes',
+      trsys_root_path: trsystemRoot || undefined,
+      sys_version: compileOn && hasSysTarget.value ? (String(buildContext.sys_version ?? '').trim() || undefined) : undefined,
+      trsys_branch: compileOn && hasTrsysTarget.value && !trsystemRoot ? trsysBranch.value.trim() || undefined : undefined,
+      build_targets: buildTargets,
+      need_pack: compileOn && needPack.value === 'yes',
       flash_skill_id: (buildContext.flash_skill_id || '').trim() || undefined,
       flash_mode: 'full_rom',
+      flash_pkg_path: needManualFlashPkg.value ? flashPkgPath.value.trim() || undefined : undefined,
       target_branch: buildContext.target_branch?.trim() || undefined,
       gerrit_issue_id: buildContext.gerrit_issue_id?.trim() || undefined,
     },
@@ -840,7 +958,8 @@ function buildCreateInput(): CreateRunInput {
             project_code: code,
             OLD_VENDOR_ROOT: oldVendorRoot.value.trim(),
             NEW_VENDOR_ROOT: newVendorRoot.value.trim(),
-            ...(newSystemRoot.value.trim() ? { NEW_SYSTEM_ROOT: newSystemRoot.value.trim() } : {}),
+            ...(compileOn && showSystemRoot.value && newSystemRoot.value.trim() ? { NEW_SYSTEM_ROOT: newSystemRoot.value.trim() } : {}),
+            ...(compileOn && showTrsysRoot.value && newTrsystemRoot.value.trim() ? { NEW_TRSYSTEM_ROOT: newTrsystemRoot.value.trim() } : {}),
             ...(selectedProjectFull() ? { PROJECT_FULL: selectedProjectFull() } : {}),
           },
           fields: parsedPathFields.value.map(f => ({ ...f })),
@@ -911,6 +1030,13 @@ onMounted(() => {
     centralConfigured.value = props.store.centralConfigured
     await Promise.all([
       loadCatalog(),
+      fetchWorkflow()
+        .then((data) => {
+          if (data.workflow?.nodes?.length) {
+            workflowNodes.value = data.workflow.nodes.map(n => ({ ...n }))
+          }
+        })
+        .catch(() => { /* 回落 DEFAULT_WORKFLOW */ }),
       fetchCapabilities()
         .then((caps) => { capabilities.value = caps })
         .catch(() => { capabilities.value = [] })
@@ -1014,10 +1140,6 @@ onUnmounted(() => {
       <div class="field">
         <label>NEW_VENDOR_ROOT <span class="req">*</span></label>
         <NInput v-model:value="newVendorRoot" placeholder="例如 Z:\project\CM8\vendor" />
-      </div>
-      <div class="field">
-        <label>NEW_SYSTEM_ROOT</label>
-        <NInput v-model:value="newSystemRoot" placeholder="可选，仅保存不参与本轮解析" />
       </div>
       <div class="parse-bar">
         <NButton
@@ -1190,12 +1312,17 @@ onUnmounted(() => {
     <!-- Step 3 -->
     <div v-else-if="step === 3" class="step-body">
       <h2>配置执行环境</h2>
-      <p class="step-hint">
+      <p v-if="showEzBuildSection" class="step-hint">
         编译经 remote-runner 在 Linux <code>~/code/ea-build</code> 执行 <code>ez-build.sh</code>。
-        Windows 盘符路径会换算为 <code>/work/code/$USER/...</code>。请先保持齐治 Bridge READY。
+        勾选打包会显示 system / trsys 根目录；编译 target 勾了 <code>sys</code> 或 <code>trsys</code> 则只显示对应 ROOT。
+        <code>trsys</code> 仅目标 OS ≥ tOS17 可选。Windows 盘符路径会换算为 <code>/work/code/$USER/...</code>。请先保持齐治 Bridge READY。
+      </p>
+      <p v-else class="step-hint">
+        当前流程未启用编译，或未勾选打包。请在下方填写版本路径供烧录使用。
       </p>
 
-      <h3 class="sub-title">编译（ez-build）</h3>
+      <template v-if="showEzBuildSection">
+      <h3 class="section-head">编译（ez-build）</h3>
       <div class="field-row">
         <div class="field">
           <label>variant <span class="req">*</span></label>
@@ -1231,7 +1358,6 @@ onUnmounted(() => {
               { label: '是（追加 pack）', value: 'yes' },
             ]"
           />
-          <p class="field-hint">选「是」时会在 targets 末尾追加 <code>pack</code>。project / system / vendor 分别取自 PROJECT_FULL、NEW_SYSTEM_ROOT、NEW_VENDOR_ROOT。</p>
         </div>
       </div>
       <div class="field">
@@ -1241,15 +1367,69 @@ onUnmounted(() => {
           multiple
           :options="BUILD_TARGET_OPTIONS"
           max-tag-count="responsive"
-          placeholder="sys / krn / vext / hal / odm"
+          placeholder="sys / krn / vext / hal / odm / trsys"
         />
-        <p class="field-hint">可多选：sys / krn / vext / hal / odm。</p>
+        <p v-if="needsTrsysUi" class="field-hint">可多选：sys / krn / vext / hal / odm / trsys，勾选sys或trsys后，需填入对应路径</p>
+        <p v-else class="field-hint">可多选：sys / krn / vext / hal / odm，勾选sys后，需填入对应路径</p>
       </div>
+      <div v-if="showSystemRoot" class="field">
+        <label>NEW_SYSTEM_ROOT <span class="req">*</span></label>
+        <NInput v-model:value="newSystemRoot" placeholder="例如 Z:\project\CM8\system" />
+      </div>
+      <div v-if="showTrsysRoot" class="field">
+        <label>NEW_TRSYSTEM_ROOT</label>
+        <NInput
+          v-model:value="newTrsystemRoot"
+          :placeholder="trsysRootPlaceholder"
+        />
+      </div>
+      <div v-if="needTrsysShareConf" class="field">
+        <label>trsys 分支</label>
+        <NSelect
+          v-model:value="trsysBranch"
+          :options="trsysBranchOptions"
+          :loading="trsysBranchesLoading"
+          filterable
+          clearable
+          placeholder="选填：从共享盘选择 TR_SYSTEM 分支"
+        />
+        <p v-if="trsysBranchesError" class="field-error">{{ trsysBranchesError }}</p>
+        <p v-else class="field-hint">
+          访问 <code>\\10.150.98.24\sw_ver_dev\COMPONENTS\TR_SYSTEM\17.0.0</code>，
+          选取分支后取其 <code>NORMAL</code> 下最新目录中的 <code>conf.json</code>，放到远端 ez-build 同目录。
+        </p>
+        <NButton size="small" secondary :loading="trsysBranchesLoading" @click="loadTrsysBranches">刷新分支</NButton>
+      </div>
+      <div v-if="hasSysTarget" class="field-row">
+        <div class="field">
+          <label>sys_version</label>
+          <NInput
+            v-model:value="buildContext.sys_version"
+            placeholder="选定sys编译的tOS版本，默认可不填"
+          />
+        </div>
+      </div>
+      </template>
 
-      <h3 class="sub-title">烧录 / 自检 / 入库</h3>
+      <h3 class="section-head">烧录 / 自检 / 入库</h3>
       <p class="field-hint section-hint">
         本轮编译不强制产出刷机包路径；烧录仍依赖后续产物或人工。整包烧录使用本机已装的 asf-device / harness-device。
       </p>
+      <div class="field">
+        <label>版本路径 <span v-if="needManualFlashPkg" class="req">*</span></label>
+        <NInput
+          v-model:value="flashPkgPath"
+          :disabled="flashVersionFromBuild"
+          :placeholder="flashVersionFromBuild
+            ? '版本来自编译打包，无须手动填入'
+            : '需要填入版本打包产物，示例：Z:\\ea-build\\output_version_lj9_h972'"
+        />
+        <p class="field-hint">
+          {{ flashVersionFromBuild
+            ? '版本来自编译打包，无须手动填入'
+            : '需要填入版本打包产物，示例：Z:\\ea-build\\output_version_lj9_h972' }}
+        </p>
+      </div>
       <div class="field-row">
         <div class="field">
           <label>
@@ -1324,7 +1504,7 @@ onUnmounted(() => {
           <span class="k">启用域</span>
           <span>{{ enabledDomains.map(d => `${d.domain_label}(${d.workspace_id})`).join(' · ') || '—' }}</span>
         </div>
-        <div class="summary-row">
+        <div v-if="showEzBuildSection" class="summary-row">
           <span class="k">编译</span>
           <span>
             ez-build · {{ selectedProjectFull() || '—' }}
@@ -1332,7 +1512,13 @@ onUnmounted(() => {
             · targets={{ selectedBuildTargets.join(',') || '—' }}{{ needPack === 'yes' ? ',pack' : '' }}
             · sys={{ newSystemRoot.trim() || '—' }}
             · vnd={{ newVendorRoot.trim() || '—' }}
+            · trsys={{ showTrsysRoot ? (newTrsystemRoot.trim() || (hasTrsysTarget ? (trsysBranch.trim() ? `pipe_main / ${trsysBranch.trim()}` : '（空 → pipe_main）') : '（未勾选 trsys）')) : '跳过（低于 tOS17）' }}
+            <template v-if="buildContext.sys_version?.trim()"> · sys_ver={{ buildContext.sys_version.trim() }}</template>
           </span>
+        </div>
+        <div class="summary-row">
+          <span class="k">烧录版本</span>
+          <span>{{ flashVersionFromBuild ? '版本来自编译打包，无须手动填入' : (flashPkgPath.trim() || '—') }}</span>
         </div>
         <div class="summary-row">
           <span class="k">路径参数</span>
@@ -1341,6 +1527,7 @@ onUnmounted(() => {
             · OLD={{ oldVendorRoot.trim() || '—' }}
             · NEW={{ newVendorRoot.trim() || '—' }}
             <template v-if="newSystemRoot.trim()"> · SYS={{ newSystemRoot.trim() }}</template>
+            <template v-if="newTrsystemRoot.trim()"> · TRSYS={{ newTrsystemRoot.trim() }}</template>
           </span>
         </div>
         <div class="summary-row">
@@ -1421,6 +1608,13 @@ onUnmounted(() => {
   margin: 0 0 16px;
   font-size: 18px;
   font-weight: 800;
+}
+.section-head {
+  margin: 20px 0 12px;
+  font-size: 16px;
+  font-weight: 800;
+  color: inherit;
+  letter-spacing: inherit;
 }
 .sub-title {
   margin: 18px 0 10px;

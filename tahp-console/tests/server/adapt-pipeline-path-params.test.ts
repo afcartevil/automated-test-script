@@ -197,6 +197,7 @@ describe('adapt-pipeline path params', () => {
       OLD_VENDOR_ROOT: old,
       NEW_VENDOR_ROOT: neu,
       NEW_SYSTEM_ROOT: 'Z:\\project\\CM8\\system',
+      NEW_TRSYSTEM_ROOT: 'Z:\\project\\trsys',
     })
     const run = createRun({
       project_code: 'LK7K',
@@ -205,6 +206,7 @@ describe('adapt-pipeline path params', () => {
     })
     const loaded = getRun(run.run_id)
     expect(loaded?.path_params?.inputs.NEW_SYSTEM_ROOT).toBe('Z:\\project\\CM8\\system')
+    expect(loaded?.path_params?.inputs.NEW_TRSYSTEM_ROOT).toBe('Z:\\project\\trsys')
     expect(loaded?.path_params?.fields.find(f => f.key === 'PROJECT_FULL')?.value).toBe(PROJECT)
   })
 
@@ -215,6 +217,7 @@ describe('adapt-pipeline path params', () => {
         OLD_VENDOR_ROOT: 'Z:\\old\\vendor',
         NEW_VENDOR_ROOT: 'Z:\\new\\vendor',
         NEW_SYSTEM_ROOT: 'Z:\\sys',
+        NEW_TRSYSTEM_ROOT: 'Z:\\trsys',
       },
       fields: [
         { key: 'PROJECT_FULL', label: 'PROJECT_FULL', kind: 'select', ok: true, value: 'lk7k_h582', parsed_value: 'lk7k_h582' },
@@ -224,6 +227,7 @@ describe('adapt-pipeline path params', () => {
     })
     expect(flat.formData.NEW_VENDOR_ROOT).toBe('Z:\\new\\vendor')
     expect(flat.formData.NEW_SYSTEM_ROOT).toBe('Z:\\sys')
+    expect(flat.formData.NEW_TRSYSTEM_ROOT).toBe('Z:\\trsys')
     expect(flat.formData.PROJECT_FULL).toBe('lk7k_h582')
     expect(flat.formData.OLD_KERNEL_DWS_PATH).toBe('Z:\\manual\\a.dws')
   })

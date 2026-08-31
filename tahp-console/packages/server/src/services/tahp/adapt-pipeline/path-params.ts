@@ -50,12 +50,14 @@ function orderFields(fields: PathParamFieldDef[]): PathParamFieldDef[] {
 
 function normalizeInputs(inputs: PathParamInputs): PathParamInputs {
   const system = inputs.NEW_SYSTEM_ROOT?.trim()
+  const trsystem = inputs.NEW_TRSYSTEM_ROOT?.trim()
   const projectFull = inputs.PROJECT_FULL?.trim()
   return {
     project_code: String(inputs.project_code ?? '').trim(),
     OLD_VENDOR_ROOT: String(inputs.OLD_VENDOR_ROOT ?? '').trim(),
     NEW_VENDOR_ROOT: String(inputs.NEW_VENDOR_ROOT ?? '').trim(),
     ...(system ? { NEW_SYSTEM_ROOT: system } : {}),
+    ...(trsystem ? { NEW_TRSYSTEM_ROOT: trsystem } : {}),
     ...(projectFull ? { PROJECT_FULL: projectFull } : {}),
   }
 }
@@ -129,6 +131,7 @@ export function flattenPathParams(pp?: PathParams | null): {
   add('OLD_VENDOR_ROOT', pp.inputs.OLD_VENDOR_ROOT)
   add('NEW_VENDOR_ROOT', pp.inputs.NEW_VENDOR_ROOT)
   add('NEW_SYSTEM_ROOT', pp.inputs.NEW_SYSTEM_ROOT ?? '')
+  add('NEW_TRSYSTEM_ROOT', pp.inputs.NEW_TRSYSTEM_ROOT ?? '')
   for (const field of pp.fields ?? []) {
     add(field.key, field.value)
   }

@@ -37,10 +37,11 @@ function collectBuildArtifacts(ctx: StageContext) {
     | undefined
   const resolved = preferredPkg || undefined
   const humanPkg = ctx.state.progress?.human_pkg_path as string | undefined
+  const contextPkg = String(ctx.run.build_context?.flash_pkg_path ?? '').trim() || undefined
   const humanImg = ctx.state.progress?.human_img_path as string | undefined
   const humanPartition = ctx.state.progress?.human_partition as string | undefined
   return {
-    pkgPath: humanPkg || resolved,
+    pkgPath: humanPkg || resolved || contextPkg,
     artifactsDir,
     artifacts,
     humanImg,
@@ -215,8 +216,9 @@ export const flashStageDefinition: StageDefinition = {
   },
 
   async start(ctx: StageContext) {
+    const manualPkg = String(ctx.run.build_context?.flash_pkg_path ?? '').trim()
     const buildState = ctx.run.stages.build
-    if (buildState?.status === 'failed' || buildState?.status === 'skipped') {
+    if (!manualPkg && (buildState?.status === 'failed' || buildState?.status === 'skipped')) {
       ctx.patchState({
         progress: { state: 'error', error: '编译未成功，跳过自动烧录' },
       })

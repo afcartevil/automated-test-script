@@ -1,8 +1,9 @@
-/**
- * ez-build 远端 tmux 启动 / 轮询命令与解析（纯函数，便于单测）
- */
+import { existsSync, mkdirSync, copyFileSync, rmSync } from 'fs'
+import { join } from 'path'
 
 export const EA_BUILD_DIR = '~/code/ea-build'
+/** Windows 映射盘上的同一目录（Z: = 用户工作盘） */
+export const EA_BUILD_WIN_DIR = 'Z:\\ea-build'
 
 export interface TmuxPollSnapshot {
   alive: boolean
@@ -38,6 +39,38 @@ export function buildDeployCommand(scriptB64: string): string {
   ].join(' && ')
 }
 
+/** 把共享盘 conf.json 拷到映射盘 ea-build，避免齐治分块传输 */
+export function copyConfJsonToMappedEaBuild(srcPath: string, destDir = EA_BUILD_WIN_DIR): string {
+  const src = String(srcPath || '').trim()
+  if (!src || !existsSync(src)) throw new Error(`conf.json 源不存在: ${src}`)
+  if (!existsSync(destDir)) {
+    try {
+      mkdirSync(destDir, { recursive: true })
+    } catch (err) {
+      throw new Error(`无法创建 ${destDir}，请确认 Z: 已映射：${(err as Error).message}`)
+    }
+  }
+  const dest = join(destDir, 'conf.json')
+  copyFileSync(src, dest)
+  try { rmSync(join(destDir, 'conf.json.b64'), { force: true }) } catch { /* leftover chunk file */ }
+  if (!existsSync(dest)) throw new Error(`拷贝后未找到 ${dest}`)
+  return dest
+}
+
+/** @deprecated 仅保留单测；生产改为 copyConfJsonToMappedEaBuild */
+export function buildConfDeployCommands(confB64: string, chunkSize = 4000): string[] {
+  const destB64 = `${EA_BUILD_DIR}/conf.json.b64`
+  const dest = `${EA_BUILD_DIR}/conf.json`
+  const cmds = [
+    `mkdir -p ${EA_BUILD_DIR} && rm -f ${destB64} ${dest}`,
+  ]
+  for (let i = 0; i < confB64.length; i += chunkSize) {
+    cmds.push(`printf %s ${shellQuote(confB64.slice(i, i + chunkSize))} >> ${destB64}`)
+  }
+  cmds.push(`base64 -d ${destB64} > ${dest} && rm -f ${destB64} && wc -c ${dest}`)
+  return cmds
+}
+
 export function buildEzBuildArgv(input: {
   project: string
   variant: string
@@ -45,16 +78,22 @@ export function buildEzBuildArgv(input: {
   targetRaw: string
   systemLinux: string
   vendorLinux: string
+  trsysLinux?: string
+  sysVersion?: string
 }): string {
-  return [
+  const argv = [
     'bash ./ez-build.sh',
     shellQuote(input.project),
     shellQuote(input.variant),
     shellQuote(input.buildFlag),
     shellQuote(input.targetRaw),
-    input.systemLinux,
+    input.systemLinux?.trim() ? input.systemLinux : "''",
     input.vendorLinux,
-  ].join(' ')
+    input.trsysLinux?.trim() ? input.trsysLinux : "''",
+  ]
+  const sysVersion = String(input.sysVersion ?? '').trim()
+  if (sysVersion) argv.push(shellQuote(sysVersion))
+  return argv.join(' ')
 }
 
 export function buildTmuxStartCommand(opts: {
@@ -65,6 +104,8 @@ export function buildTmuxStartCommand(opts: {
   targetRaw: string
   systemLinux: string
   vendorLinux: string
+  trsysLinux?: string
+  sysVersion?: string
 }): string {
   const session = opts.session
   const doneFile = `${EA_BUILD_DIR}/${session}.done`
@@ -136,6 +177,9 @@ export function detectBuildFailureInLog(lines: string[]): string | null {
     if (/\[ERROR\].*pack failed/i.test(line)) return line
     if (/\[ERROR\].*skip pack/i.test(line)) return line
     if (/\[ERROR\].*some compile targets failed/i.test(line)) return line
+    if (/\[ERROR\].*pipe_main not found/i.test(line)) return line
+    if (/\[ERROR\].*conf\.json not found/i.test(line)) return line
+    if (/\[ERROR\].*trsys dir missing/i.test(line)) return line
     if (/\[ERROR\].*not found/i.test(line)) return line
     if (/\[ERROR\].*invalid build_/i.test(line)) return line
     if (/finished: status=FAILED/i.test(line)) return line

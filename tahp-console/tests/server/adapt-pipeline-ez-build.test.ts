@@ -1,7 +1,12 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import {
+  appendTrsysIfRootMissing,
   composeBuildTargetRaw,
+  needsTrsysForTargetOs,
+  parseTosMajor,
+  resolveEzBuildTargets,
   winMappedPathToLinuxWorkCode,
+  winMappedPathToLinuxWorkCodeOptional,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/win-path-to-linux'
 import { loadEzBuildScript, resolveEzBuildScriptPath } from '../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec'
 import {
@@ -19,6 +24,8 @@ describe('winMappedPathToLinuxWorkCode', () => {
     expect(winMappedPathToLinuxWorkCode('Z:\\LJ9-push')).toBe('/work/code/$USER/LJ9-push')
     expect(winMappedPathToLinuxWorkCode('Z:/LJ9-push')).toBe('/work/code/$USER/LJ9-push')
     expect(winMappedPathToLinuxWorkCode('z:\\a\\b\\c')).toBe('/work/code/$USER/a/b/c')
+    expect(winMappedPathToLinuxWorkCodeOptional('')).toBe('')
+    expect(winMappedPathToLinuxWorkCodeOptional('Z:\\trsys')).toBe('/work/code/$USER/trsys')
   })
 
   it('rejects non-drive paths', () => {
@@ -39,16 +46,41 @@ describe('composeBuildTargetRaw', () => {
     expect(() => composeBuildTargetRaw([], false)).toThrow(/target/)
     expect(composeBuildTargetRaw([], true)).toBe('pack')
   })
+
+  it('appends trsys when NEW_TRSYSTEM_ROOT is empty', () => {
+    expect(appendTrsysIfRootMissing(['sys', 'krn'], '')).toEqual(['sys', 'krn'])
+    expect(appendTrsysIfRootMissing(['sys', 'trsys'], '')).toEqual(['sys', 'trsys'])
+    expect(appendTrsysIfRootMissing(['sys'], 'Z:\\trsys')).toEqual(['sys'])
+  })
+
+  it('only keeps trsys for tOS17+ target os', () => {
+    expect(parseTosMajor('16.3')).toBe(16)
+    expect(parseTosMajor('tOS17.0')).toBe(17)
+    expect(needsTrsysForTargetOs('16')).toBe(false)
+    expect(needsTrsysForTargetOs('17.0')).toBe(true)
+    expect(needsTrsysForTargetOs('18')).toBe(true)
+    expect(resolveEzBuildTargets({ targets: ['sys', 'trsys'], toOs: '16' })).toEqual(['sys'])
+    expect(resolveEzBuildTargets({ targets: ['sys'], trsysRoot: '', toOs: '17' })).toEqual(['sys'])
+    expect(resolveEzBuildTargets({ targets: ['sys', 'trsys'], trsysRoot: '', toOs: '17' })).toEqual(['sys', 'trsys'])
+    expect(resolveEzBuildTargets({ targets: ['sys'], trsysRoot: '', toOs: '16.3' })).toEqual(['sys'])
+  })
 })
 
 describe('ez-build asset', () => {
-  it('loads script with 6-arg signature', () => {
+  it('loads script with 6-8 arg signature and trsys rules', () => {
     const path = resolveEzBuildScriptPath()
     expect(path.replace(/\\/g, '/')).toMatch(/ez-build\.sh$/)
     const script = loadEzBuildScript()
-    expect(script).toContain('$# -ne 6')
+    expect(script).toContain('$# -lt 6 || $# -gt 8')
     expect(script).toContain('SYSTEM_DIR="$5"')
     expect(script).toContain('VENDOR_DIR="$6"')
+    expect(script).toContain('TRSYS_ROOT_DIR="${7:-}"')
+    expect(script).toContain('SYS_VERSION="${8:-}"')
+    expect(script).toContain('sys|krn|vext|hal|odm|trsys|pack')
+    expect(script).toContain('invoke_pipe_main')
+    expect(script).toContain('--trsystem-dir')
+    expect(script).toContain('NEW_TRSYSTEM_ROOT empty, trsys via pipe_main')
+    expect(script).not.toContain('TRSYS_ROOT_DIR is empty')
     expect(script.includes('\r')).toBe(false)
   })
 })
@@ -68,7 +100,24 @@ describe('tmux poll helpers', () => {
     expect(cmd).toContain('bash ./ez-build.sh')
     expect(cmd).toContain('/work/code/$USER/LJ9-sys')
     expect(cmd).toContain('ezb-LJ9-abc.done')
+    expect(cmd).toContain("''")
     expect(cmd).not.toContain('build pipeline')
+  })
+
+  it('appends TRSYS_ROOT_DIR and sys_version when provided', () => {
+    const cmd = buildTmuxStartCommand({
+      session: 'ezb-LJ9-abc',
+      project: 'LJ9',
+      variant: 'userdebug',
+      buildFlag: 'staging',
+      targetRaw: 'sys,trsys,pack',
+      systemLinux: '/work/code/$USER/LJ9-sys',
+      vendorLinux: '/work/code/$USER/LJ9-vnd',
+      trsysLinux: '/work/code/$USER/trsys',
+      sysVersion: '16.4.0',
+    })
+    expect(cmd).toContain('/work/code/$USER/trsys')
+    expect(cmd).toContain("'16.4.0'")
   })
 
   it('parses poll output and detects fail/success log lines', () => {
@@ -283,5 +332,57 @@ describe('buildCapability ez-build path (mocked bridge)', () => {
     const st = await buildCapability.getStatus(runId)
     expect(st.state).toBe('failed')
     expect(String(st.error || '')).toMatch(/project dir not found|exit_code=1/)
+  })
+})
+
+describe('trsys conf share helpers', () => {
+  it('picks latest snapshot by mtime then name', async () => {
+    const { pickLatestSnapshotName, pickConfJsonPath } = await import(
+      '../../packages/server/src/services/tahp/adapt-pipeline/trsys-conf-share'
+    )
+    expect(pickLatestSnapshotName([
+      { name: '2026.08.28.10.00.00_1', mtimeMs: 100 },
+      { name: '2026.08.29.10.49.47_312690', mtimeMs: 200 },
+    ])).toBe('2026.08.29.10.49.47_312690')
+    expect(pickConfJsonPath('S', 'user', (p) => p.replace(/\\/g, '/').endsWith('user/.pipe/conf.json')))
+      .toMatch(/user[\\/]\.pipe[\\/]conf\.json$/)
+    const { resolveLatestTrsysConf } = await import(
+      '../../packages/server/src/services/tahp/adapt-pipeline/trsys-conf-share'
+    )
+    expect(() => resolveLatestTrsysConf('../x', 'user')).toThrow(/无效/)
+  })
+})
+
+describe('copyConfJsonToMappedEaBuild', () => {
+  it('copies conf.json onto a dest dir and removes leftover b64', async () => {
+    const fs = await import('fs')
+    const { tmpdir } = await import('os')
+    const { join } = await import('path')
+    const { copyConfJsonToMappedEaBuild } = await import(
+      '../../packages/server/src/services/tahp/adapt-pipeline/ez-build-tmux'
+    )
+    const dir = fs.mkdtempSync(join(tmpdir(), 'ea-conf-'))
+    const src = join(dir, 'src.json')
+    const destDir = join(dir, 'ea-build')
+    fs.writeFileSync(src, '{"ok":1}')
+    fs.mkdirSync(destDir)
+    fs.writeFileSync(join(destDir, 'conf.json.b64'), 'stale')
+    const dest = copyConfJsonToMappedEaBuild(src, destDir)
+    expect(fs.readFileSync(dest, 'utf-8')).toBe('{"ok":1}')
+    expect(fs.existsSync(join(destDir, 'conf.json.b64'))).toBe(false)
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('buildConfDeployCommands', () => {
+  it('chunks base64 into short append commands', async () => {
+    const { buildConfDeployCommands } = await import(
+      '../../packages/server/src/services/tahp/adapt-pipeline/ez-build-tmux'
+    )
+    const cmds = buildConfDeployCommands('ABCDEFGHIJ', 4)
+    expect(cmds[0]).toContain('conf.json.b64')
+    expect(cmds.some(c => c.startsWith('printf %s'))).toBe(true)
+    expect(cmds.at(-1)).toContain('base64 -d')
+    expect(cmds.filter(c => c.startsWith('printf %s')).length).toBe(3)
   })
 })

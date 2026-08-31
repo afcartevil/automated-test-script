@@ -21,6 +21,7 @@ import {
 import { isAsfBridgeSshDisconnected } from '../host-tool-runtime'
 import {
   EA_BUILD_DIR,
+  copyConfJsonToMappedEaBuild,
   buildDeployCommand,
   buildTmuxKillCommand,
   buildTmuxPollCommand,
@@ -31,9 +32,13 @@ import {
   tmuxSessionName,
   tmuxStartConfirmed,
 } from './ez-build-tmux'
+import { resolveLatestTrsysConf } from './trsys-conf-share'
 import {
   composeBuildTargetRaw,
+  needsTrsysForTargetOs,
+  resolveEzBuildTargets,
   winMappedPathToLinuxWorkCode,
+  winMappedPathToLinuxWorkCodeOptional,
 } from './win-path-to-linux'
 import type {
   BuildCapabilityInput,
@@ -199,9 +204,18 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
     return
   }
 
-  const systemLinux = winMappedPathToLinuxWorkCode(input.systemPath)
+  const systemLinux = winMappedPathToLinuxWorkCodeOptional(input.systemPath ?? '')
   const vendorLinux = winMappedPathToLinuxWorkCode(input.vendorPath)
-  const targetRaw = composeBuildTargetRaw(input.buildTargets, input.needPack)
+  const trsysEnabled = needsTrsysForTargetOs(input.toOs)
+  const trsysLinux = trsysEnabled
+    ? winMappedPathToLinuxWorkCodeOptional(input.trsysRootPath ?? '')
+    : ''
+  const targets = resolveEzBuildTargets({
+    targets: input.buildTargets,
+    trsysRoot: trsysEnabled ? (input.trsysRootPath ?? '') : input.trsysRootPath,
+    toOs: input.toOs,
+  })
+  const targetRaw = composeBuildTargetRaw(targets, input.needPack)
   const session = tmuxSessionName(ctx.runId, input.project)
   ctx.tmuxSession = session
   ctx.logFile = `${EA_BUILD_DIR}/${session}.log`
@@ -209,7 +223,7 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
 
   ctx.status = { state: 'running', progress: 10, phase: 'deploy', message: '部署 ez-build.sh' }
   emit(ctx, `部署脚本到 ${EA_BUILD_DIR}`)
-  emit(ctx, `system=${systemLinux} vendor=${vendorLinux} targets=${targetRaw}`)
+  emit(ctx, `system=${systemLinux} vendor=${vendorLinux} trsys=${trsysLinux || '(empty)'} targets=${targetRaw}`)
 
   const script = loadEzBuildScript()
   const scriptB64 = Buffer.from(script, 'utf-8').toString('base64')
@@ -232,6 +246,21 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
     }
     if (deploy.output) emit(ctx, String(deploy.output).slice(0, 300))
 
+    const needPipeTrsys = targets.includes('trsys') && !trsysLinux
+    if (needPipeTrsys) {
+      const branch = String(input.trsysBranch ?? '').trim()
+      if (!branch) {
+        emit(ctx, '未选 trsys 分支，跳过拉取 conf.json（请自行放到 ea-build）')
+      } else {
+        ctx.status = { state: 'running', progress: 14, phase: 'deploy', message: '部署 conf.json' }
+        emit(ctx, `从共享盘拉取 conf.json（分支 ${branch}）`)
+        const conf = resolveLatestTrsysConf(branch, input.variant)
+        emit(ctx, `conf snapshot=${conf.snapshot}`)
+        const dest = copyConfJsonToMappedEaBuild(conf.confPath)
+        emit(ctx, `已拷贝到 ${dest}（映射盘，对应 ${EA_BUILD_DIR}/conf.json）`)
+      }
+    }
+
     ctx.status = { state: 'running', progress: 20, phase: 'tmux', message: 'tmux 启动 ez-build' }
     emit(ctx, `tmux 会话启动: ${session}`)
 
@@ -244,6 +273,8 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
         targetRaw,
         systemLinux,
         vendorLinux,
+        trsysLinux,
+        sysVersion: input.sysVersion,
       }),
       { timeoutSec: TMUX_START_TIMEOUT_SEC, signal },
     )
@@ -419,10 +450,11 @@ export const buildCapability: ExternalCapability<BuildCapabilityInput> = {
 
   async start(input: BuildCapabilityInput): Promise<{ runId: string }> {
     if (!input.project?.trim()) throw new Error('缺少 project')
-    if (!input.systemPath?.trim()) throw new Error('缺少 system 代码路径')
-    if (!input.vendorPath?.trim()) throw new Error('缺少 vendor 代码路径')
+    if (!input.vendorPath?.trim()) throw new Error('缺少 NEW_VENDOR_ROOT')
     if (!input.variant?.trim()) throw new Error('缺少 variant')
     if (!input.buildFlag?.trim()) throw new Error('缺少 build_flag')
+    const needSystem = Boolean(input.needPack) || (input.buildTargets ?? []).includes('sys')
+    if (needSystem && !input.systemPath?.trim()) throw new Error('缺少 NEW_SYSTEM_ROOT')
 
     const runId = genRunId()
     const resultPath = buildResultFilePath(

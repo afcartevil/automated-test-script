@@ -26,6 +26,7 @@ import {
   listRuns,
 } from '../../services/tahp/adapt-pipeline/store'
 import { parsePathParams } from '../../services/tahp/adapt-pipeline/path-params'
+import { listTrsysBranches } from '../../services/tahp/adapt-pipeline/trsys-conf-share'
 import { buildTimelineView } from '../../services/tahp/adapt-pipeline/timeline'
 import type {
   CreateRunInput,
@@ -103,12 +104,24 @@ tahpAdaptPipelineRoutes.post('/parse-path-params', async (ctx) => {
       OLD_VENDOR_ROOT,
       NEW_VENDOR_ROOT,
       NEW_SYSTEM_ROOT: body.NEW_SYSTEM_ROOT,
+      NEW_TRSYSTEM_ROOT: body.NEW_TRSYSTEM_ROOT,
       PROJECT_FULL: body.PROJECT_FULL,
     })
     ctx.body = { success: true, data }
   } catch (err) {
     logger.warn({ err }, '[adapt-pipeline] parse-path-params failed')
     ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+tahpAdaptPipelineRoutes.get('/trsys-branches', async (ctx) => {
+  try {
+    const branches = listTrsysBranches()
+    ctx.body = { success: true, data: { branches } }
+  } catch (err) {
+    logger.warn({ err }, '[adapt-pipeline] list trsys branches failed')
+    ctx.status = 502
     ctx.body = { success: false, error: (err as Error).message }
   }
 })

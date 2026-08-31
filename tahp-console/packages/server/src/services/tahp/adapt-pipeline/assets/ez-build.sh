@@ -8,8 +8,12 @@ set -o pipefail
 ########################################
 SCRIPT_NAME="$(basename "$0")"
 ROOT_DIR="$(pwd)"
-SYSTEM_DIR="${ROOT_DIR}/"
-VENDOR_DIR="${ROOT_DIR}/"
+SYSTEM_DIR=""
+VENDOR_DIR=""
+# trsys 根目录（入参 NEW_TRSYSTEM_ROOT）。打包时拼成 ${TRSYS_ROOT_DIR}/code/out_trsys/target
+# 留空：含 trsys target 时在脚本 cwd 走 pipe_main。
+TRSYS_ROOT_DIR=""
+TRSYS_OUT_REL="code/out_trsys/target"
 TIMESTAMP="$(date '+%Y%m%d_%H%M%S')"
 STATUS_DIR="${ROOT_DIR}/.build_status_${TIMESTAMP}"
 KEEPALIVE_INTERVAL=15
@@ -29,24 +33,28 @@ COLOR_RESET="\033[0m"
 usage() {
     cat <<EOF
 Usage:
-  ${SCRIPT_NAME} <project> <build_varient> <build_flag> <build_target> <system_dir> <vendor_dir>
+  ${SCRIPT_NAME} <project> <build_varient> <build_flag> <build_target> <system_dir> <vendor_dir> [trsys_root_dir] [sys_version]
 
 Args:
   project         project name
   build_varient   one of: user | user_root | userdebug
   build_flag      one of: bleeding_edge | staging | fooding | stable
   build_target    one or more of:
-                  sys,krn,vext,hal,odm,pack
+                  sys,krn,vext,hal,odm,trsys,pack
                   support both:
                   - sys,krn,hal,pack
                   - "sys krn hal pack"
   system_dir      Linux path to system tree
   vendor_dir      Linux path to vendor tree
+  trsys_root_dir  optional Linux path to trsys root (TRSYS_ROOT_DIR)
+  sys_version     optional; if omitted, sys build does not pass --version
 
 Examples:
-  ${SCRIPT_NAME} p1 userdebug staging sys /work/code/$USER/sys /work/code/$USER/vnd
-  ${SCRIPT_NAME} p1 user stable sys,krn,hal,pack /work/code/$USER/sys /work/code/$USER/vnd
-  ${SCRIPT_NAME} p1 user_root fooding "sys krn vext odm pack" /work/code/$USER/sys /work/code/$USER/vnd
+  ${SCRIPT_NAME} p1 userdebug staging sys /work/code/\$USER/sys /work/code/\$USER/vnd
+  ${SCRIPT_NAME} p1 userdebug staging sys /work/code/\$USER/sys /work/code/\$USER/vnd /work/code/\$USER/trsys 16.4.0
+  ${SCRIPT_NAME} p1 user stable sys,krn,hal,pack /work/code/\$USER/sys /work/code/\$USER/vnd
+  ${SCRIPT_NAME} p1 user_root fooding "sys krn vext odm pack" /work/code/\$USER/sys /work/code/\$USER/vnd
+  ${SCRIPT_NAME} p1 userdebug fooding "sys krn vext hal odm trsys pack" /work/code/\$USER/sys /work/code/\$USER/vnd /work/code/\$USER/trsys
 EOF
 }
 
@@ -59,6 +67,20 @@ log_info() {
 
 log_error() {
     echo -e "${COLOR_RED}[$(date '+%F %T')] [ERROR] $*${COLOR_RESET}" >&2
+}
+
+########################################
+# pipe_main (trsys)
+########################################
+invoke_pipe_main() {
+    if command -v pipe_main >/dev/null 2>&1; then
+        pipe_main "$@"
+    elif [[ -f /opt/ci/rdtool/pipe_main ]]; then
+        /opt/ci/civenv/bin/python3 /opt/ci/rdtool/pipe_main "$@"
+    else
+        echo "[ERROR] pipe_main not found in PATH and /opt/ci/rdtool/pipe_main missing" >&2
+        return 127
+    fi
 }
 
 ########################################
@@ -78,24 +100,9 @@ format_duration() {
 }
 
 ########################################
-# validate env
-########################################
-check_env() {
-    if [[ ! -d "${SYSTEM_DIR}" ]]; then
-        log_error "system directory not found: ${SYSTEM_DIR}"
-        exit 1
-    fi
-
-    if [[ ! -d "${VENDOR_DIR}" ]]; then
-        log_error "vendor directory not found: ${VENDOR_DIR}"
-        exit 1
-    fi
-}
-
-########################################
 # parse args
 ########################################
-if [[ $# -ne 6 ]]; then
+if [[ $# -lt 6 || $# -gt 8 ]]; then
     usage
     exit 1
 fi
@@ -106,10 +113,10 @@ BUILD_FLAG="$3"
 BUILD_TARGET_RAW="$4"
 SYSTEM_DIR="$5"
 VENDOR_DIR="$6"
+TRSYS_ROOT_DIR="${7:-}"
+SYS_VERSION="${8:-}"
 
 PREPARE_LOG="${ROOT_DIR}/${PROJECT}_prepare_${TIMESTAMP}.log"
-
-check_env
 
 case "${BUILD_VARIENT}" in
     user|user_root|userdebug)
@@ -143,7 +150,7 @@ declare -A TARGET_SEEN=()
 
 for t in ${TARGET_STR}; do
     case "${t}" in
-        sys|krn|vext|hal|odm|pack)
+        sys|krn|vext|hal|odm|trsys|pack)
             if [[ -z "${TARGET_SEEN[$t]+x}" ]]; then
                 TARGETS+=("${t}")
                 TARGET_SEEN["$t"]=1
@@ -151,11 +158,29 @@ for t in ${TARGET_STR}; do
             ;;
         *)
             log_error "invalid build_target: ${t}"
-            log_error "allowed: sys | krn | vext | hal | odm | pack"
+            log_error "allowed: sys | krn | vext | hal | odm | trsys | pack"
             exit 1
             ;;
     esac
 done
+
+NEED_SYSTEM_DIR=0
+for t in "${TARGETS[@]}"; do
+    if [[ "${t}" == "sys" || "${t}" == "pack" ]]; then
+        NEED_SYSTEM_DIR=1
+        break
+    fi
+done
+if [[ ${NEED_SYSTEM_DIR} -eq 1 ]]; then
+    if [[ ! -d "${SYSTEM_DIR}" ]]; then
+        log_error "system directory not found: ${SYSTEM_DIR}"
+        exit 1
+    fi
+fi
+if [[ ! -d "${VENDOR_DIR}" ]]; then
+    log_error "vendor directory not found: ${VENDOR_DIR}"
+    exit 1
+fi
 
 ########################################
 # project config path
@@ -243,6 +268,41 @@ PROJECT_ODM="$(parse_mk_var "${ODM_MK}" "VEXT_TARGET_PROJECT")" || {
 }
 
 ########################################
+# resolve trsys_dir
+########################################
+HAS_TRSYS_TARGET=0
+if [[ -n "${TARGET_SEEN[trsys]+x}" ]]; then
+    HAS_TRSYS_TARGET=1
+fi
+
+# NEW_TRSYSTEM_ROOT 有值：打包用 ${TRSYS_ROOT_DIR}/code/out_trsys/target
+# NEW_TRSYSTEM_ROOT 为空且含 trsys：在脚本 cwd（ea-build）走 pipe_main
+TRSYS_WORKDIR=""
+if [[ ${HAS_TRSYS_TARGET} -eq 1 ]]; then
+    if [[ -n "${TRSYS_ROOT_DIR}" ]]; then
+        if [[ ! -d "${TRSYS_ROOT_DIR}" ]]; then
+            log_error "trsys root directory not found: ${TRSYS_ROOT_DIR}"
+            exit 1
+        fi
+        TRSYS_WORKDIR="${TRSYS_ROOT_DIR}"
+        TRSYS_DIR="${TRSYS_ROOT_DIR%/}/${TRSYS_OUT_REL}"
+        log_info "build_target contains trsys, trsys_dir=${TRSYS_DIR}"
+    else
+        TRSYS_WORKDIR="${ROOT_DIR}"
+        TRSYS_DIR="${ROOT_DIR%/}/${TRSYS_OUT_REL}"
+        log_info "NEW_TRSYSTEM_ROOT empty, trsys via pipe_main in ${TRSYS_WORKDIR}, trsys_dir=${TRSYS_DIR}"
+    fi
+elif [[ -n "${TRSYS_ROOT_DIR}" ]]; then
+    if [[ ! -d "${TRSYS_ROOT_DIR}" ]]; then
+        log_error "trsys root directory not found: ${TRSYS_ROOT_DIR}"
+        exit 1
+    fi
+    TRSYS_DIR="${TRSYS_ROOT_DIR%/}/${TRSYS_OUT_REL}"
+else
+    TRSYS_DIR=""
+fi
+
+########################################
 # prepare log
 ########################################
 {
@@ -255,6 +315,7 @@ PROJECT_ODM="$(parse_mk_var "${ODM_MK}" "VEXT_TARGET_PROJECT")" || {
     echo "build_varient   : ${BUILD_VARIENT}"
     echo "build_flag      : ${BUILD_FLAG}"
     echo "build_targets   : ${TARGET_STR}"
+    echo "sys_version     : ${SYS_VERSION}"
     echo "project_dir     : ${PROJECT_DIR}"
     echo "full_mk         : ${FULL_MK}"
     echo "vnd_mk          : ${VND_MK}"
@@ -264,6 +325,10 @@ PROJECT_ODM="$(parse_mk_var "${ODM_MK}" "VEXT_TARGET_PROJECT")" || {
     echo "PROJECT_KRN     : ${PROJECT_KRN}"
     echo "PROJECT_VEXT    : ${PROJECT_VEXT}"
     echo "PROJECT_ODM     : ${PROJECT_ODM}"
+    echo "trsys_root_dir  : ${TRSYS_ROOT_DIR}"
+    echo "trsys_workdir   : ${TRSYS_WORKDIR}"
+    echo "trsys_dir       : ${TRSYS_DIR}"
+    echo "has_trsys_target: ${HAS_TRSYS_TARGET}"
     echo "status_dir      : ${STATUS_DIR}"
     echo "================================================"
 } > "${PREPARE_LOG}"
@@ -375,7 +440,10 @@ run_build_target() {
             sys)
                 workdir="${SYSTEM_DIR}"
                 lunch="${PROJECT_SYS}"
-                cmd="bash tran_build --component sys --lunch ${lunch} --apk-use false --release ${BUILD_FLAG} --variant ${BUILD_VARIENT} --version 16.3.0"
+                cmd="bash tran_build --component sys --lunch ${lunch} --apk-use false --release ${BUILD_FLAG} --variant ${BUILD_VARIENT}"
+                if [[ -n "${SYS_VERSION}" ]]; then
+                    cmd="${cmd} --version ${SYS_VERSION}"
+                fi
                 ;;
             krn)
                 workdir="${VENDOR_DIR}"
@@ -396,6 +464,11 @@ run_build_target() {
                 workdir="${VENDOR_DIR}"
                 lunch="${PROJECT_ODM}"
                 cmd="bash tran_build --component odm --lunch ${lunch} --apk-use false --release ${BUILD_FLAG} --variant ${BUILD_VARIENT}"
+                ;;
+            trsys)
+                workdir="${TRSYS_WORKDIR:-${ROOT_DIR}}"
+                lunch="trsys"
+                cmd="trsys-pipeline"
                 ;;
             *)
                 echo "[ERROR] unsupported target: ${target}" >> "${logfile}"
@@ -431,8 +504,39 @@ run_build_target() {
             exit 2
         }
 
-        bash -lc "${cmd}" >> "${logfile}" 2>&1
-        rc=$?
+        if [[ "${target}" == "trsys" ]]; then
+            local conf_file="${workdir}/conf.json"
+            local pipe_trsys_dir="${workdir}/.pipe/trsys"
+            rc=0
+
+            if [[ ! -f "${conf_file}" ]]; then
+                echo "[ERROR] conf.json not found: ${conf_file}" >> "${logfile}"
+                rc=1
+            else
+                if [[ -d "${pipe_trsys_dir}" ]]; then
+                    echo "[INFO] ${pipe_trsys_dir} exists, skip setup" >> "${logfile}"
+                else
+                    echo "[INFO] cmd: pipe_main --mode comp -c trsys -s setup -f conf.json" >> "${logfile}"
+                    invoke_pipe_main --mode comp -c trsys -s setup -f conf.json >> "${logfile}" 2>&1
+                    rc=$?
+                fi
+
+                if [[ ${rc} -eq 0 ]]; then
+                    echo "[INFO] cmd: pipe_main --mode comp -c trsys -s repo" >> "${logfile}"
+                    invoke_pipe_main --mode comp -c trsys -s repo >> "${logfile}" 2>&1
+                    rc=$?
+                fi
+
+                if [[ ${rc} -eq 0 ]]; then
+                    echo "[INFO] cmd: pipe_main --mode comp -c trsys -s build --local" >> "${logfile}"
+                    invoke_pipe_main --mode comp -c trsys -s build --local >> "${logfile}" 2>&1
+                    rc=$?
+                fi
+            fi
+        else
+            bash -lc "${cmd}" >> "${logfile}" 2>&1
+            rc=$?
+        fi
         end_epoch="$(now_epoch)"
         duration=$((end_epoch - start_epoch))
         write_time_info "${target}" "${start_epoch}" "${end_epoch}" "${duration}"
@@ -593,6 +697,7 @@ if [[ ${NEED_PACK} -eq 1 ]]; then
         echo "kerneldir  : ${kerneldir}"
         echo "vextdir    : ${vextdir}"
         echo "odmdir     : ${odmdir}"
+        echo "trsys_dir  : ${TRSYS_DIR}"
         echo "output_dir : ${PACK_OUTPUT_DIR}"
         echo "=================================================="
     } > "${PACK_LOG}"
@@ -604,13 +709,31 @@ if [[ ${NEED_PACK} -eq 1 ]]; then
     }
 
     # 执行打包脚本（output_dir 使用切换目录前的路径）
-    python vendor/mediatek/proprietary/scripts/releasetools/split_build.py \
-        --system-dir "${systemdir}" \
-        --vendor-dir "${vendordir}" \
-        --kernel-dir "${kerneldir}" \
-        --vext-dir "${vextdir}" \
-        --odm-dir "${odmdir}" \
-        --output-dir "${PACK_OUTPUT_DIR}" >> "${PACK_LOG}" 2>&1
+    declare -a PACK_CMD=(
+        python vendor/mediatek/proprietary/scripts/releasetools/split_build.py
+        --system-dir "${systemdir}"
+        --vendor-dir "${vendordir}"
+        --kernel-dir "${kerneldir}"
+        --vext-dir "${vextdir}"
+        --odm-dir "${odmdir}"
+        --output-dir "${PACK_OUTPUT_DIR}"
+    )
+
+    if [[ -n "${TRSYS_DIR}" && -d "${TRSYS_DIR}" ]]; then
+        PACK_CMD+=(--trsystem-dir "${TRSYS_DIR}")
+        log_info "trsys dir exists, pack append --trsystem-dir ${TRSYS_DIR}"
+        echo "pack extra  : --trsystem-dir ${TRSYS_DIR}" >> "${PACK_LOG}"
+    else
+        if [[ ${HAS_TRSYS_TARGET} -eq 1 ]]; then
+            log_error "pack failed: trsys was built but dir not found: ${TRSYS_DIR}"
+            echo "[ERROR] trsys dir missing: ${TRSYS_DIR}" >> "${PACK_LOG}"
+            exit 1
+        fi
+        log_info "trsys dir not found, pack without --trsystem-dir"
+        echo "pack extra  : (no --trsystem-dir)" >> "${PACK_LOG}"
+    fi
+
+    "${PACK_CMD[@]}" >> "${PACK_LOG}" 2>&1
 
     PACK_RC=$?
     if [[ ${PACK_RC} -eq 0 ]]; then

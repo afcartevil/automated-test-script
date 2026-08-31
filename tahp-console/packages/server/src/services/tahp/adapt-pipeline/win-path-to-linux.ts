@@ -23,6 +23,50 @@ export function winMappedPathToLinuxWorkCode(winPath: string): string {
   return `/work/code/$USER/${rest}`
 }
 
+/** 从 from_os / to_os 解析主版本：'17'、'17.0'、'tOS17' → 17 */
+export function parseTosMajor(raw?: string): number | null {
+  const s = String(raw ?? '').trim()
+  if (!s) return null
+  const m = s.match(/(?:t\s*os)?\s*(\d+)/i)
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isFinite(n) ? n : null
+}
+
+/** trsys 仅目标版本 to_os ≥ 17 需要 */
+export function needsTrsysForTargetOs(toOs?: string): boolean {
+  const major = parseTosMajor(toOs)
+  return major != null && major >= 17
+}
+
+/** 空路径保持空串；非空走盘符换算 */
+export function winMappedPathToLinuxWorkCodeOptional(winPath: string): string {
+  const raw = String(winPath ?? '').trim()
+  if (!raw) return ''
+  return winMappedPathToLinuxWorkCode(raw)
+}
+
+/**
+ * to_os ≥ 17 才保留用户勾选的 trsys；更低版本一律去掉。
+ * 不再因 ROOT 为空自动补 trsys。
+ */
+export function resolveEzBuildTargets(opts: {
+  targets: string[]
+  trsysRoot?: string
+  toOs?: string
+}): string[] {
+  const list = [...(opts.targets ?? []).map(t => String(t).trim()).filter(Boolean)]
+  if (!needsTrsysForTargetOs(opts.toOs)) {
+    return list.filter(t => t !== 'trsys')
+  }
+  return list
+}
+
+/** @deprecated 使用 resolveEzBuildTargets */
+export function appendTrsysIfRootMissing(targets: string[], trsysRoot: string): string[] {
+  return resolveEzBuildTargets({ targets, trsysRoot, toOs: '17' })
+}
+
 /** 拼 ez-build 的 BUILD_TARGET_RAW */
 export function composeBuildTargetRaw(targets: string[], needPack: boolean): string {
   const list = [...(targets ?? []).map(t => String(t).trim()).filter(Boolean)]

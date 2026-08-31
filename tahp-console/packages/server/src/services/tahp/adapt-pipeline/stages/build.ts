@@ -12,14 +12,22 @@ const base = createCapabilityStage<BuildCapabilityInput>({
   pollIntervalMs: 3000,
   buildInput: ctx => {
     const bc = ctx.run.build_context
+    const pp = ctx.run.path_params?.inputs
     const project = (bc.project || ctx.run.project_code || '').trim()
+    const systemPath = (bc.system_path || pp?.NEW_SYSTEM_ROOT || '').trim()
+    const vendorPath = (bc.vendor_path || pp?.NEW_VENDOR_ROOT || '').trim()
+    const trsysRootPath = (bc.trsys_root_path || pp?.NEW_TRSYSTEM_ROOT || '').trim()
     return {
       pipelineRunId: ctx.run.run_id,
       project,
       variant: bc.variant,
       buildFlag: bc.build_flag || 'staging',
-      systemPath: bc.system_path || '',
-      vendorPath: bc.vendor_path || '',
+      systemPath,
+      vendorPath,
+      trsysRootPath,
+      sysVersion: bc.sys_version || '',
+      toOs: ctx.run.to_os,
+      trsysBranch: bc.trsys_branch || '',
       buildTargets: bc.build_targets?.length
         ? [...bc.build_targets]
         : (bc.components ?? []),
@@ -52,8 +60,32 @@ const baseEvaluate = base.evaluate.bind(base)
 const baseStart = base.start!.bind(base)
 const baseCancel = base.cancel?.bind(base)
 
+function missingCompileRoots(ctx: { run: StageContext['run'] }): string | null {
+  if (ctx.run.run_id === '__probe__') return null
+  const bc = ctx.run.build_context
+  const pp = ctx.run.path_params?.inputs
+  const system = (bc.system_path || pp?.NEW_SYSTEM_ROOT || '').trim()
+  const vendor = (bc.vendor_path || pp?.NEW_VENDOR_ROOT || '').trim()
+  const targets = bc.build_targets ?? []
+  const needSystem = Boolean(bc.need_pack) || targets.includes('sys')
+  if (!vendor) {
+    return '缺少 NEW_VENDOR_ROOT，无法启动编译'
+  }
+  if (needSystem && !system) {
+    return '缺少 NEW_SYSTEM_ROOT，无法启动编译'
+  }
+  return null
+}
+
 export const buildStageDefinition: StageDefinition = {
   ...base,
+  async probe(ctx) {
+    const cap = await buildCapability.probe()
+    if (!cap.available) return cap
+    const missing = missingCompileRoots(ctx)
+    if (missing) return { available: false, reason: missing }
+    return cap
+  },
   evaluate(ctx: StageContext): StageVerdict {
     const p = ctx.state.progress as Record<string, unknown> | undefined
     const state = p?.state as string | undefined

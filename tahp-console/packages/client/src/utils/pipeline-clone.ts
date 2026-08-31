@@ -23,6 +23,7 @@ export interface WizardCloneSeed {
   old_vendor_root: string
   new_vendor_root: string
   new_system_root: string
+  new_trsystem_root: string
   path_params?: PathParams
   workspaces: AdaptWorkspaceId[]
   domains: PipelineDomainInput[]
@@ -106,6 +107,7 @@ export function buildWizardCloneSeed(run: PipelineRunRecord): WizardCloneSeed {
     old_vendor_root: pathParams?.inputs.OLD_VENDOR_ROOT ?? '',
     new_vendor_root: pathParams?.inputs.NEW_VENDOR_ROOT ?? String(buildContext.vendor_path ?? ''),
     new_system_root: pathParams?.inputs.NEW_SYSTEM_ROOT ?? String(buildContext.system_path ?? ''),
+    new_trsystem_root: pathParams?.inputs.NEW_TRSYSTEM_ROOT ?? String(buildContext.trsys_root_path ?? ''),
     path_params: pathParams,
     workspaces: workspacesFromCloneDomains(domains),
     domains,

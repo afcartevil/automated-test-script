@@ -48,6 +48,7 @@ function sampleRun(overrides: Partial<PipelineRunRecord> = {}): PipelineRunRecor
       build_flag: 'fooding',
       vendor_path: 'Z:\\new\\vendor',
       system_path: 'Z:\\new\\sys',
+      trsys_root_path: 'Z:\\trsys',
       build_targets: ['sys', 'krn'],
       need_pack: false,
       flash_skill_id: 'asf-device',
@@ -60,6 +61,7 @@ function sampleRun(overrides: Partial<PipelineRunRecord> = {}): PipelineRunRecor
         OLD_VENDOR_ROOT: 'Z:\\old\\vendor',
         NEW_VENDOR_ROOT: 'Z:\\new\\vendor',
         NEW_SYSTEM_ROOT: 'Z:\\new\\sys',
+        NEW_TRSYSTEM_ROOT: 'Z:\\trsys',
         PROJECT_FULL: 'KM9_DEV',
       },
       fields: [
@@ -89,6 +91,7 @@ describe('pipeline clone seed', () => {
     expect(seed.old_vendor_root).toBe('Z:\\old\\vendor')
     expect(seed.new_vendor_root).toBe('Z:\\new\\vendor')
     expect(seed.new_system_root).toBe('Z:\\new\\sys')
+    expect(seed.new_trsystem_root).toBe('Z:\\trsys')
     expect(seed.path_params?.fields[0]?.value).toBe('KM9_DEV')
     expect(seed.workspaces).toEqual(['adapt-debug'])
     expect(seed.domains.find(d => d.domain_id === 'tp')?.form_data.note).toBe(12)
@@ -108,6 +111,7 @@ describe('pipeline clone seed', () => {
     expect(seed.old_vendor_root).toBe('')
     expect(seed.new_vendor_root).toBe('Z:\\new\\vendor')
     expect(seed.new_system_root).toBe('Z:\\new\\sys')
+    expect(seed.new_trsystem_root).toBe('Z:\\trsys')
   })
 
   it('defaults adapt_max_retries to 3 when the source run has no value', () => {

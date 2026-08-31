@@ -145,6 +145,12 @@ export interface BuildContext {
   build_flag?: string
   system_path?: string
   vendor_path?: string
+  /** Windows 盘符路径，换算为远端 TRSYS_ROOT_DIR */
+  trsys_root_path?: string
+  /** sys 的 --version；空则不传 */
+  sys_version?: string
+  /** tOS17 且未填 NEW_TRSYSTEM_ROOT 时，共享盘分支名 */
+  trsys_branch?: string
   build_targets?: string[]
   need_pack?: boolean
   parallel_profile?: 'mtk' | 'qcom'
@@ -155,6 +161,8 @@ export interface BuildContext {
   lunch?: string
   native_target?: string
   native_component?: string
+  /** 未跑编译、仅烧录时的版本/刷机包路径 */
+  flash_pkg_path?: string
   flash_skill_id?: string
   flash_mode?: 'full_rom' | 'single_img'
   target_branch?: string
@@ -176,6 +184,7 @@ export interface PathParamInputs {
   OLD_VENDOR_ROOT: string
   NEW_VENDOR_ROOT: string
   NEW_SYSTEM_ROOT?: string
+  NEW_TRSYSTEM_ROOT?: string
   project_code: string
   PROJECT_FULL?: string
 }
@@ -314,6 +323,15 @@ export function createPipelineRun(input: CreateRunInput): Promise<CreateRunRespo
 
 export function parsePipelinePathParams(input: PathParamInputs): Promise<PathParams> {
   return tahpPost('/api/tahp/adapt-pipeline/parse-path-params', input)
+}
+
+export interface TrsysBranchOption {
+  name: string
+  label: string
+}
+
+export function fetchTrsysBranches(): Promise<{ branches: TrsysBranchOption[] }> {
+  return tahpGet('/api/tahp/adapt-pipeline/trsys-branches')
 }
 
 export function startPipelineRun(runId: string): Promise<{ ok: boolean }> {

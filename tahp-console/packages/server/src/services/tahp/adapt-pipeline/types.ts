@@ -14,6 +14,8 @@ export interface PathParamInputs {
   OLD_VENDOR_ROOT: string
   NEW_VENDOR_ROOT: string
   NEW_SYSTEM_ROOT?: string
+  /** 小系统根目录；空则编译阶段走 pipe_main */
+  NEW_TRSYSTEM_ROOT?: string
   project_code: string
   /** 再次解析时沿用用户已选项目目录 */
   PROJECT_FULL?: string
@@ -117,7 +119,13 @@ export interface BuildContext {
   system_path?: string
   /** Windows 盘符路径，如 Z:\LJ9-vnd */
   vendor_path?: string
-  /** 编译 target：sys/krn/vext/hal/odm */
+  /** Windows 盘符路径，如 Z:\trsys；换算为 Linux TRSYS_ROOT_DIR */
+  trsys_root_path?: string
+  /** sys 的 --version；空则不传 */
+  sys_version?: string
+  /** tOS17 EA 编译 trsys 时选用的共享盘分支名 */
+  trsys_branch?: string
+  /** 编译 target：sys/krn/vext/hal/odm/trsys */
   build_targets?: string[]
   /** 是否追加 pack 到 BUILD_TARGET_RAW */
   need_pack?: boolean
@@ -135,6 +143,8 @@ export interface BuildContext {
   native_target?: string
   /** native：分区组件，如 sys */
   native_component?: string
+  /** 未跑编译、仅烧录时由用户填写的版本/刷机包路径 */
+  flash_pkg_path?: string
   /** 刷机 skill，默认本机 asf-device / harness-device */
   flash_skill_id?: string
   /** full_rom | single_img */
@@ -304,6 +314,14 @@ export interface BuildCapabilityInput {
   /** Windows 路径，capability 内换算为 Linux */
   systemPath: string
   vendorPath: string
+  /** Windows 路径，capability 内换算为 Linux TRSYS_ROOT_DIR */
+  trsysRootPath?: string
+  /** 传给 ez-build 第 8 参；空则 sys 不带 --version */
+  sysVersion?: string
+  /** 流水线 to_os，用于判定是否编 trsys */
+  toOs?: string
+  /** tOS17 共享盘分支，EA 拉 conf.json */
+  trsysBranch?: string
   buildTargets: string[]
   needPack: boolean
   /** legacy / 兼容字段 */

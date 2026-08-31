@@ -77,6 +77,18 @@ function targetsLine(): string {
         <span class="k">vendor</span>
         <span class="v mono">{{ buildContext.vendor_path }}</span>
       </div>
+      <div v-if="buildContext?.trsys_root_path" class="meta-row">
+        <span class="k">trsys</span>
+        <span class="v mono">{{ buildContext.trsys_root_path }}</span>
+      </div>
+      <div v-else-if="buildContext?.trsys_branch" class="meta-row">
+        <span class="k">trsys 分支</span>
+        <span class="v mono">{{ buildContext.trsys_branch }}</span>
+      </div>
+      <div v-if="buildContext?.sys_version" class="meta-row">
+        <span class="k">sys_ver</span>
+        <span class="v">{{ buildContext.sys_version }}</span>
+      </div>
       <div v-if="targetsLine()" class="meta-row">
         <span class="k">targets</span>
         <span class="v">{{ targetsLine() }}</span>
