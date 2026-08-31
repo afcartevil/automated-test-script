@@ -7,8 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
+from web_app.app_paths import outputs_dir, setup_sys_path
+
+setup_sys_path()
 
 from web_app.database import (
     create_crash_analysis,
@@ -23,7 +24,7 @@ _crash_progress: Dict[str, Dict[str, Any]] = {}
 _lock = threading.Lock()
 
 # ── Performance logging ──────────────────────────────
-_TIMING_DIR = Path(__file__).parent.parent / "outputs" / "perf_logs"
+_TIMING_DIR = outputs_dir("perf_logs")
 
 
 def _log_crash_timing(

@@ -586,7 +586,7 @@ def _script_module_analysis(
             backfill_high_risk_patch_reason(
                 patches,
                 {
-                    "sha": (p.get("commit") or p.get("sha", ""))[:12],
+                    "sha": str(p.get("commit") or p.get("sha") or "").strip(),
                     "title": (p.get("title") or "")[:60],
                     "reason": reason,
                     "risk": reason,

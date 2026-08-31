@@ -58,8 +58,30 @@ REM Linux
 | `GKI_PATCH_AUTO_START=0` | 禁用 EA 启动时自动拉起 GKI |
 | `GKI_PATCH_STANDALONE=1` | 标记独立运行模式（EA 内部使用） |
 | `TAHP_SKIP_GKI_PATCH_DEPS=1` | 跳过依赖检查，同时禁用自动启动 |
+| `GKI_LLM_MANAGED_BY_EA=1` | 集成启动时由 EA 注入：LLM 走 EA 当前 OpenAI 兼容模型，忽略 GKI 设置页 DB |
+| `GKI_LLM_API_KEY` / `GKI_LLM_API_BASE` / `GKI_LLM_MODEL` | LLM 三元组；集成模式下由 EA 自动写入 |
+| `GKI_SSH_MANAGED_BY_EA=1` | 集成启动时由 EA 注入 SSH，忽略 GKI 设置页 DB |
+| `GKI_SSH_BASTION_USER` / `GKI_SSH_BASTION_PASSWORD` / `GKI_SSH_TARGET_*` | SSH 凭据；集成模式下由 EA 一键配置写入 |
 
 独立模式另支持：`GKI_HOST`、`GKI_PORT`（默认 8000）、`GKI_VENV`、`GKI_WORKERS`
+
+### LLM 配置
+
+| 模式 | 配置来源 |
+|------|----------|
+| EA 集成 | EasyAdapter 当前激活的 **OpenAI 兼容** 模型（启动 GKI 时注入）；设置页不展示 LLM |
+| 独立运行 | GKI「设置」页 / `gki-patch-tool.yaml` / `GKI_LLM_*` |
+
+说明：Anthropic 直连、无 Key 的 OAuth 提供商等无法注入时，GKI 回退到自身 LLM 配置。修改 EA 模型后需重启 EasyAdapter（或重启 GKI 子进程）生效。
+
+### SSH 配置
+
+| 模式 | 配置来源 |
+|------|----------|
+| EA 集成 | EasyAdapter「一键配置」域账号 / 域密码 / Linux IP / Linux 密码（启动时注入）；设置页不展示 SSH |
+| 独立运行 | GKI「设置 → 远程 SSH」 |
+
+字段映射：`domain_account`→cqris 用户与目标用户；`domain_password`→cqris 密码；`linux_server_ip`→目标 IP；`linux_server_password`→目标密码。OTP 仍在合入任务中手动输入（若已配置齐治 TOTP，会同步注入供后续扩展）。
 
 ### 页面模式
 

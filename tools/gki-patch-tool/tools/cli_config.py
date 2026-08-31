@@ -7,13 +7,57 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+try:
+    from web_app.app_paths import (
+        dev_modules_path,
+        install_root,
+        outputs_dir,
+        scoring_config_path,
+        settings_file,
+    )
+except ImportError:
+    install_root = None  # type: ignore[assignment]
+
+    def _fallback_root() -> Path:
+        return Path(__file__).resolve().parent.parent
+
+    def scoring_config_path() -> Path:
+        return _fallback_root() / "config" / "scoring-config.yaml"
+
+    def dev_modules_path() -> Path:
+        return _fallback_root() / "config" / "dev_modules.txt"
+
+    def outputs_dir(*parts: str) -> Path:
+        base = _fallback_root() / "outputs"
+        path = base.joinpath(*parts) if parts else base
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def settings_file() -> Path:
+        env = os.environ.get(SETTINGS_ENV, "").strip()
+        if env:
+            return Path(env)
+        root = _fallback_root()
+        for name in DEFAULT_SETTINGS_FILES:
+            candidate = root / name
+            if candidate.is_file():
+                return candidate
+        return root / DEFAULT_SETTINGS_FILES[0]
+
+
+def _project_root() -> Path:
+    if install_root is not None:
+        return install_root()
+    return Path(__file__).resolve().parent.parent
+
+
+PROJECT_ROOT = _project_root()
 SETTINGS_ENV = "GKI_SETTINGS"
 DEFAULT_SETTINGS_FILES = ("gki-patch-tool.yaml", "gki-patch-tool.yml")
 DEFAULT_REPO_URL = "https://android.googlesource.com/kernel/common"
-DEFAULT_SCORING_CONFIG = PROJECT_ROOT / "config" / "scoring-config.yaml"
-DEFAULT_DEV_MODULES_FILE = PROJECT_ROOT / "config" / "dev_modules.txt"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs"
+DEFAULT_SCORING_CONFIG = scoring_config_path()
+DEFAULT_DEV_MODULES_FILE = dev_modules_path()
+DEFAULT_OUTPUT_DIR = outputs_dir()
 DEFAULT_OUTPUT_JSON = "patch-analysis-result.json"
 ENV_REPO_DIR = "GKI_REPO_DIR"
 
@@ -54,6 +98,15 @@ def find_settings_path(explicit: Optional[str] = None) -> Optional[Path]:
             p = (Path.cwd() / p).resolve()
         if p.exists():
             return p
+
+    try:
+        from web_app.app_paths import settings_file as resolve_settings_file
+
+        candidate = resolve_settings_file()
+        if candidate.exists():
+            return candidate
+    except ImportError:
+        pass
 
     for name in DEFAULT_SETTINGS_FILES:
         for base in (Path.cwd(), PROJECT_ROOT):

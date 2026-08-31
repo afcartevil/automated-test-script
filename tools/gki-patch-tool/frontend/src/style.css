@@ -2827,6 +2827,16 @@ tr.selectable-row.active td:first-child {
   color: #334155;
 }
 
+.modules-load-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.modules-load-hint.error {
+  color: #b91c1c;
+}
+
 .summary-text,
 .module-card-section .summary-text {
   margin: 0;
@@ -3946,6 +3956,40 @@ tr.selectable-row.active td:first-child {
   gap: 14px;
 }
 
+.patch-detail-html .patch-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.patch-detail-html .patch-sec-label {
+  margin: 0 0 2px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.patch-detail-html .patch-sec-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.patch-detail-html .patch-sec-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.patch-detail-html .patch-sec-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 900px) {
+  .patch-detail-html .patch-sec-grid.two,
+  .patch-detail-html .patch-sec-grid.three {
+    grid-template-columns: 1fr;
+  }
+}
+
 .patch-detail-html .crash-warning-banner,
 .patch-detail-html .pattern-warning-banner {
   margin-bottom: 14px;
@@ -4402,3 +4446,313 @@ tr.selectable-row.active td:first-child {
     max-height: 560px;
   }
 }
+
+/* Patch detail standalone page */
+.patch-detail-page {
+  min-height: calc(100vh - 40px);
+  padding: 8px 16px 48px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(4, 159, 215, 0.08), transparent 28rem),
+    linear-gradient(180deg, #f8fbff 0%, #f3f6fb 40%, #eef2f7 100%);
+}
+.patch-detail-shell {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+.patch-detail-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 18px 20px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+}
+.patch-detail-hero-main {
+  min-width: 0;
+  flex: 1;
+}
+.patch-detail-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.patch-detail-crumbs a {
+  color: #2563eb;
+}
+.patch-detail-crumbs a:hover {
+  text-decoration: underline;
+}
+.patch-detail-title {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.35;
+  color: #0f172a;
+  word-break: break-word;
+}
+.patch-detail-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+.patch-detail-sha-chip {
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+}
+.patch-detail-score {
+  font-size: 14px;
+  font-weight: 800;
+}
+.patch-detail-chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+.patch-detail-chip.llm {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+.patch-detail-chip.script {
+  color: #334155;
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+.patch-detail-actions {
+  flex-shrink: 0;
+}
+.patch-detail-state {
+  text-align: center;
+  color: var(--muted);
+}
+.patch-detail-page .patch-detail-frame {
+  padding: 18px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.04);
+  overflow-x: auto;
+}
+.patch-detail-page .patch-detail-html .detail-panel {
+  border: none;
+  background: transparent;
+}
+.patch-detail-page .patch-detail-html .patch-info-header {
+  display: none; /* 顶部信息已由页面 hero 展示，避免重复 */
+}
+.patch-detail-page .patch-detail-html .detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.patch-detail-page .patch-detail-html .patch-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.patch-detail-page .patch-detail-html .patch-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.patch-detail-page .patch-detail-html .patch-sec-label {
+  margin: 0;
+  padding-left: 2px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.patch-detail-page .patch-detail-html .patch-sec-grid {
+  display: grid;
+  gap: 14px;
+  align-items: stretch;
+}
+.patch-detail-page .patch-detail-html .patch-sec-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.patch-detail-page .patch-detail-html .patch-sec-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.patch-detail-page .patch-detail-html .patch-sec-code .section-card,
+.patch-detail-page .patch-detail-html .patch-sec-links .section-card,
+.patch-detail-page .patch-detail-html .patch-sec-links .patch-diff-details {
+  margin-bottom: 0;
+}
+.patch-detail-page .patch-detail-html .section-card {
+  height: 100%;
+  margin-bottom: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  display: flex;
+  flex-direction: column;
+}
+.patch-detail-page .patch-detail-html .section-card-header {
+  padding: 10px 14px;
+  background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+  border-bottom: 1px solid #e2e8f0;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+}
+.patch-detail-page .patch-detail-html .section-card-body {
+  flex: 1;
+  padding: 14px 16px;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.patch-detail-page .patch-detail-html .section-card.llm {
+  border-left: 4px solid #22c55e;
+}
+.patch-detail-page .patch-detail-html .section-card.script {
+  border-left: 4px solid #3b82f6;
+}
+.patch-detail-page .patch-detail-html .section-card.generic {
+  border-left: 4px solid #94a3b8;
+}
+.patch-detail-page .patch-detail-html .diff-box,
+.patch-detail-page .patch-detail-html .patch-commit-msg {
+  max-height: 420px;
+  overflow: auto;
+  border-radius: 10px;
+  background: #0b1220;
+  color: #e2e8f0;
+  padding: 12px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.patch-detail-page .patch-detail-html .link-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.patch-detail-page .patch-detail-html .link-row a {
+  color: #2563eb;
+  font-weight: 600;
+}
+.patch-detail-page .patch-detail-html .patch-diff-details {
+  margin-top: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+.patch-detail-page .patch-detail-html .patch-diff-details > summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 700;
+  color: #334155;
+}
+.patch-detail-page .patch-detail-html .patch-diff-details[open] > summary {
+  border-bottom: 1px solid #e2e8f0;
+  background: #f1f5f9;
+}
+.patch-detail-page .patch-detail-html .patch-diff-details .diff-box {
+  margin: 0;
+  border-radius: 0;
+}
+/* 兼容旧 HTML（仍带 section-grid 的缓存页面） */
+.patch-detail-page .patch-detail-html .section-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+@media (max-width: 1100px) {
+  .patch-detail-page .patch-detail-html .patch-sec-grid.three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 860px) {
+  .patch-detail-page .patch-detail-html .patch-sec-grid.two,
+  .patch-detail-page .patch-detail-html .patch-sec-grid.three {
+    grid-template-columns: 1fr;
+  }
+}
+.patch-item-link {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+.patch-item-link:hover {
+  border-color: #049fd7;
+  background: #f7fbff;
+}
+.patch-list-hint {
+  font-size: 12px;
+}
+.patch-browse-hint .section-title {
+  align-items: center;
+}
+
+.task-patch-index-filters {
+  margin: 12px 0;
+}
+.task-patch-index-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 560px;
+  overflow: auto;
+}
+.task-patch-index-list .patch-item {
+  margin-bottom: 0;
+  min-height: 44px;
+  color: var(--text);
+  background: #fff;
+}
+.task-patch-index-list .patch-header {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  color: inherit;
+  background: #fafbfc;
+}
+.task-patch-index-list .patch-row {
+  display: grid;
+  grid-template-columns: auto 108px minmax(0, 1fr) auto auto minmax(72px, auto);
+  gap: 8px;
+  align-items: center;
+}
+.task-patch-index-list .patch-row .title,
+.task-patch-index-list .patch-row .sha,
+.task-patch-index-list .patch-row .score {
+  color: inherit;
+}
+.task-patch-index-list .patch-row .title {
+  color: #1e293b;
+}
+.task-patch-index-list .patch-row .sha {
+  color: #475569;
+}
+.task-patch-index-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+

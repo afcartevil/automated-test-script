@@ -209,6 +209,10 @@ async function startDaemon(port) {
   if (token) serverEnv.AUTH_TOKEN = token
   // 兼容 hermes 内部仍用 HERMES_WEB_UI_HOME 的代码
   serverEnv.HERMES_WEB_UI_HOME = CONSOLE_HOME
+  // 运行时数据（含 GKI/Modem 外部通知）落到稳定目录，避免写入 dist/data 被 build 清空
+  if (!serverEnv.TAHP_SERVER_DATA_DIR?.trim() && !serverEnv.TAHP_DATA_DIR?.trim()) {
+    serverEnv.TAHP_SERVER_DATA_DIR = join(CONSOLE_HOME, 'data')
+  }
 
   if (process.platform === 'win32') {
     const shell = getWindowsShell()
@@ -383,6 +387,9 @@ ${CLI_NAME} v${VERSION}
       const serverEnv = { ...process.env, NODE_ENV: 'production', PORT: String(port) }
       if (shouldDisableAuthByDefault()) serverEnv.AUTH_DISABLED = '1'
       serverEnv.HERMES_WEB_UI_HOME = CONSOLE_HOME
+      if (!serverEnv.TAHP_SERVER_DATA_DIR?.trim() && !serverEnv.TAHP_DATA_DIR?.trim()) {
+        serverEnv.TAHP_SERVER_DATA_DIR = join(CONSOLE_HOME, 'data')
+      }
       if (process.platform === 'win32') {
         const shell = getWindowsShell()
         serverEnv.SHELL = serverEnv.SHELL?.trim() || shell

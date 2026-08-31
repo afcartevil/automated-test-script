@@ -3,7 +3,10 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-PROJECT_ROOT = Path(__file__).parent.parent
+from web_app.app_paths import install_root, setup_sys_path, tools_dir
+
+setup_sys_path()
+
 DB_APPLY_MODE_KEY = "upgrade_apply_mode"
 
 
@@ -26,7 +29,7 @@ def resolve_target_repo_path(path_str: str) -> Optional[Path]:
         return None
     p = Path(raw).expanduser()
     if not p.is_absolute():
-        p = (PROJECT_ROOT / p).resolve()
+        p = (install_root() / p).resolve()
     else:
         p = p.resolve()
     if _path_is_usable(p):
@@ -41,7 +44,7 @@ def resolve_build_workdir(path_str: str) -> Optional[Path]:
         return None
     p = Path(raw).expanduser()
     if not p.is_absolute():
-        p = (PROJECT_ROOT / p).resolve()
+        p = (install_root() / p).resolve()
     else:
         p = p.resolve()
     return p if p.is_dir() else None
@@ -49,7 +52,7 @@ def resolve_build_workdir(path_str: str) -> Optional[Path]:
 
 def _yaml_settings() -> Dict[str, Any]:
     try:
-        sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+        sys.path.insert(0, str(tools_dir()))
         from cli_config import load_settings
 
         settings, _ = load_settings()

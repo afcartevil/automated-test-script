@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from web_app.analyzer_service import patch_high_risk_reason
+from web_app.app_paths import data_dir
 
 CHUNK_MAX_PATCHES = 60
 CHUNK_MAX_DIFF_CHARS = 60000
@@ -20,7 +21,7 @@ HIGH_RISK_EVIDENCE_TOTAL_CHARS = 32000
 PATCH_DIGEST_MAX_CHARS = 24000
 
 _GLOBAL_CHUNK_CACHE_LOCK = None  # lazy threading.Lock
-_GLOBAL_CHUNK_CACHE_PATH = Path(__file__).resolve().parent / "data" / "module_chunk_global_cache.json"
+_GLOBAL_CHUNK_CACHE_PATH = data_dir() / "module_chunk_global_cache.json"
 
 
 def patch_sha(p: Dict[str, Any]) -> str:

@@ -76,17 +76,37 @@ export function getWebUiHome(env: Record<string, string | undefined> = process.e
   return appHome ? resolve(appHome) : join(homedir(), '.hermes-web-ui')
 }
 
-function deriveDataDir(env: Record<string, string | undefined> = process.env): string {
+/** Daemon / 生产态状态目录（默认 ~/.tahp-console） */
+export function getTahpConsoleHome(env: Record<string, string | undefined> = process.env): string {
+  const explicit = env.TAHP_CONSOLE_HOME?.trim()
+  if (explicit) return resolve(explicit)
+  const fromWebUi = env.HERMES_WEB_UI_HOME?.trim() || env.HERMES_WEBUI_STATE_DIR?.trim()
+  if (fromWebUi) return resolve(fromWebUi)
+  return join(homedir(), '.tahp-console')
+}
+
+/**
+ * BFF 运行时数据目录（GKI/Modem 外部通知、modem runs 等）。
+ * 生产守护进程会设 HERMES_WEB_UI_HOME → 落在 {consoleHome}/data，避免写入 dist/data
+ *（`npm run build` 会 rmSync dist/data，导致重启/更新后通知丢失）。
+ */
+export function deriveDataDir(env: Record<string, string | undefined> = process.env): string {
   const explicit = env.TAHP_SERVER_DATA_DIR?.trim() || env.TAHP_DATA_DIR?.trim()
+  if (explicit) return resolve(explicit)
+
+  // 守护进程 / 已注入 console home：稳定落盘，跨 rebuild 保留
+  if (env.TAHP_CONSOLE_HOME?.trim() || env.HERMES_WEB_UI_HOME?.trim() || env.HERMES_WEBUI_STATE_DIR?.trim()) {
+    return resolve(getTahpConsoleHome(env), 'data')
+  }
+
   const candidates = [
-    explicit ? resolve(explicit) : '',
     // Prefer the source data directory so dev mode and dist mode read the same state.
     resolve(process.cwd(), 'packages', 'server', 'data'),
     resolve(__dirname, '..', 'data'),
     resolve(__dirname, '..', '..', 'packages', 'server', 'data'),
     // Allow dist-only deployments to fall back to bundled runtime assets.
     resolve(process.cwd(), 'dist', 'data'),
-  ].filter(Boolean)
+  ]
 
   const uniqueCandidates = Array.from(new Set(candidates))
   for (const candidate of uniqueCandidates) {
@@ -104,7 +124,7 @@ export const config = {
   host: getListenHost(),
   appHome,
   uploadDir: process.env.UPLOAD_DIR || join(appHome, 'upload'),
-  dataDir: deriveDataDir(),
+  dataDir: deriveDataDir(process.env),
   corsOrigins: process.env.CORS_ORIGINS || '*',
 
   /**

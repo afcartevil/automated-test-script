@@ -1,0 +1,128 @@
+# GKI 验收表统一本地配置（导出表格只读本文件）。
+# 在这里统一维护：
+# 1. 各模块的二级部门 / Owner / 审核人
+# 2. 集成维护固定 check 行
+
+departments:
+  底软通信:
+    lead: 罗义龙
+    modules:
+      LCM:
+        owner: 徐世玉
+        reviewer: 徐世玉
+      通用驱动器件:
+        owner: 范晓波
+        reviewer: 范晓波
+      Audio:
+        owner: 缪晶晶
+        reviewer: 朱福航
+      充电/USB:
+        owner: 李名龙
+        reviewer: 李名龙
+      sensor:
+        owner: 杨志刚 / 徐畅
+        reviewer: 杨志刚
+      video&多媒体框架:
+        owner: 秦英生 / 谢正威
+        reviewer: 谢正威
+      内存:
+        owner: 凌佳俊
+        reviewer: 凌佳俊
+      调度:
+        owner: 李朝权 / 夏琦云
+        reviewer: 李宁
+      稳定性:
+        owner: 仇培旋
+        reviewer: 仇培旋
+      安全:
+        owner: 秦望 / 黄铁
+        reviewer: 黄铁
+      小系统:
+        owner: 杨建云
+        reviewer: 杨建云
+      功耗:
+        owner: 卢兵 / 叶承维
+        reviewer: 叶承维
+      驱动框架:
+        owner: 雷锦先
+        reviewer: 雷锦先
+      网络协议栈:
+        owner: 朱鹏博
+        reviewer: 朱鹏博
+      NFC:
+        owner: 周波
+        reviewer: 周波
+      BlueTooth:
+        owner: 秦玉坤
+        reviewer: 秦玉坤
+      WIFI:
+        owner: 闫晓涛
+        reviewer: 闫晓涛
+      GPS:
+        owner: 贺兰钦
+        reviewer: 贺兰钦
+
+  存储:
+    lead: 谭发江
+    modules:
+      文件系统:
+        owner: 梁捷
+        reviewer: 梁捷
+      block:
+        owner: 吕昊
+        reviewer: 吕昊
+      ufs:
+        owner: 张金凯
+        reviewer: 张金凯
+      emmc:
+        owner: 纪洪宽
+        reviewer: 纪洪宽
+      sd:
+        owner: 纪洪宽
+        reviewer: 纪洪宽
+      ddr:
+        owner: 方卡
+        reviewer: 方卡
+
+  影像:
+    lead: 魏溪
+    modules:
+      影像:
+        owner: 蔡小雪
+        reviewer: 蔡小雪
+
+  系统应用:
+    lead: 龚乾坤
+    modules:
+      Binder:
+        owner: 阳重林
+        reviewer: 阳重林
+
+integration_maintenance:
+  enabled: true
+  department: 集成维护
+  leads: 蔡霞
+  modules:
+    内核:
+      owner: 宋平（升维项目）
+      reviewer: 宋平
+
+    驱动:
+      owner: 胡杰（升维项目）
+      reviewer: 胡杰
+
+    功耗:
+      owner: 陈伟（升维项目）
+      reviewer: 陈伟
+
+    通信框架:
+      owner: 李青（升维项目）
+      reviewer: 李青
+
+    通信协议:
+      owner: 武超（升维项目）
+      reviewer: 武超
+
+    系统集成:
+      owner: 毛朝雨
+      reviewer: 毛朝雨

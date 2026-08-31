@@ -364,7 +364,7 @@ def _render_warning_banners(crash_risk, crash_risk_reason, crash_patterns) -> st
         )
     if crash_patterns:
         pattern_tags = "".join(
-            f'<span class="pattern-tag {"high" if pt.get("severity")=="高" else "medium"}">'
+            f'<span class="pattern-tag {"high" if pt.get("severity")=="\u9ad8" else "medium"}">'
             f'{esc(pt.get("label",""))}</span>'
             for pt in crash_patterns
         )
@@ -398,7 +398,7 @@ def _render_crash_risk_html(crash_risk, crash_risk_reason, crash_patterns) -> st
             )
             pattern_items.append(
                 f'<div class="crash-pattern-item"><strong>{esc(pt.get("label",""))}</strong>'
-                f' <span class="pattern-tag {"high" if pt.get("severity")=="高" else "medium"}">'
+                f' <span class="pattern-tag {"high" if pt.get("severity")=="\u9ad8" else "medium"}">'
                 f'{esc(pt.get("severity",""))}</span>'
                 f'<div class="muted crash-pattern-desc">{esc(pt.get("description",""))}</div>'
                 f'<ul class="crash-pattern-lines">{lines_html}</ul></div>'
@@ -620,30 +620,49 @@ def render_patch(idx, p):
   <div class="detail-body">
     {defect_banner_html}
     {banners_html}
-    <div class="section-grid">
-      <div>
-        {card("📝 修改解读", mod_interp or '<p class="muted">暂无 LLM 解读</p>')}
+    <div class="patch-sections">
+      <section class="patch-sec patch-sec-summary">
+        <div class="patch-sec-label">变更理解</div>
+        <div class="patch-sec-grid two">
+          {card("📝 修改解读", mod_interp or '<p class="muted">暂无 LLM 解读</p>')}
+          {card("🎯 问题闭环", problem_solved or '<p class="muted">暂无 LLM 分析</p>')}
+        </div>
+      </section>
+
+      <section class="patch-sec patch-sec-code">
+        <div class="patch-sec-label">代码变化</div>
         {card("🔧 代码变化", code_html)}
-        {card("🎯 问题闭环", problem_solved or '<p class="muted">暂无 LLM 分析</p>')}
-        {card("🔍 引入分析", _introducer_combined(introducer, introduced_risk))}
-        {card("🔮 死机风险评估", crash_risk_html)}
-        {card("🔗 后续修复", future_fix_html) if future_fix_html else ''}
-      </div>
-      <div>
-        {card("📊 评分明细", score_html)}
-        {card("🧪 测试建议", test_html)}
-      </div>
-    </div>
+      </section>
 
-    <div class="section-card generic patch-links-card">
-      <div class="section-card-header">🔗 原始链接</div>
-      <div class="section-card-body">{links_html or '<p class="muted">无链接信息</p>'}</div>
-    </div>
+      <section class="patch-sec patch-sec-risk">
+        <div class="patch-sec-label">风险与后续</div>
+        <div class="patch-sec-grid {'three' if future_fix_html else 'two'}">
+          {card("🔍 引入分析", _introducer_combined(introducer, introduced_risk))}
+          {card("🔮 死机风险评估", crash_risk_html)}
+          {card("\U0001f517 后续修复", future_fix_html) if future_fix_html else ''}
+        </div>
+      </section>
 
-    <details class="patch-diff-details">
-      <summary>📄 展开 Diff</summary>
-      <div class="diff-box">{esc_br(diff_text) if diff_text else '<p class="muted">无 diff 信息</p>'}</div>
-    </details>
+      <section class="patch-sec patch-sec-eval">
+        <div class="patch-sec-label">评分与验证</div>
+        <div class="patch-sec-grid two">
+          {card("📊 评分明细", score_html)}
+          {card("🧪 测试建议", test_html)}
+        </div>
+      </section>
+
+      <section class="patch-sec patch-sec-links">
+        <div class="patch-sec-label">原始材料</div>
+        <div class="section-card generic patch-links-card">
+          <div class="section-card-header">🔗 原始链接</div>
+          <div class="section-card-body">{links_html or '<p class="muted">无链接信息</p>'}</div>
+        </div>
+        <details class="patch-diff-details">
+          <summary>📄 展开 Diff</summary>
+          <div class="diff-box">{esc_br(diff_text) if diff_text else '<p class="muted">无 diff 信息</p>'}</div>
+        </details>
+      </section>
+    </div>
   </div>
 </div>
 '''

@@ -75,8 +75,9 @@ from web_app.upgrade_execution_log import (
     resolve_execution_log_path,
 )
 
-PROJECT_ROOT = Path(__file__).parent.parent
-BUILD_LOG_DIR = PROJECT_ROOT / "outputs" / "upgrade_logs"
+from web_app.app_paths import install_root, outputs_dir
+
+BUILD_LOG_DIR = outputs_dir("upgrade_logs")
 
 _progress: Dict[str, Dict[str, Any]] = {}
 _lock = threading.Lock()
@@ -767,6 +768,13 @@ def start_upgrade(
     if remote and not remote_ssh:
         remote_ssh = get_saved_ssh_credentials()
     if remote and not remote_ssh:
+        from web_app.ssh_credentials_config import is_ssh_managed_by_ea
+
+        if is_ssh_managed_by_ea():
+            return "", (
+                "远程合入需要 SSH 账号信息，但 EasyAdapter 注入的凭据不完整。"
+                "请在 EasyAdapter「配置 → 一键配置」填写域账号、域密码、Linux 服务器 IP 与密码后重启"
+            )
         return "", (
             "远程合入需要 SSH 账号信息。"
             "请先在「系统设置 → 远程 SSH」保存 cqris 与目标机账号"

@@ -4,9 +4,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from web_app.app_paths import install_root, setup_sys_path, tools_dir
+
+setup_sys_path()
+
 ENV_KEY = "GKI_REPO_DIR"
-PROJECT_ROOT = Path(__file__).parent.parent
-DEFAULT_RELATIVE_REPO = PROJECT_ROOT / "code" / "common"
+DEFAULT_RELATIVE_REPO = install_root() / "code" / "common"
 
 
 def _path_is_usable(p: Path) -> bool:
@@ -19,7 +22,7 @@ def _resolve_path(path_str: str) -> Optional[Path]:
         return None
     p = Path(raw).expanduser()
     if not p.is_absolute():
-        p = (PROJECT_ROOT / p).resolve()
+        p = (install_root() / p).resolve()
     else:
         p = p.resolve()
     if _path_is_usable(p):
@@ -50,7 +53,7 @@ def get_local_repo_dir() -> Optional[Path]:
             return resolved
 
     try:
-        sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+        sys.path.insert(0, str(tools_dir()))
         from cli_config import get_yaml_repo_dir, load_settings
 
         settings, _ = load_settings()
@@ -103,7 +106,7 @@ def get_repo_config() -> Dict[str, Any]:
     yaml_settings_file = ""
     yaml_effective: Optional[Path] = None
     try:
-        sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+        sys.path.insert(0, str(tools_dir()))
         from cli_config import _section, get_yaml_repo_dir, load_settings
 
         settings, settings_file = load_settings()

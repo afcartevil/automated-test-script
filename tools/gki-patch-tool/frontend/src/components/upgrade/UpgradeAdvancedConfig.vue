@@ -51,11 +51,16 @@
                 stroke-linejoin="round"
               />
             </svg>
-            SSH 已配置
+            {{ sshManagedByEa ? 'SSH 已托管（EasyAdapter）' : 'SSH 已配置' }}
           </span>
           <span v-else class="upgrade-ssh-status warn">
-            <span>SSH 未配置，远程任务需先保存账号</span>
-            <button class="btn btn-sm" type="button" @click="goSshSettings">去设置</button>
+            <span v-if="sshManagedByEa || isEmbedded">
+              SSH 未就绪，请在 EasyAdapter「一键配置」补全后重启
+            </span>
+            <template v-else>
+              <span>SSH 未配置，远程任务需先保存账号</span>
+              <button class="btn btn-sm" type="button" @click="goSshSettings">去设置</button>
+            </template>
           </span>
           <span class="upgrade-remote-badge">cqris 远程</span>
         </div>
@@ -101,6 +106,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../../api'
+import { isEmbeddedMode } from '../../composables/useEmbeddedNav'
 
 const props = defineProps<{
   form: Record<string, any>
@@ -115,7 +121,9 @@ defineEmits<{
 }>()
 
 const router = useRouter()
+const isEmbedded = isEmbeddedMode()
 const sshConfigured = ref(false)
+const sshManagedByEa = ref(false)
 const sshLoading = ref(true)
 
 const targetRepoPlaceholder = '/work/.../vnd/kernel-5.10'
@@ -130,8 +138,10 @@ async function loadSshStatus() {
   try {
     const cfg = await api.get<any>('/api/upgrade/ssh-config')
     sshConfigured.value = !!cfg.credentials_configured
+    sshManagedByEa.value = !!(cfg.managed_by_ea || cfg.readonly)
   } catch {
     sshConfigured.value = false
+    sshManagedByEa.value = false
   } finally {
     sshLoading.value = false
   }

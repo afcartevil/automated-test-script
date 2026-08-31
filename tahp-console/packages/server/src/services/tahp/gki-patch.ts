@@ -4,6 +4,10 @@ import http from 'http'
 import path from 'path'
 import { config as serverConfig } from '../../config'
 import { logger } from '../logger'
+import { getActiveProfileName } from '../hermes/hermes-profile'
+import { resolveGatewayUpstream } from '../hermes/run-chat/handle-api-run'
+import { readHarnessEnvFile } from './harness-env-sync'
+import { readUnifiedConfig } from './unified-config'
 
 const DEFAULT_PORT = Number(process.env.GKI_PATCH_PORT || 8651)
 const STARTUP_TIMEOUT_MS = 60_000
@@ -12,6 +16,94 @@ const HEALTH_POLL_MS = 500
 /** 集成模式：由 EasyAdapter 托管生命周期；独立模式：使用 run_windows.bat / run_linux.sh */
 export function isGkiPatchIntegratedMode() {
   return process.env.GKI_PATCH_STANDALONE !== '1'
+}
+
+/**
+ * Resolve EasyAdapter's active OpenAI-compatible LLM for GKI Patch injection.
+ * Anthropic direct / gateway fallback / missing key → null (GKI keeps own config).
+ */
+export function resolveEaLlmForGki(): {
+  apiKey: string
+  apiBase: string
+  model: string
+} | null {
+  if (!isGkiPatchIntegratedMode()) return null
+  try {
+    const profile = getActiveProfileName() || 'default'
+    const gw = resolveGatewayUpstream(profile)
+    if (gw.providerType !== 'openai-chat') return null
+    const apiKey = (gw.apiKey || '').trim()
+    let upstream = (gw.upstream || '').trim().replace(/\/+$/, '')
+    if (!apiKey || !upstream || upstream.startsWith('anthropic://')) return null
+    // Align with Hermes openai-chat URL: …/v1/chat/completions
+    if (upstream.endsWith('/chat/completions')) {
+      upstream = upstream.slice(0, -'/chat/completions'.length).replace(/\/+$/, '')
+    }
+    const apiBase = upstream.endsWith('/v1') ? upstream : `${upstream}/v1`
+    const model = (gw.defaultModel || '').trim() || 'gpt-4o'
+    return { apiKey, apiBase, model }
+  } catch (err) {
+    logger.debug(
+      { err: (err as Error).message },
+      '[gki-patch] failed to resolve EA LLM for GKI',
+    )
+    return null
+  }
+}
+
+/**
+ * Resolve EasyAdapter harness / 一键配置 SSH for GKI Patch injection.
+ * Maps domain + Linux server fields → GKI cqris bastion credentials.
+ * EA has no separate Linux username → reuse domain_account as target_user.
+ */
+export function resolveEaSshForGki(): {
+  bastionUser: string
+  bastionPassword: string
+  targetIp: string
+  targetUser: string
+  targetPassword: string
+  otpSecret: string
+} | null {
+  if (!isGkiPatchIntegratedMode()) return null
+  try {
+    const uc = readUnifiedConfig()
+    const harness = readHarnessEnvFile()
+
+    const bastionUser = (
+      uc.domain_account || harness.HARNESS_QIZHI_USER || ''
+    ).trim()
+    const bastionPassword = (
+      uc.domain_password || harness.HARNESS_QIZHI_BASTION_PASSWORD || ''
+    ).trim()
+    const targetIp = (
+      uc.linux_server_ip || harness.HARNESS_QIZHI_TARGET_HOST || ''
+    ).trim()
+    const targetPassword = (
+      uc.linux_server_password || harness.HARNESS_QIZHI_TARGET_PASSWORD || ''
+    ).trim()
+    const targetUser = bastionUser
+    const otpSecret = (
+      uc.qizhi_totp_secret || harness.HARNESS_QIZHI_OTP_SECRET || ''
+    ).trim().replace(/\s+/g, '')
+
+    if (!bastionUser || !bastionPassword || !targetIp || !targetPassword) {
+      return null
+    }
+    return {
+      bastionUser,
+      bastionPassword,
+      targetIp,
+      targetUser,
+      targetPassword,
+      otpSecret,
+    }
+  } catch (err) {
+    logger.debug(
+      { err: (err as Error).message },
+      '[gki-patch] failed to resolve EA SSH for GKI',
+    )
+    return null
+  }
 }
 
 /** EasyAdapter 启动时是否自动拉起 GKI Patch 服务 */
@@ -26,6 +118,26 @@ let activePort = DEFAULT_PORT
 let startingPromise: Promise<void> | null = null
 let gkiQualityPollTimer: ReturnType<typeof setInterval> | null = null
 const uploadedGkiJobIds = new Set<string>()
+
+const EA_RESOLVE_CACHE_MS = 15_000
+let eaLlmCache: { at: number; value: ReturnType<typeof resolveEaLlmForGki> } | null = null
+let eaSshCache: { at: number; value: ReturnType<typeof resolveEaSshForGki> } | null = null
+
+function resolveEaLlmForGkiCached() {
+  const now = Date.now()
+  if (eaLlmCache && now - eaLlmCache.at < EA_RESOLVE_CACHE_MS) return eaLlmCache.value
+  const value = resolveEaLlmForGki()
+  eaLlmCache = { at: now, value }
+  return value
+}
+
+function resolveEaSshForGkiCached() {
+  const now = Date.now()
+  if (eaSshCache && now - eaSshCache.at < EA_RESOLVE_CACHE_MS) return eaSshCache.value
+  const value = resolveEaSshForGki()
+  eaSshCache = { at: now, value }
+  return value
+}
 
 async function fetchGkiUpgradeJobs(): Promise<GkiUpgradeJobRow[]> {
   const url = `http://127.0.0.1:${activePort}/api/upgrade/jobs?limit=50`
@@ -81,6 +193,10 @@ function stopGkiQualityPoll() {
 interface GkiUpgradeJobRow {
   id: number | string
   status: string
+  from_tag?: string
+  to_tag?: string
+  phase?: string
+  build_exit_code?: number
   applied_commits?: number
   total_commits?: number
   conflict_files?: string[]
@@ -89,6 +205,70 @@ interface GkiUpgradeJobRow {
   completed_at?: string
   repo?: string
   options?: string
+}
+
+/** List recent GKI upgrade jobs via local GKI Patch Tool HTTP API. */
+export async function listGkiUpgradeJobs(limit = 50): Promise<GkiUpgradeJobRow[]> {
+  await ensureGkiPatchServer()
+  await waitUntilHealthy(activePort, 15_000)
+  const capped = Math.min(200, Math.max(1, limit))
+  const url = `http://127.0.0.1:${activePort}/api/upgrade/jobs?limit=${capped}`
+  return gkiHttpGetJson<{ jobs?: GkiUpgradeJobRow[] }>(url).then((parsed) => parsed.jobs || [])
+}
+
+export type GkiAnalysisTaskRow = {
+  id: string
+  type?: string
+  status?: string
+  from_tag?: string
+  to_tag?: string
+  sha?: string
+  created_at?: string
+  repo?: string
+}
+
+/** List recent GKI analysis tasks via local GKI Patch Tool HTTP API. */
+export async function listGkiAnalysisTasks(limit = 50): Promise<GkiAnalysisTaskRow[]> {
+  await ensureGkiPatchServer()
+  await waitUntilHealthy(activePort, 15_000)
+  const capped = Math.min(200, Math.max(1, limit))
+  const url = `http://127.0.0.1:${activePort}/api/tasks?limit=${capped}`
+  return gkiHttpGetJson<{ tasks?: GkiAnalysisTaskRow[] }>(url).then((parsed) => parsed.tasks || [])
+}
+
+function gkiHttpGetJson<T>(url: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, { timeout: 10000 }, (res) => {
+      let body = ''
+      res.on('data', chunk => { body += chunk })
+      res.on('end', () => {
+        if ((res.statusCode || 500) >= 400) {
+          reject(new Error(`GKI HTTP ${res.statusCode}`))
+          return
+        }
+        try {
+          resolve(JSON.parse(body) as T)
+        } catch (e) {
+          reject(e)
+        }
+      })
+    })
+    req.on('error', reject)
+    req.on('timeout', () => {
+      req.destroy()
+      reject(new Error('GKI request timeout'))
+    })
+  })
+}
+
+/** Soft wait after ensure — covers brief post-spawn readiness gaps. */
+async function waitUntilHealthy(port: number, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await probeHealth(port)) return
+    await new Promise(r => setTimeout(r, 400))
+  }
+  throw new Error('GKI Patch 服务启动较慢，请稍后重试')
 }
 
 function toolRootCandidates() {
@@ -254,7 +434,7 @@ async function findFreePort(startPort: number) {
 
 function buildSpawnEnv(toolRoot: string, dataDir: string) {
   const settingsPath = process.env.GKI_SETTINGS?.trim() || defaultSettingsPath(toolRoot)
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     PYTHONUNBUFFERED: '1',
     PYTHONIOENCODING: 'utf-8',
@@ -264,6 +444,55 @@ function buildSpawnEnv(toolRoot: string, dataDir: string) {
     GKI_PORT: String(activePort),
     GKI_DATA_DIR: dataDir,
   }
+
+  const eaLlm = resolveEaLlmForGkiCached()
+  if (eaLlm) {
+    env.GKI_LLM_MANAGED_BY_EA = '1'
+    env.GKI_LLM_API_KEY = eaLlm.apiKey
+    env.GKI_LLM_API_BASE = eaLlm.apiBase
+    env.GKI_LLM_MODEL = eaLlm.model
+    logger.info(
+      '[gki-patch] injecting EA LLM base=%s model=%s',
+      eaLlm.apiBase,
+      eaLlm.model,
+    )
+  } else {
+    delete env.GKI_LLM_MANAGED_BY_EA
+    if (isGkiPatchIntegratedMode()) {
+      logger.info(
+        '[gki-patch] EA has no OpenAI-compatible LLM; GKI will use its own settings/DB config',
+      )
+    }
+  }
+
+  const eaSsh = resolveEaSshForGkiCached()
+  if (eaSsh) {
+    env.GKI_SSH_MANAGED_BY_EA = '1'
+    env.GKI_SSH_BASTION_USER = eaSsh.bastionUser
+    env.GKI_SSH_BASTION_PASSWORD = eaSsh.bastionPassword
+    env.GKI_SSH_TARGET_IP = eaSsh.targetIp
+    env.GKI_SSH_TARGET_USER = eaSsh.targetUser
+    env.GKI_SSH_TARGET_PASSWORD = eaSsh.targetPassword
+    if (eaSsh.otpSecret) {
+      env.GKI_SSH_OTP_SECRET = eaSsh.otpSecret
+    } else {
+      delete env.GKI_SSH_OTP_SECRET
+    }
+    logger.info(
+      '[gki-patch] injecting EA SSH bastion_user=%s target_ip=%s',
+      eaSsh.bastionUser,
+      eaSsh.targetIp,
+    )
+  } else {
+    delete env.GKI_SSH_MANAGED_BY_EA
+    if (isGkiPatchIntegratedMode()) {
+      logger.info(
+        '[gki-patch] EA SSH incomplete; GKI will use its own settings/DB SSH config',
+      )
+    }
+  }
+
+  return env
 }
 
 async function spawnGkiServer() {
@@ -370,6 +599,8 @@ export function getGkiPatchStatus() {
   const dist = frontendDistPath(toolRoot)
   const dbPath = gkiPatchDbPath(dataDir)
   const legacyDbPath = gkiPatchDbPath(legacyIntegratedDataDir())
+  const eaLlm = resolveEaLlmForGkiCached()
+  const eaSsh = resolveEaSshForGkiCached()
   return {
     toolRoot,
     dataDir,
@@ -379,16 +610,24 @@ export function getGkiPatchStatus() {
     appBaseUrl: `http://127.0.0.1:${activePort}/app`,
     appUrl: `http://127.0.0.1:${activePort}/app/`,
     running: false as boolean,
+    starting: Boolean(startingPromise),
     frontendBuilt: fs.existsSync(dist),
     settingsPath: process.env.GKI_SETTINGS?.trim() || defaultSettingsPath(toolRoot),
     integrated: isGkiPatchIntegratedMode(),
     autoStart: isGkiPatchAutoStartEnabled(),
+    llmManagedByEa: Boolean(eaLlm),
+    llmModel: eaLlm?.model || '',
+    llmApiBase: eaLlm?.apiBase || '',
+    sshManagedByEa: Boolean(eaSsh),
+    sshTargetIp: eaSsh?.targetIp || '',
+    sshBastionUser: eaSsh?.bastionUser || '',
   }
 }
 
 export async function getGkiPatchStatusAsync() {
   const status = getGkiPatchStatus()
   status.running = await probeHealth(activePort)
+  status.starting = Boolean(startingPromise) && !status.running
   return status
 }
 

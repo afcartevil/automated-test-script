@@ -8,7 +8,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
+from web_app.app_paths import setup_sys_path
+
+setup_sys_path()
 from patch_analyzer import fetch_commits_between_tags, fetch_patch_data, load_config
 
 from web_app.analyzer_service import (
@@ -35,7 +37,7 @@ def _build_interval_result(
     patch_by_sha: Dict[str, Dict[str, Any]],
     collect_failures: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """单个累计子 tag 区间：切片 + 统计（只读 patch 池，可并行）。"""
+    """单个相邻子 tag 区间：切片 + 统计（只读 patch 池，可并行）。"""
     if is_task_cancelled(task_id):
         return {
             "from_tag": from_tag,
@@ -147,35 +149,92 @@ def compute_interval_stats(
 def build_monthly_tag_recommendation_from_results(
     interval_results: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """从 embedded 子 tag 区间结果生成推荐。"""
-    stats = [
-        item["stats"]
+    """从子 tag 区间结果生成推荐。
+
+    展示用 ``range_stats`` 按相邻增量（r1→r2、r2→r3…）排序；
+    优选 tag 仍按「累计合入至该点」的综合风险比较（由相邻增量统计拼接，不二次查库）。
+    """
+    completed = [
+        item
         for item in interval_results
         if item.get("status") == "completed"
         and int((item.get("stats") or {}).get("total_patches") or 0) > 0
     ]
-    if not stats:
+    if not completed:
         return {"has_recommendation": False, "reason": "暂无可用于子 tag 分析的区间结果"}
 
-    ranked = sorted(stats, key=_cumulative_subtag_sort_key)
-    best = ranked[0]
-    risk = best.get("risk_distribution") or {}
-    target_tag = best.get("to_tag") or ""
+    def _to_r(item: Dict[str, Any]) -> int:
+        parsed = _parse_month_subtag(str(item.get("to_tag") or ""))
+        return parsed[1] if parsed else 0
+
+    completed.sort(key=_to_r)
+    adjacent_stats = [item.get("stats") or {} for item in completed]
+
+    baseline = str(completed[0].get("from_tag") or "")
+    best_stats: Optional[Dict[str, Any]] = None
+    best_key: Optional[Tuple[Any, ...]] = None
+    acc = {
+        "total_patches": 0,
+        "blocked_count": 0,
+        "has_future_fix_count": 0,
+        "risk_distribution": {"high": 0, "medium": 0, "low": 0, "none": 0},
+        "score_sum": 0.0,
+        "score_n": 0,
+        "min_score": None,
+    }
+    for item in completed:
+        st = item.get("stats") or {}
+        total = int(st.get("total_patches") or 0)
+        acc["total_patches"] += total
+        acc["blocked_count"] += int(st.get("blocked_count") or 0)
+        acc["has_future_fix_count"] += int(st.get("has_future_fix_count") or 0)
+        risk = st.get("risk_distribution") or {}
+        for key in ("high", "medium", "low", "none"):
+            acc["risk_distribution"][key] += int(risk.get(key, 0) or 0)
+        avg = float(st.get("avg_score") or 0)
+        if total > 0 and avg > 0:
+            acc["score_sum"] += avg * total
+            acc["score_n"] += total
+        mn = float(st.get("min_score") or 0)
+        if mn > 0:
+            acc["min_score"] = mn if acc["min_score"] is None else min(acc["min_score"], mn)
+
+        cum_stats = {
+            "from_tag": baseline or str(item.get("from_tag") or ""),
+            "to_tag": str(item.get("to_tag") or ""),
+            "total_patches": acc["total_patches"],
+            "blocked_count": acc["blocked_count"],
+            "has_future_fix_count": acc["has_future_fix_count"],
+            "risk_distribution": dict(acc["risk_distribution"]),
+            "avg_score": round(acc["score_sum"] / acc["score_n"], 2) if acc["score_n"] else 0,
+            "min_score": round(acc["min_score"] or 0, 2),
+        }
+        key = _cumulative_subtag_sort_key(cum_stats)
+        if best_key is None or key < best_key:
+            best_key = key
+            best_stats = cum_stats
+
+    if not best_stats:
+        return {"has_recommendation": False, "reason": "暂无可用于子 tag 分析的区间结果"}
+
+    risk = best_stats.get("risk_distribution") or {}
+    target_tag = best_stats.get("to_tag") or ""
     return {
         "has_recommendation": True,
         "recommended_tag": target_tag,
         "recommended_interval": {
-            "from_tag": best.get("from_tag"),
+            "from_tag": best_stats.get("from_tag"),
             "to_tag": target_tag,
         },
         "reason": (
             f"子 tag 分析结论：优选 {target_tag}。"
-            f"自 {best.get('from_tag') or 'r1'} 累计合入至该子 tag 时，"
+            f"各行按相邻增量展示；合入结论按从月初 r1 累计到该 tag 评估。"
+            f"累计合入至 {target_tag} 时，"
             f"高风险 {risk.get('high', 0)} 个、中风险 {risk.get('medium', 0)} 个、"
-            f"未来修复 {best.get('has_future_fix_count', 0)} 个，"
-            f"平均分 {best.get('avg_score', 0)}，在当前月份子 tag 累计区间中综合风险最低。"
+            f"未来修复 {best_stats.get('has_future_fix_count', 0)} 个，"
+            f"平均分 {best_stats.get('avg_score', 0)}，综合风险最低。"
         ),
-        "range_stats": ranked,
+        "range_stats": adjacent_stats,
     }
 
 
@@ -211,10 +270,17 @@ def _collect_single_patch(
 
 
 def _resolve_baseline_and_rmax(intervals: List[Tuple[str, str]]) -> Tuple[str, str]:
-    """累计区间共享 baseline（r1），rMax 为 to_tag 中 r 序号最大者。"""
+    """相邻/累计区间：baseline 为最早 from_tag，rMax 为 to_tag 中 r 序号最大者。"""
     if not intervals:
         raise ValueError("empty intervals")
     baseline = intervals[0][0]
+    best_from_r = 10**9
+    for from_tag, _to_tag in intervals:
+        parsed = _parse_month_subtag(from_tag)
+        r_num = parsed[1] if parsed else 10**9
+        if r_num < best_from_r:
+            best_from_r = r_num
+            baseline = from_tag
     rmax_tag = intervals[0][1]
     best_r = -1
     for _from_tag, to_tag in intervals:
@@ -264,20 +330,16 @@ def build_monthly_interval_sha_map(
     *,
     rmax_shas: Optional[set] = None,
 ) -> Tuple[Dict[Tuple[str, str], set], str, str]:
-    """构建各累计区间的 commit sha 集合（不采集 patch）。
+    """构建各子 tag 区间的 commit sha 集合（不采集 patch）。
 
-    ``rmax_shas`` 表示已采集 patch 池（可大于 r1→rMax 的 git 区间），
-    仅在与 git 区间 commit 求交后写入 rMax 累计区间，避免把主采样 patch 误归入子 tag。
+    当前为相邻增量区间（r1→r2、r2→r3…），直接取 ``from..to`` 的 git commit。
+    ``rmax_shas`` 保留兼容参数，相邻模式下不使用。
     """
     baseline, rmax_tag = _resolve_baseline_and_rmax(intervals)
     interval_shas: Dict[Tuple[str, str], set] = {}
     for from_tag, to_tag in intervals:
         key = (from_tag, to_tag)
-        git_shas = _commit_sha_set(repo, from_tag, to_tag, repo_dir)
-        if to_tag == rmax_tag and rmax_shas is not None:
-            interval_shas[key] = git_shas & rmax_shas
-        else:
-            interval_shas[key] = git_shas
+        interval_shas[key] = _commit_sha_set(repo, from_tag, to_tag, repo_dir)
     return interval_shas, baseline, rmax_tag
 
 
@@ -292,7 +354,7 @@ def finalize_monthly_subtag_from_pool(
     *,
     progress_cb: Optional[Callable[[int, int, str], None]] = None,
     llm_info: Optional[Dict[str, Any]] = None,
-    analysis_mode: str = "cumulative_rmax_pooled",
+    analysis_mode: str = "adjacent_pooled",
     max_workers: Optional[int] = None,
 ) -> Dict[str, Any]:
     """对已采集+分析的全集 patch 池按区间切片统计（不再采集/LLM）。"""
@@ -383,7 +445,7 @@ def finalize_monthly_subtag_from_pool(
     )
     print(
         f"[MONTHLY] {task_id}: 子 tag 统计完成 {completed}/{total} "
-        f"(r1→rMax {unique_patch_count} 笔，模式 {analysis_mode})",
+        f"(baseline→rMax {unique_patch_count} 笔，模式 {analysis_mode})",
         flush=True,
     )
     return doc
@@ -427,10 +489,8 @@ def _prepare_cumulative_from_rmax(
     for from_tag, to_tag in intervals:
         key = (from_tag, to_tag)
         git_shas = _commit_sha_set(repo, from_tag, to_tag, repo_dir)
-        if to_tag == rmax_tag:
-            interval_shas[key] = git_shas & rmax_shas
-        else:
-            interval_shas[key] = git_shas
+        # 相邻区间直接取 from..to，并与已采集池求交（仅统计已分析 patch）
+        interval_shas[key] = git_shas & rmax_shas if rmax_shas else git_shas
 
     return interval_shas, patch_by_sha, failures, baseline, rmax_tag
 
@@ -555,7 +615,7 @@ def run_monthly_subtag_analysis_for_task(
     progress_cb: Optional[Callable[[int, int, str], None]] = None,
     max_workers: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """对累计子 tag 做内嵌分析：仅 r1->rMax 采集+分析一次，再输出各 r1->rN 结论。"""
+    """对相邻子 tag 做内嵌分析：仅 baseline→rMax 采集+分析一次，再输出各 rN-1→rN 结论。"""
     if not intervals:
         return {"interval_count": 0, "intervals": [], "completed": 0, "failed": 0}
 
@@ -566,7 +626,7 @@ def run_monthly_subtag_analysis_for_task(
 
     total = len(intervals)
     if progress_cb:
-        progress_cb(0, total, "子 tag 采集 r1→rMax patch…")
+        progress_cb(0, total, "子 tag 采集 baseline→rMax patch…")
 
     (
         interval_shas,
@@ -579,8 +639,8 @@ def run_monthly_subtag_analysis_for_task(
     )
     unique_patch_count = len(patch_by_sha)
     print(
-        f"[MONTHLY] {task_id}: r1→rMax ({baseline_tag} → {rmax_tag}) "
-        f"共 {unique_patch_count} 笔 patch，{total} 个累计区间待统计",
+        f"[MONTHLY] {task_id}: baseline→rMax ({baseline_tag} → {rmax_tag}) "
+        f"共 {unique_patch_count} 笔 patch，{total} 个相邻区间待统计",
         flush=True,
     )
 
@@ -601,7 +661,7 @@ def run_monthly_subtag_analysis_for_task(
             "baseline_tag": baseline_tag,
             "rmax_tag": rmax_tag,
             "unique_patch_count": unique_patch_count,
-            "analysis_mode": "cumulative_rmax",
+            "analysis_mode": "adjacent",
         }
         update_task(task_id, monthly_subtag_results=json.dumps(doc, ensure_ascii=False))
         return doc
@@ -612,7 +672,7 @@ def run_monthly_subtag_analysis_for_task(
         if progress_cb:
             progress_cb(
                 0, total,
-                f"子 tag LLM 分析 r1→rMax {unique_patch_count} 笔…",
+                f"子 tag LLM 分析 baseline→rMax {unique_patch_count} 笔…",
             )
         all_patches, llm_info = _run_llm_analysis_on_patches(
             task_id,
@@ -639,7 +699,7 @@ def run_monthly_subtag_analysis_for_task(
         rmax_tag,
         progress_cb=progress_cb,
         llm_info=llm_info,
-        analysis_mode="cumulative_rmax",
+        analysis_mode="adjacent",
         max_workers=max_workers,
     )
 
@@ -649,7 +709,7 @@ def get_monthly_subtag_interval_patches(
     from_tag: str,
     to_tag: str,
 ) -> Dict[str, Any]:
-    """返回某累计子 tag 区间内的 patch 分析详情（优先读持久化 sha 列表）。"""
+    """返回某相邻子 tag 区间内的 patch 分析详情（优先读持久化 sha 列表）。"""
     from web_app.analyzer_service import _merge_patch_row
     from web_app.database import get_patches_by_shas, get_task
     from web_app.repo_config import get_local_repo_dir

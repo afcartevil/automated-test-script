@@ -1,6 +1,7 @@
 """Interactive SSH via cqris bastion: password + OTP → target IP → target login."""
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import socket
@@ -60,8 +61,10 @@ class RemoteCommandResult:
 def load_bastion_config() -> BastionSSHConfig:
     cfg = BastionSSHConfig()
     try:
-        root = __import__("pathlib").Path(__file__).resolve().parent.parent
-        sys.path.insert(0, str(root / "tools"))
+        from web_app.app_paths import setup_sys_path, tools_dir
+
+        setup_sys_path()
+        sys.path.insert(0, str(tools_dir()))
         from cli_config import load_settings
 
         settings, _ = load_settings()
@@ -79,6 +82,10 @@ def load_bastion_config() -> BastionSSHConfig:
                 cfg.prompt_patterns.update({str(k): str(v) for k, v in prompts.items()})
     except Exception:
         pass
+    # EasyAdapter 注入的目标 IP 覆盖 yaml 默认值
+    env_ip = os.environ.get("GKI_SSH_TARGET_IP", "").strip()
+    if env_ip:
+        cfg.target_ip = env_ip
     return cfg
 
 

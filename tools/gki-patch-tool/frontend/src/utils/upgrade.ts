@@ -171,6 +171,11 @@ export async function resolveRemoteSshPayload(
   let accounts: Record<string, string> | null = null
 
   if (!cfg.credentials_configured) {
+    if (cfg.managed_by_ea || cfg.readonly) {
+      throw new Error(
+        'EasyAdapter SSH 凭据不完整。请在 EasyAdapter「配置 → 一键配置」填写域账号、域密码、Linux 服务器 IP 与密码后重启',
+      )
+    }
     const save = window.confirm(
       '未检测到已保存的远程 SSH 账号。\n\n' +
         '点击「确定」填写账号（将保存到系统设置数据库）；\n' +
@@ -199,6 +204,12 @@ export async function ensureRemoteSshSaved(
 ): Promise<void> {
   const cfg = await fetchConfig()
   if (cfg.credentials_configured) return
+
+  if (cfg.managed_by_ea || cfg.readonly) {
+    throw new Error(
+      'EasyAdapter SSH 凭据不完整。请在 EasyAdapter「配置 → 一键配置」填写域账号、域密码、Linux 服务器 IP 与密码后重启',
+    )
+  }
 
   const save = window.confirm(
     '连接 cqris 前需要保存 SSH 账号。\n\n' +

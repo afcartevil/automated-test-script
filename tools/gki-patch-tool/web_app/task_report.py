@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-_TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
-if str(_TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(_TOOLS_DIR))
+from web_app.app_paths import data_dir, setup_sys_path, tools_dir
+
+setup_sys_path()
 
 from render_report_llm import render_patch
 
@@ -594,7 +594,7 @@ def render_monthly_analysis_html(task_id: str) -> str:
     return f"""
 <section class="report-section analysis-anchor" id="report-section-subtag">
   <div class="section-title">📅 目标月份子 tag 分析</div>
-  <p class="muted section-hint">基于 To Tag 所属月份内相邻子 tag 区间的增量 patch 风险排序</p>
+  <p class="muted section-hint">表格按相邻增量展示 diff（r1→r2、r2→r3…）；优选与合入结论按从月初 r1 累计到该 tag 评估</p>
   <p><strong>优选子 tag：</strong><span class="pill preferred">{recommended}</span></p>
   <p class="prose-inline">{reason}</p>
   <div class="table-wrap">

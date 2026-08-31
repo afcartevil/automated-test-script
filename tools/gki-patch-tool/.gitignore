@@ -1,4 +1,8 @@
 __pycache__/
+# PyInstaller build output
+dist/
+build/
+*.spec.bak
 outputs/
 .venv/
 .run/

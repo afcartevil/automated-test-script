@@ -342,7 +342,11 @@ export function buildAnalysisNavSections(
   sections.push({ id: 'analysis-section-summary', label: '分析总结' })
 
   const modulesMap = summary?.module_summaries?.modules || {}
-  if (Object.keys(modulesMap).length) {
+  const moduleCount =
+    Object.keys(modulesMap).length
+    || Number(summary?.analysis_coverage?.module_count || 0)
+    || (summary?.modules_available ? 1 : 0)
+  if (moduleCount) {
     sections.push({ id: 'analysis-section-modules', label: '模块分析' })
   }
 
@@ -352,6 +356,7 @@ export function buildAnalysisNavSections(
 
   const futureFixPoolCount = Number(summary?.future_fix_pool_count || 0)
   const futureFixCount =
+    (summary?.future_fix_patches || []).length ||
     filterFutureFixItemsInPatches(summary?.future_fix_patches || [], patches).length ||
     collectFutureFixPatches(patches).length
   if (futureFixCount || futureFixPoolCount) {
@@ -362,8 +367,9 @@ export function buildAnalysisNavSections(
     sections.push({ id: 'analysis-section-high-risk', label: '高风险' })
   }
 
-  if (patches.length) {
-    sections.push({ id: 'analysis-section-patches', label: 'Patch 列表' })
+  // Patch 详情改为独立页面；结果页提供轻量分页索引
+  if (summary?.total || patches.length) {
+    sections.push({ id: 'analysis-section-patch-index', label: 'Patch 索引' })
   }
 
   return sections

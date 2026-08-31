@@ -28,6 +28,9 @@ const ROOT_FILES = [
 
 const MERGE_DIRS = ['upload', 'media']
 
+/** 运行时业务数据（外部通知等），迁到 {consoleHome}/data/… */
+const RUNTIME_DATA_DIRS = ['gki-patch', 'modem-patch', 'modem-baseline']
+
 function getTargetHome() {
   if (process.env.TAHP_CONSOLE_HOME?.trim()) {
     return resolve(process.env.TAHP_CONSOLE_HOME.trim())
@@ -37,6 +40,10 @@ function getTargetHome() {
 
 function getSourceDirs() {
   const sources = []
+  const distDataDir = join(consoleRoot, 'dist', 'data')
+  if (existsSync(distDataDir)) {
+    sources.push({ label: 'dist 数据目录', dir: distDataDir })
+  }
   const devDataDir = join(consoleRoot, 'packages', 'server', 'data')
   if (existsSync(devDataDir)) {
     sources.push({ label: 'dev 数据目录', dir: devDataDir })
@@ -102,6 +109,8 @@ function main() {
   }
 
   mkdirSync(targetHome, { recursive: true })
+  const targetDataDir = join(targetHome, 'data')
+  mkdirSync(targetDataDir, { recursive: true })
   const copied = []
   let copiedCount = 0
 
@@ -124,6 +133,13 @@ function main() {
       const added = mergeDirIfMissing(join(source.dir, name), join(targetHome, name))
       if (added > 0) {
         copied.push(`${source.label}: ${name}/ (+${added})`)
+        copiedCount += added
+      }
+    }
+    for (const name of RUNTIME_DATA_DIRS) {
+      const added = mergeDirIfMissing(join(source.dir, name), join(targetDataDir, name))
+      if (added > 0) {
+        copied.push(`${source.label}: ${name}/ → data/ (+${added})`)
         copiedCount += added
       }
     }

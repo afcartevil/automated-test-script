@@ -317,20 +317,24 @@ export async function bootstrap() {
     logger.warn({ err }, '[bootstrap] adapt-layout line cache pull failed')
   }
 
-  try {
-    const gkiResult = await bootstrapGkiPatchServer()
-    if (gkiResult.ok && !gkiResult.skipped && gkiResult.status) {
-      console.log(`[bootstrap] gki-patch ready: ${gkiResult.status.appUrl}`)
-    } else if (!gkiResult.ok) {
-      console.warn(
-        `[bootstrap] gki-patch failed to start: ${gkiResult.error}\n` +
-        '  GKI Patch 页面可能不可用，可执行 npm run setup:gki-patch 后重启',
-      )
-    }
-  } catch (err) {
-    logger.warn({ err }, '[bootstrap] gki-patch bootstrap failed')
-    console.warn('[bootstrap] gki-patch bootstrap failed:', err instanceof Error ? err.message : err)
-  }
+  // GKI：后台拉起，不阻塞 Console 主服务就绪；进页时 ensure 会复用同一 startingPromise
+  void bootstrapGkiPatchServer()
+    .then((gkiResult) => {
+      if (gkiResult.ok && !gkiResult.skipped && gkiResult.status) {
+        console.log(`[bootstrap] gki-patch ready: ${gkiResult.status.appUrl}`)
+      } else if (gkiResult.skipped) {
+        console.log('[bootstrap] gki-patch auto-start skipped')
+      } else if (!gkiResult.ok) {
+        console.warn(
+          `[bootstrap] gki-patch failed to start: ${gkiResult.error}\n` +
+          '  进入 GKI 页面时会自动重试；也可执行 npm run setup:gki-patch 后重启',
+        )
+      }
+    })
+    .catch((err) => {
+      logger.warn({ err }, '[bootstrap] gki-patch bootstrap failed')
+      console.warn('[bootstrap] gki-patch bootstrap failed:', err instanceof Error ? err.message : err)
+    })
 }
 
 bootstrap().catch((error) => {

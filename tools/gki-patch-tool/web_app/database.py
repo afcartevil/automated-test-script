@@ -16,17 +16,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
-def _resolve_data_dir() -> Path:
-    override = os.environ.get("GKI_DATA_DIR", "").strip()
-    if override:
-        return Path(override) / "web_app" / "data"
-    return Path(__file__).parent / "data"
+from web_app.app_paths import data_dir as _data_dir, seed_db_path as _seed_db_path
 
 
-DATA_DIR = _resolve_data_dir()
+DATA_DIR = _data_dir()
 DB_PATH = DATA_DIR / "gki_patch.db"
 # Committed seed snapshot; runtime DB lives under DATA_DIR and is gitignored.
-SEED_DB_PATH = Path(__file__).resolve().parent / "seed" / "gki_patch.db.seed"
+SEED_DB_PATH = _seed_db_path()
 
 _db_write_lock = threading.RLock()
 _DB_CONNECT_TIMEOUT = 30.0
@@ -211,6 +207,29 @@ def init_db() -> None:
         pass
     conn.commit()
 
+    # ── Migration: Feishu checklist spreadsheet link ──
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN feishu_checklist_url TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN feishu_checklist_token TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN feishu_module_report_url TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN feishu_module_report_folder TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN feishu_task_folder_token TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+
     # ── Migration: check for legacy patches table ─────
     legacy_exists = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='patches_legacy'"
@@ -381,6 +400,10 @@ def init_db() -> None:
         conn.execute("ALTER TABLE upgrade_jobs ADD COLUMN local_build_mount TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_upgrade_jobs_created_at "
+        "ON upgrade_jobs(created_at DESC)"
+    )
     conn.commit()
 
     conn.close()
@@ -398,7 +421,8 @@ _SCHEMA_REQUIREMENTS: Dict[str, set[str]] = {
         "summary", "test_summary_llm", "llm_prompt_tokens", "llm_completion_tokens",
         "elapsed_seconds", "new_analyzed", "reused_count", "diff_file",
         "squash_summary", "module_summaries", "module_chunk_summaries",
-        "monthly_subtag_results",
+        "monthly_subtag_results", "feishu_checklist_url", "feishu_checklist_token",
+        "feishu_module_report_url", "feishu_module_report_folder", "feishu_task_folder_token",
     },
     "patches": {
         "sha", "title", "score", "recommendation", "key_risk", "data",
@@ -481,6 +505,37 @@ def update_task(task_id: str, **kwargs: Any) -> None:
     _run_db_write(_op)
 
 
+# Columns needed by task history / dashboard list (exclude multi-MB JSON blobs).
+_TASK_LIST_COLUMNS = (
+    "id",
+    "type",
+    "repo",
+    "from_tag",
+    "to_tag",
+    "sample_size",
+    "status",
+    "total",
+    "analyzed",
+    "failed",
+    "error_msg",
+    "created_at",
+    "completed_at",
+    "llm_prompt_tokens",
+    "llm_completion_tokens",
+    "elapsed_seconds",
+    "new_analyzed",
+    "reused_count",
+    "diff_file",
+    "future_fix_pool_count",
+    "future_fix_task_count",
+    "feishu_checklist_url",
+    "feishu_checklist_token",
+    "feishu_module_report_url",
+    "feishu_module_report_folder",
+    "feishu_task_folder_token",
+)
+
+
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     conn = _get_conn()
     row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
@@ -488,10 +543,44 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
-def list_tasks(limit: int = 50) -> List[Dict[str, Any]]:
+# Detail API needs analysis text, but not multi-MB module trees (loaded via /modules).
+_TASK_DETAIL_OMIT_COLUMNS = frozenset({
+    "module_chunk_summaries",
+    "module_summaries",
+})
+
+
+def get_task_for_api(task_id: str) -> Optional[Dict[str, Any]]:
+    """Load a task row for API responses, skipping resume-only heavy columns."""
     conn = _get_conn()
+    try:
+        cols = sorted(
+            c for c in _table_columns(conn, "tasks")
+            if c not in _TASK_DETAIL_OMIT_COLUMNS
+        )
+        if not cols:
+            return None
+        row = conn.execute(
+            f"SELECT {', '.join(cols)} FROM tasks WHERE id=?",
+            (task_id,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def list_tasks(limit: int = 50) -> List[Dict[str, Any]]:
+    """List recent tasks with lightweight metadata only.
+
+    Avoids ``SELECT *`` so multi-MB fields (``module_summaries``,
+    ``module_chunk_summaries``, ``monthly_subtag_results``, ``summary``, …)
+    are not serialized into the history API response.
+    """
+    conn = _get_conn()
+    cols = ", ".join(_TASK_LIST_COLUMNS)
     rows = conn.execute(
-        "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)
+        f"SELECT {cols} FROM tasks ORDER BY created_at DESC LIMIT ?",
+        (limit,),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -530,19 +619,33 @@ def get_patches_by_shas(shas: List[str]) -> List[Dict[str, Any]]:
 
 
 def get_patch(sha: str) -> Optional[Dict[str, Any]]:
-    """Get a patch by SHA (from standalone patches table)."""
+    """Get a patch by SHA (from standalone patches table).
+
+    Supports full SHA (exact match) and short SHA (unique prefix match).
+    Summary / UI links often pass 12-char prefixes.
+    """
+    text = (sha or "").strip()
+    if not text:
+        return None
     conn = _get_conn()
-    row = conn.execute("SELECT * FROM patches WHERE sha=?", (sha,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
+    try:
+        row = conn.execute("SELECT * FROM patches WHERE sha=?", (text,)).fetchone()
+        if not row and len(text) < 40:
+            matches = conn.execute(
+                "SELECT * FROM patches WHERE sha LIKE ? LIMIT 2",
+                (f"{text}%",),
+            ).fetchall()
+            # Only accept unambiguous prefix matches
+            if len(matches) == 1:
+                row = matches[0]
+        return dict(row) if row else None
+    finally:
+        conn.close()
 
 
 def patch_exists(sha: str) -> bool:
     """Check if a patch already exists in the database."""
-    conn = _get_conn()
-    row = conn.execute("SELECT 1 FROM patches WHERE sha=?", (sha,)).fetchone()
-    conn.close()
-    return row is not None
+    return get_patch(sha) is not None
 
 
 # ── Interval diff cache CRUD ───────────────────────────
@@ -636,21 +739,7 @@ def get_patch_by_sha(sha: str) -> Optional[Dict[str, Any]]:
     """Get a single patch by its SHA. Returns None if not found.
     Supports both full SHA (exact match) and short SHA (prefix match).
     """
-    if not sha:
-        return None
-    conn = _get_conn()
-    # Try exact match first
-    row = conn.execute(
-        "SELECT * FROM patches WHERE sha = ?",
-        (sha,),
-    ).fetchone()
-    # If not found and SHA is short, try prefix match
-    if not row and len(sha) < 40:
-        row = conn.execute(
-            "SELECT * FROM patches WHERE sha LIKE ?",
-            (f"{sha}%",),
-        ).fetchone()
-    conn.close()
+    row = get_patch(sha)
     if not row:
         return None
     d = dict(row)
@@ -796,6 +885,41 @@ def get_task_patches(task_id: str, dev_module: str = "") -> List[Dict[str, Any]]
     return [dict(r) for r in rows]
 
 
+def get_task_patches_summary_rows(
+    task_id: str,
+    dev_module: str = "",
+) -> List[Dict[str, Any]]:
+    """Lightweight patch rows for task result summary (no full ``data`` blob)."""
+    conn = _get_conn()
+    where = ["tp.task_id = ?"]
+    params: List[Any] = [task_id]
+    if dev_module:
+        where.append("p.dev_module = ?")
+        params.append(dev_module)
+    where_sql = " AND ".join(where)
+    rows = conn.execute(
+        f"""
+        SELECT p.sha, p.title, p.score, p.recommendation, p.key_risk, p.dev_module,
+               json_extract(p.data, '$.llm_analyzed') AS llm_analyzed,
+               json_extract(p.data, '$.blocked') AS blocked,
+               json_extract(p.data, '$.crash_risk') AS crash_risk,
+               json_extract(p.data, '$.crash_risk_reason') AS crash_risk_reason,
+               json_extract(p.data, '$.high_risk_paths') AS high_risk_paths,
+               json_extract(p.data, '$.fix_in_future') AS fix_in_future,
+               json_extract(p.data, '$.patch_tags') AS patch_tags,
+               json_extract(p.data, '$.test_suggestions') AS test_suggestions,
+               json_extract(p.data, '$.block_rules_hit') AS block_rules_hit
+        FROM patches p
+        JOIN task_patches tp ON tp.sha = p.sha
+        WHERE {where_sql}
+        ORDER BY p.score DESC
+        """,
+        params,
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def get_task_module_stats(task_id: str) -> List[Dict[str, Any]]:
     """Get per-module statistics for a task's patches."""
     conn = _get_conn()
@@ -814,6 +938,88 @@ def get_task_module_stats(task_id: str) -> List[Dict[str, Any]]:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def list_task_patches(
+    task_id: str,
+    *,
+    page: int = 1,
+    page_size: int = 50,
+    search: str = "",
+    dev_module: str = "",
+    llm: str = "",
+) -> Dict[str, Any]:
+    """Paginated lightweight index of patches linked to a task (no full analysis payload)."""
+    EMPTY_DEV_MODULE_FILTER = "__empty__"
+    conn = _get_conn()
+    where = ["tp.task_id = ?"]
+    params: list = [task_id]
+
+    if search.strip():
+        where.append("(p.sha LIKE ? OR p.title LIKE ? OR IFNULL(p.key_risk, '') LIKE ?)")
+        like = f"%{search.strip()}%"
+        params.extend([like, like, like])
+
+    if dev_module == EMPTY_DEV_MODULE_FILTER:
+        where.append("(p.dev_module = '' OR p.dev_module IS NULL)")
+    elif dev_module.strip():
+        where.append("p.dev_module = ?")
+        params.append(dev_module.strip())
+
+    llm_mode = (llm or "").strip().lower()
+    if llm_mode == "llm":
+        where.append(
+            "(json_extract(p.data, '$.llm_analyzed') IN (1, '1', 'true', 'True') "
+            "OR lower(CAST(json_extract(p.data, '$.llm_analyzed') AS TEXT)) = 'true')"
+        )
+    elif llm_mode == "script":
+        where.append(
+            "(json_extract(p.data, '$.llm_analyzed') IS NULL "
+            "OR json_extract(p.data, '$.llm_analyzed') IN (0, '0', 'false', 'False') "
+            "OR lower(CAST(json_extract(p.data, '$.llm_analyzed') AS TEXT)) = 'false')"
+        )
+
+    where_sql = " AND ".join(where)
+    total = conn.execute(
+        f"""SELECT COUNT(*) FROM patches p
+            JOIN task_patches tp ON tp.sha = p.sha
+            WHERE {where_sql}""",
+        params,
+    ).fetchone()[0]
+
+    page = max(1, int(page or 1))
+    page_size = max(1, min(200, int(page_size or 50)))
+    offset = (page - 1) * page_size
+    rows = conn.execute(
+        f"""SELECT p.sha, p.title, p.score, p.recommendation, p.key_risk, p.dev_module,
+                   json_extract(p.data, '$.llm_analyzed') AS llm_analyzed,
+                   json_extract(p.data, '$.blocked') AS blocked,
+                   json_extract(p.data, '$.crash_risk') AS crash_risk
+            FROM patches p
+            JOIN task_patches tp ON tp.sha = p.sha
+            WHERE {where_sql}
+            ORDER BY p.score DESC, p.sha ASC
+            LIMIT ? OFFSET ?""",
+        params + [page_size, offset],
+    ).fetchall()
+    conn.close()
+
+    items: List[Dict[str, Any]] = []
+    for r in rows:
+        item = dict(r)
+        raw_llm = item.get("llm_analyzed")
+        item["llm_analyzed"] = str(raw_llm).lower() in ("1", "true")
+        raw_blocked = item.get("blocked")
+        item["blocked"] = str(raw_blocked).lower() in ("1", "true")
+        item["crash_risk"] = str(item.get("crash_risk") or "").strip()
+        items.append(item)
+
+    return {
+        "items": items,
+        "total": int(total or 0),
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 # ── Backward-compat aliases ────────────────────────────
@@ -1103,6 +1309,68 @@ def delete_db_llm_config() -> None:
     conn.close()
 
 
+_FEISHU_KEYS = (
+    "feishu_app_id",
+    "feishu_app_secret",
+    "feishu_folder_token",
+    "feishu_open_base",
+    "feishu_owner",
+    "feishu_secure_label",
+    "feishu_webhook_url",
+    "feishu_webhook_secret",
+    "feishu_notify_users",
+)
+
+
+def get_db_feishu_config() -> Dict[str, str]:
+    conn = _get_conn()
+    rows = conn.execute(
+        f"SELECT key, value FROM config WHERE key IN ({','.join('?' * len(_FEISHU_KEYS))})",
+        _FEISHU_KEYS,
+    ).fetchall()
+    conn.close()
+    key_map = {
+        "feishu_app_id": "app_id",
+        "feishu_app_secret": "app_secret",
+        "feishu_folder_token": "folder_token",
+        "feishu_open_base": "open_base",
+        "feishu_owner": "owner",
+        "feishu_secure_label": "secure_label",
+        "feishu_webhook_url": "webhook_url",
+        "feishu_webhook_secret": "webhook_secret",
+        "feishu_notify_users": "notify_users",
+    }
+    result: Dict[str, str] = {}
+    for r in rows:
+        result[key_map[r["key"]]] = r["value"]
+    return result
+
+
+def save_db_feishu_config(
+    app_id: str,
+    app_secret: str,
+    folder_token: str = "",
+    open_base: str = "",
+    owner: str = "",
+    secure_label: str = "S2",
+    webhook_url: str = "",
+    webhook_secret: str = "",
+    notify_users: str = "",
+) -> None:
+    conn = _get_conn()
+    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('feishu_app_id', ?)", (app_id,))
+    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('feishu_app_secret', ?)", (app_secret,))
+    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('feishu_folder_token', ?)", (folder_token,))
+    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('feishu_open_base', ?)", (open_base,))
+    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('feishu_owner', ?)", (owner,))
+    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('feishu_secure_label', ?)", (secure_label or "S2",))
+    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('feishu_webhook_url', ?)", (webhook_url,))
+    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('feishu_webhook_secret', ?)", (webhook_secret,))
+    conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('feishu_notify_users', ?)", (notify_users,))
+    conn.commit()
+    conn.close()
+
+
 _REPO_DIR_KEY = "repo_dir"
 
 
@@ -1241,6 +1509,19 @@ def update_upgrade_job(job_id: str, **kwargs: Any) -> None:
     conn.close()
 
 
+# Columns for upgrade job history sidebar (exclude multi-MB ``options`` /
+# ``conflict_files`` / ``error_msg`` blobs; detail endpoints still return full rows).
+_UPGRADE_JOB_LIST_COLUMNS = (
+    "id",
+    "from_tag",
+    "to_tag",
+    "status",
+    "phase",
+    "build_exit_code",
+    "created_at",
+)
+
+
 def get_upgrade_job(job_id: str) -> Optional[Dict[str, Any]]:
     conn = _get_conn()
     row = conn.execute("SELECT * FROM upgrade_jobs WHERE id=?", (job_id,)).fetchone()
@@ -1258,23 +1539,19 @@ def get_upgrade_job(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def list_upgrade_jobs(limit: int = 50) -> List[Dict[str, Any]]:
+    """List recent upgrade jobs with lightweight metadata only.
+
+    Skips ``options`` / ``conflict_files`` JSON blobs (can be multi-MB); detail
+    endpoints still return the full row via ``get_upgrade_job``.
+    """
     conn = _get_conn()
+    cols = ", ".join(_UPGRADE_JOB_LIST_COLUMNS)
     rows = conn.execute(
-        "SELECT * FROM upgrade_jobs ORDER BY created_at DESC LIMIT ?",
+        f"SELECT {cols} FROM upgrade_jobs ORDER BY created_at DESC LIMIT ?",
         (limit,),
     ).fetchall()
     conn.close()
-    result: List[Dict[str, Any]] = []
-    for row in rows:
-        d = dict(row)
-        for field in ("conflict_files", "options"):
-            try:
-                raw = d.get(field) or ("[]" if field == "conflict_files" else "{}")
-                d[field] = json.loads(raw)
-            except (json.JSONDecodeError, TypeError):
-                d[field] = [] if field == "conflict_files" else {}
-        result.append(d)
-    return result
+    return [dict(r) for r in rows]
 
 
 def delete_upgrade_job(job_id: str) -> None:

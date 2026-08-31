@@ -6,14 +6,15 @@ from pathlib import Path
 from typing import Any, Dict
 
 from web_app.target_repo_config import normalize_linux_path
+from web_app.app_paths import setup_sys_path, tools_dir
 
-PROJECT_ROOT = Path(__file__).parent.parent
+setup_sys_path()
 DEFAULT_REMOTE_TEMP_DIR = "/tmp"
 
 
 def _yaml_remote_temp() -> str:
     try:
-        sys.path.insert(0, str(PROJECT_ROOT / "tools"))
+        sys.path.insert(0, str(tools_dir()))
         from cli_config import load_settings
 
         settings, _ = load_settings()

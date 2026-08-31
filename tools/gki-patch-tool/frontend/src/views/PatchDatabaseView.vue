@@ -141,7 +141,15 @@
                 <p class="mono">{{ previewSha }}</p>
               </div>
               <div class="toolbar">
-                <a class="btn btn-sm" :href="`/api/patches/${previewSha}/html`" target="_blank">新窗口</a>
+                <RouterLink
+                  class="btn btn-sm"
+                  :to="{ name: 'patch-detail', params: { sha: previewSha } }"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  打开详情页
+                </RouterLink>
+                <a class="btn btn-sm" :href="`/api/patches/${previewSha}/html`" target="_blank">原始 HTML</a>
                 <button type="button" class="btn btn-sm" @click="previewSha = ''">收起</button>
               </div>
             </div>
@@ -167,10 +175,12 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, RouterLink } from 'vue-router'
 import { api, shortId } from '../api'
 import { isEmbeddedMode } from '../composables/useEmbeddedNav'
 
 const isEmbedded = isEmbeddedMode()
+const route = useRoute()
 const PAGE_SIZE = 50
 const MODULE_ALL = '__all__'
 const MODULE_EMPTY = '__empty__'
@@ -328,6 +338,10 @@ watch(previewSha, (sha) => {
 })
 
 onMounted(async () => {
+  const moduleQuery = String(route.query.module || '').trim()
+  if (moduleQuery) {
+    moduleName.value = moduleFilterValue(moduleQuery)
+  }
   await loadModules()
   await loadPatches(1)
 })

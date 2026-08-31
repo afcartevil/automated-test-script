@@ -8,6 +8,7 @@
         </template>
         · LLM {{ llmCount }} 笔 · 平均分 <strong>{{ averageScore }}</strong>
       </span>
+      <span class="muted patch-list-hint">点击条目打开独立详情页（按需从数据库生成）</span>
     </div>
 
     <div v-if="moduleStats.length" class="module-stats-bar">
@@ -64,11 +65,10 @@
       <div
         v-for="patch in filteredPatches"
         :key="patch.sha"
-        class="patch-item"
-        :class="{ open: expandedSha === patch.sha }"
+        class="patch-item patch-item-link"
         :data-patch-sha="patch.sha"
       >
-        <button type="button" class="patch-header" @click="togglePatch(patch.sha)">
+        <button type="button" class="patch-header" @click="openPatchDetail(patch.sha)">
           <div class="patch-row">
             <span class="pill" :class="patch.llm_analyzed ? 'llm-badge' : 'script-badge'">
               {{ patch.llm_analyzed ? 'LLM' : '脚本' }}
@@ -100,24 +100,15 @@
             <span v-if="patch.blocked" class="blocked-tag">⛔ 阻断</span>
           </div>
         </button>
-        <div v-if="expandedSha === patch.sha" class="patch-detail open">
-          <div v-if="detailLoading[patch.sha]" class="patch-detail-loading">加载中…</div>
-          <div v-else-if="detailErrors[patch.sha]" class="message error">{{ detailErrors[patch.sha] }}</div>
-          <div
-            v-else
-            class="patch-detail-html"
-            v-html="detailHtml[patch.sha] || ''"
-            @click="onDetailHtmlClick"
-          />
-        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue'
-import { api, shortId } from '../../api'
+import { computed, nextTick, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { shortId } from '../../api'
 import { scrollPanelToSection } from '../../composables/useSectionScroll'
 import {
   buildModuleStats,
@@ -142,15 +133,12 @@ const emit = defineEmits<{
   'update:activeModule': [value: string]
 }>()
 
+const router = useRouter()
 const llmFilter = ref('')
 const moduleFilter = ref('')
 const futureFixFilter = ref(false)
 const searchQuery = ref('')
-const expandedSha = ref('')
 const patchListScrollRef = ref<HTMLElement | null>(null)
-const detailHtml = reactive<Record<string, string>>({})
-const detailLoading = reactive<Record<string, boolean>>({})
-const detailErrors = reactive<Record<string, string>>({})
 
 watch(
   () => props.activeModule,
@@ -209,22 +197,11 @@ function toggleFutureFixFilter() {
   futureFixFilter.value = !futureFixFilter.value
 }
 
-async function togglePatch(sha: string) {
-  if (expandedSha.value === sha) {
-    expandedSha.value = ''
-    return
-  }
-  expandedSha.value = sha
-  if (detailHtml[sha]) return
-  detailLoading[sha] = true
-  detailErrors[sha] = ''
-  try {
-    detailHtml[sha] = await api.get<string>(`/api/patches/${sha}/html`)
-  } catch (err: any) {
-    detailErrors[sha] = err.message || String(err)
-  } finally {
-    detailLoading[sha] = false
-  }
+function openPatchDetail(sha: string) {
+  const target = resolvePatchSha(props.patches, sha) || String(sha || '').trim()
+  if (!target) return
+  const href = router.resolve({ name: 'patch-detail', params: { sha: target } }).href
+  window.open(href, '_blank', 'noopener,noreferrer')
 }
 
 async function scrollToPatchRow(targetSha: string, scrollPanel?: HTMLElement | null) {
@@ -244,50 +221,14 @@ async function scrollToPatchRow(targetSha: string, scrollPanel?: HTMLElement | n
   row?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
-function extractDetailJumpSha(el: HTMLElement) {
-  const dataSha = el.getAttribute('data-patch-jump')
-  if (dataSha) return dataSha.trim()
-
-  if (el.tagName === 'A') {
-    const href = el.getAttribute('href') || ''
-    const match = href.match(/\/\+\/([0-9a-f]+)$/i)
-    if (match) return match[1]
-  }
-
-  const text = (el.textContent || '').trim()
-  const hex = text.replace(/[^0-9a-f]/gi, '')
-  return hex.length >= 7 ? hex : ''
-}
-
-function onDetailHtmlClick(event: MouseEvent) {
-  const target = (event.target as HTMLElement | null)?.closest(
-    '.future-fix-sha, .future-fix-cp, [data-patch-jump]',
-  ) as HTMLElement | null
-  if (!target) return
-
-  const sha = extractDetailJumpSha(target)
-  const resolved = resolvePatchSha(props.patches, sha)
-  if (!resolved) return
-
-  event.preventDefault()
-  event.stopPropagation()
-  void openPatch(resolved)
-}
-
 async function openPatch(sha: string, scrollPanel?: HTMLElement | null) {
-  const target = resolvePatchSha(props.patches, sha)
+  const target = resolvePatchSha(props.patches, sha) || String(sha || '').trim()
   if (!target) {
     searchQuery.value = String(sha || '').slice(0, 12)
     return false
   }
-
-  llmFilter.value = ''
-  moduleFilter.value = ''
-  futureFixFilter.value = false
-  emit('update:activeModule', '')
-  searchQuery.value = ''
-  await togglePatch(target)
   await scrollToPatchRow(target, scrollPanel)
+  openPatchDetail(target)
   return true
 }
 

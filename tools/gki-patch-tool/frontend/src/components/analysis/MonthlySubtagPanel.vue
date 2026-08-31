@@ -3,7 +3,7 @@
     <div class="section-title">
       <div>
         <h2>目标月份子 tag 分析</h2>
-        <p>自 r1 累计至各子 tag（r1→r2、r1→r3…），点击区间查看全部 patch 分析</p>
+        <p>按相邻子 tag 展示 diff（r1→r2、r2→r3…）；每个子 tag 的合入结论按从月初 r1 累计到该 tag 评估（如 r3 = r1+r2+r3）</p>
       </div>
       <span v-if="recommendation.recommended_tag" class="pill success">
         优选 {{ recommendation.recommended_tag }}

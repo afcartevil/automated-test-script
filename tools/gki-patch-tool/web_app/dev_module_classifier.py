@@ -1,10 +1,11 @@
-"""开发模块分类 — 严格按 dev_modules.txt 路径规则划分。
+"""开发模块分类 — dev_modules.txt 路径规则 + LLM 语义判断。
 
-分类优先级（与 classification_rules.md 一致）：
-1. 变更文件路径 + 最长路径模式匹配（按 dev_modules.txt）
-2. 非代码类 patch → 「其他」
-3. LLM 建议（必须在合法模块名列表中，且非「其他」）
-4. 代码类仍无法匹配 → 「驱动框架」（内核通用兜底，禁止代码 patch 落「其他」）
+分类优先级：
+1. 非代码类 patch → 「其他」
+2. 已 LLM 分析的 patch → 采用 LLM 返回的 dev_module（结合路径与 diff 语义）
+3. 变更文件路径 + 最长路径模式匹配（dev_modules.txt，供未 LLM 分析或规则免 LLM 时使用）
+4. LLM 建议兜底（合法模块名）
+5. 代码类仍无法匹配 → 「驱动框架」
 """
 from __future__ import annotations
 
@@ -12,8 +13,9 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-PROJECT_ROOT = Path(__file__).parent.parent
-_DEV_MODULES_FILE = PROJECT_ROOT / "config" / "dev_modules.txt"
+from web_app.app_paths import dev_modules_path
+
+_DEV_MODULES_FILE = dev_modules_path()
 
 _OTHER_ALLOWED_PATTERNS = [
     "tools/", "scripts/", "makefile", "documentation/",
@@ -156,6 +158,57 @@ def _is_non_code_patch(files: List[str], title: str, combined_lower: str) -> boo
     return False
 
 
+def _extract_diff_text(patch_data: Dict[str, Any]) -> str:
+    diff_raw = patch_data.get("diff_preview", {})
+    if isinstance(diff_raw, dict):
+        return diff_raw.get("text", "") or ""
+    if isinstance(diff_raw, str):
+        return diff_raw
+    return ""
+
+
+def _collect_diff_paths(diff_text: str, limit: int = 200) -> List[str]:
+    paths: List[str] = []
+    for line in diff_text.splitlines()[:limit]:
+        if line.startswith("+++ b/") or line.startswith("--- a/"):
+            p = line.split("\t", 1)[0][6:].strip()
+            if p and p != "/dev/null":
+                paths.append(p)
+    return paths
+
+
+def _classify_by_path_votes(
+    files: List[str],
+    diff_text: str,
+    rules_by_length: List[Tuple[str, str]],
+) -> Optional[str]:
+    """按文件路径最长模式匹配，多文件多数决。"""
+    candidates: List[str] = list(files)
+    if not candidates:
+        candidates = _collect_diff_paths(diff_text)
+    if not candidates:
+        return None
+
+    votes: Dict[str, int] = defaultdict(int)
+    weight: Dict[str, int] = defaultdict(int)
+    for fp in candidates:
+        mod = _match_file_to_module(fp, rules_by_length)
+        if mod:
+            votes[mod] += 1
+            weight[mod] += max(len(fp), 1)
+    if not votes:
+        return None
+    return max(votes.keys(), key=lambda m: (votes[m], weight[m]))
+
+
+def path_hint_for_patch(patch_data: Dict[str, Any]) -> str:
+    """路径规则给出的参考模块（供 LLM prompt 参考，不作最终裁决）。"""
+    cfg = load_dev_modules()
+    files: List[str] = list(patch_data.get("files") or [])
+    diff_text = _extract_diff_text(patch_data)
+    return _classify_by_path_votes(files, diff_text, cfg["rules_by_length"]) or ""
+
+
 def classify_patch_dev_module(
     patch_data: Dict[str, Any],
     llm_suggestion: str = "",
@@ -167,55 +220,33 @@ def classify_patch_dev_module(
 
     files: List[str] = list(patch_data.get("files") or [])
     title = (patch_data.get("title") or "").strip()
-
-    # ── 1. 按文件路径最长模式匹配，多文件多数决 ──
-    if files:
-        votes: Dict[str, int] = defaultdict(int)
-        weight: Dict[str, int] = defaultdict(int)
-        for fp in files:
-            mod = _match_file_to_module(fp, rules_by_length)
-            if mod:
-                votes[mod] += 1
-                weight[mod] += max(len(fp), 1)
-        if votes:
-            return max(votes.keys(), key=lambda m: (votes[m], weight[m]))
-
-    # ── 2. 无 files 时回退 diff 路径行（仍用最长匹配） ──
-    diff_text = ""
-    diff_raw = patch_data.get("diff_preview", {})
-    if isinstance(diff_raw, dict):
-        diff_text = diff_raw.get("text", "") or ""
-    elif isinstance(diff_raw, str):
-        diff_text = diff_raw
-    diff_paths: List[str] = []
-    for line in diff_text.splitlines()[:200]:
-        if line.startswith("+++ b/") or line.startswith("--- a/"):
-            p = line.split("\t", 1)[0][6:].strip()
-            if p and p != "/dev/null":
-                diff_paths.append(p)
-    if diff_paths:
-        votes = defaultdict(int)
-        weight = defaultdict(int)
-        for fp in diff_paths:
-            mod = _match_file_to_module(fp, rules_by_length)
-            if mod:
-                votes[mod] += 1
-                weight[mod] += len(fp)
-        if votes:
-            return max(votes.keys(), key=lambda m: (votes[m], weight[m]))
-
+    diff_text = _extract_diff_text(patch_data)
     combined_lower = (" ".join(files) + " " + diff_text[:3000]).lower()
 
-    # ── 3. 非代码类 → 其他 ──
+    # ── 1. 非代码类 → 其他 ──
     if _is_non_code_patch(files, title, combined_lower):
         return "其他"
 
-    # ── 4. LLM 建议（合法模块名） ──
-    llm_mod = normalize_dev_module_name(llm_suggestion)
+    llm_mod = normalize_dev_module_name(
+        llm_suggestion or str(patch_data.get("dev_module") or "")
+    )
+    path_mod = _classify_by_path_votes(files, diff_text, rules_by_length)
+    llm_analyzed = bool(patch_data.get("llm_analyzed"))
+    rule_based = bool(patch_data.get("rule_based"))
+
+    # ── 2. 已 LLM 分析：以模型语义判断为准 ──
+    if llm_analyzed and not rule_based and llm_mod and llm_mod != "其他":
+        return llm_mod
+
+    # ── 3. 路径规则（未 LLM 分析 / 规则免 LLM / LLM 未给出合法模块） ──
+    if path_mod:
+        return path_mod
+
+    # ── 4. LLM 建议兜底 ──
     if llm_mod and llm_mod != "其他":
         return llm_mod
 
-    # ── 5. 代码类兜底：驱动框架（禁止代码 patch 使用「其他」） ──
+    # ── 5. 代码类兜底：驱动框架 ──
     if "驱动框架" in official:
         return "驱动框架"
     return "其他"

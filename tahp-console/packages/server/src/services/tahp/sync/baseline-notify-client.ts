@@ -9,6 +9,7 @@ import { io, type Socket } from 'socket.io-client'
 import { config } from '../../../config'
 import { logger } from '../../logger'
 import { ingestModemBaselineNotice } from '../modem-baseline-notices'
+import { ingestGkiUpgradeNotice } from '../gki-upgrade-notices'
 import { getLocalActor, isCentralConfigured, isLocal } from '../runtime-mode'
 import { readJiraUsername } from '../jira-user-config'
 import { readCentralUserSession } from '../central-user-session'
@@ -86,8 +87,15 @@ function resolveOwner(): string {
 }
 
 function isGkiNotice(notice: CentralBaselineNotice): boolean {
+  const module = String(notice.module || '').toLowerCase()
+  if (module === 'gki' || module === 'gki-patch') return true
   const kind = `${notice.payload?.patch_kind || ''} ${notice.payload?.notice_type || ''}`.toLowerCase()
   return kind.includes('gki-patch') || kind.trim() === 'gki'
+}
+
+function asNoticeTag(value: unknown): string | undefined {
+  const s = String(value ?? '').trim()
+  return s || undefined
 }
 
 function loadLocalCursor(): LocalDeliveryCursor | undefined {
@@ -129,12 +137,39 @@ function handleNotice(notice: CentralBaselineNotice, sock: Socket): void {
   }
   try {
     if (isGkiNotice(notice)) {
+      const payload = notice.payload || {}
+      const { created } = ingestGkiUpgradeNotice(
+        {
+          ...payload,
+          source: notice.source,
+          sourceId: notice.sourceId,
+          title: notice.title,
+          text: notice.text,
+          from_tag: asNoticeTag(payload.from_tag ?? payload.fromTag),
+          to_tag: asNoticeTag(payload.to_tag ?? payload.toTag),
+          task_kind: asNoticeTag(payload.task_kind ?? payload.taskKind),
+          notice_type: asNoticeTag(payload.notice_type ?? payload.noticeType),
+          intent: asNoticeTag(payload.intent),
+        },
+        {
+          preferNoticeId: notice.noticeId,
+          preferReceivedAt: notice.receivedAt,
+        },
+      )
       saveLocalCursor(notice)
       sock.emit('baseline.ack', {
         noticeId: notice.noticeId,
         receivedAt: notice.receivedAt,
       })
-      logger.info({ noticeId: notice.noticeId }, '[baseline-notify] skip modem inbox for gki-patch')
+      logger.info(
+        {
+          noticeId: notice.noticeId,
+          source: notice.source,
+          sourceId: notice.sourceId || '-',
+          created,
+        },
+        '[baseline-notify] gki notice ingested',
+      )
       return
     }
     const { created } = ingestModemBaselineNotice(

@@ -1,15 +1,25 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchGkiPatchStatus, startGkiPatchServer, type GkiPatchStatus } from '@/api/tahp/gki-patch'
-import { GKI_PATCH_PATH_TO_ROUTE, isGkiPatchNavMessage } from '@/utils/gki-patch-navigation'
+import {
+  buildGkiFrameSrc,
+  GKI_PATCH_PATH_TO_ROUTE,
+  GKI_PATCH_ROUTE_TO_PATH,
+  isGkiPatchNavMessage,
+} from '@/utils/gki-patch-navigation'
 
 const route = useRoute()
 const router = useRouter()
 
 const loading = ref(true)
+const loadingHint = ref('正在检查 GKI 服务…')
 const error = ref('')
 const status = ref<GkiPatchStatus | null>(null)
+const frameRef = ref<HTMLIFrameElement | null>(null)
+const frameReady = ref(false)
+/** 仅首次挂载时写入 iframe.src，之后靠 postMessage 切页，避免整 SPA 重载 */
+const initialFrameSrc = ref('')
 
 const workbenchItem = { name: 'tahp.gki-patch.dashboard', label: '工作台', icon: 'dashboard' }
 
@@ -22,6 +32,13 @@ const navItems = [
 ]
 
 const activeName = computed(() => route.name?.toString() || 'tahp.gki-patch.dashboard')
+const isNativeWorkbench = computed(() => Boolean(route.meta?.gkiNativeWorkbench))
+
+const gkiPath = computed(() => {
+  const fromMeta = route.meta?.gkiPath
+  if (typeof fromMeta === 'string' && fromMeta) return fromMeta
+  return GKI_PATCH_ROUTE_TO_PATH[activeName.value] || '/dashboard'
+})
 
 const SIDEBAR_COLLAPSED_KEY = 'ea_gki_patch_sidebar_collapsed'
 const sidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1')
@@ -31,23 +48,87 @@ function toggleSidebar() {
   localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed.value ? '1' : '0')
 }
 
+function routeQueryAsRecord(): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(route.query)) {
+    const raw = Array.isArray(value) ? value[0] : value
+    if (raw == null || raw === '') continue
+    out[key] = String(raw)
+  }
+  return out
+}
+
+function postNavigateToFrame() {
+  const win = frameRef.value?.contentWindow
+  if (!win || !frameReady.value || isNativeWorkbench.value) return
+  win.postMessage(
+    {
+      type: 'ea-gki-patch-navigate',
+      path: gkiPath.value,
+      query: { ...routeQueryAsRecord(), embedded: '1' },
+    },
+    '*',
+  )
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function waitForRunningStatus(maxAttempts = 8): Promise<GkiPatchStatus> {
+  let last = await fetchGkiPatchStatus()
+  for (let i = 0; i < maxAttempts; i += 1) {
+    if (last.running) return last
+    if (!last.starting && i > 0) break
+    loadingHint.value = '正在启动 GKI 服务，请稍候…'
+    await sleep(800)
+    last = await fetchGkiPatchStatus()
+  }
+  return last
+}
+
 async function ensureReady() {
   loading.value = true
+  loadingHint.value = '正在检查 GKI 服务…'
   error.value = ''
+  frameReady.value = false
   try {
     let next = await fetchGkiPatchStatus()
-    if (!next.running) {
-      next = await startGkiPatchServer()
-    }
     if (!next.frontendBuilt) {
       error.value = 'GKI Patch 前端尚未构建，请执行 npm run setup:gki-patch 后重启 EasyAdapter'
       return
     }
+
     if (!next.running) {
-      error.value = 'GKI Patch 服务未就绪，请重启 EasyAdapter 后重试'
-      return
+      loadingHint.value = next.starting
+        ? 'GKI 服务正在后台启动…'
+        : '正在拉起 GKI 服务…'
+      // 最多尝试 3 次 start；与 bootstrap 的 startingPromise 合并，不会重复 spawn
+      let lastErr = ''
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          loadingHint.value = `正在拉起 GKI 服务（${attempt}/3）…`
+          next = await startGkiPatchServer()
+          if (next.running) break
+          next = await waitForRunningStatus()
+          if (next.running) break
+        } catch (err) {
+          lastErr = err instanceof Error ? err.message : String(err)
+          loadingHint.value = `启动未完成，正在重试（${attempt}/3）…`
+          await sleep(1000 * attempt)
+        }
+      }
+      if (!next.running) {
+        error.value = lastErr
+          || 'GKI 服务暂时未就绪。请稍等数秒后点重试；若持续失败请查看启动日志或执行 npm run setup:gki-patch'
+        return
+      }
     }
+
     status.value = next
+    // 工作台为 Console 原生页；iframe 仍预加载到 upgrade，便于切页即时可用
+    const bootPath = isNativeWorkbench.value ? '/upgrade' : gkiPath.value
+    initialFrameSrc.value = buildGkiFrameSrc(next, bootPath, route.query as Record<string, unknown>)
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -67,6 +148,19 @@ function handleGkiPatchMessage(event: MessageEvent) {
   router.push({ name: routeName, query })
 }
 
+function onFrameLoad() {
+  frameReady.value = true
+  postNavigateToFrame()
+}
+
+watch(
+  () => [route.name, route.fullPath] as const,
+  () => {
+    if (!status.value || !frameReady.value) return
+    postNavigateToFrame()
+  },
+)
+
 onMounted(() => {
   void ensureReady()
   window.addEventListener('message', handleGkiPatchMessage)
@@ -80,7 +174,8 @@ onUnmounted(() => {
 <template>
   <div class="gki-shell" :class="{ collapsed: sidebarCollapsed && !loading && !error }">
     <div v-if="loading" class="gki-state">
-      <p>正在加载 GKI Patch Tool…</p>
+      <p>{{ loadingHint }}</p>
+      <p class="gki-state-sub">首次启动可能需要几十秒，请稍候</p>
     </div>
 
     <div v-else-if="error" class="gki-state gki-state-error">
@@ -142,7 +237,19 @@ onUnmounted(() => {
 
       <section class="gki-main">
         <div class="gki-main-body">
-          <router-view v-if="status" :status="status" />
+          <div v-if="isNativeWorkbench" class="gki-workbench-host">
+            <router-view />
+          </div>
+          <iframe
+            v-show="!isNativeWorkbench"
+            v-if="initialFrameSrc"
+            ref="frameRef"
+            class="gki-frame"
+            :src="initialFrameSrc"
+            title="GKI Patch Tool"
+            @load="onFrameLoad"
+          />
+          <router-view v-if="!isNativeWorkbench" />
         </div>
       </section>
     </template>
@@ -166,9 +273,15 @@ onUnmounted(() => {
   grid-column: 1 / -1;
   display: grid;
   place-items: center;
-  gap: 16px;
+  gap: 8px;
   color: var(--muted);
   font-size: 15px;
+}
+
+.gki-state-sub {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.85;
 }
 
 .gki-state-error { color: var(--error); }
@@ -342,6 +455,23 @@ onUnmounted(() => {
 .gki-main-body {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.gki-workbench-host {
+  flex: 1;
+  min-height: 0;
+}
+
+.gki-frame {
+  width: 100%;
+  height: calc(100vh - 150px);
+  min-height: 560px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  flex: 1;
 }
 
 @media (max-width: 900px) {

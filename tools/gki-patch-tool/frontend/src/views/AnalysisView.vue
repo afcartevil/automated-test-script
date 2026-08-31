@@ -9,6 +9,24 @@
       <div class="toolbar">
         <a v-if="selectedTask" class="btn" :href="`/api/tasks/${selectedTask.id}/report?inline=1`" target="_blank">查看报告</a>
         <a v-if="selectedTask" class="btn" :href="`/api/tasks/${selectedTask.id}/report`" target="_blank">下载报告</a>
+        <button
+          v-if="selectedTask"
+          class="btn"
+          :disabled="exportingFeishu"
+          @click="exportFeishuChecklist"
+        >{{ exportingFeishu ? '导出中...' : '导出到飞书' }}</button>
+        <a
+          v-if="selectedTask?.feishu_checklist_url"
+          class="btn"
+          :href="selectedTask.feishu_checklist_url"
+          target="_blank"
+        >打开飞书表格</a>
+        <a
+          v-if="selectedTask?.feishu_module_report_folder || selectedTask?.feishu_module_report_url"
+          class="btn"
+          :href="selectedTask.feishu_module_report_folder || selectedTask.feishu_module_report_url"
+          target="_blank"
+        >打开模块代码云盘</a>
         <a v-if="selectedTask" class="btn" :href="`/api/tasks/${selectedTask.id}/diff`" target="_blank">下载 Diff</a>
         <RouterLink
           v-if="canStartUpgrade"
@@ -48,11 +66,23 @@
           <template v-else>
             <div class="field">
               <label>From Tag</label>
-              <input v-model="form.from_tag" class="input mono" placeholder="android12-5.10-..." />
+              <TagSelect
+                v-model="form.from_tag"
+                :options="repoTags"
+                :loading="tagsLoading"
+                :empty-hint="tagsHint"
+                placeholder="输入检索，如 android15 2026-01 r11"
+              />
             </div>
             <div class="field">
               <label>To Tag</label>
-              <input v-model="form.to_tag" class="input mono" placeholder="android12-5.10-..." />
+              <TagSelect
+                v-model="form.to_tag"
+                :options="repoTags"
+                :loading="tagsLoading"
+                :empty-hint="tagsHint"
+                placeholder="输入检索，如 android15 2026-01 r36"
+              />
             </div>
             <div class="field">
               <label>采样数量</label>
@@ -168,7 +198,7 @@
       <div v-if="selectedTask.created_at || selectedTask.llm_analyzed_count || selectedTaskDurationText" class="task-meta-bar muted">
         <span v-if="selectedTask.created_at">{{ formatDate(selectedTask.created_at) }}</span>
         <span v-if="selectedTaskDurationText">⏱ {{ selectedTaskDurationText }}</span>
-        <span v-if="showResults">{{ patches.length }} 笔 patch</span>
+        <span v-if="showResults">{{ patchCount }} 笔 patch</span>
         <span v-else-if="selectedTask.total">共 {{ selectedTask.total }} 笔 · 分析中</span>
         <span v-if="selectedTask.llm_analyzed_count">LLM {{ selectedTask.llm_analyzed_count }} 笔</span>
         <span v-if="tokenCount">🪙 {{ tokenCount.toLocaleString() }} tokens</span>
@@ -198,7 +228,7 @@
         </div>
         <div class="metric card">
           <div class="metric-label">Patch</div>
-          <div class="metric-value">{{ patches.length }}</div>
+          <div class="metric-value">{{ patchCount }}</div>
         </div>
       </div>
 
@@ -218,23 +248,20 @@
         />
         <AnalysisSummaryPanel
           v-if="taskSummary"
+          :task-id="selectedTask?.id || ''"
           :summary="taskSummary"
-          :patches="patches"
-          @filter-module="activeModule = $event"
+          @filter-module="filterIndexModule"
           @jump-to-patch="jumpToPatch"
         />
-        <PatchListPanel
-          v-if="patches.length"
-          ref="patchListRef"
-          v-model:active-module="activeModule"
-          :patches="patches"
-          :future-fix-pool-count="Number(taskSummary?.future_fix_pool_count || 0)"
+        <TaskPatchIndexPanel
+          v-if="selectedTask"
+          ref="patchIndexRef"
+          :task-id="selectedTask.id"
+          :initial-module="indexModule"
         />
-        <div v-else class="empty-state-inline">暂无 patch 结果</div>
       </div>
-
       <div v-else-if="isTaskRunning" class="empty-state-inline">
-        ⏳ 分析进行中，完成后将显示 patch 列表与总结…
+        ⏳ 分析进行中，完成后将显示总结与可点击的 patch 入口…
       </div>
 
       <div v-else-if="displayStatus === 'failed'" class="message error">
@@ -265,12 +292,13 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute, RouterLink } from 'vue-router'
+import { useRoute, useRouter, RouterLink } from 'vue-router'
+import TagSelect from '../components/TagSelect.vue'
 import AnalysisProgressPanel from '../components/analysis/AnalysisProgressPanel.vue'
 import AnalysisSectionNav from '../components/analysis/AnalysisSectionNav.vue'
 import AnalysisSummaryPanel from '../components/analysis/AnalysisSummaryPanel.vue'
 import MonthlySubtagPanel from '../components/analysis/MonthlySubtagPanel.vue'
-import PatchListPanel from '../components/analysis/PatchListPanel.vue'
+import TaskPatchIndexPanel from '../components/analysis/TaskPatchIndexPanel.vue'
 import ScrollToTopButton from '../components/ScrollToTopButton.vue'
 import { usePanelScrollReturn } from '../composables/usePanelScrollReturn'
 import { scrollPanelToSection, useAnalysisSectionSpy } from '../composables/useSectionScroll'
@@ -280,6 +308,7 @@ import { isEmbeddedMode } from '../composables/useEmbeddedNav'
 
 const isEmbedded = isEmbeddedMode()
 const route = useRoute()
+const router = useRouter()
 const mode = ref<'single' | 'range'>('range')
 const submitting = ref(false)
 const tasks = ref<any[]>([])
@@ -287,20 +316,28 @@ const selectedTaskIds = ref<Set<string>>(new Set())
 const selectedTaskId = ref('')
 const loadingTaskId = ref('')
 const selectedTask = ref<any | null>(null)
-const patches = ref<any[]>([])
 const progress = ref<any>({})
-const activeModule = ref('')
-const patchListRef = ref<InstanceType<typeof PatchListPanel> | null>(null)
 const detailPanelRef = ref<HTMLElement | null>(null)
-const patchListScrollEl = ref<HTMLElement | null>(null)
 const activeNavSection = ref('')
-const panelScroll = usePanelScrollReturn(detailPanelRef, patchListScrollEl)
+const indexModule = ref('')
+const patchIndexRef = ref<InstanceType<typeof TaskPatchIndexPanel> | null>(null)
+const panelScroll = usePanelScrollReturn(detailPanelRef, ref(null))
 
 watch(selectedTaskId, () => {
   panelScroll.returnSnapshot.value = null
   activeNavSection.value = ''
 })
+
+watch(mode, (value) => {
+  if (value === 'range') {
+    void loadRepoTags()
+  }
+})
 const actionPending = ref(false)
+const exportingFeishu = ref(false)
+const repoTags = ref<string[]>([])
+const tagsLoading = ref(false)
+const tagsHint = ref('未读取到 tag，请先在设置中配置本地 kernel 仓')
 const message = ref('')
 const error = ref('')
 const nowMs = ref(Date.now())
@@ -374,22 +411,46 @@ const allTasksSelected = computed(() => {
   return tasks.value.every((task) => selectedTaskIds.value.has(task.id))
 })
 
+async function loadRepoTags(force = false) {
+  if (tagsLoading.value) return
+  if (!force && repoTags.value.length) return
+  tagsLoading.value = true
+  try {
+    const data = await api.get<any>(`/api/repo/tags${force ? '?refresh=1' : ''}`)
+    repoTags.value = data.tags || []
+    if (!data.configured) {
+      tagsHint.value = '未配置本地 kernel 仓，请先在设置中填写路径；仍可手动输入 tag'
+    } else if (!repoTags.value.length) {
+      tagsHint.value = '本地仓库暂无 tag，请确认已 fetch tags；仍可手动输入'
+    } else {
+      tagsHint.value = `已加载 ${data.total ?? repoTags.value.length} 个 tag`
+    }
+  } catch (err: any) {
+    repoTags.value = []
+    tagsHint.value = err.message || '读取仓库 tag 失败，仍可手动输入'
+  } finally {
+    tagsLoading.value = false
+  }
+}
+
 async function refreshTaskDetail(taskId: string) {
   const task = await api.get<any>(`/api/tasks/${taskId}`)
   selectedTask.value = task
   progress.value = task.progress && Object.keys(task.progress).length ? task.progress : {}
-  const status = String(task.status || progress.value.status || '').toLowerCase()
-  if (TERMINAL_STATUSES.has(status)) {
-    patches.value = task.patches || []
-  } else {
-    patches.value = []
-  }
-  activeModule.value = ''
 }
 
 function jumpToPatch(sha: string) {
-  panelScroll.saveBeforeNavigate()
-  void patchListRef.value?.openPatch(sha, detailPanelRef.value)
+  const target = String(sha || '').trim()
+  if (!target) return
+  const href = router.resolve({ name: 'patch-detail', params: { sha: target } }).href
+  window.open(href, '_blank', 'noopener,noreferrer')
+}
+
+function filterIndexModule(moduleName: string) {
+  const name = String(moduleName || '').trim()
+  indexModule.value = name
+  patchIndexRef.value?.setModuleFilter(name)
+  nextTick(() => scrollToAnalysisSection('analysis-section-patch-index'))
 }
 
 function connectTaskSocket(taskId: string) {
@@ -440,7 +501,7 @@ const monthlySubtagData = computed(() => {
 })
 
 const analysisNavSections = computed(() =>
-  buildAnalysisNavSections(taskSummary.value, patches.value, monthlySubtagData.value),
+  buildAnalysisNavSections(taskSummary.value, [], monthlySubtagData.value),
 )
 
 const analysisNavSectionIds = computed(() => analysisNavSections.value.map((section) => section.id))
@@ -468,21 +529,13 @@ const showResults = computed(() => {
   if (!task) return false
   const status = String(displayStatus.value || '').toLowerCase()
   if (status === 'completed') return true
-  if (status === 'failed') return patches.value.length > 0
+  if (status === 'failed') return Boolean(taskSummary.value || Number(task.patch_count || task.total || 0) > 0)
   return false
 })
 
 watch(showResults, (visible) => {
   if (visible) nextTick(() => refreshNavSpy())
 })
-
-function syncPatchListScrollBinding() {
-  nextTick(() => {
-    patchListScrollEl.value = patchListRef.value?.getScrollElement?.() ?? null
-  })
-}
-
-watch(() => [patchListRef.value, showResults.value] as const, syncPatchListScrollBinding, { immediate: true })
 
 const isTaskRunning = computed(() => {
   const task = selectedTask.value
@@ -514,10 +567,17 @@ const tokenCount = computed(() => {
   return Number(task.llm_prompt_tokens || 0) + Number(task.llm_completion_tokens || 0)
 })
 
+const patchCount = computed(() => {
+  const task = selectedTask.value
+  if (!task) return 0
+  return Number(task.patch_count || taskSummary.value?.total || task.total || 0)
+})
+
 const averageScore = computed(() => {
-  const scores = patches.value.map((patch) => Number(patch.score)).filter((score) => Number.isFinite(score))
-  if (!scores.length) return '-'
-  return (scores.reduce((sum, score) => sum + score, 0) / scores.length).toFixed(1)
+  const summary = taskSummary.value
+  const avg = summary?.avg_score ?? summary?.average_score
+  if (avg != null && Number.isFinite(Number(avg))) return Number(avg).toFixed(1)
+  return '-'
 })
 
 function parseProgressFraction(message: string) {
@@ -613,7 +673,6 @@ function clearTaskDetail() {
   }
   selectedTask.value = null
   selectedTaskId.value = ''
-  patches.value = []
   progress.value = {}
 }
 
@@ -621,8 +680,8 @@ async function selectTask(taskId: string) {
   error.value = ''
   selectedTaskId.value = taskId
   loadingTaskId.value = taskId
-  activeModule.value = ''
   progress.value = {}
+  indexModule.value = ''
   try {
     await refreshTaskDetail(taskId)
     connectTaskSocket(taskId)
@@ -630,6 +689,32 @@ async function selectTask(taskId: string) {
     error.value = err.message || String(err)
   } finally {
     loadingTaskId.value = ''
+  }
+}
+
+async function exportFeishuChecklist() {
+  if (!selectedTask.value) return
+  exportingFeishu.value = true
+  error.value = ''
+  try {
+    const result = await api.post(`/api/tasks/${selectedTask.value.id}/checklist-feishu`, {})
+    if (selectedTask.value) {
+      selectedTask.value.feishu_checklist_url = result.url
+      selectedTask.value.feishu_checklist_token = result.token
+      if (result.module_report_url) {
+        selectedTask.value.feishu_module_report_url = result.module_report_url
+      }
+      if (result.module_report_folder) {
+        selectedTask.value.feishu_module_report_folder = result.module_report_folder
+      }
+    }
+    if (result.url) {
+      window.open(result.url, '_blank')
+    }
+  } catch (err: any) {
+    error.value = err.message || String(err)
+  } finally {
+    exportingFeishu.value = false
   }
 }
 
@@ -711,7 +796,14 @@ async function startAnalysis() {
       body.sample_size = Number.isFinite(sample) && sample > 0 ? Math.floor(sample) : 0
     }
     const data = await api.post<any>('/api/analyze', body)
-    message.value = `任务已创建：${data.task_id}`
+    if (mode.value === 'range') {
+      if (data.from_tag) form.from_tag = String(data.from_tag)
+      if (data.to_tag) form.to_tag = String(data.to_tag)
+    }
+    const resolvedNote = data.tag_resolved
+      ? `（已自动补全 Tag：${data.from_tag} → ${data.to_tag}）`
+      : ''
+    message.value = `任务已创建：${data.task_id}${resolvedNote}`
     await loadTasks()
     await selectTask(data.task_id)
   } catch (err: any) {
@@ -725,12 +817,30 @@ onMounted(async () => {
   durationTimer = setInterval(() => {
     nowMs.value = Date.now()
   }, 1000)
+  applyNoticeQueryPrefill()
+  if (mode.value === 'range') {
+    void loadRepoTags()
+  }
   await loadTasks()
   const taskId = String(route.query.task || '')
   if (taskId) {
     await selectTask(taskId)
   }
 })
+
+function applyNoticeQueryPrefill() {
+  const fromTag = String(route.query.from_tag || '').trim()
+  const toTag = String(route.query.to_tag || '').trim()
+  if (!fromTag || !toTag) return
+  mode.value = 'range'
+  form.from_tag = fromTag
+  form.to_tag = toTag
+}
+
+watch(
+  () => [route.query.from_tag, route.query.to_tag] as const,
+  () => applyNoticeQueryPrefill(),
+)
 
 onBeforeUnmount(() => {
   if (durationTimer) {

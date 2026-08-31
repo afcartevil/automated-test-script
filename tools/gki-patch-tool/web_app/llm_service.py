@@ -6,16 +6,20 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import yaml
 
-# ── Config ──────────────────────────────────────────────
+from web_app.app_paths import scoring_config_path
+from web_app.prompt_loader import load_prompt, render_prompt
+
 ENV_KEY = "GKI_LLM_API_KEY"
 ENV_BASE = "GKI_LLM_API_BASE"
 ENV_MODEL = "GKI_LLM_MODEL"
+ENV_MANAGED_BY_EA = "GKI_LLM_MANAGED_BY_EA"
 DEFAULT_BASE = "https://api.openai.com/v1"
 DEFAULT_MODEL = "gpt-4o"
 
@@ -25,6 +29,11 @@ BUILD_FIX_LLM_MAX_ATTEMPTS = int(os.environ.get("GKI_BUILD_FIX_LLM_MAX_ATTEMPTS"
 
 
 
+def is_llm_managed_by_ea() -> bool:
+    """True when EasyAdapter injected LLM env and owns the config."""
+    return os.environ.get(ENV_MANAGED_BY_EA, "").strip() in ("1", "true", "yes")
+
+
 def get_llm_config() -> Dict[str, str]:
     # Start with env vars / defaults
     cfg = {
@@ -32,7 +41,14 @@ def get_llm_config() -> Dict[str, str]:
         "api_base": os.environ.get(ENV_BASE, DEFAULT_BASE).rstrip("/"),
         "model": os.environ.get(ENV_MODEL, DEFAULT_MODEL),
     }
-    # Overlay DB config (page config takes precedence)
+    # EasyAdapter 集成注入时：环境变量优先，忽略设置页 DB，避免旧配置覆盖
+    if is_llm_managed_by_ea():
+        if not cfg["api_base"]:
+            cfg["api_base"] = DEFAULT_BASE
+        if not cfg["model"]:
+            cfg["model"] = DEFAULT_MODEL
+        return cfg
+    # Overlay DB config (page config takes precedence in standalone)
     try:
         from web_app.database import get_db_llm_config
         db_cfg = get_db_llm_config()
@@ -49,6 +65,8 @@ def get_llm_config() -> Dict[str, str]:
 
 def save_llm_config(api_key: str, api_base: str, model: str) -> None:
     """Persist LLM config to DB."""
+    if is_llm_managed_by_ea():
+        raise RuntimeError("当前由 EasyAdapter 托管 LLM 配置，请在 EasyAdapter「模型」中修改")
     from web_app.database import save_db_llm_config
     save_db_llm_config(api_key, api_base, model)
 
@@ -122,7 +140,7 @@ def fetch_llm_models(api_key: str = "", api_base: str = "") -> Dict[str, Any]:
 # ── Scoring criteria from config ───────────────────────
 def _get_scoring_criteria() -> str:
     """Load scoring criteria from config and format as prompt instructions."""
-    config_path = Path(__file__).parent.parent / "config" / "scoring-config.yaml"
+    config_path = scoring_config_path()
     try:
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
@@ -154,25 +172,41 @@ def _get_scoring_criteria() -> str:
     return "\n".join(lines)
 
 
+def _dev_module_list_text() -> str:
+    from web_app.dev_module_classifier import load_dev_modules
+
+    cfg = load_dev_modules()
+    descs = cfg.get("descriptions") or {}
+    names = cfg.get("names") or []
+    if not names:
+        return ""
+    patterns_by_module: Dict[str, List[str]] = defaultdict(list)
+    for pat, name in cfg.get("rules") or []:
+        patterns_by_module[name].append(pat)
+    lines: List[str] = []
+    for name in names:
+        desc = descs.get(name, "")
+        pats = patterns_by_module.get(name, [])
+        if pats:
+            pat_str = "、".join(pats[:12])
+            if len(pats) > 12:
+                pat_str += "…"
+            lines.append(f"- {name}：{desc}（参考路径：{pat_str}）")
+        else:
+            lines.append(f"- {name}：{desc}")
+    return "\n".join(lines)
+
+
+def _scoring_criteria_section(*, heading: str = "## 评分与标签要求") -> str:
+    criteria = _get_scoring_criteria()
+    if not criteria:
+        return ""
+    return f"\n{heading}\n{criteria}\n"
+
+
 def _score_output_yaml_template() -> str:
     """Shared YAML snippet for LLM score output (full + lightweight modes)."""
-    return """score: <0-10的浮点数>
-recommendation: "<推荐结论>"
-key_risk: "<一句话概括核心风险，不超过20字，无风险则填'无'>"
-score_details:
-  correctness_completeness:
-    score: <0-10>
-    reason: "一句话总结该维度的评分理由"
-  risk_safety:
-    score: <0-10>
-    reason: "一句话总结该维度的评分理由"
-  diff_maintainability:
-    score: <0-10>
-    reason: "一句话总结该维度的评分理由"
-  commit_metadata_quality:
-    score: <0-10>
-    reason: "一句话总结该维度的评分理由"
-"""
+    return load_prompt("snippets/score_output_yaml")
 
 
 def _parse_llm_score_fields(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -195,171 +229,37 @@ def _parse_llm_score_fields(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def _build_system_prompt() -> str:
     """Build the system prompt with scoring criteria and tag categories included."""
-    criteria = _get_scoring_criteria()
-
-    prompt = """你是一位 Linux 内核安全与稳定性分析专家。请分析给出的 kernel patch，以 YAML 格式输出。
-"""
-
-    if criteria:
-        prompt += f"""
-## 评分与标签要求
-{criteria}
-
-## 子系统标签
-根据修改的文件路径和内容，识别适用的子系统标签（patch_tags），以下为可用的标签列表：
-- 内存管理：涉及 mm/ 或内存分配、回收、页表等路径
-- 文件系统：涉及 fs/ 或文件系统公共接口
-- 网络协议栈：涉及 net/、网络驱动或网络协议头文件
-- 驱动框架：涉及 drivers/ 下的设备驱动
-- 块设备/存储：涉及 block/、块层或存储队列
-- 安全：涉及 security/、LSM、密钥或完整性保护
-- 加密：涉及 crypto/ 或加密 API
-- 调度：涉及 scheduler、任务调度或负载均衡
-- 锁/并发：涉及锁、RCU、原子操作或并发同步
-- 时间/定时器：涉及 timekeeping、timer、clocksource
-- 架构相关：涉及 arch/ 架构代码
-- 虚拟化/KVM：涉及 KVM、guest memory 或虚拟化路径
-- BPF/eBPF：涉及 BPF 子系统
-- IPC/进程通信：涉及 ipc/ 或进程间通信
-- 电源管理：涉及 PM、cpuidle、cpufreq、suspend/resume
-- 图形/DRM：涉及 DRM/GPU/显示子系统
-- 多媒体：涉及 media、摄像头、视频采集
-- 音频：涉及 ALSA/ASoC/声音子系统
-- USB：涉及 USB 栈或 USB 设备驱动
-- 输入设备：涉及 input 子系统
-- Android/GKI：涉及 Android 专有、GKI 或 vendor hook
-- 用户态接口：涉及 uapi 头文件或 ABI
-- 测试：涉及 selftests、kunit 或测试用例
-- 构建/Kconfig：涉及 Kconfig、Makefile 或构建脚本
-- 文档：涉及 Documentation 或文档说明
-
-如果 commit message 表明该 patch 是修复 bug，标签中需加入 "fix bug"；如果是新增功能，加入 "新需求"。如无法判断则不附加。
-
-## 开发模块分类
-根据修改的文件路径和内容，将该 patch 归类到以下开发模块之一（dev_module）。只能选择一个最匹配的模块：
-"""
-    # 动态生成模块列表（从 dev_modules.txt 读取）
-    from web_app.analyzer_service import get_dev_module_descriptions
-    _dev_descs = get_dev_module_descriptions()
-    if _dev_descs:
-        for _name, _desc in _dev_descs.items():
-            prompt += f"- {_name}：{_desc}\n"
-    prompt += """\n注意：对于代码类 patch（修改了 drivers/、kernel/、arch/、fs/、net/ 等目录下的源码），必须从上述模块中选择最匹配的一个，**禁止使用“其他”**。
-仅当 patch 属于以下非代码类时才可使用“其他”：tools/、scripts/、Makefile、Documentation/、android/、版本号提交、Merge 提交。\n"""
-
-    prompt += """
-分析要求：
-1. **修改解读**（modification_interpretation）：这个 patch 做了什么修改，为什么这么改
-2. **代码变化**（code_changes）：列出关键改动位置（文件路径+函数）和解释
-3. **问题闭环**（problem_solved）：这个 patch 解决了什么问题
-4. **引入提交分析**（introducer_analysis）：根据 commit message 和代码逻辑判断 bug 的引入来源
-5. **引入问题分析**（introduced_risk）：从修改角度分析本次代码修改可能引入的新问题或风险，包括但不限于：边界条件未覆盖、锁竞态、内存泄漏、性能回退、兼容性破坏、错误处理缺失等。如果修改安全无明显风险，请明确说明。
-6. **测试建议**（test_suggestions）：应做什么类型的测试来验证
-7. **评分明细**（score_details）：对每个评分维度分别打分并给出理由
-8. **死机风险评估**（crash_risk / crash_risk_reason）：评估该 patch 引入死机（kernel panic/oops/hang）的风险等级。
-   - 高：直接可能引发死机，如空指针解引用、use-after-free、锁死锁、中断上下文内存分配等
-   - 中：间接风险，如移除错误检查后异常路径可能触发崩溃
-   - 低：轻微风险或需要特定条件才会触发
-   - 无：修改安全，不涉及死机相关逻辑
-
-只输出 YAML，不要其他说明。YAML 格式：
-```yaml
-sha: "<sha>"
-title: "<title>"
-score: <0-10的浮点数>
-recommendation: "<推荐结论>"
-key_risk: "<一句话概括核心风险，不超过20字，无风险则填'无'>"
-dev_module: "<开发模块名>"
-patch_tags:
-  - key: "<标签key>"
-    label: "<标签名称>"
-score_details:
-  correctness_completeness:
-    score: <0-10>
-    reason: "一句话总结该维度的评分理由"
-  risk_safety:
-    score: <0-10>
-    reason: "一句话总结该维度的评分理由"
-  diff_maintainability:
-    score: <0-10>
-    reason: "一句话总结该维度的评分理由"
-  commit_metadata_quality:
-    score: <0-10>
-    reason: "一句话总结该维度的评分理由"
-modification_interpretation: |
-  你的解读
-code_changes:
-  - location: "文件路径/函数"
-    explanation: "修改说明"
-problem_solved: |
-  问题描述
-introducer_analysis: |
-  引入分析
-introduced_risk: |
-  本次修改可能引入的问题或风险分析
-crash_risk: "<高/中/低/无>"
-crash_risk_reason: "一句话说明死机风险原因，无风险则留空"
-test_suggestions: |
-  测试建议
-```"""
-
-    return prompt
+    return render_prompt(
+        "patch_analysis_full",
+        scoring_criteria_section=_scoring_criteria_section(),
+        dev_module_list=_dev_module_list_text(),
+    )
 
 
 def _build_lightweight_system_prompt() -> str:
     """区间分析单笔 patch 轻量 prompt：解读/闭环/引入 + 模块分类 + 评分。"""
     criteria = _get_scoring_criteria()
-    score_block = _score_output_yaml_template()
-
-    prompt = """你是一位 Linux 内核分析专家。请分析给出的 kernel patch，以 YAML 格式输出。
-"""
+    scoring_section = ""
     if criteria:
-        prompt += f"""
+        scoring_section = f"""
 ## 评分要求
 {criteria}
 总分 = 各维度 score × 权重 加权求和（0-10，保留一位小数），recommendation 必须与总分档位一致。
 
 """
-
-    prompt += """## 开发模块分类
-根据修改的文件路径和内容，将该 patch 归类到以下开发模块之一（dev_module）。只能选择一个最匹配的模块：
-"""
-    from web_app.analyzer_service import get_dev_module_descriptions
-    _dev_descs = get_dev_module_descriptions()
-    if _dev_descs:
-        for _name, _desc in _dev_descs.items():
-            prompt += f"- {_name}：{_desc}\n"
-    prompt += """
-注意：代码类 patch 必须从上述模块中选择，禁止使用「其他」（除非修改 tools/、Documentation/、Merge 等非代码类）。
-
-## 分析要求
-1. **修改解读**（modification_interpretation）：这个 patch 做了什么、为什么这么改
-2. **问题闭环**（problem_solved）：解决了什么问题、闭环是否完整
-3. **引入分析**（introducer_analysis）：bug 引入来源；并简要说明本次修改可能引入的新风险（写在 introducer_analysis 末尾）
-4. **评分**（score / recommendation / key_risk / score_details）：按上述维度加权给出总分、合入建议、核心风险与四维评分明细
-
-只输出 YAML，不要其他说明。格式：
-```yaml
-sha: "<sha>"
-dev_module: "<开发模块名>"
-"""
-    prompt += score_block
-    prompt += """
-modification_interpretation: |
-  修改解读
-problem_solved: |
-  问题闭环
-introducer_analysis: |
-  引入分析与潜在风险
-```"""
-    return prompt
+    return render_prompt(
+        "patch_analysis_lightweight",
+        scoring_section=scoring_section,
+        dev_module_list=_dev_module_list_text(),
+        score_yaml_snippet=_score_output_yaml_template(),
+    )
 
 
 def _parse_lightweight_llm_result(sha: str, content: str) -> Dict[str, Any]:
     """解析轻量 LLM 单笔分析结果。"""
     yaml_text = _extract_yaml(content)
     try:
-        data = yaml.safe_load(yaml_text)
+        data = _safe_load_llm_yaml(yaml_text)
     except yaml.YAMLError:
         return _fallback_parse(sha, content)
 
@@ -979,27 +879,10 @@ def _load_scoring_config_dict() -> Dict[str, Any]:
 
 def _build_minimal_system_prompt() -> str:
     """低风险 patch：统一 LLM 评分/归类，短输出，不生成长篇解读。"""
-    return """你是一位 Linux 内核 patch 评审助手。
-该 patch 已预先识别为低风险（Merge tag、符号表、文档、defconfig、注释、GKI ABI、
-版本号、维护者元数据、DeviceTree、测试代码、构建元数据或 stable/security 回退等）。
-请按统一标准给出评分与合入建议，输出尽量简短。
-
-## 要求
-1. score / recommendation / key_risk / dev_module 必须给出
-2. 默认倾向「建议合入」，key_risk 一句话即可
-3. 不要输出 modification_interpretation / problem_solved / introducer_analysis 长段
-4. low_risk_reason 填对应类别
-
-只输出 YAML：
-```yaml
-sha: "<sha>"
-dev_module: "<开发模块名>"
-score: <0-10>
-recommendation: "<推荐结论>"
-key_risk: "<一句话核心风险，无则写无明显额外风险>"
-analysis_depth: minimal
-low_risk_reason: "merge_tag|symbol_table|documentation|defconfig|comment_only|abi_gki|linux_version_bump|maintainers_only|devicetree_only|test_only|build_meta_only|stable_security_backport"
-```"""
+    return render_prompt(
+        "patch_analysis_minimal",
+        dev_module_list=_dev_module_list_text(),
+    )
 
 
 def _parse_minimal_llm_result(
@@ -1010,7 +893,7 @@ def _parse_minimal_llm_result(
 ) -> Dict[str, Any]:
     yaml_text = _extract_yaml(content)
     try:
-        data = yaml.safe_load(yaml_text)
+        data = _safe_load_llm_yaml(yaml_text)
     except yaml.YAMLError:
         data = {}
 
@@ -1054,52 +937,7 @@ def _parse_minimal_llm_result(
 
 
 def _build_module_analysis_prompt() -> str:
-    return """你是一位 Linux 内核升级评审专家，正在为**单个开发模块负责人**撰写升级区间分析报告。
-报告将直接交付模块团队使用，必须准确、可执行、有代码依据。
-
-## 分析原则
-1. **以模块 diff 为准**：代码级结论必须能在「模块相关 diff」或 patch 摘要中找到依据，禁止泛泛而谈
-2. **引用 patch**：提及风险、变更、测试项时尽量带上 `sha` 前 12 位
-3. **high_risk_patches 必须来自输入**：只能从提供的 patch 摘要中选取，并说明具体原因（评分/阻断/死机/核心风险）
-4. **测试建议要可执行**：写出测什么、怎么测、通过标准，按功能/回归/压力/平台分类
-
-## 输出要求
-1. **修改解读**（modification_interpretation）：本模块在本区间的整体变更、动机、对用户/系统的影响（5-8 句，可分点）
-2. **影响范围**（impact_scope）：涉及子系统、接口、配置、上下游依赖、跨模块耦合
-3. **问题闭环**（problem_closure_summary）：本模块 patch 主要修复/交付了哪些问题，闭环是否完整
-4. **代码变化**（code_changes）：5-12 个关键变更点；每项含 location、explanation、risk_level（高/中/低）
-5. **测试建议**（test_suggestions）：markdown，含「功能验证 / 回归范围 / 压力或长稳 / 平台或场景 / 上线前检查」
-6. **验证清单**（verification_checklist）：3-8 条可勾选的具体验证项（字符串列表）
-7. **死机风险评估**（crash_risk / crash_risk_reason）：整体 panic/oops/hang 风险（高/中/低）及依据
-8. **高风险 patch**（high_risk_patches）：最多 8 条，必须含 sha、title、reason
-9. **跨模块说明**（cross_module_notes）：若变更可能影响其他模块或依赖其他模块，简要说明；无则写「无明显跨模块影响」
-
-只输出 YAML：
-```yaml
-modification_interpretation: |
-  ...
-impact_scope: |
-  ...
-problem_closure_summary: |
-  ...
-code_changes:
-  - location: "路径或子系统"
-    explanation: "具体改了什么、为什么"
-    risk_level: "高/中/低"
-test_suggestions: |
-  ...
-verification_checklist:
-  - "验证项 1"
-  - "验证项 2"
-crash_risk: "高/中/低"
-crash_risk_reason: "..."
-high_risk_patches:
-  - sha: "abc123"
-    title: "标题"
-    reason: "原因"
-cross_module_notes: |
-  ...
-```"""
+    return load_prompt("module_analysis")
 
 
 def generate_module_analysis(
@@ -1198,7 +1036,7 @@ def generate_module_analysis(
     try:
         response, usage = _call_llm(_build_module_analysis_prompt(), user_msg, config, timeout=360)
         yaml_text = _extract_yaml(response)
-        data = yaml.safe_load(yaml_text)
+        data = _safe_load_llm_yaml(yaml_text)
         if not isinstance(data, dict):
             raise ValueError("invalid yaml")
 
@@ -1223,7 +1061,7 @@ def generate_module_analysis(
             if not isinstance(item, dict):
                 continue
             normalized_high_risk.append({
-                "sha": str(item.get("sha", "") or "")[:12],
+                "sha": str(item.get("sha", "") or "").strip(),
                 "title": str(item.get("title", "") or ""),
                 "reason": str(item.get("reason", "") or ""),
             })
@@ -1257,36 +1095,7 @@ def generate_module_analysis(
 
 
 def _build_module_chunk_summary_prompt() -> str:
-    return """你是一位 Linux 内核升级评审专家。下面是一个开发模块内**部分 patch 子集（chunk）**的变更材料。
-请输出该 chunk 的结构化摘要，供后续模块级汇总使用。
-
-## 要求
-1. 结论必须能在 diff 或 patch 摘要中找到依据
-2. covered_shas 必须列出输入中所有 patch 的 sha 前 12 位
-3. high_risk_patches 只能来自输入 patch
-4. 若 diff 被截断，在 coverage_note 中说明
-
-只输出 YAML：
-```yaml
-chunk_id: "chunk_0"
-module: "模块名"
-patch_count: 0
-covered_shas:
-  - "abc123def456"
-files_changed: 0
-main_changes: |
-  ...
-risk_points: |
-  ...
-high_risk_patches:
-  - sha: "abc123"
-    title: "标题"
-    reason: "原因"
-test_focus: |
-  ...
-coverage_note: "本 chunk 覆盖说明"
-truncated_input: false
-```"""
+    return load_prompt("module_chunk_summary")
 
 
 def _normalize_chunk_summary(
@@ -1312,7 +1121,7 @@ def _normalize_chunk_summary(
             continue
         normalized_high_risk.append(
             backfill_high_risk_patch_reason(patches, {
-                "sha": str(item.get("sha", "") or "")[:12],
+                "sha": str(item.get("sha", "") or "").strip(),
                 "title": str(item.get("title", "") or ""),
                 "reason": str(item.get("reason", "") or ""),
             })
@@ -1411,7 +1220,7 @@ def generate_module_chunk_summary(
             _build_module_chunk_summary_prompt(), user_msg, config, timeout=300,
         )
         yaml_text = _extract_yaml(response)
-        data = yaml.safe_load(yaml_text)
+        data = _safe_load_llm_yaml(yaml_text)
         if not isinstance(data, dict):
             raise ValueError("invalid yaml")
         result = _normalize_chunk_summary(data, chunk, module_name, patches, truncated_input)
@@ -1527,7 +1336,7 @@ def generate_module_rollup_summary(
     try:
         response, usage = _call_llm(_build_module_analysis_prompt(), user_msg, config, timeout=360)
         yaml_text = _extract_yaml(response)
-        data = yaml.safe_load(yaml_text)
+        data = _safe_load_llm_yaml(yaml_text)
         if not isinstance(data, dict):
             raise ValueError("invalid yaml")
 
@@ -1552,7 +1361,7 @@ def generate_module_rollup_summary(
             if not isinstance(item, dict):
                 continue
             normalized_high_risk.append({
-                "sha": str(item.get("sha", "") or "")[:12],
+                "sha": str(item.get("sha", "") or "").strip(),
                 "title": str(item.get("title", "") or ""),
                 "reason": str(item.get("reason", "") or ""),
             })
@@ -1594,7 +1403,16 @@ def generate_module_rollup_summary(
 SYSTEM_PROMPT = _build_system_prompt()
 
 
-def _build_user_message(sha: str, title: str, msg: str, diff: str, *, max_diff: int = 8000) -> str:
+def _build_user_message(
+    sha: str,
+    title: str,
+    msg: str,
+    diff: str,
+    *,
+    max_diff: int = 8000,
+    files: Optional[List[str]] = None,
+    path_hint: str = "",
+) -> str:
     # Truncate very long diffs to avoid token overflow
     MAX_DIFF = max(500, max_diff)
     if len(diff) > MAX_DIFF:
@@ -1603,9 +1421,23 @@ def _build_user_message(sha: str, title: str, msg: str, diff: str, *, max_diff: 
     if len(msg) > MAX_MSG:
         msg = msg[:MAX_MSG] + "\n... (commit message truncated)"
 
+    files_section = ""
+    if files:
+        preview = files[:20]
+        files_section = "\n### 变更文件\n" + "\n".join(f"- {fp}" for fp in preview)
+        if len(files) > 20:
+            files_section += f"\n- …(+{len(files) - 20} more)"
+
+    hint_section = ""
+    if path_hint:
+        hint_section = (
+            f"\n> 路径规则参考模块：**{path_hint}**"
+            "（仅供参考，请结合变更文件、diff 内容与 commit message 综合判断 dev_module）\n"
+        )
+
     return f"""## Patch: `{sha}`
 **标题**: {title}
-
+{files_section}{hint_section}
 ### Commit Message
 ```
 {msg}
@@ -1800,11 +1632,62 @@ def _extract_yaml(text: str) -> str:
     return text.strip()
 
 
+def _repair_llm_yaml(text: str) -> str:
+    """Repair common LLM YAML breakage so PyYAML can parse again.
+
+    Typical failure: double-quoted scalars with raw inner quotes, e.g.
+      reason: "… domain ("00") …"
+    Convert those values to block scalars.
+    """
+    out: List[str] = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.rstrip("\r")
+        # key: "value"  or  - key: "value"
+        m = re.match(r'^(\s*(?:-\s+)?[\w./\-]+)\s*:\s*"(.*)"\s*$', line)
+        if m:
+            prefix, content = m.group(1), m.group(2)
+            if re.search(r'(?<!\\)"', content):
+                indent = re.match(r"^(\s*)", line).group(1)
+                content = content.replace('\\"', '"')
+                out.append(f"{prefix}: |")
+                out.append(f"{indent}  {content}")
+                continue
+        # list item that is itself a broken quoted string: - "foo "bar" baz"
+        m2 = re.match(r'^(\s*-\s+)"(.*)"\s*$', line)
+        if m2 and re.search(r'(?<!\\)"', m2.group(2)):
+            indent = re.match(r"^(\s*)", line).group(1)
+            content = m2.group(2).replace('\\"', '"')
+            out.append(f"{indent}- |")
+            out.append(f"{indent}  {content}")
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
+def _safe_load_llm_yaml(text: str) -> Any:
+    """yaml.safe_load with one automatic repair pass for LLM quote issues."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    try:
+        return yaml.safe_load(raw)
+    except yaml.YAMLError as first_exc:
+        repaired = _repair_llm_yaml(raw)
+        if repaired == raw:
+            raise first_exc
+        try:
+            data = yaml.safe_load(repaired)
+            print("[LLM YAML] 已自动修复未转义引号后重新解析成功", flush=True)
+            return data
+        except yaml.YAMLError:
+            raise first_exc
+
+
 def _parse_llm_result(sha: str, content: str) -> Dict[str, Any]:
     """Parse LLM response into a structured analysis dict."""
     yaml_text = _extract_yaml(content)
     try:
-        data = yaml.safe_load(yaml_text)
+        data = _safe_load_llm_yaml(yaml_text)
     except yaml.YAMLError as exc:
         # Try lenient: just extract raw text fields
         return _fallback_parse(sha, content)
@@ -1897,9 +1780,18 @@ def analyze_patch_via_llm(patch_data: Dict[str, Any],
     msg = patch_data.get("commit_message_full", "")
     diff_raw = patch_data.get("diff_preview", {})
     diff = diff_raw.get("text", "") if isinstance(diff_raw, dict) else str(diff_raw)
+    files = _patch_changed_files(patch_data)
 
+    from web_app.dev_module_classifier import path_hint_for_patch
+
+    path_hint = path_hint_for_patch(patch_data)
     max_diff = 2000 if mode == "minimal" else 8000
-    user_msg = _build_user_message(sha, title, msg, diff, max_diff=max_diff)
+    user_msg = _build_user_message(
+        sha, title, msg, diff,
+        max_diff=max_diff,
+        files=files,
+        path_hint=path_hint,
+    )
     if mode == "minimal":
         prompt = _build_minimal_system_prompt()
         response, usage = _call_llm(prompt, user_msg, config)
@@ -2342,45 +2234,14 @@ def generate_unified_task_report(
         else "区间 squash diff（若有）"
     )
 
-    system_prompt = f"""你是一个内核 patch 分析助手。请基于：
-1) {primary_basis}——反映模块级与单 commit 风险、测试建议；
-2) 高风险/阻断 patch 索引；
-3) {squash_role}；
-
-生成**一份完整、深入的综合分析报告**和**一份综合测试建议**。测试建议应覆盖分析总结中提到的风险点与重点模块，但两部分内容不要简单重复。
-
-请用中文回答，保持专业，使用 markdown。分析总结要**充分展开**，不要过度压缩；有模块报告时必须引用各模块结论，不可忽略模块级风险。
-
-## 第一部分：分析总结（写入 {_ANALYSIS_SUMMARY_MARKER} 与 {_TEST_RECOMMENDATIONS_MARKER} 之间）
-必须包含以下章节（缺一不可）：
-
-1. **变更概述**（3-5 句，说明区间整体做了什么、变更规模与主要方向）
-2. **主要变更领域**（按子系统/技术域分组 bullet，说明修改意图；结合模块报告与 patch 摘要）
-3. **风险评估**（高/中/低风险变更、阻断 patch、key_risk；说明原因与可能影响）
-4. **影响范围**（涉及哪些内核子系统、驱动、框架、用户可见行为）
-5. **分模块详细总结**（参考模块：{mod_list}，仅列出有变更的模块）
-
-分模块总结格式（每个有变更的模块都要写，不可一笔带过）：
-### 分模块总结
-#### <模块名>
-- **变更要点**：该模块具体改了什么、涉及哪些文件/函数、修改目的（3-5 句，尽量引用模块报告或 patch 证据）
-- **风险点**：该模块变更的潜在风险与需关注点
-（测试验证动作写在第二部分，此处只写风险与影响）
-
-6. **高风险 Patch 综述**（若有：列出需优先 review 的 commit 及原因，可引用 SHA）
-
-## 第二部分：综合测试建议（写入 {_TEST_RECOMMENDATIONS_MARKER} 之后）
-应包含：
-1. 按测试类型（单元/集成/回归/手工/上线保障）给出建议
-2. 必做测试项与重点关注模块（与第一部分风险对应）
-3. 分模块测试要点（对有变更的模块给出可执行验证项）
-4. 回归范围与上线前验证要点
-
-输出格式（必须严格遵守，不要输出其它包裹文字）：
-{_ANALYSIS_SUMMARY_MARKER}
-（分析总结 markdown，应明显长于简短摘要）
-{_TEST_RECOMMENDATIONS_MARKER}
-（综合测试建议 markdown）"""
+    system_prompt = render_prompt(
+        "task_unified_report",
+        primary_basis=primary_basis,
+        squash_role=squash_role,
+        dev_module_names=mod_list,
+        analysis_summary_marker=_ANALYSIS_SUMMARY_MARKER,
+        test_recommendations_marker=_TEST_RECOMMENDATIONS_MARKER,
+    )
 
     patch_block = _build_patch_analysis_block(patches, max_patches=100 if total > 200 else 70)
     test_block = _build_patch_test_block(patches, max_patches=60 if total > 200 else 45)
@@ -2504,19 +2365,7 @@ def generate_task_summary(
     llm_count = sum(1 for p in patches if p.get("llm_analyzed"))
     script_count = total - llm_count
 
-    system_prompt = """你是一个内核 patch 分析助手，请根据提供的 patch 列表生成一份凝练的分析总结。
-请用中文回答，保持专业、简洁。
-
-输出格式要求：
-1. 先输出整体概述（2-3句话）
-2. 然后输出关键发现（bullet points）
-3. 最后输出分模块总结：按“模块”字段分组，对每个有变更的开发模块用1-2句话总结该模块的变更要点。格式如下：
-### 分模块总结
-- **LCM**：xxx
-- **Audio**：xxx
-- ...（仅列出有变更的模块）
-
-使用 markdown 格式。"""
+    system_prompt = load_prompt("task_summary")
 
     user_prompt = f"""## 任务信息
 仓库: {repo}
@@ -2610,15 +2459,7 @@ def generate_test_summary(
     from_tag = task.get("from_tag", "")
     to_tag = task.get("to_tag", "")
 
-    system_prompt = """你是一个内核测试专家，请根据以下 patch 列表中每一笔的测试建议，
-综合本次分析区间生成一份整体的测试策略建议。
-
-要求：
-1. 按测试类型（单元测试、集成测试、回归测试、手工验证、上线保障）分别给出建议
-2. 指出哪些模块/目录需要重点测试
-3. 给出具体的验证要点
-4. 使用 markdown 格式，简洁专业
-5. 用中文输出"""
+    system_prompt = load_prompt("task_test_summary")
 
     user_prompt = f"""## 任务信息
 仓库: {repo}
@@ -2636,6 +2477,156 @@ def generate_test_summary(
     except Exception as exc:
         print(f"[TEST SUMMARY LLM] 生成测试总结失败: {exc}", flush=True)
         return None
+
+
+def polish_checklist_cells(
+    task: Dict[str, Any],
+    items: List[Dict[str, str]],
+    *,
+    chunk_size: int = 2,
+    batch_label: str = "",
+) -> Dict[str, Dict[str, str]]:
+    """Rewrite checklist cell drafts into reviewer-facing module summaries.
+
+    items: id / module / scope / patch_count / stats / analysis_context / patch_digest / ...
+    returns {id: {modification, focus_review, test_suggestions, risk_description}}
+
+    Caller should pass overall and subtag items in **separate** batches so the model
+    cannot copy cross-month overall conclusions into monthly sub-tag rows.
+    """
+    if not items or not is_llm_configured():
+        return {}
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    config = get_llm_config()
+    system = load_prompt("checklist_polish")
+    # Never mix overall + subtag in one chunk (defense in depth).
+    overall_items = [i for i in items if str(i.get("block_kind") or "") != "subtag"]
+    subtag_items = [i for i in items if str(i.get("block_kind") or "") == "subtag"]
+    ordered_groups = [g for g in (overall_items, subtag_items) if g]
+    if not ordered_groups:
+        ordered_groups = [items]
+
+    merged: Dict[str, Dict[str, str]] = {}
+    label = f"{batch_label} " if batch_label else ""
+
+    def _run_chunk(chunk: List[Dict[str, str]]) -> Dict[str, Dict[str, str]]:
+        user = _build_checklist_polish_user(task, chunk)
+        content, _ = _call_llm(system, user, config, timeout=300, max_tokens=8192)
+        return _parse_checklist_polish(content)
+
+    for group in ordered_groups:
+        kind = str(group[0].get("block_kind") or "overall")
+        chunks = [group[i:i + chunk_size] for i in range(0, len(group), chunk_size)]
+        print(
+            f"[CHECKLIST LLM] {label}打磨 {kind} {len(group)} 行 / {len(chunks)} 批",
+            flush=True,
+        )
+        workers = max(1, min(4, len(chunks)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_run_chunk, chunk) for chunk in chunks]
+            for fut in as_completed(futures):
+                try:
+                    merged.update(fut.result() or {})
+                except Exception as exc:
+                    print(f"[CHECKLIST LLM] 表格打磨失败: {exc}", flush=True)
+    return merged
+
+
+def _build_checklist_polish_user(task: Dict[str, Any], chunk: List[Dict[str, str]]) -> str:
+    from_tag = str(task.get("from_tag") or "").strip()
+    to_tag = str(task.get("to_tag") or "").strip()
+    all_subtag = bool(chunk) and all(
+        str(item.get("block_kind") or "") == "subtag" for item in chunk
+    )
+    parts: List[str] = []
+    if all_subtag:
+        parts.append("本批全部为「目标月份子 tag」行，与跨月总包结论无关。")
+        parts.append("请严格按每条的子 tag 累计范围与 patch 摘要重写，禁止复用总包文案。")
+    else:
+        parts.append(
+            f"升级区间：{from_tag} -> {to_tag}" if from_tag or to_tag else "升级区间：未知"
+        )
+        parts.append("本批为跨月总包行。")
+    parts.append("表格只写关键信息；细节在模块详情链接。请精简文案，并保留重点 Review 的 P0/P1 分级。")
+    parts.append("请按 id 原样回写，不要合并或删减模块。")
+    parts.append("")
+    for item in chunk:
+        is_subtag = str(item.get("block_kind") or "") == "subtag"
+        parts.append(f"## 模块 id={item.get('id')}")
+        parts.append(f"模块：{item.get('module') or ''}")
+        parts.append(f"范围：{item.get('scope') or ''}")
+        parts.append(f"行类型：{'子tag' if is_subtag else '总包'}")
+        parts.append(f"patch 数量：{item.get('patch_count') or 0}")
+        if is_subtag:
+            if item.get("cumulative_scope"):
+                parts.append(f"本段范围：{item.get('cumulative_scope')}")
+            parts.append(
+                "说明：本行只对应相邻增量区间内该模块的 patch。"
+                "只根据本条 patch 数量/摘要/草稿撰写，不要补写未出现的模块，"
+                "也不要复述跨月总包结论或与其它子 tag 行共用同一段文案。"
+            )
+        if item.get("stats"):
+            parts.append(f"统计：{item.get('stats')}")
+        parts.append(f"是否有负面影响：{item.get('negative_impact') or ''}")
+        parts.append(f"是否必须合入：{item.get('must_merge') or ''}")
+        ctx = str(item.get("analysis_context") or "").strip()
+        if ctx and not is_subtag:
+            parts.append("模块分析摘要（仅供提炼，勿整段照搬进表格）：")
+            parts.append(ctx[:1200])
+        loc = str(item.get("file_locations") or "").strip()
+        if loc:
+            parts.append("变更范围（patch 数量与主要目录）：")
+            parts.append(loc)
+        digest = str(item.get("patch_digest") or "").strip()
+        if digest:
+            parts.append("本范围 patch 摘要：")
+            parts.append(digest)
+        parts.append("草稿-变更摘要：")
+        parts.append(str(item.get("modification") or "").strip() or "（空）")
+        parts.append("草稿-重点 Review：")
+        parts.append(str(item.get("focus_review") or item.get("review_comment") or "").strip() or "（空）")
+        parts.append("草稿-测试建议：")
+        parts.append(str(item.get("test_suggestions") or "").strip() or "（空）")
+        parts.append("草稿-风险项描述：")
+        parts.append(str(item.get("risk_description") or "").strip() or "（空）")
+        parts.append("")
+    return "\n".join(parts)
+
+
+def _parse_checklist_polish(content: str) -> Dict[str, Dict[str, str]]:
+    yaml_text = _extract_yaml(content)
+    try:
+        data = _safe_load_llm_yaml(yaml_text)
+    except yaml.YAMLError:
+        return {}
+    rows = []
+    if isinstance(data, dict):
+        rows = data.get("items") or data.get("modules") or []
+    elif isinstance(data, list):
+        rows = data
+    out: Dict[str, Dict[str, str]] = {}
+    if not isinstance(rows, list):
+        return out
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        item_id = str(row.get("id") or "").strip()
+        if not item_id:
+            continue
+        polished = {}
+        # focus_review 兼容旧字段 review_comment
+        focus = str(row.get("focus_review") or row.get("review_comment") or "").strip()
+        if focus:
+            polished["focus_review"] = focus
+        for key in ("modification", "test_suggestions", "risk_description"):
+            text = str(row.get(key) or "").strip()
+            if text:
+                polished[key] = text
+        if polished:
+            out[item_id] = polished
+    return out
 
 
 # ── Squash diff summary ──────────────────────────────
@@ -2685,50 +2676,13 @@ def generate_squash_summary(
     config = get_llm_config()
     repo = task.get("repo", "")
 
-    system_prompt = """你是一个内核 patch 分析助手。下面提供了一个内核仓库区间所有变更的合并 diff（squash diff）以及变更统计。
-请分析这些变更，生成一份全面的技术总结报告。
-
-请用中文回答，保持专业、简洁。
-
-输出格式要求：
-1. **变更概述**：2-3 句话概括这个区间做了什么
-2. **主要变更领域**：按子系统/模块分组，说明各部分的修改意图
-3. **风险评估**：哪些变更风险较高，为什么
-4. **影响范围**：涉及哪些内核子系统
-5. **分模块详细总结**：根据 diff 内容识别涉及的开发模块，对每个模块进行详细总结。参考的开发模块有："""
-    # 动态拼接模块列表
     from web_app.analyzer_service import get_dev_module_names
+
     _mod_names = get_dev_module_names()
-    system_prompt += "、".join(_mod_names) if _mod_names else "（无模块定义）"
-    system_prompt += """。仅列出有变更的模块。
-
-每个模块的总结应包含：
-- **变更要点**：该模块做了哪些具体修改，涉及哪些文件/函数，修改的原因和目的（3-5句话）
-- **风险点**：该模块变更的潜在风险
-- **测试建议**：针对该模块变更应做哪些测试验证
-
-格式：
-### 分模块总结
-
-#### LCM
-- **变更要点**：xxx
-- **风险点**：xxx
-- **测试建议**：xxx
-
-#### Audio
-- **变更要点**：xxx
-- **风险点**：xxx
-- **测试建议**：xxx
-
-...（仅列出有变更的模块）
-
-6. **整体测试建议**：基于所有模块的变更，给出整体的测试策略建议，包括：
-   - 必做测试项
-   - 重点关注模块
-   - 回归测试范围
-   - 上线前验证要点
-
-使用 markdown 格式。"""
+    system_prompt = render_prompt(
+        "squash_summary",
+        dev_module_names="、".join(_mod_names) if _mod_names else "（无模块定义）",
+    )
 
     stat_section = f"\n\n## 变更统计（git diff --stat）\n```\n{stat_text}\n```" if stat_text else ""
 
@@ -2982,32 +2936,7 @@ def analyze_crash_cause(crash_log: str) -> Dict[str, Any]:
     """
     config = get_llm_config()
 
-    system_prompt = """你是一个 Linux 内核死机分析专家。用户会提供一段内核死机日志，你需要深入分析死机的根本原因。
-
-请用中文回答，保持专业、简洁。
-
-## 分析要求
-1. 确定死机类型（panic, oops, NULL pointer dereference, use-after-free, watchdog timeout, BUG_ON, stack overflow 等）
-2. 从调用栈中提取崩溃发生的具体函数名
-3. 识别崩溃相关的内核模块/子系统
-4. 分析调用栈路径，理解崩溃的触发链路
-5. 提取崩溃相关的文件路径、数据结构名、锁名
-6. 分析崩溃机制：是直接 bug（如空指针）还是间接导致（如竞态、内存破坏）
-
-请严格按以下 YAML 格式输出：
-
-```yaml
-crash_type: "死机类型"
-crash_function: "崩溃发生的函数名"
-crash_module: "相关内核模块/子系统"
-call_stack_summary: "调用栈关键路径摘要"
-crash_description: "死机现象描述"
-crash_files:
-  - "崩溃相关的源文件路径（从日志中提取）"
-crash_symbols:
-  - "崩溃相关的函数名、结构体名、变量名"
-crash_mechanism: "崩溃机制分析（直接原因和可能的间接原因）"
-```"""
+    system_prompt = load_prompt("crash_phase1_cause")
 
     # Smart extraction: find crash-relevant sections instead of naive truncation
     relevant_log = _extract_crash_relevant_sections(crash_log)
@@ -3022,7 +2951,7 @@ crash_mechanism: "崩溃机制分析（直接原因和可能的间接原因）"
         content, usage = _call_llm(system_prompt, user_prompt, config, timeout=180)
         yaml_text = _extract_yaml(content)
         try:
-            data = yaml.safe_load(yaml_text) or {}
+            data = _safe_load_llm_yaml(yaml_text) or {}
         except yaml.YAMLError:
             data = {}
 
@@ -3169,65 +3098,7 @@ def find_suspected_patches(
 - 相关符号: {', '.join(crash_symbols[:10]) if crash_symbols else '未提取到'}
 - 崩溃机制: {crash_mechanism}"""
 
-    system_prompt = """你是一个 Linux 内核死机归因分析专家。前一位分析师已经完成了死机原因分析，现在你需要基于分析结论，在合入的代码变更中找到引入问题的 patch。
-
-请用中文回答，保持专业、简洁。
-
-## 提供的信息
-1. **死机分析结论**：前一步分析得到的崩溃原因、相关函数、文件、符号
-2. **变更统计**：git diff --stat 的概览
-3. **Patch 列表**：每笔 patch 的 SHA、标题和修改文件
-4. **可疑 Commit 详情**：基于崩溃相关信息筛选的 commit 的独立 diff
-5. **合并 Diff**：区间的 squash diff（用于发现可疑列表可能遗漏的变更）
-
-## 分析要求
-
-### 重要：不仅要看直接原因，还要分析间接因果关系
-- **数据结构变更**：修改了结构体定义、字段含义、枚举值
-- **初始化顺序改变**：调整了 init/probe 顺序
-- **锁序/并发变更**：修改了锁的获取顺序、增加了新的锁
-- **内存管理变更**：改变了内存分配/释放时机、引用计数逻辑
-- **API 契约变更**：修改了函数返回值含义、参数约束
-- **代码路径变更**：删除了某个检查/保护分支
-- **配置变更**：改变了默认配置、超时时间
-
-### 分析步骤
-1. 理解死机分析结论：明确崩溃函数、相关文件、关键符号
-2. 重点审查可疑 Commit 的 diff：
-   - 是否修改了崩溃函数或其依赖的代码
-   - 是否修改了调用栈中出现的文件
-   - 是否改变了相关数据结构、锁、内存管理
-3. 查看 squash diff，看是否有可疑列表遗漏的重要变更
-4. 查看 patch 列表，看是否有其他可能遗漏的可疑 patch
-5. 综合判定
-
-### 注意
-- 可疑 commit 是基于崩溃相关信息自动筛选的，可能遗漏。请同时查看 patch 列表和 squash diff 做补充
-- 即使 diff 没有直接修改崩溃函数，也可能通过间接依赖导致问题
-- 如果没有找到明确的引入 patch，请如实说明，不要强行归因
-- **严禁编造不存在的 commit SHA、修复补丁或上游补丁**。修复提交搜索将由系统单独执行，你只需基于提供的信息给出建议
-- 紧急措施只能基于已确认的信息，不要提及「上游修复补丁」或「后续修复」等未经验证的内容
-
-请严格按以下 YAML 格式输出：
-
-```yaml
-root_cause:
-  is_caused_by_merge: true/false
-  confidence: "高/中/低"
-  explanation: "详细归因分析，引用具体 commit SHA 和 diff 变更"
-  causation_type: "直接/间接/无"
-  suspected_patches:
-    - sha: "疑似 patch 的 SHA"
-      title: "patch 标题"
-      reason: "为什么怀疑（引用具体代码变更）"
-      related_files: "相关文件路径"
-      causation: "直接/间接"
-
-recommendations:
-  immediate_actions: "紧急措施（仅基于已确认信息，不要提及不存在的修复补丁）"
-  test_suggestions: "测试验证建议"
-  next_steps: "后续排查步骤（不要编造不存在的 commit 或补丁）"
-```"""
+    system_prompt = load_prompt("crash_phase2_attribution")
 
     user_prompt = f"""## GKI 升级信息
 升级区间: {from_tag} → {to_tag}
@@ -3253,7 +3124,7 @@ recommendations:
         content, usage = _call_llm(system_prompt, user_prompt, config, timeout=300)
         yaml_text = _extract_yaml(content)
         try:
-            data = yaml.safe_load(yaml_text) or {}
+            data = _safe_load_llm_yaml(yaml_text) or {}
         except yaml.YAMLError:
             data = {}
 
@@ -3340,30 +3211,7 @@ def findFixCommits(
             parts.append(f"- {s.get('sha', '')[:12]} {s.get('title', '')[:60]}")
         suspected_str = "\n".join(parts)
 
-    system_prompt = """你是一个 Linux 内核代码分析专家。用户在升级 GKI 内核后出现死机，已经分析出疑似导致死机的 patch。
-现在需要检查后续提交中是否有修复这些问题的代码。
-
-请寻找以下类型的修复提交：
-1. revert 了疑似问题 patch 的提交
-2. fix 了相同函数/模块的 bug fix 提交
-3. 修复了相同调用栈/崩溃点的提交
-
-请用中文回答，严格按以下 YAML 格式输出：
-
-```yaml
-fix_commits:
-  - sha: "修复提交的 SHA"
-    title: "提交标题"
-    fix_type: "revert/fix/其他"
-    confidence: "高/中/低"
-    reason: "为什么认为这是修复提交"
-  - sha: "..."
-    title: "..."
-    fix_type: "..."
-    confidence: "..."
-    reason: "..."
-summary: "总结是否有修复提交，修复覆盖情况"
-```"""
+    system_prompt = load_prompt("crash_fix_commits")
 
     user_prompt = f"""## GKI 升级信息
 升级区间: {from_tag} → {to_tag}
@@ -3385,7 +3233,7 @@ summary: "总结是否有修复提交，修复覆盖情况"
         content, _ = _call_llm(system_prompt, user_prompt, config, timeout=300)
         yaml_text = _extract_yaml(content)
         try:
-            data = yaml.safe_load(yaml_text)
+            data = _safe_load_llm_yaml(yaml_text)
         except yaml.YAMLError:
             data = {}
 
@@ -3594,16 +3442,7 @@ def _resolve_conflict_region_via_llm(
     config: Dict[str, str],
 ) -> Tuple[str, str]:
     """Merge a single conflict region; return (merged_snippet, summary)."""
-    system = """你是 Linux 内核/vendor 合入专家。用户正在合入 GKI patch 的**单个冲突 hunk**（不是整文件，也不是带上下文的完整区域）。
-
-要求：
-1. 保留 vendor 侧必要定制，同时尽量采纳 incoming / .rej 中的 GKI 变更
-2. 删除所有冲突标记（<<<<<<< ======= >>>>>>>）
-3. 只输出一个 ```merged 代码块，内容为**合并后的冲突主体**（仅中间 hunk，不要包含上下文行）
-4. **summary 行必须写在代码块外**
-5. 禁止重复函数/结构体声明，禁止输出上下文行或区域外代码，禁止省略行
-
-必须输出完整闭合的 ``` 代码块。"""
+    system = load_prompt("conflict_merge_region")
 
     body = (task.get("body_snippet") or "").strip()
     user_parts = [
@@ -3700,14 +3539,7 @@ def _resolve_conflict_region_via_llm_diff(
     he = task["replace_end"]
     body = (task.get("body_snippet") or "").strip()
 
-    system = """你是 Linux 内核/vendor 合入专家。用户正在合入 GKI patch 的单个冲突 hunk。
-
-要求：
-1. 保留 vendor 必要定制，采纳 GKI incoming / .rej 变更
-2. **只输出 unified diff**（含 ---/+++ 和 @@ hunk），禁止整文件、禁止 ```merged 代码块
-3. diff 仅改动冲突 hunk 相关行（约下方给出的行号范围）
-4. summary 写在代码块外
-5. 上下文行必须与源文件完全一致（diff 中空格行）"""
+    system = load_prompt("conflict_merge_diff")
 
     user_parts = [
         f"文件路径: {source_path}",
@@ -4077,83 +3909,7 @@ def resolve_build_errors_via_llm(
     if not config.get("api_key"):
         raise RuntimeError("LLM 未配置 API Key")
 
-    system = """你是 Linux 内核 / Android 全树编译专家。用户 GKI patch 合入后编译失败，需要你根据编译错误修复源码。
-
-编译报错文件**不一定在内核树**，也可能在 vendor/、hardware/、frameworks/、device/ 等 Android 源码目录中。
-
-**关键约束 — Google 上游内核只读（最高优先级，按内容判定）**：
-- 将待改文件与升级任务 **GKI to_tag** 在 `kernel/common` 中的内容比对；**完全一致**则视为 Google 上游，**禁止修改**
-- 与 to_tag **不一致** → 厂商客制化，可改；不在 GKI common 中的路径（如 `vendor/`）可改
-
-**分析要求**：
-- gcc 输出中 `error:` 行是**检测点**（宏重定义常落在**后 include** 的头文件）；`note: previous definition` 是**首次定义处** → **只改 note 指向的文件**
-- 必须结合 **#include 顺序** 理解冲突，不要只看 error 行指向的文件
-
-**宏重定义（通用决策，具体日志形态见下方结构化错误与参考示例）**：
-- `note: previous definition` → 本编译单元**首次**定义处，**只改这里**
-- `error:` 落在 `include/linux/` 等内核头 → 通常只读，根因在 vendor 侧先定义的宏
-- ✅ 首选：在 note 处**仅删除**与内核同名的 `#define` 行（**不要**删 kernel-doc 注释），由内核头提供实现
-- ❌ 禁止：`#ifndef` 包裹已无条件定义的宏、删后再 `#undef`、改内核/上游头、diff 中删除注释行
-
-若文件未 include 提供该宏的内核头，在合适位置增加对应 `#include`（勿重复 include）。
-**删除 vendor 宏后禁止再写 `#undef`**：删掉 `#define` 即已消除本文件贡献的定义。不要画蛇添足地追加：
-```c
-#ifdef CONFLICT_MACRO
-#undef CONFLICT_MACRO
-#endif
-```
-这类块在「已删除本文件 `#define`」场景下毫无意义；若写在内核头 include 之后还会把内核定义 undef 掉。
-**`#undef` 仅极少数情况可用**：无法删除更早 include 链里他处的 `#define`，且必须在相关内核头 `#include` **之前紧邻**写 `#undef`（不要包 `#ifdef` 壳），绝不在删完本文件定义后单独追加 undef 块。
-
-- 下方「相关源文件上下文」是**当前磁盘内容**；diff 须与 snippet **逐字一致**
-- 若上下文显示某路径**已无**与内核冲突的宏定义，跳过该路径
-- 禁止修改与 to_tag 一致的 Google 上游内核文件
-
-**多文件 / 多副本（极其重要）**：
-- 多条报错路径可能为**软链接**指向同一实体文件；只需 patch 一次，禁止对别名路径重复输出相同 diff
-- 若上下文标注了「软链接别名」，只改 FIX_PATH 对应文件即可
-- 同一头文件若确为不同实体（非软链），行号与上下文仍可能不同，须分别生成 diff
-- 输出 diff 前，核对 hunk 中每一行上下文在**该文件** snippet 中逐字存在；行号以该文件 `>>>` 标记为准
-
-**diff 应用失败重试**：
-- 若提供「上次 diff 应用失败原因」，说明上下文与磁盘不一致；必须按失败信息中该文件的**真实内容**重新生成 diff，不得重复相同 hunk
-
-**关键约束 — 保护合入目标路径**：
-- 「合入目标路径」是用户刚刚做 GKI patch 合入的代码树（通常是 vendor kernel），应**尽可能不改动**
-- **优先**在合入目标路径**之外**修复（如 vendor HAL、device 配置、framework 适配层、Kconfig/Makefile 外围、wrapper/头文件 shim 等）
-- **仅当**错误根因确实在合入目标路径内、且无法通过修改其他目录解决时，才允许修改合入目标路径下的文件
-- 若可通过调整调用方、宏、extern 声明、include 路径、编译选项等方式在外部消化，必须选外部方案
-- summary 中需说明为何必须/不必改合入目标路径
-
-**修复形式 — 必须最小 diff（极其重要）**：
-1. **禁止**输出整文件替换（不要重写整个 .c/.h 文件）
-2. 每个文件只输出 **unified diff**（含 `---`/`+++`/`@@` hunk），仅改动与报错直接相关的行
-3. diff 的 `@@` 起始行号须与下方「相关源文件上下文」中带 `>>>` 的报错/note 行一致；若 `>>>` 与待修符号定义不在同一行，**以该符号定义/`>>>` note 行为锚点**；上下文行须**原样复制**（含空格/引号），禁止臆造行号或从第 1 行起笔
-4. 若文件很小（<40 行）且必须整文件替换，才允许在 summary 中说明理由后输出完整文件；否则一律 diff
-5. diff 必须能直接 `patch -p1` 应用：上下文行以空格开头，删除以 `-`，新增以 `+`
-6. **最小改动**：只改与报错直接相关的代码行；**不要**删除 `/** … */` / kernel-doc 注释（宏重定义时**只删 `#define`**）。若删除函数/变量等整段实现，也只删代码行，除非报错明确要求处理注释
-7. **禁止破坏块注释结构**：若 diff 中必须动到注释，不得只删 `/**` 留 ` *`、只删 ` */` 等散落删除；**宏重定义场景下不要在 diff 里出现任何注释删除行**
-8. **删宏不是 undef 宏**：用 `-` 删掉 vendor 侧 `#define` 后，**禁止**用 `+` 追加 `#undef` / `#ifdef`…`#undef`…`#endif` 块
-
-输出格式：
-- 第一行：`summary: ` 简述修复策略（中文，一句话，说明是否必须改合入目标路径）
-- 每个文件一个代码块，语言标签 `fix`，第一行是**仓库相对路径**（如 `vendor/mediatek/...` 或 `kernel-5.10/...`），**禁止**写 `[build_workdir]` / `[target_repo]` 等 UI 前缀；随后是 **unified diff**
-- diff 中**禁止**出现空的 `-` 行（行首仅有 `-` 无内容）；删除空行时 `-` 后须有空格再跟原行内容
-
-示例（最小 diff，宏重定义只删 `#define`）：
-summary: 删除 foo.c 中与内核冲突的 #define BAR，修复宏重定义
-
-```fix drivers/foo/foo.c
---- a/drivers/foo/foo.c
-+++ b/drivers/foo/foo.c
-@@ -10,7 +10,6 @@
- /**
-  * BAR - legacy constant, superseded by header.
-  */
--#define BAR(x, y) ((x) < (y) ? (x) : (y))
- 
- static int foo_init(void)
-```"""
+    system = load_prompt("build_fix")
 
     llm_errors = list(errors or [])
     llm_chains = list(diagnostic_chains or [])

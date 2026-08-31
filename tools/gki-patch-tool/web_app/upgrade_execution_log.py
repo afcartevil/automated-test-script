@@ -6,7 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-_LOG_DIR = Path(__file__).resolve().parent.parent / "outputs" / "upgrade_logs"
+from web_app.app_paths import outputs_dir
+
+_LOG_DIR = outputs_dir("upgrade_logs")
 _LOG_TIME_FMT = "%Y%m%d_%H%M%S"
 _LINE_RE = re.compile(
     r"^\[(?P<ts>[^\]]+)\](?:\[(?P<phase>[^\]]*)\])? (?P<msg>.*)$"

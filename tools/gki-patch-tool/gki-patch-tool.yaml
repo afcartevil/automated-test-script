@@ -2,7 +2,7 @@
 # CLI: python tools/patch_analyzer.py --from-tag ... --to-tag ...
 #       或 python tools/patch_analyzer.py -s gki-patch-tool.yaml ...
 # 命令行参数优先级高于本文件；本文件优先级高于内置默认值。
-# 环境变量可覆盖部分项：GKI_REPO_DIR、GKI_LLM_*、GKI_SETTINGS
+# 环境变量可覆盖部分项：GKI_REPO_DIR、GKI_LLM_*、GKI_FEISHU_*、GKI_SETTINGS
 
 version: 1
 
@@ -27,6 +27,19 @@ analysis:
 output:
   dir: outputs
   json: patch-analysis-result.json
+
+# 飞书验收表格：优先使用开放平台应用，无需本机 lark-cli
+# 也可在「设置」页填写；环境变量 GKI_FEISHU_APP_ID / GKI_FEISHU_APP_SECRET /
+# GKI_FEISHU_FOLDER_TOKEN / GKI_FEISHU_OWNER / GKI_FEISHU_OPEN_BASE /
+# GKI_FEISHU_WEBHOOK_URL / GKI_FEISHU_WEBHOOK_SECRET 可覆盖
+feishu:
+  app_id: ""
+  app_secret: ""
+  folder_token: ""
+  owner: ""   # 新建表格后转移所有者，如邮箱 ke.li11@transsion.com
+  open_base: https://open.feishu.cn
+  webhook_url: ""      # 群自定义机器人 Webhook；任务完成/失败后推送
+  webhook_secret: ""   # 开启签名校验时填写
 
 llm:
   # 留空则使用环境变量 GKI_LLM_API_KEY / GKI_LLM_API_BASE / GKI_LLM_MODEL

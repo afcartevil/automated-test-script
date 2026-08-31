@@ -39,16 +39,21 @@
     </header>
 
     <main class="content" :class="{ 'content-embedded': embedded }">
-      <RouterView />
+      <RouterView v-slot="{ Component }">
+        <KeepAlive :include="['UpgradeView']">
+          <component :is="Component" />
+        </KeepAlive>
+      </RouterView>
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 const route = useRoute()
+const router = useRouter()
 
 const navItems = [
   { to: '/', label: '首页' },
@@ -69,4 +74,64 @@ function isNavActive(path: string) {
   if (path === '/') return route.path === '/'
   return route.path === path || route.path.startsWith(`${path}/`)
 }
+
+function isParentNavigateMessage(data: unknown): data is {
+  type: 'ea-gki-patch-navigate'
+  path: string
+  query?: Record<string, string>
+} {
+  if (!data || typeof data !== 'object') return false
+  const msg = data as { type?: string; path?: string }
+  return msg.type === 'ea-gki-patch-navigate' && typeof msg.path === 'string'
+}
+
+function isParentApplyNoticeMessage(data: unknown): data is {
+  type: 'ea-gki-patch-apply-notice'
+  fromTag: string
+  toTag: string
+  text?: string
+  noticeId?: string
+} {
+  if (!data || typeof data !== 'object') return false
+  const msg = data as { type?: string; fromTag?: string; toTag?: string }
+  return (
+    msg.type === 'ea-gki-patch-apply-notice'
+    && typeof msg.fromTag === 'string'
+    && typeof msg.toTag === 'string'
+  )
+}
+
+function handleParentNavigate(event: MessageEvent) {
+  if (!embedded.value) return
+  if (isParentNavigateMessage(event.data)) {
+    const path = event.data.path.startsWith('/') ? event.data.path : `/${event.data.path}`
+    const query = { ...(event.data.query || {}), embedded: '1' }
+    const samePath = route.path === path || route.path === `${path}/`
+    const sameQuery =
+      Object.keys(query).every((k) => String(route.query[k] ?? '') === String(query[k] ?? ''))
+      && Object.keys(route.query).every((k) => k === 'embedded' || query[k] != null)
+    if (samePath && sameQuery) return
+    void router.push({ path, query })
+    return
+  }
+  if (isParentApplyNoticeMessage(event.data)) {
+    const path = '/upgrade'
+    const query = {
+      embedded: '1',
+      from_tag: event.data.fromTag,
+      to_tag: event.data.toTag,
+      ...(event.data.text ? { notice_text: event.data.text } : {}),
+      ...(event.data.noticeId ? { notice_id: event.data.noticeId } : {}),
+    }
+    void router.push({ path, query })
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('message', handleParentNavigate)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('message', handleParentNavigate)
+})
 </script>

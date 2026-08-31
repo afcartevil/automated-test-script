@@ -4,7 +4,8 @@
       <div>
         <p class="eyebrow">Settings</p>
         <h1 class="page-title">系统设置</h1>
-        <p v-if="!isEmbedded" class="page-desc">管理本地仓库路径、LLM API 与远程 SSH 账号。</p>
+        <p v-if="!isEmbedded" class="page-desc">管理本地仓库路径、LLM API、飞书应用与远程 SSH 账号。</p>
+        <p v-else class="page-desc">管理本地仓库路径与飞书应用（LLM / SSH 使用 EasyAdapter 一键配置）。</p>
       </div>
       <button class="btn" @click="loadAll">刷新配置</button>
     </div>
@@ -29,7 +30,7 @@
         </div>
       </div>
 
-      <div class="card card-pad">
+      <div v-if="!isEmbedded" class="card card-pad">
         <div class="section-title">
           <div>
             <h2>LLM 配置</h2>
@@ -73,7 +74,108 @@
         </div>
       </div>
 
-      <div id="settings-ssh" class="card card-pad" :class="{ 'settings-section-focus': sshSectionFocus }">
+      <div class="card card-pad">
+        <div class="section-title">
+          <div>
+            <h2>飞书应用</h2>
+            <p>配置后导出验收表格无需本机安装 lark-cli；可指定共享目录，并把所有者转给指定用户</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label>App ID</label>
+            <input v-model="feishu.app_id" class="input mono" placeholder="cli_xxx" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label>App Secret</label>
+            <input v-model="feishu.app_secret" class="input" type="password" placeholder="应用密钥" autocomplete="off" />
+          </div>
+          <div class="field full">
+            <label>存放目录 Token（可选）</label>
+            <input v-model="feishu.folder_token" class="input mono" placeholder="可直接粘贴文件夹链接，如 https://xxx.feishu.cn/drive/folder/CvYFfs..." />
+          </div>
+          <div class="field full">
+            <label>默认所有者（可选）</label>
+            <input v-model="feishu.owner" class="input" placeholder="如 ke.li11@transsion.com，表格会转到该用户名下" />
+          </div>
+          <div class="field">
+            <label>默认文档密级</label>
+            <select v-model="feishu.secure_label" class="input">
+              <option value="S4">S4-绝密</option>
+              <option value="S3">S3-机密</option>
+              <option value="S2">S2-内部公开</option>
+              <option value="S1">S1-外部公开</option>
+            </select>
+          </div>
+          <div class="field full">
+            <label>开放平台地址</label>
+            <input v-model="feishu.open_base" class="input mono" placeholder="https://open.feishu.cn" />
+          </div>
+          <div class="field full">
+            <label>任务通知接收人（可多人，无群时用这个）</label>
+            <textarea
+              v-model="feishu.notify_users"
+              class="input textarea"
+              rows="3"
+              placeholder="每人一行或用逗号分隔，如：&#10;ke.li11@transsion.com&#10;someone@transsion.com"
+            />
+          </div>
+          <div class="field full">
+            <label>任务通知 Webhook（可选，有群再填）</label>
+            <input
+              v-model="feishu.webhook_url"
+              class="input mono"
+              placeholder="群自定义机器人 Webhook，如 https://open.feishu.cn/open-apis/bot/v2/hook/…"
+              autocomplete="off"
+            />
+          </div>
+          <div class="field full">
+            <label>Webhook 签名密钥（可选）</label>
+            <input
+              v-model="feishu.webhook_secret"
+              class="input"
+              type="password"
+              placeholder="机器人开启「签名校验」时填写"
+              autocomplete="off"
+            />
+          </div>
+        </div>
+        <p class="field-hint">
+          在飞书开放平台创建企业自建应用，开通云空间/电子表格权限，以及「转移云文档所有权」。填了默认所有者后，新建表格会转到该用户名下；应用仍保留协作者以便后续刷新。
+          存放目录可直接粘贴云空间文件夹链接，例如
+          https://xxx.feishu.cn/drive/folder/CvYFfsIzMl6Yo2dRq3ocfqGDnfh
+          （会自动识别最后一段 token，不一定是 fldcn 开头）。应用需要对该文件夹有编辑权限。不填则建在应用云空间。
+          默认密级会在创建验收表格、上传模块代码 HTML 后自动设置（文件夹本身不支持密级）；需应用或 lark-cli 具备 docs:secure_label 权限。
+          任务通知：没有群时，在「任务通知接收人」填多人企业邮箱（或 ou_ open_id），任务完成/失败会用应用逐个发私信。应用需开通 im:message，并在开放平台把这些用户纳入可用范围。不填接收人时会回退发给「默认所有者」。有群才需要填 Webhook。
+        </p>
+        <div class="toolbar" style="margin-top: 14px">
+          <button class="btn primary" @click="saveFeishu">保存</button>
+          <button class="btn" type="button" :disabled="feishuTesting || !feishu.app_id || !feishu.app_secret" @click="testFeishu">
+            {{ feishuTesting ? '测试中…' : '测试连接' }}
+          </button>
+          <button
+            class="btn"
+            type="button"
+            :disabled="feishuWebhookTesting || !canTestNotify"
+            @click="testFeishuWebhook"
+          >
+            {{ feishuWebhookTesting ? '发送中…' : '测试通知' }}
+          </button>
+          <span class="pill" :class="feishu.configured ? 'success' : 'warning'">
+            {{ feishu.configured ? '应用已配置' : '应用未配置' }}
+          </span>
+          <span class="pill" :class="feishu.webhook_configured ? 'success' : 'warning'">
+            {{ feishu.webhook_configured ? '通知已配置' : '通知未配置' }}
+          </span>
+        </div>
+      </div>
+
+      <div
+        v-if="!isEmbedded"
+        id="settings-ssh"
+        class="card card-pad"
+        :class="{ 'settings-section-focus': sshSectionFocus }"
+      >
         <div class="section-title">
           <div>
             <h2>远程 SSH（cqris）</h2>
@@ -144,7 +246,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../api'
 import { isEmbeddedMode } from '../composables/useEmbeddedNav'
@@ -154,7 +256,33 @@ const route = useRoute()
 const sshSectionFocus = ref(false)
 
 const repo = reactive<any>({ repo_dir: '', configured: false })
-const llm = reactive<any>({ api_key: '', api_base: 'https://api.openai.com/v1', model: '', configured: false })
+const llm = reactive<any>({
+  api_key: '',
+  api_base: 'https://api.openai.com/v1',
+  model: '',
+  configured: false,
+  managed_by_ea: false,
+  readonly: false,
+})
+const feishu = reactive<any>({
+  app_id: '',
+  app_secret: '',
+  folder_token: '',
+  owner: '',
+  open_base: 'https://open.feishu.cn',
+  secure_label: 'S2',
+  webhook_url: '',
+  webhook_secret: '',
+  notify_users: '',
+  configured: false,
+  webhook_configured: false,
+})
+const feishuTesting = ref(false)
+const feishuWebhookTesting = ref(false)
+const canTestNotify = computed(() => {
+  if (feishu.webhook_url?.trim()) return true
+  return Boolean(feishu.app_id?.trim() && feishu.app_secret?.trim() && (feishu.notify_users?.trim() || feishu.owner?.trim()))
+})
 const ssh = reactive<any>({
   bastion_host: 'cqris.transsion.com',
   bastion_port: 22,
@@ -164,6 +292,8 @@ const ssh = reactive<any>({
   target_user: '',
   target_password: '',
   credentials_configured: false,
+  managed_by_ea: false,
+  readonly: false,
 })
 const modelOptions = ref<string[]>([])
 const modelsLoading = ref(false)
@@ -213,19 +343,26 @@ function onLlmCredentialChange() {
 async function loadAll() {
   error.value = ''
   try {
-    const [repoData, llmData, sshData] = await Promise.all([
+    const [repoData, llmData, feishuData, sshData] = await Promise.all([
       api.get<any>('/api/repo/config'),
       api.get<any>('/api/llm/config'),
+      api.get<any>('/api/feishu/config'),
       api.get<any>('/api/upgrade/ssh-config'),
     ])
     Object.assign(repo, repoData)
     repo.repo_dir = repoData.repo_dir || repoData.effective_dir || ''
     Object.assign(llm, llmData)
+    Object.assign(feishu, feishuData)
+    if (!feishu.open_base) feishu.open_base = 'https://open.feishu.cn'
+    if (!feishu.secure_label) feishu.secure_label = 'S2'
     Object.assign(ssh, sshData)
-    if (llm.api_key) {
-      await fetchModels()
-    } else if (llm.model) {
-      modelOptions.value = [llm.model]
+    // 集成模式不展示 LLM 配置，跳过拉取模型列表
+    if (!isEmbedded) {
+      if (llm.api_key) {
+        await fetchModels()
+      } else if (llm.model) {
+        modelOptions.value = [llm.model]
+      }
     }
   } catch (err: any) {
     error.value = err.message || String(err)
@@ -237,6 +374,10 @@ async function saveRepo() {
 }
 
 async function saveLlm() {
+  if (llm.managed_by_ea || llm.readonly) {
+    error.value = '当前由 EasyAdapter 托管 LLM 配置，请在 EasyAdapter「模型」中修改'
+    return
+  }
   if (!llm.model) {
     error.value = '请先获取并选择模型'
     return
@@ -248,7 +389,94 @@ async function saveLlm() {
   })
 }
 
+async function saveFeishu() {
+  const hasApp = !!(feishu.app_id?.trim() && feishu.app_secret?.trim())
+  const hasWebhook = !!feishu.webhook_url?.trim()
+  if (!hasApp && !hasWebhook) {
+    error.value = '请至少填写飞书 App ID/Secret，或任务通知 Webhook'
+    return
+  }
+  await save('/api/feishu/config', {
+    app_id: feishu.app_id.trim(),
+    app_secret: feishu.app_secret.trim(),
+    folder_token: (feishu.folder_token || '').trim(),
+    owner: (feishu.owner || '').trim(),
+    open_base: (feishu.open_base || 'https://open.feishu.cn').trim(),
+    secure_label: (feishu.secure_label || 'S2').trim(),
+    webhook_url: (feishu.webhook_url || '').trim(),
+    webhook_secret: (feishu.webhook_secret || '').trim(),
+    notify_users: (feishu.notify_users || '').trim(),
+  })
+}
+
+async function testFeishu() {
+  error.value = ''
+  message.value = ''
+  if (!feishu.app_id?.trim() || !feishu.app_secret?.trim()) {
+    error.value = '请先填写并保存飞书 App ID / Secret'
+    return
+  }
+  feishuTesting.value = true
+  try {
+    await api.put('/api/feishu/config', {
+      app_id: feishu.app_id.trim(),
+      app_secret: feishu.app_secret.trim(),
+      folder_token: (feishu.folder_token || '').trim(),
+      owner: (feishu.owner || '').trim(),
+      open_base: (feishu.open_base || 'https://open.feishu.cn').trim(),
+      secure_label: (feishu.secure_label || 'S2').trim(),
+      webhook_url: (feishu.webhook_url || '').trim(),
+      webhook_secret: (feishu.webhook_secret || '').trim(),
+      notify_users: (feishu.notify_users || '').trim(),
+    })
+    await api.post('/api/feishu/config/test', {})
+    message.value = '飞书应用连接成功'
+    await loadAll()
+  } catch (err: any) {
+    error.value = err.message || String(err)
+  } finally {
+    feishuTesting.value = false
+  }
+}
+
+async function testFeishuWebhook() {
+  error.value = ''
+  message.value = ''
+  if (!canTestNotify.value) {
+    error.value = '请先填写通知接收人，或群机器人 Webhook'
+    return
+  }
+  feishuWebhookTesting.value = true
+  try {
+    await api.put('/api/feishu/config', {
+      app_id: feishu.app_id.trim(),
+      app_secret: feishu.app_secret.trim(),
+      folder_token: (feishu.folder_token || '').trim(),
+      owner: (feishu.owner || '').trim(),
+      open_base: (feishu.open_base || 'https://open.feishu.cn').trim(),
+      secure_label: (feishu.secure_label || 'S2').trim(),
+      webhook_url: feishu.webhook_url.trim(),
+      webhook_secret: (feishu.webhook_secret || '').trim(),
+      notify_users: (feishu.notify_users || '').trim(),
+    })
+    const result = await api.post<any>('/api/feishu/webhook/test', {})
+    const sent = result?.response?.sent
+    message.value = feishu.webhook_url?.trim()
+      ? '测试通知已发送，请到飞书群查看'
+      : `测试通知已发送${Array.isArray(sent) ? `（${sent.length} 人）` : ''}，请到飞书私信查看`
+    await loadAll()
+  } catch (err: any) {
+    error.value = err.message || String(err)
+  } finally {
+    feishuWebhookTesting.value = false
+  }
+}
+
 async function saveSsh() {
+  if (isEmbedded || ssh.managed_by_ea || ssh.readonly) {
+    error.value = '当前由 EasyAdapter 托管 SSH 配置，请在 EasyAdapter「一键配置」中修改'
+    return
+  }
   if (!ssh.bastion_user?.trim() || !ssh.bastion_password) {
     error.value = '请填写 cqris 用户名和密码'
     return
@@ -267,6 +495,10 @@ async function saveSsh() {
 }
 
 async function clearSsh() {
+  if (isEmbedded || ssh.managed_by_ea || ssh.readonly) {
+    error.value = '当前由 EasyAdapter 托管 SSH 配置，无法在此清除'
+    return
+  }
   if (!ssh.credentials_configured) return
   if (!window.confirm('确定清除已保存的远程 SSH 账号？清除后创建远程任务需重新配置。')) return
   error.value = ''
@@ -294,7 +526,7 @@ async function save(url: string, body: any) {
 
 onMounted(async () => {
   await loadAll()
-  if (String(route.query.section || '') === 'ssh') {
+  if (!isEmbedded && String(route.query.section || '') === 'ssh') {
     sshSectionFocus.value = true
     await nextTick()
     document.getElementById('settings-ssh')?.scrollIntoView({ behavior: 'smooth', block: 'start' })

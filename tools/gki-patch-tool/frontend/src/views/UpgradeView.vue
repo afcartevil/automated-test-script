@@ -98,6 +98,7 @@
               </button>
             </div>
           </div>
+          <div v-else-if="jobsLoading" class="empty">任务历史加载中…</div>
           <div v-else class="empty">暂无升级任务</div>
         </div>
       </div>
@@ -248,8 +249,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+
+defineOptions({ name: 'UpgradeView' })
+
+/** Module-level cache so KeepAlive / re-entry can paint history immediately. */
+let upgradeJobsCache: any[] = []
 import BuildFixPanel from '../components/upgrade/BuildFixPanel.vue'
 import ConflictPanel from '../components/upgrade/ConflictPanel.vue'
 import GerritSubmissionsPanel from '../components/upgrade/GerritSubmissionsPanel.vue'
@@ -281,7 +287,8 @@ import {
 const route = useRoute()
 const form = reactive<any>(createEmptyUpgradeForm())
 
-const jobs = ref<any[]>([])
+const jobs = ref<any[]>(upgradeJobsCache.slice())
+const jobsLoading = ref(upgradeJobsCache.length === 0)
 const selectedJobIds = ref<Set<string>>(new Set())
 const batchDeleting = ref(false)
 const activeJobId = ref('')
@@ -381,12 +388,18 @@ function clearAdvancedConfig() {
   Object.assign(form, createEmptyUpgradeForm())
 }
 
-function copyFromLastJob() {
+async function copyFromLastJob() {
   if (!jobs.value.length) return
-  const job = jobs.value[0]
-  Object.assign(form, jobToUpgradeForm(job))
-  form.remote = true
-  prefillBanner.value = `已从最近任务 ${shortId(job.id || job.job_id)} 复制配置（请核对 Tag）`
+  const latestId = jobs.value[0].id || jobs.value[0].job_id
+  if (!latestId) return
+  try {
+    const job = await api.get<any>(`/api/upgrade/jobs/${latestId}`)
+    Object.assign(form, jobToUpgradeForm(job))
+    form.remote = true
+    prefillBanner.value = `已从最近任务 ${shortId(job.id || job.job_id)} 复制配置（请核对 Tag）`
+  } catch (err: any) {
+    error.value = err.message || String(err)
+  }
 }
 
 async function loadDefaults() {
@@ -402,15 +415,23 @@ async function prefillFromAnalysisTask(taskId: string) {
   prefillBanner.value = '已从分析任务预填 Tag'
 }
 
-async function loadJobs() {
-  const data = await api.get<any>('/api/upgrade/jobs?limit=50')
-  jobs.value = data.jobs || []
-  const valid = new Set(jobs.value.map((job) => job.id || job.job_id))
-  const next = new Set<string>()
-  for (const id of selectedJobIds.value) {
-    if (valid.has(id)) next.add(id)
+async function loadJobs(opts: { silent?: boolean } = {}) {
+  if (!opts.silent || jobs.value.length === 0) {
+    jobsLoading.value = true
   }
-  selectedJobIds.value = next
+  try {
+    const data = await api.get<any>('/api/upgrade/jobs?limit=50')
+    jobs.value = data.jobs || []
+    upgradeJobsCache = jobs.value
+    const valid = new Set(jobs.value.map((job) => job.id || job.job_id))
+    const next = new Set<string>()
+    for (const id of selectedJobIds.value) {
+      if (valid.has(id)) next.add(id)
+    }
+    selectedJobIds.value = next
+  } finally {
+    jobsLoading.value = false
+  }
 }
 
 function toggleJobSelection(jobId: string, checked: boolean) {
@@ -710,25 +731,50 @@ async function deleteSelectedJobs() {
   }
 }
 
-onMounted(async () => {
-  await loadDefaults()
-  await loadJobs()
+onMounted(() => {
+  // Local defaults are sync — do not block history fetch.
+  void loadDefaults()
+  // History first: paint ASAP; panel / deep-link run in parallel.
+  void loadJobs({ silent: jobs.value.length > 0 })
+
   const taskId = String(route.query.task || '')
   if (taskId) {
-    try {
-      await prefillFromAnalysisTask(taskId)
-    } catch (err: any) {
+    void prefillFromAnalysisTask(taskId).catch((err: any) => {
       error.value = err.message || '加载分析任务失败'
-    }
+    })
   }
+  applyNoticeQueryPrefill()
   const jobId = String(route.query.job || '')
   if (jobId) {
-    await selectJob(jobId)
+    void selectJob(jobId)
   } else {
-    await openAdvancedPanel()
+    void openAdvancedPanel()
   }
 })
 
+onActivated(() => {
+  // Soft refresh when returning via KeepAlive; skip if mount fetch already in flight.
+  if (jobsLoading.value) return
+  void loadJobs({ silent: true })
+  applyNoticeQueryPrefill()
+})
+
+function applyNoticeQueryPrefill() {
+  const fromTag = String(route.query.from_tag || '').trim()
+  const toTag = String(route.query.to_tag || '').trim()
+  if (!fromTag || !toTag) return
+  form.from_tag = fromTag
+  form.to_tag = toTag
+  const noticeText = String(route.query.notice_text || '').trim()
+  prefillBanner.value = noticeText
+    ? `已从外部通知填入 Tag：${fromTag} → ${toTag}`
+    : `已填入 Tag：${fromTag} → ${toTag}`
+}
+
+watch(
+  () => [route.query.from_tag, route.query.to_tag, route.query.notice_text] as const,
+  () => applyNoticeQueryPrefill(),
+)
 onBeforeUnmount(() => {
   if (socket) socket.close()
   stopPoll()

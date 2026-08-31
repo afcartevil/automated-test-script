@@ -1,6 +1,7 @@
 """FastAPI 服务端 - REST API + WebSocket 实时进度推送。"""
 import asyncio
 import json
+import os
 import webbrowser
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -12,8 +13,15 @@ from fastapi.staticfiles import StaticFiles
 
 # Ensure web_app package is importable
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
+from web_app.app_paths import (
+    ensure_install_layout,
+    frontend_dist_dir,
+    overview_html_path,
+    settings_file,
+    setup_sys_path,
+)
+
+setup_sys_path()
 
 from web_app.analyzer_service import (
     DEFAULT_CONFIG,
@@ -43,15 +51,16 @@ from web_app.database import (
     list_upgrade_jobs,
     delete_upgrade_job,
 )
+from web_app.feishu_service import FeishuError
 from web_app.llm_service import is_llm_configured, save_llm_config
+from web_app.lark_cli_runner import LarkCliError
 from render_report_llm import render_patch
 from web_app.task_report import build_task_report_html, render_monthly_analysis_html
 
 # ── App ────────────────────────────────────────────────
 app = FastAPI(title="GKI Patch 分析平台", version="1.0.0")
 
-_PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-_FRONTEND_DIST = _PROJECT_ROOT / "frontend" / "dist"
+_FRONTEND_DIST = frontend_dist_dir()
 _FRONTEND_ASSETS = _FRONTEND_DIST / "assets"
 
 if _FRONTEND_ASSETS.is_dir():
@@ -90,17 +99,34 @@ async def api_analyze(body: Dict[str, Any]):
             raise HTTPException(400, "单 SHA 分析需要提供 sha 参数")
         task_id, err = start_analysis("single", repo, config, sha=sha,
                                        force_reanalyze=force_reanalyze)
-    else:
-        if not from_tag or not to_tag:
-            raise HTTPException(400, "区间分析需要提供 from_tag 和 to_tag 参数")
-        task_id, err = start_analysis("range", repo, config,
-                                       from_tag=from_tag, to_tag=to_tag,
-                                       sample_size=sample_size,
-                                       force_reanalyze=force_reanalyze,
-                                       auto_extend=auto_extend)
+        if err:
+            raise HTTPException(500, err)
+        return {"task_id": task_id}
+
+    if not from_tag or not to_tag:
+        raise HTTPException(400, "区间分析需要提供 from_tag 和 to_tag 参数")
+
+    from web_app.analyzer_service import resolve_analysis_range_tags
+    try:
+        resolved_from, resolved_to = resolve_analysis_range_tags(from_tag, to_tag)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    task_id, err = start_analysis("range", repo, config,
+                                   from_tag=resolved_from, to_tag=resolved_to,
+                                   sample_size=sample_size,
+                                   force_reanalyze=force_reanalyze,
+                                   auto_extend=auto_extend)
     if err:
-        raise HTTPException(500, err)
-    return {"task_id": task_id}
+        # start_analysis may still return resolve errors for safety
+        status = 400 if "无法将" in err or "_rN" in err else 500
+        raise HTTPException(status, err)
+    return {
+        "task_id": task_id,
+        "from_tag": resolved_from,
+        "to_tag": resolved_to,
+        "tag_resolved": resolved_from != from_tag or resolved_to != to_tag,
+    }
 
 
 # ── API: List tasks ────────────────────────────────────
@@ -111,8 +137,17 @@ async def api_list_tasks(limit: int = Query(50, ge=1, le=200)):
 
 # ── API: Get task detail ───────────────────────────────
 @app.get("/api/tasks/{task_id}")
-async def api_get_task(task_id: str, dev_module: str = Query("", description="按开发模块筛选")):
-    task = get_task_with_patches(task_id, dev_module=dev_module)
+async def api_get_task(
+    task_id: str,
+    dev_module: str = Query("", description="按开发模块筛选"),
+    include_patches: bool = Query(
+        False,
+        description="是否返回完整 patch 列表；默认否（结果页用 summary，详情按需拉取）",
+    ),
+):
+    task = get_task_with_patches(
+        task_id, dev_module=dev_module, include_patches=include_patches,
+    )
     if not task:
         raise HTTPException(404, "任务不存在")
     return task
@@ -127,22 +162,57 @@ async def api_task_module_stats(task_id: str):
     return {"stats": get_task_module_stats(task_id)}
 
 
+@app.get("/api/tasks/{task_id}/patches")
+async def api_task_patches(
+    task_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: str = Query(""),
+    module: str = Query("", description="开发模块；__empty__ 表示未分类"),
+    llm: str = Query("", description="llm | script | 空"),
+):
+    """本任务 patch 分页索引（轻量字段，不含完整分析正文）。"""
+    from web_app.database import get_task, list_task_patches
+
+    if not get_task(task_id):
+        raise HTTPException(404, "任务不存在")
+    return list_task_patches(
+        task_id,
+        page=page,
+        page_size=page_size,
+        search=search,
+        dev_module=module,
+        llm=llm,
+    )
+
+
 # ── API: Get task module analysis ─────────────────────
 @app.get("/api/tasks/{task_id}/modules")
-async def api_task_module_analysis(task_id: str):
+async def api_task_module_analysis(
+    task_id: str,
+    include_code_tree: bool = Query(
+        True,
+        description="是否包含 code_tree；大任务建议 true（已精简，不含 patch 长摘要）",
+    ),
+):
     import json
+    from web_app.analyzer_service import _slim_module_summaries_for_api
     from web_app.database import get_task
     task = get_task(task_id)
     if not task:
         raise HTTPException(404, "任务不存在")
     raw = task.get("module_summaries", "") or ""
     if not raw:
-        return {"module_count": 0, "modules": {}}
+        return {"module_count": 0, "modules": {}, "total_patches": 0, "total_chunks": 0}
     try:
-        data = json.loads(raw)
+        data = json.loads(raw) if isinstance(raw, str) else dict(raw)
     except (json.JSONDecodeError, TypeError):
-        data = {"module_count": 0, "modules": {}}
-    return data
+        return {"module_count": 0, "modules": {}, "total_patches": 0, "total_chunks": 0}
+    return _slim_module_summaries_for_api(
+        data,
+        include_code_tree=include_code_tree,
+        include_patch_summary=False,
+    )
 
 
 @app.get("/api/tasks/{task_id}/monthly-subtag-patches")
@@ -269,25 +339,100 @@ async def api_extend_stats(task_id: str):
 # ── API: LLM config check ────────────────────────────
 @app.get("/api/llm/config")
 async def api_llm_config():
-    from web_app.llm_service import get_llm_config
+    from web_app.llm_service import get_llm_config, is_llm_managed_by_ea
     cfg = get_llm_config()
+    managed = is_llm_managed_by_ea()
     return {
         "configured": bool(cfg["api_key"]),
         "api_key": cfg["api_key"],
         "api_base": cfg["api_base"],
         "model": cfg["model"],
+        "managed_by_ea": managed,
+        "readonly": managed,
     }
 
 
 # ── API: Save LLM config to DB ─────────────────────────
 @app.put("/api/llm/config")
 async def api_llm_config_save(body: Dict[str, Any]):
-    from web_app.llm_service import save_llm_config
+    from web_app.llm_service import is_llm_managed_by_ea, save_llm_config
+    if is_llm_managed_by_ea():
+        raise HTTPException(
+            status_code=400,
+            detail="当前由 EasyAdapter 托管 LLM 配置，请在 EasyAdapter「模型」中修改后重启服务",
+        )
     api_key = body.get("api_key", "")
     api_base = body.get("api_base", "https://api.openai.com/v1")
     model = body.get("model", "gpt-4o")
     save_llm_config(api_key, api_base, model)
     return {"saved": True}
+
+
+@app.get("/api/feishu/config")
+async def api_feishu_config():
+    from web_app.feishu_service import (
+        get_feishu_config,
+        is_feishu_app_configured,
+        is_feishu_notify_configured,
+        is_feishu_webhook_configured,
+        parse_notify_targets,
+    )
+    cfg = get_feishu_config()
+    notify_targets = parse_notify_targets(cfg.get("notify_users") or "")
+    notify_users = "\n".join(
+        str(item.get("email") or item.get("id") or "").strip()
+        for item in notify_targets
+        if str(item.get("email") or item.get("id") or "").strip()
+    )
+    return {
+        "configured": is_feishu_app_configured(),
+        "webhook_configured": is_feishu_notify_configured(),
+        "notify_via_webhook": is_feishu_webhook_configured(),
+        "app_id": cfg["app_id"],
+        "app_secret": cfg["app_secret"],
+        "folder_token": cfg["folder_token"],
+        "open_base": cfg["open_base"],
+        "owner": cfg.get("owner") or "",
+        "secure_label": cfg.get("secure_label") or "S2",
+        "webhook_url": cfg.get("webhook_url") or "",
+        "webhook_secret": cfg.get("webhook_secret") or "",
+        "notify_users": notify_users,
+    }
+
+
+@app.put("/api/feishu/config")
+async def api_feishu_config_save(body: Dict[str, Any]):
+    from web_app.feishu_service import save_feishu_config
+    save_feishu_config(
+        app_id=str(body.get("app_id") or ""),
+        app_secret=str(body.get("app_secret") or ""),
+        folder_token=str(body.get("folder_token") or ""),
+        open_base=str(body.get("open_base") or ""),
+        owner=str(body.get("owner") or ""),
+        secure_label=str(body.get("secure_label") or "S2"),
+        webhook_url=str(body.get("webhook_url") or ""),
+        webhook_secret=str(body.get("webhook_secret") or ""),
+        notify_users=str(body.get("notify_users") or ""),
+    )
+    return {"saved": True}
+
+
+@app.post("/api/feishu/config/test")
+async def api_feishu_config_test():
+    from web_app.feishu_service import test_feishu_connection
+    try:
+        return test_feishu_connection()
+    except FeishuError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/feishu/webhook/test")
+async def api_feishu_webhook_test():
+    from web_app.feishu_service import test_webhook_notify
+    try:
+        return test_webhook_notify()
+    except FeishuError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/llm/models")
@@ -316,6 +461,30 @@ async def api_repo_config_save(body: Dict[str, Any]):
     from web_app.repo_config import get_repo_config, save_repo_config
     save_repo_config(body.get("repo_dir", ""))
     return {"saved": True, **get_repo_config()}
+
+
+@app.get("/api/repo/tags")
+async def api_repo_tags(q: str = "", limit: int = 0, refresh: bool = False):
+    """List git tags from the configured local kernel repo."""
+    from web_app.analyzer_service import list_repo_tags
+    from web_app.repo_config import get_local_repo_dir
+
+    repo_dir = get_local_repo_dir()
+    tags = list_repo_tags(force=refresh)
+    query = (q or "").strip().lower()
+    if query:
+        parts = [p for p in query.split() if p]
+        tags = [t for t in tags if all(p in t.lower() for p in parts)]
+    total = len(tags)
+    if limit and limit > 0:
+        tags = tags[: int(limit)]
+    return {
+        "configured": bool(repo_dir),
+        "repo_dir": str(repo_dir) if repo_dir else "",
+        "total": total,
+        "count": len(tags),
+        "tags": tags,
+    }
 
 
 # ── API: GKI Upgrade workflow ──────────────────────────
@@ -350,17 +519,41 @@ async def api_upgrade_ssh_config():
 
 @app.put("/api/upgrade/ssh-credentials")
 async def api_upgrade_ssh_credentials_save(body: Dict[str, Any]):
-    from web_app.ssh_credentials_config import get_ssh_credentials_api_payload, save_ssh_credentials
+    from web_app.ssh_credentials_config import (
+        get_ssh_credentials_api_payload,
+        is_ssh_managed_by_ea,
+        save_ssh_credentials,
+    )
 
-    save_ssh_credentials(body or {})
+    if is_ssh_managed_by_ea():
+        raise HTTPException(
+            status_code=400,
+            detail="当前由 EasyAdapter 托管 SSH 配置，请在 EasyAdapter「一键配置」中修改后重启服务",
+        )
+    try:
+        save_ssh_credentials(body or {})
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"saved": True, **get_ssh_credentials_api_payload()}
 
 
 @app.delete("/api/upgrade/ssh-credentials")
 async def api_upgrade_ssh_credentials_clear():
-    from web_app.ssh_credentials_config import clear_ssh_credentials, get_ssh_credentials_api_payload
+    from web_app.ssh_credentials_config import (
+        clear_ssh_credentials,
+        get_ssh_credentials_api_payload,
+        is_ssh_managed_by_ea,
+    )
 
-    clear_ssh_credentials()
+    if is_ssh_managed_by_ea():
+        raise HTTPException(
+            status_code=400,
+            detail="当前由 EasyAdapter 托管 SSH 配置，无法在此清除",
+        )
+    try:
+        clear_ssh_credentials()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"cleared": True, **get_ssh_credentials_api_payload()}
 
 
@@ -429,7 +622,8 @@ async def api_upgrade_ssh_connect(job_id: str, body: Dict[str, Any] = None):
 
 @app.get("/api/upgrade/jobs")
 async def api_list_upgrade_jobs(limit: int = Query(50, ge=1, le=200)):
-    return {"jobs": list_upgrade_jobs(limit)}
+    # Sync SQLite off the event loop so list stays responsive under concurrent load.
+    return {"jobs": await asyncio.to_thread(list_upgrade_jobs, limit)}
 
 
 @app.get("/api/upgrade/jobs/{job_id}")
@@ -884,6 +1078,111 @@ async def api_task_report(task_id: str, inline: bool = Query(False, description=
     )
 
 
+@app.get("/api/tasks/{task_id}/checklist.xlsx")
+async def api_task_checklist_xlsx(task_id: str):
+    """Download a Feishu-style GKI upgrade checklist workbook."""
+    from fastapi.responses import Response
+
+    from web_app.checklist_export_service import (
+        build_checklist_xlsx,
+        checklist_content_disposition,
+    )
+
+    if not get_task(task_id):
+        raise HTTPException(404, "任务不存在")
+    try:
+        content, filename = build_checklist_xlsx(task_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "任务不存在")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, f"导出验收表格失败: {exc}") from exc
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": checklist_content_disposition(filename)},
+    )
+
+
+@app.post("/api/tasks/{task_id}/checklist-feishu")
+async def api_task_checklist_feishu(task_id: str):
+    """Create a new Feishu spreadsheet for this analysis task."""
+    from web_app.checklist_export_service import export_checklist_to_feishu
+
+    if not get_task(task_id):
+        raise HTTPException(404, "任务不存在")
+    try:
+        result = export_checklist_to_feishu(task_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "任务不存在")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except (FeishuError, LarkCliError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, f"导出飞书表格失败: {exc}") from exc
+    return result
+
+
+@app.post("/api/tasks/{task_id}/module-diff-report")
+async def api_task_module_diff_report_build(task_id: str):
+    """Build offline Gerrit-style module HTML report (no zip) without requiring Feishu upload."""
+    from web_app.module_diff_report import build_module_diff_report
+
+    if not get_task(task_id):
+        raise HTTPException(404, "任务不存在")
+    try:
+        report = build_module_diff_report(task_id, write_zip=False)
+    except FileNotFoundError:
+        raise HTTPException(404, "任务不存在")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, f"生成模块代码报告失败: {exc}") from exc
+    return {
+        "task_id": task_id,
+        "title": report.title,
+        "report_dir": str(report.report_dir),
+        "index_path": str(report.index_path),
+        "module_count": len(report.modules),
+        "subtag_count": len(report.subtags),
+        "modules": [
+            {"name": m.name, "patch_count": m.patch_count, "html": m.html_name}
+            for m in report.modules
+        ],
+        "subtags": [
+            {"name": m.name, "patch_count": m.patch_count, "html": m.html_name}
+            for m in report.subtags
+        ],
+    }
+
+
+@app.get("/api/tasks/{task_id}/module-diff-report.zip")
+async def api_task_module_diff_report_zip(task_id: str):
+    """Optional offline zip pack (on-demand only; not used by Feishu export)."""
+    from fastapi.responses import FileResponse
+    from web_app.module_diff_report import build_module_diff_report
+
+    if not get_task(task_id):
+        raise HTTPException(404, "任务不存在")
+    try:
+        report = build_module_diff_report(task_id, write_zip=True)
+    except FileNotFoundError:
+        raise HTTPException(404, "任务不存在")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, f"生成模块代码报告失败: {exc}") from exc
+    if not report.zip_path or not report.zip_path.exists():
+        raise HTTPException(500, "zip 未生成")
+    return FileResponse(
+        path=str(report.zip_path),
+        media_type="application/zip",
+        filename=report.zip_path.name,
+    )
+
+
 # ── API: Crash Analysis ─────────────────────────────
 
 @app.post("/api/crash-analysis")
@@ -940,14 +1239,40 @@ async def api_crash_analysis_report(crash_id: str):
     )
 
 
+# ── WebSocket: Real-time progress ──────────────────────
+@app.websocket("/ws/{task_id}")
+async def ws_progress(websocket: WebSocket, task_id: str):
+    await websocket.accept()
+    try:
+        while True:
+            try:
+                prog = get_progress(task_id)
+                await websocket.send_json(prog)
+                if prog.get("status") in ("completed", "failed", "cancelled"):
+                    break
+            except WebSocketDisconnect:
+                raise
+            except Exception:
+                # 页面刷新/切走后连接已 close，再 send 会触发 ASGI RuntimeError
+                break
+            await asyncio.sleep(0.4)
+    except WebSocketDisconnect:
+        pass
+
+
 @app.websocket("/ws/crash-analysis/{crash_id}")
 async def ws_crash_analysis_progress(websocket: WebSocket, crash_id: str):
     await websocket.accept()
     try:
         while True:
-            prog = get_crash_progress(crash_id)
-            await websocket.send_json(prog)
-            if prog.get("status") in ("completed", "failed"):
+            try:
+                prog = get_crash_progress(crash_id)
+                await websocket.send_json(prog)
+                if prog.get("status") in ("completed", "failed"):
+                    break
+            except WebSocketDisconnect:
+                raise
+            except Exception:
                 break
             await asyncio.sleep(1)
     except WebSocketDisconnect:
@@ -975,21 +1300,6 @@ async def ws_upgrade_progress(websocket: WebSocket, job_id: str):
                 # 客户端已断开或发送失败，结束推送
                 break
             await asyncio.sleep(1)
-    except WebSocketDisconnect:
-        pass
-
-
-# ── WebSocket: Real-time progress ──────────────────────
-@app.websocket("/ws/{task_id}")
-async def ws_progress(websocket: WebSocket, task_id: str):
-    await websocket.accept()
-    try:
-        while True:
-            prog = get_progress(task_id)
-            await websocket.send_json(prog)
-            if prog.get("status") in ("completed", "failed", "cancelled"):
-                break
-            await asyncio.sleep(0.4)
     except WebSocketDisconnect:
         pass
 
@@ -1037,7 +1347,7 @@ async def redirect_legacy_patches_page():
 # ── Tool documentation page ────────────────────────
 @app.get("/overview", response_class=HTMLResponse)
 async def docs_page():
-    doc_path = Path(__file__).parent.parent.resolve() / "gkiPatchTool_OVERVIEW.html"
+    doc_path = overview_html_path()
     if doc_path.exists():
         return HTMLResponse(doc_path.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>文档文件未找到</h1>")
@@ -1076,20 +1386,24 @@ def _configure_terminal_encoding() -> None:
 
 def main():
     _configure_terminal_encoding()
+    ensure_install_layout()
+    host = os.environ.get("GKI_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    port = int(os.environ.get("GKI_PORT", "8000") or "8000")
     from web_app.repo_config import get_repo_config
     repo_cfg = get_repo_config()
     print("=" * 50)
     print("  GKI Patch 分析平台")
     print(f"  默认配置: {DEFAULT_CONFIG}")
+    print(f"  设置文件: {settings_file()}")
     if repo_cfg["configured"]:
         print(f"  本地仓库: {repo_cfg['effective_dir']} ({repo_cfg['source']})")
     else:
         print("  本地仓库: 未配置（将使用远程 API，建议在页面配置代码路径）")
     print("=" * 50)
-    print("  启动: http://127.0.0.1:8000/app/")
+    print(f"  启动: http://{host}:{port}/app/")
     print("=" * 50)
-    webbrowser.open("http://127.0.0.1:8000/app/")
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info")
+    webbrowser.open(f"http://{host}:{port}/app/")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":

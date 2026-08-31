@@ -62,7 +62,17 @@
       </div>
     </div>
 
-    <div v-if="moduleEntries.length" id="analysis-section-modules" class="summary-section analysis-anchor">
+    <div
+      v-if="modulesLoading || modulesError"
+      id="analysis-section-modules"
+      class="summary-section analysis-anchor"
+    >
+      <div class="summary-section-title">🗂 分模块分析</div>
+      <p v-if="modulesLoading" class="modules-load-hint">模块分析加载中…</p>
+      <p v-else class="modules-load-hint error">{{ modulesError }}</p>
+    </div>
+
+    <div v-else-if="moduleEntries.length" id="analysis-section-modules" class="summary-section analysis-anchor">
       <div class="summary-section-title">🗂 分模块分析 ({{ moduleEntries.length }} 个模块)</div>
       <div class="module-analysis-grid">
         <div
@@ -208,7 +218,7 @@
               <div class="summary-text" v-html="renderSimpleMarkdown(entry.analysis.cross_module_notes)"></div>
             </div>
             <button type="button" class="btn btn-sm" @click="$emit('filter-module', entry.name)">
-              筛选该模块 Patch
+              在下方索引筛选该模块
             </button>
           </div>
         </div>
@@ -309,11 +319,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, provide, ref } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 import AccordionMarkdown from './AccordionMarkdown.vue'
 import CodeTreeNode from './CodeTreeNode.vue'
 import PatchPopover from './PatchPopover.vue'
-import { shortId } from '../../api'
+import { api, shortId } from '../../api'
 import {
   TEST_SUGGESTION_FIELDS,
   buildFutureFixDisplayItem,
@@ -329,6 +339,8 @@ import {
 const props = defineProps<{
   summary: any
   patches?: any[]
+  /** 有值时按需拉取 /api/tasks/:id/modules，避免详情首包过大 */
+  taskId?: string
 }>()
 
 const emit = defineEmits<{
@@ -339,10 +351,49 @@ const emit = defineEmits<{
 provide('jumpToPatch', (sha: string) => emit('jump-to-patch', sha))
 
 const openModules = ref<Set<string>>(new Set())
+const modulesDoc = ref<any>(null)
+const modulesLoading = ref(false)
+const modulesError = ref('')
+let modulesLoadSeq = 0
+
+async function loadModules(taskId: string) {
+  const seq = ++modulesLoadSeq
+  modulesLoading.value = true
+  modulesError.value = ''
+  modulesDoc.value = null
+  openModules.value = new Set()
+  try {
+    const data = await api.get<any>(`/api/tasks/${encodeURIComponent(taskId)}/modules`)
+    if (seq !== modulesLoadSeq) return
+    modulesDoc.value = data || { modules: {} }
+  } catch (err: any) {
+    if (seq !== modulesLoadSeq) return
+    modulesError.value = err?.message || String(err)
+    modulesDoc.value = null
+  } finally {
+    if (seq === modulesLoadSeq) modulesLoading.value = false
+  }
+}
+
+watch(
+  () => props.taskId,
+  (taskId) => {
+    const id = String(taskId || '').trim()
+    if (!id) {
+      modulesLoadSeq += 1
+      modulesDoc.value = null
+      modulesLoading.value = false
+      modulesError.value = ''
+      return
+    }
+    void loadModules(id)
+  },
+  { immediate: true },
+)
 
 const analysisCoverage = computed(() => {
   const fromSummary = props.summary?.analysis_coverage || {}
-  const fromModules = props.summary?.module_summaries || {}
+  const fromModules = modulesDoc.value || props.summary?.module_summaries || {}
   return {
     module_count: fromSummary.module_count || fromModules.module_count || 0,
     total_patches: fromSummary.total_patches || fromModules.total_patches || props.summary?.total || 0,
@@ -353,7 +404,10 @@ const analysisCoverage = computed(() => {
 })
 
 const moduleEntries = computed(() => {
-  const modulesMap = props.summary?.module_summaries?.modules || {}
+  const modulesMap =
+    modulesDoc.value?.modules
+    || props.summary?.module_summaries?.modules
+    || {}
   return Object.entries(modulesMap)
     .map(([name, mod]: [string, any]) => ({
       name,
@@ -389,7 +443,9 @@ const futureFixItems = computed(() => {
     Array.isArray(fromSummary) && fromSummary.length
       ? fromSummary
       : collectFutureFixPatches(props.patches || []).map(buildFutureFixDisplayItem)
-  return filterFutureFixItemsInPatches(rawItems, props.patches || []).slice(0, 30)
+  const pool = props.patches || []
+  if (!pool.length) return (rawItems || []).slice(0, 30)
+  return filterFutureFixItemsInPatches(rawItems, pool).slice(0, 30)
 })
 
 function truncateBadgeTitle(coverage: Record<string, number | undefined>) {

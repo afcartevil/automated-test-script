@@ -2,6 +2,7 @@
 import json
 import os
 import random
+import re
 import threading
 import time
 import uuid
@@ -11,8 +12,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
+from web_app.app_paths import install_root as PROJECT_ROOT, outputs_dir, setup_sys_path, tools_dir
+
+setup_sys_path()
 
 from patch_analyzer import (
     analyze_commit,
@@ -40,6 +42,7 @@ from web_app.database import (
     get_patches_by_shas,
     get_patches_by_task,
     get_task,
+    get_task_for_api,
     get_task_patches,
     link_task_patch,
     patch_exists,
@@ -101,7 +104,7 @@ def is_task_cancelled(task_id: str) -> bool:
 _task_start_times: Dict[str, str] = {}  # task_id -> formatted start time
 
 # ── 性能日志（本地持久化，用于分析瓶颈） ─────────────
-_TIMING_DIR = Path(__file__).parent.parent / "outputs" / "perf_logs"
+_TIMING_DIR = outputs_dir("perf_logs")
 _TIMING_BUFFERS: Dict[str, List[str]] = {}
 _TIMING_FLUSH_SIZE = int(os.environ.get("GKI_TIMING_BATCH_SIZE", "25"))
 _DB_BATCH_SIZE = int(os.environ.get("GKI_DB_BATCH_SIZE", "20"))
@@ -162,16 +165,31 @@ def _run_git_with_heartbeat(repo_dir, git_args, report_fn, label, start_time):
 
 
 
-def list_repo_tags() -> List[str]:
+_REPO_TAG_CACHE: Dict[str, Any] = {"repo": "", "at": 0.0, "tags": []}
+_REPO_TAG_TTL_SEC = 60.0
+
+
+def list_repo_tags(force: bool = False) -> List[str]:
     """List all tags in the local repo, sorted by version (newest first)."""
     from patch_analyzer import run_git
 
     repo_dir = get_local_repo_dir()
     if not repo_dir:
         return []
+    now = time.time()
+    cache_key = str(repo_dir)
+    if (
+        not force
+        and _REPO_TAG_CACHE.get("repo") == cache_key
+        and now - float(_REPO_TAG_CACHE.get("at") or 0) < _REPO_TAG_TTL_SEC
+    ):
+        return list(_REPO_TAG_CACHE.get("tags") or [])
     try:
         output = run_git(repo_dir, ["tag", "--list", "--sort=-v:refname"])
         tags = [t.strip() for t in output.strip().split("\n") if t.strip()]
+        _REPO_TAG_CACHE["repo"] = cache_key
+        _REPO_TAG_CACHE["at"] = now
+        _REPO_TAG_CACHE["tags"] = tags
         return tags
     except Exception as exc:
         print(f"[TAGS] git tag 失败: {exc}", flush=True)
@@ -426,6 +444,68 @@ def _parse_month_subtag(tag: str) -> Optional[Tuple[str, int]]:
     return m.group(1), int(m.group(2))
 
 
+_MONTH_PREFIX_ONLY_RE = re.compile(r"^(android\d+-\d+\.\d+-\d{4}-\d{2})$")
+
+
+def resolve_month_tag_to_max_r(
+    tag: str,
+    *,
+    tags: Optional[List[str]] = None,
+    require_match: bool = False,
+) -> str:
+    """If ``tag`` is a month prefix without ``_rN``, expand to the max local ``_rN``.
+
+    Examples:
+      android13-5.15-2026-03      -> android13-5.15-2026-03_r16
+      android13-5.15-2026-03_r9   -> unchanged
+      other-ref                   -> unchanged
+    """
+    raw = str(tag or "").strip()
+    if not raw:
+        return raw
+    if _parse_month_subtag(raw):
+        return raw
+    m = _MONTH_PREFIX_ONLY_RE.match(raw)
+    if not m:
+        return raw
+
+    prefix = m.group(1)
+    pool = tags if tags is not None else list_repo_tags()
+    best: Optional[str] = None
+    best_n = -1
+    for item in pool:
+        parsed = _parse_month_subtag(str(item or "").strip())
+        if not parsed or parsed[0] != prefix:
+            continue
+        if parsed[1] > best_n:
+            best_n = parsed[1]
+            best = str(item).strip()
+
+    if best:
+        print(f"[TAGS] 月份 tag 自动补全为最大 r: {raw} -> {best}", flush=True)
+        return best
+
+    msg = (
+        f"本地仓库未找到 {prefix}_rN 系列 tag，无法将「{raw}」补全为具体版本；"
+        f"请先 fetch tags，或手动填写如 {prefix}_r16"
+    )
+    if require_match:
+        raise ValueError(msg)
+    print(f"[TAGS] {msg}", flush=True)
+    return raw
+
+
+def resolve_analysis_range_tags(
+    from_tag: str,
+    to_tag: str,
+) -> Tuple[str, str]:
+    """Resolve month-only from/to tags before git log / analysis."""
+    tags = list_repo_tags()
+    resolved_from = resolve_month_tag_to_max_r(from_tag, tags=tags, require_match=True)
+    resolved_to = resolve_month_tag_to_max_r(to_tag, tags=tags, require_match=True)
+    return resolved_from, resolved_to
+
+
 def is_same_month_subtag_range(from_tag: str, to_tag: str) -> bool:
     """True when both tags are ``_rN`` sub-tags of the same calendar month prefix."""
     if not from_tag or not to_tag:
@@ -440,16 +520,16 @@ def find_monthly_subtag_intervals(
     from_tag: str = "",
     repo_url: str = "",
 ) -> List[Tuple[str, str]]:
-    """Return cumulative sub-tag intervals from baseline r1 for monthly recommendation.
+    """Return adjacent sub-tag intervals for monthly recommendation.
 
     Rules:
-    - For the month in ``to_tag``, collect ``_rN`` tags from upstream ``git ls-remote``
-      (preferred) or local repo, dedupe by commit, sort by N.
-    - Emit **cumulative** intervals ``(r1, rN)`` for each existing sub-tag after baseline:
-      e.g. r1+r2+r3+r4 -> r1->r2, r1->r3, r1->r4.
+    - For the month in ``to_tag``, collect ``_rN`` tags, dedupe by commit, sort by N.
+    - Emit **adjacent** intervals ``(rN-1, rN)`` for display:
+      e.g. r1+r2+r3+r4 -> r1->r2, r2->r3, r3->r4.
+    - Per-tag **conclusions** (checklist / 优选) still cover cumulative r1→rN.
     - When ``from_tag`` and ``to_tag`` are both same-month ``_rN`` tags, **skip** monthly
       sub-tag analysis (return ``[]``): the main range task already covers that month's
-      sub-tag delta, so pulling r1->r2 … r1->rMax again is redundant.
+      sub-tag delta.
     - Skips pairs whose tags cannot be used for analysis or have 0 commits.
     """
     if from_tag and is_same_month_subtag_range(from_tag, to_tag):
@@ -467,20 +547,23 @@ def find_monthly_subtag_intervals(
 
     r_map, tag_commits = _build_month_subtag_map(month_prefix, repo_url)
     r_map = _dedupe_subtags_by_commit(r_map, tag_commits)
-    return _build_cumulative_subtag_intervals(r_map)
+    return _build_adjacent_subtag_intervals(r_map)
 
 
-def _build_cumulative_subtag_intervals(r_map: Dict[int, str]) -> List[Tuple[str, str]]:
-    """Build r1->r2, r1->r3, … intervals from the lowest existing sub-tag."""
+def _build_adjacent_subtag_intervals(r_map: Dict[int, str]) -> List[Tuple[str, str]]:
+    """Build r1->r2, r2->r3, … intervals from sorted sub-tags."""
     r_nums = sorted(r_map.keys())
     if len(r_nums) < 2:
         return []
 
-    baseline_tag = r_map[r_nums[0]]
     intervals: List[Tuple[str, str]] = []
-    for r_num in r_nums[1:]:
-        _append_subtag_interval(intervals, baseline_tag, r_map[r_num])
+    for prev_r, cur_r in zip(r_nums, r_nums[1:]):
+        _append_subtag_interval(intervals, r_map[prev_r], r_map[cur_r])
     return intervals
+
+
+# Backward-compatible alias（旧名仍指向相邻区间构建）
+_build_cumulative_subtag_intervals = _build_adjacent_subtag_intervals
 
 
 _KEY_RISK_NONE_VALUES = frozenset({"无", "none", "n/a", "na", "-", "—"})
@@ -549,7 +632,8 @@ def patch_high_risk_reason(p: Dict[str, Any]) -> str:
 
 def _build_high_risk_item(p: Dict[str, Any], reason: str) -> Dict[str, Any]:
     """Structured high-risk patch entry for API/UI with explicit reason fields."""
-    sha = str(p.get("sha") or p.get("commit") or "")[:12]
+    # Keep full SHA for detail-page lookup; UI shortens for display.
+    sha = str(p.get("sha") or p.get("commit") or "").strip()
     score = p.get("score")
     blocked = bool(p.get("blocked"))
     crash = str(p.get("crash_risk") or "").strip()
@@ -592,7 +676,8 @@ def _build_future_fix_item(p: Dict[str, Any]) -> Dict[str, Any]:
     fixes = p.get("fix_in_future") or []
     if not isinstance(fixes, list):
         fixes = []
-    sha = str(p.get("sha") or p.get("commit") or "")[:12]
+    # Keep full SHA for detail-page lookup; UI shortens for display.
+    sha = str(p.get("sha") or p.get("commit") or "").strip()
     intro_rich = p.get("problem_introducer_rich") or {}
     intro_summary = ""
     if isinstance(intro_rich, dict):
@@ -754,11 +839,6 @@ def backfill_high_risk_patch_reason(
 ) -> Dict[str, Any]:
     """Ensure module/task high-risk entries always carry a concrete reason."""
     reason = str(item.get("reason") or item.get("risk") or "").strip()
-    if reason and not is_key_risk_none(reason):
-        item.setdefault("risk", reason)
-        item.setdefault("reason", reason)
-        return item
-
     sha = str(item.get("sha") or "").strip()
     match = None
     if sha:
@@ -767,6 +847,15 @@ def backfill_high_risk_patch_reason(
             if full_sha.startswith(sha) or full_sha[:12] == sha[:12]:
                 match = p
                 break
+    if match:
+        full = str(match.get("sha") or match.get("commit") or "").strip()
+        if full:
+            item["sha"] = full
+
+    if reason and not is_key_risk_none(reason):
+        item.setdefault("risk", reason)
+        item.setdefault("reason", reason)
+        return item
 
     if match:
         computed = patch_high_risk_reason(match)
@@ -924,32 +1013,126 @@ def _build_task_result_summary(
         "analysis_coverage": {},
     }
 
+    # 不在任务详情里嵌入 module_summaries（大区间可达数 MB，易导致浏览器闪退）。
+    # 前端通过 GET /api/tasks/{id}/modules 按需加载。
+    # get_task_for_api 已省略该列，此处通常无原文；仍保留兼容路径。
     _ms_raw = task.get("module_summaries", "") or ""
     if _ms_raw:
         try:
-            ms_doc = json.loads(_ms_raw)
-            if raw_patches is not None:
-                from web_app.module_analysis_service import (
-                    _parse_patch_data,
-                    build_code_tree,
-                    group_patches_by_module,
-                )
-                grouped = group_patches_by_module([_parse_patch_data(p) for p in raw_patches])
-                for mod_name, mod in (ms_doc.get("modules") or {}).items():
-                    mod_patches = grouped.get(mod_name) or []
-                    if mod_patches:
-                        mod["code_tree"] = build_code_tree(mod_patches)
-            result["module_summaries"] = ms_doc
+            ms_doc = json.loads(_ms_raw) if isinstance(_ms_raw, str) else dict(_ms_raw)
+            modules_map = ms_doc.get("modules") or {}
             result["analysis_coverage"] = {
-                "module_count": ms_doc.get("module_count", 0),
+                "module_count": ms_doc.get("module_count", len(modules_map)),
                 "total_patches": ms_doc.get("total_patches", total),
                 "total_chunks": ms_doc.get("total_chunks", 0),
                 "coverage_complete": ms_doc.get("coverage_complete", True),
             }
+            result["modules_available"] = bool(modules_map) or int(
+                result["analysis_coverage"].get("module_count") or 0,
+            ) > 0
         except (json.JSONDecodeError, TypeError):
-            result["module_summaries"] = {}
+            result["modules_available"] = False
+    else:
+        # 详情查询已省略该列：仍提示前端可懒加载 /modules
+        result["modules_available"] = total > 0
+        result["analysis_coverage"] = {
+            "module_count": 0,
+            "total_patches": total,
+            "total_chunks": 0,
+            "coverage_complete": True,
+        }
 
     return result
+
+
+_CODE_TREE_BRIEF_KEEP = (
+    "sha", "full_sha", "title", "score", "key_risk", "crash_risk",
+    "llm_analyzed", "blocked", "insertions", "deletions",
+)
+_CHUNK_SUMMARY_KEEP = (
+    "chunk_id", "patch_count", "truncated_input", "main_changes", "covered_shas",
+)
+
+
+def _slim_code_tree_for_api(node: Any, *, include_patch_summary: bool = False) -> Any:
+    """Trim nested code-tree patch briefs to UI fields.
+
+    Patch ``summary`` text is omitted by default — it dominates payload size on
+    large range tasks and is not required for the tree list / popover sha jump.
+    """
+    if not isinstance(node, dict):
+        return node
+    out = dict(node)
+    patches = out.get("patches")
+    if isinstance(patches, list):
+        slim_patches = []
+        for item in patches:
+            if not isinstance(item, dict):
+                continue
+            brief = {k: item.get(k) for k in _CODE_TREE_BRIEF_KEEP if k in item}
+            if include_patch_summary:
+                summary = str(item.get("summary") or "").strip()
+                if summary:
+                    brief["summary"] = summary[:240]
+            slim_patches.append(brief)
+        out["patches"] = slim_patches
+    children = out.get("children")
+    if isinstance(children, list):
+        out["children"] = [
+            _slim_code_tree_for_api(child, include_patch_summary=include_patch_summary)
+            for child in children
+        ]
+    return out
+
+
+def _slim_module_summaries_for_api(
+    ms_doc: Dict[str, Any],
+    *,
+    include_code_tree: bool = True,
+    include_patch_summary: bool = False,
+) -> Dict[str, Any]:
+    """Shrink module_summaries for analysis page / modules API payload."""
+    modules_in = ms_doc.get("modules") or {}
+    modules_out: Dict[str, Any] = {}
+    for name, mod in modules_in.items():
+        if not isinstance(mod, dict):
+            continue
+        slim = {
+            "module": mod.get("module") or name,
+            "description": mod.get("description") or "",
+            "stats": mod.get("stats") or {},
+            "analysis": mod.get("analysis") or {},
+            "coverage": mod.get("coverage") or {},
+            "module_diff_available": bool(mod.get("module_diff_available")),
+        }
+        if include_code_tree and mod.get("code_tree"):
+            slim["code_tree"] = _slim_code_tree_for_api(
+                mod.get("code_tree"),
+                include_patch_summary=include_patch_summary,
+            )
+        chunks = mod.get("chunk_summaries") or []
+        if isinstance(chunks, list) and chunks:
+            slim_chunks = []
+            for chunk in chunks:
+                if not isinstance(chunk, dict):
+                    continue
+                item = {k: chunk.get(k) for k in _CHUNK_SUMMARY_KEEP if k in chunk}
+                covered = item.get("covered_shas")
+                if isinstance(covered, list) and len(covered) > 8:
+                    item["covered_shas"] = covered[:8]
+                main = str(item.get("main_changes") or "")
+                if len(main) > 800:
+                    item["main_changes"] = main[:800] + "…"
+                slim_chunks.append(item)
+            slim["chunk_summaries"] = slim_chunks
+        modules_out[name] = slim
+    return {
+        "module_count": ms_doc.get("module_count", len(modules_out)),
+        "total_patches": ms_doc.get("total_patches", 0),
+        "total_chunks": ms_doc.get("total_chunks", 0),
+        "coverage_complete": ms_doc.get("coverage_complete", True),
+        "modules": modules_out,
+    }
 
 
 def _range_risk_sort_key(stats: Dict[str, Any]) -> Tuple[Any, ...]:
@@ -1547,7 +1730,7 @@ def _resolve_squash_path_for_task(task: Dict[str, Any]) -> Path:
         return Path()
     tag_from = from_tag.replace("/", "_").replace("\\", "_")
     tag_to = to_tag.replace("/", "_").replace("\\", "_")
-    return Path(__file__).parent.parent / "outputs" / "merged_diffs" / f"{tag_from}_to_{tag_to}_squash.patch"
+    return outputs_dir("merged_diffs") / f"{tag_from}_to_{tag_to}_squash.patch"
 
 
 def _try_generate_unified_report(
@@ -1716,7 +1899,7 @@ def _generate_merged_diff(task_id: str, repo: str, commits: List, from_tag: str,
     """Generate a merged .patch file. Prefer local git repo if available, else clone+format-patch, else HTTP."""
     from tools.patch_analyzer import run_git, normalize_repo_url
 
-    diff_dir = Path(__file__).parent.parent / "outputs" / "merged_diffs"
+    diff_dir = outputs_dir("merged_diffs")
     diff_dir.mkdir(parents=True, exist_ok=True)
 
     tag_from = from_tag.replace("/", "_").replace("\\", "_")
@@ -1785,7 +1968,7 @@ def _generate_merged_diff(task_id: str, repo: str, commits: List, from_tag: str,
 
     # ── 路径 2：克隆 + format-patch ──
     repo_url = normalize_repo_url(repo)
-    cache_dir = Path(__file__).parent.parent / "outputs" / "repo_cache"
+    cache_dir = outputs_dir("repo_cache")
 
     if not (cache_dir / ".git").exists():
         print(f"[DIFF] 首次浅克隆仓库 (depth={total*2})…", flush=True)
@@ -1907,7 +2090,9 @@ def _generate_merged_diff_http(
 
 
 # ── Config path ────────────────────────────────────────
-DEFAULT_CONFIG = str(Path(__file__).parent.parent / "config" / "scoring-config.yaml")
+from web_app.app_paths import scoring_config_path
+
+DEFAULT_CONFIG = str(scoring_config_path())
 
 # ── In-memory progress state ──────────────────────────
 _progress: Dict[str, Dict[str, Any]] = {}
@@ -2673,6 +2858,12 @@ def start_analysis(
     """Create a task record and launch analysis in a background thread.
     Returns (task_id, error_message_if_immediately_failed).
     """
+    if task_type != "single":
+        try:
+            from_tag, to_tag = resolve_analysis_range_tags(from_tag, to_tag)
+        except ValueError as exc:
+            return "", str(exc)
+
     task_id = uuid.uuid4().hex[:12]
     create_task(task_id, task_type, repo, from_tag, to_tag, sample_size)
 
@@ -3516,6 +3707,7 @@ def _run_subtag_and_summary_parallel(
                 rmax_tag,
                 progress_cb=_monthly_progress,
                 llm_info=llm_result_info,
+                analysis_mode="adjacent_pooled",
             )
         except Exception as exc:
             exc_box["monthly"] = exc
@@ -3741,7 +3933,7 @@ def _run_analysis(
             _t_fp = time.monotonic()
             from tools.patch_analyzer import run_git
             try:
-                diff_dir = Path(__file__).parent.parent / "outputs" / "merged_diffs"
+                diff_dir = outputs_dir("merged_diffs")
                 diff_dir.mkdir(parents=True, exist_ok=True)
                 tag_from = from_tag.replace("/", "_").replace("\\", "_")
                 tag_to = to_tag.replace("/", "_").replace("\\", "_")
@@ -4104,6 +4296,18 @@ def _run_analysis(
                     status="completed",
                     completed_at=datetime.now().isoformat(),
                 )
+            if not _is_single:
+                try:
+                    from web_app.checklist_export_service import try_export_checklist_to_feishu
+                    print("[FEISHU] 分析完成，正在创建飞书验收表格…", flush=True)
+                    try_export_checklist_to_feishu(task_id)
+                except Exception as exc:
+                    print(f"[FEISHU] 分析完成后自动导出失败: {exc}", flush=True)
+            try:
+                from web_app.feishu_service import try_notify_task_finished
+                try_notify_task_finished(task_id, status="completed")
+            except Exception as exc:
+                print(f"[FEISHU] 完成通知失败: {exc}", flush=True)
 
         if _monthly_enabled and _monthly_intervals and _subtag_doc:
             from web_app.monthly_subtag_service import build_monthly_tag_recommendation_from_results
@@ -4185,12 +4389,22 @@ def _run_analysis(
         update_task(task_id, status="failed", error_msg=str(exc))
         _set_progress(task_id, {"status": "failed", "message": str(exc)})
         _flush_timing_records(task_id)
+        try:
+            from web_app.feishu_service import try_notify_task_finished
+            try_notify_task_finished(task_id, status="failed")
+        except Exception as notify_exc:
+            print(f"[FEISHU] 失败通知失败: {notify_exc}", flush=True)
 
 
 # ── Task / Patch helpers ───────────────────────────────
 
-def get_task_with_patches(task_id: str, dev_module: str = "") -> Optional[Dict[str, Any]]:
-    task = get_task(task_id)
+def get_task_with_patches(
+    task_id: str,
+    dev_module: str = "",
+    *,
+    include_patches: bool = True,
+) -> Optional[Dict[str, Any]]:
+    task = get_task_for_api(task_id)
     if not task:
         return None
 
@@ -4217,23 +4431,86 @@ def get_task_with_patches(task_id: str, dev_module: str = "") -> Optional[Dict[s
         task["patch_count"] = task.get("total", 0) or 0
         task["llm_analyzed_count"] = 0
         task["summary"] = None
+        _strip_heavy_task_fields(task)
         return task
 
-    patches = get_patches_by_task(task_id, dev_module=dev_module)
-    patch_list = [_merge_patch_row(p) for p in patches]
-    _enrich_patches_with_future_fix_snapshot(patch_list, task)
+    raw_patches: Optional[List[Dict[str, Any]]] = None
+    if include_patches:
+        from web_app.database import get_patches_by_task
 
-    task["patches"] = patch_list
+        raw_patches = get_patches_by_task(task_id, dev_module=dev_module)
+        patch_list = [_merge_patch_row(p) for p in raw_patches]
+        _enrich_patches_with_future_fix_snapshot(patch_list, task)
+    else:
+        # 结果页默认不回传完整 patch；摘要只用轻量字段，避免解析数 MB 的 data JSON
+        from web_app.database import get_task_patches_summary_rows
+
+        patch_list = [
+            _patch_from_summary_row(row)
+            for row in get_task_patches_summary_rows(task_id, dev_module=dev_module)
+        ]
+        _enrich_patches_with_future_fix_snapshot(patch_list, task)
+
     task["patch_count"] = len(patch_list)
     task["llm_analyzed_count"] = sum(1 for p in patch_list if p.get("llm_analyzed"))
+    task["patches"] = patch_list if include_patches else []
 
     if patch_list:
         task["summary"] = _build_task_result_summary(
-            task, patch_list, raw_patches=patches,
+            task, patch_list, raw_patches=raw_patches,
         )
     else:
         task["summary"] = None
+    _strip_heavy_task_fields(task)
     return task
+
+
+_HEAVY_TASK_RESPONSE_FIELDS = (
+    "module_summaries",
+    "module_chunk_summaries",
+    "monthly_subtag_results",
+    "future_fix_patches",
+    "squash_summary",
+)
+
+
+def _strip_heavy_task_fields(task: Dict[str, Any]) -> None:
+    """Drop raw multi-MB DB columns already folded into ``summary`` / recommendation."""
+    for key in _HEAVY_TASK_RESPONSE_FIELDS:
+        task.pop(key, None)
+
+
+def _json_field(value: Any, default: Any) -> Any:
+    if value is None or value == "":
+        return default
+    if isinstance(value, (dict, list, bool, int, float)):
+        return value
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return default
+
+
+def _patch_from_summary_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert lightweight summary SQL row into patch dict used by result summary."""
+    return {
+        "sha": row.get("sha") or "",
+        "commit": row.get("sha") or "",
+        "title": row.get("title") or "",
+        "score": row.get("score"),
+        "recommendation": row.get("recommendation") or "",
+        "key_risk": row.get("key_risk") or "",
+        "dev_module": row.get("dev_module") or "",
+        "llm_analyzed": bool(_json_field(row.get("llm_analyzed"), False)),
+        "blocked": bool(_json_field(row.get("blocked"), False)),
+        "crash_risk": str(_json_field(row.get("crash_risk"), "") or ""),
+        "crash_risk_reason": str(_json_field(row.get("crash_risk_reason"), "") or ""),
+        "high_risk_paths": bool(_json_field(row.get("high_risk_paths"), False)),
+        "fix_in_future": _json_field(row.get("fix_in_future"), []) or [],
+        "patch_tags": _json_field(row.get("patch_tags"), []) or [],
+        "test_suggestions": _json_field(row.get("test_suggestions"), {}) or {},
+        "block_rules_hit": _json_field(row.get("block_rules_hit"), []) or [],
+    }
 
 
 def _merge_patch_row(db_row: Dict[str, Any]) -> Dict[str, Any]:

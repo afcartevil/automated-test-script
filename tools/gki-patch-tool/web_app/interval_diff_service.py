@@ -11,7 +11,9 @@ from typing import Optional, Tuple
 
 from web_app.database import delete_interval_diff, get_interval_diff, upsert_interval_diff
 
-MERGED_DIFFS_DIR = Path(__file__).parent.parent / "outputs" / "merged_diffs"
+from web_app.app_paths import outputs_dir
+
+MERGED_DIFFS_DIR = outputs_dir("merged_diffs")
 
 
 def interval_diff_paths(from_tag: str, to_tag: str) -> Tuple[Path, Path]:
