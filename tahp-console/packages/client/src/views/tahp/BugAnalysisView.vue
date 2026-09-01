@@ -79,13 +79,11 @@ const mode = ref<'single' | 'batch' | 'local'>('single')
 const singleForm = ref({
   input: '',
   user_description: '',
-  extra_context: '',
   code_source: '',
 })
 
 const batchForm = ref({
   jql: '',
-  extra_context: '',
   code_source: '',
 })
 
@@ -100,6 +98,13 @@ const localForm = ref({
 // 判型以服务端 code-source.ts 为准；这里只做输入提示。
 const codeSourceBranches = ref<string[]>([])
 const codeSourceDefaultBranch = ref('tOS_mtk_A16_trunk')
+const CODE_SOURCE_QUICK_BRANCHES = [
+  'tOS_mtk_A16_trunk',
+  'tOS_mtk_A17_trunk',
+  'tOS_qcom_A16_trunk',
+  'tOS_qcom_A17_trunk',
+] as const
+const CODE_SOURCE_FIELD_HINT = '支持本地/映射盘代码路径、OpenGrok代码分支，填写后结合源码取证'
 
 const codeSourceInput = computed(() => {
   if (mode.value === 'single') return singleForm.value.code_source
@@ -126,7 +131,7 @@ const codeSourceHint = computed(() => {
 })
 
 const codeSourcePlaceholder = computed(
-  () => `如 ${codeSourceDefaultBranch.value} / D:\\code\\tOS_mtk_A16 / http://opengrok.../xref/...`,
+  () => `如 ${codeSourceDefaultBranch.value} / D:\\code\\tOS_mtk_A16`,
 )
 
 /** 分支候选：输入为路径或链接时不提示分支 */
@@ -140,11 +145,15 @@ const codeSourceSuggestions = computed(() => {
   return codeSourceBranches.value.filter(b => b.toLowerCase().includes(lower))
 })
 
-function applyDefaultCodeSourceBranch() {
-  const branch = codeSourceDefaultBranch.value
+function applyCodeSourceBranch(branch: string) {
   if (mode.value === 'single') singleForm.value.code_source = branch
   else if (mode.value === 'batch') batchForm.value.code_source = branch
   else localForm.value.code_source = branch
+}
+
+function toggleQuickCodeSourceBranch(branch: string, checked: boolean) {
+  if (checked) applyCodeSourceBranch(branch)
+  else if (codeSourceInput.value.trim() === branch) applyCodeSourceBranch('')
 }
 
 async function loadCodeSourceOptions() {
@@ -1036,7 +1045,6 @@ async function startSingleAnalysis() {
     const resp = await startSingle({
       input: singleForm.value.input.trim(),
       user_description: singleForm.value.user_description || undefined,
-      extra_context: singleForm.value.extra_context || undefined,
       code_source: singleForm.value.code_source.trim() || undefined,
     })
     store.registerTask({
@@ -1112,7 +1120,6 @@ async function startBatchAnalysis() {
     const jql = batchForm.value.jql.trim()
     const resp = await startBatch({
       jql,
-      extra_context: batchForm.value.extra_context || undefined,
       code_source: batchForm.value.code_source.trim() || undefined,
     })
     registerBatchQueue(resp, jql)
@@ -2092,15 +2099,6 @@ watch(
             </div>
 
             <div class="ea-field">
-              <label>附加上下文（可选）</label>
-              <NInput
-                v-model:value="singleForm.extra_context"
-                placeholder="项目代号 / SoC / 版本 / Carrier 等"
-                clearable
-              />
-            </div>
-
-            <div class="ea-field">
               <label>指定代码源（可选）</label>
               <NAutoComplete
                 v-model:value="singleForm.code_source"
@@ -2111,10 +2109,18 @@ watch(
               />
               <div class="field-hint code-source-hint">
                 <span v-if="codeSourceHint">{{ codeSourceHint }}</span>
-                <span v-else>支持本地/映射盘代码路径、OpenGrok 代码分支或 xref 链接；填写后 Agent 必须结合该代码源取证。</span>
-                <NButton text size="tiny" @click="applyDefaultCodeSourceBranch">
-                  用默认分支 {{ codeSourceDefaultBranch }}
-                </NButton>
+                <span v-else>{{ CODE_SOURCE_FIELD_HINT }}</span>
+              </div>
+              <div class="code-source-quick">
+                <NCheckbox
+                  v-for="branch in CODE_SOURCE_QUICK_BRANCHES"
+                  :key="branch"
+                  size="small"
+                  :checked="codeSourceInput.trim() === branch"
+                  @update:checked="(v: boolean) => toggleQuickCodeSourceBranch(branch, v)"
+                >
+                  {{ branch }}
+                </NCheckbox>
               </div>
             </div>
 
@@ -2179,15 +2185,6 @@ watch(
             </div>
 
             <div class="ea-field">
-              <label>附加上下文（可选）</label>
-              <NInput
-                v-model:value="batchForm.extra_context"
-                placeholder="项目代号 / SoC / 版本 / Carrier 等"
-                clearable
-              />
-            </div>
-
-            <div class="ea-field">
               <label>指定代码源（可选）</label>
               <NAutoComplete
                 v-model:value="batchForm.code_source"
@@ -2198,10 +2195,18 @@ watch(
               />
               <div class="field-hint code-source-hint">
                 <span v-if="codeSourceHint">{{ codeSourceHint }}</span>
-                <span v-else>本批次所有子任务共用该代码源；Agent 必须结合其中的真实代码取证。</span>
-                <NButton text size="tiny" @click="applyDefaultCodeSourceBranch">
-                  用默认分支 {{ codeSourceDefaultBranch }}
-                </NButton>
+                <span v-else>{{ CODE_SOURCE_FIELD_HINT }}</span>
+              </div>
+              <div class="code-source-quick">
+                <NCheckbox
+                  v-for="branch in CODE_SOURCE_QUICK_BRANCHES"
+                  :key="branch"
+                  size="small"
+                  :checked="codeSourceInput.trim() === branch"
+                  @update:checked="(v: boolean) => toggleQuickCodeSourceBranch(branch, v)"
+                >
+                  {{ branch }}
+                </NCheckbox>
               </div>
             </div>
 
@@ -2267,10 +2272,18 @@ watch(
               />
               <div class="field-hint code-source-hint">
                 <span v-if="codeSourceHint">{{ codeSourceHint }}</span>
-                <span v-else>支持本地/映射盘代码路径、OpenGrok 代码分支或 xref 链接；填写后 Agent 必须结合该代码源取证。</span>
-                <NButton text size="tiny" @click="applyDefaultCodeSourceBranch">
-                  用默认分支 {{ codeSourceDefaultBranch }}
-                </NButton>
+                <span v-else>{{ CODE_SOURCE_FIELD_HINT }}</span>
+              </div>
+              <div class="code-source-quick">
+                <NCheckbox
+                  v-for="branch in CODE_SOURCE_QUICK_BRANCHES"
+                  :key="branch"
+                  size="small"
+                  :checked="codeSourceInput.trim() === branch"
+                  @update:checked="(v: boolean) => toggleQuickCodeSourceBranch(branch, v)"
+                >
+                  {{ branch }}
+                </NCheckbox>
               </div>
             </div>
 
@@ -3452,7 +3465,18 @@ watch(
 }
 
 .field-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
-.code-source-hint { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.code-source-hint { display: block; }
+.code-source-quick {
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  column-gap: 20px;
+  row-gap: 6px;
+  margin-top: 8px;
+  :deep(.n-checkbox) {
+    font-size: 11px;
+    color: var(--muted);
+  }
+}
 .info-icon { color: var(--faint); cursor: help; margin-left: 4px; vertical-align: middle; }
 .action-row { margin-top: 4px; gap: 8px; }
 .alert-sub { margin-top: 4px; color: var(--muted); font-size: 12px; }
