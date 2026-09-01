@@ -536,6 +536,8 @@ export interface SelfCheckReportSummary {
   deviceId: string
   deviceName: string
   testType: string
+  /** persist.sys.ota_version */
+  version?: string
   startTime: string
   endTime?: string
   status: string

@@ -25,6 +25,7 @@ describe('self-check-reports', () => {
       deviceId: 'dev-1',
       deviceName: 'Test Phone',
       testType: 'week',
+      version: 'X6885-15.1.2.001',
       startTime: '2026-06-25T10:00:00.000Z',
       endTime: '2026-06-25T11:00:00.000Z',
       duration: 3600,
@@ -71,6 +72,23 @@ describe('self-check-reports', () => {
     expect(detail?.aiSummary).toContain('失败 1')
     expect(detail?.failedCaseItems).toHaveLength(1)
     expect(detail?.allCaseItems?.length).toBeGreaterThanOrEqual(1)
+    expect(detail?.version).toBe('X6885-15.1.2.001')
+  })
+
+  it('buildSelfCheckDetailPayload copies version from summary', () => {
+    const summary = {
+      deviceId: 'd1',
+      deviceName: 'Phone',
+      testType: 'str4',
+      version: 'OTA-1.0',
+      status: '完成(通过)',
+      totalCases: 1,
+      passedCases: 1,
+      failedCases: 0,
+      skippedCases: 0,
+    }
+    const detail = buildSelfCheckDetailPayload(summary, [])
+    expect(detail.version).toBe('OTA-1.0')
   })
 
   it('persists manual review conclusion', async () => {

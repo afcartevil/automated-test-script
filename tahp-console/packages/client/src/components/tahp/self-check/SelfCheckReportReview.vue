@@ -440,6 +440,10 @@ onActivated(async () => {
               <dd>{{ getTestTypeLabel(reportDetail.testType) }}</dd>
             </div>
             <div>
+              <dt>OTA 版本</dt>
+              <dd>{{ reportDetail.version?.trim() ? reportDetail.version : '未获取 (persist.sys.ota_version)' }}</dd>
+            </div>
+            <div>
               <dt>完成时间</dt>
               <dd>{{ reportTime(reportDetail) }}</dd>
             </div>

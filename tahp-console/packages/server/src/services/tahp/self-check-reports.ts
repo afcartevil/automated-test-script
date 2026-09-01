@@ -46,6 +46,8 @@ export interface SelfCheckReportSummary {
   deviceId: string
   deviceName: string
   testType: string
+  /** persist.sys.ota_version（报告生成时 adb getprop） */
+  version?: string
   startTime: string
   endTime?: string
   status: string
@@ -72,6 +74,8 @@ interface SummaryJson {
   deviceId: string
   deviceName: string
   testType: string
+  /** adb shell getprop persist.sys.ota_version */
+  version?: string
   startTime?: string
   endTime?: string
   duration?: number
@@ -176,6 +180,7 @@ function buildSummaryFromDir(relativePath: string, sessionDir: string, deviceId:
     deviceId: summary.deviceId || deviceId,
     deviceName: summary.deviceName,
     testType: summary.testType,
+    version: summary.version,
     startTime: summary.startTime || sessionDir,
     endTime: summary.endTime,
     status: summary.status,

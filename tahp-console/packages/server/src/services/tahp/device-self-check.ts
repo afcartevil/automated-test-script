@@ -148,6 +148,8 @@ export interface TestSession {
   errorReason?: string
   /** 通信（str4/week tdd）人工用例优先执行；报告/列表仍按原顺序 */
   prioritizeTddManual?: boolean
+  /** adb getprop persist.sys.ota_version，测试开始时采集，报告落盘时刷新 */
+  otaVersion?: string
 }
 
 export interface CaseCatalogItem {
@@ -829,6 +831,54 @@ async function getAdbDevices(): Promise<string[]> {
 // 简单的 ADB 命令执行
 async function execAdbSimple(args: string[]): Promise<string> {
   return execAdbCommand(args, { timeoutMs: ADB_DEFAULT_TIMEOUT_MS })
+}
+
+const OTA_VERSION_PROP = 'persist.sys.ota_version'
+
+/** 设备 OTA 版本（质量验测报告 summary/detail.version） */
+async function fetchDeviceOtaVersion(deviceId: string): Promise<string> {
+  const raw = await execAdbCommand(
+    ['-s', deviceId, 'shell', 'getprop', OTA_VERSION_PROP],
+    { timeoutMs: ADB_PROBE_TIMEOUT_MS, label: `getprop ${OTA_VERSION_PROP} ${deviceId}` },
+  )
+  return raw.trim()
+}
+
+/** 报告落盘用：优先实时 getprop，失败则回退 session 缓存（测试开始时采集） */
+async function resolveReportOtaVersion(deviceId: string, session: TestSession): Promise<string> {
+  const live = await fetchDeviceOtaVersion(deviceId)
+  if (live) {
+    session.otaVersion = live
+    return live
+  }
+  const cached = session.otaVersion?.trim() || ''
+  if (!cached) {
+    console.warn(`[device-self-check] OTA version empty (${OTA_VERSION_PROP}) for ${deviceId}`)
+  }
+  return cached
+}
+
+function scheduleTestReportIfNeeded(
+  deviceId: string,
+  session: TestSession,
+  options?: { reportStatus?: string },
+): void {
+  if (Object.keys(session.caseResults).length === 0) return
+  if (session.endTime) return
+
+  const device = devices[deviceId]
+  if (!device) return
+
+  session.endTime = new Date().toISOString()
+  const testDuration = Math.round(
+    (Date.now() - new Date(device.testStartTime || Date.now()).getTime()) / 1000,
+  )
+  device.testDuration = testDuration
+  const reportStatus = options?.reportStatus ?? '完成(失败)'
+
+  void generateTestReport(deviceId, session, undefined, { reportStatus, testDuration }).catch((e) => {
+    console.warn('[device-self-check] Failed to generate report:', e)
+  })
 }
 
 function getSessionResultDir(deviceId: string, session: TestSession): string {
@@ -2739,6 +2789,8 @@ export async function startTest(
     testSessions[deviceId] = session
     emitEvent('test_started', { deviceId, testType, session })
 
+    void resolveReportOtaVersion(deviceId, session).catch(() => undefined)
+
     // 初始化：设置亮屏时间为30分钟
     execAdbSimple(['-s', deviceId, 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000'])
       .catch(() => {})
@@ -2819,6 +2871,8 @@ export async function startCustomTest(
     bindCustomAuxDevices(auxIds, deviceId, session)
     emitEvent('test_started', { deviceId, testType: 'custom', session })
 
+    void resolveReportOtaVersion(deviceId, session).catch(() => undefined)
+
     execAdbSimple(['-s', deviceId, 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000'])
       .catch(() => {})
     void startDeviceFailureLogCapture(deviceId)
@@ -2859,6 +2913,7 @@ function markTestFlowError(
   device.status = '错误'
   emitEvent('device_updated', { device })
   emitEvent('test_error', { deviceId, message: session.errorReason, module: device.currentModule })
+  scheduleTestReportIfNeeded(deviceId, session, { reportStatus: '完成(失败)' })
 }
 
 function parseCustomCaseKeys(selectedCases: string[]): { testType: string; module: string; caseIndex: number }[] {
@@ -3062,8 +3117,6 @@ export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
       (Date.now() - new Date(device.testStartTime || Date.now()).getTime()) / 1000
     )
     device.testDuration = testDuration
-    // 报告异步生成：不得 await（UNC/ADB 会拖死 /test/end）
-    // 快照 session 引用 + 显式 reportStatus，避免随后置空闲后摘要状态错乱
     const reportSession = session
     void generateTestReport(deviceId, reportSession, undefined, {
       reportStatus: '完成(失败)',
@@ -3163,6 +3216,7 @@ async function runTestFlow(
 
       const dev = devices[deviceId]
       if (!dev || !session.isRunning) {
+        scheduleTestReportIfNeeded(deviceId, session, { reportStatus: '完成(失败)' })
         return
       }
 
@@ -3317,7 +3371,6 @@ function finishTest(deviceId: string, session: TestSession): void {
   device.testDuration = Math.round(
     (Date.now() - new Date(device.testStartTime || Date.now()).getTime()) / 1000
   )
-  session.endTime = new Date().toISOString()
   session.isRunning = false
   device.status = finalStatus
 
@@ -3329,6 +3382,13 @@ function finishTest(deviceId: string, session: TestSession): void {
       console.warn('[device-self-check] Failed to mark plan completed:', session.scheduleKey, err)
     })
   }
+
+  if (session.endTime) {
+    resetDeviceToIdleAfterTest(deviceId)
+    return
+  }
+
+  session.endTime = new Date().toISOString()
 
   void generateTestReport(deviceId, session)
     .catch(e => {
@@ -3497,7 +3557,23 @@ async function generateTestReport(
 
     const orderedResults = collectOrderedCaseResults(session)
 
+    // 尽早采集 OTA 版本（避免后续 xlsx/UNC 耗时导致设备离线后读不到）
+    const otaVersion = await resolveReportOtaVersion(deviceId, session)
+
     const sheets: { name: string; rows: string[][]; styles: ('green' | 'red' | 'yellow' | '')[] }[] = []
+
+    const metaRows: string[][] = [
+      ['设备', `${device.deviceName} (${deviceId})`],
+      ['测试类型', session.testType],
+      ['OTA 版本 (persist.sys.ota_version)', otaVersion || '(未获取)'],
+      ['开始时间', session.startTime || ''],
+      ['结束时间', session.endTime || ''],
+    ]
+    sheets.push({
+      name: '摘要',
+      rows: metaRows,
+      styles: ['', '', '', '', ''],
+    })
 
     if (session.testType === 'custom') {
       const rows: string[][] = [['序号', '用例名称', '所属模块', '状态', '结论', '自动化类型', '执行时间']]
@@ -3554,10 +3630,6 @@ async function generateTestReport(
       }
     }
 
-    if (sheets.length === 0) {
-      sheets.push({ name: '摘要', rows: [['无测试数据']], styles: [''] })
-    }
-
     const buffer = generateXlsx(sheets)
     const reportPath = join(resultDir, 'test_report.xlsx')
     writeFileSync(reportPath, buffer)
@@ -3573,7 +3645,6 @@ async function generateTestReport(
     }
 
     // 写入摘要（含项目归属，供中心看板上报 / 事后补传）
-    // 项目解析（含 UNC 网络盘）限时，避免拖死报告落盘
     const projectCtx = await Promise.race([
       resolveSelfCheckProjectContext({
         deviceId,
@@ -3595,6 +3666,7 @@ async function generateTestReport(
       deviceId,
       deviceName: device.deviceName,
       testType: session.testType,
+      version: otaVersion,
       startTime: session.startTime,
       endTime: session.endTime,
       duration: reportDuration,
@@ -3941,6 +4013,7 @@ function buildSessionFromReport(
         : allCaseItems.map(i => i.caseKey))
       : undefined,
     scheduleKey: summary.scheduleKey,
+    otaVersion: (summary as { version?: string }).version,
   }
 }
 
@@ -4055,6 +4128,16 @@ export function __testingUpsertDevice(device: DeviceInfo, session?: TestSession)
     testSessions[device.deviceId] = session
   }
 }
+
+/** @internal 单测：报告 OTA 版本解析 */
+export async function __testingResolveReportOtaVersion(
+  deviceId: string,
+  session: TestSession,
+): Promise<string> {
+  return resolveReportOtaVersion(deviceId, session)
+}
+
+export const __testingOtaVersionProp = OTA_VERSION_PROP
 
 /** @internal 单测清空设备内存态 */
 export function __testingResetDevices(): void {
