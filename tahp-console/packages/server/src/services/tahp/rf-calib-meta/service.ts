@@ -275,8 +275,8 @@ async function runMetaCliJob(
     const action = assessMetaCliActionFromLogs(logLines, run.mode)
     const outputExists = !!(outputPath && isExistingFile(outputPath))
 
-    // 默认：日志 ok 且退出码 0。仅 IMEI 失败时 MetaCLI 常返回 3，靠 warning 放行。
-    let success = action.ok && (result.code === 0 || !!action.warning)
+    // 默认：日志 ok 且退出码 0。仅 IMEI 失败时 MetaCLI 常返回 3，靠 allowNonZeroExit 放行。
+    let success = action.ok && (result.code === 0 || !!action.warning || !!action.allowNonZeroExit)
     let failReason = !action.ok
       ? action.reason
       : (success ? undefined : `MetaCLI 退出码 ${result.code ?? 'unknown'}`)
@@ -290,18 +290,15 @@ async function runMetaCliJob(
     if (success && run.mode === 'backup' && outputPath && isExistingFile(outputPath)) {
       const stripped = stripImeiFromCalFile(outputPath)
       if (stripped.changed) {
-        persistLog(run.run_id, `[post] 已从备份文件去掉 IMEI（${stripped.removed} 处）: ${outputPath}`)
+        persistLog(run.run_id, `[post] 已从备份文件去掉 IMEI（${stripped.removed} 处）`)
         emit(run.run_id, 'task.message', {
           level: 'stream',
           text: `[post] 已从备份文件去掉 IMEI（${stripped.removed} 处）`,
           phase: 'post',
         })
-      } else {
-        persistLog(run.run_id, '[post] 备份文件不含 IMEI 段（符合默认排除）')
       }
     }
 
-    // 收尾醒目日志：MetaCLI 常在末尾打 Error（IMEI 等），避免同事误判整单失败
     const doneBanner = (text: string) => {
       persistLog(run.run_id, text)
       emit(run.run_id, 'task.message', { level: 'stream', text, phase: 'done' })
@@ -309,21 +306,11 @@ async function runMetaCliJob(
     if (success) {
       if (run.mode === 'backup') {
         doneBanner('========== 备份完成 ==========')
-        doneBanner(
-          warning
-            ? `[done] RF 校准备份成功。${warning}`
-            : '[done] RF 校准备份成功。',
-        )
+        doneBanner(warning ? `[done] RF 校准备份成功。${warning}` : '[done] RF 校准备份成功。')
         if (outputPath) doneBanner(`[done] 输出文件: ${outputPath}`)
-        doneBanner('[done] 若上方仍有 MetaCLI Error/IMEI Failed，可忽略；以本行「备份完成」与任务状态为准。')
       } else {
         doneBanner('========== 恢复完成 ==========')
-        doneBanner(
-          warning
-            ? `[done] RF 校准恢复成功。${warning}`
-            : '[done] RF 校准恢复成功。',
-        )
-        doneBanner('[done] 若上方仍有 MetaCLI Error/IMEI Failed，可忽略；以本行「恢复完成」与任务状态为准。')
+        doneBanner(warning ? `[done] RF 校准恢复成功。${warning}` : '[done] RF 校准恢复成功。')
       }
     } else {
       const verb = run.mode === 'backup' ? '备份' : '恢复'

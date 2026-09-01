@@ -112,7 +112,33 @@ describe('assessMetaCliActionFromLogs', () => {
       'Error: Upload and save calibration data failed',
     ], 'backup')
     expect(r.ok).toBe(true)
-    expect(r.warning).toMatch(/IMEI/)
+    expect(r.allowNonZeroExit).toBe(true)
+    expect(r.warning).toBeUndefined()
+  })
+
+  it('treats new MetaCLI category format GSM(n) IMEI-only failure as success', () => {
+    const r = assessMetaCliActionFromLogs([
+      'Connect target success',
+      'Upload and save calibration data start',
+      'Read Category: General(16)- item: IMEI Failed',
+      'Read Category: General(32)- item: Barcode Done',
+      'Read Category: GSM(14)- item: RX Path Loss Done',
+      'Read Category: LTE(100)- item: TAS Rx Done',
+      'Read Category: NR(100)- item: Max PA Input Done',
+      'Error: There are items reading from target failed',
+      'Start writing the data to file...',
+      'Write Category: General(16)- item: IMEI Failed',
+      'Write Category: GSM(14)- item: RX Path Loss Done',
+      'Write Category: LTE(100)- item: TAS Rx Done',
+      'Write Category: NR(100)- item: Max PA Input Done',
+      'Error: Backup flow failed in step1: upload from target failed.',
+      'Error: Backup flow failed in step2: save to file failed.',
+      'Error: Upload and save calibration data failed',
+      'DisConnect target success',
+    ], 'backup')
+    expect(r.ok).toBe(true)
+    expect(r.allowNonZeroExit).toBe(true)
+    expect(r.warning).toBeUndefined()
   })
 
   it('treats restore Write calibration file done as success', () => {
@@ -129,9 +155,10 @@ describe('assessMetaCliActionFromLogs', () => {
 })
 
 describe('annotateMetaCliLogLine', () => {
-  it('annotates IMEI-related MetaCLI error lines', () => {
-    expect(annotateMetaCliLogLine('Error: Backup flow failed in step1: upload from target failed.')).toMatch(/可忽略/)
-    expect(annotateMetaCliLogLine('Error: Upload and save calibration data failed')).toMatch(/可忽略/)
+  it('annotates IMEI-related MetaCLI error lines as default skip', () => {
+    expect(annotateMetaCliLogLine('Error: Backup flow failed in step1: upload from target failed.')).toMatch(/已默认跳过/)
+    expect(annotateMetaCliLogLine('Error: Backup flow failed in step2: save to file failed.')).toMatch(/已默认跳过/)
+    expect(annotateMetaCliLogLine('Error: Upload and save calibration data failed')).toMatch(/已默认跳过/)
     expect(annotateMetaCliLogLine('Connect target success')).toBe('Connect target success')
   })
 })

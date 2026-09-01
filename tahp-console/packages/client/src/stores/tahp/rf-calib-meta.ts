@@ -20,6 +20,38 @@ import {
 
 const TERMINAL = new Set(['task.completed', 'task.failed', 'task.cancelled'])
 
+/** 合并轮询 log_tail 与 socket 流，按最长重叠后缀去重，避免 prep 日志整段重复 */
+function mergeLogTailWithSocket(base: string[], fromSocket: string[]): string[] {
+  if (!fromSocket.length) return base
+  if (!base.length) return fromSocket
+  const maxK = Math.min(base.length, fromSocket.length)
+  let overlap = 0
+  for (let k = maxK; k >= 1; k--) {
+    let ok = true
+    for (let i = 0; i < k; i++) {
+      if (base[base.length - k + i] !== fromSocket[i]) {
+        ok = false
+        break
+      }
+    }
+    if (ok) {
+      overlap = k
+      break
+    }
+  }
+  if (overlap === 0) {
+    // socket 可能已含完整日志（从任务开头推送），优先用 socket 避免重复拼接
+    if (fromSocket.length >= base.length && base.every((line, i) => fromSocket[i] === line)) {
+      return fromSocket
+    }
+    // 尝试 base 是否为 socket 的前缀片段
+    const baseAsPrefix = base.length <= fromSocket.length
+      && base.every((line, i) => fromSocket[i] === line)
+    if (baseAsPrefix) return fromSocket
+  }
+  return [...base, ...fromSocket.slice(overlap)]
+}
+
 export const useRfCalibMetaStore = defineStore('tahp-rf-calib-meta', () => {
   const tasks = useTahpTasksStore()
   const mode = ref<RfCalibMetaMode>('backup')
@@ -53,17 +85,13 @@ export const useRfCalibMetaStore = defineStore('tahp-rf-calib-meta', () => {
     const id = currentRunId.value
     if (!id) return currentRun.value?.log_tail || []
     const stream = tasks.getStream(id)
-    if (!stream.length) return currentRun.value?.log_tail || []
     const fromSocket = stream
       .filter(e => e.type === 'task.message')
       .map(e => String(e.payload.text || e.payload.message || ''))
       .filter(Boolean)
     const base = currentRun.value?.log_tail || []
-    const merged = [...base]
-    for (const line of fromSocket) {
-      if (merged[merged.length - 1] !== line) merged.push(line)
-    }
-    return merged.slice(-500)
+    if (!fromSocket.length) return base
+    return mergeLogTailWithSocket(base, fromSocket).slice(-500)
   })
 
   watch(
@@ -85,8 +113,19 @@ export const useRfCalibMetaStore = defineStore('tahp-rf-calib-meta', () => {
   async function refreshProbe() {
     try {
       probe.value = await probeRfCalibMeta()
-      if (probe.value?.suggested_com_port && (!comPort.value.trim() || comPort.value === 'Auto Connection')) {
+      // 推荐/adb 方式固定 Auto Connection，不要用探测到的 COM 覆盖，避免误连
+      if (
+        connectionStrategy.value === 'meta_port'
+        && probe.value?.suggested_com_port
+        && (!comPort.value.trim() || comPort.value === 'Auto Connection')
+      ) {
         comPort.value = probe.value.suggested_com_port
+      }
+      if (
+        (connectionStrategy.value === 'preloader_boot' || connectionStrategy.value === 'adb_reboot_meta')
+        && (!comPort.value.trim() || comPort.value !== 'Auto Connection')
+      ) {
+        comPort.value = 'Auto Connection'
       }
     } catch (err) {
       const msg = (err as Error).message
@@ -161,7 +200,9 @@ export const useRfCalibMetaStore = defineStore('tahp-rf-calib-meta', () => {
         output_cal_path: mode.value === 'backup' && outputCalPath.value.trim()
           ? outputCalPath.value.trim()
           : undefined,
-        com_port: comPort.value.trim() || 'Auto Connection',
+        com_port: (connectionStrategy.value === 'preloader_boot' || connectionStrategy.value === 'adb_reboot_meta')
+          ? 'Auto Connection'
+          : (comPort.value.trim() || 'Auto Connection'),
         connection_strategy: connectionStrategy.value,
         label: mode.value === 'backup' ? '备份校准数据' : '恢复校准数据',
       })

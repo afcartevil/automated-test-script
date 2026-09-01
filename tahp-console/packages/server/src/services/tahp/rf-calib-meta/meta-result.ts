@@ -1,15 +1,17 @@
 /**
  * 解析 MetaCLI stdout，判断备份/恢复是否真正执行。
  * MetaCLI 在「仅 IMEI 读取失败」时仍会 SaveToFile 写出 RF 校准 ini，但退出码非 0；
- * 对此按成功（带警告）处理，避免界面误报整单失败。
+ * 对此按成功处理（IMEI 默认排除，不弹警告）。
  */
 import type { RfCalibMetaMode } from './types'
 
 export interface MetaCliActionAssessment {
   ok: boolean
   reason?: string
-  /** 成功但有非致命问题（如 IMEI 读失败）时的提示 */
+  /** 成功但有非致命问题（非 IMEI 默认排除场景）时的提示 */
   warning?: string
+  /** 仅 IMEI 失败导致 MetaCLI 非 0 退出时，仍视为成功 */
+  allowNonZeroExit?: boolean
 }
 
 function listFailedReadItems(text: string): string[] {
@@ -23,34 +25,39 @@ function listFailedReadItems(text: string): string[] {
   return items
 }
 
-/** 仅 IMEI（等非 RF 项）失败，且已写出校准文件 → 视为可用备份 */
+/** 仅 IMEI（等非 RF 项）失败，且已写出 RF 校准数据 → 视为可用备份 */
 export function isImeiOnlyBackupFailure(text: string): boolean {
   const failed = listFailedReadItems(text)
   if (failed.length === 0) return false
   if (!failed.every(n => /^IMEI\d*$/i.test(n))) return false
   const uploaded = /Upload and save calibration data start/i.test(text)
   const wrote = /Start writing the data to file|Write Category:.*Done|IniFlush Done/i.test(text)
-  const rfOk = /Read Category:\s*(GSM|WCDMA|LTE|NR)\s+Item/i.test(text)
-    && /item:.*Done/i.test(text)
-  return uploaded && wrote && rfOk
+  // 兼容旧格式 `GSM Item(14)` 与新格式 `GSM(14)`
+  const rfRead = /Read Category:\s*(GSM|WCDMA|LTE|NR)(\s+Item)?\s*\(/i.test(text)
+  const rfWrite = /Write Category:\s*(GSM|WCDMA|LTE|NR)(\s+Item)?\s*\([^)]*\).*Done/i.test(text)
+    || /Write Category:\s*(GSM|WCDMA|LTE|NR).*item:.*Done/i.test(text)
+  return uploaded && wrote && rfRead && rfWrite
 }
 
-const IMEI_IGNORE_NOTE = '← IMEI 保护导致，可忽略（RF 校准不受影响）'
+const IMEI_SKIP_NOTE = '← 已默认跳过（不备份/不还原 IMEI）'
 
-/** 给 MetaCLI 因 IMEI 打出的 Error/Failed 行加注释，避免误判整单失败 */
+/** 将 MetaCLI 的 IMEI Failed / 相关 Error 标注为「默认跳过」，避免误判 */
 export function annotateMetaCliLogLine(line: string): string {
   const t = line.trim()
   if (/item:\s*IMEI\d*\s+Failed/i.test(t)) {
-    return `${line}  ${IMEI_IGNORE_NOTE}`
+    return `${line}  ${IMEI_SKIP_NOTE}`
   }
   if (/There are items reading from target failed/i.test(t)) {
-    return `${line}  ${IMEI_IGNORE_NOTE}`
+    return `${line}  ${IMEI_SKIP_NOTE}`
   }
   if (/Backup flow failed in step1:\s*upload from target failed/i.test(t)) {
-    return `${line}  ${IMEI_IGNORE_NOTE}`
+    return `${line}  ${IMEI_SKIP_NOTE}`
+  }
+  if (/Backup flow failed in step2:\s*save to file failed/i.test(t)) {
+    return `${line}  ${IMEI_SKIP_NOTE}`
   }
   if (/Upload and save calibration data failed/i.test(t)) {
-    return `${line}  ${IMEI_IGNORE_NOTE}`
+    return `${line}  ${IMEI_SKIP_NOTE}`
   }
   return line
 }
@@ -86,10 +93,7 @@ export function assessMetaCliActionFromLogs(
 
     if (/Upload and save calibration data failed|Backup flow failed/i.test(text)) {
       if (isImeiOnlyBackupFailure(text)) {
-        return {
-          ok: true,
-          warning: 'RF 校准已备份；IMEI 已默认排除（机型保护）。MetaCLI 仍可能尝试读 IMEI 并打出 Failed，可忽略。',
-        }
+        return { ok: true, allowNonZeroExit: true }
       }
       const failed = listFailedReadItems(text)
       return {
@@ -115,10 +119,7 @@ export function assessMetaCliActionFromLogs(
       && !/Write calibration file done/i.test(text)) {
       const failed = listFailedReadItems(text)
       if (failed.length && failed.every(n => /^IMEI\d*$/i.test(n)) && /Write Category:.*Done/i.test(text)) {
-        return {
-          ok: true,
-          warning: 'RF 校准已恢复；IMEI 已默认排除（机型保护）。',
-        }
+        return { ok: true, allowNonZeroExit: true }
       }
       return {
         ok: false,

@@ -18,8 +18,8 @@ const message = useMessage()
 const router = useRouter()
 const store = useRfCalibMetaStore()
 const logBox = ref<HTMLElement | null>(null)
-/** SOP 默认展开，便于首次按步骤操作 */
-const sopOpen = ref(true)
+/** SOP 默认收起，需要时展开查看 */
+const sopOpen = ref(false)
 
 const statusVariant = computed(() => {
   const s = store.currentRun?.status
@@ -39,6 +39,20 @@ const statusLabel = computed(() => {
   if (s === 'pending') return '排队'
   return '未开始'
 })
+
+/** 推荐关机插 USB / adb 方式固定 Auto Connection，禁止误改 COM */
+const comPortLocked = computed(() =>
+  store.connectionStrategy === 'preloader_boot' || store.connectionStrategy === 'adb_reboot_meta',
+)
+
+watch(
+  () => store.connectionStrategy,
+  (strategy) => {
+    if (strategy === 'preloader_boot' || strategy === 'adb_reboot_meta') {
+      store.comPort = 'Auto Connection'
+    }
+  },
+)
 
 function goModemMetaConfig() {
   router.push({ name: CONFIG_ROUTE_NAME, query: { tab: 'form' } })
@@ -139,7 +153,7 @@ onBeforeUnmount(() => {
             <li>模式选 <strong>备份</strong>；进 META 选 <strong>Modem Meta 连接方式（推荐）</strong>。</li>
             <li>COM 口保持 <code>Auto Connection</code>；输出文件可留空。</li>
             <li>点 <strong>开始备份</strong> → <strong>手机关机</strong> → <strong>插入 USB</strong>。</li>
-            <li>日志出现 <code>Connect status: Boot ...</code> 为正常等待；连上后继续读写。</li>
+            <li>日志出现 <code>Connect status: Boot ...</code> 表示 MetaCLI 正在等待，插 USB 连接后会变为 success。</li>
             <li>成功标志：任务 <strong>已完成</strong>，日志末尾有 <code>========== 备份完成 ==========</code>。</li>
           </ol>
         </section>
@@ -163,7 +177,7 @@ onBeforeUnmount(() => {
           <h4>四、结果判定（重要）</h4>
           <ul>
             <li><strong>以任务状态 + 末尾「备份/恢复完成」为准</strong>，不要只看 MetaCLI 中间的 Error。</li>
-            <li><code>IMEI Failed</code> / <code>Backup flow failed</code> 等因机型 IMEI 保护产生，<strong>可忽略</strong>（默认不备份/不还原 IMEI）。</li>
+            <li>IMEI 默认不备份/不还原；日志里相关 Failed 会标注「已默认跳过」，任务仍显示 <strong>执行完成</strong>（无警告）。</li>
             <li>勿同时按 Vol+ 与 Vol-（会进 Recovery，不是校准 META）。</li>
           </ul>
         </section>
@@ -228,12 +242,17 @@ onBeforeUnmount(() => {
         <label class="field-label mt">COM 口</label>
         <NInput
           v-model:value="store.comPort"
-          placeholder="Auto Connection"
-          :disabled="store.isRunning || store.submitting"
+          :placeholder="comPortLocked ? 'Auto Connection' : '如 COM25，或留空自动检测'"
+          :disabled="store.isRunning || store.submitting || comPortLocked"
+          :readonly="comPortLocked"
         />
+        <p v-if="comPortLocked" class="field-hint">
+          当前进 META 方式使用 Auto Connection，COM 口已锁定，避免误改导致连接失败。
+          仅「已在 META」时可手动填写 COM。
+        </p>
 
         <p class="hint">
-          推荐流程：点「开始」→ 关机 → 插 USB。详见上方 SOP。默认排除 IMEI，日志里 IMEI Failed 可忽略。
+          推荐流程：点「开始」→ 关机 → 插 USB。详见上方 SOP。IMEI 默认排除，不计入警告。
         </p>
 
         <NAlert
@@ -243,8 +262,7 @@ onBeforeUnmount(() => {
           title="操作顺序（与 Modem Meta GUI 相同）"
         >
           ① 点「开始备份/恢复」→ ② 手机关机 → ③ 插入 USB。
-          日志出现 <code>Connect status: Boot ...</code> 表示 MetaCLI 正在等待，插 USB 后应变为 success。
-          勿同时按 Vol+ 与 Vol-（会进 Recovery，不是校准模式）。
+          日志出现 <code>Connect status: Boot ...</code> 表示 MetaCLI 正在等待，插 USB 后连接后会变为 success。
         </NAlert>
 
         <div class="actions">
@@ -307,14 +325,11 @@ onBeforeUnmount(() => {
 
         <NAlert
           v-if="store.currentRun?.status === 'completed'"
-          :type="store.currentRun.message?.includes('IMEI') ? 'warning' : 'success'"
+          type="success"
           class="mb"
-          :title="store.currentRun.message?.includes('IMEI') ? '备份完成（有警告）' : '执行完成'"
+          title="执行完成"
         >
           <div class="paths">
-            <p v-if="store.currentRun.message?.includes('IMEI')" class="warn-line">
-              {{ store.currentRun.message }}
-            </p>
             <div v-if="store.currentRun.output_cal_path || store.currentRun.cal_file_path">
               <strong>校准文件：</strong>
               <code>{{ store.currentRun.output_cal_path || store.currentRun.cal_file_path }}</code>
@@ -411,6 +426,12 @@ onBeforeUnmount(() => {
   margin-bottom: 6px;
   font-size: 13px;
   color: var(--ea-text-secondary, #666);
+}
+.field-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--ea-text-secondary, #888);
+  line-height: 1.45;
 }
 .mode-group {
   display: flex;
