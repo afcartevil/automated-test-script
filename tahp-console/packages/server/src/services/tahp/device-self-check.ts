@@ -643,6 +643,8 @@ function emitEvent(eventName: string, data: any) {
 const ADB_PROBE_TIMEOUT_MS = 12_000
 const ADB_LIST_TIMEOUT_MS = 8_000
 const ADB_DEFAULT_TIMEOUT_MS = 10_000
+/** 失败日志 adb pull 单次超时；避免用例失败后 pull 挂死导致整场测试无法结束 */
+const ADB_PULL_TIMEOUT_MS = 90_000
 
 const deviceAdbTail = new Map<string, Promise<unknown>>()
 
@@ -864,21 +866,40 @@ function scheduleTestReportIfNeeded(
   options?: { reportStatus?: string },
 ): void {
   if (Object.keys(session.caseResults).length === 0) return
-  if (session.endTime) return
 
   const device = devices[deviceId]
   if (!device) return
 
-  session.endTime = new Date().toISOString()
+  session.isRunning = false
   const testDuration = Math.round(
     (Date.now() - new Date(device.testStartTime || Date.now()).getTime()) / 1000,
   )
   device.testDuration = testDuration
-  const reportStatus = options?.reportStatus ?? '完成(失败)'
 
-  void generateTestReport(deviceId, session, undefined, { reportStatus, testDuration }).catch((e) => {
-    console.warn('[device-self-check] Failed to generate report:', e)
-  })
+  const reportStatus: DeviceStatus = options?.reportStatus
+    ? (options.reportStatus as DeviceStatus)
+    : (Object.values(session.caseResults).every(r => r.status === '通过' || r.status === '跳过')
+      ? '完成(通过)'
+      : '完成(失败)')
+  device.status = reportStatus
+
+  emitEvent('device_updated', { device })
+  emitEvent('test_completed', { deviceId, session })
+
+  if (session.endTime) {
+    resetDeviceToIdleAfterTest(deviceId)
+    return
+  }
+
+  session.endTime = new Date().toISOString()
+
+  void generateTestReport(deviceId, session, undefined, { reportStatus, testDuration })
+    .catch((e) => {
+      console.warn('[device-self-check] Failed to generate report:', e)
+    })
+    .finally(() => {
+      resetDeviceToIdleAfterTest(deviceId)
+    })
 }
 
 function getSessionResultDir(deviceId: string, session: TestSession): string {
@@ -953,18 +974,59 @@ async function startDeviceFailureLogCapture(deviceId: string): Promise<void> {
   }
 }
 
-function adbPull(deviceId: string, remotePath: string, localDir: string): void {
+async function adbPull(
+  deviceId: string,
+  remotePath: string,
+  localDir: string,
+  timeoutMs = ADB_PULL_TIMEOUT_MS,
+): Promise<void> {
   mkdirSync(localDir, { recursive: true })
-  const result = spawnSync('adb', ['-s', deviceId, 'pull', remotePath, localDir], {
-    encoding: 'utf-8',
-    windowsHide: true,
-  })
-  if (result.status !== 0) {
-    const text = `${result.stdout || ''}${result.stderr || ''}`.trim()
-    if (text && !/No such file|does not exist|failed to stat/i.test(text)) {
-      console.warn(`[device-self-check] adb pull failed for ${remotePath}: ${text}`)
+  await new Promise<void>((resolve) => {
+    let settled = false
+    let proc: ReturnType<typeof spawn> | null = null
+    let timeoutId: NodeJS.Timeout | null = null
+
+    const finish = () => {
+      if (settled) return
+      settled = true
+      if (timeoutId) clearTimeout(timeoutId)
+      resolve()
     }
-  }
+
+    try {
+      proc = spawn('adb', ['-s', deviceId, 'pull', remotePath, localDir], {
+        windowsHide: true,
+      })
+    } catch (e) {
+      console.warn(`[device-self-check] adb pull spawn failed for ${remotePath}:`, e)
+      finish()
+      return
+    }
+
+    let output = ''
+    proc.stdout?.on('data', (chunk: Buffer) => { output += chunk.toString('utf-8') })
+    proc.stderr?.on('data', (chunk: Buffer) => { output += chunk.toString('utf-8') })
+
+    timeoutId = setTimeout(() => {
+      console.warn(`[device-self-check] adb pull timeout (${timeoutMs}ms): ${remotePath}`)
+      killProcessTree(proc)
+      finish()
+    }, timeoutMs)
+
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        const text = output.trim()
+        if (text && !/No such file|does not exist|failed to stat/i.test(text)) {
+          console.warn(`[device-self-check] adb pull failed for ${remotePath}: ${text}`)
+        }
+      }
+      finish()
+    })
+    proc.on('error', (err) => {
+      console.warn(`[device-self-check] adb pull error for ${remotePath}:`, err.message)
+      finish()
+    })
+  })
 }
 
 async function exportFailureLogsForCase(
@@ -983,14 +1045,14 @@ async function exportFailureLogsForCase(
 
     const platform = await detectLogCollectionPlatform(deviceId)
     if (platform === 'mtk') {
-      adbPull(deviceId, '/data/debuglogger/mobilelog', join(caseDir, 'mobilelog'))
-      adbPull(deviceId, '/data/debuglogger/netlog', join(caseDir, 'netlog'))
-      adbPull(deviceId, '/data/TNE', join(caseDir, 'TNE'))
+      await adbPull(deviceId, '/data/debuglogger/mobilelog', join(caseDir, 'mobilelog'))
+      await adbPull(deviceId, '/data/debuglogger/netlog', join(caseDir, 'netlog'))
+      await adbPull(deviceId, '/data/TNE', join(caseDir, 'TNE'))
     } else if (platform === 'sprd') {
-      adbPull(deviceId, '/sdcard/ylog', join(caseDir, 'ylog'))
-      adbPull(deviceId, '/data/ylog', join(caseDir, 'ylog-data'))
-      adbPull(deviceId, '/sdcard/minidump', join(caseDir, 'minidump'))
-      adbPull(deviceId, '/data/minidump', join(caseDir, 'minidump-data'))
+      await adbPull(deviceId, '/sdcard/ylog', join(caseDir, 'ylog'))
+      await adbPull(deviceId, '/data/ylog', join(caseDir, 'ylog-data'))
+      await adbPull(deviceId, '/sdcard/minidump', join(caseDir, 'minidump'))
+      await adbPull(deviceId, '/data/minidump', join(caseDir, 'minidump-data'))
     }
 
     return caseDir
@@ -1501,15 +1563,21 @@ async function runCase(
 
   result.endTime = new Date().toISOString()
   if (result.status === '失败') {
-    const exportedDir = await exportFailureLogsForCase(deviceId, session, caseKey)
-    if (exportedDir) {
-      result.failureLogDir = exportedDir
-      result.steps.push({
+    // 后台导出失败日志，不阻塞后续用例与整场 finishTest（adb pull 可能很慢或挂死）
+    void exportFailureLogsForCase(deviceId, session, caseKey).then((exportedDir) => {
+      if (!exportedDir) return
+      const latest = session.caseResults[caseKey]
+      if (!latest) return
+      latest.failureLogDir = exportedDir
+      latest.steps.push({
         stepDesc: `失败日志已导出: ${exportedDir}`,
         status: '完成',
-        timestamp: result.endTime,
+        timestamp: new Date().toISOString(),
       })
-    }
+      emitEvent('case_completed', { deviceId, caseKey, result: latest })
+    }).catch((e) => {
+      console.warn('[device-self-check] Background failure log export failed:', caseKey, e)
+    })
   }
   emitEvent('case_completed', { deviceId, caseKey, result })
   return result
@@ -4138,6 +4206,15 @@ export async function __testingResolveReportOtaVersion(
 }
 
 export const __testingOtaVersionProp = OTA_VERSION_PROP
+
+/** @internal 单测：中断路径生成报告并释放设备 */
+export function __testingScheduleTestReportIfNeeded(
+  deviceId: string,
+  session: TestSession,
+  options?: { reportStatus?: string },
+): void {
+  scheduleTestReportIfNeeded(deviceId, session, options)
+}
 
 /** @internal 单测清空设备内存态 */
 export function __testingResetDevices(): void {
