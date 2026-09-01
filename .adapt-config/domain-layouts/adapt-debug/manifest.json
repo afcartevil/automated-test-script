@@ -114,10 +114,94 @@
       "revision": 2,
       "updated_at": "2026-06-22T02:27:50.068Z",
       "source": "user"
+    },
+    "vib": {
+      "schema_version": 1,
+      "domain_id": "vib",
+      "fields": [
+        {
+          "name": "motor_type",
+          "label": "马达类型",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "ic_vendor",
+          "label": "控制IC厂商",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "ic_model",
+          "label": "控制IC型号",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "motor_model",
+          "label": "马达型号",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "i2c_bus",
+          "label": "i2c号",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "i2c_addr",
+          "label": "i2c通讯地址",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "irq_gpio",
+          "label": "马达中断gpio",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "rst_gpio",
+          "label": "复位gpio",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "old_motor_firmware",
+          "label": "升级前的马达固件",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "old_dts_config",
+          "label": "升级前的dts参数配置",
+          "type": "text",
+          "required": true
+        },
+        {
+          "name": "x_m",
+          "label": "m",
+          "type": "textarea",
+          "required": false
+        },
+        {
+          "name": "x_123",
+          "label": "123",
+          "type": "text",
+          "required": false
+        }
+      ],
+      "related_skills": [
+        "adapt-vib-p1"
+      ],
+      "revision": 1,
+      "updated_at": "2026-09-01T12:41:14.702Z",
+      "source": "user"
     }
   },
   "sync": {
     "cloud_sync_enabled": false,
-    "last_local_save": "2026-06-22T02:27:50.069Z"
+    "last_local_save": "2026-09-01T12:41:14.703Z"
   }
 }
