@@ -107,7 +107,7 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     group: GROUP_HARNESS,
     placeholder: '齐治堡垒机 TOTP base32 secret',
     description: 'HARNESS_QIZHI_OTP_SECRET（Bridge 自动生成动态口令）',
-    doc_url: 'https://transsioner.feishu.cn/wiki/TslFwtsCuiroMVkXhlCc4YGGn50',
+    doc_url: 'https://transsioner.feishu.cn/wiki/Or6RwJ3Vti086Ikt4upcpnFdnWb',
     doc_label: '如何获取',
   },
   {
