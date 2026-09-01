@@ -8,7 +8,7 @@ import { join, resolve, dirname } from 'path'
 import { readUnifiedConfig } from '../unified-config'
 
 export const MODEM_META_CONFIG_HINT =
-  '未配置 Modem Meta 安装目录。请前往「配置 → 一键配置表单 → Modem 工具」填写后保存，再重试备份/恢复。'
+  '未配置 Modem Meta 安装目录。请前往「配置 → 一键配置 → Modem 工具」填写后保存，再重试备份/恢复。'
 
 /** 从一键配置表单读取已保存的 Modem Meta 安装目录（不含 env 预填） */
 export function readConfiguredModemMetaRoot(): string | undefined {
@@ -110,7 +110,7 @@ export function probeModemMetaCli(metaRootInput?: string): {
       available: false,
       needs_config: !configured,
       reason: configured
-        ? `一键配置中的 Modem Meta 路径无效（未找到 MetaCLI.exe）。请到「配置 → 一键配置表单 → Modem 工具」更正。当前: ${metaCli}`
+        ? `一键配置中的 Modem Meta 路径无效（未找到 MetaCLI.exe）。请到「配置 → 一键配置 → Modem 工具」更正。当前: ${metaCli}`
         : MODEM_META_CONFIG_HINT,
       meta_root: metaRoot,
       meta_cli: metaCli,

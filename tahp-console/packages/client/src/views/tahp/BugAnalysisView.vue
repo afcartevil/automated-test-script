@@ -187,7 +187,7 @@ function toggleSubmitForm() {
 }
 
 // JIRA 配置状态改由服务端统一管理（.tahp/unified-config.json / jira-user-config.json），
-// 页面只读取状态并展示；配置入口跳转「配置 → 一键配置表单」。
+// 页面只读取状态并展示；配置入口跳转「配置 → 一键配置」。
 const jiraStatus = ref<{ configured: boolean; connected: boolean; detail?: string; error?: string }>({
   configured: false,
   connected: false,
@@ -271,9 +271,9 @@ function goConfigureJira() {
 function ensureJiraReady(): boolean {
   if (jiraReady.value) return true
   if (jiraStatus.value.configured && !jiraStatus.value.connected) {
-    message.warning(jiraStatus.value.error || 'JIRA 配置无效，请前往「配置 → 一键配置表单」更新')
+    message.warning(jiraStatus.value.error || 'JIRA 配置无效，请前往「配置 → 一键配置」更新')
   } else {
-    message.warning('请先在「配置 → 一键配置表单」中配置 JIRA 账号密码')
+    message.warning('请先在「配置 → 一键配置」中配置 JIRA 账号密码')
   }
   goConfigureJira()
   return false

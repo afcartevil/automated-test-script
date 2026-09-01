@@ -28,7 +28,7 @@ export interface HarnessVersionGateResult {
 const DEFAULT_MINIMUM = '1.3.1'
 const DEFAULT_SOP = 'docs/agent-npx-cli-sop.md'
 const DEFAULT_GUIDANCE =
-  '请打开「配置 → 一键配置表单」确认 asf/harness 工具项后，点击「启动skill配置检查」，完成清单中的「Transsion ASF / Harness 安装」。'
+  '请打开「配置 → 一键配置」确认 asf/harness 工具项后，点击「保存并启动skill配置检查」，完成清单中的「Transsion ASF / Harness 安装」。'
 
 const PROBE_TTL_MS = 60_000
 let versionProbeCache: { value: string | null; at: number } | null = null

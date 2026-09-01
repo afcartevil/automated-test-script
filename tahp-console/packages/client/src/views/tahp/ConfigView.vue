@@ -3,13 +3,13 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
 import ConfigModelsPanel from '@/components/tahp/config/ConfigModelsPanel.vue'
-import ConfigSkillPanel from '@/components/tahp/config/ConfigSkillPanel.vue'
 import ConfigUnifiedFormPanel from '@/components/tahp/config/ConfigUnifiedFormPanel.vue'
 import ConfigBatchPanel from '@/components/tahp/config/ConfigBatchPanel.vue'
 import {
   CONFIG_MAIN_TABS,
   CONFIG_TAB_LABELS,
   CONFIG_ROUTE_NAME,
+  isConfigSetupTab,
   parseConfigTab,
   type ConfigTab,
 } from '@/utils/config-navigation'
@@ -19,20 +19,30 @@ const router = useRouter()
 
 const activeTab = computed(() => parseConfigTab(route.query.tab))
 
-/** 首次进入 batch 后保持组件挂载，返回表单时会话不丢失 */
+/** 首次进入检查步后保持组件挂载，返回表单时会话不丢失 */
 const batchPanelMounted = ref(false)
 /** 每次从表单保存并启动检查时递增，驱动 batch 面板启动或恢复 */
 const batchStartToken = ref(0)
 
 const pageSubtitle = computed(() => {
   if (activeTab.value === 'batch') {
-    return '依据已保存的一键配置表单，由 Agent 依次检查并完成各 Skill 配置'
+    return '依据已保存的配置，由 Agent 依次检查并完成各 Skill 配置'
   }
-  return '模型 Provider、常用 Skill 与一键配置表单统一管理'
+  return '模型 Provider 与一键配置（填表后保存并启动 Skill 检查）'
 })
 
-function switchTab(tab: ConfigTab) {
-  if (tab === activeTab.value) return
+function isMainTabActive(tab: Exclude<ConfigTab, 'batch'>): boolean {
+  if (tab === 'form') return isConfigSetupTab(activeTab.value)
+  return activeTab.value === tab
+}
+
+function switchTab(tab: Exclude<ConfigTab, 'batch'>) {
+  if (tab === 'form') {
+    if (activeTab.value === 'form') return
+    router.replace({ name: CONFIG_ROUTE_NAME, query: { tab: 'form' } })
+    return
+  }
+  if (activeTab.value === 'models') return
   router.replace({ name: CONFIG_ROUTE_NAME, query: { tab } })
 }
 
@@ -46,7 +56,12 @@ function backToForm() {
   router.push({ name: CONFIG_ROUTE_NAME, query: { tab: 'form' } })
 }
 
-/** 兼容旧 query：openForm=1 → 一键配置表单 */
+function showBatch() {
+  batchPanelMounted.value = true
+  router.push({ name: CONFIG_ROUTE_NAME, query: { tab: 'batch' } })
+}
+
+/** 兼容旧 query：openForm=1 / tab=skills → 一键配置 */
 watch(
   () => route.query,
   (q) => {
@@ -69,15 +84,15 @@ watch(activeTab, (tab) => {
   <div class="page config-view">
     <EaPageHead title="配置" :subtitle="pageSubtitle" />
 
-    <nav v-if="activeTab !== 'batch'" class="config-tabs" role="tablist">
+    <nav class="config-tabs" role="tablist">
       <button
         v-for="tab in CONFIG_MAIN_TABS"
         :key="tab"
         type="button"
         role="tab"
         class="config-tab"
-        :class="{ active: activeTab === tab }"
-        :aria-selected="activeTab === tab"
+        :class="{ active: isMainTabActive(tab) }"
+        :aria-selected="isMainTabActive(tab)"
         @click="switchTab(tab)"
       >
         {{ CONFIG_TAB_LABELS[tab] }}
@@ -86,11 +101,15 @@ watch(activeTab, (tab) => {
 
     <div class="config-panel">
       <ConfigModelsPanel v-if="activeTab === 'models'" />
-      <ConfigSkillPanel v-else-if="activeTab === 'skills'" />
-      <ConfigUnifiedFormPanel
-        v-else-if="activeTab === 'form'"
-        @start-batch="goBatch"
-      />
+      <template v-else-if="activeTab === 'form'">
+        <div v-if="batchPanelMounted" class="setup-resume">
+          <button type="button" class="setup-resume__link" @click="showBatch">
+            查看 Skill 配置检查
+          </button>
+          <span class="setup-resume__hint">会话在后台保持，不会因返回改表而中断</span>
+        </div>
+        <ConfigUnifiedFormPanel @start-batch="goBatch" />
+      </template>
       <ConfigBatchPanel
         v-if="batchPanelMounted"
         v-show="activeTab === 'batch'"
@@ -146,5 +165,30 @@ watch(activeTab, (tab) => {
 
 .config-panel {
   min-height: 200px;
+}
+
+.setup-resume {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.setup-resume__link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.setup-resume__hint {
+  color: var(--muted);
 }
 </style>

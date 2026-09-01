@@ -138,7 +138,7 @@ tahp/
 | **AI 自检** | `/tahp/self-check` | 多设备并行自动化测试 + Gerrit Code Review + AI 测试自规划 |
 | 知识库 | `/tahp/knowledge` | 条目 CRUD、BM25 搜索、草稿审核、文档导入 |
 | 报告 | `/tahp/reports` | 浏览 Bug 分析、适配 Agent、Gerrit 评审等报告 |
-| 常用 Skill 配置 | `/tahp/skill-config` | 必选 Skill 清单与配置状态管理 |
+| 一键配置 | `/tahp/config?tab=form` | 填表后保存并启动 Skill 配置检查 |
 | 对话 | `/hermes/chat` | Hermes 原生多轮对话 |
 | Skills 库 | `/hermes/skills` | Skill 浏览与管理 |
 | 模型管理 | `/hermes/models` | Provider 与模型配置 |

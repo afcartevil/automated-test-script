@@ -17,7 +17,7 @@ watch(
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 
 function goConfigure() {
-  router.push({ name: CONFIG_ROUTE_NAME, query: { tab: 'skills' } })
+  router.push({ name: CONFIG_ROUTE_NAME, query: { tab: 'form' } })
 }
 </script>
 
@@ -27,11 +27,11 @@ function goConfigure() {
     class="skill-config-warning-bar"
     role="status"
   >
-    常用 Skill 配置尚未完成（{{ unconfiguredCount }} 项未配置），智能诊断、Jira 操作等完整功能需在
+    一键配置尚未完成（{{ unconfiguredCount }} 项 Skill 未配置），智能诊断、Jira 操作等完整功能需在
     <button type="button" class="skill-config-warning-bar__link" @click="goConfigure">
-      配置 → 常用 Skill 配置
+      配置 → 一键配置
     </button>
-    中完成全部 Skill 配置。
+    中填表并完成 Skill 配置检查。
   </div>
 </template>
 

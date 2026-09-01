@@ -1,26 +1,31 @@
-export type ConfigTab = 'models' | 'skills' | 'form' | 'batch'
+export type ConfigTab = 'models' | 'form' | 'batch'
 
 export const CONFIG_ROUTE_NAME = 'tahp.config'
 
-/** 一键配置表单页「启动」按钮文案 */
+/** 一键配置检查页「启动」按钮文案 */
 export const SKILL_CONFIG_CHECK_BUTTON_LABEL = '启动skill配置检查'
 
-/** 一键配置表单页合并按钮：先保存再启动检查 */
+/** 一键配置页合并按钮：先保存再启动检查 */
 export const SAVE_AND_START_SKILL_CHECK_LABEL = '保存并启动skill配置检查'
 
-export const CONFIG_TAB_LABELS: Record<ConfigTab, string> = {
+export const CONFIG_TAB_LABELS: Record<Exclude<ConfigTab, 'batch'>, string> = {
   models: '模型管理',
-  skills: '常用 Skill 配置',
-  form: '一键配置表单',
-  batch: 'Skill 配置检查',
+  form: '一键配置',
 }
 
-/** 配置页可见的主 Tab（不含 batch 子界面） */
-export const CONFIG_MAIN_TABS: ConfigTab[] = ['models', 'skills', 'form']
+/** 配置页可见的主 Tab（batch 是一键配置内的检查步） */
+export const CONFIG_MAIN_TABS: Array<Exclude<ConfigTab, 'batch'>> = ['models', 'form']
 
 export function parseConfigTab(raw: unknown): ConfigTab {
-  if (raw === 'skills' || raw === 'form' || raw === 'batch') return raw
+  if (raw === 'batch') return 'batch'
+  // 旧「常用 Skill 配置」并入一键配置
+  if (raw === 'form' || raw === 'skills') return 'form'
   return 'models'
+}
+
+/** 表单步与检查步都属于「一键配置」标签 */
+export function isConfigSetupTab(tab: ConfigTab): boolean {
+  return tab === 'form' || tab === 'batch'
 }
 
 /** 已保存配置中是否至少有一项表单字段非空 */

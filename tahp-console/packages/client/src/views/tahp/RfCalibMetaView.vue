@@ -156,7 +156,7 @@ onBeforeUnmount(() => {
             <li>本机已安装 Modem Meta（目录内可见 <code>META.exe</code>、<code>bin</code>、<code>configs</code> 等）。</li>
             <li>
               打开
-              <NButton text type="primary" @click="goModemMetaConfig">配置 → 一键配置表单 → Modem 工具</NButton>
+              <NButton text type="primary" @click="goModemMetaConfig">配置 → 一键配置 → Modem 工具</NButton>
               ，填写 <strong>Modem Meta</strong> 为 <strong>META.exe 所在目录</strong> 并保存。
             </li>
             <li>示例路径：
@@ -212,7 +212,7 @@ onBeforeUnmount(() => {
     >
       <p>{{ store.probe.reason || '请先完成工具配置。' }}</p>
       <NButton size="small" type="warning" class="mt-btn" @click="goModemMetaConfig">
-        前往一键配置表单
+        前往一键配置
       </NButton>
     </NAlert>
 
@@ -223,7 +223,7 @@ onBeforeUnmount(() => {
       title="Modem Meta 已配置"
     >
       安装目录：<code>{{ store.probe.meta_root }}</code>
-      （来自「配置 → 一键配置表单 → Modem 工具」）
+      （来自「配置 → 一键配置 → Modem 工具」）
       <NButton size="tiny" quaternary class="mt-btn-inline" @click="onRefreshProbe">重新检测</NButton>
     </NAlert>
 

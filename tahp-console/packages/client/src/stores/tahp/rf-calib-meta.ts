@@ -180,7 +180,7 @@ export const useRfCalibMetaStore = defineStore('tahp-rf-calib-meta', () => {
     }
     if (!probe.value?.available) {
       error.value = probe.value?.reason
-        || '未配置 Modem Meta。请前往「配置 → 一键配置表单 → Modem 工具」填写安装目录'
+        || '未配置 Modem Meta。请前往「配置 → 一键配置 → Modem 工具」填写安装目录'
       return
     }
     if (!canStart.value) {

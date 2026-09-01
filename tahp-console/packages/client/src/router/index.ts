@@ -141,10 +141,7 @@ const router = createRouter({
     {
       path: '/tahp/skill-config',
       name: 'tahp.skill-config',
-      redirect: (to) => ({
-        name: 'tahp.config',
-        query: { tab: to.query.openForm === '1' ? 'form' : 'skills' },
-      }),
+      redirect: { name: 'tahp.config', query: { tab: 'form' } },
     },
     // ===== Hermes 原生视图 =====
     {

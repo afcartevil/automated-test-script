@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatUnfilledFieldsHint,
+  isConfigSetupTab,
   listUnfilledFormFields,
+  parseConfigTab,
 } from '@/utils/config-navigation'
 
 const fields = [
@@ -37,5 +39,20 @@ describe('formatUnfilledFieldsHint', () => {
     expect(hint).toContain('飞书 OpenAPI · App ID')
     expect(hint).toContain('域账号 · 域密码')
     expect(hint).not.toContain('（可选）')
+  })
+})
+
+describe('parseConfigTab', () => {
+  it('maps the old skills tab into 一键配置 form step', () => {
+    expect(parseConfigTab('skills')).toBe('form')
+    expect(parseConfigTab('form')).toBe('form')
+    expect(parseConfigTab('batch')).toBe('batch')
+    expect(parseConfigTab(undefined)).toBe('models')
+  })
+
+  it('treats form and check steps as the same 一键配置 tab', () => {
+    expect(isConfigSetupTab('form')).toBe(true)
+    expect(isConfigSetupTab('batch')).toBe(true)
+    expect(isConfigSetupTab('models')).toBe(false)
   })
 })

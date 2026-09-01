@@ -234,7 +234,7 @@ describe('probeModemMetaCli', () => {
     const r = probeModemMetaCli()
     // 本机若已在一键配置保存过 modem_meta_root，则可能 available；否则应提示配置
     if (!r.available && r.needs_config) {
-      expect(r.reason).toMatch(/一键配置表单/)
+      expect(r.reason).toMatch(/一键配置/)
     }
   })
 

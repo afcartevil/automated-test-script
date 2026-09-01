@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, type ComponentPublicInstance } from 'vue'
 import {
-  NButton, NSpin, NEmpty, NInput, NAlert, NSpace, useMessage,
+  NButton, NSpin, NEmpty, NInput, NAlert, NSpace, NScrollbar, useMessage,
 } from 'naive-ui'
 import MarkdownRenderer from '@/components/hermes/chat/MarkdownRenderer.vue'
 import ModelProviderBanner from '@/components/tahp/ModelProviderBanner.vue'
@@ -12,12 +12,15 @@ import { useModelProviderReadiness } from '@/composables/useModelProviderReadine
 import { useSkillConfigTaskWatcher } from '@/composables/useSkillConfigTaskWatcher'
 import {
   fetchSkillConfigList,
+  fetchSkillPreview,
+  startSkillConfig,
   startConfigureAllSkills,
   continueSkillConfig,
   respondSkillConfigApproval,
   type SkillConfigListItem,
+  type SkillConfigPreview,
 } from '@/api/tahp/skill-config'
-import { SKILL_CONFIG_CHECK_BUTTON_LABEL } from '@/utils/config-navigation'
+import { SKILL_CONFIG_CHECK_BUTTON_LABEL, SAVE_AND_START_SKILL_CHECK_LABEL } from '@/utils/config-navigation'
 
 const props = defineProps<{
   /** 从表单保存并启动检查时递增，触发启动或恢复 */
@@ -33,6 +36,14 @@ const { isReady: modelProviderReady } = useModelProviderReadiness()
 
 const loading = ref(false)
 const skills = ref<SkillConfigListItem[]>([])
+const manifestPath = ref('')
+const selectedId = ref<string | null>(null)
+const preview = ref<SkillConfigPreview | null>(null)
+const previewLoading = ref(false)
+const previewError = ref('')
+const startingSingle = ref(false)
+/** batch：整表检查；single：某一条开始/重新配置 */
+const sessionKind = ref<'batch' | 'single' | null>(null)
 const activeTaskId = ref<string | null>(null)
 const batchTaskStatus = ref<'running' | 'waiting_user' | 'completed' | 'failed' | null>(null)
 const batchStarting = ref(false)
@@ -100,6 +111,21 @@ const sessionStatusVariant = computed<'ok' | 'info' | 'warn' | 'err' | 'muted'>(
   return 'muted'
 })
 
+const selectedSkill = computed(() =>
+  skills.value.find(s => s.id === selectedId.value) || null,
+)
+
+const batchBusy = computed(() => {
+  if (batchStarting.value || startingSingle.value) return true
+  if (!activeTaskId.value) return false
+  if (batchTaskStatus.value === 'completed' || batchTaskStatus.value === 'failed') return false
+  return taskRunning.value || batchTaskStatus.value === 'running' || batchTaskStatus.value === 'waiting_user'
+})
+
+const canStartSingle = computed(() =>
+  !!selectedId.value && !batchBusy.value && modelProviderReady.value,
+)
+
 scrollChatToBottom(chatMarkdown)
 
 function statusLabel(status: SkillConfigListItem['status']): string {
@@ -125,12 +151,30 @@ function attachBatchTask(taskId: string, status?: 'running' | 'waiting_user') {
   tasksStore.trackTask(taskId)
 }
 
+async function loadPreview(skillId: string) {
+  previewLoading.value = true
+  previewError.value = ''
+  try {
+    preview.value = await fetchSkillPreview(skillId)
+  } catch (err) {
+    preview.value = null
+    previewError.value = (err as Error).message || '加载失败'
+  } finally {
+    previewLoading.value = false
+  }
+}
+
 async function loadList() {
   loading.value = true
   try {
     const data = await fetchSkillConfigList()
+    manifestPath.value = data.manifest_path
     skills.value = data.skills
-    if (data.batch_task?.task_id) {
+    if (!selectedId.value && data.skills.length) {
+      selectedId.value = data.skills[0].id
+    }
+    if (sessionKind.value !== 'single' && data.batch_task?.task_id) {
+      sessionKind.value = 'batch'
       attachBatchTask(data.batch_task.task_id, data.batch_task.status)
     }
   } catch (err) {
@@ -156,11 +200,16 @@ watch(
   () => props.startToken,
   async (token) => {
     if (!token) return
+    sessionKind.value = 'batch'
     await loadList()
     await startBatchIfNeeded()
   },
   { immediate: true },
 )
+
+watch(selectedId, (id) => {
+  if (id) void loadPreview(id)
+})
 
 onBeforeUnmount(() => {
   if (pollTimer) clearInterval(pollTimer)
@@ -168,6 +217,7 @@ onBeforeUnmount(() => {
 })
 
 async function startBatchIfNeeded() {
+  sessionKind.value = 'batch'
   if (activeTaskId.value) {
     if (!isTaskTerminal(activeTaskId.value)) return
     activeTaskId.value = null
@@ -198,6 +248,28 @@ async function startBatchIfNeeded() {
     }
   } finally {
     batchStarting.value = false
+  }
+}
+
+async function onStartSingle(force: boolean) {
+  if (!selectedId.value || !canStartSingle.value) return
+  if (!modelProviderReady.value) {
+    message.warning('请先在「配置 → 模型管理」中配置模型 Provider')
+    return
+  }
+  startingSingle.value = true
+  try {
+    tasksStore.ensureSocket()
+    const data = await startSkillConfig(selectedId.value, force)
+    sessionKind.value = 'single'
+    attachBatchTask(data.task_id, 'running')
+    chatInput.value = ''
+    await loadList()
+    message.info(force ? '已启动重新配置' : '已启动配置向导')
+  } catch (err) {
+    message.error((err as Error).message || '启动失败')
+  } finally {
+    startingSingle.value = false
   }
 }
 
@@ -242,7 +314,7 @@ async function onApproval(choice: string) {
   <div class="config-batch-panel">
     <div class="batch-toolbar">
       <NButton class="batch-back-btn" @click="emit('back')">
-        ← 返回一键配置表单
+        ← 返回修改配置
       </NButton>
       <EaPill v-if="sessionStatusLabel" :variant="sessionStatusVariant">
         {{ sessionStatusLabel }}
@@ -251,11 +323,11 @@ async function onApproval(choice: string) {
 
     <NAlert type="info" :show-icon="true" class="batch-session-hint">
       <template #header>会话在后台保持</template>
-      返回「一键配置表单」不会中断当前 Skill 配置检查。再次进入本页可继续查看进展与对话；左侧「配置进展」会随 Skill 完成自动刷新。
+      返回修改配置不会中断当前 Skill 配置检查。再次进入本页可继续查看进展与对话；左侧清单会随 Skill 完成自动刷新。
     </NAlert>
 
     <NAlert type="default" :show-icon="false" class="batch-hint">
-      Agent 将依据已保存的一键配置表单，依次检查并完成配置清单中各 Skill 的环境与凭据配置。
+      Agent 依据已保存的一键配置，依次检查并完成清单中各 Skill 的环境与凭据。整表检查进行中时请勿同时启动单条配置。
     </NAlert>
 
     <ModelProviderBanner style="margin-bottom: 12px" />
@@ -263,79 +335,122 @@ async function onApproval(choice: string) {
     <div class="batch-layout">
       <EaCard class="batch-list-panel">
         <div class="panel-title-row">
-          <span class="panel-title">配置进展</span>
+          <span class="panel-title">配置清单</span>
           <span v-if="activeTaskId && taskRunning" class="panel-live ea-muted">自动刷新</span>
         </div>
+        <p v-if="manifestPath" class="manifest-hint ea-muted">{{ manifestPath }}</p>
         <NSpin :show="loading && !skills.length">
           <div v-if="skills.length" class="skill-list">
-            <div
+            <button
               v-for="s in skills"
               :key="s.id"
+              type="button"
               class="skill-row"
-              :class="{ configuring: s.status === 'configuring' }"
+              :class="{ active: selectedId === s.id, configuring: s.status === 'configuring' }"
+              @click="selectedId = s.id"
             >
               <div class="skill-row-main">
                 <strong>{{ s.label }}</strong>
                 <span class="skill-id">{{ s.id }}</span>
               </div>
               <EaPill :variant="statusVariant(s.status)">{{ statusLabel(s.status) }}</EaPill>
-            </div>
+            </button>
           </div>
           <NEmpty v-else description="清单为空" size="small" />
         </NSpin>
       </EaCard>
 
-      <EaCard class="batch-chat-panel">
-        <div class="panel-title-row">
-          <span class="panel-title">Agent 配置向导</span>
-          <span v-if="activeTaskId" class="task-id ea-muted">{{ activeTaskId }}</span>
-        </div>
-
-        <div v-if="!activeTaskId && batchStarting" class="chat-placeholder">
-          <NSpin size="small" />
-          <span class="ea-muted">正在启动 {{ SKILL_CONFIG_CHECK_BUTTON_LABEL }}...</span>
-        </div>
-        <div v-else-if="!activeTaskId" class="chat-placeholder ea-muted">
-          未检测到活动会话，请返回表单重新点击「{{ SKILL_CONFIG_CHECK_BUTTON_LABEL }}」。
-        </div>
-        <template v-else>
-          <div :ref="setScrollerEl" class="chat-stream">
-            <MarkdownRenderer v-if="chatMarkdown" :content="chatMarkdown" />
-            <div v-else class="chat-waiting">
-              <NSpin size="small" />
-              <span>{{ phaseHint || 'Agent 正在处理，请稍候...' }}</span>
+      <div class="batch-main">
+        <EaCard v-if="selectedSkill" class="batch-preview-panel">
+          <div class="panel-head">
+            <div>
+              <h3>{{ selectedSkill.label }}</h3>
+              <p class="ea-muted">{{ selectedSkill.description }}</p>
             </div>
-          </div>
-          <div v-if="showChatInput" class="chat-input-row">
-            <NInput
-              v-model:value="chatInput"
-              type="textarea"
-              placeholder="按 Agent 提示回复配置项（KEY=VALUE 或说明文字）..."
-              :autosize="{ minRows: 3, maxRows: 8 }"
-              :disabled="chatSubmitting"
-              @keydown.ctrl.enter="onSendChat"
-            />
-            <NSpace justify="end">
+            <NSpace>
               <NButton
                 type="primary"
-                :loading="chatSubmitting"
-                :disabled="!chatInput.trim()"
-                @click="onSendChat"
+                size="small"
+                :loading="startingSingle"
+                :disabled="!canStartSingle"
+                @click="onStartSingle(false)"
               >
-                发送
+                开始配置
+              </NButton>
+              <NButton
+                size="small"
+                :loading="startingSingle"
+                :disabled="!canStartSingle"
+                @click="onStartSingle(true)"
+              >
+                重新配置
               </NButton>
             </NSpace>
           </div>
-          <NAlert
-            v-else-if="batchTaskStatus === 'completed'"
-            type="success"
-            :show-icon="false"
-            style="margin-top: 8px"
-          >
-            Skill 配置检查已完成。可返回表单修改配置，或前往「常用 Skill 配置」查看单项详情。
-          </NAlert>
-        </template>
-      </EaCard>
+          <NSpin :show="previewLoading">
+            <NScrollbar style="max-height: 200px">
+              <MarkdownRenderer v-if="preview?.skill_md" :content="preview.skill_md" />
+              <NEmpty
+                v-else
+                size="small"
+                :description="previewError || '无法加载 SKILL.md'"
+              />
+            </NScrollbar>
+          </NSpin>
+        </EaCard>
+
+        <EaCard class="batch-chat-panel">
+          <div class="panel-title-row">
+            <span class="panel-title">Agent 配置向导</span>
+            <span v-if="activeTaskId" class="task-id ea-muted">{{ activeTaskId }}</span>
+          </div>
+
+          <div v-if="!activeTaskId && batchStarting" class="chat-placeholder">
+            <NSpin size="small" />
+            <span class="ea-muted">正在启动 {{ SKILL_CONFIG_CHECK_BUTTON_LABEL }}...</span>
+          </div>
+          <div v-else-if="!activeTaskId" class="chat-placeholder ea-muted">
+            未检测到活动会话。可返回修改配置后点击「{{ SAVE_AND_START_SKILL_CHECK_LABEL }}」，或在上方对某一条 Skill 开始配置。
+          </div>
+          <template v-else>
+            <div :ref="setScrollerEl" class="chat-stream">
+              <MarkdownRenderer v-if="chatMarkdown" :content="chatMarkdown" />
+              <div v-else class="chat-waiting">
+                <NSpin size="small" />
+                <span>{{ phaseHint || 'Agent 正在处理，请稍候...' }}</span>
+              </div>
+            </div>
+            <div v-if="showChatInput" class="chat-input-row">
+              <NInput
+                v-model:value="chatInput"
+                type="textarea"
+                placeholder="按 Agent 提示回复配置项（KEY=VALUE 或说明文字）..."
+                :autosize="{ minRows: 3, maxRows: 8 }"
+                :disabled="chatSubmitting"
+                @keydown.ctrl.enter="onSendChat"
+              />
+              <NSpace justify="end">
+                <NButton
+                  type="primary"
+                  :loading="chatSubmitting"
+                  :disabled="!chatInput.trim()"
+                  @click="onSendChat"
+                >
+                  发送
+                </NButton>
+              </NSpace>
+            </div>
+            <NAlert
+              v-else-if="batchTaskStatus === 'completed'"
+              type="success"
+              :show-icon="false"
+              style="margin-top: 8px"
+            >
+              Skill 配置检查已完成。可返回修改配置，或对某一条 Skill 重新配置。
+            </NAlert>
+          </template>
+        </EaCard>
+      </div>
     </div>
 
     <BugAnalysisInteractionModal
@@ -389,6 +504,33 @@ async function onApproval(choice: string) {
   align-items: start;
 }
 
+.batch-main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.manifest-hint {
+  font-size: 11px;
+  word-break: break-all;
+  margin: 0 0 10px;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+
+  h3 {
+    margin: 0 0 4px;
+    font-size: 16px;
+  }
+  p { margin: 0; font-size: 12.5px; }
+}
+
 .panel-title-row {
   display: flex;
   align-items: center;
@@ -426,12 +568,17 @@ async function onApproval(choice: string) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  width: 100%;
+  text-align: left;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, background 0.15s;
 
-  &.configuring {
+  &:hover, &.active, &.configuring {
     border-color: var(--primary);
     background: color-mix(in srgb, var(--primary) 6%, var(--surface));
   }
