@@ -32,7 +32,8 @@
 | 7 | 日志出现 `Connect status: Boot ...` 为正常等待；连上后变为 success 并开始读写 |
 | 8 | 等待任务状态 **已完成**，并看到日志末尾 `========== 备份完成 ==========` |
 
-备份文件默认在：`{工程根}/.tahp-config/rf-calib-meta/outputs/<runId>/calibration_data.ini`
+备份文件默认在：`{工程根}/reports/rf-calib-meta/<runId>/calibration_data.ini`  
+（勿用 `.tahp-config` 下路径作 MetaCLI 输出——该工具对含点号隐藏目录常写失败。）
 
 ---
 

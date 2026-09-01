@@ -62,11 +62,9 @@ describe('buildMetaInitContent', () => {
 })
 
 describe('resolveBackupCalPath', () => {
-  it('uses default under project .tahp-config when explicit empty', () => {
+  it('uses default under project reports/rf-calib-meta when explicit empty', () => {
     const p = resolveBackupCalPath('C:\\proj', 'rf-cal-1')
-    expect(p).toContain('rf-calib-meta')
-    expect(p).toContain('rf-cal-1')
-    expect(p).toContain('calibration_data.ini')
+    expect(p.replace(/\\/g, '/')).toBe('C:/proj/reports/rf-calib-meta/rf-cal-1/calibration_data.ini')
   })
 
   it('appends calibration_data.ini when explicit path is directory-like', () => {

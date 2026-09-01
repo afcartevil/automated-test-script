@@ -88,12 +88,18 @@ export function buildMetaInitContent(input: BuildMetaInitInput): string {
   return `${lines.join('\r\n')}\r\n`
 }
 
+/**
+ * MetaCLI 写出的校准文件 / ToolLog 目录。
+ * 注意：不要放在 `.tahp-config` 下——MetaCLI 对含点号隐藏目录的路径常写失败
+ *（日志仍显示 Write Category Done，但 step2 save to file failed，磁盘无文件）。
+ * 任务元数据（runs/inits）仍可放在 `.tahp-config`，由 Node 读写。
+ */
 export function defaultRunOutputDir(projectRoot: string, runId: string): string {
-  return join(projectRoot, '.tahp-config', 'rf-calib-meta', 'outputs', runId)
+  return join(projectRoot, 'reports', 'rf-calib-meta', runId)
 }
 
 export function defaultToolLogDir(projectRoot: string, runId: string): string {
-  return join(projectRoot, '.tahp-config', 'rf-calib-meta', 'logs', runId)
+  return join(projectRoot, 'reports', 'rf-calib-meta', runId, 'meta-logs')
 }
 
 export function defaultInitFilePath(projectRoot: string, runId: string): string {

@@ -6,7 +6,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  NAlert, NButton, NEmpty, NInput, NProgress, NRadio, NRadioGroup, NSpin, useMessage,
+  NAlert, NButton, NInput, NProgress, NRadio, NRadioGroup, NSpin, useMessage,
 } from 'naive-ui'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
 import EaCard from '@/components/layout/EaCard.vue'
@@ -235,9 +235,12 @@ onBeforeUnmount(() => {
         <NInput
           v-if="store.mode === 'backup'"
           v-model:value="store.outputCalPath"
-          placeholder="须为 .ini 文件路径，如 D:\backup\calibration_data.ini；留空或填目录则自动加 calibration_data.ini"
+          placeholder="须为 .ini 文件路径，如 D:\backup\calibration_data.ini；留空则写到工程 reports/rf-calib-meta/<任务ID>/"
           :disabled="store.isRunning || store.submitting"
         />
+        <p class="field-hint">
+          勿填目录。留空时默认输出到 <code>reports/rf-calib-meta/</code>（勿依赖隐藏目录 <code>.tahp-config</code>，MetaCLI 常写失败）。
+        </p>
 
         <label class="field-label mt">COM 口</label>
         <NInput
@@ -347,10 +350,35 @@ onBeforeUnmount(() => {
           :title="store.currentRun.error"
         />
 
-        <h3 class="section-title">实时日志</h3>
-        <div ref="logBox" class="log-box">
-          <NEmpty v-if="!store.liveLines.length" description="开始任务后显示 MetaCLI 输出" />
-          <pre v-else class="log-pre">{{ store.liveLines.join('\n') }}</pre>
+        <div class="log-panel">
+          <div class="log-chrome">
+            <span class="log-dots" aria-hidden="true">
+              <i /><i /><i />
+            </span>
+            <span class="log-chrome-title">MetaCLI</span>
+            <span class="log-chrome-meta">
+              {{ store.liveLines.length ? `${store.liveLines.length} 行` : '待命' }}
+            </span>
+          </div>
+          <div ref="logBox" class="log-box" :class="{ 'is-empty': !store.liveLines.length }">
+            <div v-if="!store.liveLines.length" class="log-idle">
+              <div class="log-idle-glyph" aria-hidden="true">
+                <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect x="6" y="10" width="36" height="28" rx="4" stroke="currentColor" stroke-width="1.5" opacity="0.55" />
+                  <path d="M12 20h10M12 26h18M12 32h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.4" />
+                  <circle cx="36" cy="18" r="5.5" fill="currentColor" opacity="0.12" />
+                  <path d="M34.2 18h3.6M36 16.2v3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+                </svg>
+              </div>
+              <p class="log-idle-title">等待任务开始</p>
+              <p class="log-idle-desc">点「开始备份/恢复」后，此处实时显示 MetaCLI 连接与读写日志</p>
+              <ul class="log-idle-hints">
+                <li>Connect status: Boot … → 正在等待插 USB</li>
+                <li>Connect target success → 已连上，开始读写</li>
+              </ul>
+            </div>
+            <pre v-else class="log-pre">{{ store.liveLines.join('\n') }}</pre>
+          </div>
         </div>
       </EaCard>
     </div>
@@ -501,21 +529,121 @@ onBeforeUnmount(() => {
   code { word-break: break-all; }
 }
 .warn-line { margin: 0 0 8px; }
+.log-panel {
+  margin-top: 4px;
+  border: 1px solid color-mix(in srgb, #5b7c99 35%, var(--ea-border, #e8e8e8));
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0b1220;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.log-chrome {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: linear-gradient(180deg, #182233 0%, #121a27 100%);
+  border-bottom: 1px solid rgba(120, 150, 180, 0.18);
+}
+.log-dots {
+  display: inline-flex;
+  gap: 5px;
+  i {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: block;
+    &:nth-child(1) { background: #ff5f57; }
+    &:nth-child(2) { background: #febc2e; }
+    &:nth-child(3) { background: #28c840; }
+  }
+}
+.log-chrome-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #c8d6e5;
+}
+.log-chrome-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: #7f92a8;
+  font-variant-numeric: tabular-nums;
+}
 .log-box {
-  height: min(56vh, 520px);
-  border: 1px solid var(--ea-border, #e8e8e8);
-  border-radius: 8px;
-  background: #0f1419;
+  height: min(52vh, 480px);
   color: #d7e0ea;
-  padding: 10px;
+  padding: 12px 14px;
   overflow: auto;
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(56, 120, 180, 0.14), transparent 55%),
+    linear-gradient(180deg, #0e1624 0%, #0b1220 100%);
+  &.is-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+.log-idle {
+  max-width: 360px;
+  text-align: center;
+  padding: 12px 8px 20px;
+}
+.log-idle-glyph {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 12px;
+  color: #7eb6e8;
+  opacity: 0.9;
+  svg { width: 100%; height: 100%; display: block; }
+}
+.log-idle-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e8eef6;
+  letter-spacing: 0.02em;
+}
+.log-idle-desc {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #8fa3b8;
+}
+.log-idle-hints {
+  margin: 0;
+  padding: 10px 12px;
+  list-style: none;
+  text-align: left;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(126, 182, 232, 0.12);
+  li {
+    position: relative;
+    padding-left: 12px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: #9db0c4;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0.55em;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #4d8fbf;
+    }
+    & + li { margin-top: 4px; }
+  }
 }
 .compact-alert { margin-top: 8px; }
 .log-pre {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
 }

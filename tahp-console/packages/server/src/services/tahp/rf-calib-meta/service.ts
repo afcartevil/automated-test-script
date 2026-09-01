@@ -284,7 +284,7 @@ async function runMetaCliJob(
 
     if (success && run.mode === 'backup' && !outputExists) {
       success = false
-      failReason = `未找到输出文件: ${outputPath}（OutputCalibrationDataFilePath 须为 .ini 文件路径，不能填目录）`
+      failReason = `未找到输出文件: ${outputPath}。请确认「输出文件」为可写的 .ini 完整路径（勿用目录）；留空时默认写到 reports/rf-calib-meta/<任务ID>/calibration_data.ini`
     }
 
     if (success && run.mode === 'backup' && outputPath && isExistingFile(outputPath)) {
