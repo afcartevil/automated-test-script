@@ -75,6 +75,23 @@ function connect(owner: string): void {
     socket?.emit('task.package.ack', { package_id: id })
     logger.info({ package_id: id, notice_type: payload.notice_type, unread: unreadIds.size }, '[task-notify] package received')
   })
+
+  socket.on('task.package.revoke', (payload: {
+    package_id?: string
+    dispatch_id?: string
+    reason?: string
+  } = {}) => {
+    const id = String(payload.package_id || '').trim()
+    if (!id) return
+    unreadIds.delete(id)
+    unreadItems.delete(id)
+    logger.info({
+      package_id: id,
+      dispatch_id: payload.dispatch_id,
+      reason: payload.reason,
+      unread: unreadIds.size,
+    }, '[task-notify] package revoked')
+  })
 }
 
 export function startTaskNotifyClient(): void {
