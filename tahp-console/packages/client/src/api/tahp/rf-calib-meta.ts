@@ -77,3 +77,13 @@ export function listRfCalibMetaRuns(limit = 30): Promise<RfCalibMetaRunSummary[]
 export function cancelRfCalibMeta(runId: string): Promise<{ ok: boolean }> {
   return tahpPost(`/api/tahp/rf-calib-meta/runs/${encodeURIComponent(runId)}/cancel`)
 }
+
+export interface PickCalFileResult {
+  canceled: boolean
+  path?: string
+  error?: string
+}
+
+export function pickRfCalibCalFile(): Promise<PickCalFileResult> {
+  return tahpPost<PickCalFileResult>('/api/tahp/rf-calib-meta/pick-cal-file', {})
+}

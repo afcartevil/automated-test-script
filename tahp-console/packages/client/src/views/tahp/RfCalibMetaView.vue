@@ -12,6 +12,7 @@ import EaPageHead from '@/components/layout/EaPageHead.vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPill from '@/components/layout/EaPill.vue'
 import { useRfCalibMetaStore } from '@/stores/tahp/rf-calib-meta'
+import { pickRfCalibCalFile } from '@/api/tahp/rf-calib-meta'
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 
 const message = useMessage()
@@ -20,6 +21,7 @@ const store = useRfCalibMetaStore()
 const logBox = ref<HTMLElement | null>(null)
 /** SOP 默认收起，需要时展开查看 */
 const sopOpen = ref(false)
+const pickingCalFile = ref(false)
 
 const statusVariant = computed(() => {
   const s = store.currentRun?.status
@@ -88,6 +90,24 @@ async function onOpenRun(runId: string) {
 
 async function onRefreshProbe() {
   await store.refreshProbe()
+}
+
+async function onPickCalFile() {
+  if (pickingCalFile.value || store.isRunning || store.submitting) return
+  pickingCalFile.value = true
+  try {
+    const result = await pickRfCalibCalFile()
+    if (result.path) {
+      store.calFilePath = result.path
+      message.success('已选择校准文件')
+    } else if (result.error) {
+      message.error(result.error)
+    }
+  } catch (err) {
+    message.error((err as Error).message || '选择校准文件失败')
+  } finally {
+    pickingCalFile.value = false
+  }
 }
 
 watch(
@@ -224,12 +244,24 @@ onBeforeUnmount(() => {
         </NRadioGroup>
 
         <label v-if="store.mode === 'restore'" class="field-label mt">校准数据文件（CalibrationFilePath）</label>
-        <NInput
-          v-if="store.mode === 'restore'"
-          v-model:value="store.calFilePath"
-          placeholder="待写入设备的校准数据文件路径"
-          :disabled="store.isRunning || store.submitting"
-        />
+        <div v-if="store.mode === 'restore'" class="path-pick-row">
+          <NInput
+            v-model:value="store.calFilePath"
+            placeholder="请选择待写入设备的校准数据 .ini 文件"
+            readonly
+            :disabled="store.isRunning || store.submitting"
+          />
+          <NButton
+            :loading="pickingCalFile"
+            :disabled="store.isRunning || store.submitting"
+            @click="onPickCalFile"
+          >
+            选择文件
+          </NButton>
+        </div>
+        <p v-if="store.mode === 'restore'" class="field-hint">
+          通过本机文件对话框选择；须为完整路径的校准数据 <code>.ini</code>（非目录）。
+        </p>
 
         <label v-if="store.mode === 'backup'" class="field-label mt">输出文件（可选）</label>
         <NInput
@@ -238,7 +270,7 @@ onBeforeUnmount(() => {
           placeholder="须为 .ini 文件路径，如 D:\backup\calibration_data.ini；留空则写到工程 reports/rf-calib-meta/<任务ID>/"
           :disabled="store.isRunning || store.submitting"
         />
-        <p class="field-hint">
+        <p v-if="store.mode === 'backup'" class="field-hint">
           勿填目录。留空时默认输出到 <code>reports/rf-calib-meta/</code>（勿依赖隐藏目录 <code>.tahp-config</code>，MetaCLI 常写失败）。
         </p>
 
@@ -460,6 +492,13 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: var(--ea-text-secondary, #888);
   line-height: 1.45;
+}
+.path-pick-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  :deep(.n-input) { flex: 1; min-width: 0; }
+  .n-button { flex-shrink: 0; }
 }
 .mode-group {
   display: flex;

@@ -101,3 +101,15 @@ tahpRfCalibMetaRoutes.post('/runs/:runId/cancel', async (ctx) => {
   }
   ctx.body = { success: true, data: { ok: true } }
 })
+
+tahpRfCalibMetaRoutes.post('/pick-cal-file', async (ctx) => {
+  try {
+    const { pickCalibrationIniPath } = await import('../../services/tahp/local-file-picker')
+    const result = await pickCalibrationIniPath()
+    ctx.body = { success: !result.error, data: result, error: result.error }
+    if (result.error && !result.canceled) ctx.status = 500
+  } catch (err: any) {
+    ctx.status = 500
+    ctx.body = { success: false, error: err?.message || '选择校准文件失败' }
+  }
+})
