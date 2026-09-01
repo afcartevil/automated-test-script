@@ -79,4 +79,16 @@ describe('bug-analysis-activity', () => {
     expect(log).not.toContain('等待命令确认')
     expect(log).toContain('已由智能诊断后台自动同意一次')
   })
+
+  it('shows live download progress in the activity log', () => {
+    const line = formatBugActivityLine({
+      type: 'task.message',
+      ts: Date.UTC(2026, 8, 1, 6, 52, 0),
+      payload: {
+        level: 'activity',
+        text: '下载进度: 24.1% (1.65 GB/6.84 GB) 速度: 870.3 KB/s 剩余: 1h 42m',
+      },
+    })
+    expect(line).toContain('下载进度: 24.1%')
+  })
 })

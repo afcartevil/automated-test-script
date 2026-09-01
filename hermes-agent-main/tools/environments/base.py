@@ -236,6 +236,61 @@ class _BoundedOutputCollector:
             rendered_tail = tail[-tail_chars:] if tail_chars else ""
             return head[:head_chars] + notice[:available] + rendered_tail + suffix
 
+    def last_status_line(self, max_len: int = 200) -> str:
+        """Latest non-empty line, including ``\\r`` progress overwrites."""
+        with self._lock:
+            blob = "".join(self._tail) if self._tail else "".join(self._head)
+        if not blob:
+            return ""
+        window = blob[-4000:] if len(blob) > 4000 else blob
+        for part in reversed(window.replace("\r", "\n").split("\n")):
+            line = part.strip()
+            if line:
+                return line[:max_len]
+        return ""
+
+
+_output_progress_callback_local = threading.local()
+
+
+def set_output_progress_callback(cb: Callable[[str], None] | None) -> None:
+    """Register a callback for stdout last-line progress during wait-until-exit."""
+    _output_progress_callback_local.callback = cb
+
+
+def get_output_progress_callback() -> Callable[[str], None] | None:
+    return getattr(_output_progress_callback_local, "callback", None)
+
+
+def maybe_emit_output_progress(output: "_BoundedOutputCollector", state: dict) -> None:
+    """Forward jira-ops download progress at most every 5s (same line: 30s)."""
+    now = time.monotonic()
+    interval = float(state.get("progress_interval", 5.0))
+    last_emit = float(state.get("last_progress_emit", 0.0))
+    if now - last_emit < interval:
+        return
+    line = output.last_status_line()
+    if not line:
+        return
+    try:
+        from tools.log_download_wait import is_log_download_progress_line
+
+        if not is_log_download_progress_line(line):
+            return
+    except Exception:
+        return
+    last_line = state.get("last_progress_line")
+    if line == last_line and now - last_emit < 30.0:
+        return
+    state["last_progress_emit"] = now
+    state["last_progress_line"] = line
+    try:
+        cb = get_output_progress_callback()
+        if cb:
+            cb(line)
+    except Exception:
+        pass
+
 
 def set_activity_callback(cb: Callable[[str], None] | None) -> None:
     """Register a callback that _wait_for_process fires periodically."""
@@ -974,7 +1029,7 @@ class BaseEnvironment(ABC):
     # ------------------------------------------------------------------
 
     def _wait_for_process(
-        self, proc: ProcessHandle, timeout: int = 120, *, bounded_capture: bool = False
+        self, proc: ProcessHandle, timeout: int | None = 120, *, bounded_capture: bool = False
     ) -> dict:
         """Poll-based wait with interrupt checking and stdout draining.
 
@@ -1158,7 +1213,7 @@ class BaseEnvironment(ABC):
 
         drain_thread = threading.Thread(target=_drain, daemon=True)
         drain_thread.start()
-        deadline = time.monotonic() + timeout
+        deadline = None if timeout is None else time.monotonic() + timeout
         _now = time.monotonic()
         _activity_state = {
             "last_touch": _now,
@@ -1202,7 +1257,7 @@ class BaseEnvironment(ABC):
                         output.render(suffix="\n[Command interrupted]"),
                         130,
                     )
-                if time.monotonic() > deadline:
+                if deadline is not None and time.monotonic() > deadline:
                     if _DEBUG_INTERRUPT:
                         logger.info(
                             "[interrupt-debug] _wait_for_process TIMEOUT "
@@ -1221,6 +1276,10 @@ class BaseEnvironment(ABC):
                     )
                 # Periodic activity touch so the gateway knows we're alive
                 touch_activity_if_due(_activity_state, "terminal command running")
+                # wait_until_complete uses timeout=None; stream \r download
+                # progress to the Console UI while the process is still running.
+                if timeout is None:
+                    maybe_emit_output_progress(output, _activity_state)
 
                 # Heartbeat every ~30s: proves the loop is alive and reports
                 # the activity-callback state (thread-local, can get clobbered
@@ -1404,6 +1463,7 @@ class BaseEnvironment(ABC):
         stdin_data: str | None = None,
         rewrite_compound_background: bool = True,
         bounded_capture: bool = False,
+        wait_until_complete: bool = False,
     ) -> dict:
         """Execute a command, return {"output": str, "returncode": int}.
 
@@ -1415,6 +1475,10 @@ class BaseEnvironment(ABC):
         full-fidelity consumers — file operations ``cat`` reads that feed
         the patch engine, code-execution RPC reads, log reads — MUST leave
         it False: truncating those corrupts data, not just display.
+
+        ``wait_until_complete=True`` skips the wall-clock kill and waits
+        until the process exits (or is interrupted). Used for jira-ops
+        log downloads whose Skill script already aborts on HTTP stall.
         """
         self._before_execute()
 
@@ -1425,7 +1489,10 @@ class BaseEnvironment(ABC):
         if rewrite_compound_background:
             from tools.terminal_tool import _rewrite_compound_background
             exec_command = _rewrite_compound_background(exec_command)
-        effective_timeout = timeout or self.timeout
+        if wait_until_complete:
+            effective_timeout = None
+        else:
+            effective_timeout = timeout or self.timeout
         effective_cwd = cwd or self.cwd
 
         # Merge sudo stdin with caller stdin
@@ -1447,8 +1514,9 @@ class BaseEnvironment(ABC):
         # unless login itself is broken — then non-login is the only path.
         login = not self._snapshot_ready and not self._prefer_nonlogin
 
+        spawn_timeout = effective_timeout if effective_timeout is not None else 0
         proc = self._run_bash(
-            wrapped, login=login, timeout=effective_timeout, stdin_data=effective_stdin
+            wrapped, login=login, timeout=spawn_timeout, stdin_data=effective_stdin
         )
         result = self._wait_for_process(
             proc, timeout=effective_timeout, bounded_capture=bounded_capture

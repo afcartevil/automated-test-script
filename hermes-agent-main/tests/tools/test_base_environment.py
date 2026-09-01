@@ -50,6 +50,14 @@ class TestBoundedOutputCollector:
         assert rendered.endswith("[Command timed out after 1s]")
         assert "[OUTPUT TRUNCATED" in rendered
 
+    def test_last_status_line_follows_carriage_return_progress(self):
+        collector = _BoundedOutputCollector(1_000)
+        collector.append("\r下载进度: 10.0% (1 MB/10 MB) 速度: 1 MB/s 剩余: 9s    ")
+        collector.append("\r下载进度: 24.1% (1.65 GB/6.84 GB) 速度: 870.3 KB/s 剩余: 1h 42m    ")
+        line = collector.last_status_line()
+        assert "24.1%" in line
+        assert "10.0%" not in line
+
 
 class TestWrapCommand:
     def test_basic_shape(self):

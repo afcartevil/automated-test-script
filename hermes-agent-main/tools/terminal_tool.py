@@ -2727,9 +2727,20 @@ def terminal_tool(
             )
         effective_timeout = timeout or default_timeout
 
+        from tools.log_download_wait import is_log_download_command
+
+        wait_until_complete = is_log_download_command(command)
+
         # Reject foreground commands where the model explicitly requests
         # a timeout above FOREGROUND_MAX_TIMEOUT — nudge it toward background.
-        if not background and timeout and timeout > FOREGROUND_MAX_TIMEOUT:
+        # Log-download CLIs wait until the process exits (Skill HTTP stall
+        # still aborts); do not reject a high timeout or apply the cap.
+        if (
+            not background
+            and not wait_until_complete
+            and timeout
+            and timeout > FOREGROUND_MAX_TIMEOUT
+        ):
             return tool_error(
                 f"Foreground timeout {timeout}s exceeds the maximum of "
                 f"{FOREGROUND_MAX_TIMEOUT}s. Use background=true with "
@@ -3347,7 +3358,7 @@ def terminal_tool(
                         env_type=env_type,
                     )
                     execute_kwargs = {
-                        "timeout": effective_timeout,
+                        "timeout": None if wait_until_complete else effective_timeout,
                         "cwd": command_cwd,
                         # Foreground model-facing output: cap retention while
                         # streaming (head/tail window) so a verbose command
@@ -3355,6 +3366,7 @@ def terminal_tool(
                         # Internal env.execute() consumers (file ops cat
                         # reads, RPC reads) intentionally stay unbounded.
                         "bounded_capture": True,
+                        "wait_until_complete": wait_until_complete,
                     }
                     result = env.execute(command, **execute_kwargs)
                 except Exception as e:

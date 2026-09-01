@@ -804,7 +804,18 @@ def _run_sequential_tool_execution_middleware(
         "display_index": display_index,
         "middleware_trace": middleware_trace,
     }
-    if function_name in _NEVER_PARALLEL_TOOLS:
+    from tools.log_download_wait import is_log_download_tool_call
+
+    wait_for_log_download = is_log_download_tool_call(function_name, function_args)
+    if function_name in _NEVER_PARALLEL_TOOLS or wait_for_log_download:
+        # Same path as clarify: skip the generic sequential deadline. The
+        # Skill script owns network-failure stops; wall-clock 420s must not
+        # SIGTERM a still-growing SGBOX/FRBOX download.
+        if wait_for_log_download:
+            logger.info(
+                "jira-ops log download: skipping sequential tool deadline; "
+                "waiting for process exit"
+            )
         return _run_agent_tool_execution_middleware(agent, **kwargs)
 
     from tools.daemon_pool import DaemonThreadPoolExecutor
@@ -952,6 +963,30 @@ def _run_sequential_tool_execution_middleware(
         executor.shutdown(wait=not timed_out, cancel_futures=timed_out)
 
 
+def _bind_env_progress_callbacks(agent, function_name: str) -> None:
+    """Thread-local heartbeats + stdout progress for long terminal waits."""
+    try:
+        from tools.environments.base import (
+            set_activity_callback,
+            set_output_progress_callback,
+        )
+
+        set_activity_callback(agent._touch_activity)
+
+        def _on_output(text: str) -> None:
+            pcb = getattr(agent, "tool_progress_callback", None)
+            if not pcb or not text:
+                return
+            try:
+                pcb("tool.output", function_name, text, None)
+            except Exception:
+                pass
+
+        set_output_progress_callback(_on_output)
+    except Exception:
+        pass
+
+
 def _begin_tool_execution(
     agent,
     *,
@@ -988,12 +1023,7 @@ def _begin_tool_execution(
 
     agent._current_tool = function_name
     agent._touch_activity(f"executing tool: {function_name}")
-    try:
-        from tools.environments.base import set_activity_callback
-
-        set_activity_callback(agent._touch_activity)
-    except Exception:
-        pass
+    _bind_env_progress_callbacks(agent, function_name)
 
     if agent.tool_progress_callback:
         try:
@@ -1246,7 +1276,18 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
 
     # Resolved before the workers are defined so the start-order gate can clamp
     # its own bound against the batch deadline it must stay under.
+    from tools.log_download_wait import is_log_download_tool_call
+
     timeout_s = _resolve_concurrent_tool_timeout()
+    if any(
+        is_log_download_tool_call(name, args)
+        for _tc, name, args, *_rest in parsed_calls
+    ):
+        timeout_s = None
+        logger.info(
+            "jira-ops log download in concurrent batch: skipping tool batch deadline; "
+            "waiting for process exit"
+        )
     gate_timeout_s = _start_order_gate_timeout(timeout_s)
 
     # Touch activity before launching workers so the gateway knows
@@ -1279,15 +1320,11 @@ def execute_tool_calls_concurrent(agent, assistant_message, messages: list, effe
                 _ra()._set_interrupt(True, _worker_tid)
             except Exception:
                 pass
-        # Set the activity callback on THIS worker thread so
-        # _wait_for_process (terminal commands) can fire heartbeats.
-        # The callback is thread-local; the main thread's callback
-        # is invisible to worker threads.
-        try:
-            from tools.environments.base import set_activity_callback
-            set_activity_callback(agent._touch_activity)
-        except Exception:
-            pass
+        # Set the activity + stdout-progress callbacks on THIS worker thread so
+        # _wait_for_process (terminal commands) can fire heartbeats and
+        # download progress. The callbacks are thread-local; the main
+        # thread's copies are invisible to worker threads.
+        _bind_env_progress_callbacks(agent, function_name)
         # Approval/sudo callbacks (thread-local) and the agent turn's
         # ContextVars are propagated by propagate_context_to_thread() at the
         # submit site below (GHSA-qg5c-hvr5-hjgr, #13617).

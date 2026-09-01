@@ -785,6 +785,16 @@ class AgentPool:
                     file=sys.stderr,
                     flush=True,
                 )
+            if event_type == "tool.output":
+                text = str(preview or "").strip()
+                if text:
+                    self._append_event(session_id, {
+                        "event": "tool.output",
+                        "tool_name": str(function_name) if function_name else "",
+                        "text": text[:200],
+                    })
+                return
+
             if event_type == "reasoning.available":
                 self._append_event(session_id, {
                     "event": "reasoning.available",

@@ -273,3 +273,53 @@ def test_sequential_timeout_does_not_cut_clarify_human_wait(
     assert "timed out" not in messages[0]["content"]
     assert messages[1]["content"] == "second result"
     assert not any(event.get("error_type") == "tool_timeout" for event in terminal_events)
+
+
+def _prepare_logs_call(call_id: str = "dl-1"):
+    return SimpleNamespace(
+        id=call_id,
+        type="function",
+        function=SimpleNamespace(
+            name="terminal",
+            arguments=(
+                '{"command": "python scripts/api_jira.py prepare-logs --issue X-1",'
+                ' "timeout": 300}'
+            ),
+        ),
+    )
+
+
+def test_sequential_timeout_does_not_cut_jira_log_download(tmp_path, monkeypatch):
+    """jira-ops prepare-logs must outlast the generic sequential tool deadline."""
+    agent = _make_agent(tmp_path)
+    monkeypatch.setenv("HERMES_CONCURRENT_TOOL_TIMEOUT_S", "1.0")
+    terminal_events: list[dict] = []
+
+    def _dispatch(_name, _args, _task_id, *, tool_call_id, **_kwargs):
+        if tool_call_id == "dl-1":
+            time.sleep(1.3)
+            return '{"ok": true, "data": {"downloaded": true}}'
+        return "second result"
+
+    messages: list[dict] = []
+    started = time.monotonic()
+    with (
+        patch("run_agent.handle_function_call", side_effect=_dispatch),
+        patch(
+            "agent.tool_executor._emit_terminal_post_tool_call",
+            side_effect=lambda *_args, **kwargs: terminal_events.append(kwargs),
+        ),
+    ):
+        execute_tool_calls_sequential(
+            agent,
+            SimpleNamespace(tool_calls=[_prepare_logs_call(), _tool_call("next")]),
+            messages,
+            "task",
+        )
+
+    assert time.monotonic() - started < 10.0
+    assert [message["tool_call_id"] for message in messages] == ["dl-1", "next"]
+    assert "timed out" not in messages[0]["content"]
+    assert "downloaded" in messages[0]["content"]
+    assert messages[1]["content"] == "second result"
+    assert not any(event.get("error_type") == "tool_timeout" for event in terminal_events)

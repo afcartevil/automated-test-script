@@ -9,7 +9,7 @@
  *
  * 职责：
  *   - 维护 Bug 分析任务上下文（单条 / JQL 批量）
- *   - 把 Bug 任务投递到 Agent Bridge，监听并转发 tool.started / tool.completed / 文本 delta
+ *   - 把 Bug 任务投递到 Agent Bridge，监听并转发 tool.started / tool.completed / tool.output / 文本 delta
  *   - 通过 TaskStream 推送 task.* 事件给前端实时显示
  *   - 支持"补充信息继续分析"（同任务、同 Agent 会话续聊）
  *
@@ -638,6 +638,7 @@ interface AgentRunCallbacks {
   onText: (delta: string) => void
   onToolStarted: (toolName: string, args: unknown, toolCallId: unknown) => void
   onToolCompleted: (toolName: string, isError: boolean, toolCallId: unknown) => void
+  onToolOutput?: (text: string) => void
   onReasoning?: (text: string) => void
   onApprovalRequested?: (payload: ApprovalRequestPayload) => void
 }
@@ -955,6 +956,9 @@ async function runAgentChat(
       } else if (evType === 'tool.completed') {
         const toolName = (ev.tool_name as string) || 'unknown-tool'
         cb.onToolCompleted(toolName, ev.is_error === true, ev.tool_call_id)
+      } else if (evType === 'tool.output' && cb.onToolOutput) {
+        const text = formatLogDownloadProgressActivity(String(ev.text || ''))
+        if (text) cb.onToolOutput(text)
       } else if ((evType === 'reasoning.delta' || evType === 'thinking.delta') && cb.onReasoning) {
         cb.onReasoning(String(ev.text || ''))
       } else if (evType === 'approval.requested' && cb.onApprovalRequested) {
@@ -1026,6 +1030,16 @@ function findSkillUseHits(text: string, fromIndex = 0): SkillUseHit[] {
 function emitBugActivity(taskId: string, message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
   logBug(taskId, level, message)
   emit(taskId, 'task.message', { level: 'activity', text: message })
+}
+
+/** Hermes terminal last-line for jira-ops log download (`\\r` progress). */
+export function formatLogDownloadProgressActivity(text: string): string | null {
+  const line = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!line) return null
+  if (!/下载进度|开始流式下载|下载中|解压|获取share_token|合并分块|检测服务器能力|线程分块下载|\[文件]|\[文件夹]|下载完成|下载失败/.test(line)) {
+    return null
+  }
+  return line.slice(0, 200)
 }
 
 function emitPrepPhase(taskId: string, ctx: BugAnalysisTaskCtx, phase: 'PREPARING' | 'CONNECTING_AGENT', message: string) {
@@ -1149,7 +1163,7 @@ function buildReportJiraSection(ctx: BugAnalysisTaskCtx): Record<string, unknown
 
 // ─── 提示词构建（Agent 模式 + 工程 Skill 目录注入，路径均为相对工程根） ─────
 
-const AGENT_INSTRUCTIONS_BASE = `你是 TAHP（TECNO AI Harness Platform）"智能诊断专家"，运行在传音 Android 底软集成部的 Agent 环境中。
+export const AGENT_INSTRUCTIONS_BASE = `你是 TAHP（TECNO AI Harness Platform）"智能诊断专家"，运行在传音 Android 底软集成部的 Agent 环境中。
 
 # 执行原则
 1. **必须真正调用 Skill / 工具**，不要假装使用；用户可在界面核对工具调用记录。
@@ -1168,7 +1182,10 @@ const AGENT_INSTRUCTIONS_BASE = `你是 TAHP（TECNO AI Harness Platform）"智�
 1. **先检查系统提示词中的「远程分析渠道」硬规则**：若有 enabled 渠道且适用，须先尝试远程分析；远程成功时可跳过本步（输出 \`download_logs\` 并说明原因）。
 2. 远程失败 / 渠道全关 / 本地回退时：继续遵循已 Read 的 \`jira-ops\` SKILL.md。
 3. 从 Step 1 的 Issue 信息与 JIRA 附件中，下载/提取日志包（含描述中的 http(s) / UNC 日志链接）。
-4. 完成后**立即**输出阶段标记 \`download_logs\`；若确无日志可下载，\`logs_downloaded: false\` 并说明原因，仍可 \`success\` 进入下一步。
+4. **日志下载硬规则**（FRBOX/SGBOX / \`prepare-logs\` / \`download-logs\` / \`download-box\`）：
+   - 必须跑 \`python scripts/api_jira.py prepare-logs\`（或分步 download-logs），**禁止**用浏览器工具下载分享链接。
+   - 必须等到 \`api_jira.py\` **进程退出并给出 JSON**。禁止用固定墙钟（如 300s）中断仍在增长的下载。只有脚本返回失败（HTTP 中断 / 连接重置 / 分享令牌失败 / 长时间无数据）才停止等待。文件体积仍在增大时视为进行中。
+5. 完成后**立即**输出阶段标记 \`download_logs\`；若确无日志可下载，\`logs_downloaded: false\` 并说明原因，仍可 \`success\` 进入下一步。
 
 ## Step 3 — 匹配分析 Skill
 1. 若远程渠道已成功产出报告：\`matched_skills\` 填远程 skillId，再进入整理 9 节报告（可与 Step 4～5 合并输出标记）。
@@ -1975,6 +1992,9 @@ async function runSingleBugAnalysis(
           message: isError ? `✗ 工具失败：${toolName}` : `✓ 工具完成：${toolName}`,
         })
         emitBugActivity(taskId, `${isError ? '工具失败' : '工具完成'}：${toolName}`, isError ? 'warn' : 'info')
+      },
+      onToolOutput: (text) => {
+        emitBugActivity(taskId, text)
       },
       onReasoning: (text) => {
         if (text) emit(taskId, 'task.message', { level: 'reasoning', text })
