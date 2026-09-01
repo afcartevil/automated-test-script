@@ -124,6 +124,11 @@ const router = createRouter({
       component: () => import('@/views/tahp/CodePullView.vue'),
     },
     {
+      path: '/tahp/rf-calib-meta',
+      name: 'tahp.rf-calib-meta',
+      component: () => import('@/views/tahp/RfCalibMetaView.vue'),
+    },
+    {
       path: '/tahp/config',
       name: 'tahp.config',
       component: () => import('@/views/tahp/ConfigView.vue'),

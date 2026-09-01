@@ -30,6 +30,7 @@ const publicNav = [
   { name: 'tahp.bug-analysis', label: '智能诊断' },
   { name: 'tahp.self-check', label: '质量验测' },
   { name: 'tahp.code-pull', label: '代码拉取' },
+  { name: 'tahp.rf-calib-meta', label: '校准数据' },
 ]
 
 const secondaryNav = [

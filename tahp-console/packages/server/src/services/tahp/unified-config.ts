@@ -174,6 +174,14 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     group: GROUP_MODEM_TOOLS,
     placeholder: 'Qualcomm QUTS Python 目录',
   },
+  {
+    key: 'modem_meta_root',
+    label: 'Modem Meta',
+    type: 'text',
+    group: GROUP_MODEM_TOOLS,
+    placeholder: '如 D:\\Tool\\MTK\\ModemMeta_v10.2412.0.02_transsion_20240428\\ModemMeta_v10.2412.0.02_transsion_20240428（META.exe 所在目录）',
+    description: '填 META.exe 所在安装目录（同级有 bin、configs、plugins 等）。射频校准备份/恢复使用此路径。',
+  },
 ]
 
 /** 固定服务器地址：不在表单中配置，供 Agent / 派生存储直接使用 */
@@ -213,6 +221,7 @@ const FIELD_ENV_KEYS: Record<string, string[]> = {
   elt_home: ['ELT_HOME'],
   nlt_home: ['NLT_HOME'],
   quts_python_path: ['QUTS_PYTHON_PATH'],
+  modem_meta_root: ['MODEM_META_ROOT'],
 }
 
 /** 按优先级扫描的 Skill .env 文件（相对 skills 根目录），用于默认填充 */
@@ -310,6 +319,14 @@ export function readUnifiedConfigForForm(): UnifiedConfigValues {
     const saved = (stored[field.key] || '').trim()
     if (field.key === 'workspace_root') {
       values[field.key] = saved || getJiraWorkspaceRoot().replace(/\\/g, '/')
+      continue
+    }
+    if (field.key === 'modem_meta_root') {
+      values[field.key] = saved
+        || skillDefaults[field.key]
+        || process.env.MODEM_META_ROOT?.trim()
+        || field.default
+        || ''
       continue
     }
     values[field.key] = saved || skillDefaults[field.key] || field.default || ''
@@ -429,6 +446,7 @@ export function buildUnifiedConfigDirective(): string {
     `- JIRA 日志工作区（WORKSPACE_ROOT）: \`${getJiraWorkspaceRoot().replace(/\\/g, '/')}\`；下载目录为 \`{WORKSPACE_ROOT}/<JIRA_KEY>/\``,
     '- 域账号/域密码在 Jira、Gerrit、OpenGrok、harness（HARNESS_QIZHI_USER / HARNESS_QIZHI_BASTION_PASSWORD 及 Jira/OpenGrok/Gerrit/Spug 凭据）间通用。',
     '- harness 工具：Linux 服务器 IP → `HARNESS_QIZHI_TARGET_HOST`；Linux 服务器密码 → `HARNESS_QIZHI_TARGET_PASSWORD` / `HARNESS_QIZHI_SAMBA_PASSWORD`；Windows 映射盘 → `HARNESS_MAP_DRIVE_ROOT`；齐治 TOTP secret → `HARNESS_QIZHI_OTP_SECRET`。',
+    '- Modem 工具：Modem Meta 安装目录 → `modem_meta_root`（射频校准参数备份/恢复）；未配置时引导用户在一键配置表单填写，勿编造路径。',
     '- **使用 asf / harness / 官方 asf-* 或 harness-* skill 前**：先确认 CLI 版本满足工程 \`.tahp/harness-requirement.json\`；不满足则引导用户打开「配置 → 一键配置表单」后点击「启动skill配置检查」。官方 Skill 在本机 `$HOME/.claude/skills` / `$HOME/.cursor/skills` 等，**不在**工程 `skills/`。',
     `- 保存一键配置表单时 BFF 已自动同步 CLI 配置到 \`${getHarnessEnvPath().replace(/\\/g, '/')}\`（旧路径 \`~/.tran_harness/env.yaml\` 若仍存在会一并使用；模板默认值补全未在表单中的项）。`,
     '- 安装/更新 CLI 与 Agent skill：按工程相对路径 `docs/agent-npx-cli-sop.md`（相对 TAHP 工程根）执行；完成后启用全部 capabilities 并 `--sync`。优先命令前缀 `asf`（`harness` 为兼容别名）。',

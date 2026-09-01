@@ -1,0 +1,501 @@
+<script setup lang="ts">
+/**
+ * 公共能力 · 校准数据
+ * 通过本机 Modem Meta MetaCLI 备份/恢复校准数据
+ */
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import {
+  NAlert, NButton, NEmpty, NInput, NProgress, NRadio, NRadioGroup, NSpin, useMessage,
+} from 'naive-ui'
+import EaPageHead from '@/components/layout/EaPageHead.vue'
+import EaCard from '@/components/layout/EaCard.vue'
+import EaPill from '@/components/layout/EaPill.vue'
+import { useRfCalibMetaStore } from '@/stores/tahp/rf-calib-meta'
+import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
+
+const message = useMessage()
+const router = useRouter()
+const store = useRfCalibMetaStore()
+const logBox = ref<HTMLElement | null>(null)
+/** SOP 默认展开，便于首次按步骤操作 */
+const sopOpen = ref(true)
+
+const statusVariant = computed(() => {
+  const s = store.currentRun?.status
+  if (s === 'completed') return 'ok' as const
+  if (s === 'failed') return 'err' as const
+  if (s === 'cancelled') return 'warn' as const
+  if (s === 'running' || s === 'pending') return 'info' as const
+  return 'muted' as const
+})
+
+const statusLabel = computed(() => {
+  const s = store.currentRun?.status
+  if (s === 'completed') return '已完成'
+  if (s === 'failed') return '失败'
+  if (s === 'cancelled') return '已取消'
+  if (s === 'running') return '执行中'
+  if (s === 'pending') return '排队'
+  return '未开始'
+})
+
+function goModemMetaConfig() {
+  router.push({ name: CONFIG_ROUTE_NAME, query: { tab: 'form' } })
+}
+
+function toggleSop() {
+  sopOpen.value = !sopOpen.value
+}
+
+async function scrollLogToBottom() {
+  await nextTick()
+  await nextTick()
+  const el = logBox.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+
+async function onStart() {
+  await store.start()
+  if (store.error) message.error(store.error)
+  else message.success(store.mode === 'backup' ? '已开始备份' : '已开始恢复')
+  await scrollLogToBottom()
+}
+
+async function onCancel() {
+  await store.cancel()
+  message.info('已请求取消')
+}
+
+async function onOpenRun(runId: string) {
+  await store.openRun(runId)
+  await scrollLogToBottom()
+}
+
+async function onRefreshProbe() {
+  await store.refreshProbe()
+}
+
+watch(
+  () => [store.liveLines.length, store.currentRunId, store.currentRun?.log_tail?.length] as const,
+  async () => {
+    await scrollLogToBottom()
+  },
+)
+
+onMounted(async () => {
+  await store.refreshProbe()
+  await store.refreshHistory()
+  const running = store.history.find(h => h.status === 'running' || h.status === 'pending')
+  if (running) {
+    await onOpenRun(running.run_id)
+  }
+})
+
+onBeforeUnmount(() => {
+  store.dispose()
+})
+</script>
+
+<template>
+  <div class="rf-calib-page">
+    <EaPageHead
+      title="校准数据"
+      subtitle="与 Modem Meta GUI 相同：点开始后 MetaCLI 等待连接，关机插 USB 即进校准模式"
+    />
+
+    <EaCard class="sop-card mb">
+      <div class="sop-head">
+        <div>
+          <h3 class="section-title sop-title">校准数据操作 SOP</h3>
+          <p class="sop-sub">按下列步骤操作即可；与 Modem Meta GUI「读写校准数据」等价，无需再开 GUI。</p>
+        </div>
+        <NButton size="small" quaternary @click="toggleSop">
+          {{ sopOpen ? '收起' : '展开' }}
+        </NButton>
+      </div>
+
+      <div v-show="sopOpen" class="sop-body">
+        <section class="sop-section">
+          <h4>一、前置准备（首次）</h4>
+          <ol>
+            <li>本机已安装 Modem Meta（目录内可见 <code>META.exe</code>、<code>bin</code>、<code>configs</code> 等）。</li>
+            <li>
+              打开
+              <NButton text type="primary" @click="goModemMetaConfig">配置 → 一键配置表单 → Modem 工具</NButton>
+              ，填写 <strong>Modem Meta</strong> 为 <strong>META.exe 所在目录</strong> 并保存。
+            </li>
+            <li>示例路径：
+              <code>D:\Tool\MTK\ModemMeta_v10.2412.0.02_transsion_20240428\ModemMeta_v10.2412.0.02_transsion_20240428</code>
+              （不要填到某个 .exe 文件）。
+            </li>
+            <li>回到本页，确认顶部显示「Modem Meta 已配置」。</li>
+          </ol>
+        </section>
+
+        <section class="sop-section">
+          <h4>二、备份</h4>
+          <ol>
+            <li>模式选 <strong>备份</strong>；进 META 选 <strong>Modem Meta 连接方式（推荐）</strong>。</li>
+            <li>COM 口保持 <code>Auto Connection</code>；输出文件可留空。</li>
+            <li>点 <strong>开始备份</strong> → <strong>手机关机</strong> → <strong>插入 USB</strong>。</li>
+            <li>日志出现 <code>Connect status: Boot ...</code> 为正常等待；连上后继续读写。</li>
+            <li>成功标志：任务 <strong>已完成</strong>，日志末尾有 <code>========== 备份完成 ==========</code>。</li>
+          </ol>
+        </section>
+
+        <section class="sop-section">
+          <h4>三、恢复</h4>
+          <ol>
+            <li>模式选 <strong>恢复</strong>，填写待写入的校准数据 <code>.ini</code> 路径。</li>
+            <li>
+              <strong>校准文件从哪来：</strong>
+              若本机参数已丢失，可将<strong>其它同配置机器</strong>备份导出后写入恢复；
+              也可从制造资料目录获取对应配置的校准数据：
+              <code>\\sh-nas\Dcc\03.项目文件\01.项目文件\01.PCBA项目\制造资料\射频校准文件</code>
+            </li>
+            <li>进 META 选推荐方式 → 点 <strong>开始恢复</strong> → 关机 → 插 USB。</li>
+            <li>成功标志：任务 <strong>已完成</strong>，日志末尾有 <code>========== 恢复完成 ==========</code>，且含 <code>Write calibration file done</code>。</li>
+          </ol>
+        </section>
+
+        <section class="sop-section">
+          <h4>四、结果判定（重要）</h4>
+          <ul>
+            <li><strong>以任务状态 + 末尾「备份/恢复完成」为准</strong>，不要只看 MetaCLI 中间的 Error。</li>
+            <li><code>IMEI Failed</code> / <code>Backup flow failed</code> 等因机型 IMEI 保护产生，<strong>可忽略</strong>（默认不备份/不还原 IMEI）。</li>
+            <li>勿同时按 Vol+ 与 Vol-（会进 Recovery，不是校准 META）。</li>
+          </ul>
+        </section>
+      </div>
+    </EaCard>
+
+    <NAlert
+      v-if="store.probe && !store.probe.available"
+      type="warning"
+      class="mb"
+      :title="store.probe.needs_config ? '请先配置 Modem Meta' : (store.probe.reason || 'MetaCLI 不可用')"
+    >
+      <p>{{ store.probe.reason || '请先完成工具配置。' }}</p>
+      <NButton size="small" type="warning" class="mt-btn" @click="goModemMetaConfig">
+        前往一键配置表单
+      </NButton>
+    </NAlert>
+
+    <NAlert
+      v-else-if="store.probe?.available && store.probe.meta_root"
+      type="success"
+      class="mb compact-alert"
+      title="Modem Meta 已配置"
+    >
+      安装目录：<code>{{ store.probe.meta_root }}</code>
+      （来自「配置 → 一键配置表单 → Modem 工具」）
+      <NButton size="tiny" quaternary class="mt-btn-inline" @click="onRefreshProbe">重新检测</NButton>
+    </NAlert>
+
+    <div class="layout">
+      <EaCard class="form-panel">
+        <h3 class="section-title">操作</h3>
+
+        <NRadioGroup v-model:value="store.mode" class="mode-group">
+          <NRadio value="backup">备份（Upload → Save）</NRadio>
+          <NRadio value="restore">恢复（Load → Download）</NRadio>
+        </NRadioGroup>
+
+        <label class="field-label mt">进 META 方式</label>
+        <NRadioGroup v-model:value="store.connectionStrategy" class="mode-group">
+          <NRadio value="preloader_boot">Modem Meta 连接方式（推荐 · 关机插 USB）</NRadio>
+          <NRadio value="meta_port">已在 META · 手动/自动 COM</NRadio>
+          <NRadio value="adb_reboot_meta">adb reboot meta（仅部分工程版）</NRadio>
+        </NRadioGroup>
+
+        <label v-if="store.mode === 'restore'" class="field-label mt">校准数据文件（CalibrationFilePath）</label>
+        <NInput
+          v-if="store.mode === 'restore'"
+          v-model:value="store.calFilePath"
+          placeholder="待写入设备的校准数据文件路径"
+          :disabled="store.isRunning || store.submitting"
+        />
+
+        <label v-if="store.mode === 'backup'" class="field-label mt">输出文件（可选）</label>
+        <NInput
+          v-if="store.mode === 'backup'"
+          v-model:value="store.outputCalPath"
+          placeholder="须为 .ini 文件路径，如 D:\backup\calibration_data.ini；留空或填目录则自动加 calibration_data.ini"
+          :disabled="store.isRunning || store.submitting"
+        />
+
+        <label class="field-label mt">COM 口</label>
+        <NInput
+          v-model:value="store.comPort"
+          placeholder="Auto Connection"
+          :disabled="store.isRunning || store.submitting"
+        />
+
+        <p class="hint">
+          推荐流程：点「开始」→ 关机 → 插 USB。详见上方 SOP。默认排除 IMEI，日志里 IMEI Failed 可忽略。
+        </p>
+
+        <NAlert
+          v-if="store.connectionStrategy === 'preloader_boot'"
+          type="info"
+          class="mb compact-alert"
+          title="操作顺序（与 Modem Meta GUI 相同）"
+        >
+          ① 点「开始备份/恢复」→ ② 手机关机 → ③ 插入 USB。
+          日志出现 <code>Connect status: Boot ...</code> 表示 MetaCLI 正在等待，插 USB 后应变为 success。
+          勿同时按 Vol+ 与 Vol-（会进 Recovery，不是校准模式）。
+        </NAlert>
+
+        <div class="actions">
+          <NButton
+            type="primary"
+            :loading="store.submitting"
+            :disabled="store.isRunning || !store.canStart"
+            @click="onStart"
+          >
+            {{ store.mode === 'backup' ? '开始备份' : '开始恢复' }}
+          </NButton>
+          <NButton
+            v-if="store.isRunning"
+            quaternary
+            type="warning"
+            @click="onCancel"
+          >
+            取消
+          </NButton>
+        </div>
+
+        <div v-if="store.history.length" class="history">
+          <h3 class="section-title">最近任务</h3>
+          <button
+            v-for="item in store.history"
+            :key="item.run_id"
+            type="button"
+            class="history-item"
+            :class="{ active: item.run_id === store.currentRunId }"
+            @click="onOpenRun(item.run_id)"
+          >
+            <span class="hi-name">{{ item.label }} · {{ item.mode }}</span>
+            <EaPill>{{ item.status }}</EaPill>
+          </button>
+        </div>
+      </EaCard>
+
+      <EaCard class="run-panel">
+        <div class="run-head">
+          <div>
+            <h3 class="section-title">
+              {{ store.currentRun?.label || '运行状态' }}
+            </h3>
+            <div class="meta">
+              <EaPill :variant="statusVariant">{{ statusLabel }}</EaPill>
+              <span v-if="store.currentRun?.phase" class="phase">{{ store.currentRun.phase }}</span>
+              <span v-if="store.currentRun?.message" class="msg">{{ store.currentRun.message }}</span>
+            </div>
+          </div>
+          <NSpin v-if="store.loading" size="small" />
+        </div>
+
+        <NProgress
+          v-if="store.currentRun"
+          type="line"
+          :percentage="Math.min(100, Number(store.currentRun.progress || 0))"
+          :status="store.currentRun.status === 'failed' ? 'error' : store.currentRun.status === 'completed' ? 'success' : 'default'"
+          class="mb"
+        />
+
+        <NAlert
+          v-if="store.currentRun?.status === 'completed'"
+          :type="store.currentRun.message?.includes('IMEI') ? 'warning' : 'success'"
+          class="mb"
+          :title="store.currentRun.message?.includes('IMEI') ? '备份完成（有警告）' : '执行完成'"
+        >
+          <div class="paths">
+            <p v-if="store.currentRun.message?.includes('IMEI')" class="warn-line">
+              {{ store.currentRun.message }}
+            </p>
+            <div v-if="store.currentRun.output_cal_path || store.currentRun.cal_file_path">
+              <strong>校准文件：</strong>
+              <code>{{ store.currentRun.output_cal_path || store.currentRun.cal_file_path }}</code>
+            </div>
+            <div v-if="store.currentRun.init_file_path">
+              <strong>Init 文件：</strong><code>{{ store.currentRun.init_file_path }}</code>
+            </div>
+          </div>
+        </NAlert>
+
+        <NAlert
+          v-if="store.currentRun?.error"
+          type="error"
+          class="mb"
+          :title="store.currentRun.error"
+        />
+
+        <h3 class="section-title">实时日志</h3>
+        <div ref="logBox" class="log-box">
+          <NEmpty v-if="!store.liveLines.length" description="开始任务后显示 MetaCLI 输出" />
+          <pre v-else class="log-pre">{{ store.liveLines.join('\n') }}</pre>
+        </div>
+      </EaCard>
+    </div>
+  </div>
+</template>
+
+<style scoped lang="scss">
+.rf-calib-page {
+  padding: 0 4px 24px;
+}
+.mb { margin-bottom: 12px; }
+.mt { margin-top: 12px; }
+.mt-btn { margin-top: 8px; }
+.mt-btn-inline { margin-left: 8px; vertical-align: middle; }
+.sop-card {
+  border: 1px solid color-mix(in srgb, var(--ea-primary, #2f6fed) 28%, var(--ea-border, #e8e8e8));
+  background: color-mix(in srgb, var(--ea-primary, #2f6fed) 4%, transparent);
+}
+.sop-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sop-title { margin-bottom: 4px; }
+.sop-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ea-text-secondary, #666);
+  line-height: 1.45;
+}
+.sop-body {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ea-border, #e8e8e8);
+}
+.sop-section {
+  margin-bottom: 14px;
+  &:last-child { margin-bottom: 0; }
+  h4 {
+    margin: 0 0 6px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  ol, ul {
+    margin: 0;
+    padding-left: 1.25rem;
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--ea-text, #333);
+  }
+  code {
+    font-size: 11px;
+    word-break: break-all;
+  }
+}
+.layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 420px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .layout { grid-template-columns: 1fr; }
+}
+.section-title {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--ea-text-secondary, #666);
+}
+.mode-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.hint {
+  margin: 8px 0 12px;
+  font-size: 12px;
+  color: var(--ea-text-secondary, #888);
+  line-height: 1.5;
+  code { font-size: 11px; }
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.history {
+  border-top: 1px solid var(--ea-border, #e8e8e8);
+  padding-top: 12px;
+}
+.history-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--ea-border, #e8e8e8);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  &:hover, &.active {
+    border-color: var(--ea-primary, #2f6fed);
+    background: rgba(47, 111, 237, 0.04);
+  }
+}
+.hi-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--ea-text-secondary, #666);
+}
+.paths {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  code { word-break: break-all; }
+}
+.warn-line { margin: 0 0 8px; }
+.log-box {
+  height: min(56vh, 520px);
+  border: 1px solid var(--ea-border, #e8e8e8);
+  border-radius: 8px;
+  background: #0f1419;
+  color: #d7e0ea;
+  padding: 10px;
+  overflow: auto;
+}
+.compact-alert { margin-top: 8px; }
+.log-pre {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+</style>

@@ -20,6 +20,7 @@ import { tahpAdaptPipelineRoutes } from './adapt-pipeline'
 import { tahpEvalRoutes } from './eval'
 import { tahpCodePullRoutes } from './code-pull'
 import { tahpCentralSsoRoutes } from './central-sso'
+import { tahpRfCalibMetaRoutes } from './rf-calib-meta'
 
 export function registerTahpRoutes(app: Koa) {
   app.use(tahpKnowledgeRoutes.routes())
@@ -40,5 +41,6 @@ export function registerTahpRoutes(app: Koa) {
   app.use(tahpAdaptPipelineRoutes.routes())
   app.use(tahpEvalRoutes.routes())
   app.use(tahpCodePullRoutes.routes())
+  app.use(tahpRfCalibMetaRoutes.routes())
   app.use(tahpCentralSsoRoutes.routes())
 }

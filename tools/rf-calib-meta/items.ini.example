@@ -1,0 +1,10 @@
+; 校准项选择 ini 示例（IniFilePath）
+; 请根据项目/平台从 Modem Meta UI「Update Parameter → Read/Write Cal Data」导出，
+; 或向 RF 同事索取与 UI 勾选一致的 items ini。
+; 以下为占位结构，实际键名与项数以平台为准。
+
+[Calibration Items]
+; 示例：1=启用该项，0=跳过
+; RF_CAL_GSM=1
+; RF_CAL_WCDMA=1
+; RF_CAL_LTE=1
