@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onActivated, watch, inject } from 'vue'
 import { NEmpty, NButton, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
 import { DEVICE_SELF_CHECK_KEY } from './self-check-context'
-import { getCaseResultColor, getTestTypeLabel, reportTitle, displayReportStatus, reportStatusKind, getAutomationModeIcon, getAutomationModeLabel, normalizeAutomationMode } from './self-check-utils'
+import { getCaseResultColor, getTestTypeLabel, reportTitle, displayReportStatus, reportStatusKind, getAutomationModeIcon, getAutomationModeLabel, normalizeAutomationMode, formatTestConfigEntries } from './self-check-utils'
 import {
   listSelfCheckReports,
   getSelfCheckReportDetail,
@@ -77,6 +77,10 @@ const caseGroups = computed(() => {
 
 const selectedCaseItem = computed(() =>
   reportDetail.value?.allCaseItems.find(c => c.caseKey === selectedCaseKey.value) ?? null,
+)
+
+const testConfigEntries = computed(() =>
+  formatTestConfigEntries(reportDetail.value?.testConfig),
 )
 
 function resolveCaseAutomationMode(item: SelfCheckCaseItem): 'full' | 'semi' | 'manual' {
@@ -451,6 +455,12 @@ onActivated(async () => {
               <dt>通过率</dt>
               <dd>{{ reportDetail.passedCases }}/{{ reportDetail.totalCases }}</dd>
             </div>
+            <template v-for="row in testConfigEntries" :key="row.label">
+              <div>
+                <dt>{{ row.label }}</dt>
+                <dd>{{ row.value }}</dd>
+              </div>
+            </template>
           </dl>
           <p class="detail-text overview-summary">{{ reportDetail.aiSummary }}</p>
         </template>

@@ -531,6 +531,25 @@ export interface SelfCheckFailedCaseItem {
   message: string
 }
 
+export interface SelfCheckFlashBeforeTestConfig {
+  enabled: boolean
+  pkgPath?: string
+  enableRootPkg?: boolean
+  rootPkgPath?: string
+  stageVersion?: string
+}
+
+export interface SelfCheckTestConfig {
+  monkeyDuration?: string
+  smokeUsdSkipSpdInfo?: boolean
+  gmsTradefedPath?: Record<string, string>
+  autoRetestEnabled?: boolean
+  autoRetestCount?: number
+  flashBeforeTest?: SelfCheckFlashBeforeTestConfig
+  prioritizeTddManual?: boolean
+  selectedCases?: string[]
+}
+
 export interface SelfCheckReportSummary {
   reportId: string
   deviceId: string
@@ -550,6 +569,7 @@ export interface SelfCheckReportSummary {
   reportPath: string
   aiPlanned?: boolean
   scheduleKey?: string
+  testConfig?: SelfCheckTestConfig
 }
 
 export interface SelfCheckCaseItem {

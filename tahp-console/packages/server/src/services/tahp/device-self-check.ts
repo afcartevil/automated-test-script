@@ -13,7 +13,7 @@ import {
 } from './device-flash'
 import { resolvePythonSpawn, tahpPaths } from './paths'
 import { ensurePowerTestPythonDeps } from './self-check-python-deps'
-import { buildSelfCheckDetailPayload, openLocalPath, reportAbsoluteDir, type SelfCheckCaseItem, type SelfCheckFailedCaseItem } from './self-check-reports'
+import { buildSelfCheckDetailPayload, formatSelfCheckTestConfigMetaRows, openLocalPath, reportAbsoluteDir, type SelfCheckCaseItem, type SelfCheckFailedCaseItem, type SelfCheckTestConfig } from './self-check-reports'
 import { markPlanExecutionCompleted } from './test-plan-executions'
 import {
   AI_GENERATED_MODULE,
@@ -150,6 +150,8 @@ export interface TestSession {
   prioritizeTddManual?: boolean
   /** adb getprop persist.sys.ota_version，测试开始时采集，报告落盘时刷新 */
   otaVersion?: string
+  /** 测试开始前的前置配置快照（写入报告 summary/detail） */
+  testConfig?: SelfCheckTestConfig
 }
 
 export interface CaseCatalogItem {
@@ -268,6 +270,60 @@ function getAutoRetestConfig(testType: string): { enabled: boolean; count: numbe
     enabled: settings.autoRetestEnabled?.[testType] ?? true,
     count: Math.max(0, settings.autoRetestCount?.[testType] ?? 1),
   }
+}
+
+/** 测试启动时快照前置配置，写入报告 JSON */
+function snapshotTestConfig(
+  testType: DeviceTestType,
+  opts: {
+    flashOptions?: DeviceFlashOptions
+    prioritizeTddManual?: boolean
+    selectedCases?: string[]
+  },
+): SelfCheckTestConfig {
+  const cfg: SelfCheckTestConfig = {}
+
+  if (opts.flashOptions) {
+    cfg.flashBeforeTest = {
+      enabled: true,
+      pkgPath: opts.flashOptions.pkgPath,
+      enableRootPkg: opts.flashOptions.enableRootPkg,
+      rootPkgPath: opts.flashOptions.rootPkgPath,
+      stageVersion: opts.flashOptions.stageVersion,
+    }
+  }
+  if (opts.prioritizeTddManual) cfg.prioritizeTddManual = true
+  if (testType === 'custom' && opts.selectedCases?.length) {
+    cfg.selectedCases = [...opts.selectedCases]
+  }
+
+  switch (testType) {
+    case 'monkey':
+      cfg.monkeyDuration = normalizeMonkeyDuration(settings.monkeyDuration)
+      break
+    case 'smoke':
+      cfg.smokeUsdSkipSpdInfo = Boolean(settings.smokeUsdSkipSpdInfo)
+      break
+    case 'gms':
+      cfg.gmsTradefedPath = normalizeGmsTradefedPath(
+        settings.gmsTradefedPath,
+        settings.gmsTradefedRoot,
+      )
+      break
+    case 'custom':
+    case 'ai_generated':
+    case 'power':
+    case 'power_feature':
+    case 'thermal':
+      break
+    default:
+      const retest = getAutoRetestConfig(testType)
+      cfg.autoRetestEnabled = retest.enabled
+      cfg.autoRetestCount = retest.count
+      break
+  }
+
+  return cfg
 }
 
 function loadCaseInfoList(testType: string, module: string): any[] {
@@ -2852,6 +2908,10 @@ export async function startTest(
       flashOptions,
       scheduleKey: options?.scheduleKey,
       prioritizeTddManual: Boolean(options?.prioritizeTddManual),
+      testConfig: snapshotTestConfig(testType, {
+        flashOptions,
+        prioritizeTddManual: Boolean(options?.prioritizeTddManual),
+      }),
     }
 
     testSessions[deviceId] = session
@@ -2933,6 +2993,10 @@ export async function startCustomTest(
       customAuxDevices: auxIds,
       initializedPythonModules: [],
       prioritizeTddManual,
+      testConfig: snapshotTestConfig('custom', {
+        prioritizeTddManual,
+        selectedCases,
+      }),
     }
 
     testSessions[deviceId] = session
@@ -3636,11 +3700,12 @@ async function generateTestReport(
       ['OTA 版本 (persist.sys.ota_version)', otaVersion || '(未获取)'],
       ['开始时间', session.startTime || ''],
       ['结束时间', session.endTime || ''],
+      ...formatSelfCheckTestConfigMetaRows(session.testConfig),
     ]
     sheets.push({
       name: '摘要',
       rows: metaRows,
-      styles: ['', '', '', '', ''],
+      styles: metaRows.map(() => ''),
     })
 
     if (session.testType === 'custom') {
@@ -3756,6 +3821,7 @@ async function generateTestReport(
         : {}),
       ...(powerArtifactPath ? { powerArtifactPath } : {}),
       ...(thermalArtifactPath ? { thermalArtifactPath } : {}),
+      ...(session.testConfig ? { testConfig: session.testConfig } : {}),
     }
     writeFileSync(join(resultDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8')
 
@@ -4082,6 +4148,7 @@ function buildSessionFromReport(
       : undefined,
     scheduleKey: summary.scheduleKey,
     otaVersion: (summary as { version?: string }).version,
+    testConfig: (summary as { testConfig?: SelfCheckTestConfig }).testConfig,
   }
 }
 
@@ -4206,6 +4273,18 @@ export async function __testingResolveReportOtaVersion(
 }
 
 export const __testingOtaVersionProp = OTA_VERSION_PROP
+
+/** @internal 单测：前置配置快照 */
+export function __testingSnapshotTestConfig(
+  testType: DeviceTestType,
+  opts: {
+    flashOptions?: DeviceFlashOptions
+    prioritizeTddManual?: boolean
+    selectedCases?: string[]
+  },
+): SelfCheckTestConfig {
+  return snapshotTestConfig(testType, opts)
+}
 
 /** @internal 单测：中断路径生成报告并释放设备 */
 export function __testingScheduleTestReportIfNeeded(

@@ -41,6 +41,26 @@ export interface SelfCheckCaseItem {
   failureLogDir?: string
 }
 
+export interface SelfCheckFlashBeforeTestConfig {
+  enabled: boolean
+  pkgPath?: string
+  enableRootPkg?: boolean
+  rootPkgPath?: string
+  stageVersion?: string
+}
+
+/** 质量验测开始前的前置配置快照（写入 summary/detail.json） */
+export interface SelfCheckTestConfig {
+  monkeyDuration?: string
+  smokeUsdSkipSpdInfo?: boolean
+  gmsTradefedPath?: Record<string, string>
+  autoRetestEnabled?: boolean
+  autoRetestCount?: number
+  flashBeforeTest?: SelfCheckFlashBeforeTestConfig
+  prioritizeTddManual?: boolean
+  selectedCases?: string[]
+}
+
 export interface SelfCheckReportSummary {
   reportId: string
   deviceId: string
@@ -60,6 +80,7 @@ export interface SelfCheckReportSummary {
   reportPath: string
   aiPlanned?: boolean
   scheduleKey?: string
+  testConfig?: SelfCheckTestConfig
 }
 
 export interface SelfCheckReportDetail extends SelfCheckReportSummary {
@@ -86,6 +107,7 @@ interface SummaryJson {
   skippedCases: number
   aiPlanned?: boolean
   scheduleKey?: string
+  testConfig?: SelfCheckTestConfig
 }
 
 interface DetailJson extends SummaryJson {
@@ -144,6 +166,49 @@ async function saveReviewMetaStore(store: ReviewMetaStore): Promise<void> {
   await safeFileStore.writeText(reviewMetaPath(), `${JSON.stringify(store, null, 2)}\n`)
 }
 
+/** Excel 摘要页 / 报告展示：将 testConfig 转为键值行 */
+export function formatSelfCheckTestConfigMetaRows(cfg?: SelfCheckTestConfig): string[][] {
+  if (!cfg) return []
+  const rows: string[][] = []
+  if (cfg.monkeyDuration) {
+    rows.push(['monkey测试时长', cfg.monkeyDuration])
+  }
+  if (cfg.smokeUsdSkipSpdInfo !== undefined) {
+    rows.push(['跳过 SPD 拉取 (--skip-spd-info)', cfg.smokeUsdSkipSpdInfo ? '是' : '否'])
+  }
+  if (cfg.gmsTradefedPath) {
+    for (const suite of ['cts', 'gts', 'vts'] as const) {
+      const path = cfg.gmsTradefedPath[suite]
+      if (path) rows.push([`GMS ${suite.toUpperCase()} Tradefed`, path])
+    }
+  }
+  if (cfg.autoRetestEnabled !== undefined) {
+    rows.push([
+      '自动复测',
+      cfg.autoRetestEnabled ? `开启（${cfg.autoRetestCount ?? 0} 次）` : '关闭',
+    ])
+  }
+  if (cfg.prioritizeTddManual) {
+    rows.push(['通信人工用例优先', '是'])
+  }
+  if (cfg.flashBeforeTest?.enabled) {
+    rows.push(['测试前刷机', '是'])
+    if (cfg.flashBeforeTest.pkgPath) {
+      rows.push(['刷机包路径', cfg.flashBeforeTest.pkgPath])
+    }
+    if (cfg.flashBeforeTest.stageVersion) {
+      rows.push(['市场版本', cfg.flashBeforeTest.stageVersion])
+    }
+    if (cfg.flashBeforeTest.enableRootPkg && cfg.flashBeforeTest.rootPkgPath) {
+      rows.push(['Root 刷机包', cfg.flashBeforeTest.rootPkgPath])
+    }
+  }
+  if (cfg.selectedCases?.length) {
+    rows.push(['自定义勾选用例数', String(cfg.selectedCases.length)])
+  }
+  return rows
+}
+
 function buildAiSummary(summary: SummaryJson, failed: SelfCheckFailedCaseItem[]): string {
   if (summary.totalCases === 0) {
     return '本次测试未产生用例数据。'
@@ -193,6 +258,7 @@ function buildSummaryFromDir(relativePath: string, sessionDir: string, deviceId:
     reportPath: relativePath.replace(/\\/g, '/'),
     aiPlanned: summary.aiPlanned === true,
     scheduleKey: summary.scheduleKey,
+    testConfig: summary.testConfig,
   }
 }
 

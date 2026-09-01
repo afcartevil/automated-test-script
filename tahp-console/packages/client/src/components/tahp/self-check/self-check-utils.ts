@@ -1,4 +1,4 @@
-import type { CaseCatalogGroup, DeviceInfo, SelfCheckReportSummary } from '@/api/tahp/device-self-check'
+import type { CaseCatalogGroup, DeviceInfo, SelfCheckReportSummary, SelfCheckTestConfig } from '@/api/tahp/device-self-check'
 
 export const SELF_CHECK_SUBTITLE =
   '项目自动规划 → 自动烧录 → 自动测试 → 评审补全 → 人工复核报告'
@@ -346,4 +346,39 @@ export function reportStatusKind(report: SelfCheckReportSummary): ReportStatusKi
   if (report.reviewStatus === 'retest') return 'retest'
   if (report.failedCases > 0 || !report.status.includes('通过')) return 'pending'
   return 'passed'
+}
+
+/** 报告审阅：前置配置展示行 */
+export function formatTestConfigEntries(cfg?: SelfCheckTestConfig): { label: string; value: string }[] {
+  if (!cfg) return []
+  const rows: { label: string; value: string }[] = []
+  if (cfg.monkeyDuration) rows.push({ label: 'monkey测试时长', value: cfg.monkeyDuration })
+  if (cfg.smokeUsdSkipSpdInfo !== undefined) {
+    rows.push({ label: '跳过 SPD 拉取', value: cfg.smokeUsdSkipSpdInfo ? '是' : '否' })
+  }
+  if (cfg.gmsTradefedPath) {
+    for (const suite of ['cts', 'gts', 'vts'] as const) {
+      const path = cfg.gmsTradefedPath[suite]
+      if (path) rows.push({ label: `GMS ${suite.toUpperCase()} Tradefed`, value: path })
+    }
+  }
+  if (cfg.autoRetestEnabled !== undefined) {
+    rows.push({
+      label: '自动复测',
+      value: cfg.autoRetestEnabled ? `开启（${cfg.autoRetestCount ?? 0} 次）` : '关闭',
+    })
+  }
+  if (cfg.prioritizeTddManual) rows.push({ label: '通信人工用例优先', value: '是' })
+  if (cfg.flashBeforeTest?.enabled) {
+    rows.push({ label: '测试前刷机', value: '是' })
+    if (cfg.flashBeforeTest.pkgPath) rows.push({ label: '刷机包路径', value: cfg.flashBeforeTest.pkgPath })
+    if (cfg.flashBeforeTest.stageVersion) rows.push({ label: '市场版本', value: cfg.flashBeforeTest.stageVersion })
+    if (cfg.flashBeforeTest.enableRootPkg && cfg.flashBeforeTest.rootPkgPath) {
+      rows.push({ label: 'Root 刷机包', value: cfg.flashBeforeTest.rootPkgPath })
+    }
+  }
+  if (cfg.selectedCases?.length) {
+    rows.push({ label: '自定义勾选用例数', value: String(cfg.selectedCases.length) })
+  }
+  return rows
 }
