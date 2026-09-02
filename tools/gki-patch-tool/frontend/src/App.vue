@@ -127,8 +127,14 @@ function handleParentNavigate(event: MessageEvent) {
   }
 }
 
+function notifyParentReady() {
+  if (!embedded.value || window.parent === window) return
+  window.parent.postMessage({ type: 'ea-gki-patch-ready' }, '*')
+}
+
 onMounted(() => {
   window.addEventListener('message', handleParentNavigate)
+  notifyParentReady()
 })
 
 onUnmounted(() => {

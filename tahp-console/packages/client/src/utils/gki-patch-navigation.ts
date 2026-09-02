@@ -56,6 +56,32 @@ export function isGkiPatchApplyNoticeMessage(data: unknown): data is GkiPatchApp
   )
 }
 
+/** iframe → EasyAdapter parent：GKI SPA 已挂载并可接收 navigate */
+export interface GkiPatchReadyMessage {
+  type: 'ea-gki-patch-ready'
+}
+
+export function isGkiPatchReadyMessage(data: unknown): data is GkiPatchReadyMessage {
+  if (!data || typeof data !== 'object') return false
+  return (data as GkiPatchReadyMessage).type === 'ea-gki-patch-ready'
+}
+
+export type GkiFrameSyncMode = 'none' | 'mount' | 'post' | 'reload'
+
+/** 工作台不挂 iframe；首次离开工作台用 src 挂载；同会话有 ready 则 postMessage，否则改 src */
+export function resolveGkiFrameSync(opts: {
+  nativeWorkbench: boolean
+  desiredSrc: string
+  mountedSrc: string
+  frameAppReady: boolean
+}): GkiFrameSyncMode {
+  if (opts.nativeWorkbench || !opts.desiredSrc) return 'none'
+  if (!opts.mountedSrc) return 'mount'
+  if (opts.mountedSrc === opts.desiredSrc) return 'none'
+  if (opts.frameAppReady) return 'post'
+  return 'reload'
+}
+
 export function buildGkiFrameSrc(
   status: { appBaseUrl?: string; appUrl: string },
   gkiPath: string,

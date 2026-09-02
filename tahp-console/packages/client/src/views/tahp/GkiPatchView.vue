@@ -7,6 +7,8 @@ import {
   GKI_PATCH_PATH_TO_ROUTE,
   GKI_PATCH_ROUTE_TO_PATH,
   isGkiPatchNavMessage,
+  isGkiPatchReadyMessage,
+  resolveGkiFrameSync,
 } from '@/utils/gki-patch-navigation'
 
 const route = useRoute()
@@ -18,8 +20,9 @@ const error = ref('')
 const status = ref<GkiPatchStatus | null>(null)
 const frameRef = ref<HTMLIFrameElement | null>(null)
 const frameReady = ref(false)
-/** 仅首次挂载时写入 iframe.src，之后靠 postMessage 切页，避免整 SPA 重载 */
-const initialFrameSrc = ref('')
+const frameAppReady = ref(false)
+/** 已挂载 iframe 的 src；工作台为空，离开工作台时按目标 path 写入 */
+const mountedFrameSrc = ref('')
 
 const workbenchItem = { name: 'tahp.gki-patch.dashboard', label: '工作台', icon: 'dashboard' }
 
@@ -58,9 +61,21 @@ function routeQueryAsRecord(): Record<string, string> {
   return out
 }
 
+const desiredFrameSrc = computed(() => {
+  if (!status.value || isNativeWorkbench.value) return ''
+  return buildGkiFrameSrc(status.value, gkiPath.value, route.query as Record<string, unknown>)
+})
+
+function resetFrame() {
+  mountedFrameSrc.value = ''
+  frameReady.value = false
+  frameAppReady.value = false
+}
+
 function postNavigateToFrame() {
   const win = frameRef.value?.contentWindow
-  if (!win || !frameReady.value || isNativeWorkbench.value) return
+  if (!win || isNativeWorkbench.value) return
+  if (!frameReady.value && !frameAppReady.value) return
   win.postMessage(
     {
       type: 'ea-gki-patch-navigate',
@@ -69,6 +84,28 @@ function postNavigateToFrame() {
     },
     '*',
   )
+}
+
+function syncFrame() {
+  const mode = resolveGkiFrameSync({
+    nativeWorkbench: isNativeWorkbench.value,
+    desiredSrc: desiredFrameSrc.value,
+    mountedSrc: mountedFrameSrc.value,
+    frameAppReady: frameAppReady.value,
+  })
+  if (mode === 'none') {
+    if (isNativeWorkbench.value && mountedFrameSrc.value) resetFrame()
+    return
+  }
+  if (mode === 'mount' || mode === 'reload') {
+    if (mode === 'reload') {
+      frameReady.value = false
+      frameAppReady.value = false
+    }
+    mountedFrameSrc.value = desiredFrameSrc.value
+    return
+  }
+  postNavigateToFrame()
 }
 
 function sleep(ms: number) {
@@ -91,7 +128,7 @@ async function ensureReady() {
   loading.value = true
   loadingHint.value = '正在检查 GKI 服务…'
   error.value = ''
-  frameReady.value = false
+  resetFrame()
   try {
     let next = await fetchGkiPatchStatus()
     if (!next.frontendBuilt) {
@@ -126,9 +163,7 @@ async function ensureReady() {
     }
 
     status.value = next
-    // 工作台为 Console 原生页；iframe 仍预加载到 upgrade，便于切页即时可用
-    const bootPath = isNativeWorkbench.value ? '/upgrade' : gkiPath.value
-    initialFrameSrc.value = buildGkiFrameSrc(next, bootPath, route.query as Record<string, unknown>)
+    syncFrame()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -141,6 +176,11 @@ function nav(name: string) {
 }
 
 function handleGkiPatchMessage(event: MessageEvent) {
+  if (isGkiPatchReadyMessage(event.data)) {
+    frameAppReady.value = true
+    postNavigateToFrame()
+    return
+  }
   if (!isGkiPatchNavMessage(event.data)) return
   const routeName = GKI_PATCH_PATH_TO_ROUTE[event.data.path]
   if (!routeName) return
@@ -154,10 +194,10 @@ function onFrameLoad() {
 }
 
 watch(
-  () => [route.name, route.fullPath] as const,
+  () => [isNativeWorkbench.value, desiredFrameSrc.value] as const,
   () => {
-    if (!status.value || !frameReady.value) return
-    postNavigateToFrame()
+    if (!status.value) return
+    syncFrame()
   },
 )
 
@@ -241,11 +281,10 @@ onUnmounted(() => {
             <router-view />
           </div>
           <iframe
-            v-show="!isNativeWorkbench"
-            v-if="initialFrameSrc"
+            v-if="!isNativeWorkbench && mountedFrameSrc"
             ref="frameRef"
             class="gki-frame"
-            :src="initialFrameSrc"
+            :src="mountedFrameSrc"
             title="GKI Patch Tool"
             @load="onFrameLoad"
           />
