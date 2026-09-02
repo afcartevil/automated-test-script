@@ -366,6 +366,8 @@ export interface QualityRunPayload {
   domain_id?: string
   owner?: string
   device?: { id?: string; name?: string }
+  /** 被测软件版本（self-check 报告 version 字段） */
+  version?: string
   status?: string
   started_at?: string
   ended_at?: string

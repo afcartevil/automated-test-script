@@ -6,6 +6,7 @@ import type { QualityRunPayload } from './sync/central-client'
 import type {
   SelfCheckCaseItem,
   SelfCheckFailedCaseItem,
+  SelfCheckTestConfig,
 } from './self-check-reports'
 import { parseAdaptAuditSummary } from './adapt-audit-summary'
 import type { ModemBaselineRunMeta } from './modem-baseline'
@@ -14,6 +15,8 @@ export interface SelfCheckSummaryForUpload {
   deviceId: string
   deviceName: string
   testType: string
+  /** 被测软件版本（persist.sys.ota_version，报告 version 字段） */
+  version?: string
   startTime?: string
   endTime?: string
   status: string
@@ -27,6 +30,8 @@ export interface SelfCheckSummaryForUpload {
   project_code?: string
   campaign_id?: string
   brand?: string
+  /** 验测开始前的前置配置快照（报告 testConfig 字段） */
+  testConfig?: SelfCheckTestConfig
 }
 
 export interface SelfCheckDetailForUpload {
@@ -70,6 +75,38 @@ function mapIssueSeverity(status: string): 'critical' | 'major' | 'minor' {
   if (status === '失败') return 'critical'
   if (status === '部分通过' || status === '待确认') return 'major'
   return 'minor'
+}
+
+/** extra.all_cases 上限：控制上报体积（中心 extra 上限 64KB） */
+const ALL_CASES_MAX = 200
+const CASE_MESSAGE_MAX = 300
+
+function mapAllCaseStatus(status: string): 'pass' | 'fail' | 'partial' | 'skip' {
+  if (status === '通过') return 'pass'
+  if (status === '失败') return 'fail'
+  if (status === '部分通过' || status === '待确认') return 'partial'
+  return 'skip'
+}
+
+/**
+ * 全量用例（含通过）→ extra.all_cases，供中心「按测试项」聚合完整通过率。
+ * 裁剪 steps / failureLogDir 等本机路径，message 截断。
+ */
+function mapAllCasesForUpload(
+  detail?: SelfCheckDetailForUpload | null,
+): Array<{ key: string; title: string; module?: string; status: string; message?: string }> | undefined {
+  const items = detail?.allCaseItems
+  if (!items?.length) return undefined
+  return items.slice(0, ALL_CASES_MAX).map(c => {
+    const status = mapAllCaseStatus(c.status)
+    return {
+      key: c.caseKey,
+      title: c.caseName,
+      ...(c.module ? { module: c.module } : {}),
+      status,
+      ...(status !== 'pass' && c.message ? { message: c.message.slice(0, CASE_MESSAGE_MAX) } : {}),
+    }
+  })
 }
 
 /**
@@ -132,6 +169,7 @@ export function mapSelfCheckReportToQualityRun(input: {
   }))
 
   const projectCode = summary.project_code?.trim() || UNASSIGNED_PROJECT
+  const allCases = mapAllCasesForUpload(detail)
 
   return {
     run_id: buildSelfCheckRunId(summary.deviceId, sessionDir),
@@ -140,6 +178,7 @@ export function mapSelfCheckReportToQualityRun(input: {
     campaign_id: summary.campaign_id?.trim() || undefined,
     owner,
     device: { id: summary.deviceId, name: summary.deviceName },
+    version: summary.version?.trim() || undefined,
     status: mapSelfCheckStatusToRunStatus(summary.status, failed, total),
     started_at: summary.startTime,
     ended_at: summary.endTime,
@@ -157,6 +196,11 @@ export function mapSelfCheckReportToQualityRun(input: {
       { type: 'xlsx', name: 'test_report.xlsx', ref: `local://${reportRelPath}/test_report.xlsx` },
     ],
     ai_summary: detail?.aiSummary || summary.aiSummary,
+    extra: {
+      test_type: summary.testType,
+      ...(summary.testConfig ? { test_config: summary.testConfig } : {}),
+      ...(allCases ? { all_cases: allCases } : {}),
+    },
     source: {
       tool: 'tahp-console',
       version: 'self-check',

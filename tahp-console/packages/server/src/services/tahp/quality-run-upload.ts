@@ -6,7 +6,7 @@ import { basename } from 'path'
 import { logger } from '../logger'
 import { isCentralConfigured } from './runtime-mode'
 import { centralClient } from './sync/central-client'
-import { resolveFlashDeviceIdentity } from './device-flash'
+import { resolveFlashDeviceIdentity, extractProjectCandidates } from './device-flash'
 import { readJiraUsername } from './jira-user-config'
 import type { ModemBaselineRunMeta } from './modem-baseline'
 import {
@@ -122,7 +122,9 @@ export async function resolveSelfCheckProjectContext(input: {
   }
 
   if (!candidate && input.deviceName?.trim()) {
-    candidate = input.deviceName.trim()
+    // 设备名兜底（如 "Infinix X6850B"）：提取项目形候选，提取不到则落 _unassigned，
+    // 避免原始设备名直接写入 project_code 产生垃圾分组
+    candidate = extractProjectCandidates(input.deviceName)[0]
   }
 
   if (!candidate) {

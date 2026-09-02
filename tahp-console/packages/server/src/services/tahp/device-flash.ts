@@ -565,7 +565,7 @@ function normalizeBrandName(raw: string): string | null {
   return null
 }
 
-function extractProjectCandidates(...values: string[]): string[] {
+export function extractProjectCandidates(...values: string[]): string[] {
   const candidates = new Set<string>()
   for (const raw of values) {
     const value = raw.trim()
