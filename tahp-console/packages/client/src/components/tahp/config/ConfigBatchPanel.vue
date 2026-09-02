@@ -13,7 +13,6 @@ import { useSkillConfigTaskWatcher } from '@/composables/useSkillConfigTaskWatch
 import {
   fetchSkillConfigList,
   fetchSkillPreview,
-  startSkillConfig,
   startConfigureAllSkills,
   continueSkillConfig,
   respondSkillConfigApproval,
@@ -41,9 +40,6 @@ const selectedId = ref<string | null>(null)
 const preview = ref<SkillConfigPreview | null>(null)
 const previewLoading = ref(false)
 const previewError = ref('')
-const startingSingle = ref(false)
-/** batch：整表检查；single：某一条开始/重新配置 */
-const sessionKind = ref<'batch' | 'single' | null>(null)
 const activeTaskId = ref<string | null>(null)
 const batchTaskStatus = ref<'running' | 'waiting_user' | 'completed' | 'failed' | null>(null)
 const batchStarting = ref(false)
@@ -115,17 +111,6 @@ const selectedSkill = computed(() =>
   skills.value.find(s => s.id === selectedId.value) || null,
 )
 
-const batchBusy = computed(() => {
-  if (batchStarting.value || startingSingle.value) return true
-  if (!activeTaskId.value) return false
-  if (batchTaskStatus.value === 'completed' || batchTaskStatus.value === 'failed') return false
-  return taskRunning.value || batchTaskStatus.value === 'running' || batchTaskStatus.value === 'waiting_user'
-})
-
-const canStartSingle = computed(() =>
-  !!selectedId.value && !batchBusy.value && modelProviderReady.value,
-)
-
 scrollChatToBottom(chatMarkdown)
 
 function statusLabel(status: SkillConfigListItem['status']): string {
@@ -173,8 +158,7 @@ async function loadList() {
     if (!selectedId.value && data.skills.length) {
       selectedId.value = data.skills[0].id
     }
-    if (sessionKind.value !== 'single' && data.batch_task?.task_id) {
-      sessionKind.value = 'batch'
+    if (data.batch_task?.task_id) {
       attachBatchTask(data.batch_task.task_id, data.batch_task.status)
     }
   } catch (err) {
@@ -200,7 +184,6 @@ watch(
   () => props.startToken,
   async (token) => {
     if (!token) return
-    sessionKind.value = 'batch'
     await loadList()
     await startBatchIfNeeded()
   },
@@ -217,7 +200,6 @@ onBeforeUnmount(() => {
 })
 
 async function startBatchIfNeeded() {
-  sessionKind.value = 'batch'
   if (activeTaskId.value) {
     if (!isTaskTerminal(activeTaskId.value)) return
     activeTaskId.value = null
@@ -248,28 +230,6 @@ async function startBatchIfNeeded() {
     }
   } finally {
     batchStarting.value = false
-  }
-}
-
-async function onStartSingle(force: boolean) {
-  if (!selectedId.value || !canStartSingle.value) return
-  if (!modelProviderReady.value) {
-    message.warning('请先在「配置 → 模型管理」中配置模型 Provider')
-    return
-  }
-  startingSingle.value = true
-  try {
-    tasksStore.ensureSocket()
-    const data = await startSkillConfig(selectedId.value, force)
-    sessionKind.value = 'single'
-    attachBatchTask(data.task_id, 'running')
-    chatInput.value = ''
-    await loadList()
-    message.info(force ? '已启动重新配置' : '已启动配置向导')
-  } catch (err) {
-    message.error((err as Error).message || '启动失败')
-  } finally {
-    startingSingle.value = false
   }
 }
 
@@ -327,7 +287,7 @@ async function onApproval(choice: string) {
     </NAlert>
 
     <NAlert type="default" :show-icon="false" class="batch-hint">
-      Agent 依据已保存的一键配置，依次检查并完成清单中各 Skill 的环境与凭据。整表检查进行中时请勿同时启动单条配置。
+      Agent 依据已保存的一键配置，依次检查并完成清单中各 Skill 的环境与凭据。
     </NAlert>
 
     <ModelProviderBanner style="margin-bottom: 12px" />
@@ -367,25 +327,6 @@ async function onApproval(choice: string) {
               <h3>{{ selectedSkill.label }}</h3>
               <p class="ea-muted">{{ selectedSkill.description }}</p>
             </div>
-            <NSpace>
-              <NButton
-                type="primary"
-                size="small"
-                :loading="startingSingle"
-                :disabled="!canStartSingle"
-                @click="onStartSingle(false)"
-              >
-                开始配置
-              </NButton>
-              <NButton
-                size="small"
-                :loading="startingSingle"
-                :disabled="!canStartSingle"
-                @click="onStartSingle(true)"
-              >
-                重新配置
-              </NButton>
-            </NSpace>
           </div>
           <NSpin :show="previewLoading">
             <NScrollbar style="max-height: 200px">
@@ -410,7 +351,7 @@ async function onApproval(choice: string) {
             <span class="ea-muted">正在启动 {{ SKILL_CONFIG_CHECK_BUTTON_LABEL }}...</span>
           </div>
           <div v-else-if="!activeTaskId" class="chat-placeholder ea-muted">
-            未检测到活动会话。可返回修改配置后点击「{{ SAVE_AND_START_SKILL_CHECK_LABEL }}」，或在上方对某一条 Skill 开始配置。
+            未检测到活动会话。可返回修改配置后点击「{{ SAVE_AND_START_SKILL_CHECK_LABEL }}」。
           </div>
           <template v-else>
             <div :ref="setScrollerEl" class="chat-stream">
@@ -446,7 +387,7 @@ async function onApproval(choice: string) {
               :show-icon="false"
               style="margin-top: 8px"
             >
-              Skill 配置检查已完成。可返回修改配置，或对某一条 Skill 重新配置。
+              Skill 配置检查已完成。可返回修改配置后再次保存并启动检查。
             </NAlert>
           </template>
         </EaCard>

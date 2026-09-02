@@ -76,6 +76,90 @@ export interface SkillConfigStateRecord {
   configured_by?: 'agent' | 'manual'
 }
 
+export interface SkillConfigLastCheck {
+  ok: boolean
+  at: string
+  task_id?: string
+}
+
+function parseLastCheck(raw: unknown): SkillConfigLastCheck | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const rec = raw as Record<string, unknown>
+  if (typeof rec.ok !== 'boolean' || typeof rec.at !== 'string' || !rec.at.trim()) return undefined
+  const taskId = typeof rec.task_id === 'string' ? rec.task_id : undefined
+  return { ok: rec.ok, at: rec.at, task_id: taskId }
+}
+
+function isSkillStateRecord(raw: unknown): raw is SkillConfigStateRecord {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false
+  const status = (raw as { status?: unknown }).status
+  return status === 'configured' || status === 'verify_failed'
+}
+
+/** 兼容旧版扁平 skill-id map；新版为 { version, last_check, skills } */
+export function parseSkillConfigStateFile(raw: unknown): {
+  skills: Record<string, SkillConfigStateRecord>
+  last_check?: SkillConfigLastCheck
+} {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { skills: {} }
+  }
+  const doc = raw as Record<string, unknown>
+  if (doc.skills && typeof doc.skills === 'object' && !Array.isArray(doc.skills)) {
+    const skills: Record<string, SkillConfigStateRecord> = {}
+    for (const [id, rec] of Object.entries(doc.skills as Record<string, unknown>)) {
+      if (isSkillStateRecord(rec)) skills[id] = rec
+    }
+    return { skills, last_check: parseLastCheck(doc.last_check) }
+  }
+  const skills: Record<string, SkillConfigStateRecord> = {}
+  for (const [id, rec] of Object.entries(doc)) {
+    if (id === 'version' || id === 'last_check' || id === 'skills') continue
+    if (isSkillStateRecord(rec)) skills[id] = rec
+  }
+  return { skills }
+}
+
+function loadStateFile(): {
+  skills: Record<string, SkillConfigStateRecord>
+  last_check?: SkillConfigLastCheck
+} {
+  const p = statePath()
+  if (!existsSync(p)) return { skills: {} }
+  try {
+    return parseSkillConfigStateFile(JSON.parse(readFileSync(p, 'utf-8')))
+  } catch {
+    return { skills: {} }
+  }
+}
+
+function persistStateFile(
+  skills: Record<string, SkillConfigStateRecord>,
+  last_check?: SkillConfigLastCheck,
+): void {
+  writeFileSync(
+    statePath(),
+    JSON.stringify({ version: 2, last_check, skills }, null, 2),
+    'utf-8',
+  )
+}
+
+function readStateMap(): Record<string, SkillConfigStateRecord> {
+  return loadStateFile().skills
+}
+
+function writeStateMap(map: Record<string, SkillConfigStateRecord>): void {
+  persistStateFile(map, loadStateFile().last_check)
+}
+
+function recordLastCheck(ok: boolean, taskId?: string): void {
+  persistStateFile(loadStateFile().skills, {
+    ok,
+    at: new Date().toISOString(),
+    task_id: taskId,
+  })
+}
+
 export interface SkillConfigListItem {
   id: string
   label: string
@@ -118,20 +202,6 @@ function readManifest(): RequiredSkillsManifest {
   } catch (err) {
     throw new Error(`无法解析 required-skills.json: ${(err as Error).message}`)
   }
-}
-
-function readStateMap(): Record<string, SkillConfigStateRecord> {
-  const p = statePath()
-  if (!existsSync(p)) return {}
-  try {
-    return JSON.parse(readFileSync(p, 'utf-8')) as Record<string, SkillConfigStateRecord>
-  } catch {
-    return {}
-  }
-}
-
-function writeStateMap(map: Record<string, SkillConfigStateRecord>): void {
-  writeFileSync(statePath(), JSON.stringify(map, null, 2), 'utf-8')
 }
 
 function skillRoot(skillId: string): string {
@@ -250,9 +320,11 @@ export function listRequiredSkills(): {
   manifest_path: string
   skills: SkillConfigListItem[]
   batch_task?: { task_id: string; status: 'running' | 'waiting_user'; label: string }
+  last_check?: SkillConfigLastCheck
 } {
   const manifest = readManifest()
-  const state = readStateMap()
+  const loaded = loadStateFile()
+  const state = loaded.skills
   const skills: SkillConfigListItem[] = manifest.skills.map((entry) => {
     const rec = state[entry.id]
     const active = activeTasks.get(entry.id)
@@ -287,7 +359,7 @@ export function listRequiredSkills(): {
     }
   }
 
-  return { manifest_path: manifestPath(), skills, batch_task }
+  return { manifest_path: manifestPath(), skills, batch_task, last_check: loaded.last_check }
 }
 
 export function getSkillPreview(skillId: string): SkillConfigPreview | null {
@@ -917,6 +989,7 @@ async function executeBatchSkillConfigRun(
         batch: true,
         message: '配置清单中的全部 Skill 已配置完成',
       })
+      recordLastCheck(true, ctx.taskId)
       return
     }
 
@@ -932,6 +1005,7 @@ async function executeBatchSkillConfigRun(
     ctx.status = 'failed'
     ctx.error = msg
     emit(ctx.taskId, 'task.failed', { error: msg, skill_id: ctx.skillId, batch: true, message: msg })
+    recordLastCheck(false, ctx.taskId)
     logger.warn({ err: msg, taskId: ctx.taskId }, '[skill-config] batch failed')
   } finally {
     const bucket = pendingApprovals.get(ctx.taskId)

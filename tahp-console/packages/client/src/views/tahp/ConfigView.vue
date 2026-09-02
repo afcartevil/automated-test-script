@@ -2,9 +2,11 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import EaPageHead from '@/components/layout/EaPageHead.vue'
+import EaPill from '@/components/layout/EaPill.vue'
 import ConfigModelsPanel from '@/components/tahp/config/ConfigModelsPanel.vue'
 import ConfigUnifiedFormPanel from '@/components/tahp/config/ConfigUnifiedFormPanel.vue'
 import ConfigBatchPanel from '@/components/tahp/config/ConfigBatchPanel.vue'
+import { useSkillConfigReadiness } from '@/composables/useSkillConfigReadiness'
 import {
   CONFIG_MAIN_TABS,
   CONFIG_TAB_LABELS,
@@ -16,6 +18,7 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+const { loading: skillStatusLoading, summary: skillSummary, refresh: refreshSkillStatus } = useSkillConfigReadiness()
 
 const activeTab = computed(() => parseConfigTab(route.query.tab))
 
@@ -53,6 +56,7 @@ function goBatch() {
 }
 
 function backToForm() {
+  void refreshSkillStatus()
   router.push({ name: CONFIG_ROUTE_NAME, query: { tab: 'form' } })
 }
 
@@ -77,6 +81,7 @@ watch(
 
 watch(activeTab, (tab) => {
   if (tab === 'batch') batchPanelMounted.value = true
+  if (tab === 'form') void refreshSkillStatus()
 })
 </script>
 
@@ -102,11 +107,15 @@ watch(activeTab, (tab) => {
     <div class="config-panel">
       <ConfigModelsPanel v-if="activeTab === 'models'" />
       <template v-else-if="activeTab === 'form'">
-        <div v-if="batchPanelMounted" class="setup-resume">
-          <button type="button" class="setup-resume__link" @click="showBatch">
-            查看 Skill 配置检查
+        <div class="setup-status" :class="`setup-status--${skillSummary.tone}`">
+          <EaPill v-if="!skillStatusLoading" :variant="skillSummary.tone">{{ skillSummary.label }}</EaPill>
+          <span v-else class="setup-status__loading">正在读取 Skill 配置状态…</span>
+          <button type="button" class="setup-status__link" @click="showBatch">
+            查看详情
           </button>
-          <span class="setup-resume__hint">会话在后台保持，不会因返回改表而中断</span>
+          <span v-if="skillSummary.showLiveHint" class="setup-status__hint">
+            会话在后台保持，不会因返回改表而中断
+          </span>
         </div>
         <ConfigUnifiedFormPanel @start-batch="goBatch" />
       </template>
@@ -167,28 +176,39 @@ watch(activeTab, (tab) => {
   min-height: 200px;
 }
 
-.setup-resume {
+.setup-status {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
   margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
   font-size: 12px;
 }
 
-.setup-resume__link {
+.setup-status--ok { border-color: color-mix(in srgb, var(--ok, #16a34a) 35%, var(--line)); }
+.setup-status--warn { border-color: color-mix(in srgb, var(--warn, #d97706) 40%, var(--line)); }
+.setup-status--err { border-color: color-mix(in srgb, var(--err, #dc2626) 40%, var(--line)); }
+.setup-status--info { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+
+.setup-status__loading,
+.setup-status__hint {
+  color: var(--muted);
+}
+
+.setup-status__link {
   border: none;
   background: none;
   padding: 0;
+  margin-left: auto;
   color: var(--accent);
   font: inherit;
   font-weight: 700;
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
-}
-
-.setup-resume__hint {
-  color: var(--muted);
 }
 </style>

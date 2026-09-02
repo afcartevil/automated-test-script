@@ -403,7 +403,7 @@ onUnmounted(() => {
               <ol class="item-steps">
                 <li>先在「<span class="hl">配置 → 模型管理</span>」配好模型 Provider 与 API Key；</li>
                 <li>再到「<span class="hl">配置 → 一键配置</span>」填齐全部配置项，点击「<span class="hl">保存并启动skill配置检查</span>」；</li>
-                <li>Agent 会在同一标签页内依次核对各 Skill；检查完成后可对某一条重新配置。</li>
+                <li>Agent 会在同一标签页内依次核对各 Skill；检查完成后可返回修改配置并再次启动检查。</li>
               </ol>
               <p class="item-desc">三步都完成后，再回到本手册中的业务入口操作。</p>
             </div>

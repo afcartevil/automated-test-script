@@ -4,6 +4,7 @@ import {
   isConfigSetupTab,
   listUnfilledFormFields,
   parseConfigTab,
+  summarizeSkillSetup,
 } from '@/utils/config-navigation'
 
 const fields = [
@@ -54,5 +55,48 @@ describe('parseConfigTab', () => {
     expect(isConfigSetupTab('form')).toBe(true)
     expect(isConfigSetupTab('batch')).toBe(true)
     expect(isConfigSetupTab('models')).toBe(false)
+  })
+})
+
+describe('summarizeSkillSetup', () => {
+  const all = [
+    { status: 'configured' },
+    { status: 'configured' },
+  ]
+  const mixed = [
+    { status: 'configured' },
+    { status: 'not_configured' },
+  ]
+
+  it('prefers live batch over last_check', () => {
+    const s = summarizeSkillSetup({ skills: mixed, batchRunning: true, lastCheckOk: false })
+    expect(s.kind).toBe('running')
+    expect(s.showLiveHint).toBe(true)
+    expect(s.label).toContain('进行中')
+  })
+
+  it('reports all configured even if last check failed', () => {
+    const s = summarizeSkillSetup({ skills: all, lastCheckOk: false })
+    expect(s.kind).toBe('all')
+    expect(s.label).toContain('已全部配置完')
+  })
+
+  it('reports last check failure when some skills remain open', () => {
+    const s = summarizeSkillSetup({ skills: mixed, lastCheckOk: false })
+    expect(s.kind).toBe('failed')
+    expect(s.tone).toBe('err')
+    expect(s.label).toContain('上次检查失败')
+  })
+
+  it('reports partial when some skills are configured', () => {
+    const s = summarizeSkillSetup({ skills: mixed })
+    expect(s.kind).toBe('partial')
+    expect(s.label).toBe('部分已配置（1/2）')
+  })
+
+  it('reports none when nothing is configured yet', () => {
+    const s = summarizeSkillSetup({ skills: [{ status: 'not_configured' }] })
+    expect(s.kind).toBe('none')
+    expect(s.label).toBe('尚未完成 Skill 配置')
   })
 })

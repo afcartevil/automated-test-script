@@ -66,3 +66,84 @@ export function formatUnfilledFieldsHint(fields: Array<{ group?: string; label: 
   }
   return `请填写全部配置项（缺 ${items.length} 项）：${preview}`
 }
+
+export type SkillSetupKind = 'running' | 'all' | 'partial' | 'failed' | 'none'
+
+export interface SkillSetupSummary {
+  kind: SkillSetupKind
+  configured: number
+  total: number
+  label: string
+  tone: 'ok' | 'warn' | 'err' | 'info' | 'muted'
+  showLiveHint: boolean
+}
+
+/** 一键配置页 Skill 状态条：清单计数 + 可选上次整表检查结果 */
+export function summarizeSkillSetup(input: {
+  skills: Array<{ status?: string }>
+  batchRunning?: boolean
+  lastCheckOk?: boolean | null
+}): SkillSetupSummary {
+  const total = input.skills.length
+  const configured = input.skills.filter(s => s.status === 'configured').length
+  const counts = `${configured}/${total}`
+
+  if (input.batchRunning) {
+    return {
+      kind: 'running',
+      configured,
+      total,
+      label: total ? `配置检查进行中（${counts}）` : '配置检查进行中',
+      tone: 'info',
+      showLiveHint: true,
+    }
+  }
+  if (total === 0) {
+    return {
+      kind: 'none',
+      configured: 0,
+      total: 0,
+      label: '配置清单为空',
+      tone: 'muted',
+      showLiveHint: false,
+    }
+  }
+  if (configured === total) {
+    return {
+      kind: 'all',
+      configured,
+      total,
+      label: `Skill 已全部配置完（${counts}）`,
+      tone: 'ok',
+      showLiveHint: false,
+    }
+  }
+  if (input.lastCheckOk === false) {
+    return {
+      kind: 'failed',
+      configured,
+      total,
+      label: configured > 0 ? `上次检查失败（${counts} 已配置）` : '上次检查失败',
+      tone: 'err',
+      showLiveHint: false,
+    }
+  }
+  if (configured > 0) {
+    return {
+      kind: 'partial',
+      configured,
+      total,
+      label: `部分已配置（${counts}）`,
+      tone: 'warn',
+      showLiveHint: false,
+    }
+  }
+  return {
+    kind: 'none',
+    configured,
+    total,
+    label: '尚未完成 Skill 配置',
+    tone: 'muted',
+    showLiveHint: false,
+  }
+}

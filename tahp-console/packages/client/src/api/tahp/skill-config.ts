@@ -21,6 +21,11 @@ export interface SkillConfigListResp {
     status: 'running' | 'waiting_user'
     label: string
   }
+  last_check?: {
+    ok: boolean
+    at: string
+    task_id?: string
+  }
 }
 
 export interface SkillConfigPreview {
