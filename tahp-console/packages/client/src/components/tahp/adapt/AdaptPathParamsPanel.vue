@@ -59,7 +59,6 @@ const canReuseLast = computed(() => {
   return last.project_code !== cur.project_code
     || last.OLD_VENDOR_ROOT !== cur.OLD_VENDOR_ROOT
     || last.NEW_VENDOR_ROOT !== cur.NEW_VENDOR_ROOT
-    || last.NEW_SYSTEM_ROOT !== cur.NEW_SYSTEM_ROOT
 })
 
 function toggle() {
@@ -145,14 +144,6 @@ function handleReset() {
             :value="scope.inputs.NEW_VENDOR_ROOT"
             placeholder="例如 Z:\project\CM8\vendor"
             @update:value="v => setInput('NEW_VENDOR_ROOT', v)"
-          />
-        </div>
-        <div class="ppp-field">
-          <label>NEW_SYSTEM_ROOT</label>
-          <NInput
-            :value="scope.inputs.NEW_SYSTEM_ROOT"
-            placeholder="可选，仅随参数传给 Skill，不参与解析"
-            @update:value="v => setInput('NEW_SYSTEM_ROOT', v)"
           />
         </div>
       </div>

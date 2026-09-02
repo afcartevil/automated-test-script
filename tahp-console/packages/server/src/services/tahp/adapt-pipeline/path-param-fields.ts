@@ -119,6 +119,28 @@ export function normalizeKernelVersion(raw: string): string {
   return String(raw ?? '').trim().replace(/^kernel-/i, '')
 }
 
+/** 比较内核版本号（如 6.12、6.6）。a >= b 时为 true。 */
+export function isKernelVersionAtLeast(ver: string, min: string): boolean {
+  const parts = (v: string) => v.split('.').map(n => {
+    const num = parseInt(n, 10)
+    return Number.isFinite(num) ? num : 0
+  })
+  const a = parts(ver)
+  const b = parts(min)
+  const len = Math.max(a.length, b.length)
+  for (let i = 0; i < len; i++) {
+    const da = a[i] ?? 0
+    const db = b[i] ?? 0
+    if (da !== db) return da > db
+  }
+  return true
+}
+
+/** 新分支项目 dtsi 根：内核 ≥ 6.12 用 transsion，否则 mediatek。 */
+export function kernelProjectDtsVendor(kernelVer: string): 'mediatek' | 'transsion' {
+  return isKernelVersionAtLeast(kernelVer, '6.12') ? 'transsion' : 'mediatek'
+}
+
 export function requireExisting(absPath: string, kind: 'file' | 'dir'): {
   ok: boolean
   value?: string
@@ -206,6 +228,18 @@ function dtsRoot(vendorRoot: string, kernelVer: string, vendor: 'mediatek' | 'tr
     'boot',
     'dts',
     vendor,
+  )
+}
+
+function ataConfigPath(vendorRoot: string, projectFull: string): string {
+  return vendorRel(
+    vendorRoot,
+    'vendor',
+    'mediatek',
+    'proprietary',
+    'custom',
+    projectFull,
+    'factory',
   )
 }
 
@@ -403,7 +437,11 @@ export const PATH_PARAM_FIELDS: PathParamFieldDef[] = [
     kind: 'text',
     dependsOn: ['NEW_KERNEL_VERSION'],
     parse(ctx) {
-      return requireExisting(dtsRoot(ctx.inputs.NEW_VENDOR_ROOT, need(ctx, 'NEW_KERNEL_VERSION'), 'transsion'), 'dir')
+      const ver = need(ctx, 'NEW_KERNEL_VERSION')
+      return requireExisting(
+        dtsRoot(ctx.inputs.NEW_VENDOR_ROOT, ver, kernelProjectDtsVendor(ver)),
+        'dir',
+      )
     },
   },
   {
@@ -480,6 +518,24 @@ export const PATH_PARAM_FIELDS: PathParamFieldDef[] = [
         ctx.inputs.NEW_VENDOR_ROOT,
         'vendor', 'transsion', 'projects', need(ctx, 'PROJECT_FULL'), 'ko_order_table.csv',
       ), 'file')
+    },
+  },
+  {
+    key: 'OLD_ATA_CONFIG_PATH',
+    label: 'OLD_ATA_CONFIG_PATH',
+    kind: 'text',
+    dependsOn: ['PROJECT_FULL'],
+    parse(ctx) {
+      return requireExisting(ataConfigPath(ctx.inputs.OLD_VENDOR_ROOT, need(ctx, 'PROJECT_FULL')), 'dir')
+    },
+  },
+  {
+    key: 'NEW_ATA_CONFIG_PATH',
+    label: 'NEW_ATA_CONFIG_PATH',
+    kind: 'text',
+    dependsOn: ['PROJECT_FULL'],
+    parse(ctx) {
+      return requireExisting(ataConfigPath(ctx.inputs.NEW_VENDOR_ROOT, need(ctx, 'PROJECT_FULL')), 'dir')
     },
   },
 ]

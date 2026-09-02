@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   PATH_PARAM_FIELDS,
   flattenPathParams,
+  isKernelVersionAtLeast,
   parsePathParams,
   winJoin,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/path-params'
@@ -24,7 +25,12 @@ function writeFile(filePath: string, content: string) {
   writeFileSync(filePath, content)
 }
 
-function populateVendorTree(root: string, side: 'old' | 'new', extraProjects: string[] = []) {
+function populateVendorTree(
+  root: string,
+  side: 'old' | 'new',
+  extraProjects: string[] = [],
+  kernel = KERNEL,
+) {
   const names = [PROJECT, ...extraProjects]
   for (const name of names) {
     const proj = join(root, 'vendor', 'transsion', 'projects', name)
@@ -33,7 +39,7 @@ function populateVendorTree(root: string, side: 'old' | 'new', extraProjects: st
 
   const proj = join(root, 'vendor', 'transsion', 'projects', PROJECT)
   writeFile(join(proj, 'BoardConfig-vext.mk'), `TARGET_BOARD_PLATFORM := MT6858\n`)
-  writeFile(join(proj, 'ProjectConfig.mk'), `LINUX_KERNEL_VERSION := kernel-${KERNEL} # comment\n`)
+  writeFile(join(proj, 'ProjectConfig.mk'), `LINUX_KERNEL_VERSION := kernel-${kernel} # comment\n`)
   writeFile(join(proj, `vnd_${PROJECT}.mk`), `VEXT_TARGET_PROJECT := ${VEXT}\n`)
   writeFile(join(proj, 'ko_order_table.csv'), 'id,name\n')
 
@@ -56,19 +62,23 @@ function populateVendorTree(root: string, side: 'old' | 'new', extraProjects: st
     ),
     'mk\n',
   )
+  mkdirSync(
+    join(root, 'vendor', 'mediatek', 'proprietary', 'custom', PROJECT, 'factory'),
+    { recursive: true },
+  )
   writeFile(join(root, 'device', 'mediateksample', VEXT, 'ko_order_table.csv'), 'csv\n')
 
   mkdirSync(
-    join(root, 'kernel', `kernel_device_modules-${KERNEL}`, 'arch', 'arm64', 'boot', 'dts', 'mediatek'),
+    join(root, 'kernel', `kernel_device_modules-${kernel}`, 'arch', 'arm64', 'boot', 'dts', 'mediatek'),
     { recursive: true },
   )
   writeFile(
-    join(root, 'kernel', `kernel_device_modules-${KERNEL}`, 'arch', 'arm64', 'boot', 'dts', 'mediatek', `${SOC}.dts`),
+    join(root, 'kernel', `kernel_device_modules-${kernel}`, 'arch', 'arm64', 'boot', 'dts', 'mediatek', `${SOC}.dts`),
     '/dts-v1/;\n',
   )
-  if (side === 'new') {
+  if (side === 'new' && isKernelVersionAtLeast(kernel, '6.12')) {
     mkdirSync(
-      join(root, 'kernel', `kernel_device_modules-${KERNEL}`, 'arch', 'arm64', 'boot', 'dts', 'transsion'),
+      join(root, 'kernel', `kernel_device_modules-${kernel}`, 'arch', 'arm64', 'boot', 'dts', 'transsion'),
       { recursive: true },
     )
   }
@@ -124,6 +134,14 @@ describe('adapt-pipeline path params', () => {
     expect(fields.get('NEW_PROJECTS_ROOT')?.ok).toBe(true)
     expect(fields.get('NEW_KERNEL_DWS_PATH')?.ok).toBe(true)
     expect(fields.get('NEW_KERNEL_PROJECT_DTS_PATH')?.ok).toBe(true)
+    expect(fields.get('NEW_KERNEL_PROJECT_DTS_PATH')?.value).toMatch(/\\dts\\transsion\\?$/i)
+    expect(fields.get('NEW_KERNEL_PROJECT_DTS_PATH')?.label).toBe('NEW_KERNEL_PROJECT_DTS_PATH')
+    expect(fields.get('OLD_ATA_CONFIG_PATH')?.ok).toBe(true)
+    expect(fields.get('NEW_ATA_CONFIG_PATH')?.ok).toBe(true)
+    expect(fields.get('OLD_ATA_CONFIG_PATH')?.value).toMatch(new RegExp(`\\\\custom\\\\${PROJECT}\\\\factory\\\\?$`))
+    expect(fields.get('NEW_ATA_CONFIG_PATH')?.value).toMatch(new RegExp(`\\\\custom\\\\${PROJECT}\\\\factory\\\\?$`))
+    expect(fields.get('OLD_ATA_CONFIG_PATH')?.label).toBe('OLD_ATA_CONFIG_PATH')
+    expect(fields.get('NEW_ATA_CONFIG_PATH')?.label).toBe('NEW_ATA_CONFIG_PATH')
     expect(fields.get('NEW_KO_PACK_SOC_PATH')?.ok).toBe(true)
     expect(result.fields.every(f => f.key)).toBe(true)
     expect(result.fields.map(f => f.key)).toContain('NEW_KO_PACK_SOC_PATH')
@@ -173,6 +191,9 @@ describe('adapt-pipeline path params', () => {
     }).fields.map(f => f.key)
     expect(keys).toContain('SOC_PLATFROM')
     expect(keys).toContain('PROJECT_FULL')
+    expect(keys).toContain('OLD_ATA_CONFIG_PATH')
+    expect(keys).toContain('NEW_ATA_CONFIG_PATH')
+    expect(keys).toContain('NEW_KERNEL_PROJECT_DTS_PATH')
 
     const without = PATH_PARAM_FIELDS.filter(f => f.key !== 'SOC_PLATFROM')
     const next = parsePathParams({
@@ -208,6 +229,33 @@ describe('adapt-pipeline path params', () => {
     expect(loaded?.path_params?.inputs.NEW_SYSTEM_ROOT).toBe('Z:\\project\\CM8\\system')
     expect(loaded?.path_params?.inputs.NEW_TRSYSTEM_ROOT).toBe('Z:\\project\\trsys')
     expect(loaded?.path_params?.fields.find(f => f.key === 'PROJECT_FULL')?.value).toBe(PROJECT)
+  })
+
+  it('isKernelVersionAtLeast compares dotted kernel versions numerically', () => {
+    expect(isKernelVersionAtLeast('6.12', '6.12')).toBe(true)
+    expect(isKernelVersionAtLeast('6.13', '6.12')).toBe(true)
+    expect(isKernelVersionAtLeast('7.0', '6.12')).toBe(true)
+    expect(isKernelVersionAtLeast('6.6', '6.12')).toBe(false)
+    expect(isKernelVersionAtLeast('5.15', '6.12')).toBe(false)
+  })
+
+  it('NEW_KERNEL_PROJECT_DTS_PATH uses mediatek when kernel < 6.12', () => {
+    const neu = tempDir('pp-k66-new-')
+    const old = tempDir('pp-k66-old-')
+    populateVendorTree(neu, 'new', [], '6.6')
+    populateVendorTree(old, 'old', [], '6.6')
+
+    const result = parsePathParams({
+      project_code: 'LK7K',
+      OLD_VENDOR_ROOT: old,
+      NEW_VENDOR_ROOT: neu,
+    })
+    const fields = fieldMap(result)
+    expect(fields.get('NEW_KERNEL_VERSION')?.value).toBe('6.6')
+    const dts = fields.get('NEW_KERNEL_PROJECT_DTS_PATH')!
+    expect(dts.ok).toBe(true)
+    expect(dts.value).toMatch(/\\dts\\mediatek\\?$/i)
+    expect(dts.value).not.toMatch(/transsion/i)
   })
 
   it('flattenPathParams prefers fields.value including failed-but-overridden', () => {

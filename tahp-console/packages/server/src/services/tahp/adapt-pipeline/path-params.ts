@@ -15,6 +15,8 @@ import {
 export type { PathParamFieldDef, PathParamParseContext }
 export { PATH_PARAM_FIELDS } from './path-param-fields'
 export {
+  isKernelVersionAtLeast,
+  kernelProjectDtsVendor,
   listSubdirs,
   matchesProjectPrefix,
   normalizeKernelVersion,

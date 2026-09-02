@@ -16,7 +16,6 @@ export interface AdaptPathParamInputs {
   project_code: string
   OLD_VENDOR_ROOT: string
   NEW_VENDOR_ROOT: string
-  NEW_SYSTEM_ROOT: string
 }
 
 export interface AdaptPathParamScope {
@@ -34,7 +33,6 @@ export function createPathParamInputs(): AdaptPathParamInputs {
     project_code: '',
     OLD_VENDOR_ROOT: '',
     NEW_VENDOR_ROOT: '',
-    NEW_SYSTEM_ROOT: '',
   }
 }
 
@@ -53,7 +51,7 @@ export function isPathParamWorkspace(workspaceId: string): boolean {
   return (PATH_PARAM_WORKSPACES as readonly string[]).includes(workspaceId)
 }
 
-/** 参与解析的三个必填输入构成签名；NEW_SYSTEM_ROOT 只随结果保存，不影响新鲜度 */
+/** 参与解析的三个必填输入构成签名 */
 export function pathParamSignature(inputs: AdaptPathParamInputs): string {
   return [
     inputs.project_code.trim(),
@@ -83,12 +81,10 @@ export function pathParamFailCount(scope: AdaptPathParamScope): number {
 /** 再次解析时沿用用户已选/已手填的项目目录 */
 export function pathParamRequestPayload(scope: AdaptPathParamScope): PathParamInputs {
   const projectFull = scope.fields.find(f => f.key === 'PROJECT_FULL')?.value?.trim()
-  const systemRoot = scope.inputs.NEW_SYSTEM_ROOT.trim()
   return {
     project_code: scope.inputs.project_code.trim(),
     OLD_VENDOR_ROOT: scope.inputs.OLD_VENDOR_ROOT.trim(),
     NEW_VENDOR_ROOT: scope.inputs.NEW_VENDOR_ROOT.trim(),
-    ...(systemRoot ? { NEW_SYSTEM_ROOT: systemRoot } : {}),
     ...(projectFull ? { PROJECT_FULL: projectFull } : {}),
   }
 }
@@ -115,7 +111,6 @@ export function copyPathParamInputs(from: AdaptPathParamInputs): AdaptPathParamI
     project_code: from.project_code,
     OLD_VENDOR_ROOT: from.OLD_VENDOR_ROOT,
     NEW_VENDOR_ROOT: from.NEW_VENDOR_ROOT,
-    NEW_SYSTEM_ROOT: from.NEW_SYSTEM_ROOT,
   }
 }
 
@@ -145,7 +140,6 @@ export function flattenAdaptPathParams(scope?: AdaptPathParamScope | null): {
   add('project_code', scope.inputs.project_code)
   add('OLD_VENDOR_ROOT', scope.inputs.OLD_VENDOR_ROOT)
   add('NEW_VENDOR_ROOT', scope.inputs.NEW_VENDOR_ROOT)
-  add('NEW_SYSTEM_ROOT', scope.inputs.NEW_SYSTEM_ROOT)
   for (const field of scope.fields) {
     add(field.key, field.value)
   }

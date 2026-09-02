@@ -66,21 +66,13 @@ describe('adapt path params scope', () => {
     expect(pathParamsFresh(scope)).toBe(false)
   })
 
-  it('NEW_SYSTEM_ROOT 变化不影响新鲜度，但会随参数下发', () => {
-    const scope = scopeWithInputs()
-    applyPathParamResult(scope, sampleResult())
-    scope.inputs.NEW_SYSTEM_ROOT = 'Z:\\new\\system'
-    expect(pathParamsFresh(scope)).toBe(true)
-    expect(flattenAdaptPathParams(scope).formData.NEW_SYSTEM_ROOT).toBe('Z:\\new\\system')
-  })
-
-  it('重新解析沿用已选 PROJECT_FULL，并省略空的 NEW_SYSTEM_ROOT', () => {
+  it('重新解析沿用已选 PROJECT_FULL', () => {
     const scope = scopeWithInputs()
     applyPathParamResult(scope, sampleResult())
     const payload = pathParamRequestPayload(scope)
     expect(payload.PROJECT_FULL).toBe('km9_h123')
-    expect(payload.NEW_SYSTEM_ROOT).toBeUndefined()
     expect(payload.project_code).toBe('KM9')
+    expect(payload).not.toHaveProperty('NEW_SYSTEM_ROOT')
   })
 
   it('展平使用手工覆盖值，且跳过空值', () => {
@@ -92,6 +84,7 @@ describe('adapt path params scope', () => {
     const flat = flattenAdaptPathParams(scope)
     expect(flat.formData.NEW_KERNEL_DWS_PATH).toBe('Z:\\new\\vendor\\a.dws')
     expect(flat.formData.SOC_PLATFROM).toBe('mt6878')
+    expect(flat.formData.NEW_SYSTEM_ROOT).toBeUndefined()
     expect(flat.formFields.map(f => f.name)).toContain('NEW_VENDOR_ROOT')
     expect(flat.formFields.every(f => f.required === false)).toBe(true)
   })
