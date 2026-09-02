@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'events'
 import {
+  __testingOtaVersionFallbackProp,
   __testingOtaVersionProp,
   __testingResolveReportOtaVersion,
   type TestSession,
@@ -16,8 +17,11 @@ vi.mock('child_process', async (importOriginal) => {
   }
 })
 
-function mockGetprop(stdout: string) {
+function mockGetpropSequence(outputs: string[]) {
+  let call = 0
   spawnMock.mockImplementation(() => {
+    const stdout = outputs[Math.min(call, outputs.length - 1)] ?? ''
+    call += 1
     const proc = new EventEmitter() as EventEmitter & {
       stdout?: EventEmitter
       stderr?: EventEmitter
@@ -36,6 +40,10 @@ function mockGetprop(stdout: string) {
     })
     return proc
   })
+}
+
+function mockGetprop(stdout: string) {
+  mockGetpropSequence([stdout])
 }
 
 function makeSession(otaVersion?: string): TestSession {
@@ -73,5 +81,14 @@ describe('device-self-check report OTA version', () => {
     const session = makeSession('cached-ota-v1')
     const version = await __testingResolveReportOtaVersion('ut-ota-1', session)
     expect(version).toBe('cached-ota-v1')
+  })
+
+  it('falls back to ro.build.display.id when persist OTA prop is empty', async () => {
+    mockGetpropSequence(['', 'display-id-v2\n'])
+    const session = makeSession()
+    const version = await __testingResolveReportOtaVersion('ut-ota-1', session)
+    expect(version).toBe('display-id-v2')
+    const secondCallArgs = spawnMock.mock.calls[1]?.[1] as string[] | undefined
+    expect(secondCallArgs).toContain(__testingOtaVersionFallbackProp)
   })
 })

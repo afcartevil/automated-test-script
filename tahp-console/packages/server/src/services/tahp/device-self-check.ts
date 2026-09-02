@@ -152,6 +152,8 @@ export interface TestSession {
   otaVersion?: string
   /** 测试开始前的前置配置快照（写入报告 summary/detail） */
   testConfig?: SelfCheckTestConfig
+  /** 用例失败时待导出的日志（报告落盘后再执行，避免与 getprop 争抢 adb） */
+  pendingFailureLogCaseKeys?: string[]
 }
 
 export interface CaseCatalogItem {
@@ -892,14 +894,22 @@ async function execAdbSimple(args: string[]): Promise<string> {
 }
 
 const OTA_VERSION_PROP = 'persist.sys.ota_version'
+const OTA_VERSION_FALLBACK_PROP = 'ro.build.display.id'
 
 /** 设备 OTA 版本（质量验测报告 summary/detail.version） */
 async function fetchDeviceOtaVersion(deviceId: string): Promise<string> {
-  const raw = await execAdbCommand(
-    ['-s', deviceId, 'shell', 'getprop', OTA_VERSION_PROP],
-    { timeoutMs: ADB_PROBE_TIMEOUT_MS, label: `getprop ${OTA_VERSION_PROP} ${deviceId}` },
-  )
-  return raw.trim()
+  return withDeviceAdbLock(deviceId, async () => {
+    const primary = await execAdbCommand(
+      ['-s', deviceId, 'shell', 'getprop', OTA_VERSION_PROP],
+      { timeoutMs: ADB_PROBE_TIMEOUT_MS, label: `getprop ${OTA_VERSION_PROP} ${deviceId}` },
+    )
+    if (primary.trim()) return primary.trim()
+    const fallback = await execAdbCommand(
+      ['-s', deviceId, 'shell', 'getprop', OTA_VERSION_FALLBACK_PROP],
+      { timeoutMs: ADB_PROBE_TIMEOUT_MS, label: `getprop ${OTA_VERSION_FALLBACK_PROP} ${deviceId}` },
+    )
+    return fallback.trim()
+  })
 }
 
 /** 报告落盘用：优先实时 getprop，失败则回退 session 缓存（测试开始时采集） */
@@ -1083,6 +1093,34 @@ async function adbPull(
       finish()
     })
   })
+}
+
+function queueFailureLogExport(session: TestSession, caseKey: string): void {
+  if (!session.pendingFailureLogCaseKeys) session.pendingFailureLogCaseKeys = []
+  session.pendingFailureLogCaseKeys.push(caseKey)
+}
+
+async function flushPendingFailureLogExports(deviceId: string, session: TestSession): Promise<void> {
+  const keys = session.pendingFailureLogCaseKeys
+  if (!keys?.length) return
+  session.pendingFailureLogCaseKeys = []
+  for (const caseKey of keys) {
+    try {
+      const exportedDir = await exportFailureLogsForCase(deviceId, session, caseKey)
+      if (!exportedDir) continue
+      const latest = session.caseResults[caseKey]
+      if (!latest) continue
+      latest.failureLogDir = exportedDir
+      latest.steps.push({
+        stepDesc: `失败日志已导出: ${exportedDir}`,
+        status: '完成',
+        timestamp: new Date().toISOString(),
+      })
+      emitEvent('case_completed', { deviceId, caseKey, result: latest })
+    } catch (e) {
+      console.warn('[device-self-check] Background failure log export failed:', caseKey, e)
+    }
+  }
 }
 
 async function exportFailureLogsForCase(
@@ -1619,21 +1657,7 @@ async function runCase(
 
   result.endTime = new Date().toISOString()
   if (result.status === '失败') {
-    // 后台导出失败日志，不阻塞后续用例与整场 finishTest（adb pull 可能很慢或挂死）
-    void exportFailureLogsForCase(deviceId, session, caseKey).then((exportedDir) => {
-      if (!exportedDir) return
-      const latest = session.caseResults[caseKey]
-      if (!latest) return
-      latest.failureLogDir = exportedDir
-      latest.steps.push({
-        stepDesc: `失败日志已导出: ${exportedDir}`,
-        status: '完成',
-        timestamp: new Date().toISOString(),
-      })
-      emitEvent('case_completed', { deviceId, caseKey, result: latest })
-    }).catch((e) => {
-      console.warn('[device-self-check] Background failure log export failed:', caseKey, e)
-    })
+    queueFailureLogExport(session, caseKey)
   }
   emitEvent('case_completed', { deviceId, caseKey, result })
   return result
@@ -2917,7 +2941,7 @@ export async function startTest(
     testSessions[deviceId] = session
     emitEvent('test_started', { deviceId, testType, session })
 
-    void resolveReportOtaVersion(deviceId, session).catch(() => undefined)
+    await resolveReportOtaVersion(deviceId, session).catch(() => undefined)
 
     // 初始化：设置亮屏时间为30分钟
     execAdbSimple(['-s', deviceId, 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000'])
@@ -3003,7 +3027,7 @@ export async function startCustomTest(
     bindCustomAuxDevices(auxIds, deviceId, session)
     emitEvent('test_started', { deviceId, testType: 'custom', session })
 
-    void resolveReportOtaVersion(deviceId, session).catch(() => undefined)
+    await resolveReportOtaVersion(deviceId, session).catch(() => undefined)
 
     execAdbSimple(['-s', deviceId, 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000'])
       .catch(() => {})
@@ -3889,6 +3913,10 @@ async function generateTestReport(
     }).catch(err => {
       console.warn('[device-self-check] quality upload failed:', (err as Error).message)
     })
+
+    void flushPendingFailureLogExports(deviceId, session).catch((e) => {
+      console.warn('[device-self-check] Deferred failure log export failed:', e)
+    })
   } catch (e) {
     console.error('[device-self-check] Report generation error:', e)
   }
@@ -4275,6 +4303,7 @@ export async function __testingResolveReportOtaVersion(
 }
 
 export const __testingOtaVersionProp = OTA_VERSION_PROP
+export const __testingOtaVersionFallbackProp = OTA_VERSION_FALLBACK_PROP
 
 /** @internal 单测：前置配置快照 */
 export function __testingSnapshotTestConfig(
