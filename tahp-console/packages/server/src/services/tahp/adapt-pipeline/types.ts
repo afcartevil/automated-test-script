@@ -107,6 +107,11 @@ export interface PipelineDomain {
 
 export interface BuildContext {
   mapped_root: string
+  /**
+   * Linux 映射根（discover `inferred_remote_workspace`），如 `/work/code/qing.li3`。
+   * 未填时按 `/work/code/$(whoami)` 在远端展开；编译 / Gerrit 共用。
+   */
+  linux_root?: string
   workspace: string
   /** @deprecated harness 整机组件；ez-build 使用 build_targets */
   components?: string[]

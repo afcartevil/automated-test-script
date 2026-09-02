@@ -8,6 +8,8 @@ import {
 } from '../domain-catalog'
 import { registerStageForTest } from '../registry'
 import type { PipelineDomain, StageContext, StageDefinition } from '../types'
+import { discoverRemoteRunner } from '../harness-bridge-exec'
+import { fillMappedWorkspaceIfMissing } from '../mapped-workspace'
 
 const DOMAIN_LABELS: Record<string, string> = {
   tp: 'TP触摸屏',
@@ -202,6 +204,18 @@ export const prereqStageDefinition: StageDefinition = {
       from_os: data.from_os,
       to_os: data.to_os,
     })
+    try {
+      const prev = ctx.run.build_context
+      if (!prev?.mapped_root?.trim() || !prev.linux_root?.trim()) {
+        const disc = prev?.mapped_root?.trim() ? null : discoverRemoteRunner()
+        const next = fillMappedWorkspaceIfMissing(prev, disc)
+        if (next.mapped_root !== (prev?.mapped_root ?? '') || next.linux_root !== prev?.linux_root) {
+          ctx.patchRun({ build_context: next })
+        }
+      }
+    } catch {
+      /* mapped_root 为编译/Gerrit 加速项，前置失败不阻断 */
+    }
     ctx.patchState({
       progress: {},
       summary: { domain_count: domains.length, campaign_id: data.campaign_id },

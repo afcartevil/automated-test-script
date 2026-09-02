@@ -67,6 +67,9 @@ vi.mock('../../packages/server/src/services/tahp/gerrit-submit', () => ({
   startGerritDomainSubmit: (...args: unknown[]) => startGerritSubmitMock(...args),
   parseGerritSubmitResult: vi.fn().mockReturnValue({}),
   getGerritSubmitTask: vi.fn(),
+  cancelGerritSubmitTask: vi.fn(),
+  isGerritSubmitStreamFatal: () => false,
+  isGerritSubmitTimedOut: () => false,
 }))
 vi.mock('../../packages/server/src/services/tahp/adapt-pipeline/build-capability', () => ({
   buildCapability: {

@@ -363,7 +363,8 @@ async function asfSessionSshAlive(
   }
 }
 
-async function ensureAsfBridgeSession(opts?: {
+/** 认领可用 asf-bridge 槽（跳过幽灵 mux / 名义 READY）。供 Agent 任务钉死 --session。 */
+export async function ensureAsfBridgeSession(opts?: {
   signal?: { cancelled: boolean }
   onLog?: (line: string) => void
 }): Promise<number> {

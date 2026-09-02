@@ -36,6 +36,14 @@ function getChanges(): GerritChange[] {
   return raw as GerritChange[]
 }
 
+/** SUBMIT 曾误删主机名里的点，已落盘的 CR 链接在展示时补回 */
+function crHref(url: string): string {
+  return url.replace(
+    /^(https?:\/\/)gerrit(-cq)?transsioncom(?=\/|$)/i,
+    (_m, proto: string, cq?: string) => `${proto}gerrit${cq || ''}.transsion.com`,
+  )
+}
+
 function getRepos(): RepoGroup[] {
   const raw = gp().repos
   if (!Array.isArray(raw)) return []
@@ -130,7 +138,7 @@ function stateLabel(state?: unknown): string {
             <span v-if="c.note" class="cr-note">{{ c.note }}</span>
           </td>
           <td>
-            <a v-if="c.change_url" :href="c.change_url" target="_blank" rel="noopener noreferrer" class="cr-link">
+            <a v-if="c.change_url" :href="crHref(c.change_url)" target="_blank" rel="noopener noreferrer" class="cr-link">
               {{ c.change_number ?? 'Gerrit' }}
             </a>
             <span v-else-if="c.error" class="err" :title="c.error">失败</span>

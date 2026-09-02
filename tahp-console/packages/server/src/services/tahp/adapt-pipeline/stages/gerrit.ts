@@ -2,10 +2,15 @@ import { registerStageForTest } from '../registry'
 import type { GerritChangeRef, PipelineDomain, StageContext, StageDefinition, StageVerdict } from '../types'
 import {
   buildConflictChanges,
+  cancelGerritSubmitTask,
   detectDomainFileConflicts,
+  isGerritSubmitStreamFatal,
+  isGerritSubmitTimedOut,
   probeGerritSubmit,
   startGerritDomainSubmit,
 } from '../../gerrit-submit'
+import { discoverRemoteRunner } from '../harness-bridge-exec'
+import { fillMappedWorkspaceIfMissing } from '../mapped-workspace'
 import {
   filterFilesBySelectedRepos,
   groupChangedFilesByRepo,
@@ -71,7 +76,28 @@ function syncProgress(ctx: StageContext, patch: Record<string, unknown>): void {
   })
 }
 
+function ensureRunMappedWorkspace(ctx: StageContext): void {
+  const prev = ctx.run.build_context
+  if (prev?.mapped_root?.trim() && prev.linux_root?.trim()) return
+  let disc: Record<string, unknown> | null = null
+  if (!prev?.mapped_root?.trim()) {
+    try {
+      disc = discoverRemoteRunner()
+    } catch { /* discover 失败不阻断提交，Gerrit 服务仍可按盘符换算 */ }
+  }
+  const next = fillMappedWorkspaceIfMissing(prev, disc)
+  if (
+    next.mapped_root !== (prev?.mapped_root ?? '')
+    || next.linux_root !== prev?.linux_root
+  ) {
+    ctx.patchRun({ build_context: next })
+    if (next.mapped_root) ctx.log(`mapped_root=${next.mapped_root}`)
+    if (next.linux_root) ctx.log(`linux_root=${next.linux_root}`)
+  }
+}
+
 async function launchDomainSubmit(ctx: StageContext, domain: PipelineDomain): Promise<boolean> {
+  ensureRunMappedWorkspace(ctx)
   const buildContext = ctx.run.build_context
   if (!buildContext) {
     ctx.patchState({ progress: { state: 'error', error: '缺少 build_context，无法提交 Gerrit' } })
@@ -104,6 +130,7 @@ async function launchDomainSubmit(ctx: StageContext, domain: PipelineDomain): Pr
       ...(ctx.state.progress as Record<string, unknown>),
       state: 'submitting',
       current_domain_id: domain.domain_id,
+      submit_started_at: new Date().toISOString(),
     },
   })
   ctx.log(`开始提交域 ${domain.domain_label}: taskId=${result.taskId}`)
@@ -136,6 +163,7 @@ export const gerritStageDefinition: StageDefinition = {
   },
 
   async start(ctx: StageContext) {
+    ensureRunMappedWorkspace(ctx)
     const domainsRaw = domainsWithChanges(ctx)
 
     if (!domainsRaw.length) {
@@ -231,12 +259,19 @@ export const gerritStageDefinition: StageDefinition = {
     }
 
     if (ev.type === 'task.message') {
-      if (ev.payload.level === 'stream') {
-        const text = String(ev.payload.text ?? '').trim()
-        if (text) ctx.log(text.slice(0, 500))
-      } else {
-        const text = String(ev.payload.text ?? ev.payload.message ?? '').trim()
-        if (text) ctx.log(text.slice(0, 500))
+      const text = String(ev.payload.text ?? ev.payload.message ?? '').trim()
+      if (text) ctx.log(text.slice(0, 500))
+      if (text && isGerritSubmitStreamFatal(text)) {
+        const err = 'ASF Bridge 会话已断开（齐治/SSH），请重试提交'
+        const changes = [...(ctx.run.gerrit_changes ?? [])]
+        const changeIdx = changes.findIndex(c => c.domain_id === domainId)
+        if (changeIdx >= 0) {
+          changes[changeIdx] = { ...changes[changeIdx], status: 'failed', error: err }
+        }
+        ctx.patchRun({ gerrit_changes: changes })
+        syncProgress(ctx, { state: 'submit_failed', changes, error: err })
+        ctx.log(`域 ${domainId} 提交失败: ${err}`)
+        try { cancelGerritSubmitTask(taskId) } catch { /* ignore */ }
       }
       return
     }
@@ -356,6 +391,14 @@ export const gerritStageDefinition: StageDefinition = {
       return {
         status: 'failed',
         error: String(p.error ?? '部分域 Gerrit 提交失败'),
+        retryable: true,
+      }
+    }
+
+    if (state === 'submitting' && isGerritSubmitTimedOut(String(p.submit_started_at || ctx.state.started_at || ''))) {
+      return {
+        status: 'failed',
+        error: 'Gerrit 提交超时（ASF Bridge 可能已断开），请重试',
         retryable: true,
       }
     }
