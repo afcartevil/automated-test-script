@@ -10,7 +10,7 @@ import { readCentralUserSession } from '../../services/tahp/central-user-session
 import { isCentralConfigured } from '../../services/tahp/runtime-mode'
 import { bindJiraToCentral } from '../../services/tahp/sync/jira-bind'
 import { centralClient } from '../../services/tahp/sync/central-client'
-import { getTaskInboxPatches, getTaskUnreadIds } from '../../services/tahp/sync/task-notify-client'
+import { clearTaskUnread, getTaskInboxPatches, getTaskUnreadIds } from '../../services/tahp/sync/task-notify-client'
 import { clearApplyPrompt, getApplyPrompt } from '../../services/tahp/task-apply-prompt'
 import { getTaskContext, setTaskContext } from '../../services/tahp/task-context'
 
@@ -126,6 +126,13 @@ tahpCentralSsoRoutes.get('/api/tahp/task-inbox', async (ctx) => {
 
 tahpCentralSsoRoutes.post('/api/tahp/task-apply-dismiss', async (ctx) => {
   clearApplyPrompt()
+  ctx.body = { success: true }
+})
+
+/** 清除本机收件箱未读（验测任务通知点击「打开验测」后调用） */
+tahpCentralSsoRoutes.post('/api/tahp/task-inbox/ack', async (ctx) => {
+  const body = (ctx.request.body || {}) as { package_id?: string }
+  clearTaskUnread(String(body.package_id || '').trim() || undefined)
   ctx.body = { success: true }
 })
 

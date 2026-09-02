@@ -242,9 +242,17 @@ const pipelinePackages = computed(() =>
 const selfCheckPackages = computed(() =>
   unfinishedChecklist.value.filter(p => p.kind !== 'adapt-pipeline'),
 )
-const patchPackages = computed(() => inboxPackages.value.filter(p => p.notice_type))
+const patchPackages = computed(() =>
+  inboxPackages.value.filter(p => p.notice_type && p.notice_type !== 'verify-task'),
+)
+const verifyPackages = computed(() =>
+  inboxPackages.value.filter(p => p.notice_type === 'verify-task'),
+)
 const taskRemain = computed(() => unfinishedChecklist.value.length)
-const taskUnread = computed(() => unfinishedChecklist.value.filter(p => p.unread).length)
+// 红点：检查表新通知 + 验测任务指派通知（patch 通知不计）
+const taskUnread = computed(() =>
+  unfinishedChecklist.value.filter(p => p.unread).length + verifyPackages.value.length,
+)
 const applyCanPass = computed(() =>
   applyPrompt.value?.run.status === 'pass' && !applyPrompt.value?.campaign_unspecified,
 )
@@ -253,6 +261,7 @@ function kindBadge(kind?: string) {
   if (kind === 'adapt-pipeline') return '流水线'
   if (kind === 'gki-patch') return 'GKI'
   if (kind === 'modem-patch') return 'Modem'
+  if (kind === 'verify-task') return '验测'
   return '自检'
 }
 
@@ -315,6 +324,22 @@ function openPatch(pkg: (typeof inboxPackages.value)[number]) {
   closeTaskPop()
   if (pkg.notice_type === 'gki-patch') void router.push({ name: 'tahp.gki-patch.dashboard' })
   else void router.push({ name: 'tahp.modem-baseline.workbench' })
+}
+
+/** 验测任务通知：清掉本机未读红点，直达「质量验测 → 测试执行」 */
+async function openVerifyTask(pkg: (typeof inboxPackages.value)[number]) {
+  closeTaskPop()
+  inboxPackages.value = inboxPackages.value.filter(p => p.package_id !== pkg.package_id)
+  try {
+    await fetch('/api/tahp/task-inbox/ack', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ package_id: pkg.package_id }),
+    })
+  } catch {
+    /* 清未读失败不阻断跳转 */
+  }
+  void router.push({ name: 'tahp.self-check', query: { tab: 'devices' } })
 }
 
 async function goExecute(pkg: (typeof inboxPackages.value)[number]) {
@@ -504,7 +529,7 @@ onUnmounted(() => {
             <span v-if="taskUnread" class="ck-task-dot" title="未读通知">{{ taskUnread > 9 ? '9+' : taskUnread }}</span>
           </button>
           <div v-if="showTaskPop" class="ck-task-pop">
-            <div class="ck-task-pop-hd">红点=新通知　左侧数字=流水线+自检未完成包。打开清单不会把未完成清掉。Patch 单独计。</div>
+            <div class="ck-task-pop-hd">红点=新通知（含验测指派）　左侧数字=流水线+自检未完成包。Patch 单独计。</div>
             <template v-if="pipelinePackages.length">
               <div class="ck-task-sec">适配流水线</div>
               <div v-for="p in pipelinePackages" :key="p.package_id" class="ck-task-item">
@@ -538,6 +563,21 @@ onUnmounted(() => {
               </div>
             </template>
             <div v-if="!unfinishedChecklist.length" class="ck-task-empty">没有未完成的检查表</div>
+            <template v-if="verifyPackages.length">
+              <div class="ck-task-sec">验测任务</div>
+              <div v-for="p in verifyPackages" :key="p.package_id" class="ck-task-item">
+                <div>
+                  <div>
+                    <span class="ck-task-badge check">{{ kindBadge(p.notice_type) }}</span>
+                    <b>{{ p.title || '验测任务指派' }}</b>
+                  </div>
+                  <div class="ck-task-meta">指派验测 · 去「测试执行」跑对应测试项</div>
+                </div>
+                <div class="ck-task-actions">
+                  <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openVerifyTask(p)">打开验测</button>
+                </div>
+              </div>
+            </template>
             <template v-if="patchPackages.length">
               <div class="ck-task-sec">PATCH 通知（不计入 Checklist 红点）</div>
               <div v-for="p in patchPackages" :key="p.package_id" class="ck-task-item">

@@ -1,4 +1,5 @@
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
 import { useDeviceSelfCheckLaunchStore } from '@/stores/tahp/device-self-check-launch'
 import {
@@ -346,6 +347,10 @@ const gerritPreselectCount = ref(0)
 const launchStore = useDeviceSelfCheckLaunchStore()
 
   const activeTab = ref<SelfCheckTab>('overview')
+  // 支持 ?tab=devices 直达（验测任务通知「打开验测」跳转「测试执行」）
+  const route = useRoute()
+  const initialTab = String(route.query.tab || '')
+  if (SELF_CHECK_TABS.some(t => t.key === initialTab)) activeTab.value = initialTab as SelfCheckTab
   const syncing = ref(false)
   const nextNodes = ref<NextNodeItem[]>([])
   const scheduleItems = ref<ScheduleItem[]>([])
