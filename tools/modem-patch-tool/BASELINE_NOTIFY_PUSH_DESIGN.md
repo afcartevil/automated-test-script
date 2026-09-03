@@ -101,13 +101,14 @@ tahp-console（每人本机）
 ```ts
 type CentralBaselineNotice = {
   noticeId: string          // 中心生成，全局唯一；本机 ingest 必须采用此 ID
-  source: string            // 默认 MergeTool
-  sourceId?: string         // 与 source 组成幂等键
+  source: string            // webhook 固定 MergeTool
+  sourceId: string          // 中心生成 baseline-job-YYYYMMDD-NNN
   title?: string
-  text: string
-  platform?: string
-  version?: string
-  tosVersion?: string
+  text: string              // 由 trunk 三字段格式化
+  trunk?: string
+  newBaseline?: string
+  oldBaseline?: string
+  version?: string          // 从 newBaseline 文件名提取
   module: 'modem'           // 一期写死
   payload: Record<string, unknown>
   receivedAt: string        // ISO，由中心生成；补推水位依据
@@ -117,9 +118,10 @@ type CentralBaselineNotice = {
 
 约束：
 
-- 幂等：存在 `sourceId` 时，`source + sourceId` 命中则返回已有 notice，**`created=false`，不再次 fan-out**。  
+- MergeTool 只发 `trunk` / `newBaseline` / `oldBaseline`。`source`/`sourceId` 由中心补全。  
+- 幂等：相同三字段命中则返回已有 notice，**`created=false`，不再次 fan-out**。  
 - 保留上限：最近 **500** 条（与本机 inbox 截断策略对齐）。  
-- `text`：请求体 `text` / `message` 优先；否则 `title + platform + version + tosVersion` 拼接；仍空则 HTTP 400。
+- 缺三字段：HTTP 400 `notice_fields_required`。
 
 ### 4.2 送达游标（中心）
 
@@ -278,8 +280,6 @@ Authorization: Bearer <MODEM_BASELINE_NOTIFY_TOKEN>   # 仅当中心已配置该
 
 ```json
 {
-  "source": "MergeTool",
-  "sourceId": "baseline-job-20260903-001",
   "trunk": "tOS_mtk_A16_vnd_trunk.xml",
   "newBaseline": "t-alps-release-b0.mp1.rc-V12.9.xml",
   "oldBaseline": "t-alps-release-b0.mp1.rc-V11.9.xml"
@@ -290,7 +290,7 @@ Authorization: Bearer <MODEM_BASELINE_NOTIFY_TOKEN>   # 仅当中心已配置该
 |----|------|
 | Token 未配置 | **放行**（内网） |
 | Token 已配置且不匹配 | **401** |
-| 成功新建 | **201** + `noticeId`，并 Socket 广播 |
+| 成功新建 | **201** + `noticeId` / `sourceId`，并 Socket 推送 |
 | 幂等命中 | **200** + 已有 `noticeId`，不广播 |
 | 缺 `trunk`/`newBaseline`/`oldBaseline` | **400** `notice_fields_required` |
 

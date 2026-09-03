@@ -57,6 +57,7 @@ function isFilled(filledIds: string[] | undefined, noticeId: string) {
           </div>
           <div class="notice-meta">
             <span>{{ item.source }}</span>
+            <span v-if="item.sourceId">{{ item.sourceId }}</span>
             <span v-if="item.version">{{ item.version }}</span>
             <span>{{ formatTime(item.receivedAt) }}</span>
           </div>

@@ -33,12 +33,22 @@ Authorization: Bearer <MODEM_BASELINE_NOTIFY_TOKEN>   # 若已配置该环境变
 # 或 Header: X-Modem-Notify-Token: <token>
 ```
 
-请求体（唯一格式）：
+请求体（MergeTool 只发这三项；`source` / `sourceId` 由中心补全后再推本机）：
+
+```json
+{
+  "trunk": "tOS_mtk_A16_vnd_trunk.xml",
+  "newBaseline": "t-alps-release-b0.mp1.rc-V12.9.xml",
+  "oldBaseline": "t-alps-release-b0.mp1.rc-V11.9.xml"
+}
+```
+
+中心写入并扇出到本机：
 
 ```json
 {
   "source": "MergeTool",
-  "sourceId": "baseline-job-20260811-001",
+  "sourceId": "baseline-job-20260903-001",
   "trunk": "tOS_mtk_A16_vnd_trunk.xml",
   "newBaseline": "t-alps-release-b0.mp1.rc-V12.9.xml",
   "oldBaseline": "t-alps-release-b0.mp1.rc-V11.9.xml"
@@ -46,6 +56,7 @@ Authorization: Bearer <MODEM_BASELINE_NOTIFY_TOKEN>   # 若已配置该环境变
 ```
 
 - `trunk` / `newBaseline` / `oldBaseline` **均必填**
+- `source` 固定 `MergeTool`；`sourceId` 由中心生成 `baseline-job-YYYYMMDD-NNN`（MergeTool 不传）
 - inbox 展示为：
   ```text
   任务：tOS_mtk_A16_vnd_trunk.xml 基线升级
@@ -53,7 +64,7 @@ Authorization: Bearer <MODEM_BASELINE_NOTIFY_TOKEN>   # 若已配置该环境变
   老基线：t-alps-release-b0.mp1.rc-V11.9.xml
   ```
 - 从 `newBaseline` 文件名提取版本（如 `V12.9`）供「采用并填入」
-- 相同 `source` + `sourceId` 幂等；成功：`201`（新建）或 `200`（幂等命中）
+- 相同 `trunk` + `newBaseline` + `oldBaseline` 幂等（MergeTool 重试不重复）；成功：`201`（新建）或 `200`（幂等命中）
 - 缺字段：`400` `notice_fields_required`
 
 环境变量：`MODEM_BASELINE_NOTIFY_TOKEN`（可选；未配置时不校验 token）
