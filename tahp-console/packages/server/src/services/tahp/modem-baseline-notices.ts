@@ -1,6 +1,6 @@
 /**
  * External notify inbox for Modem 升级.
- * Baseline upgrade is done by other tools; they POST a notice here.
+ * MergeTool POSTs a notice here after baseline upgrade.
  * EasyAdapter only stores it — operator confirms in UI then starts the run.
  */
 import crypto from 'crypto'
@@ -10,16 +10,25 @@ import { config as serverConfig } from '../../config'
 
 export type ModemExternalNoticeStatus = 'pending' | 'applied' | 'dismissed'
 
+export type ModemBaselineManifestFields = {
+  /** 任务关联 manifest，如 tOS_mtk_A16_vnd_trunk.xml */
+  trunk?: string
+  /** 新基线 manifest，如 t-alps-release-b0.mp1.rc-V12.9.xml */
+  newBaseline?: string
+  /** 老基线 manifest，如 t-alps-release-b0.mp1.rc-V11.9.xml */
+  oldBaseline?: string
+}
+
 export type ModemExternalNotice = {
   noticeId: string
   status: ModemExternalNoticeStatus
   text: string
-  title?: string
   source: string
   sourceId?: string
-  platform?: string
   version?: string
-  tosVersion?: string
+  trunk?: string
+  newBaseline?: string
+  oldBaseline?: string
   payload: Record<string, unknown>
   receivedAt: string
   updatedAt: string
@@ -27,16 +36,13 @@ export type ModemExternalNotice = {
   dismissedAt?: string
 }
 
+/** MergeTool 外部通知唯一契约 */
 export type IngestModemNoticeInput = {
-  text?: string
-  title?: string
-  message?: string
   source?: string
   sourceId?: string
-  platform?: string
-  version?: string
-  tosVersion?: string
-  tos?: string
+  trunk?: string
+  newBaseline?: string
+  oldBaseline?: string
   [key: string]: unknown
 }
 
@@ -80,16 +86,67 @@ function asTrimmedString(value: unknown) {
   return String(value).trim()
 }
 
-function buildNoticeText(input: IngestModemNoticeInput): string {
-  const direct = asTrimmedString(input.text) || asTrimmedString(input.message)
-  if (direct) return direct
+/** 从基线/manifest 文件名提取版本，如 …-V12.9.xml → V12.9 */
+export function extractVersionFromBaselineName(name: string): string | undefined {
+  const raw = asTrimmedString(name)
+  if (!raw) return undefined
+  const dashed = raw.match(/-V(\d+(?:\.\d+){0,4})(?:\.xml)?$/i)
+  if (dashed) return `V${dashed[1]}`
+  const loose = raw.match(/\bV(\d+(?:\.\d+){0,4})\b/i)
+  return loose ? `V${loose[1]}` : undefined
+}
 
-  const title = asTrimmedString(input.title)
-  const platform = asTrimmedString(input.platform)
-  const version = asTrimmedString(input.version)
-  const tos = asTrimmedString(input.tosVersion) || asTrimmedString(input.tos)
-  const parts = [title, platform, version, tos].filter(Boolean)
-  return parts.join(' ')
+/** 从「任务：xxx.xml 基线升级」取值里抽出 manifest 名 */
+export function normalizeTaskTrunkValue(value: string): string {
+  const raw = asTrimmedString(value)
+  if (!raw) return ''
+  const xml = raw.match(/([^\s：:]+?\.xml)\b/i)
+  if (xml) return xml[1]
+  return raw.replace(/\s*基线升级\s*$/u, '').trim()
+}
+
+/** 从展示文案「任务：/新基线：/老基线：」解析字段（采用并填入时用） */
+export function parseModemBaselineManifestText(text: string): ModemBaselineManifestFields {
+  const raw = String(text ?? '')
+  const pick = (label: string) => {
+    const re = new RegExp(`^\\s*${label}\\s*[:：]\\s*(.+)\\s*$`, 'im')
+    const match = raw.match(re)
+    return match ? asTrimmedString(match[1]) : ''
+  }
+  const trunk = normalizeTaskTrunkValue(pick('任务'))
+  const newBaseline = pick('新基线')
+  const oldBaseline = pick('老基线')
+  return {
+    trunk: trunk || undefined,
+    newBaseline: newBaseline || undefined,
+    oldBaseline: oldBaseline || undefined,
+  }
+}
+
+export function formatModemBaselineManifestText(fields: ModemBaselineManifestFields): string {
+  const trunk = asTrimmedString(fields.trunk)
+  const newBaseline = asTrimmedString(fields.newBaseline)
+  const oldBaseline = asTrimmedString(fields.oldBaseline)
+  if (!trunk || !newBaseline || !oldBaseline) return ''
+  return [
+    `任务：${trunk} 基线升级`,
+    `新基线：${newBaseline}`,
+    `老基线：${oldBaseline}`,
+  ].join('\n')
+}
+
+export function resolveModemBaselineManifestFields(
+  input: IngestModemNoticeInput,
+): ModemBaselineManifestFields {
+  return {
+    trunk: normalizeTaskTrunkValue(asTrimmedString(input.trunk)) || undefined,
+    newBaseline: asTrimmedString(input.newBaseline) || undefined,
+    oldBaseline: asTrimmedString(input.oldBaseline) || undefined,
+  }
+}
+
+function buildNoticeText(input: IngestModemNoticeInput): string {
+  return formatModemBaselineManifestText(resolveModemBaselineManifestFields(input))
 }
 
 export function resolveModemNotifyToken(env: NodeJS.ProcessEnv = process.env): string {
@@ -123,16 +180,18 @@ export function ingestModemBaselineNotice(
   options?: IngestModemNoticeOptions,
 ): { notice: ModemExternalNotice; created: boolean } {
   const storePath = options?.storePath || defaultNoticesStorePath()
-  const input: IngestModemNoticeInput = typeof raw === 'string'
-    ? { text: raw }
-    : (raw && typeof raw === 'object' ? raw : {})
+  if (typeof raw === 'string' || !raw || typeof raw !== 'object') {
+    throw new Error('notice_fields_required')
+  }
+  const input: IngestModemNoticeInput = raw
 
-  const text = buildNoticeText(input)
+  const manifests = resolveModemBaselineManifestFields(input)
+  const text = formatModemBaselineManifestText(manifests)
   if (!text) {
-    throw new Error('notice_text_required')
+    throw new Error('notice_fields_required')
   }
 
-  const source = asTrimmedString(input.source) || 'tones'
+  const source = asTrimmedString(input.source) || 'MergeTool'
   const sourceId = asTrimmedString(input.sourceId) || undefined
   const preferNoticeId = asTrimmedString(options?.preferNoticeId)
   const preferReceivedAt = asTrimmedString(options?.preferReceivedAt)
@@ -157,13 +216,13 @@ export function ingestModemBaselineNotice(
     noticeId: preferNoticeId || `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
     status: 'pending',
     text,
-    title: asTrimmedString(input.title) || undefined,
     source,
     sourceId,
-    platform: asTrimmedString(input.platform) || undefined,
-    version: asTrimmedString(input.version) || undefined,
-    tosVersion: asTrimmedString(input.tosVersion) || asTrimmedString(input.tos) || undefined,
-    payload: typeof raw === 'string' ? { text: raw } : { ...input },
+    version: extractVersionFromBaselineName(manifests.newBaseline || '') || undefined,
+    trunk: manifests.trunk,
+    newBaseline: manifests.newBaseline,
+    oldBaseline: manifests.oldBaseline,
+    payload: { ...input },
     receivedAt: preferReceivedAt || now,
     updatedAt: now,
   }

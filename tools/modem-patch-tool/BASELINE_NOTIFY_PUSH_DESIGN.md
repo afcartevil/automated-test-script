@@ -101,7 +101,7 @@ tahp-console（每人本机）
 ```ts
 type CentralBaselineNotice = {
   noticeId: string          // 中心生成，全局唯一；本机 ingest 必须采用此 ID
-  source: string            // 默认 tones
+  source: string            // 默认 MergeTool
   sourceId?: string         // 与 source 组成幂等键
   title?: string
   text: string
@@ -278,13 +278,11 @@ Authorization: Bearer <MODEM_BASELINE_NOTIFY_TOKEN>   # 仅当中心已配置该
 
 ```json
 {
-  "source": "tones",
-  "sourceId": "baseline-job-20260811-001",
-  "title": "基线升级完成",
-  "platform": "GEN99-V",
-  "version": "V11.35",
-  "tosVersion": "tOS16.3.0",
-  "text": "7月基线升级 GEN99-V V11.35"
+  "source": "MergeTool",
+  "sourceId": "baseline-job-20260903-001",
+  "trunk": "tOS_mtk_A16_vnd_trunk.xml",
+  "newBaseline": "t-alps-release-b0.mp1.rc-V12.9.xml",
+  "oldBaseline": "t-alps-release-b0.mp1.rc-V11.9.xml"
 }
 ```
 
@@ -294,7 +292,7 @@ Authorization: Bearer <MODEM_BASELINE_NOTIFY_TOKEN>   # 仅当中心已配置该
 | Token 已配置且不匹配 | **401** |
 | 成功新建 | **201** + `noticeId`，并 Socket 广播 |
 | 幂等命中 | **200** + 已有 `noticeId`，不广播 |
-| 无有效 text | **400** `notice_text_required` |
+| 缺 `trunk`/`newBaseline`/`oldBaseline` | **400** `notice_fields_required` |
 
 ### 6.2 `GET /webhook/modem-baseline/notify`
 

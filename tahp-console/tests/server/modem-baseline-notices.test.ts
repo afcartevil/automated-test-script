@@ -8,7 +8,23 @@ import {
   updateModemBaselineNoticeStatus,
   verifyModemNotifyToken,
   extractModemNotifyToken,
+  parseModemBaselineManifestText,
+  extractVersionFromBaselineName,
 } from '../../packages/server/src/services/tahp/modem-baseline-notices'
+import { parseModemPatchNotice } from '../../packages/server/src/services/tahp/modem-baseline'
+
+const SAMPLE = {
+  source: 'MergeTool',
+  trunk: 'tOS_mtk_A16_vnd_trunk.xml',
+  newBaseline: 't-alps-release-b0.mp1.rc-V12.9.xml',
+  oldBaseline: 't-alps-release-b0.mp1.rc-V11.9.xml',
+} as const
+
+const DISPLAY_TEXT = [
+  '任务：tOS_mtk_A16_vnd_trunk.xml 基线升级',
+  '新基线：t-alps-release-b0.mp1.rc-V12.9.xml',
+  '老基线：t-alps-release-b0.mp1.rc-V11.9.xml',
+].join('\n')
 
 const tempDirs: string[] = []
 
@@ -27,20 +43,21 @@ afterEach(() => {
 })
 
 describe('modem-baseline external notices', () => {
-  it('ingests structured notice and lists as pending', () => {
+  it('ingests MergeTool notice and lists as pending', () => {
     const storePath = tempStorePath()
     const { notice, created } = ingestModemBaselineNotice({
-      source: 'tones',
+      ...SAMPLE,
       sourceId: 'job-1',
-      platform: 'GEN99-V',
-      version: 'V11.35',
-      title: '基线升级完成',
     }, { storePath })
 
     expect(created).toBe(true)
     expect(notice.status).toBe('pending')
-    expect(notice.text).toContain('GEN99-V')
-    expect(notice.text).toContain('V11.35')
+    expect(notice.source).toBe('MergeTool')
+    expect(notice.trunk).toBe(SAMPLE.trunk)
+    expect(notice.newBaseline).toBe(SAMPLE.newBaseline)
+    expect(notice.oldBaseline).toBe(SAMPLE.oldBaseline)
+    expect(notice.version).toBe('V12.9')
+    expect(notice.text).toBe(DISPLAY_TEXT)
 
     const pending = listModemBaselineNotices({ status: 'pending' }, { storePath })
     expect(pending).toHaveLength(1)
@@ -50,45 +67,57 @@ describe('modem-baseline external notices', () => {
   it('is idempotent on sourceId', () => {
     const storePath = tempStorePath()
     const first = ingestModemBaselineNotice({
-      text: '7月基线升级 GEN99-V V11.35',
-      source: 'tones',
+      ...SAMPLE,
       sourceId: 'dup-1',
     }, { storePath })
     const second = ingestModemBaselineNotice({
-      text: 'changed text should not create new',
-      source: 'tones',
+      ...SAMPLE,
       sourceId: 'dup-1',
+      newBaseline: 't-alps-release-b0.mp1.rc-V99.9.xml',
     }, { storePath })
 
     expect(first.created).toBe(true)
     expect(second.created).toBe(false)
     expect(second.notice.noticeId).toBe(first.notice.noticeId)
+    expect(second.notice.newBaseline).toBe(SAMPLE.newBaseline)
     expect(listModemBaselineNotices({ status: 'all' }, { storePath })).toHaveLength(1)
   })
 
   it('marks applied / dismissed', () => {
     const storePath = tempStorePath()
-    const { notice } = ingestModemBaselineNotice('基线升级 GEN97 V12.0', { storePath })
+    const { notice } = ingestModemBaselineNotice({
+      ...SAMPLE,
+      sourceId: 'apply-1',
+    }, { storePath })
     const applied = updateModemBaselineNoticeStatus(notice.noticeId, 'applied', { storePath })
     expect(applied.status).toBe('applied')
     expect(listModemBaselineNotices({ status: 'pending' }, { storePath })).toHaveLength(0)
 
-    const { notice: other } = ingestModemBaselineNotice('另一条通知 GEN98 V1.0', { storePath })
+    const { notice: other } = ingestModemBaselineNotice({
+      ...SAMPLE,
+      sourceId: 'dismiss-1',
+      oldBaseline: 't-alps-release-b0.mp1.rc-V10.0.xml',
+    }, { storePath })
     const dismissed = updateModemBaselineNoticeStatus(other.noticeId, 'dismissed', { storePath })
     expect(dismissed.status).toBe('dismissed')
   })
 
-  it('rejects empty notice text', () => {
+  it('rejects missing trunk/newBaseline/oldBaseline', () => {
     const storePath = tempStorePath()
-    expect(() => ingestModemBaselineNotice({}, { storePath })).toThrow('notice_text_required')
+    expect(() => ingestModemBaselineNotice({}, { storePath })).toThrow('notice_fields_required')
+    expect(() => ingestModemBaselineNotice({
+      source: 'MergeTool',
+      trunk: SAMPLE.trunk,
+      newBaseline: SAMPLE.newBaseline,
+    }, { storePath })).toThrow('notice_fields_required')
+    expect(() => ingestModemBaselineNotice('plain text' as any, { storePath })).toThrow('notice_fields_required')
   })
 
   it('adopts preferNoticeId and is idempotent on noticeId', () => {
     const storePath = tempStorePath()
     const first = ingestModemBaselineNotice(
       {
-        text: '中心推送 GEN99-V V11.35',
-        source: 'tones',
+        ...SAMPLE,
         sourceId: 'job-central-1',
       },
       { storePath, preferNoticeId: 'nb-fixed-1', preferReceivedAt: '2026-08-12T01:00:00.000Z' },
@@ -99,8 +128,7 @@ describe('modem-baseline external notices', () => {
 
     const second = ingestModemBaselineNotice(
       {
-        text: '重复推送应幂等',
-        source: 'tones',
+        ...SAMPLE,
         sourceId: 'other-source-id',
       },
       { storePath, preferNoticeId: 'nb-fixed-1' },
@@ -116,5 +144,21 @@ describe('modem-baseline external notices', () => {
     expect(verifyModemNotifyToken('wrong', { MODEM_BASELINE_NOTIFY_TOKEN: 'secret' })).toBe(false)
     expect(extractModemNotifyToken({ authorization: 'Bearer abc' })).toBe('abc')
     expect(extractModemNotifyToken({ 'x-modem-notify-token': 'xyz' })).toBe('xyz')
+  })
+
+  it('parses display text for 采用并填入', () => {
+    expect(parseModemBaselineManifestText(DISPLAY_TEXT)).toEqual({
+      trunk: SAMPLE.trunk,
+      newBaseline: SAMPLE.newBaseline,
+      oldBaseline: SAMPLE.oldBaseline,
+    })
+    expect(extractVersionFromBaselineName(SAMPLE.newBaseline)).toBe('V12.9')
+  })
+
+  it('parseModemPatchNotice extracts version from 新基线 line', () => {
+    const parsed = parseModemPatchNotice(DISPLAY_TEXT)
+    expect(parsed.version).toBe('V12.9')
+    expect(parsed.targetMode).toBe('mp')
+    expect(parsed.warnings).toContain('no_platform_detected')
   })
 })

@@ -8,7 +8,7 @@ import path from 'path'
 import { io, type Socket } from 'socket.io-client'
 import { config } from '../../../config'
 import { logger } from '../../logger'
-import { ingestModemBaselineNotice } from '../modem-baseline-notices'
+import { ingestModemBaselineNotice, parseModemBaselineManifestText } from '../modem-baseline-notices'
 import { ingestGkiUpgradeNotice } from '../gki-upgrade-notices'
 import { getLocalActor, isCentralConfigured, isLocal } from '../runtime-mode'
 import { readJiraUsername } from '../jira-user-config'
@@ -23,6 +23,9 @@ type CentralBaselineNotice = {
   platform?: string
   version?: string
   tosVersion?: string
+  trunk?: string
+  newBaseline?: string
+  oldBaseline?: string
   module?: string
   payload?: Record<string, unknown>
   receivedAt: string
@@ -172,15 +175,17 @@ function handleNotice(notice: CentralBaselineNotice, sock: Socket): void {
       )
       return
     }
+    const payload = (notice.payload && typeof notice.payload === 'object')
+      ? notice.payload as Record<string, unknown>
+      : {}
+    const fromText = parseModemBaselineManifestText(notice.text || '')
     const { created } = ingestModemBaselineNotice(
       {
         source: notice.source,
         sourceId: notice.sourceId,
-        title: notice.title,
-        text: notice.text,
-        platform: notice.platform,
-        version: notice.version,
-        tosVersion: notice.tosVersion,
+        trunk: asNoticeTag(notice.trunk ?? payload.trunk) || fromText.trunk,
+        newBaseline: asNoticeTag(notice.newBaseline ?? payload.newBaseline) || fromText.newBaseline,
+        oldBaseline: asNoticeTag(notice.oldBaseline ?? payload.oldBaseline) || fromText.oldBaseline,
       },
       {
         preferNoticeId: notice.noticeId,

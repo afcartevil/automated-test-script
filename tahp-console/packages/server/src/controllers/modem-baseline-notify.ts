@@ -23,19 +23,31 @@ export async function handleModemBaselineNotifyInfo(ctx: any) {
         : 'Optional (MODEM_BASELINE_NOTIFY_TOKEN not set)',
       note: '此地址不是网页。请用 POST 推送 JSON；浏览器打开仅用于探测接口是否存活。',
       example: {
-        source: 'tones',
+        source: 'MergeTool',
         sourceId: 'baseline-job-001',
-        text: '7月基线升级 GEN99-V V11.35',
-        platform: 'GEN99-V',
-        version: 'V11.35',
+        trunk: 'tOS_mtk_A16_vnd_trunk.xml',
+        newBaseline: 't-alps-release-b0.mp1.rc-V12.9.xml',
+        oldBaseline: 't-alps-release-b0.mp1.rc-V11.9.xml',
       },
+      fields: {
+        source: '来源，默认 MergeTool',
+        sourceId: '外部任务唯一 ID（建议，幂等）',
+        trunk: '任务关联 manifest',
+        newBaseline: '新基线 manifest',
+        oldBaseline: '老基线 manifest',
+      },
+      displayText: [
+        '任务：tOS_mtk_A16_vnd_trunk.xml 基线升级',
+        '新基线：t-alps-release-b0.mp1.rc-V12.9.xml',
+        '老基线：t-alps-release-b0.mp1.rc-V11.9.xml',
+      ].join('\n'),
       afterNotify: '打开 Console → Modem升级 → 外部通知 → 采用并填入 → 启动基线升级 → 确认完成',
     },
   }
 }
 
 /**
- * Public ingest endpoint for baseline-complete notifications from TONES / other tools.
+ * Public ingest endpoint for baseline-complete notifications from MergeTool.
  * Does not start Modem 升级 — only enqueues a pending notice for operator confirmation.
  */
 export async function handleModemBaselineNotify(ctx: any) {
@@ -47,16 +59,12 @@ export async function handleModemBaselineNotify(ctx: any) {
   }
 
   const body = ctx.request.body
-  let input: IngestModemNoticeInput | string
-  if (typeof body === 'string') {
-    input = body
-  } else if (body && typeof body === 'object') {
-    input = body as IngestModemNoticeInput
-  } else {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
     ctx.status = 400
     ctx.body = { success: false, error: 'invalid_body' }
     return
   }
+  const input = body as IngestModemNoticeInput
 
   try {
     const result = ingestModemBaselineNotice(input)
@@ -79,7 +87,7 @@ export async function handleModemBaselineNotify(ctx: any) {
     }
   } catch (error) {
     const message = (error as Error).message
-    ctx.status = message === 'notice_text_required' ? 400 : 500
+    ctx.status = (message === 'notice_fields_required' || message === 'notice_text_required') ? 400 : 500
     ctx.body = { success: false, error: message }
   }
 }

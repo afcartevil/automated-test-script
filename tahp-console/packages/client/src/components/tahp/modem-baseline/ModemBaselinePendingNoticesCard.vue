@@ -57,7 +57,6 @@ function isFilled(filledIds: string[] | undefined, noticeId: string) {
           </div>
           <div class="notice-meta">
             <span>{{ item.source }}</span>
-            <span v-if="item.platform">{{ item.platform }}</span>
             <span v-if="item.version">{{ item.version }}</span>
             <span>{{ formatTime(item.receivedAt) }}</span>
           </div>
@@ -173,6 +172,7 @@ function isFilled(filledIds: string[] | undefined, noticeId: string) {
   color: var(--head);
   line-height: 1.45;
   word-break: break-word;
+  white-space: pre-wrap;
 }
 
 .notice-meta {

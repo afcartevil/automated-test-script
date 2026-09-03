@@ -20,11 +20,11 @@
 
 ### 外部通知接入（基线完成后推送）
 
-> **生产扇出（已拍板设计）**：TONES → **中心 `easyadapter_bff`** 一次 POST → 中心经 Socket.IO `/baseline-notify` 推到各本机 Console；离线靠重连分批全量补推。  
-> 完整方案见：[BASELINE_NOTIFY_PUSH_DESIGN.md](./BASELINE_NOTIFY_PUSH_DESIGN.md)（同步副本：`easyadapter_bff/docs/baseline-notify/DESIGN.md`）。  
-> 下文 **本机** `POST /webhook/modem-baseline/notify` 仅用于 **单机调试**；TONES 生产请打中心同名路径。
+> **生产扇出**：MergeTool → **中心 `easyadapter_bff`** 一次 POST → 中心经 Socket.IO `/baseline-notify` 推到各本机 Console。  
+> 完整方案见：[BASELINE_NOTIFY_PUSH_DESIGN.md](./BASELINE_NOTIFY_PUSH_DESIGN.md)。  
+> 本机 `POST /webhook/modem-baseline/notify` 仅用于单机调试；生产请打中心同名路径。
 
-其它工具完成基线升级后推送通知；**不会自动启动** Modem 升级。研发在 Console「Modem升级」页「采用并填入」后仍保留在待确认；核对并启动后需再点「确认完成」才会从列表消失。
+MergeTool 完成基线升级后推送通知；**不会自动启动** Modem 升级。研发在 Console「Modem升级」页「采用并填入」后仍保留在待确认；核对并启动后再点「确认完成」才会从列表消失。
 
 ```http
 POST /webhook/modem-baseline/notify
@@ -33,24 +33,28 @@ Authorization: Bearer <MODEM_BASELINE_NOTIFY_TOKEN>   # 若已配置该环境变
 # 或 Header: X-Modem-Notify-Token: <token>
 ```
 
-请求体示例：
+请求体（唯一格式）：
 
 ```json
 {
-  "source": "tones",
+  "source": "MergeTool",
   "sourceId": "baseline-job-20260811-001",
-  "title": "基线升级完成",
-  "platform": "GEN99-V",
-  "version": "V11.35",
-  "tosVersion": "tOS16.3.0",
-  "text": "7月基线升级 GEN99-V V11.35"
+  "trunk": "tOS_mtk_A16_vnd_trunk.xml",
+  "newBaseline": "t-alps-release-b0.mp1.rc-V12.9.xml",
+  "oldBaseline": "t-alps-release-b0.mp1.rc-V11.9.xml"
 }
 ```
 
-- `text` / `message` 优先；缺省时由 `title + platform + version + tosVersion` 拼接
-- 相同 `source` + `sourceId` 幂等，重复推送返回已有 `noticeId`
-- 成功：`201`（新建）或 `200`（幂等命中）
-- 浏览器 GET 同路径可探测接口说明（不是网页业务页）
+- `trunk` / `newBaseline` / `oldBaseline` **均必填**
+- inbox 展示为：
+  ```text
+  任务：tOS_mtk_A16_vnd_trunk.xml 基线升级
+  新基线：t-alps-release-b0.mp1.rc-V12.9.xml
+  老基线：t-alps-release-b0.mp1.rc-V11.9.xml
+  ```
+- 从 `newBaseline` 文件名提取版本（如 `V12.9`）供「采用并填入」
+- 相同 `source` + `sourceId` 幂等；成功：`201`（新建）或 `200`（幂等命中）
+- 缺字段：`400` `notice_fields_required`
 
 环境变量：`MODEM_BASELINE_NOTIFY_TOKEN`（可选；未配置时不校验 token）
 

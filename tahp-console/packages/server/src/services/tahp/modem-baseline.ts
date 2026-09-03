@@ -6,6 +6,10 @@ import { spawn, spawnSync, type ChildProcess } from 'child_process'
 import type { ServerResponse } from 'http'
 import * as XLSX from 'xlsx'
 import { config as serverConfig } from '../../config'
+import {
+  extractVersionFromBaselineName,
+  parseModemBaselineManifestText,
+} from './modem-baseline-notices'
 
 export type ModemBaselineStatus = 'running' | 'success' | 'failed' | 'conflict'
 export type ModemBaselineMode = 'stop_after_merge'
@@ -1136,6 +1140,7 @@ function basePlatformToken(text?: string) {
 export function parseModemPatchNotice(text: string): NoticeParseResult {
   const rawText = String(text ?? '').trim()
   const warnings: string[] = []
+  const manifests = parseModemBaselineManifestText(rawText)
   const platforms = Array.from(new Set(
     (rawText.match(/\bGEN\d+(?:(?:[\s_-]*R\d+[\s_-]*[STUVW])|(?:[\s_-]*[STUVW][\s_-]*R\d+)|(?:[\s_-]*R\d+)|(?:[\s_-]*[STUVW]))?\b/gi) || [])
       .map(item => normalizePlatformToken(item))
@@ -1145,8 +1150,12 @@ export function parseModemPatchNotice(text: string): NoticeParseResult {
   const tosMatch = rawText.match(/\btOS\s*\d+(?:\.\d+){1,3}(?:\s*MP)?\b/i)
   const specialMpMatch = rawText.match(/\b(15\.1\.2|15\.1\.3|16\.3)(?:\s*MP)?\b/i)
   const explicitMp = /\bMP\b/i.test(rawText)
+    || /\.mp\d/i.test(manifests.newBaseline || '')
+    || /\bmp\d/i.test(manifests.newBaseline || '')
   const platform = platforms[0]
-  const version = versionMatch ? versionMatch[0].toUpperCase() : undefined
+  const versionFromNew = extractVersionFromBaselineName(manifests.newBaseline || '')
+  const version = versionFromNew
+    || (versionMatch ? versionMatch[0].toUpperCase() : undefined)
   const tosVersion = tosMatch
     ? normalizeTosVersion(tosMatch[0])
     : specialMpMatch
@@ -1160,6 +1169,7 @@ export function parseModemPatchNotice(text: string): NoticeParseResult {
   if (version) confidence += 0.2
   if (tosVersion) confidence += 0.1
   if (operationType !== 'unknown') confidence += 0.2
+  if (manifests.newBaseline) confidence = Math.min(1, confidence + 0.15)
   confidence = Math.min(1, confidence)
 
   if (!platforms.length) warnings.push('no_platform_detected')

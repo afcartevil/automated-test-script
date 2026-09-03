@@ -131,12 +131,12 @@ export type ModemExternalNotice = {
   noticeId: string
   status: ModemExternalNoticeStatus
   text: string
-  title?: string
   source: string
   sourceId?: string
-  platform?: string
   version?: string
-  tosVersion?: string
+  trunk?: string
+  newBaseline?: string
+  oldBaseline?: string
   receivedAt: string
   updatedAt: string
 }
