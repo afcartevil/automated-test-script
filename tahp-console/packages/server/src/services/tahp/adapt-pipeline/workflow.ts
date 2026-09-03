@@ -3,7 +3,7 @@ import { join } from 'path'
 import { logger } from '../../logger'
 import { tahpPaths } from '../paths'
 import { getStage } from './registry'
-import type { NodeTarget, WorkflowDefinition, WorkflowNode } from './types'
+import type { NodeTarget, PipelineRun, WorkflowDefinition, WorkflowNode } from './types'
 
 export const DEFAULT_WORKFLOW: WorkflowDefinition = {
   id: 'adapt-default',
@@ -40,6 +40,23 @@ export function workflowConfigPath(): string {
 
 export function getEnabledNodes(workflow: WorkflowDefinition): WorkflowNode[] {
   return workflow.nodes.filter(n => n.enabled)
+}
+
+/**
+ * 按本 run 已挂载的 stages 计算有效 workflow。
+ * 已存在于 run.stages 的节点强制 enabled；其余强制 disabled。
+ * 用于同 run 追加下游阶段时不改全局 workflow.json。
+ */
+export function effectiveWorkflowForRun(run: PipelineRun): WorkflowDefinition {
+  const base = loadWorkflow()
+  const present = new Set(Object.keys(run.stages))
+  return {
+    ...base,
+    nodes: base.nodes.map(n => ({
+      ...n,
+      enabled: present.has(n.key),
+    })),
+  }
 }
 
 export function resolveDefaultOnDone(workflow: WorkflowDefinition, nodeKey: string): NodeTarget {

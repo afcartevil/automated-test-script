@@ -1,7 +1,7 @@
 import { getStage } from './registry'
 import type { PipelineDomain, PipelineRun, TimelineView, WorkflowDefinition } from './types'
 import { resolveAdaptMaxRetries } from './types'
-import { getEnabledNodes, loadWorkflow } from './workflow'
+import { effectiveWorkflowForRun, getEnabledNodes } from './workflow'
 
 function serializeDomainForTimeline(domain: PipelineDomain, retryMax: number) {
   return {
@@ -92,7 +92,7 @@ function formatSummaryLine(
 
 export function buildTimelineView(
   run: PipelineRun,
-  workflow: WorkflowDefinition = loadWorkflow(),
+  workflow: WorkflowDefinition = effectiveWorkflowForRun(run),
 ): TimelineView {
   const loopTargets = collectLoopTargets(workflow)
   const startedAt = runStartedAt(run)

@@ -6,9 +6,14 @@ const props = defineProps<{
   nodes: TimelineNode[]
   activeKey: string | null
   iteration: number
+  /** 已完成运行可追加下游阶段时展示末尾入口 */
+  showAppend?: boolean
 }>()
 
-const emit = defineEmits<{ select: [key: string] }>()
+const emit = defineEmits<{
+  select: [key: string]
+  append: []
+}>()
 
 const scrollerRef = ref<HTMLElement | null>(null)
 
@@ -95,6 +100,23 @@ watch(() => props.activeKey, () => {
           :class="connectorClass(index)"
           aria-hidden="true"
         />
+      </template>
+      <template v-if="showAppend">
+        <span
+          v-if="visibleNodes.length > 0"
+          class="ea-step-conn conn-pending"
+          aria-hidden="true"
+        />
+        <button
+          type="button"
+          class="ea-step ea-step-append"
+          title="追加烧录 / 自检 / 提交 Gerrit"
+          @click="emit('append')"
+        >
+          <span class="ea-step-ico">+</span>
+          <span class="ea-step-name">追加后续阶段</span>
+          <span class="ea-step-sum">烧录 / 自检 / Gerrit</span>
+        </button>
       </template>
     </div>
     <div v-if="showLoopArc" class="ea-step-loop">
@@ -220,6 +242,27 @@ watch(() => props.activeKey, () => {
 .ea-step.st-pending {
   background: #f4f5f8;
   color: var(--faint, #9aa0b0);
+}
+
+.ea-step.ea-step-append {
+  background: color-mix(in srgb, var(--accent, #5256d4) 8%, #fff);
+  color: var(--accent, #5256d4);
+  border: 1.5px dashed color-mix(in srgb, var(--accent, #5256d4) 45%, transparent);
+  max-width: 140px;
+  min-width: 118px;
+  flex: 0 0 auto;
+
+  .ea-step-ico {
+    background: var(--accent, #5256d4);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 500;
+  }
+
+  &:hover {
+    background: color-mix(in srgb, var(--accent, #5256d4) 14%, #fff);
+    border-color: var(--accent, #5256d4);
+  }
 }
 
 .ea-step-conn {

@@ -133,6 +133,40 @@ export interface ResumeRequest {
   node: string
   scope?: 'continue' | 'restart'
   force?: boolean
+  /** 续跑烧录/自检时可补绑设备 serial */
+  device_id?: string
+}
+
+export const APPENDABLE_STAGE_KEYS = ['flash', 'selfcheck', 'gerrit'] as const
+export type AppendableStageKey = (typeof APPENDABLE_STAGE_KEYS)[number]
+
+export interface AppendStagesRequest {
+  stages: AppendableStageKey[]
+  gerrit_skip_flash?: boolean
+  device_id?: string
+  flash_pkg_path?: string
+  test_plan?: {
+    mode: 'smoke' | 'pipeline_adapt' | 'recommend' | 'fixed'
+    test_type?: string
+    selected_cases?: string[]
+    must_test_items?: string[]
+  }
+}
+
+export interface AppendCandidatesResponse {
+  eligible: boolean
+  reason?: string
+  available: AppendableStageKey[]
+  present: AppendableStageKey[]
+  artifacts: {
+    has_build: boolean
+    pkg_path?: string
+    device_id?: string
+  }
+  rules: {
+    selfcheck_requires: AppendableStageKey[]
+    gerrit_only_risk: string
+  }
 }
 
 export interface BuildContext {
@@ -315,6 +349,17 @@ export function submitPipelineHumanAction(runId: string, input: HumanActionReque
 
 export function resumePipelineRun(runId: string, input: ResumeRequest): Promise<{ ok: boolean; iteration: number }> {
   return tahpPost(`/api/tahp/adapt-pipeline/runs/${encodeURIComponent(runId)}/resume`, input)
+}
+
+export function fetchAppendCandidates(runId: string): Promise<AppendCandidatesResponse> {
+  return tahpGet(`/api/tahp/adapt-pipeline/runs/${encodeURIComponent(runId)}/append-candidates`)
+}
+
+export function appendPipelineStages(
+  runId: string,
+  input: AppendStagesRequest,
+): Promise<{ ok: boolean; status: RunStatus; current_node: string | null; stages: string[] }> {
+  return tahpPost(`/api/tahp/adapt-pipeline/runs/${encodeURIComponent(runId)}/append-stages`, input)
 }
 
 export function createPipelineRun(input: CreateRunInput): Promise<CreateRunResponse> {

@@ -417,6 +417,37 @@ export interface ResumeRequest {
   node: string
   scope?: 'continue' | 'restart'
   force?: boolean
+  /** 续跑烧录/自检时可补绑设备 serial */
+  device_id?: string
+}
+
+/** 已完成 run 可追加的下游阶段（与全局 workflow.json 正交） */
+export const APPENDABLE_STAGE_KEYS = ['flash', 'selfcheck', 'gerrit'] as const
+export type AppendableStageKey = (typeof APPENDABLE_STAGE_KEYS)[number]
+
+export interface AppendStagesRequest {
+  stages: AppendableStageKey[]
+  /** 仅追加 Gerrit 时的显式风险确认（UI 勾选后传入） */
+  gerrit_skip_flash?: boolean
+  device_id?: string
+  flash_pkg_path?: string
+  test_plan?: TestPlan
+}
+
+export interface AppendCandidatesResponse {
+  eligible: boolean
+  reason?: string
+  available: AppendableStageKey[]
+  present: AppendableStageKey[]
+  artifacts: {
+    has_build: boolean
+    pkg_path?: string
+    device_id?: string
+  }
+  rules: {
+    selfcheck_requires: AppendableStageKey[]
+    gerrit_only_risk: string
+  }
 }
 
 export interface TimelineView {

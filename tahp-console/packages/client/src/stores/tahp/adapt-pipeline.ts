@@ -2,9 +2,11 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import {
   abortPipelineRun,
+  appendPipelineStages,
   createPipelineRun,
   discardPipelineDraftRun,
   DEFAULT_WORKFLOW,
+  fetchAppendCandidates,
   fetchCapabilities,
   fetchPipelineLogs,
   fetchPipelineRuns,
@@ -16,6 +18,8 @@ import {
   saveWorkflow,
   startPipelineRun,
   submitPipelineHumanAction,
+  type AppendCandidatesResponse,
+  type AppendStagesRequest,
   type CapabilityItem,
   type ResumePointsResponse,
   type RunSummary,
@@ -33,6 +37,7 @@ const PIPELINE_EVENTS = [
   'pipeline.waiting_human',
   'pipeline.human_resolved',
   'pipeline.resumed',
+  'pipeline.stages_appended',
   'pipeline.iteration_started',
   'pipeline.run_completed',
   'pipeline.run_failed',
@@ -63,6 +68,7 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
   const socketConnected = ref(false)
   const nodeLogs = ref<Record<string, string[]>>({})
   const resumePoints = ref<ResumePointsResponse | null>(null)
+  const appendCandidates = ref<AppendCandidatesResponse | null>(null)
   const actionBusy = ref(false)
   const workflowDraft = ref<WorkflowDefinition | null>(null)
   const workflowNodes = ref<WorkflowNodeView[]>([])
@@ -160,12 +166,44 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
     }
   }
 
-  async function resumeRun(runId: string, node: string, scope: 'continue' | 'restart', force = false) {
+  async function resumeRun(
+    runId: string,
+    node: string,
+    scope: 'continue' | 'restart',
+    force = false,
+    deviceId?: string,
+  ) {
     actionBusy.value = true
     try {
-      await resumePipelineRun(runId, { node, scope, force })
+      await resumePipelineRun(runId, {
+        node,
+        scope,
+        force,
+        device_id: deviceId?.trim() || undefined,
+      })
       await loadTimeline(runId)
       await loadRuns()
+    } finally {
+      actionBusy.value = false
+    }
+  }
+
+  async function loadAppendCandidates(runId: string) {
+    try {
+      appendCandidates.value = await fetchAppendCandidates(runId)
+    } catch (err) {
+      appendCandidates.value = null
+      error.value = (err as Error).message
+    }
+  }
+
+  async function appendStages(runId: string, input: AppendStagesRequest) {
+    actionBusy.value = true
+    try {
+      await appendPipelineStages(runId, input)
+      await loadTimeline(runId)
+      await loadRuns()
+      await loadAppendCandidates(runId)
     } finally {
       actionBusy.value = false
     }
@@ -174,9 +212,11 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
   async function selectRun(runId: string | null) {
     selectedRunId.value = runId
     resumePoints.value = null
+    appendCandidates.value = null
     if (!runId) return
-    if (timelines.value[runId]) return
-    await loadTimeline(runId)
+    if (!timelines.value[runId]) await loadTimeline(runId)
+    const tl = timelines.value[runId]
+    if (tl?.status === 'passed') await loadAppendCandidates(runId)
   }
 
   function scheduleTimelineRefresh(runId: string) {
@@ -511,6 +551,7 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
     socketConnected,
     nodeLogs,
     resumePoints,
+    appendCandidates,
     actionBusy,
     workflowDraft,
     workflowNodes,
@@ -527,6 +568,8 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
     loadResumePoints,
     submitHumanAction,
     resumeRun,
+    loadAppendCandidates,
+    appendStages,
     selectRun,
     loadWorkflowEditor,
     saveWorkflowDraft,

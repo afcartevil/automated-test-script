@@ -97,9 +97,16 @@ async function onAction(nodeKey: string, actionId: string) {
   await props.store.submitHumanAction(props.runId, nodeKey, actionId)
 }
 
-async function onResume(node: string, scope: 'continue' | 'restart', force: boolean) {
-  await props.store.resumeRun(props.runId, node, scope, force)
+async function onResume(
+  node: string,
+  scope: 'continue' | 'restart',
+  force: boolean,
+  deviceId?: string,
+) {
+  await props.store.resumeRun(props.runId, node, scope, force, deviceId)
 }
+
+const currentDeviceId = computed(() => props.store.selectedTimeline?.device_id ?? null)
 </script>
 
 <template>
@@ -147,6 +154,7 @@ async function onResume(node: string, scope: 'continue' | 'restart', force: bool
         v-if="needsResumePicker(node)"
         :data="store.resumePoints"
         :busy="store.actionBusy"
+        :current-device-id="currentDeviceId"
         @reload="store.loadResumePoints(runId)"
         @submit="onResume"
       />

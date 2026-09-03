@@ -3,12 +3,15 @@ import { appendPipelineLog, emitPipelineEvent } from './events'
 import { getStage, listStages } from './registry'
 import { getRun, listActiveRunIds, saveRun } from './store'
 import {
+  effectiveWorkflowForRun,
   getEnabledNodes,
-  loadWorkflow,
   resolveOnDone,
 } from './workflow'
 import { setPipelineEventHandler, startSources } from './sources'
 import type {
+  AppendableStageKey,
+  AppendCandidatesResponse,
+  AppendStagesRequest,
   ArtifactKind,
   NodeTarget,
   ObservedEvent,
@@ -21,6 +24,7 @@ import type {
   WorkflowDefinition,
   WorkflowNode,
 } from './types'
+import { APPENDABLE_STAGE_KEYS } from './types'
 
 const advanceChains = new Map<string, Promise<void>>()
 const correlationIndex = new Map<string, { runId: string; nodeKey: string }>()
@@ -59,8 +63,155 @@ function getDownstream(kind: ArtifactKind): ArtifactKind[] {
   return artifactDownstream.get(kind) ?? []
 }
 
-function workflowFor(_run: PipelineRun): WorkflowDefinition {
-  return loadWorkflow()
+function workflowFor(run: PipelineRun): WorkflowDefinition {
+  return effectiveWorkflowForRun(run)
+}
+
+function resolveAppendPkgPath(run: PipelineRun): string | undefined {
+  const summary = run.stages.build?.summary
+  const fromSummary = typeof summary === 'object' && summary && 'pkg_path' in summary
+    ? String((summary as { pkg_path?: unknown }).pkg_path ?? '').trim()
+    : ''
+  const progress = run.stages.build?.progress as { pkg_path?: unknown; pkgPath?: unknown } | undefined
+  const fromProgress = String(progress?.pkg_path ?? progress?.pkgPath ?? '').trim()
+  const fromContext = String(run.build_context?.flash_pkg_path ?? '').trim()
+  return fromSummary || fromProgress || fromContext || undefined
+}
+
+function normalizeAppendStages(
+  requested: string[],
+  present: Set<string>,
+): AppendableStageKey[] {
+  const picked = new Set<AppendableStageKey>()
+  for (const raw of requested) {
+    const key = String(raw ?? '').trim() as AppendableStageKey
+    if (!(APPENDABLE_STAGE_KEYS as readonly string[]).includes(key)) {
+      throw new Error(`不支持追加的阶段: ${key || '(空)'}`)
+    }
+    picked.add(key)
+  }
+  if (picked.has('selfcheck')) picked.add('flash')
+  return APPENDABLE_STAGE_KEYS.filter(k => picked.has(k) && !present.has(k))
+}
+
+export function computeAppendCandidates(run: PipelineRun): AppendCandidatesResponse {
+  const present = APPENDABLE_STAGE_KEYS.filter(k => Boolean(run.stages[k]))
+  const available = APPENDABLE_STAGE_KEYS.filter(k => !run.stages[k])
+  const pkgPath = resolveAppendPkgPath(run)
+  const buildArt = run.artifacts?.build
+  const hasBuild = Boolean(
+    (buildArt && !buildArt.stale)
+    || pkgPath
+    || run.stages.build?.status === 'done',
+  )
+  const rules = {
+    selfcheck_requires: ['flash'] as AppendableStageKey[],
+    gerrit_only_risk: '跳过烧录/自检直接提交 Gerrit，改动未经刷机验证，请自行承担风险。',
+  }
+
+  if (run.status !== 'passed') {
+    return {
+      eligible: false,
+      reason: `仅已完成（passed）的运行可追加后续阶段，当前状态: ${run.status}`,
+      available: [],
+      present: [...present],
+      artifacts: { has_build: hasBuild, pkg_path: pkgPath, device_id: run.device_id },
+      rules,
+    }
+  }
+  if (available.length === 0) {
+    return {
+      eligible: false,
+      reason: '本运行已包含全部可追加下游阶段',
+      available: [],
+      present: [...present],
+      artifacts: { has_build: hasBuild, pkg_path: pkgPath, device_id: run.device_id },
+      rules,
+    }
+  }
+  return {
+    eligible: true,
+    available: [...available],
+    present: [...present],
+    artifacts: { has_build: hasBuild, pkg_path: pkgPath, device_id: run.device_id },
+    rules,
+  }
+}
+
+export async function appendStages(runId: string, req: AppendStagesRequest): Promise<void> {
+  const run = getRun(runId)
+  if (!run) throw new Error(`run not found: ${runId}`)
+  if (run.status !== 'passed') {
+    const err = new Error(`无法追加阶段，当前状态: ${run.status}`) as Error & { conflict?: boolean }
+    err.conflict = true
+    throw err
+  }
+
+  const present = new Set(Object.keys(run.stages))
+  const toAdd = normalizeAppendStages(req.stages ?? [], present)
+  if (toAdd.length === 0) {
+    throw new Error('没有可追加的阶段（可能已存在或未选择）')
+  }
+
+  const onlyGerrit = toAdd.length === 1 && toAdd[0] === 'gerrit'
+  if (onlyGerrit && !req.gerrit_skip_flash) {
+    throw new Error('仅追加 Gerrit 时请确认风险（gerrit_skip_flash）')
+  }
+
+  const needsDevice = toAdd.includes('flash') || toAdd.includes('selfcheck')
+  const incomingDevice = typeof req.device_id === 'string' ? req.device_id.trim() : ''
+  if (incomingDevice) {
+    run.device_id = incomingDevice
+  } else if (needsDevice && !String(run.device_id ?? '').trim()) {
+    throw new Error('追加烧录/自检前请填写设备 ID')
+  }
+  if (typeof req.flash_pkg_path === 'string' && req.flash_pkg_path.trim()) {
+    run.build_context = {
+      ...run.build_context,
+      flash_pkg_path: req.flash_pkg_path.trim(),
+    }
+  }
+  if (req.test_plan) {
+    run.test_plan = req.test_plan
+  }
+
+  for (const key of toAdd) {
+    run.stages[key] = freshStageState(key)
+  }
+
+  const note = `追加后续阶段: ${toAdd.join(',')}`
+  const last = run.iterations[run.iterations.length - 1]
+  if (last) {
+    last.verdict = 'running'
+    last.finished_at = undefined
+    last.note = [last.note, note].filter(Boolean).join('; ')
+  } else {
+    run.iterations.push({
+      index: run.iteration,
+      started_at: new Date().toISOString(),
+      verdict: 'running',
+      note,
+    })
+  }
+
+  run.status = 'running'
+  run.finished_at = undefined
+  run.current_node = null
+  run.abort_reason = undefined
+
+  rebuildArtifactGraph()
+  startSources()
+  setPipelineEventHandler(handleObservedEvent)
+  saveRun(run, { immediate: true })
+
+  emitPipeline('pipeline.stages_appended', {
+    run_id: runId,
+    stages: toAdd,
+    project_code: run.project_code,
+  })
+
+  await enter(runId, toAdd[0])
+  await awaitAdvanceIdle(runId)
 }
 
 function emitPipeline(type: string, payload: Record<string, unknown>): void {
@@ -958,6 +1109,14 @@ export async function resumeFrom(runId: string, req: ResumeRequest): Promise<voi
     const err = new Error('恢复点不安全，需 force 确认') as Error & { missing?: ResumePoint['missing'] }
     err.missing = point.missing
     throw err
+  }
+
+  const needsDevice = req.node === 'flash' || req.node === 'selfcheck'
+  const incomingDevice = typeof req.device_id === 'string' ? req.device_id.trim() : ''
+  if (incomingDevice) {
+    run.device_id = incomingDevice
+  } else if (needsDevice && !String(run.device_id ?? '').trim()) {
+    throw new Error('续跑烧录/自检前请填写设备 ID')
   }
 
   const fromNode = run.current_node

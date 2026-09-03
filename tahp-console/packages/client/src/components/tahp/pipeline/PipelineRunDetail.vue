@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPill from '@/components/layout/EaPill.vue'
 import EaStageStepper from '@/components/common/EaStageStepper.vue'
@@ -7,9 +7,11 @@ import PipelineNodeList from './PipelineNodeList.vue'
 import PipelineNodePanel from './PipelineNodePanel.vue'
 import PipelineHumanPanel from './PipelineHumanPanel.vue'
 import PipelineIterationBar from './PipelineIterationBar.vue'
+import PipelineAppendStagesDrawer from './PipelineAppendStagesDrawer.vue'
 import {
   formatDurationMs,
   runStatusLabel,
+  type AppendableStageKey,
   type TimelineView,
   type RunStatus,
 } from '@/api/tahp/adapt-pipeline'
@@ -28,6 +30,8 @@ const emit = defineEmits<{
   discarded: [nextRunId: string | null]
 }>()
 
+const appendOpen = ref(false)
+
 const selectedNode = computed(() =>
   props.timeline.nodes.find(n => n.key === props.selectedNodeKey) ?? props.timeline.nodes[0] ?? null,
 )
@@ -42,6 +46,11 @@ const canDiscardDraft = computed(() => props.timeline.status === 'draft')
 const canAbort = computed(() =>
   !canDiscardDraft.value
   && !['passed', 'failed', 'aborted'].includes(props.timeline.status),
+)
+
+const canAppend = computed(() =>
+  props.timeline.status === 'passed'
+  && Boolean(props.store.appendCandidates?.eligible),
 )
 
 const osLabel = computed(() => {
@@ -78,9 +87,38 @@ async function handleDiscardDraft() {
   emit('discarded', next)
 }
 
+async function openAppendDrawer() {
+  await props.store.loadAppendCandidates(props.timeline.run_id)
+  if (!props.store.appendCandidates?.eligible) {
+    window.alert(props.store.appendCandidates?.reason || '当前运行不可追加后续阶段')
+    return
+  }
+  appendOpen.value = true
+}
+
+async function handleAppendConfirm(payload: {
+  stages: AppendableStageKey[]
+  gerrit_skip_flash?: boolean
+  device_id?: string
+}) {
+  await props.store.appendStages(props.timeline.run_id, payload)
+  appendOpen.value = false
+  const first = payload.stages[0]
+  if (first) emit('selectNode', first)
+}
+
 watch(() => selectedNode.value?.key, (key) => {
   void loadLogsForNode(key ?? null)
 }, { immediate: true })
+
+watch(
+  () => [props.timeline.run_id, props.timeline.status] as const,
+  ([runId, status]) => {
+    appendOpen.value = false
+    if (status === 'passed') void props.store.loadAppendCandidates(runId)
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -134,7 +172,9 @@ watch(() => selectedNode.value?.key, (key) => {
         :nodes="timeline.nodes"
         :active-key="selectedNode?.key ?? null"
         :iteration="timeline.iteration"
+        :show-append="canAppend"
         @select="emit('selectNode', $event)"
+        @append="openAppendDrawer"
       />
     </EaCard>
 
@@ -169,6 +209,15 @@ watch(() => selectedNode.value?.key, (key) => {
       :iterations="timeline.iterations"
       :current="timeline.iteration"
       :max-iterations="timeline.max_iterations"
+    />
+
+    <PipelineAppendStagesDrawer
+      :open="appendOpen"
+      :candidates="store.appendCandidates"
+      :busy="store.actionBusy"
+      :current-device-id="timeline.device_id"
+      @close="appendOpen = false"
+      @confirm="handleAppendConfirm"
     />
   </div>
 </template>

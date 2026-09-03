@@ -10,6 +10,8 @@ import { listHarnessSkills } from '../../services/tahp/adapt-pipeline/harness-sk
 import { readPipelineLogs } from '../../services/tahp/adapt-pipeline/events'
 import {
   abortRun,
+  appendStages,
+  computeAppendCandidates,
   computeResumePoints,
   pauseRun,
   recover,
@@ -29,6 +31,7 @@ import { parsePathParams } from '../../services/tahp/adapt-pipeline/path-params'
 import { listTrsysBranches } from '../../services/tahp/adapt-pipeline/trsys-conf-share'
 import { buildTimelineView } from '../../services/tahp/adapt-pipeline/timeline'
 import type {
+  AppendStagesRequest,
   CreateRunInput,
   PathParamInputs,
   PipelineRun,
@@ -285,6 +288,48 @@ tahpAdaptPipelineRoutes.post('/runs/:runId/resume', async (ctx) => {
       return
     }
     ctx.status = 400
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+tahpAdaptPipelineRoutes.get('/runs/:runId/append-candidates', async (ctx) => {
+  const run = getRun(ctx.params.runId)
+  if (!run) {
+    ctx.status = 404
+    ctx.body = { success: false, error: 'run 不存在' }
+    return
+  }
+  ctx.body = { success: true, data: computeAppendCandidates(run) }
+})
+
+tahpAdaptPipelineRoutes.post('/runs/:runId/append-stages', async (ctx) => {
+  const runId = ctx.params.runId
+  if (!getRun(runId)) {
+    ctx.status = 404
+    ctx.body = { success: false, error: 'run 不存在' }
+    return
+  }
+  const req = (ctx.request.body ?? {}) as AppendStagesRequest
+  if (!Array.isArray(req.stages) || req.stages.length === 0) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 stages' }
+    return
+  }
+  try {
+    await appendStages(runId, req)
+    const updated = getRun(runId)!
+    ctx.body = {
+      success: true,
+      data: {
+        ok: true,
+        status: updated.status,
+        current_node: updated.current_node,
+        stages: Object.keys(updated.stages),
+      },
+    }
+  } catch (err) {
+    const conflict = (err as Error & { conflict?: boolean }).conflict
+    ctx.status = conflict ? 409 : 400
     ctx.body = { success: false, error: (err as Error).message }
   }
 })
