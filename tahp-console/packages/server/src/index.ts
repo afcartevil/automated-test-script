@@ -23,8 +23,7 @@ import { ensureJiraWorkspaceLayout } from './services/tahp/jira-workspace'
 import { startAgentBridgeManager } from './services/hermes/agent-bridge'
 import { HermesSkillInjector } from './services/hermes/skill-injector'
 import { logger } from './services/logger'
-
-// TAHP 桥接
+import { installBffDiagnostics, recordFatal } from './services/crash-log'
 import { setupTahpRunSocket } from './routes/tahp/tahp-run'
 import { initDeviceSelfCheck } from './services/tahp/device-self-check'
 import { startSyncScheduler, startBaselineNotifyClient, startTaskNotifyClient, bindStoredJiraIfAny } from './services/tahp/sync'
@@ -34,25 +33,13 @@ import { pullAllWorkspaceLayouts } from './services/tahp/adapt-layout/service'
 import { pullOrReadLineLayouts } from './services/tahp/adapt-layout/line-cache'
 import { bootstrapGkiPatchServer } from './services/tahp/gki-patch'
 
+installBffDiagnostics()
+
 // Injected by esbuild at build time; fallback to reading package.json in dev mode
 declare const __APP_VERSION__: string
 const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
   ? __APP_VERSION__
   : (() => { try { return JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8')).version } catch { return 'dev' } })()
-
-// Global error handlers
-process.on('uncaughtException', (err) => {
-  console.error('FATAL: Uncaught exception')
-  console.error(err)
-  logger.fatal(err, 'Uncaught exception')
-  process.exit(1)
-})
-
-process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled rejection')
-  console.error(reason)
-  logger.error(reason, 'Unhandled rejection')
-})
 
 let server: any = null
 let servers: any[] = []
@@ -340,6 +327,7 @@ export async function bootstrap() {
 bootstrap().catch((error) => {
   console.error('FATAL: Failed to start Hermes Web UI')
   console.error(error)
+  try { recordFatal('bootstrap-failed', error) } catch { /* ignore */ }
   logger.fatal(error, 'Fatal error during bootstrap')
   process.exit(1)
 })

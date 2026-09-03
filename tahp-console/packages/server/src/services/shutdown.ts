@@ -2,6 +2,7 @@ import { logger } from './logger'
 import { closeDb } from '../db'
 import { isGkiPatchAutoStartEnabled, stopGkiPatchServer } from './tahp/gki-patch'
 import { stopBaselineNotifyClient } from './tahp/sync'
+import { markBffExit, stopBffHeartbeat } from './crash-log'
 
 export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?: any, agentBridgeManager?: any): void {
   let isShuttingDown = false
@@ -9,6 +10,8 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
   const shutdown = async (signal: string) => {
     if (isShuttingDown) return
     isShuttingDown = true
+    stopBffHeartbeat()
+    markBffExit('graceful', { signal })
 
     // Force exit after 3s no matter what
     setTimeout(() => process.exit(0), 3000)

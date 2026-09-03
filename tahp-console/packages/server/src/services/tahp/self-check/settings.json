@@ -1,9 +1,7 @@
 {
   "autoTestEnabled": {},
   "autoTestPath": {},
-  "autoRetestEnabled": {},
-  "autoRetestCount": {},
-  "monkeyDuration": "1m",
+  "monkeyDuration": "7d",
   "smokeUsdSkipSpdInfo": false,
   "gmsTradefedPath": {}
 }

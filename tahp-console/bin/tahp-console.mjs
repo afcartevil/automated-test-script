@@ -17,6 +17,10 @@ import {
   portScanTimeoutMs,
 } from '../scripts/lib/port-scan.mjs'
 import { isProcessRunning } from '../scripts/lib/tray-actions.mjs'
+import {
+  recordUnexpectedExit,
+  writeLastExit,
+} from '../scripts/lib/crash-log.mjs'
 import { resolve, dirname, join, delimiter } from 'path'
 import { fileURLToPath } from 'url'
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, chmodSync, statSync, existsSync, realpathSync } from 'fs'
@@ -233,6 +237,7 @@ async function startDaemon(port) {
   })
   child.unref()
   writePid(child.pid)
+  spawnBffWatchdog(child.pid)
 
   const healthUrl = `http://127.0.0.1:${port}/health`
   const maxWait = 30000
@@ -245,6 +250,7 @@ async function startDaemon(port) {
     if (!isRunning(child.pid)) {
       console.log(`  ✗ ${CLI_NAME} 启动失败`)
       console.log(`    日志: ${LOG_FILE}`)
+      console.log(`    崩溃记录: ${join(CONSOLE_HOME, 'logs', 'crash.log')}`)
       removePid()
       process.exit(1)
       return
@@ -257,6 +263,7 @@ async function startDaemon(port) {
         console.log(`  ✓ ${CLI_NAME} 已启动`)
         console.log(`    ${url}`)
         console.log(`    日志: ${LOG_FILE}`)
+        console.log(`    崩溃记录: ${join(CONSOLE_HOME, 'logs', 'crash.log')}`)
         if (authDisabledDefault) {
           console.log(`    鉴权: 已关闭 (内网模式，需开启请设 AUTH_DISABLED=0)`)
         }
@@ -271,16 +278,30 @@ async function startDaemon(port) {
       } else {
         console.log(`  ⚠ 进程在运行但健康检查 ${maxWait / 1000}s 内未通过`)
         console.log(`    日志: ${LOG_FILE}`)
+        console.log(`    崩溃记录: ${join(CONSOLE_HOME, 'logs', 'crash.log')}`)
       }
     }).catch(() => {
       if (waited < maxWait) setTimeout(poll, interval)
       else {
         console.log(`  ⚠ 进程在运行但健康检查 ${maxWait / 1000}s 内未通过`)
         console.log(`    日志: ${LOG_FILE}`)
+        console.log(`    崩溃记录: ${join(CONSOLE_HOME, 'logs', 'crash.log')}`)
       }
     })
   }
   setTimeout(poll, interval)
+}
+
+function spawnBffWatchdog(pid) {
+  const watchdog = resolve(__dirname, '..', 'scripts', 'lib', 'bff-watchdog.mjs')
+  if (!existsSync(watchdog) || !pid) return
+  const child = spawn(process.execPath, [watchdog, String(pid)], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, TAHP_CONSOLE_HOME: CONSOLE_HOME, HERMES_WEB_UI_HOME: CONSOLE_HOME },
+    windowsHide: true,
+  })
+  child.unref()
 }
 
 function stopDaemon() {
@@ -290,11 +311,13 @@ function stopDaemon() {
     process.exit(1)
   }
   if (!isRunning(pid)) {
+    recordUnexpectedExit(pid, { type: 'stop-found-dead', detectedBy: 'tahp-console-stop' }, { TAHP_CONSOLE_HOME: CONSOLE_HOME })
     removePid()
     console.log(`  ✓ ${CLI_NAME} 未在运行 (已清理过期 PID)`)
     return
   }
   try {
+    writeLastExit({ pid, kind: 'stop-requested', ts: new Date().toISOString() }, { TAHP_CONSOLE_HOME: CONSOLE_HOME })
     try {
       process.kill(pid, 'SIGTERM')
       for (let i = 0; i < 10; i++) {
@@ -322,6 +345,7 @@ function showStatus() {
     console.log(`  ✓ ${CLI_NAME} 正在运行 (PID: ${pid})`)
     console.log(`    PID 文件: ${PID_FILE}`)
     console.log(`    日志: ${LOG_FILE}`)
+    console.log(`    崩溃记录: ${join(CONSOLE_HOME, 'logs', 'crash.log')}`)
   } else {
     if (pid) removePid()
     console.log(`  ✗ ${CLI_NAME} 未运行`)
