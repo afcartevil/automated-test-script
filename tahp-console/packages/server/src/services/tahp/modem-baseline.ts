@@ -9,6 +9,7 @@ import { config as serverConfig } from '../../config'
 import {
   extractVersionFromBaselineName,
   parseModemBaselineManifestText,
+  updateModemBaselineNoticePlatformTask,
 } from './modem-baseline-notices'
 
 export type ModemBaselineStatus = 'running' | 'success' | 'failed' | 'conflict'
@@ -44,6 +45,10 @@ export type ModemBaselineRunMeta = {
   error?: string
   /** Python worker pid while status=running; used to detect orphaned runs after BFF restart */
   pid?: number
+  /** 关联的外部通知 ID（AP 分支拆解后按平台启动 run 时写入，完成后回写平台状态） */
+  noticeId?: string
+  /** 该 run 对应的 modem 平台（与 noticeId 配合） */
+  platform?: string
 }
 
 export type UserWorkspaceProfile = {
@@ -1200,24 +1205,36 @@ export function recommendModemPatchConfig(input: {
   noticeText?: string
   repoId?: string
   config?: Partial<ModemBaselineConfig>
+  /** 显式指定 modem 平台（AP 分支拆解后按平台采用并填入时使用） */
+  platform?: string
+  /** 显式指定 tOS 版本（与 platform 配合做分支模板匹配；外部基线升级走主干时不传） */
+  tosVersion?: string
+  /** 强制目标模式；外部基线升级通知一律传 trunk */
+  targetMode?: 'trunk' | 'mp'
 }, owner = currentOwner()): RecommendationResult {
   const warnings: string[] = []
   const parsed = input.noticeText ? parseModemPatchNotice(input.noticeText) : null
+  const explicitPlatform = String(input.platform ?? '').trim()
+  const explicitTosVersion = String(input.tosVersion ?? '').trim()
+  const explicitTargetMode = input.targetMode === 'trunk' || input.targetMode === 'mp' ? input.targetMode : undefined
+  const effectivePlatform = explicitPlatform || parsed?.platform || ''
+  // 外部基线升级：强制 trunk，不按 tosVersion / 基线文件名误判 MP
+  const effectiveTosVersion = explicitTargetMode === 'trunk' ? undefined : (explicitTosVersion || parsed?.tosVersion)
   const repos = listModemPatchRepos(owner)
   const currentRepo = input.repoId ? repos.find(item => item.repoId === input.repoId) : null
-  const resolvedRepo = parsed?.platform ? resolveRepoByPlatform(repos, parsed.platform).matched : null
-  const repo = parsed?.platform ? (resolvedRepo ?? null) : (currentRepo ?? null)
-  const platformSource = parsed?.platform ? (repo?.platform || parsed.platform) : (repo?.platform || '')
+  const resolvedRepo = effectivePlatform ? resolveRepoByPlatform(repos, effectivePlatform).matched : null
+  const repo = effectivePlatform ? (resolvedRepo ?? null) : (currentRepo ?? null)
+  const platformSource = effectivePlatform ? (repo?.platform || effectivePlatform) : (repo?.platform || '')
   const platform = normalizePlatformToken(platformSource)
   const basePlatform = basePlatformToken(platform)
   const vendor = (repo?.vendor || '').trim()
   const operationType = parsed?.operationType || 'baseline_upgrade'
-  const targetMode = parsed?.targetMode || 'trunk'
+  const targetMode = explicitTargetMode || parsed?.targetMode || 'trunk'
   const rules = listModemPatchRules(owner).filter(item => item.enabled)
   const templates = listModemPatchBranchTemplates(owner)
   const templateMatches = repo
-    ? findBranchTemplateMatchesForRepo(templates, repo, parsed?.tosVersion)
-    : findBranchTemplateMatches(templates, parsed?.tosVersion, platformSource)
+    ? findBranchTemplateMatchesForRepo(templates, repo, effectiveTosVersion)
+    : findBranchTemplateMatches(templates, effectiveTosVersion, platformSource)
   const uniqueTemplateMatches = templateMatches.length > 1
     ? Array.from(new Map(
       templateMatches.map(item => [
@@ -1226,7 +1243,7 @@ export function recommendModemPatchConfig(input: {
       ]),
     ).values())
     : templateMatches
-  const canUseSharedTrunkTemplate = targetMode === 'trunk' && !parsed?.tosVersion
+  const canUseSharedTrunkTemplate = targetMode === 'trunk' && !effectiveTosVersion
   let selectedTemplate = uniqueTemplateMatches.length === 1 ? uniqueTemplateMatches[0] : null
   let selectedTemplateNodeBranch: string | undefined
   let selectedTemplateTargetBranch: string | undefined
@@ -3671,6 +3688,34 @@ async function postProcessRunBody(
   writeRunMeta(nextMeta)
   broadcast(runId, 'status', { status: nextMeta.status, phase: nextMeta.phase, reportPath: nextMeta.reportPath, error: nextMeta.error })
   broadcast(runId, 'conflicts', { files: conflictFiles })
+  syncNoticePlatformTaskFromRun(nextMeta, appendLog)
+}
+
+/**
+ * run 终态回写关联通知的 modem 平台任务状态。
+ * - success → done
+ * - failed  → failed
+ * - conflict → in_progress（保持，待人工 continue 后再由 success/failed 覆盖）
+ * 仅当 meta.noticeId + meta.platform 同时存在时生效；异常吞掉，不影响主流程。
+ */
+function syncNoticePlatformTaskFromRun(
+  meta: ModemBaselineRunMeta,
+  appendLog: (line: string) => void,
+) {
+  const noticeId = meta.noticeId
+  const platform = meta.platform
+  if (!noticeId || !platform) return
+  let taskStatus: 'done' | 'failed' | 'in_progress'
+  if (meta.status === 'success') taskStatus = 'done'
+  else if (meta.status === 'failed') taskStatus = 'failed'
+  else if (meta.status === 'conflict') taskStatus = 'in_progress'
+  else return
+  try {
+    updateModemBaselineNoticePlatformTask(noticeId, platform, { status: taskStatus, runId: meta.runId })
+    appendLog(`[notice] platform=${platform} status=${taskStatus} runId=${meta.runId}\n`)
+  } catch (error) {
+    appendLog(`[notice] sync_platform_task_failed platform=${platform} error=${(error as Error).message}\n`)
+  }
 }
 
 function updateReportPathFromLog(runId: string, line: string) {
@@ -3794,6 +3839,7 @@ function markRunFailed(runId: string, error: string) {
   }
   writeRunMeta(nextMeta)
   broadcast(runId, 'status', { status: nextMeta.status, phase: nextMeta.phase, reportPath: nextMeta.reportPath, error: nextMeta.error })
+  syncNoticePlatformTaskFromRun(nextMeta, line => appendRunLog(runId, nextMeta.logPath ?? runLogPath(runId), line))
 }
 
 function validateConfig(input: unknown): ModemBaselineConfig | null {
@@ -3914,6 +3960,12 @@ export function createModemBaselineRun(input: unknown) {
   ensureRunDirs(runId)
   const logPath = runLogPath(runId)
   const remoteWorkDir = computeRemoteWorkDir(validated)
+  const record = (input && typeof input === 'object' ? input : {}) as {
+    noticeId?: string
+    platform?: string
+  }
+  const noticeId = String(record.noticeId ?? '').trim() || undefined
+  const platform = String(record.platform ?? '').trim() || undefined
   const meta: ModemBaselineRunMeta = {
     runId,
     status: 'running',
@@ -3924,6 +3976,8 @@ export function createModemBaselineRun(input: unknown) {
     config: validated,
     remoteWorkDir,
     logPath,
+    noticeId,
+    platform,
   }
 
   fs.writeFileSync(runConfigPath(runId), JSON.stringify(validated, null, 2), 'utf-8')

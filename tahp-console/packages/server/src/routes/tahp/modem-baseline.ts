@@ -31,7 +31,9 @@ import {
   unregisterModemBaselineSseClient,
 } from '../../services/tahp/modem-baseline'
 import {
+  isModemNoticePlatformTasksComplete,
   listModemBaselineNotices,
+  updateModemBaselineNoticePlatformTask,
   updateModemBaselineNoticeStatus,
 } from '../../services/tahp/modem-baseline-notices'
 
@@ -297,6 +299,47 @@ tahpModemBaselineRoutes.post('/notices/:noticeId/dismiss', async (ctx) => {
   }
 })
 
+tahpModemBaselineRoutes.post('/notices/:noticeId/platform-tasks/:platform/status', async (ctx) => {
+  try {
+    const body = (ctx.request.body || {}) as { status?: string; runId?: string }
+    const status = String(body.status ?? '').trim() as 'pending' | 'in_progress' | 'done' | 'failed' | 'skipped'
+    const allowed: string[] = ['pending', 'in_progress', 'done', 'failed', 'skipped']
+    if (!allowed.includes(status)) {
+      ctx.status = 400
+      ctx.body = { success: false, error: 'invalid_platform_task_status' }
+      return
+    }
+    ctx.body = {
+      success: true,
+      data: updateModemBaselineNoticePlatformTask(
+        ctx.params.noticeId,
+        decodeURIComponent(ctx.params.platform),
+        { status, runId: body.runId ? String(body.runId) : undefined },
+      ),
+    }
+  } catch (error) {
+    const message = (error as Error).message
+    ctx.status = message === 'notice_not_found' || message === 'platform_task_not_found' ? 404 : 400
+    ctx.body = { success: false, error: message }
+  }
+})
+
+tahpModemBaselineRoutes.get('/notices/:noticeId/platform-tasks/complete', async (ctx) => {
+  try {
+    const items = listModemBaselineNotices({ status: 'all' })
+    const notice = items.find(item => item.noticeId === ctx.params.noticeId)
+    if (!notice) {
+      ctx.status = 404
+      ctx.body = { success: false, error: 'notice_not_found' }
+      return
+    }
+    ctx.body = { success: true, data: { complete: isModemNoticePlatformTasksComplete(notice) } }
+  } catch (error) {
+    ctx.status = 400
+    ctx.body = { success: false, error: (error as Error).message }
+  }
+})
+
 tahpModemBaselineRoutes.post('/parse-notice', async (ctx) => {
   try {
     const body = (ctx.request.body || {}) as { text?: string }
@@ -309,13 +352,23 @@ tahpModemBaselineRoutes.post('/parse-notice', async (ctx) => {
 
 tahpModemBaselineRoutes.post('/recommend', async (ctx) => {
   try {
-    const body = (ctx.request.body || {}) as { noticeText?: string; repoId?: string; config?: unknown }
+    const body = (ctx.request.body || {}) as {
+      noticeText?: string
+      repoId?: string
+      config?: unknown
+      platform?: string
+      tosVersion?: string
+      targetMode?: 'trunk' | 'mp'
+    }
     ctx.body = {
       success: true,
       data: recommendModemPatchConfig({
         noticeText: body.noticeText ? String(body.noticeText) : undefined,
         repoId: body.repoId ? String(body.repoId) : undefined,
         config: (body.config || {}) as any,
+        platform: body.platform ? String(body.platform) : undefined,
+        tosVersion: body.tosVersion ? String(body.tosVersion) : undefined,
+        targetMode: body.targetMode === 'trunk' || body.targetMode === 'mp' ? body.targetMode : undefined,
       }, resolveOwner(ctx)),
     }
   } catch (error) {
@@ -408,8 +461,14 @@ tahpModemBaselineRoutes.get('/runs/:runId/events', async (ctx) => {
 
 tahpModemBaselineRoutes.post('/runs', async (ctx) => {
   try {
-    const body = (ctx.request.body || {}) as { config?: unknown }
-    ctx.body = { success: true, data: createModemBaselineRun(body.config) }
+    const body = (ctx.request.body || {}) as {
+      config?: unknown
+      noticeId?: string
+      platform?: string
+    }
+    const config = (body.config || {}) as Record<string, unknown>
+    const payload = { ...config, noticeId: body.noticeId, platform: body.platform }
+    ctx.body = { success: true, data: createModemBaselineRun(payload) }
   } catch (error) {
     const message = (error as Error).message
     ctx.status = message === 'invalid_config' ? 400 : 500

@@ -10,6 +10,9 @@ import {
   extractModemNotifyToken,
   parseModemBaselineManifestText,
   extractVersionFromBaselineName,
+  resolveApTrunkPlatforms,
+  updateModemBaselineNoticePlatformTask,
+  isModemNoticePlatformTasksComplete,
 } from '../../packages/server/src/services/tahp/modem-baseline-notices'
 import { parseModemPatchNotice } from '../../packages/server/src/services/tahp/modem-baseline'
 
@@ -160,5 +163,147 @@ describe('modem-baseline external notices', () => {
     expect(parsed.version).toBe('V12.9')
     expect(parsed.targetMode).toBe('mp')
     expect(parsed.warnings).toContain('no_platform_detected')
+  })
+})
+
+const tempMapDirs: string[] = []
+
+function writeApTrunkMap(mappings: unknown): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-trunk-map-'))
+  tempMapDirs.push(dir)
+  const configDir = path.join(dir, 'config')
+  fs.mkdirSync(configDir, { recursive: true })
+  fs.writeFileSync(path.join(configDir, 'ap-trunk-platforms.json'), JSON.stringify({ mappings }), 'utf-8')
+  return path.join(configDir, 'ap-trunk-platforms.json')
+}
+
+afterEach(() => {
+  while (tempMapDirs.length) {
+    const dir = tempMapDirs.pop()
+    if (!dir) continue
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+describe('modem-baseline AP trunk → multi platform tasks', () => {
+  it('resolveApTrunkPlatforms returns empty when map file missing', () => {
+    const result = resolveApTrunkPlatforms('tOS_mtk_A16_vnd_trunk.xml', {
+      mapPath: path.join(os.tmpdir(), 'non-existent-', `${Date.now()}.json`),
+    })
+    expect(result.platforms).toEqual([])
+  })
+
+  it('resolveApTrunkPlatforms reads mapping from config file', () => {
+    const mapPath = writeApTrunkMap([
+      {
+        trunk: 'tOS_mtk_A16_vnd_trunk.xml',
+        platforms: ['GEN98-S(MP1MP2)', 'GEN97-V'],
+      },
+    ])
+    const result = resolveApTrunkPlatforms('tOS_mtk_A16_vnd_trunk.xml', { mapPath })
+    expect(result.platforms).toEqual(['GEN98-S(MP1MP2)', 'GEN97-V'])
+  })
+
+  it('resolveApTrunkPlatforms returns empty for unmatched trunk', () => {
+    const mapPath = writeApTrunkMap([
+      { trunk: 'other.xml', platforms: ['GEN97-V'] },
+    ])
+    const result = resolveApTrunkPlatforms('tOS_mtk_A16_vnd_trunk.xml', { mapPath })
+    expect(result.platforms).toEqual([])
+  })
+
+  it('ingest initializes platformTasks when trunk hits mapping', () => {
+    const storePath = tempStorePath()
+    const mapPath = writeApTrunkMap([
+      {
+        trunk: SAMPLE.trunk,
+        platforms: ['GEN98-S(MP1MP2)', 'GEN97-V'],
+      },
+    ])
+    const { notice, created } = ingestModemBaselineNotice(
+      { ...SAMPLE, sourceId: 'multi-1' },
+      { storePath, apTrunkMapPath: mapPath },
+    )
+    expect(created).toBe(true)
+    expect(notice.platformTasks).toHaveLength(2)
+    expect(notice.platformTasks?.[0]).toMatchObject({ platform: 'GEN98-S(MP1MP2)', status: 'pending' })
+    expect(notice.platformTasks?.[1]).toMatchObject({ platform: 'GEN97-V', status: 'pending' })
+  })
+
+  it('ingest leaves no platformTasks when trunk misses mapping (compat)', () => {
+    const storePath = tempStorePath()
+    // 指向不存在的映射表，确保不命中真实仓库内 config
+    const emptyMap = path.join(os.tmpdir(), `no-map-${Date.now()}.json`)
+    const { notice } = ingestModemBaselineNotice(
+      { ...SAMPLE, sourceId: 'no-map-1' },
+      { storePath, apTrunkMapPath: emptyMap },
+    )
+    expect(notice.platformTasks).toBeUndefined()
+  })
+
+  it('updateModemBaselineNoticePlatformTask updates a single platform status', () => {
+    const storePath = tempStorePath()
+    const mapPath = writeApTrunkMap([
+      {
+        trunk: SAMPLE.trunk,
+        platforms: ['GEN98-S(MP1MP2)', 'GEN97-V'],
+      },
+    ])
+    const { notice } = ingestModemBaselineNotice(
+      { ...SAMPLE, sourceId: 'multi-2' },
+      { storePath, apTrunkMapPath: mapPath },
+    )
+    const updated = updateModemBaselineNoticePlatformTask(
+      notice.noticeId,
+      'GEN97-V',
+      { status: 'done', runId: 'run-xyz' },
+      { storePath },
+    )
+    const task = updated.platformTasks?.find(t => t.platform === 'GEN97-V')
+    expect(task?.status).toBe('done')
+    expect(task?.runId).toBe('run-xyz')
+    // other platform untouched
+    const other = updated.platformTasks?.find(t => t.platform === 'GEN98-S(MP1MP2)')
+    expect(other?.status).toBe('pending')
+  })
+
+  it('updateModemBaselineNoticePlatformTask throws for unknown platform', () => {
+    const storePath = tempStorePath()
+    const mapPath = writeApTrunkMap([
+      { trunk: SAMPLE.trunk, platforms: ['GEN97-V'] },
+    ])
+    const { notice } = ingestModemBaselineNotice(
+      { ...SAMPLE, sourceId: 'multi-3' },
+      { storePath, apTrunkMapPath: mapPath },
+    )
+    expect(() =>
+      updateModemBaselineNoticePlatformTask(notice.noticeId, 'GEN99-T', { status: 'done' }, { storePath }),
+    ).toThrow('platform_task_not_found')
+  })
+
+  it('isModemNoticePlatformTasksComplete reflects per-platform status', () => {
+    const storePath = tempStorePath()
+    const mapPath = writeApTrunkMap([
+      { trunk: SAMPLE.trunk, platforms: ['GEN97-V', 'GEN98-S'] },
+    ])
+    const { notice } = ingestModemBaselineNotice(
+      { ...SAMPLE, sourceId: 'multi-4' },
+      { storePath, apTrunkMapPath: mapPath },
+    )
+    expect(isModemNoticePlatformTasksComplete(notice)).toBe(false)
+    let next = updateModemBaselineNoticePlatformTask(notice.noticeId, 'GEN97-V', { status: 'done' }, { storePath })
+    expect(isModemNoticePlatformTasksComplete(next)).toBe(false)
+    next = updateModemBaselineNoticePlatformTask(notice.noticeId, 'GEN98-S', { status: 'skipped' }, { storePath })
+    expect(isModemNoticePlatformTasksComplete(next)).toBe(true)
+  })
+
+  it('isModemNoticePlatformTasksComplete is true when no platformTasks', () => {
+    const storePath = tempStorePath()
+    const emptyMap = path.join(os.tmpdir(), `no-map-${Date.now()}.json`)
+    const { notice } = ingestModemBaselineNotice(
+      { ...SAMPLE, sourceId: 'single-1' },
+      { storePath, apTrunkMapPath: emptyMap },
+    )
+    expect(isModemNoticePlatformTasksComplete(notice)).toBe(true)
   })
 })

@@ -10,6 +10,15 @@ import { config as serverConfig } from '../../config'
 
 export type ModemExternalNoticeStatus = 'pending' | 'applied' | 'dismissed'
 
+export type ModemPlatformTaskStatus = 'pending' | 'in_progress' | 'done' | 'failed' | 'skipped'
+
+export type ModemPlatformTask = {
+  platform: string
+  status: ModemPlatformTaskStatus
+  runId?: string
+  updatedAt?: string
+}
+
 export type ModemBaselineManifestFields = {
   /** 任务关联 manifest，如 tOS_mtk_A16_vnd_trunk.xml */
   trunk?: string
@@ -34,6 +43,8 @@ export type ModemExternalNotice = {
   updatedAt: string
   appliedAt?: string
   dismissedAt?: string
+  /** AP 分支拆解出的 modem 平台任务（命中静态映射表时初始化） */
+  platformTasks?: ModemPlatformTask[]
 }
 
 /** MergeTool 外部通知唯一契约 */
@@ -52,6 +63,8 @@ export type IngestModemNoticeOptions = {
   preferNoticeId?: string
   /** 采用中心 receivedAt，便于 ack 水位与中心一致 */
   preferReceivedAt?: string
+  /** AP 分支→平台 映射表路径（测试注入） */
+  apTrunkMapPath?: string
 }
 
 function noticesRootDir(dataDir = serverConfig.dataDir) {
@@ -64,6 +77,64 @@ export function defaultNoticesStorePath(dataDir = serverConfig.dataDir) {
 
 function ensureParent(filePath: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
+}
+
+// ---- AP 分支 → modem 平台 静态映射 ----
+
+export type ApTrunkPlatformMapping = {
+  trunk: string
+  /** 该 AP trunk 对应需升级的全部 modem 平台（外部基线升级一律走主干，不区分 tosVersion） */
+  platforms: string[]
+}
+
+export type ApTrunkPlatformMapFile = {
+  mappings?: ApTrunkPlatformMapping[]
+}
+
+function apTrunkPlatformMapCandidates() {
+  const envOverride = process.env.MODEM_BASELINE_TOOL_ROOT?.trim()
+  const candidates = [
+    envOverride ? path.resolve(envOverride) : '',
+    path.resolve(process.cwd(), '..', 'tools', 'modem-patch-tool'),
+    path.resolve(process.cwd(), 'tools', 'modem-patch-tool'),
+  ].filter(Boolean)
+  return Array.from(new Set(candidates))
+}
+
+export function defaultApTrunkPlatformMapPath() {
+  const candidates = apTrunkPlatformMapCandidates()
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return path.resolve(candidate, 'config', 'ap-trunk-platforms.json')
+  }
+  return path.resolve(candidates[0] ?? path.resolve(process.cwd(), '..', 'tools', 'modem-patch-tool'), 'config', 'ap-trunk-platforms.json')
+}
+
+let apTrunkMapCache: { path: string; mtime: number; data: ApTrunkPlatformMapFile } | null = null
+
+/**
+ * 读取 AP 分支 → modem 平台 静态映射表。
+ * 文件不存在或为空时返回空 platforms（调用方按无平台任务处理，兼容旧流程）。
+ */
+export function resolveApTrunkPlatforms(
+  trunk: string,
+  options?: { mapPath?: string },
+): { platforms: string[] } {
+  const mapPath = options?.mapPath || defaultApTrunkPlatformMapPath()
+  if (!fs.existsSync(mapPath)) return { platforms: [] }
+  try {
+    const stat = fs.statSync(mapPath)
+    const mtime = stat.mtimeMs
+    if (apTrunkMapCache && apTrunkMapCache.path === mapPath && apTrunkMapCache.mtime === mtime) {
+      const hit = (apTrunkMapCache.data.mappings || []).find(item => item.trunk === trunk)
+      return hit ? { platforms: [...hit.platforms] } : { platforms: [] }
+    }
+    const raw = JSON.parse(fs.readFileSync(mapPath, 'utf-8')) as ApTrunkPlatformMapFile
+    apTrunkMapCache = { path: mapPath, mtime, data: raw }
+    const hit = (raw.mappings || []).find(item => item.trunk === trunk)
+    return hit ? { platforms: [...hit.platforms] } : { platforms: [] }
+  } catch {
+    return { platforms: [] }
+  }
 }
 
 function readStore(storePath: string): ModemExternalNotice[] {
@@ -212,6 +283,12 @@ export function ingestModemBaselineNotice(
   }
 
   const now = new Date().toISOString()
+  const resolved = manifests.trunk
+    ? resolveApTrunkPlatforms(manifests.trunk, { mapPath: options?.apTrunkMapPath })
+    : { platforms: [] as string[] }
+  const platformTasks = resolved.platforms.length
+    ? resolved.platforms.map(platform => ({ platform, status: 'pending' as const, updatedAt: now }))
+    : undefined
   const notice: ModemExternalNotice = {
     noticeId: preferNoticeId || `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
     status: 'pending',
@@ -225,6 +302,7 @@ export function ingestModemBaselineNotice(
     payload: { ...input },
     receivedAt: preferReceivedAt || now,
     updatedAt: now,
+    platformTasks,
   }
 
   items.unshift(notice)
@@ -265,4 +343,42 @@ export function updateModemBaselineNoticeStatus(
   items[index] = next
   writeStore(storePath, items)
   return next
+}
+
+/**
+ * 更新某条通知下指定 modem 平台任务的状态（run 完成回写 / UI 手动 skip/重置）。
+ */
+export function updateModemBaselineNoticePlatformTask(
+  noticeId: string,
+  platform: string,
+  patch: { status: ModemPlatformTaskStatus; runId?: string },
+  options?: { storePath?: string },
+): ModemExternalNotice {
+  const storePath = options?.storePath || defaultNoticesStorePath()
+  const items = readStore(storePath)
+  const index = items.findIndex(item => item.noticeId === noticeId)
+  if (index < 0) throw new Error('notice_not_found')
+
+  const current = items[index]
+  const tasks = Array.isArray(current.platformTasks) ? [...current.platformTasks] : []
+  const taskIndex = tasks.findIndex(item => item.platform === platform)
+  if (taskIndex < 0) throw new Error('platform_task_not_found')
+
+  const now = new Date().toISOString()
+  tasks[taskIndex] = {
+    ...tasks[taskIndex],
+    status: patch.status,
+    runId: patch.runId ?? tasks[taskIndex].runId,
+    updatedAt: now,
+  }
+  const next: ModemExternalNotice = { ...current, platformTasks: tasks, updatedAt: now }
+  items[index] = next
+  writeStore(storePath, items)
+  return next
+}
+
+/** 判断通知是否所有平台任务均已完结（done/skipped）。无 platformTasks 视为已就绪。 */
+export function isModemNoticePlatformTasksComplete(notice: ModemExternalNotice): boolean {
+  if (!notice.platformTasks || !notice.platformTasks.length) return true
+  return notice.platformTasks.every(item => item.status === 'done' || item.status === 'skipped')
 }

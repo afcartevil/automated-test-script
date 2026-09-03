@@ -10,6 +10,7 @@ import ModemBaselineLogFilterBar from '@/components/tahp/modem-baseline/ModemBas
 import ModemBaselinePendingNoticesCard from '@/components/tahp/modem-baseline/ModemBaselinePendingNoticesCard.vue'
 import ModemBaselineStagePanel from '@/components/tahp/modem-baseline/ModemBaselineStagePanel.vue'
 import { useModemBaseline } from '@/composables/useModemBaseline'
+import type { ModemPlatformTaskStatus } from '@/api/tahp/modem-baseline'
 import { isModemConflictLogLine, isModemErrorLogLine, takeModemLogTail } from '@/utils/modemBaselineLog'
 
 const message = useMessage()
@@ -56,6 +57,9 @@ const {
   applyExternalNotice,
   confirmExternalNotice,
   dismissExternalNotice,
+  setPlatformTaskStatus,
+  activeNoticeId,
+  activePlatform,
   disposeModemBaseline,
 } = useModemBaseline()
 
@@ -374,9 +378,9 @@ async function handleParseAndApply() {
   }
 }
 
-async function handleApplyExternalNotice(noticeId: string) {
+async function handleApplyExternalNotice(noticeId: string, platform?: string) {
   try {
-    const apply = await applyExternalNotice(noticeId)
+    const apply = await applyExternalNotice(noticeId, platform)
     if (!apply.applied) {
       parseFeedback.value = {
         tone: 'warning',
@@ -392,7 +396,22 @@ async function handleApplyExternalNotice(noticeId: string) {
     parseFeedback.value = feedback
     showRecommendationToast(feedback)
     openConfigPanel()
-    message.success('已填入表单（通知仍保留）。核对并启动后，请点「确认完成」才会从待确认消失')
+    message.success(platform
+      ? `已填入表单（平台 ${platform}）。核对并启动后，该平台任务完成会自动标记`
+      : '已填入表单（通知仍保留）。核对并启动后，请点「确认完成」才会从待确认消失')
+  } catch (error) {
+    message.error(String((error as Error)?.message ?? error))
+  }
+}
+
+async function handleSetPlatformTaskStatus(
+  noticeId: string,
+  platform: string,
+  status: ModemPlatformTaskStatus,
+) {
+  try {
+    await setPlatformTaskStatus(noticeId, platform, status)
+    message.success(`已将平台 ${platform} 标记为${status === 'skipped' ? '跳过' : '待升级'}`)
   } catch (error) {
     message.error(String((error as Error)?.message ?? error))
   }
@@ -456,10 +475,12 @@ onUnmounted(() => {
         :confirming-id="confirmingNoticeId"
         :dismissing-id="dismissingNoticeId"
         :filled-ids="filledNoticeIds"
+        :applying-platform="applyingNoticeId ? { noticeId: activeNoticeId, platform: activePlatform } : null"
         @refresh="reloadPendingNotices"
         @apply="handleApplyExternalNotice"
         @confirm="handleConfirmExternalNotice"
         @dismiss="handleDismissExternalNotice"
+        @set-platform-task-status="handleSetPlatformTaskStatus"
       />
 
       <ModemBaselineHistoryPanel

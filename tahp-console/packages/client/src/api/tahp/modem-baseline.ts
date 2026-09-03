@@ -31,6 +31,8 @@ export type ModemBaselineRunMeta = {
   reportPath?: string
   conflictFiles?: string[]
   error?: string
+  noticeId?: string
+  platform?: string
 }
 
 export type UserWorkspaceProfile = {
@@ -127,6 +129,15 @@ export type NoticeParseResult = {
 
 export type ModemExternalNoticeStatus = 'pending' | 'applied' | 'dismissed'
 
+export type ModemPlatformTaskStatus = 'pending' | 'in_progress' | 'done' | 'failed' | 'skipped'
+
+export type ModemPlatformTask = {
+  platform: string
+  status: ModemPlatformTaskStatus
+  runId?: string
+  updatedAt?: string
+}
+
 export type ModemExternalNotice = {
   noticeId: string
   status: ModemExternalNoticeStatus
@@ -139,6 +150,7 @@ export type ModemExternalNotice = {
   oldBaseline?: string
   receivedAt: string
   updatedAt: string
+  platformTasks?: ModemPlatformTask[]
 }
 
 export type RecommendationResult = {
@@ -271,6 +283,9 @@ export function recommendModemPatch(input: {
   noticeText?: string
   repoId?: string
   config: ModemBaselineConfig
+  platform?: string
+  tosVersion?: string
+  targetMode?: 'trunk' | 'mp'
 }): Promise<RecommendationResult> {
   return tahpPost<RecommendationResult>('/api/tahp/modem-baseline/recommend', input)
 }
@@ -301,8 +316,32 @@ export function getModemBaselineLog(runId: string): Promise<{
   }>(`/api/tahp/modem-baseline/runs/${encodeURIComponent(runId)}/log?${query.toString()}`)
 }
 
-export function createModemBaselineRun(config: ModemBaselineConfig): Promise<{ runId: string; status: ModemBaselineStatus }> {
-  return tahpPost<{ runId: string; status: ModemBaselineStatus }>('/api/tahp/modem-baseline/runs', { config })
+export function createModemBaselineRun(
+  config: ModemBaselineConfig,
+  options?: { noticeId?: string; platform?: string },
+): Promise<{ runId: string; status: ModemBaselineStatus }> {
+  return tahpPost<{ runId: string; status: ModemBaselineStatus }>('/api/tahp/modem-baseline/runs', {
+    config,
+    noticeId: options?.noticeId,
+    platform: options?.platform,
+  })
+}
+
+export function updateModemBaselineNoticePlatformTask(
+  noticeId: string,
+  platform: string,
+  patch: { status: ModemPlatformTaskStatus; runId?: string },
+): Promise<ModemExternalNotice> {
+  return tahpPost<ModemExternalNotice>(
+    `/api/tahp/modem-baseline/notices/${encodeURIComponent(noticeId)}/platform-tasks/${encodeURIComponent(platform)}/status`,
+    patch,
+  )
+}
+
+export function getModemNoticePlatformTasksComplete(noticeId: string): Promise<{ complete: boolean }> {
+  return tahpGet<{ complete: boolean }>(
+    `/api/tahp/modem-baseline/notices/${encodeURIComponent(noticeId)}/platform-tasks/complete`,
+  )
 }
 
 export function listModemBuildProjects(input: {

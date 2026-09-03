@@ -28,6 +28,9 @@ import {
   listModemBaselineNotices,
   applyModemBaselineNotice,
   dismissModemBaselineNotice,
+  updateModemBaselineNoticePlatformTask,
+  getModemNoticePlatformTasksComplete,
+  type ModemPlatformTaskStatus,
   updateRepoProfile,
   updateModemPatchRule,
   type ModemBaselineConfig,
@@ -422,6 +425,9 @@ export function useModemBaseline() {
   const dismissingNoticeId = ref('')
   /** Session-local: filled into form but still awaiting「确认完成」. */
   const filledNoticeIds = ref<string[]>([])
+  /** 当前采用并填入所关联的外部通知 + 平台（启动 run 时回写） */
+  const activeNoticeId = ref('')
+  const activePlatform = ref('')
   const noticesPollTimer = ref<number | null>(null)
 
   const selectedRepo = computed(() => repoProfiles.value.find(item => item.repoId === selectedRepoId.value) ?? null)
@@ -604,15 +610,29 @@ export function useModemBaseline() {
     }
   }
 
-  /** Fill form only — keep notice in pending until operator confirms done. */
-  async function applyExternalNotice(noticeId: string) {
+  /** Fill form only — keep notice in pending until operator confirms done.
+   *  可传 platform：AP 分支拆解后按指定 modem 平台采用并填入。 */
+  async function applyExternalNotice(noticeId: string, platform?: string) {
     const notice = pendingNotices.value.find(item => item.noticeId === noticeId)
     if (!notice) throw new Error('notice_not_found')
     applyingNoticeId.value = noticeId
     try {
-      noticeText.value = notice.text
-      await requestRecommend()
-      const apply = applyRecommendation()
+      activeNoticeId.value = noticeId
+      activePlatform.value = platform || ''
+      // 按平台采用：解析栏填「平台 + 新基线版本」，便于识别与推荐（如 GEN95-W V12.9 基线升级）
+      if (platform) {
+        const version = notice.version
+          || notice.newBaseline?.match(/\bV\d+(?:\.\d+){0,4}\b/i)?.[0]?.toUpperCase()
+          || ''
+        noticeText.value = version
+          ? `${platform} ${version} 基线升级`
+          : `${platform} 基线升级`
+      } else {
+        noticeText.value = notice.text
+      }
+      // 外部基线升级一律走主干，不按 tosVersion / 基线文件名判 MP
+      await requestRecommend({ platform, targetMode: 'trunk' })
+      const apply = applyRecommendation(platform)
       if (!filledNoticeIds.value.includes(noticeId)) {
         filledNoticeIds.value = [...filledNoticeIds.value, noticeId]
       }
@@ -643,6 +663,23 @@ export function useModemBaseline() {
     } finally {
       dismissingNoticeId.value = ''
     }
+  }
+
+  /** 手动设置某通知下某平台任务状态（如跳过 / 重置）。 */
+  async function setPlatformTaskStatus(
+    noticeId: string,
+    platform: string,
+    status: ModemPlatformTaskStatus,
+    runId?: string,
+  ) {
+    await updateModemBaselineNoticePlatformTask(noticeId, platform, { status, runId })
+    await reloadPendingNotices()
+  }
+
+  /** 判断通知所有平台任务是否完结（无 platformTasks 视为 true）。 */
+  async function isNoticePlatformTasksComplete(noticeId: string): Promise<boolean> {
+    const result = await getModemNoticePlatformTasksComplete(noticeId)
+    return result.complete
   }
 
   function mergeRun(nextRun: ModemBaselineRunMeta) {
@@ -871,9 +908,16 @@ export function useModemBaseline() {
       if (missingFields.length) {
         throw new Error(`缺少必要配置字段：${missingFields.join('、')}`)
       }
-      const result = await createModemBaselineRun(config.value)
+      const result = await createModemBaselineRun(config.value, {
+        noticeId: activeNoticeId.value || undefined,
+        platform: activePlatform.value || undefined,
+      })
       await reloadRuns()
       await selectRun(result.runId)
+      // 启动后刷新外部通知，回显该平台任务为 in_progress（后端 SSE 完成时也会回写）
+      if (activeNoticeId.value) {
+        void reloadPendingNotices()
+      }
     } finally {
       starting.value = false
     }
@@ -921,7 +965,7 @@ export function useModemBaseline() {
     }
   }
 
-  async function requestRecommend() {
+  async function requestRecommend(overrides?: { platform?: string; tosVersion?: string; targetMode?: 'trunk' | 'mp' }) {
     recommending.value = true
     try {
       if (noticeText.value.trim()) {
@@ -931,6 +975,9 @@ export function useModemBaseline() {
         noticeText: noticeText.value.trim() || undefined,
         repoId: selectedRepoId.value || undefined,
         config: config.value,
+        platform: overrides?.platform,
+        tosVersion: overrides?.tosVersion,
+        targetMode: overrides?.targetMode,
       })
       recommendation.value = result
       return result
@@ -939,11 +986,11 @@ export function useModemBaseline() {
     }
   }
 
-  function applyRecommendation(): RecommendationApplyResult {
+  function applyRecommendation(explicitPlatform?: string): RecommendationApplyResult {
     if (!recommendation.value) return { applied: false }
 
     const currentRepo = selectedRepo.value
-    const platform = normalizePlatformToken(noticeParsed.value?.platform || '')
+    const platform = normalizePlatformToken(explicitPlatform || noticeParsed.value?.platform || '')
     let repoAction: RecommendationApplyResult['repoAction']
     if (platform) {
       const resolved = resolveRepoByPlatform(repoProfiles.value, platform)
@@ -1258,6 +1305,8 @@ export function useModemBaseline() {
     confirmingNoticeId,
     dismissingNoticeId,
     filledNoticeIds,
+    activeNoticeId,
+    activePlatform,
     statusMeta,
     stageItems,
     metrics,
@@ -1272,6 +1321,8 @@ export function useModemBaseline() {
     applyExternalNotice,
     confirmExternalNotice,
     dismissExternalNotice,
+    setPlatformTaskStatus,
+    isNoticePlatformTasksComplete,
     importBranchTemplateFile,
     createRule,
     updateRule,

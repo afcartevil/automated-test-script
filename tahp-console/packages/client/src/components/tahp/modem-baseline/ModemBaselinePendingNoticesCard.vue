@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { NButton, NTag } from 'naive-ui'
-import type { ModemExternalNotice } from '@/api/tahp/modem-baseline'
+import type { ModemExternalNotice, ModemPlatformTask, ModemPlatformTaskStatus } from '@/api/tahp/modem-baseline'
 
 const props = defineProps<{
   notices: ModemExternalNotice[]
@@ -10,13 +10,16 @@ const props = defineProps<{
   confirmingId?: string
   dismissingId?: string
   filledIds?: string[]
+  /** 正在按平台采用并填入的 {noticeId, platform} */
+  applyingPlatform?: { noticeId: string; platform: string } | null
 }>()
 
 const emit = defineEmits<{
   refresh: []
-  apply: [noticeId: string]
+  apply: [noticeId: string, platform?: string]
   confirm: [noticeId: string]
   dismiss: [noticeId: string]
+  setPlatformTaskStatus: [noticeId: string, platform: string, status: ModemPlatformTaskStatus]
 }>()
 
 const isEmpty = computed(() => props.notices.length === 0)
@@ -30,6 +33,40 @@ function formatTime(value?: string) {
 
 function isFilled(filledIds: string[] | undefined, noticeId: string) {
   return Boolean(filledIds?.includes(noticeId))
+}
+
+function platformTaskTagType(status: ModemPlatformTaskStatus) {
+  switch (status) {
+    case 'done': return 'success'
+    case 'failed': return 'error'
+    case 'in_progress': return 'info'
+    case 'skipped': return 'default'
+    default: return 'warning'
+  }
+}
+
+function platformTaskTagText(status: ModemPlatformTaskStatus) {
+  switch (status) {
+    case 'pending': return '待升级'
+    case 'in_progress': return '进行中'
+    case 'done': return '已完成'
+    case 'failed': return '失败'
+    case 'skipped': return '已跳过'
+  }
+}
+
+function isPlatformApplying(noticeId: string, platform: string) {
+  return props.applyingPlatform?.noticeId === noticeId && props.applyingPlatform?.platform === platform
+}
+
+/** 该通知是否所有平台任务完结（可确认完成）。 */
+function isNoticeComplete(notice: ModemExternalNotice) {
+  if (!notice.platformTasks || !notice.platformTasks.length) return true
+  return notice.platformTasks.every(t => t.status === 'done' || t.status === 'skipped')
+}
+
+function canApplyPlatform(task: ModemPlatformTask) {
+  return task.status === 'pending' || task.status === 'failed'
 }
 </script>
 
@@ -61,9 +98,51 @@ function isFilled(filledIds: string[] | undefined, noticeId: string) {
             <span v-if="item.version">{{ item.version }}</span>
             <span>{{ formatTime(item.receivedAt) }}</span>
           </div>
+
+          <!-- 平台任务列表（AP 分支拆解） -->
+          <div v-if="item.platformTasks && item.platformTasks.length" class="platform-tasks">
+            <div class="platform-tasks-hint">该 AP 分支对应多个 modem 平台，逐个升级：</div>
+            <div v-for="task in item.platformTasks" :key="task.platform" class="platform-task-row">
+              <span class="platform-name">{{ task.platform }}</span>
+              <NTag size="small" :type="platformTaskTagType(task.status)" :bordered="false">
+                {{ platformTaskTagText(task.status) }}
+              </NTag>
+              <div class="platform-task-actions">
+                <NButton
+                  size="tiny"
+                  type="primary"
+                  :loading="isPlatformApplying(item.noticeId, task.platform)"
+                  :disabled="!canApplyPlatform(task) || Boolean(confirmingId || dismissingId)"
+                  @click="emit('apply', item.noticeId, task.platform)"
+                >
+                  采用并填入
+                </NButton>
+                <NButton
+                  v-if="task.status === 'pending' || task.status === 'failed'"
+                  size="tiny"
+                  secondary
+                  :disabled="Boolean(applyingId || confirmingId || dismissingId)"
+                  @click="emit('setPlatformTaskStatus', item.noticeId, task.platform, 'skipped')"
+                >
+                  跳过
+                </NButton>
+                <NButton
+                  v-if="task.status === 'skipped'"
+                  size="tiny"
+                  secondary
+                  :disabled="Boolean(applyingId || confirmingId || dismissingId)"
+                  @click="emit('setPlatformTaskStatus', item.noticeId, task.platform, 'pending')"
+                >
+                  恢复
+                </NButton>
+              </div>
+            </div>
+          </div>
         </div>
+
         <div class="notice-actions">
           <NButton
+            v-if="!item.platformTasks || !item.platformTasks.length"
             type="primary"
             size="small"
             :loading="applyingId === item.noticeId"
@@ -77,7 +156,7 @@ function isFilled(filledIds: string[] | undefined, noticeId: string) {
             secondary
             size="small"
             :loading="confirmingId === item.noticeId"
-            :disabled="Boolean(applyingId || dismissingId)"
+            :disabled="Boolean(applyingId || dismissingId) || (item.platformTasks ? !isNoticeComplete(item) : false)"
             @click="emit('confirm', item.noticeId)"
           >
             确认完成
@@ -183,6 +262,41 @@ function isFilled(filledIds: string[] | undefined, noticeId: string) {
   margin-top: 6px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.platform-tasks {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.08));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+}
+
+.platform-tasks-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.platform-task-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  flex-wrap: wrap;
+}
+
+.platform-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--head);
+  min-width: 96px;
+}
+
+.platform-task-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
 }
 
 .notice-actions {

@@ -1,0 +1,24 @@
+{
+  "mappings": [
+    {
+      "trunk": "tOS_mtk_A16_vnd_trunk.xml",
+      "platforms": ["GEN95-W", "GEN97-W", "GEN98-W", "GEN99-W"]
+    },
+    {
+      "trunk": "tOS_mtk_A16_trunk.xml",
+      "platforms": ["GEN95-W", "GEN97-W", "GEN98-W", "GEN99-W"]
+    },
+    {
+      "trunk": "tOS_mtk_A15_trunk.xml",
+      "platforms": ["GEN93-V", "GEN97-V", "GEN99-V"]
+    },
+    {
+      "trunk": "tOS_mtk_A14_trunk.xml",
+      "platforms": ["GEN99-U"]
+    },
+    {
+      "trunk": "tOS_mtk_A13_trunk.xml",
+      "platforms": ["GEN99-T"]
+    }
+  ]
+}
