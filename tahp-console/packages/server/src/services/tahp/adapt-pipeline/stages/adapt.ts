@@ -105,6 +105,7 @@ async function launchDomain(ctx: StageContext, domain: PipelineDomain): Promise<
 
   const layout = await getAdaptDomainLayout(domain.domain_id, domain.workspace_id)
   const pathFlat = flattenPathParams(ctx.run.path_params)
+  // layout_fields 已定义（含 []）= 发布快照权威；未定义才回退本机 overlay
   const snapshotFields = (domain.layout_fields ?? []).map(f => ({
     name: f.name,
     label: f.label,
@@ -115,7 +116,7 @@ async function launchDomain(ctx: StageContext, domain: PipelineDomain): Promise<
     label: f.label,
     required: f.required,
   }))
-  const layoutFields = snapshotFields.length ? snapshotFields : overlayFields
+  const layoutFields = domain.layout_fields !== undefined ? snapshotFields : overlayFields
   const layoutNames = new Set(layoutFields.map(f => f.name))
   const formFields = [
     ...pathFlat.formFields.filter(f => !layoutNames.has(f.name)),

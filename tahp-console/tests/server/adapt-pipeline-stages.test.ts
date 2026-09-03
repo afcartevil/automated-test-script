@@ -204,7 +204,9 @@ describe('adapt-pipeline stages', () => {
         workspace_id: 'adapt-debug',
         domain_id: 'tp',
         revision: 1,
-        schema: [],
+        schema: [
+          { key: 'debug_project', label: '调试项目名', type: 'text', required: false },
+        ],
         form_data: { debug_project: 'A' },
         stale_fields: [],
         incomplete_required: [],
@@ -263,7 +265,10 @@ describe('adapt-pipeline stages', () => {
         workspace_id: 'adapt-debug',
         domain_id: 'tp',
         revision: 1,
-        schema: [],
+        schema: [
+          { key: 'debug_project', label: '调试项目名', type: 'text', required: false },
+          { key: 'old_dts', label: '旧 DTS', type: 'text', required: false },
+        ],
         form_data: { debug_project: 'from-central', old_dts: 'Z:\\touch.dtsi' },
         stale_fields: [],
         incomplete_required: [],
@@ -344,7 +349,9 @@ describe('adapt-pipeline stages', () => {
         workspace_id: 'adapt-debug',
         domain_id: 'tp',
         revision: 1,
-        schema: [],
+        schema: [
+          { key: 'debug_project', label: '调试项目名', type: 'text', required: true },
+        ],
         form_data: {},
         stale_fields: [],
         incomplete_required: ['debug_project'],
@@ -359,6 +366,48 @@ describe('adapt-pipeline stages', () => {
     expect(updated.current_node).toBe('prereq')
     expect(updated.stages.prereq?.human?.reason).toBe('incomplete_required')
     expect(startAdaptMock).not.toHaveBeenCalled()
+  })
+
+  it('empty central schema is authoritative and does not fall back to local layout', async () => {
+    resolveMock.mockResolvedValue({
+      project_code: 'KM9',
+      campaign_id: 'camp-1',
+      from_os: '15',
+      to_os: '16',
+      domains: [{
+        workspace_id: 'adapt-debug',
+        domain_id: 'comm-framework',
+        revision: 1,
+        schema: [],
+        form_data: { prj_path: '/should/be/cleared' },
+        stale_fields: [],
+        incomplete_required: ['prj_path'],
+      }],
+    })
+    getLayoutMock.mockResolvedValue({
+      domain_id: 'comm-framework',
+      fields: [
+        { name: 'prj_path', label: 'PRJ Path', type: 'text', required: true },
+        { name: 'user_notes', label: '补充说明', type: 'textarea', required: false },
+      ],
+      related_skills: ['comm-framework-agent-test'],
+      revision: 1,
+      updated_at: new Date().toISOString(),
+      source: 'user',
+      schema_version: 1,
+    })
+    startAdaptMock.mockReturnValue({ ok: true, taskId: 'task-cmf-empty' })
+
+    const run = createRun(baseInput())
+    await startRun(run.run_id)
+
+    const updated = getRun(run.run_id)!
+    const domain = updated.domains.find(d => d.domain_id === 'comm-framework')
+    expect(domain?.layout_fields).toEqual([])
+    expect(domain?.form_data).toEqual({})
+    expect(domain?.incomplete_required).toEqual([])
+    expect(domain?.related_skills).toEqual(['comm-framework-agent-test'])
+    expect(updated.stages.prereq?.human?.reason).not.toBe('incomplete_required')
   })
 
   it('uses snapshot schema for required fields even when overlay is empty', async () => {

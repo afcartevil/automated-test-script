@@ -91,14 +91,26 @@ function pickFormDataForFields(
   schema: unknown,
 ): Record<string, unknown> {
   if (!raw) return {}
+  // 中心未给 schema（非数组）时保留原值；空数组表示发布快照权威清空
+  if (!Array.isArray(schema)) return { ...raw }
   const schemaNames = schemaToLayoutFields(schema).map(field => field.name)
-  if (!schemaNames.length) return { ...raw }
+  if (!schemaNames.length) return {}
   const allowed = new Set(schemaNames)
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(raw)) {
     if (allowed.has(key)) out[key] = value
   }
   return out
+}
+
+/** 中心返回了 schema 数组（含 []）时以其为权威，不再回退本机 layout */
+function resolveLayoutFields(
+  schema: unknown | undefined,
+  layoutFields: AdaptLayoutFieldDef[] | undefined,
+  hasCentral: boolean,
+): AdaptLayoutFieldDef[] {
+  if (hasCentral && Array.isArray(schema)) return schemaToLayoutFields(schema)
+  return layoutFields ? [...layoutFields] : []
 }
 
 /**
@@ -118,8 +130,7 @@ async function normalizeDomains(
     const result: PipelineDomain[] = []
     for (const d of centralDomains) {
       const layout = await getAdaptDomainLayout(d.domain_id, d.workspace_id)
-      const snapshotFields = schemaToLayoutFields(d.schema)
-      const layout_fields = snapshotFields.length ? snapshotFields : (layout?.fields ?? [])
+      const layout_fields = resolveLayoutFields(d.schema, layout?.fields, true)
       const form_data = pickFormDataForFields(d.form_data as Record<string, unknown>, d.schema)
       result.push({
         workspace_id: d.workspace_id,
@@ -132,9 +143,9 @@ async function normalizeDomains(
             ? [...layout.related_skills]
             : [],
         form_data,
-        incomplete_required: snapshotFields.length
-          ? computeIncomplete(form_data, snapshotFields, d.incomplete_required)
-          : [...d.incomplete_required],
+        incomplete_required: layout_fields.length
+          ? computeIncomplete(form_data, layout_fields, d.incomplete_required)
+          : [],
         enabled: true,
         status: 'pending',
         layout_fields,
@@ -148,15 +159,19 @@ async function normalizeDomains(
     const key = domainCatalogKey(p.workspace_id, p.domain_id)
     const central = centralByKey.get(key)
     const layout = await getAdaptDomainLayout(p.domain_id, p.workspace_id)
-    const snapshotFields = schemaToLayoutFields(central?.schema)
-    const layout_fields = snapshotFields.length ? snapshotFields : (layout?.fields ?? [])
+    const layout_fields = resolveLayoutFields(central?.schema, layout?.fields, !!central)
     const merged = mergeFormData(central?.form_data, p.form_data)
-    const form_data = pickFormDataForFields(merged, central?.schema)
-    const incomplete_required = computeIncomplete(
-      form_data,
-      layout_fields,
-      central?.incomplete_required ?? p.incomplete_required ?? [],
+    const form_data = pickFormDataForFields(
+      merged,
+      central ? central.schema : undefined,
     )
+    const incomplete_required = layout_fields.length
+      ? computeIncomplete(
+        form_data,
+        layout_fields,
+        central?.incomplete_required ?? p.incomplete_required ?? [],
+      )
+      : []
 
     result.push({
       workspace_id: p.workspace_id,

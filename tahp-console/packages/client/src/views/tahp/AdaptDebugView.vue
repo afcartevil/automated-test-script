@@ -1209,7 +1209,13 @@ function ensurePrereqCustomFields(
   schema: Array<{ key: string; label: string; type: string; required?: boolean; options?: Array<{ label: string; value: string }>; placeholder?: string; source?: string }>,
 ) {
   const domain = workspaceDomains[ws]?.find(d => d.id === domainId)
-  if (!domain || !schema.length) return
+  if (!domain) return
+  // 中心发布快照为权威：空 schema 也清空本地域字段（公共路径走全局前置）
+  if (!schema.length) {
+    domain.fields = []
+    syncFormDataForDomain(domain)
+    return
+  }
   const byName = new Map(domain.fields.map(f => [f.name, f]))
   const next: FieldDef[] = []
   const seen = new Set<string>()
@@ -1227,7 +1233,6 @@ function ensurePrereqCustomFields(
       defaultValue: local?.defaultValue,
     })
   }
-  if (!next.length) return
   domain.fields = next
   syncFormDataForDomain(domain)
 }

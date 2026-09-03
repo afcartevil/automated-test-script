@@ -263,7 +263,9 @@ function mergeSnapshotSchema(
   schema: WizardFieldSchema[],
   snapshot: Array<{ key: string; label: string; type?: string; required?: boolean }> | undefined,
 ): WizardFieldSchema[] {
-  if (!snapshot?.length) return schema
+  // 中心未下发该域 → 用目录/内置；中心下发了 schema 数组（含 []）→ 以其为权威
+  if (snapshot === undefined) return schema
+  if (!snapshot.length) return []
   const byKey = new Map(schema.map(f => [f.key, f]))
   return snapshot.filter(field => !!field.key).map((field) => {
     const local = byKey.get(field.key)
