@@ -7,7 +7,7 @@ import EaCard from '@/components/layout/EaCard.vue'
 const SOP_URL = 'https://transsioner.feishu.cn/wiki/BdVUwpCL4ifRZckiQlzcPQoUndg'
 
 const router = useRouter()
-const activeKey = ref('pipeline')
+const activeKey = ref('adapt-debug')
 
 function go(name: string) {
   router.push({ name })
@@ -60,57 +60,58 @@ const groups: ManualGroup[] = [
   {
     id: 'core',
     title: '三大核心',
-    subtitle: '面向 Android 大版本升级的底软适配主线能力：流水线编排和功能 / 特性 / 运营商适配调试、Modem / GKI 基线升级',
+    subtitle: '与首页三张主卡片一致：适配调试、Modem 升级、GKI 升级。都是自动适配 / 合入 → 人工审核 → 入库，不会越过审核门。',
     color: 'var(--accent)',
     items: [
-      {
-        key: 'pipeline',
-        title: '适配流水线',
-        tone: 'var(--accent)',
-        desc: '把<span class="hl">选项目 → 拉取前置版本代码 → AI 适配 → 编译 → 烧录 → 自检 → 审核 → 提交 Gerrit</span>串成可自动流转的工作流。各阶段可随时增删；某阶段没准备好时转为<span class="hl">人工处理</span>，不会卡住流程；某步失败后按上一步的产出还在不在，推荐从哪一步接着跑，<span class="hl-warn">避免整条重跑</span>。',
-        steps: [
-          '进入「适配流水线」，在「<span class="hl">新建运行</span>」选项目与前置版本（需 <span class="hl">EasyAdapter 中心</span>已配置、<span class="hl">Agent Bridge</span> 就绪）。',
-          '<span class="hl">启动</span>后在「运行看板」按阶段观察进度。',
-          '某阶段<span class="hl-warn">失败</span>按界面推荐的恢复点继续，<span class="hl-warn">不要整条重跑</span>。',
-          '「待人工处理」由人工审核通过后<span class="hl">提交 Gerrit</span>。',
-          '「流程编排」Tab 可查看 / 调整阶段定义。',
-        ],
-        notes: [
-          '编译、刷机、自检等步骤都复用现有功能，流水线只负责把它们串起来。',
-        ],
-        route: 'tahp.pipeline',
-      },
       {
         key: 'adapt-debug',
         title: 'AI 适配调试',
         tone: 'var(--violet-ic)',
-        desc: '基于 <span class="hl">JIRA / 需求</span>的单次适配工作台。按域（通信 / 驱动 / 内核等）填写前置条件，<span class="hl">启动 Agent</span> 产出代码修改与适配报告，可衔接编译、自检与 Gerrit 提交。',
+        desc: '把<span class="hl">源版本</span>的功能、特性、运营商定制改到<span class="hl">目标版本</span>。按域（通信 / 驱动 / 内核等）填前置条件，<span class="hl">启动 Agent</span> 改代码并出适配报告；入库须<span class="hl">人工审核</span>后走 Gerrit。',
         steps: [
           '进入「AI 适配调试」，选择工作区与业务域（通信 / 驱动 / 内核等）。',
           '可用「<span class="hl">从中心载入前置</span>」按项目号自动填表。',
-          '完成必填项后<span class="hl">启动</span>；填完表单后会自动进入运行监控，可看 Agent 过程与文件改动。',
+          '完成必填项后<span class="hl">启动</span>；填完表单后会进入运行监控，可看 Agent 过程与文件改动。',
           '完成后到「报告」核对修改清单；需要入库时走<span class="hl">审核</span>与 <span class="hl">Gerrit 提交</span>。',
         ],
         notes: [
-          '与流水线的区别：这里偏单次交互调试；流水线把适配与后续验证串成自动流转。',
+          '偏单次、按 JIRA / 需求交互调试。要把适配和编译、烧录、自检串起来，用下面的「适配流水线」。',
+          'Agent 不可用时任务失败，不会改成后台直接调模型。',
         ],
         route: 'tahp.adapt-debug',
+      },
+      {
+        key: 'pipeline',
+        title: '适配流水线',
+        tone: 'var(--accent)',
+        desc: '适配调试的自动流转路径：把<span class="hl">选项目 → 拉前置代码 → AI 适配 → 编译 → 烧录 → 自检 → 审核 → 提交 Gerrit</span>串成工作流。某阶段没就绪会变成<span class="hl">人工处理</span>；失败后按界面推荐的恢复点续跑，<span class="hl-warn">不要整条重跑</span>。',
+        steps: [
+          '进入「适配流水线」，在「<span class="hl">新建运行</span>」选项目与前置版本（需 <span class="hl">EasyAdapter 中心</span>已配置、<span class="hl">Agent Bridge</span> 就绪）。',
+          '<span class="hl">启动</span>后在「运行看板」按阶段观察进度。',
+          '某阶段<span class="hl-warn">失败</span>按界面推荐的恢复点继续。',
+          '「待人工处理」由人工审核通过后<span class="hl">提交 Gerrit</span>。',
+          '「流程编排」Tab 可查看 / 调整阶段定义。',
+        ],
+        notes: [
+          '流水线只负责编排；编译、刷机、自检复用现有功能。',
+        ],
+        route: 'tahp.pipeline',
       },
       {
         key: 'modem',
         title: 'Modem 升级',
         tone: 'var(--amber-ic)',
-        desc: 'Modem 基线 Patch 自动合入并提交，<span class="hl">人工审核</span>通过后入库。<span class="hl">任务来自 TONES</span>——TONES 完成 AP 基线升级后经 webhook 把通知推送到 EasyAdapter，操作员在工作台<span class="hl">采用</span>通知并启动分阶段执行。',
+        desc: 'AP 基线升级后，Modem 仓 patch <span class="hl">自动合入并提交</span>，<span class="hl">人工审核</span>通过后入库。<span class="hl">不会自动开合入</span>：TONES / MergeTool 经中心推送通知后，须在工作台采用、核对再启动。',
         steps: [
-          '<span class="hl">TONES</span> 完成 AP 基线升级后经 webhook 推送通知到 EasyAdapter；也可在工作台手动粘贴通知文本。',
-          '工作台「<span class="hl">外部通知</span>」列表出现待处理通知，点「<span class="hl">采用</span>」填入。',
-          '系统解析通知给出合入仓 / 项目推荐，核对后<span class="hl">启动</span>分阶段执行。',
+          'TONES 完成 AP 基线升级后，通知出现在工作台「<span class="hl">外部通知</span>」；也可手动粘贴通知文本。',
+          '点「<span class="hl">采用</span>」填入，核对合入仓 / 项目推荐后<span class="hl">启动</span>分阶段执行。',
           '阶段面板跟踪合入、冲突与日志；有冲突按提示处理再继续。',
-          '<span class="hl">人工审核</span>通过后<span class="hl-ok">入库</span>；运行历史可回看，环境 / 仓库 / 推送策略在配置中心维护。',
+          '核对并启动后点「<span class="hl">确认完成</span>」，通知才从待办消失。',
+          '<span class="hl">人工审核</span>通过后<span class="hl-ok">入库</span>。运行历史可回看；环境 / 仓库 / 推送策略在「配置中心」。',
         ],
         notes: [
           '子页：工作台 / 运行历史 / 配置中心。',
-          '任务源为 TONES，也可手动粘贴通知。',
+          '合入由本机 Console 调用集成版 Modem Patch Tool，不必另装一份工具。',
         ],
         route: 'tahp.modem-baseline.workbench',
       },
@@ -118,17 +119,16 @@ const groups: ManualGroup[] = [
         key: 'gki',
         title: 'GKI 升级',
         tone: 'var(--emerald-ic)',
-        desc: 'GKI Patch 质量分析、稳定性验证并选取最优 Tag，自动合入并提交，<span class="hl">人工审核</span>通过后入库。<span class="hl">任务同样来自 TONES</span>，在内嵌的 GKI Patch Tool 工作台中处理。',
+        desc: 'GKI patch <span class="hl">质量分析</span>、稳定性验证并选取最优 Tag，再自动合入提交；<span class="hl">人工审核</span>通过后入库。任务同样来自 <span class="hl">TONES</span>，在 Console 内嵌的 GKI Patch Tool 中处理。',
         steps: [
-          'GKI 升级任务来自 <span class="hl">TONES</span>，在内嵌 GKI Patch Tool 工作台中处理。',
-          '进入页面后等待本地服务就绪（首次会拉起），从工作台开始。',
-          '「<span class="hl">patch 分析</span>」查看质量与稳定性结论，用于选取最优 Tag。',
-          '「故障诊断」处理合入 / 验证中的 crash 与异常。',
-          '确认后走「<span class="hl">patch 入库</span>」提交；历史记录在「数据库」，环境在「设置」。',
+          '进入「GKI 升级」，先等本机服务就绪（首次会拉起），从<span class="hl">工作台</span>看外部通知与任务列表。',
+          '填 From / To Tag 后「前往分析」；或在左侧打开「<span class="hl">patch 分析</span>」看质量结论、选最优 Tag。',
+          '「故障诊断」处理合入 / 验证中的 crash。确认后走「<span class="hl">patch 入库</span>」合入与编译验证。',
+          '历史在「数据库」；LLM / SSH 由 EasyAdapter 一键配置注入，「设置」里看其余环境项。',
         ],
         notes: [
-          '内嵌工作台，首次进入可能拉起本地服务。',
-          '与 Modem 升级同源：任务来自 TONES + 自动合入 + 人工审核入库。',
+          '左侧「设置 / 数据库 / patch 入库 / 故障诊断 / patch 分析」会打开对应页，不必退回顶栏。',
+          '与 Modem 升级一样：通知不会自动开合入，须审核后入库。',
         ],
         route: 'tahp.gki-patch.dashboard',
       },
@@ -137,7 +137,7 @@ const groups: ManualGroup[] = [
   {
     id: 'public',
     title: '公共能力',
-    subtitle: '跨业务复用的诊断、验测与代码拉取能力',
+    subtitle: '跨业务复用：智能诊断、质量验测、代码拉取、校准数据',
     color: 'var(--info)',
     items: [
       {
@@ -193,6 +193,22 @@ const groups: ManualGroup[] = [
         ],
         route: 'tahp.code-pull',
       },
+      {
+        key: 'rf-calib',
+        title: '校准数据',
+        tone: 'var(--amber-ic)',
+        desc: '在本机通过 Modem Meta 的 <span class="hl">MetaCLI</span> 备份 / 恢复射频校准数据，对齐 GUI 的 Update Parameter / Read Write Cal Data。',
+        steps: [
+          '先在「配置 → 一键配置」填好 <span class="hl">Modem Meta</span> 安装目录并保存。',
+          '进入「校准数据」，选备份或恢复。',
+          '点开始后按提示：手机关机，再插 USB（与 Modem Meta GUI 进 META 相同）。',
+          '恢复模式需指定校准数据文件；完成后看日志确认。',
+        ],
+        notes: [
+          '仅 Windows；本机须已安装 Modem Meta（含 bin\\MetaCLI.exe）。',
+        ],
+        route: 'tahp.rf-calib-meta',
+      },
     ],
   },
   {
@@ -212,7 +228,7 @@ const groups: ManualGroup[] = [
           '可从详情返回列表，或跳转「AI 适配调试」<span class="hl">启动新任务</span>。',
         ],
         notes: [
-          '报告在任务完成后自动生成；空列表表示尚未跑过适配任务。',
+          '报告在任务完成后自动生成；空列表表示尚未跑过对应任务。',
         ],
         route: 'tahp.reports',
       },
@@ -253,14 +269,14 @@ const groups: ManualGroup[] = [
         key: 'chat',
         title: '对话搜索',
         tone: 'var(--rose-ic)',
-        desc: 'Hermes 对话与会话检索，全屏布局。用于复盘 Agent 过程、定位某次诊断 / 适配的上下文。',
+        desc: 'Hermes 全屏对话。从顶栏「运营监控 → 对话搜索」进入时<span class="hl">每次新建空白对话</span>，不接着上一场。历史会话从左侧列表打开，或用 Ctrl+K 检索。',
         steps: [
-          '进入「对话搜索」，左侧会话列表选择历史会话。',
-          '用关键词<span class="hl">检索</span>，打开对应记录查看上下文。',
-          '新对话请明确任务与项目信息，便于后续在报告 / 评测中追溯。',
+          '从「运营监控 → <span class="hl">对话搜索</span>」进入，当前页是一场新对话，可直接提问。',
+          '要复盘某次适配 / 诊断，在<span class="hl">左侧会话列表</span>点历史记录；或 Ctrl+K 按关键词搜索后打开。',
+          '新对话请写清任务与项目，便于事后在报告 / 评测里追溯。',
         ],
         notes: [
-          '该页占满内容区；业务主路径仍建议走对应工作台而非纯对话。',
+          '业务主路径仍走三大核心工作台，不要用纯对话替代适配 / Modem / GKI 流程。',
         ],
         route: 'hermes.chat',
       },
@@ -342,7 +358,7 @@ onUnmounted(() => {
       <div class="manual-content">
         <EaPageHead
           title="EasyAdapter 使用手册"
-          subtitle="按导航分区说明三大核心、公共能力与运营监控；每项可直接打开对应页面"
+          subtitle="与首页一致：适配调试、Modem 升级、GKI 升级为主线；公共能力与运营监控服务主线。每项可直接打开对应页面"
         />
 
         <EaCard

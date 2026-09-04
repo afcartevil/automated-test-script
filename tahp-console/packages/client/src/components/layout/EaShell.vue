@@ -5,6 +5,7 @@ import { NDropdown, useMessage } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
 import ModelSelector from './ModelSelector.vue'
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
+import { HERMES_CHAT_ROUTE, hermesChatFreshQuery } from '@/utils/chat-navigation'
 import {
   defaultCollapsedTypes,
   groupApplyItems,
@@ -180,6 +181,10 @@ function onPublicSelect(key: string) {
 }
 
 function onSecondarySelect(key: string) {
+  if (key === HERMES_CHAT_ROUTE) {
+    router.push({ name: HERMES_CHAT_ROUTE, query: hermesChatFreshQuery() })
+    return
+  }
   router.push({ name: key })
 }
 

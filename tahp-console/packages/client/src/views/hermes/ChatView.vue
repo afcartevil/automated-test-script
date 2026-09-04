@@ -1,15 +1,32 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import ChatPanel from '@/components/hermes/chat/ChatPanel.vue'
 import { useAppStore } from '@/stores/hermes/app'
 import { useChatStore } from '@/stores/hermes/chat'
 import { useProfilesStore } from '@/stores/hermes/profiles'
 import { useSettingsStore } from '@/stores/hermes/settings'
+import {
+  HERMES_CHAT_ROUTE,
+  hasHermesChatFreshQuery,
+  withoutHermesChatFreshQuery,
+} from '@/utils/chat-navigation'
 
+const route = useRoute()
+const router = useRouter()
 const appStore = useAppStore()
 const chatStore = useChatStore()
 const profilesStore = useProfilesStore()
 const settingsStore = useSettingsStore()
+
+async function startFreshChatIfRequested() {
+  if (!hasHermesChatFreshQuery(route.query)) return
+  await chatStore.newChat()
+  await router.replace({
+    name: HERMES_CHAT_ROUTE,
+    query: withoutHermesChatFreshQuery(route.query),
+  })
+}
 
 onMounted(async () => {
   appStore.loadModels()
@@ -19,8 +36,17 @@ onMounted(async () => {
     profilesStore.fetchProfiles(),
     settingsStore.fetchSettings(),
   ])
-  chatStore.loadSessions()
+  await chatStore.loadSessions()
+  await startFreshChatIfRequested()
 })
+
+watch(
+  () => route.query.fresh,
+  async (fresh, previous) => {
+    if (!fresh || fresh === previous) return
+    await startFreshChatIfRequested()
+  },
+)
 </script>
 
 <template>
