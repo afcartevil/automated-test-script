@@ -74,6 +74,11 @@ export interface AdaptAgentRunInput {
   userNotes?: string
   workspaceId?: string
   interactionMode?: boolean
+  /**
+   * 为 true 时不上报中心 adapt-debug（适配流水线内复用 Agent 时使用；
+   * 终态由 adapt-pipeline 整包上报）。独立 AI 适配调试保持默认 false。
+   */
+  skipQualityUpload?: boolean
 }
 
 export interface AdaptAgentTaskCtx {
@@ -106,6 +111,8 @@ export interface AdaptAgentTaskCtx {
   promptLogDir?: string
   completedAt?: string
   error?: string
+  /** 见 AdaptAgentRunInput.skipQualityUpload */
+  skipQualityUpload?: boolean
 }
 
 const taskCtx = new Map<string, AdaptAgentTaskCtx>()
@@ -587,6 +594,7 @@ export function startAdaptAgentRun(input: AdaptAgentRunInput): { ok: true; taskI
     formFields: input.formFields ? [...input.formFields] : undefined,
     userNotes: input.userNotes,
     interactionMode: isInteractiveCarrierDomain(input.domainId, input.interactionMode === true),
+    skipQualityUpload: input.skipQualityUpload === true,
     startedAt: new Date().toISOString(),
     status: 'running',
     skillsUsed: [],
@@ -747,7 +755,9 @@ async function finalizeAdaptAgentTask(
     logger.warn({ err: (e as Error).message, taskId }, '[adapt-agent] report write failed')
   }
 
-  void uploadAdaptDebugFromCtx(ctx)
+  if (!ctx.skipQualityUpload) {
+    void uploadAdaptDebugFromCtx(ctx)
+  }
 }
 
 async function runAdaptAgentTask(taskId: string, turn: AdaptTurnOptions = { mode: 'initial' }): Promise<void> {
@@ -921,7 +931,9 @@ async function runAdaptAgentTask(taskId: string, turn: AdaptTurnOptions = { mode
     ctx.status = 'failed'
     ctx.error = msg
     emit(taskId, 'task.failed', { error: msg, message: msg })
-    void uploadAdaptDebugFromCtx(ctx)
+    if (!ctx.skipQualityUpload) {
+      void uploadAdaptDebugFromCtx(ctx)
+    }
   } finally {
     adaptRunInProgress.delete(taskId)
     const latest = taskCtx.get(taskId)

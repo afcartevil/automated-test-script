@@ -154,6 +154,11 @@ export interface TestSession {
   testConfig?: SelfCheckTestConfig
   /** 用例失败时待导出的日志（报告落盘后再执行，避免与 getprop 争抢 adb） */
   pendingFailureLogCaseKeys?: string[]
+  /**
+   * 为 true 时不上报中心 self-check（适配流水线内自检阶段使用；
+   * 终态由 adapt-pipeline 整包上报）。独立自检保持默认 false/undefined。
+   */
+  skipQualityUpload?: boolean
 }
 
 export interface CaseCatalogItem {
@@ -2964,7 +2969,7 @@ export async function startCustomTest(
   deviceId: string,
   selectedCases: string[],
   customAuxDeviceIds: string[],
-  options?: { prioritizeTddManual?: boolean },
+  options?: { prioritizeTddManual?: boolean; skipQualityUpload?: boolean },
 ): Promise<DeviceDetail | null> {
   try {
     const device = devices[deviceId]
@@ -3017,6 +3022,7 @@ export async function startCustomTest(
       customAuxDevices: auxIds,
       initializedPythonModules: [],
       prioritizeTddManual,
+      skipQualityUpload: options?.skipQualityUpload === true,
       testConfig: snapshotTestConfig('custom', {
         prioritizeTddManual,
         selectedCases,
@@ -3884,35 +3890,39 @@ async function generateTestReport(
     console.log(`[device-self-check] Report generated: ${resultDir}`)
     emitEvent('report_ready', { deviceId, resultDir })
 
-    // 自动上报中心质量看板（失败不影响本地报告）
+    // 自动上报中心质量看板（失败不影响本地报告；流水线内自检跳过旁路上报）
     const reportRelPath = join('self-check', deviceId, basename(resultDir)).replace(/\\/g, '/')
-    void uploadSelfCheckReportToCentral({
-      summary: {
-        deviceId: summary.deviceId,
-        deviceName: summary.deviceName,
-        testType: summary.testType,
-        version: summary.version,
-        startTime: summary.startTime,
-        endTime: summary.endTime,
-        status: summary.status,
-        totalCases: summary.totalCases,
-        passedCases: summary.passedCases,
-        failedCases: summary.failedCases,
-        skippedCases: summary.skippedCases,
-        aiSummary: detailPayload.aiSummary,
-        aiPlanned: summary.aiPlanned,
-        scheduleKey: summary.scheduleKey,
-        project_code: summary.project_code,
-        campaign_id: summary.campaign_id,
-        brand: summary.brand,
-        testConfig: summary.testConfig,
-      },
-      detail: detailPayload,
-      resultDir,
-      reportRelPath,
-    }).catch(err => {
-      console.warn('[device-self-check] quality upload failed:', (err as Error).message)
-    })
+    if (session.skipQualityUpload) {
+      console.log('[device-self-check] skip quality upload (pipeline origin)')
+    } else {
+      void uploadSelfCheckReportToCentral({
+        summary: {
+          deviceId: summary.deviceId,
+          deviceName: summary.deviceName,
+          testType: summary.testType,
+          version: summary.version,
+          startTime: summary.startTime,
+          endTime: summary.endTime,
+          status: summary.status,
+          totalCases: summary.totalCases,
+          passedCases: summary.passedCases,
+          failedCases: summary.failedCases,
+          skippedCases: summary.skippedCases,
+          aiSummary: detailPayload.aiSummary,
+          aiPlanned: summary.aiPlanned,
+          scheduleKey: summary.scheduleKey,
+          project_code: summary.project_code,
+          campaign_id: summary.campaign_id,
+          brand: summary.brand,
+          testConfig: summary.testConfig,
+        },
+        detail: detailPayload,
+        resultDir,
+        reportRelPath,
+      }).catch(err => {
+        console.warn('[device-self-check] quality upload failed:', (err as Error).message)
+      })
+    }
 
     void flushPendingFailureLogExports(deviceId, session).catch((e) => {
       console.warn('[device-self-check] Deferred failure log export failed:', e)

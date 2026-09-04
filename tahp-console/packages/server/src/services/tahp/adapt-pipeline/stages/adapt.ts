@@ -136,6 +136,8 @@ async function launchDomain(ctx: StageContext, domain: PipelineDomain): Promise<
     formData,
     formFields,
     workspaceId: domain.workspace_id,
+    // 流水线内复用 Agent：不上报 adapt-debug，终态由 adapt-pipeline 整包上传
+    skipQualityUpload: true,
   })
 
   if (!result.ok) {

@@ -138,7 +138,10 @@ export const selfcheckStageDefinition: StageDefinition = {
     })
 
     try {
-      const detail = await startCustomTest(deviceId, selectedCases, [])
+      const detail = await startCustomTest(deviceId, selectedCases, [], {
+        // 流水线内自检：不上报 self-check，终态由 adapt-pipeline 整包上传
+        skipQualityUpload: true,
+      })
       if (!detail) {
         ctx.patchState({
           progress: {
