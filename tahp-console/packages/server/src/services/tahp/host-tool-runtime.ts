@@ -1,6 +1,6 @@
 /**
  * 本机 ASF / Harness CLI 探测：可执行入口、远程执行形态、提示词用前缀。
- * 不写死 skill 目录名；远程执行按命令是否存在选择 legacy bridge-exec 或 asf bridge cmd。
+ * 不写死 skill 目录名；有 asf bridge cmd 时优先走 asf-bridge，否则才用 legacy bridge-exec。
  */
 import { execFileSync, spawn } from 'child_process'
 import { existsSync } from 'fs'
@@ -176,8 +176,8 @@ function runHostCliSync(args: string[], timeoutMs = 8_000): string {
 
 /** 纯函数：根据 help 文本判定远程执行形态（供测试） */
 export function flavorFromHelpText(remoteRunnerHelp: string, bridgeHelp: string): RemoteExecFlavor {
-  if (/bridge-exec/.test(remoteRunnerHelp)) return 'legacy-bridge-exec'
   if (/\bcmd\b/.test(bridgeHelp) && /bridge/.test(bridgeHelp)) return 'asf-bridge'
+  if (/bridge-exec/.test(remoteRunnerHelp)) return 'legacy-bridge-exec'
   return 'unavailable'
 }
 
@@ -186,7 +186,7 @@ export function detectRemoteExecFlavor(opts?: { refresh?: boolean }): RemoteExec
     return flavorCache.value
   }
   const rr = runHostCliSync(['remote-runner', '--help'])
-  const br = /bridge-exec/.test(rr) ? '' : runHostCliSync(['bridge', '--help'])
+  const br = runHostCliSync(['bridge', '--help'])
   const value = flavorFromHelpText(rr, br)
   flavorCache = { value, at: Date.now() }
   return value

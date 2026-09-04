@@ -355,10 +355,11 @@ const hasSysTarget = computed(() => selectedBuildTargets.value.includes('sys'))
 const hasTrsysTarget = computed(() => needsTrsysUi.value && selectedBuildTargets.value.includes('trsys'))
 const showSystemRoot = computed(() => packOn.value || hasSysTarget.value)
 const showTrsysRoot = computed(() => needsTrsysUi.value && (packOn.value || hasTrsysTarget.value))
+const TRSYS_ROOT_HINT = '请填入本地trsys编译产物，路径需要填到out_trsys，示例：Z:\\LK7K\\trsys\\out_trsys'
 const trsysRootPlaceholder = computed(() =>
   hasTrsysTarget.value
-    ? '请填入本地trsys编译产物,示例:Z:\\trsys-local。或不填,将会由EA拉取编译参与打包'
-    : '请填入本地trsys编译产物,示例:Z:\\trsys-local。',
+    ? `${TRSYS_ROOT_HINT}。或不填,将会由EA拉取编译参与打包`
+    : `${TRSYS_ROOT_HINT}。`,
 )
 const needTrsysShareConf = computed(() =>
   showEzBuildSection.value && hasTrsysTarget.value && !newTrsystemRoot.value.trim(),
@@ -1315,9 +1316,10 @@ onUnmounted(() => {
     <div v-else-if="step === 3" class="step-body">
       <h2>配置执行环境</h2>
       <p v-if="showEzBuildSection" class="step-hint">
-        编译经 remote-runner 在 Linux <code>~/code/ea-build</code> 执行 <code>ez-build.sh</code>。
+        有 <code>asf bridge cmd</code> 时读取远端 Samba <code>path=</code>，在映射盘（默认 <code>Z:\ea-build</code>）写入 <code>ez-build.sh</code>。
+        无 <code>bridge cmd</code> 时回退远端 <code>~/code/ea-build</code>（legacy <code>bridge-exec</code>）。
         勾选打包会显示 system / trsys 根目录；编译 target 勾了 <code>sys</code> 或 <code>trsys</code> 则只显示对应 ROOT。
-        <code>trsys</code> 仅目标 OS ≥ tOS17 可选。Windows 盘符路径会换算为 <code>/work/code/$USER/...</code>。请先保持齐治 Bridge READY。
+        <code>trsys</code> 仅目标 OS ≥ tOS17 可选。Windows 盘符路径会换算为 <code>/work/code/$USER/...</code>。缺失 Bridge 时会尝试自动 <code>asf bridge setup</code>。
       </p>
       <p v-else class="step-hint">
         当前流程未启用编译，或未勾选打包。请在下方填写版本路径供烧录使用。

@@ -3,10 +3,14 @@
  * tmux 内跑 ez-build.sh，再以短命令轮询 tmux 会话 + 日志心跳 / done 文件。
  */
 import { randomBytes } from 'crypto'
+import { readFileSync } from 'fs'
 import { join } from 'path'
 import { logger } from '../../logger'
 import { assertHarnessCliReady } from '../harness-version-gate'
 import { tahpPaths } from '../paths'
+import { readUnifiedConfig } from '../unified-config'
+import { readHarnessEnvFile } from '../harness-env-sync'
+import { detectRemoteExecFlavor, isAsfBridgeSshDisconnected } from '../host-tool-runtime'
 import {
   buildResultFilePath,
   writeBuildResult,
@@ -18,11 +22,13 @@ import {
   ensureBridgeReady,
   loadEzBuildScript,
 } from './harness-bridge-exec'
-import { isAsfBridgeSshDisconnected } from '../host-tool-runtime'
 import {
   EA_BUILD_DIR,
   copyConfJsonToMappedEaBuild,
+  copyEzBuildScriptToMappedEaBuild,
+  buildConfDeployCommands,
   buildDeployCommand,
+  buildEzBuildChmodCommand,
   buildTmuxKillCommand,
   buildTmuxPollCommand,
   buildTmuxStartCommand,
@@ -32,6 +38,12 @@ import {
   tmuxSessionName,
   tmuxStartConfirmed,
 } from './ez-build-tmux'
+import {
+  SAMBA_SHARE_LOOKUP_CMD,
+  linuxEaBuildDir,
+  parseSambaSharePath,
+  resolveEaBuildWinDir,
+} from './ea-build-layout'
 import { resolveLatestTrsysConf } from './trsys-conf-share'
 import {
   composeBuildTargetRaw,
@@ -204,6 +216,32 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
     return
   }
 
+  try {
+  const flavor = detectRemoteExecFlavor({ refresh: true })
+  const useSambaLayout = flavor === 'asf-bridge'
+  const mapDrive = (readUnifiedConfig().windows_map_drive || readHarnessEnvFile().HARNESS_MAP_DRIVE_ROOT || 'Z:\\').trim()
+  const winDir = resolveEaBuildWinDir(mapDrive)
+  let linuxDir = EA_BUILD_DIR
+
+  if (useSambaLayout) {
+    ctx.status = { state: 'running', progress: 6, phase: 'deploy', message: '读取 Samba 映射根' }
+    emit(ctx, '经 ASF Bridge 读取当前用户 Samba path=')
+    const sambaLookup = await bridgeExec(SAMBA_SHARE_LOOKUP_CMD, {
+      timeoutSec: 45,
+      signal,
+    })
+    const sambaRaw = bridgeOutput(sambaLookup)
+    if (Number(sambaLookup.exit_code) !== 0 && String(sambaLookup.status).toLowerCase() !== 'ok' && !sambaRaw) {
+      throw new Error(sambaLookup.error || '读取 Samba 配置失败')
+    }
+    const sambaRoot = parseSambaSharePath(sambaRaw)
+    linuxDir = linuxEaBuildDir(sambaRoot)
+    emit(ctx, `Samba 根 ${sambaRoot} → Linux ${linuxDir} · 映射盘 ${winDir}`)
+  } else {
+    ctx.status = { state: 'running', progress: 6, phase: 'deploy', message: '部署 ea-build' }
+    emit(ctx, `无 asf bridge cmd，回退 ${linuxDir}（legacy bridge-exec）`)
+  }
+
   const systemLinux = winMappedPathToLinuxWorkCodeOptional(input.systemPath ?? '')
   const vendorLinux = winMappedPathToLinuxWorkCode(input.vendorPath)
   const trsysEnabled = needsTrsysForTargetOs(input.toOs)
@@ -218,19 +256,37 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
   const targetRaw = composeBuildTargetRaw(targets, input.needPack)
   const session = tmuxSessionName(ctx.runId, input.project)
   ctx.tmuxSession = session
-  ctx.logFile = `${EA_BUILD_DIR}/${session}.log`
-  ctx.doneFile = `${EA_BUILD_DIR}/${session}.done`
+  ctx.logFile = `${linuxDir}/${session}.log`
+  ctx.doneFile = `${linuxDir}/${session}.done`
 
   ctx.status = { state: 'running', progress: 10, phase: 'deploy', message: '部署 ez-build.sh' }
-  emit(ctx, `部署脚本到 ${EA_BUILD_DIR}`)
   emit(ctx, `system=${systemLinux} vendor=${vendorLinux} trsys=${trsysLinux || '(empty)'} targets=${targetRaw}`)
 
   const script = loadEzBuildScript()
-  const scriptB64 = Buffer.from(script, 'utf-8').toString('base64')
-
-  try {
+  if (useSambaLayout) {
+    emit(ctx, `在映射盘创建 ${winDir} 并写入 ez-build.sh`)
+    const scriptWin = copyEzBuildScriptToMappedEaBuild(script, winDir)
+    emit(ctx, `已写入 ${scriptWin}`)
+    const chmodOut = { text: '' }
+    const chmod = await bridgeExec(buildEzBuildChmodCommand(linuxDir), {
+      timeoutSec: DEPLOY_TIMEOUT_SEC,
+      signal,
+      onStdout: (c) => flushLogLines(ctx, chmodOut, c),
+      onStderr: (c) => flushLogLines(ctx, chmodOut, c),
+    })
+    if (ctx.cancelled) {
+      ctx.status = { state: 'cancelled', error: '已取消' }
+      emit(ctx)
+      return
+    }
+    if (Number(chmod.exit_code) !== 0 && String(chmod.status).toLowerCase() !== 'ok') {
+      throw new Error(chmod.error || chmod.output || `chmod ez-build.sh 失败 exit=${chmod.exit_code}`)
+    }
+    if (chmod.output) emit(ctx, String(chmod.output).slice(0, 300))
+  } else {
+    emit(ctx, `经 bridge-exec 在远端创建 ${linuxDir} 并写入 ez-build.sh`)
     const deployOut = { text: '' }
-    const deploy = await bridgeExec(buildDeployCommand(scriptB64), {
+    const deploy = await bridgeExec(buildDeployCommand(Buffer.from(script, 'utf-8').toString('base64'), linuxDir), {
       timeoutSec: DEPLOY_TIMEOUT_SEC,
       signal,
       onStdout: (c) => flushLogLines(ctx, deployOut, c),
@@ -242,9 +298,10 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
       return
     }
     if (Number(deploy.exit_code) !== 0 && String(deploy.status).toLowerCase() !== 'ok') {
-      throw new Error(deploy.error || deploy.output || `部署脚本失败 exit=${deploy.exit_code}`)
+      throw new Error(deploy.error || deploy.output || `部署 ez-build.sh 失败 exit=${deploy.exit_code}`)
     }
     if (deploy.output) emit(ctx, String(deploy.output).slice(0, 300))
+  }
 
     const needPipeTrsys = targets.includes('trsys') && !trsysLinux
     if (needPipeTrsys) {
@@ -256,8 +313,19 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
         emit(ctx, `从共享盘拉取 conf.json（分支 ${branch}）`)
         const conf = resolveLatestTrsysConf(branch, input.variant)
         emit(ctx, `conf snapshot=${conf.snapshot}`)
-        const dest = copyConfJsonToMappedEaBuild(conf.confPath)
-        emit(ctx, `已拷贝到 ${dest}（映射盘，对应 ${EA_BUILD_DIR}/conf.json）`)
+        if (useSambaLayout) {
+          const dest = copyConfJsonToMappedEaBuild(conf.confPath, winDir)
+          emit(ctx, `已拷贝到 ${dest}（映射盘，对应 ${linuxDir}/conf.json）`)
+        } else {
+          const confB64 = readFileSync(conf.confPath).toString('base64')
+          for (const cmd of buildConfDeployCommands(confB64, 4000, linuxDir)) {
+            const confOut = await bridgeExec(cmd, { timeoutSec: DEPLOY_TIMEOUT_SEC, signal })
+            if (Number(confOut.exit_code) !== 0 && String(confOut.status).toLowerCase() !== 'ok') {
+              throw new Error(confOut.error || confOut.output || '部署 conf.json 失败')
+            }
+          }
+          emit(ctx, `已写入 ${linuxDir}/conf.json`)
+        }
       }
     }
 
@@ -275,6 +343,7 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
         vendorLinux,
         trsysLinux,
         sysVersion: input.sysVersion,
+        eaBuildDir: linuxDir,
       }),
       { timeoutSec: TMUX_START_TIMEOUT_SEC, signal },
     )
@@ -312,7 +381,7 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
       let pollRaw = ''
       let pollError = ''
       try {
-        const poll = await bridgeExec(buildTmuxPollCommand(session), {
+        const poll = await bridgeExec(buildTmuxPollCommand(session, linuxDir), {
           timeoutSec: POLL_TIMEOUT_SEC,
           signal,
         })
@@ -360,7 +429,7 @@ async function runEzBuild(ctx: BuildRunCtx, input: BuildCapabilityInput): Promis
         const durationMs = Date.now() - started
         const success = snap.doneCode === 0 && !logFail
         if (success) {
-          const pkgPath = `Z:\\ea-build\\output_version_${input.project}`
+          const pkgPath = join(winDir, `output_version_${input.project}`)
           const sawPack = detectBuildSuccessInLog(snap.lines, true)
           const contract: BuildResultContract = {
             schema_version: 1,

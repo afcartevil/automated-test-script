@@ -10,10 +10,12 @@ SCRIPT_NAME="$(basename "$0")"
 ROOT_DIR="$(pwd)"
 SYSTEM_DIR=""
 VENDOR_DIR=""
-# trsys 根目录（入参 NEW_TRSYSTEM_ROOT）。打包时拼成 ${TRSYS_ROOT_DIR}/code/out_trsys/target
-# 留空：含 trsys target 时在脚本 cwd 走 pipe_main。
+# trsys 根目录（入参 NEW_TRSYSTEM_ROOT）。
+# 有值：用户本地产物（填到 out_trsys），打包拼 ${TRSYS_ROOT_DIR}/target，不再走 EA pipe_main。
+# 留空且勾选 trsys：在脚本 cwd 走 pipe_main，产物为 ${ROOT_DIR}/code/out_trsys/target。
 TRSYS_ROOT_DIR=""
-TRSYS_OUT_REL="code/out_trsys/target"
+TRSYS_OUT_REL_USER="target"
+TRSYS_OUT_REL_PIPE="code/out_trsys/target"
 TIMESTAMP="$(date '+%Y%m%d_%H%M%S')"
 STATUS_DIR="${ROOT_DIR}/.build_status_${TIMESTAMP}"
 KEEPALIVE_INTERVAL=15
@@ -275,21 +277,22 @@ if [[ -n "${TARGET_SEEN[trsys]+x}" ]]; then
     HAS_TRSYS_TARGET=1
 fi
 
-# NEW_TRSYSTEM_ROOT 有值：打包用 ${TRSYS_ROOT_DIR}/code/out_trsys/target
+# NEW_TRSYSTEM_ROOT 有值：打包用 ${TRSYS_ROOT_DIR}/target（用户填到 out_trsys，跳过 EA 编译）
 # NEW_TRSYSTEM_ROOT 为空且含 trsys：在脚本 cwd（ea-build）走 pipe_main
 TRSYS_WORKDIR=""
+SKIP_EA_TRSYS_BUILD=0
 if [[ ${HAS_TRSYS_TARGET} -eq 1 ]]; then
     if [[ -n "${TRSYS_ROOT_DIR}" ]]; then
         if [[ ! -d "${TRSYS_ROOT_DIR}" ]]; then
             log_error "trsys root directory not found: ${TRSYS_ROOT_DIR}"
             exit 1
         fi
-        TRSYS_WORKDIR="${TRSYS_ROOT_DIR}"
-        TRSYS_DIR="${TRSYS_ROOT_DIR%/}/${TRSYS_OUT_REL}"
-        log_info "build_target contains trsys, trsys_dir=${TRSYS_DIR}"
+        SKIP_EA_TRSYS_BUILD=1
+        TRSYS_DIR="${TRSYS_ROOT_DIR%/}/${TRSYS_OUT_REL_USER}"
+        log_info "NEW_TRSYSTEM_ROOT set, skip EA trsys build, pack trsys_dir=${TRSYS_DIR}"
     else
         TRSYS_WORKDIR="${ROOT_DIR}"
-        TRSYS_DIR="${ROOT_DIR%/}/${TRSYS_OUT_REL}"
+        TRSYS_DIR="${ROOT_DIR%/}/${TRSYS_OUT_REL_PIPE}"
         log_info "NEW_TRSYSTEM_ROOT empty, trsys via pipe_main in ${TRSYS_WORKDIR}, trsys_dir=${TRSYS_DIR}"
     fi
 elif [[ -n "${TRSYS_ROOT_DIR}" ]]; then
@@ -297,7 +300,8 @@ elif [[ -n "${TRSYS_ROOT_DIR}" ]]; then
         log_error "trsys root directory not found: ${TRSYS_ROOT_DIR}"
         exit 1
     fi
-    TRSYS_DIR="${TRSYS_ROOT_DIR%/}/${TRSYS_OUT_REL}"
+    TRSYS_DIR="${TRSYS_ROOT_DIR%/}/${TRSYS_OUT_REL_USER}"
+    log_info "NEW_TRSYSTEM_ROOT set, pack trsys_dir=${TRSYS_DIR}"
 else
     TRSYS_DIR=""
 fi
@@ -568,6 +572,8 @@ declare -a BUILD_LIST=()
 for t in "${TARGETS[@]}"; do
     if [[ "${t}" == "pack" ]]; then
         NEED_PACK=1
+    elif [[ "${t}" == "trsys" && ${SKIP_EA_TRSYS_BUILD} -eq 1 ]]; then
+        log_info "skip EA trsys compile, using ${TRSYS_DIR}"
     else
         BUILD_LIST+=("${t}")
     fi

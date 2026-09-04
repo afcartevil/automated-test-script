@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, copyFileSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, copyFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
 export const EA_BUILD_DIR = '~/code/ea-build'
-/** Windows 映射盘上的同一目录（Z: = 用户工作盘） */
+/** Windows 映射盘上的 ea-build（默认 Z:，运行时以 Samba 根 + 配置盘符为准） */
 export const EA_BUILD_WIN_DIR = 'Z:\\ea-build'
 
 export interface TmuxPollSnapshot {
@@ -30,13 +30,36 @@ export function tmuxSessionName(runId: string, project: string): string {
   return `ezb-${safe}-${short}`
 }
 
-export function buildDeployCommand(scriptB64: string): string {
+export function buildDeployCommand(scriptB64: string, linuxDir = EA_BUILD_DIR): string {
   return [
-    `mkdir -p ${EA_BUILD_DIR}`,
-    `echo ${shellQuote(scriptB64)} | base64 -d > ${EA_BUILD_DIR}/ez-build.sh`,
-    `chmod +x ${EA_BUILD_DIR}/ez-build.sh`,
-    `wc -c ${EA_BUILD_DIR}/ez-build.sh`,
+    `mkdir -p ${linuxDir}`,
+    `echo ${shellQuote(scriptB64)} | base64 -d > ${linuxDir}/ez-build.sh`,
+    `chmod +x ${linuxDir}/ez-build.sh`,
+    `wc -c ${linuxDir}/ez-build.sh`,
   ].join(' && ')
+}
+
+export function buildEzBuildChmodCommand(linuxDir: string): string {
+  const dir = String(linuxDir || '').replace(/\/+$/, '')
+  const sh = `${dir}/ez-build.sh`
+  return `chmod +x ${shellQuote(sh)} && wc -c ${sh}`
+}
+
+/** 在映射盘创建 ea-build 并写入 ez-build.sh（避免齐治传脚本） */
+export function copyEzBuildScriptToMappedEaBuild(script: string, destDir: string): string {
+  const dir = String(destDir || '').trim()
+  if (!dir) throw new Error('ea-build 映射盘目录为空')
+  if (!existsSync(dir)) {
+    try {
+      mkdirSync(dir, { recursive: true })
+    } catch (err) {
+      throw new Error(`无法创建 ${dir}，请确认映射盘已挂载：${(err as Error).message}`)
+    }
+  }
+  const dest = join(dir, 'ez-build.sh')
+  writeFileSync(dest, String(script ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n'), 'utf-8')
+  if (!existsSync(dest)) throw new Error(`写入后未找到 ${dest}`)
+  return dest
 }
 
 /** 把共享盘 conf.json 拷到映射盘 ea-build，避免齐治分块传输 */
@@ -58,9 +81,9 @@ export function copyConfJsonToMappedEaBuild(srcPath: string, destDir = EA_BUILD_
 }
 
 /** @deprecated 仅保留单测；生产改为 copyConfJsonToMappedEaBuild */
-export function buildConfDeployCommands(confB64: string, chunkSize = 4000): string[] {
-  const destB64 = `${EA_BUILD_DIR}/conf.json.b64`
-  const dest = `${EA_BUILD_DIR}/conf.json`
+export function buildConfDeployCommands(confB64: string, chunkSize = 4000, linuxDir = EA_BUILD_DIR): string[] {
+  const destB64 = `${linuxDir}/conf.json.b64`
+  const dest = `${linuxDir}/conf.json`
   const cmds = [
     `mkdir -p ${EA_BUILD_DIR} && rm -f ${destB64} ${dest}`,
   ]
@@ -106,19 +129,21 @@ export function buildTmuxStartCommand(opts: {
   vendorLinux: string
   trsysLinux?: string
   sysVersion?: string
+  eaBuildDir?: string
 }): string {
   const session = opts.session
-  const doneFile = `${EA_BUILD_DIR}/${session}.done`
-  const logFile = `${EA_BUILD_DIR}/${session}.log`
+  const dir = opts.eaBuildDir || EA_BUILD_DIR
+  const doneFile = `${dir}/${session}.done`
+  const logFile = `${dir}/${session}.log`
   const argv = buildEzBuildArgv(opts)
   const inner = [
-    `cd ${EA_BUILD_DIR}`,
+    `cd ${dir}`,
     `${argv} >${session}.log 2>&1`,
     `echo $? > ${session}.done`,
   ].join('; ')
 
   return [
-    `mkdir -p ${EA_BUILD_DIR}`,
+    `mkdir -p ${dir}`,
     `command -v tmux >/dev/null || { echo 'TMUX_MISSING'; exit 127; }`,
     `tmux has-session -t ${shellQuote(session)} 2>/dev/null && tmux kill-session -t ${shellQuote(session)} || true`,
     `rm -f ${doneFile}`,
@@ -131,9 +156,9 @@ export function buildTmuxStartCommand(opts: {
   ].join(' && ')
 }
 
-export function buildTmuxPollCommand(session: string): string {
-  const logFile = `${EA_BUILD_DIR}/${session}.log`
-  const doneFile = `${EA_BUILD_DIR}/${session}.done`
+export function buildTmuxPollCommand(session: string, eaBuildDir = EA_BUILD_DIR): string {
+  const logFile = `${eaBuildDir}/${session}.log`
+  const doneFile = `${eaBuildDir}/${session}.done`
   // 避免双引号内再套 '[:space:]'：经 Windows PowerShell -File 转发时会被拆成 harness 未知参数。
   // $(cat …) 本身会去掉尾部换行；parseTmuxPollOutput 再 trim 空白。
   return [

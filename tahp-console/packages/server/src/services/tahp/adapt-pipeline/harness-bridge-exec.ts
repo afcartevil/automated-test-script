@@ -919,7 +919,26 @@ export async function ensureBridgeReady(opts?: {
     if (opts?.signal?.cancelled) throw new Error('已取消')
   }
 
-  if (remoteFlavor() === 'asf-bridge') {
+  checkCancelled()
+  let flavor = detectRemoteExecFlavor()
+  if (flavor === 'unavailable') {
+    log('未检测到 asf bridge，尝试 asf --json bridge setup…')
+    try {
+      await spawnHarness(['--json', 'bridge', 'setup'], {
+        timeoutMs: 180_000,
+        signal: opts?.signal,
+        onStdout: (chunk) => {
+          const line = chunk.trim()
+          if (line) log(line.slice(0, 400))
+        },
+      })
+    } catch (err) {
+      log(`bridge setup 失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+    flavor = detectRemoteExecFlavor({ refresh: true })
+  }
+
+  if (flavor === 'asf-bridge') {
     const session = await ensureAsfBridgeSession({ signal: opts?.signal, onLog: log })
     return { ready: true, sessionPhase: 'ready', agentNextAction: `asf-bridge session ${session}` }
   }

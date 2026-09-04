@@ -17,11 +17,18 @@ import {
 } from '../../packages/server/src/services/tahp/host-tool-runtime'
 
 describe('host-tool-runtime remote flavor', () => {
-  it('keeps legacy machines on bridge-exec', () => {
+  it('keeps legacy machines on bridge-exec when bridge cmd is absent', () => {
     expect(flavorFromHelpText(
       'Usage: harness remote-runner bridge-exec --command <shell>',
       '',
     )).toBe('legacy-bridge-exec')
+  })
+
+  it('prefers asf bridge cmd even if remote-runner still lists bridge-exec', () => {
+    expect(flavorFromHelpText(
+      'Usage: harness remote-runner bridge-exec --command <shell>',
+      'Usage: asf bridge cmd --session N "<shell>"',
+    )).toBe('asf-bridge')
   })
 
   it('selects asf bridge cmd when bridge-exec is gone', () => {

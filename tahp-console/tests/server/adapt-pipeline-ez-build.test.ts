@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import {
   appendTrsysIfRootMissing,
@@ -8,6 +11,11 @@ import {
   winMappedPathToLinuxWorkCode,
   winMappedPathToLinuxWorkCodeOptional,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/win-path-to-linux'
+import {
+  linuxEaBuildDir,
+  parseSambaSharePath,
+  windowsEaBuildDir,
+} from '../../packages/server/src/services/tahp/adapt-pipeline/ea-build-layout'
 import { loadEzBuildScript, resolveEzBuildScriptPath } from '../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec'
 import {
   buildTmuxStartCommand,
@@ -66,6 +74,27 @@ describe('composeBuildTargetRaw', () => {
   })
 })
 
+describe('ea-build samba layout', () => {
+  it('parses whoami + testparm path for the current user', () => {
+    const raw = [
+      'guansen.wang',
+      '===SMB===',
+      '[printers]      path = /var/spool/samba',
+      '[guansen.wang]  path = /work/code/guansen.wang',
+      '[other]         path = /work/code/other',
+    ].join('\n')
+    expect(parseSambaSharePath(raw)).toBe('/work/code/guansen.wang')
+    expect(linuxEaBuildDir('/work/code/guansen.wang')).toBe('/work/code/guansen.wang/ea-build')
+    expect(windowsEaBuildDir('Z:')).toBe('Z:\\ea-build')
+    expect(windowsEaBuildDir('y:\\')).toBe('Y:\\ea-build')
+  })
+
+  it('parses indented testparm blocks', () => {
+    const raw = 'alice\n===SMB===\n[alice]\n\tpath = /work/code/alice/\n'
+    expect(parseSambaSharePath(raw)).toBe('/work/code/alice')
+  })
+})
+
 describe('ez-build asset', () => {
   it('loads script with 6-8 arg signature and trsys rules', () => {
     const path = resolveEzBuildScriptPath()
@@ -80,6 +109,9 @@ describe('ez-build asset', () => {
     expect(script).toContain('invoke_pipe_main')
     expect(script).toContain('--trsystem-dir')
     expect(script).toContain('NEW_TRSYSTEM_ROOT empty, trsys via pipe_main')
+    expect(script).toContain('TRSYS_OUT_REL_USER="target"')
+    expect(script).toContain('TRSYS_OUT_REL_PIPE="code/out_trsys/target"')
+    expect(script).toContain('skip EA trsys build, pack trsys_dir=')
     expect(script).not.toContain('TRSYS_ROOT_DIR is empty')
     expect(script.includes('\r')).toBe(false)
   })
@@ -186,16 +218,23 @@ describe('resolveHarnessSpawn', () => {
 })
 
 describe('buildCapability ez-build path (mocked bridge)', () => {
+  let eaWinDir = ''
+
   beforeEach(() => {
     vi.resetModules()
     vi.useFakeTimers()
+    eaWinDir = mkdtempSync(join(tmpdir(), 'ea-build-'))
+    process.env.TAHP_TEST_EA_BUILD_WIN = eaWinDir
   })
 
   afterEach(() => {
     vi.useRealTimers()
     vi.doUnmock('../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec')
+    vi.doUnmock('../../packages/server/src/services/tahp/host-tool-runtime')
     vi.doUnmock('../../packages/server/src/services/tahp/harness-version-gate')
     vi.restoreAllMocks()
+    delete process.env.TAHP_TEST_EA_BUILD_WIN
+    rmSync(eaWinDir, { recursive: true, force: true })
   })
 
   it('deploys script, starts tmux, polls until done_code=0', async () => {
@@ -204,6 +243,12 @@ describe('buildCapability ez-build path (mocked bridge)', () => {
     vi.doMock('../../packages/server/src/services/tahp/harness-version-gate', () => ({
       assertHarnessCliReady: () => undefined,
     }))
+    vi.doMock('../../packages/server/src/services/tahp/host-tool-runtime', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/services/tahp/host-tool-runtime')>(
+        '../../packages/server/src/services/tahp/host-tool-runtime',
+      )
+      return { ...actual, detectRemoteExecFlavor: () => 'asf-bridge' }
+    })
     vi.doMock('../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec', async () => {
       const actual = await vi.importActual<typeof import('../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec')>(
         '../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec',
@@ -215,7 +260,14 @@ describe('buildCapability ez-build path (mocked bridge)', () => {
         bridgeCancel: async () => undefined,
         bridgeExec: async (command: string) => {
           commands.push(command)
-          if (command.includes('base64 -d')) {
+          if (command.includes('testparm') || command.includes('===SMB===')) {
+            return {
+              status: 'ok',
+              exit_code: 0,
+              output: 'guansen.wang\n===SMB===\n[guansen.wang]\n\tpath = /work/code/guansen.wang\n',
+            }
+          }
+          if (command.includes('chmod +x')) {
             return { status: 'ok', exit_code: 0, output: '18718' }
           }
           if (command.includes('tmux new-session')) {
@@ -270,11 +322,13 @@ describe('buildCapability ez-build path (mocked bridge)', () => {
 
     const st = await buildCapability.getStatus(runId)
     expect(st.state).toBe('success')
-    expect(commands.some(c => c.includes('base64 -d') && c.includes('ea-build'))).toBe(true)
+    expect(commands.some(c => c.includes('testparm'))).toBe(true)
+    expect(commands.some(c => c.includes('chmod +x') && c.includes('/work/code/guansen.wang/ea-build'))).toBe(true)
     expect(commands.some(c => c.includes('tmux new-session') && c.includes('bash ./ez-build.sh'))).toBe(true)
     expect(commands.some(c => c.includes('done_code=') || c.includes('---POLL---'))).toBe(true)
     expect(commands.every(c => !c.includes('build pipeline'))).toBe(true)
     const startCmd = commands.find(c => c.includes('tmux new-session'))
+    expect(startCmd).toContain('/work/code/guansen.wang/ea-build')
     expect(startCmd).toContain('/work/code/$USER/LJ9-sys')
     expect(startCmd).toContain('sys,hal,pack')
   })
@@ -283,6 +337,12 @@ describe('buildCapability ez-build path (mocked bridge)', () => {
     vi.doMock('../../packages/server/src/services/tahp/harness-version-gate', () => ({
       assertHarnessCliReady: () => undefined,
     }))
+    vi.doMock('../../packages/server/src/services/tahp/host-tool-runtime', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/services/tahp/host-tool-runtime')>(
+        '../../packages/server/src/services/tahp/host-tool-runtime',
+      )
+      return { ...actual, detectRemoteExecFlavor: () => 'asf-bridge' }
+    })
     vi.doMock('../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec', async () => {
       const actual = await vi.importActual<typeof import('../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec')>(
         '../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec',
@@ -292,6 +352,14 @@ describe('buildCapability ez-build path (mocked bridge)', () => {
         ensureBridgeReady: async () => ({ ready: true }),
         bridgeCancel: async () => undefined,
         bridgeExec: async (command: string) => {
+          if (command.includes('testparm') || command.includes('===SMB===')) {
+            return {
+              status: 'ok',
+              exit_code: 0,
+              output: 'cl6\n===SMB===\n[cl6]\n\tpath = /work/code/cl6\n',
+            }
+          }
+          if (command.includes('chmod +x')) return { status: 'ok', exit_code: 0, output: '1' }
           if (command.includes('base64 -d')) return { status: 'ok', exit_code: 0, output: '1' }
           if (command.includes('tmux new-session')) {
             const started = command.match(/TMUX_STARTED:([^\s'";]+)/)?.[1]
@@ -333,6 +401,72 @@ describe('buildCapability ez-build path (mocked bridge)', () => {
     expect(st.state).toBe('failed')
     expect(String(st.error || '')).toMatch(/project dir not found|exit_code=1/)
   })
+
+  it('falls back to ~/code/ea-build when only legacy bridge-exec exists', async () => {
+    const commands: string[] = []
+    vi.doMock('../../packages/server/src/services/tahp/harness-version-gate', () => ({
+      assertHarnessCliReady: () => undefined,
+    }))
+    vi.doMock('../../packages/server/src/services/tahp/host-tool-runtime', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/services/tahp/host-tool-runtime')>(
+        '../../packages/server/src/services/tahp/host-tool-runtime',
+      )
+      return { ...actual, detectRemoteExecFlavor: () => 'legacy-bridge-exec' }
+    })
+    vi.doMock('../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec', async () => {
+      const actual = await vi.importActual<typeof import('../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec')>(
+        '../../packages/server/src/services/tahp/adapt-pipeline/harness-bridge-exec',
+      )
+      return {
+        ...actual,
+        ensureBridgeReady: async () => ({ ready: true }),
+        bridgeCancel: async () => undefined,
+        bridgeExec: async (command: string) => {
+          commands.push(command)
+          if (command.includes('base64 -d')) return { status: 'ok', exit_code: 0, output: '1' }
+          if (command.includes('tmux new-session')) {
+            const started = command.match(/TMUX_STARTED:([^\s'";]+)/)?.[1]
+            return { status: 'ok', exit_code: 0, output: `TMUX_STARTED:${started || 'ezb-x'}` }
+          }
+          if (command.includes('---POLL---') || command.includes('done_code=')) {
+            return {
+              status: 'ok',
+              exit_code: 0,
+              output: '---POLL---\ntmux=dead\ndone_code=0\n---LOG_TAIL---\npack success, log: /tmp/p.log',
+            }
+          }
+          return { status: 'ok', exit_code: 0, output: '' }
+        },
+      }
+    })
+
+    const { buildCapability } = await import(
+      '../../packages/server/src/services/tahp/adapt-pipeline/build-capability'
+    )
+    const { runId } = await buildCapability.start({
+      pipelineRunId: 'run-legacy',
+      project: 'LJ9',
+      variant: 'userdebug',
+      buildFlag: 'staging',
+      systemPath: 'Z:\\LJ9-sys',
+      vendorPath: 'Z:\\LJ9-vnd',
+      buildTargets: ['hal'],
+      needPack: true,
+    })
+
+    for (let i = 0; i < 40; i++) {
+      const st = await buildCapability.getStatus(runId)
+      if (st.state === 'success' || st.state === 'failed') break
+      await vi.advanceTimersByTimeAsync(20_000)
+      await Promise.resolve()
+    }
+    const st = await buildCapability.getStatus(runId)
+    expect(st.state).toBe('success')
+    expect(commands.every(c => !c.includes('testparm'))).toBe(true)
+    expect(commands.some(c => c.includes('mkdir -p ~/code/ea-build') && c.includes('base64 -d'))).toBe(true)
+    const startCmd = commands.find(c => c.includes('tmux new-session'))
+    expect(startCmd).toContain('~/code/ea-build')
+  })
 })
 
 describe('trsys conf share helpers', () => {
@@ -350,6 +484,21 @@ describe('trsys conf share helpers', () => {
       '../../packages/server/src/services/tahp/adapt-pipeline/trsys-conf-share'
     )
     expect(() => resolveLatestTrsysConf('../x', 'user')).toThrow(/无效/)
+  })
+})
+
+describe('copyEzBuildScriptToMappedEaBuild', () => {
+  it('writes ez-build.sh into dest dir', async () => {
+    const fs = await import('fs')
+    const { tmpdir } = await import('os')
+    const { join } = await import('path')
+    const { copyEzBuildScriptToMappedEaBuild } = await import(
+      '../../packages/server/src/services/tahp/adapt-pipeline/ez-build-tmux'
+    )
+    const dir = fs.mkdtempSync(join(tmpdir(), 'ea-sh-'))
+    const dest = copyEzBuildScriptToMappedEaBuild('#!/bin/bash\n', join(dir, 'ea-build'))
+    expect(fs.readFileSync(dest, 'utf-8')).toBe('#!/bin/bash\n')
+    fs.rmSync(dir, { recursive: true, force: true })
   })
 })
 
