@@ -23,7 +23,7 @@ import { getStage, listStages } from '../../services/tahp/adapt-pipeline/registr
 import '../../services/tahp/adapt-pipeline/stages'
 import {
   createRun,
-  deleteDraftRun,
+  deleteRun,
   getRun,
   listRuns,
 } from '../../services/tahp/adapt-pipeline/store'
@@ -179,14 +179,15 @@ tahpAdaptPipelineRoutes.get('/runs/:runId', async (ctx) => {
 
 tahpAdaptPipelineRoutes.delete('/runs/:runId', async (ctx) => {
   const runId = ctx.params.runId
-  if (!getRun(runId)) {
+  const result = deleteRun(runId)
+  if (!result.ok && result.code === 'not_found') {
     ctx.status = 404
     ctx.body = { success: false, error: 'run 不存在' }
     return
   }
-  if (!deleteDraftRun(runId)) {
+  if (!result.ok) {
     ctx.status = 400
-    ctx.body = { success: false, error: '仅可删除草稿状态的运行' }
+    ctx.body = { success: false, error: '运行中或待人工的记录请先终止，再删除' }
     return
   }
   ctx.body = { success: true, data: { ok: true } }

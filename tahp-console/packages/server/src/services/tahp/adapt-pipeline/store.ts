@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
 import { tahpPaths } from '../paths'
@@ -19,6 +19,7 @@ interface RunIndexFile {
 }
 
 const ACTIVE_STATUSES: RunStatus[] = ['running', 'waiting_human']
+const BUSY_STATUSES: RunStatus[] = ['running', 'waiting_human']
 
 const memoryRuns = new Map<string, PipelineRun>()
 const pendingWrites = new Map<string, ReturnType<typeof setTimeout>>()
@@ -227,13 +228,29 @@ export function saveRun(run: PipelineRun, opts?: { immediate?: boolean }): void 
   pendingWrites.set(run.run_id, timer)
 }
 
+function pruneMissingIndexEntries(): RunSummary[] {
+  const index = readIndex()
+  const kept: RunSummary[] = []
+  let dirty = false
+  for (const item of index.items) {
+    if (existsSync(runFilePath(item.run_id))) {
+      kept.push(item)
+      continue
+    }
+    dirty = true
+    flushPending(item.run_id)
+    memoryRuns.delete(item.run_id)
+  }
+  if (dirty) writeIndex(kept)
+  return kept
+}
+
 export function listRuns(filter?: {
   status?: RunStatus[]
   limit?: number
   offset?: number
 }): { items: RunSummary[]; total: number } {
-  const index = readIndex()
-  let items = index.items
+  let items = pruneMissingIndexEntries()
   if (filter?.status?.length) {
     const allowed = new Set(filter.status)
     items = items.filter(i => allowed.has(i.status))
@@ -245,31 +262,48 @@ export function listRuns(filter?: {
 }
 
 export function listActiveRunIds(): string[] {
-  return readIndex()
-    .items.filter(i => ACTIVE_STATUSES.includes(i.status))
+  return pruneMissingIndexEntries()
+    .filter(i => ACTIVE_STATUSES.includes(i.status))
     .map(i => i.run_id)
 }
 
-/** 删除未启动的草稿运行（启动失败时清理） */
-export function deleteDraftRun(runId: string): boolean {
-  const run = getRun(runId)
-  if (!run || run.status !== 'draft') return false
+export type DeleteRunResult =
+  | { ok: true }
+  | { ok: false; code: 'not_found' | 'busy' }
 
-  flushPending(runId)
-  memoryRuns.delete(runId)
-
+function removeRunFiles(runId: string): void {
   const path = runFilePath(runId)
   if (existsSync(path)) {
     try {
       unlinkSync(path)
-    } catch {
-      return false
-    }
+    } catch { /* keep going so index can still drop */ }
   }
+  const logDir = join(tahpPaths.reportsDir, 'adapt-pipeline', runId)
+  if (existsSync(logDir)) {
+    try {
+      rmSync(logDir, { recursive: true, force: true })
+    } catch { /* ignore log cleanup */ }
+  }
+}
 
-  const index = readIndex()
-  writeIndex(index.items.filter(i => i.run_id !== runId))
-  return true
+/** 删除运行记录（运行中 / 待人工须先终止）。json 已删但 index 残留时也可清掉。 */
+export function deleteRun(runId: string): DeleteRunResult {
+  const onDisk = existsSync(runFilePath(runId))
+  const inIndex = readIndex().items.some(i => i.run_id === runId)
+  const run = getRun(runId)
+  if (!run && !onDisk && !inIndex) return { ok: false, code: 'not_found' }
+  if (run && BUSY_STATUSES.includes(run.status)) return { ok: false, code: 'busy' }
+
+  flushPending(runId)
+  memoryRuns.delete(runId)
+  removeRunFiles(runId)
+  writeIndex(readIndex().items.filter(i => i.run_id !== runId))
+  return { ok: true }
+}
+
+/** @deprecated 使用 deleteRun；草稿以外的终态也可删 */
+export function deleteDraftRun(runId: string): boolean {
+  return deleteRun(runId).ok
 }
 
 /** 测试用：清空内存缓存与待写队列 */

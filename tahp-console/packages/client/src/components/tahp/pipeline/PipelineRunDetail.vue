@@ -41,11 +41,12 @@ const selectedNodeLogs = computed(() => {
   return props.store.getNodeLogs(props.timeline.run_id, selectedNode.value.key)
 })
 
-const canDiscardDraft = computed(() => props.timeline.status === 'draft')
+const canDelete = computed(() =>
+  props.timeline.status !== 'running' && props.timeline.status !== 'waiting_human',
+)
 
 const canAbort = computed(() =>
-  !canDiscardDraft.value
-  && !['passed', 'failed', 'aborted'].includes(props.timeline.status),
+  !['draft', 'passed', 'failed', 'aborted'].includes(props.timeline.status),
 )
 
 const canAppend = computed(() =>
@@ -82,7 +83,7 @@ async function handleAbort() {
 }
 
 async function handleDiscardDraft() {
-  if (!window.confirm('确认删除该草稿运行？删除后不可恢复。')) return
+  if (!window.confirm('确认删除该运行记录？将从列表移除，日志一并删除，不可恢复。')) return
   const next = await props.store.discardDraftRun(props.timeline.run_id)
   emit('discarded', next)
 }
@@ -139,13 +140,13 @@ watch(
       </div>
       <div class="head-actions">
         <button
-          v-if="canDiscardDraft"
+          v-if="canDelete"
           type="button"
           class="btn-danger"
           :disabled="store.runActionBusy"
           @click="handleDiscardDraft"
         >
-          删除草稿
+          删除
         </button>
         <button
           v-if="canAbort"

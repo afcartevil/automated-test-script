@@ -53,9 +53,13 @@ function fmtRelTime(iso: string): string {
   return new Date(iso).toLocaleString()
 }
 
+function canDelete(status: RunSummary['status']): boolean {
+  return status !== 'running' && status !== 'waiting_human'
+}
+
 function onDiscard(ev: Event, runId: string) {
   ev.stopPropagation()
-  if (!window.confirm('确认删除该草稿运行？删除后不可恢复。')) return
+  if (!window.confirm('确认删除该运行记录？将从列表移除，日志一并删除，不可恢复。')) return
   emit('discard', runId)
 }
 
@@ -100,10 +104,10 @@ function onClone(ev: Event, runId: string) {
               复制
             </button>
             <button
-              v-if="item.status === 'draft'"
+              v-if="canDelete(item.status)"
               type="button"
               class="btn-discard"
-              title="删除草稿"
+              title="删除运行记录"
               :disabled="busy"
               @click="onDiscard($event, item.run_id)"
             >

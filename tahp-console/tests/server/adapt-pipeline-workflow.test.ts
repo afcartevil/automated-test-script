@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -7,7 +7,9 @@ import {
   adaptPipelineConfigDir,
   createRun,
   deleteDraftRun,
+  deleteRun,
   getRun,
+  listRuns,
   resetStoreForTest,
   saveRun,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/store'
@@ -252,5 +254,43 @@ describe('adapt-pipeline store', () => {
     expect(deleteDraftRun(run.run_id)).toBe(true)
     expect(getRun(run.run_id)).toBeNull()
     expect(existsSync(join(adaptPipelineConfigDir(), 'runs', `${run.run_id}.json`))).toBe(false)
+    expect(listRuns().items).toHaveLength(0)
+  })
+
+  it('listRuns drops index entries whose run file is missing', () => {
+    const run = createRun({
+      project_code: 'KM9',
+      build_context: {
+        mapped_root: 'Z:\\',
+        workspace: 'project/KM9_NEW',
+        components: ['krn'],
+        variant: 'userdebug',
+      },
+    })
+    unlinkSync(join(adaptPipelineConfigDir(), 'runs', `${run.run_id}.json`))
+    expect(listRuns().items.find(i => i.run_id === run.run_id)).toBeUndefined()
+    expect(listRuns().total).toBe(0)
+  })
+
+  it('deleteRun removes aborted run; refuses running', () => {
+    const run = createRun({
+      project_code: 'KM9',
+      build_context: {
+        mapped_root: 'Z:\\',
+        workspace: 'project/KM9_NEW',
+        components: ['krn'],
+        variant: 'userdebug',
+      },
+    })
+    run.status = 'running'
+    saveRun(run, { immediate: true })
+    expect(deleteRun(run.run_id)).toEqual({ ok: false, code: 'busy' })
+    expect(getRun(run.run_id)?.status).toBe('running')
+
+    run.status = 'aborted'
+    saveRun(run, { immediate: true })
+    expect(deleteRun(run.run_id)).toEqual({ ok: true })
+    expect(getRun(run.run_id)).toBeNull()
+    expect(listRuns().items).toHaveLength(0)
   })
 })
