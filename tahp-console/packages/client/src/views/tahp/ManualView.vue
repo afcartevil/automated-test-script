@@ -72,7 +72,7 @@ const groups: ManualGroup[] = [
           '进入「AI 适配调试」，选择工作区与业务域（通信 / 驱动 / 内核等）。',
           '可用「<span class="hl">从中心载入前置</span>」按项目号自动填表。',
           '完成必填项后<span class="hl">启动</span>；填完表单后会进入运行监控，可看 Agent 过程与文件改动。',
-          '完成后到「报告」核对修改清单；需要入库时走<span class="hl">审核</span>与 <span class="hl">Gerrit 提交</span>。',
+          '完成后在本页「历史表单」点「<span class="hl">查看完整报告</span>」核对修改清单；需要入库时走<span class="hl">审核</span>与 <span class="hl">Gerrit 提交</span>。',
         ],
         notes: [
           '偏单次、按 JIRA / 需求交互调试。要把适配和编译、烧录、自检串起来，用下面的「适配流水线」。',
@@ -197,15 +197,18 @@ const groups: ManualGroup[] = [
         key: 'rf-calib',
         title: '校准数据',
         tone: 'var(--amber-ic)',
-        desc: '在本机通过 Modem Meta 的 <span class="hl">MetaCLI</span> 备份 / 恢复射频校准数据，对齐 GUI 的 Update Parameter / Read Write Cal Data。',
+        desc: '本机通过 Modem Meta 的 <span class="hl">MetaCLI</span> 备份 / 恢复射频校准数据，等价 GUI「Update Parameter / Read Write Cal Data」，<span class="hl">不必再开 GUI</span>。点开始后 MetaCLI 等待连接，<span class="hl">关机插 USB</span> 即进校准模式。',
         steps: [
-          '先在「配置 → 一键配置」填好 <span class="hl">Modem Meta</span> 安装目录并保存。',
-          '进入「校准数据」，选备份或恢复。',
-          '点开始后按提示：手机关机，再插 USB（与 Modem Meta GUI 进 META 相同）。',
-          '恢复模式需指定校准数据文件；完成后看日志确认。',
+          '首次：本机已装 Modem Meta（目录内可见 <span class="hl">META.exe</span>、<code>bin</code>、<code>configs</code>）。到「<span class="hl">配置 → 一键配置 → Modem 工具</span>」填 META.exe <span class="hl">所在目录</span> 并保存，不要填到某个 .exe。',
+          '进入「校准数据」，顶部应显示「<span class="hl">Modem Meta 已配置</span>」；未配置时点「前往一键配置」。页内可展开「校准数据操作 SOP」。',
+          '备份：模式选「<span class="hl">备份</span>」；进 META 选「Modem Meta 连接方式（推荐）」；COM 保持 <code>Auto Connection</code>；输出文件可留空。点「开始备份」→ 手机关机 → 插 USB。任务「已完成」且日志末尾「备份完成」即成功；默认落盘 <code>reports/rf-calib-meta/&lt;任务ID&gt;/calibration_data.ini</code>。',
+          '恢复：模式选「<span class="hl">恢复</span>」，点「选择文件」指定校准 <code>.ini</code>。参数丢失时用其它<span class="hl">同配置机</span>备份，或制造资料盘 <code>\\\\sh-nas\\Dcc\\03.项目文件\\01.项目文件\\01.PCBA项目\\制造资料\\射频校准文件</code>。同样关机插 USB；成功看「已完成」与日志「恢复完成」「Write calibration file done」。',
+          '以<span class="hl">任务状态 + 末尾「备份/恢复完成」</span>为准，不要只看 MetaCLI 中间的 Error。IMEI 默认不备份 / 不还原，相关 Failed 会标「已默认跳过」。',
         ],
         notes: [
-          '仅 Windows；本机须已安装 Modem Meta（含 bin\\MetaCLI.exe）。',
+          '仅 Windows。勿同时按 Vol+ 与 Vol-（会进 Recovery，不是校准 META）。',
+          '其它进 META 方式：「已在 META」可选手动/自动 COM；「adb reboot meta」仅部分工程版，非首选。',
+          '输出不要填 .tahp-config 下路径，MetaCLI 对带点号的隐藏目录常写失败。',
         ],
         route: 'tahp.rf-calib-meta',
       },
@@ -217,21 +220,6 @@ const groups: ManualGroup[] = [
     subtitle: '运行数据、评测回归与平台资产观测',
     color: 'var(--warn)',
     items: [
-      {
-        key: 'reports',
-        title: '报告',
-        tone: 'var(--warn)',
-        desc: '已完成任务的执行报告汇总：适配分析结果、文件修改记录与质量验测审核。支持列表浏览与单任务详情。',
-        steps: [
-          '进入「报告」查看全部已完成任务。',
-          '点一条进入详情，核对 AI 结论与文件改动。',
-          '可从详情返回列表，或跳转「AI 适配调试」<span class="hl">启动新任务</span>。',
-        ],
-        notes: [
-          '报告在任务完成后自动生成；空列表表示尚未跑过对应任务。',
-        ],
-        route: 'tahp.reports',
-      },
       {
         key: 'evals',
         title: '质量评测',

@@ -284,6 +284,7 @@ watch(() => store.error, (err) => {
   gap: 12px;
   min-width: 0;
   min-height: 0;
+  height: 100%;
 }
 
 .card {
@@ -294,6 +295,7 @@ watch(() => store.error, (err) => {
 }
 
 .board-empty {
+  flex: 1;
   padding: 48px 24px;
   text-align: center;
 
@@ -340,6 +342,7 @@ watch(() => store.error, (err) => {
 @media (max-width: 960px) {
   .board {
     grid-template-columns: 1fr;
+    min-height: 0;
   }
 }
 </style>

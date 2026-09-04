@@ -42,7 +42,10 @@ const panel = computed(() => (props.node ? RENDERERS[props.node.key] ?? DefaultP
 
 <style scoped lang="scss">
 .node-panel {
-  min-height: 200px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .empty {
   color: var(--faint);

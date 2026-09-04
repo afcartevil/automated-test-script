@@ -163,6 +163,11 @@ const currentDeviceId = computed(() => props.store.selectedTimeline?.device_id ?
 </template>
 
 <style scoped lang="scss">
+.human-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 .human-panel h3 {
   margin: 0 0 10px;
   font-size: 12px;

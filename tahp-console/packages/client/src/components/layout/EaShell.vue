@@ -43,7 +43,6 @@ const publicNav = [
 ]
 
 const secondaryNav = [
-  { name: 'tahp.reports', label: '报告' },
   { name: 'tahp.evals', label: '质量评测' },
   { name: 'hermes.skills', label: 'Skills' },
   { name: 'hermes.chat', label: '对话搜索' },

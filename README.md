@@ -1,13 +1,13 @@
 # EasyAdapter
 
-传音 Android 底软集成部的 **AI 辅助适配平台**。面向大版本升级，把底软改动从「人工翻代码」变成可追踪的工作台：Agent 做适配与合入，人做审核入库。
+传音软件工程部-集成维护开发部-底软集成开发部的 **AI 辅助适配平台**。面向大版本升级，把底软升级改动从「人工改代码」变成流水线工作台：Agent 做适配与升级，人做审核入库。
 
 日常入口是 Web Console（`tahp-console`）。Windows 双击仓库根目录 [`run_adapter.bat`](run_adapter.bat) 即可拉起服务与托盘。
 
 ```
 浏览器
   └── EasyAdapter Console  (:8650)
-        ├── 适配调试（Agent + Skill）
+        ├── 适配调试（Hermes Agent + Skill）
         ├── Modem 升级（tools/modem-patch-tool）
         └── GKI 升级（tools/gki-patch-tool）
 ```
@@ -32,7 +32,7 @@
 
 | 入口 | 路由 | 适用 |
 |------|------|------|
-| **AI 适配调试** | `/tahp/adapt-debug` | 单次、按 JIRA / 需求交互调试。选工作区与业务域，可从中心载入前置，启动后看 Agent 过程与文件改动。完成后到「报告」核对，入库走审核与 Gerrit。 |
+| **AI 适配调试** | `/tahp/adapt-debug` | 单次、按 JIRA / 需求交互调试。选工作区与业务域，可从中心载入前置，启动后看 Agent 过程与文件改动。完成后在本页「历史表单」查看完整报告；入库走审核与 Gerrit。 |
 | **适配流水线** | `/tahp/pipeline` | 把「选项目 → 拉前置代码 → AI 适配 → 编译 → 烧录 → 自检 → 审核 → 提交 Gerrit」串成可自动流转的工作流。某步没就绪会降成人工门；失败后按界面推荐的恢复点续跑，避免整条重来。 |
 
 流水线只做编排，编译 / 刷机 / 自检复用已有能力。Agent 不可用时适配任务失败，不降级成「BFF 直接调模型」。
@@ -113,7 +113,7 @@ easyadapter/
 
 ## 其它 Console 能力
 
-三大核心之外还有公共能力（智能诊断、质量验测、代码拉取、校准数据）和运营入口（报告、质量评测、Skills、对话搜索）。它们服务主线，不是首页主卡片。完整面板与编码规范见 [AGENTS.md](AGENTS.md)、[tahp-console/DEVELOPMENT.md](tahp-console/DEVELOPMENT.md)。
+三大核心之外还有公共能力（智能诊断、质量验测、代码拉取、校准数据）和运营入口（质量评测、Skills、对话搜索）。它们服务主线，不是首页主卡片。完整面板与编码规范见 [AGENTS.md](AGENTS.md)、[tahp-console/DEVELOPMENT.md](tahp-console/DEVELOPMENT.md)。
 
 使用手册：Console **使用手册**（`/tahp/manual`）。
 

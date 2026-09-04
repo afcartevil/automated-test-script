@@ -229,6 +229,8 @@ watch(
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  flex: 1;
+  min-height: 0;
 }
 .run-header {
   padding: 14px 16px;
@@ -285,11 +287,17 @@ watch(
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr) minmax(260px, 320px);
   gap: 12px;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
 }
 .col-card {
   padding: 12px;
   min-width: 0;
   overflow: hidden;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 .human-col {
   overflow: auto;

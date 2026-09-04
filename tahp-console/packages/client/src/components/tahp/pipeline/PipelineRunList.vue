@@ -131,7 +131,7 @@ function onClone(ev: Event, runId: string) {
   gap: 8px;
   padding: 14px;
   min-height: 0;
-  max-height: calc(100dvh - 160px);
+  height: 100%;
   overflow: hidden;
 }
 
@@ -248,7 +248,7 @@ h3 {
 }
 
 .btn-new {
-  margin-top: 8px;
+  margin-top: auto;
   flex-shrink: 0;
   border: 1px dashed var(--line-strong);
   background: transparent;
@@ -263,6 +263,13 @@ h3 {
     border-color: var(--accent);
     color: var(--accent);
     background: var(--accent-soft);
+  }
+}
+
+@media (max-width: 960px) {
+  .pipeline-run-list {
+    height: auto;
+    max-height: min(42vh, 360px);
   }
 }
 </style>
