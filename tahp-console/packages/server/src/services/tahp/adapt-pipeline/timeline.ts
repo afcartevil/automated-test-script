@@ -38,6 +38,7 @@ function buildNodeProgress(
     'flash_mode', 'flash_skill_id',
     'repos', 'queue', 'current_index', 'current_domain_id',
     'repo_groups', 'changed_files',
+    'total', 'passed', 'failed', 'running', 'failed_cases',
   ] as const) {
     if (progress[key] !== undefined) (out as Record<string, unknown>)[key] = progress[key]
   }
@@ -81,6 +82,9 @@ function formatSummaryLine(
   const s = state.summary
   if (typeof s.domain_count === 'number') {
     return `${s.domain_count} 个域`
+  }
+  if (typeof s.passed === 'number' || typeof s.failed === 'number') {
+    return `${Number(s.passed) || 0} 通过 / ${Number(s.failed) || 0} 失败`
   }
   if (typeof s.total === 'number' && typeof s.done === 'number') {
     return `${s.done}/${s.total} 域完成`

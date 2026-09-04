@@ -490,6 +490,11 @@ export interface TimelineView {
       current_domain_id?: string
       repo_groups?: unknown
       changed_files?: unknown
+      total?: number
+      passed?: number
+      failed?: number
+      running?: number
+      failed_cases?: unknown
       domains?: Array<{
         domain_id: string
         domain_label: string

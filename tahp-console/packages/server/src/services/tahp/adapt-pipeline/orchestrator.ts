@@ -229,7 +229,16 @@ function patchRun(run: PipelineRun, patch: Partial<PipelineRun>): void {
 
 function patchStage(run: PipelineRun, nodeKey: string, patch: Partial<StageState>): void {
   const prev = run.stages[nodeKey] ?? freshStageState(nodeKey)
-  run.stages[nodeKey] = { ...prev, ...patch }
+  const next: StageState = { ...prev, ...patch }
+  if (
+    patch.progress
+    && prev.progress
+    && typeof prev.progress === 'object'
+    && typeof patch.progress === 'object'
+  ) {
+    next.progress = { ...prev.progress, ...patch.progress }
+  }
+  run.stages[nodeKey] = next
   saveRun(run)
 }
 

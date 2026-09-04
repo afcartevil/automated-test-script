@@ -125,6 +125,33 @@ describe('adapt-pipeline F4', () => {
     expect(adaptNode?.progress?.domains?.[0].domain_id).toBe('comm-framework')
   })
 
+  it('buildTimelineView forwards selfcheck pass/fail counts', () => {
+    const run = createRun(baseInput())
+    run.stages.selfcheck = {
+      key: 'selfcheck',
+      status: 'done',
+      attempt: 1,
+      refs: {},
+      progress: {
+        state: 'success',
+        total: 2,
+        passed: 2,
+        failed: 0,
+        running: 0,
+        text: '0 通过 / 0 失败',
+      },
+      summary: { total: 2, passed: 2, failed: 0 },
+    }
+    saveRun(run, { immediate: true })
+
+    const timeline = buildTimelineView(run)
+    const node = timeline.nodes.find(n => n.key === 'selfcheck')
+    expect(node?.progress?.passed).toBe(2)
+    expect(node?.progress?.failed).toBe(0)
+    expect(node?.progress?.total).toBe(2)
+    expect(node?.summary_line).toBe('2 通过 / 0 失败')
+  })
+
   it('appendPipelineLog writes tail lines for logs endpoint', () => {
     const run = createRun(baseInput())
     appendPipelineLog(run.run_id, 'build', 'line-1')

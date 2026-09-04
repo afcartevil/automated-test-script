@@ -296,4 +296,43 @@ describe('adapt-pipeline selfcheck fail advance', () => {
     expect(state.stages.gerrit?.progress?.state).not.toBe('should_not_start')
     expect(state.stages.triage?.status).not.toBe('running')
   })
+
+  it('counts unique caseKey once when case_completed is emitted twice', async () => {
+    const run = createRun({
+      project_code: 'KM9',
+      device_id: deviceId,
+      build_context: {
+        mapped_root: 'Z:\\',
+        workspace: 'project/KM9',
+        components: ['krn'],
+        variant: 'userdebug',
+      },
+      test_plan: { mode: 'fixed', selected_cases: ['smoke/usd/1'] },
+    })
+
+    await startRun(run.run_id)
+
+    const payload = {
+      deviceId,
+      caseKey: 'smoke/usd/1',
+      result: {
+        testType: 'smoke',
+        module: 'usd',
+        caseIndex: 1,
+        caseName: 'USD冒烟测试',
+        status: '通过',
+        fullAutomation: true,
+        steps: [],
+      },
+    }
+    for (const cb of eventHandlers.case_completed ?? []) {
+      cb({ ...payload, result: { ...payload.result, status: '进行中' } })
+      cb(payload)
+      cb(payload)
+    }
+
+    const state = getRun(run.run_id)!
+    expect(state.stages.selfcheck?.progress?.passed).toBe(1)
+    expect(state.stages.selfcheck?.progress?.failed).toBe(0)
+  })
 })

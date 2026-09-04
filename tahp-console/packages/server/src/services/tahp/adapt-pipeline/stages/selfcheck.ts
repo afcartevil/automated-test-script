@@ -19,6 +19,11 @@ function applyCaseCompleted(ctx: StageContext, data: Record<string, unknown>): v
   if (!result) return
 
   const prev = (ctx.state.progress ?? {}) as Record<string, unknown>
+  const caseKey = String(data.caseKey ?? '')
+  const counted = (prev.counted_keys as string[] | undefined) ?? []
+  const isDone = result.status === '通过' || result.status === '失败'
+  if (isDone && caseKey && counted.includes(caseKey)) return
+
   const passed = (Number(prev.passed) || 0) + (result.status === '通过' ? 1 : 0)
   const failed = (Number(prev.failed) || 0) + (result.status === '失败' ? 1 : 0)
   const failedCases = [...((prev.failed_cases ?? []) as Array<{ name: string; message?: string }>)]
@@ -34,6 +39,7 @@ function applyCaseCompleted(ctx: StageContext, data: Record<string, unknown>): v
       failed,
       running: Math.max(0, (Number(prev.total) || 0) - passed - failed),
       failed_cases: failedCases,
+      ...(isDone && caseKey ? { counted_keys: [...counted, caseKey] } : {}),
     },
   })
   ctx.log(`[${result.status}] ${result.caseName ?? data.caseKey}`)

@@ -74,6 +74,11 @@ export interface TimelineNode {
     current_index?: number
     current_domain_id?: string
     domains?: AdaptDomainProgress[]
+    total?: number
+    passed?: number
+    failed?: number
+    running?: number
+    failed_cases?: Array<{ name: string; message?: string }>
   }
   error?: string
   summary_line?: string
