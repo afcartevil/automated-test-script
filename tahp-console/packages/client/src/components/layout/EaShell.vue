@@ -5,6 +5,14 @@ import { NDropdown, useMessage } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
 import ModelSelector from './ModelSelector.vue'
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
+import {
+  defaultCollapsedTypes,
+  groupApplyItems,
+  initialApplySelection,
+  matchInboxQuery,
+  type ApplyItemType,
+  type InboxTab,
+} from '@/utils/task-inbox-checklist'
 
 const route = useRoute()
 const router = useRouter()
@@ -77,9 +85,15 @@ type ApplyPrompt = {
 }
 const applyPrompt = ref<ApplyPrompt | null>(null)
 const applyPkgId = ref('')
-const applyChecked = ref<string[]>([])
+const applyCheckedByPkg = ref<Record<string, string[]>>({})
+const applyRecommendedIds = ref<string[]>([])
 const applyAlsoPass = ref(false)
 const applyBusy = ref(false)
+const applyQuery = ref('')
+const applyRecOnly = ref(false)
+const applyCollapsed = ref<ApplyItemType[]>([])
+const inboxTab = ref<InboxTab>('all')
+const inboxQuery = ref('')
 const taskContext = ref<{
   package_id: string
   project_code: string
@@ -205,9 +219,13 @@ async function refreshTaskInbox() {
     if (prompt?.packages?.some(p => p.pending_items?.length)) {
       if (applyPrompt.value?.run.run_id !== prompt.run.run_id) {
         applyPrompt.value = prompt
-        applyPkgId.value = prompt.packages[0]?.package_id || ''
-        const first = prompt.packages[0]
-        applyChecked.value = first?.pending_items.map(i => i.line_id) || []
+        const sel = initialApplySelection(prompt)
+        applyPkgId.value = sel.packageId
+        applyCheckedByPkg.value = sel.packageId ? { [sel.packageId]: sel.checked } : {}
+        applyRecommendedIds.value = sel.checked
+        applyQuery.value = ''
+        applyRecOnly.value = false
+        applyCollapsed.value = defaultCollapsedTypes(prompt.run?.dimension)
         applyAlsoPass.value = prompt.run?.status === 'pass' && !prompt.campaign_unspecified
       }
     } else {
@@ -257,6 +275,49 @@ const applyCanPass = computed(() =>
   applyPrompt.value?.run.status === 'pass' && !applyPrompt.value?.campaign_unspecified,
 )
 
+const INBOX_TABS: Array<{ id: InboxTab; label: string }> = [
+  { id: 'all', label: '全部' },
+  { id: 'pipe', label: '流水线' },
+  { id: 'check', label: '自检' },
+  { id: 'verify', label: '验测' },
+  { id: 'patch', label: 'Patch' },
+]
+
+function inboxCount(tab: InboxTab) {
+  if (tab === 'all') {
+    return unfinishedChecklist.value.length + verifyPackages.value.length + patchPackages.value.length
+  }
+  if (tab === 'pipe') return pipelinePackages.value.length
+  if (tab === 'check') return selfCheckPackages.value.length
+  if (tab === 'verify') return verifyPackages.value.length
+  return patchPackages.value.length
+}
+
+function inboxHaystack(pkg: (typeof inboxPackages.value)[number]) {
+  if (pkg.notice_type) return `${pkg.title || ''} ${pkg.notice_type}`
+  return `${packageHeadline(pkg)} ${packageMeta(pkg)}`
+}
+
+function visibleInbox(list: typeof inboxPackages.value) {
+  return list.filter(pkg => matchInboxQuery(inboxHaystack(pkg), inboxQuery.value))
+}
+
+const showInboxPipe = computed(() => inboxTab.value === 'all' || inboxTab.value === 'pipe')
+const showInboxCheck = computed(() => inboxTab.value === 'all' || inboxTab.value === 'check')
+const showInboxVerify = computed(() => inboxTab.value === 'all' || inboxTab.value === 'verify')
+const showInboxPatch = computed(() => inboxTab.value === 'all' || inboxTab.value === 'patch')
+const visiblePipelinePackages = computed(() => visibleInbox(pipelinePackages.value))
+const visibleSelfCheckPackages = computed(() => visibleInbox(selfCheckPackages.value))
+const visibleVerifyPackages = computed(() => visibleInbox(verifyPackages.value))
+const visiblePatchPackages = computed(() => visibleInbox(patchPackages.value))
+const inboxListEmpty = computed(() => {
+  if (showInboxPipe.value && visiblePipelinePackages.value.length) return false
+  if (showInboxCheck.value && visibleSelfCheckPackages.value.length) return false
+  if (showInboxVerify.value && visibleVerifyPackages.value.length) return false
+  if (showInboxPatch.value && visiblePatchPackages.value.length) return false
+  return true
+})
+
 function kindBadge(kind?: string) {
   if (kind === 'adapt-pipeline') return '流水线'
   if (kind === 'gki-patch') return 'GKI'
@@ -292,7 +353,12 @@ function canGoExecute(p: (typeof inboxPackages.value)[number]) {
 
 function toggleTaskPop(e: Event) {
   e.stopPropagation()
-  showTaskPop.value = !showTaskPop.value
+  const next = !showTaskPop.value
+  showTaskPop.value = next
+  if (next) {
+    inboxTab.value = 'all'
+    inboxQuery.value = ''
+  }
 }
 
 function closeTaskPop() {
@@ -385,9 +451,87 @@ const applyRows = computed(() =>
   applyPrompt.value?.packages.find(p => p.package_id === applyPkgId.value)?.pending_items || [],
 )
 
+const applyChecked = computed(() => applyCheckedByPkg.value[applyPkgId.value] || [])
+
+const applyMatchedPkg = computed(() => {
+  if (!applyPrompt.value || applyPrompt.value.domain_unspecified) return null
+  return applyPrompt.value.packages[0] || null
+})
+
+const applyVisibleRows = computed(() => {
+  const q = applyQuery.value.trim().toLowerCase()
+  return applyRows.value.filter(row => {
+    if (applyRecOnly.value && !applyRecommendedIds.value.includes(row.line_id)) return false
+    if (!q) return true
+    return `${row.item_id} ${row.title}`.toLowerCase().includes(q)
+  })
+})
+
+const applyTypeGroups = computed(() => groupApplyItems(applyVisibleRows.value).map(group => ({
+  ...group,
+  checkedCount: group.items.filter(item => applyChecked.value.includes(item.line_id)).length,
+  allChecked: group.items.length > 0 && group.items.every(item => applyChecked.value.includes(item.line_id)),
+})))
+
+function setApplyChecked(ids: string[]) {
+  applyCheckedByPkg.value = { ...applyCheckedByPkg.value, [applyPkgId.value]: ids }
+}
+
+function selectApplyPkg(pkgId: string) {
+  applyPkgId.value = pkgId
+  if (Object.prototype.hasOwnProperty.call(applyCheckedByPkg.value, pkgId)) return
+  const matched = applyMatchedPkg.value?.package_id === pkgId
+  const rows = applyPrompt.value?.packages.find(p => p.package_id === pkgId)?.pending_items || []
+  setApplyChecked(matched ? rows.map(r => r.line_id) : [])
+}
+
 function toggleApply(id: string, on: boolean) {
-  if (on) applyChecked.value = [...new Set([...applyChecked.value, id])]
-  else applyChecked.value = applyChecked.value.filter(x => x !== id)
+  if (on) setApplyChecked([...new Set([...applyChecked.value, id])])
+  else setApplyChecked(applyChecked.value.filter(x => x !== id))
+}
+
+function toggleApplyGroup(type: ApplyItemType) {
+  applyCollapsed.value = applyCollapsed.value.includes(type)
+    ? applyCollapsed.value.filter(t => t !== type)
+    : [...applyCollapsed.value, type]
+}
+
+function toggleApplyGroupAll(type: ApplyItemType, on: boolean) {
+  const ids = applyTypeGroups.value.find(g => g.type === type)?.items.map(i => i.line_id) || []
+  if (on) setApplyChecked([...new Set([...applyChecked.value, ...ids])])
+  else setApplyChecked(applyChecked.value.filter(id => !ids.includes(id)))
+}
+
+function selectAllApplyDomain() {
+  setApplyChecked(applyRows.value.map(r => r.line_id))
+}
+
+function clearApplyDomain() {
+  setApplyChecked([])
+}
+
+function restoreApplyRecommended() {
+  const prompt = applyPrompt.value
+  if (!prompt) return
+  const sel = initialApplySelection(prompt)
+  applyPkgId.value = sel.packageId
+  applyCheckedByPkg.value = sel.packageId ? { [sel.packageId]: sel.checked } : {}
+  applyRecommendedIds.value = sel.checked
+  applyQuery.value = ''
+  applyRecOnly.value = false
+  applyCollapsed.value = defaultCollapsedTypes(prompt.run?.dimension)
+}
+
+function runKindLabel(dimension?: string) {
+  if (dimension === 'self-check') return '自检'
+  if (dimension === 'adapt-pipeline') return '流水线'
+  return ''
+}
+
+function runStatusLabel(status?: string) {
+  if (status === 'pass') return '通过'
+  if (status === 'fail') return '失败'
+  return status || ''
 }
 
 async function dismissApply() {
@@ -397,7 +541,9 @@ async function dismissApply() {
 }
 
 async function confirmApply() {
-  if (!applyPrompt.value || !applyPkgId.value || !applyChecked.value.length) return
+  if (!applyPrompt.value || !applyPkgId.value) return
+  const lineIds = applyChecked.value.filter(id => applyRows.value.some(r => r.line_id === id))
+  if (!lineIds.length) return
   const alsoPass = applyAlsoPass.value && applyCanPass.value
   applyBusy.value = true
   try {
@@ -407,7 +553,7 @@ async function confirmApply() {
       body: JSON.stringify({
         package_id: applyPkgId.value,
         run_id: applyPrompt.value.run.run_id,
-        line_ids: applyChecked.value,
+        line_ids: lineIds,
         also_pass: alsoPass,
       }),
     })
@@ -529,70 +675,98 @@ onUnmounted(() => {
             <span v-if="taskUnread" class="ck-task-dot" title="未读通知">{{ taskUnread > 9 ? '9+' : taskUnread }}</span>
           </button>
           <div v-if="showTaskPop" class="ck-task-pop">
-            <div class="ck-task-pop-hd">红点=新通知（含验测指派）　左侧数字=流水线+自检未完成包。Patch 单独计。</div>
-            <template v-if="pipelinePackages.length">
-              <div class="ck-task-sec">适配流水线</div>
-              <div v-for="p in pipelinePackages" :key="p.package_id" class="ck-task-item">
-                <div>
-                  <div>
-                    <span class="ck-task-badge pipe">{{ kindBadge(p.kind) }}</span>
-                    <b>{{ packageHeadline(p) }}</b>
-                  </div>
-                  <div class="ck-task-meta">{{ packageMeta(p) }}</div>
-                </div>
-                <div class="ck-task-actions">
-                  <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openChecklist(p)">打开清单</button>
-                  <button v-if="canGoExecute(p)" type="button" class="ck-feedback-btn ck-task-go" @click="goExecute(p)">去执行</button>
-                </div>
+            <div class="ck-task-pop-hd">
+              <div class="ck-task-pop-title">
+                <b>我的任务</b>
+                <span>未完成 {{ taskRemain }} · 新通知 {{ taskUnread }}</span>
               </div>
-            </template>
-            <template v-if="selfCheckPackages.length">
-              <div class="ck-task-sec">AI 自检</div>
-              <div v-for="p in selfCheckPackages" :key="p.package_id" class="ck-task-item">
-                <div>
+              <div>红点=新通知（含验测指派）　左侧数字=流水线+自检未完成包。Patch 单独计。</div>
+            </div>
+            <div class="ck-task-tabs">
+              <button
+                v-for="tab in INBOX_TABS"
+                :key="tab.id"
+                type="button"
+                class="ck-task-chip"
+                :class="{ on: inboxTab === tab.id }"
+                @click="inboxTab = tab.id"
+              >
+                {{ tab.label }}
+                <span v-if="inboxCount(tab.id)">{{ inboxCount(tab.id) }}</span>
+              </button>
+            </div>
+            <input
+              v-model="inboxQuery"
+              class="ck-task-search"
+              type="search"
+              placeholder="搜索项目 / 域 / 标题"
+            />
+            <div class="ck-task-list">
+              <template v-if="showInboxPipe && visiblePipelinePackages.length">
+                <div class="ck-task-sec">适配流水线</div>
+                <div v-for="p in visiblePipelinePackages" :key="p.package_id" class="ck-task-item">
                   <div>
-                    <span class="ck-task-badge check">{{ kindBadge(p.kind) }}</span>
-                    <b>{{ packageHeadline(p) }}</b>
+                    <div>
+                      <span class="ck-task-badge pipe">{{ kindBadge(p.kind) }}</span>
+                      <b>{{ packageHeadline(p) }}</b>
+                    </div>
+                    <div class="ck-task-meta">{{ packageMeta(p) }}</div>
                   </div>
-                  <div class="ck-task-meta">{{ packageMeta(p) }}</div>
+                  <div class="ck-task-actions">
+                    <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openChecklist(p)">打开清单</button>
+                    <button v-if="canGoExecute(p)" type="button" class="ck-feedback-btn ck-task-go" @click="goExecute(p)">去执行</button>
+                  </div>
                 </div>
-                <div class="ck-task-actions">
-                  <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openChecklist(p)">打开清单</button>
-                  <button v-if="canGoExecute(p)" type="button" class="ck-feedback-btn ck-task-go" @click="goExecute(p)">去执行</button>
-                </div>
-              </div>
-            </template>
-            <div v-if="!unfinishedChecklist.length" class="ck-task-empty">没有未完成的检查表</div>
-            <template v-if="verifyPackages.length">
-              <div class="ck-task-sec">验测任务</div>
-              <div v-for="p in verifyPackages" :key="p.package_id" class="ck-task-item">
-                <div>
+              </template>
+              <template v-if="showInboxCheck && visibleSelfCheckPackages.length">
+                <div class="ck-task-sec">AI 自检</div>
+                <div v-for="p in visibleSelfCheckPackages" :key="p.package_id" class="ck-task-item">
                   <div>
-                    <span class="ck-task-badge check">{{ kindBadge(p.notice_type) }}</span>
-                    <b>{{ p.title || '验测任务指派' }}</b>
+                    <div>
+                      <span class="ck-task-badge check">{{ kindBadge(p.kind) }}</span>
+                      <b>{{ packageHeadline(p) }}</b>
+                    </div>
+                    <div class="ck-task-meta">{{ packageMeta(p) }}</div>
                   </div>
-                  <div class="ck-task-meta">指派验测 · 去「测试执行」跑对应测试项</div>
+                  <div class="ck-task-actions">
+                    <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openChecklist(p)">打开清单</button>
+                    <button v-if="canGoExecute(p)" type="button" class="ck-feedback-btn ck-task-go" @click="goExecute(p)">去执行</button>
+                  </div>
                 </div>
-                <div class="ck-task-actions">
-                  <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openVerifyTask(p)">打开验测</button>
-                </div>
-              </div>
-            </template>
-            <template v-if="patchPackages.length">
-              <div class="ck-task-sec">PATCH 通知（不计入 Checklist 红点）</div>
-              <div v-for="p in patchPackages" :key="p.package_id" class="ck-task-item">
-                <div>
+              </template>
+              <div v-if="inboxTab !== 'verify' && inboxTab !== 'patch' && !unfinishedChecklist.length" class="ck-task-empty">没有未完成的检查表</div>
+              <template v-if="showInboxVerify && visibleVerifyPackages.length">
+                <div class="ck-task-sec">验测任务</div>
+                <div v-for="p in visibleVerifyPackages" :key="p.package_id" class="ck-task-item">
                   <div>
-                    <span class="ck-task-badge patch">{{ kindBadge(p.notice_type) }}</span>
-                    <b>{{ p.title || (p.notice_type === 'gki-patch' ? 'GKI Patch' : 'Modem Patch') }}</b>
+                    <div>
+                      <span class="ck-task-badge check">{{ kindBadge(p.notice_type) }}</span>
+                      <b>{{ p.title || '验测任务指派' }}</b>
+                    </div>
+                    <div class="ck-task-meta">指派验测 · 去「测试执行」跑对应测试项</div>
                   </div>
-                  <div class="ck-task-meta">仅订阅名单 · 点进现有 Patch 页</div>
+                  <div class="ck-task-actions">
+                    <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openVerifyTask(p)">打开验测</button>
+                  </div>
                 </div>
-                <div class="ck-task-actions">
-                  <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openPatch(p)">打开 Patch</button>
+              </template>
+              <template v-if="showInboxPatch && visiblePatchPackages.length">
+                <div class="ck-task-sec">PATCH 通知（不计入 Checklist 红点）</div>
+                <div v-for="p in visiblePatchPackages" :key="p.package_id" class="ck-task-item">
+                  <div>
+                    <div>
+                      <span class="ck-task-badge patch">{{ kindBadge(p.notice_type) }}</span>
+                      <b>{{ p.title || (p.notice_type === 'gki-patch' ? 'GKI Patch' : 'Modem Patch') }}</b>
+                    </div>
+                    <div class="ck-task-meta">仅订阅名单 · 点进现有 Patch 页</div>
+                  </div>
+                  <div class="ck-task-actions">
+                    <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openPatch(p)">打开 Patch</button>
+                  </div>
                 </div>
-              </div>
-            </template>
+              </template>
+              <div v-if="inboxListEmpty && unfinishedChecklist.length" class="ck-task-empty">没有匹配的任务</div>
+            </div>
             <div class="ck-task-foot">
               <button type="button" class="ck-task-all" @click="openAllChecklist">打开我的 Checklist</button>
               <button type="button" class="ck-task-all" @click="openHistory">查看历史</button>
@@ -645,36 +819,95 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-if="applyPrompt" class="model-overlay" @click.self="dismissApply">
-      <div class="model-panel ck-apply-panel">
-        <h3>用本报告勾选 Checklist</h3>
-        <p class="ck-apply-meta">
-          {{ applyPrompt.run.project_code }} · {{ applyPrompt.run.run_id }}
-          <span v-if="applyPrompt.domain_unspecified">（报告未标域，请确认不要跨域误挂）</span>
-          <span v-if="applyPrompt.campaign_unspecified">（报告未标适配版本，不能勾选通过）</span>
-        </p>
-        <label v-if="applyPrompt.packages.length > 1" class="ck-apply-pkg">
-          工作包
-          <select v-model="applyPkgId" @change="applyChecked = applyRows.map(i => i.line_id)">
-            <option v-for="p in applyPrompt.packages" :key="p.package_id" :value="p.package_id">
-              {{ p.title || p.domain_label }}
-            </option>
-          </select>
-        </label>
-        <label v-for="row in applyRows" :key="row.line_id" class="ck-apply-row">
-          <input type="checkbox" :checked="applyChecked.includes(row.line_id)" @change="toggleApply(row.line_id, ($event.target as HTMLInputElement).checked)">
-          <span>{{ row.item_id }} {{ row.title }}</span>
-        </label>
-        <p v-if="!applyRows.length" class="ck-apply-meta">没有待处理行</p>
-        <label class="ck-apply-row">
-          <input type="checkbox" v-model="applyAlsoPass" :disabled="!applyCanPass">
-          <span>用本报告勾选通过（失败或未标版本的报告只能关联、不改状态）</span>
-        </label>
+    <div v-if="applyPrompt" class="model-overlay ck-apply-overlay" @click.self="dismissApply">
+      <div class="model-panel ck-apply-panel" @click.stop>
+        <div class="ck-apply-head">
+          <h3>用本报告勾选 Checklist</h3>
+          <p class="ck-apply-meta">
+            {{ applyPrompt.run.project_code }}
+            <template v-if="runKindLabel(applyPrompt.run.dimension)"> · {{ runKindLabel(applyPrompt.run.dimension) }}</template>
+            <template v-if="runStatusLabel(applyPrompt.run.status)"> · {{ runStatusLabel(applyPrompt.run.status) }}</template>
+            · {{ applyPrompt.run.run_id }}
+            <span v-if="applyPrompt.campaign_unspecified">（报告未标适配版本，不能勾选通过）</span>
+          </p>
+          <div v-if="applyPrompt.domain_unspecified" class="ck-apply-banner warn">
+            报告未标域，请先选左侧域再勾选，避免跨域误挂。
+          </div>
+          <div v-else-if="applyMatchedPkg" class="ck-apply-banner">
+            <span>已按报告自动关联「{{ applyMatchedPkg.domain_label || applyMatchedPkg.title }}」域待处理项（{{ applyRecommendedIds.length }} 项）。其它域未预选。</span>
+            <button type="button" class="ck-apply-mini" @click="restoreApplyRecommended">恢复推荐</button>
+          </div>
+        </div>
+        <div class="ck-apply-body" :class="{ 'no-rail': applyPrompt.packages.length < 2 }">
+          <aside v-if="applyPrompt.packages.length > 1" class="ck-apply-rail">
+            <div class="ck-apply-rail-h">业务域</div>
+            <button
+              v-for="pkg in applyPrompt.packages"
+              :key="pkg.package_id"
+              type="button"
+              class="ck-apply-dom"
+              :class="{ on: pkg.package_id === applyPkgId }"
+              @click="selectApplyPkg(pkg.package_id)"
+            >
+              <span>
+                {{ pkg.domain_label || pkg.title }}
+                <i v-if="applyMatchedPkg?.package_id === pkg.package_id">匹配</i>
+              </span>
+              <em>{{ pkg.pending_items.length }}</em>
+            </button>
+          </aside>
+          <section class="ck-apply-main">
+            <div class="ck-apply-tools">
+              <input v-model="applyQuery" class="ck-apply-search" type="search" placeholder="搜索编号或检查项" />
+              <button type="button" class="ck-apply-mini" :class="{ on: applyRecOnly }" @click="applyRecOnly = !applyRecOnly">仅看推荐</button>
+              <button type="button" class="ck-apply-mini" @click="selectAllApplyDomain">全选本域</button>
+              <button type="button" class="ck-apply-mini" @click="clearApplyDomain">清空本域</button>
+            </div>
+            <div class="ck-apply-list">
+              <div v-for="group in applyTypeGroups" :key="group.type" class="ck-apply-group">
+                <div class="ck-apply-ghd">
+                  <input
+                    type="checkbox"
+                    :checked="group.allChecked"
+                    @change="toggleApplyGroupAll(group.type, ($event.target as HTMLInputElement).checked)"
+                  />
+                  <button type="button" @click="toggleApplyGroup(group.type)">
+                    <b>{{ group.label }}</b>
+                    <span>{{ group.checkedCount }}/{{ group.items.length }}</span>
+                    <span>{{ applyCollapsed.includes(group.type) ? '展开' : '收起' }}</span>
+                  </button>
+                </div>
+                <div v-show="!applyCollapsed.includes(group.type)" class="ck-apply-gbody">
+                  <label v-for="row in group.items" :key="row.line_id" class="ck-apply-row">
+                    <input
+                      type="checkbox"
+                      :checked="applyChecked.includes(row.line_id)"
+                      @change="toggleApply(row.line_id, ($event.target as HTMLInputElement).checked)"
+                    />
+                    <span>
+                      <span class="ck-apply-id">{{ row.item_id }}</span>
+                      <span class="ck-apply-title">{{ row.title }}</span>
+                    </span>
+                    <em v-if="applyRecommendedIds.includes(row.line_id)">推荐</em>
+                  </label>
+                </div>
+              </div>
+              <p v-if="!applyTypeGroups.length" class="ck-apply-meta">{{ applyRows.length ? '当前筛选没有匹配项' : '没有待处理行' }}</p>
+            </div>
+          </section>
+        </div>
         <div class="ck-apply-actions">
-          <button type="button" class="ea-btn-ghost ea-btn-sm" :disabled="applyBusy" @click="dismissApply">跳过</button>
-          <button type="button" class="ck-feedback-btn" :disabled="applyBusy || !applyChecked.length" @click="confirmApply">
-            {{ applyBusy ? '提交中…' : (applyAlsoPass ? '勾选通过' : '只关联报告') }}
-          </button>
+          <label class="ck-apply-pass">
+            <input type="checkbox" v-model="applyAlsoPass" :disabled="!applyCanPass">
+            <span>用本报告勾选通过（失败或未标版本的报告只能关联、不改状态）</span>
+          </label>
+          <span class="ck-apply-count">已选 {{ applyChecked.length }} / {{ applyRows.length }}</span>
+          <div class="ck-apply-btns">
+            <button type="button" class="ea-btn-ghost ea-btn-sm" :disabled="applyBusy" @click="dismissApply">跳过</button>
+            <button type="button" class="ck-feedback-btn" :disabled="applyBusy || !applyChecked.length" @click="confirmApply">
+              {{ applyBusy ? '提交中…' : (applyAlsoPass && applyCanPass ? '勾选通过' : '只关联报告') }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -818,18 +1051,72 @@ onUnmounted(() => {
   right: 0;
   top: calc(100% + 8px);
   width: min(480px, calc(100vw - 32px));
+  max-height: min(560px, 70vh);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   background: #fff;
   border: 1px solid var(--line-strong, #e5e7eb);
   border-radius: 12px;
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16);
   z-index: 40;
-  padding: 10px 0 8px;
+  padding: 10px 0 0;
 }
 .ck-task-pop-hd {
-  padding: 4px 14px 10px;
+  padding: 4px 14px 8px;
   font-size: 12px;
   color: var(--muted);
   line-height: 1.45;
+  flex-shrink: 0;
+}
+.ck-task-pop-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--head);
+  font-size: 13px;
+}
+.ck-task-pop-title span { font-weight: 400; color: var(--muted); font-size: 12px; }
+.ck-task-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 14px 8px;
+  flex-shrink: 0;
+}
+.ck-task-chip {
+  border: 1px solid var(--line, #e5e7eb);
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ck-task-chip span {
+  margin-left: 4px;
+  font-weight: 700;
+}
+.ck-task-chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.ck-task-search {
+  margin: 0 14px 8px;
+  height: 32px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.ck-task-list {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
 }
 .ck-task-sec {
   padding: 8px 14px 4px;
@@ -870,7 +1157,7 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 8px;
   border-top: 1px solid #f1f5f9;
-  margin-top: 4px;
+  flex-shrink: 0;
 }
 .ck-task-all {
   display: block;
@@ -907,14 +1194,167 @@ onUnmounted(() => {
   font-size: 12px;
 }
 .ck-apply-panel {
-  max-width: 520px;
-  padding: 20px 22px;
-  h3 { margin: 0 0 8px; font-size: 16px; }
+  width: min(860px, calc(100vw - 32px));
+  max-width: 860px;
+  height: min(640px, calc(100vh - 48px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  h3 { margin: 0 0 4px; font-size: 16px; }
 }
-.ck-apply-meta { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
-.ck-apply-pkg { display: flex; flex-direction: column; gap: 4px; font-size: 13px; margin-bottom: 10px; }
-.ck-apply-row { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; margin: 6px 0; }
-.ck-apply-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.ck-apply-head, .ck-apply-actions { flex-shrink: 0; padding: 16px 18px; }
+.ck-apply-head { border-bottom: 1px solid var(--line, #e5e7eb); }
+.ck-apply-meta { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.45; }
+.ck-apply-banner {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #ecfdf5;
+  color: #166534;
+  font-size: 12px;
+  line-height: 1.45;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  &.warn { background: #fffbeb; color: #92400e; }
+}
+.ck-apply-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 196px 1fr;
+  &.no-rail { grid-template-columns: 1fr; }
+}
+.ck-apply-rail {
+  border-right: 1px solid var(--line, #e5e7eb);
+  padding: 10px;
+  overflow: auto;
+  background: #fafbfe;
+}
+.ck-apply-rail-h {
+  margin: 4px 8px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.ck-apply-dom {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 9px 10px;
+  border-radius: 9px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text, #1f2937);
+  i { font-style: normal; font-size: 10px; color: #16a34a; font-weight: 700; margin-left: 4px; }
+  em {
+    font-style: normal;
+    font-size: 11px;
+    color: var(--muted);
+    background: #eef0f4;
+    padding: 1px 6px;
+    border-radius: 999px;
+  }
+  &.on {
+    background: #fff;
+    box-shadow: 0 0 0 1px var(--accent);
+    font-weight: 650;
+    em { background: var(--accent-soft); color: var(--accent); }
+  }
+}
+.ck-apply-main { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.ck-apply-tools {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line, #e5e7eb);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.ck-apply-search {
+  flex: 1;
+  min-width: 140px;
+  height: 32px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.ck-apply-mini {
+  border: 1px solid var(--line, #e5e7eb);
+  background: #fff;
+  border-radius: 8px;
+  padding: 0 10px;
+  height: 32px;
+  font-size: 12px;
+  white-space: nowrap;
+  &.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+}
+.ck-apply-list { flex: 1; overflow: auto; padding: 8px 12px 14px; min-height: 0; }
+.ck-apply-group {
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.ck-apply-ghd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #f8fafc;
+  button {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    font-size: 13px;
+    b { flex: 1; }
+    span { color: var(--muted); font-size: 12px; }
+  }
+}
+.ck-apply-gbody { padding: 4px 8px 8px; }
+.ck-apply-row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  margin: 0;
+  padding: 7px 6px;
+  border-radius: 8px;
+  em { font-style: normal; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: #ecfdf5; color: #15803d; }
+}
+.ck-apply-id { display: block; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+.ck-apply-title { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.ck-apply-actions {
+  border-top: 1px solid var(--line, #e5e7eb);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ck-apply-pass {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 360px;
+}
+.ck-apply-count { font-size: 13px; color: var(--muted); }
+.ck-apply-btns { margin-left: auto; display: flex; gap: 8px; }
+.ck-apply-overlay { padding: 24px; }
 
 .ck-feedback-btn {
   display: inline-flex;
@@ -1033,5 +1473,9 @@ onUnmounted(() => {
     order: 3;
     width: 100%;
   }
+
+  .ck-apply-body:not(.no-rail) { grid-template-columns: 1fr; }
+  .ck-apply-rail { display: flex; gap: 6px; overflow: auto; border-right: 0; border-bottom: 1px solid var(--line, #e5e7eb); }
+  .ck-apply-dom { width: auto; white-space: nowrap; }
 }
 </style>

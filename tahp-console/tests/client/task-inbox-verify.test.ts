@@ -123,3 +123,108 @@ describe('EaShell 验测任务通知', () => {
     expect(wrapper.find('.ck-task-dot').exists()).toBe(false)
   })
 })
+
+const APPLY_PROMPT = {
+  run: {
+    run_id: 'run-km9-1',
+    project_code: 'KM9',
+    status: 'pass',
+    dimension: 'self-check',
+    domain_id: 'charging',
+  },
+  packages: [
+    {
+      package_id: 'pkg-ch',
+      title: 'KM9 · 充电',
+      domain_label: '充电',
+      pending_items: [
+        { line_id: 'l-p1', item_id: 'adapt-p1-charging-0001', title: '充电 IC 识别' },
+        { line_id: 'l-sw', item_id: 'adapt-software-charging-0001', title: '电量曲线' },
+      ],
+    },
+    {
+      package_id: 'pkg-tp',
+      title: 'KM9 · TP触摸屏',
+      domain_label: 'TP触摸屏',
+      pending_items: [
+        { line_id: 'l-tp', item_id: 'adapt-p1-tp-0001', title: 'TP IC 识别' },
+      ],
+    },
+  ],
+  domain_unspecified: false,
+  campaign_unspecified: false,
+}
+
+function stubFetchWithApply(prompt = APPLY_PROMPT) {
+  hoisted.fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.includes('/api/tahp/task-inbox/ack')) {
+      return { json: async () => ({ success: true }) } as Response
+    }
+    if (url.includes('/api/tahp/task-inbox')) {
+      return { json: async () => ({ success: true, data: { ...INBOX, apply_prompt: prompt } }) } as Response
+    }
+    return { json: async () => ({ success: true, data: {} }) } as Response
+  })
+  vi.stubGlobal('fetch', hoisted.fetchMock)
+}
+
+describe('EaShell 我的任务下拉', () => {
+  beforeEach(() => {
+    hoisted.routerPush.mockClear()
+    hoisted.fetchMock.mockReset()
+    stubFetch()
+  })
+
+  it('任务列表在下拉内部滚动，底栏保持可见', async () => {
+    const wrapper = mount(EaShell, { slots: { default: '<div />' } })
+    await flushPromises()
+    await wrapper.find('button[title="我的任务"]').trigger('click')
+    expect(wrapper.find('.ck-task-list').exists()).toBe(true)
+    expect(wrapper.find('.ck-task-foot').exists()).toBe(true)
+    expect(wrapper.text()).toContain('验测')
+    expect(wrapper.text()).toContain('Patch')
+  })
+
+  it('按类型 Chip 只显示对应任务', async () => {
+    const wrapper = mount(EaShell, { slots: { default: '<div />' } })
+    await flushPromises()
+    await wrapper.find('button[title="我的任务"]').trigger('click')
+    const chips = wrapper.findAll('.ck-task-chip')
+    const verifyChip = chips.find(b => b.text().includes('验测'))
+    expect(verifyChip).toBeTruthy()
+    await verifyChip!.trigger('click')
+    expect(wrapper.text()).toContain('验测任务指派：周版本测试')
+    expect(wrapper.text()).not.toContain('PATCH 通知')
+  })
+})
+
+describe('EaShell 用本报告勾选', () => {
+  beforeEach(() => {
+    hoisted.routerPush.mockClear()
+    hoisted.fetchMock.mockReset()
+    stubFetchWithApply()
+  })
+
+  it('弹层限高并按 P1/软件分组，预选报告匹配域', async () => {
+    const wrapper = mount(EaShell, { slots: { default: '<div />' } })
+    await flushPromises()
+    expect(wrapper.find('.ck-apply-panel').exists()).toBe(true)
+    expect(wrapper.find('.ck-apply-list').exists()).toBe(true)
+    expect(wrapper.text()).toContain('P1')
+    expect(wrapper.text()).toContain('软件')
+    expect(wrapper.text()).toContain('已按报告自动关联')
+    expect(wrapper.findAll('.ck-apply-row input').filter(i => (i.element as HTMLInputElement).checked).length).toBe(2)
+    expect(wrapper.text()).toContain('充电')
+    expect(wrapper.text()).toContain('TP触摸屏')
+  })
+
+  it('报告未标域时不预选检查项', async () => {
+    stubFetchWithApply({ ...APPLY_PROMPT, domain_unspecified: true })
+    const wrapper = mount(EaShell, { slots: { default: '<div />' } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('报告未标域')
+    const checked = wrapper.findAll('.ck-apply-row input').filter(i => (i.element as HTMLInputElement).checked)
+    expect(checked.length).toBe(0)
+  })
+})
