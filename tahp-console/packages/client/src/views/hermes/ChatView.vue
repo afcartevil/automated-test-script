@@ -36,8 +36,12 @@ onMounted(async () => {
     profilesStore.fetchProfiles(),
     settingsStore.fetchSettings(),
   ])
+  if (hasHermesChatFreshQuery(route.query)) {
+    await startFreshChatIfRequested()
+    void chatStore.loadSessions(undefined, { activate: false })
+    return
+  }
   await chatStore.loadSessions()
-  await startFreshChatIfRequested()
 })
 
 watch(

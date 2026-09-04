@@ -435,7 +435,11 @@ export const useChatStore = defineStore('chat', () => {
     removeItem(storageKey())
   }
 
-  async function loadSessions(profile?: string | null) {
+  async function loadSessions(
+    profile?: string | null,
+    options?: { activate?: boolean },
+  ) {
+    const activate = options?.activate !== false
     isLoadingSessions.value = true
     try {
       const list = await fetchSessions(undefined, undefined, profile || undefined)
@@ -447,7 +451,21 @@ export const useChatStore = defineStore('chat', () => {
         const prev = msgsByIdBefore.get(s.id)
         if (prev && prev.length) s.messages = prev
       }
+
+      const keepActive = activeSession.value
+      const keepId = activeSessionId.value
+      if (keepActive && !fresh.some(s => s.id === keepActive.id)) {
+        fresh.unshift(keepActive)
+      }
       sessions.value = fresh
+
+      if (!activate) {
+        if (keepId) {
+          activeSessionId.value = keepId
+          activeSession.value = sessions.value.find(s => s.id === keepId) || keepActive
+        }
+        return
+      }
 
       // Restore last active session, fallback to most recent
       const savedId = activeSessionId.value
@@ -527,7 +545,11 @@ export const useChatStore = defineStore('chat', () => {
     return session
   }
 
-  async function switchSession(sessionId: string, focusId?: string | null) {
+  async function switchSession(
+    sessionId: string,
+    focusId?: string | null,
+    options?: { resume?: boolean },
+  ) {
     clearThinkingObservationFor(sessionId)
     activeSessionId.value = sessionId
     focusMessageId.value = focusId ?? null
@@ -537,6 +559,11 @@ export const useChatStore = defineStore('chat', () => {
     activeSession.value = sessions.value.find(s => s.id === sessionId) || null
 
     if (!activeSession.value) return
+
+    if (options?.resume === false) {
+      isLoadingMessages.value = false
+      return
+    }
 
     isLoadingMessages.value = true
 
@@ -683,7 +710,7 @@ export const useChatStore = defineStore('chat', () => {
     const provider = options.provider || profileDefaults.provider || appStore.selectedProvider || ''
 
     const session = createSession({ profile, model, provider })
-    await switchSession(session.id)
+    await switchSession(session.id, null, { resume: false })
   }
 
   async function switchSessionModel(modelId: string, provider?: string, sessionId?: string): Promise<boolean> {
@@ -711,7 +738,7 @@ export const useChatStore = defineStore('chat', () => {
         await switchSession(sessions.value[0].id)
       } else {
         const session = createSession()
-        switchSession(session.id)
+        void switchSession(session.id, null, { resume: false })
       }
     }
   }
@@ -951,7 +978,7 @@ export const useChatStore = defineStore('chat', () => {
 
     if (!activeSession.value) {
       const session = createSession()
-      switchSession(session.id)
+      void switchSession(session.id, null, { resume: false })
     }
 
     // Capture session ID at send time — all callbacks use this, not activeSessionId
