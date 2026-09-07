@@ -37,7 +37,7 @@ const emit = defineEmits<{
   selectDevice: [deviceId: string]
 }>()
 
-const { tasks: verifyTasks } = useVerifyTasks()
+const { tasks: verifyTasks, unreachable: verifyUnreachable } = useVerifyTasks()
 
 const deviceCounts = computed(() => ({
   idle: props.devices.filter(d => d.status === '空闲').length,
@@ -74,6 +74,19 @@ function formatAssignTime(iso?: string): string {
 function onFlowStage(tab: string) {
   emit('goTab', tab)
 }
+
+/** 「验测任务」进入：SSO 打开本账号的中心「任务中心 → 质量验测」；中心不可达时回落到本机「测试执行」 */
+async function openVerifyCenter() {
+  try {
+    const res = await fetch('/api/tahp/central/sso-url?next=' + encodeURIComponent('/tasks/mine?lane=self-check'))
+    const json = await res.json() as { success?: boolean; data?: { url?: string } }
+    if (json.success && json.data?.url) {
+      window.open(json.data.url, '_blank')
+      return
+    }
+  } catch { /* 中心不可达时走回落 */ }
+  emit('goDevices')
+}
 </script>
 
 <template>
@@ -99,12 +112,15 @@ function onFlowStage(tab: string) {
         tone="tone-indigo"
         :metric="verifyTasks.length"
         metric-label="待完成"
-        @enter="emit('goDevices')"
+        @enter="openVerifyCenter"
       >
-        <div v-if="!verifyTasks.length" class="panel-empty ea-muted">
+        <div v-if="verifyUnreachable" class="panel-empty verify-unreachable">
+          中心不可达，验测任务列表暂不可用
+        </div>
+        <div v-else-if="!verifyTasks.length" class="panel-empty ea-muted">
           暂无未完成的验测任务
         </div>
-        <ul v-else class="item-list">
+        <ul v-if="verifyTasks.length" class="item-list">
           <li v-for="t in verifyTasks.slice(0, 3)" :key="t.task_id" class="item-row">
             <span class="item-main">
               <strong>{{ t.project || '—' }}</strong>
@@ -214,6 +230,11 @@ function onFlowStage(tab: string) {
 .panel-empty {
   font-size: 13px;
   line-height: 1.5;
+}
+
+.verify-unreachable {
+  color: var(--error);
+  font-weight: 500;
 }
 
 .panel-desc {

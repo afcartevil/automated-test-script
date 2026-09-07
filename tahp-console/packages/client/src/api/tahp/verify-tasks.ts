@@ -15,7 +15,14 @@ export interface VerifyTaskItem {
   created_at: string
 }
 
-/** 本人在中心被指派的未完成验测任务（中心不可达时服务端降级为空列表） */
-export function fetchMyVerifyTasks(): Promise<VerifyTaskItem[]> {
-  return tahpGet<VerifyTaskItem[]>('/api/tahp/verify-tasks/mine')
+export interface MyVerifyTasksResult {
+  tasks: VerifyTaskItem[]
+  /** 中心不可达/未配置/未绑定（此时 tasks 为空，前端应红字提示） */
+  degraded: boolean
+  reason?: string
+}
+
+/** 本人在中心被指派的未完成验测任务（中心不可达时 degraded=true） */
+export function fetchMyVerifyTasks(): Promise<MyVerifyTasksResult> {
+  return tahpGet<MyVerifyTasksResult>('/api/tahp/verify-tasks/mine')
 }

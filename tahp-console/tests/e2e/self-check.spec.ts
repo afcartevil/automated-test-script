@@ -87,7 +87,7 @@ function mockVerifyTasksApi(page: import('@playwright/test').Page) {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ success: true, data: tasksPayload }),
+      body: JSON.stringify({ success: true, data: { tasks: tasksPayload, degraded: false } }),
     })
   })
 }

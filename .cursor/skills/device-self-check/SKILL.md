@@ -157,9 +157,10 @@ services/tahp/self-check/python/
 
 ### 总览「验测任务」卡片
 
-- 数据源：`useVerifyTasks`（15s 轮询 + `onActivated` 立即刷新）→ EA 服务端 `GET /api/tahp/verify-tasks/mine` → 中心 `verify/mine?view=open`（会话模式转发）。
+- 数据源：`useVerifyTasks`（15s 轮询 + `onActivated` 立即刷新）→ EA 服务端 `GET /api/tahp/verify-tasks/mine` → 中心 `verify/mine?view=open`（会话模式转发；代理返回 `{tasks, degraded, reason?}`）。
 - 展示：项目（`project`）、测试项（`item_label`）、指派时间 + 指派账号（`created_at` · `created_by`，如 admin / auto-plan）；中心侧完成/取消后下一轮轮询即移除。
-- 「进入 →」跳「测试执行」Tab。
+- 中心不可达（`degraded=true` 或请求失败）：卡片顶部红字「中心不可达，验测任务列表暂不可用」，已有列表保留展示，恢复后自动刷新。
+- 「进入 →」经 `/api/tahp/central/sso-url` SSO 打开本账号的中心「任务中心 → 质量验测」（`next=/tasks/mine?lane=self-check`）；中心不可达时回落本机「测试执行」Tab。
 
 ---
 

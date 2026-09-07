@@ -12,14 +12,19 @@ const POLL_INTERVAL_MS = 15_000
 export function useVerifyTasks() {
   const tasks = ref<VerifyTaskItem[]>([])
   const loading = ref(false)
+  /** 中心不可达（代理层 degraded 或请求失败）：卡片红字提示 */
+  const unreachable = ref(false)
   let timer: number | null = null
 
   async function refresh() {
     loading.value = true
     try {
-      tasks.value = await fetchMyVerifyTasks()
+      const result = await fetchMyVerifyTasks()
+      tasks.value = result.tasks || []
+      unreachable.value = result.degraded === true
     } catch {
-      // 拉取失败保留旧数据，下一轮再试
+      // 拉取失败保留旧数据并提示不可达，下一轮再试
+      unreachable.value = true
     } finally {
       loading.value = false
     }
@@ -48,5 +53,5 @@ export function useVerifyTasks() {
   onDeactivated(stop)
   onUnmounted(stop)
 
-  return { tasks, loading, refresh }
+  return { tasks, loading, unreachable, refresh }
 }
