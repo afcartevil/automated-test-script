@@ -128,7 +128,7 @@ describe('adapt-layout merge', () => {
     expect(merged.layouts.tp.published_revision).toBe(4)
   })
 
-  it('skips dirty local module that differs from published', () => {
+  it('overwrites dirty local module with published layout', () => {
     const localTp = tpRecord({
       source: 'user',
       published_revision: 3,
@@ -154,9 +154,11 @@ describe('adapt-layout merge', () => {
         },
       },
     )
-    expect(skippedDirtyDomains).toEqual(['tp'])
-    expect(updatedDomains).toEqual([])
-    expect(merged.layouts.tp.fields[0].label).toBe('IC型号-本地改')
+    expect(skippedDirtyDomains).toEqual([])
+    expect(updatedDomains).toEqual(['tp'])
+    expect(merged.layouts.tp.fields[0].name).toBe('vendor')
+    expect(merged.layouts.tp.source).toBe('cloud')
+    expect(merged.layouts.tp.published_revision).toBe(4)
   })
 
   it('applies published when local dirty content already matches remote', () => {
@@ -189,7 +191,7 @@ describe('adapt-layout merge', () => {
     expect(merged.layouts.tp.published_revision).toBe(4)
   })
 
-  it('updates other modules even when one module is skipped', () => {
+  it('overwrites all published modules including locally dirty ones', () => {
     const dirtyTp = tpRecord({
       source: 'user',
       fields: [{ name: 'local_only', label: '本地', type: 'text', required: false }],
@@ -218,9 +220,10 @@ describe('adapt-layout merge', () => {
         },
       },
     )
-    expect(skippedDirtyDomains).toEqual(['tp'])
-    expect(updatedDomains).toEqual(['lcm'])
+    expect(skippedDirtyDomains).toEqual([])
+    expect(updatedDomains).toEqual(['tp', 'lcm'])
     expect(merged.layouts.lcm.fields[0].name).toBe('panel')
-    expect(merged.layouts.tp.fields[0].name).toBe('local_only')
+    expect(merged.layouts.tp.fields[0].name).toBe('remote')
+    expect(merged.layouts.tp.source).toBe('cloud')
   })
 })

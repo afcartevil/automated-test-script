@@ -2324,7 +2324,7 @@ function openSkill(skillName: string) {
               <div v-if="layoutEditMode" class="layout-editor">
                 <div class="layout-editor-head">
                   <span class="layout-editor-title">域配置编辑</span>
-                  <span class="layout-editor-hint">可增删表单字段与关联 Skill；第一项为主控 Skill。保存只写入本机，需全员生效时再点「提交审核」。启动与打开页面会拉取已发布布局，本机未提交的改动不会被覆盖。</span>
+                  <span class="layout-editor-hint">可增删表单字段与关联 Skill；第一项为主控 Skill。保存只写入本机草稿，全员生效需「提交审核」并通过。连上服务中心时以已发布布局覆盖本机未发布改动；连不上则沿用上次缓存。</span>
                 </div>
                 <div class="layout-skills-editor">
                   <span class="layout-skills-label">关联 Skills</span>

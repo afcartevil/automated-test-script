@@ -51,8 +51,8 @@ export function publishedToLocalRecord(
 }
 
 /**
- * 按模块合并已发布布局到本机 manifest。
- * 本机有未提交改动且内容与远端不同 → 跳过该模块（仍可刷新 review 元数据）。
+ * 按模块把已发布布局写入本机缓存。
+ * 连上中心即以远端为准，覆盖本机未发布改动；拉失败时由调用方保留上次缓存。
  */
 export function mergePublishedIntoLocal(
   local: AdaptLayoutManifest,
@@ -76,26 +76,7 @@ export function mergePublishedIntoLocal(
     if (!remoteRecord?.fields?.length) continue
     const localRecord = merged.layouts[domainId]
     const review = remoteReviews[domainId]
-    const remoteFp = fingerprintLayout(remoteRecord.fields, remoteRecord.related_skills)
-
-    if (!localRecord) {
-      merged.layouts[domainId] = publishedToLocalRecord(remoteRecord, review)
-      updatedDomains.push(domainId)
-      continue
-    }
-
-    const localFp = fingerprintLayout(localRecord.fields, localRecord.related_skills)
-    const dirty = isLocalDirty(localRecord)
-
-    if (dirty && localFp !== remoteFp) {
-      skippedDirtyDomains.push(domainId)
-      if (review) {
-        merged.layouts[domainId] = { ...localRecord, review }
-      }
-      continue
-    }
-
-    merged.layouts[domainId] = publishedToLocalRecord(remoteRecord, review ?? localRecord.review)
+    merged.layouts[domainId] = publishedToLocalRecord(remoteRecord, review ?? localRecord?.review)
     updatedDomains.push(domainId)
   }
 
