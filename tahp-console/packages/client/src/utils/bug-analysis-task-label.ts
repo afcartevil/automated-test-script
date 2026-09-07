@@ -13,6 +13,7 @@ export function bugTaskStatusPhase(status?: string): string | undefined {
 
 /** 列表/队列卡片用的 phase：终态以 status 为准，避免空 phase 显示成「准备中」。 */
 export function bugTaskCardPhase(status?: string, phase?: string): string | undefined {
+  if (phase === 'MARK_DUPLICATE') return 'MARK_DUPLICATE'
   if (status && TERMINAL.has(status)) return bugTaskStatusPhase(status)
   return phase || bugTaskStatusPhase(status)
 }

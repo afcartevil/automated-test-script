@@ -237,6 +237,13 @@ export const useBugAnalysisStore = defineStore('tahp-bug-analysis', () => {
           case 'task.phase':
             t.phase = ev.payload?.phase as string
             if (typeof ev.payload?.progress === 'number') t.progress = ev.payload.progress as number
+            if (ev.payload?.phase === 'MARK_DUPLICATE') {
+              t.dup_judge_status = 'running'
+            } else if (typeof ev.payload?.dup_judge_status === 'string') {
+              t.dup_judge_status = ev.payload.dup_judge_status as BugTask['dup_judge_status']
+            } else if (t.dup_judge_status === 'running' && ev.payload?.phase === 'COMPLETED') {
+              t.dup_judge_status = 'completed'
+            }
             break
           case 'task.stage_detail': {
             const stepId = String(ev.payload?.step_id || '')

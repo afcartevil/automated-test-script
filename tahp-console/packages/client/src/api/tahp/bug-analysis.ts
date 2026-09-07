@@ -92,6 +92,8 @@ export interface BugTask {
   corrections?: string[]
   llm_response?: string
   issue?: JiraIssueDetail
+  /** 分析完成后的 jira-dup-judge 置重状态 */
+  dup_judge_status?: 'running' | 'completed' | 'failed'
 }
 
 export interface BugJob {
@@ -109,6 +111,8 @@ export interface BugJob {
   total: number
   completed: number
   failed: number
+  /** 本批开启了「结论后回写备注并尝试置重」 */
+  auto_post_comment_and_dup?: boolean
 }
 
 export interface JiraAttachment {
@@ -233,6 +237,7 @@ export function startBatch(payload: {
   jql: string
   extra_context?: string
   code_source?: string
+  auto_post_comment_and_dup?: boolean
 }, jiraConfig?: JiraUserConfig): Promise<BugBatchStartResp> {
   return tahpPost<BugBatchStartResp>('/api/tahp/bug-analysis/batch', payload, { headers: jiraHeaders(jiraConfig) })
 }
@@ -254,8 +259,12 @@ export function postJiraComment(
   taskId: string,
   comment: string,
   jiraConfig?: JiraUserConfig,
-): Promise<{ comment_id?: string }> {
-  return tahpPost(`/api/tahp/bug-analysis/${encodeURIComponent(taskId)}/jira-comment`, { comment }, { headers: jiraHeaders(jiraConfig) })
+  opts?: { tryMarkDuplicate?: boolean },
+): Promise<{ comment_id?: string; dup_judge_started?: boolean }> {
+  return tahpPost(`/api/tahp/bug-analysis/${encodeURIComponent(taskId)}/jira-comment`, {
+    comment,
+    try_mark_duplicate: opts?.tryMarkDuplicate === true,
+  }, { headers: jiraHeaders(jiraConfig) })
 }
 
 export function continueAnalysis(taskId: string, payload: {
@@ -426,7 +435,7 @@ export function getBugLog(taskId: string): Promise<{ task_id: string; content: s
   return tahpGet<{ task_id: string; content: string }>(`/api/tahp/bug-analysis/logs/${encodeURIComponent(taskId)}`)
 }
 
-export function cancelBugTask(taskId: string): Promise<{ ok: boolean; action?: 'cancelled_pending' | 'interrupted_running' }> {
+export function cancelBugTask(taskId: string): Promise<{ ok: boolean; action?: 'cancelled_pending' | 'interrupted_running' | 'interrupted_dup_judge' }> {
   return tahpPost(`/api/tahp/bug-analysis/tasks/${encodeURIComponent(taskId)}/cancel`)
 }
 

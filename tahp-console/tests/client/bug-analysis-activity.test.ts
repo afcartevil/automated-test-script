@@ -34,6 +34,15 @@ describe('bug-analysis-activity', () => {
     expect(log).toContain('Bash')
   })
 
+  it('formats the 置重 phase', () => {
+    const line = formatBugActivityLine({
+      type: 'task.phase',
+      ts: Date.UTC(2026, 0, 1, 8, 30, 5),
+      payload: { phase: 'MARK_DUPLICATE', message: '按 jira-dup-judge 尝试置重' },
+    })
+    expect(line).toMatch(/尝试置重/)
+  })
+
   it('returns last activity hint', () => {
     const hint = lastBugActivityHint([
       { type: 'task.phase', ts: 1, payload: { phase: 'PREPARING', message: '准备' } },

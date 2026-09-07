@@ -33,6 +33,8 @@ export interface PersistedBugJob {
   /** 指定代码源原始输入（续跑时透传给新 job） */
   code_source?: string
   resumed_from?: string
+  /** 每单分析完成后自动回写 Jira comment 并尝试置重 */
+  auto_post_comment_and_dup?: boolean
   started_at: string
   updated_at: string
   status: PersistedBugJobStatus

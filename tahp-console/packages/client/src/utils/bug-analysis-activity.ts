@@ -16,6 +16,7 @@ const PHASE_LABELS: Record<string, string> = {
   MATCH_SKILLS: '匹配 Skill',
   ANALYZING: '分析中',
   GENERATING_REPORT: '生成报告',
+  MARK_DUPLICATE: '尝试置重',
   COMPLETED: '已完成',
   FAILED: '失败',
   CANCELLED: '已取消',

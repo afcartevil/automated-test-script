@@ -30,6 +30,16 @@ describe('tahp skill context injector', () => {
     expect(out).toContain('智能诊断')
   })
 
+  it('jira_dup_judge scenario does not ask for a 9-section analysis report', () => {
+    const out = buildSkillExecutionDirective({
+      preferredSkillIds: ['jira-dup-judge', 'jira-ops'],
+      scenario: 'jira_dup_judge',
+    })
+    expect(out).toContain('jira-dup-judge')
+    expect(out).toContain('Jira 置重')
+    expect(out).not.toContain('智能诊断 — 拉取 JIRA 后必须选择')
+  })
+
   it('buildTahpContext does not inject skill body excerpts', () => {
     const out = buildTahpContext('modem rf 适配', {
       includeSkillCatalog: true,

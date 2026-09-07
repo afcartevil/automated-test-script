@@ -43,6 +43,7 @@ describe('jira-ops-runner', () => {
     const result = runJiraOpsAddComment('TEST-99999', 'tahp dry-run comment')
     expect(result.error || '').not.toMatch(/退出码 null/)
     expect(result.error || '').not.toMatch(/启动失败: spawnSync py -3/)
+    expect(result.error || '').not.toMatch(/arguments are required:\s*--comment/)
     // 脚本已执行：应为 JIRA 业务错误或成功，而非 spawn 失败
     if (!result.ok) {
       expect(result.error?.length).toBeGreaterThan(5)

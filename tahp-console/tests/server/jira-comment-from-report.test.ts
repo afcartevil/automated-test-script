@@ -3,7 +3,7 @@ import {
   extractJiraCommentBlocks,
   hasJiraRemarkSection,
 } from '../../packages/server/src/services/tahp/jira-comment-from-report'
-import { composeJiraCommentFromReport } from '../../packages/server/src/services/tahp/compose-jira-comment'
+import { composeDefaultJiraCommentFromReport, composeJiraCommentFromReport } from '../../packages/server/src/services/tahp/compose-jira-comment'
 
 const SECTION9_REPORT = `### 1. 摘要 / TL;DR
 
@@ -202,5 +202,29 @@ Call trace 指向 dump_backtrace。
     expect(blocks!.suggestions[0]).toContain('更新 ecc_db.xml')
     const out = composeJiraCommentFromReport(report)
     expect(out).not.toContain('报告 §9 未填写建议')
+  })
+})
+
+describe('composeDefaultJiraCommentFromReport', () => {
+  it('joins 根因定位 with assembled §9 for batch auto-post', () => {
+    const report = `### 4. 根因定位（最关键）
+
+ECC 配置未覆盖当地号码段。
+
+### 9. Jira 备注（结论 / 依据 / 建议）
+
+【分析结论】
+飞行模式下马里新紧急号码拨号失败。
+
+【结论依据】
+1. ecc_db.xml 未包含马里紧急号码段
+
+【建议】
+1. 更新 ecc_db.xml
+`
+    const out = composeDefaultJiraCommentFromReport(report)
+    expect(out).toContain('ECC 配置未覆盖当地号码段')
+    expect(out).toContain('*分析结论：*')
+    expect(out).toContain('飞行模式下马里新紧急号码拨号失败')
   })
 })

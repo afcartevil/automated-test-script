@@ -108,7 +108,15 @@ import {
   type UserInputResponseRecord,
 } from './bug-analysis-interaction'
 import { runJiraOpsAddComment } from './jira-ops-runner'
-import { preprocessJiraCommentForSubmit } from './compose-jira-comment'
+import { composeDefaultJiraCommentFromReport, preprocessJiraCommentForSubmit } from './compose-jira-comment'
+import {
+  JIRA_DUP_JUDGE_SKILL_ID,
+  buildJiraDupJudgeInstructions,
+  buildJiraDupJudgePrompt,
+  jiraDupJudgeSessionId,
+  resolveJiraBrowseUrl,
+} from './jira-dup-judge'
+import { hasJiraBasicCredentials, resolveJiraConfig } from './jira-user-config'
 import {
   buildSilentCredentialResumeMessage,
   ensureLoginsightCredentialsForBugAnalysis,
@@ -188,6 +196,8 @@ export interface BugAnalysisTaskCtx {
   jiraSnapshot?: Record<string, string>
   analysisMode?: BugAnalysisMode
   localLogPath?: string
+  /** 分析完成后的 jira-dup-judge 置重状态（不影响分析终态） */
+  dupJudgeStatus?: 'running' | 'completed' | 'failed'
 }
 
 export interface BugAnalysisJobCtx {
@@ -199,6 +209,8 @@ export interface BugAnalysisJobCtx {
   codeSource?: string
   /** 续跑 / 重跑失败项时指向来源 job */
   resumedFrom?: string
+  /** 每单分析完成后自动回写 Jira comment，并尝试 jira-dup-judge 置重 */
+  autoPostCommentAndDup?: boolean
   taskIds: string[]               // 关联的子任务
   startedAt: string
   /** interrupted：从落盘恢复出来的、上次进程没跑完的队列 */
@@ -233,6 +245,7 @@ const taskRuntime = new Map<string, TaskRuntimeControl>()
 const pendingApprovalsByTask = new Map<string, Map<string, PendingApprovalEntry>>()
 const pendingUserInputByTask = new Map<string, PendingUserInputEntry>()
 const seenUserInputRequestIds = new Map<string, Set<string>>()
+const dupJudgeRuntime = new Map<string, TaskRuntimeControl>()
 
 const MAX_KEEP = 200
 
@@ -284,6 +297,7 @@ function persistJob(job: BugAnalysisJobCtx): void {
     extra_context: job.extraContext,
     code_source: job.codeSource,
     resumed_from: job.resumedFrom,
+    auto_post_comment_and_dup: job.autoPostCommentAndDup,
     started_at: job.startedAt,
     updated_at: new Date().toISOString(),
     status: job.status,
@@ -451,6 +465,7 @@ function ensureJobsRestored(): void {
         extraContext: persisted.extra_context,
         codeSource: persisted.code_source,
         resumedFrom: persisted.resumed_from,
+        autoPostCommentAndDup: persisted.auto_post_comment_and_dup,
         taskIds: tasks.map(t => t.task_id),
         startedAt: persisted.started_at,
         status: persisted.status === 'running' ? 'interrupted' : persisted.status,
@@ -1612,6 +1627,9 @@ export async function getBugTaskContinueStatus(taskId: string): Promise<BugTaskC
   if (status === 'running' || status === 'pending' || status === 'waiting_user_input') {
     return { can_continue: false, reason: '任务正在运行中', agent_session_id: agentSessionId }
   }
+  if (ctx?.dupJudgeStatus === 'running' || dupJudgeRuntime.has(taskId)) {
+    return { can_continue: false, reason: '正在尝试置重，请稍后再补充分析', agent_session_id: agentSessionId }
+  }
   if (status !== 'completed') {
     return { can_continue: false, reason: '仅已完成的分析任务可补充继续', agent_session_id: agentSessionId }
   }
@@ -2359,11 +2377,193 @@ export function postBugAnalysisJiraComment(
   }
 }
 
+function patchBugReportFields(taskId: string, patch: Record<string, unknown>): void {
+  const existing = readBugReport(taskId) as Record<string, unknown> | null
+  if (!existing) return
+  try {
+    writeFileSync(reportPath(taskId), JSON.stringify({ ...existing, ...patch }, null, 2), 'utf-8')
+  } catch (err) {
+    logBug(taskId, 'warn', `report patch failed: ${(err as Error).message}`)
+  }
+}
+
+function emitDupJudgePhase(
+  taskId: string,
+  ctx: BugAnalysisTaskCtx,
+  status: 'running' | 'completed' | 'failed',
+  message: string,
+): void {
+  ctx.dupJudgeStatus = status
+  taskCtx.set(taskId, ctx)
+  if (status === 'running') {
+    ctx.phase = 'MARK_DUPLICATE'
+    emit(taskId, 'task.phase', {
+      phase: 'MARK_DUPLICATE',
+      progress: 100,
+      dup_judge_status: 'running',
+      message,
+    })
+    return
+  }
+  ctx.phase = 'COMPLETED'
+  emit(taskId, 'task.phase', {
+    phase: 'COMPLETED',
+    progress: 100,
+    dup_judge_status: status,
+    message,
+  })
+}
+
+/** 分析完成后按 jira-dup-judge 启动独立 Agent 会话（不污染续聊会话）。 */
+export async function runJiraDupJudge(taskId: string): Promise<{ ok: boolean; error?: string }> {
+  if (dupJudgeRuntime.has(taskId)) {
+    return { ok: false, error: '该任务已在尝试置重' }
+  }
+
+  let ctx = taskCtx.get(taskId)
+  const report = readBugReport(taskId) as Record<string, unknown> | null
+  if (!ctx && report) ctx = restoreCtxFromReport(taskId, report)
+  if (!ctx) return { ok: false, error: `找不到任务 ${taskId}` }
+
+  const mode = ctx.analysisMode || (report?.analysis_mode as string)
+  if (mode === 'local' || ctx.jiraKey.startsWith('LOCAL-')) {
+    return { ok: false, error: '本地日志分析任务不支持置重' }
+  }
+  if (!ctx.jiraKey) return { ok: false, error: '无效 JIRA Key，无法置重' }
+
+  const jiraUrl = resolveJiraBrowseUrl(ctx.jiraUrl, ctx.jiraKey)
+  const userMessage = buildJiraDupJudgePrompt(jiraUrl)
+  const instructions = buildJiraDupJudgeInstructions(userMessage)
+  const sessionId = jiraDupJudgeSessionId(taskId)
+  dupJudgeRuntime.set(taskId, { sessionId, interruptRequested: false })
+
+  emitDupJudgePhase(taskId, ctx, 'running', `按 ${JIRA_DUP_JUDGE_SKILL_ID} 尝试置重: ${ctx.jiraKey}`)
+  emit(taskId, 'task.message', {
+    level: 'round_divider',
+    text: `\n\n---\n\n**按 ${JIRA_DUP_JUDGE_SKILL_ID} 尝试置重**\n\n${userMessage}\n\n`,
+  })
+  emitBugActivity(taskId, `开始置重：${userMessage}`)
+  saveAgentPromptLog(taskId, 'bug-analysis-dup-judge', instructions, userMessage)
+
+  ctx.skillsUsed = ctx.skillsUsed || []
+  if (!ctx.skillsUsed.includes(JIRA_DUP_JUDGE_SKILL_ID)) {
+    ctx.skillsUsed.push(JIRA_DUP_JUDGE_SKILL_ID)
+  }
+
+  try {
+    const { fullResponse, interrupted } = await runAgentChat(sessionId, userMessage, {
+      onText: (delta) => {
+        emit(taskId, 'task.message', { level: 'stream', text: delta })
+      },
+      onToolStarted: (toolName, args, toolCallId) => {
+        if (!ctx!.skillsUsed.includes(toolName)) ctx!.skillsUsed.push(toolName)
+        const argPreview = summarizeArgs(args)
+        emit(taskId, 'task.skill_use', {
+          skill_id: toolName,
+          source: 'tool_call',
+          tool_call_id: toolCallId,
+          args: argPreview,
+          purpose: `jira-dup-judge 调用 ${toolName}`,
+          message: `🛠 置重调用：${toolName}${argPreview ? ` ${argPreview}` : ''}`,
+        })
+        emitBugActivity(taskId, `置重调用工具 ${toolName}${argPreview ? ` ${argPreview}` : ''}`)
+      },
+      onToolCompleted: (toolName, isError, toolCallId) => {
+        emit(taskId, 'task.tool_completed', {
+          skill_id: toolName,
+          tool_call_id: toolCallId,
+          error: isError,
+          message: isError ? `✗ 置重工具失败：${toolName}` : `✓ 置重工具完成：${toolName}`,
+        })
+        emitBugActivity(taskId, `${isError ? '置重工具失败' : '置重工具完成'}：${toolName}`, isError ? 'warn' : 'info')
+      },
+      onToolOutput: (text) => {
+        emitBugActivity(taskId, text)
+      },
+      onReasoning: (text) => {
+        if (text) emit(taskId, 'task.message', { level: 'reasoning', text })
+      },
+      onApprovalRequested: (payload) => {
+        if (payload.approval_id) registerApprovalRequest(taskId, payload)
+      },
+    }, { instructions })
+
+    const interruptedByUser = dupJudgeRuntime.get(taskId)?.interruptRequested === true || interrupted
+    if (interruptedByUser) {
+      emitDupJudgePhase(taskId, ctx, 'failed', '置重已停止')
+      patchBugReportFields(taskId, {
+        jira_dup_judge: { status: 'failed', summary: '用户停止置重' },
+        skills_used: ctx.skillsUsed,
+      })
+      logBug(taskId, 'warn', 'jira-dup-judge interrupted')
+      return { ok: false, error: '置重已停止' }
+    }
+
+    const summary = (fullResponse || '').trim().slice(0, 2000)
+    emitDupJudgePhase(taskId, ctx, 'completed', `置重流程结束（${ctx.jiraKey}）`)
+    patchBugReportFields(taskId, {
+      jira_dup_judge: { status: 'completed', summary },
+      skills_used: ctx.skillsUsed,
+    })
+    logBug(taskId, 'info', `jira-dup-judge finished: ${ctx.jiraKey} chars=${fullResponse.length}`)
+    return { ok: true }
+  } catch (err) {
+    const msg = (err as Error).message
+    emitDupJudgePhase(taskId, ctx, 'failed', `置重失败: ${msg}`)
+    emitBugActivity(taskId, `置重失败: ${msg}`, 'error')
+    patchBugReportFields(taskId, {
+      jira_dup_judge: { status: 'failed', summary: msg },
+      skills_used: ctx.skillsUsed,
+    })
+    logBug(taskId, 'warn', `jira-dup-judge failed: ${msg}`)
+    return { ok: false, error: msg }
+  } finally {
+    const runtime = dupJudgeRuntime.get(taskId)
+    dupJudgeRuntime.delete(taskId)
+    if (runtime) {
+      sharedBridgeClient.destroy(runtime.sessionId).catch(() => {})
+    }
+  }
+}
+
+/** 批量：有结论后自动回写默认 Jira comment，再尝试置重。失败不改变分析终态。 */
+export async function autoPostCommentAndDupJudge(taskId: string): Promise<void> {
+  const report = readBugReport(taskId) as Record<string, unknown> | null
+  const reportBody = report
+    ? extractBugAnalysisReportBody(String(report.report_body || report.llm_response || ''))
+    : ''
+  const comment = composeDefaultJiraCommentFromReport(reportBody)
+  const jiraCfg = resolveJiraConfig()
+
+  if (comment && hasJiraBasicCredentials(jiraCfg)) {
+    const posted = postBugAnalysisJiraComment(taskId, comment, jiraCfg)
+    if (posted.ok) {
+      emitBugActivity(taskId, '已自动把分析结论写回 Jira comment')
+      patchBugReportFields(taskId, { jira_comment_posted: true })
+    } else {
+      emitBugActivity(taskId, `自动回写 Jira comment 失败：${posted.error}`, 'warn')
+    }
+  } else if (comment && !hasJiraBasicCredentials(jiraCfg)) {
+    emitBugActivity(taskId, '未配置 JIRA 账号，跳过自动回写 comment，仍尝试置重', 'warn')
+  } else {
+    emitBugActivity(taskId, '报告无可用 Jira 备注，跳过自动回写 comment，仍尝试置重', 'warn')
+  }
+
+  const dup = await runJiraDupJudge(taskId)
+  if (!dup.ok && dup.error) {
+    emitBugActivity(taskId, `尝试置重未完成：${dup.error}`, 'warn')
+  }
+}
+
 // ─── 公开入口：补充信息继续分析 ─────────────────────────────────────────────
 
 export async function continueBugAnalysis(taskId: string, input: ContinueAnalysisInput): Promise<StartTaskResult> {
   const additionalInfo = input.additionalInfo.trim()
   if (!additionalInfo) return { ok: false, error: '补充信息不能为空' }
+
+  if (dupJudgeRuntime.has(taskId)) {
+    return { ok: false, error: '正在尝试置重，请稍后再补充分析' }
+  }
 
   const sessionStatus = await getBugTaskContinueStatus(taskId)
   if (!sessionStatus.can_continue) {
@@ -2475,7 +2675,7 @@ interface BatchCandidate {
  */
 function startBatchQueue(
   candidates: BatchCandidate[],
-  opts: { jql?: string; extraContext?: string; codeSource?: string; resumedFrom?: string },
+  opts: { jql?: string; extraContext?: string; codeSource?: string; resumedFrom?: string; autoPostCommentAndDup?: boolean },
 ): StartBatchResult {
   const jobId = genTaskId('task-bugjob')
   const job: BugAnalysisJobCtx = {
@@ -2485,6 +2685,7 @@ function startBatchQueue(
     extraContext: opts.extraContext,
     codeSource: opts.codeSource,
     resumedFrom: opts.resumedFrom,
+    autoPostCommentAndDup: opts.autoPostCommentAndDup,
     taskIds: [],
     startedAt: new Date().toISOString(),
     status: 'running',
@@ -2566,6 +2767,15 @@ function startBatchQueue(
       if (latest && !isTerminalTaskStatus(latest.status)) {
         await waitForBatchTaskSettled(tid, budgetMs)
       }
+
+      const settled = taskCtx.get(tid)
+      if (job.autoPostCommentAndDup && settled?.status === 'completed') {
+        try {
+          await autoPostCommentAndDupJudge(tid)
+        } catch (err) {
+          logBug(tid, 'warn', `auto comment/dup failed: ${(err as Error).message}`)
+        }
+      }
     }
 
     settleJobIfDone(job)
@@ -2579,6 +2789,7 @@ export async function startBatchBugAnalysis(
   extraContext?: string,
   jiraCfg?: JiraConfig,
   codeSource?: string,
+  autoPostCommentAndDup?: boolean,
 ): Promise<StartBatchResult> {
   if (!jql?.trim()) return { ok: false, error: '空 JQL' }
 
@@ -2591,7 +2802,7 @@ export async function startBatchBugAnalysis(
     return { ok: false, error: 'JQL 未匹配到任何 Issue' }
   }
 
-  const result = startBatchQueue(candidates, { jql, extraContext, codeSource })
+  const result = startBatchQueue(candidates, { jql, extraContext, codeSource, autoPostCommentAndDup })
   if (result.ok && search.data.truncated) {
     logBug(
       result.jobId!,
@@ -2619,7 +2830,7 @@ export function retryFailedBugJob(jobId: string): StartBatchResult {
 function requeueJobTasks(
   sourceJobId: string,
   picked: PersistedBugJobTask[],
-  source: { jql?: string; extra_context?: string; code_source?: string },
+  source: { jql?: string; extra_context?: string; code_source?: string; auto_post_comment_and_dup?: boolean },
   emptyError: string,
 ): StartBatchResult {
   const candidates = picked
@@ -2631,6 +2842,7 @@ function requeueJobTasks(
     extraContext: source.extra_context,
     codeSource: source.code_source,
     resumedFrom: sourceJobId,
+    autoPostCommentAndDup: source.auto_post_comment_and_dup,
   })
 }
 
@@ -2652,8 +2864,21 @@ export { genTaskId as _genTaskId }
 // 暴露 jira summary helper for batch preview
 export { searchJQL as _previewJQL, fetchIssue as _previewIssue }
 
-export async function cancelBugTask(taskId: string): Promise<{ ok: boolean; action?: 'cancelled_pending' | 'interrupted_running'; error?: string }> {
+export async function cancelBugTask(taskId: string): Promise<{ ok: boolean; action?: 'cancelled_pending' | 'interrupted_running' | 'interrupted_dup_judge'; error?: string }> {
   const ctx = taskCtx.get(taskId)
+  const dup = dupJudgeRuntime.get(taskId)
+  if (dup) {
+    dup.interruptRequested = true
+    dupJudgeRuntime.set(taskId, dup)
+    try {
+      await sharedBridgeClient.interrupt(dup.sessionId, '用户停止置重')
+    } catch (err) {
+      logBug(taskId, 'warn', `interrupt dup-judge failed: ${(err as Error).message}`)
+    }
+    logBug(taskId, 'warn', 'jira-dup-judge cancelled by user')
+    return { ok: true, action: 'interrupted_dup_judge' }
+  }
+
   if (!ctx) return { ok: false, error: `找不到任务: ${taskId}` }
   if (ctx.status === 'completed' || ctx.status === 'failed' || ctx.status === 'cancelled') {
     return { ok: false, error: `任务已结束，当前状态: ${ctx.status}` }

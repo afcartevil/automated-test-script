@@ -1,9 +1,8 @@
 /**
  * 通过 jira-ops Skill 脚本执行 JIRA 写操作（与 Agent 同源凭据链）
  */
-import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'fs'
+import { existsSync } from 'fs'
 import { join } from 'path'
-import { tmpdir } from 'os'
 import { tahpPaths } from './paths'
 import { parseIssueKey, type JiraConfig } from './jira'
 import { applyJiraUserConfigToEnv, resolveJiraConfig } from './jira-user-config'
@@ -45,36 +44,29 @@ export function runJiraOpsAddComment(
   }
 
   const env = applyJiraCfgToEnv(process.env, resolveJiraConfig(jiraCfg))
-  const tmpDir = mkdtempSync(join(tmpdir(), 'tahp-jira-comment-'))
-  const commentFile = join(tmpDir, 'comment.md')
+  const r = spawnPythonScript({
+    cwd: root,
+    args: ['scripts/api_jira.py', 'add-comment', '--issue', key, '--comment', comment],
+    env,
+    timeout: 90_000,
+    preferJsonOutput: true,
+  })
+  const stdout = spawnOutputText(r)
+
   try {
-    writeFileSync(commentFile, comment, 'utf-8')
-    const r = spawnPythonScript({
-      cwd: root,
-      args: ['scripts/api_jira.py', 'add-comment', '--issue', key, '--comment-file', commentFile],
-      env,
-      timeout: 90_000,
-      preferJsonOutput: true,
-    })
-    const stdout = spawnOutputText(r)
-
-    try {
-      const json = JSON.parse(stdout) as { ok?: boolean; data?: Record<string, unknown>; error?: unknown }
-      if (json.ok === false) {
-        return { ok: false, error: extractJsonErrorMessage(stdout) || stdout.slice(0, 500) || 'jira-ops 返回失败' }
-      }
-      if (json.ok === true) {
-        return { ok: true, data: json.data as Record<string, unknown> | undefined }
-      }
-    } catch {
-      // 非 JSON：走下方 spawn 错误格式化
+    const json = JSON.parse(stdout) as { ok?: boolean; data?: Record<string, unknown>; error?: unknown }
+    if (json.ok === false) {
+      return { ok: false, error: extractJsonErrorMessage(stdout) || stdout.slice(0, 500) || 'jira-ops 返回失败' }
     }
-
-    if (r.status === null || (r.status !== 0 && !stdout)) {
-      return { ok: false, error: formatPythonSpawnError('jira-ops', r, stdout) }
+    if (json.ok === true) {
+      return { ok: true, data: json.data as Record<string, unknown> | undefined }
     }
-    return { ok: false, error: formatPythonSpawnError('jira-ops', r, stdout) }
-  } finally {
-    try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* ignore */ }
+  } catch {
+    // 非 JSON：走下方 spawn 错误格式化
   }
+
+  if (r.status === null || (r.status !== 0 && !stdout)) {
+    return { ok: false, error: formatPythonSpawnError('jira-ops', r, stdout) }
+  }
+  return { ok: false, error: formatPythonSpawnError('jira-ops', r, stdout) }
 }

@@ -17,6 +17,10 @@ describe('bugTaskCardPhase', () => {
     expect(bugTaskCardPhase('running', 'DOWNLOAD_JIRA_LOGS')).toBe('DOWNLOAD_JIRA_LOGS')
     expect(bugTaskStatusPhase('pending')).toBe('QUEUED')
   })
+
+  it('shows 置重 phase even after analysis has completed', () => {
+    expect(bugTaskCardPhase('completed', 'MARK_DUPLICATE')).toBe('MARK_DUPLICATE')
+  })
 })
 
 describe('bugTaskListTitle', () => {

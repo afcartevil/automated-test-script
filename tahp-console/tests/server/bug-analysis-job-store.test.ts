@@ -62,6 +62,12 @@ describe('bug-analysis-job-store', () => {
     expect(existsSync(join(bugJobDir(reportsDir), 'task-bugjob-1-aaa.json'))).toBe(true)
   })
 
+  it('round-trips auto_post_comment_and_dup', () => {
+    saveBugJob(reportsDir, makeJob({ auto_post_comment_and_dup: true }))
+    const loaded = readPersistedBugJob(reportsDir, 'task-bugjob-1-aaa')
+    expect(loaded?.auto_post_comment_and_dup).toBe(true)
+  })
+
   it('refreshes updated_at on every save', () => {
     saveBugJob(reportsDir, makeJob({ updated_at: '2000-01-01T00:00:00.000Z' }))
     const loaded = readPersistedBugJob(reportsDir, 'task-bugjob-1-aaa')

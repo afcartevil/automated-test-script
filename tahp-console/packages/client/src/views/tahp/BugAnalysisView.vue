@@ -85,6 +85,7 @@ const singleForm = ref({
 const batchForm = ref({
   jql: '',
   code_source: '',
+  auto_post_comment_and_dup: false,
 })
 
 const localForm = ref({
@@ -386,6 +387,10 @@ function selectQueue(jobId: string) {
 }
 
 const isRunning = computed(() => !isHistoryView.value && currentTask.value?.status === 'running')
+const isDupJudgeRunning = computed(() =>
+  !isHistoryView.value && currentTask.value?.dup_judge_status === 'running',
+)
+const isLiveBusy = computed(() => isRunning.value || isDupJudgeRunning.value)
 const isPending = computed(() => !isHistoryView.value && currentTask.value?.status === 'pending')
 const isWaitingUserInput = computed(() => !isHistoryView.value && currentTask.value?.status === 'waiting_user_input')
 
@@ -677,6 +682,7 @@ const canContinueAnalysis = computed(() =>
   && distillCompleted.value
   && canContinueSession.value
   && !isRunning.value
+  && !isDupJudgeRunning.value
   && !isPending.value
   && !isWaitingUserInput.value
   && !!currentTaskId.value,
@@ -710,6 +716,7 @@ const isLocalAnalysisTask = computed(() => {
 
 const canPostJiraComment = computed(() =>
   distillCompleted.value
+  && !isDupJudgeRunning.value
   && !isLocalAnalysisTask.value
   && !!(currentTask.value?.jira_key && !currentTask.value.jira_key.startsWith('LOCAL-')),
 )
@@ -721,6 +728,7 @@ const jiraCommentSubmitting = ref(false)
 const jiraCommentSections = ref<JiraCommentSection[]>([])
 const jiraCommentSelectedIds = ref<string[]>([])
 const jiraCommentInserted = ref<Record<string, string>>({})
+const jiraCommentTryDup = ref(false)
 
 // ─────────────────────────────────────────────────────────────────────────────
 const PHASE_LABELS: Record<string, { label: string; color: string }> = {
@@ -732,6 +740,7 @@ const PHASE_LABELS: Record<string, { label: string; color: string }> = {
   MATCH_SKILLS:       { label: '匹配 Skill',     color: 'var(--violet-ic)' },
   ANALYZING:          { label: '大模型分析',     color: 'var(--warn)' },
   GENERATING_REPORT:  { label: '生成分析报告',   color: 'var(--info)' },
+  MARK_DUPLICATE:     { label: '尝试置重',       color: 'var(--warn)' },
   COMPLETED:          { label: '已完成',         color: 'var(--success)' },
   FAILED:             { label: '失败',           color: 'var(--error)' },
   CANCELLED:          { label: '已取消',         color: 'var(--violet-ic)' },
@@ -1074,6 +1083,7 @@ function registerBatchQueue(
   resp: { job_id: string; total: number; tasks: Array<{ task_id: string; jira_key: string }> },
   jql?: string,
   resumedFrom?: string,
+  autoPostCommentAndDup?: boolean,
 ) {
   const startedAt = new Date().toISOString()
   store.registerJob({
@@ -1081,6 +1091,7 @@ function registerBatchQueue(
     type: 'batch',
     jql,
     resumed_from: resumedFrom,
+    auto_post_comment_and_dup: autoPostCommentAndDup,
     task_ids: resp.tasks.map(t => t.task_id),
     started_at: startedAt,
     status: 'running',
@@ -1121,9 +1132,14 @@ async function startBatchAnalysis() {
     const resp = await startBatch({
       jql,
       code_source: batchForm.value.code_source.trim() || undefined,
+      auto_post_comment_and_dup: batchForm.value.auto_post_comment_and_dup,
     })
-    registerBatchQueue(resp, jql)
-    message.success(`批量分析已启动: 共 ${resp.total} 单，串行执行，失败自动跳过`)
+    registerBatchQueue(resp, jql, undefined, batchForm.value.auto_post_comment_and_dup)
+    message.success(
+      batchForm.value.auto_post_comment_and_dup
+        ? `批量分析已启动: 共 ${resp.total} 单，结论后将自动回写备注并尝试置重`
+        : `批量分析已启动: 共 ${resp.total} 单，串行执行，失败自动跳过`,
+    )
   } catch (err) {
     message.error((err as Error).message)
   } finally {
@@ -1141,7 +1157,7 @@ async function resumeCurrentJob() {
   try {
     store.ensureSocket()
     const resp = await resumeBugJob(job.job_id)
-    registerBatchQueue(resp, job.jql, job.job_id)
+    registerBatchQueue(resp, job.jql, job.job_id, job.auto_post_comment_and_dup)
     message.success(`已继续未完成的 ${resp.total} 单`)
   } catch (err) {
     message.error((err as Error).message)
@@ -1157,7 +1173,7 @@ async function retryCurrentJobFailures() {
   try {
     store.ensureSocket()
     const resp = await retryFailedBugJob(job.job_id)
-    registerBatchQueue(resp, job.jql, job.job_id)
+    registerBatchQueue(resp, job.jql, job.job_id, job.auto_post_comment_and_dup)
     message.success(`已重跑 ${resp.total} 个失败单`)
   } catch (err) {
     message.error((err as Error).message)
@@ -1390,7 +1406,7 @@ function stopLogPoll() {
 function startLogPoll() {
   stopLogPoll()
   logPollTimer = setInterval(() => {
-    if (!isRunning.value || !currentTaskId.value) {
+    if (!isLiveBusy.value || !currentTaskId.value) {
       stopLogPoll()
       return
     }
@@ -1404,9 +1420,9 @@ watch(activeReportTab, (tab) => {
 })
 
 watch(
-  () => isRunning.value,
-  (running) => {
-    if (running && currentTaskId.value) startLogPoll()
+  () => isLiveBusy.value,
+  (busy) => {
+    if (busy && currentTaskId.value) startLogPoll()
     else stopLogPoll()
   },
   { immediate: true },
@@ -1416,10 +1432,19 @@ watch(
   () => currentTask.value?.status,
   (status, prev) => {
     if (isHistoryView.value || !currentTaskId.value) return
-    if (status === 'completed' && prev === 'running') {
+    if (status === 'completed' && prev === 'running' && currentTask.value?.dup_judge_status !== 'running') {
       activeReportTab.value = 'report'
       loadReport()
     }
+    void refreshContinueStatus()
+  },
+)
+
+watch(
+  () => currentTask.value?.dup_judge_status,
+  (status) => {
+    if (isHistoryView.value || !currentTaskId.value) return
+    if (status === 'running') activeReportTab.value = 'live'
     void refreshContinueStatus()
   },
 )
@@ -1615,6 +1640,7 @@ async function openJiraCommentDialog() {
   } else if (!hasJiraRemarkSection(markdown)) {
     message.info('当前为旧版报告，建议重新分析以生成标准 §9 Jira 备注')
   }
+  jiraCommentTryDup.value = false
   showJiraCommentDialog.value = true
 }
 
@@ -1656,9 +1682,15 @@ async function submitJiraComment() {
   }
   jiraCommentSubmitting.value = true
   try {
-    await postJiraComment(tid, text)
-    message.success(`分析结论已回到 jira comment（${currentTask.value?.jira_key || ''}）`)
-    showJiraCommentDialog.value = false
+    await postJiraComment(tid, text, undefined, { tryMarkDuplicate: jiraCommentTryDup.value })
+    if (jiraCommentTryDup.value) {
+      message.success(`备注已提交，正在按 jira-dup-judge 尝试置重（${currentTask.value?.jira_key || ''}）`)
+      showJiraCommentDialog.value = false
+      activeReportTab.value = 'live'
+    } else {
+      message.success(`分析结论已回到 jira comment（${currentTask.value?.jira_key || ''}）`)
+      showJiraCommentDialog.value = false
+    }
     return true
   } catch (err) {
     message.error((err as Error).message)
@@ -1895,7 +1927,9 @@ async function stopOrCancelCurrentTask() {
   if (!currentTaskId.value || !currentTask.value) return
   try {
     const r = await cancelBugTask(currentTaskId.value)
-    if (r.action === 'interrupted_running') {
+    if (r.action === 'interrupted_dup_judge') {
+      message.success('已停止置重')
+    } else if (r.action === 'interrupted_running') {
       message.success('已请求中断当前运行任务，通常几秒内会切到已取消并继续后续任务')
     } else if (r.action === 'cancelled_pending') {
       message.success('已取消等待中的任务')
@@ -1942,10 +1976,11 @@ const jiraInputHint = computed(() => {
 
 const liveStreamHint = computed(() => {
   if (currentLlm.value || currentReasoning.value) return null
-  if (!isRunning.value) return null
+  if (!isRunning.value && !isDupJudgeRunning.value) return null
   const hint = lastBugActivityHint(currentStream.value)
   if (hint) return hint
   const phase = currentTask.value?.phase
+  if (phase === 'MARK_DUPLICATE') return '正在按 jira-dup-judge 判断是否置重...'
   if (phase === 'ANALYZING') return 'Agent 正在调用 Skill / 工具，完成后会继续输出分析结论...'
   if (phase === 'PREPARING' || phase === 'CONNECTING_AGENT') return '正在连接 Agent Bridge...'
   return '等待 Agent 响应...'
@@ -1978,7 +2013,7 @@ const agentSkillEvents = computed(() =>
 const streamTaskLog = computed(() => buildBugActivityLog(currentStream.value))
 
 const displayTaskLog = computed(() => {
-  if (isRunning.value && streamTaskLog.value) return streamTaskLog.value
+  if (isLiveBusy.value && streamTaskLog.value) return streamTaskLog.value
   return taskLog.value || streamTaskLog.value || ''
 })
 
@@ -2207,6 +2242,18 @@ watch(
                 >
                   {{ branch }}
                 </NCheckbox>
+              </div>
+            </div>
+
+            <div class="ea-field dup-switch-field">
+              <div class="dup-switch-row">
+                <div>
+                  <label>结论后自动回写备注并尝试置重</label>
+                  <div class="field-hint">
+                    每单分析完成后自动提交默认 Jira 备注（根因定位 + §9），再按 jira-dup-judge 尝试置重；找不到合法主单则不改单。
+                  </div>
+                </div>
+                <NSwitch v-model:value="batchForm.auto_post_comment_and_dup" size="small" />
               </div>
             </div>
 
@@ -2468,6 +2515,7 @@ watch(
                       取消 {{ recentJobQueueCounts[j.job_id].cancelled }}
                     </span>
                     <span class="ea-muted">共 {{ j.total }}</span>
+                    <EaPill v-if="j.auto_post_comment_and_dup" variant="warn">回写+置重</EaPill>
                   </div>
                 </button>
               </div>
@@ -2580,6 +2628,7 @@ watch(
               <EaPill :variant="statusPillVariant(currentJob.status)">{{ currentJob.status }}</EaPill>
               <code class="mono job-id">{{ currentJob.job_id }}</code>
               <EaPill variant="info">批量 {{ currentJob.total }} 单</EaPill>
+              <EaPill v-if="currentJob.auto_post_comment_and_dup" variant="warn">结论后回写备注并置重</EaPill>
             </div>
           </div>
           <p class="job-jql"><strong>JQL:</strong> {{ currentJob.jql }}</p>
@@ -2674,8 +2723,8 @@ watch(
                 返回队列
               </button>
               <EaPill v-if="isHistoryView" variant="muted">历史记录</EaPill>
-              <EaPill :variant="statusPillVariant(currentTask.status)">
-                <span v-if="isRunning" class="ea-dot-live" />
+              <EaPill :variant="isDupJudgeRunning ? 'warn' : statusPillVariant(currentTask.status)">
+                <span v-if="isLiveBusy" class="ea-dot-live" />
                 {{ phaseLabel(currentTask.phase, currentTask.status) }}
               </EaPill>
               <a v-if="currentTask.jira_url" :href="currentTask.jira_url" target="_blank" class="ti-key">{{ currentTask.jira_key }}</a>
@@ -2757,7 +2806,8 @@ watch(
               <div class="live-llm-panel live-llm-panel-full">
                 <div class="ea-row ea-between live-llm-header">
                   <strong style="font-size: 13px">AI 分析（流式）</strong>
-                  <EaPill v-if="isRunning" variant="info"><span class="ea-dot-live" />分析中</EaPill>
+                  <EaPill v-if="isDupJudgeRunning" variant="warn"><span class="ea-dot-live" />尝试置重</EaPill>
+                  <EaPill v-else-if="isRunning" variant="info"><span class="ea-dot-live" />分析中</EaPill>
                   <EaPill v-else-if="isWaitingUserInput" variant="warn">等待配置输入</EaPill>
                   <EaPill v-else-if="currentPendingApproval" variant="warn">等待命令确认</EaPill>
                   <EaPill v-else-if="isHistoryView || currentTask.status === 'completed'" variant="ok">已完成</EaPill>
@@ -2767,11 +2817,11 @@ watch(
                   <div class="live-activity-panel">
                     <div class="live-activity-head">
                       <strong>执行动态</strong>
-                      <span v-if="isRunning" class="ea-muted live-activity-sub">实时更新</span>
+                      <span v-if="isLiveBusy" class="ea-muted live-activity-sub">实时更新</span>
                     </div>
                     <div ref="activityScroller" class="live-activity-body">
                       <div v-if="!liveActivityItems.length" class="live-activity-empty ea-muted">
-                        {{ isRunning ? '等待 Agent 开始输出...' : '暂无执行记录' }}
+                        {{ isLiveBusy ? '等待 Agent 开始输出...' : '暂无执行记录' }}
                       </div>
                       <div
                         v-for="item in liveActivityItems"
@@ -2907,14 +2957,14 @@ watch(
           <footer class="task-footer">
             <NSpace size="small" wrap>
               <NButton
-                v-if="!isHistoryView && (isRunning || isPending || isWaitingUserInput)"
+                v-if="!isHistoryView && (isRunning || isPending || isWaitingUserInput || isDupJudgeRunning)"
                 type="warning"
                 @click="stopOrCancelCurrentTask"
               >
                 <template #icon>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/></svg>
                 </template>
-                {{ isRunning ? '强行中断当前任务' : isWaitingUserInput ? '取消等待配置' : '取消等待中的任务' }}
+                {{ isDupJudgeRunning ? '停止置重' : isRunning ? '强行中断当前任务' : isWaitingUserInput ? '取消等待配置' : '取消等待中的任务' }}
               </NButton>
 
               <NButton
@@ -3025,6 +3075,17 @@ watch(
         placeholder="分析结论、结论依据、建议..."
         :autosize="{ minRows: 8, maxRows: 16 }"
       />
+      <div class="dup-switch-field" style="margin-top: 12px">
+        <div class="dup-switch-row">
+          <div>
+            <label>提交后按 jira-dup-judge 尝试置重</label>
+            <div class="field-hint">
+              备注写入后，把当前单交给 Hermes Agent 按 skill 判断是否置重；找不到合法主单则不改单。
+            </div>
+          </div>
+          <NSwitch v-model:value="jiraCommentTryDup" size="small" />
+        </div>
+      </div>
       <template #footer>
         <NSpace justify="end">
           <NButton @click="showJiraCommentDialog = false">取消</NButton>
@@ -3465,6 +3526,16 @@ watch(
 }
 
 .field-hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.dup-switch-field {
+  margin-top: 4px;
+  label { font-size: 13px; color: var(--text); }
+}
+.dup-switch-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
 .code-source-hint { display: block; }
 .code-source-quick {
   display: grid;

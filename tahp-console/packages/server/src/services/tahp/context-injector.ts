@@ -256,7 +256,7 @@ export function invalidateContextIndex(): void {
 // Skill 路径与执行规范（Agent / LLM 系统提示词共用）
 // ---------------------------------------------------------------------------
 
-export type TahpSkillScenario = 'bug_analysis' | 'adapt_debug' | 'feature_adapt' | 'carrier_config' | 'skill_config' | 'chat'
+export type TahpSkillScenario = 'bug_analysis' | 'adapt_debug' | 'feature_adapt' | 'carrier_config' | 'skill_config' | 'jira_dup_judge' | 'chat'
 
 /** TAHP 仓内 Skill 根目录（相对工程根，用于提示词） */
 export const TAHP_SKILLS_REL_ROOT = 'skills/.claude/skills'
@@ -367,6 +367,8 @@ export function buildSkillExecutionDirective(options?: {
     lines.push('**当前场景**: 运营商配置 — CarrierConfig/APN/ECC/SPN 等配置变更须严格按 Skill SOP；CarrierConfig / SPN 等人机协同域关键步骤经 Console 弹窗确认；其余域按表单直接执行。')
   } else if (scenario === 'skill_config') {
     lines.push('**当前场景**: 常用 Skill 配置 — 仅引导用户完成指定 Skill 的环境与凭据配置，按 SKILL.md 的 setup / setup-check 章节执行。')
+  } else if (scenario === 'jira_dup_judge') {
+    lines.push('**当前场景**: Jira 置重 — 只按 jira-dup-judge Skill 判断并置重，不要做故障分析，不要输出 9 节报告。')
   } else {
     lines.push('**当前场景**: TAHP 对话 — 优先使用下方「预检索结果」作答。')
     lines.push('**禁止**在未读预检索结果前对 `skills/`、`knowledge-base/`、`harness` 做 search_files/grep 全盘搜索。')
@@ -428,6 +430,7 @@ function defaultContextOptions(scenario: TahpSkillScenario): BuildTahpContextOpt
         includeKnowledge: true,
       }
     case 'skill_config':
+    case 'jira_dup_judge':
       return {
         includeSkillCatalog: false,
         includeKnowledge: false,

@@ -20,6 +20,7 @@ import {
   retryFailedBugJob,
   startLocalLogBugAnalysis,
   postBugAnalysisJiraComment,
+  runJiraDupJudge,
   cancelBugTask,
   previewSingleIssue,
   listBugTasks,
@@ -179,8 +180,9 @@ tahpBugAnalysisRoutes.post('/batch', async (ctx) => {
   }
   const extraContext = typeof body.extra_context === 'string' ? body.extra_context : undefined
   const codeSource = typeof body.code_source === 'string' ? body.code_source : undefined
+  const autoPostCommentAndDup = body.auto_post_comment_and_dup === true
 
-  const result = await startBatchBugAnalysis(jql, extraContext, jiraCfg, codeSource)
+  const result = await startBatchBugAnalysis(jql, extraContext, jiraCfg, codeSource, autoPostCommentAndDup)
   if (!result.ok) {
     ctx.status = 400
     ctx.body = { success: false, error: result.error }
@@ -289,13 +291,27 @@ tahpBugAnalysisRoutes.post('/:taskId/jira-comment', async (ctx) => {
     ctx.body = { success: false, error: '缺少 comment' }
     return
   }
+  const tryMarkDuplicate = body.try_mark_duplicate === true
   const result = postBugAnalysisJiraComment(taskId, comment, jiraCfg)
   if (!result.ok) {
     ctx.status = 400
     ctx.body = { success: false, error: result.error }
     return
   }
-  ctx.body = { success: true, data: { comment_id: result.comment_id } }
+  if (tryMarkDuplicate) {
+    setImmediate(() => {
+      runJiraDupJudge(taskId).catch(err => {
+        logger.warn({ err: (err as Error).message, taskId }, '[bug-analysis] jira-dup-judge unhandled')
+      })
+    })
+  }
+  ctx.body = {
+    success: true,
+    data: {
+      comment_id: result.comment_id,
+      dup_judge_started: tryMarkDuplicate,
+    },
+  }
 })
 
 // ─── 沉淀为知识库/Skill ──────────────────────────────────────────────────────
@@ -619,6 +635,7 @@ tahpBugAnalysisRoutes.get('/tasks', async (ctx) => {
     error: t.error,
     analysis_mode: t.analysisMode,
     local_log_path: t.localLogPath,
+    dup_judge_status: t.dupJudgeStatus,
   }))
   ctx.body = { success: true, data: tasks }
 })
@@ -665,6 +682,7 @@ tahpBugAnalysisRoutes.get('/tasks/:id', async (ctx) => {
     title: t.issue?.summary || t.title,
     analysis_mode: t.analysisMode,
     local_log_path: t.localLogPath,
+    dup_judge_status: t.dupJudgeStatus,
   } }
 })
 
@@ -689,6 +707,7 @@ tahpBugAnalysisRoutes.get('/jobs', async (ctx) => {
     type: j.type,
     jql: j.jql,
     resumed_from: j.resumedFrom,
+    auto_post_comment_and_dup: j.autoPostCommentAndDup,
     task_ids: j.taskIds,
     started_at: j.startedAt,
     status: j.status,
@@ -751,6 +770,7 @@ tahpBugAnalysisRoutes.get('/jobs/:id', async (ctx) => {
     type: j.type,
     jql: j.jql,
     resumed_from: j.resumedFrom,
+    auto_post_comment_and_dup: j.autoPostCommentAndDup,
     task_ids: j.taskIds,
     tasks: j.taskIds.map(tid => {
       const t = getBugTask(tid)
@@ -766,6 +786,7 @@ tahpBugAnalysisRoutes.get('/jobs/:id', async (ctx) => {
         skills_used: t.skillsUsed,
         skills_improved: overlaySkillsImproved(t.taskId, t.skillsImproved),
         error: t.error,
+        dup_judge_status: t.dupJudgeStatus,
       }
     }),
     started_at: j.startedAt,

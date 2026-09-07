@@ -4,6 +4,7 @@
 
 import { extractJiraCommentBlocks, isMarkdownJunkLine, stripMarkdownJunk } from './jira-comment-from-report'
 import { enrichLogEvidenceFromReport } from './log-evidence-extract'
+import { formatBugReportPlainText } from './format-bug-report-plain'
 
 function formatEvidenceItems(evidence: string[]): string[] {
   const lines: string[] = []
@@ -45,6 +46,27 @@ export function composeJiraCommentFromReport(reportMarkdown: string): string {
   const blocks = extractJiraCommentBlocks(reportMarkdown)
   if (!blocks) return ''
   return assembleComment(blocks.conclusion, blocks.evidence, blocks.suggestions)
+}
+
+/** 抽出第 4 节「根因定位」纯文本（与弹窗默认勾选一致）。 */
+export function extractRootCauseSectionPlain(reportMarkdown: string): string {
+  if (!reportMarkdown?.trim()) return ''
+  const lines = reportMarkdown.replace(/\r\n/g, '\n').split('\n')
+  const start = lines.findIndex(line => /^#{1,4}\s+4\.\s*.*根因定位/.test(line.trim()))
+  if (start < 0) return ''
+  const body: string[] = []
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^#{1,4}\s+\d+\.\s+/.test(lines[i].trim())) break
+    body.push(lines[i])
+  }
+  return formatBugReportPlainText(body.join('\n'))
+}
+
+/** 批量自动回写：弹窗默认章节（根因定位 + §9 Jira 备注）。 */
+export function composeDefaultJiraCommentFromReport(reportMarkdown: string): string {
+  const root = extractRootCauseSectionPlain(reportMarkdown)
+  const remark = composeJiraCommentFromReport(reportMarkdown)
+  return [root, remark].filter(Boolean).join('\n\n').trim()
 }
 
 /** 提交前去除 Markdown 残留（保留 Jira Wiki 小节标题 *...*）与无意义分隔行 */
