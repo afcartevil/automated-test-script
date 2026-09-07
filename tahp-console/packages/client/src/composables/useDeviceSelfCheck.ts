@@ -3,13 +3,6 @@ import { useRoute } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
 import { useDeviceSelfCheckLaunchStore } from '@/stores/tahp/device-self-check-launch'
 import {
-  fetchProjectNodes,
-  fetchTestSchedule,
-  syncProjectNodes,
-  type NextNodeItem,
-  type ScheduleItem,
-} from '@/api/tahp/test-planning'
-import {
   listDevices,
   refreshDevices,
   getDeviceDetail,
@@ -70,11 +63,10 @@ import {
   type PipelineStage,
 } from '@/components/tahp/self-check/self-check-utils'
 
-export type SelfCheckTab = 'overview' | 'planning' | 'devices' | 'review' | 'gerrit'
+export type SelfCheckTab = 'overview' | 'devices' | 'review' | 'gerrit'
 
 export const SELF_CHECK_TABS = [
   { key: 'overview', label: '总览' },
-  { key: 'planning', label: '自动规划' },
   { key: 'devices', label: '测试执行' },
   { key: 'gerrit', label: '评审补全' },
   { key: 'review', label: '测试报告' },
@@ -351,9 +343,6 @@ const launchStore = useDeviceSelfCheckLaunchStore()
   const route = useRoute()
   const initialTab = String(route.query.tab || '')
   if (SELF_CHECK_TABS.some(t => t.key === initialTab)) activeTab.value = initialTab as SelfCheckTab
-  const syncing = ref(false)
-  const nextNodes = ref<NextNodeItem[]>([])
-  const scheduleItems = ref<ScheduleItem[]>([])
   const pipelineView = ref<SelfCheckPipelineView | null>(null)
   const tpowerStatus = ref<TPowerStatus | null>(null)
   const overviewReports = ref<SelfCheckReportSummary[]>([])
@@ -397,43 +386,12 @@ const launchStore = useDeviceSelfCheckLaunchStore()
     reportsEpoch.value += 1
   }
 
-  async function loadPlanningSummary() {
-    try {
-      const [nodesView, scheduleView] = await Promise.all([
-        fetchProjectNodes(),
-        fetchTestSchedule(),
-      ])
-      nextNodes.value = nodesView.nextNodes
-      scheduleItems.value = scheduleView.items
-    } catch {
-      // ignore summary load errors
-    }
-  }
-
-  async function handleSyncNodes() {
-    syncing.value = true
-    try {
-      await syncProjectNodes()
-      message.success('项目节点已更新')
-      await loadPlanningSummary()
-      await loadPipelineStatus()
-      activeTab.value = 'planning'
-    } catch (err) {
-      message.error((err as Error).message || '同步项目节点失败')
-    } finally {
-      syncing.value = false
-    }
-  }
-
   function handleNewTask() {
     activeTab.value = 'devices'
     openCustomTest()
   }
 
   const stats = computed(() => ({
-    pendingProjects: scheduleItems.value.filter(
-      i => i.runtimeStatus !== 'completed' && i.displayLabel !== '已完成',
-    ).length,
     runningTests: pipelineView.value?.runningTests ?? devices.value.filter(d =>
       d.status.includes('测试') || d.status.includes('等待') || d.status === '初始化中',
     ).length,
@@ -447,42 +405,29 @@ const launchStore = useDeviceSelfCheckLaunchStore()
     if (pipelineView.value?.stages?.length) {
       return pipelineView.value.stages
     }
-    const hasNodes = nextNodes.value.length > 0
-    const pendingSchedules = scheduleItems.value.filter(i => i.runtimeStatus === 'pending').length
-    const noDeviceSchedules = scheduleItems.value.filter(i => i.runtimeStatus === 'no_device').length
-    const runningSchedules = scheduleItems.value.filter(i => i.runtimeStatus === 'running').length
-    const completedSchedules = scheduleItems.value.filter(i => i.runtimeStatus === 'completed').length
-    const flashHint = [
-      pendingSchedules > 0 ? `待执行 ${pendingSchedules}` : '',
-      noDeviceSchedules > 0 ? `无设备 ${noDeviceSchedules}` : '',
-    ].filter(Boolean).join(' · ')
-    const testHint = [
-      runningSchedules > 0 ? `测试中 ${runningSchedules}` : '',
-      completedSchedules > 0 ? `已完成 ${completedSchedules}` : '',
-    ].filter(Boolean).join(' · ')
+    // 服务端 pipeline 接口不可用时的本地兜底（与服务端 2 阶段口径一致）
+    const runningTests = devices.value.filter(d =>
+      d.status.includes('测试') || d.status.includes('等待') || d.status === '初始化中',
+    ).length
+    const recentlyCompleted = devices.value.filter(d =>
+      d.status === '完成(通过)' || d.status === '完成(失败)',
+    ).length
     return [
-      {
-        key: 'sync',
-        label: '同步项目节点和自主规划',
-        status: hasNodes ? 'done' : 'idle',
-        hint: hasNodes ? `${nextNodes.value.length} 个项目` : undefined,
-      },
-      {
-        key: 'flash',
-        label: '版本拉取/烧录',
-        status: noDeviceSchedules > 0 ? 'attention' : pendingSchedules > 0 ? 'queued' : 'idle',
-        hint: flashHint || undefined,
-      },
       {
         key: 'test',
         label: '自动测试',
-        status: runningSchedules > 0 ? 'running' : completedSchedules > 0 ? 'done' : 'idle',
-        hint: testHint || undefined,
+        status: runningTests > 0 ? 'running' : recentlyCompleted > 0 ? 'done' : 'idle',
+        hint: runningTests > 0
+          ? `测试中 ${runningTests}`
+          : recentlyCompleted > 0
+            ? `已完成 ${recentlyCompleted}`
+            : undefined,
       },
       {
         key: 'review',
         label: '人工复核测试报告',
-        status: stats.value.pendingManual > 0 ? 'attention' : 'idle',
+        status: stats.value.pendingReports > 0 ? 'attention' : recentlyCompleted > 0 && runningTests === 0 ? 'done' : 'idle',
+        hint: stats.value.pendingReports > 0 ? `${stats.value.pendingReports} 份待复核` : undefined,
       },
     ]
   })
@@ -1221,11 +1166,9 @@ function connectEventStream() {
         await loadDevices()
       }
       await loadPipelineStatus()
-      await loadPlanningSummary()
     } catch {
       await loadDevices()
       await loadPipelineStatus()
-      await loadPlanningSummary()
     }
   })
   eventSource.value.addEventListener('report_ready', async () => {
@@ -2073,7 +2016,6 @@ onMounted(async () => {
   connectEventStream()
   await loadDevices()
   await Promise.all([
-    loadPlanningSummary(),
     loadPipelineStatus(),
     loadTPowerStatus(),
     loadOverviewReports(),
@@ -2203,9 +2145,6 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
 
   return {
     activeTab,
-    syncing,
-    nextNodes,
-    scheduleItems,
     stats,
     pipelineStages,
     overviewReports,
@@ -2214,7 +2153,6 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     loadOverviewReports,
     tpowerStatus,
     loadTPowerStatus,
-    handleSyncNodes,
     handleNewTask,
     AUTO_RETEST_TOOLTIP,
     devices,

@@ -73,11 +73,11 @@ services/tahp/self-check/python/
 | 刷机服务 | `services/tahp/device-flash.ts` | device_update 调度 |
 | 核心服务 | `services/tahp/device-self-check.ts` | 调度、会话、报告 |
 | 报告列表 | `services/tahp/self-check-reports.ts` | 测试报告审阅与用例结果修正 |
-| 测试规划 | `services/tahp/test-planning.ts` | 节点同步、排期计算 |
-| 规划执行 | `services/tahp/test-plan-executor.ts` | 到点自动刷机 + startTest |
-| 规划执行态 | `services/tahp/test-plan-executions.ts` | `.tahp-config/test-plan-executions.json` |
+| 验测任务代理 | `routes/tahp/central-sso.ts` + `services/tahp/sync/central-client.ts` | `GET /api/tahp/verify-tasks/mine`（中心 verify/mine?view=open 转发） |
 | Python | `services/tahp/self-check/python/` | 用例与 `run_case.py` |
 | E2E | `tests/e2e/self-check.spec.ts` | 页面冒烟 |
+
+> 2026-09：「AI 测试自规划」已下线删除（`test-planning.ts` / `test-plan-executor.ts` / `test-plan-executions.ts` / `project-info-xlsx.ts`），定时指派由中心 BFF「任务中心 → 质量验测 → 定时任务」接管。
 
 ---
 
@@ -92,8 +92,7 @@ services/tahp/self-check/python/
 
 | key | 组件 | 内容 |
 |-----|------|------|
-| `overview` | `SelfCheckOverview` | 5 功能看板：项目规划、设备执行、测试报告、AI Review、流程状态 |
-| `planning` | `TestPlanningWorkspace` | 项目节点、测试排期规则、AI 规划自动执行状态 |
+| `overview` | `SelfCheckOverview` | 看板：流程状态、验测任务（中心指派）、测试执行、评审补全、测试报告 |
 | `devices` | `SelfCheckChecklist` + `SelfCheckDeviceRun` | 用例大类卡片（点击进入详情）+ 设备列表/详情/自定义测试 |
 | `gerrit` | `GerritReviewWorkspace` | AI Code Review + 用例推荐 |
 | `review` | `SelfCheckReportReview` | 测试报告列表 + 可展开详情（复测/改结果/人工审阅） |
@@ -152,20 +151,15 @@ services/tahp/self-check/python/
 - 事件：`device_updated`、`test_completed`、`case_completed` 等
 - SSE 失败降级：轮询 `getDeviceDetail` + `getPendingManualDecision`
 
-### AI 测试自规划（项目规划 Tab）
+### AI 测试自规划（已下线）
 
-**规则配置**（`TestPlanSettingsModal`）：每个节点偏移天数 + **测试大类单选**（`str4` / `week` / `smoke` / `monkey` / `gms` / `power`）。
+> 2026-09 起「自动规划」Tab 与服务端 executor 整体删除，定时指派改由中心 BFF 定时任务完成；历史报告标题中的「AI规划」标记保留展示（`summary.json` 的 `aiPlanned/scheduleKey` 仍用于历史报告的项目归属解析）。
 
-**排期计算**（`test-planning.ts`）：由项目节点日期 + 规则偏移生成 `ScheduleItem`；`phase` 为时间窗口（`upcoming` / `active`），`runtimeStatus` 为执行态（`pending` / `no_device` / `running` / `completed`）。
+### 总览「验测任务」卡片
 
-**自动执行**（`test-plan-executor.ts`，bootstrap 启动，默认 60s tick）：
-
-- 对 `phase === 'active'` 且未完成的项，按项目代号匹配空闲设备名（如 `X6876` ↔ `Infinix X6876`）
-- 匹配成功 → `buildPlannedTestFlashPayload`：解析最新 daily 刷机包、市场版本 `Open`；`monkey` 测试额外从 archive `Root/` 目录解析 Root 包（若存在）→ `startTest(..., flash, { scheduleKey })`
-- 刷机包解析失败或无设备 → `runtimeStatus=no_device`，下一 tick 重试
-- 测试完成 → `finishTest` 写 `completed`；报告 `summary.json` 含 `aiPlanned: true`
-
-**测试报告**：AI 规划触发的报告标题形如 `{deviceName} · monkey · AI规划`（见 `SelfCheckReportReview.vue`）。
+- 数据源：`useVerifyTasks`（15s 轮询 + `onActivated` 立即刷新）→ EA 服务端 `GET /api/tahp/verify-tasks/mine` → 中心 `verify/mine?view=open`（会话模式转发）。
+- 展示：项目（`project`）、测试项（`item_label`）、指派时间 + 指派账号（`created_at` · `created_by`，如 admin / auto-plan）；中心侧完成/取消后下一轮轮询即移除。
+- 「进入 →」跳「测试执行」Tab。
 
 ---
 

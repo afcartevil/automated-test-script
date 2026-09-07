@@ -2,7 +2,6 @@
 import { onMounted, provide, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import GerritReviewWorkspace from '@/components/tahp/GerritReviewWorkspace.vue'
-import TestPlanningWorkspace from '@/components/tahp/TestPlanningWorkspace.vue'
 import SelfCheckPageHeader from '@/components/tahp/self-check/SelfCheckPageHeader.vue'
 import SelfCheckOverview from '@/components/tahp/self-check/SelfCheckOverview.vue'
 import SelfCheckChecklist from '@/components/tahp/self-check/SelfCheckChecklist.vue'
@@ -27,8 +26,6 @@ const {
   activeTab,
   loading,
   devices,
-  nextNodes,
-  scheduleItems,
   stats,
   pipelineStages,
   overviewReports,
@@ -68,8 +65,6 @@ function goTab(tab: string) {
           v-if="activeTab === 'overview'"
           key="overview"
           :devices="devices"
-          :next-nodes="nextNodes"
-          :schedule-items="scheduleItems"
           :overview-reports="overviewReports"
           :stats="stats"
           :pipeline-stages="pipelineStages"
@@ -77,14 +72,11 @@ function goTab(tab: string) {
           :reports-loading="reportsLoading"
           :gerrit-task-status="gerritTaskStatus"
           @go-devices="activeTab = 'devices'"
-          @go-planning="activeTab = 'planning'"
           @go-reports="activeTab = 'review'"
           @go-gerrit="activeTab = 'gerrit'"
           @go-tab="goTab"
           @select-device="goDevicesAndSelect"
         />
-
-        <TestPlanningWorkspace v-else-if="activeTab === 'planning'" key="planning" />
 
         <div v-else-if="activeTab === 'devices'" key="devices" class="devices-tab">
           <SelfCheckChecklist

@@ -4,9 +4,7 @@ import { authenticate, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
 function mockDeviceSelfCheckApi(page: import('@playwright/test').Page) {
   const pipelinePayload = {
     stages: [
-      { key: 'sync', label: '同步项目节点和自主规划', status: 'done', hint: '1 个项目' },
-      { key: 'flash', label: '版本拉取/烧录', status: 'idle' },
-      { key: 'test', label: '自动测试', status: 'queued' },
+      { key: 'test', label: '自动测试', status: 'idle' },
       { key: 'review', label: '人工复核测试报告', status: 'idle' },
     ],
     updatedAt: '2026-06-24T08:00:00.000Z',
@@ -61,76 +59,36 @@ function mockDeviceSelfCheckApi(page: import('@playwright/test').Page) {
   })
 }
 
-function mockTestPlanningApi(page: import('@playwright/test').Page) {
-  const nodesPayload = {
-    updatedAt: '2026-06-24T08:00:00.000Z',
-    sourcePath: 'temp_milestone_info/升级项目关键信息表.xlsx',
-    projects: [],
-    nextNodes: [
-      {
-        project: 'X6885',
-        node: 'STR4A',
-        nodeDate: '2026/07/07',
-        display: 'X6885 STR4A 2026/07/07',
-      },
-    ],
-  }
-  const schedulePayload = {
-    updatedAt: '2026-06-24T08:00:00.000Z',
-    rules: [{ node: 'STR4A', offsetDays: -10, testType: 'monkey' }],
-    items: [
-      {
-        scheduleKey: 'X6885|STR4A|2026/06/27|monkey',
-        project: 'X6885',
-        node: 'STR4A',
-        nodeDate: '2026/07/07',
-        triggerDate: '2026/06/27',
-        testType: 'monkey',
-        testTypeLabel: 'monkey测试',
-        phase: 'upcoming',
-        runtimeStatus: 'no_device',
-        displayLabel: '即将开始',
-        tags: ['无设备'],
-        display: 'X6885 STR4A 2026/06/27 monkey测试',
-      },
-    ],
-  }
+function mockVerifyTasksApi(page: import('@playwright/test').Page) {
+  const tasksPayload = [
+    {
+      task_id: 'vt_e2e_1',
+      test_type: 'monkey',
+      item_label: 'monkey测试',
+      owner: 'test.user',
+      project: 'LJ9',
+      status: 'pending',
+      created_by: 'admin',
+      created_at: '2026-09-07T02:30:00.000Z',
+    },
+    {
+      task_id: 'vt_e2e_2',
+      test_type: 'week',
+      item_label: '周版本测试',
+      owner: 'test.user',
+      project: 'X6885',
+      status: 'pending',
+      created_by: 'auto-plan',
+      created_at: '2026-09-06T09:00:00.000Z',
+    },
+  ]
 
-  return page.route('**/api/tahp/test-planning/**', async (route) => {
-    const url = route.request().url()
-    if (url.includes('/nodes/sync')) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, data: nodesPayload }),
-      })
-      return
-    }
-    if (url.includes('/nodes')) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, data: nodesPayload }),
-      })
-      return
-    }
-    if (url.includes('/rules')) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, data: { version: 1, rules: schedulePayload.rules } }),
-      })
-      return
-    }
-    if (url.includes('/schedule')) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, data: schedulePayload }),
-      })
-      return
-    }
-    await route.continue()
+  return page.route('**/api/tahp/verify-tasks/mine**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, data: tasksPayload }),
+    })
   })
 }
 
@@ -138,7 +96,7 @@ test('self-check page renders tabs and workspaces', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await mockHermesApi(page)
   await mockDeviceSelfCheckApi(page)
-  await mockTestPlanningApi(page)
+  await mockVerifyTasksApi(page)
 
   await page.route('**/api/tahp/gerrit-config', async (route) => {
     await route.fulfill({
@@ -183,42 +141,31 @@ test('self-check page renders tabs and workspaces', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '质量验测', level: 1 })).toBeVisible()
   await expect(page.getByText('今日自动化流程')).not.toBeVisible()
   await expect(page.getByRole('button', { name: '总览' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '自动规划' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '自动规划' })).not.toBeVisible()
   await expect(page.getByRole('button', { name: '测试执行' })).toBeVisible()
   await expect(page.getByRole('button', { name: '评审补全' })).toBeVisible()
   await expect(page.getByRole('button', { name: '测试报告' })).toBeVisible()
-  await expect(page.getByText('自动规划').first()).toBeVisible()
   await expect(page.getByText('流程状态').first()).toBeVisible()
   const reviewCardHead = page.locator('.review-card-head')
   await expect(reviewCardHead).not.toBeVisible()
+
+  // 总览「验测任务」卡片：项目 / 测试项 / 指派时间 / 指派账号
+  await expect(page.getByText('验测任务').first()).toBeVisible()
+  await expect(page.getByText('LJ9').first()).toBeVisible()
+  await expect(page.getByText(/monkey测试 · 指派于 .* · admin/).first()).toBeVisible()
+  await expect(page.getByText(/周版本测试 · 指派于 .* · auto-plan/).first()).toBeVisible()
 
   await page.getByRole('button', { name: '评审补全' }).click()
   await expect(page.getByText('Gerrit 链接 → 启动识别「必测项」 → 从用例库推荐测试用例（带覆盖度评分）→ 覆盖不足时 AI 生成用例')).toBeVisible()
   await expect(page.getByText('Code Review 对话')).toBeVisible()
   await expect(page.getByText('必须测试')).toBeVisible()
-
-  await page.getByRole('button', { name: '自动规划' }).click()
-  await expect(page.getByText('AI测试自规划')).toBeVisible()
-  await expect(page.getByText('项目节点')).toBeVisible()
-  const nodesPanel = page.locator('.nodes-panel .item-list li').first()
-  await expect(nodesPanel).toContainText('X6885')
-  await expect(nodesPanel).toContainText('STR4A')
-  await expect(nodesPanel).toContainText('2026/07/07')
-
-  await expect(page.getByText('无设备')).toBeVisible()
-
-  const schedulePanel = page.locator('.schedule-panel .schedule-table').first()
-  await expect(schedulePanel.locator('.col-date')).toContainText('2026/06/27')
-  await expect(schedulePanel.locator('.col-project')).toContainText('X6885')
-  await expect(schedulePanel.locator('.col-test')).toContainText('monkey测试')
-  await expect(schedulePanel.locator('.col-status')).toContainText('即将开始')
 })
 
 test('self-check shows warning when gerrit is not configured', async ({ page }) => {
   await authenticate(page, TEST_ACCESS_KEY, 'research')
   await mockHermesApi(page)
   await mockDeviceSelfCheckApi(page)
-  await mockTestPlanningApi(page)
+  await mockVerifyTasksApi(page)
 
   await page.route('**/api/tahp/gerrit-config', async (route) => {
     await route.fulfill({

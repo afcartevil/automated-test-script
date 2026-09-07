@@ -145,9 +145,9 @@ description: >-
 | 8 | **停止钩子**：后台类在 `endTest()` 调用 `stopXxxForDevice()` |
 | 9 | 路由 [`routes/tahp/device-self-check.ts`](../../../tahp-console/packages/server/src/routes/tahp/device-self-check.ts)：`test/start` body 的 `testType` union |
 
-**凡新增 `StandardTestType` 且能力矩阵勾选「入 PlanTestType」**，必须继续完成 [阶段 4](#阶段-4ai-测试自规划--测试规划测试选择项)（与阶段 2/3 同批提交）。
-
 同步更新 [`case_catalog.py`](../../../tahp-console/packages/server/src/services/tahp/self-check/python/case_catalog.py)（若用 Excel/脚本生成目录）：`SHEET_TO_MODULE`、`TEST_TYPE_LABELS`、`MODULE_LABELS`。
+
+> **2026-09 变更**：「AI 测试自规划」（test-planning / test-plan-executor / TestPlanningWorkspace）已整体下线，由中心 BFF「任务中心 → 质量验测 → 定时任务」接管。新增测试类型**不再需要**改 `PlanTestType` / 规划弹窗 / executor；如需出现在中心指派目录，见 BFF 验测任务 catalog（`easyadapter_bff` verify-tasks，`PUT /api/tahp/sync/verify/catalog` 推送）。
 
 ---
 
@@ -165,65 +165,9 @@ description: >-
 
 ---
 
-## 阶段 4：AI 测试自规划 — 测试规划测试选择项
+## 阶段 4：AI 测试自规划 — 测试规划测试选择项（已下线）
 
-> 入口：`/#/tahp/self-check` → **项目规划** Tab → **测试规划** 表格 / **测试规划设置** 弹窗（`TestPlanSettingsModal`）。  
-> 规则持久化：`.tahp-config/test-plan-rules.json`；到点执行见 `test-plan-executor.ts`。
-
-### 何时必须做本阶段
-
-- 能力矩阵 **「规划排期：入 PlanTestType」** 已勾选
-- 或需求明确要求：新测试大类出现在「测试规划设置」的**测试大类下拉**中，并可写入排期规则
-
-**禁止**只改自检 `StandardTestType` 而不改 `PlanTestType`——否则 UI 规则无法保存，或保存时报「无效测试大类」。
-
-### `PlanTestType` 与 `StandardTestType` 关系
-
-| 概念 | 用途 |
-|------|------|
-| `StandardTestType` | 设备自检 `startTest(deviceId, testType)`、用例 catalog |
-| `PlanTestType` | 测试规划规则 `testType`、排期 `ScheduleItem.testType`、自动执行 `startTest` 的 testType 参数 |
-
-二者对参与规划的类型**取值应一致**（如 `str4` / `week` / `monkey` / `smoke`）。`custom` 不入规划。
-
-### 改动清单（前后端同步）
-
-| 步骤 | 文件 | 改动要点 |
-|------|------|----------|
-| 1 | [`test-planning.ts`](../../../tahp-console/packages/server/src/services/tahp/test-planning.ts) | `PlanTestType` union；`TEST_TYPE_LABELS`；`normalizePlanTestType()`（别名如「冒烟」→ `smoke`）；`validateTestPlanRules()` 的 `validTypes` 与错误文案 |
-| 2 | [`api/tahp/test-planning.ts`](../../../tahp-console/packages/client/src/api/tahp/test-planning.ts) | `PlanTestType` union（与后端一致） |
-| 3 | [`TestPlanSettingsModal.vue`](../../../tahp-console/packages/client/src/components/tahp/TestPlanSettingsModal.vue) | `TEST_TYPE_OPTIONS` 增加一项：`{ label: getTestTypeLabel('<type>'), value: '<type>' }` |
-| 4 | [`self-check-utils.ts`](../../../tahp-console/packages/client/src/components/tahp/self-check/self-check-utils.ts) | `getTestTypeLabel('<type>')` 已有文案（阶段 3 应已完成） |
-| 5 | [`device-flash.ts`](../../../tahp-console/packages/server/src/services/tahp/device-flash.ts) | `PlannedTestType` 增加新类型（参与**到点自动刷机+启动**时必需） |
-| 6 | [`test-plan-executor.ts`](../../../tahp-console/packages/server/src/services/tahp/test-plan-executor.ts) | 一般无需改类型 union（已用 `PlanTestType`）；确认 `buildPlannedTestFlashPayload` 刷机策略（monkey 含 Root，其余仅 daily） |
-
-`TestPlanningWorkspace.vue` 排期表使用 `item.testTypeLabel`，由后端 `getTestTypeLabel` 生成，**通常无需改表格组件**。
-
-### 刷机策略（阶段 5，与规划联动）
-
-| testType | `buildPlannedTestFlashPayload` 行为 |
-|----------|-------------------------------------|
-| `str4` / `week` / `smoke` | daily + `Open`，无 Root |
-| `monkey` | daily + `Open`，尝试 archive `Root/` |
-
-### 测试
-
-```bash
-cd tahp-console
-npx vitest run tests/server/test-planning.test.ts
-npx vitest run tests/server/test-plan-executor.test.ts   # 若涉及自动执行
-```
-
-至少覆盖：`normalizePlanTestType`、 `validateTestPlanRules` 接受新类型、保存规则后 schedule 含正确 `testTypeLabel`。
-
-### 已接入规划的类型（参考）
-
-| testType | 规划标签 | 备注 |
-|----------|----------|------|
-| `str4` | 转测摸底测试 | |
-| `week` | 周版本测试 | |
-| `monkey` | monkey测试 | 自动执行刷 Root（若可解析） |
-| `smoke` | 冒烟测试 | USD 冒烟等 |
+> **2026-09 起本阶段废止**：「自动规划」Tab、`TestPlanSettingsModal`、`test-planning.ts`、`test-plan-executor.ts`、`api/tahp/test-planning.ts`、`PlannedTestType` 均已从代码库删除；定时指派由中心 BFF 定时任务（`easyadapter_bff` verify-plan）接管。新增测试类型无须任何规划侧改动。
 
 ---
 
@@ -240,9 +184,9 @@ npx vitest run tests/server/test-plan-executor.test.ts   # 若涉及自动执行
 | 停止 | **`endTest()`** → `stopMonkeyForDevice` → `monkey_test.py stop`（无独立 stop API） |
 | 状态 | 脚本支持 `status`，**未**暴露 BFF |
 | 时长 | `settings.monkeyDuration`，默认 `7d`，`normalizeMonkeyDuration` 校验 |
-| 刷机 | 规划自动执行：daily + Open；monkey 尝试 archive `Root/` |
+| 刷机 | 手动测试时可选刷机；规划自动执行已随自动规划下线移除 |
 | 自动复测 | **禁用** |
-| 规划 | `PlanTestType` 含 `monkey` |
+| 规划 | （已随 2026-09 自动规划下线失效） |
 
 ### 资产一览
 
@@ -283,8 +227,6 @@ npm test                                                       # 全量回归（
 5. 设备详情可选该类型 → 可选刷机 → **开始测试**
 6. 后台类：会话结束后设备侧任务仍运行；点 **结束测试** 后任务被停止
 7. 自定义测试树可勾选并 `startCustomTest`
-8. **项目规划** Tab → 测试规划设置 → 测试大类下拉含新类型；保存规则后排期表 `testTypeLabel` 正确
-9. （若入规划自动执行）到点自动刷机 + `startTest` 行为符合刷机策略表
 
 ### E2E（可选）
 
@@ -307,5 +249,4 @@ npx playwright test tests/e2e/self-check.spec.ts
 ## 延伸阅读
 
 - 能力矩阵与文件对照表：[reference.md](reference.md)
-- **测试规划选择项明细**：[reference.md#ai-测试自规划--测试规划选择项](reference.md#ai-测试自规划--测试规划选择项)
 - Monkey 原始需求摘要：仓库外计划 `集成monkey测试_02b65b7c.plan.md`（已收敛至本 Skill 阶段 5）

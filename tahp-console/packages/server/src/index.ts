@@ -27,7 +27,6 @@ import { installBffDiagnostics, recordFatal } from './services/crash-log'
 import { setupTahpRunSocket } from './routes/tahp/tahp-run'
 import { initDeviceSelfCheck } from './services/tahp/device-self-check'
 import { startSyncScheduler, startBaselineNotifyClient, startTaskNotifyClient, bindStoredJiraIfAny } from './services/tahp/sync'
-import { startPlanExecutor } from './services/tahp/test-plan-executor'
 import { bootstrapAdaptPipeline } from './routes/tahp/adapt-pipeline'
 import { pullAllWorkspaceLayouts } from './services/tahp/adapt-layout/service'
 import { pullOrReadLineLayouts } from './services/tahp/adapt-layout/line-cache'
@@ -268,12 +267,6 @@ export async function bootstrap() {
         logger.warn({ err }, '[bootstrap] task-notify client failed to start after bind')
       }
     })
-
-  try {
-    startPlanExecutor()
-  } catch (err) {
-    logger.warn({ err }, '[bootstrap] plan executor failed to start')
-  }
 
   try {
     await bootstrapAdaptPipeline()

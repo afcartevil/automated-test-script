@@ -14,7 +14,6 @@ import {
 import { resolvePythonSpawn, tahpPaths } from './paths'
 import { ensurePowerTestPythonDeps } from './self-check-python-deps'
 import { buildSelfCheckDetailPayload, formatSelfCheckTestConfigMetaRows, openLocalPath, reportAbsoluteDir, type SelfCheckCaseItem, type SelfCheckFailedCaseItem, type SelfCheckTestConfig } from './self-check-reports'
-import { markPlanExecutionCompleted } from './test-plan-executions'
 import {
   AI_GENERATED_MODULE,
   AI_GENERATED_MODULE_LABEL,
@@ -2844,7 +2843,6 @@ async function runFlashBeforeTest(deviceId: string, session: TestSession): Promi
 }
 
 export interface StartTestOptions {
-  scheduleKey?: string
   prioritizeTddManual?: boolean
 }
 
@@ -2935,7 +2933,6 @@ export async function startTest(
       auxiliaryDevices: [],
       initializedPythonModules: [],
       flashOptions,
-      scheduleKey: options?.scheduleKey,
       prioritizeTddManual: Boolean(options?.prioritizeTddManual),
       testConfig: snapshotTestConfig(testType, {
         flashOptions,
@@ -3538,12 +3535,6 @@ function finishTest(deviceId: string, session: TestSession): void {
 
   emitEvent('device_updated', { device })
   emitEvent('test_completed', { deviceId, session })
-
-  if (session.scheduleKey) {
-    void markPlanExecutionCompleted(session.scheduleKey).catch(err => {
-      console.warn('[device-self-check] Failed to mark plan completed:', session.scheduleKey, err)
-    })
-  }
 
   if (session.endTime) {
     resetDeviceToIdleAfterTest(deviceId)

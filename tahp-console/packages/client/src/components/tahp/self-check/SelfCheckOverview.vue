@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { DeviceInfo, SelfCheckReportSummary } from '@/api/tahp/device-self-check'
-import type { NextNodeItem, ScheduleItem } from '@/api/tahp/test-planning'
 import type { PipelineStage } from './self-check-utils'
 import SelfCheckOverviewCard from './SelfCheckOverviewCard.vue'
 import SelfCheckFlowStatus from './SelfCheckFlowStatus.vue'
+import { useVerifyTasks } from '@/composables/useVerifyTasks'
 import {
   displayReportStatus,
   getDisplayRole,
@@ -17,11 +17,8 @@ import {
 
 const props = defineProps<{
   devices: DeviceInfo[]
-  nextNodes: NextNodeItem[]
-  scheduleItems: ScheduleItem[]
   overviewReports: SelfCheckReportSummary[]
   stats: {
-    pendingProjects: number
     runningTests: number
     pendingManual: number
     pendingReports: number
@@ -34,24 +31,19 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   goDevices: []
-  goPlanning: []
   goReports: []
   goGerrit: []
   goTab: [tab: string]
   selectDevice: [deviceId: string]
 }>()
 
+const { tasks: verifyTasks } = useVerifyTasks()
+
 const deviceCounts = computed(() => ({
   idle: props.devices.filter(d => d.status === '空闲').length,
   activeAux: props.devices.filter(isActiveAuxiliaryDevice).length,
   error: props.devices.filter(d => d.status === '错误').length,
 }))
-
-const activeSchedules = computed(() =>
-  props.scheduleItems.filter(
-    i => i.runtimeStatus === 'running' || i.runtimeStatus === 'no_device',
-  ),
-)
 
 const reportPreview = computed(() => props.overviewReports.slice(0, 3))
 
@@ -70,6 +62,13 @@ function formatReportTime(report: SelfCheckReportSummary): string {
   } catch {
     return t
   }
+}
+
+function formatAssignTime(iso?: string): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 function onFlowStage(tab: string) {
@@ -96,33 +95,23 @@ function onFlowStage(tab: string) {
 
     <div class="module-grid">
       <SelfCheckOverviewCard
-        title="自动规划"
+        title="验测任务"
         tone="tone-indigo"
-        :metric="stats.pendingProjects"
-        metric-label="待执行排期"
-        @enter="emit('goPlanning')"
+        :metric="verifyTasks.length"
+        metric-label="待完成"
+        @enter="emit('goDevices')"
       >
-        <div v-if="!nextNodes.length" class="panel-empty ea-muted">
-          尚未同步项目节点，请进入
-          <button type="button" class="link-btn" @click="emit('goPlanning')">自动规划</button>
-          同步
+        <div v-if="!verifyTasks.length" class="panel-empty ea-muted">
+          暂无未完成的验测任务
         </div>
         <ul v-else class="item-list">
-          <li v-for="node in nextNodes.slice(0, 3)" :key="`${node.project}-${node.node}`" class="item-row">
+          <li v-for="t in verifyTasks.slice(0, 3)" :key="t.task_id" class="item-row">
             <span class="item-main">
-              <strong>{{ node.project }}</strong>
-              <small>{{ node.node }} · {{ node.nodeDate }}</small>
+              <strong>{{ t.project || '—' }}</strong>
+              <small>{{ t.item_label }} · 指派于 {{ formatAssignTime(t.created_at) }} · {{ t.created_by }}</small>
             </span>
           </li>
-          <li v-if="nextNodes.length > 3" class="item-more ea-muted">还有 {{ nextNodes.length - 3 }} 个节点</li>
-        </ul>
-        <ul v-if="activeSchedules.length" class="item-list item-list--secondary">
-          <li v-for="item in activeSchedules.slice(0, 2)" :key="item.scheduleKey" class="item-row">
-            <span class="item-main">
-              <strong>{{ item.testTypeLabel }}</strong>
-              <small>{{ item.displayLabel }}{{ item.tags.length ? ` · ${item.tags.join(' · ')}` : '' }}</small>
-            </span>
-          </li>
+          <li v-if="verifyTasks.length > 3" class="item-more ea-muted">还有 {{ verifyTasks.length - 3 }} 项</li>
         </ul>
       </SelfCheckOverviewCard>
 
