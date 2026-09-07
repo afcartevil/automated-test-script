@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 
-def run(**_context):
-    return {
-        "status": "fail",
-        "message": "PFMMod 暂不实现",
-        "full_automation": True,
-    }
+_DIR = Path(__file__).resolve().parent
+if str(_DIR) not in sys.path:
+    sys.path.insert(0, str(_DIR))
+
+from power_scene_runner import run_scene
+
+
+def run(**context):
+    return run_scene(scene="PFMMod", **context)
