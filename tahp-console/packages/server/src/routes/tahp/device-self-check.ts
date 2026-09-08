@@ -117,14 +117,12 @@ tahpDeviceSelfCheckRoutes.post(
   async (ctx) => {
     try {
       const deviceId = ctx.params.deviceId
-      const { testType, flash, scheduleKey, prioritizeTddManual } = ctx.request.body as {
+      const { testType, flash, prioritizeTddManual } = ctx.request.body as {
         testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated'
         flash?: StartTestFlashPayload
-        scheduleKey?: string
         prioritizeTddManual?: boolean
       }
       const result = await startTest(deviceId, testType, flash, {
-        scheduleKey,
         prioritizeTddManual: Boolean(prioritizeTddManual),
       })
       ctx.body = {

@@ -900,47 +900,6 @@ export async function resolveLatestDailyFlashPackage(
   }
 }
 
-export type PlannedTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal'
-
-/** 与 device-self-check StartTestFlashPayload 结构兼容 */
-export interface PlannedTestFlashPayload {
-  enabled: boolean
-  pkgPath?: string
-  rootPkgPath?: string
-  enableRootPkg?: boolean
-  stageVersion?: string
-}
-
-export function findRootPackageInArchive(resolvedArchivePath: string): string | undefined {
-  const rootPath = join(resolvedArchivePath, 'Root')
-  if (!existsSync(rootPath)) return undefined
-  try {
-    return findFlashPackageInOpenPath(rootPath)
-  } catch {
-    return undefined
-  }
-}
-
-/** monkey / smoke 规划自动执行需与手动 UI 一致：刷机 + 勾选「刷 Root 包」 */
-const PLANNED_TEST_TYPES_WITH_ROOT_PKG: PlannedTestType[] = ['monkey', 'smoke']
-
-/** AI 测试规划自动执行：解析 latest daily + Open 市场 */
-export async function buildPlannedTestFlashPayload(
-  deviceId: string,
-  testType: PlannedTestType,
-): Promise<PlannedTestFlashPayload> {
-  const daily = await resolveLatestDailyFlashPackage({ deviceId })
-  const payload: PlannedTestFlashPayload = {
-    enabled: true,
-    pkgPath: daily.packagePath,
-    stageVersion: 'Open',
-  }
-  if (PLANNED_TEST_TYPES_WITH_ROOT_PKG.includes(testType)) {
-    payload.enableRootPkg = true
-  }
-  return payload
-}
-
 function findScatterPkgPath(searchRoot: string): string {
   const stack = [searchRoot]
   const scatterMatches: string[] = []

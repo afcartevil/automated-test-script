@@ -1,7 +1,8 @@
 /**
- * AI 自检自动化流水线状态（项目节点 → 烧录 → 测试 → Review）
+ * AI 自检自动化流水线状态（测试 → Review）
+ * 2026-09 起「自动规划」由中心 BFF 定时任务接管，本机不再有排期数据，
+ * 状态条精简为两个阶段：自动测试（设备驱动）+ 人工复核（报告驱动）。
  */
-import { getProjectNodesView, getTestScheduleView } from './test-planning'
 import { snapshotDevices, countPendingManualDecisions } from './device-self-check'
 import { countPendingSelfCheckReports } from './self-check-reports'
 
@@ -26,9 +27,7 @@ const TESTING_STATUSES = new Set(['初始化中', '等待测试开始', '测试�
 const COMPLETED_STATUSES = new Set(['完成(通过)', '完成(失败)'])
 
 export async function getSelfCheckPipelineStatus(): Promise<SelfCheckPipelineView> {
-  const [nodesView, scheduleView, pendingReports, pendingManual] = await Promise.all([
-    getProjectNodesView(),
-    getTestScheduleView(),
+  const [pendingReports, pendingManual] = await Promise.all([
     countPendingSelfCheckReports(),
     Promise.resolve(countPendingManualDecisions()),
   ])
@@ -36,53 +35,16 @@ export async function getSelfCheckPipelineStatus(): Promise<SelfCheckPipelineVie
   const deviceList = snapshotDevices()
   const runningTests = deviceList.filter(d => TESTING_STATUSES.has(d.status)).length
   const recentlyCompleted = deviceList.filter(d => COMPLETED_STATUSES.has(d.status)).length
-  const pendingSchedules = scheduleView.items.filter(i => i.runtimeStatus === 'pending').length
-  const noDeviceSchedules = scheduleView.items.filter(i => i.runtimeStatus === 'no_device').length
-  const runningSchedules = scheduleView.items.filter(i => i.runtimeStatus === 'running').length
-  const completedSchedules = scheduleView.items.filter(i => i.runtimeStatus === 'completed').length
-  const hasNodes = nodesView.projects.length > 0
-
-  const syncStage: PipelineStage = {
-    key: 'sync',
-    label: '同步项目节点和自主规划',
-    status: hasNodes ? 'done' : 'idle',
-    hint: hasNodes ? `${nodesView.projects.length} 个项目` : undefined,
-  }
-
-  let flashStatus: PipelineStageStatus = 'idle'
-  let flashHint: string | undefined
-  const flashHintParts: string[] = []
-  if (pendingSchedules > 0) flashHintParts.push(`待执行 ${pendingSchedules}`)
-  if (noDeviceSchedules > 0) flashHintParts.push(`无设备 ${noDeviceSchedules}`)
-  if (noDeviceSchedules > 0) {
-    flashStatus = 'attention'
-  } else if (pendingSchedules > 0) {
-    flashStatus = 'queued'
-  }
-  flashHint = flashHintParts.length ? flashHintParts.join(' · ') : undefined
-
-  const flashStage: PipelineStage = {
-    key: 'flash',
-    label: '版本拉取/烧录',
-    status: flashStatus,
-    hint: flashHint,
-  }
-
-  let testStatus: PipelineStageStatus = 'idle'
-  if (runningSchedules > 0) {
-    testStatus = 'running'
-  } else if (completedSchedules > 0) {
-    testStatus = 'done'
-  }
-  const testHintParts: string[] = []
-  if (runningSchedules > 0) testHintParts.push(`测试中 ${runningSchedules}`)
-  if (completedSchedules > 0) testHintParts.push(`已完成 ${completedSchedules}`)
 
   const testStage: PipelineStage = {
     key: 'test',
     label: '自动测试',
-    status: testStatus,
-    hint: testHintParts.length ? testHintParts.join(' · ') : undefined,
+    status: runningTests > 0 ? 'running' : recentlyCompleted > 0 ? 'done' : 'idle',
+    hint: runningTests > 0
+      ? `测试中 ${runningTests}`
+      : recentlyCompleted > 0
+        ? `已完成 ${recentlyCompleted}`
+        : undefined,
   }
 
   const reviewStage: PipelineStage = {
@@ -93,7 +55,7 @@ export async function getSelfCheckPipelineStatus(): Promise<SelfCheckPipelineVie
   }
 
   return {
-    stages: [syncStage, flashStage, testStage, reviewStage],
+    stages: [testStage, reviewStage],
     updatedAt: new Date().toISOString(),
     runningTests,
     pendingManual,

@@ -26,8 +26,8 @@ def resolve_power_scene_mode(raw=None):
 
     - standby: 仅定时/普通待机（wifi + data）
     - base: 仅 task_base（最多 3 轮）
-    - full: 通用全域测试（刷机 + 待机 + 基础，原全量调度）
-    - unsupported: DOU / PFMMod 等暂不实现
+    - full: 通用全域测试 / PFMMod（刷机 + 待机 + 基础，原全量调度）
+    - unsupported: DOU 等暂不实现
     - '' : 无 UI 场景标签时的实验室常驻全量循环
     """
     text = (raw if raw is not None else os.environ.get("TAHP_POWER_SCENE") or "").strip()
@@ -35,9 +35,9 @@ def resolve_power_scene_mode(raw=None):
         return "standby"
     if text == "基础场景":
         return "base"
-    if text in ("通用全域测试", "全域测试", "全量"):
+    if text in ("通用全域测试", "全域测试", "全量", "PFMMod"):
         return "full"
-    if text in ("DOU", "PFMMod"):
+    if text == "DOU":
         return "unsupported"
     return ""
 
@@ -215,8 +215,9 @@ class TaskManager:
                 self.scene_finished = True
             return
         if mode == "full":
-            # UI「通用全域测试」：原全量调度（刷机 + 待机 + 基础）
-            self.phone.loginfo("场景模式=通用全域测试：执行全量调度")
+            # UI「通用全域测试 / PFMMod」：原全量调度（刷机 + 待机 + 基础）
+            scene_label = (os.environ.get("TAHP_POWER_SCENE") or "").strip() or "通用全域测试"
+            self.phone.loginfo(f"场景模式={scene_label}：执行全量调度")
             self.run_update_rom()
             if self.reboot:
                 self.phone.loginfo(f"重启手机")

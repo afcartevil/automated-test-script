@@ -324,6 +324,23 @@ export const centralClient = {
     })
   },
 
+  /** 本人在中心被指派的未完成验测任务（总览「验测任务」卡片数据源） */
+  async verifyMine(sessionToken: string): Promise<Array<{
+    task_id: string
+    test_type: string
+    item_label: string
+    owner: string
+    project?: string
+    note?: string
+    status: string
+    created_by: string
+    created_at: string
+  }>> {
+    return request('/api/tahp/tasks/verify/mine?view=open', {
+      headers: { authorization: `Bearer ${sessionToken}` },
+    })
+  },
+
   async applyCandidates(sessionToken: string, runId: string): Promise<{
     run: { run_id: string; project_code: string; campaign_id?: string; status?: string; dimension?: string; domain_id?: string }
     packages: Array<{

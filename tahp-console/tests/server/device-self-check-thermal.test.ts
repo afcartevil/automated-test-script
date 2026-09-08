@@ -6,7 +6,6 @@ import {
   getCaseCatalogDetail,
   initDeviceSelfCheck,
 } from '../../packages/server/src/services/tahp/device-self-check'
-import { normalizePlanTestType, validateTestPlanRules } from '../../packages/server/src/services/tahp/test-planning'
 import { tahpPaths } from '../../packages/server/src/services/tahp/paths'
 
 describe('device self-check thermal catalog', () => {
@@ -53,16 +52,5 @@ describe('device self-check thermal catalog', () => {
     const case1Text = readFileSync(case1, 'utf-8')
     expect(case1Text).toContain('thermalLogParentDir')
     expect(case1Text).toContain('--log-parent-dir')
-  })
-
-  it('normalizes plan test type aliases for thermal before power', () => {
-    expect(normalizePlanTestType('thermal')).toBe('thermal')
-    expect(normalizePlanTestType('therm')).toBe('thermal')
-    expect(normalizePlanTestType('温升方案自检')).toBe('thermal')
-    expect(normalizePlanTestType('tpytest_dzppt_therm')).toBe('thermal')
-    expect(normalizePlanTestType('功耗自动化测试')).toBe('power')
-    expect(validateTestPlanRules([
-      { node: 'STR4A', offsetDays: -1, testType: 'thermal' },
-    ])).toEqual([{ node: 'STR4A', offsetDays: -1, testType: 'thermal' }])
   })
 })

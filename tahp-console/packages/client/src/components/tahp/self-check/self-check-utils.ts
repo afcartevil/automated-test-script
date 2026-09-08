@@ -1,7 +1,7 @@
 import type { CaseCatalogGroup, DeviceInfo, SelfCheckReportSummary, SelfCheckTestConfig } from '@/api/tahp/device-self-check'
 
 export const SELF_CHECK_SUBTITLE =
-  '项目自动规划 → 自动烧录 → 自动测试 → 评审补全 → 人工复核报告'
+  '验测任务 → 测试执行 → 评审补全 → 人工复核报告'
 
 export const AUTO_RETEST_TOOLTIP = '测试结束后自动复测无人工参与的失败用例'
 
@@ -228,7 +228,7 @@ export function deviceMatchesListFilter(
 /** 用例大类卡片：模块覆盖范围 */
 export function formatCatalogModuleScope(group: CaseCatalogGroup): string {
   if (group.testType === 'power') {
-    return '电流场景测试包括不限于（通用全域测试、基础场景、待机；DOU/PFMMod 暂不实现）'
+    return '电流场景测试包括不限于（通用全域测试、基础场景、待机、PFMMod；DOU 暂不实现）'
   }
   if (!group.modules.length) return '暂无用例'
   return group.modules.map(m => m.moduleLabel).join('、')

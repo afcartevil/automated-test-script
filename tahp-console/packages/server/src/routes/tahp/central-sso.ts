@@ -136,6 +136,37 @@ tahpCentralSsoRoutes.post('/api/tahp/task-inbox/ack', async (ctx) => {
   ctx.body = { success: true }
 })
 
+/** 本人在中心被指派的未完成验测任务（总览「验测任务」卡片；不可达时 degraded=true 供前端红字提示） */
+tahpCentralSsoRoutes.get('/api/tahp/verify-tasks/mine', async (ctx) => {
+  if (!isCentralConfigured()) {
+    ctx.body = { success: true, data: { tasks: [], degraded: true, reason: '中心未配置' } }
+    return
+  }
+  try {
+    let sessionToken = readCentralUserSession()?.token || ''
+    if (!sessionToken) {
+      const jira = readJiraUserConfig()
+      if (jira) {
+        const bound = await bindJiraToCentral({
+          username: jira.username,
+          password: jira.password,
+          baseUrl: jira.base_url,
+        })
+        sessionToken = bound?.token || ''
+      }
+    }
+    if (!sessionToken) {
+      ctx.body = { success: true, data: { tasks: [], degraded: true, reason: '未绑定中心账号' } }
+      return
+    }
+    const tasks = await centralClient.verifyMine(sessionToken)
+    ctx.body = { success: true, data: { tasks, degraded: false } }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, '[verify-tasks] mine failed')
+    ctx.body = { success: true, data: { tasks: [], degraded: true, reason: (err as Error).message } }
+  }
+})
+
 tahpCentralSsoRoutes.post('/api/tahp/task-apply-run', async (ctx) => {
   const body = (ctx.request.body || {}) as {
     package_id?: string

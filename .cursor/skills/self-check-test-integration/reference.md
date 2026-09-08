@@ -118,61 +118,12 @@ API：`GET/POST /api/tahp/device-self-check/settings`
 | 启动入口 | `POST .../test/start` body | `handleStartTest` / 设备详情按钮 |
 | 类型设置 | `AutoTestSettings` | 用例大类面板 `catalogTypeSettings` 或等价 |
 | 停止 | `endTest` + 钩子 | `handleEndTest`（已有） |
-| 测试规划 | `PlanTestType` + `TEST_TYPE_OPTIONS` | `TestPlanSettingsModal` 测试大类下拉 |
 
 ---
 
-## AI 测试自规划 — 测试规划选择项
+## AI 测试自规划 — 测试规划选择项（已下线）
 
-新增 **StandardTestType** 且需出现在「AI测试自规划 → 测试规划设置」时，按序改动：
-
-### 后端 `test-planning.ts`
-
-```ts
-export type PlanTestType = 'str4' | 'week' | 'monkey' | 'smoke'  // 追加新类型
-
-const TEST_TYPE_LABELS: Record<PlanTestType, string> = {
-  // ...
-  smoke: '冒烟测试',
-}
-
-export function normalizePlanTestType(raw: unknown): PlanTestType | null {
-  // 识别别名，如 text.includes('冒烟') → 'smoke'
-}
-
-export function validateTestPlanRules(rules: TestPlanRule[]): TestPlanRule[] {
-  const validTypes = new Set<string>(['str4', 'week', 'monkey', 'smoke'])
-  // 错误文案同步：须为 str4 / week / monkey / smoke / ...
-}
-```
-
-### 前端
-
-```ts
-// api/tahp/test-planning.ts
-export type PlanTestType = 'str4' | 'week' | 'monkey' | 'smoke'
-```
-
-```ts
-// TestPlanSettingsModal.vue — TEST_TYPE_OPTIONS
-{ label: getTestTypeLabel('smoke'), value: 'smoke' },
-```
-
-`getTestTypeLabel` 定义在 `self-check-utils.ts`，须与自检阶段 3 文案一致。
-
-### 规划自动执行（可选）
-
-```ts
-// device-flash.ts
-export type PlannedTestType = 'str4' | 'week' | 'monkey' | 'smoke'
-```
-
-`test-plan-executor` 调用 `buildPlannedTestFlashPayload(deviceId, item.testType)` 后 `startTest`；新类型须确认刷机策略（是否 Root）。
-
-### 单测
-
-- `tests/server/test-planning.test.ts`：`normalizePlanTestType`、`validateTestPlanRules` 含新类型
-- 可选：`test-plan-executor.test.ts` 对该类型的 flash payload 断言
+> **2026-09 起本节废止**：「AI 测试自规划」已整体从代码库删除（`test-planning.ts` / `test-plan-executor.ts` / `api/tahp/test-planning.ts` / `TestPlanSettingsModal.vue` / `PlannedTestType`），定时指派由中心 BFF「任务中心 → 质量验测 → 定时任务」接管。新增测试类型无须任何规划侧改动；如需进入中心指派目录，见 BFF 验测任务 catalog 推送（`PUT /api/tahp/sync/verify/catalog`）。
 
 ---
 
@@ -203,15 +154,6 @@ export type PlannedTestType = 'str4' | 'week' | 'monkey' | 'smoke'
 - [ ] `self-check-utils.ts`
 - [ ] `useDeviceSelfCheck.ts`
 - [ ] `SelfCheckDeviceRun.vue`（+ Checklist 如需要）
-
-### 规划（能力矩阵勾选「入 PlanTestType」时**必做**）
-
-- [ ] `test-planning.ts`：`PlanTestType`、`TEST_TYPE_LABELS`、`normalizePlanTestType`、`validateTestPlanRules`
-- [ ] `api/tahp/test-planning.ts`：`PlanTestType`
-- [ ] `TestPlanSettingsModal.vue`：`TEST_TYPE_OPTIONS`
-- [ ] `self-check-utils.ts`：`getTestTypeLabel`（阶段 3 通常已完成）
-- [ ] `device-flash.ts`：`PlannedTestType`（若到点自动刷机+启动）
-- [ ] `tests/server/test-planning.test.ts`
 
 ### 测试
 

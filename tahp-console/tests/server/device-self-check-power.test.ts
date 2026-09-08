@@ -47,7 +47,8 @@ describe('device self-check power catalog', () => {
     expect(detail[0]?.preconditions).toContain('PSW:1234567809')
     expect(detail[2]?.caseName).toBe('待机')
     expect(detail[3]?.preconditions).toContain('暂不实现')
-    expect(detail[4]?.preconditions).toContain('暂不实现')
+    expect(detail[4]?.preconditions).toContain('已支持')
+    expect(detail[4]?.preconditions).toContain('SSID:power_cloud')
     expect(detail[0]?.manualSteps).toContain('TPower')
 
     const runner = join(
@@ -89,9 +90,11 @@ describe('device self-check power catalog', () => {
     expect(src).toContain('通用全域测试')
     expect(src).toContain('return "full"')
     expect(src).toContain('return "unsupported"')
+    expect(src).toContain('"PFMMod"')
+    expect(src).toContain('text == "DOU"')
     expect(src).toContain('场景模式=待机')
     expect(src).toContain('场景模式=基础场景')
-    expect(src).toContain('场景模式=通用全域测试')
+    expect(src).toContain('执行全量调度')
     expect(src).toContain('暂不实现')
     expect(src).toContain('scene_finished')
 
@@ -116,6 +119,10 @@ describe('device self-check power catalog', () => {
     expect(readFileSync(join(
       tahpPaths.projectRoot,
       'tahp-console/packages/server/src/services/tahp/self-check/python/cases/power/current_analysis/case5.py',
-    ), 'utf-8')).toContain('PFMMod 暂不实现')
+    ), 'utf-8')).toContain('PFMMod')
+    expect(readFileSync(join(
+      tahpPaths.projectRoot,
+      'tahp-console/packages/server/src/services/tahp/self-check/python/cases/power/current_analysis/case5.py',
+    ), 'utf-8')).not.toContain('暂不实现')
   })
 })

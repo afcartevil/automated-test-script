@@ -4,7 +4,6 @@ import {
   getCaseCatalogDetail,
   initDeviceSelfCheck,
 } from '../../packages/server/src/services/tahp/device-self-check'
-import { normalizePlanTestType } from '../../packages/server/src/services/tahp/test-planning'
 
 describe('device self-check power_feature (WBS) catalog', () => {
   it('loads power_feature WBS catalog', () => {
@@ -31,13 +30,5 @@ describe('device self-check power_feature (WBS) catalog', () => {
     expect(detail[0]?.preconditions).toContain('ADB')
     expect(detail[0]?.manualSteps.length).toBeGreaterThan(0)
     expect(detail[0]?.expectedResult.length).toBeGreaterThan(0)
-  })
-
-  it('normalizes plan test type aliases for power_feature before power', () => {
-    expect(normalizePlanTestType('power_feature')).toBe('power_feature')
-    expect(normalizePlanTestType('功耗特性自检')).toBe('power_feature')
-    expect(normalizePlanTestType('WBS')).toBe('power_feature')
-    expect(normalizePlanTestType('功耗自动化测试')).toBe('power')
-    expect(normalizePlanTestType('power')).toBe('power')
   })
 })

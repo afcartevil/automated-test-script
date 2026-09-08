@@ -11,8 +11,6 @@ const emit = defineEmits<{
 }>()
 
 const stageTabMap: Record<string, string> = {
-  sync: 'planning',
-  flash: 'devices',
   test: 'devices',
   review: 'review',
 }
@@ -23,10 +21,7 @@ function handleStageClick(stage: PipelineStage) {
 }
 
 function shouldShowStatus(stage: PipelineStage): boolean {
-  return !(
-    (stage.key === 'flash' && stage.status === 'queued') ||
-    (stage.key === 'test' && stage.status === 'done')
-  )
+  return !(stage.key === 'test' && stage.status === 'done')
 }
 </script>
 

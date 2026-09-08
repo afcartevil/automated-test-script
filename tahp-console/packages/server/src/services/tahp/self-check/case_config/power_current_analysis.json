@@ -37,7 +37,7 @@
       "caseIndex": 5,
       "caseName": "PFMMod",
       "canReuse": false,
-      "automationMode": "semi"
+      "automationMode": "full"
     }
   ]
 }
