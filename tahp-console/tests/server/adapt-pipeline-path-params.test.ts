@@ -128,7 +128,7 @@ describe('adapt-pipeline path params', () => {
     expect(full.ok).toBe(true)
     expect(full.value).toBe(PROJECT)
     expect(full.options).toEqual(['cm8_foo', PROJECT].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })))
-    expect(fields.get('SOC_PLATFROM')?.value).toBe('mt6858')
+    expect(fields.get('SOC_PLATFORM')?.value).toBe('mt6858')
     expect(fields.get('NEW_KERNEL_VERSION')?.value).toBe('6.12')
     expect(fields.get('OLD_KERNEL_VERSION')?.value).toBe('6.12')
     expect(fields.get('NEW_PROJECTS_ROOT')?.ok).toBe(true)
@@ -189,19 +189,19 @@ describe('adapt-pipeline path params', () => {
       OLD_VENDOR_ROOT: 'Z:\\missing-old',
       NEW_VENDOR_ROOT: 'Z:\\missing-new',
     }).fields.map(f => f.key)
-    expect(keys).toContain('SOC_PLATFROM')
+    expect(keys).toContain('SOC_PLATFORM')
     expect(keys).toContain('PROJECT_FULL')
     expect(keys).toContain('OLD_ATA_CONFIG_PATH')
     expect(keys).toContain('NEW_ATA_CONFIG_PATH')
     expect(keys).toContain('NEW_KERNEL_PROJECT_DTS_PATH')
 
-    const without = PATH_PARAM_FIELDS.filter(f => f.key !== 'SOC_PLATFROM')
+    const without = PATH_PARAM_FIELDS.filter(f => f.key !== 'SOC_PLATFORM')
     const next = parsePathParams({
       project_code: 'X',
       OLD_VENDOR_ROOT: 'Z:\\missing-old',
       NEW_VENDOR_ROOT: 'Z:\\missing-new',
     }, without).fields.map(f => f.key)
-    expect(next).not.toContain('SOC_PLATFROM')
+    expect(next).not.toContain('SOC_PLATFORM')
     expect(next).toContain('PROJECT_FULL')
   })
 

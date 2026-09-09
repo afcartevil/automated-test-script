@@ -32,7 +32,7 @@ function sampleResult(overrides: Partial<PathParams> = {}): PathParams {
     },
     fields: [
       { key: 'PROJECT_FULL', label: 'PROJECT_FULL', kind: 'select', ok: true, value: 'km9_h123', options: ['km9_h123'] },
-      { key: 'SOC_PLATFROM', label: 'SOC_PLATFROM', kind: 'text', ok: true, value: 'mt6878' },
+      { key: 'SOC_PLATFORM', label: 'SOC_PLATFORM', kind: 'text', ok: true, value: 'mt6878' },
       { key: 'NEW_KERNEL_DWS_PATH', label: 'NEW_KERNEL_DWS_PATH', kind: 'text', ok: false, value: '', error: '文件不存在' },
     ],
     parsed_at: '2026-08-27T10:00:00.000Z',
@@ -83,7 +83,7 @@ describe('adapt path params scope', () => {
     setPathParamFieldValue(scope, 'NEW_KERNEL_DWS_PATH', 'Z:\\new\\vendor\\a.dws')
     const flat = flattenAdaptPathParams(scope)
     expect(flat.formData.NEW_KERNEL_DWS_PATH).toBe('Z:\\new\\vendor\\a.dws')
-    expect(flat.formData.SOC_PLATFROM).toBe('mt6878')
+    expect(flat.formData.SOC_PLATFORM).toBe('mt6878')
     expect(flat.formData.NEW_SYSTEM_ROOT).toBeUndefined()
     expect(flat.formFields.map(f => f.name)).toContain('NEW_VENDOR_ROOT')
     expect(flat.formFields.every(f => f.required === false)).toBe(true)
@@ -98,10 +98,10 @@ describe('adapt path params scope', () => {
     const scope = scopeWithInputs()
     applyPathParamResult(scope, sampleResult())
     const merged = fillFormDataWithPathParams(
-      { SOC_PLATFROM: 'mt6897', PROJECT_FULL: '', debug_project: 'km9' },
+      { SOC_PLATFORM: 'mt6897', PROJECT_FULL: '', debug_project: 'km9' },
       scope,
     )
-    expect(merged.SOC_PLATFROM).toBe('mt6897')
+    expect(merged.SOC_PLATFORM).toBe('mt6897')
     expect(merged.PROJECT_FULL).toBe('km9_h123')
     expect(merged.debug_project).toBe('km9')
     expect(merged.OLD_VENDOR_ROOT).toBe('Z:\\old\\vendor')

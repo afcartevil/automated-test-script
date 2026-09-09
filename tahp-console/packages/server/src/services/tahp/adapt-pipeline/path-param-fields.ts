@@ -14,7 +14,7 @@
  *     dependsOn: ['PROJECT_FULL'], // 无依赖则 []；缺依赖时本字段自动失败
  *     parse(ctx) {
  *       // ctx.inputs: OLD_VENDOR_ROOT / NEW_VENDOR_ROOT / project_code / PROJECT_FULL?
- *       // ctx.values: 已解析成功的其它字段（如 PROJECT_FULL、SOC_PLATFROM）
+ *       // ctx.values: 已解析成功的其它字段（如 PROJECT_FULL、SOC_PLATFORM）
  *       return requireExisting(winJoin(ctx.inputs.NEW_VENDOR_ROOT, 'a', 'b'), 'file')
  *       // 或 { ok: true, value: '...' } / { ok: false, error: '原因', options?: [] }
  *     },
@@ -259,8 +259,8 @@ export const PATH_PARAM_FIELDS: PathParamFieldDef[] = [
     parse: parseProjectFull,
   },
   {
-    key: 'SOC_PLATFROM',
-    label: 'SOC_PLATFROM',
+    key: 'SOC_PLATFORM',
+    label: 'SOC_PLATFORM',
     kind: 'text',
     dependsOn: ['NEW_PROJECTS_ROOT'],
     parse(ctx) {
@@ -320,12 +320,12 @@ export const PATH_PARAM_FIELDS: PathParamFieldDef[] = [
     key: 'OLD_KERNEL_DWS_PATH',
     label: 'OLD_KERNEL_DWS_PATH',
     kind: 'text',
-    dependsOn: ['SOC_PLATFROM', 'PROJECT_FULL'],
+    dependsOn: ['SOC_PLATFORM', 'PROJECT_FULL'],
     parse(ctx) {
       return requireExisting(vendorRel(
         ctx.inputs.OLD_VENDOR_ROOT,
         'vendor', 'mediatek', 'proprietary', 'tools', 'dct', 'dws',
-        need(ctx, 'SOC_PLATFROM'),
+        need(ctx, 'SOC_PLATFORM'),
         `${need(ctx, 'PROJECT_FULL')}.dws`,
       ), 'file')
     },
@@ -334,12 +334,12 @@ export const PATH_PARAM_FIELDS: PathParamFieldDef[] = [
     key: 'NEW_KERNEL_DWS_PATH',
     label: 'NEW_KERNEL_DWS_PATH',
     kind: 'text',
-    dependsOn: ['SOC_PLATFROM', 'PROJECT_FULL'],
+    dependsOn: ['SOC_PLATFORM', 'PROJECT_FULL'],
     parse(ctx) {
       return requireExisting(vendorRel(
         ctx.inputs.NEW_VENDOR_ROOT,
         'vendor', 'mediatek', 'proprietary', 'tools', 'dct', 'dws',
-        need(ctx, 'SOC_PLATFROM'),
+        need(ctx, 'SOC_PLATFORM'),
         `${need(ctx, 'PROJECT_FULL')}.dws`,
       ), 'file')
     },
@@ -448,11 +448,11 @@ export const PATH_PARAM_FIELDS: PathParamFieldDef[] = [
     key: 'OLD_KERNEL_SOC_DTS_PATH',
     label: 'OLD_KERNEL_SOC_DTS_PATH',
     kind: 'text',
-    dependsOn: ['OLD_KERNEL_VERSION', 'SOC_PLATFROM'],
+    dependsOn: ['OLD_KERNEL_VERSION', 'SOC_PLATFORM'],
     parse(ctx) {
       return requireExisting(winJoin(
         dtsRoot(ctx.inputs.OLD_VENDOR_ROOT, need(ctx, 'OLD_KERNEL_VERSION'), 'mediatek'),
-        `${need(ctx, 'SOC_PLATFROM')}.dts`,
+        `${need(ctx, 'SOC_PLATFORM')}.dts`,
       ), 'file')
     },
   },
@@ -460,11 +460,11 @@ export const PATH_PARAM_FIELDS: PathParamFieldDef[] = [
     key: 'NEW_KERNEL_SOC_DTS_PATH',
     label: 'NEW_KERNEL_SOC_DTS_PATH',
     kind: 'text',
-    dependsOn: ['NEW_KERNEL_VERSION', 'SOC_PLATFROM'],
+    dependsOn: ['NEW_KERNEL_VERSION', 'SOC_PLATFORM'],
     parse(ctx) {
       return requireExisting(winJoin(
         dtsRoot(ctx.inputs.NEW_VENDOR_ROOT, need(ctx, 'NEW_KERNEL_VERSION'), 'mediatek'),
-        `${need(ctx, 'SOC_PLATFROM')}.dts`,
+        `${need(ctx, 'SOC_PLATFORM')}.dts`,
       ), 'file')
     },
   },
