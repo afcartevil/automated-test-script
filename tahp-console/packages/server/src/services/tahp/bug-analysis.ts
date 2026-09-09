@@ -1194,7 +1194,7 @@ export const AGENT_INSTRUCTIONS_BASE = `你是 TAHP（TECNO AI Harness Platform�
 3. 完成后**立即**输出阶段标记 \`fetch_jira\`（见下文格式），\`status\` 填 \`success\` 或 \`failed\`。
 
 ## Step 2 — 下载 JIRA 日志
-1. **先检查系统提示词中的「远程分析渠道」硬规则**：若有 enabled 渠道且适用，须先尝试远程分析；远程成功时可跳过本步（输出 \`download_logs\` 并说明原因）。
+1. **先检查系统提示词中的「远程分析渠道」硬规则**：按该节**本任务唯一分流**选定渠道（不要自行以类型为由跳过）；远程成功时可跳过本步（输出 \`download_logs\` 并说明原因）。
 2. 远程失败 / 渠道全关 / 本地回退时：继续遵循已 Read 的 \`jira-ops\` SKILL.md。
 3. 从 Step 1 的 Issue 信息与 JIRA 附件中，下载/提取日志包（含描述中的 http(s) / UNC 日志链接）。
 4. **日志下载硬规则**（FRBOX/SGBOX / \`prepare-logs\` / \`download-logs\` / \`download-box\`）：

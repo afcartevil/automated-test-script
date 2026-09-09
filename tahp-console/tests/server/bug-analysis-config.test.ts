@@ -94,6 +94,40 @@ describe('bug-analysis-config', () => {
     expect(text).toContain('loginsight_remote')
   })
 
+  it('bugfix only: unconditional bugfix including stability', () => {
+    const cfg = defaultBugAnalysisChannelConfig()
+    cfg.remote_channels.bugfix_analysis.enabled = true
+    cfg.remote_channels.loginsight_remote.enabled = false
+    const text = buildRemoteChannelDirective(cfg)
+    expect(text).toContain('仅 bugfix 开')
+    expect(text).toContain('无条件走 `bugfix_analysis`')
+    expect(text).toContain('bugfix 不用于稳定性/内存分析')
+    expect(text).not.toContain('仅当问题类型匹配该渠道时才调用')
+  })
+
+  it('both on: stability to loginsight, others to bugfix, no cross-try', () => {
+    const cfg = defaultBugAnalysisChannelConfig()
+    cfg.remote_channels.bugfix_analysis.enabled = true
+    cfg.remote_channels.loginsight_remote.enabled = true
+    const text = buildRemoteChannelDirective(cfg)
+    expect(text).toContain('bugfix 开 + loginsight 开')
+    expect(text).toContain('只走 `loginsight_remote`')
+    expect(text).toContain('无条件**走 `bugfix_analysis`')
+    expect(text).toContain('不要**改走 bugfix')
+    expect(text).toContain('指定渠道失败后**不要**改试另一远程渠道')
+  })
+
+  it('loginsight only: stability remote, others local', () => {
+    const cfg = defaultBugAnalysisChannelConfig()
+    cfg.remote_channels.bugfix_analysis.enabled = false
+    cfg.remote_channels.loginsight_remote.enabled = true
+    const text = buildRemoteChannelDirective(cfg)
+    expect(text).toContain('仅 loginsight 开')
+    expect(text).toContain('走 `loginsight_remote`')
+    expect(text).toContain('调用任何远程渠道，直接回退本地')
+    expect(text).toContain('禁止调用 `bugfix_analysis`')
+  })
+
   it('resolveRemoteSkillPath finds skill under configured skill_path', () => {
     const skillRoot = join(root, 'ext-skills', 'bugfix-analysis')
     mkdirSync(skillRoot, { recursive: true })

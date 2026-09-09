@@ -2070,14 +2070,14 @@ watch(
                     <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
                   </svg>
                 </template>
-                远程接入AI2D故障分析能力，失败则调用本地故障分析skill
+                两开：稳定性走 LogInsight，其它走 Bugfix。只开 Bugfix：一律走 Bugfix。只开 LogInsight：仅稳定性走远程。失败均回退本地，不换另一远程渠道。
               </NTooltip>
             </label>
             <NSpin :show="channelConfigLoading || channelConfigSaving">
               <div class="ai2d-box">
                 <div class="ai2d-row">
                   <div class="ai2d-label">
-                    <span>Bugfix AI（通用缺陷）</span>
+                    <span>Bugfix AI</span>
                     <span v-if="channelBugfix && !channelBugfixFound" class="ai2d-warn">Skill 未找到</span>
                   </div>
                   <NSwitch
