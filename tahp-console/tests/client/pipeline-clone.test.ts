@@ -130,9 +130,10 @@ describe('pipeline clone seed', () => {
     expect(workspacesFromCloneDomains([])).toEqual(['adapt-debug'])
   })
 
-  it('keeps unknown test plan modes as smoke', () => {
+  it('only keeps pipeline_adapt; unknown modes fall back to pipeline_adapt', () => {
     expect(resolveClonedTestPlanMode('pipeline_adapt')).toBe('pipeline_adapt')
-    expect(resolveClonedTestPlanMode('nope')).toBe('smoke')
+    expect(resolveClonedTestPlanMode('smoke')).toBe('pipeline_adapt')
+    expect(resolveClonedTestPlanMode('nope')).toBe('pipeline_adapt')
   })
 
   it('overlays cloned domain enablement and form data onto catalog', () => {

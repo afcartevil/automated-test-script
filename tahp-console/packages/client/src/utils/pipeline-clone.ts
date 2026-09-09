@@ -12,7 +12,7 @@ import {
   type AdaptWorkspaceId,
 } from '@/constants/adapt-domains'
 
-export const TEST_PLAN_MODES: TestPlanMode[] = ['smoke', 'pipeline_adapt', 'recommend', 'fixed']
+export const TEST_PLAN_MODES: TestPlanMode[] = ['pipeline_adapt']
 
 export interface WizardCloneSeed {
   source_run_id: string
@@ -68,7 +68,7 @@ export function workspacesFromCloneDomains(
 }
 
 export function resolveClonedTestPlanMode(mode: string | undefined): TestPlanMode {
-  return TEST_PLAN_MODES.includes(mode as TestPlanMode) ? mode as TestPlanMode : 'smoke'
+  return TEST_PLAN_MODES.includes(mode as TestPlanMode) ? mode as TestPlanMode : 'pipeline_adapt'
 }
 
 export function clonePathParams(pathParams: PathParams | undefined): PathParams | undefined {
