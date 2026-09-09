@@ -107,6 +107,8 @@ describe('ez-build asset', () => {
     expect(script).toContain('SYS_VERSION="${8:-}"')
     expect(script).toContain('sys|krn|vext|hal|odm|trsys|pack')
     expect(script).toContain('invoke_pipe_main')
+    expect(script).toContain('/opt/ci/rdtool/pipe_main')
+    expect(script).not.toContain('/opt/ci/civenv/bin/python3')
     expect(script).toContain('--trsystem-dir')
     expect(script).toContain('NEW_TRSYSTEM_ROOT empty, trsys via pipe_main')
     expect(script).toContain('TRSYS_OUT_REL_USER="target"')

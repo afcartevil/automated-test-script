@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import time
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from typing import Any
 
 from _common import (
@@ -16,6 +17,7 @@ from _common import (
     get_screen_size,
     input_swipe,
     try_adb_root,
+    try_adb_unroot,
 )
 from utils.tdd.ui_automatic import ensure_screen_on_and_unlocked
 from utils.tdd.ui_u2 import dump_hierarchy_xml, release_uiautomator2
@@ -53,6 +55,14 @@ _DIALOG_TEXTS = (
     "Agree",
     "开始使用",
 )
+
+# --- 系统铃声（本地 Hardwood.ogg 推到设备后按 Fantastic.ogg 建索引） ---
+_RINGTONE_ASSET = Path(__file__).resolve().parent / "assets" / "Hardwood.ogg"
+_RINGTONE_REMOTE_NAME = "Fantastic.ogg"
+_RINGTONE_REMOTE_DIRS = ("/sdcard/Ringtones", "/sdcard/Notifications")
+_RINGTONE_SCAN_URI = "file:///sdcard/Notifications/Fantastic.ogg"
+_RINGTONE_SETTING_KEYS = ("ringtone", "notification_sound", "alarm_alert")
+_MEDIA_ID_RE = re.compile(r"_id\s*=\s*(\d+)", re.I)
 
 # --- 参数路径 / DTS / ADSP ---
 _AUDIO_DIR = "/odm/etc/vconfig/audio"
@@ -199,6 +209,147 @@ def _ls_names(serial: str, directory: str) -> list[str]:
     if not out or "no such file" in out.lower():
         return []
     return [name.strip() for name in out.split() if name.strip()]
+
+
+def _parse_audio_media_id(text: str, display_name: str) -> str | None:
+    needle = (display_name or "").lower()
+    for line in (text or "").splitlines():
+        if needle and needle not in line.lower():
+            continue
+        match = _MEDIA_ID_RE.search(line)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _query_audio_media(serial: str) -> str:
+    """本机解析 content query，避免 Windows 下 adb shell 管道被拆成参数。"""
+    ret = adb_run(
+        serial,
+        "shell",
+        "content",
+        "query",
+        "--uri",
+        "content://media/external/audio/media",
+        "--projection",
+        "_id:_display_name",
+        timeout=20,
+    )
+    return f"{ret.stdout or ''}{ret.stderr or ''}"
+
+
+def _wait_audio_media_id(serial: str, display_name: str, *, timeout: float = 12.0) -> str | None:
+    deadline = time.time() + timeout
+    while True:
+        last = _query_audio_media(serial)
+        media_id = _parse_audio_media_id(last, display_name)
+        if media_id:
+            return media_id
+        if time.time() >= deadline:
+            return None
+        time.sleep(0.8)
+
+
+def _push_ringtone_asset(serial: str) -> tuple[bool, str]:
+    if not _RINGTONE_ASSET.is_file():
+        return False, f"本地铃声文件不存在: {_RINGTONE_ASSET}"
+    adb_shell(
+        serial,
+        "mkdir -p /sdcard/Ringtones /sdcard/Notifications",
+        timeout=10,
+    )
+    for directory in _RINGTONE_REMOTE_DIRS:
+        remote = f"{directory}/{_RINGTONE_REMOTE_NAME}"
+        ret = adb_run(serial, "push", str(_RINGTONE_ASSET), remote, timeout=30)
+        out = f"{ret.stdout or ''}{ret.stderr or ''}".strip()
+        if ret.returncode != 0:
+            return False, f"adb push {remote} 失败: {out or ret.returncode}"
+    return True, ""
+
+
+def test_prepare_system_ringtones(
+    serial: str,
+    *,
+    steps: list[str],
+    step_update: StepFn | None = None,
+    **_,
+) -> dict[str, Any]:
+    """
+    系统铃声准备（铃声/通知/闹钟启动前）
+    1. 将 Hardwood.ogg 推到 /sdcard/Ringtones/Fantastic.ogg 与 /sdcard/Notifications/Fantastic.ogg
+    2. MEDIA_SCANNER_SCAN_FILE 扫描 Notifications/Fantastic.ogg
+    3. content query 取 Fantastic.ogg 的 media id
+    4. adb unroot 后 settings put ringtone / notification_sound / alarm_alert，再 adb root
+    """
+    name = "系统铃声准备"
+    try:
+        emit(step_update, steps, f"[铃声] 推送 {_RINGTONE_ASSET.name} → {_RINGTONE_REMOTE_NAME}")
+        ok, err = _push_ringtone_asset(serial)
+        if not ok:
+            emit(step_update, steps, f"[{name}]-失败")
+            return _item(name, "fail", err)
+        emit(
+            step_update,
+            steps,
+            f"[铃声] 已推送到 /sdcard/Ringtones/{_RINGTONE_REMOTE_NAME} 与 /sdcard/Notifications/{_RINGTONE_REMOTE_NAME}",
+        )
+
+        emit(step_update, steps, f"[铃声] MEDIA_SCANNER_SCAN_FILE {_RINGTONE_SCAN_URI}")
+        scan = adb_run(
+            serial,
+            "shell",
+            "am",
+            "broadcast",
+            "-a",
+            "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+            "-d",
+            _RINGTONE_SCAN_URI,
+            timeout=20,
+        )
+        scan_out = f"{scan.stdout or ''}{scan.stderr or ''}".strip()
+        emit(step_update, steps, f"[铃声] 扫描: {scan_out or ('ok' if scan.returncode == 0 else '失败')}")
+        if scan.returncode != 0:
+            emit(step_update, steps, f"[{name}]-失败")
+            return _item(name, "fail", f"媒体扫描失败: {scan_out or scan.returncode}")
+
+        emit(step_update, steps, f"[铃声] content query 查找 {_RINGTONE_REMOTE_NAME}")
+        media_id = _wait_audio_media_id(serial, _RINGTONE_REMOTE_NAME)
+        if not media_id:
+            emit(step_update, steps, f"[{name}]-失败")
+            return _item(name, "fail", f"未查到 {_RINGTONE_REMOTE_NAME} 的 media id")
+        uri = f"content://media/external/audio/media/{media_id}"
+        emit(step_update, steps, f"[铃声] media id={media_id} uri={uri}")
+
+        emit(step_update, steps, "[铃声] adb unroot（settings put 需非 root）")
+        unroot_ok, unroot_msg = try_adb_unroot(serial)
+        emit(step_update, steps, f"[铃声] adb unroot: {unroot_msg or ('ok' if unroot_ok else '失败')}")
+        if not unroot_ok:
+            emit(step_update, steps, f"[{name}]-失败")
+            return _item(name, "fail", f"adb unroot 失败: {unroot_msg}")
+
+        failed: list[str] = []
+        for key in _RINGTONE_SETTING_KEYS:
+            emit(step_update, steps, f"[铃声] settings put system {key} {uri}")
+            ret = adb_run(serial, "shell", "settings", "put", "system", key, uri, timeout=15)
+            out = f"{ret.stdout or ''}{ret.stderr or ''}".strip()
+            if ret.returncode != 0:
+                failed.append(f"{key} 写入失败: {out or ret.returncode}")
+                continue
+            got = (adb_shell(serial, f"settings get system {key}", timeout=10) or "").strip()
+            if uri not in got:
+                failed.append(f"{key} 校验失败 actual={got or '<空>'}")
+            else:
+                emit(step_update, steps, f"[铃声] {key}={got}")
+
+        if failed:
+            emit(step_update, steps, f"[{name}]-失败")
+            return _item(name, "fail", f"id={media_id}; {'; '.join(failed)}")
+        emit(step_update, steps, f"[{name}]-成功")
+        return _item(name, "pass", f"ringtone/notification_sound/alarm_alert={uri}")
+    finally:
+        emit(step_update, steps, "[铃声] adb root（恢复后续用例）")
+        root_ok, root_msg = try_adb_root(serial)
+        emit(step_update, steps, f"[铃声] adb root: {root_msg or ('ok' if root_ok else '失败')}")
 
 
 def test_audio_param_path(
@@ -1123,6 +1274,7 @@ def test_adsp_call_algo(
 
 
 AUDIO_TEST_CASES = (
+    test_prepare_system_ringtones,
     test_audio_param_path,
     test_dts_tuning_path,
     test_recording_function,

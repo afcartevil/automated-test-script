@@ -59,6 +59,20 @@ def try_adb_root(device_id: str) -> tuple[bool, str]:
     return True, msg or "adb root ok"
 
 
+def try_adb_unroot(device_id: str) -> tuple[bool, str]:
+    """尝试 adb unroot；已是非 root 时立刻返回。settings put 需在非 root 下执行。"""
+    ret = adb_run(device_id, "unroot", timeout=15)
+    msg = f"{(ret.stdout or '').strip()}\n{(ret.stderr or '').strip()}".strip()
+    low = msg.lower()
+    if "not running as root" in low and "restarting" not in low:
+        return True, msg or "adbd not running as root"
+    if ret.returncode != 0 and "restarting adbd" not in low:
+        return False, msg or f"adb unroot exit {ret.returncode}"
+    time.sleep(1.5)
+    adb_run(device_id, "wait-for-device", timeout=30)
+    return True, msg or "adb unroot ok"
+
+
 def emit(step_update: StepFn | None, steps: list[str], line: str) -> None:
     steps.append(line)
     if callable(step_update):

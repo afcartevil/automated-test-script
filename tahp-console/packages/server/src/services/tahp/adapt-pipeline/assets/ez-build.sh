@@ -78,7 +78,7 @@ invoke_pipe_main() {
     if command -v pipe_main >/dev/null 2>&1; then
         pipe_main "$@"
     elif [[ -f /opt/ci/rdtool/pipe_main ]]; then
-        /opt/ci/civenv/bin/python3 /opt/ci/rdtool/pipe_main "$@"
+        /opt/ci/rdtool/pipe_main "$@"
     else
         echo "[ERROR] pipe_main not found in PATH and /opt/ci/rdtool/pipe_main missing" >&2
         return 127
