@@ -80,3 +80,13 @@ export function filterFilesBySelectedRepos(
     return selected.has(normalize(repo).toLowerCase())
   })
 }
+
+/** 勾选入库仓库后，只保留选中仓（路径大小写不敏感） */
+export function filterRepoGroupsBySelection(
+  groups: RepoChangeGroup[],
+  selectedRepos: string[] | undefined,
+): RepoChangeGroup[] {
+  if (!selectedRepos?.length) return groups
+  const selected = new Set(selectedRepos.map(r => normalize(r).toLowerCase()))
+  return groups.filter(g => selected.has(normalize(g.repo).toLowerCase()))
+}

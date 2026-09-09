@@ -693,7 +693,7 @@ actions: [
 ### 要点
 
 - `gerrit-submit.ts` **仿** [gerrit-review.ts](../../../tahp-console/packages/server/src/services/tahp/gerrit-review.ts)：走 Agent Bridge 加载 `gerrit-submit` Skill，逐域提交
-- **冲突检测（强制）**：提交前比对各域 `changed_files`，存在交集时该批次转 `waiting_human`，标记 `blocked_conflict`，**禁止自动提交**
+- **按仓合提**：提交前按 git 仓分组并让用户勾选；每个仓一张 CR（该仓内各域 `changed_files` 并集）。跨域同文件不再拦截、不转 `blocked_conflict`
 - commit message 用 `gerrit-submit/commit-template.md` 模板
 - 从 Agent 输出解析 CR URL 写进 `gerrit_changes[]`
 

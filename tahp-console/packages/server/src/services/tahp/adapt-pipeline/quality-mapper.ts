@@ -95,8 +95,16 @@ function inferCurrentNode(run: PipelineRun): string {
   return lastDone || 'prereq'
 }
 
+function changeTouchesDomain(
+  g: Pick<GerritChangeRef, 'domain_id' | 'domain_ids'>,
+  domainId: string,
+): boolean {
+  if (g.domain_id === domainId) return true
+  return (g.domain_ids ?? []).includes(domainId)
+}
+
 function domainGerrits(run: PipelineRun, domainId: string): GerritChangeRef[] {
-  return (run.gerrit_changes || []).filter(g => g.domain_id === domainId)
+  return (run.gerrit_changes || []).filter(g => changeTouchesDomain(g, domainId))
 }
 
 function gerritStageForDomain(run: PipelineRun, domain: PipelineDomain): {
@@ -177,7 +185,7 @@ function buildStages(
     } else if (key === 'gerrit') {
       const submitted = (run.gerrit_changes || []).filter(c => c.status === 'submitted').length
       summary = submitted
-        ? `${submitted} 个域已提交 Gerrit`
+        ? `${submitted} 个仓已提交 Gerrit`
         : summaryFromStage(key, st, 'Gerrit 未跑或未完成')
     } else {
       scopeForStage = 'project'
@@ -305,6 +313,7 @@ function pipelineExtra(
 ): Record<string, unknown> {
   const gerrits = (run.gerrit_changes || []).map(g => ({
     domain_id: g.domain_id,
+    domain_ids: g.domain_ids,
     repo: g.repo,
     change_url: g.change_url,
     change_number: g.change_number,
@@ -320,7 +329,7 @@ function pipelineExtra(
       domain_label: domain?.domain_label,
       stages,
       gerrits: scope === 'domain' && domain
-        ? gerrits.filter(g => g.domain_id === domain.domain_id)
+        ? gerrits.filter(g => changeTouchesDomain(g, domain.domain_id))
         : gerrits,
     },
   }

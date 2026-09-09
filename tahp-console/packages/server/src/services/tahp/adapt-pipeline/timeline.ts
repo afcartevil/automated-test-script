@@ -37,6 +37,7 @@ function buildNodeProgress(
     'pkg_path', 'pkgPath', 'artifacts_dir',
     'flash_mode', 'flash_skill_id',
     'repos', 'queue', 'current_index', 'current_domain_id',
+    'current_repo', 'current_repo_label',
     'repo_groups', 'changed_files',
     'total', 'passed', 'failed', 'running', 'failed_cases',
   ] as const) {

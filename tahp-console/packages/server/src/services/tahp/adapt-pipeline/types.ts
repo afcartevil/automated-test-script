@@ -237,6 +237,8 @@ export interface ArtifactState {
 
 export interface GerritChangeRef {
   domain_id: string
+  /** 本仓合提涉及的全部适配域；缺省时仅看 domain_id */
+  domain_ids?: string[]
   repo: string
   change_url?: string
   change_number?: string
@@ -488,6 +490,8 @@ export interface TimelineView {
       queue?: string[]
       current_index?: number
       current_domain_id?: string
+      current_repo?: string
+      current_repo_label?: string
       repo_groups?: unknown
       changed_files?: unknown
       total?: number

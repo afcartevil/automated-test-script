@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildAsfBridgeEncodedCmd,
-  buildConflictChanges,
   buildGerritCommitMessage,
   buildGerritProbeScript,
   buildGerritSubmitExecutionDirective,
@@ -9,7 +8,6 @@ import {
   buildGerritSubmitUserMessage,
   extractGerritScriptFatal,
   gerritRemoteBashCommand,
-  detectDomainFileConflicts,
   isGerritSubmitStreamFatal,
   isGerritSubmitTimedOut,
   parseGerritSubmitResult,
@@ -19,72 +17,17 @@ import {
   toLinuxWorkCodePath,
   winPathRelativeToMappedRoot,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/mapped-workspace'
-import type { PipelineDomain } from '../../packages/server/src/services/tahp/adapt-pipeline/types'
+import { groupChangedFilesByRepo } from '../../packages/server/src/services/tahp/adapt-pipeline/repo-groups'
 
-function domain(id: string, files: string[]): Pick<PipelineDomain, 'domain_id' | 'changed_files'> {
-  return { domain_id: id, changed_files: files }
-}
-
-describe('detectDomainFileConflicts', () => {
-  it('returns empty when domains touch different files', () => {
-    const conflicts = detectDomainFileConflicts([
-      domain('telephony', ['vendor/foo.c']),
-      domain('kernel', ['kernel/bar.c']),
+describe('groupChangedFilesByRepo', () => {
+  it('unions overlapping files from two domains into one repo group', () => {
+    const groups = groupChangedFilesByRepo([
+      { domain_id: 'tp', changed_files: ['Z:\\project\\KM9_NEW\\kernel\\shared.dtsi', 'Z:\\project\\KM9_NEW\\kernel\\tp.c'] },
+      { domain_id: 'vib', changed_files: ['Z:\\project\\KM9_NEW\\kernel\\shared.dtsi'] },
     ])
-    expect(conflicts).toEqual([])
-  })
-
-  it('detects shared file across domains', () => {
-    const conflicts = detectDomainFileConflicts([
-      domain('telephony', ['vendor/shared.c', 'vendor/a.c']),
-      domain('kernel', ['vendor/shared.c']),
-    ])
-    expect(conflicts).toHaveLength(1)
-    expect(conflicts[0].file).toBe('vendor/shared.c')
-    expect(conflicts[0].domain_ids.sort()).toEqual(['kernel', 'telephony'])
-  })
-
-  it('normalizes Windows path separators', () => {
-    const conflicts = detectDomainFileConflicts([
-      domain('a', ['vendor\\foo.c']),
-      domain('b', ['vendor/foo.c']),
-    ])
-    expect(conflicts).toHaveLength(1)
-  })
-})
-
-describe('buildConflictChanges', () => {
-  it('marks conflicting domains as blocked_conflict', () => {
-    const domains: PipelineDomain[] = [
-      {
-        workspace_id: 'ws-a',
-        domain_id: 'a',
-        domain_label: 'A',
-        module: 'm',
-        related_skills: [],
-        form_data: {},
-        incomplete_required: [],
-        enabled: true,
-        status: 'done',
-        changed_files: ['shared.c'],
-      },
-      {
-        workspace_id: 'ws-b',
-        domain_id: 'b',
-        domain_label: 'B',
-        module: 'm',
-        related_skills: [],
-        form_data: {},
-        incomplete_required: [],
-        enabled: true,
-        status: 'done',
-        changed_files: ['shared.c', 'b-only.c'],
-      },
-    ]
-    const conflicts = detectDomainFileConflicts(domains)
-    const changes = buildConflictChanges(domains, conflicts)
-    expect(changes).toHaveLength(2)
-    expect(changes.every(c => c.status === 'blocked_conflict')).toBe(true)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].domain_ids.sort()).toEqual(['tp', 'vib'])
+    expect(groups[0].files).toHaveLength(2)
   })
 })
 
@@ -279,18 +222,11 @@ describe('gerrit commit scripts', () => {
     const text = buildGerritSubmitUserMessage({
       runId: 'r1',
       projectCode: 'LK7',
-      domain: {
-        workspace_id: 'ws',
-        domain_id: 'comm-framework',
-        domain_label: '通信框架',
-        module: 'telephony',
-        related_skills: [],
-        form_data: {},
-        incomplete_required: [],
-        enabled: true,
-        status: 'done',
-        changed_files: ['Z:\\project\\a.txt'],
-      },
+      repo: 'Z:\\project',
+      repoLabel: 'project',
+      files: ['Z:\\project\\a.txt'],
+      domainIds: ['comm-framework'],
+      domainLabels: ['通信框架'],
       buildContext: {
         mapped_root: 'Z:\\',
         linux_root: '/work/code/qing.li3',
@@ -312,6 +248,7 @@ describe('gerrit commit scripts', () => {
     expect(text).toContain('/work/code/qing.li3/project/a.txt')
     expect(text).toContain('--session 2')
     expect(text).toContain('禁止再扫 Z:\\')
+    expect(text).toContain('本仓库变更文件')
     expect(text).not.toContain('adapt_debug')
   })
 })

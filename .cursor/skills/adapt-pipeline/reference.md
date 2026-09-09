@@ -177,7 +177,8 @@ export interface ArtifactState {
 }
 
 export interface GerritChangeRef {
-  domain_id: string
+  domain_id: string                    // 兼容旧落盘；合提时为该仓第一个域
+  domain_ids?: string[]                // 本仓合提涉及的全部适配域
   repo: string
   change_url?: string
   change_number?: string

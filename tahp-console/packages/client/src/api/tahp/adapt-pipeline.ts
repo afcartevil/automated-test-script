@@ -73,6 +73,8 @@ export interface TimelineNode {
     queue?: string[]
     current_index?: number
     current_domain_id?: string
+    current_repo?: string
+    current_repo_label?: string
     domains?: AdaptDomainProgress[]
     total?: number
     passed?: number

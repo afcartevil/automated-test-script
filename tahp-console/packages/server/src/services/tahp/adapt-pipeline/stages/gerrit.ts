@@ -1,66 +1,40 @@
 import { registerStageForTest } from '../registry'
 import type { GerritChangeRef, PipelineDomain, StageContext, StageDefinition, StageVerdict } from '../types'
 import {
-  buildConflictChanges,
   cancelGerritSubmitTask,
-  detectDomainFileConflicts,
   isGerritSubmitStreamFatal,
   isGerritSubmitTimedOut,
   probeGerritSubmit,
-  startGerritDomainSubmit,
+  startGerritRepoSubmit,
 } from '../../gerrit-submit'
 import { discoverRemoteRunner } from '../harness-bridge-exec'
 import { fillMappedWorkspaceIfMissing } from '../mapped-workspace'
 import {
-  filterFilesBySelectedRepos,
+  filterRepoGroupsBySelection,
   groupChangedFilesByRepo,
-  resolveRepoForFile,
+  type RepoChangeGroup,
 } from '../repo-groups'
-import { basename, normalize } from 'path'
 import { domainsWithChangedFiles } from '../workspace-changed-files'
-
-function repoLabelForDomain(
-  domainId: string,
-  files: string[],
-  repoGroups: ReturnType<typeof groupChangedFilesByRepo>,
-  fallback: string,
-): string {
-  for (const g of repoGroups) {
-    if (g.domain_ids.includes(domainId)) {
-      return g.repo_label || basename(normalize(g.repo))
-    }
-  }
-  const first = files[0]
-  if (first) {
-    const root = resolveRepoForFile(first)
-    return basename(normalize(root))
-  }
-  return fallback
-}
 
 function domainsWithChanges(ctx: StageContext): PipelineDomain[] {
   return domainsWithChangedFiles(ctx.run.domains)
 }
 
-function applyRepoFilter(ctx: StageContext, domains: PipelineDomain[]): PipelineDomain[] {
-  const selected = ctx.run.gerrit_selected_repos
-  if (!selected?.length) return domains
-  return domains
-    .map(d => ({
-      ...d,
-      changed_files: filterFilesBySelectedRepos(d.changed_files ?? [], selected),
-    }))
-    .filter(d => (d.changed_files?.length ?? 0) > 0)
+function changeMatchesRepo(change: GerritChangeRef, repo: string, label?: string): boolean {
+  if (!repo) return false
+  if (change.repo === repo) return true
+  if (label && change.repo === label) return true
+  return false
 }
 
 function summarizeChanges(changes: GerritChangeRef[]): string {
   const submitted = changes.filter(c => c.status === 'submitted').length
   const blocked = changes.filter(c => c.status === 'blocked_conflict').length
   const failed = changes.filter(c => c.status === 'failed').length
-  if (blocked) return `${blocked} 个域存在文件冲突`
-  if (failed) return `${failed} 个域提交失败`
+  if (blocked) return `${blocked} 个仓存在历史冲突标记（将按仓合提，可重试）`
+  if (failed) return `${failed} 个仓提交失败`
   if (!changes.length) return '无待提交变更'
-  return `${submitted}/${changes.length} 域已提交`
+  return `${submitted}/${changes.length} 仓已提交`
 }
 
 function syncProgress(ctx: StageContext, patch: Record<string, unknown>): void {
@@ -96,7 +70,16 @@ function ensureRunMappedWorkspace(ctx: StageContext): void {
   }
 }
 
-async function launchDomainSubmit(ctx: StageContext, domain: PipelineDomain): Promise<boolean> {
+function domainLabelOf(ctx: StageContext, domainId: string): string {
+  return ctx.run.domains.find(d => d.domain_id === domainId)?.domain_label || domainId
+}
+
+function selectedRepoGroups(ctx: StageContext): RepoChangeGroup[] {
+  const repos = groupChangedFilesByRepo(domainsWithChanges(ctx))
+  return filterRepoGroupsBySelection(repos, ctx.run.gerrit_selected_repos)
+}
+
+async function launchRepoSubmit(ctx: StageContext, group: RepoChangeGroup): Promise<boolean> {
   ensureRunMappedWorkspace(ctx)
   const buildContext = ctx.run.build_context
   if (!buildContext) {
@@ -105,22 +88,26 @@ async function launchDomainSubmit(ctx: StageContext, domain: PipelineDomain): Pr
     return false
   }
 
-  const result = startGerritDomainSubmit({
+  const result = startGerritRepoSubmit({
     runId: ctx.run.run_id,
     projectCode: ctx.run.project_code,
-    domain,
+    repo: group.repo,
+    repoLabel: group.repo_label,
+    files: group.files,
+    domainIds: group.domain_ids,
+    domainLabels: group.domain_ids.map(id => domainLabelOf(ctx, id)),
     buildContext,
   })
 
   if (!result.ok) {
     const changes = [...(ctx.run.gerrit_changes ?? [])]
-    const idx = changes.findIndex(c => c.domain_id === domain.domain_id)
+    const idx = changes.findIndex(c => changeMatchesRepo(c, group.repo, group.repo_label))
     if (idx >= 0) {
       changes[idx] = { ...changes[idx], status: 'failed', error: result.error }
     }
     ctx.patchRun({ gerrit_changes: changes })
     syncProgress(ctx, { state: 'submit_failed', changes })
-    ctx.log(`域 ${domain.domain_id} 提交启动失败: ${result.error}`)
+    ctx.log(`仓库 ${group.repo_label} 提交启动失败: ${result.error}`)
     return false
   }
 
@@ -129,28 +116,44 @@ async function launchDomainSubmit(ctx: StageContext, domain: PipelineDomain): Pr
     progress: {
       ...(ctx.state.progress as Record<string, unknown>),
       state: 'submitting',
-      current_domain_id: domain.domain_id,
+      current_repo: group.repo,
+      current_repo_label: group.repo_label,
       submit_started_at: new Date().toISOString(),
     },
   })
-  ctx.log(`开始提交域 ${domain.domain_label}: taskId=${result.taskId}`)
+  ctx.log(`开始提交仓库 ${group.repo_label}: taskId=${result.taskId}`)
   return true
 }
 
-async function startNextDomainSubmit(ctx: StageContext): Promise<void> {
+async function startNextRepoSubmit(ctx: StageContext): Promise<void> {
   const p = (ctx.state.progress ?? {}) as Record<string, unknown>
   const queue = (p.queue as string[]) ?? []
   const idx = Number(p.current_index ?? 0)
   if (idx >= queue.length) return
 
-  const domain = ctx.run.domains.find(d => d.domain_id === queue[idx])
-  if (!domain) {
+  const repo = queue[idx]
+  const group = selectedRepoGroups(ctx).find(g => g.repo === repo)
+    ?? groupChangedFilesByRepo(domainsWithChanges(ctx)).find(g => g.repo === repo)
+  if (!group) {
     syncProgress(ctx, { current_index: idx + 1 })
-    await startNextDomainSubmit(ctx)
+    await startNextRepoSubmit(ctx)
     return
   }
 
-  await launchDomainSubmit(ctx, domain)
+  await launchRepoSubmit(ctx, group)
+}
+
+function findChangeIndex(
+  changes: GerritChangeRef[],
+  p: Record<string, unknown>,
+  evRepo?: string,
+): number {
+  const repo = String(evRepo ?? p.current_repo ?? '')
+  const label = String(p.current_repo_label ?? '')
+  const byRepo = changes.findIndex(c => changeMatchesRepo(c, repo, label))
+  if (byRepo >= 0) return byRepo
+  const idx = Number(p.current_index ?? 0)
+  return Number.isFinite(idx) && idx >= 0 && idx < changes.length ? idx : -1
 }
 
 export const gerritStageDefinition: StageDefinition = {
@@ -177,7 +180,6 @@ export const gerritStageDefinition: StageDefinition = {
       return
     }
 
-    // 写回过滤后的绝对路径，供选仓与提交使用
     const filteredById = new Map(domainsRaw.map(d => [d.domain_id, d.changed_files ?? []]))
     ctx.patchRun({
       domains: ctx.run.domains.map(d => {
@@ -198,8 +200,8 @@ export const gerritStageDefinition: StageDefinition = {
       return
     }
 
-    const domains = applyRepoFilter(ctx, domainsRaw)
-    if (!domains.length) {
+    const selected = filterRepoGroupsBySelection(repos, ctx.run.gerrit_selected_repos)
+    if (!selected.length) {
       syncProgress(ctx, {
         state: 'awaiting_confirm_no_changes',
         changes: [],
@@ -210,39 +212,24 @@ export const gerritStageDefinition: StageDefinition = {
       return
     }
 
-    const conflicts = detectDomainFileConflicts(domains)
-    if (conflicts.length) {
-      const changes = buildConflictChanges(ctx.run.domains, conflicts)
-      ctx.patchRun({ gerrit_changes: changes })
-      syncProgress(ctx, { state: 'blocked_conflict', conflicts, changes })
-      ctx.log(`检测到 ${conflicts.length} 个跨域文件冲突，禁止自动提交`)
-      return
-    }
-
-    const queue = domains.map(d => d.domain_id)
-    const repoGroupsForSubmit = groupChangedFilesByRepo(domains)
-    const initialChanges: GerritChangeRef[] = domains.map(d => ({
-      domain_id: d.domain_id,
-      repo: repoLabelForDomain(d.domain_id, d.changed_files ?? [], repoGroupsForSubmit, d.workspace_id),
+    const queue = selected.map(g => g.repo)
+    const initialChanges: GerritChangeRef[] = selected.map(g => ({
+      domain_id: g.domain_ids[0] ?? g.repo_label,
+      domain_ids: g.domain_ids,
+      repo: g.repo,
       status: 'pending',
-      files: d.changed_files ?? [],
+      files: g.files,
     }))
     ctx.patchRun({ gerrit_changes: initialChanges })
-    // 临时域文件列表到 run.domains 供后续 submit 使用
-    const patchedDomains = ctx.run.domains.map(d => {
-      const f = domains.find(x => x.domain_id === d.domain_id)
-      return f ? { ...d, changed_files: f.changed_files } : d
-    })
-    ctx.patchRun({ domains: patchedDomains, gerrit_changes: initialChanges })
     syncProgress(ctx, {
       state: 'submitting',
       queue,
       current_index: 0,
       changes: initialChanges,
-      text: `开始提交 ${domains.length} 个域`,
+      text: `开始提交 ${selected.length} 个仓库`,
     })
 
-    await startNextDomainSubmit(ctx)
+    await startNextRepoSubmit(ctx)
   },
 
   async observe(ctx: StageContext, ev) {
@@ -251,7 +238,8 @@ export const gerritStageDefinition: StageDefinition = {
     if (!taskId || ev.correlation.taskId !== taskId) return
 
     const p = (ctx.state.progress ?? {}) as Record<string, unknown>
-    const domainId = String(ev.payload.domain_id ?? p.current_domain_id ?? '')
+    const repo = String(ev.payload.repo ?? p.current_repo ?? '')
+    const repoLabel = String(ev.payload.repo_label ?? p.current_repo_label ?? repo)
 
     if (ev.type === 'task.started') {
       ctx.log(`Gerrit Agent 已启动（${taskId}）`)
@@ -264,13 +252,13 @@ export const gerritStageDefinition: StageDefinition = {
       if (text && isGerritSubmitStreamFatal(text)) {
         const err = 'ASF Bridge 会话已断开（齐治/SSH），请重试提交'
         const changes = [...(ctx.run.gerrit_changes ?? [])]
-        const changeIdx = changes.findIndex(c => c.domain_id === domainId)
+        const changeIdx = findChangeIndex(changes, p, repo)
         if (changeIdx >= 0) {
           changes[changeIdx] = { ...changes[changeIdx], status: 'failed', error: err }
         }
         ctx.patchRun({ gerrit_changes: changes })
         syncProgress(ctx, { state: 'submit_failed', changes, error: err })
-        ctx.log(`域 ${domainId} 提交失败: ${err}`)
+        ctx.log(`仓库 ${repoLabel} 提交失败: ${err}`)
         try { cancelGerritSubmitTask(taskId) } catch { /* ignore */ }
       }
       return
@@ -285,7 +273,7 @@ export const gerritStageDefinition: StageDefinition = {
     if (ev.type === 'task.completed') {
       const alreadySubmitted = ev.payload.already_submitted === true
       const changes = [...(ctx.run.gerrit_changes ?? [])]
-      const changeIdx = changes.findIndex(c => c.domain_id === domainId)
+      const changeIdx = findChangeIndex(changes, p, repo)
       if (changeIdx >= 0) {
         changes[changeIdx] = {
           ...changes[changeIdx],
@@ -302,29 +290,29 @@ export const gerritStageDefinition: StageDefinition = {
       syncProgress(ctx, { current_index: nextIndex, changes })
       ctx.log(
         alreadySubmitted
-          ? `域 ${domainId || '未知'} 无新变更，沿用既有 CR`
-          : `域 ${domainId || '未知'} Gerrit 提交完成`,
+          ? `仓库 ${repoLabel || '未知'} 无新变更，沿用既有 CR`
+          : `仓库 ${repoLabel || '未知'} Gerrit 提交完成`,
       )
 
       if (nextIndex < queue.length) {
-        await startNextDomainSubmit(ctx)
+        await startNextRepoSubmit(ctx)
       } else {
         syncProgress(ctx, { state: 'done' })
-        ctx.log('全部域 Gerrit 提交完成')
+        ctx.log('全部所选仓库 Gerrit 提交完成')
       }
       return
     }
 
     if (ev.type === 'task.failed') {
       const changes = [...(ctx.run.gerrit_changes ?? [])]
-      const changeIdx = changes.findIndex(c => c.domain_id === domainId)
+      const changeIdx = findChangeIndex(changes, p, repo)
       const err = String(ev.payload.error ?? ev.payload.message ?? '提交失败')
       if (changeIdx >= 0) {
         changes[changeIdx] = { ...changes[changeIdx], status: 'failed', error: err }
       }
       ctx.patchRun({ gerrit_changes: changes })
       syncProgress(ctx, { state: 'submit_failed', changes, error: err })
-      ctx.log(`域 ${domainId} 提交失败: ${err}`)
+      ctx.log(`仓库 ${repoLabel || repo || '未知'} 提交失败: ${err}`)
     }
   },
 
@@ -339,7 +327,7 @@ export const gerritStageDefinition: StageDefinition = {
       return {
         status: 'waiting_human',
         reason: 'select_repos',
-        message: '请勾选要提交到 Gerrit 的仓库（支持部分入库），然后继续。',
+        message: '请勾选要提交到 Gerrit 的仓库（支持部分入库）。同一仓内多域改动会合并为一张 CR。',
         actions: [
           { id: 'submit_all_repos', label: '全部仓库入库' },
           {
@@ -371,13 +359,14 @@ export const gerritStageDefinition: StageDefinition = {
       }
     }
 
+    // 旧 run 可能仍停在 blocked_conflict；重试会按仓合提，不再拦截
     if (state === 'blocked_conflict') {
       return {
         status: 'waiting_human',
         reason: 'blocked_conflict',
-        message: '检测到跨域文件冲突，无法自动提交 Gerrit。请人工协调后重试或跳过。',
+        message: '此运行曾按域拆 CR 并记下跨域同文件。现已改为按仓合提：点重试即可把勾选仓库的全部改动提交，无需先拆文件。',
         actions: [
-          { id: 'retry', label: '冲突已解决，重试提交' },
+          { id: 'retry', label: '按仓合提，重试提交' },
           { id: 'skip', label: '跳过 Gerrit 提交' },
         ],
       }
@@ -390,7 +379,7 @@ export const gerritStageDefinition: StageDefinition = {
     if (state === 'submit_failed' || changes.some(c => c.status === 'failed')) {
       return {
         status: 'failed',
-        error: String(p.error ?? '部分域 Gerrit 提交失败'),
+        error: String(p.error ?? '部分仓库 Gerrit 提交失败'),
         retryable: true,
       }
     }

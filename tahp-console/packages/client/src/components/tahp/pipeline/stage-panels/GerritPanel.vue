@@ -10,6 +10,7 @@ const props = defineProps<{
 
 interface GerritChange {
   domain_id: string
+  domain_ids?: string[]
   repo?: string
   change_url?: string
   change_number?: string
@@ -70,13 +71,28 @@ function crLabel(status: string): string {
   }
 }
 
+function domainCell(c: GerritChange): string {
+  const ids = c.domain_ids?.length ? c.domain_ids : (c.domain_id ? [c.domain_id] : [])
+  return ids.join(', ') || '—'
+}
+
+function repoCell(c: GerritChange): string {
+  const repo = (c.repo ?? '').replace(/\\/g, '/')
+  const parts = repo.split('/').filter(Boolean)
+  return parts[parts.length - 1] || c.repo || '—'
+}
+
+function changeKey(c: GerritChange): string {
+  return `${c.repo || ''}::${domainCell(c)}`
+}
+
 function stateLabel(state?: unknown): string {
   switch (String(state ?? '')) {
     case 'awaiting_repo_selection': return '选择入库仓库'
     case 'awaiting_confirm_no_changes': return '未检测到变更'
     case 'submitting': return '提交中'
     case 'done': return '完成'
-    case 'blocked_conflict': return '跨域冲突'
+    case 'blocked_conflict': return '历史冲突（可按仓重试）'
     case 'no_changes': return '无变更'
     case 'submit_failed': return '提交失败'
     default: return String(state || props.node.status)
@@ -98,7 +114,9 @@ function stateLabel(state?: unknown): string {
         <span class="k">进度</span>
         <span class="v">
           {{ Number(gp().current_index ?? 0) }} / {{ (gp().queue as string[]).length }}
-          <template v-if="gp().current_domain_id"> · 当前 {{ gp().current_domain_id }}</template>
+          <template v-if="gp().current_repo_label || gp().current_repo">
+            · 当前 {{ gp().current_repo_label || gp().current_repo }}
+          </template>
         </span>
       </div>
       <div v-if="gp().percent != null" class="row">
@@ -121,17 +139,17 @@ function stateLabel(state?: unknown): string {
     <table v-if="getChanges().length" class="cr-table">
       <thead>
         <tr>
-          <th>域</th>
           <th>仓</th>
+          <th>涉及域</th>
           <th>文件数</th>
           <th>状态</th>
           <th>CR</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="c in getChanges()" :key="c.domain_id" :class="{ conflict: c.status === 'blocked_conflict' }">
-          <td class="td-name">{{ c.domain_id }}</td>
-          <td>{{ c.repo ?? '—' }}</td>
+        <tr v-for="c in getChanges()" :key="changeKey(c)" :class="{ conflict: c.status === 'blocked_conflict' }">
+          <td class="td-name" :title="c.repo">{{ repoCell(c) }}</td>
+          <td>{{ domainCell(c) }}</td>
           <td>{{ c.files?.length ?? '—' }}</td>
           <td>
             <EaPill :variant="crVariant(c.status)" :title="c.note">{{ crLabel(c.status) }}</EaPill>

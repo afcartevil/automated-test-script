@@ -215,7 +215,7 @@ const panel = computed(() => RENDERERS[props.node.key] ?? DefaultPanel)
 | `FlashPanel` | 设备卡片 + 刷机进度条 + 日志（复用 `utils/flash-progress.ts` 解析） | — |
 | `SelfCheckPanel` | 通过/失败/进行中统计环；失败用例列表（可展开看 message） | 跳自检报告 Tab |
 | `TriagePanel` | 分析结论 Markdown 摘要 + 关键证据 | 跳 `/tahp/bug-analysis` |
-| `GerritPanel` | 按域的 CR 列表：域 / 仓 / 文件数 / CR 链接 / 状态；冲突项红色高亮 | 外链 Gerrit |
+| `GerritPanel` | 按仓的 CR 列表：仓 / 涉及域 / 文件数 / CR 链接 / 状态 | 外链 Gerrit |
 
 > `BuildPanel` 的「本轮编译组件」清单是**安全设计**，不是装饰。增量编译漏组件会导致自检结果失真且无报错，必须让人能核对。
 

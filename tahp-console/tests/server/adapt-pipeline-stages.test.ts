@@ -62,8 +62,7 @@ vi.mock('../../packages/server/src/services/tahp/adapt-layout/service', () => ({
 
 vi.mock('../../packages/server/src/services/tahp/gerrit-submit', () => ({
   probeGerritSubmit: vi.fn().mockResolvedValue({ available: false, reason: 'test: gerrit unavailable' }),
-  detectDomainFileConflicts: vi.fn().mockReturnValue([]),
-  buildConflictChanges: vi.fn().mockReturnValue([]),
+  startGerritRepoSubmit: (...args: unknown[]) => startGerritSubmitMock(...args),
   startGerritDomainSubmit: (...args: unknown[]) => startGerritSubmitMock(...args),
   parseGerritSubmitResult: vi.fn().mockReturnValue({}),
   getGerritSubmitTask: vi.fn(),
@@ -1049,7 +1048,7 @@ describe('adapt-pipeline F3', () => {
     expect(state.stages.human_review).toBeUndefined()
   })
 
-  it('gerrit submit_all_repos clears waiting_human and starts domain submit', async () => {
+  it('gerrit submit_all_repos clears waiting_human and starts repo submit', async () => {
     startGerritSubmitMock.mockReturnValue({ ok: true, taskId: 'task-gerrit-1' })
     installAllStages()
 
@@ -1110,5 +1109,74 @@ describe('adapt-pipeline F3', () => {
     expect(startGerritSubmitMock).toHaveBeenCalled()
     expect(updated.stages.gerrit?.refs?.gerrit_task_id).toBe('task-gerrit-1')
     expect((updated.stages.gerrit?.progress as { state?: string })?.state).toBe('submitting')
+  })
+
+  it('gerrit submit_all_repos merges overlapping domain files in the same repo', async () => {
+    startGerritSubmitMock.mockReturnValue({ ok: true, taskId: 'task-gerrit-union' })
+    installAllStages()
+
+    const shared = 'Z:\\project\\KM9_NEW\\kernel\\shared.dtsi'
+    const run = createRun({
+      ...baseInput(),
+      domains: [
+        {
+          workspace_id: 'adapt-debug',
+          domain_id: 'tp',
+          domain_label: 'TP',
+          module: 'kernel-driver',
+          related_skills: [],
+          form_data: {},
+          incomplete_required: [],
+          enabled: true,
+          status: 'done',
+          changed_files: [shared, 'Z:\\project\\KM9_NEW\\kernel\\tp.c'],
+        },
+        {
+          workspace_id: 'adapt-debug',
+          domain_id: 'vib',
+          domain_label: '振动',
+          module: 'kernel-driver',
+          related_skills: [],
+          form_data: {},
+          incomplete_required: [],
+          enabled: true,
+          status: 'done',
+          changed_files: [shared],
+        },
+      ],
+      build_context: {
+        ...baseInput().build_context,
+        gerrit_issue_id: 'TOS1501-1',
+      },
+    })
+    run.status = 'waiting_human'
+    run.current_node = 'gerrit'
+    run.stages.gerrit = {
+      key: 'gerrit',
+      status: 'waiting_human',
+      attempt: 1,
+      refs: {},
+      progress: { state: 'awaiting_repo_selection', repos: [] },
+      human: {
+        reason: 'select_repos',
+        message: '请勾选仓库',
+        actions: [{ id: 'submit_all_repos', label: '全部仓库入库' }],
+      },
+    }
+    saveRun(run, { immediate: true })
+
+    await submitHumanAction(run.run_id, 'gerrit', 'submit_all_repos')
+
+    const updated = getRun(run.run_id)!
+    expect((updated.stages.gerrit?.progress as { state?: string })?.state).toBe('submitting')
+    expect(startGerritSubmitMock).toHaveBeenCalledTimes(1)
+    const arg = startGerritSubmitMock.mock.calls[0][0] as {
+      files: string[]
+      domainIds: string[]
+    }
+    expect([...arg.domainIds].sort()).toEqual(['tp', 'vib'])
+    expect(arg.files).toHaveLength(2)
+    expect(updated.gerrit_changes).toHaveLength(1)
+    expect(updated.gerrit_changes?.[0].status).toBe('pending')
   })
 })

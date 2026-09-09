@@ -336,13 +336,21 @@ unsafe 的选项**不隐藏**，灰显 + 标原因，二次确认后可强制执
 
 ### 7.1 适配必须逐域串行
 
-`per-domain CR` 要求能区分「哪个文件是哪个域改的」。git 只知道文件变了，不知道归属，因此必须**每个域适配完立即打一次 git 快照**，用相邻快照差集归属该域。这决定了 `stages/adapt.ts` 是串行 fan-out，不是并行。
+适配必须逐域串行，以便记录「哪个文件是哪个域改的」（展示与质量上报）。git 只知道文件变了，不知道归属，因此必须**每个域适配完立即打一次 git 快照**，用相邻快照差集归属该域。这决定了 `stages/adapt.ts` 是串行 fan-out，不是并行。
+
+**入库按仓合提，不按域拆 CR**（见 7.2）。
 
 **不要用适配报告的 `file_changes` 做变更判定。** 它是从工具 preview 和 LLM 回复正文里正则推断的（见 [adapt-agent-report.ts](../../../tahp-console/packages/server/src/services/tahp/adapt-agent-report.ts) `:139-178`），会漏也会多。**git 是唯一真相源**，`file_changes` 仅供 UI 展示。
 
-### 7.2 同文件跨域冲突必须拦截
+### 7.2 提交按仓合提，不再因跨域同文件停跑
 
-两个域改同一文件时（如 TP 与 LCM 都改 `*_touch.dtsi`），按域拆 CR 会出错。`stages/gerrit.ts` 必须检测快照重叠，命中即转 `waiting_human`，**禁止自动提交**。
+适配阶段仍按域串行改代码，便于记录「谁改了什么」。**入库时按 git 仓拆 CR，不按域拆。**
+
+`gerrit` 阶段先把各域 `changed_files` 按仓库分组，列出可勾选清单（与既有选仓 UI 一致）。用户勾选后：
+
+- 每个仓提交 **一张** CR，文件为该仓内所有域改动的并集
+- 两个域改了同一仓里的同一文件（如 TP 与 LCM 都改 `*_touch.dtsi`）**不拦截**，直接合进该仓的一次提交
+- **禁止**再按域拆 CR 后因文件交集转 `waiting_human` / `blocked_conflict`
 
 ### 7.3 跨 run 资源冲突必须在启动前拦截
 

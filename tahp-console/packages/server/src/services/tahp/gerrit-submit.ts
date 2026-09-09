@@ -1,7 +1,8 @@
 /**
  * TAHP — Gerrit 提交编排（适配流水线 gerrit 阶段）
  *
- * 走 Agent Bridge 调用 gerrit-submit Skill，按域逐次提交。
+ * 走 Agent Bridge 调用 gerrit-submit Skill，按用户勾选的 git 仓逐次提交
+ * （同一仓内多域改动合并为一张 CR，不再按域拆单）。
  */
 import { randomBytes } from 'crypto'
 import { join } from 'path'
@@ -35,7 +36,7 @@ import {
   DEFAULT_GERRIT_HOST,
 } from './gerrit-credentials'
 import { GERRIT_NOT_CONFIGURED_ERROR } from './gerrit-review'
-import type { BuildContext, GerritChangeRef, PipelineDomain } from './adapt-pipeline/types'
+import type { BuildContext, PipelineDomain } from './adapt-pipeline/types'
 
 export const GERRIT_SUBMIT_SKILL_ID = 'gerrit-submit'
 
@@ -79,21 +80,29 @@ export function guessGerritCommitType(files: string[]): string {
 export function buildGerritCommitMessage(opts: {
   issueId?: string
   files: string[]
-  domainLabel: string
+  repoLabel?: string
+  domainLabel?: string
+  domainLabels?: string[]
 }): string {
   const rels = opts.files.map(f => f.replace(/\\/g, '/').replace(/^.*\//, '')).filter(Boolean)
   const sample = rels.slice(0, 4).join('、') || '适配变更'
   const type = guessGerritCommitType(opts.files)
+  const subject = (opts.repoLabel || opts.domainLabel || '适配').trim()
+  const domains = (opts.domainLabels ?? []).map(s => s.trim()).filter(Boolean)
+  const domainHint = domains.length ? `（${domains.join('、')}）` : ''
   const desc = type === 'test'
     ? `新增测试产物 ${sample}`
-    : `适配域 ${opts.domainLabel}：更新 ${sample}`
+    : `适配入库 ${subject}${domainHint}：更新 ${sample}`
+  const suggest = domains.length
+    ? `确认 ${subject} 中 ${domains.join('、')} 相关变更已入库且编译/功能不受影响`
+    : `确认 ${subject} 相关变更已入库且编译/功能不受影响`
   const id = (opts.issueId || '').trim()
   return [
     `ID:${id}`,
     `DESCRIPTION:${desc}`,
     `TYPE:${type}`,
     'AFFECT_PROJECTS:ALL',
-    `TEST_SUGGESTIONS:确认 ${opts.domainLabel} 相关变更已入库且编译/功能不受影响`,
+    `TEST_SUGGESTIONS:${suggest}`,
     '[是否自检]：是',
     '[是否影响其它项目]:否',
     '[是否影响其它平台]:否',
@@ -302,11 +311,18 @@ export function extractGerritScriptFatal(text: string): string | undefined {
   return m?.[0]
 }
 
-export interface DomainFileConflict {
-  file: string
-  domain_ids: string[]
+export interface GerritRepoSubmitInput {
+  runId: string
+  projectCode: string
+  repo: string
+  repoLabel: string
+  files: string[]
+  domainIds: string[]
+  domainLabels: string[]
+  buildContext: BuildContext
 }
 
+/** @deprecated 按仓提交后不再按域拆 CR；保留给旧调用方 */
 export interface GerritDomainSubmitInput {
   runId: string
   projectCode: string
@@ -317,7 +333,8 @@ export interface GerritDomainSubmitInput {
 export interface GerritSubmitTaskCtx {
   taskId: string
   runId: string
-  domainId: string
+  repo: string
+  domainId?: string
   startedAt: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
   llmResponse?: string
@@ -347,28 +364,6 @@ function emit(taskId: string, type: string, payload: Record<string, unknown>) {
     payload: { task_id: taskId, ...payload },
     ts: Date.now(),
   })
-}
-
-/** 跨域 changed_files 交集检测 */
-export function detectDomainFileConflicts(
-  domains: Array<Pick<PipelineDomain, 'domain_id' | 'changed_files'>>,
-): DomainFileConflict[] {
-  const fileToDomains = new Map<string, string[]>()
-  for (const d of domains) {
-    for (const raw of d.changed_files ?? []) {
-      const file = raw.replace(/\\/g, '/').trim()
-      if (!file) continue
-      const list = fileToDomains.get(file) ?? []
-      list.push(d.domain_id)
-      fileToDomains.set(file, list)
-    }
-  }
-  const conflicts: DomainFileConflict[] = []
-  for (const [file, ids] of fileToDomains) {
-    const unique = [...new Set(ids)]
-    if (unique.length > 1) conflicts.push({ file, domain_ids: unique })
-  }
-  return conflicts.sort((a, b) => a.file.localeCompare(b.file))
 }
 
 export interface GerritSubmitParseResult {
@@ -431,24 +426,6 @@ export function parseGerritSubmitResult(text: string): GerritSubmitParseResult {
   return result
 }
 
-export function buildConflictChanges(
-  domains: PipelineDomain[],
-  conflicts: DomainFileConflict[],
-): GerritChangeRef[] {
-  const conflictDomains = new Set(conflicts.flatMap(c => c.domain_ids))
-  return domains
-    .filter(d => d.enabled && d.status === 'done' && (d.changed_files?.length ?? 0) > 0)
-    .map(d => ({
-      domain_id: d.domain_id,
-      repo: d.workspace_id,
-      status: conflictDomains.has(d.domain_id) ? 'blocked_conflict' as const : 'pending',
-      files: d.changed_files ?? [],
-      error: conflictDomains.has(d.domain_id)
-        ? `与域 ${conflicts.filter(c => c.domain_ids.includes(d.domain_id)).flatMap(c => c.domain_ids).filter(id => id !== d.domain_id).join(', ')} 存在文件冲突`
-        : undefined,
-    }))
-}
-
 export async function probeGerritSubmit(): Promise<{ available: boolean; reason?: string }> {
   if (!isGerritConfigured()) {
     return { available: false, reason: GERRIT_NOT_CONFIGURED_ERROR }
@@ -494,7 +471,7 @@ ${sessionBlock}
 
 # 必须遵守
 1. **不要**为走流程去 Read \`transsion-coding-standards-review\` 或其它适配 Skill。BFF 已按 commit-template.md 生成 UTF-8 message 并写入 SUBMIT。仅当现成命令失败且不是 SSH/幽灵时，才 Read \`${opts.remoteHarnessPath}\`
-2. 只提交本域列出的 Linux 路径文件；禁止跨仓混提、禁止扫 Windows 盘符
+2. 只提交本仓库列出的 Linux 路径文件；禁止跨仓混提、禁止扫 Windows 盘符
 3. **push 前看 PROBE**：工作区已干净且 HEAD 就是待提交 commit 时不要重复 commit；push 输出 \`no new changes\` 属于已提交成功
 4. 回报的 Change URL **只能**来自本次 SUBMIT 哨兵区间，禁止复述历史 CR
 5. 每个仓完成后保留一行 \`GERRIT_CHANGE_URL: <url>\`
@@ -505,7 +482,7 @@ ${opts.credLine ? `\n${opts.credLine}\n` : ''}
 }
 
 function buildInstructions(
-  _input: GerritDomainSubmitInput,
+  _input: GerritRepoSubmitInput,
   cred?: { credFilePath: string; host: string },
   session?: number,
 ): string {
@@ -527,7 +504,7 @@ function buildInstructions(
 }
 
 export function buildGerritSubmitUserMessage(
-  input: GerritDomainSubmitInput,
+  input: GerritRepoSubmitInput,
   opts: {
     linuxFiles: Array<{ win: string; linux: string; rel: string }>
     commitMessage: string
@@ -544,15 +521,19 @@ export function buildGerritSubmitUserMessage(
   const cmds = [
     opts.probeCmd ? `### 1. PROBE（只发这一条，等哨兵结束）\n\`${opts.probeCmd}\`` : '',
     opts.submitCmd
-      ? `### 2. SUBMIT（PROBE 显示本域文件有变更或未 push 时发这一条；不要改 base64）\n\`${opts.submitCmd}\``
+      ? `### 2. SUBMIT（PROBE 显示本仓库文件有变更或未 push 时发这一条；不要改 base64）\n\`${opts.submitCmd}\``
       : '',
   ].filter(Boolean).join('\n\n')
+  const domains = input.domainLabels.length
+    ? input.domainLabels.map((l, i) => `${l} (${input.domainIds[i] || l})`).join('、')
+    : (input.domainIds.join('、') || '—')
 
   return [
     '# Gerrit 提交任务',
     '',
     `项目：${input.projectCode}`,
-    `域：${input.domain.domain_label} (${input.domain.domain_id})`,
+    `仓库：${input.repoLabel} (${input.repo})`,
+    `涉及域：${domains}`,
     branch ? `目标分支：${branch}（SUBMIT 脚本已写入）` : '目标分支：未指定（SUBMIT 脚本按远端 upstream / remotes 推断）',
     issueId
       ? `提交 ID（commit 模板 ID 字段，多仓共用）：${issueId}`
@@ -562,7 +543,7 @@ export function buildGerritSubmitUserMessage(
       ? `Windows 映射根：${input.buildContext.mapped_root}`
       : '',
     '',
-    '## 本域变更文件（已换算，禁止再扫 Z:\\ / UNC）',
+    '## 本仓库变更文件（已换算，禁止再扫 Z:\\ / UNC）',
     fileLines,
     '',
     '## commit message（SUBMIT 已内嵌 UTF-8 base64，禁止 execute_code 重写）',
@@ -633,8 +614,8 @@ async function runAgentChat(
   return fullResponse
 }
 
-export function startGerritDomainSubmit(
-  input: GerritDomainSubmitInput,
+export function startGerritRepoSubmit(
+  input: GerritRepoSubmitInput,
 ): { ok: true; taskId: string } | { ok: false; error: string } {
   try {
     assertHarnessCliReady()
@@ -642,9 +623,9 @@ export function startGerritDomainSubmit(
     return { ok: false, error: (err as Error).message }
   }
 
-  const files = input.domain.changed_files ?? []
+  const files = input.files ?? []
   if (!files.length) {
-    return { ok: false, error: `域 ${input.domain.domain_id} 无变更文件` }
+    return { ok: false, error: `仓库 ${input.repoLabel || input.repo} 无变更文件` }
   }
 
   const taskId = genTaskId()
@@ -652,16 +633,20 @@ export function startGerritDomainSubmit(
   taskCtx.set(taskId, {
     taskId,
     runId: input.runId,
-    domainId: input.domain.domain_id,
+    repo: input.repo,
+    domainId: input.domainIds[0],
     startedAt: now,
     status: 'running',
   })
 
   emit(taskId, 'task.started', {
     run_id: input.runId,
-    domain_id: input.domain.domain_id,
+    repo: input.repo,
+    repo_label: input.repoLabel,
+    domain_id: input.domainIds[0],
+    domain_ids: input.domainIds,
     skill: GERRIT_SUBMIT_SKILL_ID,
-    message: `开始提交域 ${input.domain.domain_label}`,
+    message: `开始提交仓库 ${input.repoLabel}`,
   })
 
   setImmediate(() => {
@@ -671,6 +656,22 @@ export function startGerritDomainSubmit(
   })
 
   return { ok: true, taskId }
+}
+
+/** @deprecated 使用 startGerritRepoSubmit；按仓合提后不再按域拆 CR */
+export function startGerritDomainSubmit(
+  input: GerritDomainSubmitInput,
+): { ok: true; taskId: string } | { ok: false; error: string } {
+  return startGerritRepoSubmit({
+    runId: input.runId,
+    projectCode: input.projectCode,
+    repo: input.domain.domain_id,
+    repoLabel: input.domain.domain_label,
+    files: input.domain.changed_files ?? [],
+    domainIds: [input.domain.domain_id],
+    domainLabels: [input.domain.domain_label],
+    buildContext: input.buildContext,
+  })
 }
 
 export function cancelGerritSubmitTask(taskId: string): void {
@@ -685,7 +686,7 @@ export function cancelGerritSubmitTask(taskId: string): void {
   sharedBridgeClient.destroy(agentSessionIdForTask(taskId)).catch(() => {})
 }
 
-async function runGerritSubmitTask(taskId: string, input: GerritDomainSubmitInput): Promise<void> {
+async function runGerritSubmitTask(taskId: string, input: GerritRepoSubmitInput): Promise<void> {
   const ctx = taskCtx.get(taskId)
   if (!ctx) return
 
@@ -707,12 +708,12 @@ async function runGerritSubmitTask(taskId: string, input: GerritDomainSubmitInpu
     const buildContext = fillMappedWorkspaceIfMissing(input.buildContext, disc)
     input = { ...input, buildContext }
 
-    const linuxFiles = mapWinFilesToLinux(input.domain.changed_files ?? [], {
+    const linuxFiles = mapWinFilesToLinux(input.files ?? [], {
       mappedRoot: buildContext.mapped_root,
       linuxRoot: buildContext.linux_root,
     })
     if (!linuxFiles.length) {
-      throw new Error(`域 ${input.domain.domain_id} 无可用 Linux 路径`)
+      throw new Error(`仓库 ${input.repoLabel || input.repo} 无可用 Linux 路径`)
     }
     onLog(`mapped_root=${buildContext.mapped_root || '(空)'} linux_root=${buildContext.linux_root || DEFAULT_LINUX_MAPPED_ROOT}`)
     for (const f of linuxFiles) onLog(`file ${f.linux}`)
@@ -721,7 +722,8 @@ async function runGerritSubmitTask(taskId: string, input: GerritDomainSubmitInpu
     const commitMessage = buildGerritCommitMessage({
       issueId: buildContext.gerrit_issue_id,
       files: linuxFiles.map(f => f.rel),
-      domainLabel: input.domain.domain_label,
+      repoLabel: input.repoLabel,
+      domainLabels: input.domainLabels,
     })
     const probeScript = buildGerritProbeScript({
       relFiles: linuxFiles.map(f => f.rel),
@@ -852,7 +854,10 @@ async function runGerritSubmitTask(taskId: string, input: GerritDomainSubmitInpu
 
     emit(taskId, 'task.completed', {
       run_id: input.runId,
-      domain_id: input.domain.domain_id,
+      repo: input.repo,
+      repo_label: input.repoLabel,
+      domain_id: input.domainIds[0],
+      domain_ids: input.domainIds,
       change_url: parsed.changeUrl,
       change_number: parsed.changeNumber,
       change_id: parsed.changeId,
@@ -864,7 +869,12 @@ async function runGerritSubmitTask(taskId: string, input: GerritDomainSubmitInpu
     ctx.status = 'failed'
     ctx.error = msg
     ctx.completedAt = new Date().toISOString()
-    emit(taskId, 'task.failed', { error: msg, message: msg, domain_id: input.domain.domain_id })
+    emit(taskId, 'task.failed', {
+      error: msg,
+      message: msg,
+      repo: input.repo,
+      domain_id: input.domainIds[0],
+    })
   } finally {
     taskRuntime.delete(taskId)
     sharedBridgeClient.destroy(agentSessionId).catch(() => {})
