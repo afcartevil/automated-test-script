@@ -138,6 +138,7 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     type: 'text',
     group: GROUP_MODEM_TOOLS,
     placeholder: 'C:\\Program Files\\7-Zip\\7z.exe',
+    default: 'E:\\software\\7-Zip\\7z.exe',
   },
   {
     key: 'chrome_binary',
@@ -145,6 +146,7 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     type: 'text',
     group: GROUP_MODEM_TOOLS,
     placeholder: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    default: 'C:\\Program Files\\Google\\Chrome\\Application',
   },
   {
     key: 'wireshark_path',
@@ -152,6 +154,7 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     type: 'text',
     group: GROUP_MODEM_TOOLS,
     placeholder: 'Wireshark 安装目录',
+    default: 'E:\\software\\Wireshark',
   },
   {
     key: 'elt_home',
@@ -159,6 +162,7 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     type: 'text',
     group: GROUP_MODEM_TOOLS,
     placeholder: 'MTK ELT 工具目录',
+    default: 'E:\\software\\ELT',
   },
   {
     key: 'nlt_home',
@@ -166,6 +170,7 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     type: 'text',
     group: GROUP_MODEM_TOOLS,
     placeholder: 'NLT 工具目录',
+    default: 'E:\\software\\ELT',
   },
   {
     key: 'quts_python_path',
@@ -173,6 +178,7 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     type: 'text',
     group: GROUP_MODEM_TOOLS,
     placeholder: 'Qualcomm QUTS Python 目录',
+    default: 'E:\\software\\ELT',
   },
   {
     key: 'modem_meta_root',
@@ -181,6 +187,7 @@ export const UNIFIED_CONFIG_FIELDS: UnifiedConfigField[] = [
     group: GROUP_MODEM_TOOLS,
     placeholder: '如 D:\\Tool\\MTK\\ModemMeta_v10.2412.0.02_transsion_20240428\\ModemMeta_v10.2412.0.02_transsion_20240428（META.exe 所在目录）',
     description: '填 META.exe 所在安装目录（同级有 bin、configs、plugins 等）。射频校准备份/恢复使用此路径。',
+    default: 'E:\\software\\ELT',
   },
 ]
 
@@ -309,7 +316,8 @@ export function readUnifiedConfig(): UnifiedConfigValues {
 
 /**
  * 表单初始展示值：已保存值 > 配置清单各 Skill 已有 .env 默认值 > 字段默认值 > 空。
- * （不落盘覆盖，仅供前端表单预填）
+ * Modem 工具组字段带团队共用安装路径 default，未自定义时预填，便于保存并启动检查。
+ * （不落盘覆盖，仅供前端表单预填；保存时见 fillUnifiedConfigDefaults）
  */
 export function readUnifiedConfigForForm(): UnifiedConfigValues {
   const stored = readUnifiedConfig()
@@ -334,12 +342,19 @@ export function readUnifiedConfigForForm(): UnifiedConfigValues {
   return values
 }
 
-export function writeUnifiedConfig(input: UnifiedConfigValues): UnifiedConfigValues {
+/** 用户未填自定义值时回填字段 default；已填值原样保留。工作区路径仍由 write 覆盖为工程根 jira_workspace。 */
+export function fillUnifiedConfigDefaults(input: UnifiedConfigValues): UnifiedConfigValues {
   const values: UnifiedConfigValues = {}
   for (const field of UNIFIED_CONFIG_FIELDS) {
     const v = input[field.key]
-    values[field.key] = typeof v === 'string' ? v.trim() : ''
+    const trimmed = typeof v === 'string' ? v.trim() : ''
+    values[field.key] = trimmed || field.default || ''
   }
+  return values
+}
+
+export function writeUnifiedConfig(input: UnifiedConfigValues): UnifiedConfigValues {
+  const values: UnifiedConfigValues = fillUnifiedConfigDefaults(input)
   values.__updated_at = new Date().toISOString()
   const workspaceRoot = getJiraWorkspaceRoot()
   values.workspace_root = workspaceRoot.replace(/\\/g, '/')
