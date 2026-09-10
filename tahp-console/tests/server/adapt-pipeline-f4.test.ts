@@ -90,6 +90,7 @@ describe('adapt-pipeline F4', () => {
     expect(timeline.run_id).toBe(run.run_id)
     expect(timeline.nodes.length).toBe(DEFAULT_WORKFLOW.nodes.filter(n => n.enabled).length)
     expect(timeline.pending_human_count).toBe(1)
+    expect(timeline.can_fail_current_stage).toBe(false)
     expect(timeline.nodes.find(n => n.key === 'build')?.human?.reason).toBe('capability_unavailable')
     expect(timeline.nodes.find(n => n.key === 'gerrit')).toBeTruthy()
   })
@@ -318,6 +319,7 @@ describe('adapt-pipeline F4', () => {
       '/api/tahp/adapt-pipeline/runs/:runId/start',
       '/api/tahp/adapt-pipeline/runs/:runId/human-action',
       '/api/tahp/adapt-pipeline/runs/:runId/resume-points',
+      '/api/tahp/adapt-pipeline/runs/:runId/fail-current-stage',
       '/api/tahp/adapt-pipeline/workflow',
       '/api/tahp/adapt-pipeline/capabilities',
       '/api/tahp/adapt-pipeline/domain-catalog',

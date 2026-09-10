@@ -1,6 +1,6 @@
 import { getStage } from './registry'
+import { canFailCurrentStage, resolveAdaptMaxRetries } from './types'
 import type { PipelineDomain, PipelineRun, TimelineView, WorkflowDefinition } from './types'
-import { resolveAdaptMaxRetries } from './types'
 import { effectiveWorkflowForRun, getEnabledNodes } from './workflow'
 
 function serializeDomainForTimeline(domain: PipelineDomain, retryMax: number) {
@@ -150,5 +150,6 @@ export function buildTimelineView(
     nodes,
     iterations: run.iterations,
     pending_human_count: pendingHumanCount,
+    can_fail_current_stage: canFailCurrentStage(run),
   }
 }

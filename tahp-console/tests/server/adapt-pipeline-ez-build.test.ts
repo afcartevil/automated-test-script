@@ -20,6 +20,7 @@ import { loadEzBuildScript, resolveEzBuildScriptPath } from '../../packages/serv
 import {
   buildTmuxStartCommand,
   buildTmuxPollCommand,
+  buildTmuxKillCommand,
   parseTmuxPollOutput,
   detectBuildFailureInLog,
   detectBuildSuccessInLog,
@@ -136,6 +137,15 @@ describe('tmux poll helpers', () => {
     expect(cmd).toContain('ezb-LJ9-abc.done')
     expect(cmd).toContain("''")
     expect(cmd).not.toContain('build pipeline')
+  })
+
+  it('buildTmuxKillCommand sends Ctrl+C then kills session and leftover compile by log name', () => {
+    const cmd = buildTmuxKillCommand('ezb-LJ9-abc')
+    expect(cmd).toContain('tmux send-keys')
+    expect(cmd).toContain('C-c')
+    expect(cmd).toContain('tmux kill-session')
+    expect(cmd).toContain('ezb-LJ9-abc.log')
+    expect(cmd).toContain('pkill')
   })
 
   it('appends TRSYS_ROOT_DIR and sys_version when provided', () => {

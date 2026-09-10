@@ -24,7 +24,7 @@ import type {
   WorkflowDefinition,
   WorkflowNode,
 } from './types'
-import { APPENDABLE_STAGE_KEYS } from './types'
+import { APPENDABLE_STAGE_KEYS, canFailCurrentStage } from './types'
 
 const advanceChains = new Map<string, Promise<void>>()
 const correlationIndex = new Map<string, { runId: string; nodeKey: string }>()
@@ -1212,6 +1212,40 @@ export async function pauseRun(runId: string): Promise<void> {
   if (!run) throw new Error(`run not found: ${runId}`)
   run.status = 'paused'
   saveRun(run, { immediate: true })
+}
+
+/**
+ * 停止当前适配/编译/烧录步骤并转人工，不 abort 整条流水线。
+ * 先闸住 waiting_human 避免 observe/advance 竞态，再 cancel 外部任务（含堡垒机 tmux）。
+ */
+export async function failCurrentStageToHuman(runId: string): Promise<void> {
+  const run = getRun(runId)
+  if (!run) throw new Error(`run not found: ${runId}`)
+  if (!canFailCurrentStage(run)) {
+    throw new Error('当前阶段不可停止转人工（仅适配 / 编译 / 烧录执行中可用）')
+  }
+
+  const nodeKey = run.current_node!
+  const wf = workflowFor(run)
+  const node = wf.nodes.find(n => n.key === nodeKey)
+  if (!node) throw new Error(`节点不可用: ${nodeKey}`)
+
+  run.status = 'waiting_human'
+  patchStage(run, nodeKey, { status: 'waiting_human' })
+  saveRun(run, { immediate: true })
+  appendPipelineLog(runId, nodeKey, '用户停止本步，正在取消外部任务…')
+
+  const stage = getStage(nodeKey)
+  if (stage?.cancel) {
+    try {
+      await stage.cancel(createCtx(run, node))
+      appendPipelineLog(runId, nodeKey, '外部任务已请求取消（含堡垒机编译会话）')
+    } catch (err) {
+      appendPipelineLog(runId, nodeKey, `取消外部任务失败: ${(err as Error).message}`)
+    }
+  }
+
+  await parkFailedNodeForHuman(runId, nodeKey, '用户停止本步')
 }
 
 export async function abortRun(runId: string, reason?: string): Promise<void> {

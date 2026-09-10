@@ -21,6 +21,24 @@ import { defaultFlashSkillId } from '../harness-skill-registry'
 
 let flashPromise: Promise<DeviceFlashResult> | null = null
 let harnessBusy = false
+let flashJobGen = 0
+let flashCancelled = false
+
+function isCurrentFlashJob(gen: number, ctx: StageContext): boolean {
+  if (flashCancelled || gen !== flashJobGen) return false
+  return ctx.run.stages.flash?.status === 'running'
+}
+
+function logIfActive(ctx: StageContext, gen: number, line: string): void {
+  if (!isCurrentFlashJob(gen, ctx)) return
+  ctx.log(line)
+}
+
+function kickAdvance(runId: string): void {
+  void import('../orchestrator').then(({ advance }) => {
+    void advance(runId)
+  }).catch(() => { /* ignore */ })
+}
 
 function collectBuildArtifacts(ctx: StageContext) {
   const buildSummary = ctx.run.stages.build?.summary as Record<string, unknown> | undefined
@@ -65,13 +83,15 @@ function classifyFromCtx(ctx: StageContext): FlashArtifactClassification {
   })
 }
 
-async function markSuccess(ctx: StageContext, pkgPath: string, via: string, returnCode = 0) {
+async function markSuccess(ctx: StageContext, gen: number, pkgPath: string, via: string, returnCode = 0) {
+  if (!isCurrentFlashJob(gen, ctx)) return
   const deviceId = ctx.run.device_id
   ctx.log(`刷机完成（${via}），等待设备重启…`)
   ctx.patchState({ progress: { state: 'waiting_boot', phase: 'reboot', via, pkg_path: pkgPath } })
   if (deviceId) {
     try {
-      await waitForAdbDevice(deviceId, 120_000)
+      await waitForAdbDevice(deviceId, 120_000, 5_000, () => !isCurrentFlashJob(gen, ctx))
+      if (!isCurrentFlashJob(gen, ctx)) return
       ctx.patchState({
         progress: { state: 'success', via },
         summary: { pkgPath, returnCode, via },
@@ -79,9 +99,11 @@ async function markSuccess(ctx: StageContext, pkgPath: string, via: string, retu
       ctx.log('设备已就绪')
       return
     } catch {
+      if (!isCurrentFlashJob(gen, ctx)) return
       ctx.log('设备重启等待超时，但刷机本身成功')
     }
   }
+  if (!isCurrentFlashJob(gen, ctx)) return
   ctx.patchState({
     progress: { state: 'success', via },
     summary: { pkgPath, returnCode, via, rebootTimeout: true },
@@ -94,11 +116,13 @@ function resolveFlashSkillId(ctx: StageContext): string {
 
 async function runDeviceUpdateFlash(
   ctx: StageContext,
+  gen: number,
   pkgPath: string,
   deviceId: string,
   phase: string,
   priorHarnessError?: string,
 ): Promise<boolean> {
+  if (!isCurrentFlashJob(gen, ctx)) return false
   let deviceUpdateAvailable = false
   try {
     const { resolveDeviceUpdateExe } = await import('../../device-flash')
@@ -132,12 +156,13 @@ async function runDeviceUpdateFlash(
   const logPrefix = priorHarnessError ? 'harness 刷机失败，降级 device_update' : '开始刷机(device_update)'
   ctx.log(`${logPrefix}: ${pkgPath} → ${deviceId}`)
 
-  flashPromise = runDeviceFlash([deviceId], { pkgPath }, line => ctx.log(line))
+  flashPromise = runDeviceFlash([deviceId], { pkgPath }, line => logIfActive(ctx, gen, line))
   try {
     const result = await flashPromise
     flashPromise = null
+    if (!isCurrentFlashJob(gen, ctx)) return false
     if (result.success) {
-      await markSuccess(ctx, pkgPath, 'device_update', result.returnCode)
+      await markSuccess(ctx, gen, pkgPath, 'device_update', result.returnCode)
       return true
     }
     const flashSkillId = resolveFlashSkillId(ctx)
@@ -154,6 +179,7 @@ async function runDeviceUpdateFlash(
     return false
   } catch (err) {
     flashPromise = null
+    if (!isCurrentFlashJob(gen, ctx)) return false
     ctx.patchState({
       progress: { state: 'failed', error: String(err) },
     })
@@ -163,10 +189,12 @@ async function runDeviceUpdateFlash(
 
 async function runHarnessFullRomFlash(
   ctx: StageContext,
+  gen: number,
   pkgPath: string,
   deviceId: string,
   flashSkillId: string,
 ): Promise<{ success: boolean; error?: string }> {
+  if (!isCurrentFlashJob(gen, ctx)) return { success: false, error: '已取消' }
   ctx.patchState({
     progress: {
       state: 'flashing',
@@ -187,10 +215,106 @@ async function runHarnessFullRomFlash(
       romPath: pkgPath,
       variant: ctx.run.build_context?.variant,
       flashSkillId,
-    }, line => ctx.log(line))
+    }, line => logIfActive(ctx, gen, line))
     return { success: result.success, error: result.error }
   } finally {
     harnessBusy = false
+  }
+}
+
+async function executeFlashJob(ctx: StageContext, gen: number): Promise<void> {
+  if (!isCurrentFlashJob(gen, ctx)) return
+  const classified = classifyFromCtx(ctx)
+  const deviceId = ctx.run.device_id!
+  if (classified.kind === 'single_img') {
+    ctx.patchState({
+      progress: {
+        state: 'flashing',
+        phase: 'harness_single_img',
+        img_path: classified.imgPath,
+        partition: classified.partition,
+        message: `harness-flash-single-img → ${classified.partition}`,
+        text: classified.imgPath,
+      },
+    })
+    ctx.log(`单镜像刷机: ${classified.imgPath} → ${classified.partition} @ ${deviceId}`)
+    harnessBusy = true
+    const result = await runHarnessFlash({
+      pipelineRunId: ctx.run.run_id,
+      mode: 'single_img',
+      deviceId,
+      imgPath: classified.imgPath,
+      partition: classified.partition,
+      variant: ctx.run.build_context?.variant,
+    }, line => logIfActive(ctx, gen, line))
+    harnessBusy = false
+    if (!isCurrentFlashJob(gen, ctx)) return
+    if (result.success) {
+      await markSuccess(ctx, gen, classified.imgPath!, 'harness-flash-single-img')
+    } else {
+      ctx.patchState({
+        progress: {
+          state: 'failed',
+          error: result.error ?? '单镜像刷机失败',
+          via: 'harness-flash-single-img',
+        },
+      })
+    }
+    return
+  }
+
+  const pkgPath = classified.pkgPath!
+  const validation = validateFlashPkgPath(pkgPath)
+  if (!validation.valid) {
+    ctx.patchState({
+      progress: {
+        state: 'waiting_artifact',
+        message: validation.reason,
+        text: validation.reason,
+      },
+    })
+    return
+  }
+
+  const flashSkillId = resolveFlashSkillId(ctx)
+  const harnessProbe = await probeHarnessFlash(flashSkillId)
+  if (!isCurrentFlashJob(gen, ctx)) return
+
+  if (harnessProbe.available) {
+    try {
+      const harnessResult = await runHarnessFullRomFlash(ctx, gen, pkgPath, deviceId, flashSkillId)
+      if (!isCurrentFlashJob(gen, ctx)) return
+      if (harnessResult.success) {
+        await markSuccess(ctx, gen, pkgPath, flashSkillId)
+        return
+      }
+      ctx.log(`harness 刷机失败: ${harnessResult.error ?? 'unknown'}，降级 device_update…`)
+      await runDeviceUpdateFlash(
+        ctx,
+        gen,
+        pkgPath,
+        deviceId,
+        'device_update_fallback',
+        harnessResult.error,
+      )
+    } catch (err) {
+      harnessBusy = false
+      if (!isCurrentFlashJob(gen, ctx)) return
+      ctx.patchState({
+        progress: { state: 'failed', error: String(err) },
+      })
+    }
+    return
+  }
+
+  ctx.log(`harness 不可用 (${harnessProbe.reason ?? 'unknown'})，使用 device_update`)
+  try {
+    await runDeviceUpdateFlash(ctx, gen, pkgPath, deviceId, 'device_update')
+  } catch (err) {
+    if (!isCurrentFlashJob(gen, ctx)) return
+    ctx.patchState({
+      progress: { state: 'failed', error: String(err) },
+    })
   }
 }
 
@@ -226,7 +350,7 @@ export const flashStageDefinition: StageDefinition = {
     }
 
     const buildKind = ctx.run.build_context?.build_kind ?? 'whole_device'
-    let classified = classifyFromCtx(ctx)
+    const classified = classifyFromCtx(ctx)
 
     // 模块编译：仅完整 ROM 或单镜像可继续；否则暂停并可跳 Gerrit
     if (classified.kind === 'none') {
@@ -264,92 +388,47 @@ export const flashStageDefinition: StageDefinition = {
       return
     }
 
-    // —— 单镜像：固定 harness-flash-single-img ——
-    if (classified.kind === 'single_img') {
-      ctx.patchState({
-        progress: {
-          state: 'flashing',
-          phase: 'harness_single_img',
-          img_path: classified.imgPath,
-          partition: classified.partition,
-          message: `harness-flash-single-img → ${classified.partition}`,
-          text: classified.imgPath,
-        },
-      })
-      ctx.log(`单镜像刷机: ${classified.imgPath} → ${classified.partition} @ ${deviceId}`)
-      harnessBusy = true
-      const result = await runHarnessFlash({
-        pipelineRunId: ctx.run.run_id,
-        mode: 'single_img',
-        deviceId,
-        imgPath: classified.imgPath,
-        partition: classified.partition,
-        variant: ctx.run.build_context?.variant,
-      }, line => ctx.log(line))
-      harnessBusy = false
-      if (result.success) {
-        await markSuccess(ctx, classified.imgPath!, 'harness-flash-single-img')
-      } else {
+    if (classified.kind !== 'single_img') {
+      const pkgPath = classified.pkgPath!
+      const validation = validateFlashPkgPath(pkgPath)
+      if (!validation.valid) {
         ctx.patchState({
           progress: {
-            state: 'failed',
-            error: result.error ?? '单镜像刷机失败',
-            via: 'harness-flash-single-img',
+            state: 'waiting_artifact',
+            message: validation.reason,
+            text: validation.reason,
           },
         })
+        return
       }
-      return
     }
 
-    // —— 完整包：先 harness（flash_skill_id），失败再降级 device_update ——
-    const pkgPath = classified.pkgPath!
-    const validation = validateFlashPkgPath(pkgPath)
-    if (!validation.valid) {
-      ctx.patchState({
-        progress: {
-          state: 'waiting_artifact',
-          message: validation.reason,
-          text: validation.reason,
-        },
-      })
-      return
+    // 只清掉流水线自己挂着的 DeviceUpdate，避免误杀 AI 自检正在跑的刷机。
+    if (flashPromise) {
+      const { stopActiveFlash } = await import('../../device-flash')
+      stopActiveFlash()
     }
-
-    const flashSkillId = resolveFlashSkillId(ctx)
-    const harnessProbe = await probeHarnessFlash(flashSkillId)
-
-    if (harnessProbe.available) {
-      try {
-        const harnessResult = await runHarnessFullRomFlash(ctx, pkgPath, deviceId, flashSkillId)
-        if (harnessResult.success) {
-          await markSuccess(ctx, pkgPath, flashSkillId)
-          return
-        }
-        ctx.log(`harness 刷机失败: ${harnessResult.error ?? 'unknown'}，降级 device_update…`)
-        await runDeviceUpdateFlash(
-          ctx,
-          pkgPath,
-          deviceId,
-          'device_update_fallback',
-          harnessResult.error,
-        )
-      } catch (err) {
-        harnessBusy = false
-        ctx.patchState({
-          progress: { state: 'failed', error: String(err) },
+    flashCancelled = false
+    const gen = ++flashJobGen
+    ctx.patchState({
+      progress: {
+        state: 'flashing',
+        phase: 'starting',
+        text: '启动烧录…',
+      },
+    })
+    // 延后到下一 macrotask：人工指定包时 orchestrator 会在 start() 返回后才把
+    // waiting_human → running；同步启动会导致 isCurrentFlashJob 直接判失败、烧录不跑。
+    setImmediate(() => {
+      void executeFlashJob(ctx, gen)
+        .catch((err) => {
+          if (!isCurrentFlashJob(gen, ctx)) return
+          ctx.patchState({ progress: { state: 'failed', error: String(err) } })
         })
-      }
-      return
-    }
-
-    ctx.log(`harness 不可用 (${harnessProbe.reason ?? 'unknown'})，使用 device_update`)
-    try {
-      await runDeviceUpdateFlash(ctx, pkgPath, deviceId, 'device_update')
-    } catch (err) {
-      ctx.patchState({
-        progress: { state: 'failed', error: String(err) },
-      })
-    }
+        .finally(() => {
+          kickAdvance(ctx.run.run_id)
+        })
+    })
   },
 
   evaluate(ctx: StageContext): StageVerdict {
@@ -452,11 +531,16 @@ export const flashStageDefinition: StageDefinition = {
     }
   },
 
-  async cancel() {
+  async cancel(ctx: StageContext) {
+    flashCancelled = true
+    flashJobGen += 1
     const { stopActiveFlash } = await import('../../device-flash')
+    const { cancelHarnessFlash } = await import('../harness-flash-capability')
+    try { await cancelHarnessFlash(ctx.run.run_id) } catch { /* ignore */ }
     stopActiveFlash()
     flashPromise = null
     harnessBusy = false
+    ctx.log('已请求停止烧录（含 DeviceUpdate 进程树）')
   },
 }
 

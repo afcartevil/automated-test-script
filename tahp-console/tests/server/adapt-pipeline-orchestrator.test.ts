@@ -6,6 +6,7 @@ import * as deviceSelfCheck from '../../packages/server/src/services/tahp/device
 import {
   advance,
   computeResumePoints,
+  failCurrentStageToHuman,
   refreshArtifacts,
   resetOrchestratorForTest,
   resumeFrom,
@@ -18,6 +19,7 @@ import {
   createRun,
   getRun,
   resetStoreForTest,
+  saveRun,
 } from '../../packages/server/src/services/tahp/adapt-pipeline/store'
 import {
   resetSelfCheckSourceForTest,
@@ -469,6 +471,7 @@ describe('adapt-pipeline orchestrator', () => {
     const run = createRun(baseRunInput())
     run.status = 'waiting_human'
     run.current_node = 'selfcheck'
+    run.device_id = 'serial-1'
     run.artifacts = {
       source: {
         kind: 'source',
@@ -516,6 +519,7 @@ describe('adapt-pipeline orchestrator', () => {
     run.status = 'waiting_human'
     run.current_node = 'human_review'
     run.iteration = 1
+    run.device_id = 'serial-1'
     run.artifacts = {
       build: {
         kind: 'build',
@@ -527,5 +531,67 @@ describe('adapt-pipeline orchestrator', () => {
 
     await resumeFrom(run.run_id, { node: 'flash' })
     expect(getRun(run.run_id)?.iteration).toBe(1)
+  })
+
+  it('failCurrentStageToHuman cancels running adapt and parks waiting_human without abort', async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    registerStage({
+      key: 'adapt',
+      label: 'AI 适配',
+      produces: ['source'],
+      async start() {},
+      evaluate() {
+        return { status: 'running' as const }
+      },
+      cancel,
+    })
+    registerStage({
+      key: 'build',
+      label: '编译',
+      async start() {},
+      evaluate() {
+        return { status: 'pending' as const }
+      },
+    })
+    setWorkflowOverrideForTest({
+      id: 'fail-current',
+      version: 1,
+      label: 'fail-current',
+      maxIterations: 3,
+      nodes: [
+        { key: 'adapt', enabled: true },
+        { key: 'build', enabled: true, onDone: 'END' },
+      ],
+    })
+
+    const run = createRun(baseRunInput())
+    await startRun(run.run_id)
+    expect(getRun(run.run_id)?.status).toBe('running')
+    expect(getRun(run.run_id)?.current_node).toBe('adapt')
+
+    await failCurrentStageToHuman(run.run_id)
+
+    expect(cancel).toHaveBeenCalledTimes(1)
+    const updated = getRun(run.run_id)!
+    expect(updated.status).toBe('waiting_human')
+    expect(updated.current_node).toBe('adapt')
+    expect(updated.stages.adapt?.status).toBe('waiting_human')
+    expect(updated.stages.adapt?.human?.reason).toBe('stage_failed')
+    expect(updated.stages.adapt?.error).toBe('用户停止本步')
+    expect(updated.abort_reason).toBeUndefined()
+    expect(updated.finished_at).toBeUndefined()
+  })
+
+  it('failCurrentStageToHuman rejects when the current node is not adapt/build/flash', async () => {
+    registerMinimalStages()
+    setWorkflowOverrideForTest(MINIMAL_WF)
+    const run = createRun(baseRunInput())
+    run.status = 'running'
+    run.current_node = 'step_a'
+    run.stages.step_a = { key: 'step_a', status: 'running', attempt: 1, refs: {} }
+    saveRun(run, { immediate: true })
+
+    await expect(failCurrentStageToHuman(run.run_id)).rejects.toThrow(/不可停止/)
+    expect(getRun(run.run_id)?.status).toBe('running')
   })
 })

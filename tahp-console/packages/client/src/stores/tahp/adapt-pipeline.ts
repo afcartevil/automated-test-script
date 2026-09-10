@@ -13,6 +13,7 @@ import {
   fetchPipelineTimeline,
   fetchResumePoints,
   fetchWorkflow,
+  failCurrentPipelineStage,
   pausePipelineRun,
   resumePipelineRun,
   saveWorkflow,
@@ -453,6 +454,19 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
     }
   }
 
+  async function failCurrentStage(runId: string) {
+    actionBusy.value = false
+    runActionBusy.value = true
+    try {
+      await failCurrentPipelineStage(runId)
+      await loadTimeline(runId)
+      await loadResumePoints(runId)
+      await loadRuns()
+    } finally {
+      runActionBusy.value = false
+    }
+  }
+
   async function discardDraftRun(runId: string): Promise<string | null> {
     runActionBusy.value = true
     try {
@@ -580,6 +594,7 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
     setMaxIterations,
     pauseRun,
     abortRun,
+    failCurrentStage,
     discardDraftRun,
     createAndStartRun,
     checkRuntimeReadiness,

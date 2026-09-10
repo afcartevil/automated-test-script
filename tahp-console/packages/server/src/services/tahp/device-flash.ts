@@ -344,6 +344,23 @@ export interface FlashToolInfo {
 }
 
 let activeFlashProcess: ChildProcessWithoutNullStreams | null = null
+/** 每次 stopActiveFlash 递增，避免流水线取消误伤 AI 自检等其它 runDeviceFlash 调用方。 */
+let flashAbortGeneration = 0
+
+function killFlashProcessTree(pid: number): void {
+  if (process.platform === 'win32') {
+    try {
+      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        timeout: 8000,
+        stdio: 'ignore',
+      })
+    } catch { /* ignore */ }
+    return
+  }
+  try { process.kill(-pid, 'SIGKILL') } catch { /* ignore */ }
+  try { process.kill(pid, 'SIGKILL') } catch { /* ignore */ }
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
@@ -1154,14 +1171,38 @@ export async function runDeviceFlash(
   }
 
   try {
+    const abortGen = flashAbortGeneration
+    const aborted = () => flashAbortGeneration !== abortGen
     ensureAdbKeysSynced(log)
     const { pkgPath, skipUnzip } = await prepareFlashPkgPath(options.pkgPath, options, log)
+    if (aborted()) {
+      log('[刷机] 已取消（准备阶段）')
+      return {
+        success: false,
+        returnCode: -1,
+        command: [],
+        workDir: resolveDeviceUpdateDir(),
+        logs,
+        error: '已取消',
+      }
+    }
     let resolvedRootPkgPath = options.rootPkgPath?.trim() || ''
     if (!resolvedRootPkgPath && options.enableRootPkg) {
       resolvedRootPkgPath = resolveUserRootPkgPath(options.pkgPath)
       log(`[刷机] 自动解析 user_root 小包: ${resolvedRootPkgPath}`)
     }
     const rootPkgPath = await prepareRootPkgPath(resolvedRootPkgPath, log)
+    if (aborted()) {
+      log('[刷机] 已取消（准备阶段）')
+      return {
+        success: false,
+        returnCode: -1,
+        command: [],
+        workDir: resolveDeviceUpdateDir(),
+        logs,
+        error: '已取消',
+      }
+    }
     const cmd = buildFlashCommand(serials, pkgPath, {
       rootPkgPath,
       stageVersion: options.stageVersion,
@@ -1202,7 +1243,18 @@ export async function runDeviceFlash(
       })
     })
 
-    const success = returnCode === 0
+    const success = returnCode === 0 && !aborted()
+    if (aborted()) {
+      log('[刷机] 已取消')
+      return {
+        success: false,
+        returnCode: returnCode === 0 ? -1 : returnCode,
+        command: cmd,
+        workDir,
+        logs,
+        error: '已取消',
+      }
+    }
     if (success) {
       log('[刷机] 刷机进程正常结束')
     } else {
@@ -1224,22 +1276,23 @@ export async function runDeviceFlash(
 }
 
 export function stopActiveFlash(): boolean {
-  if (!activeFlashProcess) return false
-  try {
-    activeFlashProcess.kill()
-    return true
-  } catch {
-    return false
-  }
+  flashAbortGeneration += 1
+  const proc = activeFlashProcess
+  if (!proc?.pid) return false
+  killFlashProcessTree(proc.pid)
+  try { proc.kill('SIGKILL') } catch { /* already dead */ }
+  return true
 }
 
 export async function waitForAdbDevice(
   serial: string,
   timeoutMs = 300_000,
-  pollIntervalMs = 5_000
+  pollIntervalMs = 5_000,
+  shouldAbort?: () => boolean,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
+    if (shouldAbort?.()) return false
     const online = await listAdbDeviceIds()
     if (online.includes(serial)) return true
     await sleep(pollIntervalMs)

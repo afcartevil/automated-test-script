@@ -10,6 +10,21 @@ export type RunStatus =
 export type StageStatus =
   | 'pending' | 'running' | 'waiting_human' | 'done' | 'failed' | 'skipped'
 
+/** 执行中可「停止本步并转人工」的阶段（不终止整条 run） */
+export const FAIL_CURRENT_STAGE_KEYS = ['adapt', 'build', 'flash'] as const
+export type FailCurrentStageKey = (typeof FAIL_CURRENT_STAGE_KEYS)[number]
+
+export function canFailCurrentStage(run: {
+  status: RunStatus
+  current_node: string | null
+  stages: Record<string, { status: StageStatus } | undefined>
+}): boolean {
+  if (run.status !== 'running') return false
+  const node = run.current_node
+  if (!node || !(FAIL_CURRENT_STAGE_KEYS as readonly string[]).includes(node)) return false
+  return run.stages[node]?.status === 'running'
+}
+
 export interface PathParamInputs {
   OLD_VENDOR_ROOT: string
   NEW_VENDOR_ROOT: string
@@ -519,6 +534,8 @@ export interface TimelineView {
   }>
   iterations: IterationRecord[]
   pending_human_count: number
+  /** 当前节点为适配/编译/烧录且正在执行时，可停止本步转人工 */
+  can_fail_current_stage?: boolean
 }
 
 /** AI 适配阶段每个失败模块的默认自动重试次数（不含首次执行） */

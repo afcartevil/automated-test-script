@@ -170,8 +170,29 @@ export function buildTmuxPollCommand(session: string, eaBuildDir = EA_BUILD_DIR)
   ].join('; ')
 }
 
+/**
+ * 停掉堡垒机 tmux 编译：先 Ctrl+C 触发 ez-build.sh 的 INT trap（杀子进程），
+ * 再杀进程组 / session，最后按会话日志名扫残留，避免留下第二份 ninja/make。
+ */
 export function buildTmuxKillCommand(session: string): string {
-  return `tmux has-session -t ${shellQuote(session)} 2>/dev/null && tmux kill-session -t ${shellQuote(session)} || true`
+  const s = shellQuote(session)
+  const logPat = shellQuote(`${session}.log`)
+  return [
+    `if tmux has-session -t ${s} 2>/dev/null; then`,
+    `  tmux send-keys -t ${s} C-c || true`,
+    `  sleep 2`,
+    `  pane_pid=$(tmux list-panes -t ${s} -F '#{pane_pid}' 2>/dev/null | head -n1)`,
+    `  if [ -n "$pane_pid" ]; then`,
+    `    pgid=$(ps -o pgid= -p "$pane_pid" 2>/dev/null | tr -d ' ')`,
+    `    if [ -n "$pgid" ]; then kill -TERM -"$pgid" 2>/dev/null || true; sleep 1; kill -KILL -"$pgid" 2>/dev/null || true; fi`,
+    `  fi`,
+    `  tmux kill-session -t ${s} || true`,
+    `fi`,
+    `pkill -TERM -f ${logPat} 2>/dev/null || true`,
+    `sleep 1`,
+    `pkill -KILL -f ${logPat} 2>/dev/null || true`,
+    `true`,
+  ].join('\n')
 }
 
 export function parseTmuxPollOutput(raw: string): TmuxPollSnapshot {

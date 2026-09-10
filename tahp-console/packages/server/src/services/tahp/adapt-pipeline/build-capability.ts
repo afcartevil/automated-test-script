@@ -570,9 +570,9 @@ export const buildCapability: ExternalCapability<BuildCapabilityInput> = {
     if (!ctx) return
     ctx.cancelled = true
     ctx.status = { state: 'cancelled', error: '已取消' }
-    if (ctx.tmuxSession) {
-      try { await killTmuxSession(ctx.tmuxSession) } catch { /* ignore */ }
-    }
+    // 不把 cancelled signal 传给 kill：否则 bridgeExec 会立刻抛「已取消」而杀不掉堡垒机编译
+    const session = ctx.tmuxSession || tmuxSessionName(ctx.runId, ctx.project)
+    try { await killTmuxSession(session) } catch { /* ignore */ }
     try { await bridgeCancel() } catch { /* ignore */ }
     emit(ctx)
   },

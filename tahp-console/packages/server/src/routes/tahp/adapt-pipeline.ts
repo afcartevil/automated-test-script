@@ -13,6 +13,7 @@ import {
   appendStages,
   computeAppendCandidates,
   computeResumePoints,
+  failCurrentStageToHuman,
   pauseRun,
   recover,
   resumeFrom,
@@ -345,6 +346,30 @@ tahpAdaptPipelineRoutes.post('/runs/:runId/pause', async (ctx) => {
   try {
     await pauseRun(runId)
     ctx.body = { success: true, data: { ok: true } }
+  } catch (err) {
+    ctx.status = 400
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
+
+tahpAdaptPipelineRoutes.post('/runs/:runId/fail-current-stage', async (ctx) => {
+  const runId = ctx.params.runId
+  if (!getRun(runId)) {
+    ctx.status = 404
+    ctx.body = { success: false, error: 'run 不存在' }
+    return
+  }
+  try {
+    await failCurrentStageToHuman(runId)
+    const updated = getRun(runId)!
+    ctx.body = {
+      success: true,
+      data: {
+        ok: true,
+        status: updated.status,
+        current_node: updated.current_node,
+      },
+    }
   } catch (err) {
     ctx.status = 400
     ctx.body = { success: false, error: (err as Error).message }

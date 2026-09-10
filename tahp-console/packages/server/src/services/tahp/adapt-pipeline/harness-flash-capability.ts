@@ -23,6 +23,17 @@ import {
 } from './harness-skill-registry'
 
 const bridgeClient = new AgentBridgeClient({ timeoutMs: 2 * 60 * 60_000 })
+const activeFlashSessions = new Map<string, string>()
+
+export async function cancelHarnessFlash(pipelineRunId: string): Promise<void> {
+  const sessionId = activeFlashSessions.get(pipelineRunId)
+  if (!sessionId) return
+  try {
+    await bridgeClient.interrupt(sessionId, '用户停止本步')
+  } finally {
+    activeFlashSessions.delete(pipelineRunId)
+  }
+}
 
 export type HarnessFlashMode = 'full_rom' | 'single_img'
 
@@ -204,6 +215,7 @@ export async function runHarnessFlash(
     if (!manager.running) throw new Error('Agent Bridge 未运行')
 
     const sessionId = `tahp-pipeline-flash-${Date.now()}-${randomBytes(2).toString('hex')}`
+    activeFlashSessions.set(input.pipelineRunId, sessionId)
     const instructions = buildInstructions(input, resolved.skillId, resolved.skillPath)
     const userMessage = input.mode === 'single_img'
       ? `# 单镜像刷机\nsn=${input.deviceId}\nimg=${input.imgPath}\npartition=${input.partition}`
@@ -254,5 +266,7 @@ export async function runHarnessFlash(
     logger.warn({ err: message, skillId }, '[harness-flash] failed')
     log(message)
     return { success: false, skillId: skillId || 'unknown', logs, error: message }
+  } finally {
+    activeFlashSessions.delete(input.pipelineRunId)
   }
 }

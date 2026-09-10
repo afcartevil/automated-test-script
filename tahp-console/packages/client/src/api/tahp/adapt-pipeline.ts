@@ -115,6 +115,7 @@ export interface TimelineView {
   nodes: TimelineNode[]
   iterations: IterationRecord[]
   pending_human_count: number
+  can_fail_current_stage?: boolean
 }
 
 export interface ResumePoint {
@@ -396,6 +397,10 @@ export function pausePipelineRun(runId: string): Promise<{ ok: boolean }> {
 
 export function abortPipelineRun(runId: string, reason?: string): Promise<{ ok: boolean }> {
   return tahpPost(`/api/tahp/adapt-pipeline/runs/${encodeURIComponent(runId)}/abort`, reason ? { reason } : undefined)
+}
+
+export function failCurrentPipelineStage(runId: string): Promise<{ ok: boolean; status?: string; current_node?: string | null }> {
+  return tahpPost(`/api/tahp/adapt-pipeline/runs/${encodeURIComponent(runId)}/fail-current-stage`)
 }
 
 export function discardPipelineDraftRun(runId: string): Promise<{ ok: boolean }> {

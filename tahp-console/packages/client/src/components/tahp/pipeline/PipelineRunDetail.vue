@@ -49,6 +49,14 @@ const canAbort = computed(() =>
   !['draft', 'passed', 'failed', 'aborted'].includes(props.timeline.status),
 )
 
+const canFailCurrentStage = computed(() => {
+  if (props.timeline.can_fail_current_stage) return true
+  if (props.timeline.status !== 'running') return false
+  const key = props.timeline.current_node
+  if (key !== 'adapt' && key !== 'build' && key !== 'flash') return false
+  return props.timeline.nodes.find(n => n.key === key)?.status === 'running'
+})
+
 const canAppend = computed(() =>
   props.timeline.status === 'passed'
   && Boolean(props.store.appendCandidates?.eligible),
@@ -80,6 +88,13 @@ async function loadLogsForNode(nodeKey: string | null) {
 async function handleAbort() {
   if (!window.confirm('确认终止该流水线？将取消编译/适配/刷机等正在执行的 Agent 与外部任务。')) return
   await props.store.abortRun(props.timeline.run_id, '用户终止')
+}
+
+async function handleFailCurrentStage() {
+  if (!window.confirm(
+    '确认停止当前步骤？将取消本步 Agent，并停止堡垒机上的编译/刷机进程。本步按失败转人工，可从恢复点继续，不会终止整条流水线。',
+  )) return
+  await props.store.failCurrentStage(props.timeline.run_id)
 }
 
 async function handleDiscardDraft() {
@@ -147,6 +162,15 @@ watch(
           @click="handleDiscardDraft"
         >
           删除
+        </button>
+        <button
+          v-if="canFailCurrentStage"
+          type="button"
+          class="btn-warn"
+          :disabled="store.runActionBusy"
+          @click="handleFailCurrentStage"
+        >
+          停止本步并转人工
         </button>
         <button
           v-if="canAbort"
