@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { NButton, NInput, useMessage } from 'naive-ui'
 import {
   listGkiAnalysisTasks,
+  listGkiRepoTags,
   listGkiUpgradeJobs,
   startGkiPatchServer,
   type GkiAnalysisTaskSummary,
@@ -11,23 +12,33 @@ import {
 } from '@/api/tahp/gki-patch'
 import {
   applyGkiUpgradeNotice,
+  deleteGkiUpgradeNotice,
   dismissGkiUpgradeNotice,
   listGkiUpgradeNotices,
-  parseGkiUpgradeNotice,
+  restoreGkiUpgradeNotice,
   type GkiExternalNotice,
 } from '@/api/tahp/gki-upgrade-notices'
 import GkiUpgradeHistoryPanel from '@/components/tahp/gki-patch/GkiUpgradeHistoryPanel.vue'
 import type { GkiHistoryKind } from '@/components/tahp/gki-patch/GkiUpgradeHistoryPanel.vue'
 import GkiUpgradePendingNoticesCard from '@/components/tahp/gki-patch/GkiUpgradePendingNoticesCard.vue'
+import GkiApplyNoticeModal from '@/components/tahp/gki-patch/GkiApplyNoticeModal.vue'
+import GkiDismissNoticeModal from '@/components/tahp/gki-patch/GkiDismissNoticeModal.vue'
+import { pickSecondNewestMonthTarget } from '@/utils/gki-month-tags'
 
+const route = useRoute()
 const router = useRouter()
 const message = useMessage()
+const highlightNoticeId = computed(() =>
+  String(route.query.notice || route.query.notice_id || '').trim(),
+)
 
 const notices = ref<GkiExternalNotice[]>([])
 const loadingNotices = ref(false)
 const applyingNoticeId = ref('')
 const confirmingNoticeId = ref('')
 const dismissingNoticeId = ref('')
+const restoringNoticeId = ref('')
+const deletingNoticeId = ref('')
 const filledNoticeIds = ref<string[]>([])
 
 const historyKind = ref<GkiHistoryKind>('upgrade')
@@ -40,6 +51,21 @@ const historyError = ref('')
 const fromTag = ref('')
 const toTag = ref('')
 const noticeHint = ref('')
+const applyModalShow = ref(false)
+const applyNotice = ref<GkiExternalNotice | null>(null)
+const applyFromTag = ref('')
+const applyToTag = ref('')
+const applyLatestTag = ref('')
+const applyLatestMonth = ref('')
+const applyRecommendedTag = ref('')
+const applyRecommendedMonth = ref('')
+const applyTagOptions = ref<string[]>([])
+const applyTagsLoading = ref(false)
+const applyTagsHint = ref('')
+const applyWarning = ref('')
+const dismissModalShow = ref(false)
+const dismissNotice = ref<GkiExternalNotice | null>(null)
+const dismissReason = ref('')
 let noticesPollTimer: number | null = null
 
 const pendingNoticeCount = computed(() =>
@@ -64,11 +90,57 @@ const completedCount = computed(() =>
 const canOpenWithTags = computed(() => Boolean(fromTag.value.trim() && toTag.value.trim()))
 
 
+function matchNotice(item: GkiExternalNotice, id: string) {
+  if (!id) return false
+  return (
+    item.noticeId === id
+    || item.sourceId === id
+    || item.parentSourceId === id
+    || Boolean(item.sourceId && item.sourceId.startsWith(`${id}#`))
+  )
+}
+
+const lastAppliedHighlight = ref('')
+
+function applyHighlightedNotice() {
+  const id = highlightNoticeId.value
+  if (!id) return
+  const found = notices.value.find(item => matchNotice(item, id))
+  const matched = notices.value.filter(item => matchNotice(item, id))
+  if (!found) {
+    if (notices.value.length && lastAppliedHighlight.value !== id) {
+      noticeHint.value = '未在本机收件箱找到该通知，请点「刷新」或核对中心任务是否已同步'
+    }
+    return
+  }
+  if (lastAppliedHighlight.value === found.noticeId || lastAppliedHighlight.value === id) return
+  lastAppliedHighlight.value = matched.length > 1 ? id : found.noticeId
+  if (matched.length > 1) {
+    noticeHint.value = `已定位 ${matched.length} 条异常告警，请在收件箱逐条处理`
+    return
+  }
+  if (found.fromTag || found.currentGkiVersion) fromTag.value = found.fromTag || found.currentGkiVersion || ''
+  if (found.toTag) toTag.value = found.toTag
+  if (found.fromTag && found.toTag) {
+    if (!filledNoticeIds.value.includes(found.noticeId)) {
+      filledNoticeIds.value = [...filledNoticeIds.value, found.noticeId]
+    }
+    noticeHint.value = `已填入 ${found.fromTag} → ${found.toTag}，可前往分析或直接合入`
+    historyKind.value = 'analysis'
+  } else if (found.fromTag || found.currentGkiVersion) {
+    noticeHint.value = `当前 GKI ${fromTag.value}。请点「采用并填入」选择次新月 To Tag`
+    historyKind.value = 'analysis'
+  } else {
+    noticeHint.value = '已定位该通知；请点「采用并填入」选择 To Tag'
+  }
+}
+
 async function reloadNotices() {
   loadingNotices.value = true
   try {
     const result = await listGkiUpgradeNotices('all')
     notices.value = result.items || []
+    applyHighlightedNotice()
   } catch {
     /* ignore */
   } finally {
@@ -119,36 +191,73 @@ function stopNoticesPolling() {
 async function onApplyNotice(noticeId: string) {
   const notice = notices.value.find(item => item.noticeId === noticeId)
   if (!notice) return
+  const nextFrom = notice.fromTag || notice.currentGkiVersion || ''
+  if (!nextFrom) {
+    noticeHint.value = '未能解析当前 GKI 版本，请核对通知'
+    message.warning(noticeHint.value)
+    return
+  }
   applyingNoticeId.value = noticeId
-  noticeHint.value = ''
+  applyNotice.value = notice
+  applyFromTag.value = nextFrom
+  applyToTag.value = notice.toTag || ''
+  applyLatestTag.value = ''
+  applyLatestMonth.value = ''
+  applyRecommendedTag.value = ''
+  applyRecommendedMonth.value = ''
+  applyTagOptions.value = []
+  applyWarning.value = ''
+  applyTagsHint.value = '正在从代码仓读取 tag…'
+  applyTagsLoading.value = true
+  applyModalShow.value = true
   try {
-    const parsed = await parseGkiUpgradeNotice({
-      text: notice.text,
-      fromTag: notice.fromTag,
-      toTag: notice.toTag,
-      taskKind: notice.taskKind,
-    })
-    const nextFrom = parsed.fromTag || notice.fromTag || ''
-    const nextTo = parsed.toTag || notice.toTag || ''
-    if (!nextFrom || !nextTo) {
-      noticeHint.value = '未能解析 From/To Tag，请核对通知或改用结构化 from_tag/to_tag'
-      message.warning(noticeHint.value)
-      return
+    try {
+      await startGkiPatchServer()
+    } catch {
+      /* list tags 内仍会 ensure */
     }
-    fromTag.value = nextFrom
-    toTag.value = nextTo
-    historyKind.value = 'analysis'
-    if (!filledNoticeIds.value.includes(noticeId)) {
-      filledNoticeIds.value = [...filledNoticeIds.value, noticeId]
+    const result = await listGkiRepoTags()
+    const pick = pickSecondNewestMonthTarget(result.tags || [], nextFrom)
+    applyTagOptions.value = pick.sameSeries.length ? pick.sameSeries : (result.tags || [])
+    applyLatestTag.value = pick.latestTag
+    applyLatestMonth.value = pick.latestMonth
+    applyRecommendedTag.value = pick.recommendedTag
+    applyRecommendedMonth.value = pick.recommendedMonth
+    applyWarning.value = pick.warning
+    if (!applyToTag.value) applyToTag.value = pick.recommendedTag
+    if (!result.configured) {
+      applyTagsHint.value = '未配置本地 kernel 仓，请先在 GKI 设置中填写路径；仍可手动输入 To Tag'
+    } else if (!(result.tags || []).length) {
+      applyTagsHint.value = '本地仓库暂无 tag，请确认已 fetch tags；仍可手动输入'
+    } else {
+      applyTagsHint.value = `已加载 ${result.total} 个 tag，同系列 ${pick.sameSeries.length} 个。策略：最新月的前一个月（次新月）`
     }
-    noticeHint.value = `已填入 ${nextFrom} → ${nextTo}，点击「前往分析」创建分析任务`
-    message.success('已填入 Tag')
   } catch (err) {
-    noticeHint.value = err instanceof Error ? err.message : String(err)
-    message.error(noticeHint.value)
+    applyTagOptions.value = []
+    applyTagsHint.value = err instanceof Error ? err.message : '读取仓库 tag 失败，请手动输入 To Tag'
   } finally {
+    applyTagsLoading.value = false
     applyingNoticeId.value = ''
   }
+}
+
+function onConfirmApplyModal() {
+  const nextFrom = applyFromTag.value.trim()
+  const nextTo = applyToTag.value.trim()
+  if (!nextFrom || !nextTo) {
+    message.warning('请选择 To Tag')
+    return
+  }
+  fromTag.value = nextFrom
+  toTag.value = nextTo
+  historyKind.value = 'analysis'
+  const noticeId = applyNotice.value?.noticeId
+  if (noticeId && !filledNoticeIds.value.includes(noticeId)) {
+    filledNoticeIds.value = [...filledNoticeIds.value, noticeId]
+  }
+  noticeHint.value = `已填入 ${nextFrom} → ${nextTo}，可前往分析或直接合入`
+  applyModalShow.value = false
+  message.success('已填入 Tag')
 }
 
 async function onConfirmNotice(noticeId: string) {
@@ -166,17 +275,58 @@ async function onConfirmNotice(noticeId: string) {
   }
 }
 
-async function onDismissNotice(noticeId: string) {
+function onDismissNotice(noticeId: string) {
+  const item = notices.value.find(notice => notice.noticeId === noticeId) || null
+  dismissNotice.value = item
+  dismissReason.value = ''
+  dismissModalShow.value = true
+}
+
+async function onConfirmDismissModal() {
+  const noticeId = dismissNotice.value?.noticeId
+  const reason = dismissReason.value.trim()
+  if (!noticeId || !reason) return
   dismissingNoticeId.value = noticeId
   try {
-    await dismissGkiUpgradeNotice(noticeId)
+    await dismissGkiUpgradeNotice(noticeId, reason)
     filledNoticeIds.value = filledNoticeIds.value.filter(id => id !== noticeId)
+    dismissModalShow.value = false
+    dismissNotice.value = null
+    dismissReason.value = ''
     await reloadNotices()
     message.success('已忽略')
   } catch (err) {
     message.error(err instanceof Error ? err.message : String(err))
   } finally {
     dismissingNoticeId.value = ''
+  }
+}
+
+async function onRestoreNotice(noticeId: string) {
+  restoringNoticeId.value = noticeId
+  try {
+    await restoreGkiUpgradeNotice(noticeId)
+    filledNoticeIds.value = filledNoticeIds.value.filter(id => id !== noticeId)
+    await reloadNotices()
+    message.success('已放回待处理')
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    restoringNoticeId.value = ''
+  }
+}
+
+async function onDeleteNotice(noticeId: string) {
+  deletingNoticeId.value = noticeId
+  try {
+    await deleteGkiUpgradeNotice(noticeId)
+    filledNoticeIds.value = filledNoticeIds.value.filter(id => id !== noticeId)
+    await reloadNotices()
+    message.success('已删除')
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    deletingNoticeId.value = ''
   }
 }
 
@@ -220,22 +370,41 @@ function handleOpen(id: string) {
   goUpgrade({ job: id })
 }
 
+function tagQuery() {
+  const query: Record<string, string> = {
+    from_tag: fromTag.value.trim(),
+    to_tag: toTag.value.trim(),
+  }
+  const hint = noticeHint.value.trim()
+  if (hint.startsWith('已填入')) query.notice_text = hint
+  return query
+}
+
 function handleGoAnalysis() {
   if (!canOpenWithTags.value) {
     message.warning('请先填写 From Tag 与 To Tag')
     return
   }
-  goAnalysis({
-    from_tag: fromTag.value.trim(),
-    to_tag: toTag.value.trim(),
-    ...(noticeHint.value ? { notice_text: noticeHint.value } : {}),
-  })
+  goAnalysis(tagQuery())
+}
+
+function handleGoUpgrade() {
+  if (!canOpenWithTags.value) {
+    message.warning('请先填写 From Tag 与 To Tag')
+    return
+  }
+  goUpgrade(tagQuery())
 }
 
 function onKindChange(kind: GkiHistoryKind) {
   historyKind.value = kind
   selectedId.value = ''
 }
+
+watch(highlightNoticeId, () => {
+  lastAppliedHighlight.value = ''
+  void reloadNotices()
+})
 
 onMounted(() => {
   void reloadNotices()
@@ -257,11 +426,16 @@ onUnmounted(() => {
         :applying-id="applyingNoticeId"
         :confirming-id="confirmingNoticeId"
         :dismissing-id="dismissingNoticeId"
+        :restoring-id="restoringNoticeId"
+        :deleting-id="deletingNoticeId"
         :filled-ids="filledNoticeIds"
+        :highlight-id="highlightNoticeId"
         @refresh="reloadNotices"
         @apply="onApplyNotice"
         @confirm="onConfirmNotice"
         @dismiss="onDismissNotice"
+        @restore="onRestoreNotice"
+        @remove="onDeleteNotice"
       />
 
       <GkiUpgradeHistoryPanel
@@ -301,9 +475,9 @@ onUnmounted(() => {
 
         <div class="ea-card create-card">
           <div class="ea-section-title">新建任务</div>
-          <h3>填写 Tag 区间后前往分析</h3>
+          <h3>填写 Tag 区间后分析或合入</h3>
           <p class="create-desc">
-            外部通知解析后创建「分析任务」（不会自动创建升级合入）。核对 Tag 后点下方按钮进入分析页再启动。
+            可先做区间分析，也可直接前往 patch 入库。直接合入会复用已有区间 patch；没有时从本地 kernel 仓库生成。
             升级已完成数：{{ completedCount }}
           </p>
 
@@ -323,14 +497,41 @@ onUnmounted(() => {
           <p v-if="historyError" class="hint error">{{ historyError }}</p>
 
           <div class="actions">
-            <NButton type="primary" :disabled="!canOpenWithTags" @click="handleGoAnalysis">
+            <NButton :disabled="!canOpenWithTags" @click="handleGoAnalysis">
               前往分析
+            </NButton>
+            <NButton type="primary" :disabled="!canOpenWithTags" @click="handleGoUpgrade">
+              前往合入
             </NButton>
           </div>
         </div>
       </div>
     </aside>
   </div>
+
+  <GkiApplyNoticeModal
+    v-model:show="applyModalShow"
+    v-model:to-tag="applyToTag"
+    :notice="applyNotice"
+    :from-tag="applyFromTag"
+    :latest-tag="applyLatestTag"
+    :latest-month="applyLatestMonth"
+    :recommended-tag="applyRecommendedTag"
+    :recommended-month="applyRecommendedMonth"
+    :tag-options="applyTagOptions"
+    :tags-loading="applyTagsLoading"
+    :tags-hint="applyTagsHint"
+    :warning="applyWarning"
+    @confirm="onConfirmApplyModal"
+  />
+
+  <GkiDismissNoticeModal
+    v-model:show="dismissModalShow"
+    v-model:reason="dismissReason"
+    :notice="dismissNotice"
+    :submitting="Boolean(dismissingNoticeId)"
+    @confirm="onConfirmDismissModal"
+  />
 </template>
 
 <style scoped lang="scss">

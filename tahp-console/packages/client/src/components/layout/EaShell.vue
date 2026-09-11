@@ -390,10 +390,25 @@ function openHistory() {
   void openCentral('/tasks/mine?view=history')
 }
 
-function openPatch(pkg: (typeof inboxPackages.value)[number]) {
+async function openPatch(pkg: (typeof inboxPackages.value)[number]) {
   closeTaskPop()
-  if (pkg.notice_type === 'gki-patch') void router.push({ name: 'tahp.gki-patch.dashboard' })
-  else void router.push({ name: 'tahp.modem-baseline.workbench' })
+  if (pkg.notice_type === 'gki-patch') {
+    try {
+      await fetch('/api/tahp/gki-patch/notices/from-task', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(pkg),
+      })
+    } catch {
+      /* 入库失败仍打开工作台；socket / inbox 轮询也可能已写入 */
+    }
+    void router.push({
+      name: 'tahp.gki-patch.dashboard',
+      query: { notice: pkg.package_id },
+    })
+    return
+  }
+  void router.push({ name: 'tahp.modem-baseline.workbench' })
 }
 
 /** 验测任务通知：清掉本机未读红点，直达「质量验测 → 测试执行」 */

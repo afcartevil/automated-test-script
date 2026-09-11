@@ -122,7 +122,7 @@ const groups: ManualGroup[] = [
         desc: 'GKI patch <span class="hl">质量分析</span>、稳定性验证并选取最优 Tag，再自动合入提交；<span class="hl">人工审核</span>通过后入库。任务同样来自 <span class="hl">TONES</span>，在 Console 内嵌的 GKI Patch Tool 中处理。',
         steps: [
           '进入「GKI 升级」，先等本机服务就绪（首次会拉起），从<span class="hl">工作台</span>看外部通知与任务列表。',
-          '填 From / To Tag 后「前往分析」；或在左侧打开「<span class="hl">patch 分析</span>」看质量结论、选最优 Tag。',
+          '填 From / To Tag 后可「前往分析」或直接「前往合入」；也可在左侧打开「<span class="hl">patch 分析</span>」看质量结论、选最优 Tag。',
           '「故障诊断」处理合入 / 验证中的 crash。确认后走「<span class="hl">patch 入库</span>」合入与编译验证。',
           '历史在「数据库」；LLM / SSH 由 EasyAdapter 一键配置注入，「设置」里看其余环境项。',
         ],

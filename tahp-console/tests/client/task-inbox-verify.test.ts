@@ -228,3 +228,49 @@ describe('EaShell 用本报告勾选', () => {
     expect(checked.length).toBe(0)
   })
 })
+
+describe('EaShell GKI 打开 Patch', () => {
+  const gkiInbox = {
+    packages: [
+      {
+        package_id: 'gki_1',
+        notice_type: 'gki-patch',
+        title: '本次GKI升级从android13-5.15-2025-09_r9升级到android13-5.15-2026-03_r16',
+        unread: true,
+      },
+    ],
+    unread: 0,
+  }
+
+  beforeEach(() => {
+    hoisted.routerPush.mockClear()
+    hoisted.fetchMock.mockReset()
+    hoisted.fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/tahp/gki-patch/notices/from-task')) {
+        return { json: async () => ({ success: true, data: { created: true, notice: { noticeId: 'gki_1' } } }) } as Response
+      }
+      if (url.includes('/api/tahp/task-inbox')) {
+        return { json: async () => ({ success: true, data: gkiInbox }) } as Response
+      }
+      return { json: async () => ({ success: true, data: {} }) } as Response
+    })
+    vi.stubGlobal('fetch', hoisted.fetchMock)
+  })
+
+  it('点击打开 Patch 会写入 GKI 收件箱并跳转工作台', async () => {
+    const wrapper = mount(EaShell, { slots: { default: '<div />' } })
+    await flushPromises()
+    await wrapper.find('button[title="我的任务"]').trigger('click')
+    const openBtn = wrapper.findAll('button').find(b => b.text() === '打开 Patch')
+    expect(openBtn).toBeTruthy()
+    await openBtn!.trigger('click')
+    await flushPromises()
+
+    expect(hoisted.fetchMock.mock.calls.some(c => String(c[0]).includes('/api/tahp/gki-patch/notices/from-task'))).toBe(true)
+    expect(hoisted.routerPush).toHaveBeenCalledWith({
+      name: 'tahp.gki-patch.dashboard',
+      query: { notice: 'gki_1' },
+    })
+  })
+})

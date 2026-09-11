@@ -60,11 +60,12 @@ export async function handleGkiUpgradeNotify(ctx: any) {
   try {
     const result = ingestGkiUpgradeNotice(input)
     logger.info(
-      'gki-upgrade notify: %s source=%s sourceId=%s created=%s from=%s to=%s',
+      'gki-upgrade notify: %s source=%s sourceId=%s created=%s count=%s from=%s to=%s',
       result.notice.noticeId,
       result.notice.source,
       result.notice.sourceId || '-',
       result.created,
+      result.createdCount,
       result.notice.fromTag || '-',
       result.notice.toTag || '-',
     )
@@ -73,11 +74,13 @@ export async function handleGkiUpgradeNotify(ctx: any) {
       success: true,
       data: {
         noticeId: result.notice.noticeId,
+        noticeIds: result.notices.map(item => item.noticeId),
         status: result.notice.status,
         text: result.notice.text,
         fromTag: result.notice.fromTag,
         toTag: result.notice.toTag,
         created: result.created,
+        createdCount: result.createdCount,
       },
     }
   } catch (error) {

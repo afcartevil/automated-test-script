@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { NButton, NTag } from 'naive-ui'
+import { computed, ref, watch } from 'vue'
+import { NButton, NPopconfirm, NTag } from 'naive-ui'
 import type { GkiExternalNotice } from '@/api/tahp/gki-upgrade-notices'
 
 export type GkiNoticeFilter = 'pending' | 'done'
@@ -11,7 +11,10 @@ const props = defineProps<{
   applyingId?: string
   confirmingId?: string
   dismissingId?: string
+  restoringId?: string
+  deletingId?: string
   filledIds?: string[]
+  highlightId?: string
 }>()
 
 const emit = defineEmits<{
@@ -19,6 +22,8 @@ const emit = defineEmits<{
   apply: [noticeId: string]
   confirm: [noticeId: string]
   dismiss: [noticeId: string]
+  restore: [noticeId: string]
+  remove: [noticeId: string]
 }>()
 
 const filter = ref<GkiNoticeFilter>('pending')
@@ -82,6 +87,68 @@ function hasTagPair(item: GkiExternalNotice) {
 function isPending(item: GkiExternalNotice) {
   return item.status === 'pending'
 }
+
+function isDismissed(item: GkiExternalNotice) {
+  return item.status === 'dismissed'
+}
+
+function isBusy() {
+  return Boolean(
+    props.applyingId
+    || props.confirmingId
+    || props.dismissingId
+    || props.restoringId
+    || props.deletingId,
+  )
+}
+
+function requestRestore(noticeId: string) {
+  emit('restore', noticeId)
+  filter.value = 'pending'
+}
+
+function isAlertNotice(item: GkiExternalNotice) {
+  return item.kind === 'alert' || Boolean(item.currentGkiVersion || item.platform || item.alertRule)
+}
+
+function alertFields(item: GkiExternalNotice) {
+  return [
+    { label: '分支', value: item.branches },
+    { label: '平台', value: item.platform },
+    { label: '项目', value: item.projects },
+    { label: '当前GKI版本', value: item.currentGkiVersion || item.fromTag },
+    { label: 'kernel版本', value: item.kernelVersion },
+    { label: 'SOC厂商', value: item.socVendor },
+    { label: '启动日期', value: item.startDate },
+    { label: '完成日期', value: item.dueDate },
+  ].filter(row => Boolean(row.value))
+}
+
+function isHighlighted(item: GkiExternalNotice) {
+  const id = String(props.highlightId || '').trim()
+  if (!id) return false
+  return (
+    item.noticeId === id
+    || item.sourceId === id
+    || item.parentSourceId === id
+    || Boolean(item.sourceId && item.sourceId.startsWith(`${id}#`))
+  )
+}
+
+const lastFilterSync = ref('')
+
+watch(
+  () => [props.highlightId, props.notices] as const,
+  () => {
+    const found = props.notices.find(isHighlighted)
+    if (!found) return
+    const key = `${found.noticeId}:${found.status}`
+    if (lastFilterSync.value === key) return
+    lastFilterSync.value = key
+    filter.value = found.status === 'pending' ? 'pending' : 'done'
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -90,8 +157,8 @@ function isPending(item: GkiExternalNotice) {
       <div>
         <div class="ea-section-title">外部通知</div>
         <h3>通知收件箱</h3>
-        <p v-if="filter === 'pending'">采用后填入 Tag；启动分析后再点「确认完成」。</p>
-        <p v-else>已确认 / 已忽略的通知仍保留在此，可再次「采用并填入」。</p>
+        <p v-if="filter === 'pending'">采用后选择次新月 To Tag；启动分析后再点「确认完成」。</p>
+        <p v-else>已确认 / 已忽略的通知。忽略的可放回待处理；不需要的可删除。</p>
       </div>
       <NButton secondary size="small" :loading="loading" @click="emit('refresh')">刷新</NButton>
     </div>
@@ -126,11 +193,19 @@ function isPending(item: GkiExternalNotice) {
     </div>
 
     <div v-else class="notice-list">
-      <div v-for="item in visibleNotices" :key="item.noticeId" class="notice-item">
+      <div
+        v-for="item in visibleNotices"
+        :key="item.noticeId"
+        class="notice-item"
+        :class="{ highlight: isHighlighted(item) }"
+      >
         <div class="notice-top">
           <div class="notice-badges">
             <NTag size="small" :type="statusTagType(item.status)" :bordered="false">
               {{ statusLabel(item.status) }}
+            </NTag>
+            <NTag v-if="item.kind === 'alert'" size="small" type="error" :bordered="false">
+              异常告警
             </NTag>
             <NTag v-if="taskKindLabel(item.taskKind)" size="small" :bordered="false">
               {{ taskKindLabel(item.taskKind) }}
@@ -145,7 +220,16 @@ function isPending(item: GkiExternalNotice) {
           </div>
         </div>
 
-        <div v-if="hasTagPair(item)" class="tag-pair">
+        <p v-if="item.title && isAlertNotice(item)" class="notice-title">{{ item.title }}</p>
+        <p v-if="item.alertRule" class="notice-rule">{{ item.alertRule }}</p>
+
+        <div v-if="alertFields(item).length" class="tag-pair">
+          <div v-for="row in alertFields(item)" :key="row.label" class="tag-line alert-line">
+            <span class="tag-label">{{ row.label }}</span>
+            <code class="tag-value">{{ row.value }}</code>
+          </div>
+        </div>
+        <div v-else-if="hasTagPair(item)" class="tag-pair">
           <div class="tag-line">
             <span class="tag-label">From</span>
             <code class="tag-value">{{ item.fromTag }}</code>
@@ -156,25 +240,33 @@ function isPending(item: GkiExternalNotice) {
           </div>
         </div>
 
-        <p class="notice-text" :class="{ secondary: hasTagPair(item) }">{{ item.text }}</p>
+        <p
+          v-if="!isAlertNotice(item)"
+          class="notice-text"
+          :class="{ secondary: hasTagPair(item) }"
+        >{{ item.text }}</p>
+
+        <p v-if="item.status === 'dismissed' && item.dismissReason" class="dismiss-reason">
+          忽略原因：{{ item.dismissReason }}
+        </p>
 
         <div class="notice-actions">
-          <NButton
-            type="primary"
-            size="small"
-            :loading="applyingId === item.noticeId"
-            :disabled="Boolean(dismissingId || confirmingId)"
-            @click="emit('apply', item.noticeId)"
-          >
-            采用并填入
-          </NButton>
           <template v-if="isPending(item)">
+            <NButton
+              type="primary"
+              size="small"
+              :loading="applyingId === item.noticeId"
+              :disabled="isBusy()"
+              @click="emit('apply', item.noticeId)"
+            >
+              采用并填入
+            </NButton>
             <NButton
               type="success"
               secondary
               size="small"
               :loading="confirmingId === item.noticeId"
-              :disabled="Boolean(applyingId || dismissingId)"
+              :disabled="isBusy()"
               @click="emit('confirm', item.noticeId)"
             >
               确认完成
@@ -183,11 +275,41 @@ function isPending(item: GkiExternalNotice) {
               secondary
               size="small"
               :loading="dismissingId === item.noticeId"
-              :disabled="Boolean(applyingId || confirmingId)"
+              :disabled="isBusy()"
               @click="emit('dismiss', item.noticeId)"
             >
               忽略
             </NButton>
+          </template>
+          <template v-else>
+            <NButton
+              v-if="isDismissed(item)"
+              type="primary"
+              secondary
+              size="small"
+              :loading="restoringId === item.noticeId"
+              :disabled="isBusy()"
+              @click="requestRestore(item.noticeId)"
+            >
+              放回待处理
+            </NButton>
+            <NPopconfirm
+              :positive-button-props="{ type: 'error' }"
+              @positive-click="emit('remove', item.noticeId)"
+            >
+              <template #trigger>
+                <NButton
+                  type="error"
+                  secondary
+                  size="small"
+                  :loading="deletingId === item.noticeId"
+                  :disabled="isBusy()"
+                >
+                  删除
+                </NButton>
+              </template>
+              删除后无法恢复，确定删除这条通知？
+            </NPopconfirm>
           </template>
         </div>
       </div>
@@ -290,6 +412,12 @@ function isPending(item: GkiExternalNotice) {
   border-radius: 10px;
   background: var(--surface);
   min-width: 0;
+
+  &.highlight {
+    border-color: color-mix(in srgb, var(--accent, #5b6cff) 45%, var(--line));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #5b6cff) 22%, transparent);
+    background: color-mix(in srgb, var(--accent, #5b6cff) 6%, var(--surface));
+  }
 }
 
 .notice-top {
@@ -333,6 +461,10 @@ function isPending(item: GkiExternalNotice) {
   gap: 8px;
   align-items: baseline;
   min-width: 0;
+
+  &.alert-line {
+    grid-template-columns: 88px minmax(0, 1fr);
+  }
 }
 
 .tag-label {
@@ -349,6 +481,31 @@ function isPending(item: GkiExternalNotice) {
   line-height: 1.4;
   color: var(--head);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.notice-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--head);
+  line-height: 1.4;
+}
+
+.notice-rule {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.dismiss-reason {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
   overflow-wrap: anywhere;
   word-break: break-word;
 }

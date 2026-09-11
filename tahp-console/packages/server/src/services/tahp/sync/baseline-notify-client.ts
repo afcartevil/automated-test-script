@@ -141,7 +141,7 @@ function handleNotice(notice: CentralBaselineNotice, sock: Socket): void {
   try {
     if (isGkiNotice(notice)) {
       const payload = notice.payload || {}
-      const { created } = ingestGkiUpgradeNotice(
+      const result = ingestGkiUpgradeNotice(
         {
           ...payload,
           source: notice.source,
@@ -166,10 +166,12 @@ function handleNotice(notice: CentralBaselineNotice, sock: Socket): void {
       })
       logger.info(
         {
-          noticeId: notice.noticeId,
+          noticeId: result.notice.noticeId,
           source: notice.source,
           sourceId: notice.sourceId || '-',
-          created,
+          created: result.created,
+          createdCount: result.createdCount,
+          notices: result.notices.length,
         },
         '[baseline-notify] gki notice ingested',
       )

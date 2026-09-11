@@ -23,6 +23,8 @@ const frameReady = ref(false)
 const frameAppReady = ref(false)
 /** 已挂载 iframe 的 src；工作台为空，离开工作台时按目标 path 写入 */
 const mountedFrameSrc = ref('')
+/** 最近一次同步到 iframe 的目标 URL（含 postMessage 切页；与 src 属性不是同一概念） */
+const lastPostedSrc = ref('')
 
 const workbenchItem = { name: 'tahp.gki-patch.dashboard', label: '工作台', icon: 'dashboard' }
 
@@ -68,6 +70,7 @@ const desiredFrameSrc = computed(() => {
 
 function resetFrame() {
   mountedFrameSrc.value = ''
+  lastPostedSrc.value = ''
   frameReady.value = false
   frameAppReady.value = false
 }
@@ -76,6 +79,7 @@ function postNavigateToFrame() {
   const win = frameRef.value?.contentWindow
   if (!win || isNativeWorkbench.value) return
   if (!frameReady.value && !frameAppReady.value) return
+  lastPostedSrc.value = desiredFrameSrc.value
   win.postMessage(
     {
       type: 'ea-gki-patch-navigate',
@@ -92,6 +96,7 @@ function syncFrame() {
     desiredSrc: desiredFrameSrc.value,
     mountedSrc: mountedFrameSrc.value,
     frameAppReady: frameAppReady.value,
+    lastPostedSrc: lastPostedSrc.value,
   })
   if (mode === 'none') {
     if (isNativeWorkbench.value && mountedFrameSrc.value) resetFrame()
@@ -103,6 +108,7 @@ function syncFrame() {
       frameAppReady.value = false
     }
     mountedFrameSrc.value = desiredFrameSrc.value
+    lastPostedSrc.value = desiredFrameSrc.value
     return
   }
   postNavigateToFrame()

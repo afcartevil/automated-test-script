@@ -68,17 +68,25 @@ export function isGkiPatchReadyMessage(data: unknown): data is GkiPatchReadyMess
 
 export type GkiFrameSyncMode = 'none' | 'mount' | 'post' | 'reload'
 
-/** 工作台不挂 iframe；首次离开工作台用 src 挂载；同会话有 ready 则 postMessage，否则改 src */
+/**
+ * 工作台不挂 iframe；首次离开工作台用 src 挂载；同会话有 ready 则 postMessage，否则改 src。
+ *
+ * `mountedSrc` 是 iframe 的 src 属性（首次挂载 URL），postMessage 切页不会改它。
+ * 因此回到「最初挂载的那一页」时 mountedSrc === desiredSrc，必须再用 lastPostedSrc
+ * 判断 iframe 内部路由是否已经在目标页，否则侧栏切回去会停在上一页。
+ */
 export function resolveGkiFrameSync(opts: {
   nativeWorkbench: boolean
   desiredSrc: string
   mountedSrc: string
   frameAppReady: boolean
+  lastPostedSrc?: string
 }): GkiFrameSyncMode {
   if (opts.nativeWorkbench || !opts.desiredSrc) return 'none'
   if (!opts.mountedSrc) return 'mount'
-  if (opts.mountedSrc === opts.desiredSrc) return 'none'
+  if (opts.lastPostedSrc === opts.desiredSrc) return 'none'
   if (opts.frameAppReady) return 'post'
+  if (opts.mountedSrc === opts.desiredSrc) return 'none'
   return 'reload'
 }
 

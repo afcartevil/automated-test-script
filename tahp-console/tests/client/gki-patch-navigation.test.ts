@@ -57,6 +57,26 @@ describe('resolveGkiFrameSync', () => {
       frameAppReady: false,
     })).toBe('reload')
   })
+
+  it('skips when the current src was already posted', () => {
+    expect(resolveGkiFrameSync({
+      nativeWorkbench: false,
+      desiredSrc: 'http://127.0.0.1:8651/app/upgrade?embedded=1',
+      mountedSrc: 'http://127.0.0.1:8651/app/upgrade?embedded=1',
+      lastPostedSrc: 'http://127.0.0.1:8651/app/upgrade?embedded=1',
+      frameAppReady: true,
+    })).toBe('none')
+  })
+
+  it('posts when returning to the originally mounted path after an in-app navigation', () => {
+    expect(resolveGkiFrameSync({
+      nativeWorkbench: false,
+      desiredSrc: 'http://127.0.0.1:8651/app/upgrade?embedded=1',
+      mountedSrc: 'http://127.0.0.1:8651/app/upgrade?embedded=1',
+      lastPostedSrc: 'http://127.0.0.1:8651/app/analysis?embedded=1',
+      frameAppReady: true,
+    })).toBe('post')
+  })
 })
 
 describe('isGkiPatchReadyMessage', () => {

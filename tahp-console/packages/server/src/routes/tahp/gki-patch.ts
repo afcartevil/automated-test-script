@@ -4,9 +4,13 @@ import {
   getGkiPatchDefaults,
   getGkiPatchStatusAsync,
   listGkiAnalysisTasks,
+  listGkiRepoTags,
   listGkiUpgradeJobs,
 } from '../../services/tahp/gki-patch'
 import {
+  deleteGkiUpgradeNotice,
+  ingestGkiNoticeFromTaskPackage,
+  isGkiTaskNotice,
   listGkiUpgradeNotices,
   parseGkiUpgradeNotice,
   updateGkiUpgradeNoticeStatus,
@@ -62,12 +66,37 @@ tahpGkiPatchRoutes.get('/analysis-tasks', async (ctx) => {
   }
 })
 
+tahpGkiPatchRoutes.get('/repo-tags', async (ctx) => {
+  try {
+    const refresh = String(ctx.query.refresh || '') === '1'
+    ctx.body = { success: true, data: await listGkiRepoTags(refresh) }
+  } catch (error) {
+    ctx.status = 500
+    ctx.body = { success: false, error: (error as Error).message }
+  }
+})
+
 tahpGkiPatchRoutes.get('/notices', async (ctx) => {
   const statusRaw = String(ctx.query.status || 'pending').trim()
   const status = (statusRaw === 'all' || statusRaw === 'pending' || statusRaw === 'applied' || statusRaw === 'dismissed')
     ? statusRaw
     : 'pending'
   ctx.body = { success: true, data: { items: listGkiUpgradeNotices({ status }) } }
+})
+
+tahpGkiPatchRoutes.post('/notices/from-task', async (ctx) => {
+  const body = (ctx.request.body || {}) as Record<string, unknown>
+  if (!isGkiTaskNotice(body)) {
+    ctx.status = 400
+    ctx.body = { success: false, error: 'not_gki_task_notice' }
+    return
+  }
+  try {
+    ctx.body = { success: true, data: ingestGkiNoticeFromTaskPackage(body) }
+  } catch (error) {
+    ctx.status = 400
+    ctx.body = { success: false, error: (error as Error).message }
+  }
 })
 
 tahpGkiPatchRoutes.post('/notices/:noticeId/apply', async (ctx) => {
@@ -85,9 +114,38 @@ tahpGkiPatchRoutes.post('/notices/:noticeId/apply', async (ctx) => {
 
 tahpGkiPatchRoutes.post('/notices/:noticeId/dismiss', async (ctx) => {
   try {
+    const body = (ctx.request.body || {}) as { reason?: string }
     ctx.body = {
       success: true,
-      data: updateGkiUpgradeNoticeStatus(ctx.params.noticeId, 'dismissed'),
+      data: updateGkiUpgradeNoticeStatus(ctx.params.noticeId, 'dismissed', {
+        reason: body.reason,
+      }),
+    }
+  } catch (error) {
+    const message = (error as Error).message
+    ctx.status = message === 'notice_not_found' ? 404 : 400
+    ctx.body = { success: false, error: message }
+  }
+})
+
+tahpGkiPatchRoutes.post('/notices/:noticeId/restore', async (ctx) => {
+  try {
+    ctx.body = {
+      success: true,
+      data: updateGkiUpgradeNoticeStatus(ctx.params.noticeId, 'pending'),
+    }
+  } catch (error) {
+    const message = (error as Error).message
+    ctx.status = message === 'notice_not_found' ? 404 : 400
+    ctx.body = { success: false, error: message }
+  }
+})
+
+tahpGkiPatchRoutes.delete('/notices/:noticeId', async (ctx) => {
+  try {
+    ctx.body = {
+      success: true,
+      data: deleteGkiUpgradeNotice(ctx.params.noticeId),
     }
   } catch (error) {
     const message = (error as Error).message

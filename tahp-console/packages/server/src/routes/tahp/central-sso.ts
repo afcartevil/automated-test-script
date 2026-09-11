@@ -13,6 +13,7 @@ import { centralClient } from '../../services/tahp/sync/central-client'
 import { clearTaskUnread, getTaskInboxPatches, getTaskUnreadIds } from '../../services/tahp/sync/task-notify-client'
 import { clearApplyPrompt, getApplyPrompt } from '../../services/tahp/task-apply-prompt'
 import { getTaskContext, setTaskContext } from '../../services/tahp/task-context'
+import { tryIngestGkiNoticesFromTaskPackages } from '../../services/tahp/gki-upgrade-notices'
 
 export const tahpCentralSsoRoutes = new Router()
 
@@ -100,7 +101,9 @@ tahpCentralSsoRoutes.get('/api/tahp/task-inbox', async (ctx) => {
       }
     }
     if (!sessionToken) {
-      ctx.body = { success: true, data: { packages: getTaskInboxPatches(), unread: getTaskUnreadIds().length, apply_prompt: getApplyPrompt() } }
+      const packages = getTaskInboxPatches()
+      tryIngestGkiNoticesFromTaskPackages(packages)
+      ctx.body = { success: true, data: { packages, unread: getTaskUnreadIds().length, apply_prompt: getApplyPrompt() } }
       return
     }
     const packages = await centralClient.myTaskPackages(sessionToken)
@@ -109,6 +112,7 @@ tahpCentralSsoRoutes.get('/api/tahp/task-inbox', async (ctx) => {
       ...packages,
       ...patches.filter(p => !packages.some(x => x.package_id === p.package_id)),
     ]
+    tryIngestGkiNoticesFromTaskPackages(merged)
     ctx.body = {
       success: true,
       data: {
@@ -120,7 +124,9 @@ tahpCentralSsoRoutes.get('/api/tahp/task-inbox', async (ctx) => {
     }
   } catch (err) {
     logger.warn({ err: (err as Error).message }, '[task-inbox] failed')
-    ctx.body = { success: true, data: { packages: getTaskInboxPatches(), unread: getTaskUnreadIds().length, apply_prompt: getApplyPrompt() } }
+    const packages = getTaskInboxPatches()
+    tryIngestGkiNoticesFromTaskPackages(packages)
+    ctx.body = { success: true, data: { packages, unread: getTaskUnreadIds().length, apply_prompt: getApplyPrompt() } }
   }
 })
 

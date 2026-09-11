@@ -62,3 +62,15 @@ export function listGkiAnalysisTasks(limit = 50): Promise<{ tasks: GkiAnalysisTa
   const query = new URLSearchParams({ limit: String(limit) })
   return tahpGet<{ tasks: GkiAnalysisTaskSummary[] }>(`/api/tahp/gki-patch/analysis-tasks?${query.toString()}`)
 }
+
+export type GkiRepoTagsResult = {
+  configured: boolean
+  repoDir: string
+  total: number
+  tags: string[]
+}
+
+export function listGkiRepoTags(refresh = false): Promise<GkiRepoTagsResult> {
+  const query = refresh ? '?refresh=1' : ''
+  return tahpGet<GkiRepoTagsResult>(`/api/tahp/gki-patch/repo-tags${query}`)
+}

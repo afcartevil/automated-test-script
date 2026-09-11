@@ -7,17 +7,21 @@ import { logger } from '../../logger'
 import { isCentralConfigured, isLocal } from '../runtime-mode'
 import { readJiraUsername } from '../jira-user-config'
 import { readCentralUserSession } from '../central-user-session'
+import { tryIngestGkiNoticeFromTaskPackage } from '../gki-upgrade-notices'
 
 let socket: Socket | null = null
 let started = false
 let currentOwner = ''
 const unreadIds = new Set<string>()
-const unreadItems = new Map<string, {
+type TaskInboxPatch = {
   package_id: string
   notice_type?: string
   title?: string
   next?: string
-}>()
+  [key: string]: unknown
+}
+
+const unreadItems = new Map<string, TaskInboxPatch>()
 
 function resolveOwner(explicit?: string): string {
   const fromArg = String(explicit || '').trim()
@@ -57,21 +61,30 @@ function connect(owner: string): void {
     logger.info({ reason }, '[task-notify] disconnected')
   })
 
-  socket.on('task.package', (payload: {
-    package_id?: string
-    notice_type?: string
-    title?: string
-    next?: string
-  } = {}) => {
+  socket.on('task.package', (payload: Record<string, unknown> = {}) => {
     const id = String(payload.package_id || '').trim()
     if (!id) return
     unreadIds.add(id)
     unreadItems.set(id, {
+      ...payload,
       package_id: id,
-      notice_type: payload.notice_type,
-      title: payload.title,
-      next: payload.next,
+      notice_type: payload.notice_type as string | undefined,
+      title: payload.title as string | undefined,
+      next: payload.next as string | undefined,
     })
+    const ingested = tryIngestGkiNoticeFromTaskPackage({ ...payload, package_id: id })
+    if (ingested) {
+      logger.info(
+        {
+          package_id: id,
+          noticeId: ingested.notice.noticeId,
+          created: ingested.created,
+          createdCount: ingested.createdCount,
+          notices: ingested.notices.length,
+        },
+        '[task-notify] gki notice ingested',
+      )
+    }
     socket?.emit('task.package.ack', { package_id: id })
     logger.info({ package_id: id, notice_type: payload.notice_type, unread: unreadIds.size }, '[task-notify] package received')
   })
@@ -149,12 +162,7 @@ export function getTaskUnreadIds(): string[] {
   return [...unreadIds]
 }
 
-export function getTaskInboxPatches(): Array<{
-  package_id: string
-  notice_type?: string
-  title?: string
-  next?: string
-}> {
+export function getTaskInboxPatches(): TaskInboxPatch[] {
   return [...unreadItems.values()].filter(item => item.notice_type)
 }
 

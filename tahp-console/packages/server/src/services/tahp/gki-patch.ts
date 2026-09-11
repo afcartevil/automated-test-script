@@ -236,9 +236,35 @@ export async function listGkiAnalysisTasks(limit = 50): Promise<GkiAnalysisTaskR
   return gkiHttpGetJson<{ tasks?: GkiAnalysisTaskRow[] }>(url).then((parsed) => parsed.tasks || [])
 }
 
-function gkiHttpGetJson<T>(url: string): Promise<T> {
+export type GkiRepoTagsResult = {
+  configured: boolean
+  repoDir: string
+  total: number
+  tags: string[]
+}
+
+/** List kernel git tags from the GKI Patch Tool local repo. */
+export async function listGkiRepoTags(refresh = false): Promise<GkiRepoTagsResult> {
+  await ensureGkiPatchServer()
+  await waitUntilHealthy(activePort, 15_000)
+  const query = refresh ? '?refresh=1' : ''
+  const parsed = await gkiHttpGetJson<{
+    configured?: boolean
+    repo_dir?: string
+    total?: number
+    tags?: string[]
+  }>(`http://127.0.0.1:${activePort}/api/repo/tags${query}`, 30_000)
+  return {
+    configured: Boolean(parsed.configured),
+    repoDir: String(parsed.repo_dir || ''),
+    total: Number(parsed.total || parsed.tags?.length || 0),
+    tags: parsed.tags || [],
+  }
+}
+
+function gkiHttpGetJson<T>(url: string, timeoutMs = 10_000): Promise<T> {
   return new Promise((resolve, reject) => {
-    const req = http.get(url, { timeout: 10000 }, (res) => {
+    const req = http.get(url, { timeout: timeoutMs }, (res) => {
       let body = ''
       res.on('data', chunk => { body += chunk })
       res.on('end', () => {
