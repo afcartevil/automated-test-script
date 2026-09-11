@@ -43,6 +43,18 @@ def _norm_local(path_str: str) -> Path:
     return p.resolve()
 
 
+def persist_local_mount_path(path_str: str) -> str:
+    """Persist the path the user typed.
+
+    ``Path.resolve()`` on Windows turns mapped drives (``Z:\\...``) into UNC
+    (``\\\\server\\share\\...``). Copy-last and the form should keep the drive letter.
+    """
+    raw = (path_str or "").strip()
+    if not raw:
+        return ""
+    return str(_norm_local(raw))
+
+
 def job_local_repo_root(job: Dict[str, Any]) -> Optional[Path]:
     raw = (job.get("local_repo_mount") or "").strip()
     if not raw:

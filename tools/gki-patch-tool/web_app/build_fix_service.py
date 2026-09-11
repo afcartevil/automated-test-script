@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from web_app.build_fix_diagnostics import (
     chains_matching_file,
     collision_call_site_lines,
+    is_kernel_readonly_path,
     multi_anchor_snippet,
     parse_build_log_diagnostics,
     try_rename_kernel_macro_collision,
@@ -1210,12 +1211,14 @@ def _format_apply_error(display_path: str, detail: str, before: str) -> str:
 
 def _error_context_role(err: Dict[str, Any]) -> str:
     """Label for LLM: where to fix vs read-only error site."""
+    path = _normalize_source_path(err.get("file") or "")
+    kernel = is_kernel_readonly_path(path)
     if (err.get("kind") or "").lower() == "note":
-        if err.get("note_kind") == "macro_defined_here":
-            path = _normalize_source_path(err.get("file") or "")
-            if "/include/linux/" in path or path.startswith("include/linux/"):
-                return "readonly_macro_definition"
+        if kernel:
+            return "readonly_macro_definition"
         return "previous_definition"
+    if kernel:
+        return "readonly_error_site"
     priority = err.get("error_priority") or ""
     if priority == "primary":
         return "primary_error"
@@ -1223,9 +1226,6 @@ def _error_context_role(err: Dict[str, Any]) -> str:
         return "cascade_error"
     if priority == "related":
         return "related_error"
-    path = _normalize_source_path(err.get("file") or "")
-    if "/include/linux/" in path or path.endswith("include/linux/minmax.h"):
-        return "readonly_error_site"
     return "error_site"
 
 
@@ -1255,12 +1255,12 @@ def _sort_errors_for_context(errors: List[Dict[str, Any]]) -> List[Dict[str, Any
 
 
 _ROLE_LABELS = {
-    "primary_error": "首要 error — 优先修复",
-    "previous_definition": "note 先前定义 — 优先在此文件修复",
+    "primary_error": "厂商侧 error — 在此文件修复（勿改内核）",
+    "previous_definition": "厂商先前定义 — 在此文件修复（勿改内核）",
     "related_error": "同文件关联 error",
     "cascade_error": "可能由前面错误引起的连带 error",
-    "readonly_macro_definition": "note 内核宏定义 — 只读勿改",
-    "readonly_error_site": "error 落点 — 上游/内核头，通常只读勿改",
+    "readonly_macro_definition": "GKI/内核先前定义 — 只读勿改",
+    "readonly_error_site": "GKI/内核 error 落点 — 只读勿改，改厂商文件",
     "error_site": "error 落点",
 }
 
@@ -1737,6 +1737,7 @@ def get_build_fix_state(job_id: str) -> Dict[str, Any]:
             (job.get("options") or {}).get("build_fix_max_attempts")
         ),
         "auto_fix_enabled": bool((job.get("options") or {}).get("auto_fix_build_errors")),
+        "failure_triage": st.get("failure_triage") or None,
     }
 
 
@@ -2599,10 +2600,15 @@ def _resolve_build_errors_with_wait(
 
     th = threading.Thread(target=_heartbeat, daemon=True)
     th.start()
+    from web_app.prompt_loader import set_session_retry_hint
+
+    job = get_upgrade_job(job_id) or {}
+    set_session_retry_hint(str((job.get("options") or {}).get("build_fix_user_hint") or ""))
     try:
         return resolve_build_errors_via_llm(wait_log=lambda m: _log(job_id, m), **kwargs)
     finally:
         done.set()
+        set_session_retry_hint("")
 
 
 def _context_fix_path(ctx: Dict[str, Any]) -> str:
@@ -3078,3 +3084,57 @@ def run_build_fix_attempt(
         "summary": summary,
         "files_changed": applied,
     }
+
+
+def triage_after_unapplied_attempt(
+    job_id: str,
+    log_path: str,
+    attempt: int,
+    result: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Diagnose an unapplied build-fix attempt; auto-retry once if verdict is retry."""
+    from web_app.failure_triage import analyze_upgrade_failure
+    from web_app.prompt_loader import set_session_retry_hint
+
+    job = get_upgrade_job(job_id) or {}
+    state = _get_state(job)
+    last = (state.get("attempts") or [None])[-1] or {}
+    excerpt = str(last.get("error_excerpt") or last.get("llm_summary") or "")[:4000]
+    errors = str(result.get("error") or last.get("error") or "AI 未能写回编译修复")
+    state["status"] = "triaging"
+    _save_state(job_id, job, state)
+    _log(job_id, "AI 修复未写回，正在分析失败原因…")
+
+    triage = analyze_upgrade_failure(kind="build_fix", errors=errors, extra=excerpt)
+    job = get_upgrade_job(job_id) or job
+    state = _get_state(job)
+    state["failure_triage"] = triage.as_dict()
+    state["status"] = "failed"
+    _save_state(job_id, job, state)
+    _log(job_id, f"失败诊断: {triage.verdict} — {triage.reason}")
+
+    if triage.verdict != "retry" or not (triage.retry_hint or "").strip():
+        return result
+
+    opts = dict((get_upgrade_job(job_id) or {}).get("options") or {})
+    opts["build_fix_user_hint"] = triage.retry_hint
+    update_upgrade_job(job_id, options=opts)
+    set_session_retry_hint(triage.retry_hint)
+    _log(job_id, "诊断认为可再试，正在按新约束再修一轮…")
+    retry_result = run_build_fix_attempt(job_id, log_path, attempt)
+    triage.auto_retried = True
+    if not retry_result.get("applied"):
+        triage.verdict = "manual"
+        triage.advice = (
+            (triage.advice or "")
+            + "\n自动重试后仍失败，请按建议在本机处理。"
+        ).strip()
+    job = get_upgrade_job(job_id) or {}
+    state = _get_state(job)
+    state["failure_triage"] = triage.as_dict()
+    if retry_result.get("applied"):
+        state["status"] = "idle"
+    else:
+        state["status"] = "failed"
+    _save_state(job_id, job, state)
+    return retry_result

@@ -14,7 +14,7 @@ import httpx
 import yaml
 
 from web_app.app_paths import scoring_config_path
-from web_app.prompt_loader import load_prompt, render_prompt
+from web_app.prompt_loader import load_prompt, render_prompt, user_hint_prompt_suffix
 
 ENV_KEY = "GKI_LLM_API_KEY"
 ENV_BASE = "GKI_LLM_API_BASE"
@@ -24,8 +24,9 @@ DEFAULT_BASE = "https://api.openai.com/v1"
 DEFAULT_MODEL = "gpt-4o"
 
 BUILD_FIX_LLM_TIMEOUT = int(os.environ.get("GKI_BUILD_FIX_LLM_TIMEOUT", "240"))
-BUILD_FIX_LLM_MAX_TOKENS = int(os.environ.get("GKI_BUILD_FIX_LLM_MAX_TOKENS", "2048"))
+BUILD_FIX_LLM_MAX_TOKENS = int(os.environ.get("GKI_BUILD_FIX_LLM_MAX_TOKENS", "8192"))
 BUILD_FIX_LLM_MAX_ATTEMPTS = int(os.environ.get("GKI_BUILD_FIX_LLM_MAX_ATTEMPTS", "1"))
+BUILD_FIX_LLM_RETRY_MAX_TOKENS = int(os.environ.get("GKI_BUILD_FIX_LLM_RETRY_MAX_TOKENS", "16384"))
 
 
 
@@ -1571,10 +1572,10 @@ def resolve_interval_worker_concurrency(interval_count: int) -> int:
 
 def _call_llm(system: str, user: str, config: Dict[str, str],
               timeout: int = 300, max_tokens: int = 4096,
-              max_attempts: int = 3) -> Tuple[str, Dict[str, int]]:
+              max_attempts: int = 3) -> Tuple[str, Dict[str, Any]]:
     """Make a chat completion request to an OpenAI-compatible API.
     Returns (content, usage_dict) where usage_dict contains prompt_tokens,
-    completion_tokens, total_tokens (may be empty if API doesn't return usage).
+    completion_tokens, total_tokens, and finish_reason when the API provides them.
     """
     api_base = config['api_base'].rstrip('/')
     if api_base.endswith('/chat/completions'):
@@ -1605,10 +1606,13 @@ def _call_llm(system: str, user: str, config: Dict[str, str],
             choice = data["choices"][0]
             content = choice["message"]["content"]
             usage = data.get("usage", None) or {}
-            usage_clean: Dict[str, int] = {
+            usage_clean: Dict[str, Any] = {
                 k: int(v) for k, v in usage.items()
                 if k in ("prompt_tokens", "completion_tokens", "total_tokens")
             }
+            finish_reason = str(choice.get("finish_reason") or "").strip()
+            if finish_reason:
+                usage_clean["finish_reason"] = finish_reason
             return content, usage_clean
         except (httpx.HTTPError, httpx.TimeoutException) as exc:
             last_exc = exc
@@ -2845,12 +2849,29 @@ def _try_parse_crash_analysis(text: str) -> Optional[Dict[str, Any]]:
     return result
 
 
+_OOPS_DUMP_HEADER_RE = re.compile(
+    r"\]\s*(?:PC|LR|SP|X\d+)\s*:\s*0x[0-9a-fA-F]+:\s*$",
+    re.IGNORECASE,
+)
+_OOPS_DUMP_BODY_RE = re.compile(
+    r"\]\s*[0-9a-fA-F]{3,4}:\s+[0-9a-fA-F]{8}\s+[0-9a-fA-F]{8}",
+    re.IGNORECASE,
+)
+
+
+def _is_oops_hexdump_line(line: str) -> bool:
+    """Drop MTK/arm64 register memory dumps that sit between pc: and Call trace."""
+    if _OOPS_DUMP_BODY_RE.search(line):
+        return True
+    return bool(_OOPS_DUMP_HEADER_RE.search(line.rstrip()))
+
+
 def _extract_crash_relevant_sections(crash_log: str, max_chars: int = 30000) -> str:
     """Intelligently extract crash-relevant sections from kernel log.
     Always performs smart extraction: finds crash markers and extracts generous context.
     Falls back to last max_chars if no markers found.
     """
-    import re as _re
+    import re as _re_local
 
     # Crash marker patterns
     markers = [
@@ -2860,8 +2881,11 @@ def _extract_crash_relevant_sections(crash_log: str, max_chars: int = 30000) -> 
         r'Oops:',
         r'general protection fault',
         r'Call Trace:',
+        r'Call trace:',
         r'RIP:',
         r'PC is at',
+        r'pc\s*:',
+        r'lr\s*:',
         r'watchdog:',
         r'RCU.*self-detected stall',
         r'INFO: rcu_sched',
@@ -2875,13 +2899,21 @@ def _extract_crash_relevant_sections(crash_log: str, max_chars: int = 30000) -> 
         r'Unhandled fault',
         r'kernel BUG at',
         r'WARNING:.*at\s+\S+\.\w+:',
+        r'KASAN',
+        r'use-after-free',
+        r'slab-out-of-bounds',
+        r'null-ptr-deref',
+        r'hung_task',
+        r'blocked for more than',
+        r'soft lockup',
+        r'hard LOCKUP',
     ]
     combined_pattern = '|'.join(markers)
 
     lines = crash_log.split('\n')
     marker_lines: List[int] = []
     for i, line in enumerate(lines):
-        if _re.search(combined_pattern, line, _re.IGNORECASE):
+        if _re_local.search(combined_pattern, line, _re_local.IGNORECASE):
             marker_lines.append(i)
 
     if not marker_lines:
@@ -2890,9 +2922,9 @@ def _extract_crash_relevant_sections(crash_log: str, max_chars: int = 30000) -> 
         print(f"[CRASH] 未找到崩溃标记，取日志末尾 {len(tail)} 字符", flush=True)
         return tail
 
-    # Extract generous context around each marker (100 lines before, 100 lines after)
-    CONTEXT_BEFORE = 100
-    CONTEXT_AFTER = 100
+    # Prefer the oops header and the Call trace that often sits after a hex dump.
+    CONTEXT_BEFORE = 20
+    CONTEXT_AFTER = 250
     sections: List[tuple] = []  # (start_line, end_line)
 
     for ml in marker_lines:
@@ -2910,19 +2942,21 @@ def _extract_crash_relevant_sections(crash_log: str, max_chars: int = 30000) -> 
         else:
             merged.append((start, end))
 
-    # Build output
+    # Build output, dropping register hex dumps so Call trace survives truncation
     result_parts: List[str] = []
     for idx, (start, end) in enumerate(merged):
         if idx > 0:
             skipped = start - merged[idx - 1][1]
             result_parts.append(f"\n... [省略 {skipped} 行无关日志] ...\n")
-        result_parts.append('\n'.join(lines[start:end]))
+        kept = [line for line in lines[start:end] if not _is_oops_hexdump_line(line)]
+        result_parts.append('\n'.join(kept))
 
     result = '\n'.join(result_parts) if result_parts else crash_log[-max_chars:]
 
-    # Final safety truncation
+    # If still too long, keep oops/stack tail rather than the noisy prefix
     if len(result) > max_chars:
-        result = result[:max_chars] + f"\n... [截断, 总 {len(result)} 字符]"
+        original_len = len(result)
+        result = result[-max_chars:] + f"\n... [截断前缀噪声, 原提取 {original_len} 字符]"
 
     print(f"[CRASH] 智能提取: 原日志 {len(crash_log)} 字符 / {len(lines)} 行, "
           f"找到 {len(marker_lines)} 个崩溃标记, "
@@ -2930,9 +2964,8 @@ def _extract_crash_relevant_sections(crash_log: str, max_chars: int = 30000) -> 
     return result
 
 
-def analyze_crash_cause(crash_log: str) -> Dict[str, Any]:
-    """Phase 1: Analyze crash log ONLY to determine crash root cause.
-    No patch info is sent — pure crash understanding.
+def analyze_crash_cause(crash_log: str, source_block: str = "") -> Dict[str, Any]:
+    """Phase 1: Analyze crash log, plus local GKI source at the crash site when available.
     """
     config = get_llm_config()
 
@@ -2940,9 +2973,25 @@ def analyze_crash_cause(crash_log: str) -> Dict[str, Any]:
 
     # Smart extraction: find crash-relevant sections instead of naive truncation
     relevant_log = _extract_crash_relevant_sections(crash_log)
+    source_section = ""
+    if (source_block or "").strip():
+        source_section = f"""
+## 本地 GKI 源码（已按当前 Tag 从仓库取出）
+{source_block}
 
-    user_prompt = f"""请分析以下内核死机日志，确定死机的根本原因：
+请结合源码说明死在哪个文件、哪一行、哪条语句。行号和语句必须来自上面的片段，禁止编造。
+"""
 
+    user_prompt = f"""请分析以下内核死机日志。
+
+要求：
+- crash_function 不要用 panic/die/kasan_report 等通用帧，除非栈上没有更具体的函数
+- crash_files 尽量写成内核相对路径（带目录），并从日志摘 file.c:line
+- crash_symbols 填崩溃路径上的真实符号，不要编造
+- evidence 摘 2～6 行日志原文
+- 有源码时填写 crash_source_path / crash_source_line / crash_source_statement
+- 不确定写「未知」
+{source_section}
 ```
 {relevant_log}
 ```"""
@@ -2958,15 +3007,47 @@ def analyze_crash_cause(crash_log: str) -> Dict[str, Any]:
         if not isinstance(data, dict):
             data = {}
 
+        files = data.get("crash_files", []) or []
+        symbols = data.get("crash_symbols", []) or []
+        if not isinstance(files, list):
+            files = [str(files)] if files else []
+        if not isinstance(symbols, list):
+            symbols = [str(symbols)] if symbols else []
+        extra_syms = [
+            data.get("crash_site_function") or "",
+            data.get("pc_symbol") or "",
+        ]
+        for item in extra_syms:
+            token = str(item).split("+")[0].strip()
+            if token and token not in symbols:
+                symbols.append(token)
+        evidence = data.get("evidence") or []
+        if not isinstance(evidence, list):
+            evidence = [str(evidence)] if evidence else []
+        source_line_raw = data.get("crash_source_line")
+        try:
+            source_line = int(str(source_line_raw).strip()) if source_line_raw not in (None, "", "未知") else 0
+        except ValueError:
+            source_line = 0
+
         result = {
             "crash_type": data.get("crash_type", ""),
+            "bug_class": data.get("bug_class", "") or "",
+            "confidence": data.get("confidence", "") or "",
             "crash_function": data.get("crash_function", ""),
+            "crash_site_function": data.get("crash_site_function", "") or "",
             "crash_module": data.get("crash_module", ""),
+            "pc_symbol": data.get("pc_symbol", "") or "",
+            "fault_addr": data.get("fault_addr", "") or "",
             "call_stack_summary": data.get("call_stack_summary", ""),
             "crash_description": data.get("crash_description", ""),
-            "crash_files": data.get("crash_files", []) or [],
-            "crash_symbols": data.get("crash_symbols", []) or [],
+            "crash_files": [str(x).strip() for x in files if str(x).strip()],
+            "crash_symbols": [str(x).strip() for x in symbols if str(x).strip()],
+            "evidence": [str(x).strip() for x in evidence if str(x).strip()],
             "crash_mechanism": data.get("crash_mechanism", ""),
+            "crash_source_path": str(data.get("crash_source_path") or "").strip(),
+            "crash_source_line": source_line,
+            "crash_source_statement": str(data.get("crash_source_statement") or "").strip(),
         }
         print(f"[CRASH Phase1] 死机类型: {result['crash_type']}, "
               f"崩溃函数: {result['crash_function']}, "
@@ -3091,7 +3172,11 @@ def find_suspected_patches(
 
     # Build crash analysis summary for LLM
     crash_summary_text = f"""- 死机类型: {crash_analysis.get('crash_type', '未知')}
+- 问题分类: {crash_analysis.get('bug_class', '') or '未知'}
 - 崩溃函数: {crash_analysis.get('crash_function', '未知')}
+- 崩溃现场函数: {crash_analysis.get('crash_site_function', '') or '未知'}
+- PC/RIP: {crash_analysis.get('pc_symbol', '') or '未知'}
+- 出错地址: {crash_analysis.get('fault_addr', '') or '未知'}
 - 相关模块: {crash_analysis.get('crash_module', '未知')}
 - 调用栈摘要: {crash_analysis.get('call_stack_summary', '')}
 - 相关文件: {', '.join(crash_files) if crash_files else '未提取到'}
@@ -3179,55 +3264,118 @@ def findFixCommits(
     commits_after_b: List[Dict[str, Any]],
     from_tag: str = "",
     to_tag: str = "",
+    search_from_tag: str = "",
+    search_to_rev: str = "",
+    total_after_tag: int = 0,
+    batch_size: int = 80,
+    on_progress: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
-    """Search for fix commits in commits after B tag.
-    Returns a list of suspected fix commits.
-    """
+    """Search for fix commits among candidates collected from tag..HEAD."""
     if not commits_after_b:
+        return []
+
+    found: List[Dict[str, Any]] = []
+    seen = set()
+    size = max(20, int(batch_size or 80))
+    batch_count = (len(commits_after_b) + size - 1) // size
+    for i in range(0, len(commits_after_b), size):
+        batch = commits_after_b[i:i + size]
+        batch_index = i // size + 1
+        if on_progress:
+            on_progress(
+                f"LLM 识别修复 {batch_index}/{batch_count}（本批 {len(batch)} / 共 {len(commits_after_b)} 笔）"
+            )
+        for row in _find_fix_commits_batch(
+            crash_info=crash_info,
+            commits=batch,
+            from_tag=from_tag,
+            to_tag=to_tag,
+            search_from_tag=search_from_tag,
+            search_to_rev=search_to_rev,
+            total_after_tag=total_after_tag,
+            candidate_total=len(commits_after_b),
+            batch_index=i // size + 1,
+            batch_count=(len(commits_after_b) + size - 1) // size,
+        ):
+            sha = (row.get("sha") or "").strip()
+            key = sha[:12] if sha else f"{row.get('title')}|{row.get('reason')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append(row)
+    return found
+
+
+def _find_fix_commits_batch(
+    crash_info: Dict[str, Any],
+    commits: List[Dict[str, Any]],
+    from_tag: str = "",
+    to_tag: str = "",
+    search_from_tag: str = "",
+    search_to_rev: str = "",
+    total_after_tag: int = 0,
+    candidate_total: int = 0,
+    batch_index: int = 1,
+    batch_count: int = 1,
+) -> List[Dict[str, Any]]:
+    if not commits:
         return []
 
     config = get_llm_config()
 
-    # Build compact commit list
     commit_lines: List[str] = []
-    for c in commits_after_b[:100]:
+    for c in commits:
         sha = c.get("sha", "?")[:12]
         title = (c.get("title") or c.get("message", ""))[:100]
         files = c.get("files", []) or []
         files_str = ", ".join(files[:5]) if files else "-"
         commit_lines.append(f"- `{sha}` {title}  [{files_str}]")
-    if len(commits_after_b) > 100:
-        commit_lines.append(f"\n... 另有 {len(commits_after_b) - 100} 笔提交未列出")
     commit_block = "\n".join(commit_lines)
 
     crash_type = crash_info.get("crash_type", "")
     crash_func = crash_info.get("crash_function", "")
     crash_module = crash_info.get("crash_module", "")
+    bug_class = crash_info.get("bug_class", "") or ""
+    crash_files = crash_info.get("crash_files", []) or []
+    files_str = ", ".join(str(x) for x in crash_files[:8]) if crash_files else "未提取"
     suspected = crash_info.get("suspected_patches", [])
     suspected_str = ""
     if suspected:
         parts = []
-        for s in suspected[:5]:
+        for s in suspected[:8]:
             parts.append(f"- {s.get('sha', '')[:12]} {s.get('title', '')[:60]}")
         suspected_str = "\n".join(parts)
 
+    origin = search_from_tag or to_tag or from_tag
+    head = (search_to_rev or "")[:12]
+    range_text = f"{origin} → HEAD({head or 'latest'})"
+    if from_tag and to_tag:
+        upgrade_line = f"升级区间: {from_tag} → {to_tag}"
+    else:
+        upgrade_line = f"当前 GKI Tag: {origin}（查社区/谷歌是否已有修复）"
+
     system_prompt = load_prompt("crash_fix_commits")
 
-    user_prompt = f"""## GKI 升级信息
-升级区间: {from_tag} → {to_tag}
+    user_prompt = f"""## GKI 信息
+{upgrade_line}
+修复检索范围: {range_text}
+该范围内全部提交: {total_after_tag or candidate_total} 笔
+本批候选: {len(commits)} / {candidate_total or len(commits)}（第 {batch_index}/{batch_count} 批，已按崩溃文件/符号/修复类标题筛选）
 
 ## 死机信息
 死机类型: {crash_type}
+问题分类: {bug_class or '未知'}
 崩溃函数: {crash_func}
 相关模块: {crash_module}
+相关文件: {files_str}
 
 ## 疑似导致死机的 Patch
-{suspected_str if suspected_str else '（未识别）'}
+{suspected_str if suspected_str else '（未识别，或本任务只查社区修复）'}
 
-## B tag 之后的提交（共 {len(commits_after_b)} 笔）
+## 候选提交
 {commit_block}
 
-请检查这些提交中是否有修复死机问题的代码。"""
+请判断这些提交中是否有修复该死机问题的代码。"""
 
     try:
         content, _ = _call_llm(system_prompt, user_prompt, config, timeout=300)
@@ -3255,6 +3403,177 @@ def findFixCommits(
 
     except Exception as exc:
         print(f"[FIX LLM] 查找修复提交失败: {exc}", flush=True)
+        return []
+
+
+def compare_crash_source_with_latest(
+    crash_analysis: Dict[str, Any],
+    crash_tag: str,
+    latest_ref: str,
+    crash_source_block: str,
+    latest_source_block: str,
+    file_diffs: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
+    """Ask the model whether the latest source still has this crash path."""
+    empty = {
+        "still_present": True,
+        "latest_status": "cannot_compare",
+        "confidence": "低",
+        "summary": "未能对照最新源码",
+        "code_change": "",
+        "fix_evidence": "",
+    }
+    if not (crash_source_block or "").strip() or not (latest_source_block or "").strip():
+        empty["summary"] = "缺少崩溃点或最新源码，无法对照"
+        return empty
+
+    config = get_llm_config()
+    system_prompt = load_prompt("crash_source_compare")
+    diff_parts: List[str] = []
+    for item in file_diffs or []:
+        path = item.get("path") or ""
+        text = item.get("diff") or ""
+        if not text:
+            continue
+        diff_parts.append(f"### {path}\n```diff\n{text}\n```")
+    diff_block = "\n\n".join(diff_parts) if diff_parts else "（无独立文件 diff，仅对照函数片段）"
+
+    user_prompt = f"""## 崩溃 Tag
+{crash_tag}
+
+## 社区最新
+{latest_ref}
+
+## 死机分析
+- 类型: {crash_analysis.get('crash_type') or '未知'}
+- 分类: {crash_analysis.get('bug_class') or '未知'}
+- 崩溃函数: {crash_analysis.get('crash_function') or '未知'}
+- 机制: {crash_analysis.get('crash_mechanism') or '未知'}
+- 崩溃语句: {crash_analysis.get('crash_source_statement') or '未知'}
+
+## 崩溃 Tag 源码
+{crash_source_block}
+
+## 社区最新源码
+{latest_source_block}
+
+## 文件 diff（Tag → 最新）
+{diff_block}
+"""
+    try:
+        content, _ = _call_llm(system_prompt, user_prompt, config, timeout=180)
+        yaml_text = _extract_yaml(content)
+        try:
+            data = _safe_load_llm_yaml(yaml_text) or {}
+        except yaml.YAMLError:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        status = str(data.get("latest_status") or "").strip()
+        if status not in ("still_buggy", "likely_fixed", "cannot_compare"):
+            if data.get("still_present") is False:
+                status = "likely_fixed"
+            elif data.get("still_present") is True:
+                status = "still_buggy"
+            else:
+                status = "cannot_compare"
+        still_present = status != "likely_fixed"
+        if "still_present" in data:
+            still_present = bool(data.get("still_present"))
+            if still_present and status == "likely_fixed":
+                status = "still_buggy"
+        return {
+            "still_present": still_present,
+            "latest_status": status,
+            "confidence": str(data.get("confidence") or "中"),
+            "summary": str(data.get("summary") or ""),
+            "code_change": str(data.get("code_change") or ""),
+            "fix_evidence": str(data.get("fix_evidence") or ""),
+        }
+    except Exception as exc:
+        print(f"[CRASH SOURCE COMPARE] 失败: {exc}", flush=True)
+        empty["summary"] = f"对照最新源码失败: {exc}"
+        return empty
+
+
+def identify_fix_from_source_diffs(
+    crash_analysis: Dict[str, Any],
+    compare: Dict[str, Any],
+    commits: List[Dict[str, Any]],
+    crash_tag: str = "",
+    latest_ref: str = "",
+) -> List[Dict[str, Any]]:
+    """Pick the fixing commit by reading file/function diffs after latest source looks safe."""
+    if not commits:
+        return []
+    config = get_llm_config()
+    system_prompt = load_prompt("crash_fix_from_diff")
+    allowed = {str(item.get("sha") or "").strip()[:12] for item in commits if item.get("sha")}
+    allowed.update(str(item.get("sha") or "").strip() for item in commits if item.get("sha"))
+    blocks: List[str] = []
+    for item in commits:
+        sha = str(item.get("sha") or "")
+        title = str(item.get("title") or "")
+        path = str(item.get("path") or "")
+        diff = str(item.get("diff") or "")
+        if not sha:
+            continue
+        if not diff:
+            diff = "(无 diff)"
+        blocks.append(f"### `{sha[:12]}` {title}\n文件: {path}\n```diff\n{diff}\n```")
+    user_prompt = f"""## 范围
+崩溃 Tag: {crash_tag}
+社区最新: {latest_ref}
+
+## 死机分析
+- 类型: {crash_analysis.get('crash_type') or '未知'}
+- 分类: {crash_analysis.get('bug_class') or '未知'}
+- 崩溃函数: {crash_analysis.get('crash_function') or '未知'}
+- 机制: {crash_analysis.get('crash_mechanism') or '未知'}
+
+## 最新源码为何认为已避开
+{compare.get('summary') or ''}
+{compare.get('fix_evidence') or ''}
+
+## 候选提交 diff（必须从中选 SHA）
+{chr(10).join(blocks)}
+"""
+    try:
+        content, _ = _call_llm(system_prompt, user_prompt, config, timeout=300)
+        yaml_text = _extract_yaml(content)
+        try:
+            data = _safe_load_llm_yaml(yaml_text) or {}
+        except yaml.YAMLError:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        found: List[Dict[str, Any]] = []
+        for row in data.get("fix_commits") or []:
+            if not isinstance(row, dict):
+                continue
+            sha = str(row.get("sha") or "").strip()
+            if not sha:
+                continue
+            if sha not in allowed and sha[:12] not in allowed:
+                continue
+            full = next(
+                (item.get("sha") for item in commits if str(item.get("sha") or "").startswith(sha[:12])),
+                sha,
+            )
+            found.append({
+                "sha": full,
+                "title": str(row.get("title") or next(
+                    (item.get("title") for item in commits if str(item.get("sha") or "").startswith(sha[:12])),
+                    "",
+                )),
+                "fix_type": str(row.get("fix_type") or "fix"),
+                "confidence": str(row.get("confidence") or "中"),
+                "reason": str(row.get("reason") or ""),
+                "via": "source_diff",
+            })
+        return found
+    except Exception as exc:
+        print(f"[CRASH FIX FROM DIFF] 失败: {exc}", flush=True)
         return []
 
 
@@ -3435,6 +3754,23 @@ def _estimate_region_merge_max_tokens(vendor_snippet: str, body_snippet: str = "
     return min(16384, max(4096, chars // 2 + 1024, lines * 14 + 512))
 
 
+def _append_conflict_logic_hints(user_parts: List[str], task: Dict[str, Any]) -> None:
+    """Attach control-flow notes as a reference to help merge, not as a sole rule."""
+    hunk_body = (task.get("hunk_body") or "").strip()
+    logic = (task.get("logic_hints") or "").strip()
+    if not logic and hunk_body:
+        from web_app.conflict_region_utils import build_function_logic_hints
+        logic = build_function_logic_hints(
+            hunk_body,
+            task.get("vendor_function")
+            or task.get("body_snippet")
+            or task.get("vendor_snippet")
+            or "",
+        )
+    if logic:
+        user_parts.append(logic)
+
+
 def _resolve_conflict_region_via_llm(
     *,
     source_path: str,
@@ -3443,6 +3779,9 @@ def _resolve_conflict_region_via_llm(
 ) -> Tuple[str, str]:
     """Merge a single conflict region; return (merged_snippet, summary)."""
     system = load_prompt("conflict_merge_region")
+    hint_block = user_hint_prompt_suffix("conflict")
+    if hint_block:
+        system = system.rstrip() + "\n\n" + hint_block
 
     body = (task.get("body_snippet") or "").strip()
     user_parts = [
@@ -3450,6 +3789,12 @@ def _resolve_conflict_region_via_llm(
         f"冲突区域 {task['index']}/{task['total']}（约第 {task['start_line']}-{task['end_line']} 行）",
         f"冲突类型: {task.get('kind', 'unknown')}",
     ]
+    if task.get("incremental_only"):
+        user_parts.append(
+            "【强制】vendor 已有同名函数且实现与 GKI 旧代码不同。"
+            "禁止把 incoming/GKI 整个函数体粘贴进文件或新增第二个同名函数。"
+            "必须在上方 vendor 函数体内按 .rej 的 +/- 逐条合入。"
+        )
     if body:
         user_parts.append("=== vendor 冲突主体（需合并的部分，仅输出此部分的合并结果）===")
         user_parts.append(body)
@@ -3458,16 +3803,43 @@ def _resolve_conflict_region_via_llm(
         user_parts.append(task["vendor_snippet"])
     incoming_body = (task.get("incoming_body_snippet") or "").strip()
     incoming = (task.get("incoming_snippet") or "").strip()
-    if incoming_body:
-        user_parts.append("=== GKI incoming 冲突主体 ===")
-        user_parts.append(incoming_body)
-    elif incoming:
-        user_parts.append("=== 拟合入的 GKI 变更（incoming，含上下文）===")
-        user_parts.append(incoming)
+    if not task.get("incremental_only"):
+        if incoming_body:
+            user_parts.append("=== GKI incoming 冲突主体 ===")
+            user_parts.append(incoming_body)
+        elif incoming:
+            user_parts.append("=== 拟合入的 GKI 变更（incoming，含上下文）===")
+            user_parts.append(incoming)
     hunk_body = (task.get("hunk_body") or "").strip()
     if hunk_body:
-        user_parts.append("=== .rej unified-diff hunk ===")
+        user_parts.append("=== .rej unified-diff hunk（只把其中 +/- 合入 vendor）===")
         user_parts.append(hunk_body)
+        user_parts.append(
+            "【强制】每条 .rej 的 + 必须紧挨其前导 context 落地；"
+            "禁止把 GKI 插入写进厂商独有块（如 CONTINUOUS_WR）。"
+            "若 hunk 下一行是 }，合入后下一行仍须是该 }。"
+        )
+    _append_conflict_logic_hints(user_parts, task)
+    old_fn = (task.get("gki_old_function") or "").strip()
+    new_fn = (task.get("gki_new_function") or "").strip()
+    if old_fn or new_fn:
+        user_parts.append(
+            "【函数实现对照】下面是同名函数在 GKI 旧版 / 新版中的实现。"
+            "对照二者得出本轮语义变更，合入上方 vendor 函数；"
+            "禁止用 GKI 新函数整体替换 vendor。"
+        )
+        if old_fn:
+            user_parts.append("=== GKI 旧版函数实现 ===")
+            user_parts.append(old_fn)
+        if new_fn:
+            user_parts.append("=== GKI 新版函数实现（对照用，禁止整段粘贴）===")
+            user_parts.append(new_fn)
+    preview = (task.get("function_merge_preview") or "").strip()
+    if preview:
+        user_parts.append(
+            "=== 函数级三路合并预览（含冲突标记；在标记处解决并删掉标记，保留未冲突的 vendor 代码）==="
+        )
+        user_parts.append(preview)
     user_parts.append("请输出 summary 行 + ```merged 合并后的冲突主体（不含上下文）```")
 
     max_tokens = _estimate_region_merge_max_tokens(
@@ -3540,6 +3912,9 @@ def _resolve_conflict_region_via_llm_diff(
     body = (task.get("body_snippet") or "").strip()
 
     system = load_prompt("conflict_merge_diff")
+    hint_block = user_hint_prompt_suffix("conflict")
+    if hint_block:
+        system = system.rstrip() + "\n\n" + hint_block
 
     user_parts = [
         f"文件路径: {source_path}",
@@ -3548,14 +3923,44 @@ def _resolve_conflict_region_via_llm_diff(
         "=== 当前 vendor 冲突主体 ===",
         body or task.get("vendor_snippet", ""),
     ]
+    if task.get("incremental_only"):
+        user_parts.append(
+            "【强制】vendor 已有同名函数且实现与 GKI 旧代码不同。"
+            "禁止贴入整个 GKI 函数或新增第二个同名定义；只把 .rej 的 +/- 合入现有函数。"
+        )
     incoming_body = (task.get("incoming_body_snippet") or "").strip()
-    if incoming_body:
+    if incoming_body and not task.get("incremental_only"):
         user_parts.append("=== GKI incoming 冲突主体 ===")
         user_parts.append(incoming_body)
     hunk_body = (task.get("hunk_body") or "").strip()
     if hunk_body:
-        user_parts.append("=== .rej hunk ===")
+        user_parts.append("=== .rej hunk（只把其中 +/- 合入 vendor）===")
         user_parts.append(hunk_body)
+        user_parts.append(
+            "【强制】每条 .rej 的 + 必须紧挨其前导 context 落地；"
+            "禁止把 GKI 插入写进厂商独有块（如 CONTINUOUS_WR）。"
+            "若 hunk 下一行是 }，合入后下一行仍须是该 }。"
+        )
+    _append_conflict_logic_hints(user_parts, task)
+    old_fn = (task.get("gki_old_function") or "").strip()
+    new_fn = (task.get("gki_new_function") or "").strip()
+    if old_fn or new_fn:
+        user_parts.append(
+            "【函数实现对照】对照 GKI 旧/新函数的语义变更，合入 vendor；"
+            "禁止用 GKI 新函数整体替换。"
+        )
+        if old_fn:
+            user_parts.append("=== GKI 旧版函数实现 ===")
+            user_parts.append(old_fn)
+        if new_fn:
+            user_parts.append("=== GKI 新版函数实现（对照用，禁止整段粘贴）===")
+            user_parts.append(new_fn)
+    preview = (task.get("function_merge_preview") or "").strip()
+    if preview:
+        user_parts.append(
+            "=== 函数级三路合并预览（含冲突标记；在标记处解决并删掉标记）==="
+        )
+        user_parts.append(preview)
     user_parts.append("请输出 summary + ```diff unified diff ```")
 
     max_tokens = _estimate_region_merge_max_tokens(
@@ -3583,6 +3988,7 @@ def resolve_merge_conflict_tasks_via_llm(
     """Apply LLM (diff-first) to remaining conflict tasks."""
     from web_app.conflict_region_utils import (
         apply_hunk_merge_to_source,
+        assert_micro_inserts_follow_context,
         extract_merged_hunk_body,
         validate_merged_hunk_middle,
         _vendor_body_lines,
@@ -3596,13 +4002,17 @@ def resolve_merge_conflict_tasks_via_llm(
     merged = original_content
     summaries: List[str] = []
     for task in sorted(tasks, key=lambda t: t["replace_start"], reverse=True):
+        hunk_body = (task.get("hunk_body") or "").strip()
         try:
-            merged, summary = _resolve_conflict_region_via_llm_diff(
+            candidate, summary = _resolve_conflict_region_via_llm_diff(
                 source_path=source_path,
                 file_content=merged,
                 task=task,
                 config=config,
             )
+            if hunk_body:
+                assert_micro_inserts_follow_context(candidate, hunk_body)
+            merged = candidate
             summaries.append(f"#{task['index']} diff: {summary}")
             continue
         except RuntimeError:
@@ -3625,6 +4035,8 @@ def resolve_merge_conflict_tasks_via_llm(
         merged = apply_hunk_merge_to_source(
             merged, task["replace_start"], task["replace_end"], middle,
         )
+        if hunk_body:
+            assert_micro_inserts_follow_context(merged, hunk_body)
         summaries.append(f"#{task['index']} body: {summary}")
 
     return merged, "LLM " + "; ".join(summaries)
@@ -3673,6 +4085,7 @@ def _resolve_merge_conflict_llm_only(
     """LLM-only fallback when job has no tag metadata."""
     from web_app.conflict_region_utils import (
         apply_hunk_merge_to_source,
+        assert_micro_inserts_follow_context,
         collect_conflict_merge_tasks,
         extract_merged_hunk_body,
         validate_merged_hunk_middle,
@@ -3725,6 +4138,9 @@ def _resolve_merge_conflict_llm_only(
         )
         summaries.append(f"#{task['index']}: {summary}")
 
+    if rej_content.strip():
+        assert_micro_inserts_follow_context(merged, rej_content)
+
     _validate_merged_source(merged, source_path=source_path)
     if "<<<<<<<" in merged or ">>>>>>>" in merged:
         raise RuntimeError("合并后仍含 git 冲突标记，请检查各冲突区域")
@@ -3745,62 +4161,73 @@ _FIX_BLOCKS_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
+
+def _llm_output_truncated(response: str, usage: Optional[Dict[str, Any]], max_tokens: int) -> bool:
+    """True when the model likely hit max_tokens before finishing the reply."""
+    usage = usage or {}
+    if str(usage.get("finish_reason") or "").lower() == "length":
+        return True
+    try:
+        completion = int(usage.get("completion_tokens") or 0)
+    except (TypeError, ValueError):
+        completion = 0
+    if max_tokens > 0 and completion >= max(1, int(max_tokens * 0.95)):
+        return True
+    text = response or ""
+    if text.count("```") % 2 == 1:
+        return True
+    return False
+
+
+def _parse_build_fix_blocks(response: str) -> Tuple[List[Dict[str, str]], str]:
+    """Parse summary + closed ```fix path blocks. Incomplete fences are ignored."""
+    summary_m = _SUMMARY_RE.search(response or "")
+    summary = summary_m.group(1).strip() if summary_m else "AI 编译修复完成"
+    from web_app.build_fix_service import sanitize_llm_fix_path
+
+    fixes: List[Dict[str, str]] = []
+    for m in _FIX_BLOCKS_RE.finditer(response or ""):
+        path = sanitize_llm_fix_path(m.group(1))
+        content = m.group(2)
+        if content.endswith("\n"):
+            content = content.rstrip("\n") + "\n"
+        if path and path != "unknown" and content.strip():
+            fixes.append({"path": path, "content": content})
+    if not fixes:
+        block_m = _MERGED_BLOCK_RE.search(response or "")
+        if block_m and (block_m.group(1) or "").strip():
+            fixes.append({"path": "unknown", "content": block_m.group(1)})
+    return fixes, summary
+
 def _build_fix_reference_examples() -> str:
     """Real failure patterns as illustrations only — not prescriptive rules for specific errors."""
     return """=== 参考示例（真实踩坑对照，非强制剧本 — 须以当前诊断链/snippet 为准） ===
-以下仅说明**通用规则**在过往任务中的典型失败形态；**不得**假定本次报错一定是其中某一例，也不得照搬路径、行号或符号名。
+以下仅说明**通用规则**在过往任务中的典型失败形态；**不得**照搬路径、行号或符号名。
 
-**示例 1 — 行号锚点错误，误删文件头 `/**`（删重复宏类任务中曾出现）**
-- 实际 diff：`@@ -1,…` 起笔，hunk 含 `-/**` 等注释行；工具匹配到文件头**章节说明**块，而非 note 处 `#define`
-- 后果：写回校验「孤立 kernel-doc」，**拒绝写回**
-- 应吸取（通用）：**只删** note 处 `-#define <宏名>`；**不要**在 diff 里出现任何注释删除行；`@@` 锚在 `#define` 行
+**示例 1 — 行号锚点错误，误删文件头 `/**`**
+- 实际 diff：`@@ -1,…` 起笔，hunk 含 `-/**`；匹配到文件头章节说明而非厂商 `#define`
+- 应吸取：`@@` 锚在厂商 `#define` 行；不要删除任何注释行；不要整文件重写
 
-**示例 2 — 散落删除注释边界（曾出现）**
-- 实际 diff：单独 `-` 了 license / 章节说明块的 `/**`、` */`、` *` 行，或只删了注释块的一部分
-- 后果：块注释未闭合或孤立 ` *` 行，编译在文件前几行报错
-- 应吸取（通用）：**不要删除任何注释行**；只改与报错直接相关的代码行（如 `#define`）
+**示例 2 — 散落删除注释边界**
+- 应吸取：不要删除任何注释行；宏重定义只删厂商重复 `#define`
 
-**示例 3 — 方案与 summary 不一致仍被拒绝（写回校验）**
-- summary 写「删宏」但 diff 动了注释块 → 工具**只认 patch 结果**
-- 应吸取（通用）：宏重定义时 **`-` 行仅含 `#define`**；若收到写回失败，按 snippet 重写锚点，勿重复删注释"""
+**示例 3 — 给 GKI 头出 diff / 整文件重写导致截断**
+- 应吸取：禁止 `include/linux/` fix 块；每个厂商文件只出很短的 unified diff"""
 
 
 def _comment_block_integrity_guidance() -> str:
     """Rules: fix only erroring code; do not delete comment blocks unless repairing broken structure."""
     return """=== ⚠ 注释与最小改动（删改 .h/.c 时遵守） ===
-**首要原则**：只修改与**当前编译报错**直接相关的代码行（如冲突的 `#define`、错误语句、缺失声明），**不要**为了「整洁」去删 kernel-doc / `/** … */` 注释块。留下描述已删宏的注释块**允许**，不影响编译。
+**首要原则**：只修改与**当前编译报错**直接相关的代码行，**不要**为了「整洁」去删 kernel-doc / `/** … */` 注释块。
 
-**宏重定义类报错（最常见）**：
-- ✅ **仅**用 `-` 删除 note 处的 `#define <宏名> …` 行（多行宏含 `\\` 续行时删完整段）
-- ❌ **禁止**在 diff 中用 `-` 删除任何 `/**`、` *`、` */`、`/*` 行
-- `@@` 锚在 `#define` 行；上下文行可保留其上方的注释块不动
+**宏重定义**：只删除厂商侧重复 `#define`（不要 `#ifndef`、不要改 GKI）。此处只强调：
+- ❌ 不要删任何 `/**`、` *`、` */`、`/*` 注释行
+- ❌ 不要把整个 .h/.c 写入 fix 块（diff 通常十几行）
+- `@@` 锚在厂商侧 `#define` 行，禁止 `@@ -1,…`
 
 **若必须动到注释（仅当报错本身与注释/守卫相关，或磁盘 snippet 标明结构已损坏）**：
-- 不得**散落**删除：只删 `/**` 留 ` *`、只删 ` */` 留 ` *` 等 — 会导致孤立行、`#ifndef` 被注释掉
-- 不得误删文件头 license / 与本次报错无关的章节说明块
-
-**写 diff 前自检**：
-1. 宏重定义：`-` 行是否**只有** `#define`（及续行）？若出现注释删除行 → 去掉这些 `-` 行
-2. 删完后是否会产生「块外孤立 ` *` / ` */`」？若会 → 说明动了注释，改回只删代码行
-3. hunk 上下文与 snippet **逐字一致**；`@@` 对齐 `>>>` / `#define`，禁止 `@@ -1,…` 臆造
-
-**典型错误 diff（禁止）**：
-```diff
--/**
-  * file-level section (unrelated).
-  */
-```
-或任何含 `-/**`、`- *`、`- */` 的宏修复 hunk。
-
-**正确 diff（宏重定义，只删定义行）**：
-```diff
-@@ -42,3 +42,2 @@
- /**
-  * MIN - ...
-  */
--#define MIN(a,b) ((a)<(b)?(a):(b))
-```
-（上方注释块保留；`@@` 锚在 `#define` 行。）"""
+- 不得**散落**删除：只删 `/**` 留 ` *`、只删 ` */` 留 ` *` 等
+- 不得误删文件头 license / 与本次报错无关的章节说明块"""
 
 
 def _macro_redefinition_guidance(errors: List[Dict[str, Any]]) -> str:
@@ -3808,46 +4235,69 @@ def _macro_redefinition_guidance(errors: List[Dict[str, Any]]) -> str:
     messages = " ".join((e.get("message") or "").lower() for e in errors)
     if "redefin" not in messages and "macro redefined" not in messages:
         return ""
+    from web_app.build_fix_diagnostics import is_kernel_readonly_path
+
+    def _is_redef_error(e: Dict[str, Any]) -> bool:
+        if (e.get("kind") or "").lower() != "error":
+            return False
+        msg = (e.get("message") or "").lower()
+        return "redefin" in msg or "macro redefined" in msg
+
+    redef_errors = [e for e in errors if _is_redef_error(e)]
     prev_sites = [
         e for e in errors
         if (e.get("kind") or "").lower() == "note"
         or e.get("context_role") == "previous_definition"
         or "previous definition" in (e.get("message") or "").lower()
     ]
-    if not prev_sites:
+    if not prev_sites and not redef_errors:
         return ""
-    prev_paths = ", ".join(
-        f"{e.get('file', '?')}:{e.get('line', '?')}" for e in prev_sites[:5]
+
+    err_vendor = [e for e in redef_errors if not is_kernel_readonly_path(e.get("file") or "")]
+    err_kernel = [e for e in redef_errors if is_kernel_readonly_path(e.get("file") or "")]
+    note_vendor = [e for e in prev_sites if not is_kernel_readonly_path(e.get("file") or "")]
+    note_kernel = [e for e in prev_sites if is_kernel_readonly_path(e.get("file") or "")]
+    case1 = bool(err_vendor and note_kernel)
+    case2 = bool(err_kernel and note_vendor)
+    if not case1 and not case2:
+        # Fall back from roles when note/error pairing is incomplete.
+        case1 = bool(err_vendor)
+        case2 = bool(err_kernel)
+
+    def _fmt(sites: List[Dict[str, Any]]) -> str:
+        return ", ".join(
+            f"{e.get('file', '?')}:{e.get('line', '?')}" for e in sites[:5]
+        ) or "(见日志)"
+
+    parts = [
+        "=== ⚠ 本次为「宏重定义」类错误 — 只删厂商重复 #define（禁止改 GKI） ===",
+        "判定：error = 后 include 的定义；note: previous definition = 先 include 的定义。",
+        "**无论哪种 include 顺序，改法相同**：删除厂商代码里那份与内核同名的 `#define`。",
+        "不要 `#ifndef` 包裹、不要改 `include/linux/`、不要整文件重写、不要删注释。",
+        "**输出硬限制**：summary 一行 + 每个厂商文件一个很短的 unified diff（通常 <20 行）。",
+    ]
+    if case1:
+        parts.append(
+            f"**情形 1（本次命中）— GKI 头在前，厂商头在后**：\n"
+            f"- error 在厂商: {_fmt(err_vendor)}\n"
+            f"- previous definition 在 GKI（只读）: {_fmt(note_kernel)}\n"
+            f"- **在厂商 error 落点删除** `#define`（内核已提供实现）。"
+        )
+    if case2:
+        parts.append(
+            f"**情形 2（本次命中）— 厂商头在前，GKI 头在后**：\n"
+            f"- error 在 GKI（只读，禁止出 diff）: {_fmt(err_kernel)}\n"
+            f"- previous definition 在厂商: {_fmt(note_vendor)}\n"
+            f"- **在厂商 note 处删除** `#define`（不要给 GKI 出 diff）。"
+        )
+    parts.append(
+        "**禁止**：修改 `include/linux/*.h`；`#ifndef` 包裹；diff 删除注释行；"
+        "把整个 .h 写入 fix 块；删完 `#define` 后再追加 `#ifdef`/`#undef` 块。"
     )
-    return f"""=== ⚠ 本次为「宏重定义」类错误 — 必读修复决策（覆盖你的默认习惯） ===
-已识别：gcc 报 macro redefined，且 note 指向先前定义处（{prev_paths}）。
-
-**推理顺序（必须按此执行，再写 summary 与 diff）**：
-1. `note: previous definition` = 本编译单元里**第一次**定义该宏的位置 → **只改这里**，不要改 error 落点的内核/上游头文件
-2. error 落在 `include/linux/` 等内核头 → 该文件通常**只读**，说明是**后 include** 的头与先前定义冲突，不是内核头写错了
-3. `#ifndef MACRO` / `#ifdef` **不能**作为首选方案：若 note 处已是 `#define MACRO ...`（无条件），宏在预处理阶段**已经定义**；后 include 的内核头再定义必冲突。在外面包一层 `#ifndef` **不会撤销**已发生的定义
-4. `LINUX_VERSION_CODE` / 内核版本条件包裹**若仍会在当前内核版本下展开出 `#define`**，同样无效；当前若是 5.10 GKI 编译，应确保 5.10 下**不再定义**与内核同名的宏
-
-**推荐修复（按优先级，选最小可行）**：
-A. 在 note 指向的文件**仅删除**与内核同名的 `#define …` 行（最小 diff）；**不要**删除其上方/下方的 `/** … */` 或任何 kernel-doc 注释
-   - 若该宏被**仅服务于此宏**的 `#ifndef MACRO`…`#endif` 包裹，可一并删除 guard 三行；**勿**动文件头 license / 章节说明注释
-   - 删完 `#define` 即止，**勿**再写 `#undef`
-B. 若 vendor 必须保留兼容名，**改名**为 vendor 前缀，并仅改本驱动内引用 — 仅当删除会破坏大量调用且无法 include 内核头时
-C. 调整 include 顺序使内核头**先于** vendor 宏定义 — 仅当不会破坏其它依赖且 diff 更小
-
-**本次明确禁止写入 summary/diff 的方案**：
-- ❌ 「为冲突宏添加 `#ifndef` 保护」
-- ❌ 删除 `#define` 后追加 `#ifdef MACRO` / `#undef MACRO` / `#endif`
-- ❌ diff 中用 `-` 删除 `/**`、` *`、` */` 等注释行（宏重定义**只删 `#define`**）
-- ❌ 「用条件编译包裹 `#define`」但当前内核版本下仍会定义同名宏
-- ❌ 修改 note 对侧的内核/上游头文件（如 `include/linux/*.h`）
-
-**summary 自检**：若草稿含「删除 kernel-doc」「删除注释块」等 → 改为「仅删除 vendor 重复 `#define`，依赖内核头提供实现」。
-
-**diff 行号锚点（宏重定义必守）**：
-1. `@@` **对齐** `#define <冲突宏名>` 所在行（或 note: previous definition 紧邻行）— **禁止** `@@ -1,…`
-2. hunk 的 `-` 行**仅**为 `#define`（及 `\\` 续行）；**禁止** `-/**`、`- *`、`- */`
-3. 每个冲突宏 1 个 hunk；不要额外 hunk 去动文件头或 license"""
+    parts.append(
+        "**diff 锚点**：`@@` 对齐厂商 `#define <宏名>` 行，禁止 `@@ -1,…`；每个冲突宏一个 hunk。"
+    )
+    return "\n".join(parts)
 
 
 def _identifier_collision_guidance(chains: List[Dict[str, Any]]) -> str:
@@ -3910,6 +4360,9 @@ def resolve_build_errors_via_llm(
         raise RuntimeError("LLM 未配置 API Key")
 
     system = load_prompt("build_fix")
+    hint_block = user_hint_prompt_suffix("build_fix")
+    if hint_block:
+        system = system.rstrip() + "\n\n" + hint_block
 
     llm_errors = list(errors or [])
     llm_chains = list(diagnostic_chains or [])
@@ -3939,12 +4392,12 @@ def resolve_build_errors_via_llm(
         if llm_errors:
             parts.append("=== 结构化编译错误（含角色标注；同文件多条 error 均已保留） ===")
             role_hints = {
-                "primary_error": "← 首要 error，优先修复",
-                "previous_definition": "← 优先在此修复",
+                "primary_error": "← 厂商侧 error，在此修复（勿改内核）",
+                "previous_definition": "← 厂商先前定义，在此修复（勿改内核）",
                 "related_error": "← 同文件关联 error",
                 "cascade_error": "← 可能由前面错误引起，勿单独打补丁",
-                "readonly_macro_definition": "← 内核宏定义，只读勿改",
-                "readonly_error_site": "← 上游只读，勿改此文件",
+                "readonly_macro_definition": "← GKI 先前定义，只读勿改",
+                "readonly_error_site": "← GKI error 落点，只读；改厂商文件",
                 "error_site": "",
             }
             limit = 12 if compact else 20
@@ -4045,9 +4498,11 @@ def resolve_build_errors_via_llm(
             if any(any(m in fb for m in struct_markers) for fb in apply_feedback):
                 parts.append(
                     "=== 上次写回因块注释结构被破坏而拒绝 ===\n"
-                    "宏重定义修复：**仅**用 `-` 删除 note 处 `#define` 行，**不要**在 diff 中删除任何 `/**`/` *`/` */` 行。\n"
-                    "若拒绝信息含「孤立 kernel-doc」：说明此前 diff 误删了文件头注释 — 本次**只删 `#define`**，锚点设在宏定义行，禁止 `@@ -1,…`。\n"
-                    "若 snippet 显示磁盘已有孤立 ` *` 行（历史损坏）：须先补回 `/**` 或删除残缺注释块，再删 `#define`。"
+                    "宏重定义修复：只删除厂商侧重复 `#define`，不要 `#ifndef`，不要改 GKI。"
+                    "**不要**在 diff 中删除任何 `/**`/` *`/` */` 行，禁止整文件重写。\n"
+                    "若拒绝信息含「孤立 kernel-doc」：说明此前 diff 误删了文件头注释 — "
+                    "本次锚点设在厂商 `#define` 行，禁止 `@@ -1,…`。\n"
+                    "若 snippet 显示磁盘已有孤立 ` *` 行（历史损坏）：须先补回 `/**` 或删除残缺注释块，再改宏定义。"
                 )
 
         parts.append(
@@ -4069,6 +4524,8 @@ def resolve_build_errors_via_llm(
             hint_parts.append("标识符冲突")
         if apply_feedback:
             hint_parts.append("上次写回失败反馈")
+        if hint_block:
+            hint_parts.append("用户补充说明")
         wait_log(f"prompt 约束已注入: {', '.join(hint_parts)}")
         wait_log(
             f"LLM 请求约 {(len(system) + len(user_msg)) // 1000}k 字符，"
@@ -4081,7 +4538,7 @@ def resolve_build_errors_via_llm(
         *,
         timeout: int,
         tokens: int,
-    ) -> Tuple[str, Dict[str, int]]:
+    ) -> Tuple[str, Dict[str, Any]]:
         return _call_llm(
             system,
             user,
@@ -4125,32 +4582,45 @@ def resolve_build_errors_via_llm(
         wait_log(
             f"LLM 响应完成: prompt={usage.get('prompt_tokens', '?')} "
             f"completion={usage.get('completion_tokens', '?')} tokens"
+            + (f" finish_reason={usage.get('finish_reason')}" if usage.get("finish_reason") else "")
         )
 
-    summary_m = _SUMMARY_RE.search(response)
-    summary = summary_m.group(1).strip() if summary_m else "AI 编译修复完成"
-
-    from web_app.build_fix_service import sanitize_llm_fix_path
-
-    fixes: List[Dict[str, str]] = []
-    for m in _FIX_BLOCKS_RE.finditer(response):
-        path = sanitize_llm_fix_path(m.group(1))
-        content = m.group(2)
-        if content.endswith("\n"):
-            content = content.rstrip("\n") + "\n"
-        if path and path != "unknown" and content.strip():
-            fixes.append({"path": path, "content": content})
+    truncated = _llm_output_truncated(response, usage, max_out)
+    fixes, summary = _parse_build_fix_blocks(response)
+    retry_cap = max(BUILD_FIX_LLM_RETRY_MAX_TOKENS, max_out)
+    if truncated and not fixes and retry_cap > max_out:
+        retry_tokens = retry_cap
+        retry_timeout = min(600, max(llm_timeout + 60, int(llm_timeout * 1.25)))
+        if wait_log:
+            wait_log(
+                f"输出疑似被 max_tokens={max_out} 截断"
+                f"（completion={usage.get('completion_tokens', '?')}），"
+                f"以 max_tokens={retry_tokens} 重试"
+            )
+        response, usage = _do_call(user_msg, timeout=retry_timeout, tokens=retry_tokens)
+        if wait_log and usage:
+            wait_log(
+                f"截断重试完成: prompt={usage.get('prompt_tokens', '?')} "
+                f"completion={usage.get('completion_tokens', '?')} tokens"
+                + (f" finish_reason={usage.get('finish_reason')}" if usage.get("finish_reason") else "")
+            )
+        truncated = _llm_output_truncated(response, usage, retry_tokens)
+        fixes, summary = _parse_build_fix_blocks(response)
 
     if not fixes:
-        block_m = _MERGED_BLOCK_RE.search(response)
-        if block_m:
-            fixes.append({"path": "unknown", "content": block_m.group(1)})
-        elif focus_paths and re.search(
+        if focus_paths and re.search(
             r"无需|跳过|已无|无需修改|不必修改|已删除|已修复|无需再改", summary, re.I
         ):
             return [], summary
-        else:
-            raise RuntimeError("LLM 未返回有效的 fix 代码块")
+        if truncated:
+            raise RuntimeError(
+                "LLM 输出被 max_tokens 截断，未得到完整 fix 代码块"
+                f"（completion={usage.get('completion_tokens', '?')}）。"
+                "可提高 GKI_BUILD_FIX_LLM_MAX_TOKENS 后重试编译修复"
+            )
+        raise RuntimeError("LLM 未返回有效的 fix 代码块")
+    if truncated and wait_log:
+        wait_log(f"输出可能仍截断，已解析 {len(fixes)} 个完整 fix 块，其余留待下一轮")
 
     return fixes, summary
 

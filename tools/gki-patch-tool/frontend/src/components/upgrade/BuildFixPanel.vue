@@ -7,6 +7,20 @@
       </div>
     </div>
 
+    <RetryHintForm
+      v-if="showHintRetry"
+      ref="hintFormRef"
+      kind="build_fix"
+      :error-text="hintErrorText"
+      :submitting="hintSubmitting"
+      :analysis-reason="failureTriage?.reason"
+      :analysis-advice="failureTriage?.advice"
+      :analysis-verdict="failureTriage?.verdict"
+      :initial-hint="failureTriage?.retry_hint"
+      submit-label="按此说明重试编译"
+      @submit="submitHintRetry"
+    />
+
     <div v-if="loading" class="muted build-fix-empty">正在加载修复记录…</div>
     <div v-else-if="!tableRows.length" class="muted build-fix-empty">
       暂无修复记录。编译失败且启用自动修复后，将在此展示修改汇总。
@@ -22,26 +36,54 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="row in tableRows" :key="row.key">
-            <td class="col-round">{{ row.attempt }}</td>
-            <td class="col-repo">
-              <div class="build-fix-repo-name" :title="row.repoTitle">{{ row.repoLabel }}</div>
-              <div v-if="row.repoRoot" class="build-fix-repo-path mono" :title="row.repoRoot">{{ row.repoRootShort }}</div>
-            </td>
-            <td class="col-file">
-              <div class="build-fix-file-name mono" :title="row.fileFull">{{ row.fileBase }}</div>
-              <div v-if="row.fileDir" class="build-fix-file-dir mono" :title="row.fileFull">{{ row.fileDir }}</div>
-            </td>
-            <td class="col-error">
-              <ul v-if="row.errors.length" class="build-fix-error-list">
-                <li v-for="(err, idx) in row.errors" :key="idx">
-                  <span class="build-fix-error-loc">{{ err.loc }}</span>
-                  <span class="build-fix-error-msg">{{ err.message }}</span>
-                </li>
-              </ul>
-              <span v-else class="muted">—</span>
-            </td>
-          </tr>
+          <template v-for="row in tableRows" :key="row.key">
+            <tr
+              class="build-fix-data-row"
+              :class="{ open: expandedKey === row.key, clickable: canExpand(row) }"
+              :tabindex="canExpand(row) ? 0 : undefined"
+              @click="toggleRow(row)"
+              @keydown.enter.prevent="toggleRow(row)"
+              @keydown.space.prevent="toggleRow(row)"
+            >
+              <td class="col-round">{{ row.attempt }}</td>
+              <td class="col-repo">
+                <div class="build-fix-repo-name" :title="row.repoTitle">{{ row.repoLabel }}</div>
+                <div v-if="row.repoRoot" class="build-fix-repo-path mono" :title="row.repoRoot">{{ row.repoRootShort }}</div>
+              </td>
+              <td class="col-file">
+                <div class="build-fix-file-name mono" :title="row.fileFull">{{ row.fileBase }}</div>
+                <div v-if="row.fileDir" class="build-fix-file-dir mono" :title="row.fileFull">{{ row.fileDir }}</div>
+              </td>
+              <td class="col-error">
+                <ul v-if="row.errors.length" class="build-fix-error-list">
+                  <li v-for="(err, idx) in row.errors" :key="idx" class="build-fix-error-item">
+                    <span class="build-fix-error-loc">{{ err.loc }}</span>
+                    <span class="build-fix-error-msg">{{ err.message }}</span>
+                  </li>
+                </ul>
+                <span v-else-if="canExpand(row)" class="muted">本轮修改（无对应编译错误行）</span>
+                <span v-else class="muted">—</span>
+                <span v-if="canExpand(row)" class="build-fix-error-hint">
+                  {{ expandedKey === row.key ? '收起修改' : '查看修改' }}
+                </span>
+              </td>
+            </tr>
+            <tr v-if="expandedKey === row.key" class="build-fix-diff-row">
+              <td colspan="4">
+                <div class="build-fix-error-diff">
+                  <GerritDiffView
+                    v-if="diffRows(row).length"
+                    :rows="diffRows(row)"
+                    :has-merged="true"
+                    left-title="修改前"
+                    right-title="修改后"
+                  />
+                  <pre v-else-if="row.processedDiff" class="build-fix-diff-fallback">{{ row.processedDiff }}</pre>
+                  <div v-else class="muted">无可用修改内容</div>
+                </div>
+              </td>
+            </tr>
+          </template>
         </tbody>
       </table>
     </div>
@@ -63,6 +105,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api } from '../../api'
+import { remoteSshBody, unifiedDiffToGerritRows } from '../../utils/upgrade'
+import GerritDiffView from './GerritDiffView.vue'
+import RetryHintForm from './RetryHintForm.vue'
 
 const props = defineProps<{
   jobId: string
@@ -70,18 +115,55 @@ const props = defineProps<{
   visible?: boolean
 }>()
 
+const emit = defineEmits<{ refresh: []; retryStarted: [] }>()
+
 const loading = ref(false)
 const data = ref<any>({ attempts: [], status: 'idle' })
 const pollTimer = ref<number | null>(null)
+const hintSubmitting = ref(false)
+const hintFormRef = ref<InstanceType<typeof RetryHintForm> | null>(null)
+const expandedKey = ref('')
+const failureTriage = computed(() => data.value?.failure_triage || null)
 
 const attempts = computed(() => data.value?.attempts || [])
 
 const statusText = computed(() => {
   const st = data.value?.status || 'idle'
   const n = attempts.value.length
-  const labels: Record<string, string> = { idle: '待命', running: '修复中…', success: '已成功', failed: '失败' }
+  const labels: Record<string, string> = { idle: '待命', running: '修复中…', triaging: '分析失败原因…', success: '已成功', failed: '失败' }
   return `${labels[st] || st} · 共 ${n} 轮 · ${tableRows.value.length} 个文件`
 })
+
+const showHintRetry = computed(() => {
+  const st = data.value?.status
+  const last = attempts.value[attempts.value.length - 1]
+  const jobSt = props.job?.status
+  return st === 'failed' || jobSt === 'build_failed' || (!!last && !last.applied && last.error)
+})
+
+const hintErrorText = computed(() => {
+  const last = attempts.value[attempts.value.length - 1]
+  return last?.error || data.value?.error || ''
+})
+
+async function submitHintRetry(payload: { hint: string; saveToPrompt: boolean }) {
+  hintSubmitting.value = true
+  try {
+    const body: Record<string, unknown> = {
+      ...(await remoteSshBody(props.job)),
+    }
+    if (payload.hint) body.user_hint = payload.hint
+    if (payload.saveToPrompt && payload.hint) body.save_to_prompt = true
+    await api.post(`/api/upgrade/jobs/${props.jobId}/build/fix-retry`, body)
+    emit('retryStarted')
+    await loadPanel()
+    emit('refresh')
+  } catch (err: any) {
+    alert(`启动失败: ${err.message}`)
+  } finally {
+    hintSubmitting.value = false
+  }
+}
 
 function stripRootLabel(path: string) {
   return (path || '').replace(/^\[(?:build_workdir|target_repo)\]\s*/i, '').trim()
@@ -165,6 +247,24 @@ function errorsForFile(attempt: any, file: any, filePath: string) {
   return out
 }
 
+function canExpand(row: { diff?: string; processedDiff?: string }) {
+  return Boolean(row.diff || row.processedDiff)
+}
+
+function toggleRow(row: { key: string; diff?: string; processedDiff?: string }) {
+  if (!canExpand(row)) return
+  expandedKey.value = expandedKey.value === row.key ? '' : row.key
+}
+
+function diffRows(row: { diff?: string; processedDiff?: string }) {
+  const unified = row.diff || (looksLikeUnifiedDiff(row.processedDiff) ? row.processedDiff : '')
+  return unifiedDiffToGerritRows(unified || '')
+}
+
+function looksLikeUnifiedDiff(text?: string) {
+  return /(?:^|\n)@@ -\d+/.test(text || '')
+}
+
 const tableRows = computed(() => {
   const rows: any[] = []
   const seen = new Set<string>()
@@ -195,6 +295,8 @@ const tableRows = computed(() => {
         fileBase: fileDisplay.base,
         fileDir: fileDisplay.dir,
         errors: errorsForFile(attempt, file, file.path || filePath),
+        diff: file.diff || '',
+        processedDiff: file.processed_diff || '',
       })
     }
   }
@@ -216,7 +318,7 @@ async function loadPanel() {
   try {
     const resp = await api.get<any>(`/api/upgrade/jobs/${props.jobId}/build-fixes`)
     data.value = resp
-    if (resp.status === 'running') startPoll()
+    if (resp.status === 'running' || resp.status === 'triaging') startPoll()
     else stopPoll()
   } catch (err: any) {
     data.value = { attempts: [], status: 'failed', error: err.message }
@@ -245,7 +347,12 @@ watch(
 
 onBeforeUnmount(stopPoll)
 
-defineExpose({ reload: loadPanel })
+defineExpose({
+  reload: loadPanel,
+  submitFromBar() {
+    hintFormRef.value?.submit()
+  },
+})
 </script>
 
 <style scoped>
@@ -311,6 +418,26 @@ defineExpose({ reload: loadPanel })
   word-break: break-all;
 }
 
+.build-fix-data-row.clickable {
+  cursor: pointer;
+}
+
+.build-fix-data-row.clickable:hover,
+.build-fix-data-row.open {
+  background: #f8fafc;
+}
+
+.build-fix-data-row.clickable:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: -2px;
+}
+
+.build-fix-diff-row td {
+  padding: 0 10px 12px;
+  background: #f8fafc;
+  border-top: none;
+}
+
 .build-fix-error-list {
   margin: 0;
   padding: 0;
@@ -319,11 +446,38 @@ defineExpose({ reload: loadPanel })
   gap: 6px;
 }
 
-.build-fix-error-list li {
+.build-fix-error-item {
   padding: 6px 8px;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   background: #fafbfc;
+  text-align: left;
+}
+
+.build-fix-error-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #2563eb;
+}
+
+.build-fix-error-diff {
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.build-fix-diff-fallback {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .build-fix-error-loc {

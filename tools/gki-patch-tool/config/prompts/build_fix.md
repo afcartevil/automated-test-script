@@ -7,14 +7,21 @@
 - 与 to_tag **不一致** → 厂商客制化，可改；不在 GKI common 中的路径（如 `vendor/`）可改
 
 **分析要求**：
-- gcc 输出中 `error:` 行是**检测点**（宏重定义常落在**后 include** 的头文件）；`note: previous definition` 是**首次定义处** → **只改 note 指向的文件**
-- 必须结合 **#include 顺序** 理解冲突，不要只看 error 行指向的文件
+- gcc 的 `error:` 是**后出现的定义**（后 include）；`note: previous definition` 是**先出现的定义**（先 include）
+- 必须结合 **#include 顺序** 判定改哪一侧；**永远改厂商文件，禁止改 GKI/`include/linux/`**
 
-**宏重定义（通用决策，具体日志形态见下方结构化错误与参考示例）**：
-- `note: previous definition` → 本编译单元**首次**定义处，**只改这里**
-- `error:` 落在 `include/linux/` 等内核头 → 通常只读，根因在 vendor 侧先定义的宏
-- ✅ 首选：在 note 处**仅删除**与内核同名的 `#define` 行（**不要**删 kernel-doc 注释），由内核头提供实现
-- ❌ 禁止：`#ifndef` 包裹已无条件定义的宏、删后再 `#undef`、改内核/上游头、diff 中删除注释行
+**宏重定义（以 MIN/MAX 等与内核同名宏为例）**：
+两种 include 顺序**改法相同**：**只删除厂商代码里那份重复 `#define`**（不要删 kernel-doc 注释、不要 `#ifndef` 包裹、不要改 GKI、不要整文件重写）。内核头已提供实现。
+
+**情形 1 — GKI 头先 include，厂商头后 include**
+- `error:` 在厂商头（如 `mali_malisw.h`），`note: previous definition` 在 GKI 头
+- 在厂商 **error 落点**删除 `#define MIN` / `#define MAX`
+
+**情形 2 — 厂商头先 include，GKI 头后 include**
+- `error:` 在 GKI 头，`note: previous definition` 在厂商头
+- 禁止给 `include/linux/` 出 diff；在厂商 **note 处**删除那份 `#define`
+
+**共同禁止**：改内核/上游头、`#ifndef` 包裹、diff 中删除注释、把整个 .h 写入 fix 块、删完 `#define` 后再追加 `#undef` 块
 
 若文件未 include 提供该宏的内核头，在合适位置增加对应 `#include`（勿重复 include）。
 **删除 vendor 宏后禁止再写 `#undef`**：删掉 `#define` 即已消除本文件贡献的定义。不要画蛇添足地追加：
@@ -52,7 +59,7 @@
 3. diff 的 `@@` 起始行号须与下方「相关源文件上下文」中带 `>>>` 的报错/note 行一致；若 `>>>` 与待修符号定义不在同一行，**以该符号定义/`>>>` note 行为锚点**；上下文行须**原样复制**（含空格/引号），禁止臆造行号或从第 1 行起笔
 4. 若文件很小（<40 行）且必须整文件替换，才允许在 summary 中说明理由后输出完整文件；否则一律 diff
 5. diff 必须能直接 `patch -p1` 应用：上下文行以空格开头，删除以 `-`，新增以 `+`
-6. **最小改动**：只改与报错直接相关的代码行；**不要**删除 `/** … */` / kernel-doc 注释（宏重定义时**只删 `#define`**）。若删除函数/变量等整段实现，也只删代码行，除非报错明确要求处理注释
+6. **最小改动**：只改与报错直接相关的代码行；**不要**删除 `/** … */` / kernel-doc 注释。宏重定义：**只删厂商侧重复 `#define`**。若删除函数/变量等整段实现，也只删代码行，除非报错明确要求处理注释
 7. **禁止破坏块注释结构**：若 diff 中必须动到注释，不得只删 `/**` 留 ` *`、只删 ` */` 等散落删除；**宏重定义场景下不要在 diff 里出现任何注释删除行**
 8. **删宏不是 undef 宏**：用 `-` 删掉 vendor 侧 `#define` 后，**禁止**用 `+` 追加 `#undef` / `#ifdef`…`#undef`…`#endif` 块
 
@@ -61,17 +68,15 @@
 - 每个文件一个代码块，语言标签 `fix`，第一行是**仓库相对路径**（如 `vendor/mediatek/...` 或 `kernel-5.10/...`），**禁止**写 `[build_workdir]` / `[target_repo]` 等 UI 前缀；随后是 **unified diff**
 - diff 中**禁止**出现空的 `-` 行（行首仅有 `-` 无内容）；删除空行时 `-` 后须有空格再跟原行内容
 
-示例（最小 diff，宏重定义只删 `#define`）：
-summary: 删除 foo.c 中与内核冲突的 #define BAR，修复宏重定义
+示例（宏重定义：只删厂商重复 `#define`）：
+summary: 删除厂商头中与内核冲突的 #define MIN，修复宏重定义
 
-```fix drivers/foo/foo.c
---- a/drivers/foo/foo.c
-+++ b/drivers/foo/foo.c
-@@ -10,7 +10,6 @@
+```fix vendor/foo/mali_malisw.h
+--- a/vendor/foo/mali_malisw.h
++++ b/vendor/foo/mali_malisw.h
+@@ -39,3 +39,2 @@
  /**
-  * BAR - legacy constant, superseded by header.
+  * MIN - legacy helper.
   */
--#define BAR(x, y) ((x) < (y) ? (x) : (y))
- 
- static int foo_init(void)
+-#define MIN(x, y) ((x) < (y) ? (x) : (y))
 ```

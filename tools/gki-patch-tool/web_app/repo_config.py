@@ -116,6 +116,12 @@ def get_repo_config() -> Dict[str, Any]:
     except Exception:
         pass
     effective = get_local_repo_dir()
+    try:
+        from web_app.user_settings import machine_settings_path
+
+        machine_path = str(machine_settings_path())
+    except Exception:
+        machine_path = ""
     return {
         "configured": effective is not None,
         "repo_dir": db_path or "",
@@ -125,6 +131,7 @@ def get_repo_config() -> Dict[str, Any]:
         "yaml_dir": yaml_path,
         "yaml_settings_file": yaml_settings_file,
         "default_dir": str(DEFAULT_RELATIVE_REPO),
+        "machine_settings_path": machine_path,
     }
 
 

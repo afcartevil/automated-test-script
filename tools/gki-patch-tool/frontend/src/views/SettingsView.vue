@@ -4,8 +4,8 @@
       <div>
         <p class="eyebrow">Settings</p>
         <h1 class="page-title">系统设置</h1>
-        <p v-if="!isEmbedded" class="page-desc">管理本地仓库路径、LLM API、飞书应用与远程 SSH 账号。</p>
-        <p v-else class="page-desc">管理本地仓库路径与飞书应用（LLM / SSH 使用 EasyAdapter 一键配置）。</p>
+        <p v-if="!isEmbedded" class="page-desc">管理本地仓库路径、LLM API、飞书应用与远程 SSH 账号。保存后写入本机，换一套代码仍会保留。</p>
+        <p v-else class="page-desc">管理本地仓库路径与飞书应用（LLM / SSH 使用 EasyAdapter 一键配置）。保存后写入本机，换一套代码仍会保留。</p>
       </div>
       <button class="btn" @click="loadAll">刷新配置</button>
     </div>
@@ -28,6 +28,9 @@
             {{ repo.configured ? '已配置' : '未配置' }}
           </span>
         </div>
+        <p v-if="repo.machine_settings_path" class="field-hint">
+          本机持久化：{{ repo.machine_settings_path }}
+        </p>
       </div>
 
       <div v-if="!isEmbedded" class="card card-pad">
@@ -146,7 +149,7 @@
           https://xxx.feishu.cn/drive/folder/CvYFfsIzMl6Yo2dRq3ocfqGDnfh
           （会自动识别最后一段 token，不一定是 fldcn 开头）。应用需要对该文件夹有编辑权限。不填则建在应用云空间。
           默认密级会在创建验收表格、上传模块代码 HTML 后自动设置（文件夹本身不支持密级）；需应用或 lark-cli 具备 docs:secure_label 权限。
-          任务通知：没有群时，在「任务通知接收人」填多人企业邮箱（或 ou_ open_id），任务完成/失败会用应用逐个发私信。应用需开通 im:message，并在开放平台把这些用户纳入可用范围。不填接收人时会回退发给「默认所有者」。有群才需要填 Webhook。
+          任务通知：没有群时，在「任务通知接收人」填多人企业邮箱（或 ou_ open_id），分析 / 故障诊断 / 入库任务完成或失败会用应用逐个发私信。应用需开通 im:message，并在开放平台把这些用户纳入可用范围。不填接收人时会回退发给「默认所有者」。有群才需要填 Webhook。
         </p>
         <div class="toolbar" style="margin-top: 14px">
           <button class="btn primary" @click="saveFeishu">保存</button>
@@ -224,6 +227,26 @@
       <div class="card card-pad">
         <div class="section-title">
           <div>
+            <h2>合入 / 编译经验</h2>
+            <p>失败重试时勾选「写入后续 prompt」会追加到这里，之后同类任务自动带上</p>
+          </div>
+        </div>
+        <div class="field">
+          <label>冲突合入经验</label>
+          <textarea v-model="retryHints.conflict" class="input" rows="5" spellcheck="false" placeholder="例如：同名函数实现不同时，只把 .rej 的 +/- 合进 vendor 现有函数" />
+        </div>
+        <div class="field" style="margin-top: 12px">
+          <label>编译修复经验</label>
+          <textarea v-model="retryHints.build_fix" class="input" rows="5" spellcheck="false" placeholder="例如：vendor 与内核宏同名时，优先 rename vendor 符号，不要改 include/linux" />
+        </div>
+        <div class="toolbar" style="margin-top: 14px">
+          <button class="btn primary" type="button" @click="saveRetryHints">保存经验</button>
+        </div>
+      </div>
+
+      <div class="card card-pad">
+        <div class="section-title">
+          <div>
             <h2>帮助文档</h2>
             <p>工具能力说明与操作流程</p>
           </div>
@@ -283,6 +306,7 @@ const canTestNotify = computed(() => {
   if (feishu.webhook_url?.trim()) return true
   return Boolean(feishu.app_id?.trim() && feishu.app_secret?.trim() && (feishu.notify_users?.trim() || feishu.owner?.trim()))
 })
+const retryHints = reactive({ conflict: '', build_fix: '' })
 const ssh = reactive<any>({
   bastion_host: 'cqris.transsion.com',
   bastion_port: 22,
@@ -343,11 +367,12 @@ function onLlmCredentialChange() {
 async function loadAll() {
   error.value = ''
   try {
-    const [repoData, llmData, feishuData, sshData] = await Promise.all([
+    const [repoData, llmData, feishuData, sshData, hintData] = await Promise.all([
       api.get<any>('/api/repo/config'),
       api.get<any>('/api/llm/config'),
       api.get<any>('/api/feishu/config'),
       api.get<any>('/api/upgrade/ssh-config'),
+      api.get<any>('/api/settings/retry-hints').catch(() => ({ hints: {} })),
     ])
     Object.assign(repo, repoData)
     repo.repo_dir = repoData.repo_dir || repoData.effective_dir || ''
@@ -356,6 +381,8 @@ async function loadAll() {
     if (!feishu.open_base) feishu.open_base = 'https://open.feishu.cn'
     if (!feishu.secure_label) feishu.secure_label = 'S2'
     Object.assign(ssh, sshData)
+    retryHints.conflict = hintData?.hints?.conflict || ''
+    retryHints.build_fix = hintData?.hints?.build_fix || ''
     // 集成模式不展示 LLM 配置，跳过拉取模型列表
     if (!isEmbedded) {
       if (llm.api_key) {
@@ -371,6 +398,19 @@ async function loadAll() {
 
 async function saveRepo() {
   await save('/api/repo/config', { repo_dir: repo.repo_dir })
+}
+
+async function saveRetryHints() {
+  error.value = ''
+  message.value = ''
+  try {
+    await api.put('/api/settings/retry-hints', { domain: 'conflict', text: retryHints.conflict })
+    await api.put('/api/settings/retry-hints', { domain: 'build_fix', text: retryHints.build_fix })
+    message.value = '合入/编译经验已保存'
+    await loadAll()
+  } catch (err: any) {
+    error.value = err.message || String(err)
+  }
 }
 
 async function saveLlm() {

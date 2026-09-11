@@ -1340,9 +1340,66 @@ def send_webhook_message(
         raise FeishuError(str(data.get("msg") or data.get("StatusMessage") or data))
     return data
 
+
+def _notify_ok(status: str) -> bool:
+    return str(status or "").strip().lower() == "completed"
+
+
+def _md_field(label: str, value: str, *, short: bool = True) -> Dict[str, Any]:
+    return {
+        "is_short": short,
+        "text": {"tag": "lark_md", "content": f"**{label}**\n{value}"},
+    }
+
+
+def _interval_field(from_tag: str, to_tag: str) -> Dict[str, Any]:
+    return _md_field(
+        "升级区间",
+        f"`{str(from_tag or '?').strip()} → {str(to_tag or '?').strip()}`",
+        short=False,
+    )
+
+
+def _elapsed_field(elapsed: Any) -> Optional[Dict[str, Any]]:
+    if elapsed in ("", None):
+        return None
+    try:
+        return _md_field("耗时", f"{int(elapsed)}s")
+    except (TypeError, ValueError):
+        return None
+
+
+def _error_field(err: str) -> Optional[Dict[str, Any]]:
+    text = str(err or "").strip()
+    if not text:
+        return None
+    return _md_field("备注", text[:300], short=False)
+
+
+def _interactive_card(
+    title: str,
+    template: str,
+    fields: List[Dict[str, Any]],
+    actions: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    elements: List[Dict[str, Any]] = [{"tag": "div", "fields": fields}]
+    if actions:
+        elements.append({"tag": "action", "actions": actions})
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title": {"tag": "plain_text", "content": title},
+                "template": template,
+            },
+            "elements": elements,
+        },
+    }
+
+
 def _task_notify_card(task: Dict[str, Any], *, status: str) -> Dict[str, Any]:
     """Build an interactive card for analysis task completion / failure."""
-    ok = status == "completed"
+    ok = _notify_ok(status)
     title = "GKI 分析任务完成" if ok else "GKI 分析任务失败"
     template = "green" if ok else "red"
     from_tag = str(task.get("from_tag") or "").strip()
@@ -1350,7 +1407,6 @@ def _task_notify_card(task: Dict[str, Any], *, status: str) -> Dict[str, Any]:
     repo = str(task.get("repo") or "").strip()
     task_id = str(task.get("id") or "").strip()
     total = task.get("total") or task.get("analyzed") or ""
-    elapsed = task.get("elapsed_seconds")
     err = str(task.get("error_msg") or "").strip()
     checklist = str(task.get("feishu_checklist_url") or "").strip()
     report = str(
@@ -1360,40 +1416,21 @@ def _task_notify_card(task: Dict[str, Any], *, status: str) -> Dict[str, Any]:
     ).strip()
 
     fields = [
-        {"is_short": True, "text": {"tag": "lark_md", "content": f"**仓库**\n{repo or '-'}" }},
-        {"is_short": True, "text": {"tag": "lark_md", "content": f"**状态**\n{'成功' if ok else '失败'}" }},
-        {
-            "is_short": False,
-            "text": {
-                "tag": "lark_md",
-                "content": f"**升级区间**\n`{from_tag or '?'} → {to_tag or '?'}`",
-            },
-        },
-        {"is_short": True, "text": {"tag": "lark_md", "content": f"**Task ID**\n`{task_id or '-'}`"}},
+        _md_field("仓库", repo or "-"),
+        _md_field("状态", "成功" if ok else "失败"),
+        _interval_field(from_tag, to_tag),
+        _md_field("Task ID", f"`{task_id or '-'}`"),
     ]
     if total not in ("", None):
-        fields.append({
-            "is_short": True,
-            "text": {"tag": "lark_md", "content": f"**Patch 数**\n{total}"},
-        })
-    if elapsed not in ("", None):
-        try:
-            fields.append({
-                "is_short": True,
-                "text": {"tag": "lark_md", "content": f"**耗时**\n{int(elapsed)}s"},
-            })
-        except Exception:
-            pass
-    if err:
-        fields.append({
-            "is_short": False,
-            "text": {"tag": "lark_md", "content": f"**备注**\n{err[:300]}"},
-        })
+        fields.append(_md_field("Patch 数", str(total)))
+    elapsed = _elapsed_field(task.get("elapsed_seconds"))
+    if elapsed:
+        fields.append(elapsed)
+    err_field = _error_field(err)
+    if err_field:
+        fields.append(err_field)
 
-    elements: List[Dict[str, Any]] = [
-        {"tag": "div", "fields": fields},
-    ]
-    actions = []
+    actions: List[Dict[str, Any]] = []
     if checklist:
         actions.append({
             "tag": "button",
@@ -1408,19 +1445,107 @@ def _task_notify_card(task: Dict[str, Any], *, status: str) -> Dict[str, Any]:
             "type": "default",
             "url": report,
         })
-    if actions:
-        elements.append({"tag": "action", "actions": actions})
+    return _interactive_card(title, template, fields, actions or None)
 
-    return {
-        "msg_type": "interactive",
-        "card": {
-            "header": {
-                "title": {"tag": "plain_text", "content": title},
-                "template": template,
-            },
-            "elements": elements,
-        },
-    }
+
+def _crash_notify_card(crash: Dict[str, Any], *, status: str) -> Dict[str, Any]:
+    """Card for crash / 故障诊断 completion or failure."""
+    ok = _notify_ok(status)
+    title = "GKI 故障诊断完成" if ok else "GKI 故障诊断失败"
+    template = "green" if ok else "red"
+    crash_id = str(crash.get("id") or "").strip()
+    summary = crash.get("crash_summary") if isinstance(crash.get("crash_summary"), dict) else {}
+    caused_raw = crash.get("is_caused_by_merge")
+    if caused_raw in (1, True, "1"):
+        caused_text = "是"
+    elif caused_raw in (0, False, "0"):
+        caused_text = "否"
+    else:
+        caused_text = "-"
+    suspected = crash.get("suspected_patches")
+    suspected_n = len(suspected) if isinstance(suspected, list) else ""
+    confidence = summary.get("confidence") if isinstance(summary, dict) else None
+
+    fields = [
+        _md_field("状态", "成功" if ok else "失败"),
+        _md_field("任务 ID", f"`{crash_id or '-'}`"),
+        _interval_field(str(crash.get("from_tag") or ""), str(crash.get("to_tag") or "")),
+    ]
+    if ok:
+        fields.append(_md_field("合入引起", caused_text))
+        if suspected_n not in ("", None):
+            fields.append(_md_field("疑似 Patch", str(suspected_n)))
+        if confidence not in ("", None):
+            fields.append(_md_field("置信度", str(confidence)))
+    elapsed = _elapsed_field(crash.get("elapsed_seconds"))
+    if elapsed:
+        fields.append(elapsed)
+    err_field = _error_field(str(crash.get("error_msg") or ""))
+    if err_field:
+        fields.append(err_field)
+    return _interactive_card(title, template, fields)
+
+
+def _upgrade_notify_card(job: Dict[str, Any], *, status: str) -> Dict[str, Any]:
+    """Card for patch 入库 / upgrade job completion or failure."""
+    ok = _notify_ok(status)
+    title = "GKI 入库任务完成" if ok else "GKI 入库任务失败"
+    template = "green" if ok else "red"
+    job_id = str(job.get("id") or "").strip()
+    repo = str(job.get("repo") or job.get("target_repo_dir") or "").strip()
+    phase = str(job.get("phase") or "").strip()
+    commit_sha = str(job.get("commit_sha") or "").strip()
+    timings = (job.get("options") or {}).get("phase_timings") or {}
+    elapsed = timings.get("total_wall_sec") if isinstance(timings, dict) else None
+
+    fields = [
+        _md_field("目标仓", repo or "-"),
+        _md_field("状态", "成功" if ok else "失败"),
+        _interval_field(str(job.get("from_tag") or ""), str(job.get("to_tag") or "")),
+        _md_field("Job ID", f"`{job_id or '-'}`"),
+    ]
+    if phase:
+        fields.append(_md_field("阶段", phase))
+    if commit_sha:
+        fields.append(_md_field("Commit", f"`{commit_sha[:12]}`"))
+    elapsed_field = _elapsed_field(elapsed)
+    if elapsed_field:
+        fields.append(elapsed_field)
+    err_field = _error_field(str(job.get("error_msg") or ""))
+    if err_field:
+        fields.append(err_field)
+    return _interactive_card(title, template, fields)
+
+
+def _dispatch_interactive_notify(
+    payload: Dict[str, Any],
+    *,
+    log_id: str,
+    kind: str,
+    status: str,
+) -> Optional[Dict[str, Any]]:
+    """Webhook first, else app IM. Shared by analysis / crash / upgrade."""
+    if not is_feishu_notify_configured():
+        return None
+    if is_feishu_webhook_configured():
+        result = send_webhook_message(payload)
+        via = "webhook"
+    else:
+        people = get_notify_recipients()
+        result = send_app_im_to_recipients(
+            people,
+            msg_type="interactive",
+            content=payload.get("card") or {},
+        )
+        via = "app"
+        n_fail = len(result.get("failed") or [])
+        print(
+            f"[FEISHU] 应用私信 {len(result.get('sent') or [])} 人成功"
+            + (f"，{n_fail} 人失败" if n_fail else ""),
+            flush=True,
+        )
+    print(f"[FEISHU] 已发送{kind}通知 id={log_id} status={status} via={via}", flush=True)
+    return result
 
 
 def send_app_im_message(
@@ -1486,40 +1611,70 @@ def send_app_im_to_recipients(
 
 def notify_task_finished(task_id: str, *, status: str = "") -> Optional[Dict[str, Any]]:
     """Notify that an analysis task finished. Webhook first, else app IM to recipients."""
-    if not is_feishu_notify_configured():
-        return None
     from web_app.database import get_task
     task = get_task(task_id)
     if not task:
         return None
     st = (status or str(task.get("status") or "")).strip().lower() or "completed"
-    payload = _task_notify_card(task, status=st)
-    if is_feishu_webhook_configured():
-        result = send_webhook_message(payload)
-        via = "webhook"
-    else:
-        people = get_notify_recipients()
-        result = send_app_im_to_recipients(
-            people,
-            msg_type="interactive",
-            content=payload.get("card") or {},
-        )
-        via = "app"
-        n_fail = len(result.get("failed") or [])
-        print(
-            f"[FEISHU] 应用私信 {len(result.get('sent') or [])} 人成功"
-            + (f"，{n_fail} 人失败" if n_fail else ""),
-            flush=True,
-        )
-    print(f"[FEISHU] 已发送任务通知 task={task_id} status={st} via={via}", flush=True)
-    return result
+    return _dispatch_interactive_notify(
+        _task_notify_card(task, status=st),
+        log_id=task_id,
+        kind="分析任务",
+        status=st,
+    )
 
 
 def try_notify_task_finished(task_id: str, *, status: str = "") -> None:
     try:
         notify_task_finished(task_id, status=status)
     except Exception as exc:
-        print(f"[FEISHU] 任务通知失败: {exc}", flush=True)
+        print(f"[FEISHU] 分析任务通知失败: {exc}", flush=True)
+
+
+def notify_crash_finished(crash_id: str, *, status: str = "") -> Optional[Dict[str, Any]]:
+    """Notify that a crash / 故障诊断 task finished."""
+    from web_app.database import get_crash_analysis
+    crash = get_crash_analysis(crash_id)
+    if not crash:
+        return None
+    st = (status or str(crash.get("status") or "")).strip().lower() or "completed"
+    return _dispatch_interactive_notify(
+        _crash_notify_card(crash, status=st),
+        log_id=crash_id,
+        kind="故障诊断",
+        status=st,
+    )
+
+
+def try_notify_crash_finished(crash_id: str, *, status: str = "") -> None:
+    try:
+        notify_crash_finished(crash_id, status=status)
+    except Exception as exc:
+        print(f"[FEISHU] 故障诊断通知失败: {exc}", flush=True)
+
+
+def notify_upgrade_finished(job_id: str, *, status: str = "") -> Optional[Dict[str, Any]]:
+    """Notify that a patch 入库 / upgrade job finished (completed or failed)."""
+    from web_app.database import get_upgrade_job
+    job = get_upgrade_job(job_id)
+    if not job:
+        return None
+    st = (status or str(job.get("status") or "")).strip().lower() or "completed"
+    if st not in ("completed", "failed"):
+        return None
+    return _dispatch_interactive_notify(
+        _upgrade_notify_card(job, status=st),
+        log_id=job_id,
+        kind="入库任务",
+        status=st,
+    )
+
+
+def try_notify_upgrade_finished(job_id: str, *, status: str = "") -> None:
+    try:
+        notify_upgrade_finished(job_id, status=status)
+    except Exception as exc:
+        print(f"[FEISHU] 入库任务通知失败: {exc}", flush=True)
 
 
 def test_webhook_notify() -> Dict[str, Any]:

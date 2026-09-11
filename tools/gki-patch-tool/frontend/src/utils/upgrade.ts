@@ -105,6 +105,20 @@ export function isUpgradeTerminalStatus(status?: string) {
   return ['completed', 'failed', 'cancelled', 'aborted'].includes(status || '')
 }
 
+/** Truly finished: do not keep WS / HTTP polling. */
+export const UPGRADE_SETTLED_STATUSES = new Set([
+  'completed',
+  'failed',
+  'aborted',
+  'cancelled',
+  'build_failed',
+  'commit_failed',
+])
+
+export function isUpgradeSettledStatus(status?: string) {
+  return UPGRADE_SETTLED_STATUSES.has(status || '')
+}
+
 export async function maybePromptRemoteOtp(job?: Record<string, any>) {
   if (!job?.options?.remote || job.ssh_connected) return null
   const otp = window.prompt('请输入 6 位 OTP 动态码（2nd Password）:')
@@ -229,6 +243,61 @@ export async function remoteSshBody(
 ) {
   const payload = await resolveRemoteSshPayload(job, fetchConfig)
   return payload ? { remote_ssh: payload } : {}
+}
+
+export function normalizeUnifiedDiffText(diff: string) {
+  return (diff || '')
+    .replace(/(--- .*?)(\+\+\+ )/g, '$1\n$2')
+    .replace(/(\+\+\+ .*?)(@@ -)/g, '$1\n$2')
+    .replace(/(@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@)(?=.)/g, '$1\n')
+}
+
+export function unifiedDiffToGerritRows(diff: string, maxRows = 400) {
+  const rows: Array<{
+    left: { num: number | null; text: string; cls: string }
+    right: { num: number | null; text: string; cls: string }
+  }> = []
+  if (!(diff || '').trim()) return rows
+  let oldLine = 1
+  let newLine = 1
+  for (const raw of normalizeUnifiedDiffText(diff).split(/\r?\n/)) {
+    if (
+      raw.startsWith('---')
+      || raw.startsWith('+++')
+      || raw.startsWith('diff ')
+      || raw.startsWith('index ')
+      || raw.startsWith('\\')
+    ) {
+      continue
+    }
+    const hunk = raw.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
+    if (hunk) {
+      oldLine = Number(hunk[1])
+      newLine = Number(hunk[2])
+      continue
+    }
+    if (!raw) continue
+    const tag = raw[0]
+    const text = raw.slice(1)
+    if (tag === ' ') {
+      rows.push({
+        left: { num: oldLine++, text, cls: 'ctx' },
+        right: { num: newLine++, text, cls: 'ctx' },
+      })
+    } else if (tag === '-') {
+      rows.push({
+        left: { num: oldLine++, text, cls: 'del' },
+        right: { num: null, text: '', cls: 'empty' },
+      })
+    } else if (tag === '+') {
+      rows.push({
+        left: { num: null, text: '', cls: 'empty' },
+        right: { num: newLine++, text, cls: 'add' },
+      })
+    }
+    if (rows.length >= maxRows) break
+  }
+  return rows
 }
 
 export function buildGerritDiffRowsFallback(before: string, after: string) {

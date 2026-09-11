@@ -368,6 +368,22 @@ async def api_llm_config_save(body: Dict[str, Any]):
     return {"saved": True}
 
 
+@app.get("/api/settings/retry-hints")
+async def api_retry_hints_get():
+    from web_app.user_settings import RETRY_HINT_DOMAINS, get_retry_hints
+    return {"hints": {d: get_retry_hints(d) for d in RETRY_HINT_DOMAINS}}
+
+
+@app.put("/api/settings/retry-hints")
+async def api_retry_hints_save(body: Dict[str, Any]):
+    from web_app.user_settings import RETRY_HINT_DOMAINS, set_retry_hints
+    domain = str(body.get("domain") or "").strip()
+    if domain not in RETRY_HINT_DOMAINS:
+        raise HTTPException(400, f"domain 须为 {' / '.join(RETRY_HINT_DOMAINS)}")
+    text = set_retry_hints(domain, str(body.get("text") or ""))
+    return {"ok": True, "domain": domain, "text": text}
+
+
 @app.get("/api/feishu/config")
 async def api_feishu_config():
     from web_app.feishu_service import (
@@ -661,12 +677,17 @@ async def api_upgrade_conflicts_resolve(job_id: str, body: Optional[Dict[str, An
     paths = body.get("paths") or body.get("conflict_paths")
     force = bool(body.get("force"))
     auto_apply = bool(body.get("auto_apply"))
+    user_hint = str(body.get("user_hint") or "").strip()
+    if user_hint and body.get("save_to_prompt"):
+        from web_app.user_settings import append_retry_hint
+        append_retry_hint("conflict", user_hint)
     schedule_ai_conflict_resolution(
         job_id,
         ssh_creds=ssh_creds,
         paths=paths,
         force=force,
         auto_apply=auto_apply,
+        user_hint=user_hint,
     )
     n = len(paths) if paths else len(job.get("conflict_files") or [])
     action = "AI 处理并写回" if auto_apply else "AI 冲突处理"
@@ -714,29 +735,12 @@ async def api_upgrade_conflicts_apply(job_id: str, body: Dict[str, Any] = None):
 
 @app.post("/api/upgrade/jobs/{job_id}/continue")
 async def api_upgrade_continue(job_id: str, body: Dict[str, Any] = None):
-    from web_app.upgrade_service import continue_after_conflicts
+    from web_app.upgrade_service import schedule_continue_after_conflicts
     body = body or {}
     ssh = body.get("remote_ssh")
-    ok, msg = continue_after_conflicts(job_id, ssh_creds=ssh)
+    ok, msg = schedule_continue_after_conflicts(job_id, ssh_creds=ssh)
     if not ok:
         raise HTTPException(400, msg)
-    if body.get("commit"):
-        from web_app.upgrade_service import commit_upgrade
-        ok2, msg2 = commit_upgrade(job_id, body.get("commit_message", ""), ssh_creds=ssh)
-        if not ok2:
-            raise HTTPException(400, msg2)
-        msg = msg2
-    if body.get("build"):
-        from web_app.upgrade_service import build_upgrade
-        ok3, msg3 = build_upgrade(
-            job_id,
-            body.get("build_command", ""),
-            body.get("build_workdir", ""),
-            ssh_creds=ssh,
-        )
-        if not ok3:
-            raise HTTPException(400, msg3)
-        msg = msg3
     job = get_upgrade_job(job_id)
     return {"ok": True, "message": msg, "job": job}
 
@@ -804,6 +808,12 @@ async def api_upgrade_build_fix_retry(job_id: str, body: Optional[Dict[str, Any]
         raise HTTPException(400, f"当前状态不可修复重试: {job.get('status')}")
     opts = dict(job.get("options") or {})
     opts["auto_fix_build_errors"] = True
+    user_hint = str(body.get("user_hint") or "").strip()
+    if user_hint:
+        opts["build_fix_user_hint"] = user_hint
+        if body.get("save_to_prompt"):
+            from web_app.user_settings import append_retry_hint
+            append_retry_hint("build_fix", user_hint)
     if body.get("max_attempts"):
         from web_app.build_fix_service import normalize_build_fix_max_attempts
         opts["build_fix_max_attempts"] = normalize_build_fix_max_attempts(body["max_attempts"])
@@ -1187,18 +1197,29 @@ async def api_task_module_diff_report_zip(task_id: str):
 
 @app.post("/api/crash-analysis")
 async def api_crash_analysis_create(body: Dict[str, Any]):
-    from_tag = body.get("from_tag", "")
-    to_tag = body.get("to_tag", "")
+    from_tag = (body.get("from_tag") or "").strip()
+    to_tag = (body.get("to_tag") or "").strip()
     crash_log = body.get("crash_log", "")
+    mode = (body.get("mode") or "").strip().lower()
+    if not mode:
+        mode = "interval" if from_tag and to_tag else "current_tag"
 
-    if not from_tag or not to_tag:
-        raise HTTPException(400, "需要提供 from_tag 和 to_tag")
+    if mode == "interval":
+        if not from_tag or not to_tag:
+            raise HTTPException(400, "区间模式需要提供 from_tag 和 to_tag")
+    elif mode == "current_tag":
+        current = to_tag or from_tag
+        if not current:
+            raise HTTPException(400, "当前 Tag 模式需要提供当前 GKI tag")
+        from_tag, to_tag = "", current
+    else:
+        raise HTTPException(400, f"不支持的分析类型: {mode}")
     if not crash_log:
         raise HTTPException(400, "需要提供死机日志")
 
-    crash_id, err = start_crash_analysis(from_tag, to_tag, crash_log)
+    crash_id, err = start_crash_analysis(from_tag, to_tag, crash_log, mode=mode)
     if err:
-        raise HTTPException(500, err)
+        raise HTTPException(400, err)
     return {"crash_id": crash_id}
 
 
@@ -1285,7 +1306,7 @@ async def ws_upgrade_progress(websocket: WebSocket, job_id: str):
 
     await websocket.accept()
     terminal = frozenset({
-        "completed", "failed", "conflicts", "aborted", "build_failed", "cancelled",
+        "completed", "failed", "aborted", "cancelled",
     })
     try:
         while True:

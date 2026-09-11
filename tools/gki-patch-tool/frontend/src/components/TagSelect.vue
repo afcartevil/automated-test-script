@@ -2,6 +2,7 @@
   <div class="tag-select" ref="rootRef">
     <input
       class="input mono"
+      :class="inputClass"
       :value="modelValue"
       :placeholder="placeholder"
       :disabled="disabled"
@@ -41,6 +42,7 @@ const props = withDefaults(defineProps<{
   loading?: boolean
   disabled?: boolean
   visibleLimit?: number
+  inputClass?: string
 }>(), {
   options: () => [],
   placeholder: '输入检索并选择 tag',
@@ -48,6 +50,7 @@ const props = withDefaults(defineProps<{
   loading: false,
   disabled: false,
   visibleLimit: 80,
+  inputClass: '',
 })
 
 const emit = defineEmits<{
@@ -132,6 +135,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
 <style scoped>
 .tag-select {
   position: relative;
+  width: 100%;
 }
 .tag-select-panel {
   position: absolute;

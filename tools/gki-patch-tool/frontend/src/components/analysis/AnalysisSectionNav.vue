@@ -1,5 +1,5 @@
 <template>
-  <nav v-if="sections.length" class="analysis-section-nav" aria-label="分析结果导航">
+  <nav v-if="sections.length" class="analysis-section-nav" :aria-label="navLabel">
     <button
       v-for="section in sections"
       :key="section.id"
@@ -16,9 +16,12 @@
 <script setup lang="ts">
 import type { AnalysisNavSection } from '../../utils/analysisDisplay'
 
-defineProps<{
+withDefaults(defineProps<{
   sections: AnalysisNavSection[]
-}>()
+  navLabel?: string
+}>(), {
+  navLabel: '分析结果导航',
+})
 
 const activeId = defineModel<string>('activeId', { default: '' })
 

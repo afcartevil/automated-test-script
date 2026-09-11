@@ -12,9 +12,16 @@ from web_app.database import (
     create_upgrade_job,
     get_task,
     get_upgrade_job,
+    list_tasks,
     update_upgrade_job,
 )
-from web_app.interval_diff_service import load_interval_diff_cache
+from web_app.interval_diff_service import (
+    ensure_interval_patch_file,
+    find_interval_patch_file,
+    is_squash_patch_path,
+    local_repo_can_generate_patch,
+    prefer_squash_sibling,
+)
 from web_app.remote_workdir_config import job_remote_temp_join
 from web_app.target_repo_config import (
     get_apply_mode,
@@ -83,6 +90,7 @@ _progress: Dict[str, Dict[str, Any]] = {}
 _lock = threading.Lock()
 _cancelled: Dict[str, bool] = {}
 _build_running: set[str] = set()
+_continue_running: set[str] = set()
 
 
 _UPGRADE_PHASE_ORDER = ["prepare", "apply", "build", "commit", "done"]
@@ -397,6 +405,11 @@ def _finalize_job_timing(job_id: str) -> None:
     _save_progress_options(job_id, prev)
 
 
+def _try_notify_upgrade_finished(job_id: str, status: str) -> None:
+    from web_app.feishu_service import try_notify_upgrade_finished
+    try_notify_upgrade_finished(job_id, status=status)
+
+
 def get_upgrade_progress(job_id: str) -> Dict[str, Any]:
     with _lock:
         prog = dict(_progress.get(job_id, {"status": "unknown", "message": ""}))
@@ -611,23 +624,34 @@ def _resolve_patch_file(
     to_tag: str,
     analysis_task_id: str = "",
     patch_file: str = "",
-) -> Tuple[Path, str]:
+    prefer_squash: bool = True,
+) -> Tuple[Optional[Path], str]:
     if patch_file:
         p = Path(patch_file)
         if p.is_file():
-            return p, "explicit"
+            return (prefer_squash_sibling(p) if prefer_squash else p), "explicit"
     if analysis_task_id:
         task = get_task(analysis_task_id)
         if task:
             diff_file = (task.get("diff_file") or "").strip()
             if diff_file and Path(diff_file).is_file():
-                return Path(diff_file), "task"
-    cache = load_interval_diff_cache(repo, from_tag, to_tag)
-    if cache:
-        return cache.diff_file, "cache"
-    raise FileNotFoundError(
-        f"未找到区间 patch 文件: {from_tag}..{to_tag}，请先完成区间分析或指定 patch 路径"
+                found = Path(diff_file)
+                return (prefer_squash_sibling(found) if prefer_squash else found), "task"
+    cached = find_interval_patch_file(
+        repo, from_tag, to_tag, prefer_squash=prefer_squash,
     )
+    if cached:
+        return cached, "cache"
+    for task in list_tasks(200):
+        if (task.get("from_tag") or "") != from_tag or (task.get("to_tag") or "") != to_tag:
+            continue
+        diff_file = (task.get("diff_file") or "").strip()
+        if not diff_file:
+            continue
+        found = Path(diff_file)
+        if found.is_file():
+            return (prefer_squash_sibling(found) if prefer_squash else found), "task"
+    return None, ""
 
 
 def _default_commit_message(from_tag: str, to_tag: str) -> str:
@@ -829,24 +853,24 @@ def start_upgrade(
         elif resolve_build_workdir(build_wd) is None:
             return "", f"编译工作目录无效或不存在: {build_wd}"
 
-    try:
-        patch_path, _ = _resolve_patch_file(
-            repo, from_tag, to_tag, analysis_task_id, patch_file,
-        )
-    except FileNotFoundError as exc:
-        return "", str(exc)
-
-    if mode == "squash":
-        cache = load_interval_diff_cache(repo, from_tag, to_tag)
-        if cache and cache.squash_file.is_file():
-            patch_path = cache.squash_file
-        else:
-            squash_candidate = patch_path.parent / (
-                patch_path.stem + "_squash" + patch_path.suffix
+    prefer_squash = mode == "squash"
+    patch_path, _ = _resolve_patch_file(
+        repo, from_tag, to_tag, analysis_task_id, patch_file,
+        prefer_squash=prefer_squash,
+    )
+    generate_patch = False
+    if prefer_squash and patch_path and not is_squash_patch_path(patch_path):
+        patch_path = None
+    if not patch_path:
+        if not local_repo_can_generate_patch():
+            return "", (
+                f"未找到区间 patch 文件: {from_tag}..{to_tag}。"
+                "直接合入请先在「系统设置」配置本地 kernel/common 路径，"
+                "或先完成区间分析"
             )
-            if squash_candidate.is_file():
-                patch_path = squash_candidate
+        generate_patch = True
 
+    patch_path_str = str(patch_path) if patch_path else ""
     job_id = uuid.uuid4().hex[:12]
     now = datetime.now().isoformat()
     log_stem = new_log_stem()
@@ -859,7 +883,8 @@ def start_upgrade(
             "target_repo": target,
             "apply_mode": mode,
             "remote": remote,
-            "patch_file": str(patch_path),
+            "patch_file": patch_path_str,
+            "generate_patch": generate_patch,
         },
     )
     from web_app.build_fix_service import (
@@ -884,6 +909,7 @@ def start_upgrade(
         "hybrid": hybrid,
         "log_stem": log_stem,
         "execution_log_file": str(log_path),
+        "generate_patch": generate_patch,
     }
     create_upgrade_job({
         "id": job_id,
@@ -893,26 +919,32 @@ def start_upgrade(
         "from_tag": from_tag,
         "to_tag": to_tag,
         "apply_mode": mode,
-        "patch_file": str(patch_path),
+        "patch_file": patch_path_str,
         "status": "pending",
         "phase": "prepare",
         "options": options,
         "created_at": now,
     })
+    from web_app.job_path_mapping import persist_local_mount_path
     update_upgrade_job(
         job_id,
-        total_commits=_estimate_commit_count(patch_path) if mode == "format-patch" else 1,
+        total_commits=(
+            _estimate_commit_count(patch_path)
+            if mode == "format-patch" and patch_path
+            else 1
+        ),
         build_command=build_cmd,
         build_workdir=build_wd,
         remote_temp_dir=normalize_linux_path(remote_temp) if remote_temp else "",
-        local_repo_mount=str(Path(local_mount).resolve()) if hybrid else "",
-        local_build_mount=str(Path(local_build_mount_val).resolve()) if local_build_mount_val else "",
+        local_repo_mount=persist_local_mount_path(local_mount) if hybrid else "",
+        local_build_mount=persist_local_mount_path(local_build_mount_val),
     )
     mode_label = "（远程 SSH + 本地映射）" if hybrid else ("（远程 SSH）" if remote else "")
+    gen_note = "；准备阶段将生成区间 patch" if generate_patch else ""
     _set_progress(job_id, {
         "status": "pending",
         "phase": "prepare",
-        "message": f"升级任务已创建：{from_tag} → {to_tag}{mode_label}",
+        "message": f"升级任务已创建：{from_tag} → {to_tag}{mode_label}{gen_note}",
         "percent": 0,
         "detail": f"目标仓库: {target}" + (f"\n本地映射: {local_mount}" if hybrid else ""),
     })
@@ -1046,6 +1078,7 @@ def _run_upgrade(job_id: str) -> None:
         if _is_cancelled(job_id):
             raise RuntimeError("任务已取消")
 
+        job = get_upgrade_job(job_id) or job
         _phase_apply(job_id, target, job)
         if _is_cancelled(job_id):
             raise RuntimeError("任务已取消")
@@ -1062,6 +1095,7 @@ def _run_upgrade(job_id: str) -> None:
             })
             return
         if job.get("status") == "failed":
+            _try_notify_upgrade_finished(job_id, "failed")
             return
 
         if options.get("auto_build"):
@@ -1126,6 +1160,7 @@ def _run_upgrade(job_id: str) -> None:
                 "message": "任务失败",
                 "skip_log": True,
             })
+            _try_notify_upgrade_finished(job_id, "failed")
     finally:
         if progress_registered:
             unregister_job_progress(job_id)
@@ -1163,8 +1198,47 @@ def _phase_connect_ssh(job_id: str, target_repo: str, options: Dict[str, Any]) -
     })
 
 
+def _ensure_job_patch_file(job_id: str, job: Dict[str, Any]) -> Path:
+    raw = (job.get("patch_file") or "").strip()
+    existing = Path(raw) if raw else None
+    if existing and existing.is_file():
+        mode = job.get("apply_mode") or "squash"
+        if mode != "squash" or is_squash_patch_path(existing):
+            return existing
+
+    from_tag = (job.get("from_tag") or "").strip()
+    to_tag = (job.get("to_tag") or "").strip()
+    _set_progress(job_id, {
+        "status": "running",
+        "phase": "prepare",
+        "message": f"正在准备区间 patch：{from_tag} → {to_tag}",
+        "percent": 6,
+    })
+    _append_progress_log(
+        job_id,
+        f"未找到现成 squash，将从本地 kernel 仓库生成 {from_tag}..{to_tag}",
+        "prepare",
+    )
+
+    def log(msg: str) -> None:
+        _append_progress_log(job_id, msg, "prepare")
+
+    path = ensure_interval_patch_file(
+        job.get("repo") or "",
+        from_tag,
+        to_tag,
+        prefer_squash=(job.get("apply_mode") or "squash") == "squash",
+        log_fn=log,
+    )
+    update_upgrade_job(job_id, patch_file=str(path))
+    _append_progress_log(job_id, f"区间 patch 已就绪: {path}", "prepare")
+    return path
+
+
 def _phase_prepare(job_id: str, target: Path, options: Dict[str, Any]) -> None:
     job = get_upgrade_job(job_id) or {}
+    _ensure_job_patch_file(job_id, job)
+    job = get_upgrade_job(job_id) or job
     repo_label = _job_target_repo(job) if is_remote_job(job) else str(target)
     _begin_phase_timing(job_id, "prepare")
     if is_remote_job(job):
@@ -1660,11 +1734,84 @@ def continue_after_conflicts(job_id: str, ssh_creds: Optional[Dict[str, Any]] = 
     job = get_upgrade_job(job_id)
     if not job:
         return False, "任务不存在"
-    if job.get("status") != "conflicts":
-        return False, f"当前状态不是 conflicts: {job.get('status')}"
+    st = job.get("status")
+    with _lock:
+        scheduled = job_id in _continue_running
+    if st != "conflicts" and not (scheduled and st == "running"):
+        return False, f"当前状态不是 conflicts: {st}"
 
     with remote_job_context(job_id, ssh_creds):
         return _continue_after_conflicts_impl(job_id, job)
+
+
+def schedule_continue_after_conflicts(
+    job_id: str,
+    ssh_creds: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, str]:
+    """Return immediately; git/SSH continue runs in a background thread."""
+    job = get_upgrade_job(job_id)
+    if not job:
+        return False, "任务不存在"
+    if job.get("status") != "conflicts":
+        return False, f"当前状态不是 conflicts: {job.get('status')}"
+    with _lock:
+        if job_id in _continue_running:
+            return False, "正在继续合入，请稍候"
+        _continue_running.add(job_id)
+
+    if ssh_creds:
+        stash_ssh_credentials(job_id, ssh_creds)
+
+    remote = is_remote_job(job)
+    msg = "正在连接远程并继续合入…" if remote else "正在继续合入…"
+    _append_progress_log(job_id, msg, "apply")
+    update_upgrade_job(job_id, status="running", phase="apply", error_msg="")
+    _set_progress(job_id, {
+        "status": "running",
+        "phase": "apply",
+        "message": msg,
+        "percent": 48,
+    })
+
+    def _worker() -> None:
+        try:
+            ok, result_msg = continue_after_conflicts(job_id, ssh_creds=ssh_creds)
+            if ok:
+                _append_progress_log(job_id, result_msg or "继续合入完成", "apply")
+                return
+            job_now = get_upgrade_job(job_id) or {}
+            if job_now.get("status") == "running":
+                update_upgrade_job(
+                    job_id,
+                    status="conflicts",
+                    phase="conflicts",
+                    error_msg=result_msg,
+                )
+                _set_progress(job_id, {
+                    "status": "conflicts",
+                    "phase": "conflicts",
+                    "message": result_msg,
+                })
+            _append_progress_log(job_id, result_msg or "继续合入未完成", "conflicts")
+        except Exception as exc:
+            err = str(exc).strip() or "继续合入失败"
+            update_upgrade_job(job_id, status="conflicts", phase="conflicts", error_msg=err)
+            _set_progress(job_id, {
+                "status": "conflicts",
+                "phase": "conflicts",
+                "message": err,
+            })
+            _append_progress_log(job_id, f"继续合入失败: {err}", "conflicts")
+        finally:
+            with _lock:
+                _continue_running.discard(job_id)
+
+    threading.Thread(
+        target=_worker,
+        daemon=True,
+        name=f"upgrade-continue-{job_id}",
+    ).start()
+    return True, "已开始继续合入，请查看进度"
 
 
 def _continue_after_conflicts_impl(job_id: str, job: Dict[str, Any]) -> Tuple[bool, str]:
@@ -1682,8 +1829,19 @@ def _continue_after_conflicts_impl(job_id: str, job: Dict[str, Any]) -> Tuple[bo
         )
     if conflicts or markers or rej:
         pending = sorted(set(conflicts + markers + rej))
-        update_upgrade_job(job_id, conflict_files=pending)
         hint = rej and f"仍有 .rej 文件: {', '.join(rej[:5])}" or f"仍有未解决冲突: {', '.join(pending[:10])}"
+        update_upgrade_job(
+            job_id,
+            status="conflicts",
+            phase="conflicts",
+            conflict_files=pending,
+            error_msg=hint,
+        )
+        _set_progress(job_id, {
+            "status": "conflicts",
+            "phase": "conflicts",
+            "message": hint,
+        })
         return False, hint
 
     _begin_phase_timing(job_id, "apply")
@@ -1828,6 +1986,7 @@ def retry_commit_upgrade(
                 "skip_log": True,
             })
             _finalize_job_timing(job_id)
+            _try_notify_upgrade_finished(job_id, "completed")
         return True, summary
     except Exception as exc:
         err = str(exc).strip() or "提交失败"
@@ -1920,6 +2079,17 @@ def schedule_build_upgrade(
 
     if ssh_creds:
         stash_ssh_credentials(job_id, ssh_creds)
+
+    remote = is_remote_job(job)
+    start_msg = "正在连接远程并启动编译…" if remote else "正在启动编译…"
+    _append_progress_log(job_id, start_msg, "build")
+    update_upgrade_job(job_id, status="running", phase="build", error_msg="")
+    _set_progress(job_id, {
+        "status": "running",
+        "phase": "build",
+        "message": start_msg,
+        "percent": 90,
+    })
 
     def _worker() -> None:
         try:
@@ -2085,6 +2255,7 @@ def _complete_build_result(
         completed_at=datetime.now().isoformat(),
     )
     _finalize_job_timing(job_id)
+    _try_notify_upgrade_finished(job_id, "completed")
 
 
 def _run_single_build(
@@ -2302,8 +2473,25 @@ def _phase_build(
 
         result = run_build_fix_attempt(job_id, str(log_path), fix_round)
         if not result.get("applied"):
+            from web_app.build_fix_service import triage_after_unapplied_attempt
+
+            _append_progress_log(job_id, "AI 修复未写回，正在分析失败原因…", "build_fix")
+            _set_progress(job_id, {
+                "status": "running",
+                "phase": "build_fix",
+                "message": "AI 修复未成功，正在分析原因…",
+                "percent": 93,
+                "build_log_file": str(log_path),
+                "skip_log": True,
+            })
+            result = triage_after_unapplied_attempt(job_id, str(log_path), fix_round, result)
+        if not result.get("applied"):
             _complete_build_result(job_id, code, log_path)
             detail = result.get("error") or "AI 未能修复编译错误"
+            bf = dict((get_upgrade_job(job_id) or {}).get("options") or {}).get("build_fix") or {}
+            advice = str((bf.get("failure_triage") or {}).get("advice") or "").strip()
+            if advice:
+                detail = f"{detail}\n建议本机处理：{advice}"
             raise RuntimeError(f"编译失败且 AI 修复未成功: {detail}")
 
         summary = result.get("summary") or ""
@@ -2533,6 +2721,7 @@ def _resume_upgrade_worker(job_id: str) -> None:
             return
         update_upgrade_job(job_id, status="failed", phase="failed", error_msg=str(exc))
         _set_progress(job_id, {"status": "failed", "phase": "failed", "message": str(exc)})
+        _try_notify_upgrade_finished(job_id, "failed")
 
 
 def resume_upgrade_job(

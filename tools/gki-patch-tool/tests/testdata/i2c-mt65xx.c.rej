@@ -1,0 +1,76 @@
+diff a/drivers/i2c/busses/i2c-mt65xx.c b/drivers/i2c/busses/i2c-mt65xx.c	(rejected hunks)
+@@ -1065,64 +1065,67 @@ static int mtk_i2c_do_transfer(struct mtk_i2c *i2c, struct i2c_msg *msgs,
+ static int mtk_i2c_transfer(struct i2c_adapter *adap,
+ 			    struct i2c_msg msgs[], int num)
+ {
+ 	int ret;
+ 	int left_num = num;
++	bool write_then_read_en = false;
+ 	struct mtk_i2c *i2c = i2c_get_adapdata(adap);
+ 
+ 	ret = mtk_i2c_clock_enable(i2c);
+ 	if (ret)
+ 		return ret;
+ 
+ 	i2c->auto_restart = i2c->dev_comp->auto_restart;
+ 
+ 	/* checking if we can skip restart and optimize using WRRD mode */
+ 	if (i2c->auto_restart && num == 2) {
+ 		if (!(msgs[0].flags & I2C_M_RD) && (msgs[1].flags & I2C_M_RD) &&
+ 		    msgs[0].addr == msgs[1].addr) {
+ 			i2c->auto_restart = 0;
++			write_then_read_en = true;
+ 		}
+ 	}
+ 
+ 	if (i2c->auto_restart && num >= 2 &&
+ 		i2c->speed_hz > I2C_MAX_FAST_MODE_PLUS_FREQ)
+ 		/* ignore the first restart irq after the master code,
+ 		 * otherwise the first transfer will be discarded.
+ 		 */
+ 		i2c->ignore_restart_irq = true;
+ 	else
+ 		i2c->ignore_restart_irq = false;
+ 
+ 	while (left_num--) {
+ 		if (!msgs->buf) {
+ 			dev_dbg(i2c->dev, "data buffer is NULL.\n");
+ 			ret = -EINVAL;
+ 			goto err_exit;
+ 		}
+ 
+ 		if (msgs->flags & I2C_M_RD)
+ 			i2c->op = I2C_MASTER_RD;
+ 		else
+ 			i2c->op = I2C_MASTER_WR;
+ 
+-		if (!i2c->auto_restart) {
+-			if (num > 1) {
+-				/* combined two messages into one transaction */
+-				i2c->op = I2C_MASTER_WRRD;
+-				left_num--;
+-			}
++		if (write_then_read_en) {
++			/* combined two messages into one transaction */
++			i2c->op = I2C_MASTER_WRRD;
++			left_num--;
+ 		}
+ 
+ 		/* always use DMA mode. */
+ 		ret = mtk_i2c_do_transfer(i2c, msgs, num, left_num);
+ 		if (ret < 0)
+ 			goto err_exit;
+ 
+-		msgs++;
++		if (i2c->op == I2C_MASTER_WRRD)
++			msgs += 2;
++		else
++			msgs++;
+ 	}
+ 	/* the return value is number of executed messages */
+ 	ret = num;
+ 
+ err_exit:
+ 	mtk_i2c_clock_disable(i2c);
+ 	return ret;
+ }

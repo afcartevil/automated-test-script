@@ -1,8 +1,8 @@
 <template>
   <div ref="rootEl" class="conflict-gerrit-view">
     <div class="conflict-gerrit-head">
-      <span>合入前（Vendor 当前）</span>
-      <span>{{ rightTitle }}</span>
+      <span>{{ leftHead }}</span>
+      <span>{{ rightHead }}</span>
     </div>
     <div class="conflict-gerrit-body">
       <div class="conflict-gerrit-split">
@@ -36,14 +36,20 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{
   rows: Array<{ left?: { num?: number | null; text?: string; cls?: string }; right?: { num?: number | null; text?: string; cls?: string } }>
   hasMerged?: boolean
+  leftTitle?: string
+  rightTitle?: string
 }>()
 
-const rightTitle = props.hasMerged ? '合入后（合并结果）' : '合入后（GKI patch 期望）'
+const leftHead = computed(() => props.leftTitle || '合入前（Vendor 当前）')
+const rightHead = computed(() =>
+  props.rightTitle
+  || (props.hasMerged ? '合入后（合并结果）' : '合入后（GKI patch 期望）'),
+)
 
 const rootEl = ref<HTMLElement | null>(null)
 const leftScroll = ref<HTMLElement | null>(null)

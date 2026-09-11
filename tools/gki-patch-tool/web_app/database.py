@@ -408,6 +408,7 @@ def init_db() -> None:
 
     conn.close()
     _verify_schema()
+    _restore_machine_settings()
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -659,6 +660,21 @@ def get_interval_diff(
         """SELECT * FROM interval_diffs
            WHERE repo=? AND from_tag=? AND to_tag=?""",
         (repo, from_tag, to_tag),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def find_interval_diff_by_tags(
+    from_tag: str, to_tag: str,
+) -> Optional[Dict[str, Any]]:
+    """Latest interval patch row for a tag range, regardless of repo URL."""
+    conn = _get_conn()
+    row = conn.execute(
+        """SELECT * FROM interval_diffs
+           WHERE from_tag=? AND to_tag=?
+           ORDER BY updated_at DESC LIMIT 1""",
+        (from_tag, to_tag),
     ).fetchone()
     conn.close()
     return dict(row) if row else None
@@ -1272,6 +1288,81 @@ def get_cross_range_overlap(task_ids: List[str]) -> Dict[str, Any]:
         "total_overlap": len(overlap_patches),
     }
 
+# ── Machine-local settings (cross-checkout) ─────────────
+
+_skip_machine_persist = False
+
+
+def _machine_settings_snapshot() -> Dict[str, Any]:
+    return {
+        "repo_dir": get_db_repo_dir(),
+        "llm": get_db_llm_config(),
+        "feishu": get_db_feishu_config(),
+        "ssh_credentials": get_db_ssh_credentials(),
+        "apply_mode": get_config_value("upgrade_apply_mode"),
+    }
+
+
+def _persist_machine_settings() -> None:
+    if _skip_machine_persist:
+        return
+    try:
+        from web_app.user_settings import save_machine_settings
+
+        save_machine_settings(_machine_settings_snapshot())
+    except Exception as exc:
+        print(f"[SETTINGS] 本机配置落盘失败: {exc}", flush=True)
+
+
+def _apply_machine_settings(data: Dict[str, Any]) -> None:
+    if "repo_dir" in data:
+        save_db_repo_dir(str(data.get("repo_dir") or ""))
+    llm = data.get("llm")
+    if isinstance(llm, dict) and llm:
+        save_db_llm_config(
+            str(llm.get("api_key") or ""),
+            str(llm.get("api_base") or ""),
+            str(llm.get("model") or ""),
+        )
+    feishu = data.get("feishu")
+    if isinstance(feishu, dict) and feishu:
+        save_db_feishu_config(
+            str(feishu.get("app_id") or ""),
+            str(feishu.get("app_secret") or ""),
+            str(feishu.get("folder_token") or ""),
+            str(feishu.get("open_base") or ""),
+            str(feishu.get("owner") or ""),
+            str(feishu.get("secure_label") or "S2"),
+            str(feishu.get("webhook_url") or ""),
+            str(feishu.get("webhook_secret") or ""),
+            str(feishu.get("notify_users") or ""),
+        )
+    ssh = data.get("ssh_credentials")
+    if isinstance(ssh, dict) and ssh:
+        save_db_ssh_credentials(ssh)
+    apply_mode = str(data.get("apply_mode") or "").strip()
+    if apply_mode in ("format-patch", "squash"):
+        set_config_value("upgrade_apply_mode", apply_mode)
+
+
+def _restore_machine_settings() -> None:
+    """Load ~/.tahp-console settings into this checkout's DB; else export DB out."""
+    global _skip_machine_persist
+    try:
+        from web_app.user_settings import load_machine_settings, settings_has_values
+
+        data = load_machine_settings()
+        if settings_has_values(data):
+            _skip_machine_persist = True
+            try:
+                _apply_machine_settings(data)
+            finally:
+                _skip_machine_persist = False
+        _persist_machine_settings()
+    except Exception as exc:
+        print(f"[SETTINGS] 本机配置同步失败: {exc}", flush=True)
+
+
 # ── LLM Config CRUD ─────────────────────────────────────
 
 _LLM_KEYS = ("llm_api_key", "llm_api_base", "llm_model")
@@ -1299,6 +1390,7 @@ def save_db_llm_config(api_key: str, api_base: str, model: str) -> None:
     conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('llm_model', ?)", (model,))
     conn.commit()
     conn.close()
+    _persist_machine_settings()
 
 
 def delete_db_llm_config() -> None:
@@ -1307,6 +1399,7 @@ def delete_db_llm_config() -> None:
     conn.execute("DELETE FROM config WHERE key IN (?, ?, ?)", _LLM_KEYS)
     conn.commit()
     conn.close()
+    _persist_machine_settings()
 
 
 _FEISHU_KEYS = (
@@ -1369,6 +1462,7 @@ def save_db_feishu_config(
     conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('feishu_notify_users', ?)", (notify_users,))
     conn.commit()
     conn.close()
+    _persist_machine_settings()
 
 
 _REPO_DIR_KEY = "repo_dir"
@@ -1393,6 +1487,7 @@ def save_db_repo_dir(repo_dir: str) -> None:
     )
     conn.commit()
     conn.close()
+    _persist_machine_settings()
 
 
 # ── SSH credentials (settings UI → DB) ─────────────────
@@ -1439,6 +1534,7 @@ def save_db_ssh_credentials(creds: Dict[str, str]) -> None:
     )
     conn.commit()
     conn.close()
+    _persist_machine_settings()
 
 
 def delete_db_ssh_credentials() -> None:
@@ -1447,6 +1543,7 @@ def delete_db_ssh_credentials() -> None:
     conn.execute("DELETE FROM config WHERE key = ?", (_SSH_CREDENTIALS_KEY,))
     conn.commit()
     conn.close()
+    _persist_machine_settings()
 
 
 def get_config_value(key: str) -> str:
@@ -1464,6 +1561,8 @@ def set_config_value(key: str, value: str) -> None:
     )
     conn.commit()
     conn.close()
+    if key == "upgrade_apply_mode":
+        _persist_machine_settings()
 
 
 # ── Upgrade job CRUD ───────────────────────────────────

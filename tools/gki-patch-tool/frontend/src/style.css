@@ -1845,6 +1845,94 @@ tr.selectable-row.active td:first-child {
   font-weight: 700;
 }
 
+.crash-create .section-title {
+  margin-bottom: 12px;
+}
+
+.crash-mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.crash-mode {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  text-align: left;
+  color: #35507a;
+  background: #d7e6fb;
+  border: 1.5px solid #b7cef3;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: 0.16s ease;
+}
+
+.crash-mode:hover {
+  color: #1e3a8a;
+  background: #c7dbf8;
+  border-color: #93c5fd;
+}
+
+.crash-mode.active {
+  color: #fff;
+  background: var(--primary);
+  border-color: var(--primary-strong);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.28);
+}
+
+.crash-mode strong {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.crash-mode span {
+  color: #4d6a96;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.crash-mode.active span {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.crash-log-input {
+  min-height: 108px;
+}
+
+.crash-upload-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 12px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: 0.16s ease;
+}
+
+.crash-upload-row:hover,
+.crash-upload-row.dragging {
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+
+.crash-create-actions {
+  margin-top: 14px;
+}
+
 .crash-report-panel .summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -1876,6 +1964,54 @@ tr.selectable-row.active td:first-child {
 .crash-progress {
   margin: 14px 0;
   background: var(--surface-soft);
+}
+
+.crash-progress-current {
+  margin: 4px 0 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.crash-progress-log {
+  max-height: 240px;
+  margin: 12px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.crash-progress-log li {
+  display: grid;
+  grid-template-columns: 44px 108px minmax(0, 1fr);
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.crash-progress-log li:last-child {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.crash-progress-log-time {
+  color: var(--muted-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.crash-progress-log-phase {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.crash-progress-log-msg {
+  min-width: 0;
+  word-break: break-word;
 }
 
 .phase-tags {
@@ -1958,6 +2094,14 @@ tr.selectable-row.active td:first-child {
   border-radius: 10px;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.source-snip {
+  margin: 8px 0 12px;
+}
+
+.source-snip .diff-view {
+  max-height: 280px;
 }
 
 .info-box.red {

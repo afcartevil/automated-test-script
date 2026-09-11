@@ -106,6 +106,13 @@ export function applyUpgradePreset(form: Record<string, any>, preset: UpgradePre
   }
 }
 
+/** GET /api/upgrade/jobs/:id 返回 `{ job, progress }`；列表项则是任务本身。 */
+export function unwrapUpgradeJob(data: Record<string, any> | null | undefined): Record<string, any> | null {
+  if (!data || typeof data !== 'object') return null
+  if (data.job && typeof data.job === 'object' && !Array.isArray(data.job)) return data.job
+  return data
+}
+
 export function jobToUpgradeForm(job: Record<string, any>) {
   const opts = job.options || {}
   return {
@@ -115,7 +122,7 @@ export function jobToUpgradeForm(job: Record<string, any>) {
     build_workdir: job.build_workdir || '',
     build_command: job.build_command || '',
     remote_temp_dir: job.remote_temp_dir || opts.remote_temp_dir || '',
-    local_repo_mount: opts.local_repo_mount || '',
+    local_repo_mount: job.local_repo_mount || opts.local_repo_mount || '',
     remote: true,
     auto_commit: !!opts.auto_commit,
     auto_resolve_conflicts: !!opts.auto_resolve_conflicts,

@@ -30,12 +30,26 @@
             <div class="upgrade-tag-row">
               <div class="field">
                 <label>From Tag <span class="required">*</span></label>
-                <input v-model="form.from_tag" class="input input-sm mono" placeholder="android14-5.10-..." />
+                <TagSelect
+                  v-model="form.from_tag"
+                  :options="repoTags"
+                  :loading="tagsLoading"
+                  :empty-hint="tagsHint"
+                  input-class="input-sm"
+                  placeholder="输入检索，如 android13 2025-09 r9"
+                />
               </div>
               <span class="upgrade-tag-arrow" aria-hidden="true">→</span>
               <div class="field">
                 <label>To Tag <span class="required">*</span></label>
-                <input v-model="form.to_tag" class="input input-sm mono" placeholder="android14-5.10-..." />
+                <TagSelect
+                  v-model="form.to_tag"
+                  :options="repoTags"
+                  :loading="tagsLoading"
+                  :empty-hint="tagsHint"
+                  input-class="input-sm"
+                  placeholder="输入检索，如 android13 2026-03 r16"
+                />
               </div>
             </div>
             <button class="btn primary upgrade-start-btn" :disabled="submitting" @click="startUpgrade">
@@ -103,7 +117,8 @@
         </div>
       </div>
 
-      <aside class="workspace-detail">
+      <aside class="workspace-detail-shell">
+        <div ref="detailPanelRef" class="workspace-detail">
         <UpgradeAdvancedConfig
           v-if="showAdvancedPanel"
           ref="advancedConfigRef"
@@ -119,6 +134,15 @@
           <div v-if="loadingJobId" class="detail-banner">正在加载升级任务：{{ shortId(loadingJobId) }}</div>
           <div v-if="liveHint" class="message info" style="margin-bottom: 12px">{{ liveHint }}</div>
 
+          <AnalysisSectionNav
+            v-if="upgradeNavSections.length"
+            v-model:active-id="activeNavSection"
+            :sections="upgradeNavSections"
+            nav-label="任务详情导航"
+            @navigate="scrollToUpgradeSection"
+          />
+
+          <div id="upgrade-section-overview" class="analysis-anchor">
           <div class="upgrade-detail-head">
             <div class="upgrade-detail-title">
               <h2>{{ activeJob.from_tag || '-' }} -> {{ activeJob.to_tag || '-' }}</h2>
@@ -176,7 +200,9 @@
             </template>
             <template v-else-if="displayStatus === 'conflicts'">
               <span class="upgrade-action-label">冲突处理</span>
-              <button class="btn primary btn-sm" @click="continueJob">冲突已解决，继续</button>
+              <button class="btn primary btn-sm" :disabled="continuing" @click="continueJob">
+                {{ continuing ? '正在继续…' : '冲突已解决，继续' }}
+              </button>
             </template>
             <template v-else-if="displayStatus === 'applied'">
               <span class="upgrade-action-label">提交</span>
@@ -206,35 +232,44 @@
               <button class="btn primary btn-sm" @click="resumeJob">继续执行（{{ resumeHint }}）</button>
             </template>
           </div>
+          </div>
 
-          <UpgradeProgressPanel
-            :job="activeJob"
-            :progress="progress"
-            :job-id="activeJob.id || activeJob.job_id"
-          />
+          <div id="upgrade-section-progress" class="analysis-anchor">
+            <UpgradeProgressPanel
+              :job="activeJob"
+              :progress="progress"
+              :job-id="activeJob.id || activeJob.job_id"
+            />
+          </div>
 
-          <GerritSubmissionsPanel
-            :job="activeJob"
-            :progress="progress"
-          />
+          <div v-if="showGerritPanel" id="upgrade-section-gerrit" class="analysis-anchor">
+            <GerritSubmissionsPanel
+              :job="activeJob"
+              :progress="progress"
+            />
+          </div>
 
-          <ConflictPanel
-            v-if="showConflictPanel"
-            ref="conflictPanelRef"
-            :job-id="activeJob.id || activeJob.job_id"
-            :job="activeJob"
-            :visible="showConflictPanel"
-            :auto-resolve="!!activeJob.options?.auto_resolve_conflicts"
-            @refresh="refreshActiveJob"
-          />
+          <div v-if="showConflictPanel" id="upgrade-section-conflicts" class="analysis-anchor">
+            <ConflictPanel
+              ref="conflictPanelRef"
+              :job-id="activeJob.id || activeJob.job_id"
+              :job="activeJob"
+              :visible="showConflictPanel"
+              :auto-resolve="!!activeJob.options?.auto_resolve_conflicts"
+              @refresh="refreshActiveJob"
+            />
+          </div>
 
-          <BuildFixPanel
-            v-if="showBuildFixPanel"
-            ref="buildFixPanelRef"
-            :job-id="activeJob.id || activeJob.job_id"
-            :job="activeJob"
-            :visible="showBuildFixPanel"
-          />
+          <div v-if="showBuildFixPanel" id="upgrade-section-build-fix" class="analysis-anchor">
+            <BuildFixPanel
+              ref="buildFixPanelRef"
+              :job-id="activeJob.id || activeJob.job_id"
+              :job="activeJob"
+              :visible="showBuildFixPanel"
+              @refresh="refreshActiveJob"
+              @retry-started="onBuildFixStarted"
+            />
+          </div>
         </div>
 
         <div v-else class="card detail-empty">
@@ -242,6 +277,7 @@
             <strong>右侧工作区</strong>
             <span>选择左侧任务查看详情，或点击「高级选项」配置新任务。</span>
           </div>
+        </div>
         </div>
       </aside>
     </div>
@@ -261,14 +297,19 @@ import ConflictPanel from '../components/upgrade/ConflictPanel.vue'
 import GerritSubmissionsPanel from '../components/upgrade/GerritSubmissionsPanel.vue'
 import UpgradeAdvancedConfig from '../components/upgrade/UpgradeAdvancedConfig.vue'
 import UpgradeProgressPanel from '../components/upgrade/UpgradeProgressPanel.vue'
+import AnalysisSectionNav from '../components/analysis/AnalysisSectionNav.vue'
+import TagSelect from '../components/TagSelect.vue'
 import { api, shortId, statusTone, wsUrl } from '../api'
 import { isEmbeddedMode } from '../composables/useEmbeddedNav'
-
-const isEmbedded = isEmbeddedMode()
+import { useRepoTags } from '../composables/useRepoTags'
+import { scrollPanelToSection, useAnalysisSectionSpy } from '../composables/useSectionScroll'
+import type { AnalysisNavSection } from '../utils/analysisDisplay'
 import {
   UPGRADE_CANCELLABLE,
   effectiveUpgradeStatus,
   ensureRemoteSshSaved,
+  gerritSubmissionsForJob,
+  isUpgradeSettledStatus,
   jobDisplayStatus,
   remoteSshBody,
   resolveRemoteSshForStart,
@@ -282,8 +323,11 @@ import {
   createEmptyUpgradeForm,
   jobToUpgradeForm,
   saveUpgradeFormDefaults,
+  unwrapUpgradeJob,
 } from '../utils/upgradeFormDefaults'
 
+const isEmbedded = isEmbeddedMode()
+const { repoTags, tagsLoading, tagsHint, loadRepoTags } = useRepoTags()
 const route = useRoute()
 const form = reactive<any>(createEmptyUpgradeForm())
 
@@ -297,6 +341,7 @@ const activeJob = ref<any | null>(null)
 const progress = ref<any>({})
 const submitting = ref(false)
 const building = ref(false)
+const continuing = ref(false)
 const committing = ref(false)
 const error = ref('')
 const liveHint = ref('')
@@ -306,8 +351,11 @@ const prefillBanner = ref('')
 const advancedConfigRef = ref<InstanceType<typeof UpgradeAdvancedConfig> | null>(null)
 const conflictPanelRef = ref<InstanceType<typeof ConflictPanel> | null>(null)
 const buildFixPanelRef = ref<InstanceType<typeof BuildFixPanel> | null>(null)
+const detailPanelRef = ref<HTMLElement | null>(null)
+const activeNavSection = ref('')
 let socket: WebSocket | null = null
 let pollTimer: number | null = null
+let pollSawLive = false
 
 const displayStatus = computed(() => effectiveUpgradeStatus(activeJob.value, progress.value))
 const selectedJobCount = computed(() => selectedJobIds.value.size)
@@ -359,6 +407,48 @@ const showBuildFixPanel = computed(() => {
   )
 })
 
+const showGerritPanel = computed(
+  () => gerritSubmissionsForJob(activeJob.value, progress.value).length > 0,
+)
+
+const upgradeNavSections = computed((): AnalysisNavSection[] => {
+  if (!activeJob.value || showAdvancedPanel.value) return []
+  const sections: AnalysisNavSection[] = [
+    { id: 'upgrade-section-overview', label: '概览' },
+    { id: 'upgrade-section-progress', label: '执行进度' },
+  ]
+  if (showGerritPanel.value) sections.push({ id: 'upgrade-section-gerrit', label: 'Gerrit 提交' })
+  if (showConflictPanel.value) sections.push({ id: 'upgrade-section-conflicts', label: '冲突合入' })
+  if (showBuildFixPanel.value) sections.push({ id: 'upgrade-section-build-fix', label: '编译修复' })
+  return sections
+})
+
+const upgradeNavSectionIds = computed(() => upgradeNavSections.value.map((section) => section.id))
+
+const { pauseSpy: pauseNavSpy, refreshSpy: refreshNavSpy } = useAnalysisSectionSpy(
+  detailPanelRef,
+  upgradeNavSectionIds,
+  activeNavSection,
+)
+
+function scrollToUpgradeSection(sectionId: string) {
+  activeNavSection.value = sectionId
+  pauseNavSpy(900)
+  scrollPanelToSection(detailPanelRef.value, sectionId)
+}
+
+watch(
+  () => [activeJobId.value, showAdvancedPanel.value] as const,
+  () => {
+    activeNavSection.value = upgradeNavSections.value[0]?.id || ''
+    nextTick(() => refreshNavSpy())
+  },
+)
+
+watch(upgradeNavSectionIds, () => {
+  nextTick(() => refreshNavSpy())
+})
+
 function toggleAdvancedPanel() {
   if (showAdvancedPanel.value) {
     closeAdvancedPanel()
@@ -393,10 +483,14 @@ async function copyFromLastJob() {
   const latestId = jobs.value[0].id || jobs.value[0].job_id
   if (!latestId) return
   try {
-    const job = await api.get<any>(`/api/upgrade/jobs/${latestId}`)
+    const data = await api.get<any>(`/api/upgrade/jobs/${latestId}`)
+    const job = unwrapUpgradeJob(data)
+    if (!job) throw new Error('升级任务数据为空')
     Object.assign(form, jobToUpgradeForm(job))
     form.remote = true
+    error.value = ''
     prefillBanner.value = `已从最近任务 ${shortId(job.id || job.job_id)} 复制配置（请核对 Tag）`
+    await openAdvancedPanel()
   } catch (err: any) {
     error.value = err.message || String(err)
   }
@@ -429,9 +523,29 @@ async function loadJobs(opts: { silent?: boolean } = {}) {
       if (valid.has(id)) next.add(id)
     }
     selectedJobIds.value = next
+    syncActiveIntoList()
   } finally {
     jobsLoading.value = false
   }
+}
+
+function syncActiveIntoList() {
+  const job = activeJob.value
+  if (!job) return
+  const id = job.id || job.job_id
+  if (!id) return
+  const liveStatus = effectiveUpgradeStatus(job, progress.value)
+  if (!liveStatus) return
+  const idx = jobs.value.findIndex((item) => (item.id || item.job_id) === id)
+  if (idx < 0) return
+  const cur = jobs.value[idx]
+  const nextPhase = job.phase || progress.value?.phase || cur.phase
+  const nextExit = job.build_exit_code ?? progress.value?.build_exit_code ?? cur.build_exit_code
+  if (cur.status === liveStatus && cur.phase === nextPhase && cur.build_exit_code === nextExit) return
+  const next = jobs.value.slice()
+  next[idx] = { ...cur, status: liveStatus, phase: nextPhase, build_exit_code: nextExit }
+  jobs.value = next
+  upgradeJobsCache = next
 }
 
 function toggleJobSelection(jobId: string, checked: boolean) {
@@ -447,8 +561,16 @@ function toggleSelectAllJobs(checked: boolean) {
     : new Set()
 }
 
+function closeSocket() {
+  if (!socket) return
+  socket.onclose = null
+  socket.onmessage = null
+  socket.close()
+  socket = null
+}
+
 function clearActiveJobDetail() {
-  if (socket) socket.close()
+  closeSocket()
   stopPoll()
   activeJob.value = null
   activeJobId.value = ''
@@ -464,6 +586,7 @@ function stopPoll() {
 
 function startPoll(jobId: string) {
   stopPoll()
+  pollSawLive = false
   pollTimer = window.setInterval(() => refreshActiveJob(jobId), 3000)
 }
 
@@ -474,9 +597,44 @@ async function refreshActiveJob(jobId?: string) {
     const data = await api.get<any>(`/api/upgrade/jobs/${id}`)
     activeJob.value = data.job
     progress.value = data.progress || {}
+    const st = effectiveUpgradeStatus(data.job, data.progress)
+    if (!isUpgradeSettledStatus(st)) {
+      pollSawLive = true
+    } else if (pollSawLive) {
+      stopPoll()
+      if (liveHint.value === '实时连接已断开，已切换为轮询更新') {
+        liveHint.value = ''
+      }
+    }
   } catch {
     // ignore polling errors
   }
+}
+
+function attachLiveSocket(jobId: string) {
+  closeSocket()
+  socket = new WebSocket(wsUrl(`/ws/upgrade/${jobId}`))
+  socket.onmessage = (event) => {
+    const payload = JSON.parse(event.data || '{}')
+    progress.value = payload
+    if (payload.job) activeJob.value = payload.job
+  }
+  socket.onclose = () => {
+    socket = null
+    if (activeJobId.value !== jobId) return
+    const closeSt = effectiveUpgradeStatus(activeJob.value, progress.value)
+    if (isUpgradeSettledStatus(closeSt)) {
+      liveHint.value = ''
+      return
+    }
+    liveHint.value = '实时连接已断开，已切换为轮询更新'
+    startPoll(jobId)
+  }
+}
+
+function followJobLive(jobId: string) {
+  startPoll(jobId)
+  attachLiveSocket(jobId)
 }
 
 async function selectJob(jobId: string) {
@@ -485,23 +643,17 @@ async function selectJob(jobId: string) {
   activeJobId.value = jobId
   loadingJobId.value = jobId
   liveHint.value = ''
-  if (socket) socket.close()
+  closeSocket()
   stopPoll()
   try {
     const data = await api.get<any>(`/api/upgrade/jobs/${jobId}`)
     activeJob.value = data.job
     progress.value = data.progress || {}
-    socket = new WebSocket(wsUrl(`/ws/upgrade/${jobId}`))
-    socket.onmessage = (event) => {
-      const payload = JSON.parse(event.data || '{}')
-      progress.value = payload
-      if (payload.job) activeJob.value = payload.job
+    const st = effectiveUpgradeStatus(data.job, data.progress)
+    if (isUpgradeSettledStatus(st)) {
+      return
     }
-    socket.onclose = () => {
-      socket = null
-      liveHint.value = '实时连接已断开，已切换为轮询更新'
-      startPoll(jobId)
-    }
+    attachLiveSocket(jobId)
   } catch (err: any) {
     error.value = err.message || String(err)
   } finally {
@@ -551,14 +703,26 @@ async function startUpgrade() {
 }
 
 async function continueJob() {
-  if (!activeJob.value) return
+  if (!activeJob.value || continuing.value) return
   const jobId = activeJob.value.id || activeJob.value.job_id
-  const body: Record<string, unknown> = {
-    ...(await remoteSshBody(activeJob.value, () => api.get<any>('/api/upgrade/ssh-config'))),
+  continuing.value = true
+  liveHint.value = '正在继续合入…'
+  try {
+    const body: Record<string, unknown> = {
+      ...(await remoteSshBody(activeJob.value, () => api.get<any>('/api/upgrade/ssh-config'))),
+    }
+    const resp = await api.post<any>(`/api/upgrade/jobs/${jobId}/continue`, body)
+    liveHint.value = resp.message || '已开始继续合入'
+    await refreshActiveJob(jobId)
+    const st = effectiveUpgradeStatus(activeJob.value, progress.value)
+    if (!isUpgradeSettledStatus(st)) followJobLive(jobId)
+  } catch (err: any) {
+    alert(err.message || String(err))
+    liveHint.value = ''
+    await refreshActiveJob(jobId)
+  } finally {
+    continuing.value = false
   }
-  await api.post(`/api/upgrade/jobs/${jobId}/continue`, body)
-  startPoll(jobId)
-  await refreshActiveJob(jobId)
 }
 
 async function commitJob() {
@@ -595,7 +759,7 @@ async function buildJob() {
     Object.assign(body, await remoteSshBody(activeJob.value, () => api.get<any>('/api/upgrade/ssh-config')))
     const resp = await api.post<any>(`/api/upgrade/jobs/${jobId}/build`, body)
     liveHint.value = resp.message || '编译已在后台启动'
-    startPoll(jobId)
+    followJobLive(jobId)
     await refreshActiveJob(jobId)
   } catch (err: any) {
     alert(`编译启动失败: ${err.message}`)
@@ -627,21 +791,14 @@ async function commitRetryJob() {
 }
 
 async function buildFixRetry() {
-  if (!activeJob.value || !confirm('将启用 AI 编译修复并重新编译。是否继续？')) return
-  const jobId = activeJob.value.id || activeJob.value.job_id
-  liveHint.value = '正在启动 AI 修复并重试编译…'
-  try {
-    const body: Record<string, unknown> = {
-      ...(await remoteSshBody(activeJob.value, () => api.get<any>('/api/upgrade/ssh-config'))),
-    }
-    const resp = await api.post<any>(`/api/upgrade/jobs/${jobId}/build/fix-retry`, body)
-    liveHint.value = resp.message || 'AI 修复重试已启动'
-    startPoll(jobId)
-    await refreshActiveJob(jobId)
-  } catch (err: any) {
-    alert(`启动失败: ${err.message}`)
-    liveHint.value = ''
-  }
+  if (!activeJob.value) return
+  buildFixPanelRef.value?.submitFromBar?.()
+}
+
+function onBuildFixStarted() {
+  const jobId = activeJob.value?.id || activeJob.value?.job_id || activeJobId.value
+  liveHint.value = 'AI 修复重试已启动'
+  if (jobId) followJobLive(jobId)
 }
 
 async function resumeJob() {
@@ -734,6 +891,7 @@ async function deleteSelectedJobs() {
 onMounted(() => {
   // Local defaults are sync — do not block history fetch.
   void loadDefaults()
+  void loadRepoTags()
   // History first: paint ASAP; panel / deep-link run in parallel.
   void loadJobs({ silent: jobs.value.length > 0 })
 
@@ -756,6 +914,7 @@ onActivated(() => {
   // Soft refresh when returning via KeepAlive; skip if mount fetch already in flight.
   if (jobsLoading.value) return
   void loadJobs({ silent: true })
+  void loadRepoTags()
   applyNoticeQueryPrefill()
 })
 
@@ -775,8 +934,18 @@ watch(
   () => [route.query.from_tag, route.query.to_tag, route.query.notice_text] as const,
   () => applyNoticeQueryPrefill(),
 )
+
+watch(
+  () => [
+    activeJob.value?.id || activeJob.value?.job_id || activeJobId.value,
+    effectiveUpgradeStatus(activeJob.value, progress.value),
+    activeJob.value?.phase || progress.value?.phase,
+    activeJob.value?.build_exit_code,
+  ],
+  () => syncActiveIntoList(),
+)
 onBeforeUnmount(() => {
-  if (socket) socket.close()
+  closeSocket()
   stopPoll()
 })
 </script>
@@ -818,6 +987,16 @@ onBeforeUnmount(() => {
 .upgrade-tag-row .field {
   gap: 4px;
   min-width: 0;
+  overflow: visible;
+}
+
+.upgrade-tag-row :deep(.input) {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.upgrade-tag-row :deep(.tag-select-panel) {
+  z-index: 40;
 }
 
 .upgrade-tag-row .field label {

@@ -301,6 +301,7 @@ import MonthlySubtagPanel from '../components/analysis/MonthlySubtagPanel.vue'
 import TaskPatchIndexPanel from '../components/analysis/TaskPatchIndexPanel.vue'
 import ScrollToTopButton from '../components/ScrollToTopButton.vue'
 import { usePanelScrollReturn } from '../composables/usePanelScrollReturn'
+import { useRepoTags } from '../composables/useRepoTags'
 import { scrollPanelToSection, useAnalysisSectionSpy } from '../composables/useSectionScroll'
 import { buildAnalysisNavSections, isSameMonthSubtagRange } from '../utils/analysisDisplay'
 import { api, formatDate, formatElapsed, shortId, statusTone, wsUrl } from '../api'
@@ -328,16 +329,9 @@ watch(selectedTaskId, () => {
   activeNavSection.value = ''
 })
 
-watch(mode, (value) => {
-  if (value === 'range') {
-    void loadRepoTags()
-  }
-})
 const actionPending = ref(false)
 const exportingFeishu = ref(false)
-const repoTags = ref<string[]>([])
-const tagsLoading = ref(false)
-const tagsHint = ref('未读取到 tag，请先在设置中配置本地 kernel 仓')
+const { repoTags, tagsLoading, tagsHint, loadRepoTags } = useRepoTags()
 const message = ref('')
 const error = ref('')
 const nowMs = ref(Date.now())
@@ -346,6 +340,12 @@ let terminalRefreshDone = false
 let durationTimer: ReturnType<typeof setInterval> | null = null
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
+
+watch(mode, (value) => {
+  if (value === 'range') {
+    void loadRepoTags()
+  }
+})
 
 function effectiveTaskStatus(task: any) {
   if (!task) return ''
@@ -410,28 +410,6 @@ const allTasksSelected = computed(() => {
   if (!tasks.value.length) return false
   return tasks.value.every((task) => selectedTaskIds.value.has(task.id))
 })
-
-async function loadRepoTags(force = false) {
-  if (tagsLoading.value) return
-  if (!force && repoTags.value.length) return
-  tagsLoading.value = true
-  try {
-    const data = await api.get<any>(`/api/repo/tags${force ? '?refresh=1' : ''}`)
-    repoTags.value = data.tags || []
-    if (!data.configured) {
-      tagsHint.value = '未配置本地 kernel 仓，请先在设置中填写路径；仍可手动输入 tag'
-    } else if (!repoTags.value.length) {
-      tagsHint.value = '本地仓库暂无 tag，请确认已 fetch tags；仍可手动输入'
-    } else {
-      tagsHint.value = `已加载 ${data.total ?? repoTags.value.length} 个 tag`
-    }
-  } catch (err: any) {
-    repoTags.value = []
-    tagsHint.value = err.message || '读取仓库 tag 失败，仍可手动输入'
-  } finally {
-    tagsLoading.value = false
-  }
-}
 
 async function refreshTaskDetail(taskId: string) {
   const task = await api.get<any>(`/api/tasks/${taskId}`)

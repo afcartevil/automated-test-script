@@ -38,9 +38,13 @@ def _norm_path(path: str) -> str:
     return (path or "").replace("\\", "/").strip()
 
 
-def _is_kernel_readonly_path(path: str) -> bool:
+def is_kernel_readonly_path(path: str) -> bool:
+    """True for include/linux/* (GKI/upstream headers; never patch)."""
     p = _norm_path(path).lower()
     return "/include/linux/" in p or p.startswith("include/linux/")
+
+
+_is_kernel_readonly_path = is_kernel_readonly_path
 
 
 def parse_gcc_diagnostic_entries(log_segment: str) -> List[Dict[str, Any]]:

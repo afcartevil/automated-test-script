@@ -16,6 +16,18 @@
       <span class="conflict-ai-status" :style="{ color: aiStatusColor }">{{ aiStatusText }}</span>
     </div>
 
+    <RetryHintForm
+      v-if="showHintRetry"
+      kind="conflict"
+      :error-text="hintErrorText"
+      :submitting="hintSubmitting"
+      :analysis-reason="failureTriage?.reason"
+      :analysis-advice="failureTriage?.advice"
+      :analysis-verdict="failureTriage?.verdict"
+      :initial-hint="failureTriage?.retry_hint"
+      submit-label="按此说明重试"
+      @submit="submitHintRetry"
+    />
     <div v-if="loading" class="conflict-panel-loading">正在加载冲突详情与 AI 建议…</div>
     <div v-else-if="!items.length" class="conflict-panel-loading">无冲突文件详情</div>
     <div v-else class="conflict-panel-body">
@@ -53,10 +65,10 @@
             {{ selectedItem.summary || selectedItem.error || selectedItem.status || '' }}
           </span>
         </div>
-        <div class="conflict-diff-title">冲突对比（Gerrit 风格 · 左合入前 / 右合入后）</div>
+        <div class="conflict-diff-title">冲突对比（左：代码仓合入前 / 右：拟写回）</div>
 
         <div v-if="!regions.length" class="conflict-compare-empty">
-          {{ selectedItem.rej_content ? '未能解析冲突片段。' : '等待 AI 处理或暂无 .rej 片段。' }}
+          {{ emptyCompareHint }}
         </div>
         <template v-else>
           <div class="conflict-diff-legend">
@@ -96,6 +108,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api } from '../../api'
 import { buildGerritDiffRowsFallback, remoteSshBody } from '../../utils/upgrade'
 import GerritDiffView from './GerritDiffView.vue'
+import RetryHintForm from './RetryHintForm.vue'
 
 const props = defineProps<{
   jobId: string
@@ -112,6 +125,7 @@ const selectedPath = ref('')
 const checkedPaths = ref(new Set<string>())
 const editorDrafts = ref<Record<string, string>>({})
 const pollTimer = ref<number | null>(null)
+const retryHoldUntil = ref(0)
 
 const items = computed(() => state.value?.items || [])
 const selectedItem = computed(() => items.value.find((i: any) => i.conflict_path === selectedPath.value) || items.value[0])
@@ -119,11 +133,23 @@ const pendingCount = computed(() => items.value.filter((i: any) => !i.applied).l
 const selectedCount = computed(() => checkedPaths.value.size)
 const allSelected = computed(() => pendingCount.value > 0 && selectedCount.value === pendingCount.value)
 const autoResolve = computed(() => props.autoResolve || state.value?.auto_resolve_conflicts)
+const failedItems = computed(() => items.value.filter((i: any) => i.status === 'failed'))
+const failureTriage = computed(() => state.value?.failure_triage || null)
+const showHintRetry = computed(() =>
+  state.value?.ai_status === 'failed' || failedItems.value.length > 0,
+)
+const hintSubmitting = ref(false)
+const hintErrorText = computed(() =>
+  selectedItem.value?.error
+  || failedItems.value.map((i: any) => i.error).filter(Boolean)[0]
+  || state.value?.ai_message
+  || '',
+)
 
 const aiStatusText = computed(() => {
   const st = state.value?.ai_status || 'idle'
   const msg = state.value?.ai_message || ''
-  if (st === 'running' || st === 'applying') return msg || (st === 'applying' ? '写回工作区…' : 'AI 处理中…')
+  if (st === 'running' || st === 'applying' || st === 'triaging') return msg || (st === 'triaging' ? '正在分析失败原因…' : st === 'applying' ? '写回工作区…' : 'AI 处理中…')
   if (st === 'failed') return msg || 'AI 处理失败'
   if (st === 'done') return msg || 'AI 处理完成'
   return msg || st
@@ -131,13 +157,28 @@ const aiStatusText = computed(() => {
 
 const aiStatusColor = computed(() => {
   const st = state.value?.ai_status || 'idle'
-  if (st === 'running' || st === 'applying') return '#2563eb'
+  if (st === 'running' || st === 'applying' || st === 'triaging') return '#2563eb'
   if (st === 'failed') return '#dc2626'
   if (st === 'done') return '#16a34a'
   return '#64748b'
 })
 
 const regions = computed(() => selectedItem.value?.conflict_regions || [])
+
+const emptyCompareHint = computed(() => {
+  const sel = selectedItem.value
+  if (!sel) return ''
+  if (sel.proposed && sel.original && sel.proposed === sel.original) {
+    return '合入前后代码仓内容相同。'
+  }
+  if (sel.status === 'ai_done' || sel.proposed) {
+    return '未能根据代码仓合入前后生成对比。'
+  }
+  if (sel.rej_content) {
+    return '等待合入建议；左侧将显示代码仓当前实现（不是 GKI 补丁原文）。'
+  }
+  return '等待 AI 处理或暂无冲突片段。'
+})
 
 const editorLabel = computed(() =>
   selectedItem.value?.kind === 'markers' ? '冲突合并结果（可编辑）' : '冲突 patch（.rej 内容，可编辑后写回）',
@@ -213,9 +254,11 @@ async function saveEditor(path?: string) {
 
 async function loadPanel() {
   if (!props.jobId || !props.visible) return
-  loading.value = true
+  const firstLoad = state.value == null
+  if (firstLoad) loading.value = true
   try {
     const data = await api.get<any>(`/api/upgrade/jobs/${props.jobId}/conflicts`)
+    const prevSt = state.value?.ai_status
     state.value = data
     if (!selectedPath.value || !data.items?.find((i: any) => i.conflict_path === selectedPath.value)) {
       selectedPath.value = data.items?.[0]?.conflict_path || ''
@@ -226,11 +269,14 @@ async function loadPanel() {
       }
     }
     const st = data.ai_status
-    if (st === 'running' || st === 'applying' || (data.auto_resolve_conflicts && props.job?.status === 'conflicts')) {
+    const busy = st === 'running' || st === 'applying' || st === 'triaging'
+    if (busy) retryHoldUntil.value = Date.now() + 120000
+    if (busy || Date.now() < retryHoldUntil.value) {
       startPoll()
     } else {
       stopPoll()
     }
+    if (prevSt && prevSt !== st) emit('refresh')
   } catch (err: any) {
     state.value = { items: [], ai_message: err.message }
   } finally {
@@ -242,7 +288,6 @@ function startPoll() {
   if (pollTimer.value) return
   pollTimer.value = window.setInterval(() => {
     loadPanel()
-    emit('refresh')
   }, 3000)
 }
 
@@ -253,8 +298,20 @@ function stopPoll() {
   }
 }
 
-async function batchResolve(force: boolean) {
-  const paths = getSelectedPaths()
+function markAiStarting(message: string) {
+  if (state.value) {
+    state.value = { ...state.value, ai_status: 'running', ai_message: message }
+  }
+  retryHoldUntil.value = Date.now() + 15000
+  startPoll()
+  emit('refresh')
+}
+
+async function batchResolve(force: boolean, extra?: { userHint?: string; saveToPrompt?: boolean; paths?: string[] }) {
+  let paths = extra?.paths?.length ? extra.paths : getSelectedPaths()
+  if (!paths.length && extra) {
+    paths = items.value.filter((i: any) => !i.applied).map((i: any) => i.conflict_path)
+  }
   if (!paths.length) {
     alert('请先勾选要处理的冲突文件')
     return
@@ -262,11 +319,26 @@ async function batchResolve(force: boolean) {
   try {
     const body: Record<string, unknown> = { paths, ...(await remoteSshBody(props.job)) }
     if (force) body.force = true
+    if (extra?.userHint) body.user_hint = extra.userHint
+    if (extra?.saveToPrompt) body.save_to_prompt = true
+    markAiStarting(extra?.userHint ? '按补充说明重试冲突合入…' : '正在启动 AI 冲突处理…')
     await api.post(`/api/upgrade/jobs/${props.jobId}/conflicts/resolve`, body)
     await loadPanel()
     startPoll()
   } catch (err: any) {
     alert(`批量 AI 失败: ${err.message}`)
+  }
+}
+
+async function submitHintRetry(payload: { hint: string; saveToPrompt: boolean }) {
+  hintSubmitting.value = true
+  try {
+    await batchResolve(true, {
+      userHint: payload.hint,
+      saveToPrompt: payload.saveToPrompt,
+    })
+  } finally {
+    hintSubmitting.value = false
   }
 }
 
@@ -309,6 +381,7 @@ async function batchResolveAndApply() {
   try {
     await saveEditor()
     const body = { paths, auto_apply: true, ...(await remoteSshBody(props.job)) }
+    markAiStarting('正在启动 AI 合入并写回…')
     await api.post(`/api/upgrade/jobs/${props.jobId}/conflicts/resolve`, body)
     await loadPanel()
     startPoll()
@@ -335,8 +408,11 @@ async function applyOne() {
 watch(
   () => [props.jobId, props.visible],
   () => {
+    stopPoll()
     checkedPaths.value = new Set()
     editorDrafts.value = {}
+    selectedPath.value = ''
+    state.value = null
     loadPanel()
   },
   { immediate: true },

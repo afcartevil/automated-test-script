@@ -47,13 +47,15 @@ def _remove_remote_file(job: Dict[str, Any], rel_path: str) -> None:
 
 
 def make_unified_diff(path: str, before: str, after: str) -> str:
+    # Default lineterm="\n" so --- / +++ / @@ each sit on their own line.
+    # lineterm="" + keepends=True glues headers together; the UI then skips the
+    # whole first line (it starts with ---) and numbers remaining lines from 0.
     return "".join(
         difflib.unified_diff(
             before.splitlines(keepends=True),
             after.splitlines(keepends=True),
             fromfile=f"a/{path}",
             tofile=f"b/{path}",
-            lineterm="",
         )
     )
 
@@ -273,6 +275,92 @@ def _run_ai_resolution(
         return files
 
 
+def _save_failure_triage(job_id: str, triage: Any) -> None:
+    job = get_upgrade_job(job_id) or {}
+    cr = _get_resolutions(job)
+    cr["failure_triage"] = triage.as_dict() if hasattr(triage, "as_dict") else triage
+    _save_resolutions(job_id, job, cr)
+
+
+def _maybe_triage_conflict_failures(
+    job_id: str,
+    ssh_creds: Optional[Dict[str, Any]],
+    *,
+    paths: Optional[List[str]],
+    files: Dict[str, Any],
+) -> Dict[str, Any]:
+    """After AI merge fails: diagnose; auto-retry once if the model says it can."""
+    failed_paths = [
+        cp for cp, ent in (files or {}).items()
+        if isinstance(ent, dict) and ent.get("status") == "failed"
+    ]
+    job = get_upgrade_job(job_id) or {}
+    cr = _get_resolutions(job)
+    if not failed_paths and cr.get("ai_status") != "failed":
+        return files
+
+    from web_app.failure_triage import analyze_upgrade_failure, format_conflict_failure_errors
+    from web_app.prompt_loader import set_session_retry_hint
+
+    _set_ai_phase(job_id, job, "triaging", "AI 合入失败，正在分析原因…")
+    _log(job_id, "AI 合入失败，正在分析原因…")
+    errors = format_conflict_failure_errors(files)
+    if not failed_paths:
+        errors = str(cr.get("ai_message") or errors)
+    triage = analyze_upgrade_failure(
+        kind="conflict",
+        errors=errors,
+    )
+    _save_failure_triage(job_id, triage)
+    _log(job_id, f"失败诊断: {triage.verdict} — {triage.reason}")
+
+    if triage.verdict != "retry" or not (triage.retry_hint or "").strip() or not failed_paths:
+        job = get_upgrade_job(job_id) or job
+        cr = _get_resolutions(job)
+        cr["ai_status"] = "failed"
+        cr["ai_message"] = (
+            (cr.get("ai_message") or "")
+            + f"；诊断建议本机处理：{triage.reason}"
+        )
+        _save_resolutions(job_id, job, cr)
+        return files
+
+    set_session_retry_hint(triage.retry_hint)
+    retry_paths = [p for p in failed_paths if not paths or p in set(paths)]
+    job = get_upgrade_job(job_id) or {}
+    _set_ai_phase(job_id, job, "running", "诊断认为可再试，正在按新约束重试合入…")
+    _log(job_id, f"按诊断约束自动重试 {len(retry_paths)} 个失败文件")
+    files = _run_ai_resolution(
+        job_id, ssh_creds, paths=retry_paths or failed_paths, force=True,
+    )
+    still_failed = [
+        cp for cp, ent in (files or {}).items()
+        if isinstance(ent, dict) and ent.get("status") == "failed"
+    ]
+    triage.auto_retried = True
+    if still_failed:
+        triage.verdict = "manual"
+        triage.advice = (
+            (triage.advice or "")
+            + "\n自动重试后仍失败，请按建议在本机处理。"
+        ).strip()
+        _save_failure_triage(job_id, triage)
+        job = get_upgrade_job(job_id) or {}
+        cr = _get_resolutions(job)
+        cr["ai_status"] = "failed"
+        cr["ai_message"] = (
+            (cr.get("ai_message") or "")
+            + f"；自动重试后仍失败：{triage.reason}"
+        )
+        _save_resolutions(job_id, job, cr)
+        _log(job_id, f"诊断重试后仍有 {len(still_failed)} 个失败文件")
+    else:
+        triage.verdict = "retry"
+        _save_failure_triage(job_id, triage)
+        _log(job_id, "诊断重试后冲突合入已成功")
+    return files
+
+
 def _conflict_paths_for_job(job: Dict[str, Any], cr: Dict[str, Any]) -> List[str]:
     active = job.get("conflict_files") or []
     history = (job.get("options") or {}).get("conflict_history_files") or []
@@ -344,16 +432,40 @@ def schedule_ai_conflict_resolution(
     force: bool = False,
     auto_apply: bool = False,
     auto_continue: bool = False,
+    user_hint: str = "",
 ) -> None:
     with _lock:
         if job_id in _ai_running:
             return
         _ai_running.add(job_id)
 
+    hint = (user_hint or "").strip()
+    job = get_upgrade_job(job_id) or {}
+    if hint:
+        opts = dict(job.get("options") or {})
+        opts["conflict_user_hint"] = hint
+        update_upgrade_job(job_id, options=opts)
+        job = get_upgrade_job(job_id) or job
+    _set_ai_phase(job_id, job, "running", "正在启动 AI 冲突处理…")
+    job = get_upgrade_job(job_id) or job
+    cr = _get_resolutions(job)
+    if cr.get("failure_triage"):
+        cr["failure_triage"] = None
+        _save_resolutions(job_id, job, cr)
+    _log(job_id, "正在启动 AI 冲突处理…")
+
     def _worker() -> None:
+        from web_app.prompt_loader import get_session_retry_hint, set_session_retry_hint
+
+        set_session_retry_hint(hint or ((get_upgrade_job(job_id) or {}).get("options") or {}).get("conflict_user_hint") or "")
+        if get_session_retry_hint():
+            _log(job_id, "已注入用户补充说明，按说明重试冲突合入")
         try:
             files = _run_ai_resolution(
                 job_id, ssh_creds, paths=paths, force=force,
+            )
+            files = _maybe_triage_conflict_failures(
+                job_id, ssh_creds, paths=paths, files=files,
             )
             if auto_apply and files:
                 apply_paths = [
@@ -384,6 +496,7 @@ def schedule_ai_conflict_resolution(
             if auto_continue:
                 _maybe_auto_continue_after_apply(job_id, ssh_creds=ssh_creds)
         finally:
+            set_session_retry_hint("")
             with _lock:
                 _ai_running.discard(job_id)
 
@@ -412,6 +525,7 @@ def get_conflict_resolution_state(job_id: str) -> Dict[str, Any]:
         "ai_message": cr.get("ai_message", ""),
         "conflict_files": _conflict_paths_for_job(job, cr),
         "auto_resolve_conflicts": bool((job.get("options") or {}).get("auto_resolve_conflicts")),
+        "failure_triage": cr.get("failure_triage") or None,
         "items": items,
         "ssh_connected": is_remote_job(job) and has_pooled_ssh_session(job_id),
     }

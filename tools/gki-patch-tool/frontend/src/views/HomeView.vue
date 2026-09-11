@@ -13,7 +13,7 @@
         <div class="home-feature-icon">诊</div>
         <div>
           <h3>故障诊断</h3>
-          <p>升级后死机日志分析，定位可疑 patch 与修复建议。</p>
+          <p>区间升级引入归因，或当前 Tag 查社区/谷歌是否已有修复。</p>
         </div>
       </RouterLink>
 

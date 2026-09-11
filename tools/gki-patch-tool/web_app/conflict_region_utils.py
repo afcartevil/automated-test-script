@@ -200,16 +200,18 @@ def _orig_span_to_prop_lines(
 
 
 def _file_hunk_aligned(orig_lines: List[str], old_start: int, hunk_old: List[str]) -> bool:
-    """True when source file at old_start matches the .rej hunk old side."""
+    """True when source at old_start matches the entire .rej hunk old side.
+
+    First-line-only match is not alignment: vendor may share a function signature
+    while the implementation differs from GKI.
+    """
     if not hunk_old:
         return False
     i0 = max(0, old_start)
     if i0 >= len(orig_lines):
         return False
     chunk = orig_lines[i0:i0 + len(hunk_old)]
-    if chunk == hunk_old:
-        return True
-    return orig_lines[i0].strip() == hunk_old[0].strip()
+    return _chunk_matches_hunk(chunk, hunk_old)
 
 
 def _prop_window_usable(prop_win: List[str], baseline: List[str], hunk_new: List[str]) -> bool:
@@ -295,17 +297,14 @@ def merge_rej_into_source(source: str, rej_content: str) -> str:
             continue
         i0 = max(0, old_start)
         chunk = lines[i0:i0 + n_old] if i0 < len(lines) else []
-        if chunk == hunk_old:
+        if _chunk_matches_hunk(chunk, hunk_old):
             lines[i0:i0 + n_old] = hunk_new
-        elif i0 < len(lines):
-            replace_len = min(n_old, len(lines) - i0) if n_old else 0
-            if replace_len > 0:
-                lines[i0:i0 + replace_len] = hunk_new
-            else:
-                lines[i0:i0] = hunk_new
-        else:
-            lines.extend(hunk_new)
-    return "\n".join(lines)
+        # else: vendor body differs — do not paste hunk_new at the .rej line number
+    result = "\n".join(lines)
+    if source.endswith("\n"):
+        result += "\n"
+    result, _n = apply_all_rej_micro_patches(result, rej_content)
+    return result
 
 
 def _region_entry(
@@ -338,6 +337,79 @@ def _region_entry(
     }
 
 
+def _regions_from_file_diff(
+    orig_lines: List[str],
+    prop_lines: List[str],
+) -> List[Dict[str, Any]]:
+    """Gerrit regions from actual repo file before vs after (not GKI .rej sides)."""
+    if orig_lines == prop_lines:
+        return []
+    if not orig_lines and not prop_lines:
+        return []
+    spans: List[Tuple[int, int, int, int]] = []
+    sm = difflib.SequenceMatcher(None, orig_lines, prop_lines, autojunk=False)
+    gap = _CONTEXT_LINES * 2
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            continue
+        if spans and i1 <= spans[-1][1] + gap:
+            p0, p1, q0, _q1 = spans[-1]
+            spans[-1] = (p0, i2, q0, j2)
+        else:
+            spans.append((i1, i2, j1, j2))
+
+    regions: List[Dict[str, Any]] = []
+    for i, (i1, i2, j1, j2) in enumerate(spans[:20], 1):
+        o0 = max(0, i1 - _CONTEXT_LINES)
+        o1 = min(len(orig_lines), i2 + _CONTEXT_LINES)
+        p0 = max(0, j1 - _CONTEXT_LINES)
+        p1 = min(len(prop_lines), j2 + _CONTEXT_LINES)
+        regions.append(_region_entry(
+            i,
+            o0 + 1,
+            o1,
+            "\n".join(orig_lines[o0:o1]),
+            "\n".join(prop_lines[p0:p1]),
+            has_merged=True,
+            new_start_line=p0 + 1,
+        ))
+    return regions
+
+
+def _vendor_pending_regions(
+    orig_lines: List[str],
+    rej_content: str,
+) -> List[Dict[str, Any]]:
+    """Before AI merge: show the vendor-repo window, not the GKI hunk old/new sides."""
+    src = "\n".join(orig_lines)
+    regions: List[Dict[str, Any]] = []
+    for i, (old_start, _oc, _ns, _nc, body) in enumerate(_parse_rej_hunks(rej_content), 1):
+        hunk_old, _hunk_new = _parse_hunk_sides(body)
+        start = _locate_hunk_in_source(orig_lines, old_start, hunk_old)
+        end: Optional[int] = (start + len(hunk_old)) if start is not None else None
+        if start is None:
+            located = None
+            for name in extract_function_names_from_hunk_body(body):
+                located = extract_named_c_function(src, name)
+                if located:
+                    break
+            if located is None:
+                continue
+            start, end, _text = located
+        o0 = max(0, start - _CONTEXT_LINES)
+        o1 = min(len(orig_lines), (end or start) + _CONTEXT_LINES)
+        regions.append(_region_entry(
+            i,
+            o0 + 1,
+            o1,
+            "\n".join(orig_lines[o0:o1]),
+            "",
+            has_merged=False,
+            from_rej=True,
+        ))
+    return regions
+
+
 def extract_conflict_regions(
     *,
     kind: str,
@@ -345,16 +417,21 @@ def extract_conflict_regions(
     rej_content: str = "",
     proposed: str = "",
 ) -> List[Dict[str, Any]]:
-    """Build Gerrit-style before/after diff regions for the UI."""
+    """Build Gerrit-style before/after diff regions for the UI.
+
+    Left/right are the code-warehouse file (合入前 / 拟写回), not GKI common
+    old/new from the .rej hunk.
+    """
     orig_lines = _split_lines(original)
     prop_lines = _split_lines(proposed)
-    has_proposed = bool(proposed.strip())
+    has_proposed = bool((proposed or "").strip())
     regions: List[Dict[str, Any]] = []
 
     if kind == "markers" or _MARKER_BLOCK.search(original or ""):
         for i, (start, end, vendor_part, incoming) in enumerate(_parse_marker_blocks(original), 1):
             start0 = start - 1
             span = end - start + 1
+            ns = start
             if has_proposed:
                 s, e, before, merged = _paired_slices(orig_lines, prop_lines, start0, span)
             else:
@@ -365,35 +442,19 @@ def extract_conflict_regions(
                 s, e, ns, before, merged = _region_from_rej_hunk(
                     orig_lines, prop_lines, start0, start0, hunk_body, has_proposed=False,
                 )
-            regions.append(_region_entry(i, s, e, before, merged, has_merged=has_proposed, new_start_line=ns))
+            regions.append(_region_entry(
+                i, s, e, before, merged, has_merged=has_proposed, new_start_line=ns,
+            ))
         if regions:
             return regions
 
-    hunks = _parse_rej_hunks(rej_content)
-    if hunks:
-        for i, (old_start, _oc, new_start, _nc, hunk_body) in enumerate(hunks, 1):
-            s, e, ns, before, merged = _region_from_rej_hunk(
-                orig_lines, prop_lines, old_start, new_start, hunk_body,
-                has_proposed=has_proposed,
-            )
-            regions.append(_region_entry(
-                i, s, e, before, merged, has_merged=has_proposed, from_rej=True, new_start_line=ns,
-            ))
-        return regions
-
-    # .rej conflict but hunk parse failed — do not fall back to whole-file diff
-    if kind == "rej" or rej_content.strip():
-        return regions
-
     if has_proposed and original != proposed:
-        idx = 0
-        for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, orig_lines, prop_lines).get_opcodes():
-            if tag == "equal":
-                continue
-            idx += 1
-            s, e, before, merged = _paired_slices(orig_lines, prop_lines, i1, i2 - i1)
-            regions.append(_region_entry(idx, s, e, before, merged, has_merged=True))
-        return regions[:20]
+        file_regions = _regions_from_file_diff(orig_lines, prop_lines)
+        if file_regions:
+            return file_regions
+
+    if rej_content.strip() or kind == "rej":
+        return _vendor_pending_regions(orig_lines, rej_content)
 
     return regions
 
@@ -406,6 +467,224 @@ def _chunk_matches_hunk(chunk: List[str], hunk_old: List[str]) -> bool:
     if len(chunk) != len(hunk_old):
         return False
     return all(_lines_equal(c, h) for c, h in zip(chunk, hunk_old))
+
+
+_C_FUNC_DEF_HEAD = re.compile(
+    r"^(?:static(?:\s+inline)?\s+)?(?:[\w*]+\s+)+\b([A-Za-z_][A-Za-z0-9_]*)\s*\("
+)
+
+
+def extract_function_names_from_hunk_body(hunk_body: str) -> List[str]:
+    """Function names appearing as definitions in a unified-diff hunk body."""
+    names: List[str] = []
+    seen = set()
+    for raw in hunk_body.splitlines():
+        if not raw or raw[0] not in " +-":
+            continue
+        m = _C_FUNC_DEF_HEAD.match(raw[1:])
+        if not m:
+            continue
+        name = m.group(1)
+        if name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def count_c_function_defs(source: str, name: str) -> int:
+    """Count C function definitions named `name` (not calls or prototypes)."""
+    if not name or not source:
+        return 0
+    head = re.compile(
+        rf"^(?:static(?:\s+inline)?\s+)?(?:[\w*]+\s+)+\b{re.escape(name)}\s*\(",
+        re.MULTILINE,
+    )
+    n = 0
+    for m in head.finditer(source):
+        rest = source[m.end(): m.end() + 500]
+        if re.match(r"[^;{}]{0,400}\)\s*\{", rest, re.DOTALL):
+            n += 1
+    return n
+
+
+def extra_function_defs_introduced(
+    original: str,
+    merged: str,
+    hunk_or_rej: str,
+) -> List[str]:
+    """Names whose definition count increased after merge (second copy pasted)."""
+    names: List[str] = []
+    for _os, _oc, _ns, _nc, body in _parse_rej_hunks(hunk_or_rej):
+        names.extend(extract_function_names_from_hunk_body(body))
+    if not names:
+        names = extract_function_names_from_hunk_body(hunk_or_rej)
+    duped: List[str] = []
+    seen = set()
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        if count_c_function_defs(merged, name) > count_c_function_defs(original, name):
+            duped.append(name)
+    return duped
+
+
+def _hunk_old_exactly_in_source(orig_lines: List[str], hunk_old: List[str]) -> bool:
+    n = len(hunk_old)
+    if n == 0:
+        return True
+    limit = len(orig_lines) - n + 1
+    for i in range(max(0, limit)):
+        if _chunk_matches_hunk(orig_lines[i:i + n], hunk_old):
+            return True
+    return False
+
+
+def function_impl_diverged_from_gki(
+    orig_lines: List[str],
+    hunk_old: List[str],
+    hunk_body: str,
+) -> bool:
+    """True when vendor already has this function but its body is not GKI-old."""
+    src = "\n".join(orig_lines)
+    names = extract_function_names_from_hunk_body(hunk_body)
+    if not names:
+        return False
+    if _hunk_old_exactly_in_source(orig_lines, hunk_old):
+        return False
+    for name in names:
+        if count_c_function_defs(src, name) >= 1:
+            return True
+    return False
+
+
+def rej_has_diverged_function_impl(original_content: str, rej_content: str) -> bool:
+    if not (rej_content or "").strip():
+        return False
+    orig_lines = _split_lines(original_content)
+    for _os, _oc, _ns, _nc, body in _parse_rej_hunks(rej_content):
+        hunk_old, _ = _parse_hunk_sides(body)
+        if function_impl_diverged_from_gki(orig_lines, hunk_old, body):
+            return True
+    return False
+
+
+def _find_function_def_line(orig_lines: List[str], name: str) -> Optional[int]:
+    head = re.compile(
+        rf"^(?:static(?:\s+inline)?\s+)?(?:[\w*]+\s+)+\b{re.escape(name)}\s*\("
+    )
+    for i, ln in enumerate(orig_lines):
+        if head.match(ln):
+            return i
+    return None
+
+
+def _find_c_function_end(lines: List[str], start: int) -> int:
+    depth = 0
+    seen_brace = False
+    for i in range(start, len(lines)):
+        for ch in lines[i]:
+            if ch == "{":
+                depth += 1
+                seen_brace = True
+            elif ch == "}":
+                depth -= 1
+                if seen_brace and depth == 0:
+                    return i + 1
+    return min(len(lines), start + 200)
+
+
+def extract_named_c_function(
+    source: str, name: str,
+) -> Optional[Tuple[int, int, str]]:
+    """Return (start, end, text) for a C function definition; skip prototypes."""
+    if not source or not name:
+        return None
+    lines = _split_lines(source)
+    head = re.compile(
+        rf"^(?:static(?:\s+inline)?\s+)?(?:[\w*]+\s+)+\b{re.escape(name)}\s*\("
+    )
+    for i, ln in enumerate(lines):
+        if not head.match(ln):
+            continue
+        rest = "\n".join(lines[i: min(len(lines), i + 30)])
+        brace = re.search(r"\)\s*\{", rest, re.DOTALL)
+        semi = re.search(r"\)\s*;", rest, re.DOTALL)
+        if not brace or (semi and semi.start() < brace.start()):
+            continue
+        end = _find_c_function_end(lines, i)
+        if end <= i + 1:
+            continue
+        text = "\n".join(lines[i:end])
+        if "{" not in text:
+            continue
+        return i, end, text
+    return None
+
+
+def function_names_from_rej(rej_content: str) -> List[str]:
+    names: List[str] = []
+    seen = set()
+    for _os, _oc, _ns, _nc, body in _parse_rej_hunks(rej_content):
+        for name in extract_function_names_from_hunk_body(body):
+            if name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def collect_incremental_function_tasks(
+    original_content: str,
+    rej_content: str,
+) -> List[Dict[str, Any]]:
+    """LLM tasks that edit the vendor function in place (no GKI function paste)."""
+    orig_lines = _split_lines(original_content)
+    hunks = _parse_rej_hunks(rej_content)
+    tasks: List[Dict[str, Any]] = []
+    total = len(hunks)
+    for i, (_os, _oc, _ns, _nc, hunk_body) in enumerate(hunks, 1):
+        hunk_old, _hunk_new = _parse_hunk_sides(hunk_body)
+        if not function_impl_diverged_from_gki(orig_lines, hunk_old, hunk_body):
+            continue
+        names = extract_function_names_from_hunk_body(hunk_body)
+        located: Optional[Tuple[int, int, str]] = None
+        for name in names:
+            located = extract_named_c_function(original_content, name)
+            if located is not None:
+                break
+        if located is None:
+            continue
+        start, end, body_text = located
+        tasks.append({
+            "index": i,
+            "total": total,
+            "start_line": start + 1,
+            "end_line": end,
+            "replace_start": start,
+            "replace_end": end,
+            "pre_len": 0,
+            "post_len": 0,
+            "aligned": True,
+            "vendor_snippet": body_text,
+            "body_snippet": body_text,
+            "incoming_snippet": "",
+            "incoming_body_snippet": "",
+            "hunk_body": hunk_body,
+            "kind": "incremental_rej",
+            "incremental_only": True,
+        })
+    return tasks
+
+
+def _add_lines_duplicate_existing_function(add_lines: List[str], current_lines: List[str]) -> bool:
+    src = "\n".join(current_lines)
+    for ln in add_lines[:4]:
+        m = _C_FUNC_DEF_HEAD.match(ln)
+        if m and count_c_function_defs(src, m.group(1)) >= 1:
+            return True
+    return False
 
 
 _MAX_HUNK_BODY_LINES = 90
@@ -541,29 +820,9 @@ def _locate_hunk_in_source(
             if i + n <= len(orig_lines) and _chunk_matches_hunk(orig_lines[i:i + n], hunk_old):
                 return i
 
-    best_i: Optional[int] = None
-    best_score = 0.0
-    search_lo = max(0, rej_old_start - search_radius)
-    search_hi = min(len(orig_lines), rej_old_start + search_radius + n)
-    for i in range(search_lo, search_hi):
-        if i + n > len(orig_lines):
-            continue
-        score = difflib.SequenceMatcher(
-            None, hunk_old, orig_lines[i:i + n], autojunk=False,
-        ).ratio()
-        if score > best_score:
-            best_score = score
-            best_i = i
-    if best_i is not None and best_score >= 0.72:
-        return best_i
-
-    # Weak anchor: only when rej line already matches hunk head (avoid vendor drift)
-    if rej_old_start < len(orig_lines) and hunk_old:
-        head = hunk_old[0].strip()
-        if head:
-            for j in range(rej_old_start, min(len(orig_lines), rej_old_start + 8)):
-                if orig_lines[j].strip() == head:
-                    return j
+    # Do not treat a similar-but-different function body as aligned. Vendor may
+    # share the signature while the implementation differs; those hunks must be
+    # applied as incremental +/- onto the existing function, not as a window replace.
     return None
 
 
@@ -715,44 +974,427 @@ def _find_all_subsequence(
     return out
 
 
+_WEAK_CTX_LINE = re.compile(
+    r"^[\s{}]*$"
+    r"|^\s*(else|break;?|continue;?|return;?)\s*$"
+)
+
+
+def _ctx_line_strong(line: str) -> bool:
+    s = (line or "").strip()
+    return bool(s) and _WEAK_CTX_LINE.match(line) is None
+
+
+def _suffix_strong_enough(suffix: List[str]) -> bool:
+    nonempty = [s for s in suffix if s.strip()]
+    if not nonempty:
+        return False
+    if _ctx_line_strong(nonempty[-1]):
+        return True
+    return len(nonempty) >= 3
+
+
+def _match_ctx_suffix(lines: List[str], ctx: List[str]) -> Tuple[List[int], int]:
+    """Longest ctx suffix that appears in lines. Returns (starts, matched_len).
+
+    Vendor files often insert extra statements in the middle of a GKI hunk, so the
+    full context subsequence misses. Using the unmatched full len(ctx) as an offset
+    after a 1-line fallback lands inserts on the wrong later block.
+    """
+    if not ctx:
+        return [0], 0
+    for k in range(len(ctx), 0, -1):
+        suffix = ctx[-k:]
+        if k < len(ctx) and not _suffix_strong_enough(suffix):
+            continue
+        positions = _find_all_subsequence(lines, suffix)
+        if positions:
+            return positions, k
+    return [], 0
+
+
+def _is_block_closer(line: str) -> bool:
+    return (line or "").strip() in ("}", "};", "else", "else {")
+
+
+def _last_nonempty(seq: List[str]) -> Optional[str]:
+    for item in reversed(seq or []):
+        if item.strip():
+            return item
+    return None
+
+
+def _first_nonempty(seq: List[str]) -> Optional[str]:
+    for item in seq or []:
+        if item.strip():
+            return item
+    return None
+
+
+_CONTROL_HEAD = re.compile(r"^\s*(if|else\s+if|while|for|switch)\b")
+
+
+def _norm_ws(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip())
+
+
+def _read_control_header(lines: List[str], start: int) -> str:
+    """Collapse a possibly multiline if/while/for header, without the opening brace."""
+    if start < 0 or start >= len(lines):
+        return ""
+    parts = [lines[start].rstrip()]
+    joined = lines[start]
+    i = start
+    while i + 1 < len(lines) and "{" not in joined and not joined.rstrip().endswith(";"):
+        i += 1
+        parts.append(lines[i].rstrip())
+        joined = "\n".join(parts)
+        if _CONTROL_HEAD.match(lines[i]) and i > start:
+            parts.pop()
+            break
+    header = _norm_ws(" ".join(p.strip() for p in parts))
+    return header.split("{")[0].strip()
+
+
+def _headers_match(a: str, b: str) -> bool:
+    na, nb = _norm_ws(a), _norm_ws(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    return na.startswith(nb) or nb.startswith(na)
+
+
+def _block_end(lines: List[str], start: int) -> Optional[int]:
+    """Line after the block that starts at `start` (header). None if no braces."""
+    depth = 0
+    seen = False
+    for i in range(start, len(lines)):
+        for ch in lines[i]:
+            if ch == "{":
+                depth += 1
+                seen = True
+            elif ch == "}":
+                depth -= 1
+                if seen and depth == 0:
+                    return i + 1
+    return None if not seen else len(lines)
+
+
+def _control_span(lines: List[str], header: str) -> Optional[Tuple[int, int]]:
+    """[start, end) of the vendor block whose if/while header matches `header`."""
+    if not header:
+        return None
+    for i, ln in enumerate(lines):
+        if not _CONTROL_HEAD.match(ln):
+            continue
+        got = _read_control_header(lines, i)
+        if not _headers_match(got, header):
+            continue
+        end = _block_end(lines, i)
+        if end is None:
+            continue
+        return i, end
+    return None
+
+
+def _line_is_comment(s: str) -> bool:
+    t = (s or "").strip()
+    return t.startswith("/*") or t.startswith("*") or t.startswith("//")
+
+
+def _comment_before(lines: List[str], idx: int) -> Optional[str]:
+    parts: List[str] = []
+    i = idx - 1
+    while i >= 0 and not lines[i].strip():
+        i -= 1
+    while i >= 0 and _line_is_comment(lines[i]):
+        parts.append(lines[i].strip())
+        i -= 1
+        if parts[-1].startswith("/*") or parts[-1].startswith("//"):
+            break
+    if not parts:
+        return None
+    parts.reverse()
+    return _norm_ws(" ".join(parts))
+
+
+def _enclosing_controls(
+    lines: List[str], at: int,
+) -> Tuple[List[str], Optional[str]]:
+    """Innermost-first if/while/for headers enclosing lines[at], plus nearest comment."""
+    if at < 0 or at >= len(lines):
+        return [], None
+    stack: List[Tuple[str, int, Optional[str]]] = []
+    pending: Optional[str] = None
+    pending_at = 0
+    depth = 0
+    for i in range(0, at + 1):
+        if _CONTROL_HEAD.match(lines[i]):
+            pending = _read_control_header(lines, i)
+            pending_at = i
+        for ch in lines[i]:
+            if ch == "{":
+                depth += 1
+                if pending:
+                    stack.append((pending, depth, _comment_before(lines, pending_at)))
+                    pending = None
+            elif ch == "}":
+                while stack and stack[-1][1] == depth:
+                    stack.pop()
+                depth -= 1
+    headers = [h for h, _d, _c in reversed(stack)]
+    comment = None
+    for _h, _d, c in reversed(stack):
+        if c:
+            comment = c
+            break
+    return headers, comment
+
+
+def _iter_groups_with_logic(hunk_body: str):
+    """Yield (ctx, dels, adds, trail, headers, comment) using GKI-old control flow."""
+    old_lines, _new = _parse_hunk_sides(hunk_body)
+    cursor = 0
+    for ctx, dels, adds, trail in _iter_hunk_micro_groups(hunk_body):
+        at: Optional[int] = None
+        if ctx:
+            at = cursor + len(ctx) - 1
+            cursor += len(ctx)
+        elif cursor:
+            at = cursor - 1
+        headers: List[str] = []
+        comment: Optional[str] = None
+        if at is not None and 0 <= at < len(old_lines):
+            headers, comment = _enclosing_controls(old_lines, at)
+        cursor += len(dels)
+        yield ctx, dels, adds, trail, headers, comment
+
+
+def _anchor_in_logic_windows(
+    lines: List[str],
+    ctx: List[str],
+    dels: List[str],
+    trail: Optional[List[str]],
+    headers: List[str],
+) -> Tuple[Optional[int], Optional[int]]:
+    """Prefer the vendor branch with the same if/while as GKI, then fall back to the whole file."""
+    windows: List[Tuple[int, int]] = []
+    for header in headers:
+        span = _control_span(lines, header)
+        if span and span not in windows:
+            windows.append(span)
+    full = (0, len(lines))
+    if full not in windows:
+        windows.append(full)
+    for lo, hi in windows:
+        sub = lines[lo:hi]
+        anchor, rep_pos = _pick_context_anchor(sub, ctx, dels, trail)
+        if anchor is None:
+            continue
+        return lo + anchor, (lo + rep_pos) if rep_pos is not None else None
+    return None, None
+
+
+def build_function_logic_hints(hunk_body: str, vendor_source: str = "") -> str:
+    """Describe which control-flow branch each GKI +/- belongs to."""
+    if not (hunk_body or "").strip():
+        return ""
+    names = extract_function_names_from_hunk_body(hunk_body)
+    vendor_lines = _split_lines(vendor_source)
+    for name in names:
+        located = extract_named_c_function(vendor_source, name)
+        if located:
+            vendor_lines = _split_lines(located[2])
+            break
+    old_lines, _ = _parse_hunk_sides(hunk_body)
+    old_headers = []
+    for i, ln in enumerate(old_lines):
+        if _CONTROL_HEAD.match(ln):
+            old_headers.append(_read_control_header(old_lines, i))
+    foreign: List[str] = []
+    for i, ln in enumerate(vendor_lines):
+        if not _CONTROL_HEAD.match(ln):
+            continue
+        header = _read_control_header(vendor_lines, i)
+        if any(_headers_match(header, h) for h in old_headers):
+            continue
+        extra = ""
+        end = _block_end(vendor_lines, i)
+        body = "\n".join(vendor_lines[i:end] if end else vendor_lines[i:i + 8])
+        if "CONTINUOUS_WR" in body:
+            extra = "（厂商独有 CONTINUOUS_WR 路径）"
+        elif "qos" in body.lower() or "pm_qos" in body:
+            extra = "（厂商独有 qos 路径）"
+        foreign.append(f"{header}{extra}")
+        if len(foreign) >= 6:
+            break
+
+    items: List[str] = []
+    for ctx, dels, adds, _trail, headers, comment in _iter_groups_with_logic(hunk_body):
+        if not adds:
+            continue
+        preview = " / ".join(a.strip() for a in adds[:3] if a.strip())[:120]
+        kind = "替换" if dels else "插入"
+        chain = " → ".join(headers[:3]) if headers else "函数体顶层（声明/序言）"
+        located = "vendor 中未扫到字面相同的 if/while（仍按 .rej 上下文合入）"
+        for header in headers:
+            if _control_span(vendor_lines, header):
+                located = f"vendor 中可参考的对应分支: {header}"
+                break
+        piece = f"• {kind} `{preview}`\n  所属控制流: {chain}"
+        if comment:
+            piece += f"\n  注释: {comment[:160]}"
+        piece += f"\n  {located}"
+        items.append(piece)
+        if len(items) >= 8:
+            break
+    if not items and not foreign:
+        return ""
+    lines_out = [
+        "【实现逻辑参考，辅助合入】下面从 GKI 旧实现还原控制流与注释，用来帮助判断"
+        "每条 +/- 在函数里的意图、更适合落在 vendor 的哪条路径。"
+        "这是参考信息，不是唯一规则：仍要结合 .rej 上下文和 vendor 定制一起合入。",
+    ]
+    lines_out.extend(items)
+    if foreign:
+        lines_out.append("vendor 中多出来的分支（合入时注意不要把 GKI 改动误写入这些路径）:")
+        for h in foreign:
+            lines_out.append(f"• {h}")
+    return "\n".join(lines_out)
+
+
+def _iter_hunk_micro_groups(
+    hunk_body: str,
+) -> List[Tuple[List[str], List[str], List[str], List[str]]]:
+    """Split a unified-diff hunk into (ctx, dels, adds, trailing-ctx) groups."""
+    hunk_lines = [ln for ln in (hunk_body or "").splitlines() if ln]
+    groups: List[Tuple[List[str], List[str], List[str], List[str]]] = []
+    i = 0
+    while i < len(hunk_lines):
+        ctx: List[str] = []
+        while i < len(hunk_lines) and hunk_lines[i][:1] == " ":
+            ctx.append(hunk_lines[i][1:])
+            i += 1
+        dels: List[str] = []
+        adds: List[str] = []
+        while i < len(hunk_lines) and hunk_lines[i][:1] in "-+":
+            if hunk_lines[i][0] == "-":
+                dels.append(hunk_lines[i][1:])
+                i += 1
+            elif hunk_lines[i][0] == "+":
+                adds.append(hunk_lines[i][1:])
+                i += 1
+            else:
+                break
+        if not dels and not adds:
+            if i < len(hunk_lines):
+                i += 1
+            continue
+        trail: List[str] = []
+        j = i
+        while j < len(hunk_lines) and hunk_lines[j][:1] == " ":
+            trail.append(hunk_lines[j][1:])
+            j += 1
+        groups.append((ctx, dels, adds, trail))
+    return groups
+
+
+def _insert_site_ok(
+    lines: List[str],
+    anchor: int,
+    ctx: List[str],
+    trail: Optional[List[str]] = None,
+) -> bool:
+    """Insert must sit immediately after last context; block closers must still follow."""
+    if anchor < 0 or anchor > len(lines):
+        return False
+    last_ctx = _last_nonempty(ctx)
+    if last_ctx is None:
+        return False
+    if anchor == 0 or lines[anchor - 1].strip() != last_ctx.strip():
+        return False
+    first_trail = _first_nonempty(trail or [])
+    if first_trail and _is_block_closer(first_trail):
+        if anchor >= len(lines) or lines[anchor].strip() != first_trail.strip():
+            return False
+    return True
+
+
+def _micro_inserts_follow_hunk_body(source: str, hunk_body: str) -> bool:
+    """True if each insert-only group sits immediately after its .rej context."""
+    if not (hunk_body or "").strip():
+        return True
+    lines = _split_lines(source)
+    for ctx, dels, adds, trail in _iter_hunk_micro_groups(hunk_body):
+        if dels or not adds:
+            continue
+        last_ctx = _last_nonempty(ctx)
+        if last_ctx is None:
+            return False
+        needle = [last_ctx] + adds
+        first_trail = _first_nonempty(trail)
+        if first_trail and _is_block_closer(first_trail):
+            needle = needle + [first_trail]
+        if _find_subsequence(lines, needle) is None:
+            return False
+    return True
+
+
+def _micro_inserts_follow_context(source: str, rej_content: str) -> bool:
+    """Reject merges where a + insert is not immediately after its .rej context."""
+    hunks = _parse_rej_hunks(rej_content)
+    bodies = [h[4] for h in hunks] if hunks else (
+        [rej_content] if (rej_content or "").strip() else []
+    )
+    return all(_micro_inserts_follow_hunk_body(source, body) for body in bodies)
+
+
+_MICRO_INSERT_PLACEMENT_ERR = (
+    "合入结果未把 .rej 的 + 行紧挨其 context 落地"
+    "（可能插到厂商其它代码块），已拒绝写回，请手动合入"
+)
+
+
+def assert_micro_inserts_follow_context(source: str, rej_or_hunk: str) -> None:
+    """Raise if insert-only .rej + lines are not adjacent to their context."""
+    if (rej_or_hunk or "").strip() and not _micro_inserts_follow_context(
+        source, rej_or_hunk,
+    ):
+        raise RuntimeError(_MICRO_INSERT_PLACEMENT_ERR)
+
+
 def _pick_context_anchor(
     lines: List[str],
     ctx: List[str],
     dels: List[str],
+    trail: Optional[List[str]] = None,
 ) -> Tuple[Optional[int], Optional[int]]:
     """Pick context match; prefer last site where dels follow context (vendor prefix code)."""
     if not ctx:
-        return 0, None
-    positions = _find_all_subsequence(lines, ctx)
-    if not positions:
-        for c in reversed(ctx):
-            if not c.strip():
-                continue
-            for j, ln in enumerate(lines):
-                if ln.strip() == c.strip():
-                    positions = [j]
-                    break
-            if positions:
-                break
+        return (0, None) if dels else (None, None)
+    positions, matched_len = _match_ctx_suffix(lines, ctx)
     if not positions:
         return None, None
 
     for pos in reversed(positions):
-        anchor = pos + len(ctx)
+        anchor = pos + matched_len
         if dels:
             rep_pos = _find_subsequence(lines, dels, anchor)
             if rep_pos is not None and rep_pos <= anchor + 20:
                 return anchor, rep_pos
-        else:
+            continue
+        if _insert_site_ok(lines, anchor, ctx, trail):
             return anchor, None
 
     if dels:
         for pos in reversed(positions):
-            anchor = pos + len(ctx)
+            anchor = pos + matched_len
             rep_pos = _find_subsequence(lines, dels, max(0, pos))
             if rep_pos is not None and rep_pos <= anchor + 30:
                 return anchor, rep_pos
-    return positions[-1] + len(ctx), None
+        return None, None
+    return None, None
 
 
 def _sanitize_duplicate_wrrd_msgs_advance(source: str) -> str:
@@ -780,46 +1422,34 @@ def _sanitize_duplicate_wrrd_msgs_advance(source: str) -> str:
 def apply_rej_hunk_micro_patches(source: str, hunk_body: str) -> Tuple[str, int]:
     """Apply .rej hunk via context-anchored micro-patches (safe when vendor added extra code).
 
-    Walks unified-diff hunk body: for each context + (-lines / +lines) group, locate context
-    in the full source file and apply replace or insert. Does not replace the whole function.
+    Walks unified-diff hunk body: for each context + (-lines / +lines) group, prefer
+    the vendor if/while whose condition matches GKI-old (implementation logic as a
+    hint), then fall back to full-file context match. Does not replace the whole
+    function. Insert-only groups must sit immediately after the matched context;
+    if the next hunk line is a block closer (`}`), that closer must still be the
+    next source line.
     """
     if not hunk_body.strip():
         return source, 0
     lines = _split_lines(source)
-    hunk_lines = [ln for ln in hunk_body.splitlines() if ln]
-    i = 0
     applied = 0
 
-    while i < len(hunk_lines):
-        ctx: List[str] = []
-        while i < len(hunk_lines) and hunk_lines[i][:1] == " ":
-            ctx.append(hunk_lines[i][1:])
-            i += 1
-        dels: List[str] = []
-        adds: List[str] = []
-        while i < len(hunk_lines) and hunk_lines[i][:1] in "-+":
-            if hunk_lines[i][0] == "-":
-                dels.append(hunk_lines[i][1:])
-                i += 1
-            elif hunk_lines[i][0] == "+":
-                adds.append(hunk_lines[i][1:])
-                i += 1
-            else:
-                break
-        if not dels and not adds:
-            if i < len(hunk_lines):
-                i += 1
-            continue
-
-        anchor, rep_pos = _pick_context_anchor(lines, ctx, dels)
+    for ctx, dels, adds, trail, headers, _comment in _iter_groups_with_logic(hunk_body):
+        anchor, rep_pos = _anchor_in_logic_windows(lines, ctx, dels, trail, headers)
         if anchor is None:
             continue
 
         if dels:
             if rep_pos is None:
-                rep_pos = _find_subsequence(lines, dels, max(0, anchor - len(ctx) - 5))
-            if rep_pos is None:
-                rep_pos = _find_subsequence(lines, dels)
+                last_ctx = _last_nonempty(ctx)
+                start = 0
+                if last_ctx:
+                    ctx_pos = _find_subsequence(lines, [last_ctx])
+                    if ctx_pos is not None:
+                        start = ctx_pos
+                rep_pos = _find_subsequence(lines, dels, start)
+                if rep_pos is not None and last_ctx and rep_pos > start + 40:
+                    rep_pos = None
             if rep_pos is not None:
                 lines[rep_pos:rep_pos + len(dels)] = adds
                 applied += 1
@@ -829,10 +1459,12 @@ def apply_rej_hunk_micro_patches(source: str, hunk_body: str) -> Tuple[str, int]
             chunk = "\n".join(lines)
             if all(a.strip() in chunk for a in adds if a.strip()):
                 continue
-            ins = anchor
-            if ins <= len(lines) and adds:
-                lines[ins:ins] = adds
-                applied += 1
+            if _add_lines_duplicate_existing_function(adds, lines):
+                continue
+            if not _insert_site_ok(lines, anchor, ctx, trail):
+                continue
+            lines[anchor:anchor] = adds
+            applied += 1
 
     result = "\n".join(lines)
     if source.endswith("\n"):
