@@ -15,6 +15,14 @@ import {
   parseGkiUpgradeNotice,
   updateGkiUpgradeNoticeStatus,
 } from '../../services/tahp/gki-upgrade-notices'
+import {
+  getGkiAlertSyncStatus,
+  readGkiAlertSyncConfig,
+  startGkiAlertSyncTimer,
+  stopGkiAlertSyncTimer,
+  syncGkiAlertsFromBitable,
+  writeGkiAlertSyncConfig,
+} from '../../services/tahp/gki-alert-sync'
 
 export const tahpGkiPatchRoutes = new Router({ prefix: '/api/tahp/gki-patch' })
 
@@ -180,6 +188,51 @@ tahpGkiPatchRoutes.post('/parse-notice', async (ctx) => {
     }
   } catch (error) {
     ctx.status = 400
+    ctx.body = { success: false, error: (error as Error).message }
+  }
+})
+
+tahpGkiPatchRoutes.get('/alert-sync', async (ctx) => {
+  try {
+    ctx.body = { success: true, data: await getGkiAlertSyncStatus() }
+  } catch (error) {
+    ctx.status = 500
+    ctx.body = { success: false, error: (error as Error).message }
+  }
+})
+
+tahpGkiPatchRoutes.put('/alert-sync/config', async (ctx) => {
+  try {
+    const body = (ctx.request.body || {}) as {
+      enabled?: boolean
+      bitableUrl?: string
+      bitable_url?: string
+      intervalSec?: number
+      interval_sec?: number
+    }
+    const prev = readGkiAlertSyncConfig()
+    const next = writeGkiAlertSyncConfig({
+      enabled: body.enabled === undefined ? prev.enabled : Boolean(body.enabled),
+      bitableUrl: String(body.bitableUrl || body.bitable_url || prev.bitableUrl || '').trim(),
+      intervalSec: Number(body.intervalSec ?? body.interval_sec ?? prev.intervalSec),
+    })
+    stopGkiAlertSyncTimer()
+    if (next.enabled) startGkiAlertSyncTimer()
+    ctx.body = { success: true, data: { config: next } }
+  } catch (error) {
+    ctx.status = 400
+    ctx.body = { success: false, error: (error as Error).message }
+  }
+})
+
+tahpGkiPatchRoutes.post('/alert-sync', async (ctx) => {
+  try {
+    const body = (ctx.request.body || {}) as { force?: boolean }
+    const result = await syncGkiAlertsFromBitable({ force: Boolean(body.force) })
+    ctx.status = result.ok ? 200 : (result.error === 'feishu_not_configured' ? 400 : 502)
+    ctx.body = { success: result.ok, data: result, error: result.error }
+  } catch (error) {
+    ctx.status = 500
     ctx.body = { success: false, error: (error as Error).message }
   }
 })

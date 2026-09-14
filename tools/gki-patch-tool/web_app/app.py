@@ -393,6 +393,7 @@ async def api_feishu_config():
         is_feishu_webhook_configured,
         parse_notify_targets,
     )
+    from web_app.user_settings import get_alert_sync_config
     cfg = get_feishu_config()
     notify_targets = parse_notify_targets(cfg.get("notify_users") or "")
     notify_users = "\n".join(
@@ -400,6 +401,7 @@ async def api_feishu_config():
         for item in notify_targets
         if str(item.get("email") or item.get("id") or "").strip()
     )
+    alert_sync = get_alert_sync_config()
     return {
         "configured": is_feishu_app_configured(),
         "webhook_configured": is_feishu_notify_configured(),
@@ -413,12 +415,16 @@ async def api_feishu_config():
         "webhook_url": cfg.get("webhook_url") or "",
         "webhook_secret": cfg.get("webhook_secret") or "",
         "notify_users": notify_users,
+        "alert_sync_enabled": alert_sync.get("enabled", True),
+        "alert_bitable_url": alert_sync.get("bitable_url") or "",
+        "alert_sync_interval_sec": alert_sync.get("interval_sec") or 1800,
     }
 
 
 @app.put("/api/feishu/config")
 async def api_feishu_config_save(body: Dict[str, Any]):
     from web_app.feishu_service import save_feishu_config
+    from web_app.user_settings import save_alert_sync_config
     save_feishu_config(
         app_id=str(body.get("app_id") or ""),
         app_secret=str(body.get("app_secret") or ""),
@@ -429,6 +435,14 @@ async def api_feishu_config_save(body: Dict[str, Any]):
         webhook_url=str(body.get("webhook_url") or ""),
         webhook_secret=str(body.get("webhook_secret") or ""),
         notify_users=str(body.get("notify_users") or ""),
+    )
+    enabled_raw = body.get("alert_sync_enabled")
+    if enabled_raw is None:
+        enabled_raw = True
+    save_alert_sync_config(
+        enabled=bool(enabled_raw),
+        bitable_url=str(body.get("alert_bitable_url") or body.get("bitable_url") or ""),
+        interval_sec=int(body.get("alert_sync_interval_sec") or body.get("interval_sec") or 1800),
     )
     return {"saved": True}
 

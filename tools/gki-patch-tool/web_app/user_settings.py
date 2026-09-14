@@ -72,6 +72,47 @@ def settings_has_values(data: Dict[str, Any]) -> bool:
 RETRY_HINT_DOMAINS = ("conflict", "build_fix")
 _RETRY_HINT_MAX_CHARS = 8000
 
+DEFAULT_GKI_ALERT_BITABLE_URL = (
+    "https://transsioner.feishu.cn/wiki/JJglwZtIuiBXqbkARAPcSQesntc"
+    "?table=tblV2q5qJffkFuPE&view=vewLOPzQfs"
+)
+
+
+def get_alert_sync_config() -> Dict[str, Any]:
+    data = load_machine_settings()
+    raw = data.get("alert_sync") if isinstance(data.get("alert_sync"), dict) else {}
+    enabled = raw.get("enabled")
+    try:
+        interval = int(raw.get("interval_sec") or 1800)
+    except (TypeError, ValueError):
+        interval = 1800
+    return {
+        "enabled": True if enabled is None else bool(enabled),
+        "bitable_url": str(raw.get("bitable_url") or DEFAULT_GKI_ALERT_BITABLE_URL).strip()
+        or DEFAULT_GKI_ALERT_BITABLE_URL,
+        "interval_sec": max(60, interval),
+    }
+
+
+def save_alert_sync_config(
+    enabled: bool = True,
+    bitable_url: str = "",
+    interval_sec: int = 1800,
+) -> Dict[str, Any]:
+    try:
+        interval = max(60, int(interval_sec or 1800))
+    except (TypeError, ValueError):
+        interval = 1800
+    payload = {
+        "enabled": bool(enabled),
+        "bitable_url": (bitable_url or "").strip() or DEFAULT_GKI_ALERT_BITABLE_URL,
+        "interval_sec": interval,
+    }
+    data = load_machine_settings()
+    data["alert_sync"] = payload
+    save_machine_settings(data)
+    return payload
+
 
 def get_retry_hints(domain: str) -> str:
     data = load_machine_settings()

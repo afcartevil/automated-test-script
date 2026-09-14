@@ -14,8 +14,11 @@ import {
   applyGkiUpgradeNotice,
   deleteGkiUpgradeNotice,
   dismissGkiUpgradeNotice,
+  getGkiAlertSyncStatus,
   listGkiUpgradeNotices,
   restoreGkiUpgradeNotice,
+  syncGkiAlertsFromBitable,
+  type GkiAlertSyncStatus,
   type GkiExternalNotice,
 } from '@/api/tahp/gki-upgrade-notices'
 import GkiUpgradeHistoryPanel from '@/components/tahp/gki-patch/GkiUpgradeHistoryPanel.vue'
@@ -34,12 +37,34 @@ const highlightNoticeId = computed(() =>
 
 const notices = ref<GkiExternalNotice[]>([])
 const loadingNotices = ref(false)
+const syncingAlerts = ref(false)
+const alertSyncStatus = ref<GkiAlertSyncStatus | null>(null)
+const alertSyncHint = ref('')
 const applyingNoticeId = ref('')
 const confirmingNoticeId = ref('')
 const dismissingNoticeId = ref('')
 const restoringNoticeId = ref('')
 const deletingNoticeId = ref('')
 const filledNoticeIds = ref<string[]>([])
+let noticesPollTimer: number | null = null
+let alertSyncOnMountDone = false
+
+const pendingNoticeCount = computed(() =>
+  notices.value.filter(item => item.status === 'pending').length,
+)
+
+const alertSyncMeta = computed(() => {
+  const st = alertSyncStatus.value
+  if (!st) return ''
+  const last = st.state.lastSyncAt
+    ? new Date(st.state.lastSyncAt).toLocaleString()
+    : '尚未同步'
+  if (!st.feishuConfigured) return `飞书应用未配置 · ${last}`
+  if (st.state.lastError && st.state.lastError !== 'sync_disabled') {
+    return `上次同步失败：${st.state.lastError} · ${last}`
+  }
+  return `飞书告警上次同步：${last}`
+})
 
 const historyKind = ref<GkiHistoryKind>('upgrade')
 const jobs = ref<GkiUpgradeJobSummary[]>([])
@@ -66,11 +91,6 @@ const applyWarning = ref('')
 const dismissModalShow = ref(false)
 const dismissNotice = ref<GkiExternalNotice | null>(null)
 const dismissReason = ref('')
-let noticesPollTimer: number | null = null
-
-const pendingNoticeCount = computed(() =>
-  notices.value.filter(item => item.status === 'pending').length,
-)
 
 const runningCount = computed(() =>
   jobs.value.filter((j) => {
@@ -146,6 +166,53 @@ async function reloadNotices() {
   } finally {
     loadingNotices.value = false
   }
+}
+
+async function refreshAlertSyncStatus() {
+  try {
+    alertSyncStatus.value = await getGkiAlertSyncStatus()
+  } catch {
+    /* ignore */
+  }
+}
+
+async function runAlertSync(options?: { manual?: boolean }) {
+  if (syncingAlerts.value) return
+  syncingAlerts.value = true
+  try {
+    const result = await syncGkiAlertsFromBitable(Boolean(options?.manual))
+    await refreshAlertSyncStatus()
+    await reloadNotices()
+    if (result.createdCount > 0) {
+      const text = `已从飞书同步 ${result.createdCount} 条新异常告警`
+      alertSyncHint.value = text
+      message.success(text)
+    } else if (options?.manual) {
+      const text = result.fetchedCount
+        ? `飞书告警无新增（拉取 ${result.fetchedCount} 条，跳过 ${result.skippedCount} 条）`
+        : '飞书当前无异常告警'
+      alertSyncHint.value = text
+      message.info(text)
+    } else {
+      alertSyncHint.value = ''
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await refreshAlertSyncStatus()
+    if (options?.manual) {
+      message.error(msg === 'feishu_not_configured' ? '请先在 GKI 设置中配置飞书 App ID/Secret' : msg)
+    } else if (msg === 'feishu_not_configured') {
+      alertSyncHint.value = '飞书应用未配置，无法自动同步异常告警'
+    } else {
+      alertSyncHint.value = `飞书告警同步失败：${msg}`
+    }
+  } finally {
+    syncingAlerts.value = false
+  }
+}
+
+async function onSyncFeishuAlerts() {
+  await runAlertSync({ manual: true })
 }
 
 async function reloadHistory() {
@@ -409,7 +476,12 @@ watch(highlightNoticeId, () => {
 onMounted(() => {
   void reloadNotices()
   void reloadHistory()
+  void refreshAlertSyncStatus()
   startNoticesPolling()
+  if (!alertSyncOnMountDone) {
+    alertSyncOnMountDone = true
+    void runAlertSync({ manual: false })
+  }
 })
 
 onUnmounted(() => {
@@ -423,6 +495,9 @@ onUnmounted(() => {
       <GkiUpgradePendingNoticesCard
         :notices="notices"
         :loading="loadingNotices"
+        :syncing="syncingAlerts"
+        :sync-meta="alertSyncMeta"
+        :sync-hint="alertSyncHint"
         :applying-id="applyingNoticeId"
         :confirming-id="confirmingNoticeId"
         :dismissing-id="dismissingNoticeId"
@@ -431,6 +506,7 @@ onUnmounted(() => {
         :filled-ids="filledNoticeIds"
         :highlight-id="highlightNoticeId"
         @refresh="reloadNotices"
+        @sync-alerts="onSyncFeishuAlerts"
         @apply="onApplyNotice"
         @confirm="onConfirmNotice"
         @dismiss="onDismissNotice"

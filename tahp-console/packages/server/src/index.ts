@@ -31,6 +31,7 @@ import { bootstrapAdaptPipeline } from './routes/tahp/adapt-pipeline'
 import { pullAllWorkspaceLayouts } from './services/tahp/adapt-layout/service'
 import { pullOrReadLineLayouts } from './services/tahp/adapt-layout/line-cache'
 import { bootstrapGkiPatchServer } from './services/tahp/gki-patch'
+import { startGkiAlertSyncTimer } from './services/tahp/gki-alert-sync'
 
 installBffDiagnostics()
 
@@ -315,6 +316,13 @@ export async function bootstrap() {
       logger.warn({ err }, '[bootstrap] gki-patch bootstrap failed')
       console.warn('[bootstrap] gki-patch bootstrap failed:', err instanceof Error ? err.message : err)
     })
+
+  // GKI 异常告警：仅在 Console 进程存活时轻量定时；主路径仍是进工作台补拉
+  try {
+    startGkiAlertSyncTimer()
+  } catch (err) {
+    logger.warn({ err }, '[bootstrap] gki-alert-sync timer failed to start')
+  }
 }
 
 bootstrap().catch((error) => {

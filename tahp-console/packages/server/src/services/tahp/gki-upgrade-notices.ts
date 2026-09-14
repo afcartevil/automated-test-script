@@ -825,6 +825,151 @@ function syncStoredAlertNoticeProjects(options: { storePath: string }) {
   if (dirty) writeStore(options.storePath, items)
 }
 
+export const FEISHU_BITABLE_NOTICE_SOURCE = 'feishu-bitable'
+
+/** Stable Feishu record_id prefix for sourceId / noticeId (may append #<clearedAt>). */
+export function feishuBitableRecordIdFromSourceId(sourceId: string | undefined): string {
+  const raw = asTrimmedString(sourceId)
+  if (!raw) return ''
+  const hash = raw.indexOf('#')
+  return hash >= 0 ? raw.slice(0, hash) : raw
+}
+
+export function listGkiNoticesForFeishuRecord(
+  recordId: string,
+  options?: { storePath?: string },
+): GkiExternalNotice[] {
+  const rid = asTrimmedString(recordId)
+  if (!rid) return []
+  const storePath = options?.storePath || defaultGkiNoticesStorePath()
+  return readStore(storePath).filter(item => (
+    item.source === FEISHU_BITABLE_NOTICE_SOURCE
+    && feishuBitableRecordIdFromSourceId(item.sourceId || item.noticeId) === rid
+  ))
+}
+
+/**
+ * Ingest one Feishu bitable alert row with a caller-chosen stable sourceId
+ * (record_id or record_id#clearedAt). Never reopens applied/dismissed.
+ */
+export function ingestFeishuBitableAlertNotice(
+  input: {
+    sourceId: string
+    recordId: string
+    record: GkiAlertRecord
+    alertRule?: string
+    taskKind?: GkiNoticeTaskKind
+  },
+  options?: IngestGkiNoticeOptions,
+): IngestGkiNoticeResult {
+  const storePath = options?.storePath || defaultGkiNoticesStorePath()
+  const sourceId = asTrimmedString(input.sourceId)
+  if (!sourceId) throw new Error('notice_source_id_required')
+
+  const items = readStore(storePath)
+  const existing = items.find(item => (
+    item.source === FEISHU_BITABLE_NOTICE_SOURCE
+    && (item.sourceId === sourceId || item.noticeId === sourceId)
+  ))
+  const now = new Date().toISOString()
+  if (existing) {
+    const nextProject = displayProject(input.record)
+    const nextGki = asTrimmedString(input.record.currentGkiVersion)
+    const nextText = formatAlertNoticeText(input.record, asTrimmedString(input.alertRule) || existing.alertRule || '')
+    const nextTitle = ['异常告警', input.record.platform, nextProject || input.record.platform]
+      .filter(Boolean)
+      .join(' · ')
+    let dirty = false
+    if (nextProject && existing.projects !== nextProject) {
+      existing.projects = nextProject
+      dirty = true
+    }
+    if (input.alertRule && existing.alertRule !== input.alertRule) {
+      existing.alertRule = input.alertRule
+      dirty = true
+    }
+    if (nextGki && existing.currentGkiVersion !== nextGki) {
+      existing.currentGkiVersion = nextGki
+      existing.fromTag = nextGki
+      dirty = true
+    }
+    if (input.record.branches && existing.branches !== input.record.branches) {
+      existing.branches = input.record.branches
+      dirty = true
+    }
+    if (input.record.platform && existing.platform !== input.record.platform) {
+      existing.platform = input.record.platform
+      dirty = true
+    }
+    if (input.record.kernelVersion && existing.kernelVersion !== input.record.kernelVersion) {
+      existing.kernelVersion = input.record.kernelVersion
+      dirty = true
+    }
+    if (input.record.socVendor && existing.socVendor !== input.record.socVendor) {
+      existing.socVendor = input.record.socVendor
+      dirty = true
+    }
+    if (input.record.startDate && existing.startDate !== input.record.startDate) {
+      existing.startDate = input.record.startDate
+      dirty = true
+    }
+    if (input.record.dueDate && existing.dueDate !== input.record.dueDate) {
+      existing.dueDate = input.record.dueDate
+      dirty = true
+    }
+    if (nextText && existing.text !== nextText) {
+      existing.text = nextText
+      dirty = true
+    }
+    if (nextTitle && existing.title !== nextTitle) {
+      existing.title = nextTitle
+      dirty = true
+    }
+    existing.payload = {
+      ...asRecord(existing.payload),
+      alertRecord: input.record.raw,
+      feishuRecordId: asTrimmedString(input.recordId) || sourceId,
+    }
+    if (dirty) {
+      existing.updatedAt = now
+      writeStore(storePath, items)
+    }
+    return asIngestResult(existing, false)
+  }
+
+  const projectLabel = displayProject(input.record) || input.record.platform
+  const rule = asTrimmedString(input.alertRule)
+  const notice: GkiExternalNotice = {
+    noticeId: sourceId,
+    status: 'pending',
+    text: formatAlertNoticeText(input.record, rule),
+    title: ['异常告警', input.record.platform, projectLabel].filter(Boolean).join(' · '),
+    source: FEISHU_BITABLE_NOTICE_SOURCE,
+    sourceId,
+    fromTag: input.record.currentGkiVersion || undefined,
+    taskKind: input.taskKind || 'both',
+    kind: 'alert',
+    alertRule: rule || undefined,
+    branches: input.record.branches || undefined,
+    platform: input.record.platform || undefined,
+    projects: displayProject(input.record) || undefined,
+    currentGkiVersion: input.record.currentGkiVersion || undefined,
+    kernelVersion: input.record.kernelVersion || undefined,
+    socVendor: input.record.socVendor || undefined,
+    startDate: input.record.startDate || undefined,
+    dueDate: input.record.dueDate || undefined,
+    payload: {
+      alertRecord: input.record.raw,
+      feishuRecordId: asTrimmedString(input.recordId) || sourceId,
+    },
+    receivedAt: asTrimmedString(options?.preferReceivedAt) || now,
+    updatedAt: now,
+  }
+  items.unshift(notice)
+  writeStore(storePath, items.slice(0, 500))
+  return asIngestResult(notice, true)
+}
+
 export function listGkiUpgradeNotices(
   filter?: { status?: GkiExternalNoticeStatus | 'all' },
   options?: { storePath?: string },

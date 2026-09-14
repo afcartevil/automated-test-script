@@ -8,6 +8,9 @@ export type GkiNoticeFilter = 'pending' | 'done'
 const props = defineProps<{
   notices: GkiExternalNotice[]
   loading?: boolean
+  syncing?: boolean
+  syncMeta?: string
+  syncHint?: string
   applyingId?: string
   confirmingId?: string
   dismissingId?: string
@@ -19,6 +22,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   refresh: []
+  syncAlerts: []
   apply: [noticeId: string]
   confirm: [noticeId: string]
   dismiss: [noticeId: string]
@@ -159,15 +163,30 @@ watch(
         <h3>通知收件箱</h3>
         <p v-if="filter === 'pending'">采用后选择次新月 To Tag；启动分析后再点「确认完成」。</p>
         <p v-else>已确认 / 已忽略的通知。忽略的可放回待处理；不需要的可删除。</p>
+        <p v-if="syncMeta" class="sync-meta">{{ syncMeta }}</p>
+        <p v-if="syncHint" class="sync-hint">{{ syncHint }}</p>
       </div>
-      <NButton secondary size="small" :loading="loading" @click="emit('refresh')">刷新</NButton>
+      <div class="cfg-actions">
+        <NButton
+          secondary
+          size="small"
+          :loading="syncing"
+          @click="emit('syncAlerts')"
+        >
+          同步飞书告警
+        </NButton>
+        <NButton secondary size="small" :loading="loading" @click="emit('refresh')">刷新</NButton>
+      </div>
     </div>
 
     <div class="filter-tabs" role="tablist">
       <button
         type="button"
         class="filter-tab"
-        :class="{ active: filter === 'pending' }"
+        :class="{
+          active: filter === 'pending',
+          'has-pending': pendingCount > 0,
+        }"
         role="tab"
         :aria-selected="filter === 'pending'"
         @click="filter = 'pending'"
@@ -348,6 +367,22 @@ watch(
     color: var(--muted);
     line-height: 1.45;
   }
+
+  .sync-meta,
+  .sync-hint {
+    margin-top: 4px;
+  }
+
+  .sync-hint {
+    color: var(--head);
+  }
+}
+
+.cfg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
 .filter-tabs {
@@ -377,6 +412,11 @@ watch(
     font-variant-numeric: tabular-nums;
   }
 
+  &.has-pending .count {
+    color: #d92d20;
+    font-weight: 700;
+  }
+
   &.active {
     color: var(--head);
     border-color: color-mix(in srgb, var(--accent, #5b6cff) 35%, var(--line));
@@ -385,6 +425,11 @@ watch(
     .count {
       background: color-mix(in srgb, var(--accent, #5b6cff) 18%, transparent);
     }
+  }
+
+  &.active.has-pending .count {
+    color: #d92d20;
+    font-weight: 700;
   }
 }
 

@@ -142,6 +142,32 @@
               autocomplete="off"
             />
           </div>
+          <div class="field full">
+            <label>GKI 异常告警多维表格 URL</label>
+            <input
+              v-model="feishu.alert_bitable_url"
+              class="input mono"
+              placeholder="飞书 wiki/base 链接，含 table=tbl…"
+            />
+          </div>
+          <div class="field">
+            <label>打开时同步异常告警</label>
+            <select v-model="feishu.alert_sync_enabled" class="input">
+              <option :value="true">开启</option>
+              <option :value="false">关闭</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>进程内同步间隔（秒）</label>
+            <input
+              v-model.number="feishu.alert_sync_interval_sec"
+              class="input mono"
+              type="number"
+              min="60"
+              step="60"
+              placeholder="1800"
+            />
+          </div>
         </div>
         <p class="field-hint">
           在飞书开放平台创建企业自建应用，开通云空间/电子表格权限，以及「转移云文档所有权」。填了默认所有者后，新建表格会转到该用户名下；应用仍保留协作者以便后续刷新。
@@ -150,6 +176,7 @@
           （会自动识别最后一段 token，不一定是 fldcn 开头）。应用需要对该文件夹有编辑权限。不填则建在应用云空间。
           默认密级会在创建验收表格、上传模块代码 HTML 后自动设置（文件夹本身不支持密级）；需应用或 lark-cli 具备 docs:secure_label 权限。
           任务通知：没有群时，在「任务通知接收人」填多人企业邮箱（或 ou_ open_id），分析 / 故障诊断 / 入库任务完成或失败会用应用逐个发私信。应用需开通 im:message，并在开放平台把这些用户纳入可用范围。不填接收人时会回退发给「默认所有者」。有群才需要填 Webhook。
+          异常告警：Console 进入 GKI 工作台时会按上方多维表格补拉「异常告警=1」的行；已同步成任务的行不会重复提醒。应用需对表格有读权限（base:record:read / wiki）。
         </p>
         <div class="toolbar" style="margin-top: 14px">
           <button class="btn primary" @click="saveFeishu">保存</button>
@@ -297,6 +324,9 @@ const feishu = reactive<any>({
   webhook_url: '',
   webhook_secret: '',
   notify_users: '',
+  alert_sync_enabled: true,
+  alert_bitable_url: '',
+  alert_sync_interval_sec: 1800,
   configured: false,
   webhook_configured: false,
 })
@@ -380,6 +410,11 @@ async function loadAll() {
     Object.assign(feishu, feishuData)
     if (!feishu.open_base) feishu.open_base = 'https://open.feishu.cn'
     if (!feishu.secure_label) feishu.secure_label = 'S2'
+    if (feishu.alert_sync_enabled === undefined) feishu.alert_sync_enabled = true
+    if (!feishu.alert_bitable_url) {
+      feishu.alert_bitable_url = 'https://transsioner.feishu.cn/wiki/JJglwZtIuiBXqbkARAPcSQesntc?table=tblV2q5qJffkFuPE&view=vewLOPzQfs'
+    }
+    if (!feishu.alert_sync_interval_sec) feishu.alert_sync_interval_sec = 1800
     Object.assign(ssh, sshData)
     retryHints.conflict = hintData?.hints?.conflict || ''
     retryHints.build_fix = hintData?.hints?.build_fix || ''
@@ -446,6 +481,9 @@ async function saveFeishu() {
     webhook_url: (feishu.webhook_url || '').trim(),
     webhook_secret: (feishu.webhook_secret || '').trim(),
     notify_users: (feishu.notify_users || '').trim(),
+    alert_sync_enabled: feishu.alert_sync_enabled !== false,
+    alert_bitable_url: (feishu.alert_bitable_url || '').trim(),
+    alert_sync_interval_sec: Number(feishu.alert_sync_interval_sec) || 1800,
   })
 }
 
@@ -468,6 +506,9 @@ async function testFeishu() {
       webhook_url: (feishu.webhook_url || '').trim(),
       webhook_secret: (feishu.webhook_secret || '').trim(),
       notify_users: (feishu.notify_users || '').trim(),
+      alert_sync_enabled: feishu.alert_sync_enabled !== false,
+      alert_bitable_url: (feishu.alert_bitable_url || '').trim(),
+      alert_sync_interval_sec: Number(feishu.alert_sync_interval_sec) || 1800,
     })
     await api.post('/api/feishu/config/test', {})
     message.value = '飞书应用连接成功'
@@ -498,6 +539,9 @@ async function testFeishuWebhook() {
       webhook_url: feishu.webhook_url.trim(),
       webhook_secret: (feishu.webhook_secret || '').trim(),
       notify_users: (feishu.notify_users || '').trim(),
+      alert_sync_enabled: feishu.alert_sync_enabled !== false,
+      alert_bitable_url: (feishu.alert_bitable_url || '').trim(),
+      alert_sync_interval_sec: Number(feishu.alert_sync_interval_sec) || 1800,
     })
     const result = await api.post<any>('/api/feishu/webhook/test', {})
     const sent = result?.response?.sent
