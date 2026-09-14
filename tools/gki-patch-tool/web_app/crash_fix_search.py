@@ -30,6 +30,37 @@ _STACK_FILE_RE = re.compile(
 )
 
 
+def community_commit_url(sha: str, repo_base: str = "") -> str:
+    """Browse URL for a community/Google kernel commit (googlesource /+/sha)."""
+    token = (sha or "").strip()
+    if not token:
+        return ""
+    base = (repo_base or _GOOGLE_COMMON).strip().rstrip("/")
+    if base.endswith(".git"):
+        base = base[:-4]
+    if "://" not in base:
+        base = _GOOGLE_COMMON
+    return f"{base}/+/{token}"
+
+
+def enrich_fix_commits_with_urls(
+    fix_commits: Optional[List[Dict[str, Any]]] = None,
+    *,
+    fetch_source: str = "",
+) -> List[Dict[str, Any]]:
+    """Attach commit_url to each fix commit when missing."""
+    out: List[Dict[str, Any]] = []
+    for row in fix_commits or []:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        sha = str(item.get("sha") or "").strip()
+        if sha and not str(item.get("commit_url") or "").strip():
+            item["commit_url"] = community_commit_url(sha, fetch_source)
+        out.append(item)
+    return out
+
+
 def _run_git(repo_dir: str, args: Sequence[str], timeout: int = _GIT_TIMEOUT) -> str:
     from tools.patch_analyzer import run_git
 

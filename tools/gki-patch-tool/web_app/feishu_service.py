@@ -1455,6 +1455,11 @@ def _crash_notify_card(crash: Dict[str, Any], *, status: str) -> Dict[str, Any]:
     template = "green" if ok else "red"
     crash_id = str(crash.get("id") or "").strip()
     summary = crash.get("crash_summary") if isinstance(crash.get("crash_summary"), dict) else {}
+    from_tag = str(crash.get("from_tag") or "").strip()
+    to_tag = str(crash.get("to_tag") or "").strip()
+    mode = str((summary or {}).get("analysis_mode") or "").strip()
+    current_tag_mode = mode == "current_tag" or not from_tag
+
     caused_raw = crash.get("is_caused_by_merge")
     if caused_raw in (1, True, "1"):
         caused_text = "是"
@@ -1463,18 +1468,78 @@ def _crash_notify_card(crash: Dict[str, Any], *, status: str) -> Dict[str, Any]:
     else:
         caused_text = "-"
     suspected = crash.get("suspected_patches")
-    suspected_n = len(suspected) if isinstance(suspected, list) else ""
+    suspected_n = len(suspected) if isinstance(suspected, list) else None
+    fixes = crash.get("fix_commits")
+    fix_n = len(fixes) if isinstance(fixes, list) else None
     confidence = summary.get("confidence") if isinstance(summary, dict) else None
+    crash_type = str((summary or {}).get("crash_type") or "").strip()
+    crash_fn = str((summary or {}).get("crash_function") or "").strip()
+    latest = (summary or {}).get("latest_compare")
+    latest = latest if isinstance(latest, dict) else {}
 
     fields = [
         _md_field("状态", "成功" if ok else "失败"),
         _md_field("任务 ID", f"`{crash_id or '-'}`"),
-        _interval_field(str(crash.get("from_tag") or ""), str(crash.get("to_tag") or "")),
     ]
+    if current_tag_mode:
+        fields.append(_md_field("当前 Tag", f"`{to_tag or from_tag or '?'}`", short=False))
+    else:
+        fields.append(_interval_field(from_tag, to_tag))
+
     if ok:
-        fields.append(_md_field("合入引起", caused_text))
-        if suspected_n not in ("", None):
-            fields.append(_md_field("疑似 Patch", str(suspected_n)))
+        if crash_type or crash_fn:
+            point = " / ".join(
+                p for p in (
+                    crash_type or "",
+                    f"`{crash_fn}`" if crash_fn else "",
+                ) if p
+            )
+            fields.append(_md_field("崩溃点", point or "-", short=False))
+        if not current_tag_mode:
+            fields.append(_md_field("合入引起", caused_text))
+            if suspected_n is not None:
+                fields.append(_md_field("疑似引入", str(suspected_n)))
+        if fix_n is not None:
+            fields.append(_md_field("社区修复", str(fix_n)))
+            if fix_n > 0 and isinstance(fixes, list):
+                from web_app.crash_fix_search import community_commit_url
+
+                search_meta = (summary or {}).get("fix_search")
+                fetch_src = (
+                    str(search_meta.get("fetch_source") or "")
+                    if isinstance(search_meta, dict)
+                    else ""
+                )
+                lines: List[str] = []
+                for fc in fixes[:5]:
+                    if not isinstance(fc, dict):
+                        continue
+                    sha = str(fc.get("sha") or "").strip()
+                    title_txt = str(fc.get("title") or "").strip()
+                    conf = str(fc.get("confidence") or "").strip()
+                    url = str(fc.get("commit_url") or "").strip() or community_commit_url(sha, fetch_src)
+                    if url and sha:
+                        bit = f"[`{sha[:12]}`]({url})"
+                    elif sha:
+                        bit = f"`{sha[:12]}`"
+                    else:
+                        bit = "-"
+                    if title_txt:
+                        bit += f" {title_txt[:72]}"
+                    if conf:
+                        bit += f" ({conf})"
+                    lines.append(bit)
+                if lines:
+                    more = f"\n…共 {fix_n} 笔" if fix_n > 5 else ""
+                    fields.append(_md_field("修复 Patch", "\n".join(lines) + more, short=False))
+        latest_status = str(latest.get("latest_status") or "").strip()
+        if latest_status:
+            status_label = {
+                "likely_fixed": "最新已避开该路径",
+                "still_buggy": "最新仍可能存在",
+                "cannot_compare": "无法对照最新源码",
+            }.get(latest_status, latest_status)
+            fields.append(_md_field("最新源码", status_label))
         if confidence not in ("", None):
             fields.append(_md_field("置信度", str(confidence)))
     elapsed = _elapsed_field(crash.get("elapsed_seconds"))

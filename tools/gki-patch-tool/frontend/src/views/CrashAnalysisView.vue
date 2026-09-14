@@ -411,7 +411,17 @@
                     </thead>
                     <tbody>
                       <tr v-for="fix in fixCommits" :key="fix.sha">
-                        <td class="mono">{{ shortId(fix.sha, 12) }}</td>
+                        <td class="mono">
+                          <a
+                            v-if="fixCommitUrl(fix)"
+                            class="sha-link"
+                            :href="fixCommitUrl(fix)"
+                            target="_blank"
+                            rel="noopener"
+                            :title="'打开原始 patch：' + fixCommitUrl(fix)"
+                          >{{ shortId(fix.sha, 12) }}</a>
+                          <template v-else>{{ shortId(fix.sha, 12) }}</template>
+                        </td>
                         <td>{{ fix.title || '-' }}</td>
                         <td><span class="pill muted">{{ fix.fix_type || '-' }}</span></td>
                         <td><span class="pill info">{{ fix.confidence || '-' }}</span></td>
@@ -671,6 +681,20 @@ function parseJsonArray(value: any) {
   } catch {
     return []
   }
+}
+
+const DEFAULT_KERNEL_COMMON = 'https://android.googlesource.com/kernel/common'
+
+function fixCommitUrl(fix: { sha?: string; commit_url?: string } | null | undefined): string {
+  const direct = String(fix?.commit_url || '').trim()
+  if (direct) return direct
+  const sha = String(fix?.sha || '').trim()
+  if (!sha) return ''
+  const source = String(crashSummary.value?.fix_search?.fetch_source || '').trim()
+  const base = (source.includes('://') ? source : DEFAULT_KERNEL_COMMON)
+    .replace(/\.git$/i, '')
+    .replace(/\/+$/, '')
+  return `${base}/+/${sha}`
 }
 
 function statusLabel(status?: string) {
@@ -1025,5 +1049,15 @@ onBeforeUnmount(() => {
 
 .crash-log-input {
   min-height: 72px;
+}
+
+.sha-link {
+  color: #2563eb;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.sha-link:hover {
+  text-decoration: underline;
 }
 </style>

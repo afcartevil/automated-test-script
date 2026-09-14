@@ -1,6 +1,7 @@
 """Crash-site source lookup from the local GKI repo."""
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -368,6 +369,149 @@ class FunctionGrepAndExtractTests(unittest.TestCase):
         self.assertIn("Call trace:", extracted)
         self.assertIn("fuse_mkdir+0x374/0x578", extracted)
         self.assertNotIn("54000241 b9403688", extracted)
+
+    def test_prepare_crash_log_sends_full_under_threshold(self):
+        from web_app import llm_service
+
+        log = "Kernel panic - not syncing\n" + ("noise\n" * 100)
+        with patch.dict(os.environ, {
+            "GKI_CRASH_LOG_FULL_MAX_CHARS": "50000",
+            "GKI_CRASH_LOG_EXTRACT_MAX_CHARS": "30000",
+        }, clear=False):
+            prepared = llm_service.prepare_crash_log_for_llm(log)
+        self.assertEqual(prepared["mode"], "full")
+        self.assertEqual(prepared["text"], log)
+        self.assertEqual(prepared["sent_chars"], len(log))
+
+    def test_prepare_crash_log_smart_extracts_over_threshold(self):
+        from web_app import llm_service
+
+        # Over full threshold, but smart extract should keep panic + nearby lines.
+        body = "filler line that is irrelevant\n" * 4000
+        crash = (
+            "Kernel panic - not syncing: Fatal exception\n"
+            "Call trace:\n"
+            " foo_bar+0x10/0x20\n"
+            " baz+0x1/0x2\n"
+        )
+        log = body + crash
+        with patch.dict(os.environ, {
+            "GKI_CRASH_LOG_FULL_MAX_CHARS": "1000",
+            "GKI_CRASH_LOG_EXTRACT_MAX_CHARS": "5000",
+        }, clear=False):
+            prepared = llm_service.prepare_crash_log_for_llm(log)
+        self.assertEqual(prepared["mode"], "smart_extract")
+        self.assertLess(prepared["sent_chars"], len(log))
+        self.assertIn("Kernel panic", prepared["text"])
+        self.assertIn("Call trace:", prepared["text"])
+        self.assertIn("foo_bar+0x10/0x20", prepared["text"])
+
+    def test_parse_markdown_hwt_analysis_report(self):
+        from web_app.llm_service import _try_parse_crash_analysis
+
+        report = """# HWT 死机分析报告（db.fatal.02）
+
+- **异常类型**：**HWT（Hardware Watchdog Timeout，硬件看门狗复位）**
+
+## 一、结论
+
+**本次死机由 F2FS 文件系统 `__insert_extent_tree()` 的已知缺陷直接导致**：
+WARN 后缺少 return NULL，CPU6 无法调度。
+
+## 二、死机证据链
+
+`WARNING: CPU: 6 PID: 4540 at fs/f2fs/extent_cache.c:607 __insert_extent_tree+0x7c/0x18c`
+
+## 四、根因分析（代码级）
+
+`fs/f2fs/extent_cache.c` `__insert_extent_tree()`（v6.12.38）
+"""
+        parsed = _try_parse_crash_analysis(report)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["crash_type"], "HWT")
+        self.assertEqual(parsed["crash_function"], "__insert_extent_tree")
+        self.assertTrue(
+            any("extent_cache.c:607" in f for f in parsed["crash_files"]),
+            parsed["crash_files"],
+        )
+        self.assertIn("__insert_extent_tree", parsed["crash_symbols"])
+        self.assertIn("F2FS", parsed["crash_mechanism"] or "")
+        self.assertIn("__insert_extent_tree", parsed["crash_mechanism"] or "")
+        self.assertEqual(parsed["input_kind"], "analysis_report")
+
+    def test_phase2_prompt_embeds_full_analysis_report(self):
+        from web_app import llm_service
+
+        captured = {}
+
+        def fake_call(system, user, config, timeout=300, max_tokens=4096):
+            captured["user"] = user
+            return (
+                "```yaml\nroot_cause:\n  is_caused_by_merge: false\n  confidence: 低\n"
+                "  explanation: x\n  causation_type: 无\n  suspected_patches: []\n"
+                "recommendations:\n  immediate_actions: a\n  test_suggestions: b\n"
+                "  next_steps: c\n```",
+                {},
+            )
+
+        report = (
+            "# HWT 死机分析报告\n\n"
+            "- **异常类型**：**HWT**\n\n"
+            "## 一、结论\n\n"
+            "**本次死机由** F2FS `__insert_extent_tree()` 缺陷导致 UNIQUE_REPORT_MARKER。\n\n"
+            "## 二、死机证据链\n\n"
+            "at fs/f2fs/extent_cache.c:607 __insert_extent_tree+0x7c/0x18c\n\n"
+            "## 四、根因分析\n\n"
+            "缺少 return NULL\n"
+        )
+        analysis = llm_service._try_parse_crash_analysis(report)
+        self.assertIsNotNone(analysis)
+        analysis["analysis_report_text"] = report
+        with patch.object(llm_service, "_call_llm", side_effect=fake_call):
+            llm_service.find_suspected_patches(
+                crash_analysis=analysis,
+                crash_log=report,
+                patch_list=[{"sha": "abcd1234", "title": "noop", "files": ["fs/f2fs/extent_cache.c"]}],
+                squash_diff="diff --git a/fs/f2fs/extent_cache.c",
+                from_tag="A",
+                to_tag="B",
+            )
+        self.assertIn("用户上传的完整分析报告", captured["user"])
+        self.assertIn("UNIQUE_REPORT_MARKER", captured["user"])
+        self.assertIn("__insert_extent_tree", captured["user"])
+
+    def test_parse_keeps_raw_oops_for_phase1(self):
+        from web_app.llm_service import _try_parse_crash_analysis
+
+        lines = [
+            f"[{1000 + i}.{i:06d}] Unable to handle kernel NULL pointer dereference"
+            if i == 0
+            else f"[{1000 + i}.{i:06d}] noise line {i} filler content for density"
+            for i in range(20)
+        ]
+        lines[1] = "[1001.000001] pc : foo_bar+0x10/0x20"
+        lines[2] = "[1002.000002] Call trace:"
+        lines[3] = "[1003.000003]  foo_bar+0x10/0x20"
+        # Mention analysis keywords but remain a dense kernel log.
+        lines[4] = "[1004.000004] note: 根因分析 placeholder 死机分析报告 quote"
+        self.assertIsNone(_try_parse_crash_analysis("\n".join(lines)))
+
+    def test_parse_yaml_style_analysis_still_works(self):
+        from web_app.llm_service import _try_parse_crash_analysis
+
+        text = """
+crash_type: NULL pointer
+crash_function: fuse_iget_backing
+崩溃原因分析: bad pointer in fuse
+crash_files:
+- fs/fuse/inode.c
+crash_symbols:
+- fuse_iget_backing
+"""
+        parsed = _try_parse_crash_analysis(text)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["crash_function"], "fuse_iget_backing")
+        self.assertEqual(parsed["crash_type"], "NULL pointer")
 
 
 if __name__ == "__main__":

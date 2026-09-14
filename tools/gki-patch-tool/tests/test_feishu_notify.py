@@ -48,16 +48,69 @@ class FeishuNotifyCardTests(unittest.TestCase):
                 "to_tag": "android13-5.15-2026-03_r16",
                 "is_caused_by_merge": 1,
                 "suspected_patches": [{"sha": "abc"}, {"sha": "def"}],
+                "fix_commits": [],
                 "elapsed_seconds": 42,
-                "crash_summary": {"confidence": 0.9},
+                "crash_summary": {
+                    "confidence": 0.9,
+                    "analysis_mode": "interval",
+                    "crash_type": "NULL",
+                    "crash_function": "foo_bar",
+                },
             },
             status="completed",
         )
         self.assertEqual(payload["card"]["header"]["title"]["content"], "GKI 故障诊断完成")
         text = _card_text(payload)
         self.assertIn("合入引起", text)
+        self.assertIn("疑似引入", text)
+        self.assertIn("社区修复", text)
         self.assertIn("2", text)
         self.assertIn("42s", text)
+        self.assertIn("foo_bar", text)
+
+    def test_crash_completed_includes_community_fix_patches(self):
+        payload = _crash_notify_card(
+            {
+                "id": "4d7faa09dd8e",
+                "from_tag": "",
+                "to_tag": "android16-6.12-2025-09_r8",
+                "is_caused_by_merge": 0,
+                "suspected_patches": [],
+                "fix_commits": [
+                    {
+                        "sha": "deadbeefcafebabe",
+                        "title": "f2fs: fix insert extent tree infinite loop",
+                        "confidence": "高",
+                    },
+                    {
+                        "sha": "1122334455667788",
+                        "title": "f2fs: return NULL after WARN",
+                        "confidence": "中",
+                    },
+                ],
+                "elapsed_seconds": 299,
+                "crash_summary": {
+                    "confidence": "中",
+                    "analysis_mode": "current_tag",
+                    "crash_type": "HWT",
+                    "crash_function": "__insert_extent_tree",
+                    "latest_compare": {"latest_status": "likely_fixed"},
+                },
+            },
+            status="completed",
+        )
+        text = _card_text(payload)
+        self.assertIn("当前 Tag", text)
+        self.assertIn("android16-6.12-2025-09_r8", text)
+        self.assertNotIn("? →", text)
+        self.assertNotIn("合入引起", text)
+        self.assertIn("社区修复", text)
+        self.assertIn("修复 Patch", text)
+        self.assertIn("deadbeefcafe", text)
+        self.assertIn("android.googlesource.com/kernel/common/+/deadbeefcafebabe", text)
+        self.assertIn("insert extent tree", text)
+        self.assertIn("最新已避开", text)
+        self.assertIn("__insert_extent_tree", text)
 
     def test_crash_failed_title(self):
         payload = _crash_notify_card(

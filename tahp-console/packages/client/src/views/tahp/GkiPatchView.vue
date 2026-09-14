@@ -30,8 +30,8 @@ const workbenchItem = { name: 'tahp.gki-patch.dashboard', label: '工作台', ic
 
 const navItems = [
   { name: 'tahp.gki-patch.analysis', label: 'patch分析', icon: 'analysis' },
-  { name: 'tahp.gki-patch.crash', label: '故障诊断', icon: 'crash' },
   { name: 'tahp.gki-patch.upgrade', label: 'patch入库', icon: 'upgrade' },
+  { name: 'tahp.gki-patch.crash', label: '故障诊断', icon: 'crash' },
   { name: 'tahp.gki-patch.patches', label: '数据库', icon: 'database' },
   { name: 'tahp.gki-patch.settings', label: '设置', icon: 'settings' },
 ]

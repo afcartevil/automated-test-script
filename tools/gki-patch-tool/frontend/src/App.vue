@@ -59,8 +59,8 @@ const navItems = [
   { to: '/', label: '首页' },
   { to: '/dashboard', label: '看板' },
   { to: '/analysis', label: 'patch分析' },
-  { to: '/crash', label: '故障诊断' },
   { to: '/upgrade', label: 'patch入库' },
+  { to: '/crash', label: '故障诊断' },
   { to: '/patches', label: '数据库' },
 ]
 

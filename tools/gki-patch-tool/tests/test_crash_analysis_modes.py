@@ -139,6 +139,22 @@ class CrashFixSearchTests(unittest.TestCase):
         self.assertEqual(picked, ["android16-6.18", "android16-6.12", "android-mainline"])
         self.assertNotIn("android15-6.6", picked)
 
+    def test_community_commit_url_and_enrich(self):
+        from web_app.crash_fix_search import community_commit_url, enrich_fix_commits_with_urls
+
+        self.assertEqual(
+            community_commit_url("abcd1234"),
+            "https://android.googlesource.com/kernel/common/+/abcd1234",
+        )
+        enriched = enrich_fix_commits_with_urls(
+            [{"sha": "deadbeef", "title": "fix"}],
+            fetch_source="https://android.googlesource.com/kernel/common.git",
+        )
+        self.assertEqual(
+            enriched[0]["commit_url"],
+            "https://android.googlesource.com/kernel/common/+/deadbeef",
+        )
+
 
 class CrashAnalysisModeTests(unittest.TestCase):
     def test_interval_requires_both_tags(self):

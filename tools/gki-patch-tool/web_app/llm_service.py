@@ -2754,84 +2754,237 @@ def _score_patch_suspicion(patch: Dict[str, Any], crash_keywords: List[str]) -> 
     return score, matches
 
 
-def _try_parse_crash_analysis(text: str) -> Optional[Dict[str, Any]]:
-    """Try to detect if the uploaded text is already an analysis result (not raw crash log).
-    If detected, parse and return a structured crash_analysis dict.
-    Returns None if the text appears to be a raw crash log.
-    """
-    import re as _re
+_RAW_KERNEL_TS_RE = re.compile(r"\[\s*\d+\.\d+\]")
+_KERNEL_PATH_LINE_RE = re.compile(
+    r"(?:^|[\s`])((?:fs|mm|drivers|kernel|net|arch|block|crypto|security|sound|virt)"
+    r"/[\w./+-]+\.[ch]):(\d+)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_WARN_AT_FUNC_RE = re.compile(
+    r"at\s+((?:[\w./+-]+/)?[\w.-]+\.[ch]):(\d+)\s+([a-zA-Z_][\w]*)\+",
+    re.IGNORECASE,
+)
+_FUNC_OFFSET_RE = re.compile(r"\b([a-zA-Z_][\w]{2,})\+0x[0-9a-fA-F]+/[0-9a-fx]+")
+_FUNC_BACKTICK_RE = re.compile(r"`([a-zA-Z_][\w]{2,})\s*\(\)`")
+_GENERIC_CRASH_FUNCS = {
+    "panic", "die", "oops_end", "bug", "kasan_report", "dump_stack",
+    "dump_stack_lvl", "warn_slowpath_fmt", "warn_slowpath_common",
+    "report_bug", "f2fs_bug_on", "WARN_ON", "warn_on",
+}
 
-    # Check for analysis result indicators
-    indicators = [
-        r'crash_type\s*:',
-        r'崩溃类型\s*[：:]',
-        r'死机类型\s*[：:]',
-        r'崩溃函数\s*[：:]',
-        r'crash_function\s*:',
-        r'崩溃原因分析',
-        r'死机分析结论',
-        r'崩溃机制分析',
+
+def _strip_md_noise(value: str) -> str:
+    text = (value or "").strip()
+    # Bold/italic / backticks only — never strip '_' (kernel symbols use __foo).
+    text = text.replace("**", "")
+    text = re.sub(r"^\*+|\*+$", "", text)
+    text = re.sub(r"^`+|`+$", "", text)
+    return text.strip(" \t\"'")
+
+
+def _looks_like_raw_kernel_log(text: str) -> bool:
+    """True when the upload is mostly oops/dmesg lines rather than a write-up."""
+    if not text:
+        return False
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return False
+    ts_hits = sum(1 for ln in lines if _RAW_KERNEL_TS_RE.search(ln))
+    marker_hits = 0
+    for ln in lines:
+        low = ln.lower()
+        if (
+            "call trace:" in low
+            or "unable to handle" in low
+            or "kernel panic" in low
+            or "pc is at" in low
+            or re.search(r"\bpc\s*:", ln, re.IGNORECASE)
+        ):
+            marker_hits += 1
+    # Dense timestamped kernel lines → raw log even if it quotes analysis words.
+    if ts_hits >= 8 and ts_hits / max(len(lines), 1) >= 0.35:
+        return True
+    if marker_hits >= 3 and ts_hits >= 5:
+        return True
+    return False
+
+
+def _analysis_report_signals(text: str) -> List[str]:
+    """Human / tool write-up signals (Markdown reports, YAML fields, AEE 结论)."""
+    patterns = [
+        (r"(?:HWT\s*)?死机分析报告", "死机分析报告"),
+        (r"崩溃分析报告", "崩溃分析报告"),
+        (r"死机证据链", "死机证据链"),
+        (r"完整死机链条", "完整死机链条"),
+        (r"根因分析", "根因分析"),
+        (r"(?:^|\n)\s*#{1,3}\s*.*结论", "结论章节"),
+        (r"异常类型\s*[：:]", "异常类型"),
+        (r"Exception Class\s*[：:]", "Exception Class"),
+        (r"crash_type\s*:", "crash_type"),
+        (r"崩溃类型\s*[：:]", "崩溃类型"),
+        (r"死机类型\s*[：:]", "死机类型"),
+        (r"崩溃函数\s*[：:]", "崩溃函数"),
+        (r"crash_function\s*:", "crash_function"),
+        (r"崩溃原因分析", "崩溃原因分析"),
+        (r"死机分析结论", "死机分析结论"),
+        (r"崩溃机制分析", "崩溃机制分析"),
+        (r"本次死机由", "本次死机由"),
     ]
-    matched_indicators = [p for p in indicators if _re.search(p, text, _re.IGNORECASE)]
-    # Need at least 2 indicators to be confident it's an analysis result
-    if len(matched_indicators) < 2:
+    hits: List[str] = []
+    for pat, label in patterns:
+        if re.search(pat, text, re.IGNORECASE | re.MULTILINE):
+            hits.append(label)
+    return hits
+
+
+def _extract_functions_from_analysis_text(text: str) -> List[str]:
+    found: List[str] = []
+
+    def _add(name: str) -> None:
+        token = _strip_md_noise(name).split("+")[0].strip()
+        if not token or token in _GENERIC_CRASH_FUNCS:
+            return
+        if token not in found:
+            found.append(token)
+
+    for m in _WARN_AT_FUNC_RE.finditer(text):
+        _add(m.group(3))
+    for m in _FUNC_OFFSET_RE.finditer(text):
+        _add(m.group(1))
+    for m in _FUNC_BACKTICK_RE.finditer(text):
+        _add(m.group(1))
+    return found
+
+
+def _extract_files_from_analysis_text(text: str) -> List[str]:
+    files: List[str] = []
+    for m in _WARN_AT_FUNC_RE.finditer(text):
+        item = f"{m.group(1)}:{m.group(2)}"
+        if item not in files:
+            files.append(item)
+    for m in _KERNEL_PATH_LINE_RE.finditer(text):
+        item = f"{m.group(1)}:{m.group(2)}"
+        if item not in files:
+            files.append(item)
+    return files[:8]
+
+
+def _try_parse_crash_analysis(text: str) -> Optional[Dict[str, Any]]:
+    """Detect uploads that are already analysis write-ups (not raw dmesg).
+
+    Accepts:
+    - structured YAML / key-value analysis dumps
+    - Markdown/AEE-style reports (e.g. 「HWT 死机分析报告」+ 结论/根因)
+
+    Rejects dense raw kernel logs so Phase-1 LLM still runs on oops text.
+    """
+    body = text or ""
+    if len(body.strip()) < 80:
+        return None
+    if _looks_like_raw_kernel_log(body):
         return None
 
-    print(f"[CRASH] 检测到已有分析结果: {matched_indicators[:5]}", flush=True)
+    signals = _analysis_report_signals(body)
+    # Need clear report structure; a single stray keyword is not enough.
+    if len(signals) < 2:
+        return None
 
-    # Try to extract structured fields
+    print(f"[CRASH] 检测到已有分析报告: {signals[:6]}", flush=True)
+
     def _extract_field(patterns: list, default: str = "") -> str:
         for p in patterns:
-            m = _re.search(p, text, _re.IGNORECASE | _re.MULTILINE)
+            m = re.search(p, body, re.IGNORECASE | re.MULTILINE)
             if m:
-                return m.group(1).strip().strip('"').strip("'").strip('*').strip()
+                return _strip_md_noise(m.group(1))
         return default
 
     crash_type = _extract_field([
-        r'(?:crash_type|崩溃类型|死机类型)\s*[：:]\s*["\']?([^\n"\'#]+)',
+        r'(?:crash_type|崩溃类型|死机类型|异常类型)\s*\**\s*[：:]\s*["\']?\*{0,2}([^\n"\'#]+)',
+        r'Exception Class\s*[：:]\s*\*{0,2}(\w+)',
     ])
+    if crash_type:
+        # Keep short label when markdown wraps explanation: HWT（Hardware ...）
+        crash_type = _strip_md_noise(re.split(r"[（(]", crash_type, maxsplit=1)[0])
+
     crash_function = _extract_field([
-        r'(?:crash_function|崩溃函数)\s*[：:]\s*["\']?([^\n"\'#]+)',
+        r'(?:crash_function|崩溃函数|栈顶(?:函数)?|崩溃点函数)\s*[：:]\s*["\']?\*{0,2}([^\n"\'#]+)',
     ])
+    funcs = _extract_functions_from_analysis_text(body)
+    if not crash_function and funcs:
+        crash_function = funcs[0]
+    elif crash_function:
+        crash_function = crash_function.split("+")[0].split("(")[0].strip()
+
     crash_module = _extract_field([
-        r'(?:crash_module|崩溃模块|相关模块)\s*[：:]\s*["\']?([^\n"\'#]+)',
+        r'(?:crash_module|崩溃模块|相关模块)\s*[：:]\s*["\']?\*{0,2}([^\n"\'#]+)',
     ])
     call_stack_summary = _extract_field([
-        r'(?:call_stack_summary|调用栈摘要|调用栈)\s*[：:]\s*["\']?([^\n"\'#]+)',
+        r'(?:call_stack_summary|调用栈摘要)\s*[：:]\s*["\']?\*{0,2}([^\n"\'#]+)',
     ])
     crash_description = _extract_field([
-        r'(?:crash_description|死机描述|死机现象|崩溃现象)\s*[：:]\s*["\']?([^\n"\'#]+)',
+        r'(?:crash_description|死机描述|死机现象|崩溃现象)\s*[：:]\s*["\']?\*{0,2}([^\n"\'#]+)',
     ])
     crash_mechanism = _extract_field([
-        r'(?:crash_mechanism|崩溃机制|崩溃原因|根本原因)\s*[：:]\s*["\']?([^\n"\']+)',
+        r'(?:crash_mechanism|崩溃机制|根本原因)\s*[：:]\s*["\']?\*{0,2}([^\n"\']+)',
+        r'本次死机由\s*([^\n。]+)',
     ])
+    if not crash_mechanism:
+        m = re.search(
+            r"(?:#{1,3}\s*.*结论\s*\n+)(.+?)(?:\n#{1,3}\s|\n---|\Z)",
+            body,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if m:
+            para = re.sub(r"\s+", " ", _strip_md_noise(m.group(1)))
+            if len(para) > 40:
+                crash_mechanism = para[:500]
 
-    # Extract list fields (crash_files, crash_symbols)
     def _extract_list(patterns: list) -> List[str]:
         for p in patterns:
-            m = _re.search(p, text, _re.IGNORECASE | _re.DOTALL)
+            m = re.search(p, body, re.IGNORECASE | re.DOTALL)
             if m:
                 block = m.group(1)
-                items = _re.findall(r'[-•]\s*["\']?([^\n"\']+)', block)
+                items = re.findall(r'[-•]\s*["\']?([^\n"\']+)', block)
                 if items:
-                    return [i.strip().strip('"').strip("'") for i in items if i.strip()]
-                # Try comma-separated
+                    return [_strip_md_noise(i) for i in items if i.strip()]
                 items = block.strip().split(',')
-                return [i.strip().strip('"').strip("'").strip('[').strip(']') for i in items if i.strip()]
+                return [
+                    _strip_md_noise(i).strip("[]")
+                    for i in items if i.strip()
+                ]
         return []
 
     crash_files = _extract_list([
         r'(?:crash_files|相关文件|崩溃文件)\s*[：:]*\s*\n?((?:\s*[-•][^\n]+\n?)+)',
         r'(?:crash_files|相关文件)\s*[：:]\s*["\']?\[([^\]]+)\]',
     ])
+    for path in _extract_files_from_analysis_text(body):
+        if path not in crash_files:
+            crash_files.append(path)
+
     crash_symbols = _extract_list([
         r'(?:crash_symbols|相关符号|崩溃符号|关键符号)\s*[：:]*\s*\n?((?:\s*[-•][^\n]+\n?)+)',
         r'(?:crash_symbols|相关符号)\s*[：:]\s*["\']?\[([^\]]+)\]',
     ])
+    for fn in funcs:
+        if fn not in crash_symbols:
+            crash_symbols.append(fn)
 
-    # Validate: must have at least crash_type or crash_function
+    if not crash_module and crash_files:
+        parts = str(crash_files[0]).replace("\\", "/").split("/")
+        if len(parts) >= 2 and parts[0] in {"fs", "mm", "drivers", "net", "kernel"}:
+            crash_module = parts[1] if parts[0] == "fs" else parts[0]
+
     if not crash_type and not crash_function:
         return None
+
+    source_path = ""
+    source_line = 0
+    if crash_files:
+        m = re.match(r"(.+\.[ch]):(\d+)$", str(crash_files[0]).replace("\\", "/"))
+        if m:
+            source_path = m.group(1)
+            source_line = int(m.group(2))
 
     result = {
         "crash_type": crash_type or "未知",
@@ -2842,11 +2995,49 @@ def _try_parse_crash_analysis(text: str) -> Optional[Dict[str, Any]]:
         "crash_files": crash_files,
         "crash_symbols": crash_symbols,
         "crash_mechanism": crash_mechanism,
+        "crash_source_path": source_path,
+        "crash_source_line": source_line,
+        "input_kind": "analysis_report",
     }
 
-    print(f"[CRASH] 解析已有分析结果: type={crash_type}, func={crash_function}, "
-          f"files={len(crash_files)}, symbols={len(crash_symbols)}", flush=True)
+    print(
+        f"[CRASH] 解析已有分析报告: type={result['crash_type']}, "
+        f"func={result['crash_function']}, files={len(crash_files)}, "
+        f"symbols={len(crash_symbols)}",
+        flush=True,
+    )
     return result
+
+
+def _is_analysis_report(crash_analysis: Optional[Dict[str, Any]]) -> bool:
+    return bool(crash_analysis and crash_analysis.get("input_kind") == "analysis_report")
+
+
+def _format_analysis_report_section(
+    crash_analysis: Optional[Dict[str, Any]] = None,
+    crash_log: str = "",
+    max_chars: Optional[int] = None,
+) -> str:
+    """Embed the uploaded analysis write-up for attribution / fix LLMs."""
+    if not _is_analysis_report(crash_analysis):
+        return ""
+    text = str(
+        (crash_analysis or {}).get("analysis_report_text")
+        or crash_log
+        or ""
+    ).strip()
+    if not text:
+        return ""
+    cap = max_chars if max_chars is not None else (_crash_log_full_max_chars() or 180000)
+    if cap <= 0:
+        cap = 180000
+    original = len(text)
+    if len(text) > cap:
+        text = text[:cap] + f"\n\n... [分析报告截断, 原文 {original} 字符]"
+    return (
+        "## 用户上传的完整分析报告（请以此为依据做归因/修复判定，不要抛开报告重编崩溃点）\n"
+        f"```markdown\n{text}\n```\n"
+    )
 
 
 _OOPS_DUMP_HEADER_RE = re.compile(
@@ -2857,6 +3048,66 @@ _OOPS_DUMP_BODY_RE = re.compile(
     r"\]\s*[0-9a-fA-F]{3,4}:\s+[0-9a-fA-F]{8}\s+[0-9a-fA-F]{8}",
     re.IGNORECASE,
 )
+
+
+def _crash_log_full_max_chars() -> int:
+    """Logs at or below this size are sent to the LLM in full (default 180k).
+
+    Set ``GKI_CRASH_LOG_FULL_MAX_CHARS=0`` to always use smart extraction.
+    """
+    raw = os.environ.get("GKI_CRASH_LOG_FULL_MAX_CHARS", "180000").strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 180000
+
+
+def _crash_log_extract_max_chars() -> int:
+    """Max chars after smart extraction when the log exceeds the full-send threshold."""
+    raw = os.environ.get("GKI_CRASH_LOG_EXTRACT_MAX_CHARS", "30000").strip()
+    try:
+        return max(1000, int(raw))
+    except ValueError:
+        return 30000
+
+
+def prepare_crash_log_for_llm(crash_log: str) -> Dict[str, Any]:
+    """Choose full log vs smart extract for Phase-1 crash analysis.
+
+    - ``len(log) <= GKI_CRASH_LOG_FULL_MAX_CHARS`` (default 180000) → entire log
+    - otherwise → marker-based smart extraction capped by ``GKI_CRASH_LOG_EXTRACT_MAX_CHARS``
+    """
+    text = crash_log or ""
+    full_max = _crash_log_full_max_chars()
+    extract_max = _crash_log_extract_max_chars()
+    if full_max > 0 and len(text) <= full_max:
+        print(
+            f"[CRASH] 日志 {len(text)} 字符 ≤ 全量阈值 {full_max}，整份送 LLM",
+            flush=True,
+        )
+        return {
+            "text": text,
+            "mode": "full",
+            "original_chars": len(text),
+            "sent_chars": len(text),
+            "full_max_chars": full_max,
+            "extract_max_chars": extract_max,
+        }
+
+    extracted = _extract_crash_relevant_sections(text, max_chars=extract_max)
+    print(
+        f"[CRASH] 日志 {len(text)} 字符 > 全量阈值 {full_max or '禁用'}，"
+        f"智能提取后送 LLM ({len(extracted)} 字符, cap={extract_max})",
+        flush=True,
+    )
+    return {
+        "text": extracted,
+        "mode": "smart_extract",
+        "original_chars": len(text),
+        "sent_chars": len(extracted),
+        "full_max_chars": full_max,
+        "extract_max_chars": extract_max,
+    }
 
 
 def _is_oops_hexdump_line(line: str) -> bool:
@@ -2971,8 +3222,8 @@ def analyze_crash_cause(crash_log: str, source_block: str = "") -> Dict[str, Any
 
     system_prompt = load_prompt("crash_phase1_cause")
 
-    # Smart extraction: find crash-relevant sections instead of naive truncation
-    relevant_log = _extract_crash_relevant_sections(crash_log)
+    prepared = prepare_crash_log_for_llm(crash_log)
+    relevant_log = prepared["text"]
     source_section = ""
     if (source_block or "").strip():
         source_section = f"""
@@ -2982,7 +3233,12 @@ def analyze_crash_cause(crash_log: str, source_block: str = "") -> Dict[str, Any
 请结合源码说明死在哪个文件、哪一行、哪条语句。行号和语句必须来自上面的片段，禁止编造。
 """
 
-    user_prompt = f"""请分析以下内核死机日志。
+    mode_note = (
+        "（以下为完整日志）"
+        if prepared["mode"] == "full"
+        else "（以下为超过全量阈值后的智能提取片段；可能省略了无关刷屏）"
+    )
+    user_prompt = f"""请分析以下内核死机日志{mode_note}。
 
 要求：
 - crash_function 不要用 panic/die/kasan_report 等通用帧，除非栈上没有更具体的函数
@@ -3185,11 +3441,23 @@ def find_suspected_patches(
 
     system_prompt = load_prompt("crash_phase2_attribution")
 
+    report_section = _format_analysis_report_section(crash_analysis, crash_log)
+    summary_heading = (
+        "## 死机分析结论（从上传报告解析的结构化摘要）"
+        if report_section
+        else "## 死机分析结论（Phase 1 分析结果）"
+    )
+    follow_up = (
+        "请基于用户上传的完整分析报告与区间 patch，判断死机是否由本次合入引起，并给出疑似问题 patch。"
+        if report_section
+        else "请基于死机分析结论，判断死机是否由本次合入代码引起，并给出疑似问题 patch。"
+    )
+
     user_prompt = f"""## GKI 升级信息
 升级区间: {from_tag} → {to_tag}
 合入 patch 数量: {len(patch_list)}
 
-## 死机分析结论（Phase 1 分析结果）
+{report_section}{summary_heading}
 {crash_summary_text}
 {stat_section}
 ## 合入的 Patch 列表（含修改文件）
@@ -3203,7 +3471,7 @@ def find_suspected_patches(
 {squash_diff[:30000]}
 ```
 
-请基于死机分析结论，判断死机是否由本次合入代码引起，并给出疑似问题 patch。"""
+{follow_up}"""
 
     try:
         content, usage = _call_llm(system_prompt, user_prompt, config, timeout=300)
@@ -3356,13 +3624,15 @@ def _find_fix_commits_batch(
 
     system_prompt = load_prompt("crash_fix_commits")
 
+    report_section = _format_analysis_report_section(crash_info)
+
     user_prompt = f"""## GKI 信息
 {upgrade_line}
 修复检索范围: {range_text}
 该范围内全部提交: {total_after_tag or candidate_total} 笔
 本批候选: {len(commits)} / {candidate_total or len(commits)}（第 {batch_index}/{batch_count} 批，已按崩溃文件/符号/修复类标题筛选）
 
-## 死机信息
+{report_section}## 死机信息
 死机类型: {crash_type}
 问题分类: {bug_class or '未知'}
 崩溃函数: {crash_func}
@@ -3375,7 +3645,7 @@ def _find_fix_commits_batch(
 ## 候选提交
 {commit_block}
 
-请判断这些提交中是否有修复该死机问题的代码。"""
+请判断这些提交中是否有修复该死机问题的代码。若上方有完整分析报告，以报告中的根因与崩溃点为准。"""
 
     try:
         content, _ = _call_llm(system_prompt, user_prompt, config, timeout=300)
@@ -3444,7 +3714,7 @@ def compare_crash_source_with_latest(
 ## 社区最新
 {latest_ref}
 
-## 死机分析
+{_format_analysis_report_section(crash_analysis)}## 死机分析
 - 类型: {crash_analysis.get('crash_type') or '未知'}
 - 分类: {crash_analysis.get('bug_class') or '未知'}
 - 崩溃函数: {crash_analysis.get('crash_function') or '未知'}
@@ -3525,7 +3795,7 @@ def identify_fix_from_source_diffs(
 崩溃 Tag: {crash_tag}
 社区最新: {latest_ref}
 
-## 死机分析
+{_format_analysis_report_section(crash_analysis)}## 死机分析
 - 类型: {crash_analysis.get('crash_type') or '未知'}
 - 分类: {crash_analysis.get('bug_class') or '未知'}
 - 崩溃函数: {crash_analysis.get('crash_function') or '未知'}

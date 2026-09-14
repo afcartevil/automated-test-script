@@ -173,6 +173,8 @@ def _run_crash_analysis(
         from web_app.crash_fix_search import (
             attach_commit_files,
             collect_fix_candidates,
+            community_commit_url,
+            enrich_fix_commits_with_urls,
             resolve_community_search_tips,
         )
         from web_app.crash_source import (
@@ -344,13 +346,18 @@ def _run_crash_analysis(
             return merged
 
         if skip_phase1:
-            _report("crash_analysis",
-                    f"识别到已有分析结果，跳过死机原因分析 | "
-                    f"类型: {pre_analysis.get('crash_type', '未知')} | "
-                    f"函数: {pre_analysis.get('crash_function', '未知')}")
+            _report(
+                "crash_analysis",
+                "识别到已有分析报告，跳过死机原因重分析；"
+                f"整份报告将交给后续归因/修复判定 | "
+                f"类型: {pre_analysis.get('crash_type', '未知')} | "
+                f"函数: {pre_analysis.get('crash_function', '未知')}",
+            )
             _log_crash_timing(crash_id, "crash_cause_llm", 0, "skipped_pre_analyzed")
-            crash_analysis = pre_analysis
-            phase1 = {"crash_analysis": pre_analysis}
+            crash_analysis = dict(pre_analysis)
+            crash_analysis["input_kind"] = "analysis_report"
+            crash_analysis["analysis_report_text"] = crash_log
+            phase1 = {"crash_analysis": crash_analysis}
             if interval_mode:
                 squash_output, squash_stat = _gen_squash()
         elif interval_mode:
@@ -369,7 +376,12 @@ def _run_crash_analysis(
                 raise RuntimeError(f"死机原因分析失败: {phase1['error']}")
 
         source_pack = _collect_source_for_analysis(crash_analysis)
-        crash_analysis = _refine_with_source(crash_analysis, source_pack)
+        # 已有完整分析报告时不再用 Phase1 口吻重跑「结合源码 refine」；
+        # 源码片段仍取出供后续对照社区最新 / 找 fix。
+        if crash_analysis.get("input_kind") != "analysis_report":
+            crash_analysis = _refine_with_source(crash_analysis, source_pack)
+        else:
+            _report("crash_analysis", "已有分析报告：保留报告结论，仅取出崩溃点源码供后续修复判定")
 
         if interval_mode:
             _report("squash_diff", f"squash diff 完成 ({len(squash_output)} 字符)")
@@ -485,6 +497,7 @@ def _run_crash_analysis(
             "crash_symbols": crash_analysis.get("crash_symbols", []),
             "evidence": crash_analysis.get("evidence", []),
             "analysis_mode": mode,
+            "input_kind": crash_analysis.get("input_kind") or "crash_log",
             "source_tag": to_tag,
             "crash_source_path": crash_analysis.get("crash_source_path", "") or "",
             "crash_source_line": crash_analysis.get("crash_source_line", 0) or 0,
@@ -631,6 +644,9 @@ def _run_crash_analysis(
                         candidates = attach_commit_files(repo_dir, candidates)
                     crash_info_for_fix = dict(crash_summary)
                     crash_info_for_fix["suspected_patches"] = suspected
+                    if crash_analysis.get("input_kind") == "analysis_report":
+                        crash_info_for_fix["input_kind"] = "analysis_report"
+                        crash_info_for_fix["analysis_report_text"] = crash_log
                     title_hits = findFixCommits(
                         crash_info=crash_info_for_fix,
                         commits_after_b=candidates,
@@ -671,6 +687,9 @@ def _run_crash_analysis(
 
         _fix_ms = (time.monotonic() - _t_fix) * 1000
         _log_crash_timing(crash_id, "find_fix", _fix_ms, fix_count=len(fix_commits))
+
+        fetch_src = str((crash_summary_with_meta.get("fix_search") or {}).get("fetch_source") or "")
+        fix_commits = enrich_fix_commits_with_urls(fix_commits, fetch_source=fetch_src)
 
         update_crash_analysis(
             crash_id,
@@ -745,6 +764,7 @@ def _build_crash_report(
     total_patches: int,
 ) -> str:
     """Build a full HTML report for the crash analysis."""
+    from web_app.crash_fix_search import community_commit_url
 
     current_tag_mode = (crash_summary.get("analysis_mode") == "current_tag") or not from_tag
     search_meta = crash_summary.get("fix_search") or {}
@@ -843,9 +863,20 @@ def _build_crash_report(
     fix_html = ""
     if fix_commits:
         rows = []
+        fetch_src = str(search_meta.get("fetch_source") or "")
         for fc in fix_commits:
+            sha = str(fc.get("sha") or "")
+            url = str(fc.get("commit_url") or "").strip() or community_commit_url(sha, fetch_src)
+            sha_disp = sha[:12] if sha else ""
+            if url and sha_disp:
+                sha_cell = (
+                    f'<a href="{url}" target="_blank" rel="noopener" class="sha-link">'
+                    f"<code>{sha_disp}</code></a>"
+                )
+            else:
+                sha_cell = f"<code>{sha_disp}</code>"
             rows.append(
-                f'<tr><td><code>{fc.get("sha", "")[:12]}</code></td>'
+                f"<tr><td>{sha_cell}</td>"
                 f'<td>{fc.get("title", "")}</td>'
                 f'<td><span class="badge badge-{fc.get("fix_type", "")}">{fc.get("fix_type", "")}</span></td>'
                 f'<td><span class="badge badge-conf-{fc.get("confidence", "")}">{fc.get("confidence", "")}</span></td>'
@@ -919,6 +950,8 @@ def _build_crash_report(
     .data-table th {{ text-align: left; padding: 8px; background: #f1f5f9; border-bottom: 2px solid #e2e8f0; font-weight: 600; }}
     .data-table td {{ padding: 8px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }}
     .data-table tr:hover {{ background: #f8fafc; }}
+    a.sha-link {{ color: #2563eb; text-decoration: none; }}
+    a.sha-link:hover {{ text-decoration: underline; }}
     .badge {{ display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }}
     .badge-revert {{ background: #fee2e2; color: #991b1b; }}
     .badge-fix {{ background: #dcfce7; color: #166534; }}
