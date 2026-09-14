@@ -3,7 +3,7 @@
  * 结束后恢复 config.yaml，不影响用户后续 git 提交。
  */
 import { randomBytes } from 'crypto'
-import { readFileSync, writeFileSync } from 'fs'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs'
 import { getActiveConfigPath, getActiveProfileName } from './hermes-profile'
 import { updateConfigYaml } from '../config-helpers'
 import {
@@ -62,6 +62,28 @@ async function invalidateBridgeProfile(profile: string): Promise<void> {
   }
 }
 
+function readConfigBackup(configPath: string): { hadConfig: boolean; backup: string } {
+  if (!existsSync(configPath)) {
+    return { hadConfig: false, backup: '' }
+  }
+  return { hadConfig: true, backup: readFileSync(configPath, 'utf-8') }
+}
+
+function restoreConfigBackup(configPath: string, hadConfig: boolean, backup: string): void {
+  if (hadConfig) {
+    writeFileSync(configPath, backup, 'utf-8')
+    return
+  }
+  // Fresh machine: verify may have created config.yaml; remove so permanent save owns creation.
+  if (existsSync(configPath)) {
+    try {
+      unlinkSync(configPath)
+    } catch {
+      writeFileSync(configPath, '{}\n', 'utf-8')
+    }
+  }
+}
+
 export async function verifyProviderViaBridge(
   input: ProviderBridgeVerifyInput,
 ): Promise<ProviderBridgeVerifyResult> {
@@ -79,7 +101,7 @@ export async function verifyProviderViaBridge(
 
   const profile = getActiveProfileName()
   const configPath = getActiveConfigPath()
-  const backup = readFileSync(configPath, 'utf-8')
+  const { hadConfig, backup } = readConfigBackup(configPath)
   const tempName = `${TEMP_PREFIX}${Date.now()}`
   const sessionId = `provider-verify-${randomBytes(6).toString('hex')}`
   const client = new AgentBridgeClient({ timeoutMs: VERIFY_TIMEOUT_MS })
@@ -126,7 +148,7 @@ export async function verifyProviderViaBridge(
     return { ok: true, reply: reply.slice(0, 200) }
   } finally {
     try {
-      writeFileSync(configPath, backup, 'utf-8')
+      restoreConfigBackup(configPath, hadConfig, backup)
     } catch (err) {
       logger.error({ err: (err as Error).message }, '[provider-verify] failed to restore config.yaml')
     }
