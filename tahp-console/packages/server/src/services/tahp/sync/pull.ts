@@ -22,8 +22,8 @@ import {
   applyInlineFilesToLocal,
   applySkillZipToLocal,
   localRequirementsHash,
-  getLocalPackageHash,
   getLocalPackageHashPair,
+  invalidateLocalPackageHashCache,
   removeLocalSkill,
   localSkillDir,
 } from './skill-package'
@@ -50,6 +50,8 @@ export interface PullResult {
   skill_ids: string[]
   skipped_synced: string[]
   skipped_dirty: string[]
+  /** apply 失败（ZIP/解压/写入后 hash 仍不对齐等）；同步全部时不中断其它项 */
+  failed: Array<{ id: string; error: string }>
   /** tombstone 清理的本机 skill id */
   deleted: string[]
   reinjected: string[]
@@ -67,7 +69,7 @@ async function applyOneSkill(
   reqAfter: string | null
 }> {
   const id = skill.id
-  const pair = getLocalPackageHashPair(id)
+  const pair = getLocalPackageHashPair(id, true)
   const localHash = pair?.raw ?? null
   const centralHash = skill.hash || null
   const lastAppliedHash = getLastAppliedHash(id)
@@ -95,19 +97,27 @@ async function applyOneSkill(
     const buf = await centralClient.downloadSkillPackage(id, skill.package_url)
     applySkillZipToLocal(id, buf)
   } else if (typeof skill.content === 'string') {
-    // P1 兼容：仅 SKILL.md
+    // P1 兼容：仅 SKILL.md（有 files/package_url 时不得走这条）
     const target = join(tahpPaths.skillsDir, id, 'SKILL.md')
     await safeFileStore.writeText(target, skill.content)
+    invalidateLocalPackageHashCache(id)
   } else {
     throw new Error(`skill ${id} 无 files/package_url/content`)
   }
 
-  if (centralHash) {
-    const after = getLocalPackageHash(id)
-    recordLastAppliedHash(id, after || centralHash)
-  }
+  recordAppliedOrThrow(id, centralHash)
   const reqAfter = localRequirementsHash(id)
   return { id, action: 'apply', reqBefore, reqAfter }
+}
+
+/** 写入后强制比对整包 hash；对不齐则失败（仍记下 last_applied 以便状态保持待更新、可再点更新） */
+function recordAppliedOrThrow(id: string, centralHash: string | null): void {
+  const after = getLocalPackageHashPair(id, true)
+  if (after?.raw) recordLastAppliedHash(id, after.raw)
+  else if (centralHash) recordLastAppliedHash(id, centralHash)
+  if (!centralHash) return
+  if (after && (after.raw === centralHash || after.norm === centralHash)) return
+  throw new Error(`写入后仍未与服务器对齐（local=${after?.raw || 'none'} central=${centralHash}）`)
 }
 
 export async function applyPull(
@@ -145,6 +155,7 @@ export async function applyPull(
   const skillIds: string[] = []
   const skipped_synced: string[] = []
   const skipped_dirty: string[] = []
+  const failed: Array<{ id: string; error: string }> = []
   const deleted: string[] = []
   const requirements_changed: string[] = []
 
@@ -187,7 +198,18 @@ export async function applyPull(
         requirements_changed.push(r.id)
       }
     } catch (e) {
-      logger.warn({ id: skill.id, err: (e as Error).message }, '[sync] apply skill package failed')
+      const error = (e as Error).message
+      failed.push({ id: skill.id, error })
+      logger.warn({ id: skill.id, err: error }, '[sync] apply skill package failed')
+    }
+  }
+
+  if (only) {
+    for (const id of only) {
+      if (deleted.includes(id)) continue
+      if (skillIds.includes(id) || skipped_synced.includes(id) || skipped_dirty.includes(id)) continue
+      if (failed.some(f => f.id === id)) continue
+      failed.push({ id, error: '中心拉取结果中无该 Skill' })
     }
   }
 
@@ -216,6 +238,7 @@ export async function applyPull(
     skill_ids: skillIds,
     skipped_synced,
     skipped_dirty,
+    failed,
     deleted,
     reinjected: [],
     requirements_changed,

@@ -101,4 +101,38 @@ describe('skill package hash', () => {
     const files = listLocalSkillFiles('jira-ops')
     expect(files.map(f => f.rel_path)).toEqual(['SKILL.md'])
   })
+
+  it('hashes non-ASCII paths with en sort so Windows zh-CN matches Linux central', async () => {
+    const root = await tempDir('skill-pkg-locale-')
+    const skillDir = join(root, 'skills', '.claude', 'skills', 'locale-pack')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(join(skillDir, 'SKILL.md'), '# demo\n', 'utf-8')
+    await writeFile(join(skillDir, '分支平台对照关系.xlsx'), 'fake-xlsx', 'utf-8')
+
+    vi.doMock('../../packages/server/src/services/tahp/paths', () => ({
+      tahpPaths: {
+        projectRoot: root,
+        skillsDir: join(root, 'skills', '.claude', 'skills'),
+        knowledgeDir: join(root, 'knowledge-base'),
+      },
+    }))
+
+    const { listLocalSkillFiles, computePackageHash, compareSkillRelPath } = await import(
+      '../../packages/server/src/services/tahp/sync/skill-package'
+    )
+    const { shortHashBuffer } = await import('../../packages/server/src/services/tahp/sync/hash')
+    const files = listLocalSkillFiles('locale-pack')
+    const enOrder = [...files].sort((a, b) => a.rel_path.localeCompare(b.rel_path, 'en'))
+    const zhOrder = [...files].sort((a, b) => a.rel_path.localeCompare(b.rel_path, 'zh-CN'))
+    expect(files.map(f => f.rel_path)).toEqual(enOrder.map(f => f.rel_path))
+    expect(zhOrder.map(f => f.rel_path)).not.toEqual(enOrder.map(f => f.rel_path))
+    expect(compareSkillRelPath('SKILL.md', '分支平台对照关系.xlsx')).toBe(
+      'SKILL.md'.localeCompare('分支平台对照关系.xlsx', 'en'),
+    )
+    const payload = (list: typeof files) => list.map(f => `${f.rel_path}\0${f.hash}\n`).join('')
+    const enHash = shortHashBuffer(Buffer.from(payload(enOrder), 'utf-8'))
+    const zhHash = shortHashBuffer(Buffer.from(payload(zhOrder), 'utf-8'))
+    expect(computePackageHash([...files].reverse())).toBe(enHash)
+    expect(enHash).not.toBe(zhHash)
+  })
 })

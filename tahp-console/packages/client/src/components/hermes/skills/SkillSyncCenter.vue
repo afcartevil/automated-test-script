@@ -13,6 +13,7 @@ import {
   requestSkillDelete,
   type SkillSyncStatusItem,
   type SkillHistoryCommit,
+  type SkillSyncResult,
 } from '@/api/hermes/skills'
 import { useSkillSyncStore } from '@/stores/hermes/skill-sync'
 
@@ -29,6 +30,7 @@ const lastResult = ref<{
   reinjectError?: string
   requirementsChanged: string[]
   skippedDirty: string[]
+  failed: Array<{ id: string; error: string }>
 } | null>(null)
 /** 进行中的单条操作按 id 集合跟踪：仅当前行置灰，其它行可继续点 */
 const publishingIds = ref<Set<string>>(new Set())
@@ -202,15 +204,106 @@ function clearSelection() {
   selectedIds.value = new Set()
 }
 
-async function loadStatus(force = false) {
+async function loadStatus(force = false, opts?: { afterMutation?: boolean }): Promise<boolean> {
   try {
     await syncStore.load({ force })
     pruneSelection()
+    return true
   } catch (err: any) {
-    if (!status.value) {
+    if (opts?.afterMutation) {
+      message.warning(t('skills.sync.refreshAfterMutationFailed'))
+    } else {
       message.error(err?.message || t('skills.sync.loadFailed'))
     }
+    return false
   }
+}
+
+function pullOutcome(res: SkillSyncResult) {
+  return {
+    skills: res.pull?.skills ?? 0,
+    reinjected: res.reinjected?.length ?? 0,
+    reinjectError: res.reinject_error || res.pull?.reinject_error,
+    requirementsChanged: res.requirements_changed || res.pull?.requirements_changed || [],
+    skippedDirty: res.pull?.skipped_dirty || [],
+    failed: res.pull?.failed || [],
+  }
+}
+
+function toastSyncBatch(stats: {
+  skills: number
+  skippedDirty: string[]
+  failed: Array<{ id: string; error: string }>
+  requirementsChanged: string[]
+  reinjectError?: string
+  bundleId?: string
+}) {
+  if (stats.requirementsChanged.length) {
+    message.warning(t('skills.sync.requirementsHint', {
+      ids: stats.requirementsChanged.join(', '),
+    }))
+    return
+  }
+  if (stats.reinjectError) {
+    message.warning(t('skills.sync.reinjectWarn'))
+    return
+  }
+  if (stats.failed.length) {
+    message.warning(t('skills.sync.syncSuccessPartial', {
+      n: stats.skills,
+      skip: stats.skippedDirty.length,
+      fail: stats.failed.length,
+    }))
+    return
+  }
+  if (stats.skippedDirty.length) {
+    const ids = stats.skippedDirty.slice(0, 8).join(', ')
+    message.warning(t('skills.sync.syncSuccessWithSkip', {
+      n: stats.skills,
+      skip: stats.skippedDirty.length,
+    }))
+    message.info(t('skills.sync.skipDirtyHint', { ids }))
+    return
+  }
+  if (stats.bundleId) {
+    message.success(t('skills.sync.syncBundleSuccess', { id: stats.bundleId, n: stats.skills }))
+    return
+  }
+  message.success(t('skills.sync.syncSuccess'))
+}
+
+function rowState(skillId: string): string | undefined {
+  return status.value?.skills.find(s => s.id === skillId)?.state
+}
+
+function toastSinglePull(
+  skillId: string,
+  res: SkillSyncResult,
+  kind: 'update' | 'overwrite',
+) {
+  const stats = pullOutcome(res)
+  const failed = stats.failed.find(f => f.id === skillId)
+  if (stats.skippedDirty.includes(skillId)) {
+    message.warning(t('skills.sync.forceOverwriteFailed'))
+    return
+  }
+  if (failed) {
+    if (failed.error.includes('写入后仍未与服务器对齐')) {
+      message.error(t('skills.sync.updateStillBehind', { id: skillId }))
+    } else {
+      message.error(failed.error || t(kind === 'update' ? 'skills.sync.updateFailed' : 'skills.sync.forceOverwriteFailed'))
+    }
+    return
+  }
+  if (rowState(skillId) === 'behind') {
+    message.error(t('skills.sync.updateStillBehind', { id: skillId }))
+    return
+  }
+  message.success(
+    kind === 'update'
+      ? t('skills.sync.updateSuccess', { id: skillId })
+      : t('skills.sync.syncSuccess'),
+  )
 }
 
 async function onSyncAll() {
@@ -219,30 +312,18 @@ async function onSyncAll() {
   lastResult.value = null
   try {
     const res = await triggerSync()
+    const stats = pullOutcome(res)
     lastResult.value = {
-      skills: res.pull?.skills ?? 0,
-      reinjected: res.reinjected?.length ?? 0,
-      reinjectError: res.reinject_error || res.pull?.reinject_error,
-      requirementsChanged: res.requirements_changed || res.pull?.requirements_changed || [],
-      skippedDirty: res.pull?.skipped_dirty || [],
+      skills: stats.skills,
+      reinjected: stats.reinjected,
+      reinjectError: stats.reinjectError,
+      requirementsChanged: stats.requirementsChanged,
+      skippedDirty: stats.skippedDirty,
+      failed: stats.failed,
     }
-    if (lastResult.value.requirementsChanged.length) {
-      message.warning(t('skills.sync.requirementsHint', {
-        ids: lastResult.value.requirementsChanged.join(', '),
-      }))
-    } else if (lastResult.value.reinjectError) {
-      message.warning(t('skills.sync.reinjectWarn'))
-    } else if (lastResult.value.skippedDirty.length) {
-      const ids = lastResult.value.skippedDirty.slice(0, 8).join(', ')
-      message.warning(t('skills.sync.syncSuccessWithSkip', {
-        n: lastResult.value.skills,
-        skip: lastResult.value.skippedDirty.length,
-      }))
-      message.info(t('skills.sync.skipDirtyHint', { ids }))
-    } else {
-      message.success(t('skills.sync.syncSuccess'))
-    }
-    await loadStatus(true)
+    const refreshed = await loadStatus(true, { afterMutation: true })
+    if (!refreshed) return
+    toastSyncBatch(stats)
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.syncFailed'))
   } finally {
@@ -264,22 +345,18 @@ async function onSyncBundle() {
   lastResult.value = null
   try {
     const res = await triggerSync(undefined, { bundle_id: bid })
+    const stats = pullOutcome(res)
     lastResult.value = {
-      skills: res.pull?.skills ?? 0,
-      reinjected: res.reinjected?.length ?? 0,
-      reinjectError: res.reinject_error || res.pull?.reinject_error,
-      requirementsChanged: res.requirements_changed || res.pull?.requirements_changed || [],
-      skippedDirty: res.pull?.skipped_dirty || [],
+      skills: stats.skills,
+      reinjected: stats.reinjected,
+      reinjectError: stats.reinjectError,
+      requirementsChanged: stats.requirementsChanged,
+      skippedDirty: stats.skippedDirty,
+      failed: stats.failed,
     }
-    if (lastResult.value.skippedDirty.length) {
-      message.warning(t('skills.sync.syncSuccessWithSkip', {
-        n: lastResult.value.skills,
-        skip: lastResult.value.skippedDirty.length,
-      }))
-    } else {
-      message.success(t('skills.sync.syncBundleSuccess', { id: bid, n: lastResult.value.skills }))
-    }
-    await loadStatus(true)
+    const refreshed = await loadStatus(true, { afterMutation: true })
+    if (!refreshed) return
+    toastSyncBatch({ ...stats, bundleId: bid })
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.syncFailed'))
   } finally {
@@ -293,13 +370,9 @@ async function onForceOverwrite(skillId: string) {
   if (!busyAdd(overwritingIds, skillId)) return
   try {
     const res = await triggerSync([skillId], { force: true })
-    const skipped = res.pull?.skipped_dirty?.length ?? 0
-    if (skipped) {
-      message.warning(t('skills.sync.forceOverwriteFailed'))
-    } else {
-      message.success(t('skills.sync.syncSuccess'))
-    }
-    await loadStatus(true)
+    const refreshed = await loadStatus(true, { afterMutation: true })
+    if (!refreshed) return
+    toastSinglePull(skillId, res, 'overwrite')
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.forceOverwriteFailed'))
   } finally {
@@ -312,13 +385,9 @@ async function onUpdate(skillId: string) {
   if (!busyAdd(updatingIds, skillId)) return
   try {
     const res = await triggerSync([skillId])
-    const skipped = res.pull?.skipped_dirty?.length ?? 0
-    if (skipped) {
-      message.warning(t('skills.sync.forceOverwriteFailed'))
-    } else {
-      message.success(t('skills.sync.updateSuccess', { id: skillId }))
-    }
-    await loadStatus(true)
+    const refreshed = await loadStatus(true, { afterMutation: true })
+    if (!refreshed) return
+    toastSinglePull(skillId, res, 'update')
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.updateFailed'))
   } finally {
@@ -333,7 +402,7 @@ async function onDeleteLocal(skillId: string) {
   try {
     await deleteLocalSkill(skillId)
     message.success(t('skills.sync.deleteLocalSuccess', { id: skillId }))
-    await loadStatus(true)
+    await loadStatus(true, { afterMutation: true })
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.deleteLocalFailed'))
   } finally {
@@ -351,7 +420,7 @@ async function onRequestDelete(skillId: string) {
       id: skillId,
       submit: res.submit_id || '-',
     }))
-    await loadStatus(true)
+    await loadStatus(true, { afterMutation: true })
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.requestDeleteFailed'))
   } finally {
@@ -386,7 +455,7 @@ async function onPublish(skillId: string) {
       n: res.file_count,
       submit: res.submit_id || '-',
     }))
-    await loadStatus(true)
+    await loadStatus(true, { afterMutation: true })
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.publishFailed'))
   } finally {
@@ -421,7 +490,7 @@ async function onPublishBatch() {
       message.success(t('skills.sync.publishBatchSuccess', { n: res.ok_count }))
     }
     clearSelection()
-    await loadStatus(true)
+    await loadStatus(true, { afterMutation: true })
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.publishBatchFailed'))
   } finally {

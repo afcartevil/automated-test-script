@@ -352,6 +352,7 @@ export interface SkillSyncResult {
     skill_ids: string[]
     skipped_synced?: string[]
     skipped_dirty?: string[]
+    failed?: Array<{ id: string; error: string }>
     reinjected: string[]
     reinject_error?: string
     requirements_changed?: string[]

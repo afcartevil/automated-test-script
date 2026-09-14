@@ -39,6 +39,11 @@ function toPosix(p: string): string {
   return p.split(sep).join('/')
 }
 
+/** 整包 hash 路径排序固定 en，避免 Windows zh-CN 与 Linux 中心结果不一致 */
+export function compareSkillRelPath(a: string, b: string): number {
+  return a.localeCompare(b, 'en')
+}
+
 export function localSkillDir(id: string): string {
   return join(tahpPaths.skillsDir, id)
 }
@@ -92,12 +97,13 @@ function listLocalSkillHashRows(id: string): SkillHashRow[] {
     }
   }
   walk(root)
-  out.sort((a, b) => a.rel_path.localeCompare(b.rel_path))
+  out.sort((a, b) => compareSkillRelPath(a.rel_path, b.rel_path))
   return out
 }
 
 export function computePackageHash(files: SkillFileMeta[]): string {
-  const payload = files.map(f => `${f.rel_path}\0${f.hash}\n`).join('')
+  const ordered = [...files].sort((a, b) => compareSkillRelPath(a.rel_path, b.rel_path))
+  const payload = ordered.map(f => `${f.rel_path}\0${f.hash}\n`).join('')
   return shortHashBuffer(Buffer.from(payload, 'utf-8'))
 }
 
@@ -112,7 +118,7 @@ type PkgHashCacheFile = {
   entries: Record<string, PkgHashCacheEntry>
 }
 
-const PKG_HASH_CACHE_VERSION = 3
+const PKG_HASH_CACHE_VERSION = 4
 
 const memPkgHash = new Map<string, PkgHashCacheEntry>()
 let diskCacheLoaded = false
