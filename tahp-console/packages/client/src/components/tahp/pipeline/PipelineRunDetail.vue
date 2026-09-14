@@ -3,11 +3,11 @@ import { computed, ref, watch } from 'vue'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPill from '@/components/layout/EaPill.vue'
 import EaStageStepper from '@/components/common/EaStageStepper.vue'
-import PipelineNodeList from './PipelineNodeList.vue'
 import PipelineNodePanel from './PipelineNodePanel.vue'
 import PipelineHumanPanel from './PipelineHumanPanel.vue'
 import PipelineIterationBar from './PipelineIterationBar.vue'
 import PipelineAppendStagesDrawer from './PipelineAppendStagesDrawer.vue'
+import PipelineAllLogsDrawer from './PipelineAllLogsDrawer.vue'
 import {
   formatDurationMs,
   runStatusLabel,
@@ -27,10 +27,20 @@ const props = defineProps<{
 const emit = defineEmits<{
   selectNode: [nodeKey: string]
   openHuman: []
-  discarded: [nextRunId: string | null]
 }>()
 
 const appendOpen = ref(false)
+const allLogsOpen = ref(false)
+const humanColRef = ref<HTMLElement | null>(null)
+
+const pendingHumanCount = computed(() => {
+  if (props.timeline.pending_human_count > 0) return props.timeline.pending_human_count
+  return props.timeline.nodes.filter(node => node.status === 'waiting_human' && Boolean(node.human)).length
+})
+
+const hasPendingHuman = computed(() => pendingHumanCount.value > 0)
+
+const showHumanColumn = computed(() => !props.humanDrawer && hasPendingHuman.value)
 
 const selectedNode = computed(() =>
   props.timeline.nodes.find(n => n.key === props.selectedNodeKey) ?? props.timeline.nodes[0] ?? null,
@@ -40,10 +50,6 @@ const selectedNodeLogs = computed(() => {
   if (!selectedNode.value) return []
   return props.store.getNodeLogs(props.timeline.run_id, selectedNode.value.key)
 })
-
-const canDelete = computed(() =>
-  props.timeline.status !== 'running' && props.timeline.status !== 'waiting_human',
-)
 
 const canAbort = computed(() =>
   !['draft', 'passed', 'failed', 'aborted'].includes(props.timeline.status),
@@ -97,12 +103,6 @@ async function handleFailCurrentStage() {
   await props.store.failCurrentStage(props.timeline.run_id)
 }
 
-async function handleDiscardDraft() {
-  if (!window.confirm('确认删除该运行记录？将从列表移除，日志一并删除，不可恢复。')) return
-  const next = await props.store.discardDraftRun(props.timeline.run_id)
-  emit('discarded', next)
-}
-
 async function openAppendDrawer() {
   await props.store.loadAppendCandidates(props.timeline.run_id)
   if (!props.store.appendCandidates?.eligible) {
@@ -110,6 +110,14 @@ async function openAppendDrawer() {
     return
   }
   appendOpen.value = true
+}
+
+function handleHumanClick() {
+  if (props.humanDrawer) {
+    emit('openHuman')
+    return
+  }
+  humanColRef.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 }
 
 async function handleAppendConfirm(payload: {
@@ -131,6 +139,7 @@ watch(
   () => [props.timeline.run_id, props.timeline.status] as const,
   ([runId, status]) => {
     appendOpen.value = false
+    allLogsOpen.value = false
     if (status === 'passed') void props.store.loadAppendCandidates(runId)
   },
   { immediate: true },
@@ -151,44 +160,42 @@ watch(
             · 已运行 {{ formatDurationMs(timeline.duration_ms) }}
           </p>
         </div>
-        <EaPill :variant="statusVariant(timeline.status)">{{ runStatusLabel(timeline.status) }}</EaPill>
-      </div>
-      <div class="head-actions">
-        <button
-          v-if="canDelete"
-          type="button"
-          class="btn-danger"
-          :disabled="store.runActionBusy"
-          @click="handleDiscardDraft"
-        >
-          删除
-        </button>
-        <button
-          v-if="canFailCurrentStage"
-          type="button"
-          class="btn-warn"
-          :disabled="store.runActionBusy"
-          @click="handleFailCurrentStage"
-        >
-          停止本步并转人工
-        </button>
-        <button
-          v-if="canAbort"
-          type="button"
-          class="btn-danger"
-          :disabled="store.runActionBusy"
-          @click="handleAbort"
-        >
-          终止
-        </button>
-        <button
-          v-if="humanDrawer && timeline.pending_human_count > 0"
-          type="button"
-          class="btn-warn"
-          @click="emit('openHuman')"
-        >
-          ⚠ 人工介入 ({{ timeline.pending_human_count }})
-        </button>
+        <div class="head-actions">
+          <EaPill :variant="statusVariant(timeline.status)">{{ runStatusLabel(timeline.status) }}</EaPill>
+          <button
+            type="button"
+            class="btn-soft"
+            @click="allLogsOpen = true"
+          >
+            查看全部日志
+          </button>
+          <button
+            v-if="canFailCurrentStage"
+            type="button"
+            class="btn-warn"
+            :disabled="store.runActionBusy"
+            @click="handleFailCurrentStage"
+          >
+            停止本步并转人工
+          </button>
+          <button
+            v-if="canAbort"
+            type="button"
+            class="btn-danger"
+            :disabled="store.runActionBusy"
+            @click="handleAbort"
+          >
+            终止
+          </button>
+          <button
+            v-if="hasPendingHuman"
+            type="button"
+            class="btn-warn btn-human"
+            @click="handleHumanClick"
+          >
+            ⚠ 人工介入 ({{ pendingHumanCount }})
+          </button>
+        </div>
       </div>
     </EaCard>
 
@@ -203,16 +210,7 @@ watch(
       />
     </EaCard>
 
-    <div class="cols" :class="{ drawer: humanDrawer }">
-      <EaCard class="col-card">
-        <h3>节点</h3>
-        <PipelineNodeList
-          :nodes="timeline.nodes"
-          :selected-key="selectedNode?.key ?? null"
-          @select="emit('selectNode', $event)"
-        />
-      </EaCard>
-
+    <div class="cols" :class="{ drawer: humanDrawer, 'has-human': showHumanColumn }">
       <EaCard class="col-card">
         <PipelineNodePanel
           :node="selectedNode"
@@ -221,13 +219,15 @@ watch(
         />
       </EaCard>
 
-      <EaCard v-if="!humanDrawer" class="col-card human-col">
-        <PipelineHumanPanel
-          :run-id="timeline.run_id"
-          :nodes="timeline.nodes"
-          :store="store"
-        />
-      </EaCard>
+      <div v-if="showHumanColumn" ref="humanColRef" class="human-col-wrap">
+        <EaCard class="col-card human-col">
+          <PipelineHumanPanel
+            :run-id="timeline.run_id"
+            :nodes="timeline.nodes"
+            :store="store"
+          />
+        </EaCard>
+      </div>
     </div>
 
     <PipelineIterationBar
@@ -243,6 +243,13 @@ watch(
       :current-device-id="timeline.device_id"
       @close="appendOpen = false"
       @confirm="handleAppendConfirm"
+    />
+
+    <PipelineAllLogsDrawer
+      :open="allLogsOpen"
+      :timeline="timeline"
+      :store="store"
+      @close="allLogsOpen = false"
     />
   </div>
 </template>
@@ -263,7 +270,8 @@ watch(
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
 }
 .head-row h2 {
   margin: 0;
@@ -284,8 +292,9 @@ watch(
 .head-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-  margin-top: 12px;
 }
 .btn-soft, .btn-danger, .btn-warn {
   padding: 7px 12px;
@@ -309,11 +318,15 @@ watch(
 }
 .cols {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) minmax(260px, 320px);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   flex: 1;
   min-height: 0;
   align-items: stretch;
+
+  &.has-human {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
+  }
 }
 .col-card {
   padding: 12px;
@@ -323,24 +336,20 @@ watch(
   display: flex;
   flex-direction: column;
 }
+.human-col-wrap,
 .human-col {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
   overflow: auto;
 }
-.col-card h3 {
-  margin: 0 0 10px;
-  font-size: 12px;
-  color: var(--faint);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
 @media (max-width: 1400px) {
+  .cols,
+  .cols.has-human,
   .cols.drawer {
-    grid-template-columns: 200px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
-  .cols:not(.drawer) {
-    grid-template-columns: 200px minmax(0, 1fr);
-  }
-  .human-col {
+  .human-col-wrap {
     grid-column: 1 / -1;
   }
 }

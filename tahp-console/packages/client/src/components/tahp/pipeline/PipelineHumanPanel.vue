@@ -112,8 +112,8 @@ const currentDeviceId = computed(() => props.store.selectedTimeline?.device_id ?
 <template>
   <div class="human-panel">
     <h3>人工介入</h3>
-    <div v-if="waitingNodes.length === 0" class="empty">当前无需人工介入</div>
-    <div v-for="node in waitingNodes" :key="node.key" class="card">
+    <p v-if="waitingNodes.length === 0" class="empty">当前无需人工介入</p>
+    <div v-for="node in waitingNodes" :key="node.key" class="task">
       <strong>⚠ {{ node.label }}</strong>
       <p>{{ node.human?.message }}</p>
 
@@ -175,16 +175,16 @@ const currentDeviceId = computed(() => props.store.selectedTimeline?.device_id ?
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.card {
+.task {
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent);
   background: var(--warn-soft);
-  padding: 10px;
+  padding: 12px;
   margin-bottom: 10px;
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.card p {
+.task p {
   margin: 6px 0 10px;
   color: var(--warn);
   line-height: 1.45;
@@ -246,7 +246,7 @@ const currentDeviceId = computed(() => props.store.selectedTimeline?.device_id ?
   .meta { font-size: 12px; color: var(--muted); }
 }
 .hint { font-size: 12px; color: var(--muted); margin: 0; }
-.empty { color: var(--faint); }
+.empty { color: var(--faint); margin: 0; font-size: 13px; }
 .btn-soft, .btn-danger {
   border: 1px solid var(--line);
   border-radius: 8px;

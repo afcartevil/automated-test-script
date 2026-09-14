@@ -14,6 +14,8 @@ import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 import { fetchPipelineRun } from '@/api/tahp/adapt-pipeline'
 import { buildWizardCloneSeed, isCloneableRunId, type WizardCloneSeed } from '@/utils/pipeline-clone'
 
+const LIST_COLLAPSED_KEY = 'ea_pipeline_runlist_collapsed'
+
 const route = useRoute()
 const router = useRouter()
 const message = useMessage()
@@ -22,9 +24,18 @@ const store = useAdaptPipelineStore()
 const activeTab = ref('board')
 const humanDrawerOpen = ref(false)
 const narrow = ref(false)
+const isMobile = ref(false)
+const listCollapsed = ref(localStorage.getItem(LIST_COLLAPSED_KEY) === '1')
 const cloneSeed = ref<WizardCloneSeed | null>(null)
 const wizardEpoch = ref(0)
 const cloneBusy = ref(false)
+
+const listRailCollapsed = computed(() => listCollapsed.value && !isMobile.value)
+
+function toggleListCollapsed() {
+  listCollapsed.value = !listCollapsed.value
+  localStorage.setItem(LIST_COLLAPSED_KEY, listCollapsed.value ? '1' : '0')
+}
 
 const pageTabs = [
   { key: 'board', label: '运行看板' },
@@ -89,23 +100,19 @@ async function handleDiscardDraft(runId: string) {
   message.success('草稿已删除')
 }
 
-function handleDiscarded(nextRunId: string | null) {
-  syncRouteRun(nextRunId)
-  message.success('草稿已删除')
-}
-
 function handleCreated(runId: string) {
   activeTab.value = 'board'
   syncRouteRun(runId)
 }
 
-function updateNarrow() {
+function updateLayout() {
   narrow.value = window.innerWidth < 1400
+  isMobile.value = window.innerWidth < 960
 }
 
 onMounted(async () => {
-  updateNarrow()
-  window.addEventListener('resize', updateNarrow)
+  updateLayout()
+  window.addEventListener('resize', updateLayout)
   await store.start()
   const runFromRoute = typeof route.query.run === 'string' ? route.query.run : null
   if (runFromRoute) {
@@ -116,7 +123,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  window.removeEventListener('resize', updateNarrow)
+  window.removeEventListener('resize', updateLayout)
   store.stop()
 })
 
@@ -158,16 +165,18 @@ watch(() => store.error, (err) => {
       Agent Bridge 未就绪，适配阶段将失败。请确认本机 Console 服务已启动且日志中有 <code>[agent-bridge] ready</code>。
     </NAlert>
 
-    <div v-if="activeTab === 'board'" class="board">
+    <div v-if="activeTab === 'board'" class="board" :class="{ 'list-collapsed': listRailCollapsed }">
       <PipelineRunList
         :items="store.runItems"
         :selected-id="store.selectedRunId"
         :loading="store.listLoading"
         :busy="store.runActionBusy || cloneBusy"
+        :collapsed="listRailCollapsed"
         @select="handleSelectRun"
         @create="handleCreateClick"
         @discard="handleDiscardDraft"
         @clone="handleCloneRun"
+        @toggle="toggleListCollapsed"
       />
 
       <div class="board-main">
@@ -192,7 +201,6 @@ watch(() => store.error, (err) => {
             :human-drawer="narrow"
             @select-node="handleSelectNode"
             @open-human="humanDrawerOpen = true"
-            @discarded="handleDiscarded"
           />
 
           <NAlert
@@ -276,6 +284,10 @@ watch(() => store.error, (err) => {
   gap: 14px;
   align-items: stretch;
   min-height: calc(100dvh - 160px);
+
+  &.list-collapsed {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
 }
 
 .board-main {
@@ -340,7 +352,8 @@ watch(() => store.error, (err) => {
 }
 
 @media (max-width: 960px) {
-  .board {
+  .board,
+  .board.list-collapsed {
     grid-template-columns: 1fr;
     min-height: 0;
   }

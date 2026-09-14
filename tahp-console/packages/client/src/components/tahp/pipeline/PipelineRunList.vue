@@ -3,22 +3,26 @@ import { computed } from 'vue'
 import type { RunSummary } from '@/api/tahp/adapt-pipeline'
 import EaPill from '@/components/layout/EaPill.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   items: RunSummary[]
   selectedId: string | null
   loading?: boolean
   busy?: boolean
-}>()
+  collapsed?: boolean
+}>(), {
+  collapsed: false,
+})
 
 const emit = defineEmits<{
   select: [runId: string]
   create: []
   discard: [runId: string]
   clone: [runId: string]
+  toggle: []
 }>()
 
-const sortedItems = computed(() =>
-  [...props.items].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+const selectedItem = computed(() =>
+  props.items.find(item => item.run_id === props.selectedId) ?? null,
 )
 
 function statusVariant(status: RunSummary['status']): 'ok' | 'info' | 'warn' | 'err' | 'muted' {
@@ -67,59 +71,98 @@ function onClone(ev: Event, runId: string) {
   ev.stopPropagation()
   emit('clone', runId)
 }
+
+function itemTitle(item: RunSummary): string {
+  return `${item.project_code} · ${statusLabel(item.status)} · 第 ${item.iteration} 轮`
+}
 </script>
 
 <template>
-  <aside class="pipeline-run-list card">
-    <h3>运行列表</h3>
+  <aside class="pipeline-run-list card" :class="{ collapsed }">
+    <div class="list-head">
+      <h3 v-if="!collapsed">运行列表</h3>
+      <button
+        type="button"
+        class="collapse-btn"
+        :title="collapsed ? '展开运行列表' : '折叠运行列表'"
+        :aria-expanded="!collapsed"
+        @click="emit('toggle')"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          :class="{ 'is-flipped': collapsed }"
+        >
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+      </button>
+    </div>
 
     <div class="list-scroll">
-      <div v-if="loading && !items.length" class="list-empty">加载中…</div>
-      <div v-else-if="!items.length" class="list-empty">还没有运行记录</div>
+      <div v-if="loading && !items.length" class="list-empty">{{ collapsed ? '…' : '加载中…' }}</div>
+      <div v-else-if="!items.length" class="list-empty">{{ collapsed ? '空' : '还没有运行记录' }}</div>
 
       <div
-        v-for="item in sortedItems"
+        v-for="item in items"
         :key="item.run_id"
         class="run-item"
-        :class="{ selected: selectedId === item.run_id }"
+        :class="{ selected: selectedId === item.run_id, rail: collapsed }"
         role="button"
         tabindex="0"
+        :title="itemTitle(item)"
+        :aria-current="selectedId === item.run_id ? 'true' : undefined"
         @click="emit('select', item.run_id)"
         @keydown.enter="emit('select', item.run_id)"
       >
-        <div class="run-main">
-          <strong>{{ item.project_code }}</strong>
-          <span class="run-meta">第 {{ item.iteration }} 轮 · {{ fmtRelTime(item.updated_at) }}</span>
-        </div>
-        <div class="run-side">
-          <EaPill :variant="statusVariant(item.status)">{{ statusLabel(item.status) }}</EaPill>
-          <div class="run-actions">
-            <button
-              type="button"
-              class="btn-clone"
-              title="复制配置到新建运行"
-              :disabled="busy"
-              @click="onClone($event, item.run_id)"
-            >
-              复制
-            </button>
-            <button
-              v-if="canDelete(item.status)"
-              type="button"
-              class="btn-discard"
-              title="删除运行记录"
-              :disabled="busy"
-              @click="onDiscard($event, item.run_id)"
-            >
-              删除
-            </button>
+        <span class="status-dot" :data-status="item.status" aria-hidden="true" />
+        <template v-if="!collapsed">
+          <div class="run-main">
+            <strong>{{ item.project_code }}</strong>
+            <span class="run-meta">第 {{ item.iteration }} 轮 · {{ fmtRelTime(item.updated_at) }}</span>
           </div>
-        </div>
+          <div class="run-side">
+            <EaPill :variant="statusVariant(item.status)">{{ statusLabel(item.status) }}</EaPill>
+            <div class="run-actions">
+              <button
+                type="button"
+                class="btn-clone"
+                title="复制配置到新建运行"
+                :disabled="busy"
+                @click="onClone($event, item.run_id)"
+              >
+                复制
+              </button>
+              <button
+                v-if="canDelete(item.status)"
+                type="button"
+                class="btn-discard"
+                title="删除运行记录"
+                :disabled="busy"
+                @click="onDiscard($event, item.run_id)"
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
 
-    <button type="button" class="btn-new" @click="emit('create')">
-      + 新建运行
+    <p v-if="collapsed && selectedItem" class="selected-hint" :title="itemTitle(selectedItem)">
+      {{ selectedItem.project_code }}
+    </p>
+
+    <button
+      type="button"
+      class="btn-new"
+      :title="collapsed ? '新建运行' : undefined"
+      @click="emit('create')"
+    >
+      {{ collapsed ? '+' : '+ 新建运行' }}
     </button>
   </aside>
 </template>
@@ -133,6 +176,11 @@ function onClone(ev: Event, runId: string) {
   min-height: 0;
   height: 100%;
   overflow: hidden;
+
+  &.collapsed {
+    padding: 10px 8px;
+    align-items: center;
+  }
 }
 
 .card {
@@ -142,14 +190,52 @@ function onClone(ev: Event, runId: string) {
   box-shadow: var(--shadow);
 }
 
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  width: 100%;
+
+  .collapsed & {
+    justify-content: center;
+  }
+}
+
 h3 {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 12px;
   font-weight: 800;
   color: var(--faint);
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.collapse-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
   flex-shrink: 0;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  svg {
+    transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  svg.is-flipped {
+    transform: rotate(180deg);
+  }
 }
 
 .list-scroll {
@@ -160,6 +246,13 @@ h3 {
   flex-direction: column;
   gap: 8px;
   padding-right: 2px;
+  width: 100%;
+
+  .collapsed & {
+    align-items: center;
+    gap: 6px;
+    padding-right: 0;
+  }
 }
 
 .list-empty {
@@ -167,6 +260,11 @@ h3 {
   text-align: center;
   color: var(--muted);
   font-size: 13px;
+
+  .collapsed & {
+    padding: 8px 0;
+    font-size: 11px;
+  }
 }
 
 .run-item {
@@ -188,6 +286,46 @@ h3 {
   &.selected {
     background: var(--accent-soft);
     border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+
+  &.rail {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 12px;
+  }
+}
+
+.status-dot {
+  display: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--faint);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--faint) 25%, transparent);
+
+  &[data-status='passed'] {
+    background: var(--ok, #2f9e6b);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok, #2f9e6b) 28%, transparent);
+  }
+  &[data-status='running'] {
+    background: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  &[data-status='waiting_human'] {
+    background: var(--warn);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 28%, transparent);
+  }
+  &[data-status='failed'],
+  &[data-status='aborted'] {
+    background: var(--err, #c0392b);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--err, #c0392b) 28%, transparent);
+  }
+
+  .rail & {
+    display: block;
   }
 }
 
@@ -247,6 +385,18 @@ h3 {
   color: var(--err, #c0392b);
 }
 
+.selected-hint {
+  margin: 0;
+  max-width: 100%;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .btn-new {
   margin-top: auto;
   flex-shrink: 0;
@@ -258,6 +408,16 @@ h3 {
   font-weight: 700;
   cursor: pointer;
   font-family: inherit;
+  width: 100%;
+
+  .collapsed & {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 12px;
+    font-size: 18px;
+    line-height: 1;
+  }
 
   &:hover {
     border-color: var(--accent);

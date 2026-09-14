@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 const props = withDefaults(defineProps<{
   lines: string[]
@@ -15,6 +15,8 @@ const overscan = 12
 const scrollTop = ref(0)
 const query = ref('')
 const level = ref<LogLevel>('all')
+const viewportEl = ref<HTMLElement | null>(null)
+const viewportPx = ref(props.height)
 
 function detectLevel(line: string): LogLevel {
   const lower = line.toLowerCase()
@@ -34,7 +36,7 @@ const filteredLines = computed(() => {
 })
 
 const viewportCount = computed(() =>
-  Math.max(1, Math.ceil(props.height / rowHeight)),
+  Math.max(1, Math.ceil(viewportPx.value / rowHeight)),
 )
 
 const startIndex = computed(() =>
@@ -49,10 +51,31 @@ const visibleLines = computed(() => filteredLines.value.slice(startIndex.value, 
 const padTop = computed(() => startIndex.value * rowHeight)
 const padBottom = computed(() => Math.max(0, (filteredLines.value.length - endIndex.value) * rowHeight))
 
+function syncViewportHeight() {
+  const measured = viewportEl.value?.clientHeight
+  viewportPx.value = measured && measured > 0 ? measured : props.height
+}
+
 function onScroll(ev: Event) {
   const target = ev.target as HTMLElement
   scrollTop.value = target.scrollTop
 }
+
+let resizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  syncViewportHeight()
+  if (typeof ResizeObserver === 'undefined' || !viewportEl.value) return
+  resizeObserver = new ResizeObserver(() => syncViewportHeight())
+  resizeObserver.observe(viewportEl.value)
+})
+
+onUnmounted(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
+})
+
+watch(() => props.height, () => syncViewportHeight())
 </script>
 
 <template>
@@ -67,7 +90,12 @@ function onScroll(ev: Event) {
       </select>
       <span class="count">{{ filteredLines.length }} / {{ lines.length }} 行</span>
     </div>
-    <div class="ea-log-viewer" :style="{ height: `${height}px` }" @scroll="onScroll">
+    <div
+      ref="viewportEl"
+      class="ea-log-viewer"
+      :style="{ height: `var(--ea-log-height, ${height}px)` }"
+      @scroll="onScroll"
+    >
       <div class="pad" :style="{ height: `${padTop}px` }" />
       <pre
         v-for="(line, idx) in visibleLines"
@@ -86,6 +114,7 @@ function onScroll(ev: Event) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
 }
 .toolbar {
   display: flex;

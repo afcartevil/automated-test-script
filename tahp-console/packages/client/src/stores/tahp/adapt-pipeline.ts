@@ -58,6 +58,21 @@ function trimLogLines(lines: string[]): string[] {
   return lines.slice(lines.length - LOG_BUFFER)
 }
 
+/** Keep the current session order; prepend runs the server just added. */
+export function mergePipelineRunItems(current: RunSummary[], incoming: RunSummary[]): RunSummary[] {
+  const byId = new Map(incoming.map(item => [item.run_id, item]))
+  const seen = new Set<string>()
+  const kept: RunSummary[] = []
+  for (const item of current) {
+    const next = byId.get(item.run_id)
+    if (!next) continue
+    kept.push(next)
+    seen.add(item.run_id)
+  }
+  const newcomers = incoming.filter(item => !seen.has(item.run_id))
+  return [...newcomers, ...kept]
+}
+
 export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
   const runItems = ref<RunSummary[]>([])
   const runTotal = ref(0)
@@ -68,6 +83,7 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
   const error = ref<string | null>(null)
   const socketConnected = ref(false)
   const nodeLogs = ref<Record<string, string[]>>({})
+  const nodeLogErrors = ref<Record<string, string>>({})
   const resumePoints = ref<ResumePointsResponse | null>(null)
   const appendCandidates = ref<AppendCandidatesResponse | null>(null)
   const actionBusy = ref(false)
@@ -108,7 +124,7 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
     error.value = null
     try {
       const data = await fetchPipelineRuns({ limit: 50 })
-      runItems.value = data.items
+      runItems.value = mergePipelineRunItems(runItems.value, data.items)
       runTotal.value = data.total
     } catch (err) {
       error.value = (err as Error).message
@@ -130,7 +146,6 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
           status: tl.status,
           iteration: tl.iteration,
           current_node: tl.current_node,
-          updated_at: new Date().toISOString(),
         }
         runItems.value = next
       }
@@ -144,12 +159,29 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
   async function loadNodeLogs(runId: string, nodeKey: string, tail = 500) {
     const key = logKey(runId, nodeKey)
     if (runId === '__mock_preview__') return
-    const data = await fetchPipelineLogs(runId, nodeKey, tail)
-    nodeLogs.value = { ...nodeLogs.value, [key]: trimLogLines(data.lines ?? []) }
+    try {
+      const data = await fetchPipelineLogs(runId, nodeKey, tail)
+      nodeLogs.value = { ...nodeLogs.value, [key]: trimLogLines(data.lines ?? []) }
+      if (nodeLogErrors.value[key]) {
+        const nextErrors = { ...nodeLogErrors.value }
+        delete nextErrors[key]
+        nodeLogErrors.value = nextErrors
+      }
+    } catch (err) {
+      nodeLogErrors.value = { ...nodeLogErrors.value, [key]: (err as Error).message || '日志加载失败' }
+    }
   }
 
   function getNodeLogs(runId: string, nodeKey: string): string[] {
     return nodeLogs.value[logKey(runId, nodeKey)] ?? []
+  }
+
+  function getNodeLogError(runId: string, nodeKey: string): string | undefined {
+    return nodeLogErrors.value[logKey(runId, nodeKey)]
+  }
+
+  async function loadAllNodeLogs(runId: string, nodeKeys: string[], tail = 2000) {
+    await Promise.all(nodeKeys.map(nodeKey => loadNodeLogs(runId, nodeKey, tail)))
   }
 
   async function loadResumePoints(runId: string) {
@@ -579,6 +611,8 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
     loadTimeline,
     loadNodeLogs,
     getNodeLogs,
+    getNodeLogError,
+    loadAllNodeLogs,
     loadResumePoints,
     submitHumanAction,
     resumeRun,

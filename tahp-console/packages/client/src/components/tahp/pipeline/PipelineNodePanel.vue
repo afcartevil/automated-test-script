@@ -36,12 +36,13 @@ const panel = computed(() => (props.node ? RENDERERS[props.node.key] ?? DefaultP
       :logs="logs"
       :build-context="buildContext"
     />
-    <p v-else class="empty">请选择左侧节点查看详情。</p>
+    <p v-else class="empty">请点击上方阶段条查看详情。</p>
   </div>
 </template>
 
 <style scoped lang="scss">
 .node-panel {
+  --ea-log-height: clamp(420px, 52vh, 680px);
   flex: 1;
   min-height: 0;
   display: flex;
