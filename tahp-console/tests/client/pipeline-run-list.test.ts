@@ -75,6 +75,16 @@ describe('PipelineRunList board layout', () => {
     expect(wrapper.findAll('.run-item strong').map(node => node.text())).toEqual(['OLD', 'NEW'])
   })
 
+  it('formats Android-suffixed project codes as code-tOSN', () => {
+    const wrapper = mount(PipelineRunList, {
+      props: {
+        items: [run({ run_id: 'a', project_code: 'X6879Android17' })],
+        selectedId: 'a',
+      },
+    })
+    expect(wrapper.get('.run-item strong').text()).toBe('X6879-tOS17')
+  })
+
   it('emits discard once from the card action', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mount(PipelineRunList, {

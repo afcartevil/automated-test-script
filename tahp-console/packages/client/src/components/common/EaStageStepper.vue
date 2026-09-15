@@ -90,9 +90,11 @@ watch(() => props.activeKey, () => {
           @click="emit('select', node.key)"
         >
           <span class="ea-step-ico">{{ statusIcon(node.status) }}</span>
-          <span class="ea-step-name">{{ node.label }}</span>
-          <span class="ea-step-dur">{{ formatDuration(node.duration_ms) }}</span>
-          <span v-if="node.summary_line" class="ea-step-sum">{{ node.summary_line }}</span>
+          <span class="ea-step-body">
+            <span class="ea-step-name">{{ node.label }}</span>
+            <span class="ea-step-dur">{{ formatDuration(node.duration_ms) }}</span>
+            <span v-if="node.summary_line" class="ea-step-sum">{{ node.summary_line }}</span>
+          </span>
         </button>
         <span
           v-if="index < visibleNodes.length - 1"
@@ -114,8 +116,10 @@ watch(() => props.activeKey, () => {
           @click="emit('append')"
         >
           <span class="ea-step-ico">+</span>
-          <span class="ea-step-name">追加后续阶段</span>
-          <span class="ea-step-sum">烧录 / 自检 / Gerrit</span>
+          <span class="ea-step-body">
+            <span class="ea-step-name">追加后续阶段</span>
+            <span class="ea-step-sum">烧录 / 自检 / Gerrit</span>
+          </span>
         </button>
       </template>
     </div>
@@ -127,15 +131,15 @@ watch(() => props.activeKey, () => {
 
 <style scoped lang="scss">
 .ea-stepper-wrap {
-  padding: 4px 0 0;
+  padding: 0;
 }
 
 .ea-stepper {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: 0;
   overflow-x: auto;
-  padding: 4px 2px 8px;
+  padding: 2px 0 4px;
   scrollbar-width: thin;
 
   &::-webkit-scrollbar { height: 6px; }
@@ -146,136 +150,142 @@ watch(() => props.activeKey, () => {
 }
 
 .ea-step {
-  min-width: 104px;
+  min-width: 128px;
   flex: 1;
-  max-width: 130px;
-  border-radius: 16px;
-  padding: 12px 10px;
+  max-width: 168px;
+  border-radius: 12px;
+  padding: 8px 10px;
   border: 1px solid transparent;
   cursor: pointer;
   text-align: left;
-  transition: transform 0.12s, box-shadow 0.12s;
-  background: #f4f5f8;
-  color: var(--faint, #9aa0b0);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: box-shadow 0.12s, border-color 0.12s;
+  background: var(--surface-2);
+  color: var(--faint);
   font-family: inherit;
 
-  &:hover { transform: translateY(-1px); }
+  &:hover { border-color: var(--line-strong); }
   &.active-sel {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
   }
 }
 
 .ea-step-ico {
-  width: 28px;
-  height: 28px;
-  border-radius: 9px;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.72);
-  font-size: 13px;
-  margin-bottom: 8px;
+  background: var(--surface);
+  font-size: 12px;
   font-weight: 700;
+  flex-shrink: 0;
+}
+
+.ea-step-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .ea-step-name {
   display: block;
-  font-weight: 800;
-  font-size: 13px;
-  margin-bottom: 2px;
+  font-weight: 700;
+  font-size: 12.5px;
   color: inherit;
 }
 
 .ea-step-dur {
   display: block;
-  font-size: 11.5px;
-  opacity: 0.85;
+  font-size: 11px;
+  opacity: 0.8;
 }
 
 .ea-step-sum {
   display: block;
   font-size: 11px;
-  margin-top: 4px;
-  font-weight: 700;
-  opacity: 0.9;
+  font-weight: 600;
+  opacity: 0.85;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .ea-step.st-done {
-  background: var(--success-soft, #e8f4ee);
-  color: var(--success, #0f7a5a);
-  border-color: color-mix(in srgb, var(--success) 16%, transparent);
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 14%, transparent);
 }
 
 .ea-step.st-running {
-  background: var(--accent-soft, #eef0fb);
-  color: var(--accent, #5256d4);
-  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
-  animation: softPulse 1.6s ease-in-out infinite;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 18%, transparent);
+  animation: softPulse 1.8s ease-in-out infinite;
 }
 
 .ea-step.st-waiting_human {
-  background: var(--warn-soft, #fbf2e2);
-  color: var(--warn, #b45309);
-  border-color: color-mix(in srgb, var(--warn) 22%, transparent);
-  animation: breathe 1.6s ease-in-out infinite;
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 18%, transparent);
 }
 
 .ea-step.st-failed {
-  background: var(--error-soft, #fbecef);
-  color: var(--error, #d33b3b);
-  border-color: color-mix(in srgb, var(--error) 18%, transparent);
+  background: var(--error-soft);
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 16%, transparent);
 }
 
 .ea-step.st-skipped {
-  background: var(--surface-2, #f1f3f7);
-  color: var(--faint, #9aa0b0);
+  background: transparent;
+  color: var(--faint);
   border-style: dashed;
   border-color: var(--line-strong);
-  text-decoration: line-through;
-  max-width: 78px;
-  min-width: 78px;
-  flex: 0 0 78px;
+  max-width: 92px;
+  min-width: 92px;
+  flex: 0 0 92px;
 }
 
 .ea-step.st-pending {
-  background: #f4f5f8;
-  color: var(--faint, #9aa0b0);
+  background: var(--surface-2);
+  color: var(--faint);
 }
 
 .ea-step.ea-step-append {
-  background: color-mix(in srgb, var(--accent, #5256d4) 8%, #fff);
-  color: var(--accent, #5256d4);
-  border: 1.5px dashed color-mix(in srgb, var(--accent, #5256d4) 45%, transparent);
-  max-width: 140px;
-  min-width: 118px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  color: var(--accent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, transparent);
+  max-width: 160px;
+  min-width: 132px;
   flex: 0 0 auto;
 
   .ea-step-ico {
-    background: var(--accent, #5256d4);
+    background: var(--accent);
     color: #fff;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 500;
   }
 
   &:hover {
-    background: color-mix(in srgb, var(--accent, #5256d4) 14%, #fff);
-    border-color: var(--accent, #5256d4);
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    border-color: var(--accent);
   }
 }
 
 .ea-step-conn {
-  width: 18px;
+  width: 16px;
   flex-shrink: 0;
-  align-self: center;
   height: 2px;
   margin: 0 2px;
   border-radius: 1px;
+  align-self: center;
 
-  &.conn-done { background: var(--success, #0f7a5a); }
+  &.conn-done { background: var(--success); }
   &.conn-active {
-    background: linear-gradient(90deg, var(--success, #0f7a5a), var(--accent, #5256d4));
+    background: linear-gradient(90deg, var(--success), var(--accent));
   }
   &.conn-pending {
     background: transparent;
@@ -294,18 +304,14 @@ watch(() => props.activeKey, () => {
   text-align: center;
   font-size: 12px;
   font-weight: 700;
-  color: var(--warn, #b45309);
-  background: var(--warn-soft, #fbf2e2);
+  color: var(--warn);
+  background: var(--warn-soft);
   border-radius: 999px;
-  padding: 6px 12px;
+  padding: 5px 12px;
 }
 
 @keyframes softPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(82, 86, 212, 0.18); }
-  50% { box-shadow: 0 0 0 5px rgba(82, 86, 212, 0.04); }
-}
-
-@keyframes breathe {
-  50% { opacity: 0.78; }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(82, 86, 212, 0.12); }
+  50% { box-shadow: 0 0 0 4px rgba(82, 86, 212, 0.04); }
 }
 </style>

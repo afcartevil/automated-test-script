@@ -181,12 +181,14 @@ watch(() => store.error, (err) => {
 
       <div class="board-main">
         <div v-if="!store.runItems.length && !store.listLoading" class="board-empty card">
+          <div class="empty-mark" aria-hidden="true">◇</div>
           <h2>还没有运行记录</h2>
           <p>创建第一条适配流水线运行，开始从项目选择到 Gerrit 提交的完整流程。</p>
           <button type="button" class="ea-btn-primary" @click="handleCreateClick">新建运行</button>
         </div>
 
         <div v-else-if="!store.selectedRunId" class="board-empty card">
+          <div class="empty-mark" aria-hidden="true">◇</div>
           <h2>还没有选中运行</h2>
           <p>从左侧选择一条运行，或新建运行开始适配流水线。</p>
           <button type="button" class="ea-btn-primary" @click="handleCreateClick">新建运行</button>
@@ -251,7 +253,8 @@ watch(() => store.error, (err) => {
 }
 
 .top-alert {
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+  border-radius: 12px;
 }
 .alert-link {
   margin-left: 8px;
@@ -302,17 +305,33 @@ watch(() => store.error, (err) => {
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 20px;
-  box-shadow: var(--shadow);
+  border-radius: 16px;
+  box-shadow: none;
 }
 
 .board-empty {
   flex: 1;
-  padding: 48px 24px;
+  padding: 64px 24px;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 
   h2 { margin: 0 0 8px; font-size: 18px; }
-  p { margin: 0 0 16px; color: var(--muted); }
+  p { margin: 0 0 16px; color: var(--muted); max-width: 360px; }
+}
+
+.empty-mark {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  margin-bottom: 14px;
 }
 
 .poll-hint { margin-top: 4px; }
@@ -330,7 +349,7 @@ watch(() => store.error, (err) => {
   height: 100%;
   padding: 16px;
   overflow: auto;
-  border-radius: 20px 0 0 20px;
+  border-radius: 16px 0 0 16px;
 }
 .drawer-head {
   display: flex;

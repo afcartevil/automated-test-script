@@ -39,6 +39,7 @@ import {
   isAdaptWorkspaceId,
 } from '@/constants/adapt-domains'
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
+import { formatOsRange, formatPipelineProjectTitle, parseTosMajor } from '@/utils/pipeline-os-label'
 import type { useAdaptPipelineStore } from '@/stores/tahp/adapt-pipeline'
 import {
   overlayCloneDomains,
@@ -142,15 +143,6 @@ const BUILD_TARGET_BASE_OPTIONS = [
   { label: 'hal', value: 'hal' },
   { label: 'odm', value: 'odm' },
 ]
-
-function parseTosMajor(raw?: string): number | null {
-  const s = String(raw ?? '').trim()
-  if (!s) return null
-  const m = s.match(/(?:t\s*os)?\s*(\d+)/i)
-  if (!m) return null
-  const n = Number(m[1])
-  return Number.isFinite(n) ? n : null
-}
 
 function needsTrsysForTargetOs(toOs?: string): boolean {
   const n = parseTosMajor(toOs)
@@ -337,8 +329,9 @@ const selectedProjectLabel = computed(() => {
   if (!code) return '—'
   const p = projects.value.find(x => x.code === code)
   const os = prereqData.value
-  if (os?.from_os && os?.to_os) return `${code} · tOS${os.from_os} → tOS${os.to_os}`
-  return p ? `${code}${p.name ? ` · ${p.name}` : ''}` : code
+  const title = formatPipelineProjectTitle(code, os?.to_os)
+  if (os?.from_os && os?.to_os) return `${title} · ${formatOsRange(os.from_os, os.to_os)}`
+  return p?.name ? `${title} · ${p.name}` : title
 })
 
 const needsTrsysUi = computed(() => needsTrsysForTargetOs(prereqData.value?.to_os))
@@ -1066,7 +1059,7 @@ onUnmounted(() => {
 <template>
   <EaCard class="wizard card">
     <NAlert v-if="cloneSeed" type="info" :bordered="false" class="banner">
-      已从运行 <strong>{{ cloneSeed.project_code }}</strong> 复制全部启动参数，当前在「配置执行」。可返回前两步核对，或直接启动。
+      已从运行 <strong>{{ formatPipelineProjectTitle(cloneSeed.project_code, cloneSeed.to_os) }}</strong> 复制全部启动参数，当前在「配置执行」。可返回前两步核对，或直接启动。
     </NAlert>
     <NAlert v-if="!centralConfigured" type="warning" :bordered="false" class="banner">
       未配置 TAHP 中心连接，无法拉取项目前置。

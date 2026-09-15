@@ -177,8 +177,9 @@ const currentDeviceId = computed(() => props.store.selectedTimeline?.device_id ?
 }
 .task {
   border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent);
-  background: var(--warn-soft);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  background: var(--surface);
   padding: 12px;
   margin-bottom: 10px;
   min-width: 0;
@@ -186,7 +187,7 @@ const currentDeviceId = computed(() => props.store.selectedTimeline?.device_id ?
 }
 .task p {
   margin: 6px 0 10px;
-  color: var(--warn);
+  color: var(--text);
   line-height: 1.45;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -196,6 +197,7 @@ const currentDeviceId = computed(() => props.store.selectedTimeline?.device_id ?
   gap: 8px;
   margin-bottom: 8px;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .repo-box {
   margin: 0 0 12px;

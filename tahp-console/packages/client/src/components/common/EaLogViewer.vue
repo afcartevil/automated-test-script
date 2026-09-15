@@ -123,7 +123,8 @@ watch(() => props.height, () => syncViewportHeight())
   flex-wrap: wrap;
 }
 .search, .level {
-  padding: 6px 10px;
+  height: 32px;
+  padding: 0 10px;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--surface);
@@ -139,7 +140,7 @@ watch(() => props.height, () => syncViewportHeight())
 .ea-log-viewer {
   overflow: auto;
   border-radius: 12px;
-  background: #1b1e2b;
+  background: #16192a;
   color: #c8ccd8;
   border: 1px solid rgba(255, 255, 255, 0.08);
   padding: 8px 12px;
@@ -156,7 +157,8 @@ watch(() => props.height, () => syncViewportHeight())
 }
 .empty {
   color: #8b90a0;
-  padding: 12px 0;
+  padding: 24px 0;
+  text-align: center;
 }
 .pad {
   width: 100%;

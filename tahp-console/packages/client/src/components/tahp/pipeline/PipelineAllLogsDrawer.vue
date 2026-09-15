@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import EaLogViewer from '@/components/common/EaLogViewer.vue'
 import type { TimelineView } from '@/api/tahp/adapt-pipeline'
 import type { useAdaptPipelineStore } from '@/stores/tahp/adapt-pipeline'
+import { formatOsRange, formatPipelineProjectTitle } from '@/utils/pipeline-os-label'
 
 const props = defineProps<{
   open: boolean
@@ -16,8 +17,17 @@ const emit = defineEmits<{
 
 const stageFilter = ref('all')
 const loading = ref(false)
+const errorsOpen = ref(true)
 
 const enabledNodes = computed(() => props.timeline.nodes.filter(node => node.enabled))
+
+const projectTitle = computed(() =>
+  formatPipelineProjectTitle(props.timeline.project_code, props.timeline.to_os),
+)
+
+const osLabel = computed(() =>
+  formatOsRange(props.timeline.from_os, props.timeline.to_os),
+)
 
 const failedStages = computed(() =>
   enabledNodes.value
@@ -74,7 +84,7 @@ watch(
       <header class="head">
         <div>
           <h3>全部阶段日志</h3>
-          <p>{{ timeline.project_code }} · 实时缓冲会随运行更新</p>
+          <p>{{ projectTitle }}<template v-if="osLabel"> · {{ osLabel }}</template> · {{ enabledNodes.length }} 个已启用阶段 · 实时缓冲会随运行更新</p>
         </div>
         <div class="head-tools">
           <label class="stage-filter">
@@ -92,9 +102,15 @@ watch(
 
       <div class="body">
         <div v-if="visibleFailedStages.length" class="errors">
-          <p v-for="item in visibleFailedStages" :key="item.key">
-            {{ item.label }}：{{ item.message }}
-          </p>
+          <button type="button" class="errors-toggle" @click="errorsOpen = !errorsOpen">
+            {{ visibleFailedStages.length }} 个阶段日志加载失败
+            <span>{{ errorsOpen ? '收起' : '展开' }}</span>
+          </button>
+          <div v-if="errorsOpen">
+            <p v-for="item in visibleFailedStages" :key="item.key">
+              {{ item.label }}：{{ item.message }}
+            </p>
+          </div>
         </div>
         <p v-if="loading" class="loading">正在加载各阶段日志…</p>
         <EaLogViewer :lines="aggregatedLines" :height="720" />
@@ -173,13 +189,25 @@ watch(
 }
 .errors {
   margin: 0;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--err, #c0392b) 8%, var(--surface));
-  color: var(--err, #c0392b);
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--error) 8%, var(--surface));
+  color: var(--error);
   font-size: 12px;
-  p { margin: 0; }
-  p + p { margin-top: 4px; }
+  p { margin: 6px 0 0; }
+}
+.errors-toggle {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  span { font-weight: 600; color: var(--muted); }
 }
 .loading {
   margin: 0;

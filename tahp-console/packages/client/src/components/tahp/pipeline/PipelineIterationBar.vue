@@ -31,10 +31,9 @@ defineProps<{
 
 <style scoped lang="scss">
 .iter-bar {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 10px;
-  background: var(--bg);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 .title {
   margin-bottom: 8px;
@@ -48,14 +47,18 @@ defineProps<{
   flex-wrap: wrap;
 }
 .dot {
-  padding: 4px 8px;
+  padding: 3px 10px;
   border-radius: 999px;
-  background: var(--surface-2);
+  background: var(--surface);
   color: var(--muted);
   font-size: 12px;
+  border: 1px solid var(--line);
 }
-.dot.running { background: var(--accent-soft); color: var(--accent); }
-.dot.passed { background: var(--success-soft); color: var(--success); }
-.dot.failed { background: var(--error-soft); color: var(--error); }
-.dot.current { font-weight: 800; }
+.dot.running { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 25%, var(--line)); }
+.dot.passed { background: var(--success-soft); color: var(--success); border-color: color-mix(in srgb, var(--success) 25%, var(--line)); }
+.dot.failed { background: var(--error-soft); color: var(--error); border-color: color-mix(in srgb, var(--error) 25%, var(--line)); }
+.dot.current {
+  font-weight: 800;
+  border-color: var(--accent);
+}
 </style>

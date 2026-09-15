@@ -93,6 +93,34 @@ describe('PipelineRunDetail board layout', () => {
     expect(wrapper.emitted('selectNode')).toEqual([['build']])
   })
 
+  it('renders project and OS as tOS majors regardless of Android prefix', () => {
+    const wrapper = mount(PipelineRunDetail, {
+      props: {
+        timeline: timeline({
+          project_code: 'X6879Android17',
+          from_os: 'Android 16',
+          to_os: 'Android 17',
+        }),
+        selectedNodeKey: 'adapt',
+        store: makeStore() as never,
+      },
+      global: {
+        stubs: {
+          PipelineNodePanel: true,
+          PipelineHumanPanel: true,
+          PipelineIterationBar: true,
+          PipelineAppendStagesDrawer: true,
+        },
+      },
+    })
+
+    const title = wrapper.get('.head-title h2').text()
+    expect(title).toContain('X6879-tOS17')
+    expect(title).toContain('tOS16 → tOS17')
+    expect(title).not.toContain('tOSAndroid')
+    expect(title).not.toContain('X6879Android17')
+  })
+
   it('aggregates enabled-stage logs in the all-logs drawer and filters by stage', async () => {
     const store = makeStore({
       logs: {

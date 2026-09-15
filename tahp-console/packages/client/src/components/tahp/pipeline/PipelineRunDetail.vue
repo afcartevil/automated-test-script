@@ -16,6 +16,7 @@ import {
   type RunStatus,
 } from '@/api/tahp/adapt-pipeline'
 import type { useAdaptPipelineStore } from '@/stores/tahp/adapt-pipeline'
+import { formatOsRange, formatPipelineProjectTitle } from '@/utils/pipeline-os-label'
 
 const props = defineProps<{
   timeline: TimelineView
@@ -68,12 +69,13 @@ const canAppend = computed(() =>
   && Boolean(props.store.appendCandidates?.eligible),
 )
 
-const osLabel = computed(() => {
-  if (props.timeline.from_os && props.timeline.to_os) {
-    return `tOS${props.timeline.from_os} → tOS${props.timeline.to_os}`
-  }
-  return ''
-})
+const projectTitle = computed(() =>
+  formatPipelineProjectTitle(props.timeline.project_code, props.timeline.to_os),
+)
+
+const osLabel = computed(() =>
+  formatOsRange(props.timeline.from_os, props.timeline.to_os),
+)
 
 function statusVariant(status: RunStatus): 'ok' | 'info' | 'warn' | 'err' | 'muted' {
   switch (status) {
@@ -150,10 +152,11 @@ watch(
   <div class="run-detail">
     <EaCard class="run-header">
       <div class="head-row">
-        <div>
+        <div class="head-title">
           <h2>
-            {{ timeline.project_code }}
+            {{ projectTitle }}
             <span v-if="osLabel" class="os">{{ osLabel }}</span>
+            <EaPill :variant="statusVariant(timeline.status)">{{ runStatusLabel(timeline.status) }}</EaPill>
           </h2>
           <p>
             第 {{ timeline.iteration }} 轮 / 共 {{ timeline.max_iterations }} 轮
@@ -161,7 +164,6 @@ watch(
           </p>
         </div>
         <div class="head-actions">
-          <EaPill :variant="statusVariant(timeline.status)">{{ runStatusLabel(timeline.status) }}</EaPill>
           <button
             type="button"
             class="btn-soft"
@@ -197,16 +199,20 @@ watch(
           </button>
         </div>
       </div>
-    </EaCard>
-
-    <EaCard class="stepper-card">
-      <EaStageStepper
-        :nodes="timeline.nodes"
-        :active-key="selectedNode?.key ?? null"
-        :iteration="timeline.iteration"
-        :show-append="canAppend"
-        @select="emit('selectNode', $event)"
-        @append="openAppendDrawer"
+      <div class="stepper-slot">
+        <EaStageStepper
+          :nodes="timeline.nodes"
+          :active-key="selectedNode?.key ?? null"
+          :iteration="timeline.iteration"
+          :show-append="canAppend"
+          @select="emit('selectNode', $event)"
+          @append="openAppendDrawer"
+        />
+      </div>
+      <PipelineIterationBar
+        :iterations="timeline.iterations"
+        :current="timeline.iteration"
+        :max-iterations="timeline.max_iterations"
       />
     </EaCard>
 
@@ -229,12 +235,6 @@ watch(
         </EaCard>
       </div>
     </div>
-
-    <PipelineIterationBar
-      :iterations="timeline.iterations"
-      :current="timeline.iteration"
-      :max-iterations="timeline.max_iterations"
-    />
 
     <PipelineAppendStagesDrawer
       :open="appendOpen"
@@ -264,7 +264,8 @@ watch(
   min-height: 0;
 }
 .run-header {
-  padding: 14px 16px;
+  padding: 14px 16px 12px;
+  border-radius: 16px;
 }
 .head-row {
   display: flex;
@@ -273,19 +274,25 @@ watch(
   align-items: flex-start;
   flex-wrap: wrap;
 }
-.head-row h2 {
+.head-title h2 {
   margin: 0;
   font-size: 18px;
   font-weight: 800;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   .os {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--muted);
-    margin-left: 8px;
+    background: var(--surface-2);
+    border-radius: 999px;
+    padding: 2px 8px;
   }
 }
-.head-row p {
-  margin: 4px 0 0;
+.head-title p {
+  margin: 6px 0 0;
   color: var(--muted);
   font-size: 12px;
 }
@@ -294,27 +301,31 @@ watch(
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 .btn-soft, .btn-danger, .btn-warn {
-  padding: 7px 12px;
-  border-radius: 10px;
-  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
   cursor: pointer;
   border: 1px solid var(--line);
   background: var(--surface);
+  font-family: inherit;
 }
 .btn-danger {
-  color: var(--err, #b03351);
-  border-color: color-mix(in srgb, var(--err, #b03351) 30%, transparent);
+  color: var(--error);
+  background: transparent;
+  border-color: transparent;
 }
 .btn-warn {
   color: var(--warn);
-  background: var(--warn-soft);
-  border-color: color-mix(in srgb, var(--warn) 25%, transparent);
+  background: var(--surface);
+  border-color: color-mix(in srgb, var(--warn) 22%, var(--line));
 }
-.stepper-card {
-  padding: 12px 14px;
+.stepper-slot {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 .cols {
   display: grid;
@@ -329,12 +340,13 @@ watch(
   }
 }
 .col-card {
-  padding: 12px;
+  padding: 12px 14px;
   min-width: 0;
   overflow: hidden;
   height: 100%;
   display: flex;
   flex-direction: column;
+  border-radius: 16px;
 }
 .human-col-wrap,
 .human-col {

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { RunSummary } from '@/api/tahp/adapt-pipeline'
 import EaPill from '@/components/layout/EaPill.vue'
+import { formatPipelineProjectTitle } from '@/utils/pipeline-os-label'
 
 const props = withDefaults(defineProps<{
   items: RunSummary[]
@@ -73,7 +74,7 @@ function onClone(ev: Event, runId: string) {
 }
 
 function itemTitle(item: RunSummary): string {
-  return `${item.project_code} · ${statusLabel(item.status)} · 第 ${item.iteration} 轮`
+  return `${formatPipelineProjectTitle(item.project_code)} · ${statusLabel(item.status)} · 第 ${item.iteration} 轮`
 }
 </script>
 
@@ -103,14 +104,21 @@ function itemTitle(item: RunSummary): string {
     </div>
 
     <div class="list-scroll">
-      <div v-if="loading && !items.length" class="list-empty">{{ collapsed ? '…' : '加载中…' }}</div>
-      <div v-else-if="!items.length" class="list-empty">{{ collapsed ? '空' : '还没有运行记录' }}</div>
+      <div v-if="loading && !items.length" class="list-empty">
+        {{ collapsed ? '…' : '加载中…' }}
+        <span v-if="!collapsed" class="list-empty-hint">正在拉取运行记录</span>
+      </div>
+      <div v-else-if="!items.length" class="list-empty">
+        {{ collapsed ? '空' : '还没有运行记录' }}
+        <span v-if="!collapsed" class="list-empty-hint">创建后会出现在这里</span>
+      </div>
 
       <div
         v-for="item in items"
         :key="item.run_id"
         class="run-item"
         :class="{ selected: selectedId === item.run_id, rail: collapsed }"
+        :data-status="item.status"
         role="button"
         tabindex="0"
         :title="itemTitle(item)"
@@ -121,7 +129,7 @@ function itemTitle(item: RunSummary): string {
         <span class="status-dot" :data-status="item.status" aria-hidden="true" />
         <template v-if="!collapsed">
           <div class="run-main">
-            <strong>{{ item.project_code }}</strong>
+            <strong>{{ formatPipelineProjectTitle(item.project_code) }}</strong>
             <span class="run-meta">第 {{ item.iteration }} 轮 · {{ fmtRelTime(item.updated_at) }}</span>
           </div>
           <div class="run-side">
@@ -153,7 +161,7 @@ function itemTitle(item: RunSummary): string {
     </div>
 
     <p v-if="collapsed && selectedItem" class="selected-hint" :title="itemTitle(selectedItem)">
-      {{ selectedItem.project_code }}
+      {{ formatPipelineProjectTitle(selectedItem.project_code) }}
     </p>
 
     <button
@@ -171,8 +179,8 @@ function itemTitle(item: RunSummary): string {
 .pipeline-run-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px;
+  gap: 10px;
+  padding: 12px;
   min-height: 0;
   height: 100%;
   overflow: hidden;
@@ -186,8 +194,8 @@ function itemTitle(item: RunSummary): string {
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 20px;
-  box-shadow: var(--shadow);
+  border-radius: 16px;
+  box-shadow: none;
 }
 
 .list-head {
@@ -206,17 +214,17 @@ function itemTitle(item: RunSummary): string {
 h3 {
   margin: 0;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 700;
   color: var(--faint);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .collapse-btn {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--bg);
   color: var(--muted);
   cursor: pointer;
@@ -244,22 +252,25 @@ h3 {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   padding-right: 2px;
   width: 100%;
 
   .collapsed & {
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     padding-right: 0;
   }
 }
 
 .list-empty {
-  padding: 24px 8px;
+  padding: 28px 8px;
   text-align: center;
   color: var(--muted);
   font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 
   .collapsed & {
     padding: 8px 0;
@@ -267,13 +278,19 @@ h3 {
   }
 }
 
+.list-empty-hint {
+  font-size: 12px;
+  color: var(--faint);
+}
+
 .run-item {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  padding: 12px;
-  border-radius: 14px;
+  padding: 10px 10px 10px 14px;
+  border-radius: 12px;
   border: 1px solid transparent;
   cursor: pointer;
   background: var(--bg);
@@ -281,11 +298,29 @@ h3 {
   width: 100%;
   color: inherit;
   font-family: inherit;
+  overflow: hidden;
 
-  &:hover { border-color: var(--line-strong); }
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: var(--faint);
+  }
+
+  &[data-status='passed']::before { background: var(--success); }
+  &[data-status='running']::before { background: var(--accent); }
+  &[data-status='waiting_human']::before { background: var(--warn); }
+  &[data-status='failed']::before,
+  &[data-status='aborted']::before { background: var(--error); }
+
+  &:hover {
+    border-color: var(--line-strong);
+    .run-actions { opacity: 1; }
+  }
   &.selected {
     background: var(--accent-soft);
-    border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   }
 
   &.rail {
@@ -294,6 +329,8 @@ h3 {
     padding: 0;
     justify-content: center;
     border-radius: 12px;
+
+    &::before { display: none; }
   }
 }
 
@@ -307,8 +344,8 @@ h3 {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--faint) 25%, transparent);
 
   &[data-status='passed'] {
-    background: var(--ok, #2f9e6b);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok, #2f9e6b) 28%, transparent);
+    background: var(--success);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 28%, transparent);
   }
   &[data-status='running'] {
     background: var(--accent);
@@ -320,12 +357,16 @@ h3 {
   }
   &[data-status='failed'],
   &[data-status='aborted'] {
-    background: var(--err, #c0392b);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--err, #c0392b) 28%, transparent);
+    background: var(--error);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--error) 28%, transparent);
   }
 
   .rail & {
     display: block;
+  }
+
+  .rail.selected & {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
   }
 }
 
@@ -361,6 +402,8 @@ h3 {
   display: flex;
   align-items: center;
   gap: 8px;
+  opacity: 0.35;
+  transition: opacity 0.15s;
 }
 
 .btn-clone,
@@ -382,7 +425,7 @@ h3 {
 }
 
 .btn-discard {
-  color: var(--err, #c0392b);
+  color: var(--error);
 }
 
 .selected-hint {
@@ -402,8 +445,8 @@ h3 {
   flex-shrink: 0;
   border: 1px dashed var(--line-strong);
   background: transparent;
-  padding: 12px;
-  border-radius: 14px;
+  padding: 10px;
+  border-radius: 12px;
   color: var(--muted);
   font-weight: 700;
   cursor: pointer;
@@ -411,10 +454,10 @@ h3 {
   width: 100%;
 
   .collapsed & {
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     padding: 0;
-    border-radius: 12px;
+    border-radius: 999px;
     font-size: 18px;
     line-height: 1;
   }
@@ -431,5 +474,6 @@ h3 {
     height: auto;
     max-height: min(42vh, 360px);
   }
+  .run-actions { opacity: 1; }
 }
 </style>
