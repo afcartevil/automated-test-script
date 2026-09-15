@@ -135,8 +135,10 @@ export function buildTimelineView(
     }
   })
 
-  const pendingHumanCount = Object.values(run.stages)
-    .filter(s => s.status === 'waiting_human').length
+  // abort/fail 后 stage 可能仍残留 waiting_human，只对整条仍待人工的 run 计数
+  const pendingHumanCount = run.status === 'waiting_human'
+    ? Object.values(run.stages).filter(s => s.status === 'waiting_human').length
+    : 0
 
   return {
     run_id: run.run_id,

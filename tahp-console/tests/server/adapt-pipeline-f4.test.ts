@@ -95,6 +95,29 @@ describe('adapt-pipeline F4', () => {
     expect(timeline.nodes.find(n => n.key === 'gerrit')).toBeTruthy()
   })
 
+  it('buildTimelineView does not count leftover waiting_human stages after abort or fail', () => {
+    const run = createRun(baseInput())
+    run.status = 'aborted'
+    run.current_node = 'build'
+    run.stages.build = {
+      key: 'build',
+      status: 'waiting_human',
+      attempt: 1,
+      refs: {},
+      human: {
+        reason: 'stage_failed',
+        message: '请选择恢复点',
+        actions: [],
+      },
+    }
+    saveRun(run, { immediate: true })
+    expect(buildTimelineView(run).pending_human_count).toBe(0)
+
+    run.status = 'failed'
+    saveRun(run, { immediate: true })
+    expect(buildTimelineView(run).pending_human_count).toBe(0)
+  })
+
   it('buildTimelineView rewrites legacy resume/abort human copy on old runs', () => {
     const run = createRun(baseInput())
     run.status = 'waiting_human'

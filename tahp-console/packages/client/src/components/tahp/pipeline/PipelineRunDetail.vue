@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useDialog } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
 import EaPill from '@/components/layout/EaPill.vue'
 import EaStageStepper from '@/components/common/EaStageStepper.vue'
@@ -39,7 +40,9 @@ const pendingHumanCount = computed(() => {
   return props.timeline.nodes.filter(node => node.status === 'waiting_human' && Boolean(node.human)).length
 })
 
-const hasPendingHuman = computed(() => pendingHumanCount.value > 0)
+const hasPendingHuman = computed(() =>
+  props.timeline.status === 'waiting_human' && pendingHumanCount.value > 0,
+)
 
 const showHumanColumn = computed(() => !props.humanDrawer && hasPendingHuman.value)
 
@@ -88,14 +91,21 @@ function statusVariant(status: RunStatus): 'ok' | 'info' | 'warn' | 'err' | 'mut
   }
 }
 
+const dialog = useDialog()
+
 async function loadLogsForNode(nodeKey: string | null) {
   if (!nodeKey) return
   await props.store.loadNodeLogs(props.timeline.run_id, nodeKey, 500)
 }
 
 async function handleAbort() {
-  if (!window.confirm('确认终止该流水线？将取消编译/适配/刷机等正在执行的 Agent 与外部任务。')) return
-  await props.store.abortRun(props.timeline.run_id, '用户终止')
+  dialog.error({
+    title: '确认终止该流水线？',
+    content: '将立即取消编译/适配/刷机等正在执行的 Agent 与外部任务，本次运行标记为已终止且不可恢复。已产出的日志和结果保留。',
+    positiveText: '终止流水线',
+    negativeText: '取消',
+    onPositiveClick: () => props.store.abortRun(props.timeline.run_id, '用户终止'),
+  })
 }
 
 async function handleFailCurrentStage() {

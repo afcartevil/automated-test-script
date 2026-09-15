@@ -1,6 +1,20 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+
+const { dialogError } = vi.hoisted(() => ({
+  dialogError: vi.fn(),
+}))
+
+vi.mock('naive-ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('naive-ui')>()
+  return {
+    ...actual,
+    useMessage: () => ({ success: vi.fn(), error: vi.fn() }),
+    useDialog: () => ({ error: dialogError }),
+  }
+})
+
 import PipelineRunDetail from '@/components/tahp/pipeline/PipelineRunDetail.vue'
 import type { TimelineNode, TimelineView } from '@/api/tahp/adapt-pipeline'
 
@@ -61,6 +75,7 @@ function makeStore(opts?: {
 
 beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn()
+  dialogError.mockReset()
 })
 
 describe('PipelineRunDetail board layout', () => {
@@ -215,7 +230,7 @@ describe('PipelineRunDetail board layout', () => {
     const store = makeStore()
     const wrapper = mount(PipelineRunDetail, {
       props: {
-        timeline: timeline({ pending_human_count: 2 }),
+        timeline: timeline({ status: 'waiting_human', pending_human_count: 2 }),
         selectedNodeKey: 'adapt',
         store: store as never,
         humanDrawer: true,
@@ -233,5 +248,75 @@ describe('PipelineRunDetail board layout', () => {
     expect(wrapper.find('.human-col-wrap').exists()).toBe(false)
     await wrapper.get('.head-actions .btn-human').trigger('click')
     expect(wrapper.emitted('openHuman')).toEqual([[]])
+  })
+
+  it('hides human entry on aborted runs even if a stage still says waiting_human', () => {
+    const store = makeStore()
+    const wrapper = mount(PipelineRunDetail, {
+      props: {
+        timeline: timeline({
+          status: 'aborted',
+          pending_human_count: 2,
+          nodes: [
+            node({
+              key: 'build',
+              label: '编译',
+              status: 'waiting_human',
+              human: {
+                reason: 'stage_failed',
+                message: '编译失败，请选择恢复点',
+                actions: [],
+              },
+            }),
+          ],
+        }),
+        selectedNodeKey: 'build',
+        store: store as never,
+      },
+      global: {
+        stubs: {
+          PipelineNodePanel: true,
+          PipelineHumanPanel: true,
+          PipelineIterationBar: true,
+          PipelineAppendStagesDrawer: true,
+        },
+      },
+    })
+
+    expect(wrapper.find('.head-actions').text()).not.toContain('人工介入')
+    expect(wrapper.find('.human-col-wrap').exists()).toBe(false)
+    expect(wrapper.find('.cols').classes()).not.toContain('has-human')
+  })
+
+  it('confirms abort with a red error dialog instead of window.confirm', async () => {
+    const store = makeStore()
+    store.abortRun = vi.fn().mockResolvedValue(undefined)
+    const wrapper = mount(PipelineRunDetail, {
+      props: {
+        timeline: timeline({ status: 'running' }),
+        selectedNodeKey: 'adapt',
+        store: store as never,
+      },
+      global: {
+        stubs: {
+          PipelineNodePanel: true,
+          PipelineHumanPanel: true,
+          PipelineIterationBar: true,
+          PipelineAppendStagesDrawer: true,
+        },
+      },
+    })
+
+    await wrapper.get('.head-actions .btn-danger').trigger('click')
+    expect(dialogError).toHaveBeenCalledWith(expect.objectContaining({
+      title: '确认终止该流水线？',
+      content: '将立即取消编译/适配/刷机等正在执行的 Agent 与外部任务，本次运行标记为已终止且不可恢复。已产出的日志和结果保留。',
+      positiveText: '终止流水线',
+      negativeText: '取消',
+    }))
+    expect(store.abortRun).not.toHaveBeenCalled()
+
+    await dialogError.mock.calls[0][0].onPositiveClick()
+    expect(store.abortRun).toHaveBeenCalledWith('run-1', '用户终止')
   })
 })

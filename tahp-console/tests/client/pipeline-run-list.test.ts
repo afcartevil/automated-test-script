@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import PipelineRunList from '@/components/tahp/pipeline/PipelineRunList.vue'
-import { mergePipelineRunItems } from '@/stores/tahp/adapt-pipeline'
-import type { RunSummary } from '@/api/tahp/adapt-pipeline'
+import { mergePipelineRunItems, useAdaptPipelineStore } from '@/stores/tahp/adapt-pipeline'
+import type { RunSummary, TimelineView } from '@/api/tahp/adapt-pipeline'
 
 function run(overrides: Partial<RunSummary> = {}): RunSummary {
   return {
@@ -120,5 +121,57 @@ describe('PipelineRunList board layout', () => {
 
     await wrapper.find('.collapse-btn').trigger('click')
     expect(wrapper.emitted('toggle')).toHaveLength(1)
+  })
+})
+
+function timelineView(overrides: Partial<TimelineView> = {}): TimelineView {
+  return {
+    run_id: 'run-1',
+    project_code: 'KM9',
+    status: 'waiting_human',
+    iteration: 1,
+    max_iterations: 3,
+    current_node: 'build',
+    started_at: '2026-09-14T00:00:00.000Z',
+    duration_ms: 1,
+    nodes: [],
+    iterations: [],
+    pending_human_count: 0,
+    ...overrides,
+  }
+}
+
+describe('pending human badge ignores finished runs', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('does not count aborted or failed timelines in the page-head badge', () => {
+    const store = useAdaptPipelineStore()
+    store.timelines = {
+      aborted: timelineView({
+        run_id: 'aborted',
+        status: 'aborted',
+        pending_human_count: 2,
+      }),
+      failed: timelineView({
+        run_id: 'failed',
+        status: 'failed',
+        pending_human_count: 3,
+      }),
+      waiting: timelineView({
+        run_id: 'waiting',
+        status: 'waiting_human',
+        pending_human_count: 1,
+      }),
+    }
+    store.runItems = [
+      run({ run_id: 'aborted', status: 'aborted' }),
+      run({ run_id: 'failed', status: 'failed' }),
+      run({ run_id: 'waiting', status: 'waiting_human' }),
+    ]
+
+    expect(store.pendingHumanTotal).toBe(1)
+    expect(store.pendingHumanRunIds).toEqual(['waiting'])
   })
 })

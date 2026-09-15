@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useMessage } from 'naive-ui'
 import type { TimelineNode } from '@/api/tahp/adapt-pipeline'
 import PipelineResumePicker from './PipelineResumePicker.vue'
 import type { useAdaptPipelineStore } from '@/stores/tahp/adapt-pipeline'
@@ -9,6 +10,9 @@ const props = defineProps<{
   nodes: TimelineNode[]
   store: ReturnType<typeof useAdaptPipelineStore>
 }>()
+
+const message = useMessage()
+const resumeLoading = ref(false)
 
 interface RepoGroup {
   repo: string
@@ -112,6 +116,19 @@ async function onResume(
   await props.store.resumeRun(props.runId, node, scope, force, deviceId)
 }
 
+async function handleReloadResume() {
+  if (resumeLoading.value) return
+  resumeLoading.value = true
+  try {
+    await props.store.loadResumePoints(props.runId)
+    message.success('恢复点已刷新')
+  } catch (err) {
+    message.error((err as Error).message || '刷新恢复点失败')
+  } finally {
+    resumeLoading.value = false
+  }
+}
+
 const currentDeviceId = computed(() => props.store.selectedTimeline?.device_id ?? null)
 </script>
 
@@ -160,8 +177,9 @@ const currentDeviceId = computed(() => props.store.selectedTimeline?.device_id ?
         v-if="needsResumePicker(node)"
         :data="store.resumePoints"
         :busy="store.actionBusy"
+        :reloading="resumeLoading"
         :current-device-id="currentDeviceId"
-        @reload="store.loadResumePoints(runId)"
+        @reload="handleReloadResume"
         @submit="onResume"
       />
     </div>

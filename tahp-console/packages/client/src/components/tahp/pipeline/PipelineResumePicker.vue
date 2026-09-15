@@ -3,12 +3,16 @@ import { computed, onMounted, ref, watch } from 'vue'
 import type { ResumePoint, ResumePointsResponse } from '@/api/tahp/adapt-pipeline'
 import { listDevices, type DeviceInfo } from '@/api/tahp/device-self-check'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   data: ResumePointsResponse | null
   busy?: boolean
+  reloading?: boolean
   /** 当前 run 已绑定的设备，用于预填 */
   currentDeviceId?: string | null
-}>()
+}>(), {
+  busy: false,
+  reloading: false,
+})
 
 const emit = defineEmits<{
   reload: []
@@ -100,7 +104,14 @@ function submit() {
   <div class="resume-picker">
     <div class="head">
       <strong>恢复点选择</strong>
-      <button type="button" class="link-btn" @click="emit('reload')">刷新</button>
+      <button
+        type="button"
+        class="link-btn"
+        :disabled="reloading"
+        @click="emit('reload')"
+      >
+        {{ reloading ? '刷新中…' : '刷新' }}
+      </button>
     </div>
 
     <div v-if="!data" class="empty">点击刷新后加载恢复点</div>
