@@ -2,6 +2,7 @@ import { logger } from './logger'
 import { closeDb } from '../db'
 import { isGkiPatchAutoStartEnabled, stopGkiPatchServer } from './tahp/gki-patch'
 import { stopBaselineNotifyClient } from './tahp/sync'
+import { stopSelfCheckBackgroundProcesses } from './tahp/device-self-check'
 import { markBffExit, stopBffHeartbeat } from './crash-log'
 
 export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?: any, agentBridgeManager?: any): void {
@@ -22,6 +23,14 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
     try {
       stopBaselineNotifyClient()
       logger.info('Baseline notify client stopped')
+
+      // 停止自检后台进程（monkey watchdog / power），避免 BFF 退出后孤儿进程残留
+      try {
+        await stopSelfCheckBackgroundProcesses()
+        logger.info('Self-check background processes stopped')
+      } catch (err) {
+        logger.warn(err, 'Failed to stop self-check background processes (non-fatal)')
+      }
 
       if (isGkiPatchAutoStartEnabled()) {
         stopGkiPatchServer()

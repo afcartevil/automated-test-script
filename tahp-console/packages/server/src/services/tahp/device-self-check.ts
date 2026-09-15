@@ -4,6 +4,7 @@
 import { spawn, spawnSync } from 'child_process'
 import { readFileSync, existsSync, writeFileSync, mkdirSync, copyFileSync, cpSync, readdirSync, statSync } from 'fs'
 import type { ServerResponse } from 'http'
+import { homedir } from 'os'
 import { join, resolve, basename, sep } from 'path'
 import AdmZip from 'adm-zip'
 import {
@@ -201,6 +202,14 @@ let moduleConditions: Record<string, ModuleCondition> = {}
 // 配置路径
 const SELF_CHECK_DIR = tahpPaths.selfCheckDir
 const PYTHON_DIR = join(SELF_CHECK_DIR, 'python')
+// 自检长驻进程（monkey watchdog / adb 等）的运行时目录；必须在 dist 之外，
+// 否则残留进程的 cwd / 日志句柄会在 Windows 上锁定 dist/server，导致重新构建 EPERM。
+const SELF_CHECK_RUNTIME_DIR = join(
+  process.env.TAHP_CONSOLE_HOME?.trim() ||
+  process.env.HERMES_WEB_UI_HOME?.trim() ||
+  join(homedir(), '.tahp-console'),
+  'self-check-runtime',
+)
 const CASE_CONFIG_DIR = join(SELF_CHECK_DIR, 'case_config')
 const SETTINGS_PATH = join(SELF_CHECK_DIR, 'settings.json')
 
@@ -1825,7 +1834,12 @@ function spawnPythonProcess(
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: false,
     cwd: options.cwd || PYTHON_DIR,
-    env: { ...process.env, PYTHONPATH: PYTHON_DIR, PYTHONUTF8: '1' },
+    env: {
+      ...process.env,
+      PYTHONPATH: PYTHON_DIR,
+      PYTHONUTF8: '1',
+      TAHP_SELF_CHECK_RUNTIME_DIR: SELF_CHECK_RUNTIME_DIR,
+    },
     windowsHide: true,
   })
 
@@ -2065,6 +2079,21 @@ async function stopPowerForDevice(deviceId: string): Promise<void> {
       resolve()
     }
   })
+}
+
+/**
+ * BFF 关闭兜底：停止所有已知设备的 monkey / power 后台进程。
+ * 避免 EA 退出后 watchdog / adb 成为孤儿继续运行（锁定构建产物、设备侧测试失控）。
+ */
+export async function stopSelfCheckBackgroundProcesses(): Promise<void> {
+  const deviceIds = new Set<string>([...Object.keys(devices), ...Object.keys(testSessions)])
+  if (!deviceIds.size) return
+  const tasks: Promise<void>[] = []
+  for (const deviceId of deviceIds) {
+    tasks.push(stopMonkeyForDevice(deviceId))
+    tasks.push(stopPowerForDevice(deviceId))
+  }
+  await Promise.allSettled(tasks)
 }
 
 const MODULE_INIT_RUNNER = `

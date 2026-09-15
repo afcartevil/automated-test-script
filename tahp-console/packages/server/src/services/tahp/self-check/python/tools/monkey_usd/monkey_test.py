@@ -17,9 +17,31 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 BLACKLIST_FILE = SCRIPT_DIR / "MonkeyBlackList.txt"
-STATE_FILE = SCRIPT_DIR / ".monkey_state.json"
-LOG_DIR = SCRIPT_DIR / "logs"
+# 旧版 state 位置（兼容 stop 清理旧版本启动的会话）
+LEGACY_STATE_FILE = SCRIPT_DIR / ".monkey_state.json"
 DEVICE_BLACKLIST_PATH = "/data/local/tmp/MonkeyBlackList.txt"
+
+
+def _resolve_runtime_dir() -> Path:
+    """monkey 运行时目录（state / 日志 / 子进程 cwd）。
+
+    必须落在构建产物 dist/ 之外：watchdog 与 adb 是长驻守护进程，
+    若 cwd 或打开的日志在 dist/server 下，Windows 会锁定该目录链，
+    导致 EA 重新构建（rmSync dist/server）EPERM 失败。
+    """
+    injected = os.environ.get("TAHP_SELF_CHECK_RUNTIME_DIR", "").strip()
+    if injected:
+        return Path(injected) / "monkey"
+    for env_name in ("TAHP_CONSOLE_HOME", "HERMES_WEB_UI_HOME"):
+        raw = os.environ.get(env_name, "").strip()
+        if raw:
+            return Path(raw) / "self-check-runtime" / "monkey"
+    return Path.home() / ".tahp-console" / "self-check-runtime" / "monkey"
+
+
+RUNTIME_DIR = _resolve_runtime_dir()
+STATE_FILE = RUNTIME_DIR / "monkey_state.json"
+LOG_DIR = RUNTIME_DIR / "logs"
 DEFAULT_DURATION = "7d"
 MAX_DURATION_SECONDS = 14 * 24 * 3600
 DEFAULT_THROTTLE_MS = 500
@@ -123,7 +145,7 @@ def load_blacklist() -> list[str]:
 
 
 def push_blacklist(serial: str, packages: list[str]) -> None:
-    local_tmp = SCRIPT_DIR / ".monkey_blacklist_push.tmp"
+    local_tmp = RUNTIME_DIR / ".monkey_blacklist_push.tmp"
     local_tmp.write_text("\n".join(packages) + "\n", encoding="utf-8", newline="\n")
     try:
         run_adb(["push", str(local_tmp), DEVICE_BLACKLIST_PATH], serial=serial)
@@ -132,12 +154,14 @@ def push_blacklist(serial: str, packages: list[str]) -> None:
 
 
 def load_state() -> dict | None:
-    if not STATE_FILE.is_file():
-        return None
-    try:
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return None
+    for candidate in (STATE_FILE, LEGACY_STATE_FILE):
+        if not candidate.is_file():
+            continue
+        try:
+            return json.loads(candidate.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
 
 
 def save_state(state: dict) -> None:
@@ -146,6 +170,7 @@ def save_state(state: dict) -> None:
 
 def clear_state() -> None:
     STATE_FILE.unlink(missing_ok=True)
+    LEGACY_STATE_FILE.unlink(missing_ok=True)
 
 
 def is_process_alive(pid: int) -> bool:
@@ -238,11 +263,12 @@ def start_monkey(
     if state and is_monkey_running_on_device(state.get("serial", serial)):
         raise RuntimeError("Monkey 测试已在运行中，请先停止当前测试")
 
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     packages = load_blacklist()
     print(f"已加载黑名单 {len(packages)} 个包名")
     push_blacklist(serial, packages)
 
-    LOG_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now()
     log_file = LOG_DIR / f"monkey_{now.strftime('%Y%m%d_%H%M%S')}.log" if save_log else None
     log_fp = log_file.open("w", encoding="utf-8", newline="\n") if log_file else None
@@ -253,7 +279,7 @@ def start_monkey(
         build_monkey_adb_cmd(serial, throttle, seed, extra_args),
         stdout=stdout_target,
         stderr=subprocess.STDOUT,
-        cwd=str(SCRIPT_DIR),
+        cwd=str(RUNTIME_DIR),
         creationflags=creationflags,
     )
     monkey_pid = find_monkey_pid(serial)
@@ -276,7 +302,7 @@ def start_monkey(
         watchdog_cmd,
         stdout=watchdog_log.open("a", encoding="utf-8"),
         stderr=subprocess.STDOUT,
-        cwd=str(SCRIPT_DIR),
+        cwd=str(RUNTIME_DIR),
         creationflags=creationflags,
     )
 

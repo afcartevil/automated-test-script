@@ -7,7 +7,7 @@
  *   - 默认端口: 8650
  *   - 默认鉴权: 若未设 AUTH_TOKEN/AUTH_DISABLED, 默认走 AUTH_DISABLED=1 (内网团队工具)
  */
-import { spawn, execSync } from 'child_process'
+import { spawn, spawnSync, execSync } from 'child_process'
 import { ensureHermesAgent } from '../scripts/ensure-hermes-agent.mjs'
 import {
   commandExists,
@@ -304,6 +304,19 @@ function spawnBffWatchdog(pid) {
   child.unref()
 }
 
+/** Windows 上 process.kill 只杀单进程；BFF 派生的 python/adb 等子进程须整棵树清理，避免孤儿残留 */
+function killProcessTreeForce(pid) {
+  try {
+    const result = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    })
+    return result.status === 0
+  } catch {
+    return false
+  }
+}
+
 function stopDaemon() {
   const pid = getPid()
   if (!pid) {
@@ -318,14 +331,21 @@ function stopDaemon() {
   }
   try {
     writeLastExit({ pid, kind: 'stop-requested', ts: new Date().toISOString() }, { TAHP_CONSOLE_HOME: CONSOLE_HOME })
-    try {
-      process.kill(pid, 'SIGTERM')
-      for (let i = 0; i < 10; i++) {
-        if (!isRunning(pid)) break
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500)
+    if (process.platform === 'win32') {
+      killProcessTreeForce(pid)
+      if (isRunning(pid)) {
+        try { process.kill(pid, 'SIGKILL') } catch {}
       }
-    } catch {}
-    if (isRunning(pid)) process.kill(pid, 'SIGKILL')
+    } else {
+      try {
+        process.kill(pid, 'SIGTERM')
+        for (let i = 0; i < 10; i++) {
+          if (!isRunning(pid)) break
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500)
+        }
+      } catch {}
+      if (isRunning(pid)) process.kill(pid, 'SIGKILL')
+    }
     removePid()
     console.log(`  ✓ ${CLI_NAME} 已停止 (PID: ${pid})`)
   } catch (err) {
