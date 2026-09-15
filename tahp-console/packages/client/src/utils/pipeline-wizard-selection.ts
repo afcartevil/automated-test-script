@@ -47,22 +47,40 @@ export interface WizardStep3Values {
   flashPkgPath: string
   flashVersionFromBuild: boolean
   deviceId: string | null | undefined
+  oemUnlockConfirmed: boolean
   gerritIssueId: string
 }
 
-/** 仅校验当前编排下会展示的必填项。 */
+/** 当前编排下会展示、但仍未满足的必填项。 */
+export function listWizardStep3Blockers(
+  sections: WizardStep3Sections,
+  values: WizardStep3Values,
+): string[] {
+  const blockers: string[] = []
+  if (sections.build) {
+    if (!values.systemRoot.trim()) blockers.push('请填写 NEW_SYSTEM_ROOT')
+    if (!values.variant.trim()) blockers.push('请选择 variant')
+    if (!values.buildFlag.trim()) blockers.push('请选择 build_flag')
+    if (!values.buildTargets.length && !values.needPack) blockers.push('请选择编译 target 或开启打包')
+  }
+  if (sections.flash && !values.flashVersionFromBuild && !values.flashPkgPath.trim()) {
+    blockers.push('请填写烧录版本路径')
+  }
+  if ((sections.flash || sections.selfcheck) && !String(values.deviceId ?? '').trim()) {
+    blockers.push('请选择目标设备')
+  }
+  if (sections.flash && !values.oemUnlockConfirmed) {
+    blockers.push('请勾选确认目标设备已 OEM 解锁，可使用 fastboot 刷机')
+  }
+  if (sections.gerrit && !values.gerritIssueId.trim()) {
+    blockers.push('请填写 Gerrit 提交 ID')
+  }
+  return blockers
+}
+
 export function canProceedWizardStep3(
   sections: WizardStep3Sections,
   values: WizardStep3Values,
 ): boolean {
-  if (sections.build) {
-    if (!values.systemRoot.trim()) return false
-    if (!values.variant.trim()) return false
-    if (!values.buildFlag.trim()) return false
-    if (!values.buildTargets.length && !values.needPack) return false
-  }
-  if (sections.flash && !values.flashVersionFromBuild && !values.flashPkgPath.trim()) return false
-  if ((sections.flash || sections.selfcheck) && !String(values.deviceId ?? '').trim()) return false
-  if (sections.gerrit && !values.gerritIssueId.trim()) return false
-  return true
+  return listWizardStep3Blockers(sections, values).length === 0
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAlert, NButton, NInput, NInputNumber, NSelect, NSpin, NSteps, NStep, NTable, useMessage } from 'naive-ui'
+import { NAlert, NButton, NInput, NInputNumber, NSelect, NSpin, NSteps, NStep, NTable, NTooltip, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
 import {
   createPipelineRun,
@@ -49,6 +49,7 @@ import {
 import {
   WIZARD_DOMAIN_DEFAULT_ENABLED,
   canProceedWizardStep3,
+  listWizardStep3Blockers,
   resolveWizardStep3Sections,
   syncWizardDomainEnabledWithWorkspaces,
   workflowStageEnabled,
@@ -178,6 +179,7 @@ const buildContext = reactive<BuildContext>({
 const selectedBuildTargets = ref<string[]>(['sys', 'krn', 'vext', 'hal', 'odm'])
 const needPack = ref<'yes' | 'no'>('yes')
 const deviceId = ref<string | null>(null)
+const oemUnlockConfirmed = ref(false)
 const keepClonedDeviceId = ref<string | null>(null)
 const skipAutoPrereqFetch = ref(false)
 const testPlanMode = ref<TestPlanMode>('pipeline_adapt')
@@ -381,6 +383,10 @@ watch(flashVersionFromBuild, (fromBuild) => {
   if (fromBuild) flashPkgPath.value = ''
 })
 
+watch(deviceId, () => {
+  oemUnlockConfirmed.value = false
+})
+
 const enabledDomains = computed(() => wizardDomains.value.filter(d => d.enabled))
 
 const visibleDomains = computed(() => {
@@ -430,8 +436,6 @@ const pathParseFresh = computed(() =>
 const pathParseOkCount = computed(() => parsedPathFields.value.filter(f => f.ok).length)
 const pathParseFailCount = computed(() => parsedPathFields.value.filter(f => !f.ok).length)
 
-const canProceedStep1 = computed(() => canParsePaths.value && pathParseFresh.value)
-
 function selectedProjectFull(): string | undefined {
   const v = parsedPathFields.value.find(f => f.key === 'PROJECT_FULL')?.value?.trim()
   return v || undefined
@@ -473,8 +477,6 @@ async function handleParsePaths() {
   }
 }
 
-const canProceedStep2 = computed(() => true)
-
 function recomputeIncomplete(domain: WizardDomain) {
   const missing: string[] = []
   for (const field of domain.schema) {
@@ -491,17 +493,40 @@ function onDomainFieldChange(domain: WizardDomain) {
   recomputeIncomplete(domain)
 }
 
-const canProceedStep3 = computed(() => canProceedWizardStep3(step3Sections.value, {
-  systemRoot: newSystemRoot.value,
-  variant: String(buildContext.variant ?? ''),
-  buildFlag: String(buildContext.build_flag ?? ''),
-  buildTargets: selectedBuildTargets.value,
-  needPack: needPack.value === 'yes',
-  flashPkgPath: flashPkgPath.value,
-  flashVersionFromBuild: flashVersionFromBuild.value,
-  deviceId: deviceId.value,
-  gerritIssueId: String(buildContext.gerrit_issue_id ?? ''),
-}))
+function step3Values() {
+  return {
+    systemRoot: newSystemRoot.value,
+    variant: String(buildContext.variant ?? ''),
+    buildFlag: String(buildContext.build_flag ?? ''),
+    buildTargets: selectedBuildTargets.value,
+    needPack: needPack.value === 'yes',
+    flashPkgPath: flashPkgPath.value,
+    flashVersionFromBuild: flashVersionFromBuild.value,
+    deviceId: deviceId.value,
+    oemUnlockConfirmed: oemUnlockConfirmed.value,
+    gerritIssueId: String(buildContext.gerrit_issue_id ?? ''),
+  }
+}
+
+const canProceedStep3 = computed(() => canProceedWizardStep3(step3Sections.value, step3Values()))
+
+const nextBlockedReasons = computed(() => {
+  if (loading.value) return ['正在处理，请稍候']
+  if (step.value === 1) {
+    if (!canParsePaths.value) return ['请选择项目并填写旧/新 vendor 根目录']
+    if (!pathParseFresh.value) return ['项目或 vendor 根已变化，请重新解析后再下一步']
+    return []
+  }
+  if (step.value === 3) return listWizardStep3Blockers(step3Sections.value, step3Values())
+  return []
+})
+
+const nextDisabled = computed(() => nextBlockedReasons.value.length > 0)
+
+function onBlockedNextClick() {
+  if (!nextBlockedReasons.value.length) return
+  message.warning(`还不能进入下一步：${nextBlockedReasons.value.join('；')}`)
+}
 
 async function loadTrsysBranches() {
   if (!needTrsysShareConf.value || trsysBranchesLoading.value) return
@@ -863,7 +888,7 @@ async function goNext() {
   }
   if (step.value === 3) {
     if (!canProceedStep3.value) {
-      message.warning('请先填写当前流程的必填项')
+      onBlockedNextClick()
       return
     }
     buildContext.build_targets = [...selectedBuildTargets.value]
@@ -1455,6 +1480,18 @@ onUnmounted(() => {
         />
         <p class="field-hint">启用烧录或自检时必选。不选则无法进入下一步。</p>
       </div>
+      <div v-if="step3Sections.flash" class="oem-unlock-box">
+        <NAlert type="warning" :bordered="false" class="oem-unlock-alert">
+          烧录将使用 fastboot 刷写分区。请确认当前目标设备已完成 OEM / Bootloader 解锁，否则刷机必然失败。
+        </NAlert>
+        <label class="oem-unlock-check">
+          <input v-model="oemUnlockConfirmed" type="checkbox">
+          <span>
+            我确认该设备已 OEM 解锁，可以使用 fastboot 刷机
+            <span class="req">*</span>
+          </span>
+        </label>
+      </div>
       <button type="button" class="link-btn extras-toggle" @click="flashExtrasOpen = !flashExtrasOpen">
         {{ flashExtrasOpen ? '收起更多选项' : '展开更多选项' }}
       </button>
@@ -1584,14 +1621,29 @@ onUnmounted(() => {
     <div class="footer">
       <NButton v-if="step > 1" :disabled="loading" @click="goBack">上一步</NButton>
       <div class="spacer" />
-      <NButton
-        v-if="step < 4"
-        type="primary"
-        :disabled="loading || (step === 1 && !canProceedStep1) || (step === 2 && !canProceedStep2) || (step === 3 && !canProceedStep3)"
-        @click="goNext"
-      >
-        下一步
-      </NButton>
+      <NTooltip v-if="step < 4" :disabled="!nextDisabled" trigger="hover" placement="top">
+        <template #trigger>
+          <span
+            class="next-wrap"
+            :class="{ blocked: nextDisabled }"
+            @click="onBlockedNextClick"
+          >
+            <NButton
+              type="primary"
+              :disabled="nextDisabled"
+              @click="goNext"
+            >
+              下一步
+            </NButton>
+          </span>
+        </template>
+        <div class="next-blockers">
+          <strong>还不能进入下一步</strong>
+          <ul>
+            <li v-for="reason in nextBlockedReasons" :key="reason">{{ reason }}</li>
+          </ul>
+        </div>
+      </NTooltip>
       <NButton
         v-else
         type="primary"
@@ -1628,6 +1680,44 @@ onUnmounted(() => {
 }
 .extras-panel {
   margin-bottom: 8px;
+}
+.oem-unlock-box {
+  margin: 0 0 14px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--warn, #d97706) 50%, var(--line));
+  background: color-mix(in srgb, var(--warn, #d97706) 12%, transparent);
+}
+.oem-unlock-alert { margin-bottom: 10px; }
+.oem-unlock-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1.45;
+  input {
+    margin-top: 3px;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+}
+.next-wrap {
+  display: inline-block;
+  &.blocked {
+    cursor: not-allowed;
+    :deep(.n-button) { pointer-events: none; }
+  }
+}
+.next-blockers {
+  max-width: 320px;
+  strong { display: block; margin-bottom: 6px; }
+  ul {
+    margin: 0;
+    padding-left: 18px;
+  }
 }
 .steps {
   margin-bottom: 24px;

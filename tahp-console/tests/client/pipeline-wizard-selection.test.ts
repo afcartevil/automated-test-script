@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   WIZARD_DOMAIN_DEFAULT_ENABLED,
   canProceedWizardStep3,
+  listWizardStep3Blockers,
   resolveWizardStep3Sections,
   syncWizardDomainEnabledWithWorkspaces,
   workflowStageEnabled,
@@ -26,6 +27,7 @@ function values(overrides: Partial<Parameters<typeof canProceedWizardStep3>[1]> 
     flashPkgPath: '',
     flashVersionFromBuild: true,
     deviceId: 'SN1',
+    oemUnlockConfirmed: true,
     gerritIssueId: 'TOS1501-1',
     ...overrides,
   }
@@ -109,11 +111,27 @@ describe('pipeline wizard step3 required fields', () => {
     )).toBe(false)
     expect(canProceedWizardStep3(
       resolveWizardStep3Sections([{ key: 'selfcheck', enabled: true }]),
-      values({ deviceId: null, flashPkgPath: '', gerritIssueId: '' }),
+      values({ deviceId: null, flashPkgPath: '', gerritIssueId: '', oemUnlockConfirmed: false }),
     )).toBe(false)
     expect(canProceedWizardStep3(
       resolveWizardStep3Sections([{ key: 'selfcheck', enabled: true }]),
-      values({ flashPkgPath: '', gerritIssueId: '' }),
+      values({ flashPkgPath: '', gerritIssueId: '', oemUnlockConfirmed: false }),
+    )).toBe(true)
+  })
+
+  it('requires OEM unlock confirmation only when flash is enabled', () => {
+    const flashOnly = resolveWizardStep3Sections([{ key: 'flash', enabled: true }])
+    expect(listWizardStep3Blockers(flashOnly, values({
+      oemUnlockConfirmed: false,
+      gerritIssueId: '',
+    }))).toContain('请勾选确认目标设备已 OEM 解锁，可使用 fastboot 刷机')
+    expect(canProceedWizardStep3(flashOnly, values({
+      oemUnlockConfirmed: false,
+      gerritIssueId: '',
+    }))).toBe(false)
+    expect(canProceedWizardStep3(
+      resolveWizardStep3Sections([{ key: 'selfcheck', enabled: true }]),
+      values({ oemUnlockConfirmed: false, gerritIssueId: '' }),
     )).toBe(true)
   })
 
@@ -134,11 +152,28 @@ describe('pipeline wizard step3 required fields', () => {
   it('requires Gerrit issue id only when gerrit is enabled', () => {
     expect(canProceedWizardStep3(
       resolveWizardStep3Sections([{ key: 'gerrit', enabled: true }]),
-      values({ gerritIssueId: '  ', deviceId: '', flashPkgPath: '' }),
+      values({ gerritIssueId: '  ', deviceId: '', flashPkgPath: '', oemUnlockConfirmed: false }),
     )).toBe(false)
     expect(canProceedWizardStep3(
       resolveWizardStep3Sections([{ key: 'build', enabled: true }]),
-      values({ gerritIssueId: '', deviceId: '', flashPkgPath: '' }),
+      values({ gerritIssueId: '', deviceId: '', flashPkgPath: '', oemUnlockConfirmed: false }),
     )).toBe(true)
+  })
+
+  it('lists every unmet required field', () => {
+    expect(listWizardStep3Blockers(
+      resolveWizardStep3Sections(defaultNodes),
+      values({
+        systemRoot: '',
+        deviceId: '',
+        oemUnlockConfirmed: false,
+        gerritIssueId: '',
+      }),
+    )).toEqual([
+      '请填写 NEW_SYSTEM_ROOT',
+      '请选择目标设备',
+      '请勾选确认目标设备已 OEM 解锁，可使用 fastboot 刷机',
+      '请填写 Gerrit 提交 ID',
+    ])
   })
 })
