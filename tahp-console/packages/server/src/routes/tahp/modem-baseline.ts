@@ -26,6 +26,7 @@ import {
   saveModemPatchWorkspaceProfile,
   scanModemPatchRepos,
   scanModemPatchReposMulti,
+  stopModemBaselineRun,
   updateModemPatchRepo,
   updateModemPatchRule,
   unregisterModemBaselineSseClient,
@@ -472,6 +473,23 @@ tahpModemBaselineRoutes.post('/runs', async (ctx) => {
   } catch (error) {
     const message = (error as Error).message
     ctx.status = message === 'invalid_config' ? 400 : 500
+    ctx.body = { success: false, error: message }
+  }
+})
+
+tahpModemBaselineRoutes.post('/runs/:runId/stop', async (ctx) => {
+  try {
+    ctx.body = {
+      success: true,
+      data: stopModemBaselineRun(ctx.params.runId),
+    }
+  } catch (error) {
+    const message = (error as Error).message
+    ctx.status = message === 'not_found'
+      ? 404
+      : message === 'not_running'
+        ? 400
+        : 500
     ctx.body = { success: false, error: message }
   }
 })

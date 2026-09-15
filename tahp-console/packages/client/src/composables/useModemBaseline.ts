@@ -24,6 +24,7 @@ import {
   recommendModemPatch,
   saveWorkspaceProfile,
   scanRepoProfiles,
+  stopModemBaselineRun,
   subscribeModemBaselineEvents,
   listModemBaselineNotices,
   applyModemBaselineNotice,
@@ -131,6 +132,7 @@ export function getRunStatusBrief(
   if (status === 'failed') {
     if (error === 'bridge_not_ready') return 'bridge 未就绪'
     if (error === 'bridge_session_dead') return 'Bridge 幽灵 session'
+    if (error === 'stopped_by_user') return '已手动停止'
     if (error === 'gerrit_missing_change_id') return 'Gerrit 缺 Change-Id'
     if (error === 'gerrit_push_rejected') return 'Gerrit 推送被拒'
     if (error === 'build_failed' || phase === 'build') return '编译失败'
@@ -165,16 +167,22 @@ export function getStatusMeta(status?: ModemBaselineStatus, error?: string, phas
       ? 'ASF Bridge 未就绪。请确认一键配置已保存齐治凭据与 TOTP 后重试（静默 asf bridge up，无需打开 Transhell）。'
       : error === 'bridge_session_dead'
         ? 'ASF Bridge 幽灵 session：界面显示已连接，但 Zellij 会话已死。请重新跑任务（会自动 down+up），或手动执行 asf --json bridge down --session 1 && asf --json bridge up --session 1。'
-        : error === 'gerrit_missing_change_id'
-          ? 'Gerrit 推送失败：commit 缺少 Change-Id。请在远端仓安装 commit-msg hook，执行 git commit --amend --no-edit 后再 push。'
-          : error === 'gerrit_push_rejected'
-            ? 'Gerrit 推送被拒。请在「实时输出」中查看 remote rejected / ERROR 行确认原因。'
-            : error === 'build_failed' || phase === 'build'
-              ? '自动编译失败，请结合运行日志确认 ./tools/bld_modem.sh 执行结果。'
-              : phase === 'resume'
-                ? '继续执行阶段失败，请结合运行日志确认 commit、post-merge 或 push 相关步骤。'
-                : '执行失败，请结合运行日志定位失败阶段。'
-    return { label: '执行失败', tone: 'error', summary }
+        : error === 'stopped_by_user'
+          ? '任务已被手动停止。可基于此配置新建升级或重新启动。'
+          : error === 'gerrit_missing_change_id'
+            ? 'Gerrit 推送失败：commit 缺少 Change-Id。请在远端仓安装 commit-msg hook，执行 git commit --amend --no-edit 后再 push。'
+            : error === 'gerrit_push_rejected'
+              ? 'Gerrit 推送被拒。请在「实时输出」中查看 remote rejected / ERROR 行确认原因。'
+              : error === 'build_failed' || phase === 'build'
+                ? '自动编译失败，请结合运行日志确认 ./tools/bld_modem.sh 执行结果。'
+                : phase === 'resume'
+                  ? '继续执行阶段失败，请结合运行日志确认 commit、post-merge 或 push 相关步骤。'
+                  : '执行失败，请结合运行日志定位失败阶段。'
+    return {
+      label: error === 'stopped_by_user' ? '已手动停止' : '执行失败',
+      tone: 'error',
+      summary,
+    }
   }
   if (status === 'running') {
     if (phase === 'build') {
@@ -413,6 +421,7 @@ export function useModemBaseline() {
   const updatingRepo = ref(false)
   const refreshingRepoBranches = ref(false)
   const continuing = ref(false)
+  const stopping = ref(false)
   const refreshing = ref(false)
   const repoRefreshTimer = ref<number | null>(null)
   const repoHadRunning = ref(false)
@@ -937,6 +946,22 @@ export function useModemBaseline() {
     }
   }
 
+  async function stopRun(runId?: string) {
+    const targetId = runId || selectedRun.value?.runId
+    if (!targetId) return
+    stopping.value = true
+    try {
+      await stopModemBaselineRun(targetId)
+      await reloadRuns()
+      if (selectedRunId.value === targetId) {
+        await selectRun(targetId)
+      }
+      void reloadPendingNotices()
+    } finally {
+      stopping.value = false
+    }
+  }
+
   async function refreshConflicts() {
     if (!selectedRun.value) return
     refreshing.value = true
@@ -1297,6 +1322,7 @@ export function useModemBaseline() {
     updatingRepo,
     refreshingRepoBranches,
     continuing,
+    stopping,
     refreshing,
     errorMessage,
     pendingNotices,
@@ -1344,6 +1370,7 @@ export function useModemBaseline() {
     selectRun,
     startRun,
     continueRun,
+    stopRun,
     refreshConflicts,
     openConflictFile,
     closeEventSource,

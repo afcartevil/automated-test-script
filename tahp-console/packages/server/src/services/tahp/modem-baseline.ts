@@ -183,6 +183,8 @@ type RunRuntime = {
 const runtimes = new Map<string, RunRuntime>()
 /** In-memory child processes for modem baseline runs (lost on BFF restart). */
 const activeChildProcesses = new Map<string, ChildProcess>()
+/** 用户手动停止的 run：close 回调跳过 postProcess，避免覆盖 stopped_by_user */
+const stoppedByUserRuns = new Set<string>()
 /** postProcess（含自动编译）进行中的 run，避免孤儿回收误杀长编译任务 */
 const activePostProcessRuns = new Set<string>()
 /** If a running run has no live worker and log is silent longer than this, treat as orphaned. */
@@ -3812,6 +3814,8 @@ export function describeModemRunFailure(error?: string): string | undefined {
       return 'ASF Bridge 未就绪。请确认一键配置已保存齐治凭据与 TOTP 后重试。'
     case 'build_failed':
       return '自动编译失败，请结合运行日志确认 ./tools/bld_modem.sh 执行结果。'
+    case 'stopped_by_user':
+      return '任务已被手动停止。'
     default:
       return undefined
   }
@@ -3944,8 +3948,82 @@ async function startBackgroundRun(runId: string, config: ModemBaselineConfig, sc
     } catch {
       // ignore
     }
+    if (stoppedByUserRuns.has(runId)) {
+      stoppedByUserRuns.delete(runId)
+      appendRunLog(runId, logPath, '[run] close skipped postProcess (stopped_by_user)\n')
+      return
+    }
     await postProcessRun(runId, config, code, line => appendRunLog(runId, logPath, line))
   })
+}
+
+function killModemBaselineProcessTree(pid: number) {
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      windowsHide: true,
+      timeout: 15_000,
+      encoding: 'utf-8',
+    })
+    return
+  }
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // already exited
+  }
+}
+
+/**
+ * 手动停止 running 任务：杀 python 进程树，标记 failed=stopped_by_user。
+ * close 回调将跳过 postProcess，避免被 bridge_session_dead 等覆盖。
+ */
+export function stopModemBaselineRun(runId: string) {
+  const meta = readModemBaselineRun(runId)
+  if (!meta) throw new Error('not_found')
+  if (meta.status !== 'running') throw new Error('not_running')
+
+  const logPath = meta.logPath || runLogPath(runId)
+  stoppedByUserRuns.add(runId)
+
+  const child = activeChildProcesses.get(runId)
+  const pid = child?.pid || meta.pid
+  if (pid && pid > 0) {
+    appendRunLog(runId, logPath, `[run] stop requested pid=${pid}\n`)
+    try {
+      killModemBaselineProcessTree(pid)
+    } catch (error) {
+      appendRunLog(runId, logPath, `[run] stop kill_failed: ${String((error as Error)?.message ?? error)}\n`)
+    }
+    try {
+      child?.kill('SIGKILL')
+    } catch {
+      // ignore
+    }
+  } else {
+    appendRunLog(runId, logPath, '[run] stop requested (no live pid; marking failed)\n')
+  }
+
+  activeChildProcesses.delete(runId)
+  const nextMeta: ModemBaselineRunMeta = {
+    ...meta,
+    status: 'failed',
+    phase: inferPhaseFromStatus('failed', meta.phase),
+    finishedAt: nowIso(),
+    error: 'stopped_by_user',
+    pid: undefined,
+  }
+  writeRunMeta(nextMeta)
+  appendRunLog(runId, logPath, '[run] stopped_by_user\n')
+  const human = describeModemRunFailure('stopped_by_user')
+  if (human) appendRunLog(runId, logPath, `[run] FAILURE: ${human}\n`)
+  broadcast(runId, 'status', {
+    status: nextMeta.status,
+    phase: nextMeta.phase,
+    reportPath: nextMeta.reportPath,
+    error: nextMeta.error,
+  })
+  syncNoticePlatformTaskFromRun(nextMeta, line => appendRunLog(runId, logPath, line))
+  return { runId, status: nextMeta.status as ModemBaselineStatus, error: nextMeta.error }
 }
 
 export function createModemBaselineRun(input: unknown) {

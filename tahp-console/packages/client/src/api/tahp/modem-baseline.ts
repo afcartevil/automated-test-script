@@ -327,6 +327,15 @@ export function createModemBaselineRun(
   })
 }
 
+export function stopModemBaselineRun(
+  runId: string,
+): Promise<{ runId: string; status: ModemBaselineStatus; error?: string }> {
+  return tahpPost<{ runId: string; status: ModemBaselineStatus; error?: string }>(
+    `/api/tahp/modem-baseline/runs/${encodeURIComponent(runId)}/stop`,
+    {},
+  )
+}
+
 export function updateModemBaselineNoticePlatformTask(
   noticeId: string,
   platform: string,
