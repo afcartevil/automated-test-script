@@ -283,4 +283,69 @@ describe('adapt-pipeline quality mapper', () => {
     const gerrit = extra?.stages?.find(s => s.key === 'gerrit')
     expect(gerrit?.status).toBe('pending')
   })
+
+  it('emits readable stage cards and prereq snapshot', async () => {
+    const base = minimalPipelineRun()
+    const run = minimalPipelineRun({
+      from_os: 'Android 16',
+      to_os: 'Android 17',
+      device_id: 'X6879A001',
+      domains: base.domains.map(d => d.domain_id === 'tp'
+        ? {
+          ...d,
+          related_skills: ['tp-adapt-bringup'],
+          layout_fields: [
+            { name: 'debug_project', label: '调试项目名', required: true },
+            { name: 'ic_vendor', label: 'IC厂商', required: true },
+          ],
+          form_data: { debug_project: 'X6879', ic_vendor: 'Goodix' },
+        }
+        : d),
+      stages: {
+        ...base.stages,
+        prereq: {
+          key: 'prereq',
+          status: 'done',
+          attempt: 1,
+          refs: {},
+          summary: { domain_count: 2, from_os: 'Android 16', to_os: 'Android 17' },
+          finished_at: '2026-08-18T10:05:00.000Z',
+        },
+        build: {
+          key: 'build',
+          status: 'done',
+          attempt: 1,
+          refs: { build_run_id: 'bld-1' },
+          summary: {
+            artifactsDir: 'Z:\\ea-build\\out',
+            durationMs: 120000,
+            skillId: 'ez-build',
+            notes: 'ea-build tmux=ezb-1 targets=sys,krn,pack',
+          },
+        },
+        flash: { key: 'flash', status: 'done', attempt: 1, refs: {}, summary: '0' },
+      },
+    })
+    const runs = await mapPipelineRunToQualityRuns(run, 'neng.zhou')
+    const machine = runs[0]
+    const extra = machine.extra?.pipeline as {
+      prereq?: { domains?: Array<{ domain_id: string; form_data?: Record<string, string> }> }
+      stages?: Array<{
+        key: string
+        summary: string
+        headline?: string
+        facts?: Array<{ label: string; value: string }>
+        error_brief?: string
+      }>
+    }
+    expect(extra?.prereq?.domains?.some(d => d.domain_id === 'tp' && d.form_data?.ic_vendor === 'Goodix')).toBe(true)
+    const prereq = extra?.stages?.find(s => s.key === 'prereq')
+    expect(prereq?.headline).toContain('前置完成')
+    expect(prereq?.summary.startsWith('{')).toBe(false)
+    const build = extra?.stages?.find(s => s.key === 'build')
+    expect(build?.headline).toContain('编译通过')
+    expect(build?.facts?.some(f => f.label === '产物目录')).toBe(true)
+    const flash = extra?.stages?.find(s => s.key === 'flash')
+    expect(flash?.headline).toContain('摘要无法解读')
+  })
 })

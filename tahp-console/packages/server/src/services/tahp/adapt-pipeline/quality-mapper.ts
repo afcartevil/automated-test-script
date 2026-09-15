@@ -39,22 +39,266 @@ export function buildAdaptPipelineDomainRunId(pipelineRunId: string, domainId: s
   return `pl-${sanitizeIdPart(pipelineRunId)}-${sanitizeIdPart(domainId)}`.slice(0, 180)
 }
 
-function mapStageReportStatus(st: StageState | undefined): StageReportStatus {
+type StageFact = { label: string; value: string }
+
+type StageReport = {
+  key: PipelineStageKey
+  status: StageReportStatus
+  scope: 'project' | 'domain'
+  summary: string
+  headline?: string
+  facts?: StageFact[]
+  error?: string
+  error_brief?: string
+  started_at?: string
+  finished_at?: string
+  duration_ms?: number
+  refs?: Record<string, string>
+}
+
+const STAGE_ZH: Record<PipelineStageKey, string> = {
+  prereq: '前置',
+  adapt: '适配',
+  build: '编译',
+  flash: '烧录',
+  selfcheck: '自检',
+  gerrit: '合入',
+}
+
+function clipText(value: string, max: number): string {
+  return value.length <= max ? value : value.slice(0, max)
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>
+        }
+      } catch { /* ignore */ }
+    }
+  }
+  return null
+}
+
+function pickField(obj: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const raw = obj[key]
+    if (typeof raw === 'string' && raw.trim()) return raw.trim()
+    if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw)
+  }
+  return ''
+}
+
+function formatDurationMs(ms?: number): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return ''
+  const sec = Math.round(ms / 1000)
+  if (sec < 60) return `${sec} 秒`
+  const min = Math.floor(sec / 60)
+  const rem = sec % 60
+  if (min < 60) return rem ? `${min} 分 ${rem} 秒` : `${min} 分`
+  const hour = Math.floor(min / 60)
+  return `${hour} 小时 ${min % 60} 分`
+}
+
+function durationOf(st: StageState | undefined, payload?: Record<string, unknown>): number | undefined {
+  const fromPayload = payload ? Number(payload.durationMs ?? payload.duration_ms) : NaN
+  if (Number.isFinite(fromPayload) && fromPayload >= 0) return fromPayload
+  if (!st?.started_at || !st.finished_at) return undefined
+  const start = Date.parse(st.started_at)
+  const end = Date.parse(st.finished_at)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return undefined
+  return end - start
+}
+
+function errorBriefOf(error?: string): string | undefined {
+  if (!error?.trim()) return undefined
+  const lines = error.split(/\r?\n/).filter(line => line.trim()).slice(0, 12)
+  return clipText(lines.join('\n'), 800)
+}
+
+function isUnreadableSummary(raw: string): boolean {
+  const trimmed = raw.trim()
+  if (!trimmed) return true
+  if (trimmed === '0' || trimmed === '{}' || trimmed === 'null') return true
+  return /^[0-9]+$/.test(trimmed) && trimmed.length < 4
+}
+
+function stagePayload(st: StageState | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  const fromSummary = asRecord(st?.summary)
+  if (fromSummary) Object.assign(out, fromSummary)
+  if (st?.progress && typeof st.progress === 'object' && !Array.isArray(st.progress)) {
+    Object.assign(out, st.progress)
+  }
+  return out
+}
+
+function parseBuildNotes(notes: string): { tmux?: string; targets?: string } {
+  return {
+    tmux: notes.match(/tmux=(\S+)/)?.[1],
+    targets: notes.match(/targets=(\S+)/)?.[1],
+  }
+}
+
+function mapStageReportStatus(
+  st: StageState | undefined,
+  run: PipelineRun,
+): StageReportStatus {
   if (!st) return 'pending'
   if (st.status === 'done') return 'done'
   if (st.status === 'failed') return 'failed'
   if (st.status === 'skipped') return 'skipped'
+  if (st.status === 'waiting_human' && isPipelineTerminal(run.status)) return 'failed'
   return 'pending'
 }
 
-function summaryFromStage(key: string, st: StageState | undefined, fallback: string): string {
-  if (st?.summary && typeof st.summary === 'object') {
-    return JSON.stringify(st.summary).slice(0, 1500)
+function factsFromPayload(
+  key: PipelineStageKey,
+  payload: Record<string, unknown>,
+  st: StageState | undefined,
+): StageFact[] {
+  const facts: StageFact[] = []
+  const push = (label: string, value: string) => {
+    if (value.trim()) facts.push({ label, value: clipText(value.trim(), 240) })
   }
-  if (typeof st?.summary === 'string' && st.summary.trim()) return st.summary.slice(0, 1500)
-  if (st?.status === 'done') return `${key} 完成 · ${st.finished_at || ''}`
-  if (st?.status === 'failed') return (st.error || `${key} 失败`).slice(0, 1500)
-  return fallback
+  if (key === 'prereq') {
+    push('源系统', pickField(payload, ['from_os', 'fromOs']))
+    push('目标系统', pickField(payload, ['to_os', 'toOs']))
+    push('战役', pickField(payload, ['campaign_id', 'campaignId']))
+    push('启用域数', pickField(payload, ['domain_count', 'domainCount']))
+    return facts
+  }
+  if (key === 'build') {
+    push('产物目录', pickField(payload, ['artifactsDir', 'artifacts_dir']))
+    push('包路径', pickField(payload, ['pkgPath', 'pkg_path']))
+    const notes = pickField(payload, ['notes'])
+    const parsed = notes ? parseBuildNotes(notes) : {}
+    push('编译模块', parsed.targets?.replace(/,/g, ' / ') || '')
+    push('构建 ID', parsed.tmux || pickField(payload, ['build_run_id']))
+    push('Skill', pickField(payload, ['skillId', 'skill_id']))
+    const dur = durationOf(st, payload)
+    push('耗时', formatDurationMs(dur))
+    return facts
+  }
+  if (key === 'flash') {
+    push('设备', pickField(payload, ['device', 'device_id', 'deviceId', 'serial']))
+    push('刷机日志', pickField(payload, ['flash_log_path', 'log_path']) || String(st?.refs?.flash_log_path || ''))
+    return facts
+  }
+  if (key === 'selfcheck') {
+    push('报告', pickField(payload, ['selfcheck_report_id']) || String(st?.refs?.selfcheck_report_id || ''))
+    push('通过 / 失败', pickField(payload, ['passed_failed', 'result']))
+    return facts
+  }
+  return facts
+}
+
+function describeStage(
+  key: PipelineStageKey,
+  status: StageReportStatus,
+  st: StageState | undefined,
+  run: PipelineRun,
+  presetSummary: string,
+): { summary: string; headline: string; facts: StageFact[] } {
+  const zh = STAGE_ZH[key]
+  const payload = stagePayload(st)
+  const facts = factsFromPayload(key, payload, st)
+  const rawText = typeof st?.summary === 'string' ? st.summary.trim() : ''
+  const preset = presetSummary.trim()
+
+  if (key === 'prereq') {
+    const enabled = run.domains.filter(d => d.enabled)
+    const incomplete = enabled.reduce((n, d) => n + d.incomplete_required.length, 0)
+    const os = [run.from_os || pickField(payload, ['from_os']), run.to_os || pickField(payload, ['to_os'])]
+      .filter(Boolean).join(' → ')
+    const names = enabled.map(d => d.domain_label || d.domain_id).slice(0, 4).join(', ')
+    if (status === 'failed' && incomplete > 0) {
+      const headline = `前置未完成 · 缺 ${incomplete} 项必填`
+      return { summary: headline, headline, facts }
+    }
+    const headline = status === 'done'
+      ? `前置完成 · ${os || '系统跨度未知'} · ${enabled.length} 域${names ? `（${names}）` : ''}`
+      : preset || `${zh}未执行`
+    if (os && !facts.some(f => f.label === '源系统' || f.label === '目标系统')) {
+      if (run.from_os) facts.unshift({ label: '源系统', value: run.from_os })
+      if (run.to_os) facts.splice(run.from_os ? 1 : 0, 0, { label: '目标系统', value: run.to_os })
+    }
+    if (enabled.length && !facts.some(f => f.label === '启用域数')) {
+      facts.push({ label: '启用域', value: names || String(enabled.length) })
+    }
+    return { summary: clipText(headline, 1500), headline, facts }
+  }
+
+  if (key === 'adapt') {
+    const headline = status === 'done'
+      ? (preset.startsWith('adapt ') ? preset : `适配完成 · ${preset}`)
+      : status === 'failed'
+        ? (st?.error || preset || '适配失败')
+        : (preset || '适配未执行')
+    return { summary: clipText(headline, 1500), headline: clipText(headline, 180), facts }
+  }
+
+  if (key === 'build') {
+    if (status === 'failed') {
+      const headline = st?.error ? `编译失败 · ${st.error.split(/\r?\n/)[0]}` : '编译失败'
+      return { summary: clipText(headline, 1500), headline: clipText(headline, 180), facts }
+    }
+    if (status === 'done') {
+      const dur = formatDurationMs(durationOf(st, payload))
+      const headline = dur ? `编译通过 · 产物已就绪 · ${dur}` : '编译通过 · 产物已就绪'
+      return { summary: headline, headline, facts }
+    }
+    return { summary: preset || '编译未执行', headline: preset || '编译未执行', facts }
+  }
+
+  if (key === 'flash') {
+    if (status === 'failed') {
+      const headline = st?.error ? `烧录失败 · ${st.error.split(/\r?\n/)[0]}` : '烧录失败'
+      return { summary: clipText(headline, 1500), headline: clipText(headline, 180), facts }
+    }
+    if (status === 'done' && isUnreadableSummary(rawText || preset)) {
+      const headline = `烧录已标记完成，但上报摘要无法解读（原始值：${rawText || preset || '空'}）`
+      facts.push({ label: '原始摘要', value: rawText || preset || '空' })
+      return { summary: headline, headline, facts }
+    }
+    if (status === 'done') {
+      const headline = preset && !preset.startsWith('{') && !isUnreadableSummary(preset)
+        ? preset
+        : '烧录完成'
+      return { summary: clipText(headline, 1500), headline: clipText(headline, 180), facts }
+    }
+    return { summary: preset || '烧录未执行', headline: preset || '烧录未执行', facts }
+  }
+
+  if (key === 'selfcheck') {
+    if (status === 'pending' && run.stages.flash?.status === 'failed') {
+      const headline = '整机未过 flash，无自检报告'
+      return { summary: headline, headline, facts }
+    }
+    if (status === 'skipped' || (status === 'pending' && (preset === '未执行' || preset === '待执行'))) {
+      const headline = status === 'skipped' ? '本轮跳过自检 · 未执行用例' : '自检未执行'
+      return { summary: headline, headline, facts }
+    }
+    if (status === 'failed') {
+      const headline = st?.error ? `自检失败 · ${st.error.split(/\r?\n/)[0]}` : '自检失败'
+      return { summary: clipText(headline, 1500), headline: clipText(headline, 180), facts }
+    }
+    if (status === 'done') {
+      const headline = '自检完成'
+      return { summary: headline, headline, facts }
+    }
+    return { summary: preset || '自检未执行', headline: preset || '自检未执行', facts }
+  }
+
+  const headline = preset || (status === 'done' ? `${zh}完成` : `${zh}未执行`)
+  return { summary: clipText(headline, 1500), headline: clipText(headline, 180), facts }
 }
 
 function stageRefs(st: StageState | undefined): Record<string, string> | undefined {
@@ -67,11 +311,10 @@ function stageRefs(st: StageState | undefined): Record<string, string> | undefin
 }
 
 function adaptDomainSummary(domain: PipelineDomain): string {
-  const parts = [`status=${domain.status}`]
-  if (domain.adapt_task_id) parts.push(`task=${domain.adapt_task_id}`)
-  if (domain.changed_files?.length) parts.push(domain.changed_files.slice(0, 20).join('\n'))
-  if (domain.error) parts.push(domain.error)
-  return parts.join(' · ').slice(0, 1500) || 'adapt'
+  if (domain.status === 'failed') return (domain.error || 'adapt failed').slice(0, 1500)
+  const n = domain.changed_files?.length ?? 0
+  const files = n ? `改 ${n} 个文件` : '无代码变更需要合入'
+  return `adapt done · ${files}`.slice(0, 1500)
 }
 
 function machineAdaptSummary(run: PipelineRun): string {
@@ -80,7 +323,7 @@ function machineAdaptSummary(run: PipelineRun): string {
   const failed = enabled.filter(d => d.status === 'failed').length
   const pending = enabled.filter(d => d.status === 'pending' || d.status === 'running').length
   const skipped = enabled.filter(d => d.status === 'skipped').length
-  return `done ${done} · fail ${failed} · pending ${pending} · skip ${skipped}`
+  return `通过 ${done} · 失败 ${failed} · 未终态 ${pending} · 跳过 ${skipped}`
 }
 
 function inferCurrentNode(run: PipelineRun): string {
@@ -136,34 +379,82 @@ function gerritStageForDomain(run: PipelineRun, domain: PipelineDomain): {
   return { status: 'pending', summary: '无 Gerrit Change', gerrits: changes }
 }
 
+function rawFallbackSummary(st: StageState | undefined, fallback: string): string {
+  if (typeof st?.summary === 'string' && st.summary.trim() && !st.summary.trim().startsWith('{')) {
+    return st.summary.trim().slice(0, 1500)
+  }
+  if (st?.status === 'done') return fallback
+  if (st?.status === 'failed') return (st.error || fallback).slice(0, 1500)
+  return fallback
+}
+
+function snapshotFormData(
+  data: Record<string, unknown> | undefined,
+  fields?: Array<{ name: string }>,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  const keys = fields?.length ? fields.map(f => f.name) : Object.keys(data || {})
+  for (const key of keys.slice(0, 24)) {
+    const raw = data?.[key]
+    if (raw == null || raw === '') {
+      out[key] = ''
+      continue
+    }
+    const text = typeof raw === 'string' ? raw : JSON.stringify(raw)
+    out[key] = clipText(text, 160)
+  }
+  return out
+}
+
+function snapshotPrereq(run: PipelineRun): Record<string, unknown> {
+  const enabled = run.domains.filter(d => d.enabled).slice(0, 8)
+  const bc = run.build_context
+  return {
+    from_os: run.from_os,
+    to_os: run.to_os,
+    campaign_id: run.campaign_id,
+    device_id: run.device_id,
+    test_plan: run.test_plan
+      ? { mode: run.test_plan.mode, test_type: run.test_plan.test_type }
+      : undefined,
+    build_context: bc
+      ? {
+        mapped_root: bc.mapped_root,
+        linux_root: bc.linux_root,
+        workspace: bc.workspace,
+        variant: bc.variant,
+        project: bc.project,
+        build_kind: bc.build_kind,
+        build_targets: bc.build_targets,
+        need_pack: bc.need_pack,
+        gerrit_issue_id: bc.gerrit_issue_id,
+      }
+      : undefined,
+    domains: enabled.map(d => ({
+      domain_id: d.domain_id,
+      domain_label: d.domain_label,
+      related_skills: (d.related_skills || []).slice(0, 8),
+      incomplete_required: (d.incomplete_required || []).slice(0, 20),
+      layout_fields: (d.layout_fields || []).slice(0, 24).map(f => ({
+        name: f.name,
+        label: f.label,
+        required: !!f.required,
+      })),
+      form_data: snapshotFormData(d.form_data, d.layout_fields),
+    })),
+  }
+}
+
 function buildStages(
   run: PipelineRun,
   scope: 'project' | 'domain',
   domain?: PipelineDomain,
-): Array<{
-  key: PipelineStageKey
-  status: StageReportStatus
-  scope: 'project' | 'domain'
-  summary: string
-  error?: string
-  started_at?: string
-  finished_at?: string
-  refs?: Record<string, string>
-}> {
-  const stages: Array<{
-    key: PipelineStageKey
-    status: StageReportStatus
-    scope: 'project' | 'domain'
-    summary: string
-    error?: string
-    started_at?: string
-    finished_at?: string
-    refs?: Record<string, string>
-  }> = []
+): StageReport[] {
+  const stages: StageReport[] = []
 
   for (const key of STAGE_KEYS) {
     const st = run.stages[key]
-    let status = mapStageReportStatus(st)
+    let status = mapStageReportStatus(st, run)
     let summary = ''
     let scopeForStage: 'project' | 'domain' = scope
     let error = st?.error
@@ -186,25 +477,35 @@ function buildStages(
       const submitted = (run.gerrit_changes || []).filter(c => c.status === 'submitted').length
       summary = submitted
         ? `${submitted} 个仓已提交 Gerrit`
-        : summaryFromStage(key, st, 'Gerrit 未跑或未完成')
+        : rawFallbackSummary(st, 'Gerrit 未跑或未完成')
     } else {
       scopeForStage = 'project'
-      summary = summaryFromStage(key, st, key === 'selfcheck' && status === 'pending' ? '未执行' : '待执行')
+      summary = rawFallbackSummary(
+        st,
+        key === 'selfcheck' && status === 'pending' ? '未执行' : '待执行',
+      )
       if (key === 'selfcheck' && status === 'pending' && run.stages.flash?.status === 'failed') {
         summary = '整机未过 flash，无自检报告'
       }
     }
 
-    if (!summary.trim()) summary = `${key} · ${status}`
+    if (!summary.trim()) summary = `${STAGE_ZH[key]} · ${status}`
+    const described = describeStage(key, status, st, run, summary)
+    const payload = stagePayload(st)
+    const durationMs = durationOf(st, payload)
 
     stages.push({
       key,
       status,
       scope: scopeForStage,
-      summary,
+      summary: described.summary,
+      headline: described.headline,
+      facts: described.facts.length ? described.facts : undefined,
       error: error?.slice(0, 500),
+      error_brief: errorBriefOf(error),
       started_at: st?.started_at,
       finished_at: st?.finished_at,
+      duration_ms: durationMs,
       refs: stageRefs(st),
     })
   }
@@ -331,6 +632,7 @@ function pipelineExtra(
       gerrits: scope === 'domain' && domain
         ? gerrits.filter(g => changeTouchesDomain(g, domain.domain_id))
         : gerrits,
+      ...(scope === 'project' ? { prereq: snapshotPrereq(run) } : {}),
     },
   }
 }
