@@ -48,6 +48,12 @@ call npm run setup:gki-patch
 if errorlevel 1 goto warn_gki
 
 :after_gki
+echo.
+echo [EasyAdapter] 检查冒烟测试 Python 依赖^(sdd_test^)...
+call npm run setup:sdd
+if errorlevel 1 goto warn_sdd
+
+:after_sdd
 node scripts/print-hermes-version.mjs
 
 node scripts/build-if-needed.mjs
@@ -123,6 +129,13 @@ echo [EasyAdapter] GKI Patch 依赖安装失败，GKI Patch 页面可能不可�
 echo   可稍后手动执行: npm run setup:gki-patch
 echo.
 goto after_gki
+
+:warn_sdd
+echo.
+echo [EasyAdapter] 冒烟测试依赖安装失败，质量验测-冒烟测试可能不可用。
+echo   可稍后手动执行: npm run setup:sdd
+echo.
+goto after_sdd
 
 :err_build
 echo.

@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url'
 import { ensureHermesAgent } from './ensure-hermes-agent.mjs'
 import { ensureSkillPythonDeps } from './ensure-skill-python-deps.mjs'
 import { ensureGkiPatchDeps } from './ensure-gki-patch-deps.mjs'
+import { ensureSddPythonDeps } from './ensure-self-check-python-deps.mjs'
 import { getBundledHermesAgentDir, getSystemPython, getTahpProjectRoot, resolvePythonCommand } from './lib/tahp-paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -89,7 +90,17 @@ if (gkiPatchDeps.ok) {
   warn(gkiPatchDeps.error || 'GKI Patch Tool 依赖安装失败（GKI Patch 页面可能不可用）')
 }
 
-// 8. 功耗自动化依赖（启动功耗测试时自动安装，不参与 Console 启动）
+// 8. 冒烟 USD (sdd_test) 依赖（pytest 等框架包，缺失会导致冒烟直接失败且无 SDD_report.json）
+console.log('')
+console.log('冒烟测试 (USD) Python 依赖\n')
+const sddDeps = ensureSddPythonDeps({ quiet: false })
+if (sddDeps.ok) {
+  if (!sddDeps.skipped) pass('冒烟测试 (USD) Python 依赖已就绪')
+} else {
+  warn(sddDeps.error || '冒烟测试依赖安装失败（质量验测-冒烟测试可能不可用）')
+}
+
+// 9. 功耗自动化依赖（启动功耗测试时自动安装，不参与 Console 启动）
 pass('功耗自动化依赖在启动功耗测试时自动检查/安装')
 
 console.log('')
