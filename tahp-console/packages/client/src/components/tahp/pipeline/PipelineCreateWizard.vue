@@ -46,6 +46,10 @@ import {
   resolveClonedTestPlanMode,
   type WizardCloneSeed,
 } from '@/utils/pipeline-clone'
+import {
+  WIZARD_DOMAIN_DEFAULT_ENABLED,
+  syncWizardDomainEnabledWithWorkspaces,
+} from '@/utils/pipeline-wizard-selection'
 
 const props = defineProps<{
   store: ReturnType<typeof useAdaptPipelineStore>
@@ -600,8 +604,8 @@ function buildWizardDomains(
       related_skills: central?.related_skills?.length
         ? [...central.related_skills]
         : [...(cat.related_skills ?? [])],
-      // 中心有该域则默认勾选；否则需用户显式启用
-      enabled: Boolean(central) && selectedWorkspaces.value.includes(cat.workspace_id as AdaptWorkspaceId),
+      // 进入模块选择页时一律不勾选，由用户显式启用（克隆走 overlay 覆盖）
+      enabled: WIZARD_DOMAIN_DEFAULT_ENABLED,
       schema,
       form_data: formData,
       incomplete_required: [],
@@ -817,16 +821,8 @@ function toggleWorkspace(id: AdaptWorkspaceId, checked: boolean) {
     }
     selectedWorkspaces.value = selectedWorkspaces.value.filter(w => w !== id)
   }
-  // 切换工作区时：新工作区下中心有数据的域自动启用；移出的工作区域取消启用
-  for (const d of wizardDomains.value) {
-    const inSelected = selectedWorkspaces.value.includes(d.workspace_id as AdaptWorkspaceId)
-    if (!inSelected) {
-      d.enabled = false
-    } else if (d.from_central && !d.enabled) {
-      d.enabled = true
-      recomputeIncomplete(d)
-    }
-  }
+  // 移出工作区时取消其模块勾选；新勾选的工作区不自动勾选模块
+  syncWizardDomainEnabledWithWorkspaces(wizardDomains.value, selectedWorkspaces.value)
 }
 
 function selectAllVisible() {
