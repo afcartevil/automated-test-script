@@ -49,6 +49,11 @@ export interface SelfCheckFlashBeforeTestConfig {
   stageVersion?: string
 }
 
+export interface SelfCheckTcardBeforeTestConfig {
+  enabled: boolean
+  zipPath?: string
+}
+
 /** 质量验测开始前的前置配置快照（写入 summary/detail.json） */
 export interface SelfCheckTestConfig {
   monkeyDuration?: string
@@ -57,6 +62,7 @@ export interface SelfCheckTestConfig {
   autoRetestEnabled?: boolean
   autoRetestCount?: number
   flashBeforeTest?: SelfCheckFlashBeforeTestConfig
+  tcardBeforeTest?: SelfCheckTcardBeforeTestConfig
   prioritizeTddManual?: boolean
   selectedCases?: string[]
 }
@@ -201,6 +207,12 @@ export function formatSelfCheckTestConfigMetaRows(cfg?: SelfCheckTestConfig): st
     }
     if (cfg.flashBeforeTest.enableRootPkg && cfg.flashBeforeTest.rootPkgPath) {
       rows.push(['Root 刷机包', cfg.flashBeforeTest.rootPkgPath])
+    }
+  }
+  if (cfg.tcardBeforeTest?.enabled) {
+    rows.push(['T卡升级', '是'])
+    if (cfg.tcardBeforeTest.zipPath) {
+      rows.push(['T卡升级 ZIP', cfg.tcardBeforeTest.zipPath])
     }
   }
   if (cfg.selectedCases?.length) {

@@ -3,6 +3,7 @@ import {
   createFlashProgressState,
   parseFlashLogLine,
   flashPhaseLabel,
+  mergeFlashLogLine,
 } from '../../packages/client/src/utils/flash-progress'
 
 describe('flash-progress parser', () => {
@@ -62,5 +63,34 @@ describe('flash-progress parser', () => {
     parseFlashLogLine(s, '[刷机] 刷机进程正常结束')
     expect(s.progress).toBe(100)
     expect(s.flashSucceeded).toBe(true)
+  })
+
+  it('tracks T-card zip push and reboot wait', () => {
+    const s = createFlashProgressState()
+    parseFlashLogLine(s, '[T卡升级] 开始推送 ota.zip -> /sdcard/ota.zip')
+    expect(s.phase).toBe('推送 ZIP')
+    parseFlashLogLine(s, '[T卡升级] [ 40%] /sdcard/ota.zip')
+    expect(s.progress).toBeGreaterThanOrEqual(20)
+    parseFlashLogLine(s, '[T卡升级] 推送完成')
+    expect(s.progress).toBeGreaterThanOrEqual(42)
+    parseFlashLogLine(s, '[T卡升级] 刷机完成，开始 T卡升级…')
+    expect(s.progress).toBeLessThan(100)
+    parseFlashLogLine(s, '[T卡升级] 完成')
+    expect(s.progress).toBe(100)
+  })
+
+  it('keeps T-card push progress on a single log line', () => {
+    const logs = mergeFlashLogLine(
+      ['[T卡升级] 开始推送 ota.zip -> /sdcard/ota.zip'],
+      '[T卡升级] [  1%] /sdcard/ota.zip',
+    )
+    expect(logs).toEqual([
+      '[T卡升级] 开始推送 ota.zip -> /sdcard/ota.zip',
+      '[T卡升级] [  1%] /sdcard/ota.zip',
+    ])
+    expect(mergeFlashLogLine(logs, '[T卡升级] [ 37%] /sdcard/ota.zip')).toEqual([
+      '[T卡升级] 开始推送 ota.zip -> /sdcard/ota.zip',
+      '[T卡升级] [ 37%] /sdcard/ota.zip',
+    ])
   })
 })

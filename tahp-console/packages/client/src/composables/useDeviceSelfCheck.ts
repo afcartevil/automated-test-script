@@ -9,6 +9,7 @@ import {
   setDeviceRole,
   startTest,
   pickFlashPath,
+  pickTcardZipPath,
   pickGmsTradefedPath,
   resolveLatestDailyFlashPackage,
   clearFlashPackageCache,
@@ -48,6 +49,7 @@ import {
   createFlashProgressState,
   parseFlashLogLine,
   flashPhaseLabel,
+  mergeFlashLogLine,
   type FlashProgressState,
 } from '@/utils/flash-progress'
 import {
@@ -121,10 +123,16 @@ interface DeviceFlashFormOptions {
   flashPath: string
   enableRootPkg: boolean
   flashStageVersion: string
+  enableTcardUpdate: boolean
+  tcardUpdatePath: string
 }
 
 /** 每台设备独立保存刷机表单，切换设备时恢复 */
 const flashFormByDeviceId = ref<Record<string, DeviceFlashFormOptions>>({})
+
+const enableTcardUpdate = ref(false)
+const tcardUpdatePath = ref('')
+const tcardPathPicking = ref(false)
 
 function snapshotFlashFormOptions(): DeviceFlashFormOptions {
   return {
@@ -132,6 +140,8 @@ function snapshotFlashFormOptions(): DeviceFlashFormOptions {
     flashPath: flashPath.value,
     enableRootPkg: enableRootPkg.value,
     flashStageVersion: flashStageVersion.value,
+    enableTcardUpdate: enableTcardUpdate.value,
+    tcardUpdatePath: tcardUpdatePath.value,
   }
 }
 
@@ -147,7 +157,10 @@ function applyFlashFormOptions(opts?: DeviceFlashFormOptions) {
   flashPath.value = opts?.flashPath ?? ''
   enableRootPkg.value = opts?.enableRootPkg ?? false
   flashStageVersion.value = opts?.flashStageVersion ?? 'Open'
+  enableTcardUpdate.value = opts?.enableTcardUpdate ?? false
+  tcardUpdatePath.value = opts?.tcardUpdatePath ?? ''
   dailyFlashResolving.value = false
+  tcardPathPicking.value = false
 }
 
 function clearFlashFormForDevice(deviceId: string) {
@@ -186,16 +199,13 @@ function scrollFlashLogToBottom() {
 }
 
 function appendFlashLog(line: string) {
-  flashLogs.value.push(line)
+  flashLogs.value = mergeFlashLogLine(flashLogs.value, line)
   flashActive.value = true
   parseFlashLogLine(flashProgressState.value, line)
   scrollFlashLogToBottom()
 }
 
 watch(flashLogs, scrollFlashLogToBottom)
-
-const enableTcardUpdate = ref(false)
-const tcardUpdatePath = ref('')
 
 // 视图模式
 const viewMode = ref<'list' | 'customTest'>('list')
@@ -570,7 +580,7 @@ async function selectDevice(deviceId: string) {
     const detail = await getDeviceDetail(deviceId)
     selectedDevice.value = detail
     // 切回仍在刷机的设备时恢复刷机面板绑定（切换其他设备期间不清理刷机状态）
-    if (detail.device.status === '刷机中') {
+    if (detail.device.status === '刷机中' || detail.device.status === 'T卡升级中') {
       if (!flashDeviceId.value || flashDeviceId.value === deviceId) {
         flashDeviceId.value = deviceId
         flashActive.value = true
@@ -1103,13 +1113,18 @@ function connectEventStream() {
       if (!data.deviceId || data.deviceId !== flashDeviceId.value) return
       flashActive.value = false
       if (data.success) {
-        clearFlashPanel()
-        followCurrent.value = true
-        const detail = await getDeviceDetail(data.deviceId)
-        if (selectedDeviceId.value === data.deviceId) {
-          selectedDevice.value = detail
+        if (data.continuePretest) {
+          flashActive.value = true
+          appendFlashLog('[T卡升级] 刷机完成，开始 T卡升级…')
+        } else {
+          clearFlashPanel()
+          followCurrent.value = true
+          const detail = await getDeviceDetail(data.deviceId)
+          if (selectedDeviceId.value === data.deviceId) {
+            selectedDevice.value = detail
+          }
+          applyFollowCurrentCase(detail.session)
         }
-        applyFollowCurrentCase(detail.session)
       } else {
         flashDone.value = 'error'
         parseFlashLogLine(
@@ -1250,6 +1265,28 @@ async function handleBrowseFlashPath() {
   }
 }
 
+async function handleBrowseTcardZip() {
+  if (tcardPathPicking.value) return
+  tcardPathPicking.value = true
+  error.value = null
+  try {
+    const result = await pickTcardZipPath()
+    if (result.path) {
+      if (!/\.zip$/i.test(result.path)) {
+        error.value = 'T卡升级仅支持 ZIP 文件'
+        return
+      }
+      tcardUpdatePath.value = result.path
+    } else if (result.error) {
+      error.value = result.error
+    }
+  } catch (e: any) {
+    error.value = e?.message || '选择 T卡升级 ZIP 失败'
+  } finally {
+    tcardPathPicking.value = false
+  }
+}
+
 async function handleResolveLatestDailyFlash() {
   if (dailyFlashResolving.value) return
   const deviceId = selectedDeviceId.value
@@ -1343,6 +1380,17 @@ async function handleStartTest(deviceId: string) {
       error.value = '请先选择刷机包路径'
       return
     }
+    if (enableTcardUpdate.value) {
+      const zipPath = tcardUpdatePath.value.trim()
+      if (!zipPath) {
+        error.value = '请先选择 T卡升级 ZIP 包'
+        return
+      }
+      if (!/\.zip$/i.test(zipPath)) {
+        error.value = 'T卡升级仅支持 ZIP 文件'
+        return
+      }
+    }
     const intent = startTestIntentRole.value
     const current = devices.value.find(d => d.deviceId === deviceId)
     if (current && current.role !== intent) {
@@ -1362,11 +1410,21 @@ async function handleStartTest(deviceId: string) {
           stageVersion: flashStageVersion.value || undefined,
         }
       : undefined
-    if (flash) {
+    const tcard = enableTcardUpdate.value
+      ? {
+          enabled: true,
+          zipPath: tcardUpdatePath.value.trim(),
+        }
+      : undefined
+    if (flash || tcard) {
       flashDeviceId.value = deviceId
       flashActive.value = true
       flashProgressState.value = createFlashProgressState()
-      appendFlashLog('[刷机] 已提交刷机任务，等待设备进入刷机流程...')
+      appendFlashLog(
+        flash
+          ? '[刷机] 已提交刷机任务，等待设备进入刷机流程...'
+          : '[T卡升级] 已提交 T卡升级任务，等待推送 ZIP...',
+      )
     }
     const result = await startTest(
       deviceId,
@@ -1374,6 +1432,7 @@ async function handleStartTest(deviceId: string) {
       flash,
       undefined,
       prioritizeTddManual.value,
+      tcard,
     )
     if (result) {
       selectedDevice.value = result
@@ -1891,6 +1950,8 @@ const errorReason = computed(() => {
 const errorModuleLabel = computed(() => selectedDevice.value?.device.currentModule || '')
 
 const isFlashing = computed(() => selectedDevice.value?.device.status === '刷机中')
+const isTcardUpdating = computed(() => selectedDevice.value?.device.status === 'T卡升级中')
+const isPretesting = computed(() => isFlashing.value || isTcardUpdating.value)
 
 const flashProgress = computed(() => flashProgressState.value.progress)
 
@@ -1904,8 +1965,7 @@ const isFlashFailed = computed(() => {
 
 const showFlashPanel = computed(() => {
   if (!selectedDeviceId.value) return false
-  // 服务端仍为刷机中：回到该设备时始终展示刷机面板
-  if (isFlashing.value) return true
+  if (isPretesting.value) return true
   if (!flashDeviceId.value || flashDeviceId.value !== selectedDeviceId.value) return false
   if (flashActive.value) return true
   return isFlashFailed.value
@@ -1914,18 +1974,33 @@ const showFlashPanel = computed(() => {
 const showFlashFailureUI = computed(() => isError.value || isFlashFailed.value)
 
 const isFlashIndeterminate = computed(() => {
-  return (flashActive.value || isFlashing.value) && flashProgress.value < 8
+  return (flashActive.value || isPretesting.value) && flashProgress.value < 8
 })
 
+const pretestPanelTitle = computed(() => (
+  isTcardUpdating.value || flashLogs.value.some(line => line.includes('[T卡升级]'))
+    ? 'T卡升级进度'
+    : '刷机进度'
+))
+
+const pretestLogTitle = computed(() => (
+  pretestPanelTitle.value === 'T卡升级进度' ? 'T卡升级日志' : '刷机日志'
+))
+
 const flashStatusText = computed(() => {
-  if (isFlashing.value || flashActive.value) return '刷机中'
-  if (flashDone.value === 'success') return '刷机完成'
-  if (flashDone.value === 'error') return '刷机失败'
-  return '待刷机'
+  if (isTcardUpdating.value) return 'T卡升级中'
+  if (isFlashing.value || flashActive.value) {
+    return flashLogs.value.some(line => line.includes('[T卡升级]')) ? 'T卡升级中' : '刷机中'
+  }
+  if (flashDone.value === 'success') return '完成'
+  if (flashDone.value === 'error') {
+    return flashLogs.value.some(line => line.includes('[T卡升级]')) ? 'T卡升级失败' : '刷机失败'
+  }
+  return '待开始'
 })
 
 const flashStatusClass = computed(() => {
-  if (isFlashing.value || flashActive.value) return 'is-running'
+  if (isPretesting.value || flashActive.value) return 'is-running'
   if (flashDone.value === 'success') return 'is-success'
   if (flashDone.value === 'error') return 'is-error'
   return 'is-idle'
@@ -1965,7 +2040,7 @@ const canEndTest = computed(() => {
   if ((device.status as string) === '待命') return false
   if (session?.isRunning) return true
   const status = device.status || ''
-  return status === '测试中' || status === '初始化中' || status === '等待测试开始' || status === '刷机中' || status === '错误'
+  return status === '测试中' || status === '初始化中' || status === '等待测试开始' || status === '刷机中' || status === 'T卡升级中' || status === '错误'
 })
 
 const canSkipCurrentCase = computed(() => {
@@ -2185,10 +2260,14 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     flashStatusText,
     flashStatusClass,
     handleBrowseFlashPath,
+    handleBrowseTcardZip,
     handleResolveLatestDailyFlash,
     handleClearFlashPackages,
     enableTcardUpdate,
     tcardUpdatePath,
+    tcardPathPicking,
+    pretestPanelTitle,
+    pretestLogTitle,
     viewMode,
     catalogPanelExpanded,
     deviceDetailExpanded,

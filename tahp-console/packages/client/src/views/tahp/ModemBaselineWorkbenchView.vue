@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { NButton, useMessage } from 'naive-ui'
+import { NButton, useDialog, useMessage } from 'naive-ui'
 import ModemBaselineAdvancedConfig from '@/components/tahp/modem-baseline/ModemBaselineAdvancedConfig.vue'
 import type { ConfigFieldErrors } from '@/components/tahp/modem-baseline/ModemBaselineAdvancedConfig.vue'
 import ModemBaselineConfigCard from '@/components/tahp/modem-baseline/ModemBaselineConfigCard.vue'
@@ -14,6 +14,7 @@ import type { ModemPlatformTaskStatus } from '@/api/tahp/modem-baseline'
 import { isModemConflictLogLine, isModemErrorLogLine, takeModemLogTail } from '@/utils/modemBaselineLog'
 
 const message = useMessage()
+const dialog = useDialog()
 const {
   config,
   noticeText,
@@ -30,6 +31,7 @@ const {
   parsingNotice,
   recommending,
   continuing,
+  stopping,
   refreshing,
   buildProjects,
   buildProjectsWarning,
@@ -51,6 +53,7 @@ const {
   reloadRuns,
   startRun,
   continueRun,
+  stopRun,
   refreshConflicts,
   openConflictFile,
   reloadPendingNotices,
@@ -346,6 +349,24 @@ async function handleContinueRun() {
   }
 }
 
+function handleStopRun() {
+  if (!selectedRun.value || selectedRun.value.status !== 'running') return
+  dialog.warning({
+    title: '停止任务',
+    content: `确认停止任务 ${selectedRun.value.runId}？将强制结束后台进程，状态标记为失败。`,
+    positiveText: '停止',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await stopRun(selectedRun.value!.runId)
+        message.success('已停止任务')
+      } catch (error) {
+        message.error(String((error as Error)?.message ?? error))
+      }
+    },
+  })
+}
+
 async function handleRefreshConflicts() {
   try {
     await refreshConflicts()
@@ -562,6 +583,15 @@ onUnmounted(() => {
               >
                 {{ statusMeta.label }}
               </span>
+              <NButton
+                v-if="selectedRun.status === 'running'"
+                type="error"
+                size="small"
+                :loading="stopping"
+                @click="handleStopRun"
+              >
+                停止任务
+              </NButton>
               <NButton type="primary" secondary size="small" @click="handleCreateUpgrade">
                 新建升级
               </NButton>

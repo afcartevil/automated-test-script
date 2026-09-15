@@ -11,7 +11,9 @@ export type DeviceStatus =
   | '完成(失败)'
   | '错误'
   | '占用中'
+  | '待命'
   | '刷机中'
+  | 'T卡升级中'
 
 export interface SimCardInfo {
   slotIndex: number
@@ -189,16 +191,22 @@ export interface StartTestFlashPayload {
   stageVersion?: string
 }
 
+export interface StartTestTcardPayload {
+  enabled: boolean
+  zipPath?: string
+}
+
 export async function startTest(
   deviceId: string,
   testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated',
   flash?: StartTestFlashPayload,
   scheduleKey?: string,
   prioritizeTddManual?: boolean,
+  tcard?: StartTestTcardPayload,
 ): Promise<DeviceDetail> {
   return await tahpPost<DeviceDetail>(
     `/api/tahp/device-self-check/devices/${deviceId}/test/start`,
-    { testType, flash, scheduleKey, prioritizeTddManual },
+    { testType, flash, scheduleKey, prioritizeTddManual, tcard },
   )
 }
 
@@ -211,6 +219,13 @@ export interface PickFlashPathResult {
 export async function pickFlashPath(): Promise<PickFlashPathResult> {
   return await tahpPost<PickFlashPathResult>(
     '/api/tahp/device-self-check/flash/pick-path',
+    {}
+  )
+}
+
+export async function pickTcardZipPath(): Promise<PickFlashPathResult> {
+  return await tahpPost<PickFlashPathResult>(
+    '/api/tahp/device-self-check/tcard/pick-zip',
     {}
   )
 }
@@ -539,6 +554,11 @@ export interface SelfCheckFlashBeforeTestConfig {
   stageVersion?: string
 }
 
+export interface SelfCheckTcardBeforeTestConfig {
+  enabled: boolean
+  zipPath?: string
+}
+
 export interface SelfCheckTestConfig {
   monkeyDuration?: string
   smokeUsdSkipSpdInfo?: boolean
@@ -546,6 +566,7 @@ export interface SelfCheckTestConfig {
   autoRetestEnabled?: boolean
   autoRetestCount?: number
   flashBeforeTest?: SelfCheckFlashBeforeTestConfig
+  tcardBeforeTest?: SelfCheckTcardBeforeTestConfig
   prioritizeTddManual?: boolean
   selectedCases?: string[]
 }

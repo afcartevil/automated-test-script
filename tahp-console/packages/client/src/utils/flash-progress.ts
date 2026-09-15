@@ -68,6 +68,41 @@ export function parseFlashLogLine(state: FlashProgressState, line: string): Flas
     return state
   }
 
+  if (normalized.includes('[T卡升级]')) {
+    if (normalized.includes('已提交') || normalized.includes('开始推送') || normalized.includes('开始 T卡升级')) {
+      bump(state, 8, '推送 ZIP', 'adb push 到 /sdcard')
+    } else if (/推送进度:\s*(\d+)%/.test(normalized) || /\[T卡升级\] \[\s*(\d+)\s*%\]/.test(normalized)) {
+      const pctMatch = normalized.match(/推送进度:\s*(\d+)%/) || normalized.match(/\[T卡升级\] \[\s*(\d+)\s*%\]/)
+      const pct = pctMatch ? parseInt(pctMatch[1], 10) : 0
+      bump(state, 8 + pct * 0.32, '推送 ZIP', `推送 ${pct}%`)
+    } else if (normalized.includes('推送完成')) {
+      bump(state, 42, '打开系统更新', 'SystemUpdateActivity')
+    } else if (normalized.includes('点击本地升级')) {
+      bump(state, 50, '本地升级', 'ota_local')
+    } else if (normalized.includes('点击 file_name')) {
+      bump(state, 54, '选择文件', 'file_name')
+    } else if (normalized.includes('选择刷机包')) {
+      bump(state, 58, '选择升级包', '点击 ZIP 文件名')
+    } else if (normalized.includes('确认安装')) {
+      bump(state, 68, '确认安装', 'btn_positive')
+    } else if (normalized.includes('再次打开系统更新')) {
+      bump(state, 75, '系统更新', '等待立即重启')
+    } else if (normalized.includes('打开系统更新')) {
+      bump(state, 45, '系统更新', 'SystemUpdateActivity')
+    } else if (normalized.includes('等待立即重启')) {
+      bump(state, 82, '等待重启按钮', 'reboot_now')
+    } else if (normalized.includes('点击立即重启')) {
+      bump(state, 90, '立即重启', '等待设备重启')
+    } else if (normalized.includes('等待设备重启')) {
+      bump(state, 94, '等待重连', '升级后设备回连')
+    } else if (normalized === '[T卡升级] 完成') {
+      bump(state, 100, 'T卡升级完成', '')
+    } else if (normalized.includes('失败')) {
+      bump(state, state.progress, 'T卡升级失败', normalized.replace(/^\[T卡升级\]\s*/, ''))
+    }
+    return state
+  }
+
   if (
     /\[ERROR\]/.test(normalized) &&
     (/升级失败|fastboot升级失败|刷机失败/.test(normalized))
@@ -208,4 +243,22 @@ export function parseFlashLogLine(state: FlashProgressState, line: string): Flas
 
 export function flashPhaseLabel(state: FlashProgressState): string {
   return state.detail ? `${state.phase} · ${state.detail}` : state.phase
+}
+
+const TCARD_PUSH_PROGRESS_RE = /\[T卡升级\] (?:推送进度:\s*\d+%|\[\s*\d+\s*%\])/
+
+/** 推送百分比原地覆盖最后一行，避免日志刷屏。 */
+export function mergeFlashLogLine(logs: string[], line: string): string[] {
+  const trimmed = line.trim()
+  if (!trimmed) return logs
+  if (
+    TCARD_PUSH_PROGRESS_RE.test(trimmed)
+    && logs.length > 0
+    && TCARD_PUSH_PROGRESS_RE.test(logs[logs.length - 1])
+  ) {
+    const next = logs.slice()
+    next[next.length - 1] = trimmed
+    return next
+  }
+  return [...logs, trimmed]
 }

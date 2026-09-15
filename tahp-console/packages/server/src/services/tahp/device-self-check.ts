@@ -12,8 +12,13 @@ import {
   runDeviceFlash,
   waitForAdbDevice,
 } from './device-flash'
+import {
+  isTcardZipPath,
+  runTcardUpdate,
+  type TcardUpdateOptions,
+} from './device-tcard-update'
 import { resolvePythonSpawn, tahpPaths } from './paths'
-import { ensurePowerTestPythonDeps } from './self-check-python-deps'
+import { ensurePowerTestPythonDeps, ensureSddTestPythonDeps } from './self-check-python-deps'
 import { buildSelfCheckDetailPayload, formatSelfCheckTestConfigMetaRows, openLocalPath, reportAbsoluteDir, type SelfCheckCaseItem, type SelfCheckFailedCaseItem, type SelfCheckTestConfig } from './self-check-reports'
 import {
   AI_GENERATED_MODULE,
@@ -42,6 +47,7 @@ export type DeviceStatus =
   | '占用中'
   | '待命'
   | '刷机中'
+  | 'T卡升级中'
 
 export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated'
 export type DeviceTestType = StandardTestType | 'custom'
@@ -144,6 +150,7 @@ export interface TestSession {
   customAuxPromotedIds?: string[]
   initializedPythonModules?: string[]
   flashOptions?: DeviceFlashOptions
+  tcardOptions?: TcardUpdateOptions
   scheduleKey?: string
   errorReason?: string
   /** 通信（str4/week tdd）人工用例优先执行；报告/列表仍按原顺序 */
@@ -292,6 +299,7 @@ function snapshotTestConfig(
   testType: DeviceTestType,
   opts: {
     flashOptions?: DeviceFlashOptions
+    tcardOptions?: TcardUpdateOptions
     prioritizeTddManual?: boolean
     selectedCases?: string[]
   },
@@ -305,6 +313,12 @@ function snapshotTestConfig(
       enableRootPkg: opts.flashOptions.enableRootPkg,
       rootPkgPath: opts.flashOptions.rootPkgPath,
       stageVersion: opts.flashOptions.stageVersion,
+    }
+  }
+  if (opts.tcardOptions?.zipPath) {
+    cfg.tcardBeforeTest = {
+      enabled: true,
+      zipPath: opts.tcardOptions.zipPath,
     }
   }
   if (opts.prioritizeTddManual) cfg.prioritizeTddManual = true
@@ -2565,6 +2579,20 @@ async function runModule(
     }
   }
 
+  if (testType === 'smoke') {
+    const sddDeps = ensureSddTestPythonDeps()
+    if (!sddDeps.ok && !sddDeps.skipped) {
+      const reason = sddDeps.error || '冒烟 USD Python 依赖安装失败'
+      console.error(`[device-self-check] Smoke USD deps failed: ${reason}`)
+      devices[deviceId].status = '错误'
+      devices[deviceId].currentModule = module
+      session.errorReason = reason
+      session.isRunning = false
+      emitEvent('device_updated', { device: devices[deviceId] })
+      return
+    }
+  }
+
   // 前置条件检查
   const precheck = await checkPreconditions(deviceId, moduleKey)
   if (precheck.status === 'failed') {
@@ -2819,6 +2847,11 @@ export interface StartTestFlashPayload {
   stageVersion?: string
 }
 
+export interface StartTestTcardPayload {
+  enabled: boolean
+  zipPath?: string
+}
+
 function buildFlashOptionsFromPayload(payload?: StartTestFlashPayload): DeviceFlashOptions | undefined {
   if (!payload?.enabled || !payload.pkgPath?.trim()) return undefined
   return {
@@ -2829,6 +2862,22 @@ function buildFlashOptionsFromPayload(payload?: StartTestFlashPayload): DeviceFl
   }
 }
 
+function buildTcardOptionsFromPayload(payload?: StartTestTcardPayload): TcardUpdateOptions | undefined {
+  if (!payload?.enabled || !payload.zipPath?.trim()) return undefined
+  const zipPath = payload.zipPath.trim()
+  if (!isTcardZipPath(zipPath)) {
+    throw new Error('T卡升级仅支持 ZIP 文件')
+  }
+  return { zipPath }
+}
+
+function pretestStatus(session: Pick<TestSession, 'flashOptions' | 'tcardOptions'> & { currentModuleIndex?: number }): DeviceStatus {
+  if ((session.currentModuleIndex ?? 0) !== 0) return '初始化中'
+  if (session.flashOptions) return '刷机中'
+  if (session.tcardOptions) return 'T卡升级中'
+  return '初始化中'
+}
+
 async function runFlashBeforeTest(deviceId: string, session: TestSession): Promise<boolean> {
   if (!session.flashOptions) return true
 
@@ -2836,6 +2885,7 @@ async function runFlashBeforeTest(deviceId: string, session: TestSession): Promi
   if (!device) return false
 
   device.status = '刷机中'
+  device.currentModule = '刷机'
   emitEvent('device_updated', { device })
   emitEvent('flash_log', { deviceId, line: '[刷机] 开始准备刷机环境…' })
 
@@ -2858,7 +2908,12 @@ async function runFlashBeforeTest(deviceId: string, session: TestSession): Promi
     return false
   }
 
-  emitEvent('flash_completed', { deviceId, success: true, returnCode: result.returnCode })
+  emitEvent('flash_completed', {
+    deviceId,
+    success: true,
+    returnCode: result.returnCode,
+    continuePretest: Boolean(session.tcardOptions),
+  })
   const reconnected = await waitForAdbDevice(deviceId)
   if (!reconnected) {
     device.status = '错误'
@@ -2871,8 +2926,45 @@ async function runFlashBeforeTest(deviceId: string, session: TestSession): Promi
   return true
 }
 
+async function runTcardBeforeTest(deviceId: string, session: TestSession): Promise<boolean> {
+  if (!session.tcardOptions) return true
+
+  const device = devices[deviceId]
+  if (!device) return false
+
+  device.status = 'T卡升级中'
+  device.currentModule = 'T卡升级'
+  emitEvent('device_updated', { device })
+  emitEvent('flash_log', { deviceId, line: '[T卡升级] 开始 T卡升级…' })
+
+  const result = await runTcardUpdate(
+    deviceId,
+    session.tcardOptions,
+    (line) => emitEvent('flash_log', { deviceId, line }),
+    () => !session.isRunning,
+  )
+
+  if (!result.success) {
+    device.status = '错误'
+    session.isRunning = false
+    session.errorReason = result.error || 'T卡升级失败'
+    device.currentModule = 'T卡升级'
+    emitEvent('device_updated', { device })
+    emitEvent('flash_completed', {
+      deviceId,
+      success: false,
+      error: result.error,
+    })
+    return false
+  }
+
+  emitEvent('flash_completed', { deviceId, success: true })
+  return true
+}
+
 export interface StartTestOptions {
   prioritizeTddManual?: boolean
+  tcard?: StartTestTcardPayload
 }
 
 function bindCustomAuxDevices(auxIds: string[], dutId: string, session: TestSession): void {
@@ -2940,9 +3032,10 @@ export async function startTest(
     }
 
     const flashOptions = buildFlashOptionsFromPayload(flash)
+    const tcardOptions = buildTcardOptionsFromPayload(options?.tcard)
 
     // 更新设备状态
-    device.status = flashOptions ? '刷机中' : '初始化中'
+    device.status = pretestStatus({ flashOptions, tcardOptions })
     device.testType = testType
     device.testStartTime = new Date().toISOString()
     emitEvent('device_updated', { device })
@@ -2962,9 +3055,11 @@ export async function startTest(
       auxiliaryDevices: [],
       initializedPythonModules: [],
       flashOptions,
+      tcardOptions,
       prioritizeTddManual: Boolean(options?.prioritizeTddManual),
       testConfig: snapshotTestConfig(testType, {
         flashOptions,
+        tcardOptions,
         prioritizeTddManual: Boolean(options?.prioritizeTddManual),
       }),
     }
@@ -3387,6 +3482,11 @@ async function runTestFlow(
       if (!flashOk || !session.isRunning) return
     }
 
+    if (session.tcardOptions && startModuleIndex === 0) {
+      const tcardOk = await runTcardBeforeTest(deviceId, session)
+      if (!tcardOk || !session.isRunning) return
+    }
+
     const device = devices[deviceId]
     if (device && startModuleIndex === 0) {
       device.status = '初始化中'
@@ -3489,6 +3589,14 @@ async function runCustomTestFlow(
         const powerDeps = ensurePowerTestPythonDeps()
         if (!powerDeps.ok && !powerDeps.skipped) {
           const reason = powerDeps.error || '功耗自动化 Python 依赖安装失败'
+          markTestFlowError(deviceId, new Error(reason), 'custom')
+          return
+        }
+      }
+      if (testType === 'smoke') {
+        const sddDeps = ensureSddTestPythonDeps()
+        if (!sddDeps.ok && !sddDeps.skipped) {
+          const reason = sddDeps.error || '冒烟 USD Python 依赖安装失败'
           markTestFlowError(deviceId, new Error(reason), 'custom')
           return
         }
@@ -3994,7 +4102,7 @@ export async function resumeTest(deviceId: string): Promise<DeviceDetail | null>
 
     session.isRunning = true
     session.errorReason = undefined
-    device.status = session.flashOptions && session.currentModuleIndex === 0 ? '刷机中' : '初始化中'
+    device.status = pretestStatus(session)
     emitEvent('device_updated', { device })
 
     const testType = session.testType
@@ -4340,6 +4448,7 @@ export function __testingSnapshotTestConfig(
   testType: DeviceTestType,
   opts: {
     flashOptions?: DeviceFlashOptions
+    tcardOptions?: TcardUpdateOptions
     prioritizeTddManual?: boolean
     selectedCases?: string[]
   },

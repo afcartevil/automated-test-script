@@ -159,7 +159,14 @@ function pathPickerError(): string | null {
   return null
 }
 
-const WINDOWS_PICKER_SCRIPT = `
+function escapePsSingleQuoted(value: string): string {
+  return value.replace(/'/g, "''")
+}
+
+function buildWindowsOpenFileScript(title: string, filter: string): string {
+  const safeTitle = escapePsSingleQuoted(title)
+  const safeFilter = escapePsSingleQuoted(filter)
+  return `
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
@@ -192,41 +199,60 @@ $owner.Show()
 $owner.Activate()
 [TahpFg]::ForceForeground($owner.Handle)
 $dlg = New-Object System.Windows.Forms.OpenFileDialog
-$dlg.Title = '选择版本包（zip / scatter xml）'
-$dlg.Filter = '刷机包 (*.zip;*.xml)|*.zip;*.xml|ZIP (*.zip)|*.zip|Scatter XML (*.xml)|*.xml|所有文件 (*.*)|*.*'
+$dlg.Title = '${safeTitle}'
+$dlg.Filter = '${safeFilter}'
 $dlg.FilterIndex = 1
 $result = $dlg.ShowDialog($owner)
 if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dlg.FileName }
 $owner.Dispose()
 `
+}
 
-function pickFlashPathWindows(): PickFlashPathResult {
+function pickOpenFileWindows(title: string, filter: string): PickFlashPathResult {
   // 用 -EncodedCommand（base64/UTF-16LE）避免内嵌 C#/中文/引号被命令行转义破坏
-  const encoded = Buffer.from(WINDOWS_PICKER_SCRIPT, 'utf16le').toString('base64')
+  const encoded = Buffer.from(buildWindowsOpenFileScript(title, filter), 'utf16le').toString('base64')
   const proc = spawnSync(
     'powershell.exe',
-    ['-NoProfile', '-STA', '-EncodedCommand', encoded],
-    { encoding: 'utf8', windowsHide: false }
+    ['-NoProfile', '-STA', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded],
+    { encoding: 'utf8', windowsHide: true },
   )
   const path = (proc.stdout || '').trim()
   if (path) return { canceled: false, path }
   return { canceled: true }
 }
 
-function pickFlashPathDarwin(): PickFlashPathResult {
+function pickFlashPathWindows(): PickFlashPathResult {
+  return pickOpenFileWindows(
+    '选择版本包（zip / scatter xml）',
+    '刷机包 (*.zip;*.xml)|*.zip;*.xml|ZIP (*.zip)|*.zip|Scatter XML (*.xml)|*.xml|所有文件 (*.*)|*.*',
+  )
+}
+
+function pickTcardZipPathWindows(): PickFlashPathResult {
+  return pickOpenFileWindows('选择 T卡升级 ZIP 包', 'ZIP (*.zip)|*.zip')
+}
+
+function pickOpenFileDarwin(prompt: string, types?: string[]): PickFlashPathResult {
+  const typeClause = types?.length
+    ? ` of type {${types.map((t) => `"${t.replace(/"/g, '\\"')}"`).join(', ')}}`
+    : ''
   const proc = spawnSync(
     'osascript',
     [
       '-e',
       'tell application "System Events" to activate',
       '-e',
-      'POSIX path of (choose file with prompt "选择版本包（zip / scatter xml）")',
+      `POSIX path of (choose file${typeClause} with prompt "${prompt.replace(/"/g, '\\"')}")`,
     ],
     { encoding: 'utf8', windowsHide: false }
   )
   const path = (proc.stdout || '').trim()
   if (proc.status === 0 && path) return { canceled: false, path }
   return { canceled: true }
+}
+
+function pickFlashPathDarwin(): PickFlashPathResult {
+  return pickOpenFileDarwin('选择版本包（zip / scatter xml）')
 }
 
 function pickFlashPathLinux(): PickFlashPathResult {
@@ -301,6 +327,36 @@ export async function pickLocalTradefedPath(): Promise<PickFlashPathResult> {
     if (process.platform === 'win32') return pickFlashPathWindows()
     if (process.platform === 'darwin') return pickFlashPathDarwin()
     return { canceled: true, error: '当前平台不支持文件选择，请手动输入路径' }
+  } catch (err: any) {
+    return { canceled: true, error: err?.message || '路径选择失败' }
+  }
+}
+
+/** T卡升级：仅允许选择 ZIP。 */
+export async function pickLocalTcardZipPath(): Promise<PickFlashPathResult> {
+  const unavailable = pathPickerError()
+  if (unavailable) return { canceled: true, error: unavailable }
+
+  try {
+    let result: PickFlashPathResult
+    if (process.platform === 'win32') result = pickTcardZipPathWindows()
+    else if (process.platform === 'darwin') result = pickOpenFileDarwin('选择 T卡升级 ZIP 包', ['zip'])
+    else if (process.platform === 'linux') {
+      result = pickFilePathLinux({
+        title: '选择 T卡升级 ZIP 包',
+        zenityFilters: [
+          '--file-filter=ZIP | *.zip',
+          '--file-filter=所有文件 | *',
+        ],
+        kdialogFilter: 'ZIP (*.zip)|*.zip',
+      })
+    } else {
+      result = { canceled: true, error: '当前平台不支持文件选择，请手动输入路径' }
+    }
+    if (result.path && !isZipFile(result.path)) {
+      return { canceled: true, error: 'T卡升级仅支持 ZIP 文件' }
+    }
+    return result
   } catch (err: any) {
     return { canceled: true, error: err?.message || '路径选择失败' }
   }

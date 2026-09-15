@@ -27,6 +27,23 @@ const WIN_REQ = join(
   'packages/server/src/services/tahp/self-check/python/tools/tpower_auto/requirements-win.txt',
 )
 
+const SDD_REQ = join(
+  consoleRoot,
+  'packages/server/src/services/tahp/self-check/python/tools/sdd_test/requirements.txt',
+)
+
+/** 冒烟 USD (sdd_test) 启动链路上的关键 import（pip 包名 → import 名） */
+const SDD_RUNTIME_IMPORTS = [
+  'pytest',
+  'PIL',
+  'yaml',
+  'xmltodict',
+  'dateutil',
+  'cryptography',
+  'pytest_rerunfailures',
+  'requests',
+]
+
 /** task_proc 启动链路上的关键 import（pip 包名 → import 名） */
 const POWER_RUNTIME_IMPORTS = [
   'appdirs',
@@ -150,8 +167,50 @@ export function ensureSelfCheckPythonDepsForPowerTest(options = {}) {
   return ensureSelfCheckPythonDeps({ ...options, forTest: true, quiet: options.quiet ?? false })
 }
 
+function listMissingSddImports(python) {
+  return SDD_RUNTIME_IMPORTS.filter((mod) => !verifyImport(python, mod))
+}
+
+/** 冒烟 USD (sdd_test) 启动前检查/安装依赖（pytest 等框架包从未自动安装过，缺失会导致 si_run 秒崩、无 SDD_report.json） */
+export function ensureSddPythonDeps(options = {}) {
+  const { quiet = false } = options
+  const python = getSystemPython()
+
+  if (process.env.TAHP_SKIP_SDD_DEPS === '1') {
+    if (!quiet) warn('  ⚠ 已跳过（TAHP_SKIP_SDD_DEPS=1）')
+    return { ok: true, skipped: true }
+  }
+
+  let missing = listMissingSddImports(python)
+  if (missing.length === 0) {
+    if (!quiet) log(`  ✓ 冒烟 USD 依赖已就绪 (${python})`)
+    return { ok: true, ready: true }
+  }
+
+  if (!quiet) {
+    log('冒烟 USD (sdd_test) Python 依赖\n')
+    log(`  → 缺少: ${missing.join(', ')}`)
+    log(`  → 正在安装 (${python})...`)
+  }
+
+  if (!pipInstall(python, SDD_REQ, 'sdd_test/requirements.txt')) {
+    return { ok: false, error: '冒烟 USD 依赖 pip install 失败，请检查网络后重试冒烟测试' }
+  }
+
+  missing = listMissingSddImports(python)
+  if (missing.length > 0) {
+    return { ok: false, error: `安装后仍缺少: ${missing.join(', ')}（解释器: ${python}）` }
+  }
+
+  if (!quiet) log(`  ✓ 冒烟 USD Python 依赖已安装 (${python})`)
+  return { ok: true }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const forTest = process.argv.includes('--for-test')
-  const result = ensureSelfCheckPythonDeps({ quiet: false, forTest })
+  const forSdd = process.argv.includes('--for-sdd')
+  const result = forSdd
+    ? ensureSddPythonDeps({ quiet: false })
+    : ensureSelfCheckPythonDeps({ quiet: false, forTest })
   process.exit(result.ok ? 0 : 1)
 }

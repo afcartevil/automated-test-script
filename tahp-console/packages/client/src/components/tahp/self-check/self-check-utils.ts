@@ -51,7 +51,7 @@ export function getTestTypeLabel(testType?: string): string {
 export function getStatusColor(status: string): string {
   if (status.includes('通过') || status === '空闲') return 'var(--success)'
   if (status.includes('失败') || status.includes('错误')) return 'var(--error)'
-  if (status.includes('测试中') || status.includes('等待') || status.includes('待命')) return 'var(--accent)'
+  if (status.includes('测试中') || status.includes('等待') || status.includes('待命') || status.includes('刷机') || status.includes('T卡升级')) return 'var(--accent)'
   if (status.includes('不满足前置条件')) return 'var(--warning, #f59e0b)'
   return 'var(--muted)'
 }
@@ -200,6 +200,7 @@ export function getDeviceListFilterKey(device: DeviceInfo): DeviceListFilterKey 
   if (
     status === '测试中'
     || status === '刷机中'
+    || status === 'T卡升级中'
     || status === '占用中'
     || status === '初始化中'
   ) {
@@ -376,6 +377,10 @@ export function formatTestConfigEntries(cfg?: SelfCheckTestConfig): { label: str
     if (cfg.flashBeforeTest.enableRootPkg && cfg.flashBeforeTest.rootPkgPath) {
       rows.push({ label: 'Root 刷机包', value: cfg.flashBeforeTest.rootPkgPath })
     }
+  }
+  if (cfg.tcardBeforeTest?.enabled) {
+    rows.push({ label: 'T卡升级', value: '是' })
+    if (cfg.tcardBeforeTest.zipPath) rows.push({ label: 'T卡升级 ZIP', value: cfg.tcardBeforeTest.zipPath })
   }
   if (cfg.selectedCases?.length) {
     rows.push({ label: '自定义勾选用例数', value: String(cfg.selectedCases.length) })

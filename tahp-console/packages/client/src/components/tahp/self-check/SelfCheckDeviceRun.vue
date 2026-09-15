@@ -204,10 +204,14 @@ const {
   flashStatusText,
   flashStatusClass,
   handleBrowseFlashPath,
+  handleBrowseTcardZip,
   handleResolveLatestDailyFlash,
   handleClearFlashPackages,
   enableTcardUpdate,
   tcardUpdatePath,
+  tcardPathPicking,
+  pretestPanelTitle,
+  pretestLogTitle,
   isSelectedCaseInConfig,
   getSelectedCaseName,
 } = inject(DEVICE_SELF_CHECK_KEY)!
@@ -391,7 +395,11 @@ function isAuxDevice(device: DeviceInfo) {
 
 function isRunning(device: DeviceInfo) {
   const status = device.status as string
-  return status.includes(WORD_TESTING) || status.includes(WORD_WAITING) || status === STATUS_INITIALIZING
+  return status.includes(WORD_TESTING)
+    || status.includes(WORD_WAITING)
+    || status === STATUS_INITIALIZING
+    || status === '刷机中'
+    || status === 'T卡升级中'
 }
 
 function isIdleDevice(device: DeviceInfo) {
@@ -1405,7 +1413,7 @@ function handleDutRowAction(deviceId: string) {
               <EaCard class="device-detail-main-card">
                 <div v-if="showFlashPanel && !showFlashFailureUI" class="device-detail-main-scroll">
                   <div class="flash-progress-header">
-                    <span class="section-title">刷机进度</span>
+                    <span class="section-title">{{ pretestPanelTitle }}</span>
                     <div class="flash-progress-meta">
                       <span class="flash-progress-percent">{{ Math.min(flashProgress, 100) }}%</span>
                       <span class="flash-progress-badge" :class="flashStatusClass">{{ flashStatusText }}</span>
@@ -1418,16 +1426,16 @@ function handleDutRowAction(deviceId: string) {
                       :style="!isFlashIndeterminate ? { width: `${Math.min(flashProgress, 100)}%` } : undefined"
                     />
                   </div>
-                  <p class="flash-phase-text">{{ flashPhase || '等待刷机日志...' }}</p>
+                  <p class="flash-phase-text">{{ flashPhase || `等待${pretestLogTitle}...` }}</p>
                   <div class="flash-log-panel">
-                    <span class="form-label">刷机日志</span>
+                    <span class="form-label">{{ pretestLogTitle }}</span>
                     <pre ref="flashLogRef" class="flash-log-content">{{ flashLogs.join('\n') }}</pre>
                   </div>
                 </div>
 
                 <template v-else-if="showFlashFailureUI">
                   <div class="case-detail-header">
-                    <span class="catalog-case-title">{{ isFlashFailed ? '刷机失败' : '测试异常' }}</span>
+                    <span class="catalog-case-title">{{ isFlashFailed ? (pretestPanelTitle === 'T卡升级进度' ? 'T卡升级失败' : '刷机失败') : '测试异常' }}</span>
                   </div>
                   <div class="device-detail-main-scroll case-detail-content">
                     <div class="case-info">
@@ -1441,7 +1449,7 @@ function handleDutRowAction(deviceId: string) {
                       </div>
                     </div>
                     <div v-if="showFlashPanel || isFlashFailed" class="flash-log-panel" style="margin-bottom: 12px;">
-                      <span class="form-label">刷机日志</span>
+                      <span class="form-label">{{ pretestLogTitle }}</span>
                       <pre class="flash-log-content">{{ flashLogs.join('\n') }}</pre>
                     </div>
                     <div class="device-detail-inline-actions">
@@ -1591,20 +1599,33 @@ function handleDutRowAction(deviceId: string) {
                       </div>
                     </div>
 
-                    <div class="form-group form-row">
-                      <label class="checkbox-label">
+                    <div class="form-group flash-options">
+                      <label class="checkbox-label flash-options-toggle">
                         <input type="checkbox" v-model="enableTcardUpdate" />
                         <span>T卡升级</span>
                       </label>
-                      <template v-if="enableTcardUpdate">
-                        <input
-                          type="text"
-                          class="form-input form-input-inline"
-                          placeholder="T卡升级路径"
-                          v-model="tcardUpdatePath"
-                        />
-                        <button type="button" class="ea-btn-ghost ea-btn-sm" @click.stop>浏览</button>
-                      </template>
+                      <div v-if="enableTcardUpdate" class="flash-options-panel">
+                        <p class="flash-options-hint">仅支持 ZIP。push 到 /sdcard 后打开系统更新 → 本地升级 → 点 file_name → 选包确认 → 立即重启。</p>
+                        <div class="flash-field">
+                          <label class="flash-field-label">升级包（ZIP）</label>
+                          <div class="flash-path-row">
+                            <input
+                              type="text"
+                              class="form-input form-input-inline flash-path-input"
+                              placeholder="仅支持 .zip"
+                              v-model="tcardUpdatePath"
+                            />
+                            <button
+                              type="button"
+                              class="ea-btn-ghost ea-btn-sm flash-browse-btn"
+                              :disabled="tcardPathPicking"
+                              @click.stop="handleBrowseTcardZip"
+                            >
+                              {{ tcardPathPicking ? '选择中...' : '浏览' }}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
                     <div v-if="showStandardTddManualPriority" class="form-group">

@@ -30,6 +30,7 @@ import {
   DeviceInfo,
   DeviceRole,
   StartTestFlashPayload,
+  StartTestTcardPayload,
 } from '../../services/tahp/device-self-check'
 import {
   listSelfCheckReports,
@@ -117,13 +118,15 @@ tahpDeviceSelfCheckRoutes.post(
   async (ctx) => {
     try {
       const deviceId = ctx.params.deviceId
-      const { testType, flash, prioritizeTddManual } = ctx.request.body as {
+      const { testType, flash, tcard, prioritizeTddManual } = ctx.request.body as {
         testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated'
         flash?: StartTestFlashPayload
+        tcard?: StartTestTcardPayload
         prioritizeTddManual?: boolean
       }
       const result = await startTest(deviceId, testType, flash, {
         prioritizeTddManual: Boolean(prioritizeTddManual),
+        tcard,
       })
       ctx.body = {
         success: true,
@@ -476,6 +479,21 @@ tahpDeviceSelfCheckRoutes.post(
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { success: false, error: err?.message || 'Failed to pick flash path' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/tcard/pick-zip',
+  async (ctx) => {
+    try {
+      const { pickLocalTcardZipPath } = await import('../../services/tahp/device-flash')
+      const result = await pickLocalTcardZipPath()
+      ctx.body = { success: !result.error, data: result, error: result.error }
+      if (result.error && !result.canceled) ctx.status = 500
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to pick T-card zip' }
     }
   }
 )
