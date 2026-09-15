@@ -196,6 +196,7 @@ describe('gerrit commit scripts', () => {
     })
     expect(probe).toContain('PROBE_BEGIN_')
     expect(submit).toContain('base64 -d')
+    expect(submit).toContain('push --no-thin origin')
     expect(submit).not.toContain('中文说明')
     expect(submit).toContain("sed 's/[.,;)]*$//'")
     expect(submit).not.toContain("tr -d '.,;'")

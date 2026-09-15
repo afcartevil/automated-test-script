@@ -274,8 +274,9 @@ for rel in "\${files[@]}"; do
   else
     git -C "\$repo" commit -F "\$MSG" || { echo "FATAL: git commit failed"; exit 2; }
   fi
-  echo "--- push refs/for/\$br"
-  push_out=\$(git -C "\$repo" push origin "HEAD:refs/for/\$br" 2>&1)
+  echo "--- push --no-thin refs/for/\$br"
+  # --no-thin：避免 Gerrit unpack 时报 Missing tree（thin pack 依赖远端 base object）
+  push_out=\$(git -C "\$repo" push --no-thin origin "HEAD:refs/for/\$br" 2>&1)
   push_rc=\$?
   echo "\$push_out"
   url=\$(echo "\$push_out" | grep -oE 'https://gerrit[^[:space:]]+' | tail -n1 | sed 's/[.,;)]*$//')
