@@ -51,3 +51,33 @@ export function ensurePowerTestPythonDeps(): { ok: boolean; skipped?: boolean; e
   const error = detail || `exit code ${result.status ?? 'unknown'}`
   return { ok: false, error }
 }
+
+/** 冒烟 USD (sdd_test) 启动前同步安装/校验依赖 */
+export function ensureSddTestPythonDeps(): { ok: boolean; skipped?: boolean; error?: string } {
+  if (process.env.TAHP_SKIP_SDD_DEPS === '1') {
+    return { ok: true, skipped: true }
+  }
+
+  const script = resolveEnsureScript()
+  if (!script) {
+    return { ok: false, error: 'ensure-self-check-python-deps.mjs not found' }
+  }
+
+  const consoleRoot = resolveConsoleRoot(script)
+  console.log('[device-self-check] ensuring smoke USD python deps...')
+
+  const result = spawnSync(process.execPath, [script, '--for-sdd'], {
+    cwd: consoleRoot,
+    env: process.env,
+    stdio: 'inherit',
+    encoding: 'utf-8',
+  })
+
+  if (result.status === 0) {
+    return { ok: true }
+  }
+
+  const detail = [result.stderr, result.stdout].filter(Boolean).join('\n').trim()
+  const error = detail || `exit code ${result.status ?? 'unknown'}`
+  return { ok: false, error }
+}

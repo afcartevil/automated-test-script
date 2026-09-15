@@ -13,7 +13,7 @@ import {
   waitForAdbDevice,
 } from './device-flash'
 import { resolvePythonSpawn, tahpPaths } from './paths'
-import { ensurePowerTestPythonDeps } from './self-check-python-deps'
+import { ensurePowerTestPythonDeps, ensureSddTestPythonDeps } from './self-check-python-deps'
 import { buildSelfCheckDetailPayload, formatSelfCheckTestConfigMetaRows, openLocalPath, reportAbsoluteDir, type SelfCheckCaseItem, type SelfCheckFailedCaseItem, type SelfCheckTestConfig } from './self-check-reports'
 import {
   AI_GENERATED_MODULE,
@@ -2565,6 +2565,20 @@ async function runModule(
     }
   }
 
+  if (testType === 'smoke') {
+    const sddDeps = ensureSddTestPythonDeps()
+    if (!sddDeps.ok && !sddDeps.skipped) {
+      const reason = sddDeps.error || '冒烟 USD Python 依赖安装失败'
+      console.error(`[device-self-check] Smoke USD deps failed: ${reason}`)
+      devices[deviceId].status = '错误'
+      devices[deviceId].currentModule = module
+      session.errorReason = reason
+      session.isRunning = false
+      emitEvent('device_updated', { device: devices[deviceId] })
+      return
+    }
+  }
+
   // 前置条件检查
   const precheck = await checkPreconditions(deviceId, moduleKey)
   if (precheck.status === 'failed') {
@@ -3489,6 +3503,14 @@ async function runCustomTestFlow(
         const powerDeps = ensurePowerTestPythonDeps()
         if (!powerDeps.ok && !powerDeps.skipped) {
           const reason = powerDeps.error || '功耗自动化 Python 依赖安装失败'
+          markTestFlowError(deviceId, new Error(reason), 'custom')
+          return
+        }
+      }
+      if (testType === 'smoke') {
+        const sddDeps = ensureSddTestPythonDeps()
+        if (!sddDeps.ok && !sddDeps.skipped) {
+          const reason = sddDeps.error || '冒烟 USD Python 依赖安装失败'
           markTestFlowError(deviceId, new Error(reason), 'custom')
           return
         }
