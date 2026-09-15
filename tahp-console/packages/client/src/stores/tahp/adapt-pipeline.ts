@@ -109,6 +109,21 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
     Object.values(timelines.value).reduce((sum, tl) => sum + (tl.pending_human_count ?? 0), 0),
   )
 
+  const pendingHumanRunIds = computed(() => {
+    const pending = new Set<string>()
+    for (const tl of Object.values(timelines.value)) {
+      if ((tl.pending_human_count ?? 0) > 0) pending.add(tl.run_id)
+    }
+    for (const item of runItems.value) {
+      if (item.status === 'waiting_human') pending.add(item.run_id)
+    }
+    const ordered = runItems.value.filter(item => pending.has(item.run_id)).map(item => item.run_id)
+    for (const id of pending) {
+      if (!ordered.includes(id)) ordered.push(id)
+    }
+    return ordered
+  })
+
   function logKey(runId: string, nodeKey: string): string {
     return `${runId}:${nodeKey}`
   }
@@ -591,6 +606,7 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
     selectedRunId,
     selectedTimeline,
     pendingHumanTotal,
+    pendingHumanRunIds,
     listLoading,
     timelineLoading,
     error,

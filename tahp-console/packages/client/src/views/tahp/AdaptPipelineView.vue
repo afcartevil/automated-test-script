@@ -105,6 +105,27 @@ function handleCreated(runId: string) {
   syncRouteRun(runId)
 }
 
+function firstWaitingNodeKey(): string | null {
+  const nodes = store.selectedTimeline?.nodes ?? []
+  const waiting = nodes.find(n => n.status === 'waiting_human' && n.human)
+    ?? nodes.find(n => n.status === 'waiting_human')
+  return waiting?.key ?? null
+}
+
+async function handlePendingHumanClick() {
+  activeTab.value = 'board'
+  const currentId = store.selectedRunId
+  const pendingIds = store.pendingHumanRunIds
+  const currentPending = Boolean(currentId && pendingIds.includes(currentId))
+  const targetRunId = currentPending ? currentId : (pendingIds[0] ?? currentId)
+  if (targetRunId && targetRunId !== store.selectedRunId) {
+    await handleSelectRun(targetRunId)
+  }
+  const nodeKey = firstWaitingNodeKey()
+  if (nodeKey) handleSelectNode(nodeKey)
+  if (narrow.value) humanDrawerOpen.value = true
+}
+
 function updateLayout() {
   narrow.value = window.innerWidth < 1400
   isMobile.value = window.innerWidth < 960
@@ -143,16 +164,13 @@ watch(() => store.error, (err) => {
     <EaPageHead title="适配流水线" subtitle="选项目 → 拉前置 → AI 适配 → 编译 → 烧录 → 自检 → 审核 → 提交 Gerrit">
       <template #actions>
         <button
-          v-if="narrow && store.pendingHumanTotal > 0"
+          v-if="store.pendingHumanTotal > 0"
           type="button"
-          class="pending-badge btn-badge"
-          @click="humanDrawerOpen = true"
+          class="pending-badge"
+          @click="handlePendingHumanClick"
         >
           ⚠ {{ store.pendingHumanTotal }} 项待人工处理
         </button>
-        <span v-else-if="store.pendingHumanTotal > 0" class="pending-badge">
-          ⚠ {{ store.pendingHumanTotal }} 项待人工处理
-        </span>
         <EaInnerTabs v-model="activeTab" :tabs="pageTabs" align="end" />
       </template>
     </EaPageHead>
@@ -275,10 +293,8 @@ watch(() => store.error, (err) => {
   font-weight: 700;
   margin-right: 12px;
   animation: breathe 1.8s ease-in-out infinite;
-}
-.btn-badge {
   cursor: pointer;
-  border: 1px solid color-mix(in srgb, var(--warn) 22%, transparent);
+  font-family: inherit;
 }
 
 .board {

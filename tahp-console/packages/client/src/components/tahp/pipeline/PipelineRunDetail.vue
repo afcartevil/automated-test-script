@@ -114,7 +114,15 @@ async function openAppendDrawer() {
   appendOpen.value = true
 }
 
+function firstWaitingNodeKey(): string | null {
+  const waiting = props.timeline.nodes.find(n => n.status === 'waiting_human' && n.human)
+    ?? props.timeline.nodes.find(n => n.status === 'waiting_human')
+  return waiting?.key ?? null
+}
+
 function handleHumanClick() {
+  const nodeKey = firstWaitingNodeKey()
+  if (nodeKey) emit('selectNode', nodeKey)
   if (props.humanDrawer) {
     emit('openHuman')
     return

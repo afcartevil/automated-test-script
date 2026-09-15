@@ -12,6 +12,7 @@ import type {
   StageState,
 } from './types'
 import { resolveAdaptMaxRetries } from './types'
+import { refreshLegacyHumanOnRun } from './human-copy'
 
 interface RunIndexFile {
   version: number
@@ -190,13 +191,19 @@ export function createRun(input: CreateRunInput): PipelineRun {
 
 export function getRun(runId: string): PipelineRun | null {
   const cached = memoryRuns.get(runId)
-  if (cached) return cached
+  if (cached) {
+    if (refreshLegacyHumanOnRun(cached)) writeRunToDisk(cached)
+    return cached
+  }
 
   const path = runFilePath(runId)
   if (!existsSync(path)) return null
   try {
     const run = JSON.parse(readFileSync(path, 'utf-8')) as PipelineRun
     run.adapt_max_retries = resolveAdaptMaxRetries(run.adapt_max_retries)
+    if (refreshLegacyHumanOnRun(run)) {
+      writeRunToDisk(run)
+    }
     memoryRuns.set(runId, run)
     return run
   } catch {

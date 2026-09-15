@@ -1,4 +1,5 @@
 import { getStage } from './registry'
+import { rewriteLegacyHumanCopy, refreshLegacyHumanActions } from './human-copy'
 import { canFailCurrentStage, resolveAdaptMaxRetries } from './types'
 import type { PipelineDomain, PipelineRun, TimelineView, WorkflowDefinition } from './types'
 import { effectiveWorkflowForRun, getEnabledNodes } from './workflow'
@@ -27,8 +28,8 @@ function buildNodeProgress(
   const out: NonNullable<TimelineView['nodes'][number]['progress']> = {}
   const percent = progress.percent ?? progress.progress
   if (typeof percent === 'number') out.percent = percent
-  if (typeof progress.text === 'string' && progress.text) out.text = progress.text
-  else if (typeof progress.message === 'string' && progress.message) out.text = progress.message
+  if (typeof progress.text === 'string' && progress.text) out.text = rewriteLegacyHumanCopy(progress.text)
+  else if (typeof progress.message === 'string' && progress.message) out.text = rewriteLegacyHumanCopy(progress.message)
   if (progress.changes) out.changes = progress.changes
 
   // 编译 / 烧录 / Gerrit：透传面板所需字段
@@ -108,8 +109,12 @@ export function buildTimelineView(
     const human = state?.human
       ? {
           reason: state.human.reason,
-          message: state.human.message,
-          actions: state.human.actions ?? [],
+          message: rewriteLegacyHumanCopy(state.human.message),
+          actions: refreshLegacyHumanActions(
+            node.key,
+            state.human.reason,
+            state.human.actions,
+          ),
         }
       : undefined
 

@@ -577,6 +577,8 @@ describe('adapt-pipeline orchestrator', () => {
     expect(updated.current_node).toBe('adapt')
     expect(updated.stages.adapt?.status).toBe('waiting_human')
     expect(updated.stages.adapt?.human?.reason).toBe('stage_failed')
+    expect(updated.stages.adapt?.human?.message).toBe('阶段失败：用户停止本步。请在下方选择恢复点继续。')
+    expect(updated.stages.adapt?.human?.actions ?? []).toEqual([])
     expect(updated.stages.adapt?.error).toBe('用户停止本步')
     expect(updated.abort_reason).toBeUndefined()
     expect(updated.finished_at).toBeUndefined()

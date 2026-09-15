@@ -316,20 +316,8 @@ async function parkFailedNodeForHuman(
     ?? nodeKey
 
   const message = error
-    ? `阶段失败：${error}。请选择恢复点继续，或终止流水线。`
-    : '阶段失败，请选择恢复点继续，或终止流水线。'
-
-  const actions = [
-    {
-      id: 'confirm_done',
-      label: '继续',
-      fields: [
-        { name: 'resume_node', label: '从哪里继续', required: true },
-        { name: 'resume_scope', label: '范围' },
-      ],
-    },
-    { id: 'abort', label: '终止流水线', danger: true },
-  ]
+    ? `阶段失败：${error}。请在下方选择恢复点继续。`
+    : '阶段失败，请在下方选择恢复点继续。'
 
   const prev = (run.stages[nodeKey]?.progress as Record<string, unknown> | undefined) ?? {}
   patchStage(run, nodeKey, {
@@ -344,7 +332,7 @@ async function parkFailedNodeForHuman(
     human: {
       reason: 'stage_failed',
       message,
-      actions,
+      actions: [],
     },
   })
   run.status = 'waiting_human'
@@ -355,7 +343,6 @@ async function parkFailedNodeForHuman(
     node: nodeKey,
     reason: 'stage_failed',
     message,
-    actions,
   })
 }
 

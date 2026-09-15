@@ -52,18 +52,8 @@ export const humanReviewStageDefinition: StageDefinition = {
     return {
       status: 'waiting_human',
       reason: 'awaiting_review',
-      message: '请审核流水线修改文件与故障分析结论（如有）。通过后可选择恢复点继续；入库仓库选择在 Gerrit 阶段进行。',
-      actions: [
-        {
-          id: 'confirm_done',
-          label: '继续',
-          fields: [
-            { name: 'resume_node', label: '从哪里继续', required: true },
-            { name: 'resume_scope', label: '范围' },
-          ],
-        },
-        { id: 'abort', label: '终止流水线', danger: true },
-      ],
+      message: '请审核流水线修改文件与故障分析结论（如有）。通过后请在下方选择恢复点继续；入库仓库选择在 Gerrit 阶段进行。',
+      actions: [],
     }
   },
 

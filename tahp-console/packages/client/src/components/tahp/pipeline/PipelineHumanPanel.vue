@@ -78,16 +78,22 @@ function clearRepos() {
   selectedRepos.value = []
 }
 
+function visibleActions(node: TimelineNode) {
+  const actions = node.human?.actions ?? []
+  return actions.filter(action => {
+    if (action.id === 'abort' || action.label === '终止流水线') return false
+    if (action.id === 'confirm_done' && needsResumePicker(node)) return false
+    return true
+  })
+}
+
+function humanMessage(node: TimelineNode): string {
+  return String(node.human?.message ?? '')
+    .replace(/请选择恢复点继续，或终止流水线。/g, '请在下方选择恢复点继续。')
+    .replace(/通过后可选择恢复点继续/g, '通过后请在下方选择恢复点继续')
+}
+
 async function onAction(nodeKey: string, actionId: string) {
-  if (actionId === 'abort') {
-    await props.store.submitHumanAction(props.runId, nodeKey, actionId)
-    return
-  }
-  // 继续走恢复点选择器，避免无 resume_node 时误标 done 并跳到 onDone（如 gerrit）
-  const node = waitingNodes.value.find(n => n.key === nodeKey)
-  if (actionId === 'confirm_done' && node && needsResumePicker(node)) {
-    return
-  }
   if (nodeKey === 'gerrit' && actionId === 'submit_selected_repos') {
     await props.store.submitHumanAction(props.runId, nodeKey, actionId, {
       selected_repos: selectedRepos.value,
@@ -115,7 +121,7 @@ const currentDeviceId = computed(() => props.store.selectedTimeline?.device_id ?
     <p v-if="waitingNodes.length === 0" class="empty">当前无需人工介入</p>
     <div v-for="node in waitingNodes" :key="node.key" class="task">
       <strong>⚠ {{ node.label }}</strong>
-      <p>{{ node.human?.message }}</p>
+      <p>{{ humanMessage(node) }}</p>
 
       <div v-if="node.key === 'gerrit' && node.human?.reason === 'select_repos'" class="repo-box">
         <div class="repo-toolbar">
@@ -138,9 +144,9 @@ const currentDeviceId = computed(() => props.store.selectedTimeline?.device_id ?
         <p v-if="!reposFor(node).length" class="hint">暂无按仓库分组的变更（请确认适配阶段返回了文件绝对路径）</p>
       </div>
 
-      <div class="actions">
+      <div v-if="visibleActions(node).length" class="actions">
         <button
-          v-for="action in node.human?.actions ?? []"
+          v-for="action in visibleActions(node)"
           :key="action.id"
           type="button"
           :class="action.danger ? 'btn-danger' : 'btn-soft'"

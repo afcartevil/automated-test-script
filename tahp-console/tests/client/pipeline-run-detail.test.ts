@@ -201,9 +201,12 @@ describe('PipelineRunDetail board layout', () => {
     expect(wrapper.find('.head-actions').text()).toContain('人工介入 (1)')
     expect(wrapper.text()).toContain('编译失败，请选择恢复点')
     expect(wrapper.text()).not.toContain('当前无需人工介入')
+    expect(wrapper.find('.human-panel .actions').exists()).toBe(false)
+    expect(wrapper.find('.human-panel').text()).not.toContain('终止流水线')
 
     vi.mocked(HTMLElement.prototype.scrollIntoView).mockClear()
     await wrapper.get('.head-actions .btn-human').trigger('click')
+    expect(wrapper.emitted('selectNode')).toEqual([['build']])
     expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled()
     expect(wrapper.emitted('openHuman')).toBeUndefined()
   })

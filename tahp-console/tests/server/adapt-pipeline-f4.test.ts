@@ -95,6 +95,34 @@ describe('adapt-pipeline F4', () => {
     expect(timeline.nodes.find(n => n.key === 'gerrit')).toBeTruthy()
   })
 
+  it('buildTimelineView rewrites legacy resume/abort human copy on old runs', () => {
+    const run = createRun(baseInput())
+    run.status = 'waiting_human'
+    run.current_node = 'adapt'
+    run.stages.adapt = {
+      key: 'adapt',
+      status: 'waiting_human',
+      attempt: 1,
+      refs: {},
+      progress: { text: '阶段失败：用户停止本步。请选择恢复点继续，或终止流水线。' },
+      human: {
+        reason: 'stage_failed',
+        message: '阶段失败：用户停止本步。请选择恢复点继续，或终止流水线。',
+        actions: [
+          { id: 'confirm_done', label: '继续' },
+          { id: 'abort', label: '终止流水线', danger: true },
+        ],
+      },
+    }
+    saveRun(run, { immediate: true })
+
+    const timeline = buildTimelineView(run)
+    const adapt = timeline.nodes.find(n => n.key === 'adapt')
+    expect(adapt?.human?.message).toBe('阶段失败：用户停止本步。请在下方选择恢复点继续。')
+    expect(adapt?.human?.actions).toEqual([])
+    expect(adapt?.progress?.text).toBe('阶段失败：用户停止本步。请在下方选择恢复点继续。')
+  })
+
   it('buildTimelineView includes adapt domains and stage error', () => {
     const run = createRun(baseInput())
     run.domains = [{
