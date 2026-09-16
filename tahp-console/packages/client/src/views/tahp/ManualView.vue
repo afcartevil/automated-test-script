@@ -7,7 +7,7 @@ import EaCard from '@/components/layout/EaCard.vue'
 const SOP_URL = 'https://transsioner.feishu.cn/wiki/BdVUwpCL4ifRZckiQlzcPQoUndg'
 
 const router = useRouter()
-const activeKey = ref('adapt-debug')
+const activeKey = ref('pursuit')
 
 function go(name: string) {
   router.push({ name })
@@ -23,13 +23,12 @@ function openItem(item: ManualItem) {
 }
 
 function scrollToItem(key: string) {
-  activeKey.value = key
+  pinNav(key)
   document.getElementById(`manual-item-${key}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 function scrollToGroup(id: string) {
-  const first = id === 'config' ? 'sop' : groups.find(g => g.id === id)?.items[0]?.key
-  if (first) activeKey.value = first
+  pinNav(id)
   document.getElementById(`manual-group-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
@@ -60,7 +59,7 @@ const groups: ManualGroup[] = [
   {
     id: 'core',
     title: '三大核心',
-    subtitle: '与首页三张主卡片一致：适配调试、Modem 升级、GKI 升级。都是自动适配 / 合入 → 人工审核 → 入库，不会越过审核门。',
+    subtitle: '适配调试/适配流水线、Modem 升级、GKI 升级',
     color: 'var(--accent)',
     items: [
       {
@@ -84,12 +83,12 @@ const groups: ManualGroup[] = [
         key: 'pipeline',
         title: '适配流水线',
         tone: 'var(--accent)',
-        desc: '适配调试的自动流转路径：把<span class="hl">选项目 → 拉前置代码 → AI 适配 → 编译 → 烧录 → 自检 → 审核 → 提交 Gerrit</span>串成工作流。某阶段没就绪会变成<span class="hl">人工处理</span>；失败后按界面推荐的恢复点续跑，<span class="hl-warn">不要整条重跑</span>。',
+        desc: '适配调试的自动流转路径：把<span class="hl">选项目 → 拉前置代码 → AI 适配 → 编译 → 烧录 → 自检 → 审核 → 提交 Gerrit</span>串成工作流。某阶段没就绪或失败会变成<span class="hl">人工处理</span>（选恢复点、能力未接入、选仓等）；按界面推荐的恢复点续跑，<span class="hl-warn">不要整条重跑</span>。',
         steps: [
-          '进入「适配流水线」，在「<span class="hl">新建运行</span>」选项目与前置版本（需 <span class="hl">EasyAdapter 中心</span>已配置、<span class="hl">Agent Bridge</span> 就绪）。',
+          '进入「适配流水线」，在「<span class="hl">新建运行</span>」选项目与前置版本（需 <span class="hl">EasyAdapter 中心</span>已配置、<span class="hl">Agent Bridge</span> 就绪）。也可在运行列表点「<span class="hl">复制</span>」带出已有配置再核对启动。',
           '<span class="hl">启动</span>后在「运行看板」按阶段观察进度。',
-          '某阶段<span class="hl-warn">失败</span>按界面推荐的恢复点继续。',
-          '「待人工处理」由人工审核通过后<span class="hl">提交 Gerrit</span>。',
+          '页头「<span class="hl">⚠ N 项待人工处理</span>」可点进对应运行；失败阶段在面板选恢复点，「刷新」可重载恢复点。',
+          '整条不要了点红色「<span class="hl-warn">终止</span>」确认后结束；已终止 / 已失败不再计入待人工。',
           '「流程编排」Tab 可查看 / 调整阶段定义。',
         ],
         notes: [
@@ -122,12 +121,12 @@ const groups: ManualGroup[] = [
         desc: 'GKI patch <span class="hl">质量分析</span>、稳定性验证并选取最优 Tag，再自动合入提交；<span class="hl">人工审核</span>通过后入库。任务同样来自 <span class="hl">TONES</span>，在 Console 内嵌的 GKI Patch Tool 中处理。',
         steps: [
           '进入「GKI 升级」，先等本机服务就绪（首次会拉起），从<span class="hl">工作台</span>看外部通知与任务列表。',
-          '填 From / To Tag 后可「前往分析」或直接「前往合入」；也可在左侧打开「<span class="hl">patch 分析</span>」看质量结论、选最优 Tag。',
-          '「故障诊断」处理合入 / 验证中的 crash。确认后走「<span class="hl">patch 入库</span>」合入与编译验证。',
+          '填 From / To Tag 后可「前往分析」或直接「前往合入」；也可在左侧打开「<span class="hl">patch分析</span>」看质量结论、选最优 Tag。',
+          '「故障诊断」处理合入 / 验证中的 crash。确认后走「<span class="hl">patch入库</span>」合入与编译验证。',
           '历史在「数据库」；LLM / SSH 由 EasyAdapter 一键配置注入，「设置」里看其余环境项。',
         ],
         notes: [
-          '左侧「设置 / 数据库 / patch 入库 / 故障诊断 / patch 分析」会打开对应页，不必退回顶栏。',
+          '左侧：工作台 / patch分析 / patch入库 / 故障诊断 / 数据库 / 设置，会打开对应页，不必退回顶栏。',
           '与 Modem 升级一样：通知不会自动开合入，须审核后入库。',
         ],
         route: 'tahp.gki-patch.dashboard',
@@ -162,12 +161,12 @@ const groups: ManualGroup[] = [
         key: 'self-check',
         title: '质量验测',
         tone: 'var(--success)',
-        desc: '设备侧 AI 自检。四个 Tab：<span class="hl">总览 / 测试执行 / 评审补全 / 测试报告</span>。多设备并行调度，含刷机与 str4 / week / custom 等用例；由后台直接调度设备与用例，无需人工介入。',
+        desc: '设备侧 AI 自检。四个 Tab：<span class="hl">总览 / 测试执行 / 评审补全 / 测试报告</span>。多设备并行调度，含刷机与 str4 / week / monkey / smoke / GMS / 功耗等用例。执行中可能弹出<span class="hl">人工确认</span>，报告需<span class="hl">人工复核</span>。',
         steps: [
           '进入「质量验测」，先看「总览」确认设备、验测任务与近期任务。',
-          '「测试执行」勾选设备与用例后<span class="hl">启动</span>，支持刷机与并行。',
+          '「测试执行」勾选设备与用例后<span class="hl">启动</span>，支持刷机与并行；遇到人工确认按弹窗处理。',
           '「评审补全」处理 Gerrit 相关补测。',
-          '「测试报告」审阅结果。',
+          '「测试报告」审阅并复核结果。',
         ],
         notes: [
           '新增测试大类前须先确认用例对外能力（启动 / 停止 / 状态 / 时长 / 刷机）。',
@@ -240,11 +239,12 @@ const groups: ManualGroup[] = [
         key: 'skills',
         title: 'Skills',
         tone: 'var(--indigo-fg)',
-        desc: 'Hermes 业务 Skill 库。<span class="hl">浏览 / 同步</span>两 Tab；按功能类型（AI 故障分析 / AI 自动化适配 / AI 自检工具）与模块过滤，查看详情、导入与同步中心。',
+        desc: 'Hermes 业务 Skill 库。三个 Tab：<span class="hl">库浏览 / 自改进 / 同步中心</span>；按功能类型（AI 故障分析 / AI 自动化适配 / AI 自检工具）与模块过滤，查看详情、导入与同步。',
         steps: [
-          '进入「Skills」，在「浏览」Tab 按功能类型 / 模块检索目标 Skill。',
+          '进入「Skills」，在「<span class="hl">库浏览</span>」按功能类型 / 模块检索目标 Skill。',
           '点 Skill 查看详情与执行规则。',
-          '「同步」Tab 用于 Skill 同步中心。',
+          '「<span class="hl">自改进</span>」查看 Agent 新建或改过、尚未固化到工程目录的 Skill。',
+          '「<span class="hl">同步中心</span>」从中心拉取 / 同步 Skill 到本机。',
           '改 Skill 后建议用「质量评测」做回归。',
         ],
         notes: [
@@ -274,18 +274,25 @@ const groups: ManualGroup[] = [
 const sopTone = 'var(--success)'
 
 let observer: IntersectionObserver | null = null
+let navPinUntil = 0
+
+function pinNav(key: string) {
+  activeKey.value = key
+  navPinUntil = Date.now() + 800
+}
 
 onMounted(() => {
   observer = new IntersectionObserver(
     (entries) => {
+      if (Date.now() < navPinUntil) return
       const visible = entries
         .filter(entry => entry.isIntersecting)
-        .sort((a, b) => b.intersectionRatio - a.intersectionRatio)
+        .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
       const top = visible[0]?.target as HTMLElement | undefined
       const key = top?.dataset.manualKey
       if (key) activeKey.value = key
     },
-    { root: null, rootMargin: '-16% 0px -70% 0px', threshold: [0, 0.25, 0.5, 1] },
+    { root: null, rootMargin: '0px 0px -70% 0px', threshold: [0, 0.25, 0.5, 1] },
   )
   document.querySelectorAll<HTMLElement>('[data-manual-key]').forEach(el => observer?.observe(el))
 })
@@ -301,10 +308,20 @@ onUnmounted(() => {
     <div class="manual-layout">
       <aside class="manual-sidebar">
         <nav class="manual-nav" aria-label="手册目录">
+          <button
+            type="button"
+            class="nav-group-title"
+            :class="{ active: activeKey === 'pursuit' }"
+            :style="toneStyle('var(--violet-ic)')"
+            @click="scrollToGroup('pursuit')"
+          >
+            三大追求
+          </button>
           <template v-for="group in groups" :key="group.id">
             <button
               type="button"
               class="nav-group-title"
+              :class="{ active: activeKey === group.id }"
               :style="toneStyle(group.color)"
               @click="scrollToGroup(group.id)"
             >
@@ -325,6 +342,7 @@ onUnmounted(() => {
           <button
             type="button"
             class="nav-group-title"
+            :class="{ active: activeKey === 'config' }"
             :style="toneStyle(sopTone)"
             @click="scrollToGroup('config')"
           >
@@ -343,10 +361,21 @@ onUnmounted(() => {
       </aside>
 
       <div class="manual-content">
-        <EaPageHead
-          title="EasyAdapter 使用手册"
-          subtitle="与首页一致：适配调试、Modem 升级、GKI 升级为主线；公共能力与运营监控服务主线。每项可直接打开对应页面"
-        />
+        <EaPageHead title="EasyAdapter 使用手册" />
+
+        <section
+          id="manual-group-pursuit"
+          class="manual-intro"
+          aria-label="产品理念"
+          data-manual-key="pursuit"
+        >
+          <p class="intro-slogan">可靠+好用+易用，是EasyAdapter追求的目标</p>
+          <ul class="intro-traits">
+            <li><strong class="trait trait-reliable">可靠——</strong>信任EasyAdapter所做的，它是可并肩而行的伙伴</li>
+            <li><strong class="trait trait-handy">好用——</strong>用了就不想换，有适配任务时第一个想到它</li>
+            <li><strong class="trait trait-easy">易用——</strong>门槛低，上手快，新人不用学就会，或学一点就会</li>
+          </ul>
+        </section>
 
         <EaCard
           v-for="group in groups"
@@ -354,7 +383,7 @@ onUnmounted(() => {
           :key="group.id"
           class="manual-group"
         >
-          <header class="group-head">
+          <header class="group-head" :data-manual-key="group.id">
             <h2 :style="toneStyle(group.color)">{{ group.title }}</h2>
             <p>{{ group.subtitle }}</p>
           </header>
@@ -390,7 +419,7 @@ onUnmounted(() => {
         </EaCard>
 
         <EaCard id="manual-group-config" class="manual-group">
-          <header class="group-head">
+          <header class="group-head" data-manual-key="config">
             <h2 :style="toneStyle(sopTone)">配置 SOP</h2>
             <p>环境、路径与账号配置步骤在飞书文档中维护，与本手册互补</p>
           </header>
@@ -426,7 +455,7 @@ onUnmounted(() => {
 
 <style scoped lang="scss">
 .manual-page {
-  padding-bottom: 48px;
+  padding-bottom: 48vh;
   max-width: 1320px;
 }
 
@@ -451,22 +480,26 @@ onUnmounted(() => {
   text-align: left;
   border: none;
   background: none;
-  padding: 0;
+  padding: 4px 10px;
   font-family: inherit;
   font-size: 16px;
   font-weight: 800;
   color: var(--item-tone, var(--accent));
-  margin: 20px 8px 8px;
+  margin: 20px 0 8px;
   letter-spacing: 0.02em;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 8px;
 
   &:first-child {
     margin-top: 0;
   }
 
   &:hover {
-    filter: brightness(1.08);
+    background: color-mix(in srgb, var(--item-tone, var(--accent)) 10%, transparent);
+  }
+
+  &.active {
+    background: color-mix(in srgb, var(--item-tone, var(--accent)) 14%, transparent);
   }
 }
 
@@ -496,6 +529,54 @@ onUnmounted(() => {
     border-left-color: var(--item-tone, var(--accent));
   }
 }
+
+.manual-intro {
+  margin-bottom: 16px;
+  padding: 20px 24px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  background: linear-gradient(135deg, var(--accent-soft), var(--violet-bg));
+  scroll-margin-top: 16px;
+}
+
+.intro-slogan {
+  margin: 0;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+}
+
+.intro-traits {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text);
+
+  li {
+    margin: 0;
+    padding: 4px 0 4px 10px;
+    border-left: 3px solid var(--accent);
+  }
+}
+
+.trait {
+  font-weight: 800;
+}
+
+.trait-reliable { color: var(--accent); }
+.trait-handy { color: var(--violet-ic); }
+.trait-easy { color: var(--success); }
+
+.intro-traits li:nth-child(1) { border-left-color: var(--accent); }
+.intro-traits li:nth-child(2) { border-left-color: var(--violet-ic); }
+.intro-traits li:nth-child(3) { border-left-color: var(--success); }
 
 .manual-group {
   margin-bottom: 16px;
@@ -598,6 +679,10 @@ onUnmounted(() => {
 }
 
 @media (max-width: 900px) {
+  .intro-traits {
+    grid-template-columns: 1fr;
+  }
+
   .manual-layout {
     grid-template-columns: 1fr;
   }
