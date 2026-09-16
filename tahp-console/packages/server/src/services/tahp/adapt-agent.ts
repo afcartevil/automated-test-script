@@ -115,7 +115,51 @@ export interface AdaptAgentTaskCtx {
   skipQualityUpload?: boolean
 }
 
+export interface AdaptAgentTaskSummary {
+  task_id: string
+  workspace_id: string
+  domain_id: string
+  domain_label: string
+  status: AdaptAgentTaskCtx['status']
+  phase?: string
+  started_at: string
+}
+
+const ACTIVE_ADAPT_STATUSES = new Set<AdaptAgentTaskCtx['status']>([
+  'pending',
+  'running',
+  'waiting_user_input',
+  'waiting_user',
+])
+
+export function isActiveStandaloneAdaptTask(task: {
+  status: AdaptAgentTaskCtx['status']
+  skipQualityUpload?: boolean
+}): boolean {
+  return !task.skipQualityUpload && ACTIVE_ADAPT_STATUSES.has(task.status)
+}
+
+export function toAdaptAgentTaskSummary(ctx: AdaptAgentTaskCtx): AdaptAgentTaskSummary {
+  return {
+    task_id: ctx.taskId,
+    workspace_id: ctx.workspaceId,
+    domain_id: ctx.domainId,
+    domain_label: ctx.domainLabel,
+    status: ctx.status,
+    phase: ctx.phase,
+    started_at: ctx.startedAt,
+  }
+}
+
 const taskCtx = new Map<string, AdaptAgentTaskCtx>()
+
+/** 独立「AI 适配调试」页可恢复的进行中任务（不含流水线内复用的 Agent 任务） */
+export function listActiveAdaptAgentTasks(): AdaptAgentTaskSummary[] {
+  return [...taskCtx.values()]
+    .filter(isActiveStandaloneAdaptTask)
+    .map(toAdaptAgentTaskSummary)
+    .sort((a, b) => (a.started_at < b.started_at ? 1 : -1))
+}
 
 interface PendingUserInputEntry {
   request: ParsedUserInputRequest

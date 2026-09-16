@@ -14,6 +14,7 @@ import { useTahpTasksStore } from '@/stores/tahp/tasks'
 import type { TahpModule } from '@/constants/tahp-modules'
 import { fetchDynamicDomains } from '@/api/tahp/skills'
 import { startAdaptAgentRun, previewAdaptAgentPrompts, submitAdaptUserInput, continueAdaptAgentRun, respondAdaptApproval, completeAdaptAgentRun, cancelAdaptAgentRun, fetchPrereqProjects, peekPrereqProjects, resolvePrereqsFromCenter, type AdaptPrereqProject } from '@/api/tahp/adapt'
+import { useAdaptDebugRunStore, domainRunKey } from '@/stores/tahp/adapt-debug-run'
 import { listTaskReports, getTaskReport, type TaskReportSummary, type TaskReportDetail } from '@/api/tahp/reports'
 import { waitForTahpSocketReady } from '@/api/tahp/socket'
 import { fetchSkills, type SkillInfo } from '@/api/hermes/skills'
@@ -61,6 +62,7 @@ const message = useMessage()
 const dialog = useDialog()
 const router = useRouter()
 const tasksStore = useTahpTasksStore()
+const adaptRunStore = useAdaptDebugRunStore()
 const { isReady: modelProviderReady } = useModelProviderReadiness()
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,43 +220,8 @@ function currentStaticDefaultSkills(): Record<string, string[]> {
   return staticDefaultsByWorkspace[activeWorkspaceId.value].skills
 }
 
-interface WorkspaceRunState {
-  agentLaunching: boolean
-  launchedTaskId: string | null
-  taskStatus: string
-  showMonitor: boolean
-  monitorMode: 'agent' | null
-  startTime: number
-}
-
-function defaultRunState(): WorkspaceRunState {
-  return {
-    agentLaunching: false,
-    launchedTaskId: null,
-    taskStatus: '',
-    showMonitor: false,
-    monitorMode: null,
-    startTime: 0,
-  }
-}
-
-const runStateByWorkspace = reactive<Record<AdaptWorkspaceId, WorkspaceRunState>>({
-  'adapt-debug': defaultRunState(),
-  'feature-adapt': defaultRunState(),
-  'carrier-config': defaultRunState(),
-})
-
-/** 各工作区 × 域 当前活跃运行（用于进行中计数与域按钮闪烁） */
-interface DomainActiveRun {
-  taskId: string
-  domainId: string
-  workspaceId: AdaptWorkspaceId
-}
-const activeRunsByKey = reactive<Record<string, DomainActiveRun>>({})
-
-function domainRunKey(workspaceId: AdaptWorkspaceId, domainId: string): string {
-  return `${workspaceId}:${domainId}`
-}
+const runStateByWorkspace = adaptRunStore.runStateByWorkspace
+const activeRunsByKey = adaptRunStore.activeRunsByKey
 
 function isTaskStreamActive(taskId: string): boolean {
   const evs = tasksStore.getStream(taskId)
@@ -283,13 +250,11 @@ function domainRunDotClass(domainId: string): string {
 }
 
 function registerActiveRun(taskId: string, domainId: string, workspaceId: AdaptWorkspaceId = activeWorkspaceId.value) {
-  activeRunsByKey[domainRunKey(workspaceId, domainId)] = { taskId, domainId, workspaceId }
+  adaptRunStore.registerActiveRun(taskId, domainId, workspaceId)
 }
 
 function unregisterActiveRun(taskId: string) {
-  for (const [key, run] of Object.entries(activeRunsByKey)) {
-    if (run.taskId === taskId) delete activeRunsByKey[key]
-  }
+  adaptRunStore.unregisterActiveRun(taskId)
 }
 
 const agentLaunching = computed({
@@ -1693,7 +1658,7 @@ watch(stream, () => {
       resetInteractionState()
     }
   }
-}, { deep: true })
+}, { deep: true, immediate: true })
 
 async function onAdaptApproval(choice: string) {
   const tid = launchedTaskId.value
@@ -1784,7 +1749,7 @@ watch(stream, async (evs) => {
   if (eventListEl.value) {
     eventListEl.value.scrollTop = eventListEl.value.scrollHeight
   }
-}, { deep: true })
+}, { deep: true, immediate: true })
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 适配域 → TAHP 模块映射（优先从动态域 module 字段读取）
@@ -1862,6 +1827,11 @@ async function loadDynamicDomains(workspaceId: AdaptWorkspaceId = activeWorkspac
 }
 
 onMounted(async () => {
+  tasksStore.ensureSocket()
+  void adaptRunStore.reattachLiveTasks({
+    ensureSocket: () => tasksStore.ensureSocket(),
+    trackTask: (taskId) => tasksStore.trackTask(taskId),
+  })
   void loadPrereqProjects()
   const ws = activeWorkspaceId.value
   layoutsReadyByWorkspace[ws] = false

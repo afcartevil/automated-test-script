@@ -49,6 +49,29 @@ export function startAdaptAgentRun(req: AdaptAgentRunRequest): Promise<{ task_id
   return tahpPost<{ task_id: string; status: string; mode: string }>('/api/tahp/adapt/agent-run', req)
 }
 
+export interface AdaptAgentRunSummary {
+  task_id: string
+  workspace_id: string
+  domain_id: string
+  domain_label: string
+  status: string
+  phase?: string
+  started_at: string
+}
+
+export function listActiveAdaptAgentRuns(): Promise<AdaptAgentRunSummary[]> {
+  return tahpGet<AdaptAgentRunSummary[]>('/api/tahp/adapt/agent-runs/active')
+}
+
+export interface AdaptAgentRunSnapshot {
+  live: (AdaptAgentRunSummary & { llmResponse?: string }) | null
+  report: unknown
+}
+
+export function getAdaptAgentRun(taskId: string): Promise<AdaptAgentRunSnapshot> {
+  return tahpGet<AdaptAgentRunSnapshot>(`/api/tahp/adapt/agent-run/${encodeURIComponent(taskId)}`)
+}
+
 export function submitAdaptUserInput(
   taskId: string,
   payload: { request_id: string; values: Record<string, string> },

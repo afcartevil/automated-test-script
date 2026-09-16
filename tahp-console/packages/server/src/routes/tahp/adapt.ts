@@ -11,6 +11,7 @@ import { join } from 'path'
 import {
   startAdaptAgentRun,
   getAdaptAgentTask,
+  listActiveAdaptAgentTasks,
   readAdaptAgentReport,
   buildAdaptAgentPrompts,
   submitAdaptUserInput,
@@ -374,6 +375,10 @@ tahpAdaptRoutes.post('/api/tahp/adapt/agent-run', async (ctx) => {
   }
 
   ctx.body = { success: true, data: { task_id: result.taskId, status: 'starting', mode: 'agent' } }
+})
+
+tahpAdaptRoutes.get('/api/tahp/adapt/agent-runs/active', async (ctx) => {
+  ctx.body = { success: true, data: listActiveAdaptAgentTasks() }
 })
 
 tahpAdaptRoutes.get('/api/tahp/adapt/agent-run/:taskId', async (ctx) => {
