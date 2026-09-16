@@ -358,12 +358,7 @@ const hasSysTarget = computed(() => selectedBuildTargets.value.includes('sys'))
 const hasTrsysTarget = computed(() => needsTrsysUi.value && selectedBuildTargets.value.includes('trsys'))
 const showSystemRoot = computed(() => showEzBuildSection.value)
 const showTrsysRoot = computed(() => needsTrsysUi.value && (packOn.value || hasTrsysTarget.value))
-const TRSYS_ROOT_HINT = '请填入本地trsys编译产物，路径需要填到out_trsys，示例：Z:\\LK7K\\trsys\\out_trsys'
-const trsysRootPlaceholder = computed(() =>
-  hasTrsysTarget.value
-    ? `${TRSYS_ROOT_HINT}。或不填,将会由EA拉取编译参与打包`
-    : `${TRSYS_ROOT_HINT}。`,
-)
+const trsysRootPlaceholder = '例如 Z:\\LK7K\\trsys\\out_trsys'
 const needTrsysShareConf = computed(() =>
   showEzBuildSection.value && hasTrsysTarget.value && !newTrsystemRoot.value.trim(),
 )
@@ -1337,31 +1332,37 @@ onUnmounted(() => {
 
     <!-- Step 3 -->
     <div v-else-if="step === 3" class="step-body">
-      <h2>配置执行环境</h2>
-      <p v-if="showEzBuildSection" class="step-hint">
-        有 <code>asf bridge cmd</code> 时读取远端 Samba <code>path=</code>，在映射盘（默认 <code>Z:\ea-build</code>）写入 <code>ez-build.sh</code>。
-        无 <code>bridge cmd</code> 时回退远端 <code>~/code/ea-build</code>（legacy <code>bridge-exec</code>）。
-        <code>NEW_SYSTEM_ROOT</code> 必填。其余编译选项有默认值，可展开修改。
-        <code>trsys</code> 仅目标 OS ≥ tOS17 可选。Windows 盘符路径会换算为 <code>/work/code/$USER/...</code>。缺失 Bridge 时会尝试自动 <code>asf bridge setup</code>。
-      </p>
-      <p v-else-if="showFlashSelfcheckSection" class="step-hint">
-        当前流程未启用编译。请选择目标设备；若启用烧录且版本不来自编译打包，还需填写版本路径。
-      </p>
-      <p v-else-if="showGerritSection" class="step-hint">
-        当前流程仅启用入库，请填写 Gerrit 提交 ID。
-      </p>
-      <p v-else class="step-hint">
-        当前编排未启用编译、烧录、自检或入库，可直接进入确认启动。
+      <h2>配置执行</h2>
+      <p v-if="!showEzBuildSection && !showFlashSelfcheckSection && !showGerritSection" class="step-hint">
+        无需额外配置，可直接下一步。
       </p>
 
       <template v-if="showEzBuildSection">
-      <h3 class="section-head">编译（ez-build）</h3>
+      <h3 class="section-head">编译</h3>
       <div class="field">
-        <label>NEW_SYSTEM_ROOT <span class="req">*</span></label>
+        <label>系统源码路径 <span class="req">*</span></label>
         <NInput v-model:value="newSystemRoot" placeholder="例如 Z:\project\CM8\system" />
       </div>
+      <div class="field">
+        <label>编译 target <span class="req">*</span></label>
+        <NSelect
+          v-model:value="selectedBuildTargets"
+          multiple
+          :options="BUILD_TARGET_OPTIONS"
+          max-tag-count="responsive"
+          placeholder="sys / krn / vext / hal / odm / trsys"
+        />
+      </div>
+      <div v-if="showTrsysRoot" class="field">
+        <label>trsys 路径</label>
+        <NInput
+          v-model:value="newTrsystemRoot"
+          :placeholder="trsysRootPlaceholder"
+        />
+        <p v-if="hasTrsysTarget" class="field-hint">填到 out_trsys；不填则由 EA 拉取后打包</p>
+      </div>
       <button type="button" class="link-btn extras-toggle" @click="buildExtrasOpen = !buildExtrasOpen">
-        {{ buildExtrasOpen ? '收起编译选项' : '展开更多编译选项' }}
+        {{ buildExtrasOpen ? '收起编译选项' : '更多编译选项' }}
       </button>
       <div v-show="buildExtrasOpen" class="extras-panel">
         <div class="field-row">
@@ -1396,29 +1397,10 @@ onUnmounted(() => {
               v-model:value="needPack"
               :options="[
                 { label: '否', value: 'no' },
-                { label: '是（追加 pack）', value: 'yes' },
+                { label: '是', value: 'yes' },
               ]"
             />
           </div>
-        </div>
-        <div class="field">
-          <label>编译 target <span class="req">*</span></label>
-          <NSelect
-            v-model:value="selectedBuildTargets"
-            multiple
-            :options="BUILD_TARGET_OPTIONS"
-            max-tag-count="responsive"
-            placeholder="sys / krn / vext / hal / odm / trsys"
-          />
-          <p v-if="needsTrsysUi" class="field-hint">可多选：sys / krn / vext / hal / odm / trsys，勾选sys或trsys后，需填入对应路径</p>
-          <p v-else class="field-hint">可多选：sys / krn / vext / hal / odm，勾选sys后，需填入对应路径</p>
-        </div>
-        <div v-if="showTrsysRoot" class="field">
-          <label>NEW_TRSYSTEM_ROOT</label>
-          <NInput
-            v-model:value="newTrsystemRoot"
-            :placeholder="trsysRootPlaceholder"
-          />
         </div>
         <div v-if="needTrsysShareConf" class="field">
           <label>trsys 分支</label>
@@ -1428,13 +1410,10 @@ onUnmounted(() => {
             :loading="trsysBranchesLoading"
             filterable
             clearable
-            placeholder="选填：从共享盘选择 TR_SYSTEM 分支"
+            placeholder="选填"
           />
           <p v-if="trsysBranchesError" class="field-error">{{ trsysBranchesError }}</p>
-          <p v-else class="field-hint">
-            访问 <code>\\10.150.98.24\sw_ver_dev\COMPONENTS\TR_SYSTEM\17.0.0</code>，
-            选取分支后取其 <code>NORMAL</code> 下最新目录中的 <code>conf.json</code>，放到远端 ez-build 同目录。
-          </p>
+          <p v-else class="field-hint">选中后自动带上该分支 conf.json</p>
           <NButton size="small" secondary :loading="trsysBranchesLoading" @click="loadTrsysBranches">刷新分支</NButton>
         </div>
         <div v-if="hasSysTarget" class="field-row">
@@ -1442,7 +1421,7 @@ onUnmounted(() => {
             <label>sys_version</label>
             <NInput
               v-model:value="buildContext.sys_version"
-              placeholder="选定sys编译的tOS版本，默认可不填"
+              placeholder="tOS 版本，可留空"
             />
           </div>
         </div>
@@ -1451,49 +1430,37 @@ onUnmounted(() => {
 
       <template v-if="showFlashSelfcheckSection">
       <h3 class="section-head">烧录 / 自检</h3>
-      <p class="field-hint section-hint">
-        烧录与 AI 自检共用一台设备。整包烧录使用本机已装的 asf-device / harness-device。
-      </p>
       <div v-if="needManualFlashPkg" class="field">
         <label>版本路径 <span class="req">*</span></label>
         <NInput
           v-model:value="flashPkgPath"
-          placeholder="需要填入版本打包产物，示例：Z:\ea-build\output_version_lj9_h972"
+          placeholder="例如 Z:\ea-build\output_version_lj9_h972"
         />
-        <p class="field-hint">需要填入版本打包产物，示例：Z:\ea-build\output_version_lj9_h972</p>
       </div>
-      <p v-else-if="step3Sections.flash && flashVersionFromBuild" class="field-hint section-hint">
-        版本来自编译打包，无须手动填入版本路径。
-      </p>
       <div class="field">
         <label>
           目标设备 <span class="req">*</span>
           <span v-if="devicesLoading" class="inline-hint">扫描中…</span>
-          <span v-else class="inline-hint muted">每 2 秒刷新</span>
         </label>
         <NSelect
           v-model:value="deviceId"
           :options="deviceSelectOptions"
           clearable
           :loading="devicesLoading"
-          :placeholder="devicesLoading ? '正在扫描 ADB 设备…' : (devices.length ? '选择烧录/自检设备' : '未检测到设备')"
+          :placeholder="devicesLoading ? '扫描中…' : (devices.length ? '选择设备' : '未检测到设备')"
         />
-        <p class="field-hint">启用烧录或自检时必选。不选则无法进入下一步。</p>
       </div>
       <div v-if="step3Sections.flash" class="oem-unlock-box">
-        <NAlert type="warning" :bordered="false" class="oem-unlock-alert">
-          烧录将使用 fastboot 刷写分区。请确认当前目标设备已完成 OEM / Bootloader 解锁，否则刷机必然失败。
-        </NAlert>
         <label class="oem-unlock-check">
           <input v-model="oemUnlockConfirmed" type="checkbox">
           <span>
-            我确认该设备已 OEM 解锁，可以使用 fastboot 刷机
+            已确认设备完成 OEM 解锁
             <span class="req">*</span>
           </span>
         </label>
       </div>
       <button type="button" class="link-btn extras-toggle" @click="flashExtrasOpen = !flashExtrasOpen">
-        {{ flashExtrasOpen ? '收起更多选项' : '展开更多选项' }}
+        {{ flashExtrasOpen ? '收起更多选项' : '更多选项' }}
       </button>
       <div v-show="flashExtrasOpen" class="extras-panel">
         <div v-if="step3Sections.selfcheck" class="field">
@@ -1501,21 +1468,21 @@ onUnmounted(() => {
           <NSelect
             v-model:value="testPlanMode"
             :options="[
-              { label: '适配流水线用例（按勾选域：TP/马达/音频/LCM/指纹/通信）', value: 'pipeline_adapt' },
+              { label: '按勾选模块', value: 'pipeline_adapt' },
             ]"
           />
-          <p class="field-hint">只跑勾选调试项对应的模块（TP/马达/音频/LCM/指纹/通信），无对应模块则转人工。</p>
+          <p class="field-hint">无对应模块则转人工</p>
         </div>
         <div class="field-row">
           <div class="field narrow">
             <label>最大迭代轮次</label>
             <NInputNumber v-model:value="maxIterations" :min="1" :max="99" />
-            <p class="field-hint">失败后改代码再编译的循环上限（自检通过后直接提交 Gerrit）。</p>
+            <p class="field-hint">失败后改代码再编译的上限</p>
           </div>
           <div class="field narrow">
             <label>模块失败重试次数</label>
             <NInputNumber v-model:value="adaptMaxRetries" :min="0" :max="20" />
-            <p class="field-hint">AI 适配阶段每个失败模块自动重试的次数，默认 3。设为 0 则失败即停。</p>
+            <p class="field-hint">每个失败模块的自动重试次数，0 表示失败即停</p>
           </div>
         </div>
       </div>
@@ -1525,20 +1492,16 @@ onUnmounted(() => {
       <h3 class="section-head">入库</h3>
       <div class="field">
         <label>Gerrit 提交 ID <span class="req">*</span></label>
-        <NInput v-model:value="buildContext.gerrit_issue_id" placeholder="如 TOS1501-63219 或 AR-202506-002681" />
-        <p class="field-hint">
-          必填。写入各仓 commit 模板的 <code>ID:</code> 字段（AR/BUG，禁止 task ID）。多仓共用同一 ID；
-          各仓 <code>DESCRIPTION</code> 仍按该仓实际 diff 由 gerrit-submit Skill 填写。
-        </p>
+        <NInput v-model:value="buildContext.gerrit_issue_id" placeholder="例如 TOS1501-63219 或 AR-202506-002681" />
+        <p class="field-hint">填 AR/BUG 单号，多仓共用</p>
       </div>
       <button type="button" class="link-btn extras-toggle" @click="gerritExtrasOpen = !gerritExtrasOpen">
-        {{ gerritExtrasOpen ? '收起更多选项' : '展开更多选项' }}
+        {{ gerritExtrasOpen ? '收起更多选项' : '更多选项' }}
       </button>
       <div v-show="gerritExtrasOpen" class="extras-panel">
         <div class="field">
           <label>Gerrit 目标分支（可选）</label>
-          <NInput v-model:value="buildContext.target_branch" placeholder="留空=按仓库远程默认分支" />
-          <p class="field-hint">仅入库阶段使用，与编译无关。需要强制推到指定分支时填写。</p>
+          <NInput v-model:value="buildContext.target_branch" placeholder="留空则使用仓库默认分支" />
         </div>
       </div>
       </template>
@@ -1575,7 +1538,7 @@ onUnmounted(() => {
         </div>
         <div v-if="showFlashSelfcheckSection && step3Sections.flash" class="summary-row">
           <span class="k">烧录版本</span>
-          <span>{{ flashVersionFromBuild ? '版本来自编译打包，无须手动填入' : (flashPkgPath.trim() || '—') }}</span>
+          <span>{{ flashVersionFromBuild ? '使用编译产物' : (flashPkgPath.trim() || '—') }}</span>
         </div>
         <div class="summary-row">
           <span class="k">路径参数</span>
@@ -1688,7 +1651,6 @@ onUnmounted(() => {
   border: 1px solid color-mix(in srgb, var(--warn, #d97706) 50%, var(--line));
   background: color-mix(in srgb, var(--warn, #d97706) 12%, transparent);
 }
-.oem-unlock-alert { margin-bottom: 10px; }
 .oem-unlock-check {
   display: flex;
   align-items: flex-start;
@@ -1753,7 +1715,6 @@ onUnmounted(() => {
     background: color-mix(in srgb, var(--line) 55%, transparent);
   }
 }
-.section-hint { margin: 0 0 12px; }
 .step-hint {
   margin: -8px 0 14px;
   font-size: 13px;

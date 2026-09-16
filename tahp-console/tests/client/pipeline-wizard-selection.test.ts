@@ -85,7 +85,7 @@ describe('pipeline wizard step3 sections', () => {
 })
 
 describe('pipeline wizard step3 required fields', () => {
-  it('requires NEW_SYSTEM_ROOT when compile is enabled', () => {
+  it('requires system root when compile is enabled', () => {
     const sections = resolveWizardStep3Sections(defaultNodes)
     expect(canProceedWizardStep3(sections, values({ systemRoot: '' }))).toBe(false)
     expect(canProceedWizardStep3(sections, values())).toBe(true)
@@ -124,7 +124,7 @@ describe('pipeline wizard step3 required fields', () => {
     expect(listWizardStep3Blockers(flashOnly, values({
       oemUnlockConfirmed: false,
       gerritIssueId: '',
-    }))).toContain('请勾选确认目标设备已 OEM 解锁，可使用 fastboot 刷机')
+    }))).toContain('请勾选确认设备已 OEM 解锁')
     expect(canProceedWizardStep3(flashOnly, values({
       oemUnlockConfirmed: false,
       gerritIssueId: '',
@@ -170,9 +170,9 @@ describe('pipeline wizard step3 required fields', () => {
         gerritIssueId: '',
       }),
     )).toEqual([
-      '请填写 NEW_SYSTEM_ROOT',
+      '请填写系统源码路径',
       '请选择目标设备',
-      '请勾选确认目标设备已 OEM 解锁，可使用 fastboot 刷机',
+      '请勾选确认设备已 OEM 解锁',
       '请填写 Gerrit 提交 ID',
     ])
   })

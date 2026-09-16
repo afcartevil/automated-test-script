@@ -58,7 +58,7 @@ export function listWizardStep3Blockers(
 ): string[] {
   const blockers: string[] = []
   if (sections.build) {
-    if (!values.systemRoot.trim()) blockers.push('请填写 NEW_SYSTEM_ROOT')
+    if (!values.systemRoot.trim()) blockers.push('请填写系统源码路径')
     if (!values.variant.trim()) blockers.push('请选择 variant')
     if (!values.buildFlag.trim()) blockers.push('请选择 build_flag')
     if (!values.buildTargets.length && !values.needPack) blockers.push('请选择编译 target 或开启打包')
@@ -70,7 +70,7 @@ export function listWizardStep3Blockers(
     blockers.push('请选择目标设备')
   }
   if (sections.flash && !values.oemUnlockConfirmed) {
-    blockers.push('请勾选确认目标设备已 OEM 解锁，可使用 fastboot 刷机')
+    blockers.push('请勾选确认设备已 OEM 解锁')
   }
   if (sections.gerrit && !values.gerritIssueId.trim()) {
     blockers.push('请填写 Gerrit 提交 ID')
