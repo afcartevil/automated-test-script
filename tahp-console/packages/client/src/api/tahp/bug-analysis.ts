@@ -376,6 +376,7 @@ export interface BugTaskContinueStatus {
   can_continue: boolean
   reason?: string
   agent_session_id?: string
+  session_alive?: boolean
 }
 
 export function getBugTaskContinueStatus(taskId: string): Promise<BugTaskContinueStatus> {

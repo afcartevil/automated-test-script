@@ -11,7 +11,7 @@
  *   - 维护 Bug 分析任务上下文（单条 / JQL 批量）
  *   - 把 Bug 任务投递到 Agent Bridge，监听并转发 tool.started / tool.completed / tool.output / 文本 delta
  *   - 通过 TaskStream 推送 task.* 事件给前端实时显示
- *   - 支持"补充信息继续分析"（同任务、同 Agent 会话续聊）
+ *   - 支持"补充信息继续分析"（优先同 Agent 会话续聊；会话过期则按落盘报告重建上下文）
  *
  * 报告落盘：
  *   reports/bug-analysis/<task-id>.json
@@ -124,12 +124,16 @@ import {
   isLlmCredentialUserInput,
   redactUserInputValues,
 } from './bug-analysis-credentials'
+import {
+  evaluateBugContinueEligibility,
+  resolveBugContinueSessionMode,
+} from './bug-analysis-continue'
 
 // ─── Agent Bridge 客户端（单例） ────────────────────────────────────────────
 //
 // 复用一个 AgentBridgeClient（短连接），交给每个 task 独立的 session_id。
 // 任务成功结束后保留 session 供「补充信息继续分析」续聊；失败/中断时 destroy。
-// 补充继续严格要求 session 仍存活，不再从历史报告重建会话。
+// 会话仍存活时同 session 续聊；闲置回收或服务重启后按落盘报告重建 conversation_history。
 //
 // 超时：单条分析可能跑数小时（日志下载 + 多轮工具调用），批量队列更长，
 // 因此默认不设 RPC 读超时（0 = 不限时）。代价是 bridge 假死时该轮不会自己醒，
@@ -1608,9 +1612,10 @@ export interface BugTaskContinueStatus {
   can_continue: boolean
   reason?: string
   agent_session_id?: string
+  session_alive?: boolean
 }
 
-/** 检测任务是否可在当前 Agent Bridge 会话中「补充信息继续分析」 */
+/** 检测已完成任务是否可「补充信息继续分析」（不要求原 Agent 会话仍存活） */
 export async function getBugTaskContinueStatus(taskId: string): Promise<BugTaskContinueStatus> {
   const agentSessionId = bugAgentSessionId(taskId)
   let ctx = taskCtx.get(taskId)
@@ -1619,31 +1624,22 @@ export async function getBugTaskContinueStatus(taskId: string): Promise<BugTaskC
   if (!ctx && report) {
     ctx = restoreCtxFromReport(taskId, report)
   }
-  if (!ctx && !report) {
-    return { can_continue: false, reason: '找不到任务' }
+
+  const gate = evaluateBugContinueEligibility({
+    found: !!(ctx || report),
+    status: ctx?.status || String(report?.status || ''),
+    dupJudgeRunning: ctx?.dupJudgeStatus === 'running' || dupJudgeRuntime.has(taskId),
+  })
+  if (!gate.can_continue) {
+    return { ...gate, agent_session_id: (ctx || report) ? agentSessionId : undefined }
   }
 
-  const status = ctx?.status || String(report?.status || '')
-  if (status === 'running' || status === 'pending' || status === 'waiting_user_input') {
-    return { can_continue: false, reason: '任务正在运行中', agent_session_id: agentSessionId }
+  const sessionAlive = await bridgeSessionAlive(agentSessionId)
+  return {
+    can_continue: true,
+    agent_session_id: agentSessionId,
+    session_alive: sessionAlive,
   }
-  if (ctx?.dupJudgeStatus === 'running' || dupJudgeRuntime.has(taskId)) {
-    return { can_continue: false, reason: '正在尝试置重，请稍后再补充分析', agent_session_id: agentSessionId }
-  }
-  if (status !== 'completed') {
-    return { can_continue: false, reason: '仅已完成的分析任务可补充继续', agent_session_id: agentSessionId }
-  }
-
-  const alive = await bridgeSessionAlive(agentSessionId)
-  if (!alive) {
-    return {
-      can_continue: false,
-      reason: 'Agent 会话已断开（服务重启或跨机器），无法在同一会话中补充分析。请重新发起分析。',
-      agent_session_id: agentSessionId,
-    }
-  }
-
-  return { can_continue: true, agent_session_id: agentSessionId }
 }
 
 function buildConversationHistoryFromReport(
@@ -1902,14 +1898,15 @@ async function runSingleBugAnalysis(
 
       userMessage = buildContinueUserMessage(correction, ctx, ctx.corrections.length)
       const sessionAlive = await bridgeSessionAlive(agentSessionId)
-      if (!sessionAlive) {
-        throw new Error(
-          'Agent 会话已断开，无法在同一会话中补充分析。请重新发起分析。',
-        )
+      if (resolveBugContinueSessionMode(sessionAlive) === 'reuse_session') {
+        logBug(taskId, 'info', `continue: reusing bridge session ${agentSessionId}`)
+        instructions = undefined
+        conversationHistory = undefined
+      } else {
+        logBug(taskId, 'info', `continue: session expired, rebuilding history for ${agentSessionId}`)
+        conversationHistory = buildConversationHistoryFromReport(taskId, ctx)
+        instructions = buildBugAnalysisInstructions(userMessage, ctx)
       }
-      logBug(taskId, 'info', `continue: reusing bridge session ${agentSessionId}`)
-      instructions = undefined
-      conversationHistory = undefined
 
       ctx.llmResponse = ''
       saveAgentPromptLog(taskId, 'bug-analysis', instructions || '(session continue — no new system prompt)', userMessage)

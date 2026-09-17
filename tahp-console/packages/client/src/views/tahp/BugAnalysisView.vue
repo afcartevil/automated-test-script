@@ -33,6 +33,7 @@ import {
 } from '@/utils/bug-analysis-report'
 import { bugJobHasUnfinished, bugJobSettledCount, countBugJobQueue } from '@/utils/bug-analysis-job-stats'
 import { bugTaskCardPhase, bugTaskDefaultDetailTab, bugTaskListTitle } from '@/utils/bug-analysis-task-label'
+import { canOfferBugContinueAnalysis } from '@/utils/bug-analysis-continue'
 import {
   buildBugActivityLog,
   formatBugActivityLine,
@@ -678,19 +679,19 @@ const distillCompleted = computed(() =>
 const canContinueSession = ref(false)
 
 const canContinueAnalysis = computed(() =>
-  !isHistoryView.value
-  && distillCompleted.value
-  && canContinueSession.value
-  && !isRunning.value
-  && !isDupJudgeRunning.value
-  && !isPending.value
-  && !isWaitingUserInput.value
-  && !!currentTaskId.value,
+  canOfferBugContinueAnalysis({
+    taskId: currentTaskId.value,
+    status: currentTask.value?.status,
+    running: isRunning.value,
+    pending: isPending.value,
+    waitingUserInput: isWaitingUserInput.value,
+    dupJudgeRunning: isDupJudgeRunning.value,
+  }),
 )
 
 async function refreshContinueStatus() {
   const tid = currentTaskId.value
-  if (!tid || isHistoryView.value) {
+  if (!tid) {
     canContinueSession.value = false
     return
   }
@@ -701,7 +702,7 @@ async function refreshContinueStatus() {
   }
   try {
     const st = await getBugTaskContinueStatus(tid)
-    canContinueSession.value = st.can_continue
+    canContinueSession.value = st.session_alive === true
   } catch {
     canContinueSession.value = false
   }
@@ -1564,10 +1565,12 @@ async function submitContinue() {
       skills_used: currentTask.value?.skills_used,
       skills_improved: currentTask.value?.skills_improved,
     })
+    taskListMode.value = 'recent'
+    selectTask(tid)
     activeReportTab.value = 'live'
     showContinueDialog.value = false
     canContinueSession.value = false
-    message.success(`补充分析已开始，将在当前会话继续分析 ${currentTask.value?.jira_key || ''}`)
+    message.success(`补充分析已开始：${currentTask.value?.jira_key || tid}`)
   } catch (err) {
     message.error((err as Error).message)
   }
@@ -3019,9 +3022,11 @@ watch(
       @positive-click="submitContinue"
     >
       <div class="modal-hint">
-        将在<strong>当前 Agent 会话</strong>中继续分析
+        将继续分析
         <strong>{{ isLocalAnalysisTask ? '本地日志' : currentTask?.jira_key }}</strong>：
         流式窗口保留此前对话，并在下方追加本轮输出；分析报告 Tab 在完成后更新为最新一版。
+        <template v-if="canContinueSession">原 Agent 会话仍在，将直接续聊。</template>
+        <template v-else>原会话可能已过期，将基于已保存的分析报告继续，无需重新发起任务。</template>
         补充信息仅用于完善对该{{ isLocalAnalysisTask ? '任务' : ' JIRA 单' }}的分析，不会切换到其它 Issue。
       </div>
       <NInput
