@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   formatUnfilledFieldsHint,
   isConfigSetupTab,
+  isTestDomainCredential,
   listUnfilledFormFields,
   parseConfigTab,
   summarizeSkillSetup,
@@ -40,6 +41,31 @@ describe('formatUnfilledFieldsHint', () => {
     expect(hint).toContain('飞书 OpenAPI · App ID')
     expect(hint).toContain('域账号 · 域密码')
     expect(hint).not.toContain('（可选）')
+  })
+})
+
+describe('isTestDomainCredential', () => {
+  it('matches only test- prefixed accounts with the fixed test password', () => {
+    expect(isTestDomainCredential({ domain_account: 'test-alice', domain_password: '12345678' })).toBe(true)
+  })
+
+  it('ignores surrounding blanks and account letter case', () => {
+    expect(isTestDomainCredential({ domain_account: '  TEST-alice ', domain_password: ' 12345678 ' })).toBe(true)
+  })
+
+  it('rejects test- accounts with any other password', () => {
+    expect(isTestDomainCredential({ domain_account: 'test-alice', domain_password: '123456789' })).toBe(false)
+    expect(isTestDomainCredential({ domain_account: 'test-alice', domain_password: '' })).toBe(false)
+  })
+
+  it('rejects normal accounts even with the test password', () => {
+    expect(isTestDomainCredential({ domain_account: 'alice', domain_password: '12345678' })).toBe(false)
+    expect(isTestDomainCredential({ domain_account: 'alice.test', domain_password: '12345678' })).toBe(false)
+  })
+
+  it('rejects empty credentials so the required-field check still applies', () => {
+    expect(isTestDomainCredential({})).toBe(false)
+    expect(isTestDomainCredential({ domain_account: '', domain_password: '' })).toBe(false)
   })
 })
 

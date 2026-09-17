@@ -48,6 +48,22 @@ export function listUnfilledFormFields<T extends { key: string }>(
   return fields.filter(f => !isFormFieldFilled(values[f.key]))
 }
 
+/** 测试域账号前缀：命中后只保存凭据，不启动 skill 配置检查 */
+export const TEST_DOMAIN_ACCOUNT_PREFIX = 'test-'
+
+/** 测试域账号固定密码 */
+export const TEST_DOMAIN_PASSWORD = '12345678'
+
+/** 测试域账号保存后的提示：不启动检查 */
+export const TEST_DOMAIN_SAVE_ONLY_HINT = '测试账号：已保存域账号与域密码；其余配置项未完成，未启动 skill 配置检查'
+
+/** 是否为测试域账号（test- 前缀 + 固定测试密码）；此类账号允许缺项保存，但不启动检查 */
+export function isTestDomainCredential(values: Record<string, string | undefined>): boolean {
+  const account = (values.domain_account || '').trim().toLowerCase()
+  const password = (values.domain_password || '').trim()
+  return account.startsWith(TEST_DOMAIN_ACCOUNT_PREFIX) && password === TEST_DOMAIN_PASSWORD
+}
+
 function groupDisplayName(group: string | undefined): string {
   return (group || '').replace(/（可选）/g, '').trim()
 }

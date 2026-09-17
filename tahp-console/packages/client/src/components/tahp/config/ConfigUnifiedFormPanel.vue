@@ -10,7 +10,9 @@ import {
 } from '@/api/tahp/skill-config'
 import {
   SAVE_AND_START_SKILL_CHECK_LABEL,
+  TEST_DOMAIN_SAVE_ONLY_HINT,
   formatUnfilledFieldsHint,
+  isTestDomainCredential,
   listUnfilledFormFields,
 } from '@/utils/config-navigation'
 
@@ -158,9 +160,20 @@ async function saveConfigForm(): Promise<boolean> {
 
 async function saveAndStartSkillCheck() {
   if (formSaving.value || formLoading.value) return
-  if (!validateRequiredFields()) return
+  const testCredential = isTestDomainCredential(formValues.value)
+  if (testCredential) {
+    missingKeys.value = []
+  } else if (!validateRequiredFields()) {
+    return
+  }
   const saved = await saveConfigForm()
   if (!saved) return
+  if (testCredential) {
+    saveHint.value = TEST_DOMAIN_SAVE_ONLY_HINT
+    saveHintKind.value = 'success'
+    message.warning(TEST_DOMAIN_SAVE_ONLY_HINT, { duration: 8000 })
+    return
+  }
   message.success('配置已保存，正在启动检查')
   emit('startBatch')
 }
