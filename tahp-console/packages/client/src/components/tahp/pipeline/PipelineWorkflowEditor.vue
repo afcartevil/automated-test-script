@@ -12,8 +12,13 @@ const props = defineProps<{
 
 const message = useMessage()
 
+const HIDDEN_EDITOR_NODE_KEYS = new Set(['triage', 'human_review'])
+
 const workflow = computed(() => props.store.workflowDraft)
 const nodeViews = computed(() => props.store.workflowNodes)
+const visibleNodes = computed(() =>
+  (workflow.value?.nodes ?? []).filter(n => !HIDDEN_EDITOR_NODE_KEYS.has(n.key)),
+)
 
 const onUnavailableOptions: Array<{ value: OnUnavailablePolicy; label: string }> = [
   { value: 'fail', label: '失败' },
@@ -74,10 +79,10 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-if="store.workflowLoading" class="loading">加载流程配置…</div>
+    <div v-if="store.workflowLoading && !workflow" class="loading">加载流程配置…</div>
     <div v-else-if="workflow" class="node-list">
       <div
-        v-for="(node, index) in workflow.nodes"
+        v-for="(node, index) in visibleNodes"
         :key="node.key"
         class="node-row"
       >

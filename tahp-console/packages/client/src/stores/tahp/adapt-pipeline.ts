@@ -428,13 +428,16 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
   }
 
   async function loadWorkflowEditor() {
-    workflowLoading.value = true
+    const hasDraft = Boolean(workflowDraft.value)
+    if (!hasDraft) workflowLoading.value = true
     error.value = null
     try {
-      const [wfData, caps] = await Promise.all([fetchWorkflow(), fetchCapabilities()])
+      const wfData = await fetchWorkflow()
       workflowDraft.value = structuredClone(wfData.workflow)
       workflowNodes.value = wfData.nodes
-      capabilities.value = caps
+      void fetchCapabilities()
+        .then((caps) => { capabilities.value = caps })
+        .catch(() => { /* 徽章稍后显示「—」，不挡住编排列表 */ })
     } catch (err) {
       error.value = (err as Error).message
     } finally {
@@ -449,7 +452,6 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
     try {
       const result = await saveWorkflow(workflowDraft.value)
       workflowDraft.value = structuredClone(result.workflow)
-      await loadWorkflowEditor()
       return true
     } catch (err) {
       error.value = (err as Error).message

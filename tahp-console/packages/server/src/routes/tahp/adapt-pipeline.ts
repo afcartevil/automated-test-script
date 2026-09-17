@@ -471,20 +471,16 @@ tahpAdaptPipelineRoutes.get('/harness-skills', async (ctx) => {
 })
 
 tahpAdaptPipelineRoutes.get('/workflow', async (ctx) => {
+  // 只返回流程定义与阶段名称；可用性探测走 /capabilities，避免 asf CLI 阻塞编排页首屏
   const workflow = loadWorkflow()
-  const nodes = await Promise.all(
-    workflow.nodes.filter(n => n.enabled).map(async node => {
-      const stage = getStage(node.key)
-      const availability = stage?.probe
-        ? await stage.probe({ run: probeContextRun() })
-        : { available: true as const }
-      return {
-        key: node.key,
-        label: stage?.label ?? node.key,
-        availability,
-      }
-    }),
-  )
+  const nodes = workflow.nodes.map(node => {
+    const stage = getStage(node.key)
+    return {
+      key: node.key,
+      label: stage?.label ?? node.key,
+      availability: { available: true as const },
+    }
+  })
   ctx.body = { success: true, data: { workflow, nodes } }
 })
 
