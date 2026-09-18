@@ -80,7 +80,7 @@ function applyTestTerminal(ctx: StageContext, data: Record<string, unknown>, kin
 
 export const selfcheckStageDefinition: StageDefinition = {
   key: 'selfcheck',
-  label: 'AI 自检',
+  label: '适配自检',
   consumes: ['flashed'],
   produces: ['testresult'],
 
