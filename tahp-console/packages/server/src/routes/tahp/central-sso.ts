@@ -14,8 +14,16 @@ import { clearTaskUnread, getTaskInboxPatches, getTaskUnreadIds } from '../../se
 import { clearApplyPrompt, getApplyPrompt } from '../../services/tahp/task-apply-prompt'
 import { getTaskContext, setTaskContext } from '../../services/tahp/task-context'
 import { tryIngestGkiNoticesFromTaskPackages } from '../../services/tahp/gki-upgrade-notices'
+import { getVerifyAutoLabelMap, getVerifyAutoRunStatus } from '../../services/tahp/verify-auto-run'
 
 export const tahpCentralSsoRoutes = new Router()
+
+/** 自动执行状态摘要（不含任务明细，明细已合并进每个任务的 auto 字段） */
+function autoRunSummary() {
+  const { tasks, ...rest } = getVerifyAutoRunStatus()
+  void tasks
+  return rest
+}
 
 function sanitizeNext(raw: unknown): string {
   const next = String(raw || '/').trim() || '/'
@@ -144,8 +152,9 @@ tahpCentralSsoRoutes.post('/api/tahp/task-inbox/ack', async (ctx) => {
 
 /** 本人在中心被指派的未完成验测任务（总览「验测任务」卡片；不可达时 degraded=true 供前端红字提示） */
 tahpCentralSsoRoutes.get('/api/tahp/verify-tasks/mine', async (ctx) => {
+  const autoRun = autoRunSummary()
   if (!isCentralConfigured()) {
-    ctx.body = { success: true, data: { tasks: [], degraded: true, reason: '中心未配置' } }
+    ctx.body = { success: true, data: { tasks: [], degraded: true, reason: '中心未配置', auto_run: autoRun } }
     return
   }
   try {
@@ -162,14 +171,17 @@ tahpCentralSsoRoutes.get('/api/tahp/verify-tasks/mine', async (ctx) => {
       }
     }
     if (!sessionToken) {
-      ctx.body = { success: true, data: { tasks: [], degraded: true, reason: '未绑定中心账号' } }
+      ctx.body = { success: true, data: { tasks: [], degraded: true, reason: '未绑定中心账号', auto_run: autoRun } }
       return
     }
     const tasks = await centralClient.verifyMine(sessionToken)
-    ctx.body = { success: true, data: { tasks, degraded: false } }
+    // 合并本机自动执行状态（测试账号）：标签/相位/设备/run_id
+    const autoLabels = getVerifyAutoLabelMap()
+    const enriched = tasks.map(task => ({ ...task, auto: autoLabels[task.task_id] }))
+    ctx.body = { success: true, data: { tasks: enriched, degraded: false, auto_run: autoRun } }
   } catch (err) {
     logger.warn({ err: (err as Error).message }, '[verify-tasks] mine failed')
-    ctx.body = { success: true, data: { tasks: [], degraded: true, reason: (err as Error).message } }
+    ctx.body = { success: true, data: { tasks: [], degraded: true, reason: (err as Error).message, auto_run: autoRun } }
   }
 })
 

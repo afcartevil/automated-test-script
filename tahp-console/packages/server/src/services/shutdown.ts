@@ -3,6 +3,7 @@ import { closeDb } from '../db'
 import { isGkiPatchAutoStartEnabled, stopGkiPatchServer } from './tahp/gki-patch'
 import { stopBaselineNotifyClient } from './tahp/sync'
 import { stopSelfCheckBackgroundProcesses } from './tahp/device-self-check'
+import { stopVerifyAutoRun } from './tahp/verify-auto-run'
 import { markBffExit, stopBffHeartbeat } from './crash-log'
 
 export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?: any, agentBridgeManager?: any): void {
@@ -23,6 +24,13 @@ export function bindShutdown(server: any, groupChatServer?: any, chatRunServer?:
     try {
       stopBaselineNotifyClient()
       logger.info('Baseline notify client stopped')
+
+      // 停止验测任务自动执行调度器（不中断已在跑的测试，进程本身由下面的清理负责）
+      try {
+        stopVerifyAutoRun()
+      } catch (err) {
+        logger.warn(err, 'Failed to stop verify-auto-run scheduler (non-fatal)')
+      }
 
       // 停止自检后台进程（monkey watchdog / power），避免 BFF 退出后孤儿进程残留
       try {

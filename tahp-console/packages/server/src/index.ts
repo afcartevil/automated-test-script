@@ -32,6 +32,7 @@ import { pullAllWorkspaceLayouts } from './services/tahp/adapt-layout/service'
 import { pullOrReadLineLayouts } from './services/tahp/adapt-layout/line-cache'
 import { bootstrapGkiPatchServer } from './services/tahp/gki-patch'
 import { startGkiAlertSyncTimer } from './services/tahp/gki-alert-sync'
+import { startVerifyAutoRun } from './services/tahp/verify-auto-run'
 
 installBffDiagnostics()
 
@@ -266,6 +267,12 @@ export async function bootstrap() {
         startTaskNotifyClient()
       } catch (err) {
         logger.warn({ err }, '[bootstrap] task-notify client failed to start after bind')
+      }
+      // 测试账号（test- 前缀）验测任务自动执行；非测试账号/中心未配置时内部自动跳过
+      try {
+        startVerifyAutoRun()
+      } catch (err) {
+        logger.warn({ err }, '[bootstrap] verify-auto-run failed to start')
       }
     })
 

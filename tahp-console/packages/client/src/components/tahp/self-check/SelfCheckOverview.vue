@@ -5,6 +5,7 @@ import type { PipelineStage } from './self-check-utils'
 import SelfCheckOverviewCard from './SelfCheckOverviewCard.vue'
 import SelfCheckFlowStatus from './SelfCheckFlowStatus.vue'
 import { useVerifyTasks } from '@/composables/useVerifyTasks'
+import { verifyLabelTone, type VerifyTaskItem } from '@/api/tahp/verify-tasks'
 import {
   displayReportStatus,
   getDisplayRole,
@@ -37,7 +38,47 @@ const emit = defineEmits<{
   selectDevice: [deviceId: string]
 }>()
 
-const { tasks: verifyTasks, unreachable: verifyUnreachable } = useVerifyTasks()
+const {
+  tasks: verifyTasks,
+  unreachable: verifyUnreachable,
+  autoRun,
+  autoRunBusy,
+  toggleAutoRun,
+  cancelAutoRun,
+} = useVerifyTasks()
+
+/** 执行标签：本机自动执行状态优先，其次中心已存标签 */
+function taskLabel(t: VerifyTaskItem): string {
+  return t.auto?.label || t.label || ''
+}
+
+function taskLabelTone(t: VerifyTaskItem): string {
+  return verifyLabelTone(t.auto?.label_code || t.label_code)
+}
+
+function taskLabelTitle(t: VerifyTaskItem): string {
+  const parts = [
+    t.auto?.last_error,
+    t.auto?.label_error,
+    t.auto?.device_id ? `设备 ${t.auto.device_id}` : '',
+    t.auto?.run_id ? `报告 ${t.auto.run_id}` : '',
+  ]
+  return parts.filter(Boolean).join(' · ')
+}
+
+/** 自动化状态条文案 */
+const autoRunHint = computed(() => {
+  const info = autoRun.value
+  if (!info) return ''
+  if (!info.is_test_account) return ''
+  if (!info.eligible) {
+    if (info.reason === 'paused') return `已暂停（${info.account}）`
+    if (info.reason === 'central_not_configured') return '中心未配置，自动执行不可用'
+    if (info.reason === 'not_test_account') return ''
+    return `自动执行未启用：${info.reason}`
+  }
+  return `自动执行中（${info.account}）`
+})
 
 const deviceCounts = computed(() => ({
   idle: props.devices.filter(d => d.status === '空闲').length,
@@ -126,9 +167,31 @@ async function openVerifyCenter() {
               <strong>{{ t.project || '—' }}</strong>
               <small>{{ t.item_label }} · 指派于 {{ formatAssignTime(t.created_at) }} · {{ t.created_by }}</small>
             </span>
+            <span
+              v-if="taskLabel(t)"
+              class="verify-label"
+              :class="`verify-label--${taskLabelTone(t)}`"
+              :title="taskLabelTitle(t)"
+            >{{ taskLabel(t) }}</span>
+            <button
+              v-if="t.auto && autoRun?.is_test_account && t.auto.phase !== 'cancelled'"
+              type="button"
+              class="link-btn verify-cancel"
+              :disabled="autoRunBusy"
+              @click.stop="cancelAutoRun(t.task_id)"
+            >取消自动</button>
           </li>
           <li v-if="verifyTasks.length > 3" class="item-more ea-muted">还有 {{ verifyTasks.length - 3 }} 项</li>
         </ul>
+        <div v-if="autoRun?.is_test_account" class="auto-bar">
+          <span class="auto-bar__text ea-muted">{{ autoRunHint }}</span>
+          <button
+            type="button"
+            class="link-btn"
+            :disabled="autoRunBusy"
+            @click="toggleAutoRun(!autoRun.enabled)"
+          >{{ autoRun.enabled ? '暂停自动执行' : '恢复自动执行' }}</button>
+        </div>
       </SelfCheckOverviewCard>
 
       <SelfCheckOverviewCard
@@ -235,6 +298,71 @@ async function openVerifyCenter() {
 .verify-unreachable {
   color: var(--error);
   font-weight: 500;
+}
+
+.verify-label {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  white-space: nowrap;
+
+  &--wait {
+    color: #b45309;
+    background: color-mix(in srgb, #f59e0b 16%, transparent);
+  }
+
+  &--run {
+    color: var(--accent);
+    background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent));
+  }
+
+  &--human {
+    color: #6d28d9;
+    background: color-mix(in srgb, #8b5cf6 16%, transparent);
+  }
+
+  &--fail {
+    color: var(--error, #b42318);
+    background: color-mix(in srgb, var(--error, #dc2626) 14%, transparent);
+  }
+
+  &--done {
+    color: var(--success, #15803d);
+    background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent);
+  }
+}
+
+.verify-cancel {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.auto-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.auto-bar__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel-desc {

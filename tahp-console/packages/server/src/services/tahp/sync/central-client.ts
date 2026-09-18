@@ -38,6 +38,22 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs = 30000): 
   }
 }
 
+/** 中心验测任务行（label* 为 EA 自动执行器写回的进度标签，老中心可能不返回） */
+export interface CentralVerifyTask {
+  task_id: string
+  test_type: string
+  item_label: string
+  owner: string
+  project?: string
+  note?: string
+  status: string
+  created_by: string
+  created_at: string
+  label?: string
+  label_code?: string
+  label_updated_at?: string
+}
+
 export const centralClient = {
   async ping(): Promise<{ pong: boolean; drafts_pending?: number }> {
     return request('/api/tahp/sync/ping', { headers: headers() })
@@ -325,19 +341,38 @@ export const centralClient = {
   },
 
   /** 本人在中心被指派的未完成验测任务（总览「验测任务」卡片数据源） */
-  async verifyMine(sessionToken: string): Promise<Array<{
-    task_id: string
-    test_type: string
-    item_label: string
-    owner: string
-    project?: string
-    note?: string
-    status: string
-    created_by: string
-    created_at: string
-  }>> {
+  async verifyMine(sessionToken: string): Promise<CentralVerifyTask[]> {
     return request('/api/tahp/tasks/verify/mine?view=open', {
       headers: { authorization: `Bearer ${sessionToken}` },
+    })
+  },
+
+  /**
+   * 写回验测任务执行标签（等待设备 / 验测执行中 …）。
+   * 老中心无此接口（404）时抛错，由调用方静默降级为仅本地显示。
+   */
+  async labelVerifyTask(
+    sessionToken: string,
+    taskId: string,
+    body: { label_code: string; label?: string },
+  ): Promise<CentralVerifyTask> {
+    return request(`/api/tahp/tasks/verify/mine/${encodeURIComponent(taskId)}/label`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${sessionToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  },
+
+  /** 关单并关联本人验测报告；可同一次写入终态标签 */
+  async completeVerifyTask(
+    sessionToken: string,
+    taskId: string,
+    body: { run_id?: string; label_code?: string; label?: string } = {},
+  ): Promise<CentralVerifyTask> {
+    return request(`/api/tahp/tasks/verify/mine/${encodeURIComponent(taskId)}/complete`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${sessionToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
     })
   },
 
