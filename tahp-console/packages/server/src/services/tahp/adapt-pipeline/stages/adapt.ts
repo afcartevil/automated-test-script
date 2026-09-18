@@ -9,6 +9,10 @@ import { registerStageForTest } from '../registry'
 import type { ObservedEvent, PipelineDomain, StageContext, StageDefinition } from '../types'
 import { resolveAdaptMaxRetries } from '../types'
 import { filterPipelineChangedFiles } from '../workspace-changed-files'
+import {
+  disposeAdaptAgentLogBuffer,
+  getAdaptAgentLogBuffer,
+} from './adapt-agent-log'
 
 function enabledDomains(run: import('../types').PipelineRun): PipelineDomain[] {
   return run.domains.filter(d => d.enabled)
@@ -151,9 +155,41 @@ async function launchDomain(ctx: StageContext, domain: PipelineDomain): Promise<
   return result.taskId
 }
 
+function adaptLogBufferKey(ctx: StageContext, running: PipelineDomain): string {
+  return `${ctx.run.run_id}:${running.adapt_task_id || running.domain_id}`
+}
+
+function truncateLogArg(text: string, max = 240): string {
+  return text.length <= max ? text : `${text.slice(0, max)}…`
+}
+
 function logAdaptTaskEvent(ctx: StageContext, ev: ObservedEvent, running: PipelineDomain): void {
   const label = running.domain_label || running.domain_id
   const prefix = `[${label}]`
+  const key = adaptLogBufferKey(ctx, running)
+  const buf = getAdaptAgentLogBuffer(key, line => ctx.log(line))
+
+  if (ev.type === 'task.message') {
+    const level = String(ev.payload.level ?? '')
+    const text = String(ev.payload.text ?? ev.payload.message ?? '')
+    if (level === 'stream') {
+      if (text) buf.append(prefix, 'output', text)
+      return
+    }
+    if (level === 'reasoning') {
+      if (text) buf.append(prefix, 'thinking', text)
+      return
+    }
+    buf.flush()
+    const trimmed = text.trim()
+    if (trimmed) ctx.log(`${prefix} ${trimmed}`)
+    return
+  }
+
+  buf.flush()
+  if (ev.type === 'task.completed' || ev.type === 'task.failed') {
+    disposeAdaptAgentLogBuffer(key)
+  }
 
   switch (ev.type) {
     case 'task.started':
@@ -174,20 +210,19 @@ function logAdaptTaskEvent(ctx: StageContext, ev: ObservedEvent, running: Pipeli
       if (msg) ctx.log(`${prefix} ${msg}`)
       break
     }
-    case 'task.message': {
-      if (ev.payload.level === 'stream') break
-      const text = String(ev.payload.text ?? '').trim()
-      if (text) ctx.log(`${prefix} ${text}`)
-      break
-    }
     case 'task.skill_use': {
+      const msg = String(ev.payload.message ?? '').trim()
       const skill = String(ev.payload.skill_id ?? ev.payload.skill ?? '').trim()
-      if (skill) ctx.log(`${prefix} 使用 Skill: ${skill}`)
+      const args = truncateLogArg(String(ev.payload.args ?? '').trim())
+      if (msg) ctx.log(`${prefix} ${msg}`)
+      else if (skill) ctx.log(`${prefix} 调用: ${skill}${args ? ` ${args}` : ''}`)
       break
     }
     case 'task.tool_completed': {
-      const tool = String(ev.payload.tool ?? ev.payload.tool_name ?? '').trim()
-      if (tool) ctx.log(`${prefix} 工具完成: ${tool}`)
+      const msg = String(ev.payload.message ?? '').trim()
+      const tool = String(ev.payload.skill_id ?? ev.payload.tool ?? ev.payload.tool_name ?? '').trim()
+      if (msg) ctx.log(`${prefix} ${msg}`)
+      else if (tool) ctx.log(`${prefix} 工具完成: ${tool}`)
       break
     }
     case 'task.file_change': {
@@ -416,6 +451,7 @@ export const adaptStageDefinition: StageDefinition = {
     const domains = cloneDomains(ctx.run)
     for (const d of domains) {
       if (d.status === 'running' && d.adapt_task_id) {
+        disposeAdaptAgentLogBuffer(`${ctx.run.run_id}:${d.adapt_task_id}`)
         await cancelAdaptAgentRun(d.adapt_task_id)
         d.status = 'pending'
         d.adapt_task_id = undefined

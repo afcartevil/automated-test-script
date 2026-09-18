@@ -3,6 +3,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getTaskStream } from '../../packages/server/src/services/tahp/task-stream'
+import { readPipelineLogs } from '../../packages/server/src/services/tahp/adapt-pipeline/events'
 import {
   advance,
   resetOrchestratorForTest,
@@ -18,6 +19,7 @@ import {
 } from '../../packages/server/src/services/tahp/adapt-pipeline/store'
 import { installPrereqStage } from '../../packages/server/src/services/tahp/adapt-pipeline/stages/prereq'
 import { installAdaptStage } from '../../packages/server/src/services/tahp/adapt-pipeline/stages/adapt'
+import { resetAdaptAgentLogBuffersForTest } from '../../packages/server/src/services/tahp/adapt-pipeline/stages/adapt-agent-log'
 import { resetSourcesForTest } from '../../packages/server/src/services/tahp/adapt-pipeline/sources'
 import { installGerritStage } from '../../packages/server/src/services/tahp/adapt-pipeline/stages/gerrit'
 import { installBuildStage } from '../../packages/server/src/services/tahp/adapt-pipeline/stages/build'
@@ -154,6 +156,7 @@ describe('adapt-pipeline stages', () => {
   })
 
   afterEach(() => {
+    resetAdaptAgentLogBuffersForTest()
     resetOrchestratorForTest()
     resetRegistryForTest()
     resetStoreForTest()
@@ -530,6 +533,81 @@ describe('adapt-pipeline stages', () => {
     const updated = getRun(run.run_id)!
     expect(updated.status).toBe('passed')
     expect(updated.domains.every(d => d.status === 'done')).toBe(true)
+  })
+
+  it('adapt logs reasoning, agent stream, and tool call details', async () => {
+    resolveMock.mockResolvedValue({
+      project_code: 'KM9',
+      campaign_id: 'camp-1',
+      from_os: '15',
+      to_os: '16',
+      domains: [{
+        workspace_id: 'adapt-debug',
+        domain_id: 'tp',
+        revision: 1,
+        schema: [],
+        form_data: { debug_project: 'A' },
+        stale_fields: [],
+        incomplete_required: [],
+      }],
+    })
+    getLayoutMock.mockResolvedValue({
+      domain_id: 'tp',
+      fields: [{ name: 'x', label: 'x', type: 'text', required: false }],
+      related_skills: ['tp-adapt-bringup'],
+      revision: 1,
+      updated_at: new Date().toISOString(),
+      source: 'user',
+      schema_version: 1,
+    })
+    startAdaptMock.mockReturnValue({ ok: true, taskId: 'task-tp' })
+
+    const run = createRun(baseInput())
+    await startRun(run.run_id)
+
+    getTaskStream().publish({
+      type: 'task.message',
+      task_id: 'task-tp',
+      payload: { level: 'reasoning', text: '先对比新旧 dts 差异' },
+      ts: Date.now(),
+    })
+    getTaskStream().publish({
+      type: 'task.message',
+      task_id: 'task-tp',
+      payload: { level: 'stream', text: '接下来读取 TP 节点配置\n' },
+      ts: Date.now(),
+    })
+    getTaskStream().publish({
+      type: 'task.skill_use',
+      task_id: 'task-tp',
+      payload: {
+        skill_id: 'read_file',
+        args: 'path=/kernel/tp.dtsi',
+        message: '🛠 调用: read_file(path=/kernel/tp.dtsi)',
+      },
+      ts: Date.now(),
+    })
+    getTaskStream().publish({
+      type: 'task.tool_completed',
+      task_id: 'task-tp',
+      payload: { skill_id: 'read_file', message: '✓ 完成: read_file' },
+      ts: Date.now(),
+    })
+    getTaskStream().publish({
+      type: 'task.message',
+      task_id: 'task-tp',
+      payload: { level: 'tool_output', text: '工具输出(read_file): compatible = "synaptics"' },
+      ts: Date.now(),
+    })
+    await advance(run.run_id)
+
+    const logs = readPipelineLogs(run.run_id, 'adapt', 50).join('\n')
+    expect(logs).toContain('思考: 先对比新旧 dts 差异')
+    expect(logs).toContain('Agent: 接下来读取 TP 节点配置')
+    expect(logs).toContain('调用: read_file(path=/kernel/tp.dtsi)')
+    expect(logs).toContain('完成: read_file')
+    expect(logs).toContain('工具输出(read_file): compatible = "synaptics"')
+    expect(logs).not.toContain('使用 Skill:')
   })
 
   it('adapt accumulates absolute changed_files from task.file_change and files_modified', async () => {

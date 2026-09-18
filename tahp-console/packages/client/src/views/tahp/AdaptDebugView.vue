@@ -1327,10 +1327,21 @@ const stream = computed(() =>
   launchedTaskId.value ? tasksStore.getStream(launchedTaskId.value) : []
 )
 
-// LLM 流式输出：将所有 task.message 事件的文本拼接为完整回复
+// LLM 流式输出：仅拼接 Agent 正文 / 用户续写，不把思考或工具输出混进主输出
 const llmResponse = computed(() =>
   stream.value
     .filter(ev => ev.type === 'task.message')
+    .filter((ev) => {
+      const level = String(ev.payload?.level ?? '')
+      return level === 'stream' || level === 'user' || level === ''
+    })
+    .map(ev => String(ev.payload?.text ?? ''))
+    .join('')
+)
+
+const reasoningText = computed(() =>
+  stream.value
+    .filter(ev => ev.type === 'task.message' && ev.payload?.level === 'reasoning')
     .map(ev => String(ev.payload?.text ?? ''))
     .join('')
 )
@@ -2862,6 +2873,8 @@ function openSkill(skillName: string) {
               </EaPill>
               <EaPill v-else-if="taskStatus === 'COMPLETED'" variant="ok">已完成</EaPill>
             </div>
+            <div v-if="reasoningText" class="adapt-reasoning-label">思考过程</div>
+            <pre v-if="reasoningText" class="adapt-reasoning-text">{{ reasoningText }}</pre>
             <pre v-if="llmResponse" class="ea-mon-output">{{ llmResponse }}</pre>
             <div v-else-if="agentRunError" class="adapt-run-error">
               <pre>{{ agentRunError }}</pre>
@@ -3574,6 +3587,29 @@ $adapt-sidebar-gap: 10px;
     height: auto;
     overflow-y: auto;
     margin: 0;
+  }
+
+  .adapt-reasoning-label {
+    flex: 0 0 auto;
+    margin: 0 0 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--faint);
+  }
+
+  .adapt-reasoning-text {
+    flex: 0 0 auto;
+    max-height: 140px;
+    overflow-y: auto;
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--muted);
+    background: color-mix(in srgb, var(--text) 4%, transparent);
+    border-radius: 8px;
   }
 
   .lrp-waiting {

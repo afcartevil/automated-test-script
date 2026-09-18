@@ -341,7 +341,7 @@ export function fetchPipelineRun(runId: string): Promise<PipelineRunRecord> {
   return tahpGet(`/api/tahp/adapt-pipeline/runs/${encodeURIComponent(runId)}`)
 }
 
-export function fetchPipelineLogs(runId: string, nodeKey: string, tail = 500): Promise<{ lines: string[] }> {
+export function fetchPipelineLogs(runId: string, nodeKey: string, tail = 2000): Promise<{ lines: string[] }> {
   return tahpGet(
     `/api/tahp/adapt-pipeline/runs/${encodeURIComponent(runId)}/logs/${encodeURIComponent(nodeKey)}?tail=${tail}`,
   )

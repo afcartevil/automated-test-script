@@ -400,7 +400,7 @@ tahpAdaptPipelineRoutes.get('/runs/:runId/logs/:node', async (ctx) => {
     ctx.body = { success: false, error: 'run 不存在' }
     return
   }
-  const tail = parseLimit(String(ctx.query.tail ?? '500')) ?? 500
+  const tail = parseLimit(String(ctx.query.tail ?? '2000')) ?? 2000
   const lines = readPipelineLogs(runId, ctx.params.node, tail)
   ctx.body = { success: true, data: { lines } }
 })

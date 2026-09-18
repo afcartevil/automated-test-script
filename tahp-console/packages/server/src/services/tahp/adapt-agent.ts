@@ -405,6 +405,38 @@ function emit(taskId: string, type: string, payload: Record<string, unknown>) {
   })
 }
 
+/** 合并 reasoning.delta，避免每个 token 占一条 TaskStream 事件。 */
+function createCoalescedMessageEmitter(
+  taskId: string,
+  level: string,
+  flushMs = 400,
+  maxChunk = 400,
+) {
+  let buf = ''
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const flush = () => {
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+    }
+    const text = buf
+    buf = ''
+    if (text) emit(taskId, 'task.message', { level, text })
+  }
+  return {
+    push(text: string) {
+      if (!text) return
+      buf += text
+      if (buf.includes('\n') || buf.length >= maxChunk) flush()
+      else {
+        if (timer) clearTimeout(timer)
+        timer = setTimeout(flush, flushMs)
+      }
+    },
+    flush,
+  }
+}
+
 function truncateStr(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`
 }
@@ -519,6 +551,7 @@ async function runAgentChat(
     onText: (delta: string) => void
     onToolStarted: (toolName: string, args: unknown, toolCallId: unknown) => void
     onToolCompleted: (toolName: string, isError: boolean, toolCallId: unknown) => void
+    onToolOutput?: (text: string, toolName: string) => void
     onReasoning?: (text: string) => void
     onApprovalRequested?: (payload: ApprovalRequestPayload) => void
   },
@@ -551,8 +584,12 @@ async function runAgentChat(
         cb.onToolStarted((ev.tool_name as string) || 'unknown-tool', ev.args, ev.tool_call_id)
       } else if (evType === 'tool.completed') {
         cb.onToolCompleted((ev.tool_name as string) || 'unknown-tool', ev.is_error === true, ev.tool_call_id)
+      } else if (evType === 'tool.output' && cb.onToolOutput) {
+        const text = String(ev.text || '').trim()
+        if (text) cb.onToolOutput(text, String(ev.tool_name || ''))
       } else if ((evType === 'reasoning.delta' || evType === 'thinking.delta') && cb.onReasoning) {
-        cb.onReasoning(String(ev.text || ''))
+        const text = String(ev.text || '')
+        if (text) cb.onReasoning(text)
       } else if (evType === 'approval.requested' && cb.onApprovalRequested) {
         cb.onApprovalRequested({
           approval_id: String(ev.approval_id || ''),
@@ -877,8 +914,14 @@ async function runAdaptAgentTask(taskId: string, turn: AdaptTurnOptions = { mode
       ctx.llmResponse = ''
     }
 
-    const { fullResponse, bridgeError, interrupted } = await runAgentChat(agentSessionId, instructions, userMessage, {
+    const reasoning = createCoalescedMessageEmitter(taskId, 'reasoning')
+    let fullResponse = ''
+    let bridgeError: string | null = null
+    let interrupted = false
+    try {
+      const result = await runAgentChat(agentSessionId, instructions, userMessage, {
       onText: (delta) => {
+        reasoning.flush()
         const fullSoFar = (ctx.llmResponse || '') + delta
         ctx.llmResponse = fullSoFar
         emit(taskId, 'task.message', { level: 'stream', text: delta })
@@ -896,6 +939,7 @@ async function runAdaptAgentTask(taskId: string, turn: AdaptTurnOptions = { mode
         }
       },
       onToolStarted: (toolName, args, toolCallId) => {
+        reasoning.flush()
         if (!ctx.skillsUsed.includes(toolName)) ctx.skillsUsed.push(toolName)
         const preview = toolArgsPreview(toolName, args)
         ctx.toolsUsed.push({ name: toolName, status: 'running', preview })
@@ -909,6 +953,7 @@ async function runAdaptAgentTask(taskId: string, turn: AdaptTurnOptions = { mode
         recordFileChanges(taskId, ctx, toolName, pathsFromToolArgs(toolName, args))
       },
       onToolCompleted: (toolName, isError, toolCallId) => {
+        reasoning.flush()
         const t = ctx.toolsUsed.find(x => x.name === toolName && x.status === 'running')
         if (t) t.status = isError ? 'error' : 'done'
         emit(taskId, 'task.tool_completed', {
@@ -918,11 +963,23 @@ async function runAdaptAgentTask(taskId: string, turn: AdaptTurnOptions = { mode
           message: isError ? `✗ 失败: ${toolName}` : `✓ 完成: ${toolName}`,
         })
       },
-      onReasoning: () => {},
+      onToolOutput: (text, toolName) => {
+        const label = toolName ? `工具输出(${toolName})` : '工具输出'
+        emit(taskId, 'task.message', { level: 'tool_output', text: `${label}: ${text}` })
+      },
+      onReasoning: (text) => {
+        reasoning.push(text)
+      },
       onApprovalRequested: (payload) => {
         if (payload.approval_id) registerAdaptApproval(taskId, payload)
       },
     }, { conversationHistory })
+      fullResponse = result.fullResponse
+      bridgeError = result.bridgeError
+      interrupted = result.interrupted
+    } finally {
+      reasoning.flush()
+    }
 
     const runtimeAfter = taskRuntime.get(taskId)
     if (runtimeAfter?.userInputPause || pendingUserInputByTask.has(taskId)) {

@@ -77,7 +77,7 @@ function errorPreview(error?: string): string {
     <p v-else class="empty">暂无域信息</p>
 
     <h4>日志</h4>
-    <EaLogViewer :lines="logs" :height="260" />
+    <EaLogViewer :lines="logs" :height="420" />
   </div>
 </template>
 

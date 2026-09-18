@@ -176,7 +176,7 @@ export const useAdaptPipelineStore = defineStore('adapt-pipeline', () => {
     }
   }
 
-  async function loadNodeLogs(runId: string, nodeKey: string, tail = 500) {
+  async function loadNodeLogs(runId: string, nodeKey: string, tail = 2000) {
     const key = logKey(runId, nodeKey)
     if (runId === '__mock_preview__') return
     try {

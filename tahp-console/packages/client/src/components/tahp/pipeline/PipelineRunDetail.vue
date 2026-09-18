@@ -95,7 +95,7 @@ const dialog = useDialog()
 
 async function loadLogsForNode(nodeKey: string | null) {
   if (!nodeKey) return
-  await props.store.loadNodeLogs(props.timeline.run_id, nodeKey, 500)
+  await props.store.loadNodeLogs(props.timeline.run_id, nodeKey, 2000)
 }
 
 async function handleAbort() {
