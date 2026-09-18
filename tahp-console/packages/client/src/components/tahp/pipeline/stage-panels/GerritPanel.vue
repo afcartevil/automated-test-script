@@ -86,6 +86,12 @@ function changeKey(c: GerritChange): string {
   return `${c.repo || ''}::${domainCell(c)}`
 }
 
+function fileLabel(path: string): string {
+  const parts = path.replace(/\\/g, '/').split('/').filter(Boolean)
+  if (parts.length <= 2) return parts.join('/') || path
+  return parts.slice(-2).join('/')
+}
+
 function stateLabel(state?: unknown): string {
   switch (String(state ?? '')) {
     case 'awaiting_repo_selection': return '选择入库仓库'
@@ -132,6 +138,9 @@ function stateLabel(state?: unknown): string {
           <strong class="repo-label">{{ r.repo_label }}</strong>
           <span class="repo-path" :title="r.repo">{{ r.repo }}</span>
           <span>{{ r.files.length }} 文件 · {{ r.domain_ids.join(', ') }}</span>
+          <ul v-if="r.files.length" class="file-list">
+            <li v-for="f in r.files" :key="f" :title="f">{{ fileLabel(f) }}</li>
+          </ul>
         </li>
       </ul>
     </div>
@@ -184,8 +193,8 @@ function stateLabel(state?: unknown): string {
 .repos {
   margin-bottom: 12px;
   min-width: 0;
-  ul { margin: 0; padding-left: 18px; }
-  li {
+  > ul { margin: 0; padding-left: 18px; }
+  > ul > li {
     margin: 6px 0;
     display: flex;
     flex-direction: column;
@@ -204,6 +213,21 @@ function stateLabel(state?: unknown): string {
       line-height: 1.35;
     }
     span { color: var(--muted); font-size: 12px; }
+  }
+}
+.file-list {
+  margin: 4px 0 0;
+  padding: 0;
+  max-height: 160px;
+  overflow: auto;
+  list-style: none;
+  li {
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+    word-break: break-all;
+    line-height: 1.35;
   }
 }
 .cr-table {

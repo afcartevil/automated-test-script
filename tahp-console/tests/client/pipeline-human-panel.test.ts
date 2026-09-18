@@ -190,4 +190,99 @@ describe('PipelineHumanPanel', () => {
     expect(mockMessage.error).toHaveBeenCalledWith('网络错误')
     expect(mockMessage.success).not.toHaveBeenCalled()
   })
+
+  function gerritSelectNode(): TimelineNode {
+    return node({
+      key: 'gerrit',
+      label: '提交 Gerrit',
+      progress: {
+        state: 'awaiting_repo_selection',
+        repos: [{
+          repo: 'Z:\\project\\KM9_NEW\\kernel',
+          repo_label: 'kernel',
+          files: [
+            'Z:\\project\\KM9_NEW\\kernel\\tp.c',
+            'Z:\\project\\KM9_NEW\\kernel\\shared.dtsi',
+          ],
+          domain_ids: ['tp'],
+        }],
+      },
+      human: {
+        reason: 'select_repos',
+        message: '请勾选要提交到 Gerrit 的仓库',
+        actions: [
+          { id: 'submit_all_repos', label: '全部仓库入库' },
+          { id: 'submit_selected_repos', label: '提交所选仓库' },
+          { id: 'skip', label: '跳过提交', danger: true },
+        ],
+      },
+    })
+  }
+
+  it('lists changed files and asks for a second confirm before submitting repos', async () => {
+    const store = makeStore()
+    const wrapper = mount(PipelineHumanPanel, {
+      props: {
+        runId: 'run-gerrit',
+        store: store as never,
+        nodes: [gerritSelectNode()],
+      },
+      global: {
+        stubs: { PipelineResumePicker: true },
+      },
+    })
+
+    expect(wrapper.text()).toContain('tp.c')
+    expect(wrapper.text()).toContain('shared.dtsi')
+
+    const submitBtn = wrapper.findAll('.actions button').find(btn => btn.text() === '提交所选仓库')
+    expect(submitBtn).toBeTruthy()
+    await submitBtn!.trigger('click')
+    await flushPromises()
+
+    expect(store.submitHumanAction).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('确认提交到 Gerrit？')
+    expect(wrapper.text()).toContain('1 个仓库 · 2 个文件')
+
+    const confirmBtn = wrapper.findAll('.confirm-box button').find(btn => btn.text() === '确认提交')
+    expect(confirmBtn).toBeTruthy()
+    await confirmBtn!.trigger('click')
+    await flushPromises()
+
+    expect(store.submitHumanAction).toHaveBeenCalledWith(
+      'run-gerrit',
+      'gerrit',
+      'submit_selected_repos',
+      { selected_repos: ['Z:\\project\\KM9_NEW\\kernel'] },
+    )
+  })
+
+  it('asks for a second confirm before skipping gerrit submit', async () => {
+    const store = makeStore()
+    const wrapper = mount(PipelineHumanPanel, {
+      props: {
+        runId: 'run-gerrit',
+        store: store as never,
+        nodes: [gerritSelectNode()],
+      },
+      global: {
+        stubs: { PipelineResumePicker: true },
+      },
+    })
+
+    const skipBtn = wrapper.findAll('.actions button').find(btn => btn.text() === '跳过提交')
+    expect(skipBtn).toBeTruthy()
+    await skipBtn!.trigger('click')
+    await flushPromises()
+
+    expect(store.submitHumanAction).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('确认跳过 Gerrit 提交？')
+
+    const confirmSkip = wrapper.findAll('.confirm-box button').find(btn => btn.text() === '确认跳过')
+    expect(confirmSkip).toBeTruthy()
+    await confirmSkip!.trigger('click')
+    await flushPromises()
+
+    expect(store.submitHumanAction).toHaveBeenCalledWith('run-gerrit', 'gerrit', 'skip')
+  })
 })

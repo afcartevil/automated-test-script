@@ -350,11 +350,10 @@ export const gerritStageDefinition: StageDefinition = {
       return {
         status: 'waiting_human',
         reason: 'no_changes',
-        message: '未检测到待提交变更（changed_files 无绝对路径，或所选仓库无文件）。可确认跳过提交，或返回重新检查适配记录。',
+        message: '未检测到待提交变更（changed_files 无绝对路径，或所选仓库无文件）。可确认无变更并完成，或跳过提交。',
         actions: [
           { id: 'confirm_done', label: '确认无变更并完成' },
           { id: 'skip', label: '跳过提交' },
-          { id: 'retry', label: '重新统计选仓' },
         ],
       }
     }
@@ -420,12 +419,6 @@ export const gerritStageDefinition: StageDefinition = {
 
     if (actionId === 'skip') {
       syncProgress(ctx, { state: 'no_changes', changes: ctx.run.gerrit_changes ?? [], repos: [] })
-      return
-    }
-
-    if (actionId === 'retry') {
-      ctx.patchRun({ gerrit_selected_repos: undefined })
-      await gerritStageDefinition.start!(ctx)
       return
     }
 
