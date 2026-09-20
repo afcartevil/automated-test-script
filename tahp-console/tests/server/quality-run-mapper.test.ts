@@ -348,4 +348,31 @@ describe('adapt-pipeline quality mapper', () => {
     const flash = extra?.stages?.find(s => s.key === 'flash')
     expect(flash?.headline).toContain('摘要无法解读')
   })
+
+  it('handles terminal run with disabled stages (missing keys, current_node null)', async () => {
+    const run = minimalPipelineRun({
+      status: 'passed',
+      current_node: null,
+      domains: [{
+        workspace_id: 'adapt-debug',
+        domain_id: 'tp',
+        domain_label: 'TP触摸屏',
+        module: 'kernel-driver',
+        related_skills: [],
+        form_data: {},
+        incomplete_required: [],
+        enabled: true,
+        status: 'pending',
+      }],
+      stages: {
+        prereq: { key: 'prereq', status: 'done', attempt: 1, refs: {}, summary: { domain_count: 1 } },
+        selfcheck: { key: 'selfcheck', status: 'done', attempt: 1, refs: {}, summary: { total: 1, passed: 1, failed: 0 } },
+      },
+    })
+    const runs = await mapPipelineRunToQualityRuns(run, 'neng.zhou')
+    expect(runs.length).toBe(1)
+    expect(runs[0].run_id).toBe(buildAdaptPipelineMachineRunId('run-test-001'))
+    expect(runs[0].status).toBe('pass')
+    expect(runs[0].current_node).toBe('selfcheck')
+  })
 })

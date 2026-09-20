@@ -330,7 +330,7 @@ function inferCurrentNode(run: PipelineRun): string {
   if (run.current_node) return run.current_node
   for (const key of STAGE_KEYS) {
     const st = run.stages[key]
-    if (st?.status === 'failed' || st.status === 'running' || st.status === 'waiting_human') {
+    if (st?.status === 'failed' || st?.status === 'running' || st?.status === 'waiting_human') {
       return key
     }
   }
