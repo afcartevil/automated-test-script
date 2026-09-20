@@ -1,6 +1,7 @@
 import { registerStageForTest } from '../registry'
 import type { ObservedEvent, StageContext, StageDefinition, StageVerdict } from '../types'
 import { planCases } from '../../selfcheck-case-planner'
+import { buildSelfCheckRunId } from '../../quality-run-mapper'
 import {
   startCustomTest,
   type CaseResult,
@@ -145,8 +146,12 @@ export const selfcheckStageDefinition: StageDefinition = {
 
     try {
       const detail = await startCustomTest(deviceId, selectedCases, [], {
-        // 流水线内自检：不上报 self-check，终态由 adapt-pipeline 整包上传
-        skipQualityUpload: true,
+        // 流水线内自检：额外上报一条 self-check run，项目归属对齐流水线；
+        // 报告编号写入 refs，供执行报告「自检」跳转质量验测查看。
+        qualityUploadProject: {
+          project_code: ctx.run.project_code,
+          campaign_id: ctx.run.campaign_id,
+        },
       })
       if (!detail) {
         ctx.patchState({
@@ -158,6 +163,14 @@ export const selfcheckStageDefinition: StageDefinition = {
           },
         })
         ctx.log('自检启动失败：startCustomTest 返回空')
+      } else if (detail.session?.startTime) {
+        const sessionDir = detail.session.startTime.replace(/[:.]/g, '-')
+        ctx.patchState({
+          refs: {
+            ...ctx.state.refs,
+            selfcheck_report_id: buildSelfCheckRunId(deviceId, sessionDir),
+          },
+        })
       }
     } catch (err) {
       ctx.patchState({

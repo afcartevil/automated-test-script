@@ -27,7 +27,7 @@ export interface ResolvedProjectContext {
   project_code: string
   campaign_id?: string
   brand?: string
-  source: 'device' | 'schedule' | 'central-match' | 'unassigned'
+  source: 'device' | 'schedule' | 'central-match' | 'unassigned' | 'pipeline'
 }
 
 /** Run.owner = Jira username；不回退 getLocalActor() */

@@ -375,4 +375,13 @@ describe('adapt-pipeline quality mapper', () => {
     expect(runs[0].status).toBe('pass')
     expect(runs[0].current_node).toBe('selfcheck')
   })
+
+  it('surfaces pipeline self-check report id as 报告 fact', async () => {
+    const runs = await mapPipelineRunToQualityRuns(minimalPipelineRun(), 'neng.zhou')
+    const stages = (runs[0].extra?.pipeline as {
+      stages?: Array<{ key: string; facts?: Array<{ label: string; value: string }> }>
+    }).stages
+    const selfcheck = stages?.find(s => s.key === 'selfcheck')
+    expect(selfcheck?.facts?.some(f => f.label === '报告' && f.value === 'sc-1')).toBe(true)
+  })
 })

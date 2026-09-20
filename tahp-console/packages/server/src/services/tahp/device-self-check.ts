@@ -159,6 +159,8 @@ export interface TestSession {
   otaVersion?: string
   /** 测试开始前的前置配置快照（写入报告 summary/detail） */
   testConfig?: SelfCheckTestConfig
+  /** 适配流水线内自检：由流水线指定上报中心的项目/战役归属（覆盖设备/日程解析） */
+  qualityUploadProject?: { project_code: string; campaign_id?: string }
   /** 用例失败时待导出的日志（报告落盘后再执行，避免与 getprop 争抢 adb） */
   pendingFailureLogCaseKeys?: string[]
   /**
@@ -3090,7 +3092,12 @@ export async function startCustomTest(
   deviceId: string,
   selectedCases: string[],
   customAuxDeviceIds: string[],
-  options?: { prioritizeTddManual?: boolean; skipQualityUpload?: boolean },
+  options?: {
+    prioritizeTddManual?: boolean
+    skipQualityUpload?: boolean
+    /** 适配流水线内自检：指定上报中心的项目/战役归属 */
+    qualityUploadProject?: { project_code: string; campaign_id?: string }
+  },
 ): Promise<DeviceDetail | null> {
   try {
     const device = devices[deviceId]
@@ -3144,6 +3151,7 @@ export async function startCustomTest(
       initializedPythonModules: [],
       prioritizeTddManual,
       skipQualityUpload: options?.skipQualityUpload === true,
+      qualityUploadProject: options?.qualityUploadProject,
       testConfig: snapshotTestConfig('custom', {
         prioritizeTddManual,
         selectedCases,
@@ -3936,19 +3944,25 @@ async function generateTestReport(
     }
 
     // 写入摘要（含项目归属，供中心看板上报 / 事后补传）
-    const projectCtx = await Promise.race([
-      resolveSelfCheckProjectContext({
-        deviceId,
-        deviceName: device.deviceName,
-        scheduleKey: session.scheduleKey,
-      }).catch((): import('./quality-run-upload').ResolvedProjectContext => ({
-        project_code: '_unassigned',
-        source: 'unassigned',
-      })),
-      new Promise<import('./quality-run-upload').ResolvedProjectContext>((resolve) => {
-        setTimeout(() => resolve({ project_code: '_unassigned', source: 'unassigned' }), 3_000)
-      }),
-    ])
+    const projectCtx: import('./quality-run-upload').ResolvedProjectContext = session.qualityUploadProject
+      ? {
+        project_code: session.qualityUploadProject.project_code,
+        campaign_id: session.qualityUploadProject.campaign_id,
+        source: 'pipeline',
+      }
+      : await Promise.race([
+        resolveSelfCheckProjectContext({
+          deviceId,
+          deviceName: device.deviceName,
+          scheduleKey: session.scheduleKey,
+        }).catch((): import('./quality-run-upload').ResolvedProjectContext => ({
+          project_code: '_unassigned',
+          source: 'unassigned',
+        })),
+        new Promise<import('./quality-run-upload').ResolvedProjectContext>((resolve) => {
+          setTimeout(() => resolve({ project_code: '_unassigned', source: 'unassigned' }), 3_000)
+        }),
+      ])
 
     const reportStatus = options?.reportStatus ?? device.status
     const reportDuration = options?.testDuration ?? device.testDuration
