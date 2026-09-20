@@ -1081,6 +1081,30 @@ async function refreshDeviceState(deviceId: string) {
   }
 }
 
+/** 已提示过「本次选择的测试机测试完成」的键，避免重复弹窗 */
+const completedNoticeKeys = new Set<string>()
+
+/** 本次选择的测试机测试项全部完成 → 提示并可跳转「测试报告」查看结果 */
+function notifySelectedDeviceComplete(deviceId: string, sessionStart?: string) {
+  if (deviceId !== selectedDeviceId.value) return
+  const key = `${deviceId}@${sessionStart || ''}`
+  if (completedNoticeKeys.has(key)) return
+  completedNoticeKeys.add(key)
+  const name = selectedDevice.value?.device.deviceName || deviceId
+  const inst = dialog.success({
+    title: '测试完成',
+    content: `本次选择的测试机「${name}」的测试项已全部完成，可前往「测试报告」查看结果。`,
+    positiveText: '查看测试报告',
+    negativeText: '稍后',
+    onPositiveClick: () => {
+      activeTab.value = 'review'
+      void refreshReportsAfterTest()
+    },
+  })
+  // 展示 5s 后自动关闭
+  setTimeout(() => inst.destroy(), 5000)
+}
+
 function connectEventStream() {
   if (eventSource.value) return
   const baseUrl = window.location.origin
@@ -1177,6 +1201,7 @@ function connectEventStream() {
       const data = JSON.parse(e.data)
       if (data.deviceId) {
         await refreshDeviceState(data.deviceId)
+        notifySelectedDeviceComplete(data.deviceId, data.session?.startTime)
       } else {
         await loadDevices()
       }
