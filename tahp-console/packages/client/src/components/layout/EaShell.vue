@@ -65,6 +65,9 @@ const inboxPackages = ref<Array<{
   unread_count?: number
   notice_type?: string
   next?: string
+  wbs_id?: string
+  from_os?: string
+  to_os?: string
   version_type?: string
   variant?: string
   node_rule_id?: string
@@ -265,15 +268,18 @@ const selfCheckPackages = computed(() =>
   unfinishedChecklist.value.filter(p => p.kind !== 'adapt-pipeline'),
 )
 const patchPackages = computed(() =>
-  inboxPackages.value.filter(p => p.notice_type && p.notice_type !== 'verify-task'),
+  inboxPackages.value.filter(p => p.notice_type && p.notice_type !== 'verify-task' && p.notice_type !== 'wbs-p1-start'),
 )
 const verifyPackages = computed(() =>
   inboxPackages.value.filter(p => p.notice_type === 'verify-task'),
 )
+const wbsPackages = computed(() =>
+  inboxPackages.value.filter(p => p.notice_type === 'wbs-p1-start'),
+)
 const taskRemain = computed(() => unfinishedChecklist.value.length)
-// 红点：检查表新通知 + 验测任务指派通知（patch 通知不计）
+// 红点：检查表新通知 + 验测任务指派 + WBS P1 启动（patch 通知不计）
 const taskUnread = computed(() =>
-  unfinishedChecklist.value.filter(p => p.unread).length + verifyPackages.value.length,
+  unfinishedChecklist.value.filter(p => p.unread).length + verifyPackages.value.length + wbsPackages.value.length,
 )
 const applyCanPass = computed(() =>
   applyPrompt.value?.run.status === 'pass' && !applyPrompt.value?.campaign_unspecified,
@@ -284,20 +290,25 @@ const INBOX_TABS: Array<{ id: InboxTab; label: string }> = [
   { id: 'pipe', label: '流水线' },
   { id: 'check', label: '自检' },
   { id: 'verify', label: '验测' },
+  { id: 'wbs', label: 'WBS' },
   { id: 'patch', label: 'Patch' },
 ]
 
 function inboxCount(tab: InboxTab) {
   if (tab === 'all') {
-    return unfinishedChecklist.value.length + verifyPackages.value.length + patchPackages.value.length
+    return unfinishedChecklist.value.length + verifyPackages.value.length + wbsPackages.value.length + patchPackages.value.length
   }
   if (tab === 'pipe') return pipelinePackages.value.length
   if (tab === 'check') return selfCheckPackages.value.length
   if (tab === 'verify') return verifyPackages.value.length
+  if (tab === 'wbs') return wbsPackages.value.length
   return patchPackages.value.length
 }
 
 function inboxHaystack(pkg: (typeof inboxPackages.value)[number]) {
+  if (pkg.notice_type === 'wbs-p1-start') {
+    return `${pkg.title || ''} ${pkg.project_code || ''} ${pkg.wbs_id || ''} ${pkg.from_os || ''} ${pkg.to_os || ''}`
+  }
   if (pkg.notice_type) return `${pkg.title || ''} ${pkg.notice_type}`
   return `${packageHeadline(pkg)} ${packageMeta(pkg)}`
 }
@@ -309,15 +320,18 @@ function visibleInbox(list: typeof inboxPackages.value) {
 const showInboxPipe = computed(() => inboxTab.value === 'all' || inboxTab.value === 'pipe')
 const showInboxCheck = computed(() => inboxTab.value === 'all' || inboxTab.value === 'check')
 const showInboxVerify = computed(() => inboxTab.value === 'all' || inboxTab.value === 'verify')
+const showInboxWbs = computed(() => inboxTab.value === 'all' || inboxTab.value === 'wbs')
 const showInboxPatch = computed(() => inboxTab.value === 'all' || inboxTab.value === 'patch')
 const visiblePipelinePackages = computed(() => visibleInbox(pipelinePackages.value))
 const visibleSelfCheckPackages = computed(() => visibleInbox(selfCheckPackages.value))
 const visibleVerifyPackages = computed(() => visibleInbox(verifyPackages.value))
+const visibleWbsPackages = computed(() => visibleInbox(wbsPackages.value))
 const visiblePatchPackages = computed(() => visibleInbox(patchPackages.value))
 const inboxListEmpty = computed(() => {
   if (showInboxPipe.value && visiblePipelinePackages.value.length) return false
   if (showInboxCheck.value && visibleSelfCheckPackages.value.length) return false
   if (showInboxVerify.value && visibleVerifyPackages.value.length) return false
+  if (showInboxWbs.value && visibleWbsPackages.value.length) return false
   if (showInboxPatch.value && visiblePatchPackages.value.length) return false
   return true
 })
@@ -327,6 +341,7 @@ function kindBadge(kind?: string) {
   if (kind === 'gki-patch') return 'GKI'
   if (kind === 'modem-patch') return 'Modem'
   if (kind === 'verify-task') return '验测'
+  if (kind === 'wbs-p1-start') return 'WBS'
   return '自检'
 }
 
@@ -425,6 +440,21 @@ async function openVerifyTask(pkg: (typeof inboxPackages.value)[number]) {
     /* 清未读失败不阻断跳转 */
   }
   void router.push({ name: 'tahp.self-check', query: { tab: 'devices' } })
+}
+
+async function openWbs(pkg: (typeof inboxPackages.value)[number]) {
+  closeTaskPop()
+  inboxPackages.value = inboxPackages.value.filter(p => p.package_id !== pkg.package_id)
+  try {
+    await fetch('/api/tahp/task-inbox/ack', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ package_id: pkg.package_id }),
+    })
+  } catch {
+    /* 清未读失败不阻断跳转 */
+  }
+  void openCentral(pkg.next || '/tasks/wbs')
 }
 
 async function goExecute(pkg: (typeof inboxPackages.value)[number]) {
@@ -699,7 +729,7 @@ onUnmounted(() => {
                 <b>我的任务</b>
                 <span>未完成 {{ taskRemain }} · 新通知 {{ taskUnread }}</span>
               </div>
-              <div>红点=新通知（含验测指派）　左侧数字=流水线+自检未完成包。Patch 单独计。</div>
+              <div>红点=新通知（含验测指派、WBS P1）　左侧数字=流水线+自检未完成包。Patch 单独计。</div>
             </div>
             <div class="ck-task-tabs">
               <button
@@ -753,7 +783,7 @@ onUnmounted(() => {
                   </div>
                 </div>
               </template>
-              <div v-if="inboxTab !== 'verify' && inboxTab !== 'patch' && !unfinishedChecklist.length" class="ck-task-empty">没有未完成的检查表</div>
+              <div v-if="inboxTab !== 'verify' && inboxTab !== 'patch' && inboxTab !== 'wbs' && !unfinishedChecklist.length" class="ck-task-empty">没有未完成的检查表</div>
               <template v-if="showInboxVerify && visibleVerifyPackages.length">
                 <div class="ck-task-sec">验测任务</div>
                 <div v-for="p in visibleVerifyPackages" :key="p.package_id" class="ck-task-item">
@@ -766,6 +796,23 @@ onUnmounted(() => {
                   </div>
                   <div class="ck-task-actions">
                     <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openVerifyTask(p)">打开验测</button>
+                  </div>
+                </div>
+              </template>
+              <template v-if="showInboxWbs && visibleWbsPackages.length">
+                <div class="ck-task-sec">WBS P1 启动</div>
+                <div v-for="p in visibleWbsPackages" :key="p.package_id" class="ck-task-item">
+                  <div>
+                    <div>
+                      <span class="ck-task-badge wbs">{{ kindBadge(p.notice_type) }}</span>
+                      <b>{{ p.title || 'P1 适配' }}</b>
+                    </div>
+                    <div class="ck-task-meta">
+                      {{ [p.project_code, p.wbs_id, p.from_os && p.to_os ? `${p.from_os} → ${p.to_os}` : ''].filter(Boolean).join(' · ') || '打开服务中心 WBS 模块' }}
+                    </div>
+                  </div>
+                  <div class="ck-task-actions">
+                    <button type="button" class="ea-btn-ghost ea-btn-sm" @click="openWbs(p)">打开服务中心</button>
                   </div>
                 </div>
               </template>
@@ -1171,6 +1218,7 @@ onUnmounted(() => {
 .ck-task-badge.check { background: #ede9fe; color: #6d28d9; }
 .ck-task-badge.pipe { background: #dbeafe; color: #1d4ed8; }
 .ck-task-badge.patch { background: #ffedd5; color: #c2410c; }
+.ck-task-badge.wbs { background: #dcfce7; color: #166534; }
 .ck-task-foot {
   display: flex;
   justify-content: space-between;

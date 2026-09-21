@@ -81,6 +81,7 @@ describe('inbox helpers', () => {
     expect(inboxTabOf({ kind: 'self-check' })).toBe('check')
     expect(inboxTabOf({ notice_type: 'verify-task' })).toBe('verify')
     expect(inboxTabOf({ notice_type: 'gki-patch' })).toBe('patch')
+    expect(inboxTabOf({ notice_type: 'wbs-p1-start' })).toBe('wbs')
   })
 
   it('matches query case-insensitively', () => {

@@ -61,10 +61,11 @@ export function groupApplyItems<T extends { item_id: string }>(items: T[]) {
     }))
 }
 
-export type InboxTab = 'all' | 'pipe' | 'check' | 'verify' | 'patch'
+export type InboxTab = 'all' | 'pipe' | 'check' | 'verify' | 'patch' | 'wbs'
 
 export function inboxTabOf(pkg: { kind?: string; notice_type?: string }): InboxTab {
   if (pkg.notice_type === 'verify-task') return 'verify'
+  if (pkg.notice_type === 'wbs-p1-start') return 'wbs'
   if (pkg.notice_type) return 'patch'
   if (pkg.kind === 'adapt-pipeline') return 'pipe'
   return 'check'
