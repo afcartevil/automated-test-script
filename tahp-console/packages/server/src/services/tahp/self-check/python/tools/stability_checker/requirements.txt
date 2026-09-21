@@ -1,0 +1,3 @@
+# tne_parser.py dependencies (case10 TNE 解压)
+zstandard>=0.22.0
+pycryptodome>=3.19.0

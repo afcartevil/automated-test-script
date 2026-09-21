@@ -119,6 +119,9 @@ const {
   selectedCaseResult,
   followCurrent,
   selectedTestType,
+  canSelectStartModules,
+  toggleStartModule,
+  isStartModuleSelected,
   loading,
   devices,
   AUTO_RETEST_TOOLTIP,
@@ -181,6 +184,7 @@ const {
   getCaseResultColor,
   selectDevice,
   saveCatalogTypeSettings,
+  saveKernelFeatureCodeDir,
   openGmsTradefedDialog,
   gmsTradefedConfiguredSummary,
   enableFlash,
@@ -294,7 +298,10 @@ watch(
 function canOpenSelectedFailureLogs(): boolean {
   const result = selectedCaseResult.value
   if (!result) return false
-  return Boolean(result.failureLogDir) || result.status === '失败'
+  return Boolean(result.failureLogDir)
+    || result.status === '失败'
+    || result.status === '通过'
+    || result.status === '部分通过'
 }
 
 async function handleOpenFailureLogs() {
@@ -862,6 +869,24 @@ function handleDutRowAction(deviceId: string) {
                   </button>
                 </div>
                 <div
+                  v-else-if="selectedCatalogTestType === 'kernel_feature'"
+                  class="catalog-kernel-code-dir catalog-overview-retest"
+                >
+                  <label class="catalog-monkey-label" for="kernel-feature-code-dir-input">源码路径 (code_dir)</label>
+                  <input
+                    id="kernel-feature-code-dir-input"
+                    v-model.trim="catalogTypeSettings.kernelFeatureCodeDir"
+                    type="text"
+                    class="catalog-setting-input catalog-kernel-code-input"
+                    :disabled="catalogSettingsSaving"
+                    placeholder="例如 Z:\alps 或 \\server\share\X6850"
+                    @change="saveKernelFeatureCodeDir(false)"
+                  />
+                  <span class="ea-muted catalog-monkey-help">
+                    稳定性 Checklist 源码对照项（7/11–14）使用；也可在设备「开始测试」面板配置
+                  </span>
+                </div>
+                <div
                   v-else-if="selectedCatalogTestType === 'ai_generated'"
                   class="catalog-ai-generated-note catalog-overview-retest"
                 >
@@ -1126,7 +1151,7 @@ function handleDutRowAction(deviceId: string) {
                       <div class="detail-value pre-wrap">{{ selectedCatalogItem.expectedResult }}</div>
                     </div>
                     <div
-                      v-if="selectedCatalogTestType !== 'monkey' && selectedCatalogTestType !== 'smoke' && selectedCatalogTestType !== 'gms' && selectedCatalogTestType !== 'power' && selectedCatalogTestType !== 'power_feature' && selectedCatalogTestType !== 'thermal' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
+                      v-if="selectedCatalogTestType !== 'monkey' && selectedCatalogTestType !== 'smoke' && selectedCatalogTestType !== 'gms' && selectedCatalogTestType !== 'power' && selectedCatalogTestType !== 'power_feature' && selectedCatalogTestType !== 'thermal' && selectedCatalogTestType !== 'kernel_feature' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
                       class="ea-muted"
                     >
                       暂无手动测试步骤
@@ -1352,7 +1377,16 @@ function handleDutRowAction(deviceId: string) {
 
           <div ref="deviceDetailBodyRef" class="detail-container device-detail-body">
             <EaCard class="sidebar-card">
-              <div class="section-title">用例列表</div>
+              <div class="section-title">
+                用例列表
+                <span
+                  v-if="isIdle && canSelectStartModules"
+                  class="ea-muted"
+                  style="font-size: 12px; margin-left: 8px; font-weight: 400; text-transform: none; letter-spacing: normal;"
+                >
+                  勾选模块后开始测试
+                </span>
+              </div>
               <div class="case-list">
                 <template v-for="([label, configs]) in getCaseGroups" :key="label">
                   <template v-for="config in configs" :key="config.module">
@@ -1361,6 +1395,15 @@ function handleDutRowAction(deviceId: string) {
                         class="module-name"
                         @click="toggleModule(`${config.module}`)"
                       >
+                        <input
+                          v-if="isIdle && canSelectStartModules"
+                          type="checkbox"
+                          class="module-select-checkbox"
+                          :checked="isStartModuleSelected(config.module)"
+                          :title="isStartModuleSelected(config.module) ? '取消勾选则跳过此模块' : '勾选后纳入本次测试'"
+                          @click.stop
+                          @change="toggleStartModule(config.module)"
+                        />
                         <span class="module-arrow" :class="{ open: isModuleExpanded(config.module) }">&#9654;</span>
                         {{ config.moduleLabel }}
                         <span class="module-count">{{ config.cases.length }}</span>
@@ -1530,6 +1573,26 @@ function handleDutRowAction(deviceId: string) {
                       </button>
                     </div>
 
+                    <div
+                      v-if="selectedTestType === 'kernel_feature'"
+                      class="form-group kernel-feature-code-dir-settings"
+                    >
+                      <span class="form-label">源码路径 (code_dir)</span>
+                      <input
+                        id="start-kernel-feature-code-dir"
+                        v-model.trim="catalogTypeSettings.kernelFeatureCodeDir"
+                        type="text"
+                        class="form-input"
+                        :disabled="catalogSettingsSaving"
+                        placeholder="例如 Z:\alps 或 \\server\share\X6850"
+                        @change="saveKernelFeatureCodeDir(false)"
+                        @click.stop
+                      />
+                      <p class="flash-options-hint ea-muted">
+                        稳定性 Checklist 源码对照项（7/11–14）需要 Android 源码根；开始测试前请先配置
+                      </p>
+                    </div>
+
                     <div class="form-group flash-options">
                       <label class="checkbox-label flash-options-toggle">
                         <input type="checkbox" v-model="enableFlash" />
@@ -1636,9 +1699,23 @@ function handleDutRowAction(deviceId: string) {
                       <p class="flash-options-hint ea-muted">仅调整执行顺序，结果列表与报告顺序不变</p>
                     </div>
 
+                    <div v-if="canSelectStartModules" class="form-group">
+                      <p class="flash-options-hint ea-muted">
+                        左侧用例列表可勾选模块；当前已选
+                        {{
+                          getCaseGroups
+                            .flatMap(([, configs]) => configs)
+                            .filter(c => isStartModuleSelected(c.module))
+                            .map(c => c.moduleLabel)
+                            .join('、') || '无'
+                        }}
+                      </p>
+                    </div>
+
                     <button
                       type="button"
                       class="ea-btn-primary"
+                      :disabled="canSelectStartModules && !getCaseGroups.some(([, configs]) => configs.some(c => isStartModuleSelected(c.module)))"
                       @click.stop="handleStartTest(selectedDevice.device.deviceId)"
                     >
                       {{ startTestIntentRole === AUX_ROLE ? '开始待命' : '开始测试' }}
@@ -1705,7 +1782,7 @@ function handleDutRowAction(deviceId: string) {
                       </div>
                       <div class="detail-item detail-item--full">
                         <span class="detail-label">测试结论</span>
-                        <span class="detail-value">{{ selectedCaseResult.message || '暂无' }}</span>
+                        <span class="detail-value pre-wrap">{{ selectedCaseResult.message || '暂无' }}</span>
                       </div>
                     </div>
 
@@ -2471,6 +2548,15 @@ $catalog-pane-height: calc(100vh - 48px);
   width: 90px;
 }
 
+.catalog-kernel-code-dir {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+  width: 100%;
+  max-width: 720px;
+}
+
 .catalog-monkey-help {
   font-size: 12px;
 }
@@ -2526,6 +2612,13 @@ $catalog-pane-height: calc(100vh - 48px);
     opacity: 0.6;
     cursor: not-allowed;
   }
+}
+
+.catalog-setting-input.catalog-kernel-code-input {
+  width: 100%;
+  min-width: 280px;
+  max-width: 720px;
+  box-sizing: border-box;
 }
 
 .pre-wrap {
@@ -2867,6 +2960,15 @@ $catalog-pane-height: calc(100vh - 48px);
   &:hover {
     color: var(--text);
   }
+}
+
+.module-select-checkbox {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0 2px 0 0;
+  cursor: pointer;
+  accent-color: var(--primary, #2563eb);
 }
 
 .module-arrow {

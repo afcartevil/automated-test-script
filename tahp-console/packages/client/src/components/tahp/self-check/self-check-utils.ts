@@ -6,7 +6,7 @@ export const SELF_CHECK_SUBTITLE =
 export const AUTO_RETEST_TOOLTIP = '测试结束后自动复测无人工参与的失败用例'
 
 /** 标准测试大类展示顺序（与用例列表 / 后端 catalog 一致） */
-export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'thermal', 'pipeline_adapt', 'ai_generated'] as const
+export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'ai_generated'] as const
 
 export type StandardTestTypeKey = (typeof STANDARD_TEST_TYPE_ORDER)[number]
 
@@ -23,6 +23,7 @@ export const MODULE_ORDER: Record<string, number> = {
   current_analysis: 14,
   wbs: 15,
   scheme: 16,
+  stability: 17,
   generated: 20,
   tp: 30,
   vibrator: 31,
@@ -42,6 +43,7 @@ export function getTestTypeLabel(testType?: string): string {
   if (testType === 'power') return '功耗自动化测试'
   if (testType === 'power_feature') return '功耗特性自检'
   if (testType === 'thermal' || testType === 'therm') return '温升方案自检'
+  if (testType === 'kernel_feature') return '内核特性自检'
   if (testType === 'pipeline_adapt') return '流水线适配自动化测试'
   if (testType === 'ai_generated') return 'AI用例'
   if (testType === 'custom') return '自定义测试'
@@ -231,6 +233,9 @@ export function formatCatalogModuleScope(group: CaseCatalogGroup): string {
   if (group.testType === 'power') {
     return '电流场景测试包括不限于（通用全域测试、基础场景、待机、PFMMod；DOU 暂不实现）'
   }
+  if (group.testType === 'kernel_feature') {
+    return '稳定性、内存、调度（小系统/安全后续接入）'
+  }
   if (!group.modules.length) return '暂无用例'
   return group.modules.map(m => m.moduleLabel).join('、')
 }
@@ -251,6 +256,9 @@ export function formatCatalogAutomation(group: CaseCatalogGroup): string {
   }
   if (group.testType === 'power_feature') {
     return '脚本全自动（WBS 特性检测）'
+  }
+  if (group.testType === 'kernel_feature') {
+    return '脚本全自动（稳定性 Checklist；源码项需配置 code_dir）'
   }
   if (group.testType === 'thermal') {
     return '脚本全自动（tpytest_dzppt_therm）'
@@ -315,6 +323,7 @@ export function reportShortType(testType: string): string {
   if (testType === 'monkey') return 'monkey'
   if (testType === 'smoke') return '冒烟'
   if (testType === 'power_feature') return '功耗特性'
+  if (testType === 'kernel_feature') return '内核特性'
   if (testType === 'thermal' || testType === 'therm') return '温升方案'
   if (testType === 'pipeline_adapt') return '流水线适配'
   if (testType === 'str4') return 'STR4'
@@ -333,6 +342,32 @@ export function reportTitle(report: SelfCheckReportSummary): string {
   return `${report.deviceName} · ${typeLabel}`
 }
 
+/** 本地会话目录名（与 reports/self-check/<设备>/<目录> 一致） */
+export function selfCheckSessionDirName(report: {
+  reportPath?: string
+  startTime?: string
+}): string {
+  const parts = String(report.reportPath || '').replace(/\\/g, '/').split('/').filter(Boolean)
+  if (parts.length) return parts[parts.length - 1]
+  if (report.startTime) return report.startTime.replace(/[:.]/g, '-')
+  return ''
+}
+
+export function formatSelfCheckIsoTime(iso?: string): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString('zh-CN')
+}
+
+/**
+ * 列表卡片时间：展示开始时间（对应本地会话目录），便于对照文件夹名。
+ * 结束时间放在详情里。
+ */
+export function reportListTimeLabel(report: SelfCheckReportSummary): string {
+  return `开始 ${formatSelfCheckIsoTime(report.startTime)}`
+}
+
 export type ReportStatusKind = 'passed' | 'pending' | 'reviewed' | 'retest'
 
 export function displayReportStatus(report: SelfCheckReportSummary): string {
@@ -340,6 +375,33 @@ export function displayReportStatus(report: SelfCheckReportSummary): string {
   if (report.reviewStatus === 'retest') return '待补测'
   if (report.failedCases > 0) return '待审阅'
   return report.status.includes('通过') ? '通过' : '待审阅'
+}
+
+/** 通过率分母：总项数排除人工待补录 */
+export function selfCheckScoredTotal(report: {
+  totalCases: number
+  pendingManualCases?: number
+}): number {
+  return Math.max(0, report.totalCases - (report.pendingManualCases ?? 0))
+}
+
+/** 通过率分子/分母文案（NA 计入通过，人工项不计入分母） */
+export function selfCheckPassRateLabel(report: {
+  totalCases: number
+  passedCases: number
+  pendingManualCases?: number
+}): string {
+  return `${report.passedCases}/${selfCheckScoredTotal(report)}`
+}
+
+export function selfCheckPassRatePercent(report: {
+  totalCases: number
+  passedCases: number
+  pendingManualCases?: number
+}): number {
+  const scored = selfCheckScoredTotal(report)
+  if (scored <= 0) return 0
+  return Math.round((report.passedCases / scored) * 100)
 }
 
 export function reportStatusKind(report: SelfCheckReportSummary): ReportStatusKind {
@@ -362,6 +424,9 @@ export function formatTestConfigEntries(cfg?: SelfCheckTestConfig): { label: str
       const path = cfg.gmsTradefedPath[suite]
       if (path) rows.push({ label: `GMS ${suite.toUpperCase()} Tradefed`, value: path })
     }
+  }
+  if (cfg.kernelFeatureCodeDir) {
+    rows.push({ label: '内核源码路径', value: cfg.kernelFeatureCodeDir })
   }
   if (cfg.autoRetestEnabled !== undefined) {
     rows.push({
@@ -386,4 +451,15 @@ export function formatTestConfigEntries(cfg?: SelfCheckTestConfig): { label: str
     rows.push({ label: '自定义勾选用例数', value: String(cfg.selectedCases.length) })
   }
   return rows
+}
+
+/** 执行阶段跳过的人工用例，待在测试报告中补录 */
+export function isPendingManualReportFillIn(item: {
+  status?: string
+  message?: string
+  automationMode?: string
+}): boolean {
+  return item.automationMode === 'manual'
+    && item.status === '待确认'
+    && Boolean(item.message?.includes('报告中补录'))
 }

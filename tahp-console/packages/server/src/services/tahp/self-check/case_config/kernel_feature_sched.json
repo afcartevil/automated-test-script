@@ -1,0 +1,17 @@
+{
+  "testType": "kernel_feature",
+  "module": "sched",
+  "moduleLabel": "调度(SPD)",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    { "caseIndex": 1, "caseName": "感知调度", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 2, "caseName": "性能统计 perf log", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 3, "caseName": "CPU调度健康标准", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 4, "caseName": "cgroup分组策略", "canReuse": false, "automationMode": "full" }
+  ]
+}

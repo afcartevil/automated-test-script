@@ -25,6 +25,9 @@ SHEET_TO_MODULE: dict[str, tuple[str, str]] = {
     "gms_vts": ("gms", "vts"),
     "power_current_analysis": ("power", "current_analysis"),
     "power_feature_wbs": ("power_feature", "wbs"),
+    "kernel_feature_stability": ("kernel_feature", "stability"),
+    "kernel_feature_memory": ("kernel_feature", "memory"),
+    "kernel_feature_sched": ("kernel_feature", "sched"),
     "thermal_scheme": ("thermal", "scheme"),
     "pipeline_adapt_tp": ("pipeline_adapt", "tp"),
     "pipeline_adapt_vibrator": ("pipeline_adapt", "vibrator"),
@@ -46,6 +49,7 @@ TEST_TYPE_LABELS = {
     "gms": "GMS测试",
     "power": "功耗自动化测试",
     "power_feature": "功耗特性自检",
+    "kernel_feature": "内核特性自检",
     "thermal": "温升方案自检",
     "pipeline_adapt": "流水线适配自动化测试",
 }
@@ -63,6 +67,7 @@ MODULE_LABELS = {
     "vts": "VTS",
     "current_analysis": "场景功耗测量",
     "wbs": "功耗特性检测",
+    "stability": "稳定性",
     "scheme": "温升方案检测",
     "tp": "TP",
     "vibrator": "马达",
@@ -72,8 +77,8 @@ MODULE_LABELS = {
     "charger": "Charger",
 }
 
-TEST_TYPE_ORDER = ("str4", "week", "monkey", "smoke", "gms", "power", "power_feature", "thermal", "pipeline_adapt")
-MODULE_ORDER = ("driver_component", "driver_hardware", "driver", "monkey", "usd", "cts", "gts", "vts", "cts_tele", "current_analysis", "wbs", "scheme", "tp", "vibrator", "audio", "lcm", "fingerprint", "charger", "tdd")
+TEST_TYPE_ORDER = ("str4", "week", "monkey", "smoke", "gms", "power", "power_feature", "thermal", "kernel_feature", "pipeline_adapt")
+MODULE_ORDER = ("driver_component", "driver_hardware", "driver", "monkey", "usd", "cts", "gts", "vts", "cts_tele", "current_analysis", "wbs", "scheme", "stability", "tp", "vibrator", "audio", "lcm", "fingerprint", "charger", "tdd")
 
 
 def make_category_key(test_type: str, module: str) -> str:

@@ -1,0 +1,186 @@
+[
+  {
+    "caseIndex": 1,
+    "caseName": "log配置",
+    "前置条件": "DUT 已连接 ADB；建议 adb root",
+    "测试步骤": "读 /proc/cmdline，确认含 log_buf_len=2M",
+    "期望结果": "cmdline 含 log_buf_len=2M",
+    "用例名": "log配置"
+  },
+  {
+    "caseIndex": 2,
+    "caseName": "三键uart和console功能配置",
+    "前置条件": "串口线、user_root/userdebug；P1 起需打开 USB 转串口与 console",
+    "测试步骤": "1. 音量上+音量下+电源键开机，串口终端有 log 输出\n2. 开机约 10s 后在串口终端发 logcat，能看到系统层 log",
+    "期望结果": "三键可抓串口；console 有效（logcat 有输出）",
+    "用例名": "三键uart和console功能配置"
+  },
+  {
+    "caseIndex": 3,
+    "caseName": "检查Kernel panic前串口打印",
+    "前置条件": "设备有 /data/debuglogger/mobilelog",
+    "测试步骤": "pull mobilelog 并搜索 earlycon/uart8250",
+    "期望结果": "命中 earlycon 相关打印",
+    "用例名": "检查Kernel panic前串口打印"
+  },
+  {
+    "caseIndex": 4,
+    "caseName": "长按power key软重启",
+    "前置条件": "user_root；可焊串口更佳；榫卯架构不需要测试",
+    "测试步骤": "开机约1分钟后长按 power 软重启；串口见 Say Goodbye / LongPressReboot sys_sync；重启后 cat /proc/pl_lk | grep battery 确认 has_battery_removed=0",
+    "期望结果": "软重启成功且非硬重启",
+    "用例名": "长按power key软重启"
+  },
+  {
+    "caseIndex": 5,
+    "caseName": "检查user版本默认uart是否关闭",
+    "前置条件": "必须使用 user 版本；需人工查看抓取到的 mobilelog / pl_lk 证据",
+    "测试步骤": "人工检查 user 版本日志中的 pl_lk，确认 mtk_printk_ctrl.disable_uart 已从 0 切到 1",
+    "期望结果": "默认关闭 uart 打印（disable_uart=1），并在测试报告中补录结果",
+    "用例名": "检查user版本默认uart是否关闭"
+  },
+  {
+    "caseIndex": 6,
+    "caseName": "下载模式DA返回清除异常状态",
+    "前置条件": "DUT 已连接；建议曾进入下载模式烧写后重启",
+    "测试步骤": "读取 /proc/pl_lk，确认含 [RGU] rst from: DA",
+    "期望结果": "输出含 [RGU] rst from: DA",
+    "用例名": "下载模式DA返回清除异常状态"
+  },
+  {
+    "caseIndex": 7,
+    "caseName": "双键触发hang",
+    "前置条件": "user_root；人工按键",
+    "测试步骤": "音量上下同按 10–16s 松开 → 5s 内连按音量上 3 次 → 橙屏完成后检查 /data/vendor/aee_exp 是否有 db",
+    "期望结果": "触发 hang/橙屏且产生 db",
+    "用例名": "双键触发hang"
+  },
+  {
+    "caseIndex": 8,
+    "caseName": "db文件检查",
+    "前置条件": "已内置 aee_extract + Dispatcher；会触发 sysrq",
+    "测试步骤": "清理 aee_exp → sysrq → 等待 fulldump ≥10min → wait-for-device → 开机后再等 5min → adb pull /data/vendor/aee_exp → aee_extract/Dispatcher 确认 sysrq",
+    "期望结果": "pull 到可解析 .dbg，且含 sysrq 证据",
+    "用例名": "db文件检查"
+  },
+  {
+    "caseIndex": 9,
+    "caseName": "root版本开机完成停止串口log",
+    "前置条件": "user_root；开机完成；榫卯架构不需要测试",
+    "测试步骤": "adb shell cat /proc/mtprintk，确认 printk uart enable: 0",
+    "期望结果": "uart enable 为 0",
+    "用例名": "root版本开机完成停止串口log"
+  },
+  {
+    "caseIndex": 10,
+    "caseName": "关闭RT_RUNTIME_SHARE",
+    "前置条件": "建议配置 code_dir；未配置时本项标为待确认（报告补录）；榫卯架构不需要测试",
+    "测试步骤": "检查 kernel/sched/features.h 中 SCHED_FEAT(RT_RUNTIME_SHARE, false)",
+    "期望结果": "RT_RUNTIME_SHARE 为 false；无 code_dir 则待确认",
+    "用例名": "关闭RT_RUNTIME_SHARE"
+  },
+  {
+    "caseIndex": 12,
+    "caseName": "SODI移除检查",
+    "前置条件": "建议配置 code_dir（含 kernel 或 kernel-*）；未配置时本项待确认；较旧平台存在 mt_idle.c",
+    "测试步骤": "仅在 kernel/kernel-* 目录下查找 mt_idle.c，检查 soidle/slidle switch 为 0",
+    "期望结果": "soidle 与 slidle 关闭；无 code_dir 则待确认；有 code_dir 但无该文件则 NA",
+    "用例名": "SODI移除检查"
+  },
+  {
+    "caseIndex": 13,
+    "caseName": "不开机log_store[TDFS]检查",
+    "前置条件": "内置 tran_pdfs.py；设备有 tdfs 分区",
+    "测试步骤": "mrdump_tool output-set internal-storage 打开 fulldump → 确认 by-name/tdfs 存在 → 多次 sysrq → pull tdfs → tran_pdfs 解析",
+    "期望结果": "tdfs 产物含 sysrq last_kmsg",
+    "用例名": "不开机log_store[TDFS]检查"
+  },
+  {
+    "caseIndex": 14,
+    "caseName": "关闭mrdump_key功能",
+    "前置条件": "DUT 已连接；code_dir 可选（有则结合源码；无且 sysfs 无法判定则待确认）",
+    "测试步骤": "读 sysfs compatible（disable_mrdump_key 或 mrdump_ext_rst-disable-eint 视为关闭）；若已配置 code_dir，再结合 mrdump_key_setup.c 与 pl_lk 判定",
+    "期望结果": "compatible 含关闭关键字；有 code_dir 时源码侧也确认已关闭；无 code_dir 且 sysfs 无法判定则待确认",
+    "用例名": "关闭mrdump_key功能"
+  },
+  {
+    "caseIndex": 15,
+    "caseName": "mt6789平台晶振patch检查",
+    "前置条件": "仅 mt6789；建议配置 code_dir（未配置且为本平台时待确认）",
+    "测试步骤": "先判平台；mt6789 时检查 pmic_initial_setting.c 关键字",
+    "期望结果": "关键字存在；非 mt6789 则 NA；mt6789 无 code_dir 则待确认",
+    "用例名": "mt6789平台晶振patch检查"
+  },
+  {
+    "caseIndex": 16,
+    "caseName": "OCP埋点",
+    "前置条件": "需人工按专项制造 OCP reboot，并确认埋点产物；榫卯架构不需要测试",
+    "测试步骤": "人工完成 OCP 造障与埋点验证（无法自动化）；完成后在测试报告中补录结果",
+    "期望结果": "OCP 埋点验证通过，并在报告中填写结果",
+    "用例名": "OCP埋点"
+  },
+  {
+    "caseIndex": 17,
+    "caseName": "器件稳定性埋点",
+    "前置条件": "内置 tdsm.py；可配 product_name",
+    "测试步骤": "echo 1→dev_id/msg_type → 三次写入 /proc/tran_devmsg（格式：产品名 tdsm test 日期 no1）→ cat 校验 → sysrq → pull expdb → tdsm 解析",
+    "期望结果": "adb 与 tdsm 均命中产品名/日期",
+    "用例名": "器件稳定性埋点"
+  },
+  {
+    "caseIndex": 18,
+    "caseName": "fec2.0方案",
+    "前置条件": "DUT 已连接；kernel 5.10 可能不支持；榫卯架构不需要测试",
+    "测试步骤": "cat /proc/pl_lk | grep -i otaenablefec",
+    "期望结果": "命中 otaenablefec；明确不支持则 NA",
+    "用例名": "fec2.0方案"
+  },
+  {
+    "caseIndex": 19,
+    "caseName": "黑屏定屏类故障检测",
+    "前置条件": "内置 tne_parser；user_root；会 kill surfaceflinger / system_server 造 hung",
+    "测试步骤": "清 TNE → hung_task_timeout=30 → kill -19 surfaceflinger → 等 60s → 轮询设备直至出现 0xffffff35*.tne（默认最长再等 180s）→ 整目录 pull /data/TNE → tne_parser 解压查 sys_kernel_log → hung_task_maxdeath_count=2 → kill -19 system_server → 等 60s → wait-for-device → cat pstore console-ramoops-0",
+    "期望结果": "sys_kernel_log 含 hung_task+surfaceflinger blocked>30s；pstore 含 hung_task blocked key tasks more than 2",
+    "用例名": "黑屏定屏类故障检测"
+  },
+  {
+    "caseIndex": 11,
+    "caseName": "解析expdb",
+    "前置条件": "已内置 Dispatcher；优先复用前序项产生的 /data/TNE/temp_db（须目录下有文件）",
+    "测试步骤": "mrdump_tool output-set none 关闭 fulldump → 检查 /data/TNE/temp_db：存在且有文件则直接 pull+Dispatcher；否则 sysrq → wait-for-device（默认 180s，无 fulldump）→ 开机后再等约 1min → pull temp_db → Dispatcher 解析",
+    "期望结果": "分析产物确认 sysrq",
+    "用例名": "解析expdb"
+  },
+  {
+    "caseIndex": 20,
+    "caseName": "重启检查",
+    "前置条件": "需刷机进入 OOBE；人工观察重启过程（STR4 标准用例）",
+    "测试步骤": "1. 刷机进入 OOBE 界面 → 重启手机查看\n2. 进入系统界面 → 重启手机查看\n注：长按约 2 秒手动重启与长按约 8 秒强制重启都要各执行一遍",
+    "期望结果": "手机正常重启；不出现卡 logo、开机动画异常、开机过程黑屏、开机时间过长等明显异常；完成后在测试报告中补录结果",
+    "用例名": "重启检查"
+  },
+  {
+    "caseIndex": 21,
+    "caseName": "cpu中sram bitflip导致的黑屏问题",
+    "前置条件": "建议配置 code_dir（Android 源码根）；未配置时本项待确认",
+    "测试步骤": "检查 vendor/mediatek/proprietary/bootable/bootloader/preloader/platform/common/ram_console.c，确认含 ram_console->off_pl == sizeof(struct ram_console_buffer)",
+    "期望结果": "源码含该校验字符串；无 code_dir 则待确认；文件不存在或未命中则 Fail",
+    "用例名": "cpu中sram bitflip导致的黑屏问题"
+  },
+  {
+    "caseIndex": 22,
+    "caseName": "kernel-5.10 s2idle hwt patch检查",
+    "前置条件": "DUT 已连接；建议配置 code_dir；kernel 非 5.10 则 NA",
+    "测试步骤": "读 ro.kernel.version（回退 uname -r）；若含 5.10，则检查 kernel-5.10/.../lpm_plat_suspend.c 中 mtk_s2idle_state_enable 不存在或已注释",
+    "期望结果": "非 5.10 → NA；5.10 且字符串已注释/不存在 → Pass；仍存在未注释 → Fail；无 code_dir → 待确认",
+    "用例名": "kernel-5.10 s2idle hwt patch检查"
+  },
+  {
+    "caseIndex": 23,
+    "caseName": "MTK平台检查pl/lk的boot_reason枚举定义顺序保持一致",
+    "前置条件": "DUT 已连接；建议配置 code_dir；需能读到 ro.board.platform",
+    "测试步骤": "getprop ro.board.platform → 比对 preloader platform/<平台>/.../platform.h 的 boot_reason_t 与 lk2 .../boot_mode.h 的 boot_reason（名称与取值顺序）",
+    "期望结果": "两侧枚举一致 → Pass；不一致或文件缺失 → Fail；无 code_dir → 待确认",
+    "用例名": "MTK平台检查pl/lk的boot_reason枚举定义顺序保持一致"
+  }
+]

@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onActivated, watch, inject } from 'vue'
 import { NEmpty, NButton, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
 import { DEVICE_SELF_CHECK_KEY } from './self-check-context'
-import { getCaseResultColor, getTestTypeLabel, reportTitle, displayReportStatus, reportStatusKind, getAutomationModeIcon, getAutomationModeLabel, normalizeAutomationMode, formatTestConfigEntries } from './self-check-utils'
+import { getCaseResultColor, getTestTypeLabel, reportTitle, displayReportStatus, reportStatusKind, getAutomationModeIcon, getAutomationModeLabel, normalizeAutomationMode, formatTestConfigEntries, isPendingManualReportFillIn, selfCheckPassRateLabel, reportListTimeLabel, formatSelfCheckIsoTime, selfCheckSessionDirName } from './self-check-utils'
 import {
   listSelfCheckReports,
   getSelfCheckReportDetail,
@@ -100,12 +100,7 @@ const availableAuxForRetest = computed(() =>
 )
 
 function reportTime(report: SelfCheckReportSummary): string {
-  const t = report.completedAt || report.endTime || report.startTime
-  try {
-    return new Date(t).toLocaleString('zh-CN')
-  } catch {
-    return t
-  }
+  return reportListTimeLabel(report)
 }
 
 function toggleModule(module: string) {
@@ -146,7 +141,10 @@ async function openReportFile() {
 
 function canOpenFailureLogs(item: SelfCheckCaseItem | null | undefined): boolean {
   if (!item) return false
-  return Boolean(item.failureLogDir) || item.status === '失败'
+  return Boolean(item.failureLogDir)
+    || item.status === '失败'
+    || item.status === '通过'
+    || item.status === '部分通过'
 }
 
 async function openFailureLogs() {
@@ -344,7 +342,7 @@ onActivated(async () => {
               </div>
               <strong class="report-card-title">{{ reportTitle(report) }}</strong>
               <small class="report-card-meta ea-muted">
-                {{ reportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }}
+                {{ reportTime(report) }} · {{ selfCheckPassRateLabel(report) }}
               </small>
             </li>
           </ul>
@@ -379,7 +377,7 @@ onActivated(async () => {
               </div>
               <strong class="report-card-title">{{ reportTitle(report) }}</strong>
               <small class="report-card-meta ea-muted">
-                {{ reportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }}
+                {{ reportTime(report) }} · {{ selfCheckPassRateLabel(report) }}
               </small>
             </li>
           </ul>
@@ -448,12 +446,20 @@ onActivated(async () => {
               <dd>{{ reportDetail.version?.trim() ? reportDetail.version : '未获取 (persist.sys.ota_version)' }}</dd>
             </div>
             <div>
-              <dt>完成时间</dt>
-              <dd>{{ reportTime(reportDetail) }}</dd>
+              <dt>开始时间</dt>
+              <dd>{{ formatSelfCheckIsoTime(reportDetail.startTime) }}</dd>
+            </div>
+            <div>
+              <dt>结束时间</dt>
+              <dd>{{ formatSelfCheckIsoTime(reportDetail.endTime || reportDetail.completedAt) }}</dd>
+            </div>
+            <div>
+              <dt>本地目录</dt>
+              <dd class="session-dir-name">{{ selfCheckSessionDirName(reportDetail) || '—' }}</dd>
             </div>
             <div>
               <dt>通过率</dt>
-              <dd>{{ reportDetail.passedCases }}/{{ reportDetail.totalCases }}</dd>
+              <dd>{{ selfCheckPassRateLabel(reportDetail) }}</dd>
             </div>
             <template v-for="row in testConfigEntries" :key="row.label">
               <div>
@@ -527,8 +533,14 @@ onActivated(async () => {
                   </div>
                   <div class="detail-item detail-item--full">
                     <span class="detail-label">结论</span>
-                    <span class="detail-value">{{ selectedCaseItem.message || '暂无' }}</span>
+                    <span class="detail-value pre-wrap">{{ selectedCaseItem.message || '暂无' }}</span>
                   </div>
+                </div>
+                <div
+                  v-if="selectedCaseItem && isPendingManualReportFillIn(selectedCaseItem)"
+                  class="pending-manual-hint"
+                >
+                  该用例为人工项，自动化执行时已跳过。请线下完成测试后，点击「修改用例结果」填写通过/失败与备注。
                 </div>
                 <div v-if="selectedCaseItem.steps?.length" class="case-steps">
                   <div class="section-title">子步骤</div>
@@ -901,6 +913,12 @@ $report-pane-height: calc(100vh - 48px);
     margin: 2px 0 0;
     font-size: 13px;
   }
+
+  .session-dir-name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    word-break: break-all;
+  }
 }
 
 .overview-summary {
@@ -1124,6 +1142,17 @@ $report-pane-height: calc(100vh - 48px);
   border-bottom: 1px solid var(--line);
 }
 
+.pending-manual-hint {
+  margin-top: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, var(--line));
+  border-radius: 8px;
+}
+
 .case-detail-actions,
 .detail-actions {
   display: flex;
@@ -1212,5 +1241,10 @@ $report-pane-height: calc(100vh - 48px);
     outline: none;
     border-color: var(--accent);
   }
+}
+
+.pre-wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

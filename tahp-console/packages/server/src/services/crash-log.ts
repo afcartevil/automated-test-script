@@ -3,6 +3,7 @@
  * native crash / SIGKILL 仍需 scripts/lib/bff-watchdog.mjs。
  */
 import { appendFileSync, mkdirSync, writeFileSync } from 'fs'
+import { freemem } from 'os'
 import { join } from 'path'
 import { getTahpConsoleHome } from '../config'
 import { logger } from './logger'
@@ -53,11 +54,16 @@ export function forceStdioBlocking(): void {
 }
 
 export function writeHeartbeat(): void {
+  const mem = process.memoryUsage()
   writeJson('bff-heartbeat.json', {
     pid: process.pid,
     ts: new Date().toISOString(),
     uptimeSec: Math.round(process.uptime()),
-    rss: process.memoryUsage().rss,
+    rss: mem.rss,
+    heapUsed: mem.heapUsed,
+    heapTotal: mem.heapTotal,
+    external: mem.external,
+    freemem: freemem(),
   })
 }
 

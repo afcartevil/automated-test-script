@@ -19,7 +19,17 @@ import {
 } from './device-tcard-update'
 import { resolvePythonSpawn, tahpPaths } from './paths'
 import { ensurePowerTestPythonDeps, ensureSddTestPythonDeps } from './self-check-python-deps'
-import { buildSelfCheckDetailPayload, formatSelfCheckTestConfigMetaRows, openLocalPath, reportAbsoluteDir, type SelfCheckCaseItem, type SelfCheckFailedCaseItem, type SelfCheckTestConfig } from './self-check-reports'
+import {
+  buildSelfCheckDetailPayload,
+  formatSelfCheckTestConfigMetaRows,
+  isPendingManualReportFillIn,
+  openLocalPath,
+  PENDING_MANUAL_REPORT_MSG,
+  reportAbsoluteDir,
+  type SelfCheckCaseItem,
+  type SelfCheckFailedCaseItem,
+  type SelfCheckTestConfig,
+} from './self-check-reports'
 import {
   AI_GENERATED_MODULE,
   AI_GENERATED_MODULE_LABEL,
@@ -49,7 +59,7 @@ export type DeviceStatus =
   | '刷机中'
   | 'T卡升级中'
 
-export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated'
+export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
 export type DeviceTestType = StandardTestType | 'custom'
 
 export interface SimCardInfo {
@@ -234,6 +244,8 @@ interface AutoTestSettings {
   gmsTradefedPath?: Record<string, string>
   /** @deprecated 兼容旧配置：套件根目录，将自动解析 tools/xxx-tradefed */
   gmsTradefedRoot?: Record<string, string>
+  /** 内核特性/稳定性：Android 源码根（用例 7/11-14 对照） */
+  kernelFeatureCodeDir?: string
 }
 
 const DEFAULT_MONKEY_DURATION = '7d'
@@ -286,6 +298,7 @@ function getAutoRetestConfig(testType: string): { enabled: boolean; count: numbe
     testType === 'power' ||
     testType === 'power_feature' ||
     testType === 'thermal' ||
+    testType === 'kernel_feature' ||
     testType === 'ai_generated'
   ) {
     return { enabled: false, count: 0 }
@@ -340,6 +353,11 @@ function snapshotTestConfig(
         settings.gmsTradefedPath,
         settings.gmsTradefedRoot,
       )
+      break
+    case 'kernel_feature':
+      if (settings.kernelFeatureCodeDir?.trim()) {
+        cfg.kernelFeatureCodeDir = settings.kernelFeatureCodeDir.trim()
+      }
       break
     case 'custom':
     case 'ai_generated':
@@ -524,6 +542,34 @@ export function buildManualCaseConfirmMessage(options: {
   return parts.join('\n')
 }
 
+/** catalog 标注 manual 的用例：执行阶段不弹窗，报告里待补录 */
+function applyDeferredManualCatalogCase(
+  result: CaseResult,
+  deviceId: string,
+  caseKey: string,
+  caseInfoItems: any,
+  startTime: string,
+): CaseResult {
+  result.status = '待确认'
+  result.message = PENDING_MANUAL_REPORT_MSG
+  result.fullAutomation = false
+  result.automationMode = 'manual'
+  const manualLines = parseTestSteps(caseInfoItems?.['测试步骤'] || '')
+  result.steps = [
+    { stepDesc: '加载用例信息', status: '完成', timestamp: startTime },
+    { stepDesc: '执行阶段已跳过（人工用例，不阻塞自动化）', status: '完成', timestamp: new Date().toISOString() },
+    ...manualLines.map(line => ({
+      stepDesc: line.stepDesc,
+      status: '未开始' as const,
+      timestamp: new Date().toISOString(),
+    })),
+    { stepDesc: '请在「测试报告 → 修改用例结果」中补录', status: '进行中', timestamp: new Date().toISOString() },
+  ]
+  result.endTime = new Date().toISOString()
+  emitEvent('case_completed', { deviceId, caseKey, result })
+  return result
+}
+
 function enrichModuleCasesAutomationMode(config: ModuleCondition): void {
   const caseInfoList = loadCaseInfoList(config.testType, config.module)
   for (const c of config.cases) {
@@ -611,6 +657,7 @@ export function getSettings(): AutoTestSettings {
       settings.gmsTradefedPath,
       settings.gmsTradefedRoot,
     ),
+    kernelFeatureCodeDir: String(settings.kernelFeatureCodeDir || '').trim(),
   }
 }
 
@@ -622,6 +669,7 @@ export function updateSettings(newSettings: AutoTestSettings): void {
     monkeyDuration: normalizeMonkeyDuration(newSettings.monkeyDuration),
     smokeUsdSkipSpdInfo: Boolean(newSettings.smokeUsdSkipSpdInfo),
     gmsTradefedPath: normalizeGmsTradefedPath(newSettings.gmsTradefedPath),
+    kernelFeatureCodeDir: String(newSettings.kernelFeatureCodeDir || '').trim(),
   }
   saveSettings()
 }
@@ -640,6 +688,9 @@ function loadCaseConfigs(): void {
     'power_current_analysis.json',
     'power_feature_wbs.json',
     'thermal_scheme.json',
+    'kernel_feature_stability.json',
+    'kernel_feature_memory.json',
+    'kernel_feature_sched.json',
     'pipeline_adapt_tp.json',
     'pipeline_adapt_vibrator.json',
     'pipeline_adapt_audio.json',
@@ -730,8 +781,6 @@ function emitEvent(eventName: string, data: any) {
 const ADB_PROBE_TIMEOUT_MS = 12_000
 const ADB_LIST_TIMEOUT_MS = 8_000
 const ADB_DEFAULT_TIMEOUT_MS = 10_000
-/** 失败日志 adb pull 单次超时；避免用例失败后 pull 挂死导致整场测试无法结束 */
-const ADB_PULL_TIMEOUT_MS = 90_000
 
 const deviceAdbTail = new Map<string, Promise<unknown>>()
 
@@ -1010,123 +1059,80 @@ function sanitizeCaseKeyForPath(caseKey: string): string {
   return caseKey.replace(/[\\/:"*?<>|]+/g, '_')
 }
 
-async function detectLogCollectionPlatform(deviceId: string): Promise<'mtk' | 'sprd' | 'other'> {
-  const hardware = (await execAdbSimple(['-s', deviceId, 'shell', 'getprop', 'ro.hardware'])).trim().toLowerCase()
-  if (hardware.startsWith('mt')) return 'mtk'
-  if (hardware.startsWith('ums') || hardware.startsWith('udx') || hardware.startsWith('sp') || hardware.includes('sprd')) {
-    return 'sprd'
-  }
-  return 'other'
-}
-
-async function startDeviceFailureLogCapture(deviceId: string): Promise<void> {
-  try {
-    await execAdbSimple(['-s', deviceId, 'shell', 'logcat', '-b', 'all', '-c'])
-    const platform = await detectLogCollectionPlatform(deviceId)
-    if (platform === 'mtk') {
-      await execAdbSimple([
-        '-s', deviceId, 'shell', 'am', 'broadcast',
-        '-a', 'com.debug.loggerui.ADB_CMD',
-        '-e', 'cmd_name', 'stop',
-        '--ei', 'cmd_target', '127',
-        '-n', 'com.debug.loggerui/.framework.LogReceiver',
-      ])
-      await execAdbSimple(['-s', deviceId, 'shell', 'rm', '-rf', '/data/debuglogger/*'])
-      await execAdbSimple([
-        '-s', deviceId, 'shell', 'am', 'broadcast',
-        '-a', 'com.debug.loggerui.ADB_CMD',
-        '-e', 'cmd_name', 'start',
-        '--ei', 'cmd_target', '5',
-        '-n', 'com.debug.loggerui/.framework.LogReceiver',
-      ])
-    } else if (platform === 'sprd') {
-      await execAdbSimple([
-        '-s', deviceId, 'shell', 'am', 'startservice',
-        '-n', 'com.reallytek.wg/.utils.LogControlService',
-        '-e', 'from', 'adb',
-        '-p', 'com.reallytek.wg',
-        '--ei', 'magic', '901',
-      ])
-      await execAdbSimple(['-s', deviceId, 'shell', 'rm', '-rf', '/sdcard/ylog/*'])
-      await execAdbSimple(['-s', deviceId, 'shell', 'rm', '-rf', '/data/ylog/*'])
-      await execAdbSimple([
-        '-s', deviceId, 'shell', 'am', 'startservice',
-        '-n', 'com.reallytek.wg/.utils.LogControlService',
-        '-e', 'from', 'adb',
-        '-p', 'com.reallytek.wg',
-        '--ei', 'magic', '902',
-        '-e', 'android', '1',
-        '-e', 'kernel', '1',
-        '-e', 'uboot', '1',
-        '-e', 'lastkmsg', '1',
-        '-e', 'thermal', '0',
-        '-e', 'bthci', '0',
-        '-e', 'apcap', '0',
-      ])
-    }
-  } catch (e) {
-    console.warn('[device-self-check] Failed to start device log capture:', deviceId, e)
-  }
-}
-
-async function adbPull(
-  deviceId: string,
-  remotePath: string,
-  localDir: string,
-  timeoutMs = ADB_PULL_TIMEOUT_MS,
-): Promise<void> {
-  mkdirSync(localDir, { recursive: true })
-  await new Promise<void>((resolve) => {
-    let settled = false
-    let proc: ReturnType<typeof spawn> | null = null
-    let timeoutId: NodeJS.Timeout | null = null
-
-    const finish = () => {
-      if (settled) return
-      settled = true
-      if (timeoutId) clearTimeout(timeoutId)
-      resolve()
-    }
-
-    try {
-      proc = spawn('adb', ['-s', deviceId, 'pull', remotePath, localDir], {
-        windowsHide: true,
-      })
-    } catch (e) {
-      console.warn(`[device-self-check] adb pull spawn failed for ${remotePath}:`, e)
-      finish()
-      return
-    }
-
-    let output = ''
-    proc.stdout?.on('data', (chunk: Buffer) => { output += chunk.toString('utf-8') })
-    proc.stderr?.on('data', (chunk: Buffer) => { output += chunk.toString('utf-8') })
-
-    timeoutId = setTimeout(() => {
-      console.warn(`[device-self-check] adb pull timeout (${timeoutMs}ms): ${remotePath}`)
-      killProcessTree(proc)
-      finish()
-    }, timeoutMs)
-
-    proc.on('close', (code) => {
-      if (code !== 0) {
-        const text = output.trim()
-        if (text && !/No such file|does not exist|failed to stat/i.test(text)) {
-          console.warn(`[device-self-check] adb pull failed for ${remotePath}: ${text}`)
-        }
-      }
-      finish()
-    })
-    proc.on('error', (err) => {
-      console.warn(`[device-self-check] adb pull error for ${remotePath}:`, err.message)
-      finish()
-    })
-  })
-}
-
 function queueFailureLogExport(session: TestSession, caseKey: string): void {
   if (!session.pendingFailureLogCaseKeys) session.pendingFailureLogCaseKeys = []
-  session.pendingFailureLogCaseKeys.push(caseKey)
+  if (!session.pendingFailureLogCaseKeys.includes(caseKey)) {
+    session.pendingFailureLogCaseKeys.push(caseKey)
+  }
+}
+
+async function attachExportedCaseLogDir(
+  deviceId: string,
+  session: TestSession,
+  caseKey: string,
+  exportedDir: string,
+  notePrefix = '执行日志已导出',
+): Promise<void> {
+  const latest = session.caseResults[caseKey]
+    || Object.values(session.caseResults).find(
+      r => formatCaseResultKey(r.testType, r.module, r.caseIndex) === caseKey,
+    )
+  if (!latest) return
+  latest.failureLogDir = exportedDir
+  const alreadyNoted = (latest.steps || []).some(
+    s => s.stepDesc?.startsWith('执行日志已导出:') || s.stepDesc?.startsWith('失败日志已导出:'),
+  )
+  if (!alreadyNoted) {
+    latest.steps.push({
+      stepDesc: `${notePrefix}: ${exportedDir}`,
+      status: '完成',
+      timestamp: new Date().toISOString(),
+    })
+  }
+  emitEvent('case_completed', { deviceId, caseKey, result: latest })
+}
+
+/** @deprecated 兼容旧名 */
+async function attachExportedFailureLogDir(
+  deviceId: string,
+  session: TestSession,
+  caseKey: string,
+  exportedDir: string,
+): Promise<void> {
+  await attachExportedCaseLogDir(deviceId, session, caseKey, exportedDir, '失败日志已导出')
+}
+
+/** 用例结束后立刻导出，避免只能等整轮报告结束才能「打开日志」 */
+async function exportCaseLogsSoon(
+  deviceId: string,
+  session: TestSession,
+  caseKey: string,
+  mode: 'execution' | 'failure' = 'failure',
+): Promise<void> {
+  try {
+    const exportedDir = await exportCaseLogsForCase(deviceId, session, caseKey, mode)
+    if (!exportedDir) return
+    if (session.pendingFailureLogCaseKeys?.length) {
+      session.pendingFailureLogCaseKeys = session.pendingFailureLogCaseKeys.filter(k => k !== caseKey)
+    }
+    await attachExportedCaseLogDir(
+      deviceId,
+      session,
+      caseKey,
+      exportedDir,
+      mode === 'failure' ? '失败日志已导出' : '执行日志已导出',
+    )
+  } catch (e) {
+    console.warn('[device-self-check] Immediate case log export failed:', caseKey, e)
+  }
+}
+
+async function exportFailureLogsSoon(
+  deviceId: string,
+  session: TestSession,
+  caseKey: string,
+): Promise<void> {
+  await exportCaseLogsSoon(deviceId, session, caseKey, 'failure')
 }
 
 async function flushPendingFailureLogExports(deviceId: string, session: TestSession): Promise<void> {
@@ -1135,20 +1141,86 @@ async function flushPendingFailureLogExports(deviceId: string, session: TestSess
   session.pendingFailureLogCaseKeys = []
   for (const caseKey of keys) {
     try {
-      const exportedDir = await exportFailureLogsForCase(deviceId, session, caseKey)
+      const exportedDir = await exportCaseLogsForCase(deviceId, session, caseKey, 'failure')
       if (!exportedDir) continue
-      const latest = session.caseResults[caseKey]
-      if (!latest) continue
-      latest.failureLogDir = exportedDir
-      latest.steps.push({
-        stepDesc: `失败日志已导出: ${exportedDir}`,
-        status: '完成',
-        timestamp: new Date().toISOString(),
-      })
-      emitEvent('case_completed', { deviceId, caseKey, result: latest })
+      await attachExportedCaseLogDir(deviceId, session, caseKey, exportedDir, '失败日志已导出')
     } catch (e) {
       console.warn('[device-self-check] Background failure log export failed:', caseKey, e)
     }
+  }
+}
+
+/**
+ * 导出用例日志（成功/失败策略一致）：
+ * - case_result.txt 执行摘要
+ * - 内核稳定性：checker 本地 evidence + 用例工作目录产物
+ * - 不再从设备额外 pull logcat / mobilelog / netlog / TNE
+ */
+async function exportCaseLogsForCase(
+  deviceId: string,
+  session: TestSession,
+  caseKey: string,
+  mode: 'execution' | 'failure' = 'failure',
+): Promise<string | null> {
+  try {
+    const logRoot = mode === 'failure' ? 'failure-logs' : 'case-logs'
+    const caseDir = join(getSessionResultDir(deviceId, session), logRoot, sanitizeCaseKeyForPath(caseKey))
+    mkdirSync(caseDir, { recursive: true })
+
+    const result = session.caseResults[caseKey]
+      || Object.values(session.caseResults).find(
+        r => formatCaseResultKey(r.testType, r.module, r.caseIndex) === caseKey,
+      )
+    if (result) {
+      const summary = [
+        `caseKey=${caseKey}`,
+        `status=${result.status}`,
+        `message=${result.message || ''}`,
+        `startTime=${result.startTime || ''}`,
+        `endTime=${result.endTime || ''}`,
+        '',
+        '--- steps ---',
+        ...(result.steps || []).map(
+          s => `[${s.timestamp || ''}] ${s.status || ''} ${s.stepDesc || ''}`,
+        ),
+      ].join('\n')
+      writeFileSync(join(caseDir, 'case_result.txt'), `${summary}\n`, 'utf-8')
+    }
+
+    // 内核稳定性：保留执行期本地产物（不依赖设备仍在线，也不再二次拉全机日志）
+    const parts = caseKey.split('/')
+    if (parts[0] === 'kernel_feature' && parts[2]) {
+      const caseId = String(parts[2])
+      const workspaceRoot = join(PYTHON_DIR, 'tools', 'stability_checker', 'workspace')
+      const evidenceSrc = join(workspaceRoot, 'evidence', caseId)
+      const evidenceDest = join(caseDir, 'stability-evidence')
+      try {
+        if (existsSync(evidenceSrc)) {
+          mkdirSync(evidenceDest, { recursive: true })
+          cpSync(evidenceSrc, evidenceDest, { recursive: true })
+        }
+      } catch (e) {
+        console.warn('[device-self-check] copy stability evidence failed:', e)
+      }
+
+      // case8 / case11 / case19_hung 等执行工作目录
+      for (const name of [`case${caseId}`, `case${caseId}_hung`]) {
+        const workSrc = join(workspaceRoot, name)
+        if (!existsSync(workSrc)) continue
+        const workDest = join(caseDir, 'stability-workdir', name)
+        try {
+          mkdirSync(join(caseDir, 'stability-workdir'), { recursive: true })
+          cpSync(workSrc, workDest, { recursive: true })
+        } catch (e) {
+          console.warn('[device-self-check] copy stability workdir failed:', name, e)
+        }
+      }
+    }
+
+    return caseDir
+  } catch (e) {
+    console.warn('[device-self-check] Failed to export case logs:', deviceId, caseKey, e)
+    return null
   }
 }
 
@@ -1157,32 +1229,7 @@ async function exportFailureLogsForCase(
   session: TestSession,
   caseKey: string,
 ): Promise<string | null> {
-  try {
-    const caseDir = join(getSessionResultDir(deviceId, session), 'failure-logs', sanitizeCaseKeyForPath(caseKey))
-    mkdirSync(caseDir, { recursive: true })
-
-    const logcat = await execAdbSimple(['-s', deviceId, 'shell', 'logcat', '-d', '-b', 'all', '-v', 'threadtime'])
-    if (logcat.trim()) {
-      writeFileSync(join(caseDir, 'logcat.txt'), logcat, 'utf-8')
-    }
-
-    const platform = await detectLogCollectionPlatform(deviceId)
-    if (platform === 'mtk') {
-      await adbPull(deviceId, '/data/debuglogger/mobilelog', join(caseDir, 'mobilelog'))
-      await adbPull(deviceId, '/data/debuglogger/netlog', join(caseDir, 'netlog'))
-      await adbPull(deviceId, '/data/TNE', join(caseDir, 'TNE'))
-    } else if (platform === 'sprd') {
-      await adbPull(deviceId, '/sdcard/ylog', join(caseDir, 'ylog'))
-      await adbPull(deviceId, '/data/ylog', join(caseDir, 'ylog-data'))
-      await adbPull(deviceId, '/sdcard/minidump', join(caseDir, 'minidump'))
-      await adbPull(deviceId, '/data/minidump', join(caseDir, 'minidump-data'))
-    }
-
-    return caseDir
-  } catch (e) {
-    console.warn('[device-self-check] Failed to export failure logs:', deviceId, caseKey, e)
-    return null
-  }
+  return exportCaseLogsForCase(deviceId, session, caseKey, 'failure')
 }
 
 // 获取 SIM 卡运营商
@@ -1409,6 +1456,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'power') return ['current_analysis']
   if (testType === 'power_feature') return ['wbs']
   if (testType === 'thermal') return ['scheme']
+  if (testType === 'kernel_feature') return ['stability', 'memory', 'sched']
   if (testType === 'pipeline_adapt') return ['tp', 'vibrator', 'audio', 'lcm', 'fingerprint', 'tdd']
   if (testType === 'ai_generated') return [AI_GENERATED_MODULE]
   return ['driver', 'tdd']
@@ -1488,6 +1536,10 @@ async function runCase(
   })
   result.fullAutomation = result.automationMode === 'full'
 
+  if (caseMeta?.automationMode === 'manual') {
+    return applyDeferredManualCatalogCase(result, deviceId, caseKey, caseInfoItems, startTime)
+  }
+
   if (shouldAwaitTddManualConfirm(session.prioritizeTddManual, testType, module, result.automationMode)) {
     const message = buildManualCaseConfirmMessage({
       caseName: result.caseName,
@@ -1506,6 +1558,9 @@ async function runCase(
   // 检查是否有对应的 .py 脚本
   const caseScript = join(PYTHON_DIR, 'cases', testType, module, `case${caseIndex}.py`)
   if (!existsSync(caseScript)) {
+    if (result.automationMode === 'manual') {
+      return applyDeferredManualCatalogCase(result, deviceId, caseKey, caseInfoItems, startTime)
+    }
     result.status = '待确认'
     result.message = '需人工测试'
     result.automationMode = 'manual'
@@ -1516,7 +1571,7 @@ async function runCase(
     ]
     emitEvent('case_completed', { deviceId, caseKey, result })
 
-    // 暂停等待人工确认
+    // 暂停等待人工确认（非 catalog manual 的无脚本用例）
     const decisionId = `pending_${caseKey}_${Date.now()}`
     const pendingPromise = new Promise<string>((res) => {
       pendingManualDecisions[decisionId] = {
@@ -1601,10 +1656,18 @@ async function runCase(
       : pythonResult.status === '部分pass' ? '部分通过'
       : pythonResult.status === 'fail' ? '失败'
       : pythonResult.status === 'pending' ? '待确认'
+      : pythonResult.status === 'na' ? 'NA'
       : pythonResult.status === 'skip' ? '跳过'
-      : '跳过'
+      : '失败'
     result.message = pythonResult.message || ''
-    if ((pythonResult.message || '').includes('需人工测试')) {
+    if (
+      result.status === '待确认'
+      && (result.message.includes('报告中补录') || result.message.includes('需人工测试'))
+    ) {
+      // 与 catalog 人工项一致：执行阶段不弹窗，报告里补录
+      result.automationMode = 'manual'
+      result.fullAutomation = false
+    } else if ((pythonResult.message || '').includes('需人工测试')) {
       result.automationMode = 'manual'
       result.fullAutomation = false
     } else if (
@@ -1618,12 +1681,13 @@ async function runCase(
       result.fullAutomation = result.automationMode === 'full' && pythonResult.fullAutomation !== false
     }
     result.steps.push({
-      stepDesc: `结果: ${result.message || result.status}`,
+      // 结论字段已含完整明细；子步骤只记一行摘要，避免把「预期 vs 实际」再贴一遍
+      stepDesc: `结果: ${result.status}${(result.message || '').includes('\n') ? ` — ${(result.message || '').split('\n')[0]}` : (result.message ? ` — ${result.message}` : '')}`,
       status: result.status,
       timestamp: new Date().toISOString()
     })
-    // 待确认的用例：暂停测试，等待前端人工决策
-    if (result.status === '待确认') {
+    // 待确认且非「报告补录」类：暂停测试，等待前端人工决策
+    if (result.status === '待确认' && !isPendingManualReportFillIn(result)) {
       const decisionId = `pending_${caseKey}_${Date.now()}`
       const pendingMessage = result.message || '需人工评判'
       const isSupportConfirm = /是否支持|请判断是否支持/.test(pendingMessage)
@@ -1645,9 +1709,9 @@ async function runCase(
             if (decision === 'skip') {
               applyUserSkipToResult(result)
             } else if (isSupportConfirm && decision !== 'pass') {
-              // 更新结果：支持确认选「不支持」记为跳过
-              result.status = '跳过'
-              result.message = '设备不支持，已跳过'
+              // 更新结果：支持确认选「不支持」记为 NA
+              result.status = 'NA'
+              result.message = '设备不支持（NA）'
             } else {
               result.status = decision === 'pass' ? '通过' : '失败'
               result.message = decision === 'pass' ? '人工确认通过' : '人工确认失败'
@@ -1687,6 +1751,9 @@ async function runCase(
   result.endTime = new Date().toISOString()
   if (result.status === '失败') {
     queueFailureLogExport(session, caseKey)
+    void exportCaseLogsSoon(deviceId, session, caseKey, 'failure')
+  } else if (result.status === '通过' || result.status === '部分通过') {
+    void exportCaseLogsSoon(deviceId, session, caseKey, 'execution')
   }
   emitEvent('case_completed', { deviceId, caseKey, result })
   return result
@@ -1769,6 +1836,9 @@ function buildDeviceInfo(
       settings.gmsTradefedPath,
       settings.gmsTradefedRoot,
     ),
+    ...(testType === 'kernel_feature' && settings.kernelFeatureCodeDir?.trim()
+      ? { code_dir: settings.kernelFeatureCodeDir.trim() }
+      : {}),
     module_init_done: Boolean(
       testType &&
       module &&
@@ -1928,6 +1998,8 @@ const THERM_TOOLS_DIR = join(PYTHON_DIR, 'tools', 'tpytest_dzppt_therm')
 const THERM_DEFAULT_RUNTIME_LOG = join(THERM_TOOLS_DIR, '.runtime', 'log')
 const POWER_EXEC_TIMEOUT_MS = 86_400_000 // 24h，功耗任务由飞书表驱动，长时间运行
 const POWER_FEATURE_EXEC_TIMEOUT_MS = 30 * 60_000 // 功耗特性自检（含 APK 安装）
+const KERNEL_FEATURE_EXEC_TIMEOUT_MS = 60 * 60_000 // 稳定性 checklist（case8 fulldump+开机等待+pull）
+const KERNEL_FEATURE_SPD_EXEC_TIMEOUT_MS = 10 * 60_000 // 内存/调度 SPD 分项（短时 adb 检查）
 const THERM_EXEC_TIMEOUT_MS = 86_400_000 // 24h，温升方案用例集较长
 
 function summarizePowerReportFromXlsx(): {
@@ -2220,6 +2292,14 @@ function resolveCaseExecTimeoutMs(testType: string, module: string): number {
   if (testType === 'power_feature' && module === 'wbs') {
     const raw = Number(process.env.TAHP_POWER_FEATURE_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : POWER_FEATURE_EXEC_TIMEOUT_MS
+  }
+  if (testType === 'kernel_feature' && module === 'stability') {
+    const raw = Number(process.env.TAHP_KERNEL_FEATURE_TIMEOUT_MS)
+    return Number.isFinite(raw) && raw > 0 ? raw : KERNEL_FEATURE_EXEC_TIMEOUT_MS
+  }
+  if (testType === 'kernel_feature' && (module === 'memory' || module === 'sched')) {
+    const raw = Number(process.env.TAHP_KERNEL_FEATURE_SPD_TIMEOUT_MS)
+    return Number.isFinite(raw) && raw > 0 ? raw : KERNEL_FEATURE_SPD_EXEC_TIMEOUT_MS
   }
   if ((testType === 'thermal' || testType === 'therm') && module === 'scheme') {
     const raw = Number(process.env.TAHP_THERMAL_TIMEOUT_MS || process.env.TAHP_THERM_TIMEOUT_MS)
@@ -2693,7 +2773,9 @@ async function runModule(
   for (let i = 0; i < totalCases; i++) {
     if (!session.isRunning) return
 
-    const caseIndex = cases[i]?.case_index || (i + 1)
+    // Prefer explicit case_index/caseIndex so catalog order can diverge from script numbers
+    // (e.g. kernel_feature: 解析expdb case11 runs after 黑屏定屏 case19).
+    const caseIndex = Number(cases[i]?.case_index ?? cases[i]?.caseIndex ?? (i + 1))
     session.moduleProgress[moduleKey].currentCaseIndex = caseIndex
 
     const caseKey = `${moduleKey}/${caseIndex}`
@@ -2717,9 +2799,13 @@ async function runModule(
     session.caseResults[caseKey] = result
     session.moduleProgress[moduleKey].completedCases = i + 1
 
-    if (result.status === '通过') {
+    if (result.status === '通过' || result.status === 'NA') {
       session.moduleProgress[moduleKey].passedCases++
-    } else if (result.status === '失败' || result.status === '部分通过' || result.status === '待确认') {
+    } else if (
+      result.status === '失败'
+      || result.status === '部分通过'
+      || (result.status === '待确认' && !isPendingManualReportFillIn(result))
+    ) {
       session.moduleProgress[moduleKey].failedCases++
       if (result.fullAutomation) {
         failedAutoCases.push(caseIndex)
@@ -2980,6 +3066,23 @@ async function runTcardBeforeTest(deviceId: string, session: TestSession): Promi
 export interface StartTestOptions {
   prioritizeTddManual?: boolean
   tcard?: StartTestTcardPayload
+  /** 仅跑所选模块；须为该 testType 合法子集，缺省/空则跑全部 */
+  modules?: string[]
+}
+
+/** 解析标准测试启动时的模块列表（保持 getModulesForTestType 顺序） */
+export function resolveStartModules(
+  testType: StandardTestType,
+  requested?: string[] | null,
+): string[] {
+  const all = getModulesForTestType(testType)
+  if (!requested || requested.length === 0) return all
+  const wanted = new Set(requested)
+  const selected = all.filter(m => wanted.has(m))
+  if (selected.length === 0) {
+    throw new Error('请至少选择一个有效的测试模块')
+  }
+  return selected
 }
 
 function bindCustomAuxDevices(auxIds: string[], dutId: string, session: TestSession): void {
@@ -3055,8 +3158,8 @@ export async function startTest(
     device.testStartTime = new Date().toISOString()
     emitEvent('device_updated', { device })
 
-    // 创建测试会话
-    const modules = getModulesForTestType(testType)
+    // 创建测试会话（可按 UI 勾选过滤模块）
+    const modules = resolveStartModules(testType, options?.modules)
 
     const session: TestSession = {
       deviceId,
@@ -3087,8 +3190,6 @@ export async function startTest(
     // 初始化：设置亮屏时间为30分钟
     execAdbSimple(['-s', deviceId, 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000'])
       .catch(() => {})
-    void startDeviceFailureLogCapture(deviceId)
-
     // 异步执行测试流程
     runTestFlow(deviceId, testType, session).catch(e => {
       markTestFlowError(deviceId, e, testType)
@@ -3179,8 +3280,6 @@ export async function startCustomTest(
 
     execAdbSimple(['-s', deviceId, 'shell', 'settings', 'put', 'system', 'screen_off_timeout', '1800000'])
       .catch(() => {})
-    void startDeviceFailureLogCapture(deviceId)
-
     runCustomTestFlow(deviceId, session, executionCaseList).catch(e => {
       markTestFlowError(deviceId, e, 'custom')
     })
@@ -3331,7 +3430,7 @@ function markCasesFailedOnUserAbort(deviceId: string, session: TestSession): voi
       if (`${result.testType}/${result.module}` !== moduleKey) continue
       if (!TERMINAL_CASE_STATUSES.has(result.status) && result.status !== '待确认') continue
       completed++
-      if (result.status === '通过') passed++
+      if (result.status === '通过' || result.status === 'NA') passed++
       else if (result.status === '失败' || result.status === '部分通过' || result.status === '待确认') failed++
     }
     prog.passedCases = passed
@@ -3641,7 +3740,7 @@ async function runCustomTestFlow(
     session.caseResults[caseKey] = result
     session.moduleProgress[moduleKey].completedCases++
 
-    if (result.status === '通过') {
+    if (result.status === '通过' || result.status === 'NA') {
       session.moduleProgress[moduleKey].passedCases++
     } else if (result.status === '失败') {
       session.moduleProgress[moduleKey].failedCases++
@@ -3991,9 +4090,14 @@ async function generateTestReport(
       status: reportStatus,
       modules: session.moduleProgress,
       totalCases: orderedResults.length,
-      passedCases: orderedResults.filter(r => r.status === '通过').length,
-      failedCases: orderedResults.filter(r => r.status === '失败').length,
-      skippedCases: orderedResults.filter(r => r.status === '跳过' || r.status === 'NA').length,
+      passedCases: orderedResults.filter(r => r.status === '通过' || r.status === 'NA').length,
+      failedCases: orderedResults.filter(
+        r => r.status === '失败'
+          || r.status === '部分通过'
+          || (r.status === '待确认' && !isPendingManualReportFillIn(r)),
+      ).length,
+      skippedCases: orderedResults.filter(r => r.status === '跳过').length,
+      pendingManualCases: orderedResults.filter(r => isPendingManualReportFillIn(r)).length,
       project_code: projectCtx.project_code,
       ...(projectCtx.campaign_id ? { campaign_id: projectCtx.campaign_id } : {}),
       ...(projectCtx.brand ? { brand: projectCtx.brand } : {}),
@@ -4013,6 +4117,7 @@ async function generateTestReport(
     const failedCaseItems: SelfCheckFailedCaseItem[] = []
 
     for (const c of orderedResults) {
+      if (isPendingManualReportFillIn(c)) continue
       if (c.status !== '失败' && c.status !== '部分通过' && c.status !== '待确认') continue
       const caseKey = formatCaseResultKey(c.testType, c.module, c.caseIndex)
       failedCaseItems.push({
@@ -4256,7 +4361,7 @@ export async function retestCase(
 
   // 更新模块进度
   if (session.moduleProgress[moduleKey]) {
-    if (result.status === '通过') {
+    if (result.status === '通过' || result.status === 'NA') {
       session.moduleProgress[moduleKey].passedCases++
     } else if (result.status === '失败') {
       session.moduleProgress[moduleKey].failedCases++
@@ -4322,7 +4427,7 @@ function buildSessionFromReport(
     const prog = moduleProgress[moduleKey]
     prog.totalCases++
     prog.completedCases++
-    if (result.status === '通过') prog.passedCases++
+    if (result.status === '通过' || result.status === 'NA') prog.passedCases++
     if (result.status === '失败' || result.status === '部分通过') prog.failedCases++
   }
   return {
@@ -4511,8 +4616,8 @@ export function getTestSession(deviceId: string): TestSession | undefined {
   return testSessions[deviceId]
 }
 
-/** 打开设备会话中某用例的失败日志目录 */
-export function openDeviceCaseFailureLogs(deviceId: string, caseKey: string): string {
+/** 打开设备会话中某用例的日志目录（若不存在则按结果即时导出） */
+export async function openDeviceCaseFailureLogs(deviceId: string, caseKey: string): Promise<string> {
   const session = testSessions[deviceId]
   if (!session) {
     throw new Error('设备无测试会话')
@@ -4521,10 +4626,15 @@ export function openDeviceCaseFailureLogs(deviceId: string, caseKey: string): st
     || Object.values(session.caseResults).find(
       r => formatCaseResultKey(r.testType, r.module, r.caseIndex) === caseKey,
     )
-  const candidate = result?.failureLogDir
-    || join(getSessionResultDir(deviceId, session), 'failure-logs', sanitizeCaseKeyForPath(caseKey))
+  const safeKey = sanitizeCaseKeyForPath(caseKey)
+  const sessionDir = getSessionResultDir(deviceId, session)
+  let candidate = result?.failureLogDir
+    || join(sessionDir, 'case-logs', safeKey)
+  if (!result?.failureLogDir && !existsSync(candidate)) {
+    candidate = join(sessionDir, 'failure-logs', safeKey)
+  }
   const reportsRoot = resolve(tahpPaths.reportsDir, 'self-check')
-  const abs = resolve(candidate)
+  let abs = resolve(candidate)
   const rootPrefix = reportsRoot.endsWith(sep) ? reportsRoot : reportsRoot + sep
   if (
     abs.toLowerCase() !== reportsRoot.toLowerCase()
@@ -4533,7 +4643,21 @@ export function openDeviceCaseFailureLogs(deviceId: string, caseKey: string): st
     throw new Error('非法日志路径')
   }
   if (!existsSync(abs)) {
-    throw new Error('失败日志目录不存在')
+    const mode = result?.status === '失败' ? 'failure' : 'execution'
+    const exported = await exportCaseLogsForCase(deviceId, session, caseKey, mode)
+    if (exported) {
+      await attachExportedCaseLogDir(
+        deviceId,
+        session,
+        caseKey,
+        exported,
+        mode === 'failure' ? '失败日志已导出' : '执行日志已导出',
+      )
+      abs = resolve(exported)
+    }
+  }
+  if (!existsSync(abs)) {
+    throw new Error('日志目录不存在（用例可能尚未执行完成，或会话结果目录未创建）')
   }
   openLocalPath(abs)
   return abs
@@ -4556,6 +4680,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     power_feature: '功耗特性自检',
     thermal: '温升方案自检',
     therm: '温升方案自检',
+    kernel_feature: '内核特性自检',
     pipeline_adapt: '流水线适配自动化测试',
     ai_generated: 'AI用例',
   }
@@ -4572,6 +4697,9 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     current_analysis: 14,
     wbs: 15,
     scheme: 16,
+    stability: 17,
+    memory: 18,
+    sched: 19,
     tp: 30,
     vibrator: 31,
     audio: 32,
@@ -4609,7 +4737,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'thermal', 'pipeline_adapt', AI_GENERATED_TEST_TYPE]
+  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', AI_GENERATED_TEST_TYPE]
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),

@@ -24,6 +24,7 @@ export interface SelfCheckSummaryForUpload {
   passedCases: number
   failedCases: number
   skippedCases: number
+  pendingManualCases?: number
   aiSummary?: string
   aiPlanned?: boolean
   scheduleKey?: string
@@ -156,7 +157,9 @@ export function mapSelfCheckReportToQualityRun(input: {
   const passed = summary.passedCases ?? 0
   const failed = summary.failedCases ?? 0
   const skipped = summary.skippedCases ?? 0
-  const passRate = total > 0 ? Math.round((passed / total) * 1000) / 1000 : undefined
+  const pendingManual = summary.pendingManualCases ?? 0
+  const scored = Math.max(0, total - pendingManual)
+  const passRate = scored > 0 ? Math.round((passed / scored) * 1000) / 1000 : undefined
 
   const failedItems = detail?.failedCaseItems ?? []
   const issues = failedItems.map(item => ({

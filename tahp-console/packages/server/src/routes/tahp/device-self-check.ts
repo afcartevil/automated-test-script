@@ -118,15 +118,17 @@ tahpDeviceSelfCheckRoutes.post(
   async (ctx) => {
     try {
       const deviceId = ctx.params.deviceId
-      const { testType, flash, tcard, prioritizeTddManual } = ctx.request.body as {
-        testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated'
+      const { testType, flash, tcard, prioritizeTddManual, modules } = ctx.request.body as {
+        testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
         flash?: StartTestFlashPayload
         tcard?: StartTestTcardPayload
         prioritizeTddManual?: boolean
+        modules?: string[]
       }
       const result = await startTest(deviceId, testType, flash, {
         prioritizeTddManual: Boolean(prioritizeTddManual),
         tcard,
+        modules: Array.isArray(modules) ? modules.filter(m => typeof m === 'string' && m.trim()) : undefined,
       })
       ctx.body = {
         success: true,
@@ -396,7 +398,7 @@ tahpDeviceSelfCheckRoutes.post(
   async (ctx) => {
     try {
       const caseKey = decodeURIComponent(ctx.params.caseKey)
-      const dirPath = openDeviceCaseFailureLogs(ctx.params.deviceId, caseKey)
+      const dirPath = await openDeviceCaseFailureLogs(ctx.params.deviceId, caseKey)
       ctx.body = { success: true, data: { dirPath } }
     } catch (err: any) {
       const message = err?.message || 'Failed to open failure logs'

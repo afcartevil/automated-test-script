@@ -49,7 +49,7 @@ describe('crash-log', () => {
     expect(isExpectedExit(42, env)).toBe(true)
   })
 
-  it('recordUnexpectedExit writes crash.log and skips expected pid', () => {
+  it('recordUnexpectedExit writes crash.log, latest-crash.json, and skips expected pid', () => {
     const env = envFor()
     const paths = crashLogPaths(env)
     writeFileSync(paths.pinoLog, 'last pino line\n')
@@ -58,12 +58,17 @@ describe('crash-log', () => {
     writeLastExit({ pid: 9, kind: 'stop-requested' }, env)
     expect(recordUnexpectedExit(9, { type: 'watchdog-exit' }, env)).toBeNull()
 
-    const rec = recordUnexpectedExit(88, { type: 'watchdog-exit', detectedBy: 'test' }, env)
+    const rec = recordUnexpectedExit(88, { type: 'supervisor-exit', detectedBy: 'test', exitCode: 1, signal: null }, env)
     expect(rec?.pid).toBe(88)
+    expect(rec?.exitCode).toBe(1)
+    expect(rec?.host?.totalmemMb).toBeGreaterThan(0)
     expect(rec?.pinoTail).toContain('last pino line')
     const crash = readFileSync(paths.crashLog, 'utf8')
-    expect(crash).toContain('"type":"watchdog-exit"')
+    expect(crash).toContain('"type":"supervisor-exit"')
     expect(crash).toContain('"pid":88')
+    const latest = JSON.parse(readFileSync(paths.latestCrash, 'utf8'))
+    expect(latest.exitCode).toBe(1)
+    expect(latest.type).toBe('supervisor-exit')
     expect(alreadyLoggedFatal(88, env)).toBe(true)
     expect(recordUnexpectedExit(88, { type: 'watchdog-exit' }, env)).toBeNull()
   })

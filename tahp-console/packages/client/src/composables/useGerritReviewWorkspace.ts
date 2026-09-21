@@ -175,8 +175,25 @@ export function useGerritReviewWorkspace() {
 
   function scrollToBottom() {
     nextTick(() => {
-      const el = scrollRef.value?.$el?.querySelector('.n-scrollbar-container')
-      if (el) el.scrollTop = el.scrollHeight
+      const inst = scrollRef.value as
+        | { scrollTo?: (opts: { top: number; behavior?: ScrollBehavior }) => void; $el?: unknown }
+        | null
+      if (!inst) return
+      // Naive NScrollbar 优先走组件 API，避免依赖 $el 形态
+      if (typeof inst.scrollTo === 'function') {
+        try {
+          inst.scrollTo({ top: Number.MAX_SAFE_INTEGER })
+          return
+        } catch {
+          // fall through
+        }
+      }
+      const root = inst.$el
+      if (!(root instanceof Element)) return
+      const el = root.querySelector('.n-scrollbar-container')
+      if (el instanceof HTMLElement) {
+        el.scrollTop = el.scrollHeight
+      }
     })
   }
 

@@ -86,13 +86,43 @@ const selectedDevice = ref<DeviceDetail | null>(null)
 const moduleConditions = ref<Record<string, ModuleCondition>>({})
 
 // 测试类型选择
-const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated'>('week')
+const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'>('week')
+/** 空闲设备开始测试前勾选的模块（多模块大类可筛；默认全选） */
+const selectedStartModules = ref<Set<string>>(new Set())
 /** 空闲设备开始测试前的角色意向（仅 UI，选中设备时默认测试机；点击开始测试时才落盘） */
 const startTestIntentRole = ref<DeviceRole>('测试机')
 
 function setStartTestIntentRole(role: DeviceRole) {
   startTestIntentRole.value = role
 }
+
+function listModulesForTestType(testType: string): string[] {
+  const mods = new Set<string>()
+  for (const config of Object.values(moduleConditions.value)) {
+    if (config.customOnly) continue
+    if (config.testType === testType) mods.add(config.module)
+  }
+  return Array.from(mods).sort((a, b) => (MODULE_ORDER[a] ?? 50) - (MODULE_ORDER[b] ?? 50))
+}
+
+function syncSelectedStartModules(testType: string = selectedTestType.value) {
+  selectedStartModules.value = new Set(listModulesForTestType(testType))
+}
+
+function toggleStartModule(module: string) {
+  if (selectedStartModules.value.has(module)) {
+    selectedStartModules.value.delete(module)
+  } else {
+    selectedStartModules.value.add(module)
+  }
+  selectedStartModules.value = new Set(selectedStartModules.value)
+}
+
+function isStartModuleSelected(module: string): boolean {
+  return selectedStartModules.value.has(module)
+}
+
+const canSelectStartModules = computed(() => listModulesForTestType(selectedTestType.value).length > 1)
 
 // 刷机相关选项（device_update，工具位于 self-check/flash_tool/）
 const enableFlash = ref(false)
@@ -317,6 +347,7 @@ const catalogTypeSettings = ref({
   autoRetestCount: 1,
   monkeyDuration: '7d',
   smokeUsdSkipSpdInfo: false,
+  kernelFeatureCodeDir: '',
   gmsTradefedPath: {
     cts: '',
     gts: '',
@@ -648,6 +679,42 @@ async function loadGmsTradefedSettings() {
   }
 }
 
+async function loadKernelFeatureSettings() {
+  try {
+    const settingsData = await getSettings()
+    catalogTypeSettings.value.kernelFeatureCodeDir = settingsData.kernelFeatureCodeDir || ''
+  } catch (e: any) {
+    console.error('[DeviceSelfCheck] Failed to load kernel feature settings:', e)
+  }
+}
+
+async function saveKernelFeatureCodeDir(showToast = false) {
+  catalogSettingsSaving.value = true
+  try {
+    const current = await getSettings()
+    const autoRetestEnabled = { ...(current.autoRetestEnabled || {}) }
+    const autoRetestCount = { ...(current.autoRetestCount || {}) }
+    delete autoRetestEnabled.kernel_feature
+    delete autoRetestCount.kernel_feature
+    await updateSettings({
+      ...current,
+      autoRetestEnabled,
+      autoRetestCount,
+      kernelFeatureCodeDir: catalogTypeSettings.value.kernelFeatureCodeDir?.trim() || '',
+    })
+    if (showToast) {
+      message.success('内核源码路径已保存')
+    }
+  } catch (e: any) {
+    const text = e?.message || '保存内核源码路径失败'
+    error.value = text
+    message.error(text)
+    throw e
+  } finally {
+    catalogSettingsSaving.value = false
+  }
+}
+
 async function saveGmsTradefedSettings(showToast = false) {
   catalogSettingsSaving.value = true
   try {
@@ -755,14 +822,15 @@ async function openCaseCatalog(testType: string) {
       [...new Set(detail.map(item => `${testType}/${item.module}`))]
     )
     catalogTypeSettings.value = {
-      autoRetestEnabled: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'ai_generated'
+      autoRetestEnabled: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated'
         ? false
         : (settingsData.autoRetestEnabled?.[testType] ?? true),
-      autoRetestCount: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'ai_generated'
+      autoRetestCount: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated'
         ? 0
         : (settingsData.autoRetestCount?.[testType] ?? 1),
       monkeyDuration: settingsData.monkeyDuration || '7d',
       smokeUsdSkipSpdInfo: Boolean(settingsData.smokeUsdSkipSpdInfo),
+      kernelFeatureCodeDir: settingsData.kernelFeatureCodeDir || '',
       gmsTradefedPath: {
         cts: settingsData.gmsTradefedPath?.cts || '',
         gts: settingsData.gmsTradefedPath?.gts || '',
@@ -976,6 +1044,11 @@ async function saveCatalogTypeSettings() {
 
     if (testType === 'gms') {
       await saveGmsTradefedSettings(false)
+      return
+    }
+
+    if (testType === 'kernel_feature') {
+      await saveKernelFeatureCodeDir(false)
       return
     }
 
@@ -1416,6 +1489,9 @@ async function handleStartTest(deviceId: string) {
         return
       }
     }
+    if (selectedTestType.value === 'kernel_feature') {
+      await saveKernelFeatureCodeDir(false)
+    }
     const intent = startTestIntentRole.value
     const current = devices.value.find(d => d.deviceId === deviceId)
     if (current && current.role !== intent) {
@@ -1425,6 +1501,12 @@ async function handleStartTest(deviceId: string) {
       if (selectedDeviceId.value === deviceId && selectedDevice.value) {
         selectedDevice.value = { ...selectedDevice.value, device: updated }
       }
+    }
+    const availableModules = listModulesForTestType(selectedTestType.value)
+    const modulesToRun = availableModules.filter(m => selectedStartModules.value.has(m))
+    if (availableModules.length > 1 && modulesToRun.length === 0) {
+      error.value = '请至少勾选一个测试模块'
+      return
     }
     clearFlashPanel()
     const flash = enableFlash.value
@@ -1458,6 +1540,7 @@ async function handleStartTest(deviceId: string) {
       undefined,
       prioritizeTddManual.value,
       tcard,
+      availableModules.length > 1 ? modulesToRun : undefined,
     )
     if (result) {
       selectedDevice.value = result
@@ -2107,8 +2190,12 @@ const selectedCaseResult = computed((): CaseResult | undefined => {
 })
 
 watch(selectedTestType, (testType) => {
+  syncSelectedStartModules(testType)
   if (testType === 'gms') {
     void loadGmsTradefedSettings()
+  }
+  if (testType === 'kernel_feature') {
+    void loadKernelFeatureSettings()
   }
 })
 
@@ -2121,11 +2208,15 @@ onMounted(async () => {
     loadOverviewReports(),
   ])
   loadCaseCatalogs({ silent: true })
-  await loadGmsTradefedSettings()
+  await Promise.all([
+    loadGmsTradefedSettings(),
+    loadKernelFeatureSettings(),
+  ])
   try {
     moduleConditions.value = await getModuleConditions()
     // 默认展开所有模块
     expandedModules.value = new Set(Object.keys(moduleConditions.value).map(k => moduleConditions.value[k].module))
+    syncSelectedStartModules()
   } catch (e) {
     console.error('[DeviceSelfCheck] Failed to load module conditions:', e)
   }
@@ -2262,6 +2353,10 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     selectedDevice,
     moduleConditions,
     selectedTestType,
+    selectedStartModules,
+    canSelectStartModules,
+    toggleStartModule,
+    isStartModuleSelected,
     startTestIntentRole,
     setStartTestIntentRole,
     enableFlash,
@@ -2378,6 +2473,8 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     aiNlCaseProgressStatus,
     clearAiNlProgress,
     saveCatalogTypeSettings,
+    saveKernelFeatureCodeDir,
+    loadKernelFeatureSettings,
     saveGmsTradefedSettings,
     saveGmsTradefedSettingsFromDialog,
     openGmsTradefedDialog,

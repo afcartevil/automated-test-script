@@ -23,7 +23,7 @@ import {
 } from '../scripts/lib/crash-log.mjs'
 import { resolve, dirname, join, delimiter } from 'path'
 import { fileURLToPath } from 'url'
-import { readFileSync, writeFileSync, unlinkSync, mkdirSync, openSync, chmodSync, statSync, existsSync, realpathSync } from 'fs'
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync, chmodSync, statSync, existsSync, realpathSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { createServer } from 'net'
 import { homedir } from 'os'
@@ -203,7 +203,6 @@ async function startDaemon(port) {
     }
   } catch {}
 
-  const logStream = openSync(LOG_FILE, 'a')
   const serverEnv = {
     ...process.env,
     NODE_ENV: 'production',
@@ -224,10 +223,24 @@ async function startDaemon(port) {
     serverEnv.ComSpec = serverEnv.ComSpec?.trim() || shell
   }
 
-  const child = spawn(process.execPath, [serverEntry], {
+  const supervisor = resolve(__dirname, '..', 'scripts', 'lib', 'bff-supervisor.mjs')
+  if (!existsSync(supervisor) || !existsSync(serverEntry)) {
+    console.error(`  ✗ 缺少启动入口: supervisor=${existsSync(supervisor)} server=${existsSync(serverEntry)}`)
+    process.exit(1)
+  }
+
+  // 经 supervisor 拉起 BFF，以便捕获 exitCode/signal；server.pid 写的是子进程 PID
+  const child = spawn(process.execPath, [supervisor], {
     detached: true,
-    stdio: ['ignore', logStream, logStream],
-    env: serverEnv,
+    stdio: 'ignore',
+    env: {
+      ...serverEnv,
+      TAHP_BFF_SERVER_ENTRY: serverEntry,
+      TAHP_BFF_LOG_FILE: LOG_FILE,
+      TAHP_BFF_PID_FILE: PID_FILE,
+      TAHP_CONSOLE_HOME: CONSOLE_HOME,
+      HERMES_WEB_UI_HOME: CONSOLE_HOME,
+    },
     windowsHide: true,
   })
   child.on('error', (err) => {
@@ -236,23 +249,41 @@ async function startDaemon(port) {
     process.exit(1)
   })
   child.unref()
-  writePid(child.pid)
-  spawnBffWatchdog(child.pid)
 
   const healthUrl = `http://127.0.0.1:${port}/health`
   const maxWait = 30000
   const interval = 500
   let waited = 0
-  console.log(`  ⏳ 正在启动 ${CLI_NAME} (PID: ${child.pid}, 端口: ${port})...`)
+  console.log(`  ⏳ 正在启动 ${CLI_NAME} (端口: ${port}, 经 supervisor)...`)
+
+  function readServerPid() {
+    try {
+      const pid = parseInt(readFileSync(PID_FILE, 'utf-8').trim(), 10)
+      return Number.isFinite(pid) ? pid : null
+    } catch {
+      return null
+    }
+  }
 
   function poll() {
     waited += interval
-    if (!isRunning(child.pid)) {
+    const pid = readServerPid()
+    if (pid && !isRunning(pid) && waited > 2000) {
       console.log(`  ✗ ${CLI_NAME} 启动失败`)
       console.log(`    日志: ${LOG_FILE}`)
       console.log(`    崩溃记录: ${join(CONSOLE_HOME, 'logs', 'crash.log')}`)
+      console.log(`    摘要: ${join(CONSOLE_HOME, 'logs', 'latest-crash.json')}`)
       removePid()
       process.exit(1)
+      return
+    }
+    if (!pid) {
+      if (waited < maxWait) setTimeout(poll, interval)
+      else {
+        console.log(`  ✗ ${CLI_NAME} 启动超时（未写入 PID）`)
+        console.log(`    日志: ${LOG_FILE}`)
+        process.exit(1)
+      }
       return
     }
     fetch(healthUrl).then(res => {
@@ -261,9 +292,11 @@ async function startDaemon(port) {
           ? `http://localhost:${port}/#/?token=${token}`
           : `http://localhost:${port}/#/tahp/dashboard`
         console.log(`  ✓ ${CLI_NAME} 已启动`)
+        console.log(`    PID: ${pid}`)
         console.log(`    ${url}`)
         console.log(`    日志: ${LOG_FILE}`)
         console.log(`    崩溃记录: ${join(CONSOLE_HOME, 'logs', 'crash.log')}`)
+        console.log(`    崩溃摘要: ${join(CONSOLE_HOME, 'logs', 'latest-crash.json')}`)
         if (authDisabledDefault) {
           console.log(`    鉴权: 已关闭 (内网模式，需开启请设 AUTH_DISABLED=0)`)
         }
@@ -290,18 +323,6 @@ async function startDaemon(port) {
     })
   }
   setTimeout(poll, interval)
-}
-
-function spawnBffWatchdog(pid) {
-  const watchdog = resolve(__dirname, '..', 'scripts', 'lib', 'bff-watchdog.mjs')
-  if (!existsSync(watchdog) || !pid) return
-  const child = spawn(process.execPath, [watchdog, String(pid)], {
-    detached: true,
-    stdio: 'ignore',
-    env: { ...process.env, TAHP_CONSOLE_HOME: CONSOLE_HOME, HERMES_WEB_UI_HOME: CONSOLE_HOME },
-    windowsHide: true,
-  })
-  child.unref()
 }
 
 /** Windows 上 process.kill 只杀单进程；BFF 派生的 python/adb 等子进程须整棵树清理，避免孤儿残留 */
@@ -366,6 +387,7 @@ function showStatus() {
     console.log(`    PID 文件: ${PID_FILE}`)
     console.log(`    日志: ${LOG_FILE}`)
     console.log(`    崩溃记录: ${join(CONSOLE_HOME, 'logs', 'crash.log')}`)
+    console.log(`    崩溃摘要: ${join(CONSOLE_HOME, 'logs', 'latest-crash.json')}`)
   } else {
     if (pid) removePid()
     console.log(`  ✗ ${CLI_NAME} 未运行`)

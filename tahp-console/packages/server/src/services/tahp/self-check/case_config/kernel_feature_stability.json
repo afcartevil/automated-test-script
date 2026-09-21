@@ -1,0 +1,36 @@
+{
+  "testType": "kernel_feature",
+  "module": "stability",
+  "moduleLabel": "稳定性",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    { "caseIndex": 1, "caseName": "log配置", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 2, "caseName": "三键uart和console功能配置", "canReuse": false, "automationMode": "manual" },
+    { "caseIndex": 3, "caseName": "检查Kernel panic前串口打印", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 4, "caseName": "长按power key软重启", "canReuse": false, "automationMode": "manual" },
+    { "caseIndex": 5, "caseName": "检查user版本默认uart是否关闭", "canReuse": false, "automationMode": "manual" },
+    { "caseIndex": 6, "caseName": "下载模式DA返回清除异常状态", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 7, "caseName": "双键触发hang", "canReuse": false, "automationMode": "manual" },
+    { "caseIndex": 8, "caseName": "db文件检查", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 9, "caseName": "root版本开机完成停止串口log", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 10, "caseName": "关闭RT_RUNTIME_SHARE", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 12, "caseName": "SODI移除检查", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 13, "caseName": "不开机log_store[TDFS]检查", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 14, "caseName": "关闭mrdump_key功能", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 15, "caseName": "mt6789平台晶振patch检查", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 16, "caseName": "OCP埋点", "canReuse": false, "automationMode": "manual" },
+    { "caseIndex": 17, "caseName": "器件稳定性埋点", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 18, "caseName": "fec2.0方案", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 19, "caseName": "黑屏定屏类故障检测", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 11, "caseName": "解析expdb", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 20, "caseName": "重启检查", "canReuse": false, "automationMode": "manual" },
+    { "caseIndex": 21, "caseName": "cpu中sram bitflip导致的黑屏问题", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 22, "caseName": "kernel-5.10 s2idle hwt patch检查", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 23, "caseName": "MTK平台检查pl/lk的boot_reason枚举定义顺序保持一致", "canReuse": false, "automationMode": "full" }
+  ]
+}

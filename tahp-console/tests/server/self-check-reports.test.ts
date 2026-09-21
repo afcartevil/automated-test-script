@@ -9,6 +9,9 @@ import {
   listSelfCheckReports,
   openSelfCheckReportXlsx,
   submitSelfCheckReportReview,
+  isPendingManualReportFillIn,
+  PENDING_MANUAL_REPORT_MSG,
+  updateReportCaseResult,
 } from '../../packages/server/src/services/tahp/self-check-reports'
 
 describe('self-check-reports', () => {
@@ -127,5 +130,57 @@ describe('self-check-reports', () => {
     const rel = 'self-check/dev-1/2026-06-25T10-00-00'
     const reportId = encodeReportId(rel)
     expect(() => openSelfCheckReportXlsx(reportId)).toThrow('报告文件不存在')
+  })
+
+  it('excludes deferred manual fill-in from failed counts until reviewed', async () => {
+    const rel = 'self-check/dev-1/2026-06-25T10-00-00'
+    const reportId = encodeReportId(rel)
+    const reportDir = join(tempDir, 'reports', rel)
+    const summary = {
+      deviceId: 'dev-1',
+      deviceName: 'Test Phone',
+      testType: 'kernel_feature',
+      status: '完成(通过)',
+      totalCases: 2,
+      passedCases: 1,
+      failedCases: 0,
+      skippedCases: 0,
+      pendingManualCases: 1,
+    }
+    const allCaseItems = [
+      {
+        caseKey: 'kernel_feature/stability/1',
+        caseName: 'log配置',
+        module: 'stability',
+        testType: 'kernel_feature',
+        caseIndex: 1,
+        status: '通过',
+        message: 'ok',
+        automationMode: 'full' as const,
+      },
+      {
+        caseKey: 'kernel_feature/stability/2',
+        caseName: '三键uart',
+        module: 'stability',
+        testType: 'kernel_feature',
+        caseIndex: 2,
+        status: '待确认',
+        message: PENDING_MANUAL_REPORT_MSG,
+        automationMode: 'manual' as const,
+      },
+    ]
+    expect(isPendingManualReportFillIn(allCaseItems[1]!)).toBe(true)
+    writeFileSync(join(reportDir, 'summary.json'), JSON.stringify(summary))
+    writeFileSync(
+      join(reportDir, 'detail.json'),
+      JSON.stringify(buildSelfCheckDetailPayload(summary, [], allCaseItems)),
+    )
+
+    let detail = await getSelfCheckReportDetail(reportId)
+    expect(detail?.failedCaseItems).toHaveLength(0)
+
+    detail = await updateReportCaseResult(reportId, 'kernel_feature/stability/2', '通过', '人工补录通过')
+    expect(detail?.failedCases).toBe(0)
+    expect(detail?.allCaseItems?.find(c => c.caseKey === 'kernel_feature/stability/2')?.status).toBe('通过')
   })
 })

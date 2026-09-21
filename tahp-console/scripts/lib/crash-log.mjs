@@ -13,8 +13,9 @@ import {
   closeSync,
   existsSync,
 } from 'fs'
-import { homedir } from 'os'
+import { homedir, freemem, totalmem } from 'os'
 import { join, resolve } from 'path'
+import { spawnSync } from 'child_process'
 
 const MAX_CRASH_LOG = 1024 * 1024
 const TAIL_BYTES = 8 * 1024
@@ -36,6 +37,7 @@ export function crashLogPaths(env = process.env) {
     home,
     logsDir,
     crashLog: join(logsDir, 'crash.log'),
+    latestCrash: join(logsDir, 'latest-crash.json'),
     lastExit: join(logsDir, 'last-exit.json'),
     heartbeat: join(logsDir, 'bff-heartbeat.json'),
     stdoutLog: join(home, 'server.log'),
@@ -153,6 +155,110 @@ export function appendCrashRecord(record, env = process.env) {
   return line
 }
 
+export function collectHostDiagnostics() {
+  const host = {
+    freemem: freemem(),
+    totalmem: totalmem(),
+    freememMb: Math.round(freemem() / 1024 / 1024),
+    totalmemMb: Math.round(totalmem() / 1024 / 1024),
+  }
+  if (process.env.VITEST || process.env.TAHP_CRASH_SKIP_HOST === '1') {
+    host.skipped = 'light'
+    return host
+  }
+  try {
+    if (process.platform === 'win32') {
+      const r = spawnSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          "(Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Used -ne $null } | Select-Object Name,@{n='FreeGB';e={[math]::Round($_.Free/1GB,2)},@{n='UsedGB';e={[math]::Round($_.Used/1GB,2)}} | ConvertTo-Json -Compress)",
+        ],
+        { encoding: 'utf8', timeout: 4_000, windowsHide: true },
+      )
+      if (r.status === 0 && r.stdout?.trim()) {
+        try {
+          host.disks = JSON.parse(r.stdout.trim())
+        } catch {
+          host.disksRaw = r.stdout.trim().slice(0, 1000)
+        }
+      } else if (r.error) {
+        host.diskError = r.error.message
+      }
+    } else {
+      const r = spawnSync('df', ['-k', '.'], { encoding: 'utf8', timeout: 3_000 })
+      if (r.status === 0) host.df = (r.stdout || '').trim().split(/\r?\n/).slice(0, 4)
+    }
+  } catch (err) {
+    host.diskError = err instanceof Error ? err.message : String(err)
+  }
+  return host
+}
+
+/** Windows Application 日志中与 node 相关的近期条目（尽力而为，超时则跳过） */
+export function collectWindowsAppErrors(lookbackMinutes = 20) {
+  if (process.platform !== 'win32') return null
+  if (process.env.VITEST || process.env.TAHP_CRASH_SKIP_HOST === '1') {
+    return { skipped: 'light' }
+  }
+  try {
+    const minutes = Math.max(5, Math.min(120, Number(lookbackMinutes) || 20))
+    const script = [
+      `$start=(Get-Date).AddMinutes(-${minutes})`,
+      `$ev=@()`,
+      `try {`,
+      `  $ev=@(Get-WinEvent -FilterHashtable @{LogName='Application';StartTime=$start} -MaxEvents 40 -ErrorAction SilentlyContinue |`,
+      `    Where-Object { $_.ProviderName -match 'Application Error|Windows Error Reporting|Application Hang' -or $_.Message -match 'node\\.exe|tahp-console' } |`,
+      `    Select-Object -First 8 @{n='time';e={$_.TimeCreated.ToString('o')}},Id,ProviderName,@{n='message';e={($_.Message -replace '\\s+',' ').Substring(0,[Math]::Min(400,($_.Message -replace '\\s+',' ').Length))}})`,
+      `} catch {}`,
+      `($ev | ConvertTo-Json -Compress)`,
+    ].join('; ')
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      timeout: 5_000,
+      windowsHide: true,
+    })
+    if (r.error) return { error: r.error.message }
+    if (r.status !== 0) {
+      return { error: (r.stderr || r.stdout || 'powershell failed').toString().slice(0, 500) }
+    }
+    const raw = (r.stdout || '').trim()
+    if (!raw) return []
+    try {
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed : [parsed]
+    } catch {
+      return { raw: raw.slice(0, 1000) }
+    }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export function writeLatestCrashSummary(record, env = process.env) {
+  const paths = crashLogPaths(env)
+  mkdirSync(paths.logsDir, { recursive: true })
+  const summary = {
+    ts: record.ts || new Date().toISOString(),
+    pid: record.pid,
+    type: record.type,
+    detectedBy: record.detectedBy,
+    exitCode: record.exitCode ?? null,
+    signal: record.signal ?? null,
+    note: record.note,
+    heartbeat: record.heartbeat,
+    host: record.host,
+    winEvents: record.winEvents,
+    lastExit: record.lastExit,
+    crashLog: paths.crashLog,
+    serverLog: paths.stdoutLog,
+  }
+  writeFileSync(paths.latestCrash, `${JSON.stringify(summary, null, 2)}\n`, 'utf8')
+  return summary
+}
+
 export function collectExitDiagnostics(pid, extra = {}, env = process.env) {
   const paths = crashLogPaths(env)
   return {
@@ -162,6 +268,8 @@ export function collectExitDiagnostics(pid, extra = {}, env = process.env) {
     node: process.version,
     lastExit: readLastExit(env),
     heartbeat: readJsonFile(paths.heartbeat),
+    host: collectHostDiagnostics(),
+    winEvents: collectWindowsAppErrors(20),
     pinoTail: tailFile(paths.pinoLog),
     stdoutTail: tailFile(paths.stdoutLog),
     ...extra,
@@ -175,6 +283,9 @@ export function recordUnexpectedExit(pid, extra = {}, env = process.env) {
     record.note = '进程已消失，但没有 graceful/stop-requested 标记。常见原因：原生崩溃、OOM、taskkill /F、或未捕获的 native addon 异常。JS uncaughtException 不会走到。'
   }
   appendCrashRecord(record, env)
+  try {
+    writeLatestCrashSummary(record, env)
+  } catch { /* ignore */ }
   writeLastExit({ pid, kind: 'fatal', ts: record.ts, note: record.type }, env)
   return record
 }

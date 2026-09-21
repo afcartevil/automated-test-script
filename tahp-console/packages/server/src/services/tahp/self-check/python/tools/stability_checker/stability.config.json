@@ -1,0 +1,17 @@
+{
+  "_comment": "内核特性/稳定性 checklist。Dispatcher/aee_extract/tne_parser/tdsm/tran_pdfs 默认用本目录内置工具。code_dir 为 Android 源码根，可用 TAHP_STABILITY_CODE_DIR 覆盖。case10 配置供「黑屏定屏类故障检测」(现 case19) 使用。",
+  "paths": {
+    "code_dir": "",
+    "work_dir": "workspace"
+  },
+  "product_name": "",
+  "tdsm_sequence": "no1",
+  "case2_reboot": false,
+  "adb_after_root_sec": 5,
+  "case10": {
+    "tne_focus_dir_prefix": "0xffffff35",
+    "tne_remote_dir": "/data/TNE",
+    "tne_appear_timeout_sec": 180,
+    "tne_poll_sec": 15
+  }
+}

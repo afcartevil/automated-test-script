@@ -27,7 +27,7 @@ export interface DeviceInfo {
   deviceName: string
   role: DeviceRole
   status: DeviceStatus
-  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated'
+  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
   currentModule?: string
   simCards: SimCardInfo[]
   testStartTime?: string
@@ -95,7 +95,7 @@ export interface ModuleProgress {
 
 export interface TestSession {
   deviceId: string
-  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated'
+  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
   modules: string[]
   currentModuleIndex: number
   moduleProgress: Record<string, ModuleProgress>
@@ -198,15 +198,16 @@ export interface StartTestTcardPayload {
 
 export async function startTest(
   deviceId: string,
-  testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'pipeline_adapt' | 'ai_generated',
+  testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated',
   flash?: StartTestFlashPayload,
   scheduleKey?: string,
   prioritizeTddManual?: boolean,
   tcard?: StartTestTcardPayload,
+  modules?: string[],
 ): Promise<DeviceDetail> {
   return await tahpPost<DeviceDetail>(
     `/api/tahp/device-self-check/devices/${deviceId}/test/start`,
-    { testType, flash, scheduleKey, prioritizeTddManual, tcard },
+    { testType, flash, scheduleKey, prioritizeTddManual, tcard, modules },
   )
 }
 
@@ -491,6 +492,8 @@ export interface AutoTestSettings {
   monkeyDuration?: string
   smokeUsdSkipSpdInfo?: boolean
   gmsTradefedPath?: Record<string, string>
+  /** 内核特性/稳定性：Android 源码根（用例 7/11-14） */
+  kernelFeatureCodeDir?: string
 }
 
 export async function getSettings(): Promise<AutoTestSettings> {
@@ -503,6 +506,7 @@ export async function getSettings(): Promise<AutoTestSettings> {
     monkeyDuration: data?.monkeyDuration || '7d',
     smokeUsdSkipSpdInfo: Boolean(data?.smokeUsdSkipSpdInfo),
     gmsTradefedPath: data?.gmsTradefedPath || {},
+    kernelFeatureCodeDir: String(data?.kernelFeatureCodeDir || '').trim(),
   }
 }
 
@@ -563,6 +567,7 @@ export interface SelfCheckTestConfig {
   monkeyDuration?: string
   smokeUsdSkipSpdInfo?: boolean
   gmsTradefedPath?: Record<string, string>
+  kernelFeatureCodeDir?: string
   autoRetestEnabled?: boolean
   autoRetestCount?: number
   flashBeforeTest?: SelfCheckFlashBeforeTestConfig
@@ -585,6 +590,8 @@ export interface SelfCheckReportSummary {
   passedCases: number
   failedCases: number
   skippedCases: number
+  /** 人工待报告补录；通过率分母不含此类 */
+  pendingManualCases?: number
   reviewStatus: SelfCheckReviewStatus
   completedAt: string
   reportPath: string

@@ -27,6 +27,17 @@ describe('device self-check testConfig snapshot', () => {
     })
   })
 
+  it('captures kernel feature code_dir', () => {
+    updateSettings({
+      autoTestEnabled: {},
+      autoTestPath: {},
+      kernelFeatureCodeDir: 'Z:\\alps',
+    })
+    const cfg = __testingSnapshotTestConfig('kernel_feature', {})
+    expect(cfg.kernelFeatureCodeDir).toBe('Z:\\alps')
+    expect(formatSelfCheckTestConfigMetaRows(cfg).some(r => r[0] === '内核源码路径 (code_dir)')).toBe(true)
+  })
+
   it('captures monkey duration for monkey tests', () => {
     const cfg = __testingSnapshotTestConfig('monkey', {})
     expect(cfg.monkeyDuration).toBe('30m')

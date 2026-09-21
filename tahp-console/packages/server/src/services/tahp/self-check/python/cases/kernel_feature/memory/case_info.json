@@ -1,0 +1,82 @@
+[
+  {
+    "caseIndex": 1,
+    "caseName": "融合/压缩版本识别",
+    "前置条件": "DUT 已连接 ADB；user/userdebug 均可",
+    "测试步骤": "1. adb shell uname -r，确认内核版本可读\n2. adb shell cat /proc/memfusion/dump_info，确认含 Swap_Write_Enable:Kernel[On], Frameworks[On]\n3. 读取 swap_write_enable / aggr_enable / compress_enable / memcg_compress 等节点与相关 persist 属性\n4. 判定 memfusion_version（2.2/3.0）与 memcompress_version（none/1.0/1.1/2.0）",
+    "期望结果": "输出 memfusion_version、memcompress_version 及 reason；无法读节点时 BLOCKED",
+    "用例名": "融合/压缩版本识别"
+  },
+  {
+    "caseIndex": 2,
+    "caseName": "内存压缩状态",
+    "前置条件": "DUT 已连接 ADB。SPD 单版本原则：本机只测一种压缩实现（2.0 新融合 或 1.1 表路径）。memcgcprsv2 仅作应检路由信号（或 TOS≥16.3∧kernel≥6.1 亦可路由 2.0），不作为本项 PASS/FAIL 证据",
+    "测试步骤": "1. adb shell uname -r，并解析 TOS（getprop version 相关属性）\n2. 判定唯一应检版本：memcgcprsv2.support=true，或 TOS≥16.3∧kernel≥6.1 → 只跑压缩2.0 证据；否则 kernel∈{6.1,6.12} → 只跑压缩1.1；其它 → BLOCKED/NA\n3. 应检 2.0 时：核对融合侧 support/version21/22/swapfile、dump_info（Swap_Write_Enable On + zram0/partition + swapfile/file）、zram_bd_list 含 /dev/block/dm-*（不强制 memcgcprsv2=true）\n4. 应检 1.1 时：dumpsys aegean#compact_v2 wbs 含 wbs pass=true，且 memcg_compress 为 on\n5. 结论只写本机应检那一条路径的 PASS/FAIL/BLOCKED（含预期 vs 实际）",
+    "期望结果": "应检路径证据满足 → PASS；关键项不满足 → FAIL；无矩阵/adb 失败 → BLOCKED(NA)。memcgcprsv2 缺失不单独判 FAIL",
+    "用例名": "内存压缩状态"
+  },
+  {
+    "caseIndex": 3,
+    "caseName": "内存融合2.2/2.3",
+    "前置条件": "DUT 已连接 ADB；支持内核 5.15 / 6.1 / 6.6 / 6.12",
+    "测试步骤": "1. adb shell uname -r，确认内核在支持矩阵内\n2. getprop | grep memfusion，核对 ro.odm.tr_memfusion.support=1、version21/22.support=true\n3. getprop | grep swapfile，核对 persist.odm.tr_memfusion.swapfile.support=true\n4. 核对 persist.odm.tr_memfusion.swapfile_size_mb 为可解析正整数",
+    "期望结果": "上述键值齐全且 swapfile_size_mb>0 为 PASS；缺键/非 true/非正 FAIL；内核不支持 BLOCKED",
+    "用例名": "内存融合2.2/2.3"
+  },
+  {
+    "caseIndex": 4,
+    "caseName": "kswapd绑核",
+    "前置条件": "DUT 已连接 ADB；支持内核 6.1 / 6.6 / 6.12（5.15 专项不支持）",
+    "测试步骤": "1. adb shell uname -r，确认内核在支持矩阵内\n2. getprop | grep kswapd0\n3. 核对 persist.odm.tr_powerhal.kswapd0_bind.feature.support 值为 1 或 -1",
+    "期望结果": "属性值为 1/-1 为 PASS；缺失或不在集合 FAIL；kernel 5.15 或不支持 BLOCKED",
+    "用例名": "kswapd绑核"
+  },
+  {
+    "caseIndex": 5,
+    "caseName": "shrink_slab",
+    "前置条件": "DUT 已连接 ADB；支持内核 5.15 / 6.1 / 6.6（6.12 专项不支持）",
+    "测试步骤": "1. adb shell uname -r，确认内核在支持矩阵内\n2. adb shell ps -ef | grep shrink_slab\n3. 确认输出含 [kshrink_slabd]",
+    "期望结果": "命中 kshrink_slabd 为 PASS；未命中 FAIL；kernel 6.12 或不支持 BLOCKED",
+    "用例名": "shrink_slab"
+  },
+  {
+    "caseIndex": 6,
+    "caseName": "look around",
+    "前置条件": "DUT 已连接 ADB；按内核分支自动选路径（6.12 专项不支持）",
+    "测试步骤": "1. adb shell uname -r，按内核选分支\n2. kernel 6.1：cat /sys/kernel/mm/lru_gen/enabled，确认可读且取值非 0\n3. kernel 5.15/6.6：ls /sys/module/look_around/，确认含 coresize/holders/initsize/initstate/notes/refcnt/sections/taint/uevent",
+    "期望结果": "对应分支证据齐全为 PASS；节点缺失或值为 0/缺目录项 FAIL；6.12 或不支持 BLOCKED",
+    "用例名": "look around"
+  },
+  {
+    "caseIndex": 7,
+    "caseName": "kswapd回收日志",
+    "前置条件": "DUT 已连接 ADB；支持内核 5.15 / 6.1 / 6.6 / 6.12；若无日志可先触发内存压力场景",
+    "测试步骤": "1. adb shell uname -r，确认内核在支持矩阵内\n2. adb shell logcat -d | grep TranMemoryInfo（或等价抓取）\n3. 若无命中，再 adb shell dmesg | grep TranMemoryInfo\n4. 确认任一通道有 TranMemoryInfo 相关输出",
+    "期望结果": "logcat 或 dmesg 命中 TranMemoryInfo 为 PASS；均无命中 FAIL；adb/内核异常 BLOCKED",
+    "用例名": "kswapd回收日志"
+  },
+  {
+    "caseIndex": 8,
+    "caseName": "top10 page fault",
+    "前置条件": "DUT 已连接 ADB；支持内核 5.15 / 6.1 / 6.6 / 6.12",
+    "测试步骤": "1. adb shell uname -r，确认内核在支持矩阵内\n2. adb shell dmesg | grep TranMemoryInfo，确认有 page fault 相关信息\n3. adb shell cat /proc/tran_mm_collect/page_fault_sampling，确认节点可读",
+    "期望结果": "dmesg 有 page fault 相关输出且 sampling 节点可读为 PASS；缺任一证据 FAIL；adb/内核异常 BLOCKED",
+    "用例名": "top10 page fault"
+  },
+  {
+    "caseIndex": 9,
+    "caseName": "Quantus Framework",
+    "前置条件": "DUT 已连接 ADB；TOS≥16.3；kernel 6.6/6.12 表内专项不支持",
+    "测试步骤": "1. 解析 TOS（须 ≥16.3），否则 BLOCKED\n2. adb shell uname -r，按内核选分支（6.6/6.12 → BLOCKED）\n3. cat /proc/pages_prefiltered/page_filter_state\n4. getprop | grep quantus\n5. kernel≥6：state 使能(1 或 1:*) 且存在 quantus 属性；kernel<6：state 严格为 1 且全部 quantus 属性值为 1",
+    "期望结果": "分支期望全部满足为 PASS；证据不足 FAIL；TOS/内核门控不满足 BLOCKED",
+    "用例名": "Quantus Framework"
+  },
+  {
+    "caseIndex": 10,
+    "caseName": "内存分配",
+    "前置条件": "DUT 已连接 ADB；TOS≥16.3 且 kernel≥6.0；按是否 trms 自动分分支",
+    "测试步骤": "1. 解析 TOS≥16.3 与 uname -r≥6.0，否则 BLOCKED\n2. 属性：非 trms 查 aegean/umf 相关 support=1；trms 查 persist.tr_perf.rms.memvip.support=1\n3. WBS：非 trms dumpsys activity aegean#umf wbs；trms dumpsys TranRmsService rms#memvip config_mem_vip\n4. cat /proc/priority_allocate/vip_page_pool_state，确认 setup/fillthread 为 1\n5. cat /proc/priority_allocate/vip_page_pool，确认 total_used/pcp_used 等有效",
+    "期望结果": "属性+WBS+vip 状态与内存池证据齐全为 PASS；缺证据 FAIL；门控不满足 BLOCKED",
+    "用例名": "内存分配"
+  }
+]

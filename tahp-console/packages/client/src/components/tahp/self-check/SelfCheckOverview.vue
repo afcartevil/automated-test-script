@@ -14,6 +14,8 @@ import {
   getTestTypeLabel,
   isActiveAuxiliaryDevice,
   reportTitle,
+  selfCheckPassRateLabel,
+  reportListTimeLabel,
 } from './self-check-utils'
 
 const props = defineProps<{
@@ -97,12 +99,7 @@ const gerritStatusLabel = computed(() => {
 })
 
 function formatReportTime(report: SelfCheckReportSummary): string {
-  const t = report.completedAt || report.endTime || report.startTime
-  try {
-    return new Date(t).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return t
-  }
+  return reportListTimeLabel(report)
 }
 
 function formatAssignTime(iso?: string): string {
@@ -263,7 +260,7 @@ async function openVerifyCenter() {
           <li v-for="report in reportPreview" :key="report.reportId" class="item-row">
             <span class="item-main">
               <strong>{{ reportTitle(report) }}</strong>
-              <small>{{ displayReportStatus(report) }} · {{ formatReportTime(report) }} · {{ report.passedCases }}/{{ report.totalCases }} 通过</small>
+              <small>{{ displayReportStatus(report) }} · {{ formatReportTime(report) }} · {{ selfCheckPassRateLabel(report) }} 通过</small>
             </span>
           </li>
         </ul>

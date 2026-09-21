@@ -1,0 +1,8 @@
+workspace/
+__pycache__/
+*.pyc
+
+# Vendor offline debug suite / local binaries (not source)
+SpOfflineDebugSuite/
+aee_extract.exe
+*.exe

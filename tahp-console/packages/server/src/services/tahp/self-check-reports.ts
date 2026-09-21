@@ -41,6 +41,19 @@ export interface SelfCheckCaseItem {
   failureLogDir?: string
 }
 
+/** 执行阶段跳过的人工用例，在报告中补录结果 */
+export const PENDING_MANUAL_REPORT_MSG = '未执行自动化；请在测试报告中补录人工测试结果'
+
+export function isPendingManualReportFillIn(item: {
+  status?: string
+  message?: string
+  automationMode?: string
+}): boolean {
+  return item.automationMode === 'manual'
+    && item.status === '待确认'
+    && Boolean(item.message?.includes('报告中补录'))
+}
+
 export interface SelfCheckFlashBeforeTestConfig {
   enabled: boolean
   pkgPath?: string
@@ -59,6 +72,8 @@ export interface SelfCheckTestConfig {
   monkeyDuration?: string
   smokeUsdSkipSpdInfo?: boolean
   gmsTradefedPath?: Record<string, string>
+  /** 内核特性/稳定性：Android 源码根 */
+  kernelFeatureCodeDir?: string
   autoRetestEnabled?: boolean
   autoRetestCount?: number
   flashBeforeTest?: SelfCheckFlashBeforeTestConfig
@@ -81,6 +96,8 @@ export interface SelfCheckReportSummary {
   passedCases: number
   failedCases: number
   skippedCases: number
+  /** 人工待报告补录项数（通过率分母会排除） */
+  pendingManualCases?: number
   reviewStatus: SelfCheckReviewStatus
   completedAt: string
   reportPath: string
@@ -111,6 +128,8 @@ interface SummaryJson {
   passedCases: number
   failedCases: number
   skippedCases: number
+  /** 执行阶段跳过、待在报告中补录的人工用例数 */
+  pendingManualCases?: number
   aiPlanned?: boolean
   scheduleKey?: string
   testConfig?: SelfCheckTestConfig
@@ -188,6 +207,9 @@ export function formatSelfCheckTestConfigMetaRows(cfg?: SelfCheckTestConfig): st
       if (path) rows.push([`GMS ${suite.toUpperCase()} Tradefed`, path])
     }
   }
+  if (cfg.kernelFeatureCodeDir) {
+    rows.push(['内核源码路径 (code_dir)', cfg.kernelFeatureCodeDir])
+  }
   if (cfg.autoRetestEnabled !== undefined) {
     rows.push([
       '自动复测',
@@ -225,13 +247,40 @@ function buildAiSummary(summary: SummaryJson, failed: SelfCheckFailedCaseItem[])
   if (summary.totalCases === 0) {
     return '本次测试未产生用例数据。'
   }
-  const passRate = Math.round((summary.passedCases / summary.totalCases) * 100)
+  const pendingManual = summary.pendingManualCases ?? 0
+  const scored = Math.max(0, summary.totalCases - pendingManual)
+  const passRate = scored > 0 ? Math.round((summary.passedCases / scored) * 100) : 0
+  const manualHint = pendingManual > 0 ? `，人工待确认 ${pendingManual}（不计入通过率）` : ''
   if (failed.length === 0) {
-    return `共 ${summary.totalCases} 项用例，全部通过（通过率 ${passRate}%）。设备 ${summary.deviceName}，测试类型 ${summary.testType}。`
+    if (scored === 0) {
+      return `共 ${summary.totalCases} 项用例均为人工待确认，暂无自动项通过率。设备 ${summary.deviceName}，测试类型 ${summary.testType}。`
+    }
+    return `共 ${summary.totalCases} 项用例，自动项全部通过（通过率 ${passRate}%${manualHint ? '，已排除人工项' : ''}）。设备 ${summary.deviceName}，测试类型 ${summary.testType}。`
   }
   const modules = [...new Set(failed.map(item => item.module))].slice(0, 3).join('、')
   const names = failed.slice(0, 3).map(item => item.caseName).join('；')
-  return `共 ${summary.totalCases} 项，通过 ${summary.passedCases}，失败 ${summary.failedCases}（通过率 ${passRate}%）。失败集中在 ${modules || '未知模块'}。建议优先关注：${names}${failed.length > 3 ? ' 等' : ''}。`
+  return `共 ${summary.totalCases} 项，通过 ${summary.passedCases}，失败 ${summary.failedCases}${manualHint}（通过率 ${passRate}%）。失败集中在 ${modules || '未知模块'}。建议优先关注：${names}${failed.length > 3 ? ' 等' : ''}。`
+}
+
+/** 统计上视为通过：显式通过，或 NA（不适用/不支持） */
+function countsAsPassedStatus(status?: string): boolean {
+  return status === '通过' || status === 'NA'
+}
+
+function recomputeSummaryCounts(allCaseItems: SelfCheckCaseItem[]): Pick<
+  SummaryJson,
+  'totalCases' | 'passedCases' | 'failedCases' | 'skippedCases' | 'pendingManualCases' | 'status'
+> {
+  const totalCases = allCaseItems.length
+  const passedCases = allCaseItems.filter(c => countsAsPassedStatus(c.status)).length
+  const failedCases = allCaseItems.filter(
+    c => (c.status === '失败' || c.status === '部分通过' || c.status === '待确认')
+      && !isPendingManualReportFillIn(c),
+  ).length
+  const skippedCases = allCaseItems.filter(c => c.status === '跳过').length
+  const pendingManualCases = allCaseItems.filter(c => isPendingManualReportFillIn(c)).length
+  const status = failedCases === 0 ? '完成(通过)' : '完成(失败)'
+  return { totalCases, passedCases, failedCases, skippedCases, pendingManualCases, status }
 }
 
 function readJsonFile<T>(path: string): T | null {
@@ -252,6 +301,12 @@ function buildSummaryFromDir(relativePath: string, sessionDir: string, deviceId:
   const mtime = existsSync(summaryPath) ? statSync(summaryPath).mtimeMs : 0
   const reportId = encodeReportId(relativePath)
 
+  // 有全量用例明细时按现行规则重算（NA 计入通过），兼容历史 summary
+  const detailJson = readJsonFile<DetailJson>(join(absDir, 'detail.json'))
+  const recount = detailJson?.allCaseItems?.length
+    ? recomputeSummaryCounts(detailJson.allCaseItems)
+    : null
+
   return {
     reportId,
     deviceId: summary.deviceId || deviceId,
@@ -260,11 +315,12 @@ function buildSummaryFromDir(relativePath: string, sessionDir: string, deviceId:
     version: summary.version,
     startTime: summary.startTime || sessionDir,
     endTime: summary.endTime,
-    status: summary.status,
-    totalCases: summary.totalCases ?? 0,
-    passedCases: summary.passedCases ?? 0,
-    failedCases: summary.failedCases ?? 0,
-    skippedCases: summary.skippedCases ?? 0,
+    status: recount?.status ?? summary.status,
+    totalCases: recount?.totalCases ?? summary.totalCases ?? 0,
+    passedCases: recount?.passedCases ?? summary.passedCases ?? 0,
+    failedCases: recount?.failedCases ?? summary.failedCases ?? 0,
+    skippedCases: recount?.skippedCases ?? summary.skippedCases ?? 0,
+    pendingManualCases: recount?.pendingManualCases ?? summary.pendingManualCases ?? 0,
     reviewStatus: 'pending',
     completedAt: summary.endTime || new Date(mtime).toISOString(),
     reportPath: relativePath.replace(/\\/g, '/'),
@@ -333,10 +389,10 @@ export async function getSelfCheckReportDetail(reportId: string): Promise<SelfCh
   const summaryJson = readJsonFile<SummaryJson>(join(absDir, 'summary.json'))
   const base = summaryJson || detailJson
 
-  const failedCaseItems = detailJson?.failedCaseItems ?? []
+  const storedFailed = detailJson?.failedCaseItems ?? []
   const allCaseItems = detailJson?.allCaseItems?.length
     ? detailJson.allCaseItems
-    : failedCaseItems.map(item => ({
+    : storedFailed.map(item => ({
         caseKey: item.caseKey,
         caseName: item.caseName,
         module: item.module,
@@ -345,11 +401,19 @@ export async function getSelfCheckReportDetail(reportId: string): Promise<SelfCh
         status: item.status,
         message: item.message,
       }))
-  const aiSummary = detailJson?.aiSummary
-    ?? (base ? buildAiSummary(base, failedCaseItems) : '暂无 AI 摘要')
+  const failedCaseItems = storedFailed.length ? storedFailed : collectFailedFromAll(allCaseItems)
+  const recount = allCaseItems.length ? recomputeSummaryCounts(allCaseItems) : null
+  const summaryForAi: SummaryJson = {
+    ...(base as SummaryJson),
+    ...(recount || {}),
+    deviceName: summary.deviceName,
+    testType: summary.testType,
+  }
+  const aiSummary = buildAiSummary(summaryForAi, failedCaseItems)
 
   return {
     ...summary,
+    ...(recount || {}),
     reviewStatus: review?.status ?? summary.reviewStatus,
     aiSummary,
     failedCaseItems,
@@ -399,7 +463,8 @@ export function buildSelfCheckDetailPayload(
 
 function collectFailedFromAll(allCaseItems: SelfCheckCaseItem[]): SelfCheckFailedCaseItem[] {
   return allCaseItems
-    .filter(c => c.status === '失败' || c.status === '部分通过' || c.status === '待确认')
+    .filter(c => (c.status === '失败' || c.status === '部分通过' || c.status === '待确认')
+      && !isPendingManualReportFillIn(c))
     .map(c => ({
       caseKey: c.caseKey,
       caseName: c.caseName,
@@ -407,20 +472,6 @@ function collectFailedFromAll(allCaseItems: SelfCheckCaseItem[]): SelfCheckFaile
       status: c.status,
       message: c.message,
     }))
-}
-
-function recomputeSummaryCounts(allCaseItems: SelfCheckCaseItem[]): Pick<
-  SummaryJson,
-  'totalCases' | 'passedCases' | 'failedCases' | 'skippedCases' | 'status'
-> {
-  const totalCases = allCaseItems.length
-  const passedCases = allCaseItems.filter(c => c.status === '通过').length
-  const failedCases = allCaseItems.filter(
-    c => c.status === '失败' || c.status === '部分通过' || c.status === '待确认',
-  ).length
-  const skippedCases = allCaseItems.filter(c => c.status === '跳过' || c.status === 'NA').length
-  const status = failedCases === 0 ? '完成(通过)' : '完成(失败)'
-  return { totalCases, passedCases, failedCases, skippedCases, status }
 }
 
 export async function updateReportCaseResult(
@@ -498,7 +549,7 @@ function assertPathUnderSelfCheckReports(targetPath: string): string {
   return abs
 }
 
-/** 打开报告中某用例的失败日志目录 */
+/** 打开报告中某用例的日志目录 */
 export async function openSelfCheckCaseFailureLogs(reportId: string, caseKey: string): Promise<string> {
   const detail = await getSelfCheckReportDetail(reportId)
   if (!detail) {
@@ -506,11 +557,15 @@ export async function openSelfCheckCaseFailureLogs(reportId: string, caseKey: st
   }
   const item = detail.allCaseItems.find(c => c.caseKey === caseKey)
   const reportDir = reportAbsoluteDir(reportId)
-  const candidate = item?.failureLogDir
-    || join(reportDir, 'failure-logs', sanitizeCaseKeyForPath(caseKey))
+  const safeKey = sanitizeCaseKeyForPath(caseKey)
+  let candidate = item?.failureLogDir
+    || join(reportDir, 'case-logs', safeKey)
+  if (!item?.failureLogDir && !existsSync(candidate)) {
+    candidate = join(reportDir, 'failure-logs', safeKey)
+  }
   const abs = assertPathUnderSelfCheckReports(candidate)
   if (!existsSync(abs)) {
-    throw new Error('失败日志目录不存在')
+    throw new Error('日志目录不存在')
   }
   openLocalPath(abs)
   return abs

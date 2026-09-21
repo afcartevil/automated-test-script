@@ -1,0 +1,23 @@
+{
+  "testType": "kernel_feature",
+  "module": "memory",
+  "moduleLabel": "内存(SPD)",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    { "caseIndex": 1, "caseName": "融合/压缩版本识别", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 2, "caseName": "内存压缩状态", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 3, "caseName": "内存融合2.2/2.3", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 4, "caseName": "kswapd绑核", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 5, "caseName": "shrink_slab", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 6, "caseName": "look around", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 7, "caseName": "kswapd回收日志", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 8, "caseName": "top10 page fault", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 9, "caseName": "Quantus Framework", "canReuse": false, "automationMode": "full" },
+    { "caseIndex": 10, "caseName": "内存分配", "canReuse": false, "automationMode": "full" }
+  ]
+}

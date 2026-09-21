@@ -3,5 +3,6 @@
   "autoTestPath": {},
   "monkeyDuration": "7d",
   "smokeUsdSkipSpdInfo": false,
-  "gmsTradefedPath": {}
+  "gmsTradefedPath": {},
+  "kernelFeatureCodeDir": ""
 }
