@@ -210,10 +210,18 @@ const {
   handleBrowseFlashPath,
   handleBrowseTcardZip,
   handleResolveLatestDailyFlash,
+  handleResolveReleaseUpgrade,
+  toggleReleaseUpgradeStep,
+  updateReleaseUpgradePath,
+  releaseUpgradeMethodLabel,
   handleClearFlashPackages,
   enableTcardUpdate,
   tcardUpdatePath,
   tcardPathPicking,
+  enableReleaseUpgrade,
+  releaseTcardPaths,
+  releaseUpgradeResolving,
+  releaseUpgradePlan,
   pretestPanelTitle,
   pretestLogTitle,
   isSelectedCaseInConfig,
@@ -1663,12 +1671,78 @@ function handleDutRowAction(deviceId: string) {
                     </div>
 
                     <div class="form-group flash-options">
+                      <div class="flash-options-head">
+                        <label class="checkbox-label flash-options-toggle">
+                          <input type="checkbox" v-model="enableReleaseUpgrade" />
+                          <span>连续版本升级</span>
+                        </label>
+                        <button
+                          type="button"
+                          class="ea-btn-primary ea-btn-sm flash-daily-resolve-btn"
+                          :disabled="releaseUpgradeResolving"
+                          @click.stop="handleResolveReleaseUpgrade"
+                        >
+                          {{ releaseUpgradeResolving ? '解析中...' : (releaseUpgradePlan ? '重新解析外发版本' : '获取外发版本') }}
+                        </button>
+                      </div>
+                      <div v-if="enableReleaseUpgrade" class="flash-options-panel">
+                        <p class="flash-options-hint">勾选需要升级的 Android 版本；最低版使用 device_update，更高版本依次 T卡升级，全部完成后开始测试。</p>
+                        <div v-if="releaseUpgradePlan" class="release-upgrade-panel">
+                          <p class="flash-daily-meta">
+                            {{ releaseUpgradePlan.brand }} / {{ releaseUpgradePlan.model }}
+                          </p>
+                          <p v-if="releaseUpgradePlan.dailyTcardOverrideApplied" class="release-upgrade-daily-note">
+                            最高 Android 版本已使用 sw_ver_sh 最新 daily T卡包
+                            <span v-if="releaseUpgradePlan.dailyTcardSource === 'TEST'">（DEV 无包，已从 TEST 获取）</span>
+                          </p>
+                          <p v-else-if="releaseUpgradePlan.dailyResolveWarning" class="release-upgrade-warning release-upgrade-warning--standalone">
+                            sw_ver_sh 最新版本解析失败：{{ releaseUpgradePlan.dailyResolveWarning }}
+                          </p>
+                          <div
+                            v-for="step in releaseUpgradePlan.steps"
+                            :key="`${step.androidVersion}-${step.releaseFolder}`"
+                            class="release-upgrade-row"
+                            :class="{ 'release-upgrade-row--missing': step.needsTransfer || !step.available }"
+                          >
+                            <label class="release-upgrade-check">
+                              <input
+                                type="checkbox"
+                                :checked="step.selected"
+                                :disabled="step.needsTransfer || !step.available"
+                                @change="toggleReleaseUpgradeStep(step)"
+                              />
+                              <strong>{{ step.androidLabel }}</strong>
+                            </label>
+                            <span class="release-upgrade-version">{{ step.releaseVersionName }}</span>
+                            <span class="release-upgrade-method">{{ releaseUpgradeMethodLabel(step) }}</span>
+                            <input
+                              type="text"
+                              class="form-input release-upgrade-path"
+                              :value="step.packagePath"
+                              @input="updateReleaseUpgradePath(step, ($event.target as HTMLInputElement).value)"
+                            />
+                            <p v-if="step.needsTransfer" class="release-upgrade-warning">
+                              重庆无刷机包，请将上海包传输到 {{ step.cqTargetPath }} 后重新解析
+                            </p>
+                            <p v-else-if="step.unavailableReason" class="release-upgrade-warning">
+                              {{ step.unavailableReason }}
+                            </p>
+                          </div>
+                        </div>
+                        <p v-else class="flash-daily-hint">点击“获取外发版本”识别当前项目可升级的 Android 版本。</p>
+                        <p v-if="releaseTcardPaths.length > 1" class="flash-daily-hint">
+                          将依次执行 {{ releaseTcardPaths.length }} 个 T 卡升级包
+                        </p>
+                      </div>
+                    </div>
+
+                    <div class="form-group flash-options">
                       <label class="checkbox-label flash-options-toggle">
                         <input type="checkbox" v-model="enableTcardUpdate" />
                         <span>T卡升级</span>
                       </label>
                       <div v-if="enableTcardUpdate" class="flash-options-panel">
-                        <p class="flash-options-hint">仅支持 ZIP。push 到 /sdcard 后打开系统更新 → 本地升级 → 点 file_name → 选包确认 → 立即重启。</p>
+                        <p class="flash-options-hint">单包 T 卡升级：push 到 /sdcard 后调用系统更新，完成后开始测试。</p>
                         <div class="flash-field">
                           <label class="flash-field-label">升级包（ZIP）</label>
                           <div class="flash-path-row">
@@ -3625,6 +3699,76 @@ $catalog-pane-height: calc(100vh - 48px);
   .flash-options-toggle {
     font-weight: 600;
   }
+}
+
+.flash-options-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.release-upgrade-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.release-upgrade-row {
+  display: grid;
+  grid-template-columns: 120px minmax(130px, 0.7fr) 110px minmax(220px, 1.5fr);
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.release-upgrade-row--missing {
+  border-color: color-mix(in srgb, var(--danger, #dc2626) 40%, var(--line));
+  background: color-mix(in srgb, var(--danger, #dc2626) 5%, var(--bg));
+}
+
+.release-upgrade-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.release-upgrade-version,
+.release-upgrade-method {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.release-upgrade-path {
+  min-width: 0;
+  margin-top: 0;
+  font-size: 12px;
+}
+
+.release-upgrade-warning {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--danger, #dc2626);
+  word-break: break-all;
+}
+
+.release-upgrade-warning--standalone {
+  grid-column: auto;
+}
+
+.release-upgrade-daily-note {
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .flash-options-panel {

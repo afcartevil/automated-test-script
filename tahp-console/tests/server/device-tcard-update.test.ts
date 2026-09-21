@@ -10,6 +10,7 @@ import {
   formatAdbPushProgressLine,
   percentFromSizes,
   tcardRemotePath,
+  tcardZipQueue,
 } from '../../packages/server/src/services/tahp/device-tcard-update'
 
 const FILE_LIST_XML = `<?xml version='1.0' encoding='UTF-8' ?>
@@ -26,6 +27,10 @@ describe('tcard update helpers', () => {
     expect(isTcardZipPath('D:/rom/ota.zip')).toBe(true)
     expect(isTcardZipPath('D:/rom/scatter.xml')).toBe(false)
     expect(tcardRemotePath('D:/cache/CM5_OTA_v1000.zip')).toBe('/sdcard/CM5_OTA_v1000.zip')
+    expect(tcardZipQueue({
+      zipPath: 'D:/rom/fallback.zip',
+      zipPaths: [' D:/rom/a15.zip ', 'D:/rom/a16.zip', 'D:/rom/a15.zip'],
+    })).toEqual(['D:/rom/a15.zip', 'D:/rom/a16.zip'])
   })
 
   it('parses cmd-style adb push progress', () => {

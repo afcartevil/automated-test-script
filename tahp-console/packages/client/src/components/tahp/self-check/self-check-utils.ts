@@ -445,7 +445,15 @@ export function formatTestConfigEntries(cfg?: SelfCheckTestConfig): { label: str
   }
   if (cfg.tcardBeforeTest?.enabled) {
     rows.push({ label: 'T卡升级', value: '是' })
-    if (cfg.tcardBeforeTest.zipPath) rows.push({ label: 'T卡升级 ZIP', value: cfg.tcardBeforeTest.zipPath })
+    const zipPaths = cfg.tcardBeforeTest.zipPaths?.length
+      ? cfg.tcardBeforeTest.zipPaths
+      : (cfg.tcardBeforeTest.zipPath ? [cfg.tcardBeforeTest.zipPath] : [])
+    zipPaths.forEach((path, index) => {
+      rows.push({
+        label: zipPaths.length > 1 ? `T卡升级 ZIP ${index + 1}` : 'T卡升级 ZIP',
+        value: path,
+      })
+    })
   }
   if (cfg.selectedCases?.length) {
     rows.push({ label: '自定义勾选用例数', value: String(cfg.selectedCases.length) })

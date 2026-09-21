@@ -12,6 +12,7 @@ import {
   pickTcardZipPath,
   pickGmsTradefedPath,
   resolveLatestDailyFlashPackage,
+  resolveReleaseUpgradePlan,
   clearFlashPackageCache,
   startCustomTest,
   deleteAiGeneratedCases,
@@ -44,6 +45,8 @@ import {
   type SelfCheckPipelineView,
   type SelfCheckReportSummary,
   type TPowerStatus,
+  type ReleaseUpgradePlan,
+  type AndroidUpgradeStep,
 } from '@/api/tahp/device-self-check'
 import {
   createFlashProgressState,
@@ -155,6 +158,10 @@ interface DeviceFlashFormOptions {
   flashStageVersion: string
   enableTcardUpdate: boolean
   tcardUpdatePath: string
+  enableReleaseUpgrade: boolean
+  releaseFlashPath: string
+  releaseTcardPaths: string[]
+  releaseUpgradePlan: ReleaseUpgradePlan | null
 }
 
 /** 每台设备独立保存刷机表单，切换设备时恢复 */
@@ -163,6 +170,27 @@ const flashFormByDeviceId = ref<Record<string, DeviceFlashFormOptions>>({})
 const enableTcardUpdate = ref(false)
 const tcardUpdatePath = ref('')
 const tcardPathPicking = ref(false)
+const enableReleaseUpgrade = ref(false)
+const releaseFlashPath = ref('')
+const releaseTcardPaths = ref<string[]>([])
+const releaseUpgradeResolving = ref(false)
+const releaseUpgradePlan = ref<ReleaseUpgradePlan | null>(null)
+
+watch(enableReleaseUpgrade, (enabled) => {
+  if (!enabled) return
+  enableFlash.value = false
+  enableTcardUpdate.value = false
+})
+watch(enableFlash, (enabled) => {
+  if (enabled) enableReleaseUpgrade.value = false
+})
+watch(enableTcardUpdate, (enabled) => {
+  if (enabled) enableReleaseUpgrade.value = false
+})
+
+function cloneReleaseUpgradePlan(plan: ReleaseUpgradePlan | null): ReleaseUpgradePlan | null {
+  return plan ? JSON.parse(JSON.stringify(plan)) as ReleaseUpgradePlan : null
+}
 
 function snapshotFlashFormOptions(): DeviceFlashFormOptions {
   return {
@@ -172,6 +200,10 @@ function snapshotFlashFormOptions(): DeviceFlashFormOptions {
     flashStageVersion: flashStageVersion.value,
     enableTcardUpdate: enableTcardUpdate.value,
     tcardUpdatePath: tcardUpdatePath.value,
+    enableReleaseUpgrade: enableReleaseUpgrade.value,
+    releaseFlashPath: releaseFlashPath.value,
+    releaseTcardPaths: [...releaseTcardPaths.value],
+    releaseUpgradePlan: cloneReleaseUpgradePlan(releaseUpgradePlan.value),
   }
 }
 
@@ -189,8 +221,13 @@ function applyFlashFormOptions(opts?: DeviceFlashFormOptions) {
   flashStageVersion.value = opts?.flashStageVersion ?? 'Open'
   enableTcardUpdate.value = opts?.enableTcardUpdate ?? false
   tcardUpdatePath.value = opts?.tcardUpdatePath ?? ''
+  enableReleaseUpgrade.value = opts?.enableReleaseUpgrade ?? false
+  releaseFlashPath.value = opts?.releaseFlashPath ?? ''
+  releaseTcardPaths.value = [...(opts?.releaseTcardPaths ?? [])]
+  releaseUpgradePlan.value = cloneReleaseUpgradePlan(opts?.releaseUpgradePlan ?? null)
   dailyFlashResolving.value = false
   tcardPathPicking.value = false
+  releaseUpgradeResolving.value = false
 }
 
 function clearFlashFormForDevice(deviceId: string) {
@@ -1412,6 +1449,118 @@ async function handleResolveLatestDailyFlash() {
   }
 }
 
+function pickTcardPath(step: AndroidUpgradeStep, previousAndroid: number): string {
+  const hinted = step.tcardZips.filter((path) =>
+    new RegExp(`_a${previousAndroid}(?:\\D|$)`, 'i').test(path.split(/[\\/]/).pop() || path)
+  )
+  return [...(hinted.length ? hinted : step.tcardZips)].sort().reverse()[0] || ''
+}
+
+function syncReleaseUpgradeSelection(): boolean {
+  const plan = releaseUpgradePlan.value
+  if (!plan) return true
+  const selected = plan.steps
+    .filter((step) => step.selected)
+    .sort((a, b) => a.androidVersion - b.androidVersion)
+  if (!selected.length) {
+    releaseFlashPath.value = ''
+    releaseTcardPaths.value = []
+    return false
+  }
+
+  const baseline = selected[0]!
+  if (baseline.needsTransfer || !baseline.available || !baseline.fullZip) {
+    return false
+  }
+  baseline.packagePath = baseline.fullZip
+  releaseFlashPath.value = baseline.packagePath
+
+  const tcardPaths: string[] = []
+  let previousAndroid = baseline.androidVersion
+  for (const step of selected.slice(1)) {
+    if (step.needsTransfer || !step.available) return false
+    const path = pickTcardPath(step, previousAndroid)
+    if (!path) return false
+    step.packagePath = path
+    tcardPaths.push(path)
+    previousAndroid = step.androidVersion
+  }
+  releaseTcardPaths.value = tcardPaths
+  return true
+}
+
+function toggleReleaseUpgradeStep(step: AndroidUpgradeStep) {
+  if (!step.available || step.needsTransfer) return
+  step.selected = !step.selected
+  syncReleaseUpgradeSelection()
+}
+
+function updateReleaseUpgradePath(step: AndroidUpgradeStep, path: string) {
+  step.packagePath = path
+  if (step.needsTransfer) {
+    step.sourcePath = path
+    return
+  }
+  const selected = releaseUpgradePlan.value?.steps
+    .filter((item) => item.selected)
+    .sort((a, b) => a.androidVersion - b.androidVersion) || []
+  if (selected[0] === step) {
+    step.fullZip = path
+  } else {
+    step.tcardZips = path ? [path, ...step.tcardZips.filter((item) => item !== path)] : []
+  }
+  syncReleaseUpgradeSelection()
+}
+
+function releaseUpgradeMethodLabel(step: AndroidUpgradeStep): string {
+  if (step.needsTransfer) return '待回传重庆'
+  if (!step.available) return '缺少T卡包'
+  if (!step.selected) return '未选择'
+  const selected = releaseUpgradePlan.value?.steps
+    .filter((item) => item.selected)
+    .sort((a, b) => a.androidVersion - b.androidVersion) || []
+  return selected[0] === step ? 'device_update' : 'T卡升级'
+}
+
+async function handleResolveReleaseUpgrade() {
+  if (releaseUpgradeResolving.value) return
+  const deviceId = selectedDeviceId.value
+  if (!deviceId) {
+    message.error('请先选择设备')
+    return
+  }
+  releaseUpgradeResolving.value = true
+  error.value = null
+  try {
+    releaseUpgradePlan.value = await resolveReleaseUpgradePlan(deviceId)
+    enableReleaseUpgrade.value = true
+    syncReleaseUpgradeSelection()
+    const transferable = releaseUpgradePlan.value.steps.filter((step) => step.needsTransfer).length
+    const unavailable = releaseUpgradePlan.value.steps.filter((step) => !step.available && !step.needsTransfer).length
+    message.success(
+      releaseUpgradePlan.value.dailyTcardOverrideApplied
+        ? `已识别各 Android 最新版本，最高版本已使用 sw_ver_sh 最新 daily T卡包${transferable ? `；${transferable} 个其他版本需传回重庆` : ''}`
+        : transferable
+        ? `已识别各 Android 最新版本，${transferable} 个版本需先传回重庆`
+        : unavailable
+        ? `已识别各 Android 大版本，${unavailable} 个版本未找到 T卡包`
+        : '已识别各 Android 最新版本并生成连续升级顺序',
+    )
+  } catch (e: any) {
+    const text = e?.message || '解析已外发 Android 版本失败'
+    if (text.includes('不能使用连续版本升级')) {
+      enableReleaseUpgrade.value = false
+      releaseUpgradePlan.value = null
+      releaseFlashPath.value = ''
+      releaseTcardPaths.value = []
+    }
+    error.value = text
+    message.error(text)
+  } finally {
+    releaseUpgradeResolving.value = false
+  }
+}
+
 function formatFreedBytes(bytes: number): string {
   const gib = bytes / 1024 / 1024 / 1024
   if (gib >= 1) return `${gib.toFixed(2)} GiB`
@@ -1474,17 +1623,37 @@ async function handleClearFlashPackages() {
 
 async function handleStartTest(deviceId: string) {
   try {
-    if (enableFlash.value && !flashPath.value.trim()) {
+    const releaseActive = enableReleaseUpgrade.value
+    if (releaseActive && !releaseUpgradePlan.value) {
+      error.value = '请先获取外发版本'
+      return
+    }
+    if (releaseActive && releaseUpgradePlan.value) {
+      const selected = releaseUpgradePlan.value.steps.filter((step) => step.selected)
+      if (!selected.length) {
+        error.value = '请至少选择一个可用的 Android 版本'
+        return
+      }
+      if (selected.some((step) => step.needsTransfer || !step.available)) {
+        error.value = '所选版本包含尚未传回重庆的刷机包，请传输后重新解析'
+        return
+      }
+      if (!syncReleaseUpgradeSelection()) {
+        error.value = '最低选中版本缺少 device_update 整包，或更高版本缺少 T卡升级包'
+        return
+      }
+    }
+    if (!releaseActive && enableFlash.value && !flashPath.value.trim()) {
       error.value = '请先选择刷机包路径'
       return
     }
-    if (enableTcardUpdate.value) {
-      const zipPath = tcardUpdatePath.value.trim()
-      if (!zipPath) {
+    if (!releaseActive && enableTcardUpdate.value) {
+      const zipPaths = tcardUpdatePath.value.trim() ? [tcardUpdatePath.value.trim()] : []
+      if (!zipPaths.length) {
         error.value = '请先选择 T卡升级 ZIP 包'
         return
       }
-      if (!/\.zip$/i.test(zipPath)) {
+      if (zipPaths.some((path) => !/\.zip$/i.test(path))) {
         error.value = 'T卡升级仅支持 ZIP 文件'
         return
       }
@@ -1509,7 +1678,13 @@ async function handleStartTest(deviceId: string) {
       return
     }
     clearFlashPanel()
-    const flash = enableFlash.value
+    const flash = releaseActive
+      ? {
+          enabled: true,
+          pkgPath: releaseFlashPath.value.trim(),
+          stageVersion: 'Open',
+        }
+      : enableFlash.value
       ? {
           enabled: true,
           pkgPath: flashPath.value.trim(),
@@ -1517,10 +1692,17 @@ async function handleStartTest(deviceId: string) {
           stageVersion: flashStageVersion.value || undefined,
         }
       : undefined
-    const tcard = enableTcardUpdate.value
+    const tcard = releaseActive && releaseTcardPaths.value.length
+      ? {
+          enabled: true,
+          zipPath: releaseTcardPaths.value[0],
+          zipPaths: [...releaseTcardPaths.value],
+        }
+      : !releaseActive && enableTcardUpdate.value
       ? {
           enabled: true,
           zipPath: tcardUpdatePath.value.trim(),
+          zipPaths: [tcardUpdatePath.value.trim()],
         }
       : undefined
     if (flash || tcard) {
@@ -2382,10 +2564,18 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     handleBrowseFlashPath,
     handleBrowseTcardZip,
     handleResolveLatestDailyFlash,
+    handleResolveReleaseUpgrade,
+    toggleReleaseUpgradeStep,
+    updateReleaseUpgradePath,
+    releaseUpgradeMethodLabel,
     handleClearFlashPackages,
     enableTcardUpdate,
     tcardUpdatePath,
     tcardPathPicking,
+    enableReleaseUpgrade,
+    releaseTcardPaths,
+    releaseUpgradeResolving,
+    releaseUpgradePlan,
     pretestPanelTitle,
     pretestLogTitle,
     viewMode,

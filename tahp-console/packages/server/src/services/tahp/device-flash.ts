@@ -66,9 +66,25 @@ export interface LatestDailyFlashResult {
   usedIdhFallback: boolean
 }
 
+export interface HighestDailyAndroidTcardResult {
+  deviceId: string
+  brand: string
+  project: string
+  androidVersion: number
+  devProjectPath: string
+  systemVersion: string
+  versionName: string
+  openPath: string
+  tcardPackagePath?: string
+  tcardSource?: 'DEV' | 'TEST'
+  tcardResolveWarning?: string
+  usedIdhFallback: boolean
+}
+
 const EXTRACT_ZIP_SCRIPT = join(__dirname, 'self-check', 'python', 'extract_flash_zip.py')
 const ADB_KEY_FILES = ['adbkey', 'adbkey.pub'] as const
 const DAILY_VERSION_ROOT = '\\\\10.150.98.24\\sw_ver_sh'
+const CQ_DAILY_VERSION_ROOT = '\\\\10.205.4.40\\sw_version\\CI'
 const RELEASE_NOTE_FILE = 'ReleaseNote.xlsx'
 const DEFAULT_DEV_PROJECT_KEYWORD = 'Android_16'
 const RELEASE_BRANCH_SUFFIX = '_mtk_sys_release'
@@ -677,25 +693,28 @@ function resolveProjectOnShare(brand: string, candidates: string[]): string {
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
 
+  const matched = matchProjectFolder(projects, candidates)
+  if (matched) return matched
+  throw new Error(`无法识别项目代号（候选: ${candidates.join(', ') || '无'}）`)
+}
+
+export function matchProjectFolder(projects: string[], candidates: string[]): string | null {
   for (const candidate of candidates) {
     const exact = projects.find((name) => name.toUpperCase() === candidate.toUpperCase())
     if (exact) return exact
   }
-
   for (const candidate of candidates) {
-    const prefix = projects.find((name) => name.toUpperCase().startsWith(candidate.toUpperCase()))
+    const prefix = projects.find((name) => name.toUpperCase().startsWith(`${candidate.toUpperCase()}-`))
     if (prefix) return prefix
   }
-
-  throw new Error(`无法识别项目代号（候选: ${candidates.join(', ') || '无'}）`)
+  return null
 }
 
-export async function resolveFlashDeviceIdentity(deviceId: string): Promise<{
+async function resolveFlashDeviceBaseIdentity(deviceId: string): Promise<{
   deviceId: string
   brand: string
   project: string
   devRoot: string
-  devProjectPath: string
 }> {
   const serial = deviceId.trim()
   if (!serial) throw new Error('设备 ID 为空')
@@ -710,8 +729,20 @@ export async function resolveFlashDeviceIdentity(deviceId: string): Promise<{
   const devRoot = join(DAILY_VERSION_ROOT, brand, project, 'DEV')
   if (!existsSync(devRoot)) throw new Error(`DEV 路径不存在: ${devRoot}`)
 
+  return { deviceId: serial, brand, project, devRoot }
+}
+
+export async function resolveFlashDeviceIdentity(deviceId: string): Promise<{
+  deviceId: string
+  brand: string
+  project: string
+  devRoot: string
+  devProjectPath: string
+}> {
+  const identity = await resolveFlashDeviceBaseIdentity(deviceId)
+  const { devRoot } = identity
   const devProjectPath = findDevProjectPath(devRoot, DEFAULT_DEV_PROJECT_KEYWORD)
-  return { deviceId: serial, brand, project, devRoot, devProjectPath }
+  return { ...identity, devProjectPath }
 }
 
 export function listSystemVersions(devProjectPath: string): DailySystemVersionOption[] {
@@ -757,6 +788,41 @@ function findDevProjectPath(devRoot: string, devProjectKeyword: string): string 
   }
   const latest = newestByNameTimestamp(devRoot, devProjects) || devProjects.sort().at(-1)!
   return join(devRoot, latest)
+}
+
+export function parseAndroidVersionFromDevProjectName(name: string): number | null {
+  const match = name.match(/Android[_-]?(\d+)/i)
+  if (!match) return null
+  const version = Number(match[1])
+  return Number.isFinite(version) && version >= 10 ? version : null
+}
+
+function findHighestAndroidDevProject(devRoot: string): {
+  androidVersion: number
+  devProjectPath: string
+} {
+  const candidates = safeDirEntries(devRoot)
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => ({ name: entry.name, androidVersion: parseAndroidVersionFromDevProjectName(entry.name) }))
+    .filter((item): item is { name: string; androidVersion: number } => item.androidVersion != null)
+  if (!candidates.length) throw new Error(`DEV 下未找到 Android 版本目录: ${devRoot}`)
+  const highestAndroid = Math.max(...candidates.map((item) => item.androidVersion))
+  const highestNames = candidates
+    .filter((item) => item.androidVersion === highestAndroid)
+    .map((item) => item.name)
+  const selected = newestByNameTimestamp(devRoot, highestNames) || highestNames.sort().at(-1)!
+  return { androidVersion: highestAndroid, devProjectPath: join(devRoot, selected) }
+}
+
+export function findDailyTrunkBranchName(names: string[], androidVersion: number): string | null {
+  const patterns = [
+    new RegExp(`(?:^|_)A${androidVersion}(?:_|$)`, 'i'),
+    new RegExp(`Android[_-]?${androidVersion}`, 'i'),
+  ]
+  return names
+    .filter((name) => patterns.some((pattern) => pattern.test(name)) && /trunk/i.test(name))
+    .sort()
+    .at(-1) || null
 }
 
 function findReleaseBranchBySystemVersion(devProjectPath: string, systemVersion: string): string {
@@ -925,6 +991,67 @@ function findFlashPackageInOpenPath(openPath: string): string {
   return openPath
 }
 
+function listUsableTcardNames(openPath: string): string[] {
+  if (!existsSync(openPath)) return []
+  const versionPattern = /\d+\.\d+\.\d+\.\d+(?:SP\d+)?/gi
+  return safeDirEntries(openPath)
+    .filter((entry) => entry.isFile() && /\.zip$/i.test(entry.name))
+    .map((entry) => entry.name)
+    .filter((name) => (
+      (/^Tcard_/i.test(name) || (name.match(versionPattern)?.length ?? 0) >= 2)
+      && !/_user(?:_|\.|$)/i.test(name)
+    ))
+}
+
+function pickPreferredTcardName(names: string[], previousAndroid?: number): string | null {
+  if (!names.length) return null
+  const hinted = previousAndroid
+    ? names.filter((name) => new RegExp(`_a${previousAndroid}(?:\\D|$)`, 'i').test(name))
+    : []
+  const pool = hinted.length ? hinted : names
+  return pool.slice().sort().reverse()[0] || null
+}
+
+export function findLatestTcardPackageInOpenPath(
+  openPath: string,
+  previousAndroid?: number,
+): string {
+  if (!existsSync(openPath)) throw new Error(`Open 刷机包目录不存在: ${openPath}`)
+  const latest = pickPreferredTcardName(listUsableTcardNames(openPath), previousAndroid)
+  if (!latest) throw new Error(`最新 daily 的 Open 目录下未找到 T卡升级包: ${openPath}`)
+  return join(openPath, latest)
+}
+
+function testVersionSortKey(folderName: string): string {
+  const version = folderName.match(/^tOS(\d+)\.(\d+)\.(\d+)\.(\d+)(?:SP(\d+))?/i)
+  const timestamp = folderName.match(/\[(\d{4}\.\d{2}\.\d{2}\.\d{2}\.\d{2}\.\d{2})_/i)?.[1] || ''
+  if (!version) return folderName
+  return [
+    version[1],
+    version[2],
+    version[3],
+    version[4],
+    version[5] || '0',
+  ].map((part) => part.padStart(8, '0')).join('.') + `.${timestamp}`
+}
+
+export function findLatestTcardPackageInTestRoot(
+  testRoot: string,
+  androidVersion: number,
+): { openPath: string; tcardPackagePath: string } {
+  if (!existsSync(testRoot)) throw new Error(`TEST 路径不存在: ${testRoot}`)
+  const candidates = safeDirEntries(testRoot)
+    .filter((entry) => entry.isDirectory() && new RegExp(`^tOS${androidVersion}(?:\\.|$)`, 'i').test(entry.name))
+    .map((entry) => entry.name)
+    .sort((a, b) => testVersionSortKey(b).localeCompare(testVersionSortKey(a)))
+  for (const folderName of candidates) {
+    const openPath = join(testRoot, folderName, 'Open')
+    const picked = pickPreferredTcardName(listUsableTcardNames(openPath), androidVersion - 1)
+    if (picked) return { openPath, tcardPackagePath: join(openPath, picked) }
+  }
+  throw new Error(`TEST 下未找到 Android ${androidVersion} 的 T卡升级包: ${testRoot}`)
+}
+
 export function pickLatestSystemVersion(versions: DailySystemVersionOption[]): string {
   if (!versions.length) {
     throw new Error('未找到可用的 tOS 系统版本')
@@ -969,6 +1096,91 @@ export async function resolveLatestDailyFlashPackage(
     resolvedArchivePath: resolved.path,
     openPath,
     packagePath,
+    usedIdhFallback: resolved.usedIdhFallback,
+  }
+}
+
+export async function resolveHighestDailyAndroidTcardPackage(
+  deviceId: string,
+): Promise<HighestDailyAndroidTcardResult> {
+  const identity = await resolveFlashDeviceBaseIdentity(deviceId)
+  const highest = findHighestAndroidDevProject(identity.devRoot)
+  const availableVersions = listSystemVersions(highest.devProjectPath)
+  if (!availableVersions.length) {
+    const branchNames = safeDirEntries(highest.devProjectPath)
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+    const trunkBranch = findDailyTrunkBranchName(branchNames, highest.androidVersion)
+    const testRoot = join(CQ_DAILY_VERSION_ROOT, identity.brand, identity.project, 'TEST')
+    let openPath = testRoot
+    let tcardPackagePath: string | undefined
+    let tcardSource: 'TEST' | undefined
+    let tcardResolveWarning: string | undefined
+    try {
+      const fallback = findLatestTcardPackageInTestRoot(testRoot, highest.androidVersion)
+      openPath = fallback.openPath
+      tcardPackagePath = fallback.tcardPackagePath
+      tcardSource = 'TEST'
+    } catch (err: any) {
+      tcardResolveWarning = err?.message
+        || `Android ${highest.androidVersion} 仅有 trunk，且 TEST 下未找到 T卡升级包`
+    }
+    return {
+      deviceId: identity.deviceId,
+      brand: identity.brand,
+      project: identity.project,
+      androidVersion: highest.androidVersion,
+      devProjectPath: highest.devProjectPath,
+      systemVersion: trunkBranch || `Android ${highest.androidVersion} trunk`,
+      versionName: 'trunk',
+      openPath,
+      tcardPackagePath,
+      tcardSource,
+      tcardResolveWarning,
+      usedIdhFallback: false,
+    }
+  }
+  const systemVersion = pickLatestSystemVersion(availableVersions)
+  const branchPath = findReleaseBranchBySystemVersion(highest.devProjectPath, systemVersion)
+  const stableRoot = join(branchPath, 'stable')
+  if (!existsSync(stableRoot)) throw new Error(`release 分支下 stable 路径不存在: ${stableRoot}`)
+
+  const { versionName, versionPath } = findLatestStableVersion(stableRoot)
+  const releaseNotePath = join(versionPath, RELEASE_NOTE_FILE)
+  if (!existsSync(releaseNotePath)) throw new Error(`最新 daily 版本缺少 ${RELEASE_NOTE_FILE}: ${releaseNotePath}`)
+  const archivePathCq = extractArchivePathCqFromReleaseNote(releaseNotePath)
+  const resolved = resolveExistingArchivePath(archivePathCq, identity.brand)
+  let openPath = join(resolved.path, 'Open')
+  let tcardPackagePath: string | undefined
+  let tcardSource: 'DEV' | 'TEST' | undefined
+  let tcardResolveWarning: string | undefined
+  try {
+    tcardPackagePath = findLatestTcardPackageInOpenPath(openPath, highest.androidVersion - 1)
+    tcardSource = 'DEV'
+  } catch {
+    const testRoot = join(CQ_DAILY_VERSION_ROOT, identity.brand, identity.project, 'TEST')
+    try {
+      const fallback = findLatestTcardPackageInTestRoot(testRoot, highest.androidVersion)
+      openPath = fallback.openPath
+      tcardPackagePath = fallback.tcardPackagePath
+      tcardSource = 'TEST'
+    } catch (err: any) {
+      tcardResolveWarning = err?.message || `未找到 Android ${highest.androidVersion} 的 T卡升级包`
+    }
+  }
+
+  return {
+    deviceId: identity.deviceId,
+    brand: identity.brand,
+    project: identity.project,
+    androidVersion: highest.androidVersion,
+    devProjectPath: highest.devProjectPath,
+    systemVersion,
+    versionName,
+    openPath,
+    tcardPackagePath,
+    tcardSource,
+    tcardResolveWarning,
     usedIdhFallback: resolved.usedIdhFallback,
   }
 }

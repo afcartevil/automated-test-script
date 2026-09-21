@@ -65,6 +65,7 @@ export interface SelfCheckFlashBeforeTestConfig {
 export interface SelfCheckTcardBeforeTestConfig {
   enabled: boolean
   zipPath?: string
+  zipPaths?: string[]
 }
 
 /** 质量验测开始前的前置配置快照（写入 summary/detail.json） */
@@ -233,9 +234,12 @@ export function formatSelfCheckTestConfigMetaRows(cfg?: SelfCheckTestConfig): st
   }
   if (cfg.tcardBeforeTest?.enabled) {
     rows.push(['T卡升级', '是'])
-    if (cfg.tcardBeforeTest.zipPath) {
-      rows.push(['T卡升级 ZIP', cfg.tcardBeforeTest.zipPath])
-    }
+    const zipPaths = cfg.tcardBeforeTest.zipPaths?.length
+      ? cfg.tcardBeforeTest.zipPaths
+      : (cfg.tcardBeforeTest.zipPath ? [cfg.tcardBeforeTest.zipPath] : [])
+    zipPaths.forEach((path, index) => {
+      rows.push([zipPaths.length > 1 ? `T卡升级 ZIP ${index + 1}` : 'T卡升级 ZIP', path])
+    })
   }
   if (cfg.selectedCases?.length) {
     rows.push(['自定义勾选用例数', String(cfg.selectedCases.length)])

@@ -11,6 +11,11 @@ import {
   buildSkipOobeAdbArgs,
   normalizeSystemVersionLabel,
   pickLatestSystemVersion,
+  parseAndroidVersionFromDevProjectName,
+  findLatestTcardPackageInOpenPath,
+  findLatestTcardPackageInTestRoot,
+  findDailyTrunkBranchName,
+  matchProjectFolder,
   resolveUserRootPkgPath,
   clearFlashPackageCache,
   MARKET_VERSIONS,
@@ -57,6 +62,65 @@ describe('device-flash helpers', () => {
       { label: 'tOS16.3', value: 'tOS16.3', branchFolder: 'tOS16.3.0_mtk_sys_release' },
     ]
     expect(pickLatestSystemVersion(versions)).toBe('tOS17.0')
+  })
+
+  it('parses Android version from sw_ver_sh DEV project folders', () => {
+    expect(parseAndroidVersionFromDevProjectName('X6850_Android_16_user')).toBe(16)
+    expect(parseAndroidVersionFromDevProjectName('project-Android17-release')).toBe(17)
+    expect(parseAndroidVersionFromDevProjectName('legacy_project')).toBeNull()
+  })
+
+  it('recognizes Android trunk when no release branch exists', () => {
+    expect(findDailyTrunkBranchName(['tOS_mtk_A17_trunk'], 17)).toBe('tOS_mtk_A17_trunk')
+    expect(findDailyTrunkBranchName(['tOS_mtk_A16_trunk'], 17)).toBeNull()
+  })
+
+  it('keeps the generic project name for sw_ver_sh and Chongqing CI daily paths', () => {
+    expect(matchProjectFolder(
+      ['X6879', 'X6879-H785', 'X6876-H786'],
+      ['X6879'],
+    )).toBe('X6879')
+    expect(matchProjectFolder(
+      ['X6876', 'X6876-H786'],
+      ['X6876-H786', 'X6876'],
+    )).toBe('X6876-H786')
+  })
+
+  it('finds T-card package in latest daily Open directory', () => {
+    const base = join(tmpdir(), `tahp-daily-tcard-${Date.now()}`)
+    mkdirSync(base, { recursive: true })
+    try {
+      writeFileSync(join(base, 'X6850-16.3.0.145.zip'), 'full')
+      const tcard = join(base, 'Tcard_X6850-16.3.0.145_a15.zip')
+      writeFileSync(tcard, 'tcard')
+      expect(findLatestTcardPackageInOpenPath(base)).toBe(tcard)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to newest TEST version that contains a usable T-card package', () => {
+    const base = join(tmpdir(), `tahp-test-tcard-${Date.now()}`)
+    const noTcardOpen = join(base, 'tOS16.3.0.156[2026.09.21.01.00.00_1_user]', 'Open')
+    const olderOpen = join(base, 'tOS16.3.0.155SP08[2026.09.16.22.08.09_2_user]', 'Open')
+    const latestOpen = join(base, 'tOS16.3.0.155SP08[2026.09.20.18.56.27_3_user]', 'Open')
+    mkdirSync(noTcardOpen, { recursive: true })
+    mkdirSync(olderOpen, { recursive: true })
+    mkdirSync(latestOpen, { recursive: true })
+    try {
+      writeFileSync(join(noTcardOpen, 'CM5-16.3.0.156.zip'), 'full')
+      writeFileSync(join(olderOpen, 'Tcard_CM5-16.3.0.155SP08-OP004PF001AZ.zip'), 'tcard')
+      const expected = join(latestOpen, 'Tcard_CM5-16.3.0.155SP08-OP005PF001AZ_a15.zip')
+      writeFileSync(expected, 'tcard')
+      writeFileSync(join(latestOpen, 'Tcard_CM5-16.3.0.155SP08-OP005PF001AZ_user_root_a15.zip'), 'root')
+
+      expect(findLatestTcardPackageInTestRoot(base, 16)).toEqual({
+        openPath: latestOpen,
+        tcardPackagePath: expected,
+      })
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
   })
 
   it('resolves user_root package from flash package directory', () => {

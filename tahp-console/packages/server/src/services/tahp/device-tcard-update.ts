@@ -23,6 +23,12 @@ const FILE_LIST_TIMEOUT_MS = 90_000
 
 export interface TcardUpdateOptions {
   zipPath: string
+  zipPaths?: string[]
+}
+
+export function tcardZipQueue(options: TcardUpdateOptions): string[] {
+  const paths = options.zipPaths?.length ? options.zipPaths : [options.zipPath]
+  return [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
 }
 
 export interface TcardUpdateResult {

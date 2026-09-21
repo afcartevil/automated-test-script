@@ -15,6 +15,7 @@ import {
 import {
   isTcardZipPath,
   runTcardUpdate,
+  tcardZipQueue,
   type TcardUpdateOptions,
 } from './device-tcard-update'
 import { resolvePythonSpawn, tahpPaths } from './paths'
@@ -330,10 +331,12 @@ function snapshotTestConfig(
       stageVersion: opts.flashOptions.stageVersion,
     }
   }
-  if (opts.tcardOptions?.zipPath) {
+  if (opts.tcardOptions) {
+    const zipPaths = tcardZipQueue(opts.tcardOptions)
     cfg.tcardBeforeTest = {
       enabled: true,
-      zipPath: opts.tcardOptions.zipPath,
+      zipPath: zipPaths[0],
+      zipPaths: zipPaths.length > 1 ? zipPaths : undefined,
     }
   }
   if (opts.prioritizeTddManual) cfg.prioritizeTddManual = true
@@ -2938,6 +2941,7 @@ export interface StartTestFlashPayload {
 export interface StartTestTcardPayload {
   enabled: boolean
   zipPath?: string
+  zipPaths?: string[]
 }
 
 function buildFlashOptionsFromPayload(payload?: StartTestFlashPayload): DeviceFlashOptions | undefined {
@@ -2951,12 +2955,16 @@ function buildFlashOptionsFromPayload(payload?: StartTestFlashPayload): DeviceFl
 }
 
 function buildTcardOptionsFromPayload(payload?: StartTestTcardPayload): TcardUpdateOptions | undefined {
-  if (!payload?.enabled || !payload.zipPath?.trim()) return undefined
-  const zipPath = payload.zipPath.trim()
-  if (!isTcardZipPath(zipPath)) {
+  if (!payload?.enabled) return undefined
+  const zipPaths = tcardZipQueue({
+    zipPath: payload.zipPath || '',
+    zipPaths: payload.zipPaths,
+  })
+  if (!zipPaths.length) return undefined
+  if (zipPaths.some((path) => !isTcardZipPath(path))) {
     throw new Error('T卡升级仅支持 ZIP 文件')
   }
-  return { zipPath }
+  return { zipPath: zipPaths[0]!, zipPaths }
 }
 
 function pretestStatus(session: Pick<TestSession, 'flashOptions' | 'tcardOptions'> & { currentModuleIndex?: number }): DeviceStatus {
@@ -3032,31 +3040,40 @@ async function runTcardBeforeTest(deviceId: string, session: TestSession): Promi
 
   const device = devices[deviceId]
   if (!device) return false
+  const zipPaths = tcardZipQueue(session.tcardOptions)
+  if (!zipPaths.length) return true
 
   device.status = 'T卡升级中'
   device.currentModule = 'T卡升级'
   emitEvent('device_updated', { device })
-  emitEvent('flash_log', { deviceId, line: '[T卡升级] 开始 T卡升级…' })
+  emitEvent('flash_log', { deviceId, line: `[T卡升级] 开始连续升级，共 ${zipPaths.length} 个升级包…` })
 
-  const result = await runTcardUpdate(
-    deviceId,
-    session.tcardOptions,
-    (line) => emitEvent('flash_log', { deviceId, line }),
-    () => !session.isRunning,
-  )
-
-  if (!result.success) {
-    device.status = '错误'
-    session.isRunning = false
-    session.errorReason = result.error || 'T卡升级失败'
-    device.currentModule = 'T卡升级'
-    emitEvent('device_updated', { device })
-    emitEvent('flash_completed', {
+  for (let index = 0; index < zipPaths.length; index += 1) {
+    if (!session.isRunning) return false
+    const zipPath = zipPaths[index]!
+    emitEvent('flash_log', {
       deviceId,
-      success: false,
-      error: result.error,
+      line: `[T卡升级] (${index + 1}/${zipPaths.length}) ${basename(zipPath)}`,
     })
-    return false
+    const result = await runTcardUpdate(
+      deviceId,
+      { zipPath },
+      (line) => emitEvent('flash_log', { deviceId, line }),
+      () => !session.isRunning,
+    )
+    if (!result.success) {
+      device.status = '错误'
+      session.isRunning = false
+      session.errorReason = result.error || 'T卡升级失败'
+      device.currentModule = 'T卡升级'
+      emitEvent('device_updated', { device })
+      emitEvent('flash_completed', {
+        deviceId,
+        success: false,
+        error: result.error,
+      })
+      return false
+    }
   }
 
   emitEvent('flash_completed', { deviceId, success: true })

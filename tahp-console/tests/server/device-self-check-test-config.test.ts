@@ -77,6 +77,17 @@ describe('device self-check testConfig snapshot', () => {
     expect(formatSelfCheckTestConfigMetaRows(cfg).some(r => r[0] === 'T卡升级 ZIP')).toBe(true)
   })
 
+  it('captures sequential T-card zip upgrades', () => {
+    const cfg = __testingSnapshotTestConfig('str4', {
+      tcardOptions: {
+        zipPath: 'D:\\rom\\a15.zip',
+        zipPaths: ['D:\\rom\\a15.zip', 'D:\\rom\\a16.zip'],
+      },
+    })
+    expect(cfg.tcardBeforeTest?.zipPaths).toEqual(['D:\\rom\\a15.zip', 'D:\\rom\\a16.zip'])
+    expect(formatSelfCheckTestConfigMetaRows(cfg).map((row) => row[0])).toContain('T卡升级 ZIP 2')
+  })
+
   it('formats monkey duration for excel meta rows', () => {
     const rows = formatSelfCheckTestConfigMetaRows({ monkeyDuration: '7d' })
     expect(rows).toEqual([['monkey测试时长', '7d']])

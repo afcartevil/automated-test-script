@@ -557,6 +557,21 @@ tahpDeviceSelfCheckRoutes.post(
 )
 
 tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/tcard/release-upgrade',
+  async (ctx) => {
+    try {
+      const { resolveReleaseUpgradePlan } = await import('../../services/tahp/device-release-upgrade')
+      const body = (ctx.request.body || {}) as { deviceId?: string }
+      const result = await resolveReleaseUpgradePlan(body.deviceId || '')
+      ctx.body = { success: true, data: result }
+    } catch (err: any) {
+      ctx.status = 400
+      ctx.body = { success: false, error: err?.message || 'Failed to resolve release upgrade plan' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
   '/api/tahp/device-self-check/flash/clear-packages',
   async (ctx) => {
     try {

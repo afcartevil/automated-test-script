@@ -194,6 +194,7 @@ export interface StartTestFlashPayload {
 export interface StartTestTcardPayload {
   enabled: boolean
   zipPath?: string
+  zipPaths?: string[]
 }
 
 export async function startTest(
@@ -290,6 +291,45 @@ export async function resolveLatestDailyFlashPackage(
   return await tahpPost<LatestDailyFlashResult>(
     '/api/tahp/device-self-check/flash/latest-daily',
     payload
+  )
+}
+
+export interface AndroidUpgradeStep {
+  androidVersion: number
+  androidLabel: string
+  releaseVersionName: string
+  releaseFolder: string
+  channel: 'USER' | 'MR' | 'DAILY'
+  packagePath: string
+  fullZip?: string
+  tcardZips: string[]
+  sourcePath?: string
+  cqTargetPath: string
+  needsTransfer: boolean
+  available: boolean
+  selected: boolean
+  unavailableReason?: string
+}
+
+export interface ReleaseUpgradePlan {
+  deviceId: string
+  brand: string
+  model: string
+  ciModels: string[]
+  releaseRoot: string
+  ciRoot: string
+  steps: AndroidUpgradeStep[]
+  dailyHighestAndroidVersion?: number
+  dailyTcardOverrideApplied?: boolean
+  dailyTcardPackagePath?: string
+  dailyTcardSource?: 'DEV' | 'TEST'
+  dailyResolveWarning?: string
+}
+
+export async function resolveReleaseUpgradePlan(deviceId: string): Promise<ReleaseUpgradePlan> {
+  return await tahpPost<ReleaseUpgradePlan>(
+    '/api/tahp/device-self-check/tcard/release-upgrade',
+    { deviceId },
   )
 }
 
@@ -561,6 +601,7 @@ export interface SelfCheckFlashBeforeTestConfig {
 export interface SelfCheckTcardBeforeTestConfig {
   enabled: boolean
   zipPath?: string
+  zipPaths?: string[]
 }
 
 export interface SelfCheckTestConfig {
