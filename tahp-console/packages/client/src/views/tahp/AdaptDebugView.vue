@@ -48,6 +48,7 @@ import {
 import { normalizeSpnRelatedSkills } from '@/constants/adapt-domains/spn-config-form'
 import { CONFIG_ROUTE_NAME } from '@/utils/config-navigation'
 import AdaptPathParamsPanel from '@/components/tahp/adapt/AdaptPathParamsPanel.vue'
+import ChecklistScmpSyncBar from '@/components/tahp/adapt/ChecklistScmpSyncBar.vue'
 import {
   copyPathParamInputs,
   createPathParamScope,
@@ -2217,6 +2218,8 @@ function openSkill(skillName: string) {
         <span class="adapt-domain-dot" :class="domainRunDotClass(domain.id)" />
       </button>
     </div>
+
+    <ChecklistScmpSyncBar v-if="activeWorkspaceId === 'feature-adapt'" />
 
     <!-- ───────── 表单阶段 ───────── -->
     <template v-if="!showMonitor">

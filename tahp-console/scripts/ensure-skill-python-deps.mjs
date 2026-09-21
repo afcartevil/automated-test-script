@@ -19,8 +19,13 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-/** skill id → 相对 TAHP 项目根的 requirements.txt */
+/** skill / 随仓依赖 → 相对 TAHP 项目根的 requirements.txt */
 const SKILL_REQUIREMENTS = [
+  {
+    id: 'checklist-scmp-sync',
+    req: 'tahp-console/packages/server/src/services/tahp/checklist-scmp-sync/requirements.txt',
+    imports: ['httpx', 'cryptography'],
+  },
   {
     id: 'tones-scmp',
     req: 'skills/.claude/skills/tones-scmp/scripts/requirements.txt',

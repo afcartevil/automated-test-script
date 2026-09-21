@@ -21,6 +21,7 @@ import { tahpCodePullRoutes } from './code-pull'
 import { tahpCentralSsoRoutes } from './central-sso'
 import { tahpVerifyAutoRunRoutes } from './verify-auto-run'
 import { tahpRfCalibMetaRoutes } from './rf-calib-meta'
+import { tahpChecklistScmpSyncRoutes } from './checklist-scmp-sync'
 
 export function registerTahpRoutes(app: Koa) {
   app.use(tahpKnowledgeRoutes.routes())
@@ -41,6 +42,7 @@ export function registerTahpRoutes(app: Koa) {
   app.use(tahpEvalRoutes.routes())
   app.use(tahpCodePullRoutes.routes())
   app.use(tahpRfCalibMetaRoutes.routes())
+  app.use(tahpChecklistScmpSyncRoutes.routes())
   app.use(tahpCentralSsoRoutes.routes())
   app.use(tahpVerifyAutoRunRoutes.routes())
 }

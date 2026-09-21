@@ -56,6 +56,24 @@ cpSync(
   { recursive: true },
 )
 
+const checklistScmpSrc = resolve(
+  rootDir,
+  'packages/server/src/services/tahp/checklist-scmp-sync/cli',
+)
+const checklistScmpOut = resolve(serverOutDir, 'checklist-scmp-sync/cli')
+if (existsSync(checklistScmpSrc)) {
+  mkdirSync(checklistScmpOut, { recursive: true })
+  cpSync(checklistScmpSrc, checklistScmpOut, { recursive: true })
+}
+const checklistScmpReqSrc = resolve(
+  rootDir,
+  'packages/server/src/services/tahp/checklist-scmp-sync/requirements.txt',
+)
+if (existsSync(checklistScmpReqSrc)) {
+  mkdirSync(resolve(serverOutDir, 'checklist-scmp-sync'), { recursive: true })
+  cpSync(checklistScmpReqSrc, resolve(serverOutDir, 'checklist-scmp-sync', 'requirements.txt'))
+}
+
 // packages/server/data 在 .gitignore 中（本机运行时 DB），clone 后可能不存在；
 // 生产模式实际读写 ~/.tahp-console，此处仅兼容旧产物布局。
 const serverDataDir = resolve(rootDir, 'packages/server/data')
