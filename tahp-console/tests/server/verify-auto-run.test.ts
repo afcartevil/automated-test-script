@@ -323,6 +323,92 @@ describe('自动启动（刷机 + 刷 Root）', () => {
   })
 })
 
+describe('人工执行测试项（str4 / week 不自动执行）', () => {
+  it('str4 任务仅打本机「待人工执行」标签，不认领设备、不写回中心', async () => {
+    sessionFor('test-qa01')
+    h.verifyMine.mockResolvedValue([centralTask({ test_type: 'str4', item_label: '转测摸底测试' })])
+
+    await tickVerifyAutoRun()
+
+    const task = loadVerifyAutoRunState().tasks[0]
+    expect(task.phase).toBe('manual_only')
+    expect(task.label).toBe('待人工执行')
+    expect(h.refreshDevices).not.toHaveBeenCalled()
+    expect(h.startTest).not.toHaveBeenCalled()
+    // 中心白名单无 manual_only 码：标签仅本机展示，不写回
+    expect(h.labelVerifyTask).not.toHaveBeenCalled()
+  })
+
+  it('week 任务同样不自动执行', async () => {
+    sessionFor('test-qa01')
+    h.verifyMine.mockResolvedValue([centralTask({ test_type: 'week', item_label: '周版本测试' })])
+
+    await tickVerifyAutoRun()
+
+    expect(loadVerifyAutoRunState().tasks[0].phase).toBe('manual_only')
+    expect(h.refreshDevices).not.toHaveBeenCalled()
+  })
+
+  it('策略调整前已在等待设备的 str4 任务转为待人工执行', async () => {
+    sessionFor('test-qa01')
+    __testingWriteVerifyAutoRunState({
+      schema_version: 1,
+      enabled: true,
+      updated_at: new Date().toISOString(),
+      tasks: [{
+        task_id: 'vt_1',
+        test_type: 'str4',
+        item_label: '转测摸底测试',
+        project: 'X6876',
+        created_at: '2026-09-17T00:00:00.000Z',
+        phase: 'waiting_device',
+        label_code: 'waiting_device',
+        label: '等待设备',
+        waiting_since: new Date().toISOString(),
+        attempts: 0,
+        close_attempts: 0,
+        updated_at: new Date().toISOString(),
+      }],
+    })
+    h.verifyMine.mockResolvedValue([centralTask({ test_type: 'str4', item_label: '转测摸底测试' })])
+
+    await tickVerifyAutoRun()
+
+    expect(loadVerifyAutoRunState().tasks[0].phase).toBe('manual_only')
+    expect(h.refreshDevices).not.toHaveBeenCalled()
+  })
+
+  it('中心完成后 manual_only 任务按 gone 清理', async () => {
+    sessionFor('test-qa01')
+    h.verifyMine.mockResolvedValue([centralTask({ test_type: 'str4', item_label: '转测摸底测试' })])
+    await tickVerifyAutoRun()
+    expect(loadVerifyAutoRunState().tasks[0].phase).toBe('manual_only')
+
+    // 人工在中心完成：下一轮 verify/mine?view=open 不再返回该任务
+    h.verifyMine.mockResolvedValue([])
+    await tickVerifyAutoRun()
+
+    expect(loadVerifyAutoRunState().tasks[0].phase).toBe('gone')
+  })
+})
+
+describe('GMS 自动执行（不刷机 / 不刷 Root 包）', () => {
+  it('uses the device current build: no package resolution, startTest with flash disabled', async () => {
+    sessionFor('test-qa01')
+    h.verifyMine.mockResolvedValue([centralTask({ test_type: 'gms', item_label: 'GMS测试' })])
+    h.refreshDevices.mockResolvedValue([device('SER_MATCH')])
+
+    const result = await tickVerifyAutoRun()
+
+    expect(h.resolveLatestDailyFlashPackage).not.toHaveBeenCalled()
+    expect(h.startTest).toHaveBeenCalledWith('SER_MATCH', 'gms', { enabled: false }, {})
+    expect(result.active_task_id).toBe('vt_1')
+    const task = loadVerifyAutoRunState().tasks[0]
+    expect(task.phase).toBe('running')
+    expect(task.device_id).toBe('SER_MATCH')
+  })
+})
+
 describe('执行期标签与关单', () => {
   async function startRunning() {
     sessionFor('test-qa01')

@@ -4,7 +4,7 @@
  */
 import { tahpGet, tahpPost } from './client'
 
-/** 执行标签码（与中心 VERIFY_TASK_LABELS / 本机 verify-auto-run 对齐） */
+/** 执行标签码（与中心 VERIFY_TASK_LABELS / 本机 verify-auto-run 对齐；manual_only 仅本机展示不写回中心） */
 export type VerifyAutoLabelCode =
   | 'waiting_device'
   | 'resolving_flash'
@@ -17,6 +17,7 @@ export type VerifyAutoLabelCode =
   | 'completed_pass'
   | 'completed_fail'
   | 'close_failed'
+  | 'manual_only'
   | 'paused'
   | 'cancelled'
 
@@ -33,6 +34,7 @@ export const VERIFY_AUTO_LABEL_TONE: Record<string, 'wait' | 'run' | 'human' | '
   completed_pass: 'done',
   completed_fail: 'fail',
   close_failed: 'fail',
+  manual_only: 'human',
   paused: 'muted',
   cancelled: 'muted',
 }

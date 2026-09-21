@@ -252,6 +252,33 @@ describe('总览「验测任务」卡片 · 测试账号自动执行', () => {
     wrapper.unmount()
   })
 
+  it('待人工执行（str4/week）任务显示标签且不显示「取消自动」', async () => {
+    hoisted.fetchMyVerifyTasks.mockResolvedValue({
+      tasks: [
+        {
+          ...TASKS[1],
+          auto: {
+            label: '待人工执行',
+            label_code: 'manual_only' as const,
+            phase: 'manual_only',
+            updated_at: '2026-09-17T10:00:00.000Z',
+          },
+        },
+      ],
+      degraded: false,
+      auto_run: AUTO_RUN,
+    })
+    const wrapper = mountOverview()
+    await flushPromises()
+
+    const label = wrapper.find('.verify-label')
+    expect(label.exists()).toBe(true)
+    expect(label.text()).toBe('待人工执行')
+    expect(label.classes()).toContain('verify-label--human')
+    expect(wrapper.find('.verify-cancel').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('可取消单个任务的自动执行', async () => {
     hoisted.fetchMyVerifyTasks.mockResolvedValue({
       tasks: [{ ...TASKS[0], auto: AUTO_STATE }],

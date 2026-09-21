@@ -5,6 +5,12 @@
  * 取最新 daily 刷机包（勾选刷 Root）→ `startTest` 启动对应测试项 → 全程把执行标签写回中心
  * （等待设备 / 验测执行中 / 等待人工确认 …）→ 报告落盘后自动关单并关联 run_id。
  *
+ * 测试项策略：
+ *  - 转测摸底测试（str4）/ 周版本测试（week）：**不自动执行**，仅同步到本机打「待人工执行」
+ *    标签展示在「总览 → 验测任务」（不写回中心：中心白名单无此码），由人工手动执行；
+ *  - GMS测试（gms）：自动执行但**不刷机、不刷 Root 包**，直接使用设备当前版本；
+ *  - 其余测试项：自动等设备 → 刷最新 daily（含 Root 包）→ 启动测试。
+ *
  * 边界与安全：
  *  - 仅 `test-` 前缀账号生效（`isTestAccountName`），且需 `isLocal() && isCentralConfigured()`；
  *    `TAHP_VERIFY_AUTO_RUN_DISABLED=1` 可整体关闭，EA 界面可暂停/取消。
@@ -32,6 +38,7 @@ import {
   startTest,
   type DeviceInfo,
   type StandardTestType,
+  type StartTestFlashPayload,
 } from './device-self-check'
 import {
   extractProjectCandidates,
@@ -56,6 +63,8 @@ export const VERIFY_AUTO_LABELS = {
   completed_pass: '验测完成(通过)',
   completed_fail: '验测完成(失败)',
   close_failed: '关单失败·待人工',
+  /** 仅本机展示（中心 VERIFY_TASK_LABELS 白名单无此码，不写回） */
+  manual_only: '待人工执行',
   paused: '已暂停',
   cancelled: '已取消',
 } as const
@@ -76,16 +85,22 @@ export type VerifyAutoPhase =
   | 'completed_fail'
   | 'close_failed'
   | 'unsupported'
+  | 'manual_only'
   | 'cancelled'
   | 'gone'
 
-/** 已收尾（不再认领、不再推进）的相位 */
+/**
+ * 已收尾（不再认领、不再推进）的相位。
+ * manual_only 不认领、不推进也归入此类（暂停/恢复、事件订阅均不触碰）；
+ * 但它并非终态——中心侧完成后仍按 gone 清理（见 syncRemoteTasks）。
+ */
 const CLOSED_PHASES: VerifyAutoPhase[] = [
   'completed_pass',
   'completed_fail',
   'close_failed',
   'wait_timeout',
   'unsupported',
+  'manual_only',
   'cancelled',
   'gone',
 ]
@@ -97,6 +112,12 @@ const PENDING_CLOSE_PHASES: VerifyAutoPhase[] = ['completing', 'flash_failed', '
 const SUPPORTED_TEST_TYPES: StandardTestType[] = [
   'str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'thermal', 'pipeline_adapt', 'ai_generated',
 ]
+
+/** 不自动执行、仅展示「待人工执行」的测试项（转测摸底 / 周版本：由人工把控刷机版本与执行范围） */
+const MANUAL_ONLY_TEST_TYPES = ['str4', 'week']
+
+/** 自动执行但跳过刷机（不刷机、不刷 Root 包），直接使用设备当前版本的测试项 */
+const SKIP_FLASH_TEST_TYPES = ['gms']
 
 /** 等待匹配设备的上限（默认 4h），超时打标签让位下一个任务 */
 const DEFAULT_MAX_WAIT_MS = 4 * 60 * 60 * 1000
@@ -351,6 +372,10 @@ function projectMatches(taskProject: string | undefined, deviceProject: string):
 
 // ─── 主流程 ──────────────────────────────────────────────────────────────
 
+function isManualOnlyTestType(testType: string): boolean {
+  return MANUAL_ONLY_TEST_TYPES.includes(String(testType || '').trim())
+}
+
 function syncRemoteTasks(state: VerifyAutoRunState, remote: CentralVerifyTask[]): void {
   const known = new Map(state.tasks.map(t => [t.task_id, t]))
   for (const row of remote) {
@@ -358,27 +383,34 @@ function syncRemoteTasks(state: VerifyAutoRunState, remote: CentralVerifyTask[])
     if (existing) {
       existing.project = row.project || existing.project
       existing.item_label = row.item_label || existing.item_label
+      // 策略调整前已跟踪的 str4/week：未认领设备的转「待人工执行」（已在跑的让它跑完关单）
+      if (existing.phase === 'waiting_device' && isManualOnlyTestType(existing.test_type)) {
+        existing.waiting_since = undefined
+        setLabel(state, existing, 'manual_only', { phase: 'manual_only', error: '' })
+      }
       continue
     }
+    const manualOnly = isManualOnlyTestType(String(row.test_type || '').trim())
     state.tasks.push({
       task_id: row.task_id,
       test_type: String(row.test_type || '').trim(),
       item_label: row.item_label,
       project: row.project,
       created_at: row.created_at,
-      phase: 'waiting_device',
-      label_code: 'waiting_device',
-      label: VERIFY_AUTO_LABELS.waiting_device,
-      waiting_since: new Date().toISOString(),
+      phase: manualOnly ? 'manual_only' : 'waiting_device',
+      label_code: manualOnly ? 'manual_only' : 'waiting_device',
+      label: manualOnly ? VERIFY_AUTO_LABELS.manual_only : VERIFY_AUTO_LABELS.waiting_device,
+      waiting_since: manualOnly ? undefined : new Date().toISOString(),
       attempts: 0,
       close_attempts: 0,
       updated_at: new Date().toISOString(),
     })
   }
-  // 中心已关单/改派：未收尾的本地任务停止跟踪
+  // 中心已关单/改派：未收尾的本地任务停止跟踪（manual_only 虽不收尾，中心完成后同样移除）
   const remoteIds = new Set(remote.map(r => r.task_id))
   for (const task of state.tasks) {
-    if (remoteIds.has(task.task_id) || CLOSED_PHASES.includes(task.phase)) continue
+    if (remoteIds.has(task.task_id)) continue
+    if (CLOSED_PHASES.includes(task.phase) && task.phase !== 'manual_only') continue
     task.phase = 'gone'
     task.updated_at = new Date().toISOString()
     if (state.active_task_id === task.task_id) state.active_task_id = undefined
@@ -389,7 +421,7 @@ function isSupportedTestType(testType: string): testType is StandardTestType {
   return (SUPPORTED_TEST_TYPES as string[]).includes(testType)
 }
 
-/** 选中空闲设备 → 取最新 daily 包 → 启动测试（刷 Root） */
+/** 选中空闲设备 → 按测试项策略刷最新 daily 包或直接用设备当前版本 → 启动测试 */
 async function claimAndStart(state: VerifyAutoRunState, task: VerifyAutoTaskState, token: string): Promise<void> {
   let devices: DeviceInfo[] = []
   try {
@@ -437,36 +469,37 @@ async function claimAndStart(state: VerifyAutoRunState, task: VerifyAutoTaskStat
     return
   }
 
-  setLabel(state, task, 'resolving_flash', { phase: 'resolving_flash', error: '' })
-  let packagePath = ''
-  try {
-    packagePath = (await resolveLatestDailyFlashPackage({ deviceId: matched.deviceId })).packagePath
-  } catch (err) {
-    task.attempts += 1
-    const message = (err as Error).message || '未知错误'
-    if (task.attempts >= MAX_FLASH_ATTEMPTS) {
-      setLabel(state, task, 'flash_failed', {
-        phase: 'flash_failed',
-        error: `最新 daily 刷机包解析失败（已试 ${task.attempts} 次）：${message}`,
+  // GMS 等测试项：不刷机、不刷 Root 包，直接使用设备当前版本执行
+  const skipFlash = SKIP_FLASH_TEST_TYPES.includes(task.test_type)
+  let flashPayload: StartTestFlashPayload = { enabled: false }
+  if (!skipFlash) {
+    setLabel(state, task, 'resolving_flash', { phase: 'resolving_flash', error: '' })
+    let packagePath = ''
+    try {
+      packagePath = (await resolveLatestDailyFlashPackage({ deviceId: matched.deviceId })).packagePath
+    } catch (err) {
+      task.attempts += 1
+      const message = (err as Error).message || '未知错误'
+      if (task.attempts >= MAX_FLASH_ATTEMPTS) {
+        setLabel(state, task, 'flash_failed', {
+          phase: 'flash_failed',
+          error: `最新 daily 刷机包解析失败（已试 ${task.attempts} 次）：${message}`,
+        })
+        task.ended_at = new Date().toISOString()
+        // 失败也自动关单（无报告则不关联 run_id）
+        await closeTask(state, task, token)
+        return
+      }
+      setLabel(state, task, 'waiting_device', {
+        phase: 'waiting_device',
+        error: `刷机包解析失败：${message}`,
       })
-      task.ended_at = new Date().toISOString()
-      // 失败也自动关单（无报告则不关联 run_id）
-      await closeTask(state, task, token)
       return
     }
-    setLabel(state, task, 'waiting_device', {
-      phase: 'waiting_device',
-      error: `刷机包解析失败：${message}`,
-    })
-    return
+    flashPayload = { enabled: true, pkgPath: packagePath, enableRootPkg: true, stageVersion: 'Open' }
   }
 
-  const detail = await startTest(
-    matched.deviceId,
-    task.test_type,
-    { enabled: true, pkgPath: packagePath, enableRootPkg: true, stageVersion: 'Open' },
-    {},
-  )
+  const detail = await startTest(matched.deviceId, task.test_type, flashPayload, {})
   if (!detail) {
     // 设备被人工或其它流程抢走：下一轮重新匹配
     task.attempts += 1
@@ -483,8 +516,10 @@ async function claimAndStart(state: VerifyAutoRunState, task: VerifyAutoTaskStat
   state.active_task_id = task.task_id
   setLabel(state, task, 'running', { phase: 'running', error: '' })
   logger.info(
-    { taskId: task.task_id, deviceId: matched.deviceId, testType: task.test_type, packagePath },
-    '[verify-auto-run] 已自动启动验测（刷最新 daily + Root 包）',
+    { taskId: task.task_id, deviceId: matched.deviceId, testType: task.test_type, packagePath: flashPayload.pkgPath },
+    skipFlash
+      ? '[verify-auto-run] 已自动启动验测（不刷机，使用设备当前版本）'
+      : '[verify-auto-run] 已自动启动验测（刷最新 daily + Root 包）',
   )
 }
 
@@ -644,7 +679,8 @@ export async function tickVerifyAutoRun(): Promise<{ eligible: boolean; reason?:
     syncRemoteTasks(state, remote)
 
     for (const task of state.tasks) {
-      if (task.phase === 'gone' || task.label_synced_at) continue
+      // manual_only 标签仅本机展示：中心 VERIFY_TASK_LABELS 白名单无此码，写回会被 400 拒绝
+      if (task.phase === 'gone' || task.phase === 'manual_only' || task.label_synced_at) continue
       await pushLabel(token, task)
     }
 

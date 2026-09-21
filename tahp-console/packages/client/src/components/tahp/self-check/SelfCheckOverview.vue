@@ -171,7 +171,7 @@ async function openVerifyCenter() {
               :title="taskLabelTitle(t)"
             >{{ taskLabel(t) }}</span>
             <button
-              v-if="t.auto && autoRun?.is_test_account && t.auto.phase !== 'cancelled'"
+              v-if="t.auto && autoRun?.is_test_account && t.auto.phase !== 'cancelled' && t.auto.phase !== 'manual_only'"
               type="button"
               class="link-btn verify-cancel"
               :disabled="autoRunBusy"
