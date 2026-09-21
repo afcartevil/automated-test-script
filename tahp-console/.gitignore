@@ -46,3 +46,13 @@ hermes-dependencies.md
 CLAUDE.md
 # Client source map artifacts
 packages/client/src/**/*.js
+
+# One-off stability checklist codegen scratch (do not commit)
+_a17_*
+_qcom_*
+_dump_methods.py
+_gen_a17_cases.py
+_parse_stability_checklist.py
+_splice_a17.py
+stability-*-cells.json
+stability-checklist-*.json
