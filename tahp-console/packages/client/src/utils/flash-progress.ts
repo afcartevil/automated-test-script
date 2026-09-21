@@ -60,8 +60,12 @@ export function parseFlashLogLine(state: FlashProgressState, line: string): Flas
       bump(state, 12, '准备刷机包', '解压或缓存版本包')
     } else if (normalized.includes('启动命令')) {
       bump(state, 14, '启动工具', '拉起 device_update')
+    } else if (normalized.includes('开始跳过 OOBE')) {
+      bump(state, 95, '配置设备', '跳过 OOBE')
+    } else if (normalized.includes('已跳过 OOBE')) {
+      bump(state, 100, '刷机完成', '已跳过 OOBE')
     } else if (normalized.includes('正常结束')) {
-      bump(state, 100, '刷机完成', '')
+      bump(state, 93, '刷机完成', '等待跳过 OOBE')
     } else if (normalized.includes('异常') || normalized.includes('失败')) {
       bump(state, state.progress, '刷机失败', normalized.replace(/^\[刷机\]\s*/, ''))
     }

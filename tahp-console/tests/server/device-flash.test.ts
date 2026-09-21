@@ -8,6 +8,7 @@ import {
   isNetworkPath,
   buildFlashCommand,
   buildReleaseBranchFolder,
+  buildSkipOobeAdbArgs,
   normalizeSystemVersionLabel,
   pickLatestSystemVersion,
   resolveUserRootPkgPath,
@@ -72,6 +73,19 @@ describe('device-flash helpers', () => {
     } finally {
       rmSync(base, { recursive: true, force: true })
     }
+  })
+
+  it('builds SkipOOBE adb commands for a known serial', () => {
+    expect(buildSkipOobeAdbArgs('ABC123')).toEqual([
+      ['-s', 'ABC123', 'root'],
+      ['-s', 'ABC123', 'wait-for-device'],
+      ['-s', 'ABC123', 'shell', 'settings', 'put', 'secure', 'user_setup_complete', '1'],
+      ['-s', 'ABC123', 'shell', 'settings', 'put', 'global', 'device_provisioned', '1'],
+      ['-s', 'ABC123', 'shell', 'settings', 'put', 'system', 'show_inadvertent', '0'],
+      ['-s', 'ABC123', 'shell', 'input', 'keyevent', '3'],
+      ['-s', 'ABC123', 'shell', 'input', 'keyevent', '3'],
+      ['-s', 'ABC123', 'shell', 'input', 'keyevent', '3'],
+    ])
   })
 
   it('clears flash package cache directory contents', () => {

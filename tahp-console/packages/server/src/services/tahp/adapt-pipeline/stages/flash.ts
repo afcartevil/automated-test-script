@@ -6,6 +6,7 @@ import {
 } from '../../flash-artifact-resolver'
 import {
   runDeviceFlash,
+  skipOobeForDevice,
   waitForAdbDevice,
   type DeviceFlashResult,
 } from '../../device-flash'
@@ -91,6 +92,13 @@ async function markSuccess(ctx: StageContext, gen: number, pkgPath: string, via:
   if (deviceId) {
     try {
       await waitForAdbDevice(deviceId, 120_000, 5_000, () => !isCurrentFlashJob(gen, ctx))
+      if (!isCurrentFlashJob(gen, ctx)) return
+      ctx.log('设备已就绪，开始跳过 OOBE')
+      await skipOobeForDevice(deviceId, (line) => ctx.log(line), {
+        timeoutMs: 30_000,
+        pollIntervalMs: 2_000,
+        shouldAbort: () => !isCurrentFlashJob(gen, ctx),
+      })
       if (!isCurrentFlashJob(gen, ctx)) return
       ctx.patchState({
         progress: { state: 'success', via },

@@ -10,7 +10,7 @@ import AdmZip from 'adm-zip'
 import {
   type DeviceFlashOptions,
   runDeviceFlash,
-  waitForAdbDevice,
+  skipOobeForDevice,
 } from './device-flash'
 import {
   isTcardZipPath,
@@ -2910,21 +2910,34 @@ async function runFlashBeforeTest(deviceId: string, session: TestSession): Promi
     return false
   }
 
+  emitEvent('flash_log', { deviceId, line: '[刷机] 刷机完成，开始跳过 OOBE…' })
+  const oobeOk = await skipOobeForDevice(deviceId, (line) => {
+    emitEvent('flash_log', { deviceId, line })
+  }, {
+    shouldAbort: () => !session.isRunning,
+  })
+  if (!session.isRunning) return false
+  if (!oobeOk) {
+    device.status = '错误'
+    session.isRunning = false
+    session.errorReason = '刷机后跳过 OOBE 失败（设备未重新连接）'
+    device.currentModule = '刷机'
+    emitEvent('device_updated', { device })
+    emitEvent('flash_completed', {
+      deviceId,
+      success: false,
+      returnCode: result.returnCode,
+      error: session.errorReason,
+    })
+    return false
+  }
+
   emitEvent('flash_completed', {
     deviceId,
     success: true,
     returnCode: result.returnCode,
     continuePretest: Boolean(session.tcardOptions),
   })
-  const reconnected = await waitForAdbDevice(deviceId)
-  if (!reconnected) {
-    device.status = '错误'
-    session.isRunning = false
-    session.errorReason = '刷机后设备未重新连接'
-    device.currentModule = '刷机'
-    emitEvent('device_updated', { device })
-    return false
-  }
   return true
 }
 

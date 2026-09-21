@@ -61,8 +61,11 @@ describe('flash-progress parser', () => {
     const s = createFlashProgressState()
     parseFlashLogLine(s, '[DeviceUpdate][SN] --- 手机:SN Fastboot刷机成功, 开始执行跳过OOBE')
     parseFlashLogLine(s, '[刷机] 刷机进程正常结束')
+    parseFlashLogLine(s, '[刷机] 刷机完成，开始跳过 OOBE…')
+    parseFlashLogLine(s, '[刷机] 已跳过 OOBE')
     expect(s.progress).toBe(100)
     expect(s.flashSucceeded).toBe(true)
+    expect(s.phase).toBe('刷机完成')
   })
 
   it('tracks T-card zip push and reboot wait', () => {

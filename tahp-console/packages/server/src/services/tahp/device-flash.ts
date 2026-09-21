@@ -1356,6 +1356,94 @@ export async function waitForAdbDevice(
   return false
 }
 
+const SKIP_OOBE_ADB_TIMEOUT_MS = 60_000
+
+/** 对应 SkipOOBE.bat：root → wait-for-device → 标记已完成设置 → HOME。 */
+export function buildSkipOobeAdbArgs(deviceId: string): string[][] {
+  const serial = ['-s', deviceId]
+  return [
+    [...serial, 'root'],
+    [...serial, 'wait-for-device'],
+    [...serial, 'shell', 'settings', 'put', 'secure', 'user_setup_complete', '1'],
+    [...serial, 'shell', 'settings', 'put', 'global', 'device_provisioned', '1'],
+    [...serial, 'shell', 'settings', 'put', 'system', 'show_inadvertent', '0'],
+    [...serial, 'shell', 'input', 'keyevent', '3'],
+    [...serial, 'shell', 'input', 'keyevent', '3'],
+    [...serial, 'shell', 'input', 'keyevent', '3'],
+  ]
+}
+
+function runAdbArgs(args: string[], timeoutMs = SKIP_OOBE_ADB_TIMEOUT_MS): {
+  status: number | null
+  stdout: string
+  stderr: string
+  error?: string
+} {
+  const result = spawnSync('adb', args, {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: timeoutMs,
+  })
+  return {
+    status: result.status,
+    stdout: (result.stdout || '').trim(),
+    stderr: (result.stderr || '').trim(),
+    error: result.error?.message,
+  }
+}
+
+export interface SkipOobeOptions {
+  timeoutMs?: number
+  pollIntervalMs?: number
+  shouldAbort?: () => boolean
+}
+
+/**
+ * 刷机后跳过 OOBE：等待设备重连，再按 SkipOOBE.bat 逐条执行 adb。
+ * 设备未重连返回 false；命令失败只记日志，不阻断后续测试。
+ */
+export async function skipOobeForDevice(
+  deviceId: string,
+  onLog?: (line: string) => void,
+  options: SkipOobeOptions = {},
+): Promise<boolean> {
+  const serial = deviceId.trim()
+  const log = (line: string) => onLog?.(line)
+  if (!serial) {
+    log('[刷机] 跳过 OOBE 失败：设备 ID 为空')
+    return false
+  }
+
+  log(`[刷机] 开始跳过 OOBE: ${serial}`)
+  const online = await waitForAdbDevice(
+    serial,
+    options.timeoutMs ?? 300_000,
+    options.pollIntervalMs ?? 5_000,
+    options.shouldAbort,
+  )
+  if (options.shouldAbort?.()) return false
+  if (!online) {
+    log('[刷机] 跳过 OOBE 失败：设备未重新连接')
+    return false
+  }
+
+  for (const args of buildSkipOobeAdbArgs(serial)) {
+    if (options.shouldAbort?.()) return false
+    log(`[刷机] adb ${args.join(' ')}`)
+    const timeoutMs = args.includes('wait-for-device') ? 120_000 : SKIP_OOBE_ADB_TIMEOUT_MS
+    const result = runAdbArgs(args, timeoutMs)
+    if (result.stdout) log(`[刷机] ${result.stdout}`)
+    if (result.error) {
+      log(`[刷机] ${result.error}`)
+      continue
+    }
+    if (result.status !== 0 && result.stderr) log(`[刷机] ${result.stderr}`)
+  }
+
+  log('[刷机] 已跳过 OOBE')
+  return true
+}
+
 export function listAdbDeviceIds(): Promise<string[]> {
   return new Promise((resolvePromise) => {
     const ids: string[] = []
