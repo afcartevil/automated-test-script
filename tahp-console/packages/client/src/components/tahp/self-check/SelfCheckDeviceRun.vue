@@ -187,6 +187,8 @@ const {
   saveKernelFeatureCodeDir,
   openGmsTradefedDialog,
   gmsTradefedConfiguredSummary,
+  gmsHostSupported,
+  isCatalogGroupUnavailable,
   enableFlash,
   flashPath,
   dailyFlashResolving,
@@ -552,19 +554,29 @@ function handleDutRowAction(deviceId: string) {
                 <div v-if="filteredCustomCatalogGroups.length === 0" class="ea-muted catalog-empty-cases">
                   当前筛选下无用例
                 </div>
-                <div v-for="group in filteredCustomCatalogGroups" :key="group.testType" class="catalog-type-group">
+                <div
+                  v-for="group in filteredCustomCatalogGroups"
+                  :key="group.testType"
+                  class="catalog-type-group"
+                  :class="{ 'is-unavailable': isCatalogGroupUnavailable(group) }"
+                >
                   <div class="catalog-type-header" @click="toggleCatalogType(group.testType)">
                     <span class="catalog-toggle">{{ expandedCatalogTypes.has(group.testType) ? '▼' : '▶' }}</span>
                     <span class="catalog-type-label">{{ group.label }}</span>
                     <span class="catalog-meta">{{ group.testType }} ({{ countGroupCases(group) }}个)</span>
+                    <span v-if="isCatalogGroupUnavailable(group)" class="catalog-unavailable-tag">不可用</span>
                     <button
                       type="button"
                       class="ea-btn-ghost ea-btn-sm"
+                      :disabled="isCatalogGroupUnavailable(group)"
                       @click.stop="toggleAllCasesInGroup(group)"
                     >
                       {{ isGroupAllSelected(group) ? '取消全选' : '全选' }}
                     </button>
                   </div>
+                  <p v-if="isCatalogGroupUnavailable(group)" class="catalog-unavailable-hint">
+                    {{ group.unavailableReason || '当前环境不支持该测试' }}
+                  </p>
                   <div v-if="expandedCatalogTypes.has(group.testType)" class="catalog-type-body">
                     <div v-for="catalog in group.modules" :key="catalog.key" class="catalog-group">
                       <div class="catalog-header" @click="toggleCatalogModule(catalog.key)">
@@ -574,6 +586,7 @@ function handleDutRowAction(deviceId: string) {
                         <button
                           type="button"
                           class="ea-btn-ghost ea-btn-sm"
+                          :disabled="isCatalogGroupUnavailable(group)"
                           @click.stop="toggleAllCasesInModule(catalog)"
                         >
                           {{ catalog.cases.every(c => selectedCases.has(catalog.key + '/' + c.caseIndex)) ? '取消全选' : '全选' }}
@@ -867,7 +880,23 @@ function handleDutRowAction(deviceId: string) {
                   v-else-if="selectedCatalogTestType === 'gms'"
                   class="catalog-gms-settings catalog-overview-retest"
                 >
+                  <p v-if="!gmsHostSupported" class="catalog-gms-unavailable">
+                    Windows 环境不支持 GMS 测试，请在 Linux 主机上运行 cts/gts/vts-tradefed。
+                  </p>
                   <p class="catalog-gms-intro ea-muted">{{ gmsTradefedConfiguredSummary }}</p>
+                  <label class="catalog-monkey-label" for="gms-timeout-hours-input">用例超时</label>
+                  <input
+                    id="gms-timeout-hours-input"
+                    v-model.number="catalogTypeSettings.gmsTimeoutHours"
+                    type="number"
+                    min="1"
+                    max="72"
+                    class="catalog-setting-input catalog-monkey-input"
+                    :disabled="catalogSettingsSaving"
+                    @change="saveCatalogTypeSettings"
+                  />
+                  <span class="ea-muted catalog-monkey-help">小时                    小时，每个 CTS/GTS/VTS 子计划（指纹/传感器/多媒体/安全等）最长执行时间，默认 8
+                  </span>
                   <button
                     type="button"
                     class="ea-btn-ghost ea-btn-sm"
@@ -1571,6 +1600,9 @@ function handleDutRowAction(deviceId: string) {
 
                     <div v-if="selectedTestType === 'gms'" class="form-group gms-tradefed-settings">
                       <span class="form-label">GMS Tradefed</span>
+                      <p v-if="!gmsHostSupported" class="catalog-gms-unavailable">
+                        Windows 环境不支持 GMS 测试，请在 Linux 主机上运行。
+                      </p>
                       <p class="gms-tradefed-summary ea-muted">{{ gmsTradefedConfiguredSummary }}</p>
                       <button
                         type="button"
@@ -1789,7 +1821,7 @@ function handleDutRowAction(deviceId: string) {
                     <button
                       type="button"
                       class="ea-btn-primary"
-                      :disabled="canSelectStartModules && !getCaseGroups.some(([, configs]) => configs.some(c => isStartModuleSelected(c.module)))"
+                      :disabled="(selectedTestType === 'gms' && !gmsHostSupported) || (canSelectStartModules && !getCaseGroups.some(([, configs]) => configs.some(c => isStartModuleSelected(c.module))))"
                       @click.stop="handleStartTest(selectedDevice.device.deviceId)"
                     >
                       {{ startTestIntentRole === AUX_ROLE ? '开始待命' : '开始测试' }}
@@ -2654,6 +2686,31 @@ $catalog-pane-height: calc(100vh - 48px);
 .catalog-gms-intro {
   font-size: 12px;
   margin: 0;
+}
+
+.catalog-gms-unavailable,
+.catalog-unavailable-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #b42318;
+}
+
+.catalog-unavailable-tag {
+  font-size: 11px;
+  color: #b42318;
+  border: 1px solid #fecdca;
+  background: #fef3f2;
+  border-radius: 4px;
+  padding: 0 6px;
+  line-height: 18px;
+}
+
+.catalog-type-group.is-unavailable {
+  opacity: 0.78;
+}
+
+.catalog-type-group.is-unavailable .case-checkbox {
+  pointer-events: none;
 }
 
 .gms-tradefed-settings {

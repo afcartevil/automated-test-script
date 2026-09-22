@@ -134,6 +134,7 @@ export interface CaseCatalogGroup {
   testType: string
   label: string
   modules: CaseCatalog[]
+  unavailableReason?: string
 }
 
 export interface CaseCatalogDetailItem {
@@ -532,6 +533,8 @@ export interface AutoTestSettings {
   monkeyDuration?: string
   smokeUsdSkipSpdInfo?: boolean
   gmsTradefedPath?: Record<string, string>
+  gmsTimeoutHours?: number
+  gmsHostSupported?: boolean
   /** 内核特性/稳定性：Android 源码根（用例 7/11-14） */
   kernelFeatureCodeDir?: string
 }
@@ -546,6 +549,8 @@ export async function getSettings(): Promise<AutoTestSettings> {
     monkeyDuration: data?.monkeyDuration || '7d',
     smokeUsdSkipSpdInfo: Boolean(data?.smokeUsdSkipSpdInfo),
     gmsTradefedPath: data?.gmsTradefedPath || {},
+    gmsTimeoutHours: Number(data?.gmsTimeoutHours) > 0 ? Number(data.gmsTimeoutHours) : 8,
+    gmsHostSupported: data?.gmsHostSupported !== false,
     kernelFeatureCodeDir: String(data?.kernelFeatureCodeDir || '').trim(),
   }
 }
@@ -608,6 +613,7 @@ export interface SelfCheckTestConfig {
   monkeyDuration?: string
   smokeUsdSkipSpdInfo?: boolean
   gmsTradefedPath?: Record<string, string>
+  gmsTimeoutHours?: number
   kernelFeatureCodeDir?: string
   autoRetestEnabled?: boolean
   autoRetestCount?: number

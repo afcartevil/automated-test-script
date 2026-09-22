@@ -385,6 +385,7 @@ const catalogTypeSettings = ref({
   monkeyDuration: '7d',
   smokeUsdSkipSpdInfo: false,
   kernelFeatureCodeDir: '',
+  gmsTimeoutHours: 8,
   gmsTradefedPath: {
     cts: '',
     gts: '',
@@ -392,6 +393,7 @@ const catalogTypeSettings = ref({
   },
 })
 const catalogSettingsSaving = ref(false)
+const gmsHostSupported = ref(true)
 const gmsPathPickingSuite = ref<'cts' | 'gts' | 'vts' | null>(null)
 const showGmsTradefedDialog = ref(false)
 const gmsTradefedDraft = ref({
@@ -706,6 +708,8 @@ function toggleCatalogDetailModule(module: string) {
 async function loadGmsTradefedSettings() {
   try {
     const settingsData = await getSettings()
+    gmsHostSupported.value = settingsData.gmsHostSupported !== false
+    catalogTypeSettings.value.gmsTimeoutHours = settingsData.gmsTimeoutHours || 8
     catalogTypeSettings.value.gmsTradefedPath = {
       cts: settingsData.gmsTradefedPath?.cts || '',
       gts: settingsData.gmsTradefedPath?.gts || '',
@@ -761,10 +765,13 @@ async function saveGmsTradefedSettings(showToast = false) {
     delete autoRetestEnabled.gms
     delete autoRetestCount.gms
     const paths = catalogTypeSettings.value.gmsTradefedPath || { cts: '', gts: '', vts: '' }
+    const timeoutHours = Math.min(72, Math.max(1, Math.round(Number(catalogTypeSettings.value.gmsTimeoutHours) || 8)))
+    catalogTypeSettings.value.gmsTimeoutHours = timeoutHours
     await updateSettings({
       ...current,
       autoRetestEnabled,
       autoRetestCount,
+      gmsTimeoutHours: timeoutHours,
       gmsTradefedPath: {
         cts: paths.cts?.trim() || '',
         gts: paths.gts?.trim() || '',
@@ -868,12 +875,14 @@ async function openCaseCatalog(testType: string) {
       monkeyDuration: settingsData.monkeyDuration || '7d',
       smokeUsdSkipSpdInfo: Boolean(settingsData.smokeUsdSkipSpdInfo),
       kernelFeatureCodeDir: settingsData.kernelFeatureCodeDir || '',
+      gmsTimeoutHours: settingsData.gmsTimeoutHours || 8,
       gmsTradefedPath: {
         cts: settingsData.gmsTradefedPath?.cts || '',
         gts: settingsData.gmsTradefedPath?.gts || '',
         vts: settingsData.gmsTradefedPath?.vts || '',
       },
     }
+    gmsHostSupported.value = settingsData.gmsHostSupported !== false
     if (detail.length > 0) {
       selectedCatalogCaseKey.value = detail[0].key
     }
@@ -1623,6 +1632,11 @@ async function handleClearFlashPackages() {
 
 async function handleStartTest(deviceId: string) {
   try {
+    if (selectedTestType.value === 'gms' && !gmsHostSupported.value) {
+      error.value = 'Windows 环境不支持 GMS 测试，请在 Linux 主机上运行'
+      message.error(error.value)
+      return
+    }
     const releaseActive = enableReleaseUpgrade.value
     if (releaseActive && !releaseUpgradePlan.value) {
       error.value = '请先获取外发版本'
@@ -1660,6 +1674,9 @@ async function handleStartTest(deviceId: string) {
     }
     if (selectedTestType.value === 'kernel_feature') {
       await saveKernelFeatureCodeDir(false)
+    }
+    if (selectedTestType.value === 'gms') {
+      await saveGmsTradefedSettings(false)
     }
     const intent = startTestIntentRole.value
     const current = devices.value.find(d => d.deviceId === deviceId)
@@ -2009,6 +2026,7 @@ function toggleCatalogModule(moduleKey: string) {
 }
 
 function toggleCase(caseKey: string) {
+  if (caseKey.startsWith('gms/') && !gmsHostSupported.value) return
   if (selectedCases.value.has(caseKey)) {
     selectedCases.value.delete(caseKey)
   } else {
@@ -2017,7 +2035,12 @@ function toggleCase(caseKey: string) {
   selectedCases.value = new Set(selectedCases.value)
 }
 
+function isCatalogGroupUnavailable(group: { testType: string; unavailableReason?: string }): boolean {
+  return Boolean(group.unavailableReason) || (group.testType === 'gms' && !gmsHostSupported.value)
+}
+
 function toggleAllCasesInModule(catalog: CaseCatalog) {
+  if (catalog.testType === 'gms' && !gmsHostSupported.value) return
   const allSelected = catalog.cases.every(c =>
     selectedCases.value.has(`${catalog.key}/${c.caseIndex}`)
   )
@@ -2033,6 +2056,7 @@ function toggleAllCasesInModule(catalog: CaseCatalog) {
 }
 
 function toggleAllCasesInGroup(group: CaseCatalogGroup) {
+  if (isCatalogGroupUnavailable(group)) return
   const allKeys: string[] = []
   for (const mod of group.modules) {
     for (const c of mod.cases) {
@@ -2083,6 +2107,11 @@ async function toggleAuxDevice(deviceId: string) {
 
 async function handleStartCustomTest() {
   if (!customTestDutDeviceId.value || selectedCases.value.size === 0) return
+  if (!gmsHostSupported.value && Array.from(selectedCases.value).some(key => key.startsWith('gms/'))) {
+    error.value = 'Windows 环境不支持 GMS 测试，请取消勾选 GMS 用例或在 Linux 主机上运行'
+    message.error(error.value)
+    return
+  }
   customTestStarting.value = true
   error.value = null
   try {
@@ -2672,6 +2701,8 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     showGmsTradefedDialog,
     gmsTradefedDraft,
     gmsTradefedConfiguredSummary,
+    gmsHostSupported,
+    isCatalogGroupUnavailable,
     handleBrowseGmsTradefedPath,
     gmsPathPickingSuite,
     backToOverview,

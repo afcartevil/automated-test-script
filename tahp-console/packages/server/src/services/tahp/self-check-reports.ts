@@ -73,6 +73,8 @@ export interface SelfCheckTestConfig {
   monkeyDuration?: string
   smokeUsdSkipSpdInfo?: boolean
   gmsTradefedPath?: Record<string, string>
+  /** GMS 每个子计划超时小时数 */
+  gmsTimeoutHours?: number
   /** 内核特性/稳定性：Android 源码根 */
   kernelFeatureCodeDir?: string
   autoRetestEnabled?: boolean
@@ -207,6 +209,9 @@ export function formatSelfCheckTestConfigMetaRows(cfg?: SelfCheckTestConfig): st
       const path = cfg.gmsTradefedPath[suite]
       if (path) rows.push([`GMS ${suite.toUpperCase()} Tradefed`, path])
     }
+  }
+  if (cfg.gmsTimeoutHours) {
+    rows.push(['GMS 用例超时', `${cfg.gmsTimeoutHours} 小时`])
   }
   if (cfg.kernelFeatureCodeDir) {
     rows.push(['内核源码路径 (code_dir)', cfg.kernelFeatureCodeDir])

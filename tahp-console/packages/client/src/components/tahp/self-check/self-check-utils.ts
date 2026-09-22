@@ -425,6 +425,9 @@ export function formatTestConfigEntries(cfg?: SelfCheckTestConfig): { label: str
       if (path) rows.push({ label: `GMS ${suite.toUpperCase()} Tradefed`, value: path })
     }
   }
+  if (cfg.gmsTimeoutHours) {
+    rows.push({ label: 'GMS 用例超时', value: `${cfg.gmsTimeoutHours} 小时` })
+  }
   if (cfg.kernelFeatureCodeDir) {
     rows.push({ label: '内核源码路径', value: cfg.kernelFeatureCodeDir })
   }

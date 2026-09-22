@@ -75,7 +75,10 @@ function openCatalog(testType: string) {
         class="checklist-card checklist-card-clickable"
         :class="[
           toneByType[group.testType] || '',
-          { 'is-active': activeTestType === group.testType },
+          {
+            'is-active': activeTestType === group.testType,
+            'is-unavailable': Boolean(group.unavailableReason),
+          },
         ]"
         role="button"
         tabindex="0"
@@ -83,6 +86,7 @@ function openCatalog(testType: string) {
         @keydown.enter="openCatalog(group.testType)"
       >
         <h4>{{ group.label }}</h4>
+        <p v-if="group.unavailableReason" class="checklist-unavailable">{{ group.unavailableReason }}</p>
         <dl class="checklist-meta">
           <div><dt>覆盖</dt><dd>{{ formatCatalogModuleScope(group) }}</dd></div>
           <div><dt>自动化</dt><dd>{{ formatCatalogAutomation(group) }}</dd></div>
@@ -141,10 +145,21 @@ function openCatalog(testType: string) {
     box-shadow: 0 0 0 2px var(--accent);
   }
 
+  &.is-unavailable {
+    opacity: 0.82;
+  }
+
   &:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
+}
+
+.checklist-unavailable {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #b42318;
 }
 
 .checklist-meta {

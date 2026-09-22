@@ -135,8 +135,9 @@ tahpDeviceSelfCheckRoutes.post(
         data: result,
       }
     } catch (err: any) {
-      ctx.status = 500
-      ctx.body = { success: false, error: err?.message || 'Failed to start test' }
+      const message = err?.message || 'Failed to start test'
+      ctx.status = message.includes('不支持 GMS') ? 400 : 500
+      ctx.body = { success: false, error: message }
     }
   }
 )
@@ -312,8 +313,9 @@ tahpDeviceSelfCheckRoutes.post(
       }
       ctx.body = { success: true, data: result }
     } catch (err: any) {
-      ctx.status = 500
-      ctx.body = { success: false, error: err?.message || 'Failed to start custom test' }
+      const message = err?.message || 'Failed to start custom test'
+      ctx.status = message.includes('不支持 GMS') ? 400 : 500
+      ctx.body = { success: false, error: message }
     }
   }
 )

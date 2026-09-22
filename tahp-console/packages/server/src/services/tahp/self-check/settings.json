@@ -4,5 +4,6 @@
   "monkeyDuration": "7d",
   "smokeUsdSkipSpdInfo": false,
   "gmsTradefedPath": {},
+  "gmsTimeoutHours": 8,
   "kernelFeatureCodeDir": ""
 }

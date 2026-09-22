@@ -15,6 +15,7 @@ const h = vi.hoisted(() => {
     getDevice: vi.fn(),
     endTest: vi.fn(),
     continueTest: vi.fn(),
+    isGmsSupportedOnHost: vi.fn(() => true),
     onEvent: vi.fn((name: string, cb: (data: any) => void) => {
       (handlers[name] ||= []).push(cb)
     }),
@@ -75,6 +76,7 @@ vi.mock('../../packages/server/src/services/tahp/device-self-check', () => ({
   endTest: h.endTest,
   continueTest: h.continueTest,
   onEvent: h.onEvent,
+  isGmsSupportedOnHost: h.isGmsSupportedOnHost,
 }))
 
 vi.mock('../../packages/server/src/services/tahp/device-flash', () => ({
@@ -158,6 +160,7 @@ beforeEach(() => {
   }))
   h.resolveLatestDailyFlashPackage.mockResolvedValue({ deviceId: 'SER_MATCH', packagePath: PKG_PATH })
   h.startTest.mockResolvedValue({ device: device('SER_MATCH', { status: '刷机中' }), session: {} })
+  h.isGmsSupportedOnHost.mockReturnValue(true)
   h.labelVerifyTask.mockResolvedValue({})
   h.completeVerifyTask.mockResolvedValue({})
   __testingResetVerifyAutoRun()
@@ -406,6 +409,20 @@ describe('GMS 自动执行（不刷机 / 不刷 Root 包）', () => {
     const task = loadVerifyAutoRunState().tasks[0]
     expect(task.phase).toBe('running')
     expect(task.device_id).toBe('SER_MATCH')
+  })
+
+  it('marks GMS unsupported on Windows hosts without starting the test', async () => {
+    h.isGmsSupportedOnHost.mockReturnValue(false)
+    sessionFor('test-qa01')
+    h.verifyMine.mockResolvedValue([centralTask({ test_type: 'gms', item_label: 'GMS测试' })])
+    h.refreshDevices.mockResolvedValue([device('SER_MATCH')])
+
+    await tickVerifyAutoRun()
+
+    expect(h.startTest).not.toHaveBeenCalled()
+    const task = loadVerifyAutoRunState().tasks[0]
+    expect(task.phase).toBe('unsupported')
+    expect(task.last_error).toContain('Windows 环境不支持 GMS')
   })
 })
 

@@ -205,6 +205,8 @@ export interface CaseCatalogGroup {
   testType: string
   label: string
   modules: CaseCatalog[]
+  /** 当前主机不支持启动该大类时的说明（如 Windows 上的 GMS） */
+  unavailableReason?: string
 }
 
 export interface DeviceDetail {
@@ -245,8 +247,38 @@ interface AutoTestSettings {
   gmsTradefedPath?: Record<string, string>
   /** @deprecated 兼容旧配置：套件根目录，将自动解析 tools/xxx-tradefed */
   gmsTradefedRoot?: Record<string, string>
+  /** GMS 每个子计划（指纹/传感器/多媒体等）超时小时数，默认 8 */
+  gmsTimeoutHours?: number
+  /** 运行时：当前主机是否支持启动 GMS（不落盘） */
+  gmsHostSupported?: boolean
   /** 内核特性/稳定性：Android 源码根（用例 7/11-14 对照） */
   kernelFeatureCodeDir?: string
+}
+
+export const GMS_WINDOWS_UNSUPPORTED_MESSAGE = 'Windows 环境不支持 GMS 测试，请在 Linux 主机上运行 cts/gts/vts-tradefed'
+const DEFAULT_GMS_TIMEOUT_HOURS = 8
+const GMS_TIMEOUT_HOURS_MIN = 1
+const GMS_TIMEOUT_HOURS_MAX = 72
+
+export function isGmsSupportedOnHost(platform = process.platform): boolean {
+  return platform !== 'win32'
+}
+
+export function normalizeGmsTimeoutHours(raw?: number): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_GMS_TIMEOUT_HOURS
+  return Math.min(GMS_TIMEOUT_HOURS_MAX, Math.max(GMS_TIMEOUT_HOURS_MIN, Math.round(n)))
+}
+
+function isGmsCaseKey(caseKey: string): boolean {
+  return caseKey === 'gms' || caseKey.startsWith('gms/')
+}
+
+function assertGmsRunnable(testType: string, selectedCases?: string[]): void {
+  if (isGmsSupportedOnHost()) return
+  if (testType === 'gms' || selectedCases?.some(isGmsCaseKey)) {
+    throw new Error(GMS_WINDOWS_UNSUPPORTED_MESSAGE)
+  }
 }
 
 const DEFAULT_MONKEY_DURATION = '7d'
@@ -356,6 +388,7 @@ function snapshotTestConfig(
         settings.gmsTradefedPath,
         settings.gmsTradefedRoot,
       )
+      cfg.gmsTimeoutHours = normalizeGmsTimeoutHours(settings.gmsTimeoutHours)
       break
     case 'kernel_feature':
       if (settings.kernelFeatureCodeDir?.trim()) {
@@ -398,6 +431,26 @@ function resolveCaseInfoItem(caseInfoList: any[], caseIndex: number): any | null
     return caseInfoList[caseIndex - 1]
   }
   return null
+}
+
+function caseInfoDisplayName(info: any | null | undefined): string {
+  if (!info || typeof info !== 'object') return ''
+  const name = info['用例名'] || info.case_name || info['名称'] || info.name || info.caseName
+  return typeof name === 'string' ? name.trim() : ''
+}
+
+function resolveCaseDisplayName(
+  testType: string,
+  module: string,
+  caseIndex: number,
+  caseInfoItems?: any | null,
+): string {
+  const fromInfo = caseInfoDisplayName(caseInfoItems)
+  if (fromInfo) return fromInfo
+  const fromConfig = moduleConditions[`${testType}/${module}`]?.cases
+    .find(c => c.caseIndex === caseIndex)?.caseName?.trim()
+  if (fromConfig) return fromConfig
+  return `用例${caseIndex}`
 }
 
 /**
@@ -660,19 +713,23 @@ export function getSettings(): AutoTestSettings {
       settings.gmsTradefedPath,
       settings.gmsTradefedRoot,
     ),
+    gmsTimeoutHours: normalizeGmsTimeoutHours(settings.gmsTimeoutHours),
+    gmsHostSupported: isGmsSupportedOnHost(),
     kernelFeatureCodeDir: String(settings.kernelFeatureCodeDir || '').trim(),
   }
 }
 
 export function updateSettings(newSettings: AutoTestSettings): void {
+  const { gmsHostSupported: _gmsHostSupported, ...persistable } = newSettings
   settings = {
-    ...newSettings,
-    autoTestEnabled: newSettings.autoTestEnabled || {},
-    autoTestPath: newSettings.autoTestPath || {},
-    monkeyDuration: normalizeMonkeyDuration(newSettings.monkeyDuration),
-    smokeUsdSkipSpdInfo: Boolean(newSettings.smokeUsdSkipSpdInfo),
-    gmsTradefedPath: normalizeGmsTradefedPath(newSettings.gmsTradefedPath),
-    kernelFeatureCodeDir: String(newSettings.kernelFeatureCodeDir || '').trim(),
+    ...persistable,
+    autoTestEnabled: persistable.autoTestEnabled || {},
+    autoTestPath: persistable.autoTestPath || {},
+    monkeyDuration: normalizeMonkeyDuration(persistable.monkeyDuration),
+    smokeUsdSkipSpdInfo: Boolean(persistable.smokeUsdSkipSpdInfo),
+    gmsTradefedPath: normalizeGmsTradefedPath(persistable.gmsTradefedPath),
+    gmsTimeoutHours: normalizeGmsTimeoutHours(persistable.gmsTimeoutHours),
+    kernelFeatureCodeDir: String(persistable.kernelFeatureCodeDir || '').trim(),
   }
   saveSettings()
 }
@@ -1479,7 +1536,7 @@ async function runCase(
     testType,
     module,
     caseIndex,
-    caseName: `用例${caseIndex}`,
+    caseName: resolveCaseDisplayName(testType, module, caseIndex),
     status: '进行中',
     message: '',
     fullAutomation: false,
@@ -1522,7 +1579,7 @@ async function runCase(
       if (Array.isArray(caseInfoList)) {
         caseInfoItems = resolveCaseInfoItem(caseInfoList, caseIndex)
         if (caseInfoItems) {
-          result.caseName = caseInfoItems['用例名'] || caseInfoItems.case_name || `用例${caseIndex}`
+          result.caseName = resolveCaseDisplayName(testType, module, caseIndex, caseInfoItems)
           const testSteps = caseInfoItems['测试步骤'] || ''
           if (testSteps) {
             result.steps = parseTestSteps(testSteps)
@@ -2276,7 +2333,6 @@ async function execPythonInit(
 
 const CASE_EXEC_TIMEOUT_MS = 5 * 60_000
 const SMOKE_USD_EXEC_TIMEOUT_MS = 3_600_000
-const GMS_EXEC_TIMEOUT_MS = 28_800_000
 const MANUAL_CONFIRM_TIMEOUT_MS = 30 * 60_000
 
 function resolveCaseExecTimeoutMs(testType: string, module: string): number {
@@ -2286,7 +2342,8 @@ function resolveCaseExecTimeoutMs(testType: string, module: string): number {
   }
   if (testType === 'gms' && ['cts', 'cts_tele', 'gts', 'vts'].includes(module)) {
     const raw = Number(process.env.TAHP_GMS_TIMEOUT_MS)
-    return Number.isFinite(raw) && raw > 0 ? raw : GMS_EXEC_TIMEOUT_MS
+    if (Number.isFinite(raw) && raw > 0) return raw
+    return normalizeGmsTimeoutHours(settings.gmsTimeoutHours) * 3_600_000
   }
   if (testType === 'power' && module === 'current_analysis') {
     const raw = Number(process.env.TAHP_POWER_TIMEOUT_MS)
@@ -2788,7 +2845,7 @@ async function runModule(
       testType,
       module,
       caseIndex,
-      caseName: `用例${caseIndex}`,
+      caseName: resolveCaseDisplayName(testType, module, caseIndex),
       status: '进行中',
       message: '',
       fullAutomation: false,
@@ -3150,6 +3207,7 @@ export async function startTest(
   flash?: StartTestFlashPayload,
   options?: StartTestOptions,
 ): Promise<DeviceDetail | null> {
+  assertGmsRunnable(testType)
   try {
     const device = devices[deviceId]
     if (!device || device.status !== '空闲') {
@@ -3230,6 +3288,7 @@ export async function startCustomTest(
     qualityUploadProject?: { project_code: string; campaign_id?: string }
   },
 ): Promise<DeviceDetail | null> {
+  assertGmsRunnable('custom', selectedCases)
   try {
     const device = devices[deviceId]
     if (!device || device.status !== '空闲') return null
@@ -4592,6 +4651,16 @@ export async function __testingResolveReportOtaVersion(
 export const __testingOtaVersionProp = OTA_VERSION_PROP
 export const __testingOtaVersionFallbackProp = OTA_VERSION_FALLBACK_PROP
 
+/** @internal 单测：用例展示名解析（catalog + case_info 名称字段） */
+export function __testingResolveCaseDisplayName(
+  testType: string,
+  module: string,
+  caseIndex: number,
+  caseInfoItems?: any | null,
+): string {
+  return resolveCaseDisplayName(testType, module, caseIndex, caseInfoItems)
+}
+
 /** @internal 单测：前置配置快照 */
 export function __testingSnapshotTestConfig(
   testType: DeviceTestType,
@@ -4766,6 +4835,9 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     modules: modulesByType[testType].sort(
       (a, b) => (MODULE_ORDER[a.module] ?? 50) - (MODULE_ORDER[b.module] ?? 50)
     ),
+    ...(testType === 'gms' && !isGmsSupportedOnHost()
+      ? { unavailableReason: GMS_WINDOWS_UNSUPPORTED_MESSAGE }
+      : {}),
   }))
 }
 

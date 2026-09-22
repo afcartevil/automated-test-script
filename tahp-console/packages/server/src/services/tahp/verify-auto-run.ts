@@ -9,6 +9,7 @@
  *  - 转测摸底测试（str4）/ 周版本测试（week）：**不自动执行**，仅同步到本机打「待人工执行」
  *    标签展示在「总览 → 验测任务」（不写回中心：中心白名单无此码），由人工手动执行；
  *  - GMS测试（gms）：自动执行但**不刷机、不刷 Root 包**，直接使用设备当前版本；
+ *    Windows 主机不支持 GMS（无 cts/gts/vts-tradefed），自动任务标记为不支持；
  *  - 其余测试项：自动等设备 → 刷最新 daily（含 Root 包）→ 启动测试。
  *
  * 边界与安全：
@@ -36,6 +37,7 @@ import {
   onEvent,
   refreshDevices,
   startTest,
+  isGmsSupportedOnHost,
   type DeviceInfo,
   type StandardTestType,
   type StartTestFlashPayload,
@@ -464,6 +466,16 @@ async function claimAndStart(state: VerifyAutoRunState, task: VerifyAutoTaskStat
       text: '测试项不支持自动执行',
       phase: 'unsupported',
       error: `未知测试项: ${task.test_type}`,
+    })
+    task.ended_at = new Date().toISOString()
+    return
+  }
+
+  if (task.test_type === 'gms' && !isGmsSupportedOnHost()) {
+    setLabel(state, task, 'precheck_blocked', {
+      text: '测试项不支持自动执行',
+      phase: 'unsupported',
+      error: 'Windows 环境不支持 GMS 测试，请在 Linux 主机上运行',
     })
     task.ended_at = new Date().toISOString()
     return

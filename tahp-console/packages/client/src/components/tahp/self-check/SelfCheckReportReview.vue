@@ -65,7 +65,8 @@ const caseGroups = computed(() => {
   const items = reportDetail.value?.allCaseItems ?? []
   const map = new Map<string, SelfCheckCaseItem[]>()
   for (const item of items) {
-    const label = item.module
+    const moduleKey = `${item.testType}/${item.module}`
+    const label = ctx.moduleConditions.value[moduleKey]?.moduleLabel || item.module
     if (!map.has(label)) map.set(label, [])
     map.get(label)!.push(item)
   }
@@ -89,6 +90,19 @@ function resolveCaseAutomationMode(item: SelfCheckCaseItem): 'full' | 'semi' | '
   const meta = ctx.moduleConditions.value[moduleKey]?.cases.find(c => c.caseIndex === item.caseIndex)
   if (meta?.automationMode) return normalizeAutomationMode(meta.automationMode)
   return item.fullAutomation === false ? 'manual' : 'full'
+}
+
+function displayReportCaseName(item: SelfCheckCaseItem): string {
+  const name = String(item.caseName || '').trim()
+  if (name && !/^用例\d+$/.test(name)) return name
+  const moduleKey = `${item.testType}/${item.module}`
+  const meta = ctx.moduleConditions.value[moduleKey]?.cases.find(c => c.caseIndex === item.caseIndex)
+  return meta?.caseName || name || `用例${item.caseIndex}`
+}
+
+function displayReportModuleName(item: SelfCheckCaseItem): string {
+  const moduleKey = `${item.testType}/${item.module}`
+  return ctx.moduleConditions.value[moduleKey]?.moduleLabel || item.module
 }
 
 const availableAuxForRetest = computed(() =>
@@ -496,7 +510,7 @@ onActivated(async () => {
                     :class="`auto-mode-icon--${resolveCaseAutomationMode(item)}`"
                     :title="getAutomationModeLabel(resolveCaseAutomationMode(item))"
                   >{{ getAutomationModeIcon(resolveCaseAutomationMode(item)) }}</span>
-                  <span class="case-item-name">{{ item.caseName }}</span>
+                  <span class="case-item-name">{{ displayReportCaseName(item) }}</span>
                 </div>
               </div>
             </div>
@@ -507,7 +521,7 @@ onActivated(async () => {
           <EaCard class="report-case-detail-card">
             <template v-if="selectedCaseItem">
               <div class="case-detail-header">
-                <span class="catalog-case-title">{{ selectedCaseItem.caseName }}</span>
+                <span class="catalog-case-title">{{ displayReportCaseName(selectedCaseItem) }}</span>
                 <span
                   class="auto-mode-badge"
                   :class="`auto-mode-badge--${resolveCaseAutomationMode(selectedCaseItem)}`"
@@ -523,7 +537,7 @@ onActivated(async () => {
                 <div class="case-info">
                   <div class="detail-item">
                     <span class="detail-label">模块</span>
-                    <span class="detail-value">{{ selectedCaseItem.module }}</span>
+                    <span class="detail-value">{{ displayReportModuleName(selectedCaseItem) }}</span>
                   </div>
                   <div class="detail-item">
                     <span class="detail-label">结果</span>

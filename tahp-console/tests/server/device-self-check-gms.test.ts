@@ -4,6 +4,10 @@ import {
   getCaseCatalogDetail,
   getSettings,
   initDeviceSelfCheck,
+  isGmsSupportedOnHost,
+  normalizeGmsTimeoutHours,
+  updateSettings,
+  __testingResolveCaseDisplayName,
 } from '../../packages/server/src/services/tahp/device-self-check'
 
 describe('device self-check gms catalog', () => {
@@ -36,5 +40,45 @@ describe('device self-check gms catalog', () => {
     expect(vtsDetail[4]?.manualSteps).toContain('vts-tradefed run security-vts-plan')
 
     expect(getSettings().gmsTradefedPath).toEqual({})
+    expect(getSettings().gmsTimeoutHours).toBe(8)
+    expect(getSettings().gmsHostSupported).toBe(process.platform !== 'win32')
+    if (process.platform === 'win32') {
+      expect(gmsGroup?.unavailableReason).toContain('Windows 环境不支持 GMS')
+    } else {
+      expect(gmsGroup?.unavailableReason).toBeUndefined()
+    }
+  })
+
+  it('resolves GMS report names from case_info 名称 or catalog, not 用例N', () => {
+    initDeviceSelfCheck()
+    expect(__testingResolveCaseDisplayName('gms', 'cts', 1, { 名称: 'CTS指纹测试' })).toBe('CTS指纹测试')
+    expect(__testingResolveCaseDisplayName('gms', 'cts', 4)).toBe('CTS安全测试')
+    expect(__testingResolveCaseDisplayName('gms', 'gts', 3)).toBe('GTS通信测试')
+  })
+
+  it('clamps GMS timeout hours and marks Windows as unsupported', () => {
+    expect(normalizeGmsTimeoutHours(undefined)).toBe(8)
+    expect(normalizeGmsTimeoutHours(0)).toBe(8)
+    expect(normalizeGmsTimeoutHours(3.6)).toBe(4)
+    expect(normalizeGmsTimeoutHours(100)).toBe(72)
+    expect(isGmsSupportedOnHost('win32')).toBe(false)
+    expect(isGmsSupportedOnHost('linux')).toBe(true)
+  })
+
+  it('persists GMS timeout hours in settings', () => {
+    initDeviceSelfCheck()
+    updateSettings({
+      ...getSettings(),
+      autoTestEnabled: {},
+      autoTestPath: {},
+      gmsTimeoutHours: 12,
+    })
+    expect(getSettings().gmsTimeoutHours).toBe(12)
+    updateSettings({
+      ...getSettings(),
+      autoTestEnabled: {},
+      autoTestPath: {},
+      gmsTimeoutHours: 8,
+    })
   })
 })

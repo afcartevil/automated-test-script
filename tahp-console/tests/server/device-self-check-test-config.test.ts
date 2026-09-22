@@ -49,6 +49,18 @@ describe('device self-check testConfig snapshot', () => {
     expect(cfg.smokeUsdSkipSpdInfo).toBe(true)
   })
 
+  it('captures GMS timeout hours', () => {
+    updateSettings({
+      autoTestEnabled: {},
+      autoTestPath: {},
+      gmsTimeoutHours: 10,
+      gmsTradefedPath: { cts: '/opt/cts-tradefed' },
+    })
+    const cfg = __testingSnapshotTestConfig('gms', {})
+    expect(cfg.gmsTimeoutHours).toBe(10)
+    expect(formatSelfCheckTestConfigMetaRows(cfg).some(r => r[0] === 'GMS 用例超时')).toBe(true)
+  })
+
   it('captures auto retest for str4', () => {
     const cfg = __testingSnapshotTestConfig('str4', {})
     expect(cfg.autoRetestEnabled).toBe(true)
