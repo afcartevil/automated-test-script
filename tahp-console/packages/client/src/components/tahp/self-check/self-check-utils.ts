@@ -5,6 +5,18 @@ export const SELF_CHECK_SUBTITLE =
 
 export const AUTO_RETEST_TOOLTIP = '测试结束后自动复测无人工参与的失败用例'
 
+/** 连续OTA升级开始刷机前的人工确认 */
+export const OTA_UPGRADE_FLASH_CONFIRM = {
+  title: '开始刷机',
+  lines: [
+    '1.请确保手机已完成OEM解锁',
+    '2.手机电量大于30%',
+    '3.AP NV参数的usbdebug标志位已写为1',
+  ],
+  positiveText: '确认',
+  negativeText: '取消',
+} as const
+
 /** 标准测试大类展示顺序（与用例列表 / 后端 catalog 一致） */
 export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'monkey_check', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'ai_generated'] as const
 

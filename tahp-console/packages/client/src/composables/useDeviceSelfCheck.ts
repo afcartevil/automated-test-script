@@ -1,4 +1,4 @@
-import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { h, ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
 import { useDeviceSelfCheckLaunchStore } from '@/stores/tahp/device-self-check-launch'
@@ -58,6 +58,7 @@ import {
 import {
   AUTO_RETEST_TOOLTIP,
   MODULE_ORDER,
+  OTA_UPGRADE_FLASH_CONFIRM,
   getTestTypeLabel,
   getStatusColor,
   getStatusIcon,
@@ -170,6 +171,7 @@ const flashFormByDeviceId = ref<Record<string, DeviceFlashFormOptions>>({})
 const enableTcardUpdate = ref(false)
 const tcardUpdatePath = ref('')
 const tcardPathPicking = ref(false)
+const releasePathPicking = ref(false)
 const enableReleaseUpgrade = ref(false)
 const releaseFlashPath = ref('')
 const releaseTcardPaths = ref<string[]>([])
@@ -227,6 +229,7 @@ function applyFlashFormOptions(opts?: DeviceFlashFormOptions) {
   releaseUpgradePlan.value = cloneReleaseUpgradePlan(opts?.releaseUpgradePlan ?? null)
   dailyFlashResolving.value = false
   tcardPathPicking.value = false
+  releasePathPicking.value = false
   releaseUpgradeResolving.value = false
 }
 
@@ -1504,21 +1507,54 @@ function toggleReleaseUpgradeStep(step: AndroidUpgradeStep) {
   syncReleaseUpgradeSelection()
 }
 
+function isReleaseUpgradeFlashStep(step: AndroidUpgradeStep): boolean {
+  const selected = releaseUpgradePlan.value?.steps
+    .filter((item) => item.selected)
+    .sort((a, b) => a.androidVersion - b.androidVersion) || []
+  if (selected[0]) return selected[0] === step
+  const all = [...(releaseUpgradePlan.value?.steps || [])].sort((a, b) => a.androidVersion - b.androidVersion)
+  return all[0] === step
+}
+
 function updateReleaseUpgradePath(step: AndroidUpgradeStep, path: string) {
   step.packagePath = path
   if (step.needsTransfer) {
     step.sourcePath = path
     return
   }
-  const selected = releaseUpgradePlan.value?.steps
-    .filter((item) => item.selected)
-    .sort((a, b) => a.androidVersion - b.androidVersion) || []
-  if (selected[0] === step) {
+  if (isReleaseUpgradeFlashStep(step)) {
     step.fullZip = path
   } else {
     step.tcardZips = path ? [path, ...step.tcardZips.filter((item) => item !== path)] : []
   }
   syncReleaseUpgradeSelection()
+}
+
+async function handleBrowseReleaseUpgradePath(step: AndroidUpgradeStep) {
+  if (releasePathPicking.value) return
+  releasePathPicking.value = true
+  error.value = null
+  try {
+    const pickFlash = isReleaseUpgradeFlashStep(step)
+    const result = pickFlash ? await pickFlashPath() : await pickTcardZipPath()
+    if (result.path) {
+      if (!pickFlash && !/\.zip$/i.test(result.path)) {
+        error.value = 'T卡升级仅支持 ZIP 文件'
+        return
+      }
+      if (!step.needsTransfer) {
+        step.available = true
+        step.unavailableReason = undefined
+      }
+      updateReleaseUpgradePath(step, result.path)
+    } else if (result.error) {
+      error.value = result.error
+    }
+  } catch (e: any) {
+    error.value = e?.message || '选择升级包失败'
+  } finally {
+    releasePathPicking.value = false
+  }
 }
 
 function releaseUpgradeMethodLabel(step: AndroidUpgradeStep): string {
@@ -1630,6 +1666,20 @@ async function handleClearFlashPackages() {
   })
 }
 
+function confirmOtaUpgradeFlashThenStart(deviceId: string) {
+  dialog.warning({
+    title: OTA_UPGRADE_FLASH_CONFIRM.title,
+    content: () => h(
+      'div',
+      { style: 'line-height: 1.7' },
+      OTA_UPGRADE_FLASH_CONFIRM.lines.map(line => h('p', { style: 'margin: 0 0 8px' }, line)),
+    ),
+    positiveText: OTA_UPGRADE_FLASH_CONFIRM.positiveText,
+    negativeText: OTA_UPGRADE_FLASH_CONFIRM.negativeText,
+    onPositiveClick: () => commitStartTest(deviceId),
+  })
+}
+
 async function handleStartTest(deviceId: string) {
   try {
     if (selectedTestType.value === 'gms' && !gmsHostSupported.value) {
@@ -1678,6 +1728,27 @@ async function handleStartTest(deviceId: string) {
     if (selectedTestType.value === 'gms') {
       await saveGmsTradefedSettings(false)
     }
+    const availableModules = listModulesForTestType(selectedTestType.value)
+    const modulesToRun = availableModules.filter(m => selectedStartModules.value.has(m))
+    if (availableModules.length > 1 && modulesToRun.length === 0) {
+      error.value = '请至少勾选一个测试模块'
+      return
+    }
+    if (selectedTestType.value === 'ota_upgrade' && startTestIntentRole.value !== '辅测机') {
+      confirmOtaUpgradeFlashThenStart(deviceId)
+      return
+    }
+    await commitStartTest(deviceId)
+  } catch (e: any) {
+    console.error('[DeviceSelfCheck] Error starting test:', e)
+    clearFlashPanel()
+    error.value = e?.message || '启动测试失败'
+  }
+}
+
+async function commitStartTest(deviceId: string) {
+  try {
+    const releaseActive = enableReleaseUpgrade.value || selectedTestType.value === 'ota_upgrade'
     const intent = startTestIntentRole.value
     const current = devices.value.find(d => d.deviceId === deviceId)
     if (current && current.role !== intent) {
@@ -1690,10 +1761,6 @@ async function handleStartTest(deviceId: string) {
     }
     const availableModules = listModulesForTestType(selectedTestType.value)
     const modulesToRun = availableModules.filter(m => selectedStartModules.value.has(m))
-    if (availableModules.length > 1 && modulesToRun.length === 0) {
-      error.value = '请至少勾选一个测试模块'
-      return
-    }
     clearFlashPanel()
     const flash = releaseActive
       ? {
@@ -2595,6 +2662,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     flashStatusClass,
     handleBrowseFlashPath,
     handleBrowseTcardZip,
+    handleBrowseReleaseUpgradePath,
     handleResolveLatestDailyFlash,
     handleResolveReleaseUpgrade,
     toggleReleaseUpgradeStep,
@@ -2604,6 +2672,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     enableTcardUpdate,
     tcardUpdatePath,
     tcardPathPicking,
+    releasePathPicking,
     enableReleaseUpgrade,
     releaseTcardPaths,
     releaseUpgradeResolving,

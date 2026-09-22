@@ -220,6 +220,8 @@ const {
   enableTcardUpdate,
   tcardUpdatePath,
   tcardPathPicking,
+  releasePathPicking,
+  handleBrowseReleaseUpgradePath,
   enableReleaseUpgrade,
   releaseTcardPaths,
   releaseUpgradeResolving,
@@ -1765,12 +1767,22 @@ function handleDutRowAction(deviceId: string) {
                             </label>
                             <span class="release-upgrade-version">{{ step.releaseVersionName }}</span>
                             <span class="release-upgrade-method">{{ releaseUpgradeMethodLabel(step) }}</span>
-                            <input
-                              type="text"
-                              class="form-input release-upgrade-path"
-                              :value="step.packagePath"
-                              @input="updateReleaseUpgradePath(step, ($event.target as HTMLInputElement).value)"
-                            />
+                            <div class="release-upgrade-path-cell">
+                              <input
+                                type="text"
+                                class="form-input release-upgrade-path"
+                                :value="step.packagePath"
+                                @input="updateReleaseUpgradePath(step, ($event.target as HTMLInputElement).value)"
+                              />
+                              <button
+                                type="button"
+                                class="ea-btn-ghost ea-btn-sm flash-browse-btn"
+                                :disabled="releasePathPicking"
+                                @click.stop="handleBrowseReleaseUpgradePath(step)"
+                              >
+                                {{ releasePathPicking ? '选择中...' : '浏览' }}
+                              </button>
+                            </div>
                             <p v-if="step.needsTransfer" class="release-upgrade-warning">
                               重庆无刷机包，请将上海包传输到 {{ step.cqTargetPath }} 后重新解析
                             </p>
@@ -3811,7 +3823,15 @@ $catalog-pane-height: calc(100vh - 48px);
   color: var(--muted);
 }
 
+.release-upgrade-path-cell {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
 .release-upgrade-path {
+  flex: 1;
   min-width: 0;
   margin-top: 0;
   font-size: 12px;
