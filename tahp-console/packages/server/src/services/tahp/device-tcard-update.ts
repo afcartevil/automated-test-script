@@ -3,10 +3,16 @@
  */
 import { spawn } from 'child_process'
 import { existsSync, statSync } from 'fs'
-import { basename } from 'path'
-import { isZipFile, waitForAdbDevice } from './device-flash'
+import { basename, join } from 'path'
+import {
+  ensureLocalZip,
+  isZipFile,
+  resolveFlashPackageDir,
+  waitForAdbDevice,
+} from './device-flash'
 
 export const TCARD_REMOTE_DIR = '/sdcard'
+export const TCARD_REMOTE_DIR_CANDIDATES = ['/sdcard', '/storage/emulated/0', '/data/media/0'] as const
 export const SYSTEM_UPDATE_ACTIVITY =
   'com.transsion.systemupdate/com.transsion.systemupdate.SystemUpdateActivity'
 export const OTA_LOCAL_RESOURCE_ID = 'com.transsion.systemupdate:id/ota_local'
@@ -14,8 +20,10 @@ export const FILE_NAME_RESOURCE_ID = 'com.transsion.systemupdate:id/file_name'
 export const BTN_POSITIVE_RESOURCE_ID = 'com.transsion.systemupdate:id/btn_positive'
 export const REBOOT_NOW_RESOURCE_ID = 'com.transsion.systemupdate:id/reboot_now'
 
-const UI_DUMP_REMOTE = '/sdcard/tcard_ui_dump.xml'
+const UI_DUMP_REMOTE = '/data/local/tmp/tcard_ui_dump.xml'
 const PUSH_TIMEOUT_MS = 40 * 60 * 1000
+const STORAGE_WAIT_MS = 120_000
+const BOOT_WAIT_MS = 10 * 60 * 1000
 const REBOOT_NOW_TIMEOUT_MS = 20 * 60 * 1000
 const RECONNECT_TIMEOUT_MS = 10 * 60 * 1000
 const UI_STEP_TIMEOUT_MS = 30_000
@@ -47,8 +55,21 @@ export function isTcardZipPath(path: string): boolean {
   return isZipFile(path.trim())
 }
 
-export function tcardRemotePath(zipPath: string): string {
-  return `${TCARD_REMOTE_DIR}/${basename(zipPath.trim())}`
+export function tcardRemotePath(zipPath: string, remoteDir = TCARD_REMOTE_DIR): string {
+  return `${remoteDir.replace(/\/+$/, '')}/${basename(zipPath.trim())}`
+}
+
+export function isAdbRemoteCreateMissingError(text: string): boolean {
+  return /couldn't create file:\s*No such file or directory/i.test(text)
+}
+
+export function isSystemBootCompleted(propOutput: string): boolean {
+  return propOutput
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .some((line) => line === '1')
 }
 
 export function parseAdbPushPercent(line: string): number | null {
@@ -316,14 +337,90 @@ async function readRemoteFileSize(deviceId: string, remotePath: string): Promise
   return null
 }
 
-async function pushZip(
+async function waitForBootCompleted(
   deviceId: string,
-  localPath: string,
-  remotePath: string,
   onLog: (line: string) => void,
   shouldAbort?: () => boolean,
 ): Promise<void> {
-  const localSize = statSync(localPath).size
+  const deadline = Date.now() + BOOT_WAIT_MS
+  let lastLog = 0
+  while (Date.now() < deadline) {
+    if (shouldAbort?.()) throw new Error('T卡升级已取消')
+    const sys = await adbShell(deviceId, ['getprop', 'sys.boot_completed'], 8_000)
+    const dev = await adbShell(deviceId, ['getprop', 'dev.bootcomplete'], 8_000)
+    if (isSystemBootCompleted(sys.stdout) || isSystemBootCompleted(dev.stdout)) {
+      onLog('[T卡升级] 系统已启动完成 (sys.boot_completed=1)')
+      return
+    }
+    if (Date.now() - lastLog > 15_000) {
+      onLog('[T卡升级] 等待系统启动完成 (sys.boot_completed)…')
+      lastLog = Date.now()
+    }
+    await sleep(2000)
+  }
+  throw new Error('等待系统启动完成超时 (sys.boot_completed)')
+}
+
+async function dirIsWritable(deviceId: string, dir: string): Promise<boolean> {
+  const probe = `${dir.replace(/\/+$/, '')}/.tahp_tcard_probe`
+  const result = await adbShell(
+    deviceId,
+    ['sh', '-c', `echo ok > "${probe}" && rm -f "${probe}"`],
+    8_000,
+  )
+  const text = `${result.stdout}\n${result.stderr}`
+  return result.code === 0 && !/No such file|Read-only|Permission denied|Not a directory/i.test(text)
+}
+
+async function waitForWritableRemoteDir(
+  deviceId: string,
+  onLog: (line: string) => void,
+  shouldAbort?: () => boolean,
+): Promise<string> {
+  await adbShell(deviceId, ['mkdir', '-p', '/data/media/0'])
+  await adbShell(deviceId, ['mkdir', '-p', '/storage/emulated/0'])
+  const deadline = Date.now() + STORAGE_WAIT_MS
+  let lastWaitLog = 0
+  while (Date.now() < deadline) {
+    if (shouldAbort?.()) throw new Error('T卡升级已取消')
+    for (const dir of TCARD_REMOTE_DIR_CANDIDATES) {
+      if (await dirIsWritable(deviceId, dir)) {
+        onLog(`[T卡升级] 存储目录就绪: ${dir}`)
+        return dir
+      }
+    }
+    if (Date.now() - lastWaitLog > 15_000) {
+      onLog('[T卡升级] 等待 /sdcard 可写…')
+      lastWaitLog = Date.now()
+    }
+    await sleep(2000)
+  }
+  onLog('[T卡升级] /sdcard 仍未就绪，改用 /data/media/0')
+  await adbShell(deviceId, ['mkdir', '-p', '/data/media/0'])
+  return '/data/media/0'
+}
+
+async function findRemoteZip(
+  deviceId: string,
+  zipName: string,
+  localSize: number,
+): Promise<string | null> {
+  for (const dir of TCARD_REMOTE_DIR_CANDIDATES) {
+    const remotePath = `${dir}/${zipName}`
+    const remoteSize = await readRemoteFileSize(deviceId, remotePath)
+    if (remoteSize != null && remoteSize === localSize) return remotePath
+  }
+  return null
+}
+
+async function pushZipTo(
+  deviceId: string,
+  localPath: string,
+  remotePath: string,
+  localSize: number,
+  onLog: (line: string) => void,
+  shouldAbort?: () => boolean,
+): Promise<AdbRunResult> {
   let lastPct = -1
   const emitPct = (pct: number) => {
     const clamped = Math.max(0, Math.min(100, pct))
@@ -368,13 +465,46 @@ async function pushZip(
   })()
 
   const [result] = await Promise.all([pushPromise, pollPromise])
-  if (shouldAbort?.() || result.code === -2) throw new Error('T卡升级已取消')
-  if (result.code === -1) throw new Error('adb push 超时')
-  if (result.code !== 0) {
-    const detail = (result.stderr || result.stdout || '').trim() || `adb push 退出码 ${result.code}`
-    throw new Error(`adb push 失败: ${detail}`)
+  if (result.code === 0) emitPct(100)
+  return result
+}
+
+async function pushZip(
+  deviceId: string,
+  localPath: string,
+  onLog: (line: string) => void,
+  shouldAbort?: () => boolean,
+): Promise<string> {
+  const zipName = basename(localPath)
+  const localSize = statSync(localPath).size
+  const existing = await findRemoteZip(deviceId, zipName, localSize)
+  if (existing) {
+    onLog(`[T卡升级] 设备上已有完整包，跳过推送: ${existing}`)
+    return existing
   }
-  emitPct(100)
+
+  await waitForAdbDevice(deviceId, BOOT_WAIT_MS, 2_000, shouldAbort)
+  await waitForBootCompleted(deviceId, onLog, shouldAbort)
+  await runAdb(['-s', deviceId, 'root'], { timeoutMs: 20_000 })
+  await waitForAdbDevice(deviceId, 60_000, 2_000, shouldAbort)
+  await waitForBootCompleted(deviceId, onLog, shouldAbort)
+  const preferred = await waitForWritableRemoteDir(deviceId, onLog, shouldAbort)
+  const dests = [preferred, ...TCARD_REMOTE_DIR_CANDIDATES.filter((dir) => dir !== preferred)]
+
+  let lastError = ''
+  for (const dir of dests) {
+    if (shouldAbort?.()) throw new Error('T卡升级已取消')
+    const remotePath = tcardRemotePath(localPath, dir)
+    onLog(`[T卡升级] 开始推送 ${zipName} -> ${remotePath}`)
+    const result = await pushZipTo(deviceId, localPath, remotePath, localSize, onLog, shouldAbort)
+    if (shouldAbort?.() || result.code === -2) throw new Error('T卡升级已取消')
+    if (result.code === -1) throw new Error('adb push 超时')
+    const found = await findRemoteZip(deviceId, zipName, localSize)
+    if (found) return found
+    lastError = (result.stderr || result.stdout || '').trim() || `adb push 退出码 ${result.code}`
+    onLog(`[T卡升级] 推送到 ${dir} 未完成: ${lastError}`)
+  }
+  throw new Error(`adb push 失败: ${lastError}`)
 }
 
 export async function runTcardUpdate(
@@ -390,13 +520,16 @@ export async function runTcardUpdate(
   try {
     const zipPath = validateZipPath(options.zipPath)
     const zipName = basename(zipPath)
-    const remotePath = tcardRemotePath(zipPath)
-
-    onLog(`[T卡升级] 开始推送 ${zipName} -> ${remotePath}`)
     abortOrThrow()
-    await pushZip(deviceId, zipPath, remotePath, onLog, shouldAbort)
+    const localZip = await ensureLocalZip(
+      zipPath,
+      join(resolveFlashPackageDir(), 'tcard'),
+      (line) => onLog(line.replace(/^\[刷机\]/, '[T卡升级]')),
+    )
     abortOrThrow()
-    onLog('[T卡升级] 推送完成')
+    const remotePath = await pushZip(deviceId, localZip, onLog, shouldAbort)
+    abortOrThrow()
+    onLog(`[T卡升级] 推送完成: ${remotePath}`)
 
     await adbShell(deviceId, ['input', 'keyevent', '224'])
     await adbShell(deviceId, ['wm', 'dismiss-keyguard'])

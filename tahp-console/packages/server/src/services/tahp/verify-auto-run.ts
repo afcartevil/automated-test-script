@@ -112,11 +112,11 @@ const PENDING_CLOSE_PHASES: VerifyAutoPhase[] = ['completing', 'flash_failed', '
 
 /** EA「测试执行」支持的测试项（中心目录与此对齐；不在表内的不自动执行） */
 const SUPPORTED_TEST_TYPES: StandardTestType[] = [
-  'str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'thermal', 'pipeline_adapt', 'ai_generated',
+  'str4', 'week', 'monkey', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'pipeline_adapt', 'ai_generated',
 ]
 
-/** 不自动执行、仅展示「待人工执行」的测试项（转测摸底 / 周版本：由人工把控刷机版本与执行范围） */
-const MANUAL_ONLY_TEST_TYPES = ['str4', 'week']
+/** 不自动执行、仅展示「待人工执行」的测试项（转测摸底 / 周版本 / 连续OTA：由人工把控刷机版本与执行范围） */
+const MANUAL_ONLY_TEST_TYPES = ['str4', 'week', 'ota_upgrade']
 
 /** 自动执行但跳过刷机（不刷机、不刷 Root 包），直接使用设备当前版本的测试项 */
 const SKIP_FLASH_TEST_TYPES = ['gms']

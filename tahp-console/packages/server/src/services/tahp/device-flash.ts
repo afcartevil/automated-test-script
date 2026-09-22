@@ -1267,7 +1267,7 @@ async function copyFileWithProgress(
   onLog?.(`[刷机] 复制 ${label} 完成: ${dest}`)
 }
 
-async function ensureLocalZip(
+export async function ensureLocalZip(
   zipPath: string,
   cacheDir: string,
   onLog?: (line: string) => void

@@ -929,6 +929,12 @@ function handleDutRowAction(deviceId: string) {
                 >
                   <span class="ea-muted">AI用例失败后将立即停止，不自动复测；NL UI 用例全自动执行。</span>
                 </div>
+                <div
+                  v-else-if="selectedCatalogTestType === 'ota_upgrade'"
+                  class="catalog-ai-generated-note catalog-overview-retest"
+                >
+                  <span class="ea-muted">本项必须先获取外发版本：最低 Android 走 device_update，更高版本依次 T卡升级；完成后校验开机并记录版本。不自动复测。</span>
+                </div>
                 <div v-else class="catalog-auto-retest-row catalog-overview-retest">
                   <label
                     class="checkbox-label"
@@ -1188,7 +1194,7 @@ function handleDutRowAction(deviceId: string) {
                       <div class="detail-value pre-wrap">{{ selectedCatalogItem.expectedResult }}</div>
                     </div>
                     <div
-                      v-if="selectedCatalogTestType !== 'monkey' && selectedCatalogTestType !== 'smoke' && selectedCatalogTestType !== 'gms' && selectedCatalogTestType !== 'power' && selectedCatalogTestType !== 'power_feature' && selectedCatalogTestType !== 'thermal' && selectedCatalogTestType !== 'kernel_feature' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
+                      v-if="selectedCatalogTestType !== 'monkey' && selectedCatalogTestType !== 'smoke' && selectedCatalogTestType !== 'gms' && selectedCatalogTestType !== 'power' && selectedCatalogTestType !== 'power_feature' && selectedCatalogTestType !== 'thermal' && selectedCatalogTestType !== 'kernel_feature' && selectedCatalogTestType !== 'ota_upgrade' && !selectedCatalogItem.manualSteps && !selectedCatalogItem.preconditions && !selectedCatalogItem.expectedResult"
                       class="ea-muted"
                     >
                       暂无手动测试步骤
@@ -1633,7 +1639,7 @@ function handleDutRowAction(deviceId: string) {
                       </p>
                     </div>
 
-                    <div class="form-group flash-options">
+                    <div v-if="selectedTestType !== 'ota_upgrade'" class="form-group flash-options">
                       <label class="checkbox-label flash-options-toggle">
                         <input type="checkbox" v-model="enableFlash" />
                         <span>刷机</span>
@@ -1703,22 +1709,34 @@ function handleDutRowAction(deviceId: string) {
                     </div>
 
                     <div class="form-group flash-options">
-                      <div class="flash-options-head">
-                        <label class="checkbox-label flash-options-toggle">
-                          <input type="checkbox" v-model="enableReleaseUpgrade" />
-                          <span>连续版本升级</span>
-                        </label>
-                        <button
-                          type="button"
-                          class="ea-btn-primary ea-btn-sm flash-daily-resolve-btn"
-                          :disabled="releaseUpgradeResolving"
-                          @click.stop="handleResolveReleaseUpgrade"
-                        >
-                          {{ releaseUpgradeResolving ? '解析中...' : (releaseUpgradePlan ? '重新解析外发版本' : '获取外发版本') }}
-                        </button>
+                      <label
+                        v-if="selectedTestType !== 'ota_upgrade'"
+                        class="checkbox-label flash-options-toggle"
+                      >
+                        <input type="checkbox" v-model="enableReleaseUpgrade" />
+                        <span>连续版本升级</span>
+                      </label>
+                      <div v-else class="flash-options-toggle">
+                        <span class="form-label">连续版本升级</span>
                       </div>
-                      <div v-if="enableReleaseUpgrade" class="flash-options-panel">
-                        <p class="flash-options-hint">勾选需要升级的 Android 版本；最低版使用 device_update，更高版本依次 T卡升级，全部完成后开始测试。</p>
+                      <div v-if="enableReleaseUpgrade || selectedTestType === 'ota_upgrade'" class="flash-options-panel">
+                        <p class="flash-options-hint">
+                          {{
+                            selectedTestType === 'ota_upgrade'
+                              ? '本测试项必须获取外发版本：最低版使用 device_update，更高版本依次 T卡升级；全部完成后校验设备开机并记录版本。'
+                              : '勾选需要升级的 Android 版本；最低版使用 device_update，更高版本依次 T卡升级，全部完成后开始测试。'
+                          }}
+                        </p>
+                        <div class="flash-path-row">
+                          <button
+                            type="button"
+                            class="ea-btn-primary ea-btn-sm flash-daily-resolve-btn"
+                            :disabled="releaseUpgradeResolving"
+                            @click.stop="handleResolveReleaseUpgrade"
+                          >
+                            {{ releaseUpgradeResolving ? '解析中...' : (releaseUpgradePlan ? '重新解析外发版本' : '获取外发版本') }}
+                          </button>
+                        </div>
                         <div v-if="releaseUpgradePlan" class="release-upgrade-panel">
                           <p class="flash-daily-meta">
                             {{ releaseUpgradePlan.brand }} / {{ releaseUpgradePlan.model }}
@@ -1768,7 +1786,7 @@ function handleDutRowAction(deviceId: string) {
                       </div>
                     </div>
 
-                    <div class="form-group flash-options">
+                    <div v-if="selectedTestType !== 'ota_upgrade'" class="form-group flash-options">
                       <label class="checkbox-label flash-options-toggle">
                         <input type="checkbox" v-model="enableTcardUpdate" />
                         <span>T卡升级</span>
@@ -3756,13 +3774,6 @@ $catalog-pane-height: calc(100vh - 48px);
   .flash-options-toggle {
     font-weight: 600;
   }
-}
-
-.flash-options-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
 }
 
 .release-upgrade-panel {

@@ -6,7 +6,7 @@ export const SELF_CHECK_SUBTITLE =
 export const AUTO_RETEST_TOOLTIP = '测试结束后自动复测无人工参与的失败用例'
 
 /** 标准测试大类展示顺序（与用例列表 / 后端 catalog 一致） */
-export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'ai_generated'] as const
+export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'ai_generated'] as const
 
 export type StandardTestTypeKey = (typeof STANDARD_TEST_TYPE_ORDER)[number]
 
@@ -16,6 +16,7 @@ export const MODULE_ORDER: Record<string, number> = {
   driver_hardware: 1,
   monkey: 2,
   usd: 3,
+  ota: 4,
   cts: 10,
   gts: 11,
   vts: 12,
@@ -39,6 +40,7 @@ export function getTestTypeLabel(testType?: string): string {
   if (testType === 'week') return '周版本测试'
   if (testType === 'monkey') return 'monkey测试'
   if (testType === 'smoke') return '冒烟测试'
+  if (testType === 'ota_upgrade') return '连续OTA升级'
   if (testType === 'gms') return 'GMS测试'
   if (testType === 'power') return '功耗自动化测试'
   if (testType === 'power_feature') return '功耗特性自检'
@@ -77,6 +79,7 @@ export function getModuleLabel(module: string): string {
     driver_hardware: '驱动-硬测',
     monkey: 'monkey测试',
     usd: 'USD冒烟测试',
+    ota: '连续OTA升级',
     cts: 'CTS',
     gts: 'GTS',
     vts: 'VTS',
@@ -248,6 +251,9 @@ export function formatCatalogAutomation(group: CaseCatalogGroup): string {
   if (group.testType === 'smoke') {
     return '脚本全自动（SDD USD pytest）'
   }
+  if (group.testType === 'ota_upgrade') {
+    return '脚本全自动（连续版本升级 + 开机校验）'
+  }
   if (group.testType === 'gms') {
     return '脚本全自动（Tradefed CTS/GTS/VTS）'
   }
@@ -279,6 +285,9 @@ export function formatCatalogAutomation(group: CaseCatalogGroup): string {
 export function formatCatalogPrereq(group: CaseCatalogGroup): string {
   if (group.testType === 'power') {
     return 'ADB 连接测试机+TPower测量仪器'
+  }
+  if (group.testType === 'ota_upgrade') {
+    return 'ADB 连接测试机；开始前须获取外发版本'
   }
   const parts: string[] = ['ADB 连接测试机']
   const maxDutSim = Math.max(0, ...group.modules.map(m => m.conditions.dutSimCount))
@@ -322,6 +331,7 @@ export function pipelineStatusLabel(status: PipelineStageStatus): string {
 export function reportShortType(testType: string): string {
   if (testType === 'monkey') return 'monkey'
   if (testType === 'smoke') return '冒烟'
+  if (testType === 'ota_upgrade') return '连续OTA'
   if (testType === 'power_feature') return '功耗特性'
   if (testType === 'kernel_feature') return '内核特性'
   if (testType === 'thermal' || testType === 'therm') return '温升方案'

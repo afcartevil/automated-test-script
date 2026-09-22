@@ -60,7 +60,7 @@ export type DeviceStatus =
   | '刷机中'
   | 'T卡升级中'
 
-export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
+export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
 export type DeviceTestType = StandardTestType | 'custom'
 
 export interface SimCardInfo {
@@ -332,7 +332,8 @@ function getAutoRetestConfig(testType: string): { enabled: boolean; count: numbe
     testType === 'power_feature' ||
     testType === 'thermal' ||
     testType === 'kernel_feature' ||
-    testType === 'ai_generated'
+    testType === 'ai_generated' ||
+    testType === 'ota_upgrade'
   ) {
     return { enabled: false, count: 0 }
   }
@@ -400,6 +401,7 @@ function snapshotTestConfig(
     case 'power':
     case 'power_feature':
     case 'thermal':
+    case 'ota_upgrade':
       break
     default:
       const retest = getAutoRetestConfig(testType)
@@ -741,6 +743,7 @@ function loadCaseConfigs(): void {
     'week_tdd.json', 'week_driver.json',
     'monkey_monkey.json',
     'smoke_usd.json',
+    'ota_upgrade_ota.json',
     'gms_cts.json',
     'gms_cts_tele.json',
     'gms_gts.json',
@@ -1512,6 +1515,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'str4') return ['driver_component', 'driver_hardware', 'tdd']
   if (testType === 'monkey') return ['monkey']
   if (testType === 'smoke') return ['usd']
+  if (testType === 'ota_upgrade') return ['ota']
   if (testType === 'gms') return ['cts', 'gts', 'vts']
   if (testType === 'power') return ['current_analysis']
   if (testType === 'power_feature') return ['wbs']
@@ -3208,6 +3212,9 @@ export async function startTest(
   options?: StartTestOptions,
 ): Promise<DeviceDetail | null> {
   assertGmsRunnable(testType)
+  if (testType === 'ota_upgrade' && !buildFlashOptionsFromPayload(flash)) {
+    throw new Error('连续OTA升级需要先获取外发版本并选择 Android 版本')
+  }
   try {
     const device = devices[deviceId]
     if (!device || device.status !== '空闲') {
@@ -4761,6 +4768,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     week: '周版本测试',
     monkey: 'monkey测试',
     smoke: '冒烟测试',
+    ota_upgrade: '连续OTA升级',
     gms: 'GMS测试',
     power: '功耗自动化测试',
     power_feature: '功耗特性自检',
@@ -4776,6 +4784,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     driver_hardware: 1,
     monkey: 2,
     usd: 3,
+    ota: 4,
     cts: 10,
     gts: 11,
     vts: 12,
@@ -4823,7 +4832,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', AI_GENERATED_TEST_TYPE]
+  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', AI_GENERATED_TEST_TYPE]
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),

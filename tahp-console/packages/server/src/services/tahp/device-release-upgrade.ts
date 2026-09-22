@@ -18,7 +18,10 @@ const ANDROID_LETTER_MAP: Record<string, number> = { T: 13, U: 14, V: 15, W: 16,
 const USER_FOLDER_RE = /^([A-Za-z0-9]+)-(\d+\.\d+\.\d+\.\d+(?:SP\d+)?)?(?:\(([A-Z0-9]+)\))?(.*)$/i
 const MR_FOLDER_RE = /-([TUVWXY])-([A-Z]+)-(\d{6}V\d+)/i
 const VERSION_TOKEN_RE = /\d+\.\d+\.\d+\.\d+(?:SP\d+)?/gi
-const EXCLUDED_ZIP_RE = /(_user|_userdebug|_eng|efuse)/i
+const MR_VERSION_TOKEN_RE = /\d{6}V\d+/g
+const USER_FULL_ZIP_RE = /^[A-Za-z0-9]+-\d+\.\d+\.\d+\.\d+(?:SP\d+)?\([A-Z0-9]+\)\.zip$/i
+const MR_FULL_ZIP_RE = /^[A-Za-z0-9]+-[A-Za-z0-9]+-[TUVWXY]-[A-Z]+-\d{6}V\d+\.zip$/i
+const SKIP_ZIP_RE = /(_user|_userdebug|_eng|efuse|target_files|ota_tools|^OTA_TOOLS\.zip$|trpre_apk)/i
 
 export type ReleaseChannel = 'USER' | 'MR' | 'DAILY'
 export type UpgradeMethod = 'device_update' | 'tcard'
@@ -159,30 +162,107 @@ export function parseMrReleaseFolder(
   }
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 export function classifyReleaseZipName(name: string): 'full' | 'tcard' | 'skip' {
   const fileName = basename(name)
   if (!/\.zip$/i.test(fileName)) return 'skip'
-  if (EXCLUDED_ZIP_RE.test(fileName) && !/^Tcard_/i.test(fileName)) return 'skip'
-  if (/^Tcard_/i.test(fileName) || (fileName.match(VERSION_TOKEN_RE)?.length ?? 0) >= 2) return 'tcard'
-  return 'full'
+  if (/^Tcard_/i.test(fileName)) return 'tcard'
+  if (SKIP_ZIP_RE.test(fileName)) return 'skip'
+  if ((fileName.match(VERSION_TOKEN_RE)?.length ?? 0) >= 2) return 'tcard'
+  if ((fileName.match(MR_VERSION_TOKEN_RE)?.length ?? 0) >= 2) return 'tcard'
+  if (USER_FULL_ZIP_RE.test(fileName) || MR_FULL_ZIP_RE.test(fileName)) return 'full'
+  return 'skip'
+}
+
+export function zipMatchesRelease(fileName: string, release: ParsedReleaseVersion): boolean {
+  const name = basename(fileName)
+  if (release.channel === 'MR' || MR_FULL_ZIP_RE.test(name)) {
+    const stem = release.folderName.replace(/_MR\d+.*$/i, '')
+    if (name.toLowerCase() === `${stem}.zip`.toLowerCase()) return true
+    return new RegExp(`-${escapeRegExp(release.versionName)}\\.zip$`, 'i').test(name)
+  }
+  if (release.market) {
+    return new RegExp(
+      `-${escapeRegExp(release.versionName)}\\(${escapeRegExp(release.market)}\\)\\.zip$`,
+      'i',
+    ).test(name)
+  }
+  return new RegExp(`-${escapeRegExp(release.versionName)}(?:\\(|\\.zip$)`, 'i').test(name)
+}
+
+export function pickFullFlashZip(paths: string[], release?: ParsedReleaseVersion): string | undefined {
+  const full = paths.filter((path) => classifyReleaseZipName(path) === 'full')
+  if (!full.length) return undefined
+  if (release) {
+    const matched = full.filter((path) => zipMatchesRelease(path, release))
+    if (matched.length) return matched.slice().sort().reverse()[0]
+  }
+  return full.slice().sort().reverse()[0]
+}
+
+function zipFilesIn(dir: string): string[] {
+  return safeDirEntries(dir)
+    .filter((entry) => entry.isFile() && /\.zip$/i.test(entry.name))
+    .map((entry) => join(dir, entry.name))
+}
+
+function samePath(a: string, b: string): boolean {
+  return a.replace(/[\\/]+$/, '').replace(/\//g, '\\').toLowerCase()
+    === b.replace(/[\\/]+$/, '').replace(/\//g, '\\').toLowerCase()
+}
+
+/**
+ * USER 外发包通常在 `{版本}/Open`；Android 14 MR 会多一层不固定平台目录
+ * （如 `tran_mtk_u0.mp1.rc_v3.8_os13.6-os14.0_mp.rel_231212`），Open 在其下。
+ */
+export function resolveReleasePackageRoot(versionPath: string): string {
+  type Candidate = { root: string; openPath: string; nested: boolean; name: string }
+  const candidates: Candidate[] = []
+  const directOpen = join(versionPath, 'Open')
+  if (existsSync(directOpen)) {
+    candidates.push({ root: versionPath, openPath: directOpen, nested: false, name: 'Open' })
+  }
+  for (const entry of safeDirEntries(versionPath)) {
+    if (!entry.isDirectory() || entry.name.toUpperCase() === 'OPEN') continue
+    const openPath = join(versionPath, entry.name, 'Open')
+    if (existsSync(openPath)) {
+      candidates.push({
+        root: join(versionPath, entry.name),
+        openPath,
+        nested: true,
+        name: entry.name,
+      })
+    }
+  }
+  if (!candidates.length) return versionPath
+  const withZips = candidates.filter((item) => zipFilesIn(item.openPath).length > 0)
+  const pool = withZips.length ? withZips : candidates
+  const direct = pool.find((item) => !item.nested)
+  if (direct) return direct.root
+  return (pool.find((item) => /^tran_mtk/i.test(item.name)) || pool[0]).root
+}
+
+function extraPackageSegment(versionPath: string, packageRoot: string): string {
+  return samePath(versionPath, packageRoot) ? '' : basename(packageRoot)
 }
 
 function listZipFiles(versionPath: string): string[] {
-  const roots = [join(versionPath, 'Open'), versionPath]
+  const packageRoot = resolveReleasePackageRoot(versionPath)
+  const roots = [join(packageRoot, 'Open'), packageRoot]
   for (const root of roots) {
     if (!existsSync(root)) continue
-    const zips = safeDirEntries(root)
-      .filter((entry) => entry.isFile() && /\.zip$/i.test(entry.name))
-      .map((entry) => join(root, entry.name))
+    const zips = zipFilesIn(root)
     if (zips.length) return zips
   }
   return []
 }
 
-export function packageSetFromPaths(paths: string[]): ReleasePackageSet {
-  const full = paths.filter((path) => classifyReleaseZipName(path) === 'full').sort().reverse()
+export function packageSetFromPaths(paths: string[], release?: ParsedReleaseVersion): ReleasePackageSet {
   const tcard = paths.filter((path) => classifyReleaseZipName(path) === 'tcard').sort().reverse()
-  return { fullZip: full[0], tcardZips: tcard }
+  return { fullZip: pickFullFlashZip(paths, release), tcardZips: tcard }
 }
 
 export function pickTcardZipForPreviousAndroid(paths: string[], previousAndroid: number): string | undefined {
@@ -190,12 +270,16 @@ export function pickTcardZipForPreviousAndroid(paths: string[], previousAndroid:
   return (hinted.length ? hinted : paths).slice().sort().reverse()[0]
 }
 
-function listVersionFolders(modelRoot: string): ParsedReleaseVersion[] {
+export function listVersionFolders(modelRoot: string): ParsedReleaseVersion[] {
   const versions: ParsedReleaseVersion[] = []
   const userRoot = join(modelRoot, 'USER')
   for (const entry of safeDirEntries(userRoot)) {
     if (!entry.isDirectory()) continue
-    const parsed = parseUserReleaseFolder(entry.name, join(userRoot, entry.name))
+    const folderPath = join(userRoot, entry.name)
+    const packageRoot = resolveReleasePackageRoot(folderPath)
+    const extra = extraPackageSegment(folderPath, packageRoot)
+    const relativePath = extra ? join('USER', entry.name, extra) : join('USER', entry.name)
+    const parsed = parseUserReleaseFolder(entry.name, packageRoot, relativePath)
     if (parsed) versions.push(parsed)
   }
   for (const project of safeDirEntries(modelRoot)) {
@@ -203,8 +287,13 @@ function listVersionFolders(modelRoot: string): ParsedReleaseVersion[] {
     const mrRoot = join(modelRoot, project.name, 'MR')
     for (const entry of safeDirEntries(mrRoot)) {
       if (!entry.isDirectory()) continue
-      const relativePath = join(project.name, 'MR', entry.name)
-      const parsed = parseMrReleaseFolder(entry.name, join(mrRoot, entry.name), relativePath)
+      const folderPath = join(mrRoot, entry.name)
+      const packageRoot = resolveReleasePackageRoot(folderPath)
+      const extra = extraPackageSegment(folderPath, packageRoot)
+      const relativePath = extra
+        ? join(project.name, 'MR', entry.name, extra)
+        : join(project.name, 'MR', entry.name)
+      const parsed = parseMrReleaseFolder(entry.name, packageRoot, relativePath)
       if (parsed) versions.push(parsed)
     }
   }
@@ -278,6 +367,22 @@ export function matchModelFolder(folders: string[], candidates: string[]): strin
   return null
 }
 
+function packagesForVersion(version: ParsedReleaseVersion): ReleasePackageSet {
+  return packageSetFromPaths(listZipFiles(version.folderPath), version)
+}
+
+function findFullZipForAndroid(versions: ParsedReleaseVersion[], androidVersion: number): string | undefined {
+  const ranked = versions
+    .filter((item) => item.androidVersion === androidVersion)
+    .slice()
+    .sort((a, b) => b.sortKey.localeCompare(a.sortKey) || b.folderName.localeCompare(a.folderName))
+  for (const item of ranked) {
+    const fullZip = packagesForVersion(item).fullZip
+    if (fullZip) return fullZip
+  }
+  return undefined
+}
+
 function findCiVersion(
   ciBrandRoot: string,
   models: string[],
@@ -288,7 +393,10 @@ function findCiVersion(
     const exact = versions.find((item) => item.folderName === release.folderName)
     const candidate = exact || pickLatestForAndroid(versions, release.androidVersion)
     if (!candidate) continue
-    const packages = packageSetFromPaths(listZipFiles(candidate.folderPath))
+    const packages = packagesForVersion(candidate)
+    if (!packages.fullZip) {
+      packages.fullZip = findFullZipForAndroid(versions, release.androidVersion)
+    }
     if (packages.fullZip || packages.tcardZips.length) return { model, version: candidate, packages }
   }
   return null
@@ -302,7 +410,7 @@ export function buildUpgradeSteps(
   const androidVersions = [...new Set(releases.map((item) => item.androidVersion))].sort((a, b) => a - b)
   return androidVersions.map((androidVersion) => {
     const release = pickLatestForAndroid(releases, androidVersion)!
-    const sourcePackages = packageSetFromPaths(listZipFiles(release.folderPath))
+    const sourcePackages = packageSetFromPaths(listZipFiles(release.folderPath), release)
     const ci = findCi(release)
     const packages = ci?.packages || sourcePackages
     const packagePath = packages.fullZip || packages.tcardZips[0] || release.folderPath

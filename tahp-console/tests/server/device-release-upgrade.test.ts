@@ -7,14 +7,17 @@ import {
   applyHighestDailyTcardOverride,
   assertContinuousUpgradeEligible,
   classifyReleaseZipName,
+  listVersionFolders,
   matchModelFolder,
   mergeHighestDailyVersion,
   modelFamilyVariants,
   packageSetFromPaths,
   parseMrReleaseFolder,
   parseUserReleaseFolder,
+  pickFullFlashZip,
   pickLatestForAndroid,
   pickTcardZipForPreviousAndroid,
+  resolveReleasePackageRoot,
   type ParsedReleaseVersion,
 } from '../../packages/server/src/services/tahp/device-release-upgrade'
 
@@ -48,9 +51,33 @@ describe('release upgrade resolver helpers', () => {
 
   it('classifies full and incremental packages', () => {
     expect(classifyReleaseZipName('X6850-15.1.2.180SP05(OP001PF001AZ).zip')).toBe('full')
+    expect(classifyReleaseZipName('X6850-15.1.0.159(OP001PF001AZ).zip')).toBe('full')
+    expect(classifyReleaseZipName('X6850-H895FHJKL-U-OP-250717V3825.zip')).toBe('full')
     expect(classifyReleaseZipName('Tcard_X6850-16.3.0.145SP06_a15.zip')).toBe('tcard')
     expect(classifyReleaseZipName('X-15.1.2.1-16.3.0.2.zip')).toBe('tcard')
+    expect(classifyReleaseZipName('X6850-H895FHJKL-U-OP-241125V3671-250218V3766_20250219114005.zip')).toBe('tcard')
     expect(classifyReleaseZipName('X6850_user_EFUSE.zip')).toBe('skip')
+    expect(classifyReleaseZipName('full_x6850_h895_f1-target_files.zip')).toBe('skip')
+    expect(classifyReleaseZipName('trpre_apk_management_system_files.zip')).toBe('skip')
+    expect(classifyReleaseZipName('OTA_TOOLS.zip')).toBe('skip')
+    expect(classifyReleaseZipName('X6850-15.1.2.180SP05(OP001PF001AZ)_user_root.zip')).toBe('skip')
+  })
+
+  it('picks device_update full zip by USER/MR official names, not Tcard or tools', () => {
+    const user = parseUserReleaseFolder('X6850-15.1.2.180SP05(OP001PF001AZ)_MR9_N19')!
+    const mr = parseMrReleaseFolder('X6850-H895FHJKL-U-OP-250717V3825_MR8')!
+    expect(pickFullFlashZip([
+      'D:\\Open\\full_x6850_h895_f1-target_files.zip',
+      'D:\\Open\\trpre_apk_management_system_files.zip',
+      'D:\\Open\\Tcard_X6850-15.1.2.180SP05-OP001PF001AZ.zip',
+      'D:\\Open\\X6850-15.1.2.180SP05(OP001PF001AZ)_user_root.zip',
+      'D:\\Open\\X6850-15.1.2.180SP05(OP001PF001AZ).zip',
+    ], user)).toBe('D:\\Open\\X6850-15.1.2.180SP05(OP001PF001AZ).zip')
+    expect(pickFullFlashZip([
+      'D:\\Open\\OTA_TOOLS.zip',
+      'D:\\Open\\X6850-H895FHJKL-U-OP-241125V3671-250218V3766_20250219114005.zip',
+      'D:\\Open\\X6850-H895FHJKL-U-OP-250717V3825.zip',
+    ], mr)).toBe('D:\\Open\\X6850-H895FHJKL-U-OP-250717V3825.zip')
   })
 
   it('selects latest OP release and matching previous-Android T-card package', () => {
@@ -86,7 +113,7 @@ describe('release upgrade resolver helpers', () => {
       () => ({
         model: 'X6879-H785',
         version: release,
-        packages: packageSetFromPaths(['\\\\cq\\X6879-16.3.0.155SP08.zip']),
+        packages: packageSetFromPaths(['\\\\cq\\X6879-16.3.0.155SP08(OP005PF001AZ).zip']),
       }),
       () => '\\\\cq\\X6879-H785\\USER\\Open',
     )
@@ -113,7 +140,7 @@ describe('release upgrade resolver helpers', () => {
   it('marks missing Chongqing package for transfer and keeps Shanghai source path', () => {
     const a15Path = tempVersion('X6850-15.1.2.180SP05(OP001PF001AZ)_MR9_N19')
     const a16Path = tempVersion('X6850-16.3.0.145SP06(OP005PF001AZ)_FR_N52')
-    const a15Zip = join(a15Path, 'Open', 'X6850-15.1.2.180SP05.zip')
+    const a15Zip = join(a15Path, 'Open', 'X6850-15.1.2.180SP05(OP001PF001AZ).zip')
     const a16Zip = join(a16Path, 'Open', 'Tcard_X6850-16.3.0.145SP06_a15.zip')
     writeFileSync(a15Zip, 'flash')
     writeFileSync(a16Zip, 'tcard')
@@ -126,7 +153,7 @@ describe('release upgrade resolver helpers', () => {
       'X6850-16.3.0.145SP06(OP005PF001AZ)_FR_N52',
       a16Path,
     )!
-    const ciPackages = packageSetFromPaths(['\\\\cq\\Open\\X6850-15.1.2.180SP05.zip'])
+    const ciPackages = packageSetFromPaths(['\\\\cq\\Open\\X6850-15.1.2.180SP05(OP001PF001AZ).zip'])
     const steps = buildUpgradeSteps(
       [a15, a16] as ParsedReleaseVersion[],
       (release) => release.androidVersion === 15
@@ -158,6 +185,51 @@ describe('release upgrade resolver helpers', () => {
       ['X6879', 'X6879-H785'],
       ['X6879-H785', 'X6879'],
     )).toBe('X6879-H785')
+  })
+
+  it('resolves USER Open directly and MR nested platform Open for Chongqing path', () => {
+    const modelRoot = join(tmpdir(), `tahp-release-${Date.now()}-${tempRoots.length}`)
+    tempRoots.push(modelRoot)
+    const extra = 'tran_mtk_u0.mp1.rc_v3.8_os13.6-os14.0_mp.rel_231212'
+    const mrFolder = 'X6850-H895FHJKL-U-OP-250218V3766_MR11'
+    const userFolder = 'X6850-15.1.2.180SP05(OP001PF001AZ)_MR9_N19'
+    const userPath = join(modelRoot, 'USER', userFolder)
+    const mrPath = join(modelRoot, 'x6850_h895_f1', 'MR', mrFolder)
+    mkdirSync(join(userPath, 'Open'), { recursive: true })
+    mkdirSync(join(mrPath, extra, 'Open'), { recursive: true })
+    writeFileSync(join(userPath, 'Open', 'X6850-15.1.2.180SP05(OP001PF001AZ).zip'), 'user')
+    writeFileSync(join(mrPath, extra, 'Open', 'X6850-H895FHJKL-U-OP-250218V3766.zip'), 'mr')
+
+    expect(resolveReleasePackageRoot(userPath)).toBe(userPath)
+    expect(resolveReleasePackageRoot(mrPath)).toBe(join(mrPath, extra))
+
+    const versions = listVersionFolders(modelRoot)
+    const a14 = versions.find((item) => item.androidVersion === 14)
+    const a15 = versions.find((item) => item.androidVersion === 15)
+    expect(a14?.relativePath).toBe(join('x6850_h895_f1', 'MR', mrFolder, extra))
+    expect(a15?.relativePath).toBe(join('USER', userFolder))
+
+    const steps = buildUpgradeSteps(
+      versions,
+      () => null,
+      (model, release) => join('\\\\10.205.4.40\\cq', model || 'X6850-H895', release.relativePath, 'Open'),
+    )
+    const a14Step = steps.find((step) => step.androidVersion === 14)
+    expect(a14Step?.cqTargetPath).toContain(extra)
+    expect(a14Step?.cqTargetPath.replace(/\//g, '\\')).toBe(
+      `\\\\10.205.4.40\\cq\\X6850-H895\\x6850_h895_f1\\MR\\${mrFolder}\\${extra}\\Open`,
+    )
+  })
+
+  it('prefers nested Open with zips when version root Open is missing', () => {
+    const root = join(tmpdir(), `tahp-release-${Date.now()}-${tempRoots.length}`)
+    const versionPath = join(root, 'MR11')
+    tempRoots.push(root)
+    const extra = 'tran_mtk_t0.mp1.rc_v9.9_os13.0-os14.0_mp.rel_999999'
+    mkdirSync(join(versionPath, extra, 'Open'), { recursive: true })
+    mkdirSync(join(versionPath, 'other_platform', 'Open'), { recursive: true })
+    writeFileSync(join(versionPath, extra, 'Open', 'full.zip'), 'ok')
+    expect(resolveReleasePackageRoot(versionPath)).toBe(join(versionPath, extra))
   })
 
   it('overrides only matching RELEASE highest Android with latest daily T-card path', () => {

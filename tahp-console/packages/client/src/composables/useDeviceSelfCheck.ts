@@ -89,7 +89,7 @@ const selectedDevice = ref<DeviceDetail | null>(null)
 const moduleConditions = ref<Record<string, ModuleCondition>>({})
 
 // 测试类型选择
-const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'>('week')
+const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'>('week')
 /** 空闲设备开始测试前勾选的模块（多模块大类可筛；默认全选） */
 const selectedStartModules = ref<Set<string>>(new Set())
 /** 空闲设备开始测试前的角色意向（仅 UI，选中设备时默认测试机；点击开始测试时才落盘） */
@@ -866,10 +866,10 @@ async function openCaseCatalog(testType: string) {
       [...new Set(detail.map(item => `${testType}/${item.module}`))]
     )
     catalogTypeSettings.value = {
-      autoRetestEnabled: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated'
+      autoRetestEnabled: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated' || testType === 'ota_upgrade'
         ? false
         : (settingsData.autoRetestEnabled?.[testType] ?? true),
-      autoRetestCount: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated'
+      autoRetestCount: testType === 'monkey' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated' || testType === 'ota_upgrade'
         ? 0
         : (settingsData.autoRetestCount?.[testType] ?? 1),
       monkeyDuration: settingsData.monkeyDuration || '7d',
@@ -1112,7 +1112,7 @@ async function saveCatalogTypeSettings() {
       return
     }
 
-    if (testType === 'ai_generated') {
+    if (testType === 'ai_generated' || testType === 'ota_upgrade') {
       return
     }
 
@@ -1637,7 +1637,7 @@ async function handleStartTest(deviceId: string) {
       message.error(error.value)
       return
     }
-    const releaseActive = enableReleaseUpgrade.value
+    const releaseActive = enableReleaseUpgrade.value || selectedTestType.value === 'ota_upgrade'
     if (releaseActive && !releaseUpgradePlan.value) {
       error.value = '请先获取外发版本'
       return
@@ -2402,6 +2402,9 @@ const selectedCaseResult = computed((): CaseResult | undefined => {
 
 watch(selectedTestType, (testType) => {
   syncSelectedStartModules(testType)
+  if (testType === 'ota_upgrade') {
+    enableReleaseUpgrade.value = true
+  }
   if (testType === 'gms') {
     void loadGmsTradefedSettings()
   }

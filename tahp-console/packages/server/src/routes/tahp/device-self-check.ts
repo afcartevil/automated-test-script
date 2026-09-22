@@ -119,7 +119,7 @@ tahpDeviceSelfCheckRoutes.post(
     try {
       const deviceId = ctx.params.deviceId
       const { testType, flash, tcard, prioritizeTddManual, modules } = ctx.request.body as {
-        testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
+        testType: 'str4' | 'week' | 'monkey' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
         flash?: StartTestFlashPayload
         tcard?: StartTestTcardPayload
         prioritizeTddManual?: boolean

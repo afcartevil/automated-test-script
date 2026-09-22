@@ -1,0 +1,19 @@
+{
+  "testType": "ota_upgrade",
+  "module": "ota",
+  "moduleLabel": "连续OTA升级",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "连续OTA升级",
+      "canReuse": false,
+      "automationMode": "full"
+    }
+  ]
+}

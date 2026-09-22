@@ -352,6 +352,17 @@ describe('人工执行测试项（str4 / week 不自动执行）', () => {
     expect(h.refreshDevices).not.toHaveBeenCalled()
   })
 
+  it('ota_upgrade 任务同样不自动执行', async () => {
+    sessionFor('test-qa01')
+    h.verifyMine.mockResolvedValue([centralTask({ test_type: 'ota_upgrade', item_label: '连续OTA升级' })])
+
+    await tickVerifyAutoRun()
+
+    expect(loadVerifyAutoRunState().tasks[0].phase).toBe('manual_only')
+    expect(h.startTest).not.toHaveBeenCalled()
+    expect(h.refreshDevices).not.toHaveBeenCalled()
+  })
+
   it('策略调整前已在等待设备的 str4 任务转为待人工执行', async () => {
     sessionFor('test-qa01')
     __testingWriteVerifyAutoRunState({

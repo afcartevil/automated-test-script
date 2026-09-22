@@ -11,6 +11,8 @@ import {
   percentFromSizes,
   tcardRemotePath,
   tcardZipQueue,
+  isAdbRemoteCreateMissingError,
+  isSystemBootCompleted,
 } from '../../packages/server/src/services/tahp/device-tcard-update'
 
 const FILE_LIST_XML = `<?xml version='1.0' encoding='UTF-8' ?>
@@ -27,6 +29,18 @@ describe('tcard update helpers', () => {
     expect(isTcardZipPath('D:/rom/ota.zip')).toBe(true)
     expect(isTcardZipPath('D:/rom/scatter.xml')).toBe(false)
     expect(tcardRemotePath('D:/cache/CM5_OTA_v1000.zip')).toBe('/sdcard/CM5_OTA_v1000.zip')
+    expect(tcardRemotePath(
+      '\\\\10.205.4.40\\sw_version\\CI\\Tcard_X6850-16.3.0.145SP06-OP005PF001AZ_a15.zip',
+      '/data/media/0',
+    )).toBe('/data/media/0/Tcard_X6850-16.3.0.145SP06-OP005PF001AZ_a15.zip')
+    expect(isAdbRemoteCreateMissingError(
+      "adb: error: failed to copy '\\\\server\\a.zip' to '/sdcard/a.zip': remote couldn't create file: No such file or directory",
+    )).toBe(true)
+    expect(isAdbRemoteCreateMissingError('1 file pushed, 0 skipped')).toBe(false)
+    expect(isSystemBootCompleted('1')).toBe(true)
+    expect(isSystemBootCompleted('1\r\n')).toBe(true)
+    expect(isSystemBootCompleted('0')).toBe(false)
+    expect(isSystemBootCompleted('')).toBe(false)
     expect(tcardZipQueue({
       zipPath: 'D:/rom/fallback.zip',
       zipPaths: [' D:/rom/a15.zip ', 'D:/rom/a16.zip', 'D:/rom/a15.zip'],

@@ -61,6 +61,12 @@ describe('device self-check testConfig snapshot', () => {
     expect(formatSelfCheckTestConfigMetaRows(cfg).some(r => r[0] === 'GMS 用例超时')).toBe(true)
   })
 
+  it('does not snapshot auto-retest for ota_upgrade', () => {
+    const cfg = __testingSnapshotTestConfig('ota_upgrade', {})
+    expect(cfg.autoRetestEnabled).toBeUndefined()
+    expect(cfg.autoRetestCount).toBeUndefined()
+  })
+
   it('captures auto retest for str4', () => {
     const cfg = __testingSnapshotTestConfig('str4', {})
     expect(cfg.autoRetestEnabled).toBe(true)
