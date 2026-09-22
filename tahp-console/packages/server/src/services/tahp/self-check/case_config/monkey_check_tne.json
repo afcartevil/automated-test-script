@@ -1,0 +1,10 @@
+{
+  "testType": "monkey_check",
+  "module": "tne",
+  "moduleLabel": "TNE异常检查",
+  "conditions": { "dutSimCount": 0, "auxRequired": 0, "auxSimCount": 0 },
+  "defaultCaseMode": "solo",
+  "cases": [
+    { "caseIndex": 1, "caseName": "monkey结果检查", "canReuse": false, "automationMode": "full" }
+  ]
+}

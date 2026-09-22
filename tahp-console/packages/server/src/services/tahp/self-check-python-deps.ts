@@ -81,3 +81,33 @@ export function ensureSddTestPythonDeps(): { ok: boolean; skipped?: boolean; err
   const error = detail || `exit code ${result.status ?? 'unknown'}`
   return { ok: false, error }
 }
+
+/** monkey结果检查 (TNE 解压) 启动前同步安装/校验依赖 */
+export function ensureMonkeyCheckTestPythonDeps(): { ok: boolean; skipped?: boolean; error?: string } {
+  if (process.env.TAHP_SKIP_MONKEY_CHECK_DEPS === '1') {
+    return { ok: true, skipped: true }
+  }
+
+  const script = resolveEnsureScript()
+  if (!script) {
+    return { ok: false, error: 'ensure-self-check-python-deps.mjs not found' }
+  }
+
+  const consoleRoot = resolveConsoleRoot(script)
+  console.log('[device-self-check] ensuring monkey_check python deps...')
+
+  const result = spawnSync(process.execPath, [script, '--for-monkey-check'], {
+    cwd: consoleRoot,
+    env: process.env,
+    stdio: 'inherit',
+    encoding: 'utf-8',
+  })
+
+  if (result.status === 0) {
+    return { ok: true }
+  }
+
+  const detail = [result.stderr, result.stdout].filter(Boolean).join('\n').trim()
+  const error = detail || `exit code ${result.status ?? 'unknown'}`
+  return { ok: false, error }
+}

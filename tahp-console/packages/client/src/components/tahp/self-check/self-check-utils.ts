@@ -6,7 +6,7 @@ export const SELF_CHECK_SUBTITLE =
 export const AUTO_RETEST_TOOLTIP = '测试结束后自动复测无人工参与的失败用例'
 
 /** 标准测试大类展示顺序（与用例列表 / 后端 catalog 一致） */
-export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'ai_generated'] as const
+export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'monkey_check', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'ai_generated'] as const
 
 export type StandardTestTypeKey = (typeof STANDARD_TEST_TYPE_ORDER)[number]
 
@@ -15,8 +15,9 @@ export const MODULE_ORDER: Record<string, number> = {
   driver_component: 0,
   driver_hardware: 1,
   monkey: 2,
-  usd: 3,
-  ota: 4,
+  tne: 3,
+  usd: 4,
+  ota: 5,
   cts: 10,
   gts: 11,
   vts: 12,
@@ -39,6 +40,7 @@ export function getTestTypeLabel(testType?: string): string {
   if (testType === 'str4') return '转测摸底测试'
   if (testType === 'week') return '周版本测试'
   if (testType === 'monkey') return 'monkey测试'
+  if (testType === 'monkey_check') return 'monkey结果检查'
   if (testType === 'smoke') return '冒烟测试'
   if (testType === 'ota_upgrade') return '连续OTA升级'
   if (testType === 'gms') return 'GMS测试'
@@ -78,6 +80,7 @@ export function getModuleLabel(module: string): string {
     driver_component: '驱动-器件',
     driver_hardware: '驱动-硬测',
     monkey: 'monkey测试',
+    tne: 'TNE异常检查',
     usd: 'USD冒烟测试',
     ota: '连续OTA升级',
     cts: 'CTS',
@@ -330,6 +333,7 @@ export function pipelineStatusLabel(status: PipelineStageStatus): string {
 
 export function reportShortType(testType: string): string {
   if (testType === 'monkey') return 'monkey'
+  if (testType === 'monkey_check') return 'monkey检查'
   if (testType === 'smoke') return '冒烟'
   if (testType === 'ota_upgrade') return '连续OTA'
   if (testType === 'power_feature') return '功耗特性'

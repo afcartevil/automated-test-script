@@ -18,6 +18,7 @@ SHEET_TO_MODULE: dict[str, tuple[str, str]] = {
     "week_tdd": ("week", "tdd"),
     "week_driver": ("week", "driver"),
     "monkey_monkey": ("monkey", "monkey"),
+    "monkey_check_tne": ("monkey_check", "tne"),
     "smoke_usd": ("smoke", "usd"),
     "ota_upgrade_ota": ("ota_upgrade", "ota"),
     "gms_cts": ("gms", "cts"),
@@ -46,6 +47,7 @@ TEST_TYPE_LABELS = {
     "str4": "str4转测摸底测试",
     "week": "周版本测试",
     "monkey": "monkey测试",
+    "monkey_check": "monkey结果检查",
     "smoke": "冒烟测试",
     "ota_upgrade": "连续OTA升级",
     "gms": "GMS测试",
@@ -62,6 +64,7 @@ MODULE_LABELS = {
     "driver_hardware": "驱动-硬测",
     "tdd": "通信框架",
     "monkey": "monkey测试",
+    "tne": "TNE异常检查",
     "usd": "USD冒烟测试",
     "ota": "连续OTA升级",
     "cts": "CTS",
@@ -80,8 +83,8 @@ MODULE_LABELS = {
     "charger": "Charger",
 }
 
-TEST_TYPE_ORDER = ("str4", "week", "monkey", "smoke", "ota_upgrade", "gms", "power", "power_feature", "thermal", "kernel_feature", "pipeline_adapt")
-MODULE_ORDER = ("driver_component", "driver_hardware", "driver", "monkey", "usd", "ota", "cts", "gts", "vts", "cts_tele", "current_analysis", "wbs", "scheme", "stability", "tp", "vibrator", "audio", "lcm", "fingerprint", "charger", "tdd")
+TEST_TYPE_ORDER = ("str4", "week", "monkey", "monkey_check", "smoke", "ota_upgrade", "gms", "power", "power_feature", "thermal", "kernel_feature", "pipeline_adapt")
+MODULE_ORDER = ("driver_component", "driver_hardware", "driver", "monkey", "tne", "usd", "ota", "cts", "gts", "vts", "cts_tele", "current_analysis", "wbs", "scheme", "stability", "tp", "vibrator", "audio", "lcm", "fingerprint", "charger", "tdd")
 
 
 def make_category_key(test_type: str, module: str) -> str:

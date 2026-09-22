@@ -19,7 +19,8 @@ import {
   type TcardUpdateOptions,
 } from './device-tcard-update'
 import { resolvePythonSpawn, tahpPaths } from './paths'
-import { ensurePowerTestPythonDeps, ensureSddTestPythonDeps } from './self-check-python-deps'
+import { ensureMonkeyCheckTestPythonDeps, ensurePowerTestPythonDeps, ensureSddTestPythonDeps } from './self-check-python-deps'
+import { applyMonkeyCheckAiReport } from './monkey-tne-report'
 import {
   buildSelfCheckDetailPayload,
   formatSelfCheckTestConfigMetaRows,
@@ -60,7 +61,7 @@ export type DeviceStatus =
   | '刷机中'
   | 'T卡升级中'
 
-export type StandardTestType = 'str4' | 'week' | 'monkey' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
+export type StandardTestType = 'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
 export type DeviceTestType = StandardTestType | 'custom'
 
 export interface SimCardInfo {
@@ -326,6 +327,7 @@ function normalizeGmsTradefedPath(
 function getAutoRetestConfig(testType: string): { enabled: boolean; count: number } {
   if (
     testType === 'monkey' ||
+    testType === 'monkey_check' ||
     testType === 'smoke' ||
     testType === 'gms' ||
     testType === 'power' ||
@@ -742,6 +744,7 @@ function loadCaseConfigs(): void {
     'str4_tdd.json', 'str4_driver_component.json', 'str4_driver_hardware.json',
     'week_tdd.json', 'week_driver.json',
     'monkey_monkey.json',
+    'monkey_check_tne.json',
     'smoke_usd.json',
     'ota_upgrade_ota.json',
     'gms_cts.json',
@@ -1514,6 +1517,7 @@ async function checkPreconditions(
 function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'str4') return ['driver_component', 'driver_hardware', 'tdd']
   if (testType === 'monkey') return ['monkey']
+  if (testType === 'monkey_check') return ['tne']
   if (testType === 'smoke') return ['usd']
   if (testType === 'ota_upgrade') return ['ota']
   if (testType === 'gms') return ['cts', 'gts', 'vts']
@@ -1724,6 +1728,10 @@ async function runCase(
       : pythonResult.status === 'skip' ? '跳过'
       : '失败'
     result.message = pythonResult.message || ''
+    // monkey结果检查：Python 已完成 TNE 采集/解压，Node 侧用 AI 对 native crash 归类并合成最终汇报
+    if (testType === 'monkey_check' && result.status !== '失败') {
+      await applyMonkeyCheckAiReport(getSessionResultDir(deviceId, session), result)
+    }
     if (
       result.status === '待确认'
       && (result.message.includes('报告中补录') || result.message.includes('需人工测试'))
@@ -2373,6 +2381,10 @@ function resolveCaseExecTimeoutMs(testType: string, module: string): number {
     const raw = Number(process.env.TAHP_NL_UI_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : 180_000
   }
+  if (testType === 'monkey_check' && module === 'tne') {
+    const raw = Number(process.env.TAHP_MONKEY_CHECK_TIMEOUT_MS)
+    return Number.isFinite(raw) && raw > 0 ? raw : 10 * 60_000
+  }
   return CASE_EXEC_TIMEOUT_MS
 }
 
@@ -2730,6 +2742,20 @@ async function runModule(
     if (!sddDeps.ok && !sddDeps.skipped) {
       const reason = sddDeps.error || '冒烟 USD Python 依赖安装失败'
       console.error(`[device-self-check] Smoke USD deps failed: ${reason}`)
+      devices[deviceId].status = '错误'
+      devices[deviceId].currentModule = module
+      session.errorReason = reason
+      session.isRunning = false
+      emitEvent('device_updated', { device: devices[deviceId] })
+      return
+    }
+  }
+
+  if (testType === 'monkey_check') {
+    const tneDeps = ensureMonkeyCheckTestPythonDeps()
+    if (!tneDeps.ok && !tneDeps.skipped) {
+      const reason = tneDeps.error || 'TNE 解压 Python 依赖安装失败'
+      console.error(`[device-self-check] monkey_check deps failed: ${reason}`)
       devices[deviceId].status = '错误'
       devices[deviceId].currentModule = module
       session.errorReason = reason
@@ -4767,6 +4793,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     str4: '转测摸底测试',
     week: '周版本测试',
     monkey: 'monkey测试',
+    monkey_check: 'monkey结果检查',
     smoke: '冒烟测试',
     ota_upgrade: '连续OTA升级',
     gms: 'GMS测试',
@@ -4783,8 +4810,9 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     driver_component: 0,
     driver_hardware: 1,
     monkey: 2,
-    usd: 3,
-    ota: 4,
+    tne: 3,
+    usd: 4,
+    ota: 5,
     cts: 10,
     gts: 11,
     vts: 12,
@@ -4832,7 +4860,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week', 'monkey', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', AI_GENERATED_TEST_TYPE]
+  const typeOrder = ['str4', 'week', 'monkey', 'monkey_check', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', AI_GENERATED_TEST_TYPE]
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),

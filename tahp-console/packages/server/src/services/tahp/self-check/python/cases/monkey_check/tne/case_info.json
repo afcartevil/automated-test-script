@@ -1,0 +1,8 @@
+[
+  {
+    "用例名": "monkey结果检查",
+    "前置条件": "测试机已通过 ADB 连接（状态为 device）；设备已执行过 monkey 测试，/data/TNE/0xffff 目录可读（需要 root 权限）。",
+    "测试步骤": "1. 在用例大类中选择「monkey结果检查」并开始测试\n2. 系统自动进入 /data/TNE/0xffff，统计各 tne 类型数量（0xffffff39 native crash / 0xffffff04 KE / 0xffffff0d HWT / 0xffffff0c HANG / 0xffffff12 OOM / 0xffffff15 OCP_REBOOT）\n3. 系统自动拉取并解压全部 0xffffff39 类型 tne log（内置 tne_parser），读取解压内容中的 android_crash_log\n4. 系统使用 AI 分析每条 android_crash_log 归属模块（audio / display 等）并汇总",
+    "期望结果": "输出汇总报告：发现的各类型异常次数（未发生的类型不显示），以及 native crash 按模块（audio/display 等）分类的次数，并贴出各模块对应 tne log 路径（同模块超过 5 份时仅贴最近时间的 5 份）；未发现异常时提示「未发现 KE/NE 等异常 log」"
+  }
+]

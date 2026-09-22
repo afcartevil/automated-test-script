@@ -32,6 +32,17 @@ const SDD_REQ = join(
   'packages/server/src/services/tahp/self-check/python/tools/sdd_test/requirements.txt',
 )
 
+const MONKEY_CHECK_REQ = join(
+  consoleRoot,
+  'packages/server/src/services/tahp/self-check/python/tools/stability_checker/requirements.txt',
+)
+
+/** monkey结果检查 (TNE 解压) 启动链路上的关键 import（pip 包名 → import 名） */
+const MONKEY_CHECK_RUNTIME_IMPORTS = [
+  'zstandard',
+  'Crypto',
+]
+
 /** 冒烟 USD (sdd_test) 启动链路上的关键 import（pip 包名 → import 名） */
 const SDD_RUNTIME_IMPORTS = [
   'pytest',
@@ -171,6 +182,45 @@ function listMissingSddImports(python) {
   return SDD_RUNTIME_IMPORTS.filter((mod) => !verifyImport(python, mod))
 }
 
+function listMissingMonkeyCheckImports(python) {
+  return MONKEY_CHECK_RUNTIME_IMPORTS.filter((mod) => !verifyImport(python, mod))
+}
+
+/** monkey结果检查 (TNE 解压) 启动前检查/安装依赖（zstandard / pycryptodome） */
+export function ensureMonkeyCheckPythonDeps(options = {}) {
+  const { quiet = false } = options
+  const python = getSystemPython()
+
+  if (process.env.TAHP_SKIP_MONKEY_CHECK_DEPS === '1') {
+    if (!quiet) warn('  ⚠ 已跳过（TAHP_SKIP_MONKEY_CHECK_DEPS=1）')
+    return { ok: true, skipped: true }
+  }
+
+  let missing = listMissingMonkeyCheckImports(python)
+  if (missing.length === 0) {
+    if (!quiet) log(`  ✓ monkey结果检查依赖已就绪 (${python})`)
+    return { ok: true, ready: true }
+  }
+
+  if (!quiet) {
+    log('monkey结果检查 (TNE 解压) Python 依赖\n')
+    log(`  → 缺少: ${missing.join(', ')}`)
+    log(`  → 正在安装 (${python})...`)
+  }
+
+  if (!pipInstall(python, MONKEY_CHECK_REQ, 'stability_checker/requirements.txt')) {
+    return { ok: false, error: 'monkey结果检查依赖 pip install 失败，请检查网络后重试' }
+  }
+
+  missing = listMissingMonkeyCheckImports(python)
+  if (missing.length > 0) {
+    return { ok: false, error: `安装后仍缺少: ${missing.join(', ')}（解释器: ${python}）` }
+  }
+
+  if (!quiet) log(`  ✓ monkey结果检查 Python 依赖已安装 (${python})`)
+  return { ok: true }
+}
+
 /** 冒烟 USD (sdd_test) 启动前检查/安装依赖（pytest 等框架包从未自动安装过，缺失会导致 si_run 秒崩、无 SDD_report.json） */
 export function ensureSddPythonDeps(options = {}) {
   const { quiet = false } = options
@@ -209,8 +259,11 @@ export function ensureSddPythonDeps(options = {}) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const forTest = process.argv.includes('--for-test')
   const forSdd = process.argv.includes('--for-sdd')
-  const result = forSdd
-    ? ensureSddPythonDeps({ quiet: false })
-    : ensureSelfCheckPythonDeps({ quiet: false, forTest })
+  const forMonkeyCheck = process.argv.includes('--for-monkey-check')
+  const result = forMonkeyCheck
+    ? ensureMonkeyCheckPythonDeps({ quiet: false })
+    : forSdd
+      ? ensureSddPythonDeps({ quiet: false })
+      : ensureSelfCheckPythonDeps({ quiet: false, forTest })
   process.exit(result.ok ? 0 : 1)
 }
