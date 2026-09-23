@@ -49,16 +49,18 @@ export function isOfficialTcardZipName(name: string): boolean {
   return /^Tcard_/i.test(fileName) && /\.zip$/i.test(fileName) && !/_user(?:_|\.|$)/i.test(fileName)
 }
 
-/** Tcard_ 不带 _aNN 优先；没有时再选 Tcard_*_a{previousAndroid}.zip */
+/** 已知上一档 Android 时只选 Tcard_*_a{previous}.zip，不退回不带后缀的 Tcard_*.zip */
 export function pickPreferredTcardZip(paths: string[], previousAndroid?: number): string {
   const tcard = paths.filter((path) => isOfficialTcardZipName(path))
   const rank = (path: string): number => {
     const fileName = tcardZipFileName(path)
-    if (!/_a\d+\.zip$/i.test(fileName)) return 3
-    if (previousAndroid != null && new RegExp(`_a${previousAndroid}\\.zip$`, 'i').test(fileName)) return 2
+    if (previousAndroid != null) {
+      return new RegExp(`_a${previousAndroid}\\.zip$`, 'i').test(fileName) ? 4 : -1
+    }
+    if (!/_a\d+\.zip$/i.test(fileName)) return 2
     return 1
   }
-  return tcard.slice().sort((a, b) => {
+  return tcard.filter((path) => rank(path) >= 0).slice().sort((a, b) => {
     const delta = rank(b) - rank(a)
     return delta || b.localeCompare(a)
   })[0] || ''

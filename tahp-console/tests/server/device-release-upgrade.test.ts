@@ -97,7 +97,10 @@ describe('release upgrade resolver helpers', () => {
       '\\\\cq\\Open\\X6885-16.3.0.140SP17-OP007PF001AZ-16.3.0.145SP08-OP004PF001AZ_20260826235808.zip',
       '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip',
       '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip',
-    ], 15)).toBe('\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip')
+    ], 15)).toBe('\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip')
+    expect(pickTcardZipForPreviousAndroid([
+      '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip',
+    ], 15)).toBeUndefined()
     expect(packageSetFromPaths([
       '\\\\cq\\Open\\X6885-16.3.0.140SP17-OP007PF001AZ-16.3.0.145SP08-OP004PF001AZ_20260826235808.zip',
       '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip',

@@ -71,19 +71,19 @@ describe('release upgrade checkbox when switching test type', () => {
 })
 
 describe('preferred Tcard OTA zip', () => {
-  it('picks unsuffixed Tcard_ zip and ignores incremental packages', () => {
+  it('picks Tcard_ *_a15.zip for A15 to A16 and ignores incremental packages', () => {
     expect(pickPreferredTcardZip([
       '\\\\cq\\Open\\X6885-16.3.0.140SP17-OP007PF001AZ-16.3.0.145SP08-OP004PF001AZ_20260826235808.zip',
       '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip',
       '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip',
-    ], 15)).toBe('\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip')
+    ], 15)).toBe('\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip')
   })
 
-  it('falls back to Tcard_ *_aNN.zip when the unsuffixed package is absent', () => {
+  it('does not fall back to unsuffixed Tcard_ zip when the matching _aNN package is absent', () => {
     expect(pickPreferredTcardZip([
       '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a14.zip',
-      '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip',
-    ], 15)).toContain('_a15')
+      '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip',
+    ], 15)).toBe('')
   })
 })
 

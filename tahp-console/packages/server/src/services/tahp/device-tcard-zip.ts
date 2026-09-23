@@ -1,6 +1,6 @@
 /**
- * T卡 / 连续 OTA 包名规则：只认 Tcard_ 前缀；
- * 优先不带 _aNN 后缀的官方名，再退回 Tcard_*_a{previousAndroid}.zip。
+ * T卡 / 连续 OTA 包名规则：只认 Tcard_ 前缀。
+ * 已知上一档 Android（如 A15→A16）时只选 Tcard_*_a15.zip，不退回不带后缀的 Tcard_*.zip。
  */
 const SKIP_ZIP_RE = /(_user|_userdebug|_eng|efuse|target_files|ota_tools|^OTA_TOOLS\.zip$|trpre_apk)/i
 const ANDROID_SUFFIX_RE = /_a\d+\.zip$/i
@@ -17,8 +17,10 @@ export function isOfficialTcardZipName(name: string): boolean {
 export function rankTcardZip(name: string, previousAndroid?: number): number {
   const fileName = zipFileName(name)
   if (!isOfficialTcardZipName(fileName)) return -1
-  if (!ANDROID_SUFFIX_RE.test(fileName)) return 3
-  if (previousAndroid != null && new RegExp(`_a${previousAndroid}\\.zip$`, 'i').test(fileName)) return 2
+  if (previousAndroid != null) {
+    return new RegExp(`_a${previousAndroid}\\.zip$`, 'i').test(fileName) ? 4 : -1
+  }
+  if (!ANDROID_SUFFIX_RE.test(fileName)) return 2
   return 1
 }
 

@@ -99,8 +99,8 @@ describe('device-flash helpers', () => {
     }
   })
 
-  it('prefers unsuffixed Tcard OTA zip over incremental and _a15 packages', () => {
-    const base = join(tmpdir(), `tahp-daily-tcard-plain-${Date.now()}`)
+  it('prefers Tcard *_a15.zip when upgrading from Android 15, ignoring incremental packages', () => {
+    const base = join(tmpdir(), `tahp-daily-tcard-a15-${Date.now()}`)
     mkdirSync(base, { recursive: true })
     try {
       const incremental = join(base, 'X6885-16.3.0.140SP17-OP007PF001AZ-16.3.0.145SP08-OP004PF001AZ_20260826235808.zip')
@@ -109,7 +109,18 @@ describe('device-flash helpers', () => {
       writeFileSync(incremental, 'delta')
       writeFileSync(a15, 'a15')
       writeFileSync(plain, 'tcard')
-      expect(findLatestTcardPackageInOpenPath(base, 15)).toBe(plain)
+      expect(findLatestTcardPackageInOpenPath(base, 15)).toBe(a15)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('does not use unsuffixed Tcard_ zip when upgrading from Android 15', () => {
+    const base = join(tmpdir(), `tahp-daily-tcard-no-a15-${Date.now()}`)
+    mkdirSync(base, { recursive: true })
+    try {
+      writeFileSync(join(base, 'Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip'), 'tcard')
+      expect(() => findLatestTcardPackageInOpenPath(base, 15)).toThrow(/未找到 T卡升级包/)
     } finally {
       rmSync(base, { recursive: true, force: true })
     }
