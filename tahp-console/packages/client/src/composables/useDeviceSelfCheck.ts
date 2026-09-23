@@ -60,6 +60,7 @@ import {
   MODULE_ORDER,
   OTA_UPGRADE_FLASH_CONFIRM,
   OTA_UPGRADE_SOP,
+  missingTcardZipHint,
   pickPreferredTcardZip,
   resolveReleaseUpgradeEnabledOnTypeChange,
   getTestTypeLabel,
@@ -1491,10 +1492,22 @@ function syncReleaseUpgradeSelection(): boolean {
   const tcardPaths: string[] = []
   let previousAndroid = baseline.androidVersion
   for (const step of selected.slice(1)) {
-    if (step.needsTransfer || !step.available) return false
     const path = pickTcardPath(step, previousAndroid)
-    if (!path) return false
+    if (!path) {
+      if (!step.needsTransfer) {
+        step.packagePath = ''
+        step.unavailableReason = missingTcardZipHint(previousAndroid)
+        step.available = false
+        step.selected = false
+      }
+      releaseTcardPaths.value = tcardPaths
+      return false
+    }
     step.packagePath = path
+    if (step.needsTransfer || !step.available) {
+      releaseTcardPaths.value = tcardPaths
+      return false
+    }
     tcardPaths.push(path)
     previousAndroid = step.androidVersion
   }
@@ -1582,16 +1595,18 @@ async function handleResolveReleaseUpgrade() {
     enableReleaseUpgrade.value = true
     syncReleaseUpgradeSelection()
     const transferable = releaseUpgradePlan.value.steps.filter((step) => step.needsTransfer).length
-    const unavailable = releaseUpgradePlan.value.steps.filter((step) => !step.available && !step.needsTransfer).length
-    message.success(
-      releaseUpgradePlan.value.dailyTcardOverrideApplied
-        ? `已识别各 Android 最新版本，最高版本已使用 sw_ver_sh 最新 daily T卡包${transferable ? `；${transferable} 个其他版本需传回重庆` : ''}`
-        : transferable
-        ? `已识别各 Android 最新版本，${transferable} 个版本需先传回重庆`
-        : unavailable
-        ? `已识别各 Android 大版本，${unavailable} 个版本未找到 T卡包`
-        : '已识别各 Android 最新版本并生成连续升级顺序',
-    )
+    const missingTcard = releaseUpgradePlan.value.steps.filter((step) =>
+      !step.available && !step.needsTransfer && Boolean(step.unavailableReason)
+    ).length
+    const summary = releaseUpgradePlan.value.dailyTcardOverrideApplied
+      ? `已识别各 Android 最新版本，最高版本已使用 sw_ver_sh 最新 daily T卡包${transferable ? `；${transferable} 个其他版本需传回重庆` : ''}`
+      : transferable
+      ? `已识别各 Android 最新版本，${transferable} 个版本需先传回重庆`
+      : missingTcard
+      ? `已识别各 Android 大版本，${missingTcard} 个版本未找到T卡包`
+      : '已识别各 Android 最新版本并生成连续升级顺序'
+    if (missingTcard) message.warning(summary)
+    else message.success(summary)
   } catch (e: any) {
     const text = e?.message || '解析已外发 Android 版本失败'
     if (text.includes('不能使用连续版本升级')) {

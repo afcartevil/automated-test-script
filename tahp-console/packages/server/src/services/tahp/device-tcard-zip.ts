@@ -40,3 +40,7 @@ export function pickPreferredTcardZipPath(
 ): string | undefined {
   return sortTcardZipPaths(paths, previousAndroid)[0]
 }
+
+export function missingTcardZipHint(previousAndroid: number): string {
+  return `未找到T卡包（需 Tcard_*_a${previousAndroid}.zip）`
+}

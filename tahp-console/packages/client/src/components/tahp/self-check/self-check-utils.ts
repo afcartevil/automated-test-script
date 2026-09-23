@@ -66,6 +66,10 @@ export function pickPreferredTcardZip(paths: string[], previousAndroid?: number)
   })[0] || ''
 }
 
+export function missingTcardZipHint(previousAndroid: number): string {
+  return `未找到T卡包（需 Tcard_*_a${previousAndroid}.zip）`
+}
+
 /** 连续OTA升级开始刷机前的人工确认 */
 export const OTA_UPGRADE_FLASH_CONFIRM = {
   title: '开始刷机',

@@ -10,7 +10,9 @@ import {
 } from './device-flash'
 import {
   isOfficialTcardZipName,
+  missingTcardZipHint,
   pickPreferredTcardZipPath,
+  rankTcardZip,
   sortTcardZipPaths,
 } from './device-tcard-zip'
 
@@ -21,6 +23,8 @@ const BRAND_PROPS = ['ro.product.brand', 'ro.build.brand', 'ro.product.manufactu
 const PROJECT_PROPS = ['ro.product.name', 'ro.build.product', 'ro.product.device', 'ro.product.model']
 const ANDROID_LETTER_MAP: Record<string, number> = { T: 13, U: 14, V: 15, W: 16, X: 17, Y: 18 }
 const USER_FOLDER_RE = /^([A-Za-z0-9]+)-(\d+\.\d+\.\d+\.\d+(?:SP\d+)?)?(?:\(([A-Z0-9]+)\))?(.*)$/i
+/** OP 市场：`OP` 或 `OP001PF001AZ`。不包含 OPPJ 等其它以 OP 开头的市场。 */
+const OP_MARKET_RE = /^OP(\d|$)/i
 const MR_FOLDER_RE = /-([TUVWXY])-([A-Z]+)-(\d{6}V\d+)/i
 const VERSION_TOKEN_RE = /\d+\.\d+\.\d+\.\d+(?:SP\d+)?/gi
 const MR_VERSION_TOKEN_RE = /\d{6}V\d+/g
@@ -138,7 +142,7 @@ export function parseUserReleaseFolder(
     androidLabel: androidLabel(androidVersion),
     versionName: match[2],
     market,
-    isOpMarket: /^OP/i.test(market),
+    isOpMarket: OP_MARKET_RE.test(market),
     sortKey: numericSortKey(match[2]),
   }
 }
@@ -162,7 +166,7 @@ export function parseMrReleaseFolder(
     androidLabel: androidLabel(androidVersion, letter),
     versionName: match[3],
     market: match[2],
-    isOpMarket: /^OP/i.test(match[2]),
+    isOpMarket: OP_MARKET_RE.test(match[2]),
     sortKey: numericSortKey(match[3]),
   }
 }
@@ -306,6 +310,11 @@ export function listVersionFolders(modelRoot: string): ParsedReleaseVersion[] {
   return versions
 }
 
+function compareReleasePreference(a: ParsedReleaseVersion, b: ParsedReleaseVersion): number {
+  if (a.isOpMarket !== b.isOpMarket) return a.isOpMarket ? -1 : 1
+  return b.sortKey.localeCompare(a.sortKey) || b.folderName.localeCompare(a.folderName)
+}
+
 export function pickLatestForAndroid(
   versions: ParsedReleaseVersion[],
   androidVersion: number,
@@ -315,6 +324,18 @@ export function pickLatestForAndroid(
   return (opGroup.length ? opGroup : group).slice().sort((a, b) =>
     b.sortKey.localeCompare(a.sortKey) || b.folderName.localeCompare(a.folderName)
   )[0]
+}
+
+/** 同一 Android 大版本下，优先 OP、再新版本，找到第一个匹配的 T卡包。 */
+export function pickTcardZipFromVersions(
+  versions: ParsedReleaseVersion[],
+  previousAndroid: number,
+): { version: ParsedReleaseVersion; path: string; tcardZips: string[] } | undefined {
+  for (const version of versions.slice().sort(compareReleasePreference)) {
+    const tcardZips = sortTcardZipPaths(packagesForVersion(version).tcardZips, previousAndroid)
+    if (tcardZips[0]) return { version, path: tcardZips[0], tcardZips }
+  }
+  return undefined
 }
 
 export function assertContinuousUpgradeEligible(releases: { androidVersion: number }[]): void {
@@ -403,6 +424,11 @@ function findCiVersion(
     if (!packages.fullZip) {
       packages.fullZip = findFullZipForAndroid(versions, release.androidVersion)
     }
+    packages.tcardZips = versions
+      .filter((item) => item.androidVersion === release.androidVersion)
+      .slice()
+      .sort(compareReleasePreference)
+      .flatMap((item) => packagesForVersion(item).tcardZips)
     if (packages.fullZip || packages.tcardZips.length) return { model, version: candidate, packages }
   }
   return null
@@ -414,27 +440,42 @@ export function buildUpgradeSteps(
   ciRootFor: (model: string, release: ParsedReleaseVersion) => string,
 ): AndroidUpgradeStep[] {
   const androidVersions = [...new Set(releases.map((item) => item.androidVersion))].sort((a, b) => a - b)
-  return androidVersions.map((androidVersion) => {
+  return androidVersions.map((androidVersion, index) => {
+    const group = releases.filter((item) => item.androidVersion === androidVersion)
     const release = pickLatestForAndroid(releases, androidVersion)!
-    const sourcePackages = packageSetFromPaths(listZipFiles(release.folderPath), release)
     const ci = findCi(release)
-    const packages = ci?.packages || sourcePackages
-    const packagePath = packages.fullZip || packages.tcardZips[0] || release.folderPath
+    const packages = ci?.packages || packagesForVersion(release)
+    const previousAndroid = index > 0 ? androidVersions[index - 1] : undefined
+    const isBaseline = previousAndroid == null
+    const ciTcardZips = previousAndroid != null
+      ? (ci?.packages.tcardZips || []).filter((path) => rankTcardZip(path, previousAndroid) >= 0)
+      : (ci?.packages.tcardZips || [])
+    const shanghaiHit = previousAndroid != null
+      ? pickTcardZipFromVersions(group, previousAndroid)
+      : undefined
+    const usingShanghaiTcard = !isBaseline && !ciTcardZips[0] && Boolean(shanghaiHit?.path)
+    const tcardZips = ciTcardZips[0] ? ciTcardZips : (shanghaiHit?.tcardZips || [])
+    const tcardZip = tcardZips[0]
+    const missingTcard = !isBaseline && !tcardZip
+    const packagePath = isBaseline ? (packages.fullZip || '') : (tcardZip || '')
     const targetModel = ci?.model || ''
+    const stepRelease = usingShanghaiTcard && shanghaiHit ? shanghaiHit.version : release
+    const needsTransfer = !ci || usingShanghaiTcard
     return {
       androidVersion,
       androidLabel: release.androidLabel,
-      releaseVersionName: release.versionName,
-      releaseFolder: release.folderName,
-      channel: release.channel,
+      releaseVersionName: stepRelease.versionName,
+      releaseFolder: stepRelease.folderName,
+      channel: stepRelease.channel,
       packagePath,
       fullZip: packages.fullZip,
-      tcardZips: packages.tcardZips,
-      sourcePath: ci ? undefined : packagePath,
-      cqTargetPath: ciRootFor(targetModel, release),
-      needsTransfer: !ci,
-      available: Boolean(ci),
-      selected: Boolean(ci),
+      tcardZips,
+      sourcePath: needsTransfer ? packagePath : undefined,
+      cqTargetPath: ciRootFor(targetModel, stepRelease),
+      needsTransfer,
+      available: Boolean(ci) && !missingTcard && !usingShanghaiTcard,
+      selected: Boolean(ci) && !missingTcard && !usingShanghaiTcard,
+      unavailableReason: missingTcard ? missingTcardZipHint(previousAndroid) : undefined,
     }
   })
 }
@@ -484,7 +525,7 @@ export function mergeHighestDailyVersion(
         : false,
     }
   }
-  const path = daily.tcardPackagePath || daily.openPath
+  const path = daily.tcardPackagePath || ''
   steps.push({
     androidVersion: daily.androidVersion,
     androidLabel: `Android ${daily.androidVersion}`,

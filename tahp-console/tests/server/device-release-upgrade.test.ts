@@ -20,6 +20,7 @@ import {
   resolveReleasePackageRoot,
   type ParsedReleaseVersion,
 } from '../../packages/server/src/services/tahp/device-release-upgrade'
+import { missingTcardZipHint } from '../../packages/server/src/services/tahp/device-tcard-zip'
 
 const tempRoots: string[] = []
 
@@ -40,6 +41,12 @@ describe('release upgrade resolver helpers', () => {
     expect(parseUserReleaseFolder('X6850-15.1.2.180SP05(OP001PF001AZ)_MR9_N19')).toMatchObject({
       androidVersion: 15,
       versionName: '15.1.2.180SP05',
+      isOpMarket: true,
+    })
+    expect(parseUserReleaseFolder('X6876-16.3.0.150SP06(OPPJ005PF001PJ)_MR3_N34')).toMatchObject({
+      isOpMarket: false,
+    })
+    expect(parseMrReleaseFolder('X6850-H895FHJKL-U-OP-250717V3825_MR1')).toMatchObject({
       isOpMarket: true,
     })
     expect(parseMrReleaseFolder('X6850-H895DE-U-EU-240927V3580_MR5')).toMatchObject({
@@ -89,6 +96,11 @@ describe('release upgrade resolver helpers', () => {
       parseUserReleaseFolder('X6850-15.1.2.175SP03(OP001PF001AZ)_MR8_N8')!,
     ]
     expect(pickLatestForAndroid(versions, 15)?.versionName).toBe('15.1.2.180SP05')
+    expect(pickLatestForAndroid([
+      parseUserReleaseFolder('X6876-16.3.0.150SP06(OPPJ005PF001PJ)_MR3_N34')!,
+      parseUserReleaseFolder('X6876-16.3.0.150SP06(OP005PF001AZ)_MR3_N32')!,
+      parseUserReleaseFolder('X6876-16.3.0.150SP06(IN005PF001AZ)_MR3_N35')!,
+    ], 16)?.folderName).toBe('X6876-16.3.0.150SP06(OP005PF001AZ)_MR3_N32')
     expect(pickTcardZipForPreviousAndroid([
       'D:\\Tcard_X6850-16.3.0.1_a14.zip',
       'D:\\Tcard_X6850-16.3.0.1_a15.zip',
@@ -110,6 +122,142 @@ describe('release upgrade resolver helpers', () => {
       '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip',
       '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip',
     ])
+  })
+
+  it('fills Shanghai A15 T-card path when Chongqing only has device_update zip', () => {
+    const a15Path = tempVersion('X6885-15.1.0.159(OP004PF001AZ)_MR1')
+    const a16Path = tempVersion('X6885-16.3.0.145SP08(OP004PF001AZ)_MR2_N48')
+    const shanghaiTcard = join(a16Path, 'Open', 'Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip')
+    writeFileSync(join(a15Path, 'Open', 'X6885-15.1.0.159(OP004PF001AZ).zip'), 'flash')
+    writeFileSync(shanghaiTcard, 'tcard')
+
+    const a15 = parseUserReleaseFolder('X6885-15.1.0.159(OP004PF001AZ)_MR1', a15Path)!
+    const a16 = parseUserReleaseFolder('X6885-16.3.0.145SP08(OP004PF001AZ)_MR2_N48', a16Path)!
+    const a15Full = '\\\\cq\\Open\\X6885-15.1.0.159(OP004PF001AZ).zip'
+    const a16Full = '\\\\cq\\Open\\X6885-16.3.0.145SP08(OP004PF001AZ).zip'
+    const steps = buildUpgradeSteps(
+      [a15, a16],
+      (release) => release.androidVersion === 15
+        ? { model: 'X6885-H8923', version: release, packages: packageSetFromPaths([a15Full]) }
+        : {
+            model: 'X6885-H8923',
+            version: release,
+            packages: packageSetFromPaths([
+              a16Full,
+              '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip',
+            ]),
+          },
+      () => '\\\\cq\\X6885-H8923\\USER\\Open',
+    )
+
+    expect(steps[0]?.packagePath).toBe(a15Full)
+    expect(steps[1]).toMatchObject({
+      androidVersion: 16,
+      packagePath: shanghaiTcard,
+      sourcePath: shanghaiTcard,
+      fullZip: a16Full,
+      tcardZips: [shanghaiTcard],
+      available: false,
+      selected: false,
+      needsTransfer: true,
+    })
+    expect(steps[1]?.packagePath).not.toBe(a16Full)
+    expect(steps[1]?.unavailableReason).toBeUndefined()
+  })
+
+  it('scans all same-Android folders for T-card instead of only the latest OP Open', () => {
+    const a15Path = tempVersion('X6873-15.1.2.165SP07(OP001PF001AZ)_MR11_N34')
+    const a16LatestPath = tempVersion('X6873-16.3.0.150SP09(OP006PF001AZ)_MR4_N53')
+    const a16OlderPath = tempVersion('X6873-16.2.0.145SP03(OP002PF001AZ)_MR2_N45')
+    const shanghaiTcard = join(a16OlderPath, 'Open', 'Tcard_X6873-16.2.0.145SP03-OP002PF001AZ_a15.zip')
+    writeFileSync(join(a15Path, 'Open', 'X6873-15.1.2.165SP07(OP001PF001AZ).zip'), 'flash')
+    writeFileSync(join(a16LatestPath, 'Open', 'X6873-16.3.0.150SP09(OP006PF001AZ).zip'), 'full')
+    writeFileSync(shanghaiTcard, 'tcard')
+
+    const a15 = parseUserReleaseFolder('X6873-15.1.2.165SP07(OP001PF001AZ)_MR11_N34', a15Path)!
+    const a16Latest = parseUserReleaseFolder('X6873-16.3.0.150SP09(OP006PF001AZ)_MR4_N53', a16LatestPath)!
+    const a16Older = parseUserReleaseFolder('X6873-16.2.0.145SP03(OP002PF001AZ)_MR2_N45', a16OlderPath)!
+    const a15Full = '\\\\cq\\Open\\X6873-15.1.2.165SP07(OP001PF001AZ).zip'
+    const a16Full = '\\\\cq\\Open\\X6873-16.3.0.150SP09(OP006PF001AZ).zip'
+    const steps = buildUpgradeSteps(
+      [a15, a16Latest, a16Older],
+      (release) => release.androidVersion === 15
+        ? { model: 'X6873-H972', version: release, packages: packageSetFromPaths([a15Full]) }
+        : { model: 'X6873-H972', version: a16Latest, packages: packageSetFromPaths([a16Full]) },
+      (_model, release) => `\\\\cq\\X6873-H972\\${release.relativePath}\\Open`,
+    )
+
+    expect(steps[1]).toMatchObject({
+      androidVersion: 16,
+      packagePath: shanghaiTcard,
+      sourcePath: shanghaiTcard,
+      releaseFolder: a16Older.folderName,
+      releaseVersionName: '16.2.0.145SP03',
+      fullZip: a16Full,
+      available: false,
+      selected: false,
+      needsTransfer: true,
+    })
+    expect(steps[1]?.packagePath).not.toBe(a16Full)
+    expect(steps[1]?.cqTargetPath).toContain(a16Older.folderName)
+  })
+
+  it('prefers OP-market T-card over other markets when scanning all folders', () => {
+    const a15Path = tempVersion('X6873-15.1.2.165SP07(OP001PF001AZ)_MR11_N34')
+    const inPath = tempVersion('X6873-16.3.0.150SP09(IN006PF001AZ)_MR3_N56')
+    const opPath = tempVersion('X6873-16.2.0.145SP03(OP002PF001AZ)_MR2_N45')
+    const inTcard = join(inPath, 'Open', 'Tcard_X6873-16.3.0.150SP09-IN006PF001AZ_a15.zip')
+    const opTcard = join(opPath, 'Open', 'Tcard_X6873-16.2.0.145SP03-OP002PF001AZ_a15.zip')
+    writeFileSync(join(a15Path, 'Open', 'X6873-15.1.2.165SP07(OP001PF001AZ).zip'), 'flash')
+    writeFileSync(inTcard, 'in')
+    writeFileSync(opTcard, 'op')
+
+    const a15 = parseUserReleaseFolder('X6873-15.1.2.165SP07(OP001PF001AZ)_MR11_N34', a15Path)!
+    const a16In = parseUserReleaseFolder('X6873-16.3.0.150SP09(IN006PF001AZ)_MR3_N56', inPath)!
+    const a16Op = parseUserReleaseFolder('X6873-16.2.0.145SP03(OP002PF001AZ)_MR2_N45', opPath)!
+    const steps = buildUpgradeSteps(
+      [a15, a16In, a16Op],
+      (release) => release.androidVersion === 15
+        ? { model: 'X6873-H972', version: release, packages: packageSetFromPaths(['\\\\cq\\a15.zip']) }
+        : null,
+      () => '\\\\cq\\Open',
+    )
+
+    expect(steps[1]?.packagePath).toBe(opTcard)
+    expect(steps[1]?.releaseFolder).toBe(a16Op.folderName)
+  })
+
+  it('does not fill device_update zip when neither Chongqing nor Shanghai has the A15 T-card', () => {
+    const a15 = parseUserReleaseFolder('X6885-15.1.0.159(OP004PF001AZ)_MR1')!
+    const a16 = parseUserReleaseFolder('X6885-16.3.0.145SP08(OP004PF001AZ)_MR2_N48')!
+    const a15Full = '\\\\cq\\Open\\X6885-15.1.0.159(OP004PF001AZ).zip'
+    const a16Full = '\\\\cq\\Open\\X6885-16.3.0.145SP08(OP004PF001AZ).zip'
+    const steps = buildUpgradeSteps(
+      [a15, a16],
+      (release) => release.androidVersion === 15
+        ? { model: 'X6885-H8923', version: release, packages: packageSetFromPaths([a15Full]) }
+        : {
+            model: 'X6885-H8923',
+            version: release,
+            packages: packageSetFromPaths([
+              a16Full,
+              '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip',
+            ]),
+          },
+      () => '\\\\cq\\X6885-H8923\\USER\\Open',
+    )
+
+    expect(steps[1]).toMatchObject({
+      androidVersion: 16,
+      packagePath: '',
+      fullZip: a16Full,
+      tcardZips: [],
+      available: false,
+      selected: false,
+      needsTransfer: false,
+      unavailableReason: missingTcardZipHint(15),
+    })
+    expect(steps[1]?.packagePath).not.toBe(a16Full)
   })
 
   it('rejects continuous upgrade when RELEASE has only one Android major', () => {

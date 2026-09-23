@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   OTA_UPGRADE_FLASH_CONFIRM,
   OTA_UPGRADE_SOP,
+  missingTcardZipHint,
   pickPreferredTcardZip,
   resolveReleaseUpgradeEnabledOnTypeChange,
 } from '../../packages/client/src/components/tahp/self-check/self-check-utils'
@@ -84,6 +85,7 @@ describe('preferred Tcard OTA zip', () => {
       '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a14.zip',
       '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip',
     ], 15)).toBe('')
+    expect(missingTcardZipHint(15)).toBe('未找到T卡包（需 Tcard_*_a15.zip）')
   })
 })
 
