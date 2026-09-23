@@ -19,6 +19,7 @@ import { pipeline } from 'stream/promises'
 import { Transform } from 'stream'
 import * as XLSX from 'xlsx'
 import { tahpPaths } from './paths'
+import { isOfficialTcardZipName, pickPreferredTcardZipPath } from './device-tcard-zip'
 
 export interface PickFlashPathResult {
   canceled: boolean
@@ -993,23 +994,13 @@ function findFlashPackageInOpenPath(openPath: string): string {
 
 function listUsableTcardNames(openPath: string): string[] {
   if (!existsSync(openPath)) return []
-  const versionPattern = /\d+\.\d+\.\d+\.\d+(?:SP\d+)?/gi
   return safeDirEntries(openPath)
-    .filter((entry) => entry.isFile() && /\.zip$/i.test(entry.name))
+    .filter((entry) => entry.isFile() && isOfficialTcardZipName(entry.name))
     .map((entry) => entry.name)
-    .filter((name) => (
-      (/^Tcard_/i.test(name) || (name.match(versionPattern)?.length ?? 0) >= 2)
-      && !/_user(?:_|\.|$)/i.test(name)
-    ))
 }
 
 function pickPreferredTcardName(names: string[], previousAndroid?: number): string | null {
-  if (!names.length) return null
-  const hinted = previousAndroid
-    ? names.filter((name) => new RegExp(`_a${previousAndroid}(?:\\D|$)`, 'i').test(name))
-    : []
-  const pool = hinted.length ? hinted : names
-  return pool.slice().sort().reverse()[0] || null
+  return pickPreferredTcardZipPath(names, previousAndroid) || null
 }
 
 export function findLatestTcardPackageInOpenPath(

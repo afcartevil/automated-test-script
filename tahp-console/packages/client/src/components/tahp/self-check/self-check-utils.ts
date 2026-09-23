@@ -40,6 +40,30 @@ export function resolveReleaseUpgradeEnabledOnTypeChange(input: {
   }
 }
 
+function tcardZipFileName(path: string): string {
+  return path.replace(/^.*[\\/]/, '')
+}
+
+export function isOfficialTcardZipName(name: string): boolean {
+  const fileName = tcardZipFileName(name)
+  return /^Tcard_/i.test(fileName) && /\.zip$/i.test(fileName) && !/_user(?:_|\.|$)/i.test(fileName)
+}
+
+/** Tcard_ 不带 _aNN 优先；没有时再选 Tcard_*_a{previousAndroid}.zip */
+export function pickPreferredTcardZip(paths: string[], previousAndroid?: number): string {
+  const tcard = paths.filter((path) => isOfficialTcardZipName(path))
+  const rank = (path: string): number => {
+    const fileName = tcardZipFileName(path)
+    if (!/_a\d+\.zip$/i.test(fileName)) return 3
+    if (previousAndroid != null && new RegExp(`_a${previousAndroid}\\.zip$`, 'i').test(fileName)) return 2
+    return 1
+  }
+  return tcard.slice().sort((a, b) => {
+    const delta = rank(b) - rank(a)
+    return delta || b.localeCompare(a)
+  })[0] || ''
+}
+
 /** 连续OTA升级开始刷机前的人工确认 */
 export const OTA_UPGRADE_FLASH_CONFIRM = {
   title: '开始刷机',

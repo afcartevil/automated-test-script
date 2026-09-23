@@ -60,6 +60,7 @@ import {
   MODULE_ORDER,
   OTA_UPGRADE_FLASH_CONFIRM,
   OTA_UPGRADE_SOP,
+  pickPreferredTcardZip,
   resolveReleaseUpgradeEnabledOnTypeChange,
   getTestTypeLabel,
   getStatusColor,
@@ -1465,10 +1466,7 @@ async function handleResolveLatestDailyFlash() {
 }
 
 function pickTcardPath(step: AndroidUpgradeStep, previousAndroid: number): string {
-  const hinted = step.tcardZips.filter((path) =>
-    new RegExp(`_a${previousAndroid}(?:\\D|$)`, 'i').test(path.split(/[\\/]/).pop() || path)
-  )
-  return [...(hinted.length ? hinted : step.tcardZips)].sort().reverse()[0] || ''
+  return pickPreferredTcardZip(step.tcardZips, previousAndroid)
 }
 
 function syncReleaseUpgradeSelection(): boolean {

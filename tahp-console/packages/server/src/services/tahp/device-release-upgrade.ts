@@ -8,6 +8,11 @@ import {
   extractProjectCandidates,
   resolveHighestDailyAndroidTcardPackage,
 } from './device-flash'
+import {
+  isOfficialTcardZipName,
+  pickPreferredTcardZipPath,
+  sortTcardZipPaths,
+} from './device-tcard-zip'
 
 export const RELEASE_VERSION_ROOT = '\\\\10.150.98.24\\sw_ver_release\\RELEASE_VERSIONS'
 export const CI_RELEASE_VERSION_ROOT = '\\\\10.205.4.40\\sw_version\\CI\\RELEASE_VERSIONS'
@@ -169,10 +174,10 @@ function escapeRegExp(value: string): string {
 export function classifyReleaseZipName(name: string): 'full' | 'tcard' | 'skip' {
   const fileName = basename(name)
   if (!/\.zip$/i.test(fileName)) return 'skip'
-  if (/^Tcard_/i.test(fileName)) return 'tcard'
+  if (isOfficialTcardZipName(fileName)) return 'tcard'
   if (SKIP_ZIP_RE.test(fileName)) return 'skip'
-  if ((fileName.match(VERSION_TOKEN_RE)?.length ?? 0) >= 2) return 'tcard'
-  if ((fileName.match(MR_VERSION_TOKEN_RE)?.length ?? 0) >= 2) return 'tcard'
+  if ((fileName.match(VERSION_TOKEN_RE)?.length ?? 0) >= 2) return 'skip'
+  if ((fileName.match(MR_VERSION_TOKEN_RE)?.length ?? 0) >= 2) return 'skip'
   if (USER_FULL_ZIP_RE.test(fileName) || MR_FULL_ZIP_RE.test(fileName)) return 'full'
   return 'skip'
 }
@@ -261,13 +266,14 @@ function listZipFiles(versionPath: string): string[] {
 }
 
 export function packageSetFromPaths(paths: string[], release?: ParsedReleaseVersion): ReleasePackageSet {
-  const tcard = paths.filter((path) => classifyReleaseZipName(path) === 'tcard').sort().reverse()
-  return { fullZip: pickFullFlashZip(paths, release), tcardZips: tcard }
+  return {
+    fullZip: pickFullFlashZip(paths, release),
+    tcardZips: sortTcardZipPaths(paths.filter((path) => classifyReleaseZipName(path) === 'tcard')),
+  }
 }
 
 export function pickTcardZipForPreviousAndroid(paths: string[], previousAndroid: number): string | undefined {
-  const hinted = paths.filter((path) => new RegExp(`_a${previousAndroid}(?:\\D|$)`, 'i').test(basename(path)))
-  return (hinted.length ? hinted : paths).slice().sort().reverse()[0]
+  return pickPreferredTcardZipPath(paths, previousAndroid)
 }
 
 export function listVersionFolders(modelRoot: string): ParsedReleaseVersion[] {

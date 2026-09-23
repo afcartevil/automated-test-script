@@ -99,6 +99,22 @@ describe('device-flash helpers', () => {
     }
   })
 
+  it('prefers unsuffixed Tcard OTA zip over incremental and _a15 packages', () => {
+    const base = join(tmpdir(), `tahp-daily-tcard-plain-${Date.now()}`)
+    mkdirSync(base, { recursive: true })
+    try {
+      const incremental = join(base, 'X6885-16.3.0.140SP17-OP007PF001AZ-16.3.0.145SP08-OP004PF001AZ_20260826235808.zip')
+      const a15 = join(base, 'Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip')
+      const plain = join(base, 'Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip')
+      writeFileSync(incremental, 'delta')
+      writeFileSync(a15, 'a15')
+      writeFileSync(plain, 'tcard')
+      expect(findLatestTcardPackageInOpenPath(base, 15)).toBe(plain)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
   it('falls back to newest TEST version that contains a usable T-card package', () => {
     const base = join(tmpdir(), `tahp-test-tcard-${Date.now()}`)
     const noTcardOpen = join(base, 'tOS16.3.0.156[2026.09.21.01.00.00_1_user]', 'Open')

@@ -54,8 +54,10 @@ describe('release upgrade resolver helpers', () => {
     expect(classifyReleaseZipName('X6850-15.1.0.159(OP001PF001AZ).zip')).toBe('full')
     expect(classifyReleaseZipName('X6850-H895FHJKL-U-OP-250717V3825.zip')).toBe('full')
     expect(classifyReleaseZipName('Tcard_X6850-16.3.0.145SP06_a15.zip')).toBe('tcard')
-    expect(classifyReleaseZipName('X-15.1.2.1-16.3.0.2.zip')).toBe('tcard')
-    expect(classifyReleaseZipName('X6850-H895FHJKL-U-OP-241125V3671-250218V3766_20250219114005.zip')).toBe('tcard')
+    expect(classifyReleaseZipName('Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip')).toBe('tcard')
+    expect(classifyReleaseZipName('X-15.1.2.1-16.3.0.2.zip')).toBe('skip')
+    expect(classifyReleaseZipName('X6850-H895FHJKL-U-OP-241125V3671-250218V3766_20250219114005.zip')).toBe('skip')
+    expect(classifyReleaseZipName('X6885-16.3.0.140SP17-OP007PF001AZ-16.3.0.145SP08-OP004PF001AZ_20260826235808.zip')).toBe('skip')
     expect(classifyReleaseZipName('X6850_user_EFUSE.zip')).toBe('skip')
     expect(classifyReleaseZipName('full_x6850_h895_f1-target_files.zip')).toBe('skip')
     expect(classifyReleaseZipName('trpre_apk_management_system_files.zip')).toBe('skip')
@@ -91,6 +93,20 @@ describe('release upgrade resolver helpers', () => {
       'D:\\Tcard_X6850-16.3.0.1_a14.zip',
       'D:\\Tcard_X6850-16.3.0.1_a15.zip',
     ], 15)).toContain('_a15')
+    expect(pickTcardZipForPreviousAndroid([
+      '\\\\cq\\Open\\X6885-16.3.0.140SP17-OP007PF001AZ-16.3.0.145SP08-OP004PF001AZ_20260826235808.zip',
+      '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip',
+      '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip',
+    ], 15)).toBe('\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip')
+    expect(packageSetFromPaths([
+      '\\\\cq\\Open\\X6885-16.3.0.140SP17-OP007PF001AZ-16.3.0.145SP08-OP004PF001AZ_20260826235808.zip',
+      '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip',
+      '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip',
+      '\\\\cq\\Open\\X6885-16.3.0.145SP08(OP004PF001AZ).zip',
+    ]).tcardZips).toEqual([
+      '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip',
+      '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip',
+    ])
   })
 
   it('rejects continuous upgrade when RELEASE has only one Android major', () => {
