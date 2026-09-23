@@ -59,6 +59,8 @@ import {
   AUTO_RETEST_TOOLTIP,
   MODULE_ORDER,
   OTA_UPGRADE_FLASH_CONFIRM,
+  OTA_UPGRADE_SOP,
+  resolveReleaseUpgradeEnabledOnTypeChange,
   getTestTypeLabel,
   getStatusColor,
   getStatusIcon,
@@ -173,6 +175,7 @@ const tcardUpdatePath = ref('')
 const tcardPathPicking = ref(false)
 const releasePathPicking = ref(false)
 const enableReleaseUpgrade = ref(false)
+let releaseUpgradeEnabledBeforeOta = false
 const releaseFlashPath = ref('')
 const releaseTcardPaths = ref<string[]>([])
 const releaseUpgradeResolving = ref(false)
@@ -1672,7 +1675,21 @@ function confirmOtaUpgradeFlashThenStart(deviceId: string) {
     content: () => h(
       'div',
       { style: 'line-height: 1.7' },
-      OTA_UPGRADE_FLASH_CONFIRM.lines.map(line => h('p', { style: 'margin: 0 0 8px' }, line)),
+      [
+        ...OTA_UPGRADE_FLASH_CONFIRM.lines.map(line => h('p', { style: 'margin: 0 0 8px' }, line)),
+        h('p', { style: 'margin: 12px 0 0; font-size: 13px' }, [
+          `${OTA_UPGRADE_SOP.hint}：`,
+          h(
+            'a',
+            {
+              href: OTA_UPGRADE_SOP.url,
+              target: '_blank',
+              rel: 'noopener noreferrer',
+            },
+            OTA_UPGRADE_SOP.label,
+          ),
+        ]),
+      ],
     ),
     positiveText: OTA_UPGRADE_FLASH_CONFIRM.positiveText,
     negativeText: OTA_UPGRADE_FLASH_CONFIRM.negativeText,
@@ -2467,10 +2484,20 @@ const selectedCaseResult = computed((): CaseResult | undefined => {
   return result
 })
 
-watch(selectedTestType, (testType) => {
+watch(selectedTestType, (testType, previous) => {
   syncSelectedStartModules(testType)
-  if (testType === 'ota_upgrade') {
-    enableReleaseUpgrade.value = true
+  const next = resolveReleaseUpgradeEnabledOnTypeChange({
+    testType,
+    previousTestType: previous,
+    currentEnabled: enableReleaseUpgrade.value,
+    enabledBeforeOta: releaseUpgradeEnabledBeforeOta,
+  })
+  releaseUpgradeEnabledBeforeOta = next.enabledBeforeOta
+  if (enableReleaseUpgrade.value !== next.enabled) {
+    enableReleaseUpgrade.value = next.enabled
+    if (previous === 'ota_upgrade' && selectedDeviceId.value) {
+      saveFlashFormForDevice(selectedDeviceId.value)
+    }
   }
   if (testType === 'gms') {
     void loadGmsTradefedSettings()

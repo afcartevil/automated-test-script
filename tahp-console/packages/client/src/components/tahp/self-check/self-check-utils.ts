@@ -5,6 +5,41 @@ export const SELF_CHECK_SUBTITLE =
 
 export const AUTO_RETEST_TOOLTIP = '测试结束后自动复测无人工参与的失败用例'
 
+/** 连续OTA升级 SOP（飞书文档，作界面提示与刷机确认入口） */
+export const OTA_UPGRADE_SOP = {
+  url: 'https://transsioner.feishu.cn/docx/KPDTdp4UhovtfUxHJHocIb0Knjc',
+  label: '连续OTA升级 SOP',
+  inlineLabel: '前置操作',
+  hint: '操作请按 SOP 执行',
+} as const
+
+/** 连续OTA升级进入时强制勾选连续版本升级；离开时恢复进入前的勾选，避免泄漏到其他测试项 */
+export function resolveReleaseUpgradeEnabledOnTypeChange(input: {
+  testType: string
+  previousTestType?: string
+  currentEnabled: boolean
+  enabledBeforeOta: boolean
+}): { enabled: boolean; enabledBeforeOta: boolean } {
+  if (input.testType === 'ota_upgrade') {
+    return {
+      enabled: true,
+      enabledBeforeOta: input.previousTestType === 'ota_upgrade'
+        ? input.enabledBeforeOta
+        : input.currentEnabled,
+    }
+  }
+  if (input.previousTestType === 'ota_upgrade') {
+    return {
+      enabled: input.enabledBeforeOta,
+      enabledBeforeOta: input.enabledBeforeOta,
+    }
+  }
+  return {
+    enabled: input.currentEnabled,
+    enabledBeforeOta: input.enabledBeforeOta,
+  }
+}
+
 /** 连续OTA升级开始刷机前的人工确认 */
 export const OTA_UPGRADE_FLASH_CONFIRM = {
   title: '开始刷机',
@@ -302,7 +337,7 @@ export function formatCatalogPrereq(group: CaseCatalogGroup): string {
     return 'ADB 连接测试机+TPower测量仪器'
   }
   if (group.testType === 'ota_upgrade') {
-    return 'ADB 连接测试机；开始前须获取外发版本'
+    return 'ADB 连接测试机；开始前须获取外发版本；按 SOP 操作'
   }
   const parts: string[] = ['ADB 连接测试机']
   const maxDutSim = Math.max(0, ...group.modules.map(m => m.conditions.dutSimCount))

@@ -21,6 +21,7 @@ import {
   normalizeAutomationMode,
   parseManualSteps,
   STANDARD_TEST_TYPE_ORDER,
+  OTA_UPGRADE_SOP,
 } from './self-check-utils'
 import type { AutomationModeFilterKey, DeviceListFilterKey } from './self-check-utils'
 import type { CaseCatalogGroup } from '@/api/tahp/device-self-check'
@@ -935,7 +936,18 @@ function handleDutRowAction(deviceId: string) {
                   v-else-if="selectedCatalogTestType === 'ota_upgrade'"
                   class="catalog-ai-generated-note catalog-overview-retest"
                 >
-                  <span class="ea-muted">本项必须先获取外发版本：最低 Android 走 device_update，更高版本依次 T卡升级；完成后校验开机并记录版本。不自动复测。</span>
+                  <span class="ea-muted">
+                    本项必须先获取外发版本：最低 Android 走 device_update，更高版本依次 T卡升级；完成后校验开机并记录版本。不自动复测。
+                    操作请按
+                    <a
+                      class="ota-sop-link"
+                      :href="OTA_UPGRADE_SOP.url"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      @click.stop
+                    >{{ OTA_UPGRADE_SOP.label }}</a>
+                    执行。
+                  </span>
                 </div>
                 <div v-else class="catalog-auto-retest-row catalog-overview-retest">
                   <label
@@ -1711,15 +1723,25 @@ function handleDutRowAction(deviceId: string) {
                     </div>
 
                     <div class="form-group flash-options">
-                      <label
-                        v-if="selectedTestType !== 'ota_upgrade'"
-                        class="checkbox-label flash-options-toggle"
-                      >
-                        <input type="checkbox" v-model="enableReleaseUpgrade" />
-                        <span>连续版本升级</span>
-                      </label>
-                      <div v-else class="flash-options-toggle">
-                        <span class="form-label">连续版本升级</span>
+                      <div class="flash-options-title-row">
+                        <label
+                          v-if="selectedTestType !== 'ota_upgrade'"
+                          class="checkbox-label flash-options-toggle"
+                        >
+                          <input type="checkbox" v-model="enableReleaseUpgrade" />
+                          <span>连续版本升级</span>
+                        </label>
+                        <div v-else class="flash-options-toggle">
+                          <span class="form-label">连续版本升级</span>
+                        </div>
+                        <a
+                          class="ota-sop-guide"
+                          :href="OTA_UPGRADE_SOP.url"
+                          :title="OTA_UPGRADE_SOP.label"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          @click.stop
+                        >{{ OTA_UPGRADE_SOP.inlineLabel }}</a>
                       </div>
                       <div v-if="enableReleaseUpgrade || selectedTestType === 'ota_upgrade'" class="flash-options-panel">
                         <p class="flash-options-hint">
@@ -3783,6 +3805,13 @@ $catalog-pane-height: calc(100vh - 48px);
 
 
 .flash-options {
+  .flash-options-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
   .flash-options-toggle {
     font-weight: 600;
   }
@@ -3878,6 +3907,20 @@ $catalog-pane-height: calc(100vh - 48px);
   color: var(--warning, #b45309);
   background: color-mix(in srgb, var(--warning, #b45309) 10%, var(--bg));
   border-radius: 6px;
+}
+
+.ota-sop-link,
+.ota-sop-guide {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }
 
 .flash-field {

@@ -32,6 +32,7 @@ describe('device self-check ota_upgrade catalog', () => {
       automationMode: 'full',
     })
     expect(detail[0]?.preconditions).toContain('获取外发版本')
+    expect(detail[0]?.preconditions).toContain('https://transsioner.feishu.cn/docx/KPDTdp4UhovtfUxHJHocIb0Knjc')
     expect(detail[0]?.manualSteps).toContain('device_update')
     expect(detail[0]?.expectedResult).toContain('ro.build.version.release')
   })

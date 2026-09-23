@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { OTA_UPGRADE_FLASH_CONFIRM } from '../../packages/client/src/components/tahp/self-check/self-check-utils'
+import {
+  OTA_UPGRADE_FLASH_CONFIRM,
+  OTA_UPGRADE_SOP,
+  resolveReleaseUpgradeEnabledOnTypeChange,
+} from '../../packages/client/src/components/tahp/self-check/self-check-utils'
 
 describe('ota upgrade flash confirm copy', () => {
   it('lists OEM unlock, battery and usbdebug checks with confirm/cancel actions', () => {
@@ -12,4 +16,56 @@ describe('ota upgrade flash confirm copy', () => {
     expect(OTA_UPGRADE_FLASH_CONFIRM.positiveText).toBe('确认')
     expect(OTA_UPGRADE_FLASH_CONFIRM.negativeText).toBe('取消')
   })
+
+  it('points to the official continuous OTA SOP document', () => {
+    expect(OTA_UPGRADE_SOP.url).toBe('https://transsioner.feishu.cn/docx/KPDTdp4UhovtfUxHJHocIb0Knjc')
+    expect(OTA_UPGRADE_SOP.label).toContain('SOP')
+    expect(OTA_UPGRADE_SOP.inlineLabel).toBe('前置操作')
+  })
 })
+
+describe('release upgrade checkbox when switching test type', () => {
+  it('forces continuous upgrade on while ota_upgrade is selected', () => {
+    const next = resolveReleaseUpgradeEnabledOnTypeChange({
+      testType: 'ota_upgrade',
+      previousTestType: 'week',
+      currentEnabled: false,
+      enabledBeforeOta: false,
+    })
+    expect(next.enabled).toBe(true)
+    expect(next.enabledBeforeOta).toBe(false)
+  })
+
+  it('does not leave continuous upgrade checked after leaving ota_upgrade', () => {
+    const entered = resolveReleaseUpgradeEnabledOnTypeChange({
+      testType: 'ota_upgrade',
+      previousTestType: 'week',
+      currentEnabled: false,
+      enabledBeforeOta: false,
+    })
+    const left = resolveReleaseUpgradeEnabledOnTypeChange({
+      testType: 'week',
+      previousTestType: 'ota_upgrade',
+      currentEnabled: entered.enabled,
+      enabledBeforeOta: entered.enabledBeforeOta,
+    })
+    expect(left.enabled).toBe(false)
+  })
+
+  it('restores a previously checked continuous upgrade after leaving ota_upgrade', () => {
+    const entered = resolveReleaseUpgradeEnabledOnTypeChange({
+      testType: 'ota_upgrade',
+      previousTestType: 'str4',
+      currentEnabled: true,
+      enabledBeforeOta: false,
+    })
+    const left = resolveReleaseUpgradeEnabledOnTypeChange({
+      testType: 'str4',
+      previousTestType: 'ota_upgrade',
+      currentEnabled: entered.enabled,
+      enabledBeforeOta: entered.enabledBeforeOta,
+    })
+    expect(left.enabled).toBe(true)
+  })
+})
+
