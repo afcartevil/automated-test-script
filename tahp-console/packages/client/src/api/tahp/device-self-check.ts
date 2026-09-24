@@ -82,6 +82,15 @@ export interface CaseResult {
   startTime?: string
   endTime?: string
   failureLogDir?: string
+  /** 测试证据/详细测量数据（如功耗测量的各项电流值） */
+  evidence?: Array<{
+    name: string
+    expected: string
+    actual: string
+    ok: boolean
+  }>
+  /** 额外的详细数据（如原始测量结果、手势状态等） */
+  detail?: Record<string, any>
 }
 
 export interface ModuleProgress {

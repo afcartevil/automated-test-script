@@ -1,0 +1,19 @@
+{
+  "testType": "power_feature",
+  "module": "p1_check",
+  "moduleLabel": "P1自检测量",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "P1自检测量",
+      "canReuse": false,
+      "automationMode": "full"
+    }
+  ]
+}

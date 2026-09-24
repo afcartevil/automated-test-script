@@ -135,6 +135,15 @@ export interface CaseResult {
   endTime?: string
   /** 失败时导出的设备日志目录（本机绝对路径） */
   failureLogDir?: string
+  /** 测试证据/详细测量数据（如功耗测量的各项电流值） */
+  evidence?: Array<{
+    name: string
+    expected: string
+    actual: string
+    ok: boolean
+  }>
+  /** 额外的详细数据（如原始测量结果、手势状态等） */
+  detail?: Record<string, any>
 }
 
 export interface ModuleProgress {
@@ -753,6 +762,7 @@ function loadCaseConfigs(): void {
     'gms_vts.json',
     'power_current_analysis.json',
     'power_feature_wbs.json',
+    'power_feature_p1_check.json',
     'thermal_scheme.json',
     'kernel_feature_stability.json',
     'kernel_feature_memory.json',
@@ -1522,7 +1532,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'ota_upgrade') return ['ota']
   if (testType === 'gms') return ['cts', 'gts', 'vts']
   if (testType === 'power') return ['current_analysis']
-  if (testType === 'power_feature') return ['wbs']
+  if (testType === 'power_feature') return ['wbs', 'p1_check']
   if (testType === 'thermal') return ['scheme']
   if (testType === 'kernel_feature') return ['stability', 'memory', 'sched']
   if (testType === 'pipeline_adapt') return ['tp', 'vibrator', 'audio', 'lcm', 'fingerprint', 'tdd']
@@ -1728,6 +1738,13 @@ async function runCase(
       : pythonResult.status === 'skip' ? '跳过'
       : '失败'
     result.message = pythonResult.message || ''
+    // 传递测试证据/详细测量数据（如功耗测量的各项电流值）
+    if (pythonResult.evidence) {
+      result.evidence = pythonResult.evidence
+    }
+    if (pythonResult.detail) {
+      result.detail = pythonResult.detail
+    }
     // monkey结果检查：Python 已完成 TNE 采集/解压，Node 侧用 AI 对 native crash 归类并合成最终汇报
     if (testType === 'monkey_check' && result.status !== '失败') {
       await applyMonkeyCheckAiReport(getSessionResultDir(deviceId, session), result)
@@ -2365,6 +2382,10 @@ function resolveCaseExecTimeoutMs(testType: string, module: string): number {
     const raw = Number(process.env.TAHP_POWER_FEATURE_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : POWER_FEATURE_EXEC_TIMEOUT_MS
   }
+  if (testType === 'power_feature' && module === 'p1_check') {
+    const raw = Number(process.env.TAHP_POWER_FEATURE_TIMEOUT_MS)
+    return Number.isFinite(raw) && raw > 0 ? raw : POWER_FEATURE_EXEC_TIMEOUT_MS
+  }
   if (testType === 'kernel_feature' && module === 'stability') {
     const raw = Number(process.env.TAHP_KERNEL_FEATURE_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : KERNEL_FEATURE_EXEC_TIMEOUT_MS
@@ -2395,7 +2416,7 @@ async function execPythonCase(
   module: string,
   caseIndex: number,
   deviceInfo: any
-): Promise<{ status: string; message: string; steps: CaseStep[]; fullAutomation?: boolean }> {
+): Promise<{ status: string; message: string; steps: CaseStep[]; fullAutomation?: boolean; evidence?: CaseResult['evidence']; detail?: Record<string, any> }> {
   return new Promise((resolve) => {
     const runCaseScript = join(PYTHON_DIR, 'run_case.py')
     const deviceInfoJson = JSON.stringify(deviceInfo)
@@ -2413,7 +2434,7 @@ async function execPythonCase(
       steps: [] as CaseStep[],
     })
 
-    const finish = (result: { status: string; message: string; steps: CaseStep[]; fullAutomation?: boolean }) => {
+    const finish = (result: { status: string; message: string; steps: CaseStep[]; fullAutomation?: boolean; evidence?: CaseResult['evidence']; detail?: Record<string, any> }) => {
       if (settled) return
       settled = true
       if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
@@ -2564,7 +2585,9 @@ async function execPythonCase(
               status: parsed.status || 'fail',
               message: parsed.message || stderr.trim(),
               steps: parsed.steps || [],
-              fullAutomation: parsed.full_automation
+              fullAutomation: parsed.full_automation,
+              evidence: parsed.evidence,
+              detail: parsed.detail,
             })
           } else {
             finish({
