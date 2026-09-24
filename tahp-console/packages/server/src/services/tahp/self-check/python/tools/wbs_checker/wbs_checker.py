@@ -50,6 +50,14 @@ class PowerChecker:
         return stdout.strip() == "device"
 
     def check_gift(self):
+        android_ver, _ = self.run_adb('shell getprop ro.build.version.release')
+        major_ver = android_ver.split('.')[0] if android_ver else ''
+        
+        if major_ver == '17':
+            res, info = "Pass", "gift功能已在Android 17上去除"
+            self.results["gift"] = {"res": res, "info": info}
+            return res, info
+        
         #print("\n正在执行 gift 检测...")
         apk_path = os.path.join(self.project_root, 'res', 'pvzfree_row.apk')
         if not os.path.exists(apk_path):
@@ -258,8 +266,8 @@ class PowerChecker:
         else:
             print("未检测到 pvz 相关包名，将直接尝试获取日志。")
             
-        stdout, _ = self.run_adb('shell "logcat -d | grep \'TranTp/TranTpSwitchManagerimpl\'"')
-        logcat_found = 'is tp rate to 360' in stdout
+        stdout, _ = self.run_adb('shell "logcat -d | grep -i \'TranTp/TranTpSwitchManagerimpl\'"')
+        logcat_found = bool(re.search(r'is tp rate to \[?360\]?', stdout, re.IGNORECASE))
         if logcat_found or v1 == '1':
             res, info = "Pass", "logcat: Found" if logcat_found else f"v1:{v1}"
         else:
@@ -294,7 +302,14 @@ class PowerChecker:
         return res, info
 
     def check_health_standard(self):
-        stdout, _ = self.run_adb('shell dumpsys activity healthstandard support')
+        android_ver, _ = self.run_adb('shell getprop ro.build.version.release')
+        major_ver = android_ver.split('.')[0] if android_ver else ''
+        
+        if major_ver == '17':
+            stdout, _ = self.run_adb('shell dumpsys activity service com.transsion.usf.UsfMainService -power_healthstandard support')
+        else:
+            stdout, _ = self.run_adb('shell dumpsys activity healthstandard support')
+        
         if '1' in stdout or 'true' in stdout.lower():
             res, info = "Pass", "Found support indicators"
         else:
@@ -303,15 +318,25 @@ class PowerChecker:
         return res, info
 
     def check_hiber(self):
+        android_ver, _ = self.run_adb('shell getprop ro.build.version.release')
+        major_ver = android_ver.split('.')[0] if android_ver else ''
+        
         v1, _ = self.run_adb('shell getprop ro.tran.hiber.support')
         stdout1, _ = self.run_adb('shell "dumpsys activity hiber dump | grep enabled"')
         stdout2, _ = self.run_adb('shell "dumpsys tran_bootstrap_service_manager tran_usf-hiber | grep enabled"')
         stdout3, _ = self.run_adb('shell "dumpsys activity service com.transsion.usf.UsfMainService -hiber dump | grep enable"')
         stdout = stdout1 + stdout2 + stdout3
-        if v1 == '1' and re.search(r'enable[d]?[:=]\s*true', stdout, re.IGNORECASE):
-            res, info = "Pass", "v1=1 and enabled=true"
+        
+        if major_ver == '17':
+            if re.search(r'enable[d]?[:=]\s*true', stdout, re.IGNORECASE):
+                res, info = "Pass", "Android 17: enabled=true"
+            else:
+                res, info = "Fail", "Android 17: dump missing enabled=true"
         else:
-            res, info = "Fail", f"v1:{v1}, dump missing enabled=true"
+            if v1 == '1' and re.search(r'enable[d]?[:=]\s*true', stdout, re.IGNORECASE):
+                res, info = "Pass", "v1=1 and enabled=true"
+            else:
+                res, info = "Fail", f"v1:{v1}, dump missing enabled=true"
         self.results["应用冻结"] = {"res": res, "info": info}
         return res, info
 
@@ -321,20 +346,22 @@ class PowerChecker:
         major_ver = android_ver.split('.')[0] if android_ver else ''
 
         # 根据 Android 版本选择命令
-        if major_ver == '16':
+        if major_ver >= '16':
             cmd = 'shell "dumpsys vendor.mediatek.hardware.pq_aidl.IPictureQuality_AIDL/default --aal --function"'
         else:
             cmd = 'shell "lshal debug vendor.mediatek.hardware.pq@2.6::IPictureQuality --aal --function"'
 
         stdout, _ = self.run_adb(cmd)
 
-        # 获取屏幕类型
-        thermal_stdout, _ = self.run_adb('shell "dumpsys activity thermal_light state"')
+        # 从命令返回值中获取屏幕类型 (例如: ESS Version : 3.1(LCD))
         screen_type = ''
-        for line in thermal_stdout.splitlines():
-            if 'Screen Type:' in line:
-                screen_type = line.split('Screen Type:')[-1].strip().upper()
-                break
+        ess_match = re.search(r'ESS Version\s*:\s*[\d.]+\((\w+)\)', stdout, re.IGNORECASE)
+        if ess_match:
+            screen_type = ess_match.group(1).upper()
+        else:
+            res, info = "Fail", "Cannot find screen type in ESS Version"
+            self.results["AAL strategy optimize"] = {"res": res, "info": info}
+            return res, info
 
         # 根据屏幕类型判断期望的 setting 值
         if 'LCD' in screen_type:
@@ -342,7 +369,7 @@ class PowerChecker:
         elif 'OLED' in screen_type:
             expected = ['setting(0x0)', 'setting(0x4)']
         else:
-            res, info = "Fail", f"Unknown Screen Type: {screen_type or 'N/A'}"
+            res, info = "Fail", f"Unknown Screen Type: {screen_type}"
             self.results["AAL strategy optimize"] = {"res": res, "info": info}
             return res, info
 
@@ -384,31 +411,41 @@ class PowerChecker:
         android_ver, _ = self.run_adb('shell getprop ro.build.version.release')
         major_ver = android_ver.split('.')[0] if android_ver else ''
 
-        # 根据 Android 版本选择 getprop 命令
-        if major_ver == '16':
-            prop_cmd = 'shell getprop ro.tr_power.standby_handler.support'
-        else:
-            prop_cmd = 'shell getprop ro.transsion.standby_handler'
-
-        prop_val, _ = self.run_adb(prop_cmd)
-        dump_stdout, _ = self.run_adb('shell "dumpsys activity standbyhandler state"')
-
-        # 根据 Android 版本使用不同的判断标准
-        if major_ver == '16':
-            prop_ok = prop_val.strip().lower() == 'true'
-            dump_ok = 'Enabled: true' in dump_stdout
-            expected_prop = 'true'
-            expected_dump = 'Enabled: true'
-        else:
-            prop_ok = prop_val.strip() == '1'
+        # Android 17 使用新的检测方法
+        if major_ver == '17':
+            dump_stdout, _ = self.run_adb('shell "dumpsys activity service com.transsion.usf.UsfMainService -standbyhandler state"')
             dump_ok = 'true' in dump_stdout.lower()
-            expected_prop = '1'
-            expected_dump = 'true'
-
-        if prop_ok and dump_ok:
-            res, info = "Pass", f"prop={prop_val}, dumpsys contains '{expected_dump}'"
+            if dump_ok:
+                res, info = "Pass", "Android 17: dumpsys contains 'true'"
+            else:
+                res, info = "Fail", "Android 17: dumpsys missing 'true'"
         else:
-            res, info = "Fail", f"prop={prop_val}(expected {expected_prop}), dumpsys={'pass' if dump_ok else 'fail'}(expected '{expected_dump}')"
+            # 根据 Android 版本选择 getprop 命令
+            if major_ver == '16':
+                prop_cmd = 'shell getprop ro.tr_power.standby_handler.support'
+            else:
+                prop_cmd = 'shell getprop ro.transsion.standby_handler'
+
+            prop_val, _ = self.run_adb(prop_cmd)
+            dump_stdout, _ = self.run_adb('shell "dumpsys activity standbyhandler state"')
+
+            # 根据 Android 版本使用不同的判断标准
+            if major_ver == '16':
+                prop_ok = prop_val.strip().lower() in ('true', '1')
+                dump_ok = 'Enabled: true' in dump_stdout
+                expected_prop = 'true or 1'
+                expected_dump = 'Enabled: true'
+            else:
+                prop_ok = prop_val.strip() == '1'
+                dump_ok = 'true' in dump_stdout.lower()
+                expected_prop = '1'
+                expected_dump = 'true'
+
+            if prop_ok and dump_ok:
+                res, info = "Pass", f"prop={prop_val}, dumpsys contains '{expected_dump}'"
+            else:
+                res, info = "Fail", f"prop={prop_val}(expected {expected_prop}), dumpsys={'pass' if dump_ok else 'fail'}(expected '{expected_dump}')"
+        
         self.results["应用异常管控设计"] = {"res": res, "info": info}
         return res, info
 
@@ -418,7 +455,7 @@ class PowerChecker:
         major_ver = android_ver.split('.')[0] if android_ver else ''
 
         # 根据 Android 版本选择属性命令
-        if major_ver == '16':
+        if major_ver >= '16':
             prop_cmd = 'shell getprop ro.tr_light.app_brightness_limit_v2.feature.support'
         else:
             prop_cmd = 'shell getprop ro.tran_app_brightness_limit_V2.support'
@@ -515,7 +552,25 @@ class PowerChecker:
         # 清空 logcat
         self.run_adb('shell logcat -c')
 
-        if major_ver == '16':
+        if major_ver == '17':
+            # Android 17: dumpsys display 检查
+            dump_stdout, _ = self.run_adb('shell "dumpsys display"')
+            has_thermal_modifier = 'ThermalBacklightModifier' in dump_stdout
+            has_config_enabled = 'Config Enabled: true' in dump_stdout
+            has_light_limits = 'lightLimits: {' in dump_stdout
+
+            if has_thermal_modifier and has_config_enabled and has_light_limits:
+                res, info = "Pass", "Android 17: ThermalBacklightModifier, Config Enabled: true, lightLimits found"
+            else:
+                details = []
+                if not has_thermal_modifier:
+                    details.append("missing 'ThermalBacklightModifier'")
+                if not has_config_enabled:
+                    details.append("missing 'Config Enabled: true'")
+                if not has_light_limits:
+                    details.append("missing 'lightLimits: {'")
+                res, info = "Fail", f"Android 17: {', '.join(details)}"
+        elif major_ver == '16':
             # Android 16: dumpsys 检查
             dump_stdout, _ = self.run_adb('shell "dumpsys activity thermal_light state"')
             has_max_nits = 'Max Nits' in dump_stdout
