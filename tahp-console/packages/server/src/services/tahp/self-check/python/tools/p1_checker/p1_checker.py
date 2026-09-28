@@ -601,7 +601,7 @@ class P1Checker:
 
         # 3. 测量关机电流 I1（连接假电池，30s）
         self._emit("测量关机电流 I1（假电池）…")
-        i1_result = self._measure_current(pmsn, duration_s=30, filter_period_s=10)
+        i1_result = self._measure_current(pmsn, duration_s=30, filter_period_s=10, stabilize_s=30)
         
         # _measure_current 会在测量后重连 USB，但关机电流测试需要保持 USB 断开
         self._device_manager.usb_disconnect(pmsn)
@@ -631,7 +631,7 @@ class P1Checker:
         time.sleep(10)  # 等待充电图标显示
 
         self._emit("测量关机电流 I2（拔掉充电器后）…")
-        i2_result = self._measure_current(pmsn, duration_s=30, filter_period_s=10)
+        i2_result = self._measure_current(pmsn, duration_s=30, filter_period_s=10, stabilize_s=30)
         
         # _measure_current 会在测量后重连 USB，但我们需要手动控制重连时机
         self._device_manager.usb_disconnect(pmsn)
