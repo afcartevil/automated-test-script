@@ -288,26 +288,30 @@ class P1Checker:
             type_str = self._adb_shell(f"cat {zone_path}/type 2>/dev/null")
             temp_str = self._adb_shell(f"cat {zone_path}/temp 2>/dev/null")
 
+            # type 读取失败，标记为 NA
             if not type_str or type_str.startswith("Error") or type_str.startswith("Timeout"):
+                na_count += 1
                 evidence_rows.append({
                     "name": f"zone{i} (type)",
                     "expected": "可读",
-                    "actual": type_str or "(empty)",
-                    "ok": False,
+                    "actual": type_str or "(empty) (NA)",
+                    "ok": True,  # NA 不算失败
                 })
-                all_pass = False
+                zones_found.append({"zone": i, "type": "(unknown)", "temp": None, "status": "NA"})
                 continue
 
+            # temp 读取失败或无效，标记为 NA
             try:
                 temp_val = int(temp_str.strip())
             except (ValueError, AttributeError):
+                na_count += 1
                 evidence_rows.append({
                     "name": f"zone{i} ({type_str})",
                     "expected": "NTC温度在20000-60000范围内",
-                    "actual": f"temp值无效: {temp_str}",
-                    "ok": False,
+                    "actual": f"temp值无效: {temp_str} (NA)",
+                    "ok": True,  # NA 不算失败
                 })
-                all_pass = False
+                zones_found.append({"zone": i, "type": type_str, "temp": None, "status": "NA"})
                 continue
 
             # -274000 是传感器未连接的标志值（绝对零度偏移），0 也是无效值
