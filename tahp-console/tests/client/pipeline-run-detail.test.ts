@@ -167,15 +167,58 @@ describe('PipelineRunDetail board layout', () => {
 
     expect(store.loadAllNodeLogs).toHaveBeenCalledWith('run-1', ['adapt', 'build'])
     const drawer = wrapper.get('[aria-label="全部阶段日志"]')
-    expect(drawer.text()).toContain('[AI 适配] adapt started')
-    expect(drawer.text()).toContain('[编译] build failed')
+    const rows = () => drawer.findAll('.ln').map(row => ({
+      stage: row.find('.ln-stage').exists() ? row.get('.ln-stage').text() : null,
+      msg: row.get('.ln-msg').text(),
+    }))
+    expect(rows()).toEqual([
+      { stage: 'AI 适配', msg: 'adapt started' },
+      { stage: '编译', msg: 'build failed' },
+    ])
+    expect(drawer.findAll('.stage-tabs .tab').map(tab => tab.text())).toEqual([
+      '全部2',
+      'AI 适配1',
+      '编译1',
+    ])
     expect(drawer.text()).toContain('编译：编译日志加载失败')
 
-    await drawer.get('.stage-filter select').setValue('adapt')
-    expect(drawer.text()).toContain('adapt started')
-    expect(drawer.text()).not.toContain('[AI 适配] adapt started')
+    await drawer.get('.stage-tabs [data-stage="adapt"]').trigger('click')
+    expect(rows()).toEqual([{ stage: null, msg: 'adapt started' }])
     expect(drawer.text()).not.toContain('build failed')
     expect(drawer.text()).not.toContain('编译日志加载失败')
+  })
+
+  it('splits timestamp and domain tag out of each all-logs line', async () => {
+    const store = makeStore({
+      logs: {
+        adapt: ['[2026-09-15T07:09:26.513Z] [安全] Agent Bridge 已就绪'],
+      },
+    })
+    const wrapper = mount(PipelineRunDetail, {
+      props: {
+        timeline: timeline(),
+        selectedNodeKey: 'adapt',
+        store: store as never,
+      },
+      global: {
+        stubs: {
+          PipelineNodePanel: true,
+          PipelineHumanPanel: true,
+          PipelineIterationBar: true,
+          PipelineAppendStagesDrawer: true,
+        },
+      },
+    })
+
+    await wrapper.get('.head-actions .btn-soft').trigger('click')
+    await flushPromises()
+
+    const row = wrapper.get('[aria-label="全部阶段日志"] .ln')
+    const expectedTime = new Date('2026-09-15T07:09:26.513Z').toLocaleTimeString('zh-CN', { hour12: false })
+    expect(row.get('.ln-time').text()).toBe(expectedTime)
+    expect(row.get('.ln-tag').text()).toBe('安全')
+    expect(row.get('.ln-msg').text()).toBe('安全Agent Bridge 已就绪')
+    expect(row.text()).not.toContain('2026-09-15T07:09:26.513Z')
   })
 
   it('shows a wider human column only when work is pending', async () => {

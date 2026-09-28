@@ -27,12 +27,14 @@ function detectLevel(line: string): LogLevel {
 
 const filteredLines = computed(() => {
   const q = query.value.trim().toLowerCase()
-  return props.lines.filter((line) => {
+  const out: { line: string, index: number, level: LogLevel }[] = []
+  props.lines.forEach((line, index) => {
     const lv = detectLevel(line)
-    if (level.value !== 'all' && lv !== level.value) return false
-    if (q && !line.toLowerCase().includes(q)) return false
-    return true
+    if (level.value !== 'all' && lv !== level.value) return
+    if (q && !line.toLowerCase().includes(q)) return
+    out.push({ line, index, level: lv })
   })
+  return out
 })
 
 const viewportCount = computed(() =>
@@ -83,7 +85,7 @@ watch(() => props.height, () => syncViewportHeight())
     <div class="toolbar">
       <input v-model="query" type="search" class="search" placeholder="搜索日志…">
       <select v-model="level" class="level">
-        <option value="all">全部</option>
+        <option value="all">全部级别</option>
         <option value="error">错误</option>
         <option value="warn">警告</option>
         <option value="info">信息</option>
@@ -97,12 +99,12 @@ watch(() => props.height, () => syncViewportHeight())
       @scroll="onScroll"
     >
       <div class="pad" :style="{ height: `${padTop}px` }" />
-      <pre
-        v-for="(line, idx) in visibleLines"
-        :key="startIndex + idx"
-        class="line"
-        :class="detectLevel(line)"
-      >{{ line }}</pre>
+      <template v-for="(item, idx) in visibleLines" :key="startIndex + idx">
+        <div v-if="$slots.line" class="line" :class="item.level">
+          <slot name="line" :line="item.line" :index="item.index" :level="item.level" />
+        </div>
+        <pre v-else class="line" :class="item.level">{{ item.line }}</pre>
+      </template>
       <div v-if="!filteredLines.length" class="empty">无匹配日志</div>
       <div class="pad" :style="{ height: `${padBottom}px` }" />
     </div>

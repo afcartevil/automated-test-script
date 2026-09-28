@@ -15,6 +15,19 @@ const emit = defineEmits<{
   close: []
 }>()
 
+interface LogEntry {
+  stageLabel: string
+  tone: number
+  time: string
+  fullTime: string
+  tag: string
+  message: string
+}
+
+const TONE_COUNT = 6
+const TIME_PREFIX = /^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\]\s*/
+const TAG_PREFIX = /^\[([^\][]{1,12})\]\s*/
+
 const stageFilter = ref('all')
 const loading = ref(false)
 const errorsOpen = ref(true)
@@ -28,6 +41,19 @@ const projectTitle = computed(() =>
 const osLabel = computed(() =>
   formatOsRange(props.timeline.from_os, props.timeline.to_os),
 )
+
+const isLive = computed(() => props.timeline.status === 'running')
+
+const stageTabs = computed(() =>
+  enabledNodes.value.map((node, idx) => ({
+    key: node.key,
+    label: node.label,
+    tone: idx % TONE_COUNT,
+    count: props.store.getNodeLogs(props.timeline.run_id, node.key).length,
+  })),
+)
+
+const totalCount = computed(() => stageTabs.value.reduce((sum, tab) => sum + tab.count, 0))
 
 const failedStages = computed(() =>
   enabledNodes.value
@@ -45,19 +71,47 @@ const visibleFailedStages = computed(() =>
     : failedStages.value.filter(item => item.key === stageFilter.value),
 )
 
-const aggregatedLines = computed(() => {
-  const nodes = stageFilter.value === 'all'
-    ? enabledNodes.value
-    : enabledNodes.value.filter(node => node.key === stageFilter.value)
-  const lines: string[] = []
-  for (const node of nodes) {
-    const raw = props.store.getNodeLogs(props.timeline.run_id, node.key)
-    for (const line of raw) {
-      lines.push(stageFilter.value === 'all' ? `[${node.label}] ${line}` : line)
+function formatClock(iso: string): { time: string, fullTime: string } {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return { time: '', fullTime: '' }
+  return {
+    time: date.toLocaleTimeString('zh-CN', { hour12: false }),
+    fullTime: date.toLocaleString('zh-CN', { hour12: false }),
+  }
+}
+
+function parseLine(raw: string, stageLabel: string, tone: number): LogEntry {
+  let rest = raw
+  let clock = { time: '', fullTime: '' }
+  const timeMatch = rest.match(TIME_PREFIX)
+  if (timeMatch) {
+    clock = formatClock(timeMatch[1])
+    rest = rest.slice(timeMatch[0].length)
+  }
+  let tag = ''
+  const tagMatch = rest.match(TAG_PREFIX)
+  if (tagMatch) {
+    tag = tagMatch[1]
+    rest = rest.slice(tagMatch[0].length)
+  }
+  return { stageLabel, tone, ...clock, tag, message: rest }
+}
+
+const entries = computed(() => {
+  const tabs = stageFilter.value === 'all'
+    ? stageTabs.value
+    : stageTabs.value.filter(tab => tab.key === stageFilter.value)
+  const out: { search: string, entry: LogEntry }[] = []
+  for (const tab of tabs) {
+    for (const raw of props.store.getNodeLogs(props.timeline.run_id, tab.key)) {
+      out.push({ search: `${tab.label} ${raw}`, entry: parseLine(raw, tab.label, tab.tone) })
     }
   }
-  return lines
+  return out
 })
+
+const searchLines = computed(() => entries.value.map(item => item.search))
+const showStage = computed(() => stageFilter.value === 'all')
 
 watch(
   () => [props.open, props.timeline.run_id, enabledNodes.value.map(node => node.key).join(',')] as const,
@@ -82,23 +136,39 @@ watch(
   <div v-if="open" class="mask" @click.self="emit('close')">
     <aside class="drawer" role="dialog" aria-label="全部阶段日志">
       <header class="head">
-        <div>
+        <div class="head-main">
           <h3>全部阶段日志</h3>
-          <p>{{ projectTitle }}<template v-if="osLabel"> · {{ osLabel }}</template> · {{ enabledNodes.length }} 个已启用阶段 · 实时缓冲会随运行更新</p>
+          <p class="meta">
+            <span>{{ projectTitle }}</span>
+            <span v-if="osLabel">{{ osLabel }}</span>
+            <span v-if="isLive" class="live"><i />实时更新</span>
+          </p>
         </div>
-        <div class="head-tools">
-          <label class="stage-filter">
-            <span>阶段</span>
-            <select v-model="stageFilter">
-              <option value="all">全部阶段</option>
-              <option v-for="node in enabledNodes" :key="node.key" :value="node.key">
-                {{ node.label }}
-              </option>
-            </select>
-          </label>
-          <button type="button" class="icon-btn" aria-label="关闭" @click="emit('close')">×</button>
-        </div>
+        <button type="button" class="icon-btn" aria-label="关闭" @click="emit('close')">×</button>
       </header>
+
+      <nav class="stage-tabs" aria-label="按阶段筛选">
+        <button
+          type="button"
+          class="tab"
+          :class="{ active: stageFilter === 'all' }"
+          @click="stageFilter = 'all'"
+        >
+          全部<em>{{ totalCount }}</em>
+        </button>
+        <button
+          v-for="tab in stageTabs"
+          :key="tab.key"
+          type="button"
+          class="tab"
+          :class="{ active: stageFilter === tab.key, empty: tab.count === 0 }"
+          :data-stage="tab.key"
+          @click="stageFilter = tab.key"
+        >
+          <i class="dot" :class="`tone-${tab.tone}`" />{{ tab.label }}<em>{{ tab.count }}</em>
+        </button>
+        <span v-if="loading" class="loading">加载中…</span>
+      </nav>
 
       <div class="body">
         <div v-if="visibleFailedStages.length" class="errors">
@@ -112,14 +182,27 @@ watch(
             </p>
           </div>
         </div>
-        <p v-if="loading" class="loading">正在加载各阶段日志…</p>
-        <EaLogViewer :lines="aggregatedLines" :height="720" />
+        <EaLogViewer :lines="searchLines" :height="720">
+          <template #line="{ index }">
+            <div v-if="entries[index]" class="ln">
+              <span class="ln-time" :title="entries[index].entry.fullTime">{{ entries[index].entry.time }}</span>
+              <span
+                v-if="showStage"
+                class="ln-stage"
+                :class="`tone-${entries[index].entry.tone}`"
+              >{{ entries[index].entry.stageLabel }}</span>
+              <span class="ln-msg"><b v-if="entries[index].entry.tag" class="ln-tag">{{ entries[index].entry.tag }}</b>{{ entries[index].entry.message }}</span>
+            </div>
+          </template>
+        </EaLogViewer>
       </div>
     </aside>
   </div>
 </template>
 
 <style scoped lang="scss">
+$tones: (#7aa2f7, #bb9af7, #7dcfff, #9ece6a, #e0af68, #73daca);
+
 .mask {
   position: fixed;
   inset: 0;
@@ -134,39 +217,47 @@ watch(
   background: var(--surface, #fff);
   box-shadow: -12px 0 40px rgba(15, 23, 42, 0.12);
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   min-width: 0;
 }
 .head {
-  padding: 16px 18px 12px;
-  border-bottom: 1px solid var(--line);
+  padding: 16px 18px 10px;
   display: flex;
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
   h3 { margin: 0; font-size: 16px; font-weight: 800; }
-  p { margin: 6px 0 0; font-size: 12px; color: var(--muted); line-height: 1.55; }
 }
-.head-tools {
+.meta {
+  margin: 6px 0 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-.stage-filter {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: 12px;
   color: var(--muted);
-  select {
-    padding: 6px 10px;
-    border-radius: 8px;
-    border: 1px solid var(--line);
-    background: var(--surface);
-    font-size: 12px;
-    color: inherit;
+  span + span::before {
+    content: '·';
+    margin-right: 6px;
+    color: var(--faint);
   }
+}
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--success);
+  font-weight: 600;
+  i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+}
+@keyframes pulse {
+  50% { opacity: 0.3; }
 }
 .icon-btn {
   border: none;
@@ -177,10 +268,56 @@ watch(
   color: #475569;
   font-size: 16px;
   cursor: pointer;
+  flex-shrink: 0;
+}
+.stage-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  em {
+    font-style: normal;
+    font-size: 11px;
+    color: var(--faint);
+  }
+  &.empty { color: var(--faint); }
+  &.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 700;
+    em { color: inherit; }
+  }
+}
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.loading {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
 }
 .body {
-  --ea-log-height: calc(100dvh - 148px);
-  padding: 14px 18px;
+  --ea-log-height: calc(100dvh - 178px);
+  padding: 12px 18px 14px;
   min-height: 0;
   overflow: hidden;
   display: flex;
@@ -209,9 +346,37 @@ watch(
   padding: 0;
   span { font-weight: 600; color: var(--muted); }
 }
-.loading {
-  margin: 0;
-  font-size: 12px;
-  color: var(--muted);
+.ln {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.ln-time {
+  flex: 0 0 60px;
+  color: #6b7289;
+  font-variant-numeric: tabular-nums;
+}
+.ln-stage {
+  flex: 0 0 auto;
+  min-width: 56px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.ln-msg {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ln-tag {
+  margin-right: 6px;
+  font-weight: 400;
+  color: #8b90a0;
+}
+@for $i from 1 through length($tones) {
+  .tone-#{$i - 1} {
+    color: nth($tones, $i);
+    &.dot { background: nth($tones, $i); }
+  }
 }
 </style>
