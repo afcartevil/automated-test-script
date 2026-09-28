@@ -440,7 +440,7 @@ class P1Checker:
 
         使用 TPowerTool 测量：
         1. 不插卡，开启飞行模式，关闭所有手势，关闭WiFi,BT,GPS,自动旋转屏
-        2. 进入主界面切换至飞行模式，静置五分钟后灭屏，等电流稳定后，开始测量记录平均电流，及最小电流(底电流)
+        2. 进入主界面切换至飞行模式，灭屏静置5分钟，等电流稳定后，开始测量记录平均电流，及最小电流(底电流)
         3. 结果备注手势全闭还是全开的数据
 
         Args:
@@ -474,16 +474,16 @@ class P1Checker:
         self._adb_shell("input keyevent HOME")
         time.sleep(1)
 
-        # 3. 等待 5 分钟让电流稳定
-        self._emit("等待电流稳定（5分钟）…")
-        for remaining in range(300, 0, -30):
-            self._emit(f"  剩余 {remaining}s…")
-            time.sleep(30)
-
-        # 4. 灭屏
+        # 3. 灭屏
         self._emit("灭屏…")
         self._adb_shell("input keyevent KEYCODE_SLEEP")
         time.sleep(2)
+
+        # 4. 灭屏静置 5 分钟让电流稳定
+        self._emit("灭屏静置等待电流稳定（5分钟）…")
+        for remaining in range(300, 0, -30):
+            self._emit(f"  剩余 {remaining}s…")
+            time.sleep(30)
 
         # 5. 使用 TPowerTool 测量（内部会断开USB、等待稳定、测量、重连USB）
         # 参考 C01_Sleep: 灭屏后断开USB，等待180s稳定，然后测量120s
