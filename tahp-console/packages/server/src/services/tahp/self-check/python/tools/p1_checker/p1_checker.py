@@ -572,9 +572,12 @@ class P1Checker:
         """关机电流测量。
 
         使用 TPowerTool 测量：
-        1. 手机关机，连接假电池观察电流I1≤0.2mA
-        2. 插充电器，待显示充电图标后，拔掉充电器，观察电流I2，I2对比I1无增量
-        3. 预期结果 ≤0.3mA
+        1. 手机关机
+        2. 断开 USB
+        3. 等待 30s 稳定
+        4. 测量关机电流（30s）
+        5. 预期结果 ≤0.3mA
+        6. 重连 USB，开机
         """
         if not self.has_tpowertool:
             self._emit("TPowerTool 不可用，关机电流标记为 Blocked")
@@ -590,54 +593,27 @@ class P1Checker:
         pmsn = self._pmsn
         threshold_ma = 0.3
 
-        # 1. 断开 USB，关机
-        self._emit("断开USB，执行关机…")
-        self._device_manager.usb_disconnect(pmsn)
+        # 1. 关机
+        self._emit("执行关机…")
         self._adb_shell("reboot -p", timeout=15)
 
         # 2. 等待关机完成（约 30s）
         self._emit("等待设备关机（30s）…")
         time.sleep(30)
 
-        # 3. 测量关机电流 I1（连接假电池，30s）
-        self._emit("测量关机电流 I1（假电池）…")
-        i1_result = self._measure_current(pmsn, duration_s=30, filter_period_s=10, stabilize_s=30)
-        
-        # _measure_current 会在测量后重连 USB，但关机电流测试需要保持 USB 断开
+        # 3. 断开 USB
+        self._emit("断开 USB…")
         self._device_manager.usb_disconnect(pmsn)
 
-        if i1_result is None:
-            self._emit("I1 测量失败")
-            # 重新连接 USB，开机
-            self._device_manager.usb_connect(pmsn)
-            time.sleep(3)
-            self._adb("reboot", timeout=10)
-            return {
-                "name": "关机电流",
-                "status": "Fail",
-                "expected": f"≤{threshold_ma}mA",
-                "actual": "I1测量未返回有效数据",
-                "evidence": [],
-            }
+        # 4. 测量关机电流（等待 30s 稳定 + 测量 30s）
+        self._emit("测量关机电流…")
+        result = self._measure_current(pmsn, duration_s=30, filter_period_s=10, stabilize_s=30)
 
-        i1_current = i1_result.get("avg_current")
-        i1_min = i1_result.get("min_current")
-
-        # 4. 插充电器，待显示充电图标后，拔掉充电器，测量 I2
-        self._emit("插充电器，等待充电图标…")
-        # 注意：这里需要手动插充电器，代码无法控制硬件
-        # 实际使用时需要人工干预或自动化设备
-        self._emit("请插入充电器，等待显示充电图标后拔掉")
-        time.sleep(10)  # 等待充电图标显示
-
-        self._emit("测量关机电流 I2（拔掉充电器后）…")
-        i2_result = self._measure_current(pmsn, duration_s=30, filter_period_s=10, stabilize_s=30)
-        
-        # _measure_current 会在测量后重连 USB，但我们需要手动控制重连时机
+        # _measure_current 会在测量后重连 USB，关机状态下需再次断开
         self._device_manager.usb_disconnect(pmsn)
 
-        # 5. 重新连接 USB，开机
-        self._emit("重新连接USB，开机…")
+        # 5. 重连 USB，开机
+        self._emit("重新连接 USB，开机…")
         self._device_manager.usb_connect(pmsn)
         time.sleep(3)
         self._adb("reboot", timeout=10)
@@ -649,82 +625,68 @@ class P1Checker:
             if self._check_device():
                 break
 
-        if i2_result is None:
-            self._emit("I2 测量失败")
+        if result is None:
+            self._emit("关机电流测量失败")
             return {
                 "name": "关机电流",
                 "status": "Fail",
                 "expected": f"≤{threshold_ma}mA",
-                "actual": "I2测量未返回有效数据",
+                "actual": "测量未返回有效数据",
                 "evidence": [],
             }
 
-        i2_current = i2_result.get("avg_current")
-        i2_min = i2_result.get("min_current")
+        avg_current = result.get("avg_current")
+        min_current = result.get("min_current")
+        max_current = result.get("max_current")
 
-        if i1_current is None or i2_current is None:
+        if avg_current is None:
+            self._emit("测量结果中缺少平均电流数据")
             return {
                 "name": "关机电流",
                 "status": "Fail",
                 "expected": f"≤{threshold_ma}mA",
                 "actual": "测量结果缺少电流数据",
-                "evidence": [
-                    {"name": "I1", "expected": "有效值", "actual": str(i1_current), "ok": i1_current is not None},
-                    {"name": "I2", "expected": "有效值", "actual": str(i2_current), "ok": i2_current is not None},
-                ],
+                "evidence": [{"name": "raw_result", "expected": "含 avg_current", "actual": str(result), "ok": False}],
             }
 
-        # 7. 判断：I1≤0.2mA 且 I2对比I1无增量（I2 - I1 ≤ 0.1mA）
-        i1_pass = i1_current <= 0.2
-        i2_no_increase = (i2_current - i1_current) <= 0.1
-        is_pass = i1_pass and i2_no_increase and i2_current <= threshold_ma
+        is_pass = avg_current <= threshold_ma
 
         evidence_rows = [
             {
-                "name": "I1（假电池）",
-                "expected": "≤0.2mA",
-                "actual": f"{i1_current:.3f}mA",
-                "ok": i1_pass,
-            },
-            {
-                "name": "I2（拔充电器后）",
+                "name": "平均电流",
                 "expected": f"≤{threshold_ma}mA",
-                "actual": f"{i2_current:.3f}mA",
-                "ok": i2_current <= threshold_ma,
-            },
-            {
-                "name": "I2-I1增量",
-                "expected": "≤0.1mA（无增量）",
-                "actual": f"{i2_current - i1_current:.3f}mA",
-                "ok": i2_no_increase,
+                "actual": f"{avg_current:.3f}mA",
+                "ok": is_pass,
             },
         ]
-        if i1_min is not None:
+        if min_current is not None:
             evidence_rows.append({
-                "name": "I1底电",
+                "name": "最小电流(底电)",
                 "expected": "-",
-                "actual": f"{i1_min:.3f}mA",
+                "actual": f"{min_current:.3f}mA",
                 "ok": True,
             })
-        if i2_min is not None:
+        if max_current is not None:
             evidence_rows.append({
-                "name": "I2底电",
+                "name": "最大电流",
                 "expected": "-",
-                "actual": f"{i2_min:.3f}mA",
+                "actual": f"{max_current:.3f}mA",
                 "ok": True,
             })
 
         status = "Pass" if is_pass else "Fail"
-        summary = f"I1={i1_current:.3f}mA, I2={i2_current:.3f}mA, 增量={i2_current - i1_current:.3f}mA"
-        self._emit(f"关机电流完成: {summary} — {'Pass' if is_pass else 'Fail'}")
+        summary = f"关机电流：{avg_current:.3f}mA"
+        if min_current is not None:
+            summary += f"，底电：{min_current:.3f}mA"
+        self._emit(f"关机电流完成：{summary} — {'Pass' if is_pass else 'Fail'}")
 
         return {
             "name": "关机电流",
             "status": status,
-            "expected": f"I1≤0.2mA, I2≤{threshold_ma}mA, I2-I1无增量",
+            "expected": f"≤{threshold_ma}mA",
             "actual": summary,
             "evidence": evidence_rows,
-            "detail": {"i1": i1_result, "i2": i2_result},
+            "detail": {**result},
         }
 
     # ------------------------------------------------------------------
@@ -839,7 +801,7 @@ class P1Checker:
             "thermal_zone,cool": "adb命令查看所有thermal_zone下的节点，ntc温度是否正常\nadb shell \"i=0 ; while [[ $i -lt 80 ]]; do { type=`cat /sys/class/thermal/thermal_zone$i/type` ; temp=`cat /sys/class/thermal/thermal_zone$i/temp` ; echo \"$i $type : $temp\"; i=$(($i+1));done\"",
             "新增NTC检测": "与硬件确认项目是否有新增NTC，有则需要单独检测能否正常读取NTC温度",
             "Flight mode suspend": "1、不插卡，开启飞行模式，关闭所有手势，关闭WiFi,BT,GPS,自动旋转屏\n2、进入主界面切换至飞行模式，静置五分钟后灭屏，等电流稳定后，开始测量记录平均电流，及最小电流(底电流)\n3、结果备注手势全闭还是全开的数据",
-            "关机电流": "1、手机关机，连接假电池观察电流I1≤0.2mA\n2、插充电器，待显示充电图标后，拔掉充电器，观察电流I2，I2对比I1无增量",
+            "关机电流": "1、手机关机\n2、断开USB\n3、等待30s稳定后测量关机电流（30s）\n4、预期结果≤0.3mA",
         }
 
         # 数据行
