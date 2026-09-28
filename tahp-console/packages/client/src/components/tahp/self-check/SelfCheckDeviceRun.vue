@@ -4,10 +4,12 @@ import { useMessage } from 'naive-ui'
 import type { DeviceInfo, DeviceRole } from '@/api/tahp/device-self-check'
 import { openDeviceCaseFailureLogs } from '@/api/tahp/device-self-check'
 import EaCard from '@/components/layout/EaCard.vue'
+import BitflipResultTable from './BitflipResultTable.vue'
 import { DEVICE_SELF_CHECK_KEY } from './self-check-context'
 import {
   AUTOMATION_MODE_FILTER_OPTIONS,
   DEVICE_LIST_FILTER_OPTIONS,
+  bitflipResultOf,
   formatCatalogAutomation,
   formatCatalogModuleScope,
   formatCatalogPrereq,
@@ -186,6 +188,7 @@ const {
   selectDevice,
   saveCatalogTypeSettings,
   saveKernelFeatureCodeDir,
+  saveBitflipRepeatCount,
   openGmsTradefedDialog,
   gmsTradefedConfiguredSummary,
   gmsHostSupported,
@@ -241,6 +244,9 @@ const caseDetailScrollRef = ref<HTMLElement | null>(null)
 const currentCaseStepIndex = computed(() =>
   getCurrentCaseStepIndex(selectedCaseResult.value?.steps, selectedCaseResult.value?.status),
 )
+
+/** 当前选中用例的 bitflip 压测结果表（detail.bitflip，无则 null） */
+const selectedBitflipResult = computed(() => bitflipResultOf(selectedCaseResult.value?.detail))
 
 watch(
   () => [
@@ -949,6 +955,25 @@ function handleDutRowAction(deviceId: string) {
                     执行。
                   </span>
                 </div>
+                <div
+                  v-else-if="selectedCatalogTestType === 'bitflip'"
+                  class="catalog-bitflip-settings catalog-overview-retest"
+                >
+                  <label class="catalog-monkey-label" for="bitflip-repeat-count-input">每项重复测试次数 (-r)</label>
+                  <input
+                    id="bitflip-repeat-count-input"
+                    v-model.number="catalogTypeSettings.bitflipRepeatCount"
+                    type="number"
+                    min="1"
+                    max="100"
+                    class="catalog-setting-input catalog-monkey-input"
+                    :disabled="catalogSettingsSaving"
+                    @change="saveCatalogTypeSettings"
+                  />
+                  <span class="ea-muted catalog-monkey-help">
+                    遍历条件下每项重复测试次数（BAT -r 参数），默认 5，范围 1-100；全量压测耗时数小时，期间设备会多次重启
+                  </span>
+                </div>
                 <div v-else class="catalog-auto-retest-row catalog-overview-retest">
                   <label
                     class="checkbox-label"
@@ -1653,6 +1678,27 @@ function handleDutRowAction(deviceId: string) {
                       </p>
                     </div>
 
+                    <div
+                      v-if="selectedTestType === 'bitflip'"
+                      class="form-group bitflip-repeat-count-settings"
+                    >
+                      <span class="form-label">每项重复测试次数 (-r)</span>
+                      <input
+                        id="start-bitflip-repeat-count"
+                        v-model.number="catalogTypeSettings.bitflipRepeatCount"
+                        type="number"
+                        min="1"
+                        max="100"
+                        class="form-input"
+                        :disabled="catalogSettingsSaving"
+                        @change="saveBitflipRepeatCount(false)"
+                        @click.stop
+                      />
+                      <p class="flash-options-hint ea-muted">
+                        遍历条件下每项重复测试次数（BAT -r 参数），默认 5；全量压测耗时数小时，期间设备会多次重启，需 userdebug 已 root 且主机 java+adb 可用
+                      </p>
+                    </div>
+
                     <div v-if="selectedTestType !== 'ota_upgrade'" class="form-group flash-options">
                       <label class="checkbox-label flash-options-toggle">
                         <input type="checkbox" v-model="enableFlash" />
@@ -1981,6 +2027,11 @@ function handleDutRowAction(deviceId: string) {
                           </tr>
                         </tbody>
                       </table>
+                    </div>
+
+                    <div class="case-bitflip" v-if="selectedBitflipResult">
+                      <div class="section-title">bitflip 压测结果</div>
+                      <BitflipResultTable :result="selectedBitflipResult" />
                     </div>
                     <div v-if="canOpenSelectedFailureLogs()" class="case-detail-actions">
                       <button

@@ -49,3 +49,6 @@ tahp-console/packages/server/src/services/tahp/self-check/flash_tool/flash_packa
 
 # gki_patch_tool
 tools/gki-patch-tool/logs
+
+# bitflip BAT 压测运行输出（每次测试生成，勿提交）
+tahp-console/packages/server/src/services/tahp/self-check/python/tools/bitflip_bat/BAT-Data_*/

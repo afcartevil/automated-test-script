@@ -1,4 +1,4 @@
-import type { CaseCatalogGroup, DeviceInfo, SelfCheckReportSummary, SelfCheckTestConfig } from '@/api/tahp/device-self-check'
+import type { BitflipResultDetail, CaseCatalogGroup, DeviceInfo, SelfCheckReportSummary, SelfCheckTestConfig } from '@/api/tahp/device-self-check'
 
 export const SELF_CHECK_SUBTITLE =
   '验测任务 → 测试执行 → 评审补全 → 人工复核报告'
@@ -83,7 +83,7 @@ export const OTA_UPGRADE_FLASH_CONFIRM = {
 } as const
 
 /** 标准测试大类展示顺序（与用例列表 / 后端 catalog 一致） */
-export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'monkey_check', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'ai_generated'] as const
+export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'monkey_check', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'bitflip', 'ai_generated'] as const
 
 export type StandardTestTypeKey = (typeof STANDARD_TEST_TYPE_ORDER)[number]
 
@@ -104,6 +104,7 @@ export const MODULE_ORDER: Record<string, number> = {
   scheme: 16,
   stability: 17,
   generated: 20,
+  bst: 21,
   tp: 30,
   vibrator: 31,
   audio: 32,
@@ -126,6 +127,7 @@ export function getTestTypeLabel(testType?: string): string {
   if (testType === 'thermal' || testType === 'therm') return '温升方案自检'
   if (testType === 'kernel_feature') return '内核特性自检'
   if (testType === 'pipeline_adapt') return '流水线适配自动化测试'
+  if (testType === 'bitflip') return 'bitflip压测'
   if (testType === 'ai_generated') return 'AI用例'
   if (testType === 'custom') return '自定义测试'
   return '未分配'
@@ -173,6 +175,7 @@ export function getModuleLabel(module: string): string {
     fingerprint: '指纹/人脸',
     charger: 'Charger',
     generated: 'AI生成用例',
+    bst: 'bitflip压测(BAT)',
   }
   return labels[module] || module
 }
@@ -352,6 +355,9 @@ export function formatCatalogAutomation(group: CaseCatalogGroup): string {
   if (group.testType === 'pipeline_adapt') {
     return '脚本全自动（节点检查 + 工模 + 应用 UI）'
   }
+  if (group.testType === 'bitflip') {
+    return '脚本全自动（MTK BAT bitflip 压测）'
+  }
   if (group.testType === 'ai_generated') {
     const totalCases = group.modules.reduce((sum, m) => sum + m.cases.length, 0)
     return totalCases > 0 ? 'NL UI 自动化 + 半自动（Gerrit）' : '支持 NL UI 自动化新增'
@@ -365,6 +371,9 @@ export function formatCatalogAutomation(group: CaseCatalogGroup): string {
 export function formatCatalogPrereq(group: CaseCatalogGroup): string {
   if (group.testType === 'power') {
     return 'ADB 连接测试机+TPower测量仪器'
+  }
+  if (group.testType === 'bitflip') {
+    return 'ADB 连接测试机（userdebug 已 root）；主机需 java+adb；测试中途设备会多次重启'
   }
   if (group.testType === 'ota_upgrade') {
     return 'ADB 连接测试机；开始前须获取外发版本；按 SOP 操作'
@@ -417,6 +426,7 @@ export function reportShortType(testType: string): string {
   if (testType === 'kernel_feature') return '内核特性'
   if (testType === 'thermal' || testType === 'therm') return '温升方案'
   if (testType === 'pipeline_adapt') return '流水线适配'
+  if (testType === 'bitflip') return 'bitflip压测'
   if (testType === 'str4') return 'STR4'
   if (testType === 'week') return '周版本'
   if (testType === 'custom') return '自定义'
@@ -522,6 +532,9 @@ export function formatTestConfigEntries(cfg?: SelfCheckTestConfig): { label: str
   if (cfg.kernelFeatureCodeDir) {
     rows.push({ label: '内核源码路径', value: cfg.kernelFeatureCodeDir })
   }
+  if (cfg.bitflipRepeatCount) {
+    rows.push({ label: 'bitflip 每项重复次数 (-r)', value: String(cfg.bitflipRepeatCount) })
+  }
   if (cfg.autoRetestEnabled !== undefined) {
     rows.push({
       label: '自动复测',
@@ -564,4 +577,12 @@ export function isPendingManualReportFillIn(item: {
   return item.automationMode === 'manual'
     && item.status === '待确认'
     && Boolean(item.message?.includes('报告中补录'))
+}
+
+/** 从用例 detail 中提取 bitflip 压测结果表（无 bitflip 数据时返回 null） */
+export function bitflipResultOf(detail?: Record<string, any> | null): BitflipResultDetail | null {
+  const bitflip = detail?.bitflip
+  if (!bitflip || !Array.isArray(bitflip.columns) || !bitflip.columns.length) return null
+  if (!Array.isArray(bitflip.rows)) return null
+  return bitflip as BitflipResultDetail
 }

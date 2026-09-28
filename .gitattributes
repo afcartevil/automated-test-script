@@ -1,3 +1,7 @@
 # Skill 由同步中心下发，统一为 LF 换行，避免打开 EA 后 Git 把未改内容显示成修改。
 skills/** text=auto eol=lf
 run_adapter.sh text eol=lf
+
+# bitflip BAT 工具：设备端 .sh 必须 LF（CRLF 会导致设备上 sh 执行失败）；主机 .bat 保持 CRLF
+tahp-console/packages/server/src/services/tahp/self-check/python/tools/bitflip_bat/** text=auto eol=lf
+tahp-console/packages/server/src/services/tahp/self-check/python/tools/bitflip_bat/**/*.bat text eol=crlf

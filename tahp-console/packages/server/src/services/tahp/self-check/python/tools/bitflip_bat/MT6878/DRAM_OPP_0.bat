@@ -1,0 +1,1 @@
+adb -s %1 shell "echo 0 > /sys/kernel/helio-dvfsrc/dvfsrc_force_vcore_dvfs_opp"

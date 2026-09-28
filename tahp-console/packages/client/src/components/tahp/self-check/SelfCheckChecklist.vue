@@ -61,6 +61,7 @@ const toneByType: Record<string, string> = {
   power_feature: 'ea-t-violet',
   thermal: 'ea-t-orange',
   ai_generated: 'ea-t-cyan',
+  bitflip: 'ea-t-indigo',
 }
 
 function openCatalog(testType: string) {

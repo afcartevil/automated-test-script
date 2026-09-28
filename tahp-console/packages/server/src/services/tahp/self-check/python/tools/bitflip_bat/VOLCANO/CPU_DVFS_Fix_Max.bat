@@ -1,0 +1,11 @@
+:: Qualcomm volcano: pin all CPU policies to max frequency (equivalent of MTK Fix-OPP0)
+adb -s %1 shell "echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor"
+adb -s %1 shell "echo performance > /sys/devices/system/cpu/cpufreq/policy4/scaling_governor"
+adb -s %1 shell "echo performance > /sys/devices/system/cpu/cpufreq/policy7/scaling_governor"
+adb -s %1 shell "echo 1804800 > /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq"
+adb -s %1 shell "echo 2400000 > /sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq"
+adb -s %1 shell "echo 2707200 > /sys/devices/system/cpu/cpufreq/policy7/scaling_min_freq"
+adb -s %1 shell "echo 1804800 > /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq"
+adb -s %1 shell "echo 2400000 > /sys/devices/system/cpu/cpufreq/policy4/scaling_max_freq"
+adb -s %1 shell "echo 2707200 > /sys/devices/system/cpu/cpufreq/policy7/scaling_max_freq"
+adb -s %1 shell "cat /sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq /sys/devices/system/cpu/cpufreq/policy4/scaling_cur_freq /sys/devices/system/cpu/cpufreq/policy7/scaling_cur_freq"

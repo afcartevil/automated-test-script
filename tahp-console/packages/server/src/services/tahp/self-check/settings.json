@@ -1,6 +1,7 @@
 {
   "autoTestEnabled": {},
   "autoTestPath": {},
+  "bitflipRepeatCount": 5,
   "monkeyDuration": "7d",
   "smokeUsdSkipSpdInfo": false,
   "gmsTradefedPath": {},

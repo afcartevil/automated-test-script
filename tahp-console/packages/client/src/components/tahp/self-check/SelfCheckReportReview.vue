@@ -2,8 +2,9 @@
 import { ref, computed, onMounted, onActivated, watch, inject } from 'vue'
 import { NEmpty, NButton, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
+import BitflipResultTable from './BitflipResultTable.vue'
 import { DEVICE_SELF_CHECK_KEY } from './self-check-context'
-import { getCaseResultColor, getTestTypeLabel, reportTitle, displayReportStatus, reportStatusKind, getAutomationModeIcon, getAutomationModeLabel, normalizeAutomationMode, formatTestConfigEntries, isPendingManualReportFillIn, selfCheckPassRateLabel, reportListTimeLabel, formatSelfCheckIsoTime, selfCheckSessionDirName } from './self-check-utils'
+import { getCaseResultColor, getTestTypeLabel, reportTitle, displayReportStatus, reportStatusKind, getAutomationModeIcon, getAutomationModeLabel, normalizeAutomationMode, formatTestConfigEntries, isPendingManualReportFillIn, selfCheckPassRateLabel, reportListTimeLabel, formatSelfCheckIsoTime, selfCheckSessionDirName, bitflipResultOf } from './self-check-utils'
 import {
   listSelfCheckReports,
   getSelfCheckReportDetail,
@@ -79,6 +80,8 @@ const caseGroups = computed(() => {
 const selectedCaseItem = computed(() =>
   reportDetail.value?.allCaseItems.find(c => c.caseKey === selectedCaseKey.value) ?? null,
 )
+
+const selectedCaseBitflipResult = computed(() => bitflipResultOf(selectedCaseItem.value?.detail))
 
 const testConfigEntries = computed(() =>
   formatTestConfigEntries(reportDetail.value?.testConfig),
@@ -561,6 +564,10 @@ onActivated(async () => {
                   <div v-for="(step, idx) in selectedCaseItem.steps" :key="idx" class="step-item">
                     {{ step.stepDesc }}
                   </div>
+                </div>
+                <div v-if="selectedCaseBitflipResult" class="case-bitflip">
+                  <div class="section-title">bitflip 压测结果</div>
+                  <BitflipResultTable :result="selectedCaseBitflipResult" />
                 </div>
                 <div class="case-detail-actions">
                   <button

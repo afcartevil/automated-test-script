@@ -145,6 +145,11 @@ def run(
         }
         if status == "pending":
             payload["full_automation"] = False
+        # 透传结构化结果（如 bitflip 逐轮结果表 / 功耗测量 evidence），供 Node 侧入报告
+        if result.get("evidence") is not None:
+            payload["evidence"] = result["evidence"]
+        if result.get("detail") is not None:
+            payload["detail"] = result["detail"]
         return payload
     return {"status": "pass", "message": "", "full_automation": True}
 

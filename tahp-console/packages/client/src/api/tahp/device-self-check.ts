@@ -27,7 +27,7 @@ export interface DeviceInfo {
   deviceName: string
   role: DeviceRole
   status: DeviceStatus
-  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
+  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip'
   currentModule?: string
   simCards: SimCardInfo[]
   testStartTime?: string
@@ -104,7 +104,7 @@ export interface ModuleProgress {
 
 export interface TestSession {
   deviceId: string
-  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
+  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip'
   modules: string[]
   currentModuleIndex: number
   moduleProgress: Record<string, ModuleProgress>
@@ -209,7 +209,7 @@ export interface StartTestTcardPayload {
 
 export async function startTest(
   deviceId: string,
-  testType: 'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated',
+  testType: 'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip',
   flash?: StartTestFlashPayload,
   scheduleKey?: string,
   prioritizeTddManual?: boolean,
@@ -546,6 +546,8 @@ export interface AutoTestSettings {
   gmsHostSupported?: boolean
   /** 内核特性/稳定性：Android 源码根（用例 7/11-14） */
   kernelFeatureCodeDir?: string
+  /** bitflip 压测：遍历条件下每项重复测试次数（BAT -r 参数），默认 5 */
+  bitflipRepeatCount?: number
 }
 
 export async function getSettings(): Promise<AutoTestSettings> {
@@ -561,6 +563,7 @@ export async function getSettings(): Promise<AutoTestSettings> {
     gmsTimeoutHours: Number(data?.gmsTimeoutHours) > 0 ? Number(data.gmsTimeoutHours) : 8,
     gmsHostSupported: data?.gmsHostSupported !== false,
     kernelFeatureCodeDir: String(data?.kernelFeatureCodeDir || '').trim(),
+    bitflipRepeatCount: Number(data?.bitflipRepeatCount) > 0 ? Number(data.bitflipRepeatCount) : 5,
   }
 }
 
@@ -624,6 +627,7 @@ export interface SelfCheckTestConfig {
   gmsTradefedPath?: Record<string, string>
   gmsTimeoutHours?: number
   kernelFeatureCodeDir?: string
+  bitflipRepeatCount?: number
   autoRetestEnabled?: boolean
   autoRetestCount?: number
   flashBeforeTest?: SelfCheckFlashBeforeTestConfig
@@ -656,6 +660,25 @@ export interface SelfCheckReportSummary {
   testConfig?: SelfCheckTestConfig
 }
 
+/** bitflip 压测逐轮结果表（CaseResult.detail.bitflip / SelfCheckCaseItem.detail.bitflip） */
+export interface BitflipResultDetail {
+  columns: string[]
+  rows: any[][]
+  totalRounds: number
+  passedRounds: number
+  failedRounds: number
+  overallResult: string
+  logDir?: string
+  xlsxPath?: string
+  bstLogPath?: string
+  archivedXlsxPath?: string
+  archivedBstLogPath?: string
+  repeatCount?: number
+  javaExitCode?: number
+  durationSec?: number
+  failureComments?: string[]
+}
+
 export interface SelfCheckCaseItem {
   caseKey: string
   caseName: string
@@ -668,6 +691,8 @@ export interface SelfCheckCaseItem {
   automationMode?: AutomationMode
   steps?: { stepDesc: string; status: string; timestamp: string }[]
   failureLogDir?: string
+  /** 用例附加结构化数据（如 bitflip 压测逐轮结果表 detail.bitflip） */
+  detail?: Record<string, any>
 }
 
 export interface SelfCheckReportDetail extends SelfCheckReportSummary {

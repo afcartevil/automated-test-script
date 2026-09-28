@@ -60,7 +60,9 @@ telephony / kernel-driver / power-mgmt / shared，权威常量在 `packages/serv
 
 ## 质量验测测试大类（self-check）
 
-str4 / week / monkey / monkey_check / smoke / ota_upgrade / gms / power / power_feature / thermal / kernel_feature / pipeline_adapt / ai_generated。权威注册点：BFF `device-self-check.ts`（`StandardTestType`、`TEST_TYPE_LABELS`、`MODULE_ORDER`、`typeOrder`、`getModulesForTestType`）与客户端 `self-check-utils.ts`（`STANDARD_TEST_TYPE_ORDER`），用例资产在 `self-check/case_config/` + `python/cases/`；新增/接入流程与能力门禁见 `.cursor/skills/self-check-test-integration/`。
+str4 / week / monkey / monkey_check / smoke / ota_upgrade / gms / power / power_feature / thermal / kernel_feature / pipeline_adapt / bitflip / ai_generated。权威注册点：BFF `device-self-check.ts`（`StandardTestType`、`TEST_TYPE_LABELS`、`MODULE_ORDER`、`typeOrder`、`getModulesForTestType`）与客户端 `self-check-utils.ts`（`STANDARD_TEST_TYPE_ORDER`），用例资产在 `self-check/case_config/` + `python/cases/`；新增/接入流程与能力门禁见 `.cursor/skills/self-check-test-integration/`。
+
+- **bitflip（BAT bitflip 压测）**：MTK BitflipAnalysisTool v5.5.3 已 vendor 至 `python/tools/bitflip_bat/`（jar + 平台脚本，勿删改；运行输出 `BAT-Data_*/` 已 gitignore）；`-r` 重复次数经设置项 `bitflipRepeatCount`（默认 5）下发；结果表解析器在用例内（`cases/bitflip/bst/bst_runner.py`，纯 stdlib），逐轮结果写入 `detail.bitflip` 供报告页与导出 xlsx 展示。
 
 ## 路径与配置排障
 

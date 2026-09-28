@@ -39,6 +39,8 @@ export interface SelfCheckCaseItem {
   steps?: { stepDesc: string; status: string; timestamp: string }[]
   /** 失败用例导出的设备日志目录 */
   failureLogDir?: string
+  /** 用例附加结构化数据（如 bitflip 压测逐轮结果表 detail.bitflip） */
+  detail?: Record<string, any>
 }
 
 /** 执行阶段跳过的人工用例，在报告中补录结果 */
@@ -77,6 +79,8 @@ export interface SelfCheckTestConfig {
   gmsTimeoutHours?: number
   /** 内核特性/稳定性：Android 源码根 */
   kernelFeatureCodeDir?: string
+  /** bitflip 压测：遍历条件下每项重复测试次数（BAT -r 参数） */
+  bitflipRepeatCount?: number
   autoRetestEnabled?: boolean
   autoRetestCount?: number
   flashBeforeTest?: SelfCheckFlashBeforeTestConfig
@@ -215,6 +219,9 @@ export function formatSelfCheckTestConfigMetaRows(cfg?: SelfCheckTestConfig): st
   }
   if (cfg.kernelFeatureCodeDir) {
     rows.push(['内核源码路径 (code_dir)', cfg.kernelFeatureCodeDir])
+  }
+  if (cfg.bitflipRepeatCount) {
+    rows.push(['bitflip 每项重复次数 (-r)', String(cfg.bitflipRepeatCount)])
   }
   if (cfg.autoRetestEnabled !== undefined) {
     rows.push([

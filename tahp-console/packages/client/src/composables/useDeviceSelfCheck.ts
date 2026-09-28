@@ -94,7 +94,7 @@ const selectedDevice = ref<DeviceDetail | null>(null)
 const moduleConditions = ref<Record<string, ModuleCondition>>({})
 
 // 测试类型选择
-const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'>('week')
+const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip'>('week')
 /** 空闲设备开始测试前勾选的模块（多模块大类可筛；默认全选） */
 const selectedStartModules = ref<Set<string>>(new Set())
 /** 空闲设备开始测试前的角色意向（仅 UI，选中设备时默认测试机；点击开始测试时才落盘） */
@@ -399,6 +399,7 @@ const catalogTypeSettings = ref({
     gts: '',
     vts: '',
   },
+  bitflipRepeatCount: 5,
 })
 const catalogSettingsSaving = ref(false)
 const gmsHostSupported = ref(true)
@@ -764,6 +765,35 @@ async function saveKernelFeatureCodeDir(showToast = false) {
   }
 }
 
+async function saveBitflipRepeatCount(showToast = false) {
+  catalogSettingsSaving.value = true
+  try {
+    const current = await getSettings()
+    const autoRetestEnabled = { ...(current.autoRetestEnabled || {}) }
+    const autoRetestCount = { ...(current.autoRetestCount || {}) }
+    delete autoRetestEnabled.bitflip
+    delete autoRetestCount.bitflip
+    const repeatCount = Math.min(100, Math.max(1, Math.round(Number(catalogTypeSettings.value.bitflipRepeatCount) || 5)))
+    catalogTypeSettings.value.bitflipRepeatCount = repeatCount
+    await updateSettings({
+      ...current,
+      autoRetestEnabled,
+      autoRetestCount,
+      bitflipRepeatCount: repeatCount,
+    })
+    if (showToast) {
+      message.success('bitflip 每项重复测试次数已保存')
+    }
+  } catch (e: any) {
+    const text = e?.message || '保存 bitflip 配置失败'
+    error.value = text
+    message.error(text)
+    throw e
+  } finally {
+    catalogSettingsSaving.value = false
+  }
+}
+
 async function saveGmsTradefedSettings(showToast = false) {
   catalogSettingsSaving.value = true
   try {
@@ -874,10 +904,10 @@ async function openCaseCatalog(testType: string) {
       [...new Set(detail.map(item => `${testType}/${item.module}`))]
     )
     catalogTypeSettings.value = {
-      autoRetestEnabled: testType === 'monkey' || testType === 'monkey_check' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated' || testType === 'ota_upgrade'
+      autoRetestEnabled: testType === 'monkey' || testType === 'monkey_check' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated' || testType === 'ota_upgrade' || testType === 'bitflip'
         ? false
         : (settingsData.autoRetestEnabled?.[testType] ?? true),
-      autoRetestCount: testType === 'monkey' || testType === 'monkey_check' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated' || testType === 'ota_upgrade'
+      autoRetestCount: testType === 'monkey' || testType === 'monkey_check' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated' || testType === 'ota_upgrade' || testType === 'bitflip'
         ? 0
         : (settingsData.autoRetestCount?.[testType] ?? 1),
       monkeyDuration: settingsData.monkeyDuration || '7d',
@@ -889,6 +919,7 @@ async function openCaseCatalog(testType: string) {
         gts: settingsData.gmsTradefedPath?.gts || '',
         vts: settingsData.gmsTradefedPath?.vts || '',
       },
+      bitflipRepeatCount: settingsData.bitflipRepeatCount || 5,
     }
     gmsHostSupported.value = settingsData.gmsHostSupported !== false
     if (detail.length > 0) {
@@ -1103,6 +1134,11 @@ async function saveCatalogTypeSettings() {
 
     if (testType === 'kernel_feature') {
       await saveKernelFeatureCodeDir(false)
+      return
+    }
+
+    if (testType === 'bitflip') {
+      await saveBitflipRepeatCount(false)
       return
     }
 
@@ -1757,6 +1793,9 @@ async function handleStartTest(deviceId: string) {
     }
     if (selectedTestType.value === 'gms') {
       await saveGmsTradefedSettings(false)
+    }
+    if (selectedTestType.value === 'bitflip') {
+      await saveBitflipRepeatCount(false)
     }
     const availableModules = listModulesForTestType(selectedTestType.value)
     const modulesToRun = availableModules.filter(m => selectedStartModules.value.has(m))
@@ -2806,6 +2845,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     saveCatalogTypeSettings,
     saveKernelFeatureCodeDir,
     loadKernelFeatureSettings,
+    saveBitflipRepeatCount,
     saveGmsTradefedSettings,
     saveGmsTradefedSettingsFromDialog,
     openGmsTradefedDialog,

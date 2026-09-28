@@ -61,7 +61,7 @@ export type DeviceStatus =
   | '刷机中'
   | 'T卡升级中'
 
-export type StandardTestType = 'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated'
+export type StandardTestType = 'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip'
 export type DeviceTestType = StandardTestType | 'custom'
 
 export interface SimCardInfo {
@@ -263,6 +263,8 @@ interface AutoTestSettings {
   gmsHostSupported?: boolean
   /** 内核特性/稳定性：Android 源码根（用例 7/11-14 对照） */
   kernelFeatureCodeDir?: string
+  /** bitflip 压测：遍历条件下每项重复测试次数（BAT -r 参数），默认 5 */
+  bitflipRepeatCount?: number
 }
 
 export const GMS_WINDOWS_UNSUPPORTED_MESSAGE = 'Windows 环境不支持 GMS 测试，请在 Linux 主机上运行 cts/gts/vts-tradefed'
@@ -292,10 +294,21 @@ function assertGmsRunnable(testType: string, selectedCases?: string[]): void {
 }
 
 const DEFAULT_MONKEY_DURATION = '7d'
+const DEFAULT_BITFLIP_REPEAT_COUNT = 5
+const BITFLIP_REPEAT_COUNT_MIN = 1
+const BITFLIP_REPEAT_COUNT_MAX = 100
+
+export function normalizeBitflipRepeatCount(raw?: number): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_BITFLIP_REPEAT_COUNT
+  return Math.min(BITFLIP_REPEAT_COUNT_MAX, Math.max(BITFLIP_REPEAT_COUNT_MIN, Math.round(n)))
+}
+
 let settings: AutoTestSettings = {
   autoTestEnabled: {},
   autoTestPath: {},
   monkeyDuration: DEFAULT_MONKEY_DURATION,
+  bitflipRepeatCount: DEFAULT_BITFLIP_REPEAT_COUNT,
 }
 
 export interface CaseCatalogDetailItem {
@@ -344,7 +357,8 @@ function getAutoRetestConfig(testType: string): { enabled: boolean; count: numbe
     testType === 'thermal' ||
     testType === 'kernel_feature' ||
     testType === 'ai_generated' ||
-    testType === 'ota_upgrade'
+    testType === 'ota_upgrade' ||
+    testType === 'bitflip'
   ) {
     return { enabled: false, count: 0 }
   }
@@ -406,6 +420,9 @@ function snapshotTestConfig(
       if (settings.kernelFeatureCodeDir?.trim()) {
         cfg.kernelFeatureCodeDir = settings.kernelFeatureCodeDir.trim()
       }
+      break
+    case 'bitflip':
+      cfg.bitflipRepeatCount = normalizeBitflipRepeatCount(settings.bitflipRepeatCount)
       break
     case 'custom':
     case 'ai_generated':
@@ -729,6 +746,7 @@ export function getSettings(): AutoTestSettings {
     gmsTimeoutHours: normalizeGmsTimeoutHours(settings.gmsTimeoutHours),
     gmsHostSupported: isGmsSupportedOnHost(),
     kernelFeatureCodeDir: String(settings.kernelFeatureCodeDir || '').trim(),
+    bitflipRepeatCount: normalizeBitflipRepeatCount(settings.bitflipRepeatCount),
   }
 }
 
@@ -743,6 +761,7 @@ export function updateSettings(newSettings: AutoTestSettings): void {
     gmsTradefedPath: normalizeGmsTradefedPath(persistable.gmsTradefedPath),
     gmsTimeoutHours: normalizeGmsTimeoutHours(persistable.gmsTimeoutHours),
     kernelFeatureCodeDir: String(persistable.kernelFeatureCodeDir || '').trim(),
+    bitflipRepeatCount: normalizeBitflipRepeatCount(persistable.bitflipRepeatCount),
   }
   saveSettings()
 }
@@ -773,6 +792,7 @@ function loadCaseConfigs(): void {
     'pipeline_adapt_lcm.json',
     'pipeline_adapt_fingerprint.json',
     'pipeline_adapt_tdd.json',
+    'bitflip_bst.json',
   ]
   
   for (const file of configFiles) {
@@ -1536,6 +1556,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'thermal') return ['scheme']
   if (testType === 'kernel_feature') return ['stability', 'memory', 'sched']
   if (testType === 'pipeline_adapt') return ['tp', 'vibrator', 'audio', 'lcm', 'fingerprint', 'tdd']
+  if (testType === 'bitflip') return ['bst']
   if (testType === 'ai_generated') return [AI_GENERATED_MODULE]
   return ['driver', 'tdd']
 }
@@ -1925,6 +1946,7 @@ function buildDeviceInfo(
       settings.gmsTradefedPath,
       settings.gmsTradefedRoot,
     ),
+    bitflipRepeatCount: normalizeBitflipRepeatCount(settings.bitflipRepeatCount),
     ...(testType === 'kernel_feature' && settings.kernelFeatureCodeDir?.trim()
       ? { code_dir: settings.kernelFeatureCodeDir.trim() }
       : {}),
@@ -2363,6 +2385,8 @@ async function execPythonInit(
 const CASE_EXEC_TIMEOUT_MS = 5 * 60_000
 const SMOKE_USD_EXEC_TIMEOUT_MS = 3_600_000
 const MANUAL_CONFIRM_TIMEOUT_MS = 30 * 60_000
+/** bitflip 压测为小时级同步长跑（遍历条件 × 每项重复次数），默认 24h */
+const BITFLIP_EXEC_TIMEOUT_MS = 24 * 3_600_000
 
 function resolveCaseExecTimeoutMs(testType: string, module: string): number {
   if (testType === 'smoke' && module === 'usd') {
@@ -2405,6 +2429,10 @@ function resolveCaseExecTimeoutMs(testType: string, module: string): number {
   if (testType === 'monkey_check' && module === 'tne') {
     const raw = Number(process.env.TAHP_MONKEY_CHECK_TIMEOUT_MS)
     return Number.isFinite(raw) && raw > 0 ? raw : 10 * 60_000
+  }
+  if (testType === 'bitflip' && module === 'bst') {
+    const raw = Number(process.env.TAHP_BITFLIP_TIMEOUT_MS)
+    return Number.isFinite(raw) && raw > 0 ? raw : BITFLIP_EXEC_TIMEOUT_MS
   }
   return CASE_EXEC_TIMEOUT_MS
 }
@@ -3971,12 +3999,6 @@ function generateXlsx(sheets: { name: string; rows: string[][]; styles: ('green'
   const escXml = (s: string): string =>
     String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-  // sharedStrings.xml
-  const ssXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${sharedStrings.length}" uniqueCount="${sharedStrings.length}">
-${sharedStrings.map(s => `<si><t>${escXml(s)}</t></si>`).join('\n')}
-</sst>`
-
   // styles.xml
   const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
@@ -4053,7 +4075,6 @@ ${sheetsXml}
   zip.addFile('xl/workbook.xml', Buffer.from(workbookXml, 'utf-8'))
   zip.addFile('xl/_rels/workbook.xml.rels', Buffer.from(relsXml, 'utf-8'))
   zip.addFile('xl/styles.xml', Buffer.from(stylesXml, 'utf-8'))
-  zip.addFile('xl/sharedStrings.xml', Buffer.from(ssXml, 'utf-8'))
 
   // 每个 sheet 生成 worksheet XML
   sheets.forEach((sheet, si) => {
@@ -4077,8 +4098,18 @@ ${cols}
     zip.addFile(`xl/worksheets/sheet${si + 1}.xml`, Buffer.from(sheetXml, 'utf-8'))
   })
 
+  // sharedStrings 在生成各 sheet 时收集，须在循环之后落盘（否则 sst 为空、单元格全部空白）
+  const ssXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${sharedStrings.length}" uniqueCount="${sharedStrings.length}">
+${sharedStrings.map(s => `<si><t>${escXml(s)}</t></si>`).join('\n')}
+</sst>`
+  zip.addFile('xl/sharedStrings.xml', Buffer.from(ssXml, 'utf-8'))
+
   return zip.toBuffer()
 }
+
+/** 仅测试用：直接校验 xlsx 产物（sharedStrings 回归） */
+export const __testingGenerateXlsx = generateXlsx
 
 async function generateTestReport(
   deviceId: string,
@@ -4171,6 +4202,37 @@ async function generateTestReport(
         }
         sheets.push({ name: sheetName, rows, styles })
       }
+    }
+
+    // bitflip 压测：完整结果表 sheet（每一轮每一项结果 + 整体结果 + 日志路径）
+    for (const c of orderedResults) {
+      if (c.testType !== 'bitflip') continue
+      const bitflip = c.detail?.bitflip
+      if (!bitflip || !Array.isArray(bitflip.columns) || !bitflip.columns.length) continue
+      const columns: string[] = bitflip.columns.map((v: any) => String(v))
+      const resultCol = columns.findIndex(name => name.toLowerCase() === 'result')
+      const rows: string[][] = [
+        ['整体结果', String(bitflip.overallResult || 'UNKNOWN')],
+        ['轮次统计', `共 ${bitflip.totalRounds ?? 0} 轮：通过 ${bitflip.passedRounds ?? 0}、失败 ${bitflip.failedRounds ?? 0}`],
+        ['每项重复次数 (-r)', String(bitflip.repeatCount ?? '')],
+        ['测试日志目录', String(bitflip.logDir || '')],
+        ['主日志 (BST_Log.txt)', String(bitflip.bstLogPath || '')],
+        ['原始结果表', String(bitflip.xlsxPath || '')],
+        [],
+        columns,
+      ]
+      const styles: ('green' | 'red' | 'yellow' | '')[] = [
+        bitflip.overallResult === 'PASS' ? 'green' : 'red',
+        '', '', '', '', '', '', '',
+      ]
+      for (const dataRow of bitflip.rows || []) {
+        rows.push(dataRow.map((cell: any) => (
+          typeof cell === 'boolean' ? (cell ? 'PASS' : 'FAIL') : String(cell ?? '')
+        )))
+        const roundOk = resultCol >= 0 && dataRow[resultCol] === true
+        styles.push(roundOk ? 'green' : 'red')
+      }
+      sheets.push({ name: 'bitflip结果', rows, styles })
     }
 
     const buffer = generateXlsx(sheets)
@@ -4273,6 +4335,7 @@ async function generateTestReport(
       automationMode: c.automationMode ?? (c.fullAutomation ? 'full' : 'manual'),
       steps: c.steps,
       failureLogDir: c.failureLogDir,
+      ...(c.detail ? { detail: c.detail } : {}),
     }))
 
     const detailPayload = buildSelfCheckDetailPayload(summary, failedCaseItems, allCaseItems)
@@ -4827,6 +4890,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     kernel_feature: '内核特性自检',
     pipeline_adapt: '流水线适配自动化测试',
     ai_generated: 'AI用例',
+    bitflip: 'bitflip压测',
   }
   const MODULE_ORDER: Record<string, number> = {
     driver: 0,
@@ -4846,6 +4910,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     stability: 17,
     memory: 18,
     sched: 19,
+    bst: 21,
     tp: 30,
     vibrator: 31,
     audio: 32,
@@ -4883,7 +4948,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week', 'monkey', 'monkey_check', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', AI_GENERATED_TEST_TYPE]
+  const typeOrder = ['str4', 'week', 'monkey', 'monkey_check', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'bitflip', AI_GENERATED_TEST_TYPE]
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),
