@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import type { ProxyOptions } from 'vite'
 import { resolve } from 'path'
-import pkg from './package.json'
+import pkg from './package.json' with { type: 'json' }
 
 const BACKEND = 'http://127.0.0.1:8650'
 
@@ -25,14 +25,14 @@ function createProxyConfig(): ProxyOptions {
 
 export default defineConfig({
   root: 'packages/client',
-  cacheDir: resolve(__dirname, 'node_modules/.vite'),
+  cacheDir: resolve(import.meta.dirname, 'node_modules/.vite'),
   plugins: [vue()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'packages/client/src'),
+      '@': resolve(import.meta.dirname, 'packages/client/src'),
     },
   },
   build: {
@@ -76,7 +76,7 @@ export default defineConfig({
       'pinia',
       'naive-ui',
     ],
-    entries: [resolve(__dirname, 'packages/client/index.html')],
+    entries: [resolve(import.meta.dirname, 'packages/client/index.html')],
   },
   server: {
     proxy: {

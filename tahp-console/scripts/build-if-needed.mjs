@@ -20,7 +20,7 @@ const WATCH_EXTENSIONS = new Set(['.ts', '.tsx', '.vue', '.js', '.mjs', '.scss',
 const WATCH_FILES = [
   'package.json',
   'package-lock.json',
-  'vite.config.ts',
+  'vite.config.mts',
   'vite.config.website.ts',
   'scripts/build-server.mjs',
   'bin/easyadapter-tray.mjs',

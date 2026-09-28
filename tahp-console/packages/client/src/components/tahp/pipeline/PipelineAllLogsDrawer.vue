@@ -201,8 +201,6 @@ watch(
 </template>
 
 <style scoped lang="scss">
-$tones: (#7aa2f7, #bb9af7, #7dcfff, #9ece6a, #e0af68, #73daca);
-
 .mask {
   position: fixed;
   inset: 0;
@@ -373,10 +371,12 @@ $tones: (#7aa2f7, #bb9af7, #7dcfff, #9ece6a, #e0af68, #73daca);
   font-weight: 400;
   color: #8b90a0;
 }
-@for $i from 1 through length($tones) {
-  .tone-#{$i - 1} {
-    color: nth($tones, $i);
-    &.dot { background: nth($tones, $i); }
-  }
-}
+/* 阶段色板：页签色点与日志行阶段名共用，按启用顺序循环 */
+.tone-0 { color: #7aa2f7; }
+.tone-1 { color: #bb9af7; }
+.tone-2 { color: #7dcfff; }
+.tone-3 { color: #9ece6a; }
+.tone-4 { color: #e0af68; }
+.tone-5 { color: #73daca; }
+.dot { background: currentColor; }
 </style>

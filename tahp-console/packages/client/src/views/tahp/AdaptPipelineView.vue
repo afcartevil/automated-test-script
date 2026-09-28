@@ -161,7 +161,7 @@ watch(() => store.error, (err) => {
 
 <template>
   <div class="pipeline-page">
-    <EaPageHead title="适配流水线" subtitle="选项目 → 拉前置 → AI 适配 → 编译 → 烧录 → 自检 → 审核 → 提交 Gerrit">
+    <EaPageHead title="适配流水线" subtitle="选项目 → 前置信息 → AI 适配 → 编译 → 烧录 → 适配自检 → 提交 Gerrit → 人工审核入库">
       <template #actions>
         <button
           v-if="store.pendingHumanTotal > 0"

@@ -83,7 +83,7 @@ const groups: ManualGroup[] = [
         key: 'pipeline',
         title: '适配流水线',
         tone: 'var(--accent)',
-        desc: '适配调试的自动流转路径：把<span class="hl">选项目 → 拉前置代码 → AI 适配 → 编译 → 烧录 → 自检 → 审核 → 提交 Gerrit</span>串成工作流。某阶段没就绪或失败会变成<span class="hl">人工处理</span>（选恢复点、能力未接入、选仓等）；按界面推荐的恢复点续跑，<span class="hl-warn">不要整条重跑</span>。',
+        desc: '适配调试的自动流转路径：把<span class="hl">选项目 → 前置信息 → AI 适配 → 编译 → 烧录 → 适配自检 → 提交 Gerrit → 人工审核入库</span>串成工作流。某阶段没就绪或失败会变成<span class="hl">人工处理</span>（选恢复点、能力未接入、选仓等）；按界面推荐的恢复点续跑，<span class="hl-warn">不要整条重跑</span>。',
         steps: [
           '进入「适配流水线」，在「<span class="hl">新建运行</span>」选项目与前置版本（需 <span class="hl">EasyAdapter 中心</span>已配置、<span class="hl">Agent Bridge</span> 就绪）。也可在运行列表点「<span class="hl">复制</span>」带出已有配置再核对启动。',
           '<span class="hl">启动</span>后在「运行看板」按阶段观察进度。',
