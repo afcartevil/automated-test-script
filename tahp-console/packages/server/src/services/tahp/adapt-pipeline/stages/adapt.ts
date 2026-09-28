@@ -405,9 +405,9 @@ export const adaptStageDefinition: StageDefinition = {
       return {
         status: 'waiting_human' as const,
         reason: 'adapt_interaction',
-        message: '适配 Agent 等待人工输入或审批，请前往「AI 适配调试」处理后再继续。',
+        message: '适配 Agent 等待人工输入或审批，请前往「单项适配」处理后再继续。',
         actions: [
-          { id: 'confirm_done', label: '已在适配调试处理完成' },
+          { id: 'confirm_done', label: '已在单项适配处理完成' },
           { id: 'retry', label: '重试当前域' },
         ],
       }

@@ -3,7 +3,7 @@ import { authenticate, mockHermesApi, TEST_ACCESS_KEY } from './fixtures'
 
 const MAIN_ROUTES = [
   { path: '/#/tahp/dashboard', heading: /AI 适配流水线|模型选择/ },
-  { path: '/#/tahp/adapt-debug', heading: /AI 适配调试/ },
+  { path: '/#/tahp/adapt-debug', heading: /单项适配/ },
   { path: '/#/tahp/bug-analysis', heading: /Bug 分析/ },
   { path: '/#/tahp/self-check', heading: /质量验测/ },
   { path: '/#/tahp/reports', heading: /任务报告|报告/ },

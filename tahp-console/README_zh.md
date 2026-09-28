@@ -289,7 +289,7 @@ npm run build   # 构建输出到 dist/
 |------|------|
 | `/tahp/dashboard` | 仪表盘 |
 | `/tahp/bug-analysis` | 智能诊断（Agent + Skill） |
-| `/tahp/adapt-debug` | AI 适配调试 |
+| `/tahp/adapt-debug` | 单项适配 |
 | `/tahp/knowledge` | 知识库 |
 | `/tahp/reports` | 任务报告 |
 

@@ -15,7 +15,7 @@ describe('adapt-agent prompts', () => {
       formData: { prj_path: 'D:\\project\\test' },
     })
     expect(systemPrompt).toContain('comm-framework-agent-test')
-    expect(systemPrompt).toContain('AI 适配调试')
+    expect(systemPrompt).toContain('单项适配')
     expect(userPrompt).toContain('prj_path')
     expect(userPrompt).not.toContain('项目代码')
     expect(userPrompt).not.toContain('升级路径')

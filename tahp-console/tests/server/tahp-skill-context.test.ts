@@ -54,13 +54,13 @@ describe('tahp skill context injector', () => {
   })
 
   it('buildFullTahpSystemContext adapt_debug skips skill catalog scan', () => {
-    const out = buildFullTahpSystemContext('AI 适配调试 关联 Skills: MODEM_P1_Adapt', {
+    const out = buildFullTahpSystemContext('单项适配 关联 Skills: MODEM_P1_Adapt', {
       scenario: 'adapt_debug',
       preferredSkillIds: ['MODEM_P1_Adapt'],
     })
     if (!out) return
     expect(out).toContain('MODEM_P1_Adapt')
-    expect(out).toContain('AI 适配调试')
+    expect(out).toContain('单项适配')
     expect(out).not.toContain('已扫描到的 Skills（共')
   })
 

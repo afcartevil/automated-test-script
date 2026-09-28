@@ -26,7 +26,7 @@ function buildAdaptDebugWorkflowHint(domainId: string, primarySkill: string): st
 
 export const adaptDebugPromptProfile: AdaptWorkspacePromptProfile = {
   workspaceId: 'adapt-debug',
-  workspaceLabel: 'AI适配调试',
+  workspaceLabel: '单项适配',
   contextScenario: 'adapt_debug',
 
   isInteractive(input: AdaptAgentPromptInput) {
@@ -34,15 +34,15 @@ export const adaptDebugPromptProfile: AdaptWorkspacePromptProfile = {
   },
 
   buildRoleIntro(input) {
-    return `你是 TAHP「AI 适配调试 · Agent 自动适配」专家，负责在传音 Android 底软集成部完成 **${input.domainLabel}** 的适配调试任务。
+    return `你是 TAHP「单项适配 · Agent 自动适配」专家，负责在传音 Android 底软集成部完成 **${input.domainLabel}** 的适配调试任务。
 
-本任务来自 **AI适配调试** 工作区：侧重联调、验证与问题定位，可按 Skill SOP 分步执行并保留中间结论。`
+本任务来自 **单项适配** 工作区：侧重联调、验证与问题定位，可按 Skill SOP 分步执行并保留中间结论。`
   },
 
   buildWorkflowHint: buildAdaptDebugWorkflowHint,
 
   buildUserTitle(input) {
-    return `# ${input.domainLabel} — AI 适配调试任务`
+    return `# ${input.domainLabel} — 单项适配任务`
   },
 
   buildUserClosingLines(_input, interactive) {

@@ -63,27 +63,10 @@ const groups: ManualGroup[] = [
     color: 'var(--accent)',
     items: [
       {
-        key: 'adapt-debug',
-        title: 'AI 适配调试',
-        tone: 'var(--violet-ic)',
-        desc: '把<span class="hl">源版本</span>的功能、特性、运营商定制改到<span class="hl">目标版本</span>。按域（通信 / 驱动 / 内核等）填前置条件，<span class="hl">启动 Agent</span> 改代码并出适配报告；入库须<span class="hl">人工审核</span>后走 Gerrit。',
-        steps: [
-          '进入「<span class="hl">公共能力 → AI 适配调试</span>」，选择工作区与业务域（通信 / 驱动 / 内核等）。',
-          '可用「<span class="hl">从中心载入前置</span>」按项目号自动填表。',
-          '完成必填项后<span class="hl">启动</span>；填完表单后会进入运行监控，可看 Agent 过程与文件改动。',
-          '完成后在本页「历史表单」点「<span class="hl">查看完整报告</span>」核对修改清单；需要入库时走<span class="hl">审核</span>与 <span class="hl">Gerrit 提交</span>。',
-        ],
-        notes: [
-          '偏单次、按 JIRA / 需求交互调试。要把适配和编译、烧录、自检串起来，用下面的「AI 适配流水线」。',
-          'Agent 不可用时任务失败，不会改成后台直接调模型。',
-        ],
-        route: 'tahp.adapt-debug',
-      },
-      {
         key: 'pipeline',
         title: 'AI 适配流水线',
         tone: 'var(--accent)',
-        desc: '适配调试的自动流转路径：把<span class="hl">选项目 → 前置信息 → AI 适配 → 编译 → 烧录 → 适配自检 → 提交 Gerrit → 人工审核入库</span>串成工作流。某阶段没就绪或失败会变成<span class="hl">人工处理</span>（选恢复点、能力未接入、选仓等）；按界面推荐的恢复点续跑，<span class="hl-warn">不要整条重跑</span>。',
+        desc: '适配的自动流转路径：把<span class="hl">选项目 → 前置信息 → AI 适配 → 编译 → 烧录 → 适配自检 → 提交 Gerrit → 人工审核入库</span>串成工作流。某阶段没就绪或失败会变成<span class="hl">人工处理</span>（选恢复点、能力未接入、选仓等）；按界面推荐的恢复点续跑，<span class="hl-warn">不要整条重跑</span>。',
         steps: [
           '进入「AI 适配流水线」，在「<span class="hl">新建运行</span>」选项目与前置版本（需 <span class="hl">EasyAdapter 中心</span>已配置、<span class="hl">Agent Bridge</span> 就绪）。也可在运行列表点「<span class="hl">复制</span>」带出已有配置再核对启动。',
           '<span class="hl">启动</span>后在「运行看板」按阶段观察进度。',
@@ -136,9 +119,26 @@ const groups: ManualGroup[] = [
   {
     id: 'public',
     title: '公共能力',
-    subtitle: '跨业务复用：智能诊断、质量验测、代码拉取、校准数据',
+    subtitle: '跨业务复用：单项适配、智能诊断、质量验测、代码拉取、校准数据',
     color: 'var(--info)',
     items: [
+      {
+        key: 'adapt-debug',
+        title: '单项适配',
+        tone: 'var(--violet-ic)',
+        desc: '把<span class="hl">源版本</span>的功能、特性、运营商定制改到<span class="hl">目标版本</span>。按域（通信 / 驱动 / 内核等）填前置条件，<span class="hl">启动 Agent</span> 改代码并出适配报告；入库须<span class="hl">人工审核</span>后走 Gerrit。',
+        steps: [
+          '进入「<span class="hl">公共能力 → 单项适配</span>」，选择工作区与业务域（通信 / 驱动 / 内核等）。',
+          '可用「<span class="hl">从中心载入前置</span>」按项目号自动填表。',
+          '完成必填项后<span class="hl">启动</span>；填完表单后会进入运行监控，可看 Agent 过程与文件改动。',
+          '完成后在本页「历史表单」点「<span class="hl">查看完整报告</span>」核对修改清单；需要入库时走<span class="hl">审核</span>与 <span class="hl">Gerrit 提交</span>。',
+        ],
+        notes: [
+          '偏单次、按 JIRA / 需求交互处理单个适配项。要把适配和编译、烧录、自检串起来，用「三大核心」里的「AI 适配流水线」。',
+          'Agent 不可用时任务失败，不会改成后台直接调模型。',
+        ],
+        route: 'tahp.adapt-debug',
+      },
       {
         key: 'bug-analysis',
         title: '智能诊断',

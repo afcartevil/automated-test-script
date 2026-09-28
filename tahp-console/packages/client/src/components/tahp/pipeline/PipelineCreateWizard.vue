@@ -1301,7 +1301,7 @@ onUnmounted(() => {
                         </tr>
                       </tbody>
                     </NTable>
-                    <p v-else class="checklist-empty">暂无特性清单（与 AI 适配调试一致，请在适配调试「编辑布局」中配置）</p>
+                    <p v-else class="checklist-empty">暂无特性清单（与单项适配一致，请在单项适配「编辑布局」中配置）</p>
                   </div>
                   <NInput
                     v-else-if="field.type === 'textarea'"

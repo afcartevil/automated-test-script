@@ -308,7 +308,7 @@ export function inferSkillScenario(text: string): TahpSkillScenario {
   if (/jira\s*key|bug\s*分析|根因定位|8\s*节报告|tools_invoked|待分析\s*bug/i.test(text)) {
     return 'bug_analysis'
   }
-  if (/适配调试|adapt[- ]?debug|前置条件|升级路径|bsp\s*适配|关联\s*skills/i.test(text)) {
+  if (/单项适配|适配调试|adapt[- ]?debug|前置条件|升级路径|bsp\s*适配|关联\s*skills/i.test(text)) {
     return 'adapt_debug'
   }
   return 'chat'
@@ -360,7 +360,7 @@ export function buildSkillExecutionDirective(options?: {
   if (scenario === 'bug_analysis') {
     lines.push('**当前场景**: 智能诊断 — 拉取 JIRA 后必须选择并加载匹配的日志/领域分析 Skill。')
   } else if (scenario === 'adapt_debug') {
-    lines.push('**当前场景**: AI 适配调试 — 优先加载用户指定的关联 Adapt Skill 并按 SOP 排查；全部完成后必须 Read `transsion-coding-standards-review` 并在报告末尾输出自检审核。')
+    lines.push('**当前场景**: 单项适配 — 优先加载用户指定的关联 Adapt Skill 并按 SOP 排查；全部完成后必须 Read `transsion-coding-standards-review` 并在报告末尾输出自检审核。')
   } else if (scenario === 'feature_adapt') {
     lines.push('**当前场景**: 特性适配 — 按正式交付 SOP 完成特性适配；优先加载用户指定的关联 Skill；完成后必须 Read `transsion-coding-standards-review` 并输出可交付的结构化报告与自检审核。')
   } else if (scenario === 'carrier_config') {

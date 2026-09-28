@@ -2128,7 +2128,7 @@ function openSkill(skillName: string) {
   <div class="page page-wide" :class="{ 'adapt-page--monitor': showMonitor }">
 
     <EaPageHead
-      title="AI 适配调试"
+      title="单项适配"
       :subtitle="activeWorkspace.subtitle"
     >
       <template #actions>

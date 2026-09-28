@@ -35,7 +35,7 @@ const coreNav = [
 ]
 
 const publicNav = [
-  { name: 'tahp.adapt-debug', label: 'AI 适配调试' },
+  { name: 'tahp.adapt-debug', label: '单项适配' },
   { name: 'tahp.bug-analysis', label: '智能诊断' },
   { name: 'tahp.self-check', label: '质量验测' },
   { name: 'tahp.code-pull', label: '代码拉取' },
