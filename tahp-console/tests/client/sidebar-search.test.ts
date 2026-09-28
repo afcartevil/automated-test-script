@@ -33,7 +33,7 @@ vi.mock('vue-router', async (importOriginal) => {
   const actual = await importOriginal<any>()
   return {
     ...actual,
-    useRoute: () => ({ name: 'tahp.dashboard' }),
+    useRoute: () => ({ name: 'tahp.dashboard', meta: {} }),
     useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   }
 })
@@ -81,9 +81,10 @@ describe('EaShell', () => {
 
     const tabs = wrapper.findAll('.ck-tab').map(node => node.text())
     expect(tabs).toContain('首页')
-    expect(tabs).toContain('AI 适配调试')
-    expect(tabs).toContain('智能诊断')
-    expect(tabs).toContain('质量验测')
+    expect(tabs).toContain('AI 适配流水线')
+    // 智能诊断 / 质量验测 位于「公共能力」下拉中，顶栏只渲染触发按钮
+    expect(tabs.some(text => text.includes('公共能力'))).toBe(true)
+    expect(tabs).not.toContain('智能诊断')
   })
 
   it('shows update button when server reports update available', async () => {

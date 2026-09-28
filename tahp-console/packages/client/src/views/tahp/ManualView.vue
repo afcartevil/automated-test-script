@@ -59,7 +59,7 @@ const groups: ManualGroup[] = [
   {
     id: 'core',
     title: '三大核心',
-    subtitle: '适配调试/适配流水线、Modem 升级、GKI 升级',
+    subtitle: 'AI 适配流水线、Modem 升级、GKI 升级',
     color: 'var(--accent)',
     items: [
       {
@@ -68,24 +68,24 @@ const groups: ManualGroup[] = [
         tone: 'var(--violet-ic)',
         desc: '把<span class="hl">源版本</span>的功能、特性、运营商定制改到<span class="hl">目标版本</span>。按域（通信 / 驱动 / 内核等）填前置条件，<span class="hl">启动 Agent</span> 改代码并出适配报告；入库须<span class="hl">人工审核</span>后走 Gerrit。',
         steps: [
-          '进入「AI 适配调试」，选择工作区与业务域（通信 / 驱动 / 内核等）。',
+          '进入「<span class="hl">公共能力 → AI 适配调试</span>」，选择工作区与业务域（通信 / 驱动 / 内核等）。',
           '可用「<span class="hl">从中心载入前置</span>」按项目号自动填表。',
           '完成必填项后<span class="hl">启动</span>；填完表单后会进入运行监控，可看 Agent 过程与文件改动。',
           '完成后在本页「历史表单」点「<span class="hl">查看完整报告</span>」核对修改清单；需要入库时走<span class="hl">审核</span>与 <span class="hl">Gerrit 提交</span>。',
         ],
         notes: [
-          '偏单次、按 JIRA / 需求交互调试。要把适配和编译、烧录、自检串起来，用下面的「适配流水线」。',
+          '偏单次、按 JIRA / 需求交互调试。要把适配和编译、烧录、自检串起来，用下面的「AI 适配流水线」。',
           'Agent 不可用时任务失败，不会改成后台直接调模型。',
         ],
         route: 'tahp.adapt-debug',
       },
       {
         key: 'pipeline',
-        title: '适配流水线',
+        title: 'AI 适配流水线',
         tone: 'var(--accent)',
         desc: '适配调试的自动流转路径：把<span class="hl">选项目 → 前置信息 → AI 适配 → 编译 → 烧录 → 适配自检 → 提交 Gerrit → 人工审核入库</span>串成工作流。某阶段没就绪或失败会变成<span class="hl">人工处理</span>（选恢复点、能力未接入、选仓等）；按界面推荐的恢复点续跑，<span class="hl-warn">不要整条重跑</span>。',
         steps: [
-          '进入「适配流水线」，在「<span class="hl">新建运行</span>」选项目与前置版本（需 <span class="hl">EasyAdapter 中心</span>已配置、<span class="hl">Agent Bridge</span> 就绪）。也可在运行列表点「<span class="hl">复制</span>」带出已有配置再核对启动。',
+          '进入「AI 适配流水线」，在「<span class="hl">新建运行</span>」选项目与前置版本（需 <span class="hl">EasyAdapter 中心</span>已配置、<span class="hl">Agent Bridge</span> 就绪）。也可在运行列表点「<span class="hl">复制</span>」带出已有配置再核对启动。',
           '<span class="hl">启动</span>后在「运行看板」按阶段观察进度。',
           '页头「<span class="hl">⚠ N 项待人工处理</span>」可点进对应运行；失败阶段在面板选恢复点，「刷新」可重载恢复点。',
           '整条不要了点红色「<span class="hl-warn">终止</span>」确认后结束；已终止 / 已失败不再计入待人工。',
@@ -170,7 +170,7 @@ const groups: ManualGroup[] = [
         ],
         notes: [
           '新增测试大类前须先确认用例对外能力（启动 / 停止 / 状态 / 时长 / 刷机）。',
-          '可被适配流水线作为「自检」阶段调用。',
+          '可被 AI 适配流水线作为「自检」阶段调用。',
         ],
         route: 'tahp.self-check',
       },

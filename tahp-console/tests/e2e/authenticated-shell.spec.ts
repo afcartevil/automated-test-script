@@ -10,8 +10,8 @@ test('renders V26 shell and navigates to models via system menu', async ({ page 
   await expect(page.locator('.ck-shell')).toBeVisible()
   await expect(page.locator('.ck-brand')).toContainText('EasyAdapter')
 
-  await page.locator('.ck-tab', { hasText: 'AI 适配调试' }).click()
-  await expect(page).toHaveURL(/#\/tahp\/adapt-debug/)
+  await page.locator('.ck-tab', { hasText: 'AI 适配流水线' }).click()
+  await expect(page).toHaveURL(/#\/tahp\/pipeline/)
 
   await page.locator('.ck-sys-btn').first().click()
   await page.getByText('模型管理', { exact: true }).click()

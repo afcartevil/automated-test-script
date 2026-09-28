@@ -161,7 +161,7 @@ watch(() => store.error, (err) => {
 
 <template>
   <div class="pipeline-page">
-    <EaPageHead title="适配流水线" subtitle="选项目 → 前置信息 → AI 适配 → 编译 → 烧录 → 适配自检 → 提交 Gerrit → 人工审核入库">
+    <EaPageHead title="AI 适配流水线" subtitle="选项目 → 前置信息 → AI 适配 → 编译 → 烧录 → 适配自检 → 提交 Gerrit → 人工审核入库">
       <template #actions>
         <button
           v-if="store.pendingHumanTotal > 0"
@@ -201,14 +201,14 @@ watch(() => store.error, (err) => {
         <div v-if="!store.runItems.length && !store.listLoading" class="board-empty card">
           <div class="empty-mark" aria-hidden="true">◇</div>
           <h2>还没有运行记录</h2>
-          <p>创建第一条适配流水线运行，开始从项目选择到 Gerrit 提交的完整流程。</p>
+          <p>创建第一条 AI 适配流水线运行，开始从项目选择到 Gerrit 提交的完整流程。</p>
           <button type="button" class="ea-btn-primary" @click="handleCreateClick">新建运行</button>
         </div>
 
         <div v-else-if="!store.selectedRunId" class="board-empty card">
           <div class="empty-mark" aria-hidden="true">◇</div>
           <h2>还没有选中运行</h2>
-          <p>从左侧选择一条运行，或新建运行开始适配流水线。</p>
+          <p>从左侧选择一条运行，或新建运行开始 AI 适配流水线。</p>
           <button type="button" class="ea-btn-primary" @click="handleCreateClick">新建运行</button>
         </div>
 

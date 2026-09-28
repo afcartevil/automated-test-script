@@ -184,9 +184,13 @@ watch(
         <div class="head-actions">
           <button
             type="button"
-            class="btn-soft"
+            class="btn-logs"
+            title="按阶段汇总查看本次运行的全部日志"
             @click="allLogsOpen = true"
           >
+            <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+              <path d="M2.5 4.5h11M2.5 8h7.5M2.5 11.5h9.5" />
+            </svg>
             查看全部日志
           </button>
           <button
@@ -321,14 +325,43 @@ watch(
   justify-content: flex-end;
   gap: 6px;
 }
-.btn-soft, .btn-danger, .btn-warn {
-  padding: 6px 10px;
+.btn-logs, .btn-danger, .btn-warn {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
   border-radius: 8px;
   font-size: 12.5px;
   cursor: pointer;
   border: 1px solid var(--line);
   background: var(--surface);
   font-family: inherit;
+}
+.btn-logs {
+  gap: 7px;
+  padding: 0 14px 0 11px;
+  border-radius: 999px;
+  border-color: var(--line-strong);
+  color: var(--text);
+  font-weight: 600;
+  transition: border-color 0.15s, color 0.15s;
+  .ico {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: var(--muted);
+    transition: color 0.15s;
+  }
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    .ico { color: var(--accent); }
+  }
+  &:active { transform: translateY(1px); }
+  &:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
+    outline-offset: 1px;
+  }
 }
 .btn-danger {
   color: var(--error);

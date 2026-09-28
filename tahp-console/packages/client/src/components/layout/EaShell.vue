@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NDropdown, useMessage } from 'naive-ui'
 import { useAppStore } from '@/stores/hermes/app'
@@ -29,13 +29,13 @@ const CONFIG_ROUTE_NAMES = new Set([
 
 const coreNav = [
   { name: 'tahp.dashboard', label: '首页' },
-  { name: 'tahp.adapt-debug', label: 'AI 适配调试' },
-  { name: 'tahp.pipeline', label: '适配流水线' },
+  { name: 'tahp.pipeline', label: 'AI 适配流水线' },
   { name: 'tahp.modem-baseline.workbench', label: 'Modem升级' },
   { name: 'tahp.gki-patch.dashboard', label: 'GKI 升级' },
 ]
 
 const publicNav = [
+  { name: 'tahp.adapt-debug', label: 'AI 适配调试' },
   { name: 'tahp.bug-analysis', label: '智能诊断' },
   { name: 'tahp.self-check', label: '质量验测' },
   { name: 'tahp.code-pull', label: '代码拉取' },
@@ -623,9 +623,54 @@ async function confirmApply() {
 
 const inboxTimer = window.setInterval(refreshTaskInbox, 15000)
 refreshTaskInbox()
-onMounted(() => document.addEventListener('click', onDocClick))
+
+// ---- 顶栏溢出：窄屏时 Tab 条横向滚动，两端出现滚动箭头（参考 Google 搜索页） ----
+const tabsEl = ref<HTMLElement | null>(null)
+const canScrollLeft = ref(false)
+const canScrollRight = ref(false)
+let tabsResizeObserver: ResizeObserver | null = null
+
+function measureTabs() {
+  const el = tabsEl.value
+  if (!el) return
+  const maxScroll = el.scrollWidth - el.clientWidth
+  canScrollLeft.value = el.scrollLeft > 1
+  canScrollRight.value = maxScroll - el.scrollLeft > 1
+}
+
+function scrollTabs(direction: 1 | -1) {
+  const el = tabsEl.value
+  if (!el) return
+  el.scrollBy({ left: direction * Math.max(120, el.clientWidth * 0.6), behavior: 'smooth' })
+}
+
+/** 路由切换后把当前激活的 Tab 滚进可视区 */
+function revealActiveTab() {
+  const el = tabsEl.value
+  const active = el?.querySelector<HTMLElement>('.ck-tab.active')
+  if (!el || !active || typeof active.scrollIntoView !== 'function') return
+  if (active.offsetLeft < el.scrollLeft || active.offsetLeft + active.offsetWidth > el.scrollLeft + el.clientWidth) {
+    active.scrollIntoView({ block: 'nearest', inline: 'center' })
+  }
+  measureTabs()
+}
+
+watch(() => route.name, () => void nextTick(revealActiveTab))
+
+onMounted(() => {
+  document.addEventListener('click', onDocClick)
+  window.addEventListener('resize', measureTabs)
+  void nextTick(revealActiveTab)
+  if (typeof ResizeObserver !== 'undefined' && tabsEl.value) {
+    tabsResizeObserver = new ResizeObserver(() => measureTabs())
+    tabsResizeObserver.observe(tabsEl.value)
+  }
+})
 onUnmounted(() => {
   document.removeEventListener('click', onDocClick)
+  window.removeEventListener('resize', measureTabs)
+  tabsResizeObserver?.disconnect()
+  tabsResizeObserver = null
   window.clearInterval(inboxTimer)
 })
 </script>
@@ -638,7 +683,8 @@ onUnmounted(() => {
         EasyAdapter
       </div>
 
-      <nav class="ck-tabs">
+      <div class="ck-tabs-wrap">
+      <nav ref="tabsEl" class="ck-tabs" @scroll.passive="measureTabs">
         <button
           v-for="item in coreNav"
           :key="item.name"
@@ -716,6 +762,22 @@ onUnmounted(() => {
         </NDropdown>
       </nav>
 
+      <div v-if="canScrollLeft" class="ck-tabs-edge left">
+        <button type="button" class="ck-tabs-arrow" title="向左查看更多" aria-label="向左查看更多" @click="scrollTabs(-1)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 6l-6 6 6 6" />
+          </svg>
+        </button>
+      </div>
+      <div v-if="canScrollRight" class="ck-tabs-edge right">
+        <button type="button" class="ck-tabs-arrow" title="向右查看更多" aria-label="向右查看更多" @click="scrollTabs(1)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        </button>
+      </div>
+      </div>
+
       <div class="ck-spacer">
         <div ref="taskPopWrap" class="ck-task-wrap">
           <button type="button" class="ck-feedback-btn" title="我的任务" @click="toggleTaskPop">
@@ -752,7 +814,7 @@ onUnmounted(() => {
             />
             <div class="ck-task-list">
               <template v-if="showInboxPipe && visiblePipelinePackages.length">
-                <div class="ck-task-sec">适配流水线</div>
+                <div class="ck-task-sec">AI 适配流水线</div>
                 <div v-for="p in visiblePipelinePackages" :key="p.package_id" class="ck-task-item">
                   <div>
                     <div>
@@ -1023,7 +1085,16 @@ onUnmounted(() => {
   font-weight: 800;
 }
 
+.ck-tabs-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
 .ck-tabs {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -1033,6 +1104,49 @@ onUnmounted(() => {
   min-width: 0;
 
   &::-webkit-scrollbar { display: none; }
+}
+
+/* 窄屏溢出：Tab 条横向滚动，两端渐隐 + 圆形滚动箭头（参考 Google 搜索页） */
+.ck-tabs-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+
+  &.left {
+    left: 0;
+    padding-right: 28px;
+    background: linear-gradient(to left, transparent, var(--bg) 45%);
+  }
+  &.right {
+    right: 0;
+    padding-left: 28px;
+    background: linear-gradient(to right, transparent, var(--bg) 45%);
+  }
+}
+
+.ck-tabs-arrow {
+  pointer-events: auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(20, 22, 40, 0.06);
+  transition: color 0.18s, border-color 0.18s, box-shadow 0.18s;
+
+  &:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 2px 6px rgba(82, 86, 212, 0.16);
+  }
+  &:active { transform: translateY(1px); }
 }
 
 .ck-tab {
@@ -1536,7 +1650,7 @@ onUnmounted(() => {
     gap: 10px;
   }
 
-  .ck-tabs {
+  .ck-tabs-wrap {
     order: 3;
     width: 100%;
   }

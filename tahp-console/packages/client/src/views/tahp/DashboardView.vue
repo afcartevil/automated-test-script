@@ -17,10 +17,10 @@ const featuredPin = ref<{ model: string; provider: string } | null>(null)
 
 const coreCards = [
   {
-    route: 'tahp.adapt-debug',
+    route: 'tahp.pipeline',
     tone: 'ea-t-indigo',
     icon: 'play',
-    title: 'AI 适配调试',
+    title: 'AI 适配流水线',
     summary: '将源版本的功能、特性及运营商定制改动自动适配到目标版本，并将底软升级中的适配、验证、入库全流程串联为自动化流水线',
     large: true,
   },

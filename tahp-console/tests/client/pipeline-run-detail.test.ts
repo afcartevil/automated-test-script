@@ -162,7 +162,7 @@ describe('PipelineRunDetail board layout', () => {
       },
     })
 
-    await wrapper.get('.head-actions .btn-soft').trigger('click')
+    await wrapper.get('.head-actions .btn-logs').trigger('click')
     await flushPromises()
 
     expect(store.loadAllNodeLogs).toHaveBeenCalledWith('run-1', ['adapt', 'build'])
@@ -210,7 +210,7 @@ describe('PipelineRunDetail board layout', () => {
       },
     })
 
-    await wrapper.get('.head-actions .btn-soft').trigger('click')
+    await wrapper.get('.head-actions .btn-logs').trigger('click')
     await flushPromises()
 
     const row = wrapper.get('[aria-label="全部阶段日志"] .ln')
