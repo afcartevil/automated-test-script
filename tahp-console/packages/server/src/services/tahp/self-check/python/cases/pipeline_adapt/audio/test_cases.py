@@ -104,8 +104,8 @@ _EXPECT = {
 _VOLUME_BARS = (
     ("媒体", ("媒体", "Media")),
     ("通知", ("通知", "Notifications")),
-    ("铃声", ("铃声", "Ring volume")),
-    ("闹钟", ("闹钟", "Alarm")),
+    ("铃声", ("铃声", "Rings", "Ring volume")),
+    ("闹钟", ("闹钟", "Alarms", "Alarm")),
 )
 _VOLUME_KEYS = {
     "媒体": "media",
@@ -776,7 +776,8 @@ def _fsm_on_lines(text: str) -> str:
     lines: list[str] = []
     for ln in (text or "").splitlines():
         low = ln.lower()
-        if "fsm_speaker_on" in low and "fsm_speaker_off" not in low:
+        # 铃声/闹钟的 scene:0008 在 fsm_speaker_off，onn 行常仍是 scene:0001
+        if "fsm_speaker_on" in low or "fsm_speaker_off" in low:
             lines.append(ln)
     return "\n".join(lines)
 
@@ -938,7 +939,7 @@ def _best_slider_for_descs(xml: str, descs: tuple[str, ...]) -> ET.Element | Non
     return best
 
 
-def _swipe_seekbar(serial: str, el: ET.Element) -> bool:
+def _swipe_seekbar(serial: str, el: ET.Element, *, reverse: bool = False) -> bool:
     """用 adb input swipe 小幅拖进度条，不必拉满。"""
     box = _parse_bounds(el.attrib.get("bounds") or "")
     if not box:
@@ -951,6 +952,8 @@ def _swipe_seekbar(serial: str, el: ET.Element) -> bool:
     end = min(x2 - 16, start + travel)
     if end - start < 48:
         start, end = x1 + 24, min(x2 - 16, x1 + 24 + 80)
+    if reverse:
+        start, end = end, start
     return input_swipe(serial, start, y, end, y, 280)
 
 
@@ -1028,7 +1031,7 @@ def test_pa_mode(
     """
     PA模式检查
     1. cat /odm/etc/vconfig/audio/TranAudioConfiguration.conf 识别 fsm / aw/oca
-    2. 每次判定前 dmesg -C；fsm 只 grep fsm_speaker_on
+    2. 每次判定前 dmesg -C；fsm 读取 fsm_speaker_onn 与 fsm_speaker_off
     3. SOUND_SETTINGS 滑动媒体/通知/铃声/闹钟
     4. 拨号前检查 SIM；未插卡则不拨打：前面已有失败则整项失败，否则跳过并注明原因
     5. 已插卡则拨打 10086 听筒再切免提
@@ -1097,7 +1100,7 @@ def test_pa_mode(
             hit, hits, preview = _check_after_action(serial, kind, token)
             if not hit:
                 bar2 = _locate_one_volume_bar(serial, descs) or bar
-                _swipe_seekbar(serial, bar2)
+                _swipe_seekbar(serial, bar2, reverse=label in ("铃声", "闹钟"))
                 hit, hits, preview = _check_after_action(
                     serial, kind, token, settle=0.3, timeout=3.0
                 )
