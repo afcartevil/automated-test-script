@@ -113,6 +113,15 @@ describe('release upgrade resolver helpers', () => {
     expect(pickTcardZipForPreviousAndroid([
       '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ.zip',
     ], 15)).toBeUndefined()
+    expect(pickTcardZipForPreviousAndroid([
+      'D:\\Open\\Tcard_X6850-15.1.2.180SP05-OP001PF001AZ_a14.zip',
+      'D:\\Open\\Tcard_X6850-15.1.2.180SP05-OP001PF001AZ.zip',
+      'D:\\Open\\Tcard_X6850-16.3.0.145SP06-OP001PF001AZ.zip',
+    ], 14)).toBe('D:\\Open\\Tcard_X6850-15.1.2.180SP05-OP001PF001AZ.zip')
+    expect(pickTcardZipForPreviousAndroid([
+      'D:\\Open\\Tcard_X6850-15.1.2.180SP05-OP001PF001AZ_a14.zip',
+    ], 14)).toBeUndefined()
+    expect(missingTcardZipHint(14)).toBe('未找到T卡包（需 Tcard_*-15.*.zip）')
     expect(packageSetFromPaths([
       '\\\\cq\\Open\\X6885-16.3.0.140SP17-OP007PF001AZ-16.3.0.145SP08-OP004PF001AZ_20260826235808.zip',
       '\\\\cq\\Open\\Tcard_X6885-16.3.0.145SP08-OP004PF001AZ_a15.zip',

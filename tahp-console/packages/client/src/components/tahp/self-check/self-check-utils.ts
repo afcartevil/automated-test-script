@@ -49,11 +49,16 @@ export function isOfficialTcardZipName(name: string): boolean {
   return /^Tcard_/i.test(fileName) && /\.zip$/i.test(fileName) && !/_user(?:_|\.|$)/i.test(fileName)
 }
 
-/** 已知上一档 Android 时只选 Tcard_*_a{previous}.zip，不退回不带后缀的 Tcard_*.zip */
+/** A15 及以后只选 Tcard_*_a{上一档}.zip。A14→A15 选 Tcard_项目-15.x...zip，不认 _a14。 */
 export function pickPreferredTcardZip(paths: string[], previousAndroid?: number): string {
   const tcard = paths.filter((path) => isOfficialTcardZipName(path))
   const rank = (path: string): number => {
     const fileName = tcardZipFileName(path)
+    if (previousAndroid === 14) {
+      if (/_a\d+\.zip$/i.test(fileName)) return -1
+      const target = fileName.match(/^Tcard_[^-]+-(\d+)\./i)
+      return target && Number(target[1]) === 15 ? 4 : -1
+    }
     if (previousAndroid != null) {
       return new RegExp(`_a${previousAndroid}\\.zip$`, 'i').test(fileName) ? 4 : -1
     }
@@ -67,6 +72,7 @@ export function pickPreferredTcardZip(paths: string[], previousAndroid?: number)
 }
 
 export function missingTcardZipHint(previousAndroid: number): string {
+  if (previousAndroid === 14) return '未找到T卡包（需 Tcard_*-15.*.zip）'
   return `未找到T卡包（需 Tcard_*_a${previousAndroid}.zip）`
 }
 

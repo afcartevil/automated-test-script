@@ -87,6 +87,18 @@ describe('preferred Tcard OTA zip', () => {
     ], 15)).toBe('')
     expect(missingTcardZipHint(15)).toBe('未找到T卡包（需 Tcard_*_a15.zip）')
   })
+
+  it('picks unsuffixed Tcard_*-15 zip for A14 to A15 and ignores _a14', () => {
+    expect(pickPreferredTcardZip([
+      'D:\\Open\\Tcard_X6850-15.1.2.180SP05-OP001PF001AZ_a14.zip',
+      'D:\\Open\\Tcard_X6850-15.1.2.180SP05-OP001PF001AZ.zip',
+      'D:\\Open\\Tcard_X6850-16.3.0.145SP06-OP001PF001AZ.zip',
+    ], 14)).toBe('D:\\Open\\Tcard_X6850-15.1.2.180SP05-OP001PF001AZ.zip')
+    expect(pickPreferredTcardZip([
+      'D:\\Open\\Tcard_X6850-15.1.2.180SP05-OP001PF001AZ_a14.zip',
+    ], 14)).toBe('')
+    expect(missingTcardZipHint(14)).toBe('未找到T卡包（需 Tcard_*-15.*.zip）')
+  })
 })
 
 
