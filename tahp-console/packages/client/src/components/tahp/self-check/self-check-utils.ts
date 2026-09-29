@@ -535,6 +535,9 @@ export function formatTestConfigEntries(cfg?: SelfCheckTestConfig): { label: str
   if (cfg.bitflipRepeatCount) {
     rows.push({ label: 'bitflip 每项重复次数 (-r)', value: String(cfg.bitflipRepeatCount) })
   }
+  if (cfg.bitflipTimeoutHours) {
+    rows.push({ label: 'bitflip 超时上限 (20h×-r)', value: `${cfg.bitflipTimeoutHours} 小时` })
+  }
   if (cfg.autoRetestEnabled !== undefined) {
     rows.push({
       label: '自动复测',

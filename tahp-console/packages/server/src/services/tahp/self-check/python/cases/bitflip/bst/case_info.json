@@ -3,7 +3,7 @@
     "case_index": 1,
     "用例名": "bitflip压测(BAT)",
     "前置条件": "MTK GKI 平台设备，userdebug 固件且 adb root 可用；主机已安装 java 与 adb 并加入 PATH；设备电量充足（默认检查电量）；测试过程中设备会多次自动重启，请勿断开连接",
-    "测试步骤": "1. 按设备指纹自动匹配平台目录并读取 ConditionConfig 遍历条件；2. 每个条件组合下执行 memtester/stressapptest/mtk_mem_test 等压力用例，每项重复 -r 次（默认 5，可在用例大类设置中调整）；3. 运行结束后解析 BAT-Data 目录中的 --BST.xlsx 结果表",
+    "测试步骤": "1. 按设备指纹自动匹配平台目录并读取 ConditionConfig 遍历条件；2. 每个条件组合下执行 memtester/stressapptest/mtk_mem_test 等压力用例，每项重复 -r 次（默认 1，可在用例大类设置中调整；超时上限 = 20h × 重复次数）；3. 运行结束后解析 BAT-Data 目录中的 --BST.xlsx 结果表",
     "期望结果": "结果表所有轮次 Result=PASS；用例详情与测试报告展示每一轮每一项的结果、整体结果与测试 log 路径"
   }
 ]

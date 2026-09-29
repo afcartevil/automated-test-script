@@ -81,6 +81,8 @@ export interface SelfCheckTestConfig {
   kernelFeatureCodeDir?: string
   /** bitflip 压测：遍历条件下每项重复测试次数（BAT -r 参数） */
   bitflipRepeatCount?: number
+  /** bitflip 压测：生效超时上限（小时）= 20h × -r */
+  bitflipTimeoutHours?: number
   autoRetestEnabled?: boolean
   autoRetestCount?: number
   flashBeforeTest?: SelfCheckFlashBeforeTestConfig
@@ -222,6 +224,9 @@ export function formatSelfCheckTestConfigMetaRows(cfg?: SelfCheckTestConfig): st
   }
   if (cfg.bitflipRepeatCount) {
     rows.push(['bitflip 每项重复次数 (-r)', String(cfg.bitflipRepeatCount)])
+  }
+  if (cfg.bitflipTimeoutHours) {
+    rows.push(['bitflip 超时上限 (20h×-r)', `${cfg.bitflipTimeoutHours} 小时`])
   }
   if (cfg.autoRetestEnabled !== undefined) {
     rows.push([

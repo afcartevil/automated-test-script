@@ -971,7 +971,7 @@ function handleDutRowAction(deviceId: string) {
                     @change="saveCatalogTypeSettings"
                   />
                   <span class="ea-muted catalog-monkey-help">
-                    遍历条件下每项重复测试次数（BAT -r 参数），默认 5，范围 1-100；全量压测耗时数小时，期间设备会多次重启
+                    遍历条件下每项重复测试次数（BAT -r 参数），默认 1，范围 1-100；超时上限 = 20h × 重复次数（当前 {{ (catalogTypeSettings.bitflipRepeatCount || 1) * 20 }}h）；每轮约 12-20 小时，期间设备会多次重启
                   </span>
                 </div>
                 <div v-else class="catalog-auto-retest-row catalog-overview-retest">
@@ -1695,7 +1695,7 @@ function handleDutRowAction(deviceId: string) {
                         @click.stop
                       />
                       <p class="flash-options-hint ea-muted">
-                        遍历条件下每项重复测试次数（BAT -r 参数），默认 5；全量压测耗时数小时，期间设备会多次重启，需 userdebug 已 root 且主机 java+adb 可用
+                        遍历条件下每项重复测试次数（BAT -r 参数），默认 1；超时上限 = 20h × 重复次数（当前 {{ (catalogTypeSettings.bitflipRepeatCount || 1) * 20 }}h）；每轮约 12-20 小时，期间设备会多次重启，需 userdebug 已 root 且主机 java+adb 可用
                       </p>
                     </div>
 

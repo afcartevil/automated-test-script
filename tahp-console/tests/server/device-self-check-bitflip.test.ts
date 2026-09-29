@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import * as XLSX from 'xlsx'
 import {
   __testingGenerateXlsx,
+  __testingResolveBitflipExecTimeoutMs,
   __testingSnapshotTestConfig,
   getAllCaseCatalogs,
   getCaseCatalogDetail,
@@ -54,28 +55,50 @@ describe('device self-check bitflip catalog', () => {
     expect(existsSync(join(caseDir, 'case_info.json'))).toBe(true)
   })
 
-  it('defaults bitflipRepeatCount to 5 and normalizes input', () => {
-    expect(getSettings().bitflipRepeatCount).toBe(5)
-    expect(normalizeBitflipRepeatCount(undefined)).toBe(5)
-    expect(normalizeBitflipRepeatCount(0)).toBe(5)
-    expect(normalizeBitflipRepeatCount(-1)).toBe(5)
-    expect(normalizeBitflipRepeatCount(Number.NaN)).toBe(5)
+  it('defaults bitflipRepeatCount to 1 and normalizes input', () => {
+    expect(getSettings().bitflipRepeatCount).toBe(1)
+    expect(normalizeBitflipRepeatCount(undefined)).toBe(1)
+    expect(normalizeBitflipRepeatCount(0)).toBe(1)
+    expect(normalizeBitflipRepeatCount(-1)).toBe(1)
+    expect(normalizeBitflipRepeatCount(Number.NaN)).toBe(1)
     expect(normalizeBitflipRepeatCount(3)).toBe(3)
     expect(normalizeBitflipRepeatCount(100)).toBe(100)
     expect(normalizeBitflipRepeatCount(500)).toBe(100)
   })
 
-  it('snapshots bitflipRepeatCount into testConfig and meta rows, without auto retest', () => {
+  it('resolves bitflip timeout as 20h per repeat count, env overridable', () => {
+    const prevEnv = process.env.TAHP_BITFLIP_TIMEOUT_MS
+    delete process.env.TAHP_BITFLIP_TIMEOUT_MS
+    updateSettings({ autoTestEnabled: {}, autoTestPath: {}, bitflipRepeatCount: 3 })
+    try {
+      expect(__testingResolveBitflipExecTimeoutMs()).toBe(60 * 3_600_000)
+      updateSettings({ autoTestEnabled: {}, autoTestPath: {}, bitflipRepeatCount: 1 })
+      expect(__testingResolveBitflipExecTimeoutMs()).toBe(20 * 3_600_000)
+      process.env.TAHP_BITFLIP_TIMEOUT_MS = '7200000'
+      expect(__testingResolveBitflipExecTimeoutMs()).toBe(7_200_000)
+    } finally {
+      if (prevEnv === undefined) {
+        delete process.env.TAHP_BITFLIP_TIMEOUT_MS
+      } else {
+        process.env.TAHP_BITFLIP_TIMEOUT_MS = prevEnv
+      }
+      updateSettings({ autoTestEnabled: {}, autoTestPath: {}, bitflipRepeatCount: 1 })
+    }
+  })
+
+  it('snapshots bitflipRepeatCount and timeout into testConfig and meta rows, without auto retest', () => {
     updateSettings({ autoTestEnabled: {}, autoTestPath: {}, bitflipRepeatCount: 8 })
     try {
       const cfg = __testingSnapshotTestConfig('bitflip', {})
       expect(cfg.bitflipRepeatCount).toBe(8)
+      expect(cfg.bitflipTimeoutHours).toBe(160)
       expect(cfg.autoRetestEnabled).toBeUndefined()
       expect(cfg.autoRetestCount).toBeUndefined()
       const rows = formatSelfCheckTestConfigMetaRows(cfg)
       expect(rows.some(r => r[0] === 'bitflip 每项重复次数 (-r)' && r[1] === '8')).toBe(true)
+      expect(rows.some(r => r[0] === 'bitflip 超时上限 (20h×-r)' && r[1] === '160 小时')).toBe(true)
     } finally {
-      updateSettings({ autoTestEnabled: {}, autoTestPath: {}, bitflipRepeatCount: 5 })
+      updateSettings({ autoTestEnabled: {}, autoTestPath: {}, bitflipRepeatCount: 1 })
     }
   })
 

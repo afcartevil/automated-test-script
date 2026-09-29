@@ -563,7 +563,7 @@ export async function getSettings(): Promise<AutoTestSettings> {
     gmsTimeoutHours: Number(data?.gmsTimeoutHours) > 0 ? Number(data.gmsTimeoutHours) : 8,
     gmsHostSupported: data?.gmsHostSupported !== false,
     kernelFeatureCodeDir: String(data?.kernelFeatureCodeDir || '').trim(),
-    bitflipRepeatCount: Number(data?.bitflipRepeatCount) > 0 ? Number(data.bitflipRepeatCount) : 5,
+    bitflipRepeatCount: Number(data?.bitflipRepeatCount) > 0 ? Number(data.bitflipRepeatCount) : 1,
   }
 }
 
@@ -628,6 +628,8 @@ export interface SelfCheckTestConfig {
   gmsTimeoutHours?: number
   kernelFeatureCodeDir?: string
   bitflipRepeatCount?: number
+  /** bitflip 生效超时上限（小时）= 20h × -r */
+  bitflipTimeoutHours?: number
   autoRetestEnabled?: boolean
   autoRetestCount?: number
   flashBeforeTest?: SelfCheckFlashBeforeTestConfig

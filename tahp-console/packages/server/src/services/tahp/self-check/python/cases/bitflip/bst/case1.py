@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-DEFAULT_REPEAT_COUNT = 5
+DEFAULT_REPEAT_COUNT = 1
 
 
 def _device_serial(device_info: dict) -> str:

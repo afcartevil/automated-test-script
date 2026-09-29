@@ -294,7 +294,7 @@ function assertGmsRunnable(testType: string, selectedCases?: string[]): void {
 }
 
 const DEFAULT_MONKEY_DURATION = '7d'
-const DEFAULT_BITFLIP_REPEAT_COUNT = 5
+const DEFAULT_BITFLIP_REPEAT_COUNT = 1
 const BITFLIP_REPEAT_COUNT_MIN = 1
 const BITFLIP_REPEAT_COUNT_MAX = 100
 
@@ -421,9 +421,12 @@ function snapshotTestConfig(
         cfg.kernelFeatureCodeDir = settings.kernelFeatureCodeDir.trim()
       }
       break
-    case 'bitflip':
-      cfg.bitflipRepeatCount = normalizeBitflipRepeatCount(settings.bitflipRepeatCount)
+    case 'bitflip': {
+      const repeatCount = normalizeBitflipRepeatCount(settings.bitflipRepeatCount)
+      cfg.bitflipRepeatCount = repeatCount
+      cfg.bitflipTimeoutHours = 20 * repeatCount
       break
+    }
     case 'custom':
     case 'ai_generated':
     case 'power':
@@ -2385,8 +2388,20 @@ async function execPythonInit(
 const CASE_EXEC_TIMEOUT_MS = 5 * 60_000
 const SMOKE_USD_EXEC_TIMEOUT_MS = 3_600_000
 const MANUAL_CONFIRM_TIMEOUT_MS = 30 * 60_000
-/** bitflip 压测为小时级同步长跑（遍历条件 × 每项重复次数），默认 24h */
-const BITFLIP_EXEC_TIMEOUT_MS = 24 * 3_600_000
+/** bitflip 压测：每 1 次重复（-r）预算 20h；实际超时 = 20h × 重复次数 */
+const BITFLIP_TIMEOUT_PER_REPEAT_MS = 20 * 3_600_000
+
+/** bitflip 用例超时：20h × -r（环境变量 TAHP_BITFLIP_TIMEOUT_MS 可覆盖） */
+function resolveBitflipExecTimeoutMs(): number {
+  const raw = Number(process.env.TAHP_BITFLIP_TIMEOUT_MS)
+  if (Number.isFinite(raw) && raw > 0) return raw
+  return BITFLIP_TIMEOUT_PER_REPEAT_MS * normalizeBitflipRepeatCount(settings.bitflipRepeatCount)
+}
+
+/** 报告快照用：bitflip 当前生效超时小时数（20h × -r） */
+export function getBitflipTimeoutHours(): number {
+  return 20 * normalizeBitflipRepeatCount(settings.bitflipRepeatCount)
+}
 
 function resolveCaseExecTimeoutMs(testType: string, module: string): number {
   if (testType === 'smoke' && module === 'usd') {
@@ -2431,8 +2446,7 @@ function resolveCaseExecTimeoutMs(testType: string, module: string): number {
     return Number.isFinite(raw) && raw > 0 ? raw : 10 * 60_000
   }
   if (testType === 'bitflip' && module === 'bst') {
-    const raw = Number(process.env.TAHP_BITFLIP_TIMEOUT_MS)
-    return Number.isFinite(raw) && raw > 0 ? raw : BITFLIP_EXEC_TIMEOUT_MS
+    return resolveBitflipExecTimeoutMs()
   }
   return CASE_EXEC_TIMEOUT_MS
 }
@@ -4110,6 +4124,9 @@ ${sharedStrings.map(s => `<si><t>${escXml(s)}</t></si>`).join('\n')}
 
 /** 仅测试用：直接校验 xlsx 产物（sharedStrings 回归） */
 export const __testingGenerateXlsx = generateXlsx
+
+/** 仅测试用：校验 bitflip 超时公式（20h × -r） */
+export const __testingResolveBitflipExecTimeoutMs = resolveBitflipExecTimeoutMs
 
 async function generateTestReport(
   deviceId: string,

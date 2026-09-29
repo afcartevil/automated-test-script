@@ -21,7 +21,7 @@ XLSX_MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 XLSX_REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 PKG_REL_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 
-DEFAULT_REPEAT_COUNT = 5
+DEFAULT_REPEAT_COUNT = 1
 MIN_REPEAT_COUNT = 1
 MAX_REPEAT_COUNT = 100
 
@@ -348,6 +348,10 @@ def run_bitflip_test(serial: str, repeat_count: int, on_step=None, result_dir: s
     ]
     add_step(f"启动 BAT bitflip 压测，设备: {serial}，每项重复: {repeat_count} 次")
     add_step(f"命令: java -jar {JAR_NAME} -o true -i 30 -r {repeat_count} -s {serial}")
+    add_step(
+        f"预计耗时: 总轮数 = 平台条件组合数 × {repeat_count}（每轮约 15-20 分钟）；"
+        f"超时上限 = 20h × {repeat_count} = {20 * repeat_count}h"
+    )
     add_step(f"控制台日志: {console_log}")
 
     existing_dirs = {p for p in tool_dir.glob(f"{BAT_DATA_PREFIX}*") if p.is_dir()}

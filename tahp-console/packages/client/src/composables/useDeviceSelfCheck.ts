@@ -399,7 +399,7 @@ const catalogTypeSettings = ref({
     gts: '',
     vts: '',
   },
-  bitflipRepeatCount: 5,
+  bitflipRepeatCount: 1,
 })
 const catalogSettingsSaving = ref(false)
 const gmsHostSupported = ref(true)
@@ -773,7 +773,7 @@ async function saveBitflipRepeatCount(showToast = false) {
     const autoRetestCount = { ...(current.autoRetestCount || {}) }
     delete autoRetestEnabled.bitflip
     delete autoRetestCount.bitflip
-    const repeatCount = Math.min(100, Math.max(1, Math.round(Number(catalogTypeSettings.value.bitflipRepeatCount) || 5)))
+    const repeatCount = Math.min(100, Math.max(1, Math.round(Number(catalogTypeSettings.value.bitflipRepeatCount) || 1)))
     catalogTypeSettings.value.bitflipRepeatCount = repeatCount
     await updateSettings({
       ...current,
@@ -919,7 +919,7 @@ async function openCaseCatalog(testType: string) {
         gts: settingsData.gmsTradefedPath?.gts || '',
         vts: settingsData.gmsTradefedPath?.vts || '',
       },
-      bitflipRepeatCount: settingsData.bitflipRepeatCount || 5,
+      bitflipRepeatCount: settingsData.bitflipRepeatCount || 1,
     }
     gmsHostSupported.value = settingsData.gmsHostSupported !== false
     if (detail.length > 0) {
