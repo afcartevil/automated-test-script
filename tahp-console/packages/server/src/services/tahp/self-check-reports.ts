@@ -56,6 +56,20 @@ export function isPendingManualReportFillIn(item: {
     && Boolean(item.message?.includes('报告中补录'))
 }
 
+/** 平台过滤未实测的 NA：不进入最终报告展示与统计 */
+export function shouldOmitFromSelfCheckReport(item: {
+  status?: string
+  message?: string
+}): boolean {
+  if (item.status !== 'NA') return false
+  const msg = item.message || ''
+  return msg.includes('非本机平台用例') || msg.includes('平台过滤')
+}
+
+export function filterReportCaseItems<T extends { status?: string; message?: string }>(items: T[]): T[] {
+  return items.filter(item => !shouldOmitFromSelfCheckReport(item))
+}
+
 export interface SelfCheckFlashBeforeTestConfig {
   enabled: boolean
   pkgPath?: string
@@ -322,10 +336,13 @@ function buildSummaryFromDir(relativePath: string, sessionDir: string, deviceId:
   const mtime = existsSync(summaryPath) ? statSync(summaryPath).mtimeMs : 0
   const reportId = encodeReportId(relativePath)
 
-  // 有全量用例明细时按现行规则重算（NA 计入通过），兼容历史 summary
+  // 有全量用例明细时按现行规则重算（NA 计入通过；平台未测 NA 已剔除），兼容历史 summary
   const detailJson = readJsonFile<DetailJson>(join(absDir, 'detail.json'))
-  const recount = detailJson?.allCaseItems?.length
-    ? recomputeSummaryCounts(detailJson.allCaseItems)
+  const visibleItems = detailJson?.allCaseItems?.length
+    ? filterReportCaseItems(detailJson.allCaseItems)
+    : null
+  const recount = visibleItems
+    ? recomputeSummaryCounts(visibleItems)
     : null
 
   return {
@@ -411,7 +428,7 @@ export async function getSelfCheckReportDetail(reportId: string): Promise<SelfCh
   const base = summaryJson || detailJson
 
   const storedFailed = detailJson?.failedCaseItems ?? []
-  const allCaseItems = detailJson?.allCaseItems?.length
+  const rawAllCaseItems = detailJson?.allCaseItems?.length
     ? detailJson.allCaseItems
     : storedFailed.map(item => ({
         caseKey: item.caseKey,
@@ -422,7 +439,10 @@ export async function getSelfCheckReportDetail(reportId: string): Promise<SelfCh
         status: item.status,
         message: item.message,
       }))
-  const failedCaseItems = storedFailed.length ? storedFailed : collectFailedFromAll(allCaseItems)
+  const allCaseItems = filterReportCaseItems(rawAllCaseItems)
+  const failedCaseItems = filterReportCaseItems(
+    storedFailed.length ? storedFailed : collectFailedFromAll(allCaseItems),
+  )
   const recount = allCaseItems.length ? recomputeSummaryCounts(allCaseItems) : null
   const summaryForAi: SummaryJson = {
     ...(base as SummaryJson),

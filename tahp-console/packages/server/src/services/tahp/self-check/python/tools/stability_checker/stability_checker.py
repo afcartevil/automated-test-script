@@ -1,17 +1,20 @@
-"""稳定性 Checklist 自检工具（TAHP / AI 自检，MTK / A17）。
+"""稳定性 Checklist 自检工具（TAHP / AI 自检，MTK / Qcom）。
 
 由 cases/kernel_feature/stability/caseN.py 调用，风格对齐 wbs_checker：
 - 入口类 StabilityChecker(serial, on_step=...)
 - 每项 run_item(id) → Pass / Fail / NA / Pending（缺 code_dir 需源码验证时）
 
-对齐飞书「稳定性checklist」A17（MTK）主项，并补充旧 checklist「黑屏定屏类故障检测」：
-- 工具默认内置在本目录（Dispatcher / aee_extract / tne_parser / tdsm / tran_pdfs）
+对齐飞书「稳定性checklist」A17（MTK）与 Qcom：
+- 工具默认内置在本目录（Dispatcher / aee_extract / tne_parser / tdsm / tran_pdfs / qcom_dump）
 - code_dir（Android 源码根）经 stability.config.json / 环境变量 / Console 配置
 - adb 一律带 -s <serial>，适配 Console 多设备
+- 高通：user_root 开机后 dload 默认回 full；每次用例开始及每次 wait-for-device 后
+  须 adb root，并重写 dload_mode（默认 mini；仅 case24 用 both）
 """
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import re
 import shutil
@@ -59,12 +62,21 @@ CHECKLIST_ITEMS: List[Dict[str, str]] = [
     {"id": "17", "name": "器件稳定性埋点", "mode": "tools"},
     {"id": "18", "name": "fec2.0方案", "mode": "adb"},
     {"id": "19", "name": "黑屏定屏类故障检测", "mode": "tools"},
-    {"id": "11", "name": "解析expdb", "mode": "tools"},
+    {"id": "11", "name": "解析expdb/tranpdb", "mode": "tools"},
     {"id": "20", "name": "重启检查", "mode": "manual"},
     {"id": "21", "name": "cpu中sram bitflip导致的黑屏问题", "mode": "code"},
     {"id": "22", "name": "kernel-5.10 s2idle hwt patch检查", "mode": "code"},
     {"id": "23", "name": "MTK平台检查pl/lk的boot_reason枚举定义顺序保持一致", "mode": "code"},
+    {"id": "24", "name": "minidump && fulldump转存", "mode": "tools"},
+    {"id": "25", "name": "kasan适配", "mode": "manual"},
+    {"id": "26", "name": "启动日志保存", "mode": "adb"},
+    {"id": "27", "name": "crash界面优化", "mode": "manual"},
 ]
+
+QCOM_MINIDUMP_DIR = "/data/vendor/debuglogger/minidump"
+QCOM_BOOT_LOG_DIR = "/data/vendor/debuglogger/stability"
+QCOM_DLOAD_MODE_PATH = "/sys/kernel/dload/dload_mode"
+QCOM_KCONSOLE_NAME = "md_KCONSOLE.BIN"
 
 # case8 db：sysrq 触发 fulldump，需较长固定等待（可通过环境变量覆盖）
 def _env_positive_int(name: str, default: int) -> int:
@@ -84,6 +96,32 @@ CASE8_POST_BOOT_WAIT_SEC = _env_positive_int("TAHP_STABILITY_CASE8_POST_BOOT_WAI
 # case11 已 output-set none，无 fulldump，开机很快；勿用 case8 那套长超时
 CASE11_WAIT_DEVICE_TIMEOUT_SEC = _env_positive_int("TAHP_STABILITY_CASE11_WAIT_DEVICE_SEC", 180)
 CASE11_POST_BOOT_WAIT_SEC = _env_positive_int("TAHP_STABILITY_CASE11_POST_BOOT_WAIT_SEC", 60)
+CASE24_SAHARA_TIMEOUT_SEC = _env_positive_int("TAHP_STABILITY_CASE24_SAHARA_SEC", 900)
+CASE24_WAIT_DEVICE_TIMEOUT_SEC = _env_positive_int("TAHP_STABILITY_CASE24_WAIT_DEVICE_SEC", 600)
+CASE24_POST_BOOT_WAIT_SEC = _env_positive_int("TAHP_STABILITY_CASE24_POST_BOOT_WAIT_SEC", 90)
+
+# caseIndex → platforms（来自 case_config；缺省不限制）
+_CASE_PLATFORMS: Dict[int, List[str]] = {}
+
+
+def _load_case_platforms() -> Dict[int, List[str]]:
+    global _CASE_PLATFORMS
+    if _CASE_PLATFORMS:
+        return _CASE_PLATFORMS
+    cfg_path = TOOL_ROOT.parents[2] / "case_config" / "kernel_feature_stability.json"
+    out: Dict[int, List[str]] = {}
+    if cfg_path.is_file():
+        try:
+            raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+            for row in raw.get("cases") or []:
+                idx = int(row.get("caseIndex") or 0)
+                plats = row.get("platforms")
+                if idx and isinstance(plats, list) and plats:
+                    out[idx] = [str(p).strip().lower() for p in plats if str(p).strip()]
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            out = {}
+    _CASE_PLATFORMS = out
+    return out
 
 
 def checklist_item_name(item_id: int) -> str:
@@ -122,7 +160,13 @@ def _load_config(overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         or str(paths.get("tools_root") or "").strip()
         or str(TOOL_ROOT)
     )
-    work_rel = str(paths.get("work_dir") or "workspace").strip() or "workspace"
+    # 优先：调用方传入 / 环境变量（Console 用例目录）；否则脚本旁 workspace（仅本地手跑）
+    work_rel = (
+        (str(overrides.get("work_dir")).strip() if overrides and overrides.get("work_dir") else "")
+        or os.environ.get("TAHP_STABILITY_WORK_DIR", "").strip()
+        or str(paths.get("work_dir") or "workspace").strip()
+        or "workspace"
+    )
     work_dir = Path(work_rel)
     if not work_dir.is_absolute():
         work_dir = (TOOL_ROOT / work_dir).resolve()
@@ -161,6 +205,9 @@ class StabilityChecker:
         self.cfg = _load_config(config)
         self.results: Dict[int, Dict[str, str]] = {}
         self.project_root = str(TOOL_ROOT)
+        self._chip_platform: Optional[str] = None
+        # 高通 dload_mode 不持久：user_root 开机默认回 full；记录当前期望，每次开机后重写
+        self._qcom_dload_desired: str = "mini"
 
     def _emit(self, message: str) -> None:
         if self.on_step:
@@ -247,11 +294,188 @@ class StabilityChecker:
             return 1, str(exc)
 
     def ensure_root(self) -> None:
+        """打开 adb root。高通默认无 root，重启后每次都需重新 adb root。"""
         self.run_adb("root", timeout=30)
         self.run_adb("wait-for-device", timeout=90)
         wait = float(self.cfg.get("adb_after_root_sec") or 0)
         if wait > 0:
             time.sleep(wait)
+        uid, _ = self.run_adb("shell id", timeout=10)
+        if "uid=0" not in (uid or ""):
+            # 再试一次（部分机型 root 后需多等一会）
+            time.sleep(2)
+            self.run_adb("root", timeout=30)
+            self.run_adb("wait-for-device", timeout=90)
+            if wait > 0:
+                time.sleep(wait)
+
+    def detect_chip_platform(self) -> str:
+        """返回 mtk / qcom / unisoc / unknown（缓存）。"""
+        if self._chip_platform:
+            return self._chip_platform
+        props = [
+            "ro.hardware",
+            "ro.board.platform",
+            "ro.soc.manufacturer",
+            "ro.product.board",
+        ]
+        blob = ""
+        for prop in props:
+            out, _ = self.run_adb(f"shell getprop {prop}", timeout=10)
+            blob += f" {out or ''}"
+        low = blob.lower()
+        if any(k in low for k in ("qcom", "qualcomm", "msm", "sdm", "sm8", "sm7", "kona", "lahaina", "taro", "kalama", "pineapple")):
+            self._chip_platform = "qcom"
+        elif any(k in low for k in ("mt", "mediatek")):
+            self._chip_platform = "mtk"
+        elif any(k in low for k in ("unisoc", "sprd", "ums", "udx")):
+            self._chip_platform = "unisoc"
+        else:
+            self._chip_platform = "unknown"
+        self._emit(f"检测到芯片平台: {self._chip_platform}（props={blob.strip()[:160]}）")
+        return self._chip_platform
+
+    def set_qcom_dload_mode(self, mode: str) -> Tuple[bool, str]:
+        """设置高通 dump 模式：mini / full / both（须已 adb root；不持久）。"""
+        mode = (mode or "").strip().lower()
+        if mode not in ("mini", "full", "both"):
+            return False, f"非法 dload_mode: {mode}"
+        out, err = self.run_adb(
+            f'shell "echo {mode} > {QCOM_DLOAD_MODE_PATH}"',
+            timeout=15,
+        )
+        cur, cur_err = self.run_adb(f"shell cat {QCOM_DLOAD_MODE_PATH}", timeout=10)
+        cur_text = (cur or "").strip().lower()
+        try:
+            (self.cfg["work_dir"] / "evidence").mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        detail = f"set={mode} out={out!r} err={err!r} current={cur_text or cur_err}"
+        ok = mode in cur_text or (not cur_err and mode == cur_text)
+        # 部分机型 cat 为空但仍写入成功
+        if not ok and not (err or "").strip() and not (cur_err or "").strip():
+            ok = True
+        return ok, detail
+
+    def prepare_qcom_dload(self, mode: str = "mini") -> None:
+        """用例开始或开机后：adb root + 写入 dload_mode（每次都写，不依赖「已设置」缓存）。"""
+        if self.detect_chip_platform() != "qcom":
+            return
+        mode = (mode or "mini").strip().lower()
+        if mode not in ("mini", "full", "both"):
+            mode = "mini"
+        self._qcom_dload_desired = mode
+        self.ensure_root()
+        self._emit(f"高通：设置 dload_mode={mode}（开机后需重设）…")
+        ok, detail = self.set_qcom_dload_mode(mode)
+        self._emit(f"高通 dload_mode={mode} → {'ok' if ok else 'warn'}: {detail}")
+
+    def after_boot(self, *, dload_mode: Optional[str] = None) -> None:
+        """设备重新上线后调用：adb root；高通再按期望重写 dload_mode。"""
+        self.ensure_root()
+        if self.detect_chip_platform() != "qcom":
+            return
+        mode = (dload_mode or self._qcom_dload_desired or "mini").strip().lower()
+        if mode not in ("mini", "full", "both"):
+            mode = "mini"
+        self.prepare_qcom_dload(mode)
+
+    def early_crash_after_adb_online(
+        self,
+        label: str = "early-sysrq",
+        wait_offline_sec: int = 45,
+    ) -> Tuple[bool, str]:
+        """不开机场景：``wait-for-device`` 后尽快 root(+高通重写 dload) 并 sysrq。
+
+        刻意跳过 ensure_root 长 sleep、平台诊断与多次重试，争取在进桌面前触发 dump。
+        对齐手工：``adb wait-for-device`` → ``adb root`` → ``echo c > /proc/sysrq-trigger``。
+        """
+        self._emit(f"{label}: 早触发 — adb root（不等 boot_completed）…")
+        self.run_adb("root", timeout=20)
+        self.run_adb("wait-for-device", timeout=60)
+        if self.detect_chip_platform() == "qcom":
+            mode = (self._qcom_dload_desired or "mini").strip().lower()
+            if mode not in ("mini", "full", "both"):
+                mode = "mini"
+            self._emit(f"{label}: 高通快速重设 dload_mode={mode} …")
+            self.run_adb(
+                f'shell "echo {mode} > {QCOM_DLOAD_MODE_PATH}"',
+                timeout=8,
+            )
+        # 打开 sysrq 后立刻造障，不做 id/ls 诊断
+        self.run_adb('shell "echo 1 > /proc/sys/kernel/sysrq"', timeout=5)
+        argv = ["adb", "-s", self.serial, "shell", "echo c > /proc/sysrq-trigger"]
+        self._emit(f"{label}: 立刻下发 echo c > /proc/sysrq-trigger")
+        out, err = self.run_adb_argv(argv, timeout=15)
+        self._emit(f"{label}: 返回 out={out[:120]!r} err={err[:120]!r}；等待掉线…")
+        offline, elapsed = self._wait_device_offline(label, wait_offline_sec)
+        if offline:
+            return True, f"早触发 sysrq 成功（约 {elapsed}s 掉线）"
+        # 一次快路径回退
+        self._emit(f"{label}: 未掉线，stdin→cat 再试一次…")
+        try:
+            proc = subprocess.Popen(
+                ["adb", "-s", self.serial, "shell", "sh", "-c", "cat > /proc/sysrq-trigger"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                proc.communicate(input=b"c", timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+        except Exception as exc:
+            return False, f"早触发 sysrq 失败且回退异常: {exc}"
+        offline, elapsed = self._wait_device_offline(label, min(20, wait_offline_sec))
+        if offline:
+            return True, f"早触发 sysrq 成功（stdin-cat，约 {elapsed}s）"
+        return False, f"早触发 sysrq 后 {wait_offline_sec}s 内未掉线（可能已进桌面）"
+
+    def _find_md_kconsole(self, root: Path) -> Optional[Path]:
+        if not root.exists():
+            return None
+        exact = list(root.rglob(QCOM_KCONSOLE_NAME))
+        if exact:
+            return exact[0]
+        # 大小写不敏感兜底
+        for p in root.rglob("*"):
+            if p.is_file() and p.name.lower() == QCOM_KCONSOLE_NAME.lower():
+                return p
+        return None
+
+    def _text_has_sysrq_keyword(self, text: str) -> bool:
+        t = (text or "").lower()
+        if "sysrq triggered crash" in t or "sysrq: trigger a crash" in t:
+            return True
+        return "sysrq" in t and any(k in t for k in ("trigger", "panic", "sysrq_handle_crash"))
+
+    def pull_qcom_sahara_dump(self, out_dir: Path) -> Tuple[bool, str]:
+        """用内置 qcom_dump/QSaharaServer.exe 导出 fulldump（设备停在 XBL / 90EE）。
+
+        COM 检测与调用逻辑见 qcom_dump/sahara_pull.py（对齐原 bat 参数）。
+        """
+        qs = self._resolve_tool("qcom_dump/QSaharaServer.exe", "QSaharaServer.exe")
+        if not qs:
+            return False, (
+                "未找到 qcom_dump/QSaharaServer.exe；"
+                "请将工具放到 tools/stability_checker/qcom_dump/"
+            )
+        out_dir.mkdir(parents=True, exist_ok=True)
+        pull_mod = TOOL_ROOT / "qcom_dump" / "sahara_pull.py"
+        if not pull_mod.is_file():
+            return False, f"未找到 {pull_mod}"
+        spec = importlib.util.spec_from_file_location("qcom_sahara_pull", pull_mod)
+        if spec is None or spec.loader is None:
+            return False, f"无法加载 {pull_mod}"
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.pull_sahara_dump(
+            out_dir,
+            qs_exe=qs,
+            timeout_sec=CASE24_SAHARA_TIMEOUT_SEC,
+            on_log=lambda m: self._emit(f"case24: {m}"),
+        )
 
     def check_device(self) -> bool:
         stdout, _ = self.run_adb("get-state", timeout=15)
@@ -563,7 +787,7 @@ class StabilityChecker:
         (ev / "wait_for_device.txt").write_text(f"exit={wcode}\n{wout}\n", encoding="utf-8")
         if wcode != 0:
             return "Fail", f"wait-for-device 失败或超时: {wout.strip() or wcode}"
-        self.ensure_root()
+        self.after_boot()
         self._sleep_with_progress(
             CASE8_POST_BOOT_WAIT_SEC,
             "case8: 开机后等待 aee_exp 落盘",
@@ -718,7 +942,17 @@ class StabilityChecker:
         return False, detail
 
     def check_tranpdb(self) -> Tuple[str, str]:
-        """A17#11 解析 expdb / temp_db。
+        """A17#11 / Qcom：解析 expdb/tranpdb。
+
+        MTK：Dispatcher 解析 temp_db。
+        高通：前序步骤相同（mini dump + sysrq），导出后直接检查 md_KCONSOLE.BIN 关键字，不再走 Dispatcher。
+        """
+        if self.detect_chip_platform() == "qcom":
+            return self.check_tranpdb_qcom()
+        return self.check_tranpdb_mtk()
+
+    def check_tranpdb_mtk(self) -> Tuple[str, str]:
+        """MTK：解析 expdb / temp_db。
 
         优先复用前序项已产生的 /data/TNE/temp_db（须目录下有文件或非空文件）；
         否则先 mrdump_tool output-set none（关 fulldump）→ sysrq →
@@ -767,7 +1001,7 @@ class StabilityChecker:
             (ev / "wait_for_device.txt").write_text(f"exit={wcode}\n{wout}\n", encoding="utf-8")
             if wcode != 0:
                 return "Fail", f"wait-for-device 失败或超时: {wout.strip() or wcode}"
-            self.ensure_root()
+            self.after_boot()
             self._sleep_with_progress(
                 CASE11_POST_BOOT_WAIT_SEC,
                 "case11: 开机后等待 temp_db 落盘",
@@ -808,6 +1042,86 @@ class StabilityChecker:
         ok, msg = check_dispatcher_sysrq(analysis, dout)
         reused = "复用已有 temp_db" if reusable else "sysrq 新生成 temp_db"
         return ("Pass" if ok else "Fail"), f"{msg}（{reused}）"
+
+    def check_tranpdb_qcom(self) -> Tuple[str, str]:
+        """高通 tranpdb：sysrq 后 pull minidump，检查 md_KCONSOLE.BIN 关键字（不走 Dispatcher）。"""
+        work = self.cfg["work_dir"] / "case11_qcom"
+        work.mkdir(parents=True, exist_ok=True)
+        ev = self._evidence(11)
+        self.ensure_root()
+        self.prepare_qcom_dload("mini")
+        ok_mode, mode_detail = True, "via prepare_qcom_dload"
+        (ev / "dload_mode.txt").write_text(f"ok={ok_mode}\n{mode_detail}\n", encoding="utf-8")
+
+        remote = QCOM_MINIDUMP_DIR
+        self._emit(f"case11(qcom): 检查已有 {remote} …")
+        ls_out, _ = self.run_adb(f'shell "ls -la {remote}"', timeout=20)
+        (ev / "minidump_ls_before.txt").write_text(ls_out or "(empty)\n", encoding="utf-8")
+
+        # 若目录已有 md_KCONSOLE.BIN 则可复用；否则造障
+        probe_dir = work / "probe"
+        if probe_dir.exists():
+            shutil.rmtree(probe_dir, ignore_errors=True)
+        reusable = False
+        if "No such file" not in (ls_out or "") and (ls_out or "").strip():
+            code, pout = self.run_host(
+                ["adb", "-s", self.serial, "pull", remote, str(probe_dir)],
+                cwd=work,
+                timeout=300,
+            )
+            (ev / "adb_pull_probe.txt").write_text(f"exit={code}\n{pout}\n", encoding="utf-8")
+            if self._find_md_kconsole(probe_dir):
+                reusable = True
+                self._emit("case11(qcom): 复用已有 minidump 中的 md_KCONSOLE.BIN")
+
+        if not reusable:
+            self._emit("case11(qcom): 清理后触发 sysrq …")
+            self.run_adb(f'shell "rm -rf {remote}/*"', timeout=30)
+            ok_sysrq, sysrq_msg = self.trigger_sysrq_crash("case11-qcom")
+            if not ok_sysrq:
+                return "Fail", sysrq_msg
+            self._emit(
+                f"case11(qcom): wait-for-device（超时 {CASE11_WAIT_DEVICE_TIMEOUT_SEC}s）…"
+            )
+            wcode, wout = self.run_host(
+                ["adb", "-s", self.serial, "wait-for-device"],
+                timeout=CASE11_WAIT_DEVICE_TIMEOUT_SEC,
+            )
+            (ev / "wait_for_device.txt").write_text(f"exit={wcode}\n{wout}\n", encoding="utf-8")
+            if wcode != 0:
+                return "Fail", f"wait-for-device 失败或超时: {wout.strip() or wcode}"
+            self.after_boot(dload_mode="mini")
+            self._sleep_with_progress(
+                CASE11_POST_BOOT_WAIT_SEC,
+                "case11(qcom): 开机后等待 minidump 落盘",
+                tick_sec=15,
+            )
+
+        local = work / "minidump"
+        if local.exists():
+            shutil.rmtree(local, ignore_errors=True)
+        self._emit(f"case11(qcom): pull {remote} …")
+        code, pull_out = self.run_host(
+            ["adb", "-s", self.serial, "pull", remote, str(local)],
+            cwd=work,
+            timeout=300,
+        )
+        (ev / "adb_pull_minidump.txt").write_text(f"exit={code}\n{pull_out}\n", encoding="utf-8")
+        if not local.exists():
+            return "Fail", f"未 pull 到 {remote}"
+        kcon = self._find_md_kconsole(local)
+        if not kcon:
+            return "Fail", f"导出的 minidump 中未找到 {QCOM_KCONSOLE_NAME}"
+        try:
+            raw = kcon.read_bytes()
+            text = raw.decode("utf-8", errors="ignore")
+        except OSError as exc:
+            return "Fail", f"读取 {kcon.name} 失败: {exc}"
+        (ev / "md_KCONSOLE_snippet.txt").write_text(text[:4000], encoding="utf-8", errors="replace")
+        if self._text_has_sysrq_keyword(text):
+            reused = "复用已有 minidump" if reusable else "sysrq 新生成 minidump"
+            return "Pass", f"{QCOM_KCONSOLE_NAME} 含 sysrq 关键字（{reused}）"
+        return "Fail", f"{QCOM_KCONSOLE_NAME} 未命中 sysrq 相关关键字"
 
     def _kernel_roots(self, code_dir: Path) -> List[Path]:
         """返回 code_dir 下的 kernel / kernel-* 目录（以及 code_dir 本身若已是 kernel 树）。"""
@@ -887,36 +1201,48 @@ class StabilityChecker:
         return "Fail", f"soidle/slidle 未确认为 0，请人工核对 {rel}"
 
     def check_tdfs_stucklogo(self) -> Tuple[str, str]:
+        """不开机 log_store[TDFS]：adb 一上线就 sysrq，不等进桌面。
+
+        MTK / 高通共用早触发路径；高通仅在 root 后极速重写 dload_mode。
+        解析产物：MTK 查 last_kmsg；高通查 xbl.bin + kernel.bin。
+        """
         tools, err = self._require_tools("tran_pdfs")
         if err:
             return "NA", err
         work = self.cfg["work_dir"] / "case13"
         work.mkdir(parents=True, exist_ok=True)
         ev = self._evidence(13)
+        chip = self.detect_chip_platform()
         self.ensure_root()
-        # case11 可能已 output-set none；本项需要 fulldump，先恢复 internal-storage
-        self._emit("case13: mrdump_tool output-set internal-storage（打开 fulldump）…")
-        md_out, md_err = self.run_adb(
-            "shell mrdump_tool output-set internal-storage",
-            timeout=20,
-        )
-        (ev / "mrdump_output_set_internal.txt").write_text(
-            f"out={md_out}\nerr={md_err}\n",
-            encoding="utf-8",
-        )
+        # case11 可能已 output-set none；本项需要 fulldump，先恢复 internal-storage（MTK）
+        if chip != "qcom":
+            self._emit("case13: mrdump_tool output-set internal-storage（打开 fulldump）…")
+            md_out, md_err = self.run_adb(
+                "shell mrdump_tool output-set internal-storage",
+                timeout=20,
+            )
+            (ev / "mrdump_output_set_internal.txt").write_text(
+                f"out={md_out}\nerr={md_err}\n",
+                encoding="utf-8",
+            )
         ls_out, _ = self.run_adb('shell "ls -l /dev/block/by-name/tdfs"', timeout=15)
         if "No such file" in (ls_out or "") or "No such" in (ls_out or ""):
             return "Fail", "不存在 /dev/block/by-name/tdfs，请存储同事加入分区"
-        self._emit("case13: 多次 sysrq 后 pull tdfs …")
+        self._emit(
+            "case13: reboot 后多次「wait-for-device → 立刻 root(+dload) → sysrq」"
+            "（赶在进桌面前）…"
+        )
         self.run_adb("reboot", timeout=30)
         for i in range(3):
             self.run_adb("wait-for-device", timeout=180)
-            ok_sysrq, sysrq_msg = self.trigger_sysrq_crash(f"case13#{i + 1}")
+            ok_sysrq, sysrq_msg = self.early_crash_after_adb_online(f"case13#{i + 1}")
             if not ok_sysrq:
                 return "Fail", sysrq_msg
-            time.sleep(5)
+            # 已掉线则无需再 sleep；给 USB 枚举一点余量即可
+            time.sleep(2)
         self.run_adb("wait-for-device", timeout=180)
-        self.ensure_root()
+        # 最终 pull 阶段需要稳定 root（可等开机完成）
+        self.after_boot()
         time.sleep(60)
         tdfs_img = work / "tdfs"
         code, out = self.run_host(
@@ -927,8 +1253,15 @@ class StabilityChecker:
         (ev / "adb_pull_tdfs.txt").write_text(f"exit={code}\n{out}\n", encoding="utf-8")
         if not tdfs_img.is_file():
             return "Fail", "pull tdfs 失败"
+        parse_plat = "auto"
         pcode, pout = self.run_host(
-            [sys.executable, str(tools["tran_pdfs"]), str(tdfs_img)],
+            [
+                sys.executable,
+                str(tools["tran_pdfs"]),
+                str(tdfs_img),
+                "--platform",
+                parse_plat,
+            ],
             cwd=work,
             timeout=600,
         )
@@ -940,6 +1273,10 @@ class StabilityChecker:
             return "Fail", "tran_pdfs 未生成 tdfs-* 目录"
         latest = dirs[0]
         needle = "Kernel panic - not syncing: sysrq triggered crash"
+
+        if chip == "qcom":
+            return self._judge_tdfs_qcom(latest, needle, pcode, pout)
+
         hits = 0
         for kmsg in latest.rglob("*"):
             if not kmsg.is_file():
@@ -959,6 +1296,59 @@ class StabilityChecker:
             return "Fail", f"已解析 {latest.name}，未找到 sysrq last_kmsg 关键字"
         return "Fail", f"tran_pdfs 失败: {pout[:200]}"
 
+    def _judge_tdfs_qcom(
+        self,
+        latest: Path,
+        needle: str,
+        pcode: int,
+        pout: str,
+    ) -> Tuple[str, str]:
+        """高通：tran_pdfs 产物为 xbl.bin + kernel.bin（无 last_kmsg）。
+
+        兼容旧脚本把 type0 写成 unknown_type_0 的情况。
+        """
+        def _collect(*names: str) -> List[Path]:
+            out: List[Path] = []
+            for name in names:
+                out.extend(
+                    p for p in latest.rglob(name) if p.is_file() and p.stat().st_size > 0
+                )
+            return out
+
+        xbl_files = _collect("xbl.bin", "unknown_type_0")
+        kernel_files = _collect("kernel.bin")
+        if not xbl_files or not kernel_files:
+            missing = []
+            if not xbl_files:
+                missing.append("xbl.bin")
+            if not kernel_files:
+                missing.append("kernel.bin")
+            if pcode != 0:
+                return "Fail", f"tran_pdfs 失败且缺 {','.join(missing)}: {pout[:200]}"
+            return "Fail", f"已解析 {latest.name}，缺少高通产物: {','.join(missing)}"
+
+        hits = 0
+        for kpath in kernel_files:
+            if kpath.stat().st_size >= 5_000_000:
+                continue
+            try:
+                text = kpath.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if needle in text or "sysrq" in text.lower():
+                hits += 1
+        if hits:
+            return (
+                "Pass",
+                f"tdfs 含 xbl×{len(xbl_files)} + kernel.bin×{len(kernel_files)}，"
+                f"且 kernel.bin 命中 sysrq（{hits}）",
+            )
+        if pcode == 0:
+            return (
+                "Fail",
+                f"已解析 {latest.name}，有 xbl/kernel 但未命中 sysrq 关键字",
+            )
+        return "Fail", f"tran_pdfs 失败: {pout[:200]}"
     def check_mrdump_key(self) -> Tuple[str, str]:
         """A17#14：sysfs compatible；若配置了 code_dir 则必须再结合源码判定。"""
         self.ensure_root()
@@ -1047,7 +1437,10 @@ class StabilityChecker:
         """A17#17 器件稳定性埋点：对齐旧 checklist case09。
 
         写 /proc/tran_devmsg（格式 ``{product} tdsm test {date} {seq}``）→ sysrq →
-        pull expdb → tdsm 解析；adb/tdsm 两侧均需命中 product + date。
+        pull 分区 → tdsm 解析；adb/tdsm 两侧均需命中 product + date。
+
+        MTK：log_store 节点 + mrdump none + pull expdb
+        高通：tran_devmsg 节点 + dload_mode=mini + pull tdfs
         """
         tools, err = self._require_tools("tdsm")
         if err:
@@ -1055,19 +1448,36 @@ class StabilityChecker:
         work = self.cfg["work_dir"] / "case17"
         work.mkdir(parents=True, exist_ok=True)
         ev = self._evidence(17)
+        chip = self.detect_chip_platform()
         product = str(self.cfg.get("product_name") or self._guess_product()).strip() or "UNKNOWN"
         date_str = datetime.now().strftime("%Y%m%d")
         seq = str(self.cfg.get("tdsm_sequence") or "no1").strip() or "no1"
         # 与旧 checklist build_tdsm_devmsg 一致（成功用例格式）
         devmsg = f"{product} tdsm test {date_str} {seq}"
         (ev / "devmsg_expected.txt").write_text(
-            f"devmsg={devmsg}\nproduct={product}\ndate={date_str}\n",
+            f"devmsg={devmsg}\nproduct={product}\ndate={date_str}\nchip={chip}\n",
             encoding="utf-8",
         )
         self.ensure_root()
         self._emit(f"case17: 写入埋点 {devmsg} 并触发 sysrq …")
-        self.run_adb('shell "echo 1 > /sys/module/log_store/parameters/dev_id"', timeout=15)
-        self.run_adb('shell "echo 1 > /sys/module/log_store/parameters/msg_type"', timeout=15)
+        if chip == "qcom":
+            self.run_adb(
+                'shell "echo 1 > /sys/module/tran_devmsg/parameters/dev_id"',
+                timeout=15,
+            )
+            self.run_adb(
+                'shell "echo 1 > /sys/module/tran_devmsg/parameters/msg_type"',
+                timeout=15,
+            )
+        else:
+            self.run_adb(
+                'shell "echo 1 > /sys/module/log_store/parameters/dev_id"',
+                timeout=15,
+            )
+            self.run_adb(
+                'shell "echo 1 > /sys/module/log_store/parameters/msg_type"',
+                timeout=15,
+            )
         # 写入 /proc/tran_devmsg（勿写 sysfs dev_msg；否则 cat/tdsm 都匹配不到）
         safe = devmsg.replace("'", "'\"'\"'")
         for _ in range(3):
@@ -1077,27 +1487,50 @@ class StabilityChecker:
             f"out={adb_cat}\nerr={adb_err}\n",
             encoding="utf-8",
         )
-        self.run_adb("shell mrdump_tool output-set none", timeout=20)
+        if chip == "qcom":
+            self._emit("case17: 高通设置 dload_mode=mini …")
+            self.prepare_qcom_dload("mini")
+        else:
+            self.run_adb("shell mrdump_tool output-set none", timeout=20)
         ok_sysrq, sysrq_msg = self.trigger_sysrq_crash("case17")
         if not ok_sysrq:
             return "Fail", sysrq_msg
         time.sleep(30)
         self.run_adb("wait-for-device", timeout=180)
-        self.ensure_root()
-        expdb = work / "expdb"
+        self.after_boot(dload_mode="mini" if chip == "qcom" else None)
+        if chip == "qcom":
+            remote_part = "/dev/block/by-name/tdfs"
+            local_img = work / "tdfs"
+            pull_log = "adb_pull_tdfs.txt"
+            pull_fail = "pull tdfs 失败"
+        else:
+            remote_part = "/dev/block/by-name/expdb"
+            local_img = work / "expdb"
+            pull_log = "adb_pull_expdb.txt"
+            pull_fail = "pull expdb 失败"
         code, pout = self.run_host(
-            ["adb", "-s", self.serial, "pull", "/dev/block/by-name/expdb", str(expdb)],
+            ["adb", "-s", self.serial, "pull", remote_part, str(local_img)],
             cwd=work,
             timeout=600,
         )
-        (ev / "adb_pull_expdb.txt").write_text(f"exit={code}\n{pout}\n", encoding="utf-8")
-        if code != 0 and not expdb.exists():
-            return "Fail", "pull expdb 失败"
-        tcode, tout = self.run_host([sys.executable, str(tools["tdsm"]), str(expdb)], cwd=work, timeout=300)
+        (ev / pull_log).write_text(f"exit={code}\n{pout}\n", encoding="utf-8")
+        if code != 0 and not local_img.exists():
+            return "Fail", pull_fail
+        tcode, tout = self.run_host(
+            [
+                sys.executable,
+                str(tools["tdsm"]),
+                str(local_img),
+                "--platform",
+                "qcom" if chip == "qcom" else "mtk",
+            ],
+            cwd=work,
+            timeout=300,
+        )
         (ev / "tdsm.out").write_text(f"exit={tcode}\n{tout}\n", encoding="utf-8")
         ok_adb = product in (adb_cat or "") and date_str in (adb_cat or "")
         ok_tdsm = product in (tout or "") and date_str in (tout or "")
-        msg = f"adb_match={ok_adb} tdsm_match={ok_tdsm}"
+        msg = f"adb_match={ok_adb} tdsm_match={ok_tdsm} part={remote_part}"
         if not ok_adb:
             msg += f"；tran_devmsg={((adb_cat or adb_err) or '(empty)')[:120]}"
         if not ok_tdsm:
@@ -1327,7 +1760,7 @@ class StabilityChecker:
             timeout=180,
         )
         (ev / "wait_for_device.txt").write_text(f"exit={wcode}\n{wout}\n", encoding="utf-8")
-        self.ensure_root()
+        self.after_boot()
         self._sleep_with_progress(60, "case19: root 后等待 pstore 可读", tick_sec=15)
         pstore_out, pstore_err = self.run_adb(
             'shell "cat /sys/fs/pstore/console-ramoops-0"',
@@ -1401,6 +1834,141 @@ class StabilityChecker:
         # pass_if_missing：True=不存在/已注释；False=仍存在未注释
         return ("Pass" if ok else "Fail"), msg
 
+    def check_minidump_fulldump(self) -> Tuple[str, str]:
+        """Qcom#24：minidump && fulldump 转存。
+
+        - 切 dload_mode=both
+        - sysrq 后 fulldump 停在 XBL（主机出现 90EE），用 qcom_dump/QSaharaServer 导出
+        - 重启后检查 /data/vendor/debuglogger/minidump
+        - 结束后恢复 mini
+        """
+        if self.detect_chip_platform() != "qcom":
+            return "NA", "本项仅适用于高通平台"
+        work = self.cfg["work_dir"] / "case24"
+        work.mkdir(parents=True, exist_ok=True)
+        ev = self._evidence(24)
+        self.prepare_qcom_dload("both")
+        (ev / "dload_mode_both.txt").write_text(
+            f"desired=both\n",
+            encoding="utf-8",
+        )
+
+        self._emit("case24: 触发 sysrq（期望进入 fulldump / 90EE）…")
+        ok_sysrq, sysrq_msg = self.trigger_sysrq_crash("case24", wait_offline_sec=60)
+        if not ok_sysrq:
+            # 设备若仍在线则尝试恢复 mini
+            try:
+                self.prepare_qcom_dload("mini")
+            except Exception:
+                pass
+            return "Fail", sysrq_msg
+
+        # 给 Sahara 端口枚举一点时间
+        self._sleep_with_progress(15, "case24: 等待 90EE 端口出现", tick_sec=5)
+        sahara_dir = work / "fulldump_sahara"
+        if sahara_dir.exists():
+            shutil.rmtree(sahara_dir, ignore_errors=True)
+        ok_sahara, sahara_msg = self.pull_qcom_sahara_dump(sahara_dir)
+        (ev / "sahara_result.txt").write_text(
+            f"ok={ok_sahara}\n{sahara_msg}\n",
+            encoding="utf-8",
+        )
+        if not ok_sahara:
+            self._emit(f"case24: Sahara 自动导出失败 — {sahara_msg}")
+            return "Fail", f"fulldump Sahara 导出失败: {sahara_msg}"
+
+        self._emit(
+            f"case24: fulldump 已导出，wait-for-device（超时 {CASE24_WAIT_DEVICE_TIMEOUT_SEC}s）…"
+        )
+        # fulldump 导出后设备常需重启才回 adb；等待即可，不弹人工确认
+        wcode, wout = self.run_host(
+            ["adb", "-s", self.serial, "wait-for-device"],
+            timeout=CASE24_WAIT_DEVICE_TIMEOUT_SEC,
+        )
+        (ev / "wait_for_device.txt").write_text(f"exit={wcode}\n{wout}\n", encoding="utf-8")
+        if wcode != 0:
+            return (
+                "Fail",
+                "fulldump 已导出，但 wait-for-device 超时（设备未回到 adb）；"
+                "请确认导出后已重启再复测",
+            )
+
+        # 开机后：root + 恢复 mini（再查 minidump）
+        self.after_boot(dload_mode="mini")
+        self._sleep_with_progress(
+            CASE24_POST_BOOT_WAIT_SEC,
+            "case24: 开机后等待 minidump 落盘",
+            tick_sec=15,
+        )
+        local_mini = work / "minidump"
+        if local_mini.exists():
+            shutil.rmtree(local_mini, ignore_errors=True)
+        self._emit(f"case24: pull {QCOM_MINIDUMP_DIR} …")
+        code, pull_out = self.run_host(
+            ["adb", "-s", self.serial, "pull", QCOM_MINIDUMP_DIR, str(local_mini)],
+            cwd=work,
+            timeout=300,
+        )
+        (ev / "adb_pull_minidump.txt").write_text(f"exit={code}\n{pull_out}\n", encoding="utf-8")
+        ls_out, _ = self.run_adb(f'shell "ls -la {QCOM_MINIDUMP_DIR}"', timeout=20)
+        (ev / "minidump_ls.txt").write_text(ls_out or "(empty)\n", encoding="utf-8")
+
+        mini_ok = local_mini.exists() and (
+            (local_mini.is_dir() and any(p.is_file() for p in local_mini.rglob("*")))
+            or (local_mini.is_file() and local_mini.stat().st_size > 0)
+        )
+        if not mini_ok:
+            return (
+                "Fail",
+                f"fulldump 已导出，但未在 {QCOM_MINIDUMP_DIR} 拉到 minidump 文件",
+            )
+        return "Pass", f"fulldump(Sahara) + minidump({QCOM_MINIDUMP_DIR}) 均已确认"
+
+    def check_boot_log_save(self) -> Tuple[str, str]:
+        """Qcom#26：启动日志保存在 /data/vendor/debuglogger/stability。"""
+        if self.detect_chip_platform() != "qcom":
+            return "NA", "本项仅适用于高通平台"
+        ev = self._evidence(26)
+        self.prepare_qcom_dload("mini")
+        remote = QCOM_BOOT_LOG_DIR
+        self._emit(f"case26: 检查 {remote} …")
+        ls_out, ls_err = self.run_adb(f'shell "ls -la {remote}"', timeout=20)
+        (ev / "stability_ls.txt").write_text(
+            f"out={ls_out}\nerr={ls_err}\n",
+            encoding="utf-8",
+        )
+        text = (ls_out or "").strip()
+        if "No such file" in text or "No such file" in (ls_err or ""):
+            return "Fail", f"不存在目录 {remote}"
+        if not text:
+            return "Fail", f"无法列出 {remote}: {ls_err or '(empty)'}"
+        # 目录存在且非空（至少有 . 以外的条目）
+        lines = [
+            ln for ln in text.splitlines()
+            if ln.strip() and not ln.strip().endswith(" .") and not ln.strip().endswith(" ..")
+        ]
+        # ls -la 至少有 total 行；再看是否有真实文件行
+        file_lines = [
+            ln for ln in lines
+            if not ln.lower().startswith("total") and "Permission denied" not in ln
+        ]
+        if len(file_lines) <= 0:
+            return "Fail", f"{remote} 存在但为空"
+        work = self.cfg["work_dir"] / "case26"
+        work.mkdir(parents=True, exist_ok=True)
+        local = work / "stability_logs"
+        if local.exists():
+            shutil.rmtree(local, ignore_errors=True)
+        code, pout = self.run_host(
+            ["adb", "-s", self.serial, "pull", remote, str(local)],
+            cwd=work,
+            timeout=300,
+        )
+        (ev / "adb_pull.txt").write_text(f"exit={code}\n{pout}\n", encoding="utf-8")
+        if local.exists() and any(p.is_file() for p in local.rglob("*")):
+            return "Pass", f"{remote} 存在且已 pull 到本地证据"
+        return "Pass", f"{remote} 目录非空（pull 可忽略）: {file_lines[0][:120]}"
+
     def check_pl_lk_boot_reason(self) -> Tuple[str, str]:
         """MTK：preloader platform.h 与 lk boot_mode.h 的 boot_reason 枚举一致。"""
         plat_out, _ = self.run_adb("shell getprop ro.board.platform", timeout=15)
@@ -1449,6 +2017,10 @@ class StabilityChecker:
             21: StabilityChecker.check_sram_bitflip_ram_console,
             22: StabilityChecker.check_s2idle_hwt_patch,
             23: StabilityChecker.check_pl_lk_boot_reason,
+            24: StabilityChecker.check_minidump_fulldump,
+            25: StabilityChecker.check_manual_placeholder,
+            26: StabilityChecker.check_boot_log_save,
+            27: StabilityChecker.check_manual_placeholder,
         }
         return mapping[item_id]
 
@@ -1463,6 +2035,23 @@ class StabilityChecker:
                 "status": "Fail",
                 "info": f"设备不可用或未连接: {self.serial}",
             }
+        # 高通：每次用例开始重设 dload（mini；#24 用 both）；开机后由 after_boot 再写
+        try:
+            chip = self.detect_chip_platform()
+            platforms = _load_case_platforms().get(item_id) or []
+            if platforms and chip != "unknown" and chip not in platforms:
+                status_norm = "NA"
+                info = f"非本机平台用例（设备={chip}，用例适用={','.join(platforms)}）"
+                row = {"id": item_id, "name": name, "status": status_norm, "info": info}
+                self.results[item_id] = row
+                self._emit(f"[{item_id}/{total}] {name} → {status_norm}: {info}")
+                return row
+            if chip == "qcom":
+                # 每次用例都重设：user_root 开机后 dload 会回到 full
+                mode = "both" if item_id == 24 else "mini"
+                self.prepare_qcom_dload(mode)
+        except Exception as exc:
+            self._emit(f"平台预处理警告: {exc}")
         self._emit(f"[{item_id}/{total}] {name} …")
         try:
             status, info = self._fn_for(item_id)(self)

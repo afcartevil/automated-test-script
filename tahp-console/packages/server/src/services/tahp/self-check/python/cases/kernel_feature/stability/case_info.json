@@ -10,7 +10,7 @@
   {
     "caseIndex": 2,
     "caseName": "三键uart和console功能配置",
-    "前置条件": "串口线、user_root/userdebug；P1 起需打开 USB 转串口与 console",
+    "前置条件": "串口线、user_root/userdebug；P1 起需打开 USB 转串口与 console；MTK/高通均需人工执行",
     "测试步骤": "1. 音量上+音量下+电源键开机，串口终端有 log 输出\n2. 开机约 10s 后在串口终端发 logcat，能看到系统层 log",
     "期望结果": "三键可抓串口；console 有效（logcat 有输出）",
     "用例名": "三键uart和console功能配置"
@@ -50,7 +50,7 @@
   {
     "caseIndex": 7,
     "caseName": "双键触发hang",
-    "前置条件": "user_root；人工按键",
+    "前置条件": "user_root；人工按键；MTK/高通均需人工执行",
     "测试步骤": "音量上下同按 10–16s 松开 → 5s 内连按音量上 3 次 → 橙屏完成后检查 /data/vendor/aee_exp 是否有 db",
     "期望结果": "触发 hang/橙屏且产生 db",
     "用例名": "双键触发hang"
@@ -90,9 +90,9 @@
   {
     "caseIndex": 13,
     "caseName": "不开机log_store[TDFS]检查",
-    "前置条件": "内置 tran_pdfs.py；设备有 tdfs 分区",
-    "测试步骤": "mrdump_tool output-set internal-storage 打开 fulldump → 确认 by-name/tdfs 存在 → 多次 sysrq → pull tdfs → tran_pdfs 解析",
-    "期望结果": "tdfs 产物含 sysrq last_kmsg",
+    "前置条件": "内置 tran_pdfs.py；设备有 tdfs 分区；高通复用早触发路径（开机后尽快 root+重设 dload）",
+    "测试步骤": "确认 by-name/tdfs 存在 →（MTK）mrdump_tool output-set internal-storage → reboot → 循环 3 次：adb wait-for-device 后立刻 adb root（高通再写 dload_mode）并 echo c >/proc/sysrq-trigger（不等进桌面）→ pull tdfs → tran_pdfs --platform mtk|qcom 解析",
+    "期望结果": "MTK：tdfs 产物含 sysrq last_kmsg；高通：tdfs 产物含 xbl.bin 与 kernel.bin（可在 kernel.bin 核对 sysrq）",
     "用例名": "不开机log_store[TDFS]检查"
   },
   {
@@ -122,9 +122,9 @@
   {
     "caseIndex": 17,
     "caseName": "器件稳定性埋点",
-    "前置条件": "内置 tdsm.py；可配 product_name",
-    "测试步骤": "echo 1→dev_id/msg_type → 三次写入 /proc/tran_devmsg（格式：产品名 tdsm test 日期 no1）→ cat 校验 → sysrq → pull expdb → tdsm 解析",
-    "期望结果": "adb 与 tdsm 均命中产品名/日期",
+    "前置条件": "内置 tdsm.py；可配 product_name；MTK/高通节点与导出分区不同",
+    "测试步骤": "MTK：echo 1→log_store/dev_id|msg_type → 写 /proc/tran_devmsg×3 → cat → mrdump none → sysrq → pull expdb → tdsm\n高通：echo 1→tran_devmsg/dev_id|msg_type → 写 /proc/tran_devmsg×3 → cat → echo mini>/sys/kernel/dload/dload_mode → sysrq → pull tdfs → tdsm",
+    "期望结果": "adb 与 tdsm 均命中产品名/日期（MTK 解析 expdb；高通解析 tdfs）",
     "用例名": "器件稳定性埋点"
   },
   {
@@ -145,11 +145,11 @@
   },
   {
     "caseIndex": 11,
-    "caseName": "解析expdb",
-    "前置条件": "已内置 Dispatcher；优先复用前序项产生的 /data/TNE/temp_db（须目录下有文件）",
-    "测试步骤": "mrdump_tool output-set none 关闭 fulldump → 检查 /data/TNE/temp_db：存在且有文件则直接 pull+Dispatcher；否则 sysrq → wait-for-device（默认 180s，无 fulldump）→ 开机后再等约 1min → pull temp_db → Dispatcher 解析",
-    "期望结果": "分析产物确认 sysrq",
-    "用例名": "解析expdb"
+    "caseName": "解析expdb/tranpdb",
+    "前置条件": "MTK：已内置 Dispatcher，优先复用 /data/TNE/temp_db；高通：dload_mode=mini，minidump 在 /data/vendor/debuglogger/minidump",
+    "测试步骤": "【MTK】\n1. mrdump_tool output-set none 关闭 fulldump\n2. 检查 /data/TNE/temp_db：存在且有文件则直接 pull+Dispatcher；否则 sysrq → wait-for-device → pull temp_db → Dispatcher 解析\n【高通】\n1. echo mini > /sys/kernel/dload/dload_mode\n2. 前序步骤同造障（sysrq）；adb root 后 pull /data/vendor/debuglogger/minidump\n3. 不使用 Dispatcher；直接检查导出 dump 中的 md_KCONSOLE.BIN 是否含 sysrq 关键字",
+    "期望结果": "MTK：分析产物确认 sysrq；高通：md_KCONSOLE.BIN 含 sysrq 相关关键字",
+    "用例名": "解析expdb/tranpdb"
   },
   {
     "caseIndex": 20,
@@ -182,5 +182,37 @@
     "测试步骤": "getprop ro.board.platform → 比对 preloader platform/<平台>/.../platform.h 的 boot_reason_t 与 lk2 .../boot_mode.h 的 boot_reason（名称与取值顺序）",
     "期望结果": "两侧枚举一致 → Pass；不一致或文件缺失 → Fail；无 code_dir → 待确认",
     "用例名": "MTK平台检查pl/lk的boot_reason枚举定义顺序保持一致"
+  },
+  {
+    "caseIndex": 24,
+    "caseName": "minidump && fulldump转存",
+    "前置条件": "仅高通；工具目录 tools/stability_checker/qcom_dump（QSaharaServer.exe）；重启后需 adb root",
+    "测试步骤": "1. echo both > /sys/kernel/dload/dload_mode\n2. 触发 sysrq/crash；fulldump 会停在 xbl，电脑出现 90EE 端口\n3. 由脚本调用 QSaharaServer.exe 导出 fulldump（自动检测 90EE COM）\n4. 设备重启后 adb root，检查 /data/vendor/debuglogger/minidump 是否有 minidump\n5. 测试结束后恢复：echo mini > /sys/kernel/dload/dload_mode",
+    "期望结果": "fulldump（Sahara/90EE）与 minidump（/data/vendor/debuglogger/minidump）均成功转存",
+    "用例名": "minidump && fulldump转存"
+  },
+  {
+    "caseIndex": 25,
+    "caseName": "kasan适配",
+    "前置条件": "仅高通；需人工验证 KASAN 适配",
+    "测试步骤": "按项目 KASAN 适配清单人工执行与确认；完成后在测试报告中补录结果",
+    "期望结果": "KASAN 适配验证通过，并在报告中填写结果",
+    "用例名": "kasan适配"
+  },
+  {
+    "caseIndex": 26,
+    "caseName": "启动日志保存",
+    "前置条件": "仅高通；重启后需 adb root",
+    "测试步骤": "adb root 后检查 /data/vendor/debuglogger/stability 目录是否存在且有启动日志，并 pull 作为证据",
+    "期望结果": "/data/vendor/debuglogger/stability 存在且非空",
+    "用例名": "启动日志保存"
+  },
+  {
+    "caseIndex": 27,
+    "caseName": "crash界面优化",
+    "前置条件": "仅高通；需人工观察 crash 界面",
+    "测试步骤": "按项目要求触发 crash 并人工确认界面优化效果；完成后在测试报告中补录结果",
+    "期望结果": "crash 界面表现符合预期，并在报告中填写结果",
+    "用例名": "crash界面优化"
   }
 ]

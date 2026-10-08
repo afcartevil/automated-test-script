@@ -19,7 +19,10 @@ def _device_serial(device_info: dict) -> str:
 
 
 def _checker_config(device_info: dict) -> dict:
-    """从 device_info 透传可选配置（也可走 env / stability.config.json）。"""
+    """从 device_info 透传可选配置（也可走 env / stability.config.json）。
+
+    Console 会注入 work_dir=会话 case-workdir/<caseKey>，产物落在用例执行目录。
+    """
     if not isinstance(device_info, dict):
         return {}
     cfg = {}
@@ -32,6 +35,11 @@ def _checker_config(device_info: dict) -> dict:
         for key in ("code_dir", "tools_root", "work_dir", "product_name", "case2_reboot"):
             if nested.get(key) not in (None, "") and key not in cfg:
                 cfg[key] = nested[key]
+    # resultDir 兜底：未显式传 work_dir 时拼 case 子目录
+    if not cfg.get("work_dir"):
+        result_dir = device_info.get("resultDir") or device_info.get("result_dir")
+        if result_dir:
+            cfg["work_dir"] = str(Path(result_dir) / "case-workdir" / "stability")
     return cfg
 
 
@@ -73,11 +81,15 @@ def run_checklist_item(item_id: int, device_info=None, step_update=None, **_cont
         return {"status": "fail", "message": str(exc), "full_automation": True}
 
     name = checklist_item_name(item_id)
+    cfg = _checker_config(info if isinstance(info, dict) else {})
+    work = cfg.get("work_dir")
     add_step(f"执行稳定性检查项 {item_id}/{total}：{name}（设备 {serial}）")
+    if work:
+        add_step(f"用例工作目录: {work}")
     checker = StabilityChecker(
         serial=serial,
         on_step=add_step,
-        config=_checker_config(info if isinstance(info, dict) else {}),
+        config=cfg,
     )
     result = checker.run_item(item_id)
     status = str(result.get("status") or "").lower()

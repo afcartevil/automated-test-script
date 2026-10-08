@@ -14,6 +14,7 @@ import {
   formatCatalogModuleScope,
   formatCatalogPrereq,
   deviceMatchesListFilter,
+  formatChipPlatforms,
   getAutomationModeIcon,
   getAutomationModeLabel,
   getCurrentCaseStepIndex,
@@ -626,6 +627,11 @@ function handleDutRowAction(deviceId: string) {
                             :title="getAutomationModeLabel(c.automationMode)"
                           >{{ getAutomationModeIcon(c.automationMode) }}</span>
                           <span class="case-name">{{ c.caseIndex }}. {{ c.caseName }}</span>
+                          <span
+                            v-for="plat in formatChipPlatforms(c.platforms)"
+                            :key="plat"
+                            class="case-tag case-tag--platform"
+                          >{{ plat }}</span>
                           <span v-if="c.canReuse" class="case-tag">可复用</span>
                         </div>
                       </div>
@@ -1180,6 +1186,11 @@ function handleDutRowAction(deviceId: string) {
                           :title="getAutomationModeLabel(item.automationMode)"
                         >{{ getAutomationModeIcon(item.automationMode) }}</span>
                         <span class="case-item-name">{{ item.caseName }}</span>
+                        <span
+                          v-for="plat in formatChipPlatforms(item.platforms)"
+                          :key="plat"
+                          class="case-tag case-tag--platform"
+                        >{{ plat }}</span>
                         <button
                           v-if="isAiGeneratedCatalog()"
                           type="button"
@@ -1200,6 +1211,11 @@ function handleDutRowAction(deviceId: string) {
                 <EaCard class="catalog-case-detail-card">
                   <div v-if="selectedCatalogItem" class="case-detail-header">
                     <span class="catalog-case-title">{{ selectedCatalogItem.caseName }}</span>
+                    <span
+                      v-for="plat in formatChipPlatforms(selectedCatalogItem.platforms)"
+                      :key="plat"
+                      class="case-tag case-tag--platform"
+                    >{{ plat }}</span>
                     <span
                       class="auto-mode-badge"
                       :class="`auto-mode-badge--${normalizeAutomationMode(selectedCatalogItem.automationMode)}`"
@@ -1505,6 +1521,11 @@ function handleDutRowAction(deviceId: string) {
                               :title="getAutomationModeLabel(caseItem.automationMode)"
                             >{{ getAutomationModeIcon(caseItem.automationMode) }}</span>
                             <span class="case-item-name">{{ caseItem.caseName }}</span>
+                            <span
+                              v-for="plat in formatChipPlatforms(caseItem.platforms)"
+                              :key="plat"
+                              class="case-tag case-tag--platform"
+                            >{{ plat }}</span>
                           </div>
                         </template>
                         <template v-else>
@@ -1525,6 +1546,11 @@ function handleDutRowAction(deviceId: string) {
                               :title="getAutomationModeLabel(caseItem.automationMode)"
                             >{{ getAutomationModeIcon(caseItem.automationMode) }}</span>
                             <span class="case-item-name">{{ caseItem.caseName }}</span>
+                            <span
+                              v-for="plat in formatChipPlatforms(caseItem.platforms)"
+                              :key="plat"
+                              class="case-tag case-tag--platform"
+                            >{{ plat }}</span>
                           </div>
                         </template>
                       </div>
@@ -3322,8 +3348,10 @@ $catalog-pane-height: calc(100vh - 48px);
 
 .case-detail-header {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   align-items: center;
+  gap: 8px;
   margin-bottom: 16px;
 }
 
@@ -3879,6 +3907,21 @@ $catalog-pane-height: calc(100vh - 48px);
     background: var(--accent);
     color: #fff;
   }
+}
+
+.case-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.case-tag--platform {
+  background: transparent;
+  color: var(--ea-text-secondary, #64748b);
+  border: 1px solid var(--ea-border, #cbd5e1);
 }
 
 .device-section-head {

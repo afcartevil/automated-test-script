@@ -1,6 +1,17 @@
 #!/usr/bin/env python3
 """
-Python port of tran_pdfs.c — extract Transsion DFS (tdfs) partition logs to ./tdfs-<timestamp>/.
+Extract Transsion tdfs partition logs to ./tdfs-<timestamp>/.
+
+Layout (from TranDFSLib.h / stucklogo_dump.h — same on MTK & Qualcomm):
+  [stucklogo_header]
+  [stucklogo_log_header x TRAN_LOG_INDEX_MAX]
+  [payload referenced by log_desc start/end]
+
+Qualcomm differences vs MTK:
+  - log_type enum is 0-based: xbl/uefi/abl/kernel/android/hang
+  - init sets offset == blksz with reboot_count == 0 (empty is valid)
+  - payload for LOG_TYPE_XBL is a raw copy of partition xbl_sc_logs
+    (often starts with Qualcomm IMTL + LOG_START text)
 """
 
 from __future__ import annotations
@@ -10,30 +21,43 @@ import os
 import struct
 import time
 from dataclasses import dataclass
-from typing import BinaryIO, List
+from typing import BinaryIO, List, Tuple
 
-# Must match tran_pdfs.h
 TRAN_DFS_SIG = 0x785690EF
-TRAN_LOG_MAGIC = 0xAEE0DEAD
+TRAN_LOG_MAGIC = 0xAEE0DEAD  # set when reboot_count reaches TRAN_LOG_INDEX_MAX
 TRAN_LOG_INDEX_MAX = 3
 TRAN_LOG_TYPE_MAX = 6
-LOG_MAX = 3
+TDFS_STUCKLOGO_SIZE = 15 * 1024 * 1024  # QCOM stucklogo region size
 
-FILE_NAMES = (
-    "last_pl_lk",  # LOG_PLLK = 1
-    "last_pl",
-    "last_kmsg",
-    "last_atf_log",
-    "last_gz_log",
-    "last_kernel",
-    "last_nhang",
-    "last_cpu_hang",
+# Qualcomm xbl_sc_logs raw image magic (inside LOG_TYPE_XBL payload)
+IMTL_MAGIC = b"IMTL"
+
+# MTK: 1-based types used by original tran_pdfs
+MTK_FILE_NAMES = (
+    "last_pl_lk",  # 1
+    "last_pl",  # 2
+    "last_kmsg",  # 3
+    "last_atf_log",  # 4
+    "last_gz_log",  # 5
+    "last_kernel",  # 6
+    "last_nhang",  # 7
+    "last_cpu_hang",  # 8
 )
 
-HEADER_STRUCT = struct.Struct("<8I")  # sig, magic, blksz, partsz, idx, offset, reboot_count, boot_step
-LOG_DESC_STRUCT = struct.Struct("<3I")  # log_type, start, end
-# log_type, log_cnt, boot_reason[24], offset, then TRAN_LOG_TYPE_MAX log_desc
+# QCOM: 0-based types from TranDFSLib.h / stucklogo_dump.c
+QCOM_FILE_NAMES = {
+    0x00: "xbl",
+    0x01: "uefi",
+    0x02: "abl",
+    0x03: "kernel",
+    0x04: "android",
+    0x05: "hang",
+}
+
+HEADER_STRUCT = struct.Struct("<8I")
+LOG_DESC_STRUCT = struct.Struct("<3I")
 _LOG_HEADER_PREFIX = struct.Struct("<II24sI")
+LOG_HEADER_SIZE = _LOG_HEADER_PREFIX.size + TRAN_LOG_TYPE_MAX * LOG_DESC_STRUCT.size
 
 
 @dataclass
@@ -67,17 +91,14 @@ class LogHeader:
 def unpack_header(data: bytes) -> DfsHeader:
     if len(data) != HEADER_STRUCT.size:
         raise ValueError("header size mismatch")
-    fields = HEADER_STRUCT.unpack(data)
-    return DfsHeader(*fields)
+    return DfsHeader(*HEADER_STRUCT.unpack(data))
 
 
 def unpack_log_header(data: bytes) -> LogHeader:
-    need = _LOG_HEADER_PREFIX.size + TRAN_LOG_TYPE_MAX * LOG_DESC_STRUCT.size
-    if len(data) < need:
+    if len(data) < LOG_HEADER_SIZE:
         raise ValueError("log header size mismatch")
-    off = 0
-    log_type, log_cnt, boot_reason_b, loff = _LOG_HEADER_PREFIX.unpack_from(data, off)
-    off += _LOG_HEADER_PREFIX.size
+    log_type, log_cnt, boot_reason_b, loff = _LOG_HEADER_PREFIX.unpack_from(data, 0)
+    off = _LOG_HEADER_PREFIX.size
     boot_reason = boot_reason_b.split(b"\x00", 1)[0].decode("utf-8", errors="replace")
     descs: List[LogDesc] = []
     for _ in range(TRAN_LOG_TYPE_MAX):
@@ -87,7 +108,26 @@ def unpack_log_header(data: bytes) -> LogHeader:
     return LogHeader(log_type, log_cnt, boot_reason, loff, descs)
 
 
-def dfs_valid(fp: BinaryIO) -> DfsHeader:
+def detect_platform(header: DfsHeader, fp: BinaryIO) -> str:
+    """Heuristic: QCOM stucklogo region is fixed 15MB (TDFS_STUCKLOGO_SIZE)."""
+    if header.partsz == TDFS_STUCKLOGO_SIZE:
+        return "qcom"
+    # leftover xbl_sc_logs image often sits at first data block
+    if header.blksz and peek_magic(fp, header.blksz) == IMTL_MAGIC:
+        return "qcom"
+    return "mtk"
+
+
+def peek_magic(fp: BinaryIO, offset: int, size: int = 4) -> bytes:
+    pos = fp.tell()
+    try:
+        fp.seek(offset)
+        return fp.read(size)
+    finally:
+        fp.seek(pos)
+
+
+def dfs_valid(fp: BinaryIO) -> Tuple[DfsHeader, str]:
     raw = fp.read(HEADER_STRUCT.size)
     if len(raw) != HEADER_STRUCT.size:
         print("read dfs header fail!")
@@ -106,23 +146,35 @@ def dfs_valid(fp: BinaryIO) -> DfsHeader:
         )
     )
 
-    if (
-        header.sig != TRAN_DFS_SIG
-        or header.offset <= header.blksz
-        or header.offset > header.partsz
-        or header.idx > TRAN_LOG_INDEX_MAX
-    ):
+    if header.sig != TRAN_DFS_SIG:
         print("dfs invalid!")
-        raise ValueError("invalid dfs header")
+        raise ValueError("invalid dfs header sig")
 
-    if header.magic != TRAN_LOG_MAGIC or header.reboot_count <= 3:
+    if header.blksz == 0:
+        raise ValueError("invalid blksz")
+
+    # Init state sets offset == blksz with reboot_count == 0 (see tdfs_stucklogo_init_header).
+    # After logs are written, offset advances past blksz. Reject only clearly broken values.
+    if header.offset > header.partsz:
+        print("dfs invalid!")
+        raise ValueError("invalid dfs header offset > partsz")
+    if header.idx > TRAN_LOG_INDEX_MAX:
+        print("dfs invalid!")
+        raise ValueError("invalid dfs header idx")
+
+    platform = detect_platform(header, fp)
+    print(f"platform: {platform}")
+
+    if header.magic != TRAN_LOG_MAGIC or header.reboot_count < TRAN_LOG_INDEX_MAX:
         print("abormal boot less three times")
 
     fp.seek(0)
-    return header
+    return header, platform
 
 
 def read_at(fp: BinaryIO, offset: int, size: int) -> bytes:
+    if size < 0:
+        raise ValueError(f"negative read size {size}")
     fp.seek(offset)
     data = fp.read(size)
     if len(data) != size:
@@ -140,87 +192,148 @@ def ensure_dir(pathname: str) -> None:
         pass
 
 
-def save_logs(idx: int, out_base: str, log_desc: LogDesc, fp: BinaryIO) -> None:
-    file_size = log_desc.end - log_desc.start
-    if file_size < 0:
-        print(f"invalid range start={log_desc.start} end={log_desc.end}")
-        raise ValueError("negative log size")
-
-    subdir = os.path.join(out_base, str(idx))
-    ensure_dir(subdir)
-
-    lt = log_desc.log_type
-    if lt < 1 or lt > len(FILE_NAMES):
-        name = f"unknown_type_{lt}"
-    else:
-        name = FILE_NAMES[lt - 1]
-
-    file_path = os.path.join(subdir, name)
-    print(f"	open {file_path}")
-
-    data = read_at(fp, log_desc.start, file_size)
-    with open(file_path, "wb") as out:
-        os.chmod(file_path, 0o666)
-        out.write(data)
-
-
-def parse_dfs(header: DfsHeader, fp: BinaryIO) -> None:
-    maxsize = header.offset
-    print(f"log maxsize=0x{maxsize:x}")
-
-    log_header_size = TRAN_LOG_TYPE_MAX * LOG_DESC_STRUCT.size + _LOG_HEADER_PREFIX.size
-    one_log_header = log_header_size  # same as sizeof one struct in C
-
-    total_headers = header.reboot_count * one_log_header
-    buf = read_at(fp, HEADER_STRUCT.size, total_headers)
-
+def make_outdir() -> str:
     t = time.localtime()
     dirname = "tdfs-{}-{}-{}-{}-{}-{}".format(
-        t.tm_year,
-        t.tm_mon,
-        t.tm_mday,
-        t.tm_hour,
-        t.tm_min,
-        t.tm_sec,
+        t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec
     )
     path = os.path.join(".", dirname) + os.sep
     ensure_dir(path)
     print(f"path:{path}")
+    return path
 
-    if header.reboot_count > LOG_MAX:
-        log_count = LOG_MAX
-    else:
-        log_count = header.reboot_count
 
-    for i in range(log_count):
-        chunk = buf[i * one_log_header : (i + 1) * one_log_header]
+def write_log_file(subdir: str, name: str, data: bytes) -> None:
+    ensure_dir(subdir)
+    file_path = os.path.join(subdir, name)
+    print(f"\topen {file_path} ({len(data)} bytes)")
+    with open(file_path, "wb") as out:
+        out.write(data)
+    try:
+        os.chmod(file_path, 0o666)
+    except OSError:
+        pass
+
+
+def log_type_name(platform: str, log_type: int) -> str:
+    if platform == "qcom":
+        return QCOM_FILE_NAMES.get(log_type, f"unknown_type_{log_type}")
+    if log_type < 1 or log_type > len(MTK_FILE_NAMES):
+        return f"unknown_type_{log_type}"
+    return MTK_FILE_NAMES[log_type - 1]
+
+
+def save_logs(idx: int, out_base: str, log_desc: LogDesc, fp: BinaryIO, platform: str) -> None:
+    size = log_desc.end - log_desc.start
+    if size <= 0:
+        print(f"skip invalid range start={log_desc.start} end={log_desc.end}")
+        return
+    name = log_type_name(platform, log_desc.log_type)
+    if platform == "qcom":
+        name = f"{name}.bin"
+    data = read_at(fp, log_desc.start, size)
+    write_log_file(os.path.join(out_base, str(idx)), name, data)
+
+
+def slot_indices(header: DfsHeader) -> List[int]:
+    """
+    Match stucklogo_dump.c archive order:
+      - reboot_count <= 3: slots 0..reboot_count-1
+      - reboot_count > 3: slot 0 pinned, then ring [1, TRAN_LOG_INDEX_MAX)
+    """
+    if header.reboot_count == 0:
+        return []
+    if header.reboot_count <= TRAN_LOG_INDEX_MAX:
+        return list(range(header.reboot_count))
+
+    out = [0]
+    ring = TRAN_LOG_INDEX_MAX - 1
+    oldest = 1 + (header.idx % ring)
+    for i in range(1, TRAN_LOG_INDEX_MAX):
+        out.append(1 + ((oldest - 1 + (i - 1)) % ring))
+    return out
+
+
+def parse_stucklogo(header: DfsHeader, fp: BinaryIO, platform: str) -> str:
+    """Parse official stucklogo descriptors. Returns output directory path."""
+    print(f"log write cursor=0x{header.offset:x}")
+    path = make_outdir()
+    base = path.rstrip(os.sep)
+
+    indices = slot_indices(header)
+    if not indices:
+        print("reboot_count=0: no stucklogo snapshots (header initialized / cleaned)")
+        return path
+
+    buf = read_at(fp, HEADER_STRUCT.size, TRAN_LOG_INDEX_MAX * LOG_HEADER_SIZE)
+
+    for out_i, slot in enumerate(indices):
+        chunk = buf[slot * LOG_HEADER_SIZE : (slot + 1) * LOG_HEADER_SIZE]
         lh = unpack_log_header(chunk)
+        cnt = min(lh.log_cnt, TRAN_LOG_TYPE_MAX)
         print("-----------------")
         print(
-            f"logtype:{lh.log_type:x}, reason:{lh.boot_reason}, log_count:{lh.log_cnt}"
+            f"slot:{slot} -> dir:{out_i}, logtype:0x{lh.log_type:x}, "
+            f"reason:{lh.boot_reason}, log_count:{cnt}"
         )
-        for j in range(lh.log_cnt):
+        for j in range(cnt):
             d = lh.log_desc[j]
-            print(f"logdesc: logtype:{d.log_type:x}, start:{d.start}, end:{d.end}")
-            save_logs(i, path.rstrip(os.sep), d, fp)
+            print(
+                f"logdesc: type:0x{d.log_type:x}({log_type_name(platform, d.log_type)}), "
+                f"start:{d.start}, end:{d.end}"
+            )
+            save_logs(out_i, base, d, fp, platform)
+        if cnt == 0:
+            print("(empty slot)")
         print("-----------------")
+    return path
+
+
+def stucklogo_has_type(header: DfsHeader, fp: BinaryIO, log_type: int) -> bool:
+    if header.reboot_count == 0:
+        return False
+    buf = read_at(fp, HEADER_STRUCT.size, TRAN_LOG_INDEX_MAX * LOG_HEADER_SIZE)
+    for slot in range(min(header.reboot_count, TRAN_LOG_INDEX_MAX)):
+        lh = unpack_log_header(buf[slot * LOG_HEADER_SIZE : (slot + 1) * LOG_HEADER_SIZE])
+        for j in range(min(lh.log_cnt, TRAN_LOG_TYPE_MAX)):
+            if lh.log_desc[j].log_type == log_type and lh.log_desc[j].end > lh.log_desc[j].start:
+                return True
+    return False
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Extract Transsion tdfs partition logs (tran_pdfs.c port).")
+    ap = argparse.ArgumentParser(
+        description="Extract Transsion tdfs stucklogo logs (MTK + Qualcomm)."
+    )
     ap.add_argument(
         "tdfs",
         nargs="?",
         default="tdfs",
         help="Path to tdfs dump or block device (default: ./tdfs)",
     )
+    ap.add_argument(
+        "--platform",
+        choices=("auto", "mtk", "qcom"),
+        default="auto",
+        help="Force platform log-type naming (default: auto-detect)",
+    )
     args = ap.parse_args()
-    tdfs_path = args.tdfs
 
     try:
-        with open(tdfs_path, "rb") as fp:
-            header = dfs_valid(fp)
-            parse_dfs(header, fp)
+        with open(args.tdfs, "rb") as fp:
+            header, platform = dfs_valid(fp)
+            if args.platform != "auto":
+                platform = args.platform
+                print(f"platform overridden: {platform}")
+
+            parse_stucklogo(header, fp, platform)
+
+            if platform == "qcom" and not stucklogo_has_type(header, fp, 0x03):
+                print(
+                    "note: stucklogo has no LOG_TYPE_KERNEL — "
+                    "kernel log was not written into stucklogo descriptors"
+                )
+
     except FileNotFoundError:
         print("dfs file not exist!")
         print("tran_pdfs failed")

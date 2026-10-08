@@ -1,4 +1,4 @@
-import type { BitflipResultDetail, CaseCatalogGroup, DeviceInfo, SelfCheckReportSummary, SelfCheckTestConfig } from '@/api/tahp/device-self-check'
+import type { BitflipResultDetail, CaseCatalogGroup, ChipPlatform, DeviceInfo, SelfCheckReportSummary, SelfCheckTestConfig } from '@/api/tahp/device-self-check'
 
 export const SELF_CHECK_SUBTITLE =
   '验测任务 → 测试执行 → 评审补全 → 人工复核报告'
@@ -92,6 +92,21 @@ export const OTA_UPGRADE_FLASH_CONFIRM = {
 export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'monkey_check', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'bitflip', 'ai_generated'] as const
 
 export type StandardTestTypeKey = (typeof STANDARD_TEST_TYPE_ORDER)[number]
+
+export const CHIP_PLATFORM_LABELS: Record<ChipPlatform, string> = {
+  mtk: 'MTK',
+  qcom: '高通',
+  unisoc: '展锐',
+}
+
+export function getChipPlatformLabel(platform: string): string {
+  return CHIP_PLATFORM_LABELS[platform as ChipPlatform] || platform
+}
+
+export function formatChipPlatforms(platforms?: string[] | null): string[] {
+  if (!platforms?.length) return []
+  return platforms.map(getChipPlatformLabel)
+}
 
 export const MODULE_ORDER: Record<string, number> = {
   driver: 0,

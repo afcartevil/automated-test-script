@@ -23,6 +23,7 @@ import { ensureMonkeyCheckTestPythonDeps, ensurePowerTestPythonDeps, ensureSddTe
 import { applyMonkeyCheckAiReport } from './monkey-tne-report'
 import {
   buildSelfCheckDetailPayload,
+  filterReportCaseItems,
   formatSelfCheckTestConfigMetaRows,
   isPendingManualReportFillIn,
   openLocalPath,
@@ -94,6 +95,9 @@ export interface CaseCondition {
 /** 用例自动化形态：全自动 / 半自动 / 人工 */
 export type AutomationMode = 'full' | 'semi' | 'manual'
 
+/** 芯片平台标签（稳定性等跨平台用例） */
+export type ChipPlatform = 'mtk' | 'qcom' | 'unisoc'
+
 export interface CaseInfo {
   caseIndex: number
   caseName: string
@@ -102,6 +106,8 @@ export interface CaseInfo {
   automationMode?: AutomationMode
   /** AI 生成用例执行方式（nl_ui=全自动，manual=半自动引导） */
   execMode?: 'manual' | 'nl_ui'
+  /** 适用平台；缺省表示不限制 */
+  platforms?: ChipPlatform[]
 }
 
 export interface ModuleCondition {
@@ -189,6 +195,8 @@ export interface TestSession {
    * 终态由 adapt-pipeline 整包上报）。独立自检保持默认 false/undefined。
    */
   skipQualityUpload?: boolean
+  /** 会话内缓存的芯片平台（mtk/qcom/unisoc），用于按 platforms 过滤用例 */
+  chipPlatform?: ChipPlatform | 'unknown'
 }
 
 export interface CaseCatalogItem {
@@ -196,6 +204,7 @@ export interface CaseCatalogItem {
   caseName: string
   canReuse: boolean
   automationMode: AutomationMode
+  platforms?: ChipPlatform[]
 }
 
 export interface CaseCatalog {
@@ -320,6 +329,7 @@ export interface CaseCatalogDetailItem {
   caseName: string
   canReuse: boolean
   automationMode: AutomationMode
+  platforms?: ChipPlatform[]
   preconditions: string
   manualSteps: string
   expectedResult: string
@@ -1252,7 +1262,7 @@ async function flushPendingFailureLogExports(deviceId: string, session: TestSess
 /**
  * 导出用例日志（成功/失败策略一致）：
  * - case_result.txt 执行摘要
- * - 内核稳定性：checker 本地 evidence + 用例工作目录产物
+ * - 内核稳定性：产物已直接写在会话 case-workdir/<caseKey>/，此处复用该目录
  * - 不再从设备额外 pull logcat / mobilelog / netlog / TNE
  */
 async function exportCaseLogsForCase(
@@ -1262,8 +1272,15 @@ async function exportCaseLogsForCase(
   mode: 'execution' | 'failure' = 'failure',
 ): Promise<string | null> {
   try {
+    const parts = caseKey.split('/')
+    const isStability = parts[0] === 'kernel_feature' && parts[1] === 'stability'
+    const sessionDir = getSessionResultDir(deviceId, session)
+    const caseWorkDir = join(sessionDir, 'case-workdir', sanitizeCaseKeyForPath(caseKey))
     const logRoot = mode === 'failure' ? 'failure-logs' : 'case-logs'
-    const caseDir = join(getSessionResultDir(deviceId, session), logRoot, sanitizeCaseKeyForPath(caseKey))
+    // 稳定性：打开日志直接进用例工作目录；其它模块仍用 case-logs / failure-logs
+    const caseDir = isStability
+      ? caseWorkDir
+      : join(sessionDir, logRoot, sanitizeCaseKeyForPath(caseKey))
     mkdirSync(caseDir, { recursive: true })
 
     const result = session.caseResults[caseKey]
@@ -1277,6 +1294,7 @@ async function exportCaseLogsForCase(
         `message=${result.message || ''}`,
         `startTime=${result.startTime || ''}`,
         `endTime=${result.endTime || ''}`,
+        `workDir=${caseDir}`,
         '',
         '--- steps ---',
         ...(result.steps || []).map(
@@ -1286,32 +1304,28 @@ async function exportCaseLogsForCase(
       writeFileSync(join(caseDir, 'case_result.txt'), `${summary}\n`, 'utf-8')
     }
 
-    // 内核稳定性：保留执行期本地产物（不依赖设备仍在线，也不再二次拉全机日志）
-    const parts = caseKey.split('/')
-    if (parts[0] === 'kernel_feature' && parts[2]) {
+    // 兼容旧路径：若仍有脚本旁 workspace 残留，补拷到用例目录
+    if (isStability && parts[2]) {
       const caseId = String(parts[2])
-      const workspaceRoot = join(PYTHON_DIR, 'tools', 'stability_checker', 'workspace')
-      const evidenceSrc = join(workspaceRoot, 'evidence', caseId)
-      const evidenceDest = join(caseDir, 'stability-evidence')
+      const legacyRoot = join(PYTHON_DIR, 'tools', 'stability_checker', 'workspace')
+      const evidenceSrc = join(legacyRoot, 'evidence', caseId)
+      const evidenceDest = join(caseDir, 'evidence', caseId)
       try {
-        if (existsSync(evidenceSrc)) {
+        if (existsSync(evidenceSrc) && !existsSync(evidenceDest)) {
           mkdirSync(evidenceDest, { recursive: true })
           cpSync(evidenceSrc, evidenceDest, { recursive: true })
         }
       } catch (e) {
-        console.warn('[device-self-check] copy stability evidence failed:', e)
+        console.warn('[device-self-check] copy legacy stability evidence failed:', e)
       }
-
-      // case8 / case11 / case19_hung 等执行工作目录
-      for (const name of [`case${caseId}`, `case${caseId}_hung`]) {
-        const workSrc = join(workspaceRoot, name)
-        if (!existsSync(workSrc)) continue
-        const workDest = join(caseDir, 'stability-workdir', name)
+      for (const name of [`case${caseId}`, `case${caseId}_hung`, `case${caseId}_qcom`]) {
+        const workSrc = join(legacyRoot, name)
+        const workDest = join(caseDir, name)
+        if (!existsSync(workSrc) || existsSync(workDest)) continue
         try {
-          mkdirSync(join(caseDir, 'stability-workdir'), { recursive: true })
           cpSync(workSrc, workDest, { recursive: true })
         } catch (e) {
-          console.warn('[device-self-check] copy stability workdir failed:', name, e)
+          console.warn('[device-self-check] copy legacy stability workdir failed:', name, e)
         }
       }
     }
@@ -1564,6 +1578,97 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   return ['driver', 'tdd']
 }
 
+const CHIP_PLATFORM_LABELS: Record<ChipPlatform | 'unknown', string> = {
+  mtk: 'MTK',
+  qcom: '高通',
+  unisoc: '展锐',
+  unknown: '未知',
+}
+
+function classifyChipPlatformFromProps(blob: string): ChipPlatform | 'unknown' {
+  const low = (blob || '').toLowerCase()
+  if (
+    /qcom|qualcomm|\bmsm|\bsdm|\bsm[78]|\bkona|\blahaina|\btaro|\bkalama|\bpineapple/.test(low)
+  ) {
+    return 'qcom'
+  }
+  if (/\bmt\d|mediatek|\bmtk\b/.test(low)) {
+    return 'mtk'
+  }
+  if (/unisoc|sprd|\bums|\budx/.test(low)) {
+    return 'unisoc'
+  }
+  // ro.hardware 常见短名：mt6877 / qcom 等
+  if (/\bmt[0-9a-z]{2,}/.test(low)) return 'mtk'
+  return 'unknown'
+}
+
+/** 探测 DUT 芯片平台；结果缓存在 session.chipPlatform */
+async function resolveSessionChipPlatform(
+  deviceId: string,
+  session: TestSession,
+): Promise<ChipPlatform | 'unknown'> {
+  if (session.chipPlatform) return session.chipPlatform
+  try {
+    const props = ['ro.hardware', 'ro.board.platform', 'ro.soc.manufacturer', 'ro.product.board']
+    const parts: string[] = []
+    await withDeviceAdbLock(deviceId, async () => {
+      for (const prop of props) {
+        const out = await execAdbCommand(
+          ['-s', deviceId, 'shell', 'getprop', prop],
+          { timeoutMs: ADB_PROBE_TIMEOUT_MS, label: `getprop ${prop} ${deviceId}` },
+        )
+        if (out?.trim()) parts.push(out.trim())
+      }
+    })
+    const platform = classifyChipPlatformFromProps(parts.join(' '))
+    session.chipPlatform = platform
+    console.log(
+      `[device-self-check] chipPlatform=${platform} device=${deviceId} props=${parts.join('|')}`,
+    )
+    return platform
+  } catch (e) {
+    console.warn('[device-self-check] detect chipPlatform failed:', deviceId, e)
+    session.chipPlatform = 'unknown'
+    return 'unknown'
+  }
+}
+
+function caseAppliesToChipPlatform(
+  platforms: ChipPlatform[] | undefined,
+  chip: ChipPlatform | 'unknown',
+): boolean {
+  // 未标注平台 → 不限制；平台未知 → 不跳过（避免误杀）
+  if (!platforms?.length) return true
+  if (chip === 'unknown') return true
+  return platforms.includes(chip)
+}
+
+function applyPlatformMismatchNa(
+  result: CaseResult,
+  deviceId: string,
+  caseKey: string,
+  platforms: ChipPlatform[],
+  chip: ChipPlatform | 'unknown',
+): CaseResult {
+  const want = platforms.map(p => CHIP_PLATFORM_LABELS[p] || p).join('/')
+  const got = CHIP_PLATFORM_LABELS[chip] || chip
+  result.status = 'NA'
+  result.message = `非本机平台用例（设备=${got}，用例适用=${want}）`
+  result.fullAutomation = true
+  result.automationMode = result.automationMode || 'full'
+  result.steps = [
+    {
+      stepDesc: `平台过滤: 设备=${got}，用例适用=${want} → NA`,
+      status: '完成',
+      timestamp: new Date().toISOString(),
+    },
+  ]
+  result.endTime = new Date().toISOString()
+  emitEvent('case_completed', { deviceId, caseKey, result })
+  return result
+}
+
 // 执行单个用例
 async function runCase(
   deviceId: string,
@@ -1637,6 +1742,17 @@ async function runCase(
     execMode: caseMeta?.execMode,
   })
   result.fullAutomation = result.automationMode === 'full'
+
+  // 按芯片平台过滤（须在人工占位之前，避免 MTK 人工项在高通机上仍进报告补录）
+  if (caseMeta?.platforms?.length) {
+    const chip = await resolveSessionChipPlatform(deviceId, session)
+    if (!caseAppliesToChipPlatform(caseMeta.platforms, chip)) {
+      console.log(
+        `[device-self-check] Skip case ${caseKey}: chip=${chip}, platforms=${caseMeta.platforms.join(',')}`,
+      )
+      return applyPlatformMismatchNa(result, deviceId, caseKey, caseMeta.platforms, chip)
+    }
+  }
 
   if (caseMeta?.automationMode === 'manual') {
     return applyDeferredManualCatalogCase(result, deviceId, caseKey, caseInfoItems, startTime)
@@ -1712,7 +1828,7 @@ async function runCase(
   emitEvent('case_completed', { deviceId, caseKey, result })
 
   // 构建 device_info 传给 Python 脚本
-  const deviceInfo = buildDeviceInfo(deviceId, testType, module, session)
+  const deviceInfo = buildDeviceInfo(deviceId, testType, module, session, caseIndex)
 
   // 监听实时步骤更新（Python 每次推送完整累计步骤）
   const stepHandler = (data: any) => {
@@ -1891,7 +2007,8 @@ function buildDeviceInfo(
   deviceId: string,
   testType?: string,
   module?: string,
-  session?: TestSession
+  session?: TestSession,
+  caseIndex?: number,
 ): any {
   const dut = devices[deviceId]
   if (!dut) return { DUT: [] }
@@ -1931,6 +2048,40 @@ function buildDeviceInfo(
     }
   }
 
+  const resultDirPayload = session?.startTime
+    ? (() => {
+        const resultDir = getSessionResultDir(deviceId, session)
+        const thermalLogParentDir = join(resultDir, 'thermal')
+        try {
+          mkdirSync(thermalLogParentDir, { recursive: true })
+        } catch {
+          // ignore
+        }
+        return { resultDir, thermalLogParentDir, thermLogParentDir: thermalLogParentDir }
+      })()
+    : {}
+
+  // 内核稳定性：产物落到会话用例目录，避免写在脚本旁 workspace/
+  let stabilityWorkDir: string | undefined
+  if (
+    testType === 'kernel_feature' &&
+    module === 'stability' &&
+    typeof caseIndex === 'number' &&
+    session?.startTime
+  ) {
+    const caseKey = formatCaseResultKey(testType, module, caseIndex)
+    stabilityWorkDir = join(
+      getSessionResultDir(deviceId, session),
+      'case-workdir',
+      sanitizeCaseKeyForPath(caseKey),
+    )
+    try {
+      mkdirSync(stabilityWorkDir, { recursive: true })
+    } catch {
+      // ignore
+    }
+  }
+
   return {
     DUT: [{
       device_id: deviceId,
@@ -1953,23 +2104,13 @@ function buildDeviceInfo(
     ...(testType === 'kernel_feature' && settings.kernelFeatureCodeDir?.trim()
       ? { code_dir: settings.kernelFeatureCodeDir.trim() }
       : {}),
+    ...(stabilityWorkDir ? { work_dir: stabilityWorkDir } : {}),
     module_init_done: Boolean(
       testType &&
       module &&
       session?.initializedPythonModules?.includes(`${testType}/${module}`)
     ),
-    ...(session?.startTime
-      ? (() => {
-          const resultDir = getSessionResultDir(deviceId, session)
-          const thermalLogParentDir = join(resultDir, 'thermal')
-          try {
-            mkdirSync(thermalLogParentDir, { recursive: true })
-          } catch {
-            // ignore
-          }
-          return { resultDir, thermalLogParentDir, thermLogParentDir: thermalLogParentDir }
-        })()
-      : {}),
+    ...resultDirPayload,
   }
 }
 
@@ -2881,6 +3022,11 @@ async function runModule(
   await execPythonInit(deviceId, testType, module, session)
   if (!session.isRunning) return
 
+  // 内核特性：先探测芯片平台，后续按 platforms 标签过滤
+  if (testType === 'kernel_feature') {
+    await resolveSessionChipPlatform(deviceId, session)
+  }
+
   // 加载用例列表
   const caseInfoPath = join(PYTHON_DIR, 'cases', testType, module, 'case_info.json')
   let cases: any[] = []
@@ -2912,6 +3058,29 @@ async function runModule(
       }
     })
     cases = prioritizeTddManualCases(mapped).map(item => item.raw)
+  }
+
+  // 按芯片平台剔除不适用用例：不执行、不进结果、不进最终报告
+  {
+    const hasPlatformTags = cases.some((c, i) => {
+      const caseIndex = Number(c?.case_index ?? c?.caseIndex ?? (i + 1))
+      return Boolean(config.cases.find(x => x.caseIndex === caseIndex)?.platforms?.length)
+    })
+    if (hasPlatformTags) {
+      const chip = await resolveSessionChipPlatform(deviceId, session)
+      const beforeCount = cases.length
+      cases = cases.filter((c, i) => {
+        const caseIndex = Number(c?.case_index ?? c?.caseIndex ?? (i + 1))
+        const platforms = config.cases.find(x => x.caseIndex === caseIndex)?.platforms
+        return caseAppliesToChipPlatform(platforms, chip)
+      })
+      if (cases.length < beforeCount) {
+        console.log(
+          `[device-self-check] Platform omit ${beforeCount - cases.length} case(s) `
+          + `module=${moduleKey} chip=${chip}`,
+        )
+      }
+    }
   }
 
   const totalCases = cases.length || 0
@@ -3828,6 +3997,29 @@ async function runCustomTestFlow(
   const device = devices[deviceId]
   if (!device) return
 
+  // 按芯片平台剔除不适用勾选项
+  {
+    const hasPlatformTags = caseList.some(item => {
+      const platforms = moduleConditions[`${item.testType}/${item.module}`]
+        ?.cases.find(c => c.caseIndex === item.caseIndex)?.platforms
+      return Boolean(platforms?.length)
+    })
+    if (hasPlatformTags) {
+      const chip = await resolveSessionChipPlatform(deviceId, session)
+      const beforeCount = caseList.length
+      caseList = caseList.filter(item => {
+        const platforms = moduleConditions[`${item.testType}/${item.module}`]
+          ?.cases.find(c => c.caseIndex === item.caseIndex)?.platforms
+        return caseAppliesToChipPlatform(platforms, chip)
+      })
+      if (caseList.length < beforeCount) {
+        console.log(
+          `[device-self-check] Custom platform omit ${beforeCount - caseList.length} case(s) chip=${chip}`,
+        )
+      }
+    }
+  }
+
   const moduleKeys = new Set(caseList.map(c => `${c.testType}/${c.module}`))
   for (const mk of moduleKeys) {
     const moduleCases = caseList.filter(c => `${c.testType}/${c.module}` === mk)
@@ -4145,7 +4337,7 @@ async function generateTestReport(
       finalizePowerCaseResults(deviceId, session)
     }
 
-    const orderedResults = collectOrderedCaseResults(session)
+    const orderedResults = filterReportCaseItems(collectOrderedCaseResults(session))
 
     // 尽早采集 OTA 版本（避免后续 xlsx/UNC 耗时导致设备离线后读不到）
     const otaVersion = await resolveReportOtaVersion(deviceId, session)
@@ -4826,6 +5018,19 @@ export function __testingResetDevices(): void {
   initializedDeviceIds = new Set()
 }
 
+/** @internal 单测：芯片平台文案分类 */
+export function __testingClassifyChipPlatform(blob: string): ChipPlatform | 'unknown' {
+  return classifyChipPlatformFromProps(blob)
+}
+
+/** @internal 单测：用例 platforms 是否适用于设备 */
+export function __testingCaseAppliesToChipPlatform(
+  platforms: ChipPlatform[] | undefined,
+  chip: ChipPlatform | 'unknown',
+): boolean {
+  return caseAppliesToChipPlatform(platforms, chip)
+}
+
 export function snapshotDevices(): DeviceInfo[] {
   return Object.values(devices)
 }
@@ -4851,7 +5056,10 @@ export async function openDeviceCaseFailureLogs(deviceId: string, caseKey: strin
   const safeKey = sanitizeCaseKeyForPath(caseKey)
   const sessionDir = getSessionResultDir(deviceId, session)
   let candidate = result?.failureLogDir
-    || join(sessionDir, 'case-logs', safeKey)
+    || join(sessionDir, 'case-workdir', safeKey)
+  if (!result?.failureLogDir && !existsSync(candidate)) {
+    candidate = join(sessionDir, 'case-logs', safeKey)
+  }
   if (!result?.failureLogDir && !existsSync(candidate)) {
     candidate = join(sessionDir, 'failure-logs', safeKey)
   }
@@ -4961,6 +5169,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
         automationMode: c.automationMode ?? resolveCaseAutomationMode(testType, module, c.caseIndex, {
           execMode: c.execMode,
         }),
+        platforms: Array.isArray(c.platforms) ? c.platforms : undefined,
       })),
     })
   }
@@ -5004,6 +5213,7 @@ export function getCaseCatalogDetail(testType: string): CaseCatalogDetailItem[] 
         caseName: c.caseName,
         canReuse: c.canReuse,
         automationMode: c.automationMode,
+        platforms: c.platforms,
         preconditions: info?.['前置条件'] || '',
         manualSteps: info?.['测试步骤'] || '',
         expectedResult: info?.['期望结果'] || '',

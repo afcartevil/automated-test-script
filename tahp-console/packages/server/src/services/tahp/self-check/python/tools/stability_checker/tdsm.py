@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-Python port of tdsm.c — read Transsion device messages from the tail of expdb.
+Python port of tdsm.c — parse Transsion device messages (TDSM).
+
+Layouts:
+  MTK:  TDSM at expdb tail
+        base = file_size - EXPDB_RESERVED_SIZE + EXPDB_MRDUMP_CONFIG_RESERVED_SIZE
+  QCOM: TDSM at fixed offset in tdfs partition (TranDSMLib.h)
+        base = TDSM_LOG_PARTITION_OFFSET (0x2D00000)
 """
 
 from __future__ import annotations
@@ -9,15 +15,17 @@ import argparse
 import os
 import struct
 from dataclasses import dataclass
-from typing import BinaryIO
+from typing import BinaryIO, Optional, Tuple
 
-# Must match tdsm.h
+# Must match tdsm.h / TranDSMLib.h
 TRAN_DEVMSG_MAGIC = b"TDSM"
 EXPDB_RESERVED_SIZE = 0x300000
 EXPDB_MRDUMP_CONFIG_RESERVED_SIZE = 0x100
 TRAN_DEVMSG_RESERVED_SIZE = 0xFFF00
-TRAN_DEVMSG_MAX_SIZE = 256
+TRAN_DEVMSG_MAX_SIZE = 256  # desc.len upper bound for parse (msg payload is smaller)
 TRAN_DEVMSG_MAX_LEN = 300
+# QCOM: AEE_IPANIC_PLABLE "tdfs" + TDSM_LOG_PARTITION_OFFSET
+TDSM_LOG_PARTITION_OFFSET = 0x2D00000
 
 # sizeof(struct tran_devmsg_header): magic[4] + u32 * 3
 HEADER_STRUCT = struct.Struct("<4sIII")
@@ -93,31 +101,81 @@ def unpack_desc(data: bytes) -> TranDevmsgDesc:
     )
 
 
-def header_base_offset(file_size: int) -> int:
+def mtk_header_base(file_size: int) -> int:
     return file_size - EXPDB_RESERVED_SIZE + EXPDB_MRDUMP_CONFIG_RESERVED_SIZE
 
 
-def check_tdsm_valid(fp: BinaryIO, path: str) -> tuple[TranDevmsgHeader, int]:
-    file_size = fp.seek(0, os.SEEK_END)
-    if file_size < 0:
-        raise OSError("could not stat file")
-
-    base = header_base_offset(file_size)
+def read_header_at(fp: BinaryIO, base: int) -> Optional[TranDevmsgHeader]:
     if base < 0:
-        raise ValueError(
-            f"file too small ({file_size}) for expdb tail layout (need >= {EXPDB_RESERVED_SIZE - EXPDB_MRDUMP_CONFIG_RESERVED_SIZE})"
-        )
-
-    print(f"check_tdsm_valid: open {path} file success, fileSize = {file_size}")
-
+        return None
+    fp.seek(0, os.SEEK_END)
+    if base + HEADER_STRUCT.size > fp.tell():
+        return None
     fp.seek(base)
     raw = fp.read(HEADER_STRUCT.size)
     if len(raw) != HEADER_STRUCT.size:
-        print(f"check_tdsm_valid: read devmsg header fail, ret = {len(raw)}")
-        raise ValueError("short header")
-
+        return None
     header = unpack_header(raw)
+    if header.magic[:4] != TRAN_DEVMSG_MAGIC:
+        return None
+    return header
+
+
+def header_fields_ok(header: TranDevmsgHeader) -> bool:
+    header_sz = HEADER_STRUCT.size
+    return (
+        header.offset > header_sz
+        and header.offset <= TRAN_DEVMSG_RESERVED_SIZE
+        and header.count != 0
+    )
+
+
+def detect_tdsm_base(fp: BinaryIO, platform: str) -> Tuple[str, int, TranDevmsgHeader]:
+    """
+    Locate TDSM header. Returns (platform, base_offset, header).
+    platform: "mtk" | "qcom" (forced or auto-detected).
+    """
+    fp.seek(0, os.SEEK_END)
+    file_size = fp.tell()
+
+    candidates: list[Tuple[str, int]] = []
+    if platform in ("auto", "qcom"):
+        candidates.append(("qcom", TDSM_LOG_PARTITION_OFFSET))
+    if platform in ("auto", "mtk"):
+        candidates.append(("mtk", mtk_header_base(file_size)))
+
+    for plat, base in candidates:
+        header = read_header_at(fp, base)
+        if header is None:
+            continue
+        if not header_fields_ok(header):
+            print(
+                f"tdsm@{base:#x} ({plat}): magic ok but bad offset/count "
+                f"(offset=0x{header.offset:x} count=0x{header.count:x})"
+            )
+            continue
+        return plat, base, header
+
+    raise ValueError(
+        "TDSM header not found "
+        f"(tried platform={platform}; qcom@{TDSM_LOG_PARTITION_OFFSET:#x}, "
+        f"mtk@expdb_tail)"
+    )
+
+
+def check_tdsm_valid(
+    fp: BinaryIO, path: str, platform: str = "auto"
+) -> Tuple[str, TranDevmsgHeader, int]:
+    fp.seek(0, os.SEEK_END)
+    file_size = fp.tell()
+    if file_size < 0:
+        raise OSError("could not stat file")
+
+    print(f"check_tdsm_valid: open {path} file success, fileSize = {file_size}")
+
+    plat, base, header = detect_tdsm_base(fp, platform)
     magic_show = header.magic[:4].decode("ascii", errors="replace")
+    print(f"platform: {plat}  tdsm_base: 0x{base:x}")
     print(
         "header: magic={}, offset=0x{:x}, reboot_count=0x{:x}, count=0x{:x}".format(
             magic_show,
@@ -127,20 +185,8 @@ def check_tdsm_valid(fp: BinaryIO, path: str) -> tuple[TranDevmsgHeader, int]:
         )
     )
 
-    if header.magic[:4] != TRAN_DEVMSG_MAGIC:
-        print("devmsg header invalid!")
-        raise ValueError("bad magic")
-    header_sz = HEADER_STRUCT.size
-    if (
-        header.offset <= header_sz
-        or header.offset > TRAN_DEVMSG_RESERVED_SIZE
-        or not header.count
-    ):
-        print("devmsg header invalid!")
-        raise ValueError("bad offset or count")
-
-    data_offset = base + header_sz
-    return header, data_offset
+    data_offset = base + HEADER_STRUCT.size
+    return plat, header, data_offset
 
 
 def parse_tdsm(fp: BinaryIO, header: TranDevmsgHeader, start_offset: int) -> None:
@@ -200,20 +246,26 @@ def parse_tdsm(fp: BinaryIO, header: TranDevmsgHeader, start_offset: int) -> Non
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Parse Transsion expdb devmsg region (tdsm.c port).",
+        description="Parse Transsion TDSM (MTK expdb tail / QCOM tdfs@0x2D00000).",
     )
     ap.add_argument(
-        "expdb",
+        "image",
         nargs="?",
-        default="expdb",
-        help="Path to expdb image or device (default: ./expdb)",
+        default="tdfs",
+        help="Path to expdb (MTK) or tdfs (QCOM) image (default: ./tdfs)",
+    )
+    ap.add_argument(
+        "--platform",
+        choices=("auto", "mtk", "qcom"),
+        default="auto",
+        help="Force layout: mtk=expdb tail, qcom=tdfs@0x2D00000 (default: auto)",
     )
     args = ap.parse_args()
-    path = args.expdb
+    path = args.image
 
     try:
         with open(path, "rb") as fp:
-            header, data_off = check_tdsm_valid(fp, path)
+            _plat, header, data_off = check_tdsm_valid(fp, path, args.platform)
             parse_tdsm(fp, header, data_off)
     except FileNotFoundError:
         print(f"check_tdsm_valid: file {path} not exist!")

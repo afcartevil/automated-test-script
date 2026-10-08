@@ -11,15 +11,34 @@ import {
   submitSelfCheckReportReview,
   isPendingManualReportFillIn,
   PENDING_MANUAL_REPORT_MSG,
+  shouldOmitFromSelfCheckReport,
   updateReportCaseResult,
 } from '../../packages/server/src/services/tahp/self-check-reports'
 
 describe('self-check-reports', () => {
+  it('shouldOmitFromSelfCheckReport only for platform-mismatch NA', () => {
+    expect(shouldOmitFromSelfCheckReport({
+      status: 'NA',
+      message: '非本机平台用例（设备=高通，用例适用=MTK）',
+    })).toBe(true)
+    expect(shouldOmitFromSelfCheckReport({
+      status: 'NA',
+      message: '设备不支持（NA）',
+    })).toBe(false)
+    expect(shouldOmitFromSelfCheckReport({
+      status: '通过',
+      message: '非本机平台用例',
+    })).toBe(false)
+  })
+
   let tempDir: string
   let prevProjectRoot: string | undefined
 
   beforeEach(() => {
     tempDir = join(tmpdir(), `tahp-self-check-reports-${Date.now()}`)
+    // 满足 isValidTahpProjectRoot，否则会回退到真实工程根，读写对不上
+    mkdirSync(join(tempDir, 'skills', '.claude', 'skills'), { recursive: true })
+    mkdirSync(join(tempDir, 'tahp-console', 'packages', 'server'), { recursive: true })
     mkdirSync(join(tempDir, 'reports', 'self-check', 'dev-1', '2026-06-25T10-00-00'), { recursive: true })
     prevProjectRoot = process.env.TAHP_PROJECT_ROOT
     process.env.TAHP_PROJECT_ROOT = tempDir
@@ -182,5 +201,67 @@ describe('self-check-reports', () => {
     detail = await updateReportCaseResult(reportId, 'kernel_feature/stability/2', '通过', '人工补录通过')
     expect(detail?.failedCases).toBe(0)
     expect(detail?.allCaseItems?.find(c => c.caseKey === 'kernel_feature/stability/2')?.status).toBe('通过')
+  })
+
+  it('omits platform-mismatch NA cases from report detail and counts', async () => {
+    const rel = 'self-check/dev-1/2026-06-25T10-00-00'
+    const reportId = encodeReportId(rel)
+    const reportDir = join(tempDir, 'reports', rel)
+    const summary = {
+      deviceId: 'dev-1',
+      deviceName: 'Test Phone',
+      testType: 'kernel_feature',
+      status: '完成(通过)',
+      totalCases: 3,
+      passedCases: 3,
+      failedCases: 0,
+      skippedCases: 0,
+    }
+    const allCaseItems = [
+      {
+        caseKey: 'kernel_feature/stability/11',
+        caseName: 'tranpdb',
+        module: 'stability',
+        testType: 'kernel_feature',
+        caseIndex: 11,
+        status: '通过',
+        message: 'ok',
+        automationMode: 'full' as const,
+      },
+      {
+        caseKey: 'kernel_feature/stability/3',
+        caseName: 'mtk-only',
+        module: 'stability',
+        testType: 'kernel_feature',
+        caseIndex: 3,
+        status: 'NA',
+        message: '非本机平台用例（设备=高通，用例适用=MTK）',
+        automationMode: 'full' as const,
+      },
+      {
+        caseKey: 'kernel_feature/stability/5',
+        caseName: 'device-na',
+        module: 'stability',
+        testType: 'kernel_feature',
+        caseIndex: 5,
+        status: 'NA',
+        message: '设备不支持（NA）',
+        automationMode: 'full' as const,
+      },
+    ]
+    writeFileSync(join(reportDir, 'summary.json'), JSON.stringify(summary))
+    writeFileSync(
+      join(reportDir, 'detail.json'),
+      JSON.stringify(buildSelfCheckDetailPayload(summary, [], allCaseItems)),
+    )
+
+    const detail = await getSelfCheckReportDetail(reportId)
+    expect(detail?.allCaseItems?.map(c => c.caseIndex)).toEqual([11, 5])
+    expect(detail?.totalCases).toBe(2)
+    expect(detail?.passedCases).toBe(2)
+
+    const listed = await listSelfCheckReports()
+    expect(listed[0]?.totalCases).toBe(2)
+    expect(listed[0]?.passedCases).toBe(2)
   })
 })

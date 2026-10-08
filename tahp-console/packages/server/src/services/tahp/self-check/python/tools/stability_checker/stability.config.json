@@ -1,5 +1,5 @@
 {
-  "_comment": "内核特性/稳定性 checklist。Dispatcher/aee_extract/tne_parser/tdsm/tran_pdfs 默认用本目录内置工具。code_dir 为 Android 源码根，可用 TAHP_STABILITY_CODE_DIR 覆盖。case10 配置供「黑屏定屏类故障检测」(现 case19) 使用。",
+  "_comment": "内核特性/稳定性 checklist（MTK+高通）。Dispatcher/aee_extract/tne_parser/tdsm/tran_pdfs 默认用本目录内置工具；高通 fulldump 用 qcom_dump/。Console 执行时会注入 work_dir=reports/.../case-workdir/<caseKey>；本地手跑才用下方相对 workspace。code_dir 可用 TAHP_STABILITY_CODE_DIR 覆盖。",
   "paths": {
     "code_dir": "",
     "work_dir": "workspace"

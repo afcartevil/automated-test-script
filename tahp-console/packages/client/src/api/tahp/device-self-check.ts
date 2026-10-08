@@ -44,6 +44,9 @@ export interface CaseCondition {
 
 export type AutomationMode = 'full' | 'semi' | 'manual'
 
+/** 芯片平台标签 */
+export type ChipPlatform = 'mtk' | 'qcom' | 'unisoc'
+
 export interface CaseInfo {
   caseIndex: number
   caseName: string
@@ -51,6 +54,7 @@ export interface CaseInfo {
   canReuse: boolean
   automationMode?: AutomationMode
   execMode?: 'manual' | 'nl_ui'
+  platforms?: ChipPlatform[]
 }
 
 export interface ModuleCondition {
@@ -124,6 +128,7 @@ export interface CaseCatalogItem {
   caseName: string
   canReuse: boolean
   automationMode: AutomationMode
+  platforms?: ChipPlatform[]
 }
 
 export interface CaseCatalog {
@@ -155,6 +160,7 @@ export interface CaseCatalogDetailItem {
   caseName: string
   canReuse: boolean
   automationMode: AutomationMode
+  platforms?: ChipPlatform[]
   preconditions: string
   manualSteps: string
   expectedResult: string
