@@ -5,7 +5,7 @@
  */
 import { createHash } from 'crypto'
 import { spawnSync } from 'child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { findMissingDependencies } from './lib/required-npm-deps.mjs'
@@ -19,6 +19,15 @@ const logPrefix = '[EasyAdapter]'
 
 function lockFingerprint() {
   return createHash('sha256').update(readFileSync(lockPath)).digest('hex')
+}
+
+function removeIncompletePackages(names) {
+  for (const name of names) {
+    const pkgDir = join(root, 'node_modules', name)
+    if (!existsSync(join(pkgDir, 'package.json'))) continue
+    console.log(`${logPrefix} 依赖 ${name} 安装不完整，删除后重新安装…`)
+    rmSync(pkgDir, { recursive: true, force: true })
+  }
 }
 
 function runNpmInstall() {
@@ -54,6 +63,7 @@ function main() {
     console.log(`${logPrefix} 同步 npm 依赖（package-lock 有变更）…`)
   }
 
+  removeIncompletePackages(missing)
   runNpmInstall()
 
   const stillMissing = findMissingDependencies(root)

@@ -39,4 +39,21 @@ describe('required-npm-deps', () => {
       rmSync(root, { recursive: true, force: true })
     }
   })
+
+  it('treats monaco-editor as missing when its LSP bundle is absent', () => {
+    const root = mkdtempSync(join(tmpdir(), 'tahp-deps-'))
+    try {
+      writeFileSync(
+        join(root, 'package.json'),
+        JSON.stringify({ devDependencies: { 'monaco-editor': '^0.55.1' } }),
+      )
+      const installedDir = join(root, 'node_modules', 'monaco-editor')
+      mkdirSync(installedDir, { recursive: true })
+      writeFileSync(join(installedDir, 'package.json'), '{"name":"monaco-editor"}')
+
+      expect(findMissingDependencies(root)).toEqual(['monaco-editor'])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })

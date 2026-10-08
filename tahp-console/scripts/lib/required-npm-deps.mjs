@@ -1,5 +1,5 @@
 /**
- * 校验 package.json 声明的 dependencies 是否已落到 node_modules。
+ * 校验 package.json 声明的 dependencies / devDependencies 是否已完整落到 node_modules。
  * 用于 npm-install-if-needed：lock 未变但缺包时仍触发 npm install。
  */
 import { existsSync, readFileSync } from 'fs'
@@ -14,14 +14,17 @@ export function getConsoleRoot(fromDir = __dirname) {
 
 /**
  * @param {string} consoleRoot tahp-console 根目录
- * @returns {string[]} package.json dependencies 的 key 列表
+ * @returns {string[]} package.json dependencies 与 devDependencies 的 key 列表
  */
 export function listDeclaredDependencies(consoleRoot = getConsoleRoot()) {
   const pkgPath = join(consoleRoot, 'package.json')
   if (!existsSync(pkgPath)) return []
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
-    return Object.keys(pkg.dependencies || {})
+    return [
+      ...Object.keys(pkg.dependencies || {}),
+      ...Object.keys(pkg.devDependencies || {}),
+    ]
   } catch {
     return []
   }
@@ -34,10 +37,29 @@ export function listDeclaredDependencies(consoleRoot = getConsoleRoot()) {
 export function findMissingDependencies(consoleRoot = getConsoleRoot()) {
   const missing = []
   for (const name of listDeclaredDependencies(consoleRoot)) {
-    const installed = join(consoleRoot, 'node_modules', name, 'package.json')
-    if (!existsSync(installed)) missing.push(name)
+    if (!hasCompleteInstall(consoleRoot, name)) missing.push(name)
   }
   return missing
+}
+
+/**
+ * 包目录存在但内部文件缺失时，npm 会认为该版本已安装并跳过展开。
+ * 这些文件缺失会导致生产构建失败，须视为依赖未就绪。
+ */
+const PACKAGE_SENTINELS = {
+  'monaco-editor': ['esm/external/monaco-lsp-client/out/index.js'],
+}
+
+/**
+ * @param {string} consoleRoot
+ * @param {string} name
+ * @returns {boolean}
+ */
+function hasCompleteInstall(consoleRoot, name) {
+  const pkgDir = join(consoleRoot, 'node_modules', name)
+  if (!existsSync(join(pkgDir, 'package.json'))) return false
+  const sentinels = PACKAGE_SENTINELS[name] || []
+  return sentinels.every((relativePath) => existsSync(join(pkgDir, relativePath)))
 }
 
 /** Windows 托盘等启动路径强依赖的包（缺失时优先提示） */
