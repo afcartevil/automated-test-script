@@ -384,6 +384,13 @@ watch(deviceId, () => {
 
 const enabledDomains = computed(() => wizardDomains.value.filter(d => d.enabled))
 
+function formatRelatedSkills(skills: string[]): string {
+  if (!skills.length) return '未配置'
+  const [primary, ...rest] = skills
+  if (!rest.length) return primary
+  return `${primary}（协同 ${rest.join('、')}）`
+}
+
 const visibleDomains = computed(() => {
   const ws = new Set(selectedWorkspaces.value)
   return wizardDomains.value.filter(d => ws.has(d.workspace_id as AdaptWorkspaceId))
@@ -1252,6 +1259,17 @@ onUnmounted(() => {
                 <span v-if="domain.from_central" class="pill ok">中心有数据</span>
                 <span v-else class="pill muted-pill">需手工填写</span>
               </label>
+              <p class="domain-skills" :class="{ empty: !domain.related_skills.length }">
+                <template v-if="domain.related_skills.length">
+                  <span class="skill-role">主控</span>
+                  <code>{{ domain.related_skills[0] }}</code>
+                  <template v-if="domain.related_skills.length > 1">
+                    <span class="skill-role">协同</span>
+                    <code v-for="skill in domain.related_skills.slice(1)" :key="skill">{{ skill }}</code>
+                  </template>
+                </template>
+                <span v-else>未配置关联 Skill</span>
+              </p>
               <div v-if="domain.enabled" class="fields">
                 <div
                   v-for="field in domain.schema"
@@ -1523,6 +1541,16 @@ onUnmounted(() => {
         <div class="summary-row">
           <span class="k">启用域</span>
           <span>{{ enabledDomains.map(d => `${d.domain_label}(${d.workspace_id})`).join(' · ') || '—' }}</span>
+        </div>
+        <div class="summary-row">
+          <span class="k">关联 Skill</span>
+          <span v-if="enabledDomains.length" class="skill-summary">
+            <span
+              v-for="d in enabledDomains"
+              :key="`${d.workspace_id}::${d.domain_id}`"
+            >{{ d.domain_label }}({{ d.workspace_id }})：{{ formatRelatedSkills(d.related_skills) }}</span>
+          </span>
+          <span v-else>—</span>
         </div>
         <div v-if="showEzBuildSection" class="summary-row">
           <span class="k">编译</span>
@@ -1838,6 +1866,33 @@ onUnmounted(() => {
     color: var(--faint);
     font-family: var(--mono, monospace);
   }
+}
+.domain-skills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0 22px;
+  font-size: 12px;
+  color: var(--muted);
+  code {
+    font-family: var(--mono, monospace);
+    font-size: 12px;
+    color: var(--text);
+    background: color-mix(in srgb, var(--line) 55%, transparent);
+    padding: 1px 6px;
+    border-radius: 6px;
+  }
+  .skill-role {
+    font-weight: 700;
+    color: var(--faint);
+  }
+  &.empty { color: var(--faint); }
+}
+.skill-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .pill {
   font-size: 11px;
