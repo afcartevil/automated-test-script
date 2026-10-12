@@ -103,6 +103,8 @@ export interface SelfCheckTestConfig {
   tcardBeforeTest?: SelfCheckTcardBeforeTestConfig
   prioritizeTddManual?: boolean
   selectedCases?: string[]
+  /** 子任务选择：caseKey -> caseId[]（如 power/current_analysis/2 -> ['C01', 'C03']） */
+  caseIds?: Record<string, string[]>
 }
 
 export interface SelfCheckReportSummary {

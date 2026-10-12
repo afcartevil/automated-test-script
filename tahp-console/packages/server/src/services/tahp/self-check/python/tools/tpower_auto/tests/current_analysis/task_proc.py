@@ -31,9 +31,9 @@ def resolve_power_scene_mode(raw=None):
     - '' : 无 UI 场景标签时的实验室常驻全量循环
     """
     text = (raw if raw is not None else os.environ.get("TAHP_POWER_SCENE") or "").strip()
-    if text in ("复杂待机", "待机"):
+    if text in ("复杂待机场景", "复杂待机", "待机"):
         return "standby"
-    if text == "基础场景":
+    if text in ("系统基础场景", "基础体验场景", "基础场景"):
         return "base"
     if text in ("通用全域测试", "全域测试", "全量", "PFMMod"):
         return "full"
@@ -123,6 +123,11 @@ def device_task_loop(pmsn, tabletask: TableTask, debug: bool):
     version = phone.version
     initOK = False
     phone.loginfo(f"线程已启动: VER={version}")
+    
+    # 获取场景模式
+    scene_mode = resolve_power_scene_mode()
+    
+    # 基础功耗测试（base）和待机测试都使用完整初始化（带容错）
     for i in range(3):
         try:
             phone.env_init()
@@ -132,7 +137,6 @@ def device_task_loop(pmsn, tabletask: TableTask, debug: bool):
         except Exception as e:
             phone.logerror(f"手机配置失败, 异常信息: {e}")
             continue
-
     if not initOK:
         phone.logerror(f"手机配置失败, 线程退出")
         return
@@ -150,12 +154,12 @@ def device_task_loop(pmsn, tabletask: TableTask, debug: bool):
             else:
                 phone.logerror(f"ADB重连失败, 线程退出")
                 return
-        try:
-            phone.pre_phone_check_wifi_connection()
-        except Exception as e:
-            phone.logerror(f"WiFi连接失败, 异常信息: {e}")
-            time.sleep(60)
-            continue
+        # 基础功耗测试跳过 WiFi 检查
+        if scene_mode != "base":
+            try:
+                phone.pre_phone_check_wifi_connection()
+            except Exception as e:
+                phone.logerror(f"WiFi连接检查失败(已跳过): {e}")
         try:
             taskmanager.run()
         except Exception as e:
@@ -374,6 +378,29 @@ class TaskManager:
             if(self.basetestcnt < 3):
                 tasks_base = self.tabletask.get_tasks_base()
                 if tasks_base:
+                    # 按 case_id 前缀过滤（如 C01,C03）
+                    selected_case_ids_str = os.environ.get("TAHP_POWER_CASE_IDS", "").strip()
+                    self.phone.loginfo(f"[TAHP] TAHP_POWER_CASE_IDS='{selected_case_ids_str}'")
+                    if selected_case_ids_str:
+                        selected_case_ids = [cid.strip() for cid in selected_case_ids_str.split(",") if cid.strip()]
+                        filtered = {}
+                        matched_case_ids = set()  # 记录已匹配的 case_id，每个只取第一个任务
+                        for tid, tdata in tasks_base.items():
+                            case_id = tdata.get("case_id", "")
+                            # 匹配 case_id 前缀（如 C01_待机功耗 匹配 C01）
+                            for cid in selected_case_ids:
+                                if case_id.startswith(cid) and cid not in matched_case_ids:
+                                    filtered[tid] = tdata
+                                    matched_case_ids.add(cid)
+                                    break
+                        tasks_base = filtered
+                        if not tasks_base:
+                            self.phone.loginfo(f"选中的 case_id 无匹配任务：{selected_case_ids}")
+                            self.basetest = False
+                            self.scene_finished = True
+                            return
+                        self.phone.loginfo(f"已筛选 {len(tasks_base)} 个任务（case: {', '.join(selected_case_ids)}）")
+                    
                     self.basetestcnt += 1
                     self.phone.loginfo(f"基础功耗测试第{self.basetestcnt}轮开始")
                     self.task = tasks_base
@@ -383,7 +410,9 @@ class TaskManager:
                         self.phone.u2d_helper.set_fake_battery_level(80)
                     self.run_task()
                     self.phone.loginfo(f"基础功耗测试第{self.basetestcnt}轮结束")
-                    if self.phone.debug or self.basetestcnt >= 3: #DEBUG 只测一次
+                    # 选中 case_ids 时只测 1 轮，否则测 3 轮
+                    max_rounds = 1 if selected_case_ids_str else 3
+                    if self.phone.debug or self.basetestcnt >= max_rounds:
                         self.basetest = False
                         self.phone.loginfo(f"今日基础功耗测试任务已完成")
                     return
@@ -391,8 +420,19 @@ class TaskManager:
     def run_ontime_standby_task(self):
         self.standbyconf = self.tabletask.get_standby_tasks()
         assert self.standbyconf is not None, "获取待机任务失败"
+        
+        # 获取选中的 case_ids
+        selected_case_ids_str = os.environ.get("TAHP_POWER_CASE_IDS", "").strip()
+        selected_standby_ids = set()
+        if selected_case_ids_str:
+            selected_standby_ids = set(cid.strip().upper() for cid in selected_case_ids_str.split(",") if cid.strip())
+        
         if self.datastandby:
-            if 'data' not in self.plan or self.weekstr not in self.plan['data']['week']:
+            # 检查是否选中了 S01
+            if selected_standby_ids and 'S01' not in selected_standby_ids:
+                self.phone.loginfo(f"S01(数据待机)未选中，跳过")
+                self.datastandby = False
+            elif 'data' not in self.plan or self.weekstr not in self.plan['data']['week']:
                 self.datastandby = False
                 self.phone.loginfo(f"今日无数据待机测试任务")
             elif(self.plan['data']['runtime_hour'] != ''):
@@ -414,7 +454,11 @@ class TaskManager:
                             self.phone.loginfo(f"今日数据待机测试任务已完成")
                             break
         if self.wifistandby:
-            if 'wifi' not in self.plan or self.weekstr not in self.plan['wifi']['week']:
+            # 检查是否选中了 S02
+            if selected_standby_ids and 'S02' not in selected_standby_ids:
+                self.phone.loginfo(f"S02(WIFI待机)未选中，跳过")
+                self.wifistandby = False
+            elif 'wifi' not in self.plan or self.weekstr not in self.plan['wifi']['week']:
                 self.wifistandby = False
                 self.phone.loginfo(f"今日无WiFi待机测试任务")
             elif(self.plan['wifi']['runtime_hour'] != ''):
@@ -439,8 +483,19 @@ class TaskManager:
     def run_common_standby_task(self):
         self.standbyconf = self.tabletask.get_standby_tasks()
         assert self.standbyconf is not None, "获取待机任务失败"
+        
+        # 获取选中的 case_ids
+        selected_case_ids_str = os.environ.get("TAHP_POWER_CASE_IDS", "").strip()
+        selected_standby_ids = set()
+        if selected_case_ids_str:
+            selected_standby_ids = set(cid.strip().upper() for cid in selected_case_ids_str.split(",") if cid.strip())
+        
         if self.datastandby:
-            if 'data' not in self.plan or self.weekstr not in self.plan['data']['week']:
+            # 检查是否选中了 S01
+            if selected_standby_ids and 'S01' not in selected_standby_ids:
+                self.phone.loginfo(f"S01(数据待机)未选中，跳过")
+                self.datastandby = False
+            elif 'data' not in self.plan or self.weekstr not in self.plan['data']['week']:
                 self.datastandby = False
                 self.phone.loginfo(f"今日无数据待机测试任务")
             elif(self.plan['data']['runtime_hour'] == ''):
@@ -460,7 +515,11 @@ class TaskManager:
                         self.phone.loginfo(f"今日数据待机测试任务已完成")
                         break
         if self.wifistandby:
-            if 'wifi' not in self.plan or self.weekstr not in self.plan['wifi']['week']:
+            # 检查是否选中了 S02
+            if selected_standby_ids and 'S02' not in selected_standby_ids:
+                self.phone.loginfo(f"S02(WIFI待机)未选中，跳过")
+                self.wifistandby = False
+            elif 'wifi' not in self.plan or self.weekstr not in self.plan['wifi']['week']:
                 self.wifistandby = False
                 self.phone.loginfo(f"今日无WiFi待机测试任务")
             elif(self.plan['wifi']['runtime_hour'] == ''):

@@ -191,7 +191,16 @@ class PhoneConfig():
                               -v -v \
                               --throttle 800 21600 > NUL 2>&1")
     
+    def _safe_init_step(self, step_name: str, func, *args, **kwargs):
+        """Execute an init step with error tolerance - log warning on failure instead of raising."""
+        try:
+            self.loginfo(step_name)
+            func(*args, **kwargs)
+        except Exception as e:
+            self.logerror(f"{step_name} 失败(已跳过): {str(e)}")
+
     def env_init(self):
+        # 基础操作 - 必须成功
         adb.poweron_screen_and_unlock(self.serial)
         time.sleep(1)
         self.u2d_helper.press_home_key()
@@ -199,65 +208,32 @@ class PhoneConfig():
         self.stop_pip_apps()
         self.u2d_helper.set_all_volume_level(5)
         self.u2d_helper.set_brightness_and_close_auto_bright(102)
-        self.loginfo(f"pre_phone_copilot_switch_language_en")
-        self.pre_phone_copilot_switch_language_en()
-        self.loginfo(f"pre_phone_developer")
-        self.pre_phone_developer()
-        self.loginfo(f"pre_phone_copilot_restore_control_center_status")
-        self.pre_phone_copilot_restore_control_center_status()
-        self.loginfo(f"pre_phone_switch_keyboard_default")
-        self.pre_phone_switch_keyboard_default()
-        self.loginfo(f"pre_phone_switch_navi_mode_3_buttons")
-        self.pre_phone_switch_navi_mode_3_buttons()
-        self.loginfo(f"pre_phone_close_non_disturb_mode")
-        self.pre_phone_close_non_disturb_mode()
-        self.loginfo(f"pre_phone_close_clock")
-        self.pre_phone_close_clock()
-        self.loginfo(f"pre_phone_copilot_switch_dialer_default")
-        self.pre_phone_copilot_switch_dialer_default()
-        self.loginfo(f"pre_phone_clean_and_push_necessary_files")
-        self.pre_phone_clean_and_push_necessary_files()
-        self.loginfo(f"pre_phone_close_sidebar")
-        self.pre_phone_close_sidebar()
-        self.loginfo(f"pre_phone_copilot_close_google_protect")
-        self.pre_phone_copilot_close_google_protect()
-        self.loginfo(f"pre_phone_check_wifi_connection")
-        self.pre_phone_check_wifi_connection()
-        self.loginfo(f"pre_check_installed_apps_and_grant_permissions")
-        self.check_installed_apps_and_grant_permissions()
-        self.loginfo(f"pre_app_google_play_update")
-        for cnt in range(5):
-            try:
-                self.pre_app_google_play_update()
-                break
-            except Exception as e:
-                self.logerror(f"pre_app_google_play_update 失败: {str(e)}")
-                if cnt == 4:
-                    raise e
-        try:
-            self.loginfo(f"pre_phone_check_time")
-            self.pre_phone_check_time()
-        except Exception as e:
-            self.logerror(f"pre_phone_check_time 失败: {str(e)}")
-        self.loginfo(f"pre_phone_close_auto_update")
-        self.pre_phone_close_auto_update()
-        self.loginfo(f"pre_app_visha_video")
-        self.pre_app_visha()
-        self.loginfo(f"pre_app_mxplayer")
-        self.pre_app_mxplayer()
-        self.loginfo(f"pre_app_youtube")
-        self.pre_app_youtube()
-        #self.loginfo(f"pre_app_tiktok")
-        #self.pre_app_tiktok()
-        self.loginfo(f"pre_app_instagram")
-        self.pre_app_instagram()
-        self.loginfo(f"pre_app_gallery")
-        self.pre_app_gallery()
-        #断网测试
-        self.loginfo(f"pre_app_YTMusic")
-        self.pre_app_YTMusic()
-        self.loginfo(f"pre_app_candycrash")
-        self.pre_app_candycrash()
+        
+        # 以下配置步骤采用容错模式：失败只记录警告，不中断初始化
+        self._safe_init_step("pre_phone_copilot_switch_language_en", self.pre_phone_copilot_switch_language_en)
+        self._safe_init_step("pre_phone_developer", self.pre_phone_developer)
+        self._safe_init_step("pre_phone_copilot_restore_control_center_status", self.pre_phone_copilot_restore_control_center_status)
+        self._safe_init_step("pre_phone_switch_keyboard_default", self.pre_phone_switch_keyboard_default)
+        self._safe_init_step("pre_phone_switch_navi_mode_3_buttons", self.pre_phone_switch_navi_mode_3_buttons)
+        self._safe_init_step("pre_phone_close_non_disturb_mode", self.pre_phone_close_non_disturb_mode)
+        self._safe_init_step("pre_phone_close_clock", self.pre_phone_close_clock)
+        self._safe_init_step("pre_phone_copilot_switch_dialer_default", self.pre_phone_copilot_switch_dialer_default)
+        self._safe_init_step("pre_phone_clean_and_push_necessary_files", self.pre_phone_clean_and_push_necessary_files)
+        self._safe_init_step("pre_phone_close_sidebar", self.pre_phone_close_sidebar)
+        self._safe_init_step("pre_phone_copilot_close_google_protect", self.pre_phone_copilot_close_google_protect)
+        self._safe_init_step("pre_phone_check_wifi_connection", self.pre_phone_check_wifi_connection)
+        self._safe_init_step("pre_check_installed_apps_and_grant_permissions", self.check_installed_apps_and_grant_permissions)
+        self._safe_init_step("pre_app_google_play_update", self.pre_app_google_play_update)
+        self._safe_init_step("pre_phone_check_time", self.pre_phone_check_time)
+        self._safe_init_step("pre_phone_close_auto_update", self.pre_phone_close_auto_update)
+        self._safe_init_step("pre_app_visha_video", self.pre_app_visha)
+        self._safe_init_step("pre_app_mxplayer", self.pre_app_mxplayer)
+        self._safe_init_step("pre_app_youtube", self.pre_app_youtube)
+        #self._safe_init_step("pre_app_tiktok", self.pre_app_tiktok)
+        self._safe_init_step("pre_app_instagram", self.pre_app_instagram)
+        self._safe_init_step("pre_app_gallery", self.pre_app_gallery)
+        self._safe_init_step("pre_app_YTMusic", self.pre_app_YTMusic)
+        self._safe_init_step("pre_app_candycrash", self.pre_app_candycrash)
         
     def resourceid_click(self, idname: str, delay: float = 1) -> bool:
         for i in range(2):
@@ -495,12 +471,22 @@ class PhoneConfig():
         self.u2d_helper.close_wifi_auto_switch()
 
     def pre_phone_check_wifi_connection(self):
-        # 不要自动打开wifi
-        check_device_to_link_wifi(self.u2d, "power_cloud", "1234567809")
+        # 先检查WiFi是否已连接（通过ping测试）
         try:
-            self.u2d_helper.check_network_connections(True)
+            self.u2d_helper.check_network_connections(True)  # 检查海外网络
+            self.loginfo("WiFi已连接，跳过连接步骤")
+            return
         except Exception:
-            raise Exception("Phone wifi connection failed")
+            pass  # 未连接，继续尝试连接
+        
+        # 尝试连接WiFi
+        try:
+            check_device_to_link_wifi(self.u2d, "power_cloud", "1234567809")
+            self.u2d_helper.check_network_connections(True)
+            self.loginfo("WiFi连接成功")
+        except Exception as e:
+            self.logerror(f"WiFi连接失败(已跳过): {e}")
+            # 不抛异常，允许继续执行
 
     def pre_phone_check_mobile_data_connection(self):
         if adb.is_wifi_open(self.serial):
@@ -762,12 +748,11 @@ class PhoneConfig():
                         self.u2d.xpath('//*[@text="OK"]').click()
                     else:
                         break
-            while True:
+            for _ in range(10):  # 最多滑动10次
                 time.sleep(1)
                 self.u2d.swipe(0.5, 0.3, 0.5, 0.7)
-                if self.u2d.xpath('//*[@text="Cancel all"]').exists:
-                    continue
-                break
+                if not self.u2d.xpath('//*[@text="Cancel all"]').exists:
+                    break
         self.u2d.app_stop(app_info['package'])
 
     def pre_app_mxplayer(self):

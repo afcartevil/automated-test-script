@@ -136,6 +136,10 @@ const {
   toggleCatalogModule,
   toggleAllCasesInModule,
   toggleCase,
+  toggleSubTask,
+  toggleAllSubTasks,
+  isSubTaskSelected,
+  isAllSubTasksSelected,
   toggleAuxDevice,
   handleStartCustomTest,
   openCaseCatalog,
@@ -603,37 +607,69 @@ function handleDutRowAction(deviceId: string) {
                         </button>
                       </div>
                       <div v-if="expandedCatalogModules.has(catalog.key)" class="catalog-cases">
-                        <div
-                          v-for="c in catalog.cases"
-                          :key="c.caseIndex"
-                          class="case-checkbox"
-                          :class="{ selected: selectedCases.has(catalog.key + '/' + c.caseIndex) }"
-                          role="checkbox"
-                          tabindex="0"
-                          :aria-checked="selectedCases.has(catalog.key + '/' + c.caseIndex)"
-                          @click="toggleCase(catalog.key + '/' + c.caseIndex)"
-                          @keydown.enter.prevent="toggleCase(catalog.key + '/' + c.caseIndex)"
-                          @keydown.space.prevent="toggleCase(catalog.key + '/' + c.caseIndex)"
-                        >
-                          <input
-                            type="checkbox"
-                            :checked="selectedCases.has(catalog.key + '/' + c.caseIndex)"
-                            @click.stop
-                            @change="toggleCase(catalog.key + '/' + c.caseIndex)"
-                          />
-                          <span
-                            class="auto-mode-icon"
-                            :class="`auto-mode-icon--${normalizeAutomationMode(c.automationMode)}`"
-                            :title="getAutomationModeLabel(c.automationMode)"
-                          >{{ getAutomationModeIcon(c.automationMode) }}</span>
-                          <span class="case-name">{{ c.caseIndex }}. {{ c.caseName }}</span>
-                          <span
-                            v-for="plat in formatChipPlatforms(c.platforms)"
-                            :key="plat"
-                            class="case-tag case-tag--platform"
-                          >{{ plat }}</span>
-                          <span v-if="c.canReuse" class="case-tag">可复用</span>
-                        </div>
+                        <template v-for="c in catalog.cases" :key="c.caseIndex">
+                          <div
+                            class="case-checkbox"
+                            :class="{ selected: selectedCases.has(catalog.key + '/' + c.caseIndex) }"
+                            role="checkbox"
+                            tabindex="0"
+                            :aria-checked="selectedCases.has(catalog.key + '/' + c.caseIndex)"
+                            @click="toggleCase(catalog.key + '/' + c.caseIndex)"
+                            @keydown.enter.prevent="toggleCase(catalog.key + '/' + c.caseIndex)"
+                            @keydown.space.prevent="toggleCase(catalog.key + '/' + c.caseIndex)"
+                          >
+                            <input
+                              type="checkbox"
+                              :checked="selectedCases.has(catalog.key + '/' + c.caseIndex)"
+                              @click.stop
+                              @change="toggleCase(catalog.key + '/' + c.caseIndex)"
+                            />
+                            <span
+                              class="auto-mode-icon"
+                              :class="`auto-mode-icon--${normalizeAutomationMode(c.automationMode)}`"
+                              :title="getAutomationModeLabel(c.automationMode)"
+                            >{{ getAutomationModeIcon(c.automationMode) }}</span>
+                            <span class="case-name">{{ c.caseIndex }}. {{ c.caseName }}</span>
+                            <span
+                              v-for="plat in formatChipPlatforms(c.platforms)"
+                              :key="plat"
+                              class="case-tag case-tag--platform"
+                            >{{ plat }}</span>
+                            <span v-if="c.canReuse" class="case-tag">可复用</span>
+                          </div>
+                          <!-- 子任务选择面板 -->
+                          <div
+                            v-if="c.subTasks?.length && selectedCases.has(catalog.key + '/' + c.caseIndex)"
+                            class="subtask-panel"
+                          >
+                            <div class="subtask-header">
+                              <span class="subtask-title">{{ c.caseName }} - 选择测试项</span>
+                              <button
+                                type="button"
+                                class="ea-btn-ghost ea-btn-sm"
+                                @click.stop="toggleAllSubTasks(catalog.key + '/' + c.caseIndex, c.subTasks!)"
+                              >
+                                {{ isAllSubTasksSelected(catalog.key + '/' + c.caseIndex, c.subTasks!) ? '取消全选' : '全选' }}
+                              </button>
+                            </div>
+                            <div class="subtask-list">
+                              <label
+                                v-for="st in c.subTasks"
+                                :key="st.caseId"
+                                class="subtask-item"
+                                :class="{ selected: isSubTaskSelected(catalog.key + '/' + c.caseIndex, st.caseId) }"
+                              >
+                                <input
+                                  type="checkbox"
+                                  :checked="isSubTaskSelected(catalog.key + '/' + c.caseIndex, st.caseId)"
+                                  @change="toggleSubTask(catalog.key + '/' + c.caseIndex, st.caseId)"
+                                />
+                                <span class="subtask-id">{{ st.caseId }}</span>
+                                <span class="subtask-label">{{ st.label }}</span>
+                              </label>
+                            </div>
+                          </div>
+                        </template>
                       </div>
                     </div>
                   </div>
@@ -3906,6 +3942,71 @@ $catalog-pane-height: calc(100vh - 48px);
     border-radius: 4px;
     background: var(--accent);
     color: #fff;
+  }
+}
+
+.subtask-panel {
+  margin: 4px 0 8px 24px;
+  padding: 8px 12px;
+  background: var(--bg-soft, #f5f5f5);
+  border-radius: 6px;
+  border: 1px solid var(--border, #e0e0e0);
+
+  .subtask-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+
+    .subtask-title {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary, #666);
+    }
+  }
+
+  .subtask-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 4px;
+  }
+
+  .subtask-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    user-select: none;
+
+    &:hover {
+      background: var(--bg, #fff);
+    }
+
+    &.selected {
+      background: var(--accent-soft, #e3f2fd);
+    }
+
+    input {
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+
+    .subtask-id {
+      font-weight: 500;
+      color: var(--accent, #1976d2);
+      min-width: 28px;
+    }
+
+    .subtask-label {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   }
 }
 

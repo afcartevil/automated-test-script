@@ -414,6 +414,8 @@ const expandedCatalogTypes = ref<Set<string>>(new Set())
 const expandedCatalogModules = ref<Set<string>>(new Set())
 const expandedCatalogDetailModules = ref<Set<string>>(new Set())
 const selectedCases = ref<Set<string>>(new Set())
+/** 子任务选择：caseKey -> caseId[]（如 power/current_analysis/2 -> ['C01', 'C03']） */
+const selectedCaseIds = ref<Record<string, string[]>>({})
 const customTestDutDeviceId = ref<string | null>(null)
 const customTestAuxDeviceIds = ref<Set<string>>(new Set())
 
@@ -2165,10 +2167,54 @@ function toggleCase(caseKey: string) {
   if (caseKey.startsWith('gms/') && !gmsHostSupported.value) return
   if (selectedCases.value.has(caseKey)) {
     selectedCases.value.delete(caseKey)
+    // 取消选择时，清除对应的子任务选择
+    delete selectedCaseIds.value[caseKey]
+    selectedCaseIds.value = { ...selectedCaseIds.value }
   } else {
     selectedCases.value.add(caseKey)
   }
   selectedCases.value = new Set(selectedCases.value)
+}
+
+/** 切换子任务选择（如基础场景的 C01, C03 等） */
+function toggleSubTask(caseKey: string, caseId: string) {
+  const current = selectedCaseIds.value[caseKey] || []
+  const index = current.indexOf(caseId)
+  if (index >= 0) {
+    current.splice(index, 1)
+  } else {
+    current.push(caseId)
+  }
+  if (current.length === 0) {
+    delete selectedCaseIds.value[caseKey]
+  } else {
+    selectedCaseIds.value[caseKey] = current
+  }
+  selectedCaseIds.value = { ...selectedCaseIds.value }
+}
+
+/** 全选/取消全选子任务 */
+function toggleAllSubTasks(caseKey: string, subTasks: Array<{ caseId: string; label: string }>) {
+  const current = selectedCaseIds.value[caseKey] || []
+  const allSelected = subTasks.every(st => current.includes(st.caseId))
+  if (allSelected) {
+    delete selectedCaseIds.value[caseKey]
+  } else {
+    selectedCaseIds.value[caseKey] = subTasks.map(st => st.caseId)
+  }
+  selectedCaseIds.value = { ...selectedCaseIds.value }
+}
+
+/** 获取子任务选中状态 */
+function isSubTaskSelected(caseKey: string, caseId: string): boolean {
+  const current = selectedCaseIds.value[caseKey] || []
+  return current.includes(caseId)
+}
+
+/** 获取子任务全选状态 */
+function isAllSubTasksSelected(caseKey: string, subTasks: Array<{ caseId: string; label: string }>): boolean {
+  const current = selectedCaseIds.value[caseKey] || []
+  return subTasks.length > 0 && subTasks.every(st => current.includes(st.caseId))
 }
 
 function isCatalogGroupUnavailable(group: { testType: string; unavailableReason?: string }): boolean {
@@ -2251,11 +2297,19 @@ async function handleStartCustomTest() {
   customTestStarting.value = true
   error.value = null
   try {
+    // 过滤出有选中子任务的 caseIds
+    const caseIdsPayload: Record<string, string[]> = {}
+    for (const [caseKey, ids] of Object.entries(selectedCaseIds.value)) {
+      if (ids.length > 0 && selectedCases.value.has(caseKey)) {
+        caseIdsPayload[caseKey] = ids
+      }
+    }
     const result = await startCustomTest(
       customTestDutDeviceId.value,
       Array.from(selectedCases.value),
       Array.from(customTestAuxDeviceIds.value),
       prioritizeTddManual.value,
+      Object.keys(caseIdsPayload).length > 0 ? caseIdsPayload : undefined,
     )
     viewMode.value = 'list'
     catalogPanelExpanded.value = false
@@ -2776,6 +2830,7 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     expandedCatalogModules,
     expandedCatalogDetailModules,
     selectedCases,
+    selectedCaseIds,
     customTestDutDeviceId,
     customTestAuxDeviceIds,
     customTestStarting,
@@ -2872,6 +2927,10 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     toggleCatalogType,
     toggleCatalogModule,
     toggleCase,
+    toggleSubTask,
+    toggleAllSubTasks,
+    isSubTaskSelected,
+    isAllSubTasksSelected,
     toggleAllCasesInModule,
     toggleAllCasesInGroup,
     countGroupCases,

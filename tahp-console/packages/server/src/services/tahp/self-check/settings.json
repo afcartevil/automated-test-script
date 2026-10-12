@@ -2,9 +2,9 @@
   "autoTestEnabled": {},
   "autoTestPath": {},
   "monkeyDuration": "7d",
+  "bitflipRepeatCount": 1,
   "smokeUsdSkipSpdInfo": false,
   "gmsTradefedPath": {},
   "gmsTimeoutHours": 8,
-  "kernelFeatureCodeDir": "",
-  "bitflipRepeatCount": 1
+  "kernelFeatureCodeDir": ""
 }

@@ -129,6 +129,7 @@ export interface CaseCatalogItem {
   canReuse: boolean
   automationMode: AutomationMode
   platforms?: ChipPlatform[]
+  subTasks?: Array<{ caseId: string; label: string }>
 }
 
 export interface CaseCatalog {
@@ -377,10 +378,11 @@ export async function startCustomTest(
   selectedCases: string[],
   customAuxDeviceIds: string[],
   prioritizeTddManual?: boolean,
+  caseIds?: Record<string, string[]>,
 ): Promise<DeviceDetail> {
   return await tahpPost<DeviceDetail>(
     `/api/tahp/device-self-check/devices/${deviceId}/test/custom-start`,
-    { selectedCases, customAuxDeviceIds, prioritizeTddManual },
+    { selectedCases, customAuxDeviceIds, prioritizeTddManual, caseIds },
   )
 }
 

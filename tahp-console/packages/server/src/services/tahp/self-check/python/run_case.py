@@ -92,6 +92,16 @@ def run(
         aux_ok, aux_msg = ensure_auxiliary_devices_awake(device_info)
         if not aux_ok:
             return {"status": "fail", "message": aux_msg}
+        
+        # 提取子任务选择（case_ids）
+        case_ids_map = device_info.get("case_ids") or {}
+        case_key = f"{test_type}/{module}/{case_index}"
+        print(f"[TAHP] case_key={case_key}, case_ids_map={json.dumps(case_ids_map, ensure_ascii=False)}", flush=True)
+        if case_key in case_ids_map:
+            context["case_ids"] = case_ids_map[case_key]
+            print(f"[TAHP] 选中 case_ids: {context['case_ids']}", flush=True)
+        else:
+            print(f"[TAHP] case_key 未匹配，运行全部任务", flush=True)
 
     _ensure_module_init(test_type, module, device_info=context.get("device_info"))
     reset_dial_sequence()

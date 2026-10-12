@@ -108,6 +108,8 @@ export interface CaseInfo {
   execMode?: 'manual' | 'nl_ui'
   /** 适用平台；缺省表示不限制 */
   platforms?: ChipPlatform[]
+  /** 子任务列表（如基础场景的 C01~C24 测试项） */
+  subTasks?: Array<{ caseId: string; label: string }>
 }
 
 export interface ModuleCondition {
@@ -197,6 +199,8 @@ export interface TestSession {
   skipQualityUpload?: boolean
   /** 会话内缓存的芯片平台（mtk/qcom/unisoc），用于按 platforms 过滤用例 */
   chipPlatform?: ChipPlatform | 'unknown'
+  /** 子任务选择：caseKey -> caseId[]（如 power/current_analysis/2 -> ['C01', 'C03']） */
+  caseIds?: Record<string, string[]>
 }
 
 export interface CaseCatalogItem {
@@ -386,6 +390,7 @@ function snapshotTestConfig(
     tcardOptions?: TcardUpdateOptions
     prioritizeTddManual?: boolean
     selectedCases?: string[]
+    caseIds?: Record<string, string[]>
   },
 ): SelfCheckTestConfig {
   const cfg: SelfCheckTestConfig = {}
@@ -410,6 +415,9 @@ function snapshotTestConfig(
   if (opts.prioritizeTddManual) cfg.prioritizeTddManual = true
   if (testType === 'custom' && opts.selectedCases?.length) {
     cfg.selectedCases = [...opts.selectedCases]
+  }
+  if (opts.caseIds && Object.keys(opts.caseIds).length > 0) {
+    cfg.caseIds = { ...opts.caseIds }
   }
 
   switch (testType) {
@@ -2110,6 +2118,8 @@ function buildDeviceInfo(
       module &&
       session?.initializedPythonModules?.includes(`${testType}/${module}`)
     ),
+    // 子任务选择：caseKey -> caseId[]（如 power/current_analysis/2 -> ['C01', 'C03']）
+    ...(session?.caseIds ? { case_ids: session.caseIds } : {}),
     ...resultDirPayload,
   }
 }
@@ -3553,6 +3563,8 @@ export async function startCustomTest(
     skipQualityUpload?: boolean
     /** 适配流水线内自检：指定上报中心的项目/战役归属 */
     qualityUploadProject?: { project_code: string; campaign_id?: string }
+    /** 子任务选择：caseKey -> caseId[]（如 power/current_analysis/2 -> ['C01', 'C03']） */
+    caseIds?: Record<string, string[]>
   },
 ): Promise<DeviceDetail | null> {
   assertGmsRunnable('custom', selectedCases)
@@ -3609,9 +3621,11 @@ export async function startCustomTest(
       prioritizeTddManual,
       skipQualityUpload: options?.skipQualityUpload === true,
       qualityUploadProject: options?.qualityUploadProject,
+      caseIds: options?.caseIds,
       testConfig: snapshotTestConfig('custom', {
         prioritizeTddManual,
         selectedCases,
+        caseIds: options?.caseIds,
       }),
     }
 
@@ -5170,6 +5184,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
           execMode: c.execMode,
         }),
         platforms: Array.isArray(c.platforms) ? c.platforms : undefined,
+        subTasks: Array.isArray(c.subTasks) ? c.subTasks : undefined,
       })),
     })
   }

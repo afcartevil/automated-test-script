@@ -17,15 +17,42 @@
     },
     {
       "caseIndex": 2,
-      "caseName": "基础场景",
+      "caseName": "系统基础场景",
       "canReuse": false,
-      "automationMode": "full"
+      "automationMode": "full",
+      "subTasks": [
+        { "caseId": "C01", "label": "底电功耗" },
+        { "caseId": "C03", "label": "AI Gallery-白图" },
+        { "caseId": "C04", "label": "AI Gallery-黑图" },
+        { "caseId": "C05", "label": "默认壁纸设置" },
+        { "caseId": "C06", "label": "功耗指定壁纸" },
+        { "caseId": "C07", "label": "离线通话" },
+        { "caseId": "C09", "label": "YouTube-播放lonely" },
+        { "caseId": "C10", "label": "相机-预览" },
+        { "caseId": "C11", "label": "相机-拍照" },
+        { "caseId": "C12", "label": "相机-录像" },
+        { "caseId": "C13", "label": "前摄-预览" },
+        { "caseId": "C14", "label": "前摄-录像" },
+        { "caseId": "C16", "label": "Candy Crush 游戏" },
+        { "caseId": "C17", "label": "MXPlayer-本地视频" },
+        { "caseId": "C18", "label": "Visha-本地视频" },
+        { "caseId": "C19", "label": "YouTube-在线视频" },
+        { "caseId": "C20", "label": "TikTok-在线视频" },
+        { "caseId": "C21", "label": "Chrome-网页浏览" },
+        { "caseId": "C22", "label": "Instagram-在线视频" },
+        { "caseId": "C23", "label": "Settings-网页浏览" },
+        { "caseId": "C24", "label": "息屏录像" }
+      ]
     },
     {
       "caseIndex": 3,
-      "caseName": "待机",
+      "caseName": "复杂待机场景",
       "canReuse": false,
-      "automationMode": "full"
+      "automationMode": "full",
+      "subTasks": [
+        { "caseId": "S01", "label": "数据待机(data)" },
+        { "caseId": "S02", "label": "WIFI待机(wifi)" }
+      ]
     },
     {
       "caseIndex": 4,
@@ -38,6 +65,35 @@
       "caseName": "PFMMod",
       "canReuse": false,
       "automationMode": "full"
+    },
+    {
+      "caseIndex": 6,
+      "caseName": "基础体验场景",
+      "canReuse": false,
+      "automationMode": "full",
+      "subTasks": [
+        { "caseId": "C01", "label": "底电功耗" },
+        { "caseId": "C03", "label": "AI Gallery-白图" },
+        { "caseId": "C04", "label": "AI Gallery-黑图" },
+        { "caseId": "C05", "label": "默认壁纸设置" },
+        { "caseId": "C06", "label": "功耗指定壁纸" },
+        { "caseId": "C07", "label": "离线通话" },
+        { "caseId": "C09", "label": "YouTube-播放lonely" },
+        { "caseId": "C10", "label": "相机-预览" },
+        { "caseId": "C11", "label": "相机-拍照" },
+        { "caseId": "C12", "label": "相机-录像" },
+        { "caseId": "C13", "label": "前摄-预览" },
+        { "caseId": "C14", "label": "前摄-录像" },
+        { "caseId": "C16", "label": "Candy Crush 游戏" },
+        { "caseId": "C17", "label": "MXPlayer-本地视频" },
+        { "caseId": "C18", "label": "Visha-本地视频" },
+        { "caseId": "C19", "label": "YouTube-在线视频" },
+        { "caseId": "C20", "label": "TikTok-在线视频" },
+        { "caseId": "C21", "label": "Chrome-网页浏览" },
+        { "caseId": "C22", "label": "Instagram-在线视频" },
+        { "caseId": "C23", "label": "Settings-网页浏览" },
+        { "caseId": "C24", "label": "息屏录像" }
+      ]
     }
   ]
 }

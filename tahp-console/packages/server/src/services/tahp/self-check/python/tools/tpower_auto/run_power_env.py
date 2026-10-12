@@ -136,7 +136,7 @@ def _register_shutdown_handlers() -> None:
             pass
 
 
-def cmd_run_foreground(serial: str | None, scene: str | None = None) -> int:
+def cmd_run_foreground(serial: str | None, scene: str | None = None, case_ids: str | None = None) -> int:
     """前台运行 task_proc（子线程调度），供自检用例阻塞等待；stop 命令可终止。"""
     setup_env()
     try:
@@ -148,12 +148,19 @@ def cmd_run_foreground(serial: str | None, scene: str | None = None) -> int:
     scene_name = (scene or "").strip()
     if scene_name:
         os.environ["TAHP_POWER_SCENE"] = scene_name
+    
+    # 设置选中的 case_ids（逗号分隔，如 C01,C03,C19）
+    case_ids_str = (case_ids or "").strip()
+    print(f"[TAHP] run_power_env: case_ids='{case_ids}', case_ids_str='{case_ids_str}'", flush=True)
+    if case_ids_str:
+        os.environ["TAHP_POWER_CASE_IDS"] = case_ids_str
 
     save_state(
         {
             "daemon_pid": os.getpid(),
             "serial": serial or "",
             "scene": scene_name,
+            "case_ids": case_ids_str,
             "start_time": time.strftime("%Y-%m-%d %H:%M:%S"),
             "output_dir": str(OUTPUT_DIR),
             "mode": "foreground",
@@ -329,12 +336,13 @@ def main() -> int:
     parser.add_argument("command", choices=["start", "stop", "status", "daemon", "run", "latest-xlsx", "summarize-xlsx"])
     parser.add_argument("-s", "--serial", default="")
     parser.add_argument("--scene", default="", help="场景子项：通用全域测试 / 基础场景 / 待机 / PFMMod（DOU 暂不实现）")
+    parser.add_argument("--case-ids", default="", help="选中的 case_id 前缀列表（逗号分隔，如 C01,C03），为空则运行全部")
     args = parser.parse_args()
 
     if args.command == "daemon":
         return run_daemon()
     if args.command == "run":
-        return cmd_run_foreground(args.serial or None, args.scene or None)
+        return cmd_run_foreground(args.serial or None, args.scene or None, args.case_ids or None)
     if args.command == "start":
         return cmd_start(args.serial or None)
     if args.command == "stop":

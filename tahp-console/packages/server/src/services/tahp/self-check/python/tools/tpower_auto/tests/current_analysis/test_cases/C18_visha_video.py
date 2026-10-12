@@ -15,10 +15,14 @@ def visha_start(phone :PhoneConfig, file="1080.mp4"):
         -t \"video/mp4\" \
         --ez android.intent.extra.user_rotation 1")
     sleep(3)
-    while phone.u2d(text="Agree").exists():
+    for _ in range(10):  # 最多点击10次
+        if not phone.u2d(text="Agree").exists():
+            break
         phone.u2d.swipe(0.5, 0.7, 0.5, 0.5)
         phone.u2d(text="Agree").click()
         sleep(1)
+    else:
+        phone.logerror("Visha 'Agree' 按钮点击超时，继续执行")
     if phone.u2d(resourceId="com.transsion.magicshow:id/tv_skip").exists():
         phone.u2d(resourceId="com.transsion.magicshow:id/tv_skip").click()
     sleep(3)

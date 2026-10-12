@@ -295,16 +295,17 @@ tahpDeviceSelfCheckRoutes.post(
   async (ctx) => {
     try {
       const deviceId = ctx.params.deviceId
-      const { selectedCases, customAuxDeviceIds, prioritizeTddManual } = ctx.request.body as {
+      const { selectedCases, customAuxDeviceIds, prioritizeTddManual, caseIds } = ctx.request.body as {
         selectedCases: string[]
         customAuxDeviceIds: string[]
         prioritizeTddManual?: boolean
+        caseIds?: Record<string, string[]>
       }
       const result = await startCustomTest(
         deviceId,
         selectedCases || [],
         customAuxDeviceIds || [],
-        { prioritizeTddManual: Boolean(prioritizeTddManual) },
+        { prioritizeTddManual: Boolean(prioritizeTddManual), caseIds },
       )
       if (!result) {
         ctx.status = 400

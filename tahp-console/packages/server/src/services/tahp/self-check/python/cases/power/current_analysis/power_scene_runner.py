@@ -40,10 +40,19 @@ def _summarize(runner: Path) -> dict:
     return {"ok": False, "message": stdout or (result.stderr or "").strip() or "无法汇总报告"}
 
 
-def run_scene(scene: str, device_info=None, step_update=None, **_context):
+def run_scene(scene: str, device_info=None, step_update=None, case_ids=None, **_context):
     info = device_info or {}
     serial = _device_serial(info)
     label = (scene or "").strip() or "场景功耗测量"
+    
+    # case_ids: 逗号分隔的 case_id 前缀列表（如 C01,C03），或列表格式
+    case_ids_str = ""
+    if case_ids:
+        if isinstance(case_ids, list):
+            case_ids_str = ",".join(str(cid).strip() for cid in case_ids if str(cid).strip())
+        elif isinstance(case_ids, str):
+            case_ids_str = case_ids.strip()
+    print(f"[TAHP] power_scene_runner: case_ids={case_ids}, case_ids_str='{case_ids_str}'", flush=True)
 
     runner = (
         Path(__file__).resolve().parents[3]
@@ -77,6 +86,8 @@ def run_scene(scene: str, device_info=None, step_update=None, **_context):
             pass
 
     add_step(f"准备启动场景功耗测量（{label}），设备: {serial}")
+    if case_ids_str:
+        add_step(f"选中测试项: {case_ids_str}")
     subprocess.run(
         [sys.executable, str(runner), "stop", "-s", serial],
         cwd=str(runner.parent),
@@ -91,8 +102,14 @@ def run_scene(scene: str, device_info=None, step_update=None, **_context):
     log_offset = log_path.stat().st_size if log_path.is_file() else 0
 
     add_step(f"TPower 子线程启动中（{label}）…")
+    
+    # 构建命令行参数
+    cmd_args = [sys.executable, str(runner), "run", "-s", serial, "--scene", label]
+    if case_ids_str:
+        cmd_args.extend(["--case-ids", case_ids_str])
+    
     proc = subprocess.Popen(
-        [sys.executable, str(runner), "run", "-s", serial, "--scene", label],
+        cmd_args,
         cwd=str(runner.parent),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

@@ -248,7 +248,7 @@ def phone_env_config(phone:PhoneConfig):
             if(dict_excel['gesture'].strip() == ''):
                 dict_excel['gesture'] = 'off'
             phone.loginfo(f"设置手势: {dict_excel['gesture']}")
-            while True:
+            for _ in range(10):  # 最多重试10次
                 if dict_excel['gesture'] == device.get_keyvalue(pmsn, 'last_gesture'):
                     phone.loginfo(f"手势已设置为 {dict_excel['gesture']}")
                     break
@@ -256,6 +256,8 @@ def phone_env_config(phone:PhoneConfig):
                 if ret:
                     device.set_keyvalue(pmsn, 'last_gesture', dict_excel['gesture'])
                     break
+            else:
+                phone.logerror(f"手势设置超时，跳过")
     
     # 设置是否开启后台应用
     if 'background' in dict_excel:

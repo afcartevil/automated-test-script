@@ -10,5 +10,5 @@ if str(_DIR) not in sys.path:
 from power_scene_runner import run_scene
 
 
-def run(**context):
-    return run_scene(scene="待机", **context)
+def run(case_ids=None, **context):
+    return run_scene(scene="复杂待机场景", case_ids=case_ids, **context)

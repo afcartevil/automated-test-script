@@ -31,11 +31,13 @@ def youtube_start(phone :PhoneConfig):
     phone.u2d.swipe(0.5, 0.9, 0.5, 0.1)
     sleep(1)
     phone.u2d(descriptionContains='Avatar EP01').click()
-    while True:
+    for _ in range(20):  # 最多等待60秒（20次*3秒）
         sleep(3)
         phone.u2d.xpath('//*[@resource-id="com.google.android.youtube:id/skip_ad_button_text"]').click_exists(timeout=5)
         if phone.u2d(descriptionContains='seconds of 25 minutes').exists():
             break
+    else:
+        phone.logerror("YouTube视频加载超时，跳过广告跳过步骤")
     phone.u2d.click(0.5, 0.1)
     btn_fullscreen = phone.u2d.xpath('//*[@resource-id="com.google.android.youtube:id/fullscreen_button"]')
     btn_fullscreen.click()
