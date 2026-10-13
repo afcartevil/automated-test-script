@@ -21,27 +21,575 @@
       "canReuse": false,
       "automationMode": "full",
       "subTasks": [
-        { "caseId": "C01", "label": "底电功耗" },
-        { "caseId": "C03", "label": "AI Gallery-白图" },
-        { "caseId": "C04", "label": "AI Gallery-黑图" },
-        { "caseId": "C05", "label": "默认壁纸设置" },
-        { "caseId": "C06", "label": "功耗指定壁纸" },
-        { "caseId": "C07", "label": "离线通话" },
-        { "caseId": "C09", "label": "YouTube-播放lonely" },
-        { "caseId": "C10", "label": "相机-预览" },
-        { "caseId": "C11", "label": "相机-拍照" },
-        { "caseId": "C12", "label": "相机-录像" },
-        { "caseId": "C13", "label": "前摄-预览" },
-        { "caseId": "C14", "label": "前摄-录像" },
-        { "caseId": "C16", "label": "Candy Crush 游戏" },
-        { "caseId": "C17", "label": "MXPlayer-本地视频" },
-        { "caseId": "C18", "label": "Visha-本地视频" },
-        { "caseId": "C19", "label": "YouTube-在线视频" },
-        { "caseId": "C20", "label": "TikTok-在线视频" },
-        { "caseId": "C21", "label": "Chrome-网页浏览" },
-        { "caseId": "C22", "label": "Instagram-在线视频" },
-        { "caseId": "C23", "label": "Settings-网页浏览" },
-        { "caseId": "C24", "label": "息屏录像" }
+        {
+          "caseId": "C01",
+          "label": "底电功耗",
+          "children": [
+            {
+              "caseId": "T01",
+              "label": "底电-手势全关"
+            },
+            {
+              "caseId": "T02",
+              "label": "底电-手势默认"
+            },
+            {
+              "caseId": "T03",
+              "label": "底电-手势全开"
+            },
+            {
+              "caseId": "T04",
+              "label": "GPS灭屏待机"
+            },
+            {
+              "caseId": "T05",
+              "label": "IDLE灭屏待机"
+            },
+            {
+              "caseId": "T06",
+              "label": "开启数据待机"
+            },
+            {
+              "caseId": "T07",
+              "label": "连接WIFI待机"
+            }
+          ]
+        },
+        {
+          "caseId": "C03",
+          "label": "AI Gallery-白图",
+          "children": [
+            {
+              "caseId": "T08",
+              "label": "AI Gallery-白图-最暗"
+            },
+            {
+              "caseId": "T09",
+              "label": "AI Gallery-白图-默认"
+            },
+            {
+              "caseId": "T10",
+              "label": "AI Gallery-白图-最亮"
+            },
+            {
+              "caseId": "T11",
+              "label": "AI Gallery-白图-DOU"
+            }
+          ]
+        },
+        {
+          "caseId": "C04",
+          "label": "AI Gallery-黑图",
+          "children": [
+            {
+              "caseId": "T12",
+              "label": "AI Gallery-黑图-最暗"
+            },
+            {
+              "caseId": "T13",
+              "label": "AI Gallery-黑图-最亮"
+            }
+          ]
+        },
+        {
+          "caseId": "C05",
+          "label": "默认壁纸设置",
+          "children": [
+            {
+              "caseId": "T14",
+              "label": "默认壁纸-最亮"
+            }
+          ]
+        },
+        {
+          "caseId": "C06",
+          "label": "功耗指定壁纸",
+          "children": [
+            {
+              "caseId": "T15",
+              "label": "功耗指定壁纸-默认"
+            },
+            {
+              "caseId": "T16",
+              "label": "功耗指定壁纸-最亮"
+            },
+            {
+              "caseId": "T17",
+              "label": "功耗指定壁纸-DOU"
+            },
+            {
+              "caseId": "T18",
+              "label": "功耗指定壁纸-开NFC"
+            }
+          ]
+        },
+        {
+          "caseId": "C07",
+          "label": "离线通话",
+          "simRequired": true,
+          "children": [
+            {
+              "caseId": "T19",
+              "label": "灭屏通话"
+            }
+          ]
+        },
+        {
+          "caseId": "C09",
+          "label": "YouTube-播放lonely",
+          "children": [
+            {
+              "caseId": "T22",
+              "label": "YT- lonely-静音"
+            },
+            {
+              "caseId": "T23",
+              "label": "YT- lonely-1级"
+            },
+            {
+              "caseId": "T24",
+              "label": "YT- lonely-13级"
+            },
+            {
+              "caseId": "T25",
+              "label": "YT- lonely-15级"
+            },
+            {
+              "caseId": "T61",
+              "label": "YT- lonely-10级"
+            },
+            {
+              "caseId": "T62",
+              "label": "YT- lonely-11级"
+            },
+            {
+              "caseId": "T63",
+              "label": "YT- lonely-12级"
+            },
+            {
+              "caseId": "T64",
+              "label": "YT- lonely-14级"
+            }
+          ]
+        },
+        {
+          "caseId": "C12",
+          "label": "相机-录像",
+          "children": [
+            {
+              "caseId": "T29",
+              "label": "后摄-录像-最亮"
+            }
+          ]
+        },
+        {
+          "caseId": "C18",
+          "label": "Visha-本地视频",
+          "children": [
+            {
+              "caseId": "T43",
+              "label": "Visha那些年1080P-最亮-最响"
+            },
+            {
+              "caseId": "T44",
+              "label": "Visha那些年1080P-DOU-静音"
+            },
+            {
+              "caseId": "T45",
+              "label": "Visha那些年1080P-DOU"
+            },
+            {
+              "caseId": "T46",
+              "label": "Visha那些年1080P-最亮-静音"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "caseIndex": 6,
+      "caseName": "基础体验场景",
+      "canReuse": false,
+      "automationMode": "full",
+      "subTasks": [
+        {
+          "caseId": "C01",
+          "label": "底电功耗",
+          "children": [
+            {
+              "caseId": "T01",
+              "label": "底电-手势全关"
+            },
+            {
+              "caseId": "T02",
+              "label": "底电-手势默认"
+            },
+            {
+              "caseId": "T03",
+              "label": "底电-手势全开"
+            },
+            {
+              "caseId": "T04",
+              "label": "GPS灭屏待机"
+            },
+            {
+              "caseId": "T05",
+              "label": "IDLE灭屏待机"
+            },
+            {
+              "caseId": "T06",
+              "label": "开启数据待机"
+            },
+            {
+              "caseId": "T07",
+              "label": "连接WIFI待机"
+            }
+          ]
+        },
+        {
+          "caseId": "C03",
+          "label": "AI Gallery-白图",
+          "children": [
+            {
+              "caseId": "T08",
+              "label": "AI Gallery-白图-最暗"
+            },
+            {
+              "caseId": "T09",
+              "label": "AI Gallery-白图-默认"
+            },
+            {
+              "caseId": "T10",
+              "label": "AI Gallery-白图-最亮"
+            },
+            {
+              "caseId": "T11",
+              "label": "AI Gallery-白图-DOU"
+            }
+          ]
+        },
+        {
+          "caseId": "C04",
+          "label": "AI Gallery-黑图",
+          "children": [
+            {
+              "caseId": "T12",
+              "label": "AI Gallery-黑图-最暗"
+            },
+            {
+              "caseId": "T13",
+              "label": "AI Gallery-黑图-最亮"
+            }
+          ]
+        },
+        {
+          "caseId": "C05",
+          "label": "默认壁纸设置",
+          "children": [
+            {
+              "caseId": "T14",
+              "label": "默认壁纸-最亮"
+            }
+          ]
+        },
+        {
+          "caseId": "C06",
+          "label": "功耗指定壁纸",
+          "children": [
+            {
+              "caseId": "T15",
+              "label": "功耗指定壁纸-默认"
+            },
+            {
+              "caseId": "T16",
+              "label": "功耗指定壁纸-最亮"
+            },
+            {
+              "caseId": "T17",
+              "label": "功耗指定壁纸-DOU"
+            },
+            {
+              "caseId": "T18",
+              "label": "功耗指定壁纸-开NFC"
+            }
+          ]
+        },
+        {
+          "caseId": "C07",
+          "label": "离线通话",
+          "children": [
+            {
+              "caseId": "T19",
+              "label": "灭屏通话"
+            }
+          ]
+        },
+        {
+          "caseId": "C09",
+          "label": "YouTube-播放lonely",
+          "children": [
+            {
+              "caseId": "T22",
+              "label": "YT- lonely-静音"
+            },
+            {
+              "caseId": "T23",
+              "label": "YT- lonely-1级"
+            },
+            {
+              "caseId": "T24",
+              "label": "YT- lonely-13级"
+            },
+            {
+              "caseId": "T25",
+              "label": "YT- lonely-15级"
+            },
+            {
+              "caseId": "T61",
+              "label": "YT- lonely-10级"
+            },
+            {
+              "caseId": "T62",
+              "label": "YT- lonely-11级"
+            },
+            {
+              "caseId": "T63",
+              "label": "YT- lonely-12级"
+            },
+            {
+              "caseId": "T64",
+              "label": "YT- lonely-14级"
+            }
+          ]
+        },
+        {
+          "caseId": "C10",
+          "label": "相机-预览",
+          "children": [
+            {
+              "caseId": "T26",
+              "label": "后摄-预览-最亮"
+            },
+            {
+              "caseId": "T27",
+              "label": "后摄-预览-DOU"
+            }
+          ]
+        },
+        {
+          "caseId": "C11",
+          "label": "相机-拍照",
+          "children": [
+            {
+              "caseId": "T28",
+              "label": "后摄-拍照-最亮"
+            },
+            {
+              "caseId": "T30",
+              "label": "前摄-预览-最亮"
+            }
+          ]
+        },
+        {
+          "caseId": "C12",
+          "label": "相机-录像",
+          "children": [
+            {
+              "caseId": "T29",
+              "label": "后摄-录像-最亮"
+            }
+          ]
+        },
+        {
+          "caseId": "C13",
+          "label": "前摄-预览",
+          "children": [
+            {
+              "caseId": "T31",
+              "label": "前摄-预览-DOU"
+            }
+          ]
+        },
+        {
+          "caseId": "C14",
+          "label": "前摄-录像",
+          "children": [
+            {
+              "caseId": "T32",
+              "label": "前摄-录像-最亮"
+            }
+          ]
+        },
+        {
+          "caseId": "C16",
+          "label": "Candy Crush 游戏",
+          "children": [
+            {
+              "caseId": "T35",
+              "label": "Candy Crush-最亮-最响"
+            },
+            {
+              "caseId": "T36",
+              "label": "Candy Crush-DOU-静音"
+            },
+            {
+              "caseId": "T37",
+              "label": "Candy Crush-DOU"
+            },
+            {
+              "caseId": "T38",
+              "label": "Candy Crush-最亮-静音"
+            }
+          ]
+        },
+        {
+          "caseId": "C17",
+          "label": "MXPlayer-本地视频",
+          "children": [
+            {
+              "caseId": "T39",
+              "label": "MXPlayer那些年1080P-最亮-最响"
+            },
+            {
+              "caseId": "T40",
+              "label": "MXPlayer那些年1080P-DOU-静音"
+            },
+            {
+              "caseId": "T41",
+              "label": "MXPlayer那些年1080P-DOU"
+            },
+            {
+              "caseId": "T42",
+              "label": "MXPlayer那些年1080P-最亮-静音"
+            }
+          ]
+        },
+        {
+          "caseId": "C18",
+          "label": "Visha-本地视频",
+          "children": [
+            {
+              "caseId": "T43",
+              "label": "Visha那些年1080P-最亮-最响"
+            },
+            {
+              "caseId": "T44",
+              "label": "Visha那些年1080P-DOU-静音"
+            },
+            {
+              "caseId": "T45",
+              "label": "Visha那些年1080P-DOU"
+            },
+            {
+              "caseId": "T46",
+              "label": "Visha那些年1080P-最亮-静音"
+            }
+          ]
+        },
+        {
+          "caseId": "C19",
+          "label": "YouTube-在线视频",
+          "children": [
+            {
+              "caseId": "T47",
+              "label": "youtube-全职高手-最亮-最响"
+            },
+            {
+              "caseId": "T48",
+              "label": "youtube-全职高手-DOU-静音"
+            },
+            {
+              "caseId": "T49",
+              "label": "youtube-全职高手-DOU"
+            },
+            {
+              "caseId": "T50",
+              "label": "youtube-全职高手-最亮-静音"
+            }
+          ]
+        },
+        {
+          "caseId": "C20",
+          "label": "TikTok-在线视频",
+          "children": [
+            {
+              "caseId": "T51",
+              "label": "Tiktok-固定列表-最亮-最响"
+            },
+            {
+              "caseId": "T52",
+              "label": "Tiktok-固定列表-DOU-静音"
+            },
+            {
+              "caseId": "T53",
+              "label": "Tiktok-固定列表-DOU"
+            },
+            {
+              "caseId": "T54",
+              "label": "Tiktok-固定列表-最亮-静音"
+            }
+          ]
+        },
+        {
+          "caseId": "C21",
+          "label": "Chrome-网页浏览",
+          "children": [
+            {
+              "caseId": "T55",
+              "label": "Chrome-浏览-最亮"
+            },
+            {
+              "caseId": "T56",
+              "label": "Chrome-浏览-DOU"
+            }
+          ]
+        },
+        {
+          "caseId": "C22",
+          "label": "Instagram-在线视频",
+          "children": [
+            {
+              "caseId": "T57",
+              "label": "Ins-播放视频-最亮-最响"
+            },
+            {
+              "caseId": "T58",
+              "label": "Ins-播放视频-DOU-静音"
+            },
+            {
+              "caseId": "T59",
+              "label": "Ins-播放视频-DOU"
+            },
+            {
+              "caseId": "T60",
+              "label": "Ins-播放视频-最亮-静音"
+            }
+          ]
+        },
+        {
+          "caseId": "C23",
+          "label": "Settings-网页浏览",
+          "children": [
+            {
+              "caseId": "T65",
+              "label": "Settings-浏览-最亮"
+            },
+            {
+              "caseId": "T66",
+              "label": "Settings-浏览-DOU"
+            }
+          ]
+        },
+        {
+          "caseId": "C24",
+          "label": "息屏录像",
+          "children": [
+            {
+              "caseId": "T67",
+              "label": "灭屏录音"
+            }
+          ]
+        }
       ]
     },
     {
@@ -50,8 +598,14 @@
       "canReuse": false,
       "automationMode": "full",
       "subTasks": [
-        { "caseId": "S01", "label": "数据待机(data)" },
-        { "caseId": "S02", "label": "WIFI待机(wifi)" }
+        {
+          "caseId": "S01",
+          "label": "数据待机(data)"
+        },
+        {
+          "caseId": "S02",
+          "label": "WIFI待机(wifi)"
+        }
       ]
     },
     {
@@ -65,35 +619,6 @@
       "caseName": "PFMMod",
       "canReuse": false,
       "automationMode": "full"
-    },
-    {
-      "caseIndex": 6,
-      "caseName": "基础体验场景",
-      "canReuse": false,
-      "automationMode": "full",
-      "subTasks": [
-        { "caseId": "C01", "label": "底电功耗" },
-        { "caseId": "C03", "label": "AI Gallery-白图" },
-        { "caseId": "C04", "label": "AI Gallery-黑图" },
-        { "caseId": "C05", "label": "默认壁纸设置" },
-        { "caseId": "C06", "label": "功耗指定壁纸" },
-        { "caseId": "C07", "label": "离线通话" },
-        { "caseId": "C09", "label": "YouTube-播放lonely" },
-        { "caseId": "C10", "label": "相机-预览" },
-        { "caseId": "C11", "label": "相机-拍照" },
-        { "caseId": "C12", "label": "相机-录像" },
-        { "caseId": "C13", "label": "前摄-预览" },
-        { "caseId": "C14", "label": "前摄-录像" },
-        { "caseId": "C16", "label": "Candy Crush 游戏" },
-        { "caseId": "C17", "label": "MXPlayer-本地视频" },
-        { "caseId": "C18", "label": "Visha-本地视频" },
-        { "caseId": "C19", "label": "YouTube-在线视频" },
-        { "caseId": "C20", "label": "TikTok-在线视频" },
-        { "caseId": "C21", "label": "Chrome-网页浏览" },
-        { "caseId": "C22", "label": "Instagram-在线视频" },
-        { "caseId": "C23", "label": "Settings-网页浏览" },
-        { "caseId": "C24", "label": "息屏录像" }
-      ]
     }
   ]
 }

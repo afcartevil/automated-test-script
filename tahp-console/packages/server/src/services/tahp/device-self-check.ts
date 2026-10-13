@@ -108,8 +108,8 @@ export interface CaseInfo {
   execMode?: 'manual' | 'nl_ui'
   /** 适用平台；缺省表示不限制 */
   platforms?: ChipPlatform[]
-  /** 子任务列表（如基础场景的 C01~C24 测试项） */
-  subTasks?: Array<{ caseId: string; label: string }>
+  /** 子任务列表（如基础场景的 C01~C24 测试项；C01 下 children 为 T01–T07 底电项） */
+  subTasks?: Array<{ caseId: string; label: string; children?: Array<{ caseId: string; label: string }> }>
 }
 
 export interface ModuleCondition {
@@ -209,6 +209,7 @@ export interface CaseCatalogItem {
   canReuse: boolean
   automationMode: AutomationMode
   platforms?: ChipPlatform[]
+  subTasks?: Array<{ caseId: string; label: string; children?: Array<{ caseId: string; label: string }> }>
 }
 
 export interface CaseCatalog {
@@ -2274,6 +2275,12 @@ function summarizePowerReportFromXlsx(): {
   passed: number
   message: string
   path?: string
+  powerResults?: Array<{
+    task_id: string
+    task: string
+    case_id: string
+    current_mA: number
+  }>
 } | null {
   const script = join(POWER_TOOLS_DIR, 'run_power_env.py')
   if (!existsSync(script)) return null
@@ -2320,6 +2327,17 @@ function finalizePowerCaseResults(deviceId: string, session: TestSession): void 
       status: result.status,
       timestamp: result.endTime,
     })
+    // 添加功耗测量结果到 evidence（汇总脚本字段是 power_results）
+    const powerResults = summary.powerResults
+      ?? (summary as { power_results?: typeof summary.powerResults }).power_results
+    if (powerResults && powerResults.length > 0) {
+      result.evidence = powerResults.map(pr => ({
+        name: `${pr.task_id} - ${pr.task}`,
+        expected: '-',
+        actual: `${pr.current_mA} mA`,
+        ok: true,
+      }))
+    }
     emitEvent('case_completed', { deviceId, caseKey, result })
   }
 }
@@ -3764,17 +3782,17 @@ function findSkippableCaseEntries(session: TestSession): Array<[string, CaseResu
   )
 }
 
-/** 用户点「结束测试」时：未终态用例一律记为失败，保证报告呈现失败 */
+/** 用户点「结束测试」时：未终态用例一律记为跳过，保证报告呈现暂停状态 */
 function markCasesFailedOnUserAbort(deviceId: string, session: TestSession): void {
   const now = new Date().toISOString()
   for (const [caseKey, result] of Object.entries(session.caseResults)) {
     if (TERMINAL_CASE_STATUSES.has(result.status)) continue
-    result.status = '失败'
-    result.message = '用户结束测试'
+    result.status = '跳过'
+    result.message = '用户结束测试（暂停）'
     result.endTime = now
     result.steps = [
       ...(result.steps || []),
-      { stepDesc: '用户结束测试', status: '失败', timestamp: now },
+      { stepDesc: '用户结束测试（暂停）', status: '跳过', timestamp: now },
     ]
     emitEvent('case_completed', { deviceId, caseKey, result })
   }
@@ -4558,6 +4576,7 @@ async function generateTestReport(
       automationMode: c.automationMode ?? (c.fullAutomation ? 'full' : 'manual'),
       steps: c.steps,
       failureLogDir: c.failureLogDir,
+      ...(c.evidence ? { evidence: c.evidence } : {}),
       ...(c.detail ? { detail: c.detail } : {}),
     }))
 

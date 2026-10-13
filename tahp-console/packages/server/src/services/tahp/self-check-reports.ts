@@ -39,6 +39,13 @@ export interface SelfCheckCaseItem {
   steps?: { stepDesc: string; status: string; timestamp: string }[]
   /** 失败用例导出的设备日志目录 */
   failureLogDir?: string
+  /** 测试证据/详细测量数据（如功耗测量的各项电流值） */
+  evidence?: Array<{
+    name: string
+    expected: string
+    actual: string
+    ok: boolean
+  }>
   /** 用例附加结构化数据（如 bitflip 压测逐轮结果表 detail.bitflip） */
   detail?: Record<string, any>
 }

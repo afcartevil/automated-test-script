@@ -653,20 +653,39 @@ function handleDutRowAction(deviceId: string) {
                               </button>
                             </div>
                             <div class="subtask-list">
-                              <label
-                                v-for="st in c.subTasks"
-                                :key="st.caseId"
-                                class="subtask-item"
-                                :class="{ selected: isSubTaskSelected(catalog.key + '/' + c.caseIndex, st.caseId) }"
-                              >
-                                <input
-                                  type="checkbox"
-                                  :checked="isSubTaskSelected(catalog.key + '/' + c.caseIndex, st.caseId)"
-                                  @change="toggleSubTask(catalog.key + '/' + c.caseIndex, st.caseId)"
-                                />
-                                <span class="subtask-id">{{ st.caseId }}</span>
-                                <span class="subtask-label">{{ st.label }}</span>
-                              </label>
+                              <div v-for="st in c.subTasks" :key="st.caseId" class="subtask-block">
+                                <label
+                                  class="subtask-item"
+                                  :class="{ selected: isSubTaskSelected(catalog.key + '/' + c.caseIndex, st.caseId) }"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    :checked="isSubTaskSelected(catalog.key + '/' + c.caseIndex, st.caseId)"
+                                    @change="toggleSubTask(catalog.key + '/' + c.caseIndex, st.caseId, (st.children || []).map(ch => ch.caseId))"
+                                  />
+                                  <span class="subtask-id">{{ st.caseId }}</span>
+                                  <span class="subtask-label">{{ st.label }}</span>
+                                </label>
+                                <div
+                                  v-if="st.children?.length && isSubTaskSelected(catalog.key + '/' + c.caseIndex, st.caseId)"
+                                  class="subtask-children"
+                                >
+                                  <label
+                                    v-for="ch in st.children"
+                                    :key="ch.caseId"
+                                    class="subtask-item"
+                                    :class="{ selected: isSubTaskSelected(catalog.key + '/' + c.caseIndex, ch.caseId) }"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      :checked="isSubTaskSelected(catalog.key + '/' + c.caseIndex, ch.caseId)"
+                                      @change="toggleSubTask(catalog.key + '/' + c.caseIndex, ch.caseId)"
+                                    />
+                                    <span class="subtask-id">{{ ch.caseId }}</span>
+                                    <span class="subtask-label">{{ ch.label }}</span>
+                                  </label>
+                                </div>
+                              </div>
                             </div>
                           </div>
                         </template>
@@ -3969,6 +3988,19 @@ $catalog-pane-height: calc(100vh - 48px);
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 4px;
+  }
+
+  .subtask-block:has(.subtask-children) {
+    grid-column: 1 / -1;
+  }
+
+  .subtask-children {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 4px;
+    margin: 4px 0 4px 22px;
+    padding: 6px 8px;
+    border-left: 2px solid var(--accent, #1976d2);
   }
 
   .subtask-item {

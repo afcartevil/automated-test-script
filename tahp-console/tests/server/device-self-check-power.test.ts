@@ -97,6 +97,8 @@ describe('device self-check power catalog', () => {
     expect(src).toContain('执行全量调度')
     expect(src).toContain('暂不实现')
     expect(src).toContain('scene_finished')
+    expect(src).toContain('selected_task_ids')
+    expect(src).toContain('T\\d+')
 
     const phoneConfig = join(
       tahpPaths.projectRoot,
@@ -124,5 +126,36 @@ describe('device self-check power catalog', () => {
       tahpPaths.projectRoot,
       'tahp-console/packages/server/src/services/tahp/self-check/python/cases/power/current_analysis/case5.py',
     ), 'utf-8')).not.toContain('暂不实现')
+  })
+
+  it('lists T01-T07 under 底电功耗 so each baseline row can be selected', () => {
+    const configPath = join(
+      tahpPaths.projectRoot,
+      'tahp-console/packages/server/src/services/tahp/self-check/case_config/power_current_analysis.json',
+    )
+    const config = JSON.parse(readFileSync(configPath, 'utf-8')) as {
+      cases: Array<{ caseName: string; subTasks?: Array<{ caseId: string; label: string; children?: Array<{ caseId: string; label: string }> }> }>
+    }
+    for (const caseName of ['系统基础场景', '基础体验场景']) {
+      const scene = config.cases.find(item => item.caseName === caseName)
+      const c01 = scene?.subTasks?.find(item => item.caseId === 'C01')
+      expect(c01?.label).toBe('底电功耗')
+      expect(c01?.children?.map(item => `${item.caseId}:${item.label}`)).toEqual([
+        'T01:底电-手势全关',
+        'T02:底电-手势默认',
+        'T03:底电-手势全开',
+        'T04:GPS灭屏待机',
+        'T05:IDLE灭屏待机',
+        'T06:开启数据待机',
+        'T07:连接WIFI待机',
+      ])
+      expect(scene?.subTasks?.filter(item => item.caseId !== 'C01').every(item => (item.children?.length ?? 0) > 0)).toBe(true)
+    }
+    const base = config.cases.find(item => item.caseName === '系统基础场景')
+    expect(base?.subTasks?.find(item => item.caseId === 'C03')?.children?.map(item => item.caseId)).toEqual(['T08', 'T09', 'T10', 'T11'])
+    expect(base?.subTasks?.find(item => item.caseId === 'C09')?.children?.map(item => item.caseId)).toEqual(['T22', 'T23', 'T24', 'T25', 'T61', 'T62', 'T63', 'T64'])
+    const experience = config.cases.find(item => item.caseName === '基础体验场景')
+    expect(experience?.subTasks?.find(item => item.caseId === 'C19')?.children?.map(item => item.caseId)).toEqual(['T47', 'T48', 'T49', 'T50'])
+    expect(experience?.subTasks?.find(item => item.caseId === 'C24')?.children?.[0]).toEqual({ caseId: 'T67', label: '灭屏录音' })
   })
 })

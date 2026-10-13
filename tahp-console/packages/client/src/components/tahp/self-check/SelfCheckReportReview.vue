@@ -565,6 +565,31 @@ onActivated(async () => {
                     {{ step.stepDesc }}
                   </div>
                 </div>
+                <div class="case-evidence" v-if="selectedCaseItem.evidence?.length">
+                  <div class="section-title">测量数据</div>
+                  <table class="evidence-table">
+                    <thead>
+                      <tr>
+                        <th>检查项</th>
+                        <th>预期值</th>
+                        <th>实测值</th>
+                        <th>结果</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(item, idx) in selectedCaseItem.evidence" :key="idx" :class="{ 'evidence-pass': item.ok, 'evidence-fail': !item.ok }">
+                        <td>{{ item.name }}</td>
+                        <td>{{ item.expected }}</td>
+                        <td>{{ item.actual }}</td>
+                        <td>
+                          <span :class="item.ok ? 'status-pass' : 'status-fail'">
+                            {{ item.ok ? '通过' : '失败' }}
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
                 <div v-if="selectedCaseBitflipResult" class="case-bitflip">
                   <div class="section-title">bitflip 压测结果</div>
                   <BitflipResultTable :result="selectedCaseBitflipResult" />
@@ -1267,5 +1292,48 @@ $report-pane-height: calc(100vh - 48px);
 .pre-wrap {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.case-evidence {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+}
+
+.evidence-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 8px;
+
+  th, td {
+    padding: 8px 12px;
+    text-align: left;
+    border: 1px solid var(--line);
+  }
+
+  th {
+    background: var(--bg-soft);
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .evidence-pass {
+    background: color-mix(in srgb, var(--success, #10b981) 8%, transparent);
+  }
+
+  .evidence-fail {
+    background: color-mix(in srgb, var(--error, #ef4444) 8%, transparent);
+  }
+
+  .status-pass {
+    color: var(--success, #10b981);
+    font-weight: 600;
+  }
+
+  .status-fail {
+    color: var(--error, #ef4444);
+    font-weight: 600;
+  }
 }
 </style>

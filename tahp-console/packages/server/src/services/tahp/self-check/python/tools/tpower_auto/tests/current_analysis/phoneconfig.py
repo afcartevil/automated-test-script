@@ -11,6 +11,7 @@ from powertrde.framework.logs_protocol import logs_p
 from powertrde.utils.wifiadb.wifi_adb_utils import check_device_to_link_wifi
 from tests.current_analysis.device import Device
 from tests.current_analysis.gobalconfig import GlobalConfig
+# from tests.current_analysis.task_proc import resolve_power_scene_mode  # 延迟导入，避免循环依赖
 from plugins.tpytest_extends.utils.app_installer import AppInstallerForProvider
 from tests.current_analysis.tran_ai import TranAi
 from powertrde.env import PROJ_DIR
@@ -208,6 +209,18 @@ class PhoneConfig():
         self.stop_pip_apps()
         self.u2d_helper.set_all_volume_level(5)
         self.u2d_helper.set_brightness_and_close_auto_bright(102)
+        
+        # 获取场景模式，基础场景跳过不必要的初始化
+        from tests.current_analysis.task_proc import resolve_power_scene_mode
+        scene_mode = resolve_power_scene_mode()
+        
+        if scene_mode == "base":
+            # 基础场景：只保留必要初始化，跳过应用检查和 WiFi
+            self.loginfo("基础场景模式，简化初始化")
+            self._safe_init_step("pre_phone_close_non_disturb_mode", self.pre_phone_close_non_disturb_mode)
+            self._safe_init_step("pre_phone_check_time", self.pre_phone_check_time)
+            self._safe_init_step("pre_phone_close_auto_update", self.pre_phone_close_auto_update)
+            return
         
         # 以下配置步骤采用容错模式：失败只记录警告，不中断初始化
         self._safe_init_step("pre_phone_copilot_switch_language_en", self.pre_phone_copilot_switch_language_en)
@@ -471,22 +484,25 @@ class PhoneConfig():
         self.u2d_helper.close_wifi_auto_switch()
 
     def pre_phone_check_wifi_connection(self):
-        # 先检查WiFi是否已连接（通过ping测试）
-        try:
-            self.u2d_helper.check_network_connections(True)  # 检查海外网络
-            self.loginfo("WiFi已连接，跳过连接步骤")
-            return
-        except Exception:
-            pass  # 未连接，继续尝试连接
+        # 延迟导入，避免循环依赖
+        from tests.current_analysis.task_proc import resolve_power_scene_mode
+        # 系统基础场景：尝试连接WiFi，不成功则跳过
+        scene_mode = resolve_power_scene_mode()
+        if scene_mode == "base":
+            try:
+                self.u2d_helper.check_network_connections(True)
+                self.loginfo("WiFi已连接，跳过连接步骤")
+                return
+            except Exception:
+                pass  # 未连接，尝试连接
         
-        # 尝试连接WiFi
+        # 尝试连接WiFi（单次尝试，不循环）
         try:
             check_device_to_link_wifi(self.u2d, "power_cloud", "1234567809")
             self.u2d_helper.check_network_connections(True)
             self.loginfo("WiFi连接成功")
         except Exception as e:
-            self.logerror(f"WiFi连接失败(已跳过): {e}")
-            # 不抛异常，允许继续执行
+            self.loginfo(f"WiFi连接失败(已跳过): {e}")
 
     def pre_phone_check_mobile_data_connection(self):
         if adb.is_wifi_open(self.serial):

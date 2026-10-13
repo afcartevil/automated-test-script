@@ -173,7 +173,68 @@ def cmd_run_foreground(serial: str | None, scene: str | None = None, case_ids: s
         clear_state()
 
 
+def _format_power_result_lines(results: list[dict]) -> str:
+    lines: list[str] = []
+    for item in results:
+        case_id = str(item.get("case_id") or "").strip()
+        task = str(item.get("task") or "").strip()
+        name = case_id or task or str(item.get("task_id") or "未知项")
+        if task and task not in name:
+            name = f"{name}（{task}）"
+        current = item.get("current_mA")
+        if current is None or str(current).strip() == "":
+            lines.append(f"{name}：无电流数据")
+            continue
+        lines.append(f"{name}：{current} mA")
+    return "\n".join(lines)
+
+
 def summarize_xlsx(path: Path | None = None) -> dict:
+    # 优先从 JSON 文件读取实时结果（每次测试执行后写入）
+    json_path = OUTPUT_DIR / "power_results.json"
+    if json_path.is_file():
+        try:
+            import json
+            with open(json_path, 'r', encoding='utf-8') as f:
+                power_results = json.load(f)
+            
+            total = len(power_results)
+            # 过滤掉 current_mA 为 None 或空的结果
+            valid_results = [r for r in power_results if r.get("current_mA") is not None]
+            failed = total - len(valid_results)
+            passed = len(valid_results)
+            
+            # 格式化结果
+            formatted_results = []
+            for r in valid_results:
+                formatted_results.append({
+                    "task_id": r.get("task_id", ""),
+                    "task": r.get("task", ""),
+                    "case_id": r.get("case_id", ""),
+                    "current_mA": round(float(r.get("current_mA", 0)), 1),
+                })
+            
+            message = f"功耗测试共 {total} 项，通过 {passed} 项，失败 {failed} 项"
+            detail = _format_power_result_lines(power_results)
+            if detail:
+                message = f"{message}\n{detail}"
+            if total == 0:
+                message = "功耗环境已结束，暂无测试项写入报告"
+            
+            return {
+                "ok": total > 0 and failed == 0,
+                "total": total,
+                "failed": failed,
+                "passed": passed,
+                "message": message,
+                "path": str(json_path),
+                "power_results": formatted_results,
+            }
+        except Exception as exc:
+            # JSON 读取失败，回退到 xlsx
+            pass
+    
+    # 回退：从 xlsx 读取
     target = path or find_latest_xlsx()
     if not target or not target.is_file():
         return {
@@ -211,6 +272,35 @@ def summarize_xlsx(path: Path | None = None) -> dict:
     message = f"功耗测试共 {total} 项，通过 {passed} 项，失败 {failed} 项"
     if total == 0:
         message = "功耗环境已结束，暂无测试项写入报告"
+    
+    # 构建功耗结果列表（每个测试项的平均电流）
+    power_results = []
+    if total > 0:
+        for idx, row in df.iterrows():
+            task_id = str(row.get("task_id", ""))
+            task_name = str(row.get("task", ""))
+            case_id = str(row.get("case_id", ""))
+            current_val = row.get("current", None)
+            avgcurrent = row.get("avgcurrent_mA", None)
+            
+            # 使用 current 或 avgcurrent_mA
+            current_ma = None
+            if pd.notna(current_val):
+                current_ma = float(current_val)
+            elif pd.notna(avgcurrent):
+                current_ma = float(avgcurrent)
+            
+            if current_ma is not None:
+                power_results.append({
+                    "task_id": task_id,
+                    "task": task_name,
+                    "case_id": case_id,
+                    "current_mA": round(current_ma, 1),
+                })
+    detail = _format_power_result_lines(power_results)
+    if detail and total > 0:
+        message = f"{message}\n{detail}"
+
     return {
         "ok": total > 0 and failed == 0,
         "total": total,
@@ -218,6 +308,7 @@ def summarize_xlsx(path: Path | None = None) -> dict:
         "passed": passed,
         "message": message,
         "path": str(target),
+        "power_results": power_results,
     }
 
 
@@ -325,7 +416,7 @@ def cmd_status() -> int:
 def find_latest_xlsx() -> Path | None:
     if not OUTPUT_DIR.is_dir():
         return None
-    candidates = [p for p in OUTPUT_DIR.glob("*.xlsx") if p.is_file()]
+    candidates = [p for p in OUTPUT_DIR.glob("*.xlsx") if p.is_file() and not p.name.startswith("~$")]
     if not candidates:
         return None
     return max(candidates, key=lambda p: p.stat().st_mtime)

@@ -114,6 +114,21 @@ def run_scene(scene: str, device_info=None, step_update=None, case_ids=None, **_
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    
+    # 等待一小段时间检查是否立即失败
+    try:
+        proc.wait(timeout=3)
+        # 如果立即退出，说明启动失败
+        if proc.returncode is not None:
+            add_step(f"子进程启动失败(码 {proc.returncode})")
+            return {
+                "status": "fail",
+                "message": f"TPower 子进程启动失败，退出码 {proc.returncode}",
+                "full_automation": True,
+            }
+    except subprocess.TimeoutExpired:
+        # 子进程还在运行，这是正常的
+        pass
 
     def tail_log() -> None:
         nonlocal log_offset

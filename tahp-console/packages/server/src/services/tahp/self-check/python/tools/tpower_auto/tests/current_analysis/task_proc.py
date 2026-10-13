@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -378,17 +379,27 @@ class TaskManager:
             if(self.basetestcnt < 3):
                 tasks_base = self.tabletask.get_tasks_base()
                 if tasks_base:
-                    # 按 case_id 前缀过滤（如 C01,C03）
                     selected_case_ids_str = os.environ.get("TAHP_POWER_CASE_IDS", "").strip()
                     self.phone.loginfo(f"[TAHP] TAHP_POWER_CASE_IDS='{selected_case_ids_str}'")
+                    matched_case_ids = set()
                     if selected_case_ids_str:
                         selected_case_ids = [cid.strip() for cid in selected_case_ids_str.split(",") if cid.strip()]
+                        # T01 这类是 task_base 的任务号，同一 case_id（如 C01_灭屏待机）下要能多选
+                        selected_task_ids = {
+                            cid.upper() for cid in selected_case_ids if re.fullmatch(r"T\d+", cid, re.IGNORECASE)
+                        }
+                        selected_prefixes = [
+                            cid for cid in selected_case_ids if not re.fullmatch(r"T\d+", cid, re.IGNORECASE)
+                        ]
                         filtered = {}
-                        matched_case_ids = set()  # 记录已匹配的 case_id，每个只取第一个任务
                         for tid, tdata in tasks_base.items():
-                            case_id = tdata.get("case_id", "")
-                            # 匹配 case_id 前缀（如 C01_待机功耗 匹配 C01）
-                            for cid in selected_case_ids:
+                            task_key = str(tdata.get("id") or tid).strip().upper()
+                            if task_key in selected_task_ids:
+                                filtered[tid] = tdata
+                                matched_case_ids.add(task_key)
+                                continue
+                            case_id = str(tdata.get("case_id", ""))
+                            for cid in selected_prefixes:
                                 if case_id.startswith(cid) and cid not in matched_case_ids:
                                     filtered[tid] = tdata
                                     matched_case_ids.add(cid)
@@ -399,8 +410,26 @@ class TaskManager:
                             self.basetest = False
                             self.scene_finished = True
                             return
-                        self.phone.loginfo(f"已筛选 {len(tasks_base)} 个任务（case: {', '.join(selected_case_ids)}）")
-                    
+                        self.phone.loginfo(f"已筛选 {len(tasks_base)} 个任务（case: {', '.join(sorted(matched_case_ids))}）")
+
+                    if any(str(tdata.get("case_id", "")).startswith("C07") for tdata in tasks_base.values()):
+                        try:
+                            sim_state = adb.exec_cmd(self.phone.serial, "dumpsys telephony.registry | grep -E 'mState=CONNECTED|mState=DISCONNECTED'")
+                            sim_count = len([line for line in sim_state.split("\n") if "mState=" in line]) if sim_state else 0
+                            if sim_count == 0:
+                                tasks_base = {tid: tdata for tid, tdata in tasks_base.items() if not str(tdata.get("case_id", "")).startswith("C07")}
+                                matched_case_ids.discard("C07")
+                                self.phone.loginfo("[TAHP] 无 SIM 卡，跳过 C07（离线通话）")
+                        except Exception as e:
+                            tasks_base = {tid: tdata for tid, tdata in tasks_base.items() if not str(tdata.get("case_id", "")).startswith("C07")}
+                            matched_case_ids.discard("C07")
+                            self.phone.loginfo(f"[TAHP] SIM 卡检查失败，跳过 C07: {e}")
+                        if not tasks_base:
+                            self.phone.loginfo(f"选中的 case_id 无匹配任务：{selected_case_ids_str}")
+                            self.basetest = False
+                            self.scene_finished = True
+                            return
+
                     self.basetestcnt += 1
                     self.phone.loginfo(f"基础功耗测试第{self.basetestcnt}轮开始")
                     self.task = tasks_base
@@ -544,6 +573,15 @@ class TaskManager:
         self.phone.logsubdir = f"{self.phone.version}_{datestr}"
         adb.reset_batterystats_for_bugreport(self.phone.serial)  # 重置bugreport
         xlsx_path = f"{self.phone.logrootdir}/{self.phone.logsubdir}.xlsx"
+        
+        # 清空 JSON 结果文件，避免累积之前的测试结果
+        json_path = f"{self.phone.logrootdir}/power_results.json"
+        try:
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump([], f)
+        except Exception as e:
+            self.phone.logwarning(f"清空 JSON 结果文件失败: {e}")
+        
         for task_id, task_data in self.task.items():
             if(task_data['priority'] == ''):
                 continue
@@ -593,6 +631,27 @@ class TaskManager:
                 new_row = pd.DataFrame([data_dict])
                 combined_df = pd.concat([existing_df, new_row], ignore_index=True)
                 combined_df.to_excel(xlsx_path, index=False, engine="openpyxl")
+                
+                # 同时将结果写入 JSON 文件（实时结果，供报告展示）
+                json_path = f"{self.phone.logrootdir}/power_results.json"
+                power_result = {
+                    "task_id": data_dict.get("task_id", ""),
+                    "task": data_dict.get("task", ""),
+                    "case_id": data_dict.get("case_id", ""),
+                    "current_mA": data_dict.get("current"),
+                    "timestamp": data_dict.get("test_time", ""),
+                }
+                # 读取现有结果或创建新文件
+                results_list = []
+                if os.path.exists(json_path):
+                    try:
+                        with open(json_path, 'r', encoding='utf-8') as f:
+                            results_list = json.load(f)
+                    except Exception:
+                        results_list = []
+                results_list.append(power_result)
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(results_list, f, ensure_ascii=False, indent=2)
         if not os.path.exists(xlsx_path):
             return False
         self.phone.loginfo(f"开始生成bugreport,大约需要5分钟")

@@ -129,7 +129,7 @@ export interface CaseCatalogItem {
   canReuse: boolean
   automationMode: AutomationMode
   platforms?: ChipPlatform[]
-  subTasks?: Array<{ caseId: string; label: string }>
+  subTasks?: Array<{ caseId: string; label: string; children?: Array<{ caseId: string; label: string }> }>
 }
 
 export interface CaseCatalog {
@@ -701,6 +701,13 @@ export interface SelfCheckCaseItem {
   automationMode?: AutomationMode
   steps?: { stepDesc: string; status: string; timestamp: string }[]
   failureLogDir?: string
+  /** 测试证据/详细测量数据（如功耗测量的各项电流值） */
+  evidence?: Array<{
+    name: string
+    expected: string
+    actual: string
+    ok: boolean
+  }>
   /** 用例附加结构化数据（如 bitflip 压测逐轮结果表 detail.bitflip） */
   detail?: Record<string, any>
 }

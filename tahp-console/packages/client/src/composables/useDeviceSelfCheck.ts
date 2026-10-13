@@ -2176,21 +2176,53 @@ function toggleCase(caseKey: string) {
   selectedCases.value = new Set(selectedCases.value)
 }
 
-/** 切换子任务选择（如基础场景的 C01, C03 等） */
-function toggleSubTask(caseKey: string, caseId: string) {
-  const current = selectedCaseIds.value[caseKey] || []
+/** 切换子任务选择（如基础场景的 C01, C03 等）。取消父项时一并去掉其底电子项。 */
+function toggleSubTask(caseKey: string, caseId: string, childIds: string[] = []) {
+  const current = [...(selectedCaseIds.value[caseKey] || [])]
   const index = current.indexOf(caseId)
   if (index >= 0) {
-    current.splice(index, 1)
+    const drop = new Set([caseId, ...childIds])
+    const next = current.filter(id => !drop.has(id))
+    if (next.length === 0) {
+      delete selectedCaseIds.value[caseKey]
+    } else {
+      selectedCaseIds.value[caseKey] = next
+    }
   } else {
     current.push(caseId)
-  }
-  if (current.length === 0) {
-    delete selectedCaseIds.value[caseKey]
-  } else {
     selectedCaseIds.value[caseKey] = current
   }
   selectedCaseIds.value = { ...selectedCaseIds.value }
+}
+
+/** 勾了飞书任务号（T01 等）时只下发这些任务号；只勾父项时仍按用例号跑第一条。 */
+function expandCaseIdsForRun(caseKey: string, ids: string[]): string[] {
+  const splitAt = caseKey.lastIndexOf('/')
+  const catalogKey = splitAt >= 0 ? caseKey.slice(0, splitAt) : caseKey
+  const caseIndex = Number(caseKey.slice(splitAt + 1))
+  const childIdsByParent = new Map<string, string[]>()
+  for (const group of caseCatalogGroups.value) {
+    const catalog = group.modules.find(mod => mod.key === catalogKey)
+    const item = catalog?.cases.find(c => c.caseIndex === caseIndex)
+    for (const st of item?.subTasks || []) {
+      if (st.children?.length) {
+        childIdsByParent.set(st.caseId, st.children.map(ch => ch.caseId))
+      }
+    }
+  }
+  const nestedIds = new Set([...childIdsByParent.values()].flat())
+  const expanded: string[] = []
+  for (const id of ids) {
+    if (nestedIds.has(id)) continue
+    const children = childIdsByParent.get(id)
+    if (!children) {
+      expanded.push(id)
+      continue
+    }
+    const picked = children.filter(childId => ids.includes(childId))
+    expanded.push(...(picked.length > 0 ? picked : [id]))
+  }
+  return expanded
 }
 
 /** 全选/取消全选子任务 */
@@ -2301,7 +2333,8 @@ async function handleStartCustomTest() {
     const caseIdsPayload: Record<string, string[]> = {}
     for (const [caseKey, ids] of Object.entries(selectedCaseIds.value)) {
       if (ids.length > 0 && selectedCases.value.has(caseKey)) {
-        caseIdsPayload[caseKey] = ids
+        const expanded = expandCaseIdsForRun(caseKey, ids)
+        if (expanded.length > 0) caseIdsPayload[caseKey] = expanded
       }
     }
     const result = await startCustomTest(
