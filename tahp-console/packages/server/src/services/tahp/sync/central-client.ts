@@ -406,6 +406,20 @@ export const centralClient = {
       body: JSON.stringify(body),
     })
   },
+
+  /** 定时任务「项目节点信息表」在线取数回传：对应中心 POST /api/tahp/sync/verify-plan/nodes */
+  async reportVerifyPlanNodes(body: {
+    request_id: string
+    source_name?: string
+    projects?: Array<{ name: string; status?: string; nodes: Record<string, string | null> }>
+    error?: string
+  }): Promise<{ projects?: number; ignored?: string }> {
+    return request('/api/tahp/sync/verify-plan/nodes', {
+      method: 'POST',
+      headers: headers({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    })
+  },
 }
 
 /** 与 easyadapter_bff quality-store IngestRunInput 对齐 */

@@ -8,6 +8,7 @@ import { isCentralConfigured, isLocal } from '../runtime-mode'
 import { readJiraUsername } from '../jira-user-config'
 import { readCentralUserSession } from '../central-user-session'
 import { tryIngestGkiNoticeFromTaskPackage } from '../gki-upgrade-notices'
+import { handleVerifyPlanNodesFetch } from '../verify-plan-nodes-fetch'
 
 let socket: Socket | null = null
 let started = false
@@ -104,6 +105,12 @@ function connect(owner: string): void {
       reason: payload.reason,
       unread: unreadIds.size,
     }, '[task-notify] package revoked')
+  })
+
+  // 中心「定时任务 → 项目节点信息表」在线取数请求（广播，先到先得；回传按 request_id 幂等）
+  socket.on('verify.plan.nodes.fetch', (payload: { request_id?: string } = {}) => {
+    logger.info({ request_id: payload?.request_id }, '[task-notify] verify plan nodes fetch requested')
+    void handleVerifyPlanNodesFetch(payload)
   })
 }
 
