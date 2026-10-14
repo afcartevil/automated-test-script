@@ -1315,7 +1315,7 @@ function handleDutRowAction(deviceId: string) {
         <div ref="deviceListAnchorRef" class="device-list-anchor self-check-stack-pane self-check-stack-pane--list">
         <EaCard class="device-list-section">
           <div class="device-list-header">
-            <div class="section-title device-list-title">设备列表</div>
+            <div class="section-title device-list-title">设备列表-点击设备启动测试</div>
             <div class="device-list-actions">
               <button
                 type="button"
