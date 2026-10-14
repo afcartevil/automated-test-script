@@ -4,7 +4,7 @@ import subprocess
 import time
 
 
-BOOT_WAIT_SECONDS = 90
+BOOT_WAIT_SECONDS = 300
 BOOT_POLL_INTERVAL = 3
 
 

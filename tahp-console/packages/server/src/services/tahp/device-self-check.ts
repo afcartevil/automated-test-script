@@ -2656,6 +2656,8 @@ async function execPythonInit(
 }
 
 const CASE_EXEC_TIMEOUT_MS = 5 * 60_000
+/** 连续 OTA 用例在升级后轮询开机，等待 5 分钟；调度超时留出 adb 重试余量 */
+const OTA_UPGRADE_EXEC_TIMEOUT_MS = 8 * 60_000
 const SMOKE_USD_EXEC_TIMEOUT_MS = 3_600_000
 const MANUAL_CONFIRM_TIMEOUT_MS = 30 * 60_000
 /** bitflip 压测：每 1 次重复（-r）预算 20h；实际超时 = 20h × 重复次数 */
@@ -2717,6 +2719,9 @@ function resolveCaseExecTimeoutMs(testType: string, module: string): number {
   }
   if (testType === 'bitflip' && module === 'bst') {
     return resolveBitflipExecTimeoutMs()
+  }
+  if (testType === 'ota_upgrade') {
+    return OTA_UPGRADE_EXEC_TIMEOUT_MS
   }
   return CASE_EXEC_TIMEOUT_MS
 }
