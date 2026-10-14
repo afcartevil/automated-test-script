@@ -6,7 +6,7 @@ SWD_Development_Center 刷机工具自动化脚本
   0. 旧版本工具启动后若弹"版本升级提示"窗口, 自动点"否"跳过(不升级)
   1. 启动工具 -> "账号登录"界面, 从 swd_flash_config.ini 读取账号/密码填充, 点"确认"登录
   2. 点"设置" -> "加载" -> 选择传入的固件路径(flash.xml), 弹窗点"OK"
-  3. 设置界面"下载选项"中, 仅勾选 "下载后自动开机" 和 "退出开始状态", 其余不勾
+  3. 设置界面"下载方式"选择"固件升级"; "下载选项"中仅勾选 "下载后自动开机" 和 "退出开始状态", 其余不勾
   4. 点"确认" -> "Load Files Setting"界面点 "Select All"
   5. adb 检查手机: getprop ro.product.name 与固件版本匹配, 不匹配报错"无可用设备"
   6. 点"启动"(开始/停止按钮), 确认启动后下发 "adb reboot -p" 关机进入刷机
@@ -32,6 +32,7 @@ SWD_Development_Center 刷机工具自动化脚本
   主窗口: 开始/停止=1019 设置=1020 帮助=1021 SW版本=1056 总数=1041 失败数=1042
           通过率=1043 端口列表=1007
   设置框"设置": 路径Edit=1025 加载=1026 确认=1027 取消=1028
+    下载方式(单选): 格式化下载（清除NV）=1063 固件升级=1064 仅格式化=1065 保留用户数据=1066
     下载选项: 下载后自动开机=1067 Flash校验功能=1068 检查软件版本号=1069
               本地版本校验=1070 退出开始状态=1079 下载进入QMMI模式=1081
   "Load Files Setting": Select All=1084 OK=1109 Cancel=2
@@ -79,6 +80,23 @@ LOGIN_BTN_OK = 1170
 EDIT_FW_PATH = 1025
 BTN_LOAD = 1026
 BTN_OK = 1027
+# 下载方式单选。第一列是一组: 1063 格式化下载（清除NV）/ 1064 固件升级 / 1065 仅格式化 / 1066 保留用户数据
+DL_MODE_FIRMWARE_UPGRADE = 1064
+DL_MODE_RADIOS = (
+    (1063, "格式化下载（清除NV）"),
+    (1064, "固件升级"),
+    (1065, "仅格式化"),
+    (1066, "保留用户数据"),
+    (1072, "内存测试"),
+    (1113, "分区回读"),
+    (1098, "分区写入"),
+    (1111, "仅读熔丝信息"),
+    (1165, "ETT BIN Download"),
+    (1114, "仅写熔丝操作"),
+    (1115, "读取SocID"),
+    (1117, "高通设置参数模式"),
+)
+
 # 下载选项勾选框: 目标状态 True=勾选
 DL_OPTIONS = {
     1067: True,   # 下载后自动开机
@@ -457,27 +475,51 @@ def login_if_needed(app, cfg_path, timeout=90):
 
 
 # ---------------- 步骤2/3/4: 设置固件 ----------------
-def open_settings(app):
-    dlg = None
-    try:
-        d = app.window(title_re=SETTINGS_TITLE_RE, class_name="#32770")
-        if d.exists(timeout=0.3):
-            return d
-    except Exception:
-        pass
-    known = list_dialogs(app)
-    log("点击设置按钮...")
-    main_wnd(app).child_window(control_id=BTN_SETTINGS).click()
+BM_CLICK = 0x00F5
+WM_COMMAND = 0x0111
+
+
+def press_button(ctrl):
+    """向按钮发送 BM_CLICK。不移动鼠标，也不发鼠标按下/抬起消息。"""
+    ctrl.send_message(BM_CLICK, 0, 0)
+
+
+def notify_button_clicked(ctrl):
+    """向父窗口补发 BN_CLICKED。"""
+    ctrl.parent().send_message(WM_COMMAND, ctrl.control_id(), ctrl.handle)
+
+
+def find_settings_dialog(app):
+    """已打开的设置框直接用句柄接管。title_re 的 exists() 会卡在繁忙窗口上。"""
+    for handle, title in list_dialogs(app):
+        if (title or "").strip() in ("设置", "Settings"):
+            return app.window(handle=handle)
+    return None
+
+
+def wait_settings_dialog(app, timeout):
     t0 = time.time()
-    while time.time() - t0 < 20:
-        try:
-            d = app.window(title_re=SETTINGS_TITLE_RE, class_name="#32770")
-            if d.exists(timeout=0.3):
-                dlg = d
-                break
-        except Exception:
-            pass
+    while time.time() - t0 < timeout:
+        dlg = find_settings_dialog(app)
+        if dlg is not None:
+            return dlg
         time.sleep(0.5)
+    return None
+
+
+def open_settings(app):
+    dlg = find_settings_dialog(app)
+    if dlg is not None:
+        log("设置对话框已打开，继续后续操作")
+        return dlg
+    btn = main_wnd(app).child_window(control_id=BTN_SETTINGS).wrapper_object()
+    log("点击设置按钮...")
+    press_button(btn)
+    dlg = wait_settings_dialog(app, 8)
+    if dlg is None:
+        log("设置按钮 BM_CLICK 未打开对话框，补发 BN_CLICKED")
+        notify_button_clicked(btn)
+        dlg = wait_settings_dialog(app, 12)
     if dlg is None:
         raise RuntimeError("设置对话框未出现")
     return dlg
@@ -571,6 +613,54 @@ def browse_and_load(app, dlg, fw_path, timeout=20):
         raise
     except Exception as e:
         log("读取设置框路径失败: %s" % e)
+
+
+def _download_mode_states(dlg):
+    rows = []
+    for cid, name in DL_MODE_RADIOS:
+        radio = dlg.child_window(control_id=cid).wrapper_object()
+        rows.append((cid, name, radio.get_check_state()))
+    return rows
+
+
+def _firmware_upgrade_selected(rows):
+    selected = [name for _cid, name, state in rows if state == 1]
+    return selected == ["固件升级"]
+
+
+def _log_download_mode(prefix, rows):
+    chosen = [name for _cid, name, state in rows if state == 1]
+    log("  %s选中: %s" % (prefix, "、".join(chosen) or "无"))
+
+
+def set_download_mode(dlg):
+    """下载方式: 选择固件升级(1064)。"""
+    log("配置'下载方式': 选择固件升级...")
+    try:
+        before = _download_mode_states(dlg)
+        _log_download_mode("切换前", before)
+        if _firmware_upgrade_selected(before):
+            log("  固件升级已选中")
+            return
+        radio = dlg.child_window(control_id=DL_MODE_FIRMWARE_UPGRADE).wrapper_object()
+        press_button(radio)
+        time.sleep(0.4)
+        after = _download_mode_states(dlg)
+        _log_download_mode("消息点击后", after)
+        if not _firmware_upgrade_selected(after):
+            log("  BM_CLICK 未生效，补发 BN_CLICKED")
+            notify_button_clicked(radio)
+            time.sleep(0.4)
+            after = _download_mode_states(dlg)
+            _log_download_mode("补发后", after)
+        if not _firmware_upgrade_selected(after):
+            selected = [name for _cid, name, state in after if state == 1]
+            raise RuntimeError("下载方式未能选中固件升级，当前选中: %s" % ("、".join(selected) or "无"))
+    except RuntimeError:
+        raise
+    except Exception as e:
+        log("  固件升级设置失败: %s" % e)
+        raise RuntimeError("下载方式控件%d配置失败" % DL_MODE_FIRMWARE_UPGRADE)
 
 
 def set_download_options(dlg):
@@ -945,8 +1035,9 @@ def full_flow(app, fw_path, adb_path, prepare_only, flash_timeout):
     # 步骤2: 设置->加载->选择固件->弹窗OK
     dlg = open_settings(app)
     browse_and_load(app, dlg, fw_path)
-    # 步骤3: 下载选项勾选
+    # 步骤3: 先勾选下载选项，再点击下载方式。放在最后，避免后续勾选消息打断刚点中的单选。
     set_download_options(dlg)
+    set_download_mode(dlg)
     # 步骤4: 确认 -> Load Files Setting -> Select All
     confirm_settings(app, dlg)
     lfs_select_all(app)

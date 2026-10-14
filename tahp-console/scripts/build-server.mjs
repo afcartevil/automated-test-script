@@ -1,15 +1,30 @@
 import * as esbuild from 'esbuild'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync } from 'fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'fs'
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(resolve(rootDir, 'package.json'), 'utf-8'))
 const version = pkg.version
 const serverOutDir = resolve(rootDir, 'dist/server')
 const distDataDir = resolve(rootDir, 'dist/data')
+const flashPackagesDir = resolve(serverOutDir, 'self-check', 'flash_tool', 'flash_packages')
 
-rmSync(serverOutDir, { recursive: true, force: true })
+function rmBuildDir(dir, keep) {
+  if (!existsSync(dir)) return
+  const dirPath = resolve(dir)
+  const keepPath = resolve(keep)
+  if (dirPath === keepPath) return
+  if (!keepPath.startsWith(`${dirPath}\\`)) {
+    rmSync(dirPath, { recursive: true, force: true })
+    return
+  }
+  for (const name of readdirSync(dirPath)) {
+    rmBuildDir(resolve(dirPath, name), keepPath)
+  }
+}
+
+rmBuildDir(serverOutDir, flashPackagesDir)
 mkdirSync(serverOutDir, { recursive: true })
 rmSync(distDataDir, { recursive: true, force: true })
 

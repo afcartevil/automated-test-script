@@ -298,12 +298,17 @@ function newestFirst(a: DirEntry, b: DirEntry): number {
  * 在项目目录下查找 DerivativeVersions 中最新的 *_ud.zip。
  * 搜索限制深度，避免误扫整个版本盘。
  */
-export function findLatestUdZip(projectRoot: string): string | null {
+export async function findLatestUdZip(
+  projectRoot: string,
+  onVisit?: (dir: string) => void,
+): Promise<string | null> {
   let bestPath: string | null = null
   let bestMtime = -1
 
-  const visit = (dir: string, depth: number, underDerivative: boolean) => {
+  const visit = async (dir: string, depth: number, underDerivative: boolean): Promise<void> => {
     if (depth > 8) return
+    onVisit?.(dir)
+    await new Promise(resolve => setImmediate(resolve))
     const entries = safeEntries(dir).sort(newestFirst)
     for (const entry of entries) {
       const full = join(dir, entry.name)
@@ -320,11 +325,11 @@ export function findLatestUdZip(projectRoot: string): string | null {
       if (!entry.isDirectory()) continue
       const nextUnderDerivative = underDerivative || entry.name.toLowerCase() === 'derivativeversions'
       if (!nextUnderDerivative && depth >= 4) continue
-      visit(full, depth + 1, nextUnderDerivative)
+      await visit(full, depth + 1, nextUnderDerivative)
     }
   }
 
-  visit(projectRoot, 0, false)
+  await visit(projectRoot, 0, false)
   return bestPath
 }
 
@@ -347,7 +352,10 @@ async function resolveIdentity(deviceId: string, root: string): Promise<{ brand:
   return { brand, project }
 }
 
-export async function resolveUdPackage(deviceId: string): Promise<UdPackageResult> {
+export async function resolveUdPackage(
+  deviceId: string,
+  onLog?: (line: string) => void,
+): Promise<UdPackageResult> {
   const serial = deviceId.trim()
   if (!serial) throw new Error('设备 ID 为空')
 
@@ -369,7 +377,13 @@ export async function resolveUdPackage(deviceId: string): Promise<UdPackageResul
   ]) {
     const projectRoot = join(candidate.root, identity.brand, identity.project)
     searchedRoots.push(projectRoot)
-    const packagePath = findLatestUdZip(projectRoot)
+    let lastProgress = Date.now()
+    const packagePath = await findLatestUdZip(projectRoot, (dir) => {
+      const now = Date.now()
+      if (now - lastProgress < 8_000) return
+      lastProgress = now
+      onLog?.(`[前置操作] 仍在${candidate.source}版本盘查找 UD 包（${basename(dir)}）`)
+    })
     if (packagePath) {
       return {
         deviceId: serial,
@@ -526,7 +540,7 @@ function udPackageDir(): string {
   return dir
 }
 
-function prepareUdFlashXml(packagePath: string, onLog: (line: string) => void): string {
+async function prepareUdFlashXml(packagePath: string, onLog: (line: string) => void): Promise<string> {
   const normalized = packagePath.trim()
   if (!UD_ZIP_RE.test(normalized)) throw new Error('UD 刷机包必须是 *_ud.zip')
   if (!existsSync(normalized)) throw new Error(`UD 刷机包不存在: ${normalized}`)
@@ -545,13 +559,21 @@ function prepareUdFlashXml(packagePath: string, onLog: (line: string) => void): 
   const python = resolvePythonSpawn()
   const extractScript = join(__dirname, 'self-check', 'python', 'extract_flash_zip.py')
   onLog(`[UD刷机] 正在解压 ${basename(normalized)}...`)
-  const result = spawnSync(python.command, [...python.prefixArgs, extractScript, normalized, dest], {
-    encoding: 'utf8',
-    windowsHide: true,
-    timeout: 30 * 60_000,
-  })
-  if (result.status !== 0) {
-    throw new Error(String(result.stderr || result.stdout || 'UD 包解压失败').trim())
+  await new Promise(resolve => setImmediate(resolve))
+  try {
+    await streamProcess(
+      python.command,
+      [...python.prefixArgs, '-u', extractScript, normalized, dest],
+      {
+        env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+        timeoutMs: 30 * 60_000,
+        timeoutMessage: 'UD 包解压超时',
+      },
+      line => onLog(`[UD刷机] ${line}`),
+    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(message || 'UD 包解压失败')
   }
   const flashXml = findFlashXml(dest)
   if (!flashXml) throw new Error(`UD 包中未找到 flash.xml: ${normalized}`)
@@ -611,7 +633,7 @@ function writeSwdConfig(settings: OtaPretestSettings): string {
 function streamProcess(
   command: string,
   args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number },
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs: number; timeoutMessage?: string },
   onLog: (line: string) => void,
 ): Promise<string> {
   return new Promise((resolvePromise, reject) => {
@@ -624,7 +646,7 @@ function streamProcess(
     let output = ''
     const timer = setTimeout(() => {
       child.kill('SIGKILL')
-      reject(new Error('前置操作执行超时'))
+      reject(new Error(options.timeoutMessage || '前置操作执行超时'))
     }, options.timeoutMs)
     const consume = (prefix: string, chunk: Buffer) => {
       const text = decodeConsoleText(chunk)
@@ -759,7 +781,7 @@ export async function runUdFlash(
 ): Promise<void> {
   const script = resolve(settings.swdScriptPath.trim())
   if (!existsSync(script)) throw new Error(`未找到 swd_flash.py: ${script}`)
-  const flashXml = prepareUdFlashXml(packagePath, onLog)
+  const flashXml = await prepareUdFlashXml(packagePath, onLog)
   const config = writeSwdConfig(settings)
   const pythonExe = await ensureSwdPython(onLog)
   const swdLogPath = join(dirname(script), 'swd_flash_log.txt')
@@ -897,7 +919,8 @@ export async function runCombinedPretest(
   if (flashUd) {
     onLog('[前置操作] adb root 未成功，按 user 版本先刷 UD')
     if (!usedPath) {
-      const resolved = await resolveUdPackage(deviceId)
+      onLog('[前置操作] 正在寻找UD版本刷机包')
+      const resolved = await resolveUdPackage(deviceId, onLog)
       usedPath = resolved.packagePath
       onLog(`[前置操作] ${resolved.message}：${usedPath}`)
     }

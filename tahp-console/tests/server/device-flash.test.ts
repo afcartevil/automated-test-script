@@ -193,7 +193,7 @@ describe('device-flash helpers', () => {
     expect(isOemUnlocked('', 'green')).toBe(false)
   })
 
-  it('finds the newest UD package only under DerivativeVersions', () => {
+  it('finds the newest UD package only under DerivativeVersions', async () => {
     const base = join(tmpdir(), `tahp-ud-package-${Date.now()}`)
     const older = join(base, 'TEST', 'old_user', 'DerivativeVersions', 'STS_VERSIONS', 'old_ud', 'Open')
     const newer = join(base, 'TEST', 'new_user', 'DerivativeVersions', 'STS_VERSIONS', 'new_ud', 'Open')
@@ -209,7 +209,7 @@ describe('device-flash helpers', () => {
       utimesSync(oldZip, now, now)
       utimesSync(newZip, later, later)
       writeFileSync(join(base, 'ignored_ud.zip'), 'outside derivative')
-      expect(findLatestUdZip(base)).toBe(newZip)
+      expect(await findLatestUdZip(base)).toBe(newZip)
     } finally {
       rmSync(base, { recursive: true, force: true })
     }
