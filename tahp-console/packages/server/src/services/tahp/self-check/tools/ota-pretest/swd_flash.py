@@ -480,13 +480,13 @@ WM_COMMAND = 0x0111
 
 
 def press_button(ctrl):
-    """向按钮发送 BM_CLICK。不移动鼠标，也不发鼠标按下/抬起消息。"""
-    ctrl.send_message(BM_CLICK, 0, 0)
+    """PostMessage BM_CLICK。"""
+    ctrl.post_message(BM_CLICK, 0, 0)
 
 
 def notify_button_clicked(ctrl):
-    """向父窗口补发 BN_CLICKED。"""
-    ctrl.parent().send_message(WM_COMMAND, ctrl.control_id(), ctrl.handle)
+    """向父窗口 PostMessage BN_CLICKED。原因同 press_button。"""
+    ctrl.parent().post_message(WM_COMMAND, ctrl.control_id(), ctrl.handle)
 
 
 def find_settings_dialog(app):
@@ -529,7 +529,7 @@ def browse_and_load(app, dlg, fw_path, timeout=20):
     """点'加载'->文件对话框输入路径->打开->处理弹窗OK。"""
     known = list_dialogs(app)
     log("点击'加载'按钮...")
-    dlg.child_window(control_id=BTN_LOAD).click()
+    press_button(dlg.child_window(control_id=BTN_LOAD).wrapper_object())
     # 等文件对话框
     fd = None
     t0 = time.time()
@@ -688,7 +688,7 @@ def set_download_options(dlg):
 def confirm_settings(app, dlg, timeout=120):
     known = list_dialogs(app)
     log("点击设置'确认'...")
-    dlg.child_window(control_id=BTN_OK).click()
+    press_button(dlg.child_window(control_id=BTN_OK).wrapper_object())
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
