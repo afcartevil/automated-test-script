@@ -85,6 +85,29 @@ export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'monkey_check
 
 export type StandardTestTypeKey = (typeof STANDARD_TEST_TYPE_ORDER)[number]
 
+/** 测试执行卡片的两级收纳（仅展示层分组；STANDARD_TEST_TYPE_ORDER 的并集须与之保持完备） */
+export const TEST_TYPE_CATEGORIES = [
+  {
+    key: 'general',
+    label: '通用测试',
+    testTypes: ['str4', 'week', 'smoke', 'ota_upgrade', 'gms', 'pipeline_adapt', 'ai_generated'],
+  },
+  {
+    key: 'domain',
+    label: '领域测试',
+    testTypes: ['monkey', 'monkey_check', 'power', 'power_feature', 'thermal', 'kernel_feature', 'bitflip'],
+  },
+] as const
+
+export type TestTypeCategoryKey = (typeof TEST_TYPE_CATEGORIES)[number]['key']
+
+export function getTestTypeCategory(testType: string): (typeof TEST_TYPE_CATEGORIES)[number] | null {
+  for (const category of TEST_TYPE_CATEGORIES) {
+    if ((category.testTypes as readonly string[]).includes(testType)) return category
+  }
+  return null
+}
+
 export const CHIP_PLATFORM_LABELS: Record<ChipPlatform, string> = {
   mtk: 'MTK',
   qcom: '高通',
