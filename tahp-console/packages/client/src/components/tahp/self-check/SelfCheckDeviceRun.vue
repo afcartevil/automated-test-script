@@ -24,7 +24,6 @@ import {
   normalizeAutomationMode,
   parseManualSteps,
   STANDARD_TEST_TYPE_ORDER,
-  OTA_UPGRADE_SOP,
 } from './self-check-utils'
 import type { AutomationModeFilterKey, DeviceListFilterKey } from './self-check-utils'
 import type { CaseCatalogGroup } from '@/api/tahp/device-self-check'
@@ -237,6 +236,11 @@ const {
   releaseUpgradePlan,
   pretestPanelTitle,
   pretestLogTitle,
+  otaBatteryMessage,
+  otaBatteryChecking,
+  otaStartBlocked,
+  otaPretestConfiguredSummary,
+  openOtaPretestDialog,
   isSelectedCaseInConfig,
   getSelectedCaseName,
 } = inject(DEVICE_SELF_CHECK_KEY)!
@@ -1004,16 +1008,7 @@ function handleDutRowAction(deviceId: string) {
                   class="catalog-ai-generated-note catalog-overview-retest"
                 >
                   <span class="ea-muted">
-                    本项必须先获取外发版本：最低 Android 走 device_update，更高版本依次 T卡升级；完成后校验开机并记录版本。不自动复测。
-                    操作请按
-                    <a
-                      class="ota-sop-link"
-                      :href="OTA_UPGRADE_SOP.url"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      @click.stop
-                    >{{ OTA_UPGRADE_SOP.label }}</a>
-                    执行。
+                    已获取外发版本时按所选版本连续升级；未获取到版本时仍可开始，只执行前置步骤。完成后校验开机并记录版本。不自动复测。
                   </span>
                 </div>
                 <div
@@ -1641,7 +1636,7 @@ function handleDutRowAction(deviceId: string) {
 
                 <template v-else-if="showFlashFailureUI">
                   <div class="case-detail-header">
-                    <span class="catalog-case-title">{{ isFlashFailed ? (pretestPanelTitle === 'T卡升级进度' ? 'T卡升级失败' : '刷机失败') : '测试异常' }}</span>
+                    <span class="catalog-case-title">{{ isFlashFailed ? pretestPanelTitle.replace('进度', '失败') : '测试异常' }}</span>
                   </div>
                   <div class="device-detail-main-scroll case-detail-content">
                     <div class="case-info">
@@ -1861,20 +1856,21 @@ function handleDutRowAction(deviceId: string) {
                         <div v-else class="flash-options-toggle">
                           <span class="form-label">连续版本升级</span>
                         </div>
-                        <a
-                          class="ota-sop-guide"
-                          :href="OTA_UPGRADE_SOP.url"
-                          :title="OTA_UPGRADE_SOP.label"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          @click.stop
-                        >{{ OTA_UPGRADE_SOP.inlineLabel }}</a>
+                        <button
+                          v-if="selectedTestType === 'ota_upgrade'"
+                          type="button"
+                          class="ea-btn-ghost ea-btn-sm ota-pretest-config-btn"
+                          :title="otaPretestConfiguredSummary"
+                          @click.stop="openOtaPretestDialog"
+                        >
+                          账号 / SWD
+                        </button>
                       </div>
                       <div v-if="enableReleaseUpgrade || selectedTestType === 'ota_upgrade'" class="flash-options-panel">
                         <p class="flash-options-hint">
                           {{
                             selectedTestType === 'ota_upgrade'
-                              ? '本测试项必须获取外发版本：最低版使用 device_update，更高版本依次 T卡升级；全部完成后校验设备开机并记录版本。'
+                              ? '已获取外发版本时按所选版本连续升级；调试阶段未获取到版本也可以开始，只执行本次前置步骤。'
                               : '勾选需要升级的 Android 版本；最低版使用 device_update，更高版本依次 T卡升级，全部完成后开始测试。'
                           }}
                         </p>
@@ -1997,10 +1993,16 @@ function handleDutRowAction(deviceId: string) {
                       </p>
                     </div>
 
+                    <p
+                      v-if="selectedTestType === 'ota_upgrade' && startTestIntentRole !== AUX_ROLE && (otaBatteryChecking || otaBatteryMessage)"
+                      class="flash-options-hint"
+                    >
+                      {{ otaBatteryChecking ? '正在检查电量...' : otaBatteryMessage }}
+                    </p>
                     <button
                       type="button"
                       class="ea-btn-primary"
-                      :disabled="(selectedTestType === 'gms' && !gmsHostSupported) || (canSelectStartModules && !getCaseGroups.some(([, configs]) => configs.some(c => isStartModuleSelected(c.module))))"
+                      :disabled="(selectedTestType === 'gms' && !gmsHostSupported) || otaStartBlocked || (canSelectStartModules && !getCaseGroups.some(([, configs]) => configs.some(c => isStartModuleSelected(c.module))))"
                       @click.stop="handleStartTest(selectedDevice.device.deviceId)"
                     >
                       {{ startTestIntentRole === AUX_ROLE ? '开始待命' : '开始测试' }}
@@ -2931,6 +2933,46 @@ $catalog-pane-height: calc(100vh - 48px);
 .gms-tradefed-summary {
   font-size: 12px;
   margin: 0 0 8px;
+}
+
+.ota-pretest-checks {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-height: 32px;
+}
+
+.ota-pretest-path-row {
+  flex-wrap: wrap;
+}
+
+.ota-pretest-config-row,
+.ota-pretest-account-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.ota-pretest-config-row .flash-field,
+.ota-pretest-account-row .flash-field {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.ota-pretest-account-row {
+  margin-top: 10px;
+}
+
+.ota-pretest-account-row .ea-btn-sm {
+  height: 34px;
+}
+
+@media (max-width: 900px) {
+  .ota-pretest-checks {
+    flex-wrap: wrap;
+    gap: 12px 24px;
+  }
 }
 
 .catalog-setting-input {
@@ -4111,6 +4153,10 @@ $catalog-pane-height: calc(100vh - 48px);
   .flash-options-toggle {
     font-weight: 600;
   }
+
+  .ota-pretest-config-btn {
+    margin-left: auto;
+  }
 }
 
 .release-upgrade-panel {
@@ -4203,20 +4249,6 @@ $catalog-pane-height: calc(100vh - 48px);
   color: var(--warning, #b45309);
   background: color-mix(in srgb, var(--warning, #b45309) 10%, var(--bg));
   border-radius: 6px;
-}
-
-.ota-sop-link,
-.ota-sop-guide {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--accent);
-  text-decoration: none;
-  white-space: nowrap;
-
-  &:hover {
-    text-decoration: underline;
-  }
 }
 
 .flash-field {

@@ -43,6 +43,12 @@ jira_workspace/
 .tahp/TAHP_STAGE_*.txt
 # TranCopilot 项目规则文件夹
 *.copilot
+# 连续 OTA 前置工具运行日志（脚本旁生成，勿提交）
+tahp-console/packages/server/src/services/tahp/self-check/tools/ota-pretest/swd_flash_log*.txt
+tahp-console/packages/server/src/services/tahp/self-check/tools/ota-pretest/swd_flash_config.ini
+tahp-console/packages/server/src/services/tahp/self-check/tools/ota-pretest/oem-unlock-windows/unlock_data.bin
+tahp-console/packages/server/src/services/tahp/self-check/tools/ota-pretest/oem-unlock-windows/scripts/config.json
+
 # 刷机工具运行时日志与本地解压缓存
 tahp-console/packages/server/src/services/tahp/self-check/flash_tool/device_update/log/
 tahp-console/packages/server/src/services/tahp/self-check/flash_tool/flash_packages/

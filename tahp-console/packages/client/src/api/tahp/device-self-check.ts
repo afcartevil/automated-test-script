@@ -214,6 +214,12 @@ export interface StartTestTcardPayload {
   zipPaths?: string[]
 }
 
+export interface StartTestOtaPretestPayload {
+  udFlash: boolean
+  oemUnlock: boolean
+  udPackagePath?: string
+}
+
 export async function startTest(
   deviceId: string,
   testType: 'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip',
@@ -222,10 +228,11 @@ export async function startTest(
   prioritizeTddManual?: boolean,
   tcard?: StartTestTcardPayload,
   modules?: string[],
+  otaPretest?: StartTestOtaPretestPayload,
 ): Promise<DeviceDetail> {
   return await tahpPost<DeviceDetail>(
     `/api/tahp/device-self-check/devices/${deviceId}/test/start`,
-    { testType, flash, scheduleKey, prioritizeTddManual, tcard, modules },
+    { testType, flash, scheduleKey, prioritizeTddManual, tcard, modules, otaPretest },
   )
 }
 
@@ -253,6 +260,71 @@ export async function pickGmsTradefedPath(): Promise<PickFlashPathResult> {
   return await tahpPost<PickFlashPathResult>(
     '/api/tahp/device-self-check/gms/pick-tradefed-path',
     {}
+  )
+}
+
+export interface OtaPretestSettings {
+  username: string
+  password: string
+  swdScriptPath: string
+  swdToolDir: string
+  oemToolDir: string
+}
+
+export interface UdPackageResult {
+  deviceId: string
+  brand: string
+  project: string
+  packagePath: string
+  source: '重庆' | '上海'
+  searchedRoots: string[]
+  message: string
+}
+
+export async function pickOtaPretestPath(target: 'script' | 'directory'): Promise<PickFlashPathResult> {
+  return await tahpPost<PickFlashPathResult>(
+    '/api/tahp/device-self-check/ota-pretest/pick-path',
+    { target },
+  )
+}
+
+export async function resolveOtaPretestUdPackage(deviceId: string): Promise<UdPackageResult> {
+  return await tahpPost<UdPackageResult>(
+    '/api/tahp/device-self-check/ota-pretest/resolve-ud',
+    { deviceId },
+  )
+}
+
+export interface OtaPretestRunResult {
+  success: true
+  rootOutput: string
+  flashedUd: boolean
+  udPackagePath?: string
+  oemUnlockRan: boolean
+  usbdebugWritten: boolean
+}
+
+export interface OtaStartPreview {
+  level: number
+  allowed: boolean
+  message: string
+  steps: string[]
+}
+
+export async function previewOtaStart(deviceId: string): Promise<OtaStartPreview> {
+  return await tahpPost<OtaStartPreview>(
+    '/api/tahp/device-self-check/ota-pretest/preview',
+    { deviceId },
+  )
+}
+
+export async function runOtaPretestOperation(payload: {
+  deviceId: string
+  udPackagePath?: string
+}): Promise<OtaPretestRunResult> {
+  return await tahpPost<OtaPretestRunResult>(
+    '/api/tahp/device-self-check/ota-pretest/run',
+    payload,
   )
 }
 
@@ -556,6 +628,7 @@ export interface AutoTestSettings {
   kernelFeatureCodeDir?: string
   /** bitflip 压测：遍历条件下每项重复测试次数（BAT -r 参数），默认 5 */
   bitflipRepeatCount?: number
+  otaPretest?: OtaPretestSettings
 }
 
 export async function getSettings(): Promise<AutoTestSettings> {
@@ -572,6 +645,7 @@ export async function getSettings(): Promise<AutoTestSettings> {
     gmsHostSupported: data?.gmsHostSupported !== false,
     kernelFeatureCodeDir: String(data?.kernelFeatureCodeDir || '').trim(),
     bitflipRepeatCount: Number(data?.bitflipRepeatCount) > 0 ? Number(data.bitflipRepeatCount) : 1,
+    otaPretest: data?.otaPretest,
   }
 }
 

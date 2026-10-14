@@ -45,6 +45,15 @@ import {
   resolveSelfCheckProjectContext,
   uploadSelfCheckReportToCentral,
 } from './quality-run-upload'
+import {
+  applyStoredOtaAccount,
+  assertOtaUpgradeBattery,
+  resolveUdPackage,
+  runCombinedPretest,
+  writeOtaAccountStore,
+  type OtaPretestSettings,
+  type UdPackageResult,
+} from './ota-pretest'
 
 // 类型定义
 export type DeviceRole = '未分配' | '测试机' | '辅测机'
@@ -279,6 +288,8 @@ interface AutoTestSettings {
   kernelFeatureCodeDir?: string
   /** bitflip 压测：遍历条件下每项重复测试次数（BAT -r 参数），默认 5 */
   bitflipRepeatCount?: number
+  /** 连续 OTA 前置操作：SWD 刷机和 OEM 解锁配置 */
+  otaPretest?: OtaPretestSettings
 }
 
 export const GMS_WINDOWS_UNSUPPORTED_MESSAGE = 'Windows 环境不支持 GMS 测试，请在 Linux 主机上运行 cts/gts/vts-tradefed'
@@ -312,6 +323,28 @@ const DEFAULT_BITFLIP_REPEAT_COUNT = 1
 const BITFLIP_REPEAT_COUNT_MIN = 1
 const BITFLIP_REPEAT_COUNT_MAX = 100
 
+function defaultOtaPretestSettings(): OtaPretestSettings {
+  const toolRoot = join(tahpPaths.selfCheckDir, 'tools', 'ota-pretest')
+  return {
+    username: '',
+    password: '',
+    swdScriptPath: join(toolRoot, 'swd_flash.py'),
+    swdToolDir: '',
+    oemToolDir: join(toolRoot, 'oem-unlock-windows'),
+  }
+}
+
+function normalizeOtaPretestSettings(raw?: Partial<OtaPretestSettings>): OtaPretestSettings {
+  const defaults = defaultOtaPretestSettings()
+  return {
+    username: String(raw?.username ?? defaults.username).trim(),
+    password: String(raw?.password ?? defaults.password),
+    swdScriptPath: defaults.swdScriptPath,
+    swdToolDir: String(raw?.swdToolDir || '').trim(),
+    oemToolDir: defaults.oemToolDir,
+  }
+}
+
 export function normalizeBitflipRepeatCount(raw?: number): number {
   const n = Number(raw)
   if (!Number.isFinite(n) || n <= 0) return DEFAULT_BITFLIP_REPEAT_COUNT
@@ -323,6 +356,7 @@ let settings: AutoTestSettings = {
   autoTestPath: {},
   monkeyDuration: DEFAULT_MONKEY_DURATION,
   bitflipRepeatCount: DEFAULT_BITFLIP_REPEAT_COUNT,
+  otaPretest: defaultOtaPretestSettings(),
 }
 
 export interface CaseCatalogDetailItem {
@@ -392,6 +426,11 @@ function snapshotTestConfig(
     prioritizeTddManual?: boolean
     selectedCases?: string[]
     caseIds?: Record<string, string[]>
+    otaPretest?: {
+      udFlash: boolean
+      oemUnlock: boolean
+      udPackagePath?: string
+    }
   },
 ): SelfCheckTestConfig {
   const cfg: SelfCheckTestConfig = {}
@@ -419,6 +458,14 @@ function snapshotTestConfig(
   }
   if (opts.caseIds && Object.keys(opts.caseIds).length > 0) {
     cfg.caseIds = { ...opts.caseIds }
+  }
+  if (testType === 'ota_upgrade' && opts.otaPretest) {
+    const pretestSettings = normalizeOtaPretestSettings(settings.otaPretest)
+    cfg.otaPretest = {
+      ...opts.otaPretest,
+      swdToolDir: pretestSettings.swdToolDir,
+      oemToolDir: pretestSettings.oemToolDir,
+    }
   }
 
   switch (testType) {
@@ -737,6 +784,7 @@ function loadSettings(): void {
   } catch (e) {
     console.warn('[device-self-check] Failed to load settings, using defaults')
   }
+  settings.otaPretest = applyStoredOtaAccount(normalizeOtaPretestSettings(settings.otaPretest))
 }
 
 function normalizeMonkeyDuration(duration?: string): string {
@@ -750,7 +798,14 @@ function normalizeMonkeyDuration(duration?: string): string {
 
 function saveSettings(): void {
   try {
-    writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2), 'utf-8')
+    const otaPretest = normalizeOtaPretestSettings(settings.otaPretest)
+    writeOtaAccountStore(otaPretest)
+    settings.otaPretest = otaPretest
+    const diskSettings = {
+      ...settings,
+      otaPretest: { ...otaPretest, password: '' },
+    }
+    writeFileSync(SETTINGS_PATH, JSON.stringify(diskSettings, null, 2), 'utf-8')
   } catch (e) {
     console.error('[device-self-check] Failed to save settings:', e)
   }
@@ -769,6 +824,7 @@ export function getSettings(): AutoTestSettings {
     gmsHostSupported: isGmsSupportedOnHost(),
     kernelFeatureCodeDir: String(settings.kernelFeatureCodeDir || '').trim(),
     bitflipRepeatCount: normalizeBitflipRepeatCount(settings.bitflipRepeatCount),
+    otaPretest: normalizeOtaPretestSettings(settings.otaPretest),
   }
 }
 
@@ -784,8 +840,51 @@ export function updateSettings(newSettings: AutoTestSettings): void {
     gmsTimeoutHours: normalizeGmsTimeoutHours(persistable.gmsTimeoutHours),
     kernelFeatureCodeDir: String(persistable.kernelFeatureCodeDir || '').trim(),
     bitflipRepeatCount: normalizeBitflipRepeatCount(persistable.bitflipRepeatCount),
+    otaPretest: normalizeOtaPretestSettings(persistable.otaPretest),
   }
   saveSettings()
+}
+
+export async function resolveOtaPretestUdPackage(deviceId: string): Promise<UdPackageResult> {
+  return resolveUdPackage(deviceId)
+}
+
+const activeOtaPretestDevices = new Set<string>()
+
+export async function runOtaPretestOperation(
+  deviceId: string,
+  udPackagePath?: string,
+): Promise<{
+  success: true
+  rootOutput: string
+  flashedUd: boolean
+  udPackagePath?: string
+  oemUnlockRan: boolean
+  usbdebugWritten: boolean
+}> {
+  const serial = deviceId.trim()
+  if (!serial) throw new Error('设备 ID 为空')
+  if (activeOtaPretestDevices.has(serial)) throw new Error('该设备已有前置操作正在执行')
+  const config = normalizeOtaPretestSettings(settings.otaPretest)
+  const log = (line: string) => emitEvent('flash_log', { deviceId: serial, line })
+
+  activeOtaPretestDevices.add(serial)
+  try {
+    const result = await runCombinedPretest(serial, udPackagePath, config, log)
+    emitEvent('ota_pretest_completed', { deviceId: serial, success: true, ...result })
+    return { success: true, ...result }
+  } catch (error: any) {
+    const message = error?.message || String(error)
+    log(`[前置操作] 失败: ${message}`)
+    emitEvent('ota_pretest_completed', {
+      deviceId: serial,
+      success: false,
+      error: message,
+    })
+    throw error
+  } finally {
+    activeOtaPretestDevices.delete(serial)
+  }
 }
 
 // 加载用例配置
@@ -893,6 +992,8 @@ function emitEvent(eventName: string, data: any) {
   const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`
   for (const res of sseClients) {
     res.write(payload)
+    const flushable = res as ServerResponse & { flush?: () => void }
+    if (typeof flushable.flush === 'function') flushable.flush()
   }
 }
 
@@ -3434,6 +3535,11 @@ export interface StartTestOptions {
   tcard?: StartTestTcardPayload
   /** 仅跑所选模块；须为该 testType 合法子集，缺省/空则跑全部 */
   modules?: string[]
+  otaPretest?: {
+    udFlash: boolean
+    oemUnlock: boolean
+    udPackagePath?: string
+  }
 }
 
 /** 解析标准测试启动时的模块列表（保持 getModulesForTestType 顺序） */
@@ -3500,9 +3606,6 @@ export async function startTest(
   options?: StartTestOptions,
 ): Promise<DeviceDetail | null> {
   assertGmsRunnable(testType)
-  if (testType === 'ota_upgrade' && !buildFlashOptionsFromPayload(flash)) {
-    throw new Error('连续OTA升级需要先获取外发版本并选择 Android 版本')
-  }
   try {
     const device = devices[deviceId]
     if (!device || device.status !== '空闲') {
@@ -3517,6 +3620,10 @@ export async function startTest(
       emitEvent('device_updated', { device })
       console.log(`[device-self-check] Auxiliary device standing by: ${deviceId} for ${testType}`)
       return { device }
+    }
+
+    if (testType === 'ota_upgrade') {
+      assertOtaUpgradeBattery(deviceId)
     }
 
     const flashOptions = buildFlashOptionsFromPayload(flash)
@@ -3549,6 +3656,7 @@ export async function startTest(
         flashOptions,
         tcardOptions,
         prioritizeTddManual: Boolean(options?.prioritizeTddManual),
+        otaPretest: options?.otaPretest,
       }),
     }
 

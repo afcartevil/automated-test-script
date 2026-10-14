@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync, readdirSync } from 'fs'
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, utimesSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -21,6 +21,7 @@ import {
   MARKET_VERSIONS,
   type DailySystemVersionOption,
 } from '../../packages/server/src/services/tahp/device-flash'
+import { applyStoredOtaAccount, assertOtaBatteryLevel, findLatestUdZip, isOemUnlocked, needsUdFlash, parseBatteryLevel, parseUsbdebugFlag, readOtaAccountStore, readProjectSwdConfig, swdProjectConfigPath, writeOtaAccountStore } from '../../packages/server/src/services/tahp/ota-pretest'
 
 describe('device-flash helpers', () => {
   it('normalizes UNC paths', () => {
@@ -166,6 +167,54 @@ describe('device-flash helpers', () => {
     }
   })
 
+  it('flashes UD only when adb root cannot succeed', () => {
+    expect(needsUdFlash('adbd cannot run as root in production builds')).toBe(true)
+    expect(needsUdFlash('adbd is already running as root')).toBe(false)
+    expect(needsUdFlash('restarting adbd as root')).toBe(false)
+    expect(needsUdFlash('设备已root')).toBe(false)
+    expect(() => needsUdFlash('')).toThrow(/无法根据 adb root/)
+  })
+
+  it('rejects continuous OTA when battery is below 30 percent', () => {
+    expect(parseBatteryLevel('  level: 30')).toBe(30)
+    expect(parseBatteryLevel('  level: 29\n')).toBe(29)
+    expect(parseBatteryLevel('scale: 100')).toBeNull()
+    expect(() => assertOtaBatteryLevel(29)).toThrow(/低于 30%/)
+    expect(() => assertOtaBatteryLevel(30)).not.toThrow()
+  })
+
+  it('treats usbdebug flag 1 as written and bootloader 0 as unlocked', () => {
+    expect(parseUsbdebugFlag('   1')).toBe(1)
+    expect(parseUsbdebugFlag('0')).toBe(0)
+    expect(parseUsbdebugFlag('')).toBeNull()
+    expect(isOemUnlocked('0')).toBe(true)
+    expect(isOemUnlocked('1')).toBe(false)
+    expect(isOemUnlocked('', 'orange')).toBe(true)
+    expect(isOemUnlocked('', 'green')).toBe(false)
+  })
+
+  it('finds the newest UD package only under DerivativeVersions', () => {
+    const base = join(tmpdir(), `tahp-ud-package-${Date.now()}`)
+    const older = join(base, 'TEST', 'old_user', 'DerivativeVersions', 'STS_VERSIONS', 'old_ud', 'Open')
+    const newer = join(base, 'TEST', 'new_user', 'DerivativeVersions', 'STS_VERSIONS', 'new_ud', 'Open')
+    mkdirSync(older, { recursive: true })
+    mkdirSync(newer, { recursive: true })
+    try {
+      const oldZip = join(older, 'project_old_ud.zip')
+      const newZip = join(newer, 'project_new_ud.zip')
+      writeFileSync(oldZip, 'old')
+      writeFileSync(newZip, 'new')
+      const now = new Date()
+      const later = new Date(now.getTime() + 10_000)
+      utimesSync(oldZip, now, now)
+      utimesSync(newZip, later, later)
+      writeFileSync(join(base, 'ignored_ud.zip'), 'outside derivative')
+      expect(findLatestUdZip(base)).toBe(newZip)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
   it('builds SkipOOBE adb commands for a known serial', () => {
     expect(buildSkipOobeAdbArgs('ABC123')).toEqual([
       ['-s', 'ABC123', 'root'],
@@ -197,6 +246,58 @@ describe('device-flash helpers', () => {
     } finally {
       if (prev === undefined) delete process.env.TAHP_FLASH_PACKAGE_DIR
       else process.env.TAHP_FLASH_PACKAGE_DIR = prev
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('ota account store', () => {
+  it('keeps username, password and SWD path in the project swd config', () => {
+    const base = join(tmpdir(), `tahp-ota-account-${Date.now()}`)
+    const prev = process.env.TAHP_CONSOLE_HOME
+    const iniPath = swdProjectConfigPath()
+    const oemConfigPath = join(iniPath, '..', 'oem-unlock-windows', 'config.json')
+    const oemScriptConfigPath = join(iniPath, '..', 'oem-unlock-windows', 'scripts', 'config.json')
+    const iniBackup = existsSync(iniPath) ? readFileSync(iniPath) : null
+    const oemBackup = existsSync(oemConfigPath) ? readFileSync(oemConfigPath) : null
+    const oemScriptBackup = existsSync(oemScriptConfigPath) ? readFileSync(oemScriptConfigPath) : null
+    process.env.TAHP_CONSOLE_HOME = base
+    try {
+      writeOtaAccountStore({
+        username: '18660000',
+        password: 'oa-secret',
+        swdToolDir: 'E:\\Softwaredownload',
+      })
+      const restored = applyStoredOtaAccount({
+        username: '',
+        password: '',
+        swdScriptPath: 'swd_flash.py',
+        swdToolDir: '',
+        oemToolDir: 'oem-unlock-windows',
+      })
+      expect(readProjectSwdConfig()).toMatchObject({
+        username: '18660000',
+        password: 'oa-secret',
+        swdToolDir: 'E:\\Softwaredownload',
+      })
+      expect(readOtaAccountStore()).toMatchObject({
+        username: '18660000',
+        password: 'oa-secret',
+        swdToolDir: 'E:\\Softwaredownload',
+      })
+      expect(restored.username).toBe('18660000')
+      expect(restored.password).toBe('oa-secret')
+      expect(restored.swdToolDir).toBe('E:\\Softwaredownload')
+      expect(restored.swdScriptPath).toBe('swd_flash.py')
+    } finally {
+      if (iniBackup) writeFileSync(iniPath, iniBackup)
+      else rmSync(iniPath, { force: true })
+      if (oemBackup) writeFileSync(oemConfigPath, oemBackup)
+      else rmSync(oemConfigPath, { force: true })
+      if (oemScriptBackup) writeFileSync(oemScriptConfigPath, oemScriptBackup)
+      else rmSync(oemScriptConfigPath, { force: true })
+      if (prev === undefined) delete process.env.TAHP_CONSOLE_HOME
+      else process.env.TAHP_CONSOLE_HOME = prev
       rmSync(base, { recursive: true, force: true })
     }
   })

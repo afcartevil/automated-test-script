@@ -23,6 +23,8 @@ import {
   updateAiNlUiCase,
   getSettings,
   updateSettings,
+  resolveOtaPretestUdPackage,
+  runOtaPretestOperation,
   addSseClient,
   removeSseClient,
   submitManualDecision,
@@ -124,11 +126,24 @@ tahpDeviceSelfCheckRoutes.post(
         tcard?: StartTestTcardPayload
         prioritizeTddManual?: boolean
         modules?: string[]
+        otaPretest?: {
+          udFlash?: boolean
+          oemUnlock?: boolean
+          udPackagePath?: string
+        }
+      }
+      const { otaPretest } = ctx.request.body as {
+        otaPretest?: { udFlash?: boolean; oemUnlock?: boolean; udPackagePath?: string }
       }
       const result = await startTest(deviceId, testType, flash, {
         prioritizeTddManual: Boolean(prioritizeTddManual),
         tcard,
         modules: Array.isArray(modules) ? modules.filter(m => typeof m === 'string' && m.trim()) : undefined,
+        otaPretest: otaPretest ? {
+          udFlash: Boolean(otaPretest.udFlash),
+          oemUnlock: Boolean(otaPretest.oemUnlock),
+          udPackagePath: String(otaPretest.udPackagePath || '').trim() || undefined,
+        } : undefined,
       })
       ctx.body = {
         success: true,
@@ -469,6 +484,71 @@ tahpDeviceSelfCheckRoutes.post(
     } catch (err: any) {
       ctx.status = 500
       ctx.body = { success: false, error: err?.message || 'Failed to update settings' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/ota-pretest/pick-path',
+  async (ctx) => {
+    try {
+      const { target } = (ctx.request.body || {}) as { target?: 'script' | 'directory' }
+      const { pickLocalPythonScript, pickLocalDirectory } = await import('../../services/tahp/device-flash')
+      const result = target === 'script' ? await pickLocalPythonScript() : await pickLocalDirectory()
+      ctx.body = { success: !result.error, data: result, error: result.error }
+      if (result.error && !result.canceled) ctx.status = 500
+    } catch (err: any) {
+      ctx.status = 500
+      ctx.body = { success: false, error: err?.message || 'Failed to pick path' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/ota-pretest/resolve-ud',
+  async (ctx) => {
+    try {
+      const { deviceId } = (ctx.request.body || {}) as { deviceId?: string }
+      const result = await resolveOtaPretestUdPackage(String(deviceId || ''))
+      ctx.body = { success: true, data: result }
+    } catch (err: any) {
+      ctx.status = 400
+      ctx.body = { success: false, error: err?.message || 'Failed to resolve UD package' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/ota-pretest/preview',
+  async (ctx) => {
+    try {
+      const { deviceId } = (ctx.request.body || {}) as { deviceId?: string }
+      const { previewOtaStart } = await import('../../services/tahp/ota-pretest')
+      const result = await previewOtaStart(String(deviceId || ''))
+      ctx.body = { success: true, data: result }
+    } catch (err: any) {
+      ctx.status = 400
+      ctx.body = { success: false, error: err?.message || 'Failed to preview OTA start' }
+    }
+  }
+)
+
+tahpDeviceSelfCheckRoutes.post(
+  '/api/tahp/device-self-check/ota-pretest/run',
+  async (ctx) => {
+    try {
+      const body = (ctx.request.body || {}) as {
+        deviceId?: string
+        udPackagePath?: string
+      }
+      const result = await runOtaPretestOperation(
+        String(body.deviceId || ''),
+        body.udPackagePath,
+      )
+      ctx.body = { success: true, data: result }
+    } catch (err: any) {
+      ctx.status = 400
+      ctx.body = { success: false, error: err?.message || 'Failed to run OTA pretest operation' }
     }
   }
 )

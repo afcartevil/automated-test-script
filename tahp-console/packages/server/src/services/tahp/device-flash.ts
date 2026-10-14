@@ -249,6 +249,68 @@ function pickTcardZipPathWindows(): PickFlashPathResult {
   return pickOpenFileWindows('选择 T卡升级 ZIP 包', 'ZIP (*.zip)|*.zip')
 }
 
+function pickPythonScriptWindows(): PickFlashPathResult {
+  return pickOpenFileWindows('选择 swd_flash.py', 'Python (*.py)|*.py|所有文件 (*.*)|*.*')
+}
+
+function pickDirectoryWindows(): Promise<PickFlashPathResult> {
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class TahpFgDir {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+  public static void ForceForeground(IntPtr hWnd) {
+    keybd_event(0x12, 0, 0, UIntPtr.Zero);
+    keybd_event(0x12, 0, 0x0002, UIntPtr.Zero);
+    ShowWindow(hWnd, 5);
+    BringWindowToTop(hWnd);
+    SetForegroundWindow(hWnd);
+  }
+}
+"@
+$owner = New-Object System.Windows.Forms.Form
+$owner.TopMost = $true
+$owner.ShowInTaskbar = $false
+$owner.FormBorderStyle = 'None'
+$owner.Size = New-Object System.Drawing.Size(1, 1)
+$owner.StartPosition = 'Manual'
+$owner.Location = New-Object System.Drawing.Point(-2000, -2000)
+$owner.Add_Shown({ [TahpFgDir]::ForceForeground($owner.Handle) })
+$owner.Show()
+$owner.Activate()
+[TahpFgDir]::ForceForeground($owner.Handle)
+$dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+$dlg.Description = '选择 SWD 工具目录'
+$dlg.ShowNewFolderButton = $false
+$result = $dlg.ShowDialog($owner)
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dlg.SelectedPath }
+$owner.Dispose()
+`
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  return new Promise((resolvePicker) => {
+    const proc = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-STA', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded],
+      { windowsHide: true },
+    )
+    let stdout = ''
+    proc.stdout.setEncoding('utf8')
+    proc.stdout.on('data', (chunk: string) => { stdout += chunk })
+    proc.on('error', (err) => resolvePicker({ canceled: true, error: err.message || '路径选择失败' }))
+    proc.on('close', () => {
+      const path = stdout.trim()
+      if (path) resolvePicker({ canceled: false, path })
+      else resolvePicker({ canceled: true })
+    })
+  })
+}
+
 function pickOpenFileDarwin(prompt: string, types?: string[]): PickFlashPathResult {
   const typeClause = types?.length
     ? ` of type {${types.map((t) => `"${t.replace(/"/g, '\\"')}"`).join(', ')}}`
@@ -344,6 +406,54 @@ export async function pickLocalTradefedPath(): Promise<PickFlashPathResult> {
     if (process.platform === 'win32') return pickFlashPathWindows()
     if (process.platform === 'darwin') return pickFlashPathDarwin()
     return { canceled: true, error: '当前平台不支持文件选择，请手动输入路径' }
+  } catch (err: any) {
+    return { canceled: true, error: err?.message || '路径选择失败' }
+  }
+}
+
+export async function pickLocalPythonScript(): Promise<PickFlashPathResult> {
+  const unavailable = pathPickerError()
+  if (unavailable) return { canceled: true, error: unavailable }
+  try {
+    if (process.platform === 'win32') return pickPythonScriptWindows()
+    if (process.platform === 'darwin') return pickOpenFileDarwin('选择 swd_flash.py', ['py'])
+    if (process.platform === 'linux') {
+      return pickFilePathLinux({
+        title: '选择 swd_flash.py',
+        zenityFilters: ['--file-filter=Python | *.py', '--file-filter=所有文件 | *'],
+        kdialogFilter: 'Python (*.py)|*.py',
+      })
+    }
+    return { canceled: true, error: '当前平台不支持文件选择，请手动输入路径' }
+  } catch (err: any) {
+    return { canceled: true, error: err?.message || '路径选择失败' }
+  }
+}
+
+export async function pickLocalDirectory(): Promise<PickFlashPathResult> {
+  const unavailable = pathPickerError()
+  if (unavailable) return { canceled: true, error: unavailable }
+  try {
+    if (process.platform === 'win32') return await pickDirectoryWindows()
+    if (process.platform === 'darwin') {
+      const proc = spawnSync('osascript', ['-e', 'POSIX path of (choose folder with prompt "选择工具目录")'], {
+        encoding: 'utf8',
+        windowsHide: true,
+      })
+      const path = (proc.stdout || '').trim()
+      if (proc.status === 0 && path) return { canceled: false, path }
+      return { canceled: true }
+    }
+    if (process.platform === 'linux') {
+      const proc = spawnSync('zenity', ['--file-selection', '--directory', '--title=选择工具目录'], {
+        encoding: 'utf8',
+        windowsHide: false,
+      })
+      const path = (proc.stdout || '').trim()
+      if (proc.status === 0 && path) return { canceled: false, path }
+      return { canceled: true }
+    }
+    return { canceled: true, error: '当前平台不支持目录选择，请手动输入路径' }
   } catch (err: any) {
     return { canceled: true, error: err?.message || '路径选择失败' }
   }

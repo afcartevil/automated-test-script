@@ -28,6 +28,13 @@ const {
   handleBrowseGmsTradefedPath,
   closeGmsTradefedDialog,
   saveGmsTradefedSettingsFromDialog,
+  showOtaPretestDialog,
+  otaPretestDraft,
+  otaPretestPathPicking,
+  otaPretestConfigSaving,
+  handleBrowseOtaPretestPath,
+  closeOtaPretestDialog,
+  saveOtaPretestSettingsFromDialog,
 } = inject(DEVICE_SELF_CHECK_KEY)!
 </script>
 
@@ -201,6 +208,41 @@ const {
           @click="saveGmsTradefedSettingsFromDialog"
         >
           {{ catalogSettingsSaving ? '保存中...' : '保存' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="showOtaPretestDialog" class="modify-overlay" @click.self="closeOtaPretestDialog">
+    <div class="modify-dialog gms-tradefed-dialog">
+      <div class="modify-dialog-header">
+        <span class="section-title">刷机配置</span>
+        <button type="button" class="ea-btn-ghost ea-btn-sm" @click="closeOtaPretestDialog">✕</button>
+      </div>
+      <div class="modify-dialog-body">
+        <p class="gms-tradefed-dialog-hint">同一账号用于刷 UD 和 OEM 解锁，保存在本机，重启后仍然有效。</p>
+        <div class="form-group">
+          <label class="form-label" for="ota-pretest-user">账号</label>
+          <input id="ota-pretest-user" v-model.trim="otaPretestDraft.username" type="text" class="form-input" placeholder="例如 18660000" autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ota-pretest-password">密码</label>
+          <input id="ota-pretest-password" v-model="otaPretestDraft.password" type="password" class="form-input" placeholder="OA Password" autocomplete="current-password" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ota-pretest-swd">SWD 工具目录</label>
+          <div class="gms-tradefed-path-row">
+            <input id="ota-pretest-swd" v-model.trim="otaPretestDraft.swdToolDir" type="text" class="form-input" placeholder="含 SWD_Development_Center.exe" />
+            <button type="button" class="ea-btn-ghost ea-btn-sm" :disabled="otaPretestPathPicking != null" @click="handleBrowseOtaPretestPath('swdTool')">
+              {{ otaPretestPathPicking === 'swdTool' ? '选择中...' : '浏览' }}
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="modify-dialog-footer">
+        <button type="button" class="ea-btn-ghost" :disabled="otaPretestConfigSaving" @click="closeOtaPretestDialog">取消</button>
+        <button type="button" class="ea-btn-primary" :disabled="otaPretestConfigSaving" @click="saveOtaPretestSettingsFromDialog">
+          {{ otaPretestConfigSaving ? '保存中...' : '保存' }}
         </button>
       </div>
     </div>

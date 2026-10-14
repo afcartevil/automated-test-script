@@ -1,7 +1,7 @@
 [
   {
     "用例名": "连续OTA升级",
-    "前置条件": "测试机已通过 ADB 连接且状态为 device；外发版本共享目录可访问。开始测试前须在启动面板点击「获取外发版本」，并至少勾选一个可用的 Android 版本。操作请按 SOP 执行：https://transsioner.feishu.cn/docx/KPDTdp4UhovtfUxHJHocIb0Knjc",
+    "前置条件": "测试机已通过 ADB 连接且状态为 device；外发版本共享目录可访问。开始测试前须在启动面板点击「获取外发版本」，并至少勾选一个可用的 Android 版本。",
     "测试步骤": "1、在测试执行页选择测试机，用例选择「连续OTA升级」\n2、点击「获取外发版本」，勾选需要连续升级的 Android 版本（最低版走 device_update，更高版本依次 T卡升级）\n3、启动测试：系统先刷入最低选中版本，再按顺序执行 T卡升级\n4、全部升级完成后校验设备已开机（sys.boot_completed），并记录当前 Android 版本与显示版本号",
     "期望结果": "所选版本全部升级成功，设备重新开机完成；用例记录 ro.build.version.release 与 ro.build.display.id。任一刷机或 T卡升级失败则本项失败。"
   }

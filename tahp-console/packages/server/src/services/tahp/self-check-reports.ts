@@ -112,6 +112,14 @@ export interface SelfCheckTestConfig {
   selectedCases?: string[]
   /** 子任务选择：caseKey -> caseId[]（如 power/current_analysis/2 -> ['C01', 'C03']） */
   caseIds?: Record<string, string[]>
+  /** 连续 OTA 前置操作快照（不含账号密码） */
+  otaPretest?: {
+    udFlash: boolean
+    oemUnlock: boolean
+    udPackagePath?: string
+    swdToolDir?: string
+    oemToolDir?: string
+  }
 }
 
 export interface SelfCheckReportSummary {
@@ -280,6 +288,11 @@ export function formatSelfCheckTestConfigMetaRows(cfg?: SelfCheckTestConfig): st
     zipPaths.forEach((path, index) => {
       rows.push([zipPaths.length > 1 ? `T卡升级 ZIP ${index + 1}` : 'T卡升级 ZIP', path])
     })
+  }
+  if (cfg.otaPretest) {
+    rows.push(['连续OTA前置-刷UD', cfg.otaPretest.udFlash ? '是' : '否'])
+    rows.push(['连续OTA前置-OEM解锁', cfg.otaPretest.oemUnlock ? '是' : '否'])
+    if (cfg.otaPretest.udPackagePath) rows.push(['UD包路径', cfg.otaPretest.udPackagePath])
   }
   if (cfg.selectedCases?.length) {
     rows.push(['自定义勾选用例数', String(cfg.selectedCases.length)])

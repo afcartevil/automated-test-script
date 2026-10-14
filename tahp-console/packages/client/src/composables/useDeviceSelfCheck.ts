@@ -11,6 +11,10 @@ import {
   pickFlashPath,
   pickTcardZipPath,
   pickGmsTradefedPath,
+  previewOtaStart,
+  resolveOtaPretestUdPackage,
+  runOtaPretestOperation,
+  pickOtaPretestPath,
   resolveLatestDailyFlashPackage,
   resolveReleaseUpgradePlan,
   clearFlashPackageCache,
@@ -47,6 +51,7 @@ import {
   type TPowerStatus,
   type ReleaseUpgradePlan,
   type AndroidUpgradeStep,
+  type OtaPretestSettings,
 } from '@/api/tahp/device-self-check'
 import {
   createFlashProgressState,
@@ -59,7 +64,6 @@ import {
   AUTO_RETEST_TOOLTIP,
   MODULE_ORDER,
   OTA_UPGRADE_FLASH_CONFIRM,
-  OTA_UPGRADE_SOP,
   missingTcardZipHint,
   pickPreferredTcardZip,
   resolveReleaseUpgradeEnabledOnTypeChange,
@@ -183,6 +187,35 @@ const releaseTcardPaths = ref<string[]>([])
 const releaseUpgradeResolving = ref(false)
 const releaseUpgradePlan = ref<ReleaseUpgradePlan | null>(null)
 
+const otaPretestConfig = ref<OtaPretestSettings>({
+  username: '',
+  password: '',
+  swdScriptPath: '',
+  swdToolDir: '',
+  oemToolDir: '',
+})
+const otaPretestConfigSaving = ref(false)
+const showOtaPretestDialog = ref(false)
+const otaPretestDraft = ref<OtaPretestSettings>({
+  username: '',
+  password: '',
+  swdScriptPath: '',
+  swdToolDir: '',
+  oemToolDir: '',
+})
+const otaPretestPathPicking = ref<'script' | 'swdTool' | 'oemTool' | null>(null)
+const otaPretestResolving = ref(false)
+const otaPretestRunning = ref(false)
+const otaPretestUdPath = ref('')
+const otaPretestUdSource = ref<'重庆' | '上海' | null>(null)
+const otaPretestEnabled = ref(true)
+const otaBatteryLevel = ref<number | null>(null)
+const otaBatteryMessage = ref('')
+const otaBatteryAllowed = ref(false)
+const otaBatteryChecking = ref(false)
+const otaPretestRootOutput = ref('')
+const otaPretestFlashedUd = ref(false)
+
 watch(enableReleaseUpgrade, (enabled) => {
   if (!enabled) return
   enableFlash.value = false
@@ -242,6 +275,160 @@ function clearFlashFormForDevice(deviceId: string) {
   const next = { ...flashFormByDeviceId.value }
   delete next[deviceId]
   flashFormByDeviceId.value = next
+}
+
+async function loadOtaPretestSettings() {
+  try {
+    const data = await getSettings()
+    if (data.otaPretest) {
+      otaPretestConfig.value = {
+        username: data.otaPretest.username || '',
+        password: data.otaPretest.password || '',
+        swdScriptPath: data.otaPretest.swdScriptPath || '',
+        swdToolDir: data.otaPretest.swdToolDir || '',
+        oemToolDir: data.otaPretest.oemToolDir || '',
+      }
+    }
+  } catch (e: any) {
+    console.error('[DeviceSelfCheck] Failed to load OTA pretest settings:', e)
+  }
+}
+
+async function saveOtaPretestSettings(showToast = true) {
+  otaPretestConfigSaving.value = true
+  try {
+    const current = await getSettings()
+    await updateSettings({
+      ...current,
+      otaPretest: {
+        username: otaPretestConfig.value.username.trim(),
+        password: otaPretestConfig.value.password,
+        swdScriptPath: otaPretestConfig.value.swdScriptPath.trim(),
+        swdToolDir: otaPretestConfig.value.swdToolDir.trim(),
+        oemToolDir: otaPretestConfig.value.oemToolDir.trim(),
+      },
+    })
+    if (showToast) message.success('连续 OTA 前置操作配置已保存')
+  } catch (e: any) {
+    const text = e?.message || '保存前置操作配置失败'
+    error.value = text
+    message.error(text)
+    throw e
+  } finally {
+    otaPretestConfigSaving.value = false
+  }
+}
+
+const otaPretestConfiguredSummary = computed(() => {
+  const config = otaPretestConfig.value
+  if (!config.username.trim() || !config.password) return '未配置账号'
+  if (!config.swdToolDir.trim()) return '已配置账号，未配置 SWD 工具路径'
+  return '账号与 SWD 工具路径已配置'
+})
+
+async function openOtaPretestDialog() {
+  await loadOtaPretestSettings()
+  otaPretestDraft.value = { ...otaPretestConfig.value }
+  showOtaPretestDialog.value = true
+}
+
+function closeOtaPretestDialog() {
+  showOtaPretestDialog.value = false
+}
+
+async function saveOtaPretestSettingsFromDialog() {
+  otaPretestConfig.value = {
+    username: otaPretestDraft.value.username.trim(),
+    password: otaPretestDraft.value.password,
+    swdScriptPath: otaPretestDraft.value.swdScriptPath.trim(),
+    swdToolDir: otaPretestDraft.value.swdToolDir.trim(),
+    oemToolDir: otaPretestDraft.value.oemToolDir.trim(),
+  }
+  await saveOtaPretestSettings(true)
+  showOtaPretestDialog.value = false
+}
+
+async function handleBrowseOtaPretestPath(target: 'script' | 'swdTool' | 'oemTool') {
+  if (otaPretestPathPicking.value) return
+  otaPretestPathPicking.value = target
+  try {
+    const result = await pickOtaPretestPath(target === 'script' ? 'script' : 'directory')
+    if (result.path) {
+      if (target === 'script') otaPretestDraft.value.swdScriptPath = result.path
+      else if (target === 'swdTool') otaPretestDraft.value.swdToolDir = result.path
+      else otaPretestDraft.value.oemToolDir = result.path
+    } else if (result.error) {
+      message.error(result.error)
+    }
+  } catch (e: any) {
+    message.error(e?.message || '选择路径失败')
+  } finally {
+    otaPretestPathPicking.value = null
+  }
+}
+
+async function handleResolveOtaPretestUd() {
+  const deviceId = selectedDeviceId.value
+  if (!deviceId || otaPretestResolving.value) return
+  otaPretestResolving.value = true
+  error.value = null
+  try {
+    const result = await resolveOtaPretestUdPackage(deviceId)
+    otaPretestUdPath.value = result.packagePath
+    otaPretestUdSource.value = result.source
+    if (result.source === '上海') message.warning(result.message)
+    else message.success(result.message)
+  } catch (e: any) {
+    const text = e?.message || '解析 UD 包失败'
+    error.value = text
+    message.error(text)
+  } finally {
+    otaPretestResolving.value = false
+  }
+}
+
+async function executeOtaPretest(): Promise<boolean> {
+  const deviceId = selectedDeviceId.value
+  if (!deviceId || otaPretestRunning.value) return false
+  otaPretestRunning.value = true
+  error.value = null
+  clearFlashPanel()
+  flashDeviceId.value = deviceId
+  flashActive.value = true
+  flashProgressState.value = createFlashProgressState()
+  appendFlashLog('[前置操作] 正在执行 adb root...')
+  try {
+    await saveOtaPretestSettings(false)
+    const result = await runOtaPretestOperation({
+      deviceId,
+      udPackagePath: otaPretestUdPath.value.trim() || undefined,
+    })
+    otaPretestRootOutput.value = result.rootOutput
+    otaPretestFlashedUd.value = result.flashedUd
+    if (result.udPackagePath) otaPretestUdPath.value = result.udPackagePath
+    flashActive.value = false
+    flashDone.value = 'success'
+    const actions = [
+      result.flashedUd ? '已刷 UD' : '未刷机',
+      result.oemUnlockRan ? '已执行 OEM 解锁' : 'OEM 已解锁',
+      result.usbdebugWritten ? '已写入 usbdebug' : 'usbdebug 已是 1',
+    ]
+    message.success(actions.join('，'))
+    return true
+  } catch (e: any) {
+    flashActive.value = false
+    flashDone.value = 'error'
+    const text = e?.message || 'OEM 解锁前置操作失败'
+    error.value = text
+    message.error(text)
+    return false
+  } finally {
+    otaPretestRunning.value = false
+  }
+}
+
+async function handleRunOtaPretest() {
+  await executeOtaPretest()
 }
 
 function resetFlashProgress() {
@@ -1720,32 +1907,74 @@ async function handleClearFlashPackages() {
   })
 }
 
-function confirmOtaUpgradeFlashThenStart(deviceId: string) {
+function otaReleaseSteps(): string[] {
+  const selected = (releaseUpgradePlan.value?.steps || [])
+    .filter(step => step.selected)
+    .sort((a, b) => a.androidVersion - b.androidVersion)
+  return selected.map((step, index) => (
+    index === 0
+      ? `device_update 刷入 ${step.androidLabel}`
+      : `T卡升级到 ${step.androidLabel}`
+  ))
+}
+
+const otaConfirmOpen = ref(false)
+const otaStartPreparing = ref(false)
+
+function closeOtaConfirm() {
+  otaConfirmOpen.value = false
+}
+
+function confirmOtaUpgradeFlashThenStart(deviceId: string, steps: string[]) {
+  if (otaConfirmOpen.value) return
+  otaConfirmOpen.value = true
+  const lines = steps.length ? steps : ['连续版本升级']
   dialog.warning({
-    title: OTA_UPGRADE_FLASH_CONFIRM.title,
+    title: '本次将执行',
     content: () => h(
       'div',
       { style: 'line-height: 1.7' },
       [
-        ...OTA_UPGRADE_FLASH_CONFIRM.lines.map(line => h('p', { style: 'margin: 0 0 8px' }, line)),
-        h('p', { style: 'margin: 12px 0 0; font-size: 13px' }, [
-          `${OTA_UPGRADE_SOP.hint}：`,
-          h(
-            'a',
-            {
-              href: OTA_UPGRADE_SOP.url,
-              target: '_blank',
-              rel: 'noopener noreferrer',
-            },
-            OTA_UPGRADE_SOP.label,
-          ),
-        ]),
+        ...lines.map((line, index) => h('p', { style: 'margin: 0 0 8px' }, `${index + 1}. ${line}`)),
       ],
     ),
     positiveText: OTA_UPGRADE_FLASH_CONFIRM.positiveText,
     negativeText: OTA_UPGRADE_FLASH_CONFIRM.negativeText,
-    onPositiveClick: () => commitStartTest(deviceId),
+    onPositiveClick: () => {
+      closeOtaConfirm()
+      void runSelectedOtaPretestThenStart(deviceId)
+    },
+    onNegativeClick: closeOtaConfirm,
+    onClose: closeOtaConfirm,
   })
+}
+
+async function runSelectedOtaPretestThenStart(deviceId: string) {
+  const ok = await executeOtaPretest()
+  if (!ok) return
+  await commitStartTest(deviceId)
+}
+
+async function refreshOtaBatteryGate() {
+  if (selectedTestType.value !== 'ota_upgrade' || startTestIntentRole.value === '辅测机' || !selectedDeviceId.value) {
+    otaBatteryAllowed.value = true
+    otaBatteryMessage.value = ''
+    otaBatteryChecking.value = false
+    return
+  }
+  otaBatteryChecking.value = true
+  try {
+    const preview = await previewOtaStart(selectedDeviceId.value)
+    otaBatteryLevel.value = preview.level
+    otaBatteryAllowed.value = preview.allowed
+    otaBatteryMessage.value = preview.allowed ? '' : preview.message
+  } catch (e: any) {
+    otaBatteryLevel.value = null
+    otaBatteryAllowed.value = false
+    otaBatteryMessage.value = e?.message || '无法读取手机电量，不能开始连续 OTA'
+  } finally {
+    otaBatteryChecking.value = false
+  }
 }
 
 async function handleStartTest(deviceId: string) {
@@ -1755,7 +1984,9 @@ async function handleStartTest(deviceId: string) {
       message.error(error.value)
       return
     }
-    const releaseActive = enableReleaseUpgrade.value || selectedTestType.value === 'ota_upgrade'
+    const releaseActive = selectedTestType.value === 'ota_upgrade'
+      ? Boolean(releaseUpgradePlan.value)
+      : enableReleaseUpgrade.value
     if (releaseActive && !releaseUpgradePlan.value) {
       error.value = '请先获取外发版本'
       return
@@ -1806,7 +2037,22 @@ async function handleStartTest(deviceId: string) {
       return
     }
     if (selectedTestType.value === 'ota_upgrade' && startTestIntentRole.value !== '辅测机') {
-      confirmOtaUpgradeFlashThenStart(deviceId)
+      if (otaConfirmOpen.value || otaStartPreparing.value || otaPretestRunning.value) return
+      otaStartPreparing.value = true
+      try {
+        const preview = await previewOtaStart(deviceId)
+        otaBatteryLevel.value = preview.level
+        otaBatteryAllowed.value = preview.allowed
+        otaBatteryMessage.value = preview.allowed ? '' : preview.message
+        if (!preview.allowed) {
+          error.value = preview.message
+          message.error(preview.message)
+          return
+        }
+        confirmOtaUpgradeFlashThenStart(deviceId, [...preview.steps, ...otaReleaseSteps()])
+      } finally {
+        otaStartPreparing.value = false
+      }
       return
     }
     await commitStartTest(deviceId)
@@ -1819,7 +2065,9 @@ async function handleStartTest(deviceId: string) {
 
 async function commitStartTest(deviceId: string) {
   try {
-    const releaseActive = enableReleaseUpgrade.value || selectedTestType.value === 'ota_upgrade'
+    const releaseActive = selectedTestType.value === 'ota_upgrade'
+      ? Boolean(releaseUpgradePlan.value && releaseFlashPath.value.trim())
+      : enableReleaseUpgrade.value
     const intent = startTestIntentRole.value
     const current = devices.value.find(d => d.deviceId === deviceId)
     if (current && current.role !== intent) {
@@ -1878,6 +2126,13 @@ async function commitStartTest(deviceId: string) {
       prioritizeTddManual.value,
       tcard,
       availableModules.length > 1 ? modulesToRun : undefined,
+      selectedTestType.value === 'ota_upgrade'
+        ? {
+            udFlash: otaPretestEnabled.value && otaPretestFlashedUd.value,
+            oemUnlock: otaPretestEnabled.value,
+            udPackagePath: otaPretestUdPath.value.trim() || undefined,
+          }
+        : undefined,
     )
     if (result) {
       selectedDevice.value = result
@@ -2520,18 +2775,24 @@ const isFlashIndeterminate = computed(() => {
 })
 
 const pretestPanelTitle = computed(() => (
-  isTcardUpdating.value || flashLogs.value.some(line => line.includes('[T卡升级]'))
-    ? 'T卡升级进度'
-    : '刷机进度'
+  flashLogs.value.some(line => line.includes('[OEM解锁]'))
+    ? 'OEM 解锁进度'
+    : isTcardUpdating.value || flashLogs.value.some(line => line.includes('[T卡升级]'))
+      ? 'T卡升级进度'
+      : flashLogs.value.some(line => line.includes('[UD刷机]'))
+        ? 'UD 刷机进度'
+        : '刷机进度'
 ))
 
 const pretestLogTitle = computed(() => (
-  pretestPanelTitle.value === 'T卡升级进度' ? 'T卡升级日志' : '刷机日志'
+  pretestPanelTitle.value.replace('进度', '日志')
 ))
 
 const flashStatusText = computed(() => {
   if (isTcardUpdating.value) return 'T卡升级中'
   if (isFlashing.value || flashActive.value) {
+    if (flashLogs.value.some(line => line.includes('[OEM解锁]'))) return 'OEM 解锁中'
+    if (flashLogs.value.some(line => line.includes('[UD刷机]'))) return 'UD 刷机中'
     return flashLogs.value.some(line => line.includes('[T卡升级]')) ? 'T卡升级中' : '刷机中'
   }
   if (flashDone.value === 'success') return '完成'
@@ -2644,9 +2905,23 @@ watch(selectedTestType, (testType, previous) => {
   if (testType === 'kernel_feature') {
     void loadKernelFeatureSettings()
   }
+  void refreshOtaBatteryGate()
 })
 
+watch([selectedDeviceId, startTestIntentRole], () => {
+  void refreshOtaBatteryGate()
+})
+
+const otaStartBlocked = computed(() => (
+  selectedTestType.value === 'ota_upgrade'
+  && startTestIntentRole.value !== '辅测机'
+  && (otaBatteryChecking.value || otaStartPreparing.value || !otaBatteryAllowed.value)
+))
+
+let otaBatteryTimer: ReturnType<typeof setInterval> | null = null
+
 onMounted(async () => {
+  otaBatteryTimer = setInterval(() => { void refreshOtaBatteryGate() }, 20_000)
   connectEventStream()
   await loadDevices()
   await Promise.all([
@@ -2658,6 +2933,7 @@ onMounted(async () => {
   await Promise.all([
     loadGmsTradefedSettings(),
     loadKernelFeatureSettings(),
+    loadOtaPretestSettings(),
   ])
   try {
     moduleConditions.value = await getModuleConditions()
@@ -2670,6 +2946,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (otaBatteryTimer) clearInterval(otaBatteryTimer)
   disconnectEventStream()
 })
 
@@ -2845,6 +3122,28 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     releaseUpgradePlan,
     pretestPanelTitle,
     pretestLogTitle,
+    otaPretestConfig,
+    otaPretestConfigSaving,
+    otaPretestResolving,
+    otaPretestRunning,
+    otaPretestUdPath,
+    otaPretestUdSource,
+    otaPretestEnabled,
+    otaBatteryMessage,
+    otaBatteryChecking,
+    otaStartBlocked,
+    otaPretestRootOutput,
+    otaPretestConfiguredSummary,
+    showOtaPretestDialog,
+    otaPretestDraft,
+    otaPretestPathPicking,
+    openOtaPretestDialog,
+    closeOtaPretestDialog,
+    saveOtaPretestSettingsFromDialog,
+    handleBrowseOtaPretestPath,
+    saveOtaPretestSettings,
+    handleResolveOtaPretestUd,
+    handleRunOtaPretest,
     viewMode,
     catalogPanelExpanded,
     deviceDetailExpanded,
