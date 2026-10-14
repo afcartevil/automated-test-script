@@ -209,10 +209,6 @@ const otaPretestRunning = ref(false)
 const otaPretestUdPath = ref('')
 const otaPretestUdSource = ref<'重庆' | '上海' | null>(null)
 const otaPretestEnabled = ref(true)
-const otaBatteryLevel = ref<number | null>(null)
-const otaBatteryMessage = ref('')
-const otaBatteryAllowed = ref(false)
-const otaBatteryChecking = ref(false)
 const otaPretestRootOutput = ref('')
 const otaPretestFlashedUd = ref(false)
 
@@ -1955,28 +1951,6 @@ async function runSelectedOtaPretestThenStart(deviceId: string) {
   await commitStartTest(deviceId)
 }
 
-async function refreshOtaBatteryGate() {
-  if (selectedTestType.value !== 'ota_upgrade' || startTestIntentRole.value === '辅测机' || !selectedDeviceId.value) {
-    otaBatteryAllowed.value = true
-    otaBatteryMessage.value = ''
-    otaBatteryChecking.value = false
-    return
-  }
-  otaBatteryChecking.value = true
-  try {
-    const preview = await previewOtaStart(selectedDeviceId.value)
-    otaBatteryLevel.value = preview.level
-    otaBatteryAllowed.value = preview.allowed
-    otaBatteryMessage.value = preview.allowed ? '' : preview.message
-  } catch (e: any) {
-    otaBatteryLevel.value = null
-    otaBatteryAllowed.value = false
-    otaBatteryMessage.value = e?.message || '无法读取手机电量，不能开始连续 OTA'
-  } finally {
-    otaBatteryChecking.value = false
-  }
-}
-
 async function handleStartTest(deviceId: string) {
   try {
     if (selectedTestType.value === 'gms' && !gmsHostSupported.value) {
@@ -2041,15 +2015,26 @@ async function handleStartTest(deviceId: string) {
       otaStartPreparing.value = true
       try {
         const preview = await previewOtaStart(deviceId)
-        otaBatteryLevel.value = preview.level
-        otaBatteryAllowed.value = preview.allowed
-        otaBatteryMessage.value = preview.allowed ? '' : preview.message
         if (!preview.allowed) {
-          error.value = preview.message
-          message.error(preview.message)
+          const text = preview.message || '无法进行连续 OTA 升级'
+          error.value = text
+          dialog.warning({
+            title: '无法进行连续 OTA 升级',
+            content: text,
+            positiveText: '知道了',
+          })
           return
         }
         confirmOtaUpgradeFlashThenStart(deviceId, [...preview.steps, ...otaReleaseSteps()])
+      } catch (e: any) {
+        const text = e?.message || '无法读取手机电量，无法进行连续 OTA 升级'
+        error.value = text
+        dialog.warning({
+          title: '无法进行连续 OTA 升级',
+          content: text,
+          positiveText: '知道了',
+        })
+        return
       } finally {
         otaStartPreparing.value = false
       }
@@ -2905,23 +2890,15 @@ watch(selectedTestType, (testType, previous) => {
   if (testType === 'kernel_feature') {
     void loadKernelFeatureSettings()
   }
-  void refreshOtaBatteryGate()
-})
-
-watch([selectedDeviceId, startTestIntentRole], () => {
-  void refreshOtaBatteryGate()
 })
 
 const otaStartBlocked = computed(() => (
   selectedTestType.value === 'ota_upgrade'
   && startTestIntentRole.value !== '辅测机'
-  && (otaBatteryChecking.value || otaStartPreparing.value || !otaBatteryAllowed.value)
+  && otaStartPreparing.value
 ))
 
-let otaBatteryTimer: ReturnType<typeof setInterval> | null = null
-
 onMounted(async () => {
-  otaBatteryTimer = setInterval(() => { void refreshOtaBatteryGate() }, 20_000)
   connectEventStream()
   await loadDevices()
   await Promise.all([
@@ -2946,7 +2923,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (otaBatteryTimer) clearInterval(otaBatteryTimer)
   disconnectEventStream()
 })
 
@@ -3129,8 +3105,6 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     otaPretestUdPath,
     otaPretestUdSource,
     otaPretestEnabled,
-    otaBatteryMessage,
-    otaBatteryChecking,
     otaStartBlocked,
     otaPretestRootOutput,
     otaPretestConfiguredSummary,

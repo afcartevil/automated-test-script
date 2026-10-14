@@ -236,8 +236,6 @@ const {
   releaseUpgradePlan,
   pretestPanelTitle,
   pretestLogTitle,
-  otaBatteryMessage,
-  otaBatteryChecking,
   otaStartBlocked,
   otaPretestConfiguredSummary,
   openOtaPretestDialog,
@@ -1993,12 +1991,6 @@ function handleDutRowAction(deviceId: string) {
                       </p>
                     </div>
 
-                    <p
-                      v-if="selectedTestType === 'ota_upgrade' && startTestIntentRole !== AUX_ROLE && (otaBatteryChecking || otaBatteryMessage)"
-                      class="flash-options-hint"
-                    >
-                      {{ otaBatteryChecking ? '正在检查电量...' : otaBatteryMessage }}
-                    </p>
                     <button
                       type="button"
                       class="ea-btn-primary"

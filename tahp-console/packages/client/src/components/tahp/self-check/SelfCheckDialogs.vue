@@ -223,7 +223,7 @@ const {
         <p class="gms-tradefed-dialog-hint">同一账号用于刷 UD 和 OEM 解锁，保存在本机，重启后仍然有效。</p>
         <div class="form-group">
           <label class="form-label" for="ota-pretest-user">账号</label>
-          <input id="ota-pretest-user" v-model.trim="otaPretestDraft.username" type="text" class="form-input" placeholder="例如 18660000" autocomplete="username" />
+          <input id="ota-pretest-user" v-model.trim="otaPretestDraft.username" type="text" class="form-input" placeholder="18660000" autocomplete="username" />
         </div>
         <div class="form-group">
           <label class="form-label" for="ota-pretest-password">密码</label>
@@ -232,7 +232,7 @@ const {
         <div class="form-group">
           <label class="form-label" for="ota-pretest-swd">SWD 工具目录</label>
           <div class="gms-tradefed-path-row">
-            <input id="ota-pretest-swd" v-model.trim="otaPretestDraft.swdToolDir" type="text" class="form-input" placeholder="含 SWD_Development_Center.exe" />
+            <input id="ota-pretest-swd" v-model.trim="otaPretestDraft.swdToolDir" type="text" class="form-input" placeholder="SWD_Development_Center.exe 所在目录" />
             <button type="button" class="ea-btn-ghost ea-btn-sm" :disabled="otaPretestPathPicking != null" @click="handleBrowseOtaPretestPath('swdTool')">
               {{ otaPretestPathPicking === 'swdTool' ? '选择中...' : '浏览' }}
             </button>

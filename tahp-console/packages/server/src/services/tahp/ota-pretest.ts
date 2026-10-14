@@ -107,7 +107,7 @@ export function parseBatteryLevel(output: string): number | null {
 
 export function assertOtaBatteryLevel(level: number): void {
   if (level < OTA_MIN_BATTERY_LEVEL) {
-    throw new Error(`手机电量 ${level}% 低于 30%，不允许开始连续 OTA 升级`)
+    throw new Error(`手机电量 ${level}% 低于 30%，无法进行连续 OTA 升级`)
   }
 }
 
@@ -807,7 +807,7 @@ export async function previewOtaStart(deviceId: string): Promise<OtaStartPreview
     return {
       level,
       allowed: false,
-      message: `手机电量 ${level}% 低于 30%，无法开始连续 OTA`,
+      message: `手机电量 ${level}% 低于 30%，无法进行连续 OTA 升级`,
       steps: [],
     }
   }
