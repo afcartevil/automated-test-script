@@ -880,6 +880,9 @@ function writeOemProjectConfig(username: string, password: string): void {
   }, null, 2)
   mkdirSync(root, { recursive: true })
   writeFileSync(configPath, body, 'utf8')
+  const scriptConfig = join(root, 'scripts', 'config.json')
+  mkdirSync(dirname(scriptConfig), { recursive: true })
+  writeFileSync(scriptConfig, body, 'utf8')
 }
 
 function prepareOemConfig(settings: OtaPretestSettings): { script: string; root: string } {
