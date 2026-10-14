@@ -47,7 +47,7 @@ jira_workspace/
 tahp-console/packages/server/src/services/tahp/self-check/tools/ota-pretest/swd_flash_log*.txt
 tahp-console/packages/server/src/services/tahp/self-check/tools/ota-pretest/swd_flash_config.ini
 tahp-console/packages/server/src/services/tahp/self-check/tools/ota-pretest/oem-unlock-windows/unlock_data.bin
-tahp-console/packages/server/src/services/tahp/self-check/tools/ota-pretest/oem-unlock-windows/scripts/config.json
+tahp-console/packages/server/src/services/tahp/self-check/tools/ota-pretest/oem-unlock-windows/config.json
 
 # 刷机工具运行时日志与本地解压缓存
 tahp-console/packages/server/src/services/tahp/self-check/flash_tool/device_update/log/

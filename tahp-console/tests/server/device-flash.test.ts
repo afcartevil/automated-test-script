@@ -257,10 +257,8 @@ describe('ota account store', () => {
     const prev = process.env.TAHP_CONSOLE_HOME
     const iniPath = swdProjectConfigPath()
     const oemConfigPath = join(iniPath, '..', 'oem-unlock-windows', 'config.json')
-    const oemScriptConfigPath = join(iniPath, '..', 'oem-unlock-windows', 'scripts', 'config.json')
     const iniBackup = existsSync(iniPath) ? readFileSync(iniPath) : null
     const oemBackup = existsSync(oemConfigPath) ? readFileSync(oemConfigPath) : null
-    const oemScriptBackup = existsSync(oemScriptConfigPath) ? readFileSync(oemScriptConfigPath) : null
     process.env.TAHP_CONSOLE_HOME = base
     try {
       writeOtaAccountStore({
@@ -294,8 +292,6 @@ describe('ota account store', () => {
       else rmSync(iniPath, { force: true })
       if (oemBackup) writeFileSync(oemConfigPath, oemBackup)
       else rmSync(oemConfigPath, { force: true })
-      if (oemScriptBackup) writeFileSync(oemScriptConfigPath, oemScriptBackup)
-      else rmSync(oemScriptConfigPath, { force: true })
       if (prev === undefined) delete process.env.TAHP_CONSOLE_HOME
       else process.env.TAHP_CONSOLE_HOME = prev
       rmSync(base, { recursive: true, force: true })
