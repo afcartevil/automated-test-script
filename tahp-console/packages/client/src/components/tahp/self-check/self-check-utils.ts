@@ -125,12 +125,12 @@ export const TEST_TYPE_CATEGORIES = [
   {
     key: 'general',
     label: '通用测试',
-    testTypes: ['str4', 'week', 'smoke', 'ota_upgrade', 'alarm', 'gms', 'pipeline_adapt', 'ai_generated'],
+    testTypes: ['str4', 'week', 'smoke', 'ota_upgrade', 'gms', 'pipeline_adapt', 'ai_generated'],
   },
   {
     key: 'domain',
     label: '领域测试',
-    testTypes: ['monkey', 'monkey_check', 'power', 'power_feature', 'thermal', 'kernel_feature', 'bitflip'],
+    testTypes: ['monkey', 'monkey_check', 'alarm', 'power', 'power_feature', 'thermal', 'kernel_feature', 'bitflip'],
   },
 ] as const
 

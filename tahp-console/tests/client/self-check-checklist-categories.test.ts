@@ -36,10 +36,10 @@ describe('测试大类两级收纳常量', () => {
   })
 
   it('getTestTypeCategory 归属正确', () => {
-    for (const testType of ['str4', 'week', 'smoke', 'ota_upgrade', 'alarm', 'gms', 'pipeline_adapt', 'ai_generated']) {
+    for (const testType of ['str4', 'week', 'smoke', 'ota_upgrade', 'gms', 'pipeline_adapt', 'ai_generated']) {
       expect(getTestTypeCategory(testType)?.key).toBe('general')
     }
-    for (const testType of ['monkey', 'monkey_check', 'power', 'power_feature', 'thermal', 'kernel_feature', 'bitflip']) {
+    for (const testType of ['monkey', 'monkey_check', 'alarm', 'power', 'power_feature', 'thermal', 'kernel_feature', 'bitflip']) {
       expect(getTestTypeCategory(testType)?.key).toBe('domain')
     }
     expect(getTestTypeCategory('custom')).toBeNull()
@@ -54,7 +54,7 @@ describe('SelfCheckChecklist 两级卡片', () => {
     expect(cards.length).toBe(2)
     expect(cards[0].text()).toContain('通用测试')
     expect(cards[1].text()).toContain('领域测试')
-    expect(cards[0].text()).toContain('8 个测试项')
+    expect(cards[0].text()).toContain('7 个测试项')
     // 测试项卡未渲染（覆盖/自动化/前置 meta 仅测试项卡有）
     expect(wrapper.find('.checklist-meta').exists()).toBe(false)
     wrapper.unmount()
@@ -65,10 +65,10 @@ describe('SelfCheckChecklist 两级卡片', () => {
     await wrapper.findAll('.checklist-card')[0].trigger('click')
 
     const cards = wrapper.findAll('.checklist-card')
-    expect(cards.length).toBe(8)
+    expect(cards.length).toBe(7)
     expect(cards[0].text()).toContain('转测摸底测试')
     expect(cards.map(c => c.find('h4').text())).toEqual([
-      '转测摸底测试', '周版本测试', '冒烟测试', '连续OTA升级', '休眠唤醒-重启测试', 'GMS测试', '流水线适配自动化测试', 'AI用例',
+      '转测摸底测试', '周版本测试', '冒烟测试', '连续OTA升级', 'GMS测试', '流水线适配自动化测试', 'AI用例',
     ])
 
     await cards[0].trigger('click')
@@ -79,7 +79,7 @@ describe('SelfCheckChecklist 两级卡片', () => {
   it('「返回分类」回到大类卡视图，分类切换可直达另一类', async () => {
     const wrapper = mountChecklist()
     await wrapper.findAll('.checklist-card')[0].trigger('click')
-    expect(wrapper.findAll('.checklist-card').length).toBe(8)
+    expect(wrapper.findAll('.checklist-card').length).toBe(7)
 
     await wrapper.find('.checklist-back').trigger('click')
     expect(wrapper.findAll('.checklist-card').length).toBe(2)
@@ -98,10 +98,16 @@ describe('SelfCheckChecklist 两级卡片', () => {
   it('activeTestType 传入时自动落在对应分类并高亮当前项', () => {
     const wrapper = mountChecklist({ activeTestType: 'monkey' })
     const cards = wrapper.findAll('.checklist-card')
-    expect(cards.length).toBe(7)
+    expect(cards.length).toBe(8)
     expect(cards[0].text()).toContain('monkey测试')
     expect(cards[0].classes()).toContain('is-active')
     expect(wrapper.findAll('.category-switch-btn')[1].classes()).toContain('active')
+    // alarm 卡片已收纳进领域测试，排在 monkey 家族之后
+    expect(cards.map(c => c.find('h4').text())).toEqual(
+      expect.arrayContaining(['monkey测试', 'monkey结果检查', '休眠唤醒-重启测试']),
+    )
+    const labels = cards.map(c => c.find('h4').text())
+    expect(labels.indexOf('休眠唤醒-重启测试')).toBeGreaterThan(labels.indexOf('monkey结果检查'))
     wrapper.unmount()
   })
 })
