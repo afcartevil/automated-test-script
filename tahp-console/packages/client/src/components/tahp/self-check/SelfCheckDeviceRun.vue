@@ -237,6 +237,8 @@ const {
   pretestPanelTitle,
   pretestLogTitle,
   otaStartBlocked,
+  otaUpgradePathMissing,
+  otaPretestOnly,
   otaPretestConfiguredSummary,
   openOtaPretestDialog,
   isSelectedCaseInConfig,
@@ -1868,7 +1870,7 @@ function handleDutRowAction(deviceId: string) {
                         <p class="flash-options-hint">
                           {{
                             selectedTestType === 'ota_upgrade'
-                              ? '已获取外发版本时按所选版本连续升级；调试阶段未获取到版本也可以开始，只执行本次前置步骤。'
+                              ? '请先获取外发版本。未拿到升级路径时不能开始连续 OTA 升级。'
                               : '勾选需要升级的 Android 版本；最低版使用 device_update，更高版本依次 T卡升级，全部完成后开始测试。'
                           }}
                         </p>
@@ -1991,13 +1993,22 @@ function handleDutRowAction(deviceId: string) {
                       </p>
                     </div>
 
+                    <div v-if="selectedTestType === 'ota_upgrade'" class="form-group">
+                      <label class="checkbox-label">
+                        <input type="checkbox" v-model="otaPretestOnly" />
+                        <span>仅执行前置操作</span>
+                      </label>
+                      <p class="flash-options-hint ea-muted">执行 OEM 解锁和 usbdebug，不检查电量，也不进行连续 OTA 升级。</p>
+                    </div>
+
                     <button
                       type="button"
                       class="ea-btn-primary"
-                      :disabled="(selectedTestType === 'gms' && !gmsHostSupported) || otaStartBlocked || (canSelectStartModules && !getCaseGroups.some(([, configs]) => configs.some(c => isStartModuleSelected(c.module))))"
+                      :disabled="(selectedTestType === 'gms' && !gmsHostSupported) || otaStartBlocked || otaUpgradePathMissing || (canSelectStartModules && !getCaseGroups.some(([, configs]) => configs.some(c => isStartModuleSelected(c.module))))"
+                      :title="otaUpgradePathMissing ? '请先获取外发版本' : undefined"
                       @click.stop="handleStartTest(selectedDevice.device.deviceId)"
                     >
-                      {{ startTestIntentRole === AUX_ROLE ? '开始待命' : '开始测试' }}
+                      {{ startTestIntentRole === AUX_ROLE ? '开始待命' : (selectedTestType === 'ota_upgrade' && otaPretestOnly ? '执行前置操作' : '开始测试') }}
                     </button>
                   </div>
                 </template>

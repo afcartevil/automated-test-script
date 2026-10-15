@@ -4,6 +4,7 @@ import { tmpdir } from 'os'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   buildUpgradeSteps,
+  findCiRelease,
   applyHighestDailyTcardOverride,
   assertContinuousUpgradeEligible,
   classifyReleaseZipName,
@@ -450,5 +451,33 @@ describe('release upgrade resolver helpers', () => {
       androidVersion: 17,
       tcardPackagePath: '\\\\cq\\daily\\a17.zip',
     })).toBe(false)
+  })
+
+  it('keeps CI packages and falls back to CI\\IDH with the same relative path', () => {
+    const root = join(tmpdir(), `tahp-ci-idh-${Date.now()}-${tempRoots.length}`)
+    tempRoots.push(root)
+    const folder = 'LI9-15.1.2.170SP05(OP001PF001AZ)'
+    const ciOpen = join(root, 'CI', 'RELEASE_VERSIONS', 'TECNO', 'LI9-H335', 'USER', folder, 'Open')
+    const idhOpen = join(root, 'CI', 'IDH', 'RELEASE_VERSIONS', 'TECNO', 'LI9-H335', 'USER', folder, 'Open')
+    mkdirSync(ciOpen, { recursive: true })
+    mkdirSync(idhOpen, { recursive: true })
+    const ciZip = join(ciOpen, 'LI9-15.1.2.170SP05(OP001PF001AZ).zip')
+    const idhZip = join(idhOpen, 'LI9-15.1.2.170SP05(OP001PF001AZ).zip')
+    writeFileSync(ciZip, 'ci')
+    writeFileSync(idhZip, 'idh')
+
+    const release = parseUserReleaseFolder(folder)!
+    const ciBrand = join(root, 'CI', 'RELEASE_VERSIONS', 'TECNO')
+    const idhBrand = join(root, 'CI', 'IDH', 'RELEASE_VERSIONS', 'TECNO')
+    expect(findCiRelease([ciBrand, idhBrand], ['LI9-H335'], release)).toMatchObject({
+      brandRoot: ciBrand,
+      packages: { fullZip: ciZip },
+    })
+
+    rmSync(join(root, 'CI', 'RELEASE_VERSIONS', 'TECNO', 'LI9-H335'), { recursive: true, force: true })
+    expect(findCiRelease([ciBrand, idhBrand], ['LI9-H335'], release)).toMatchObject({
+      brandRoot: idhBrand,
+      packages: { fullZip: idhZip },
+    })
   })
 })

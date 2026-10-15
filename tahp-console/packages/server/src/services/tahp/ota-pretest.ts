@@ -10,7 +10,7 @@ import {
 } from 'fs'
 import { homedir } from 'os'
 import { basename, dirname, join, resolve } from 'path'
-import { extractProjectCandidates, matchProjectFolder, resolveFlashPackageDir, waitForAdbDevice } from './device-flash'
+import { extractProjectCandidates, matchProjectFolder, resolveFlashPackageDir, toCiIdhPath, waitForAdbDevice } from './device-flash'
 import { resolvePythonSpawn, tahpPaths } from './paths'
 
 export const CQ_UD_ROOT = '\\\\10.205.4.40\\sw_version\\CI'
@@ -294,8 +294,14 @@ function newestFirst(a: DirEntry, b: DirEntry): number {
   return b.name.localeCompare(a.name, undefined, { numeric: true })
 }
 
+function isUdContainer(name: string): boolean {
+  const lower = name.toLowerCase()
+  return lower === 'derivativeversions' || lower === 'sts_versions'
+}
+
 /**
- * 在项目目录下查找 DerivativeVersions 中最新的 *_ud.zip。
+ * 在项目目录下查找最新的 *_ud.zip。
+ * 位置：DerivativeVersions，或 TEST 具体版本目录下的 STS_VERSIONS。
  * 搜索限制深度，避免误扫整个版本盘。
  */
 export async function findLatestUdZip(
@@ -305,7 +311,7 @@ export async function findLatestUdZip(
   let bestPath: string | null = null
   let bestMtime = -1
 
-  const visit = async (dir: string, depth: number, underDerivative: boolean): Promise<void> => {
+  const visit = async (dir: string, depth: number, underUd: boolean): Promise<void> => {
     if (depth > 8) return
     onVisit?.(dir)
     await new Promise(resolve => setImmediate(resolve))
@@ -313,7 +319,7 @@ export async function findLatestUdZip(
     for (const entry of entries) {
       const full = join(dir, entry.name)
       if (entry.isFile()) {
-        if (!underDerivative || !UD_ZIP_RE.test(entry.name)) continue
+        if (!underUd || !UD_ZIP_RE.test(entry.name)) continue
         let mtime = 0
         try { mtime = statSync(full).mtimeMs } catch { /* network stat may fail */ }
         if (mtime > bestMtime || (mtime === bestMtime && (!bestPath || full.localeCompare(bestPath) > 0))) {
@@ -323,9 +329,9 @@ export async function findLatestUdZip(
         continue
       }
       if (!entry.isDirectory()) continue
-      const nextUnderDerivative = underDerivative || entry.name.toLowerCase() === 'derivativeversions'
-      if (!nextUnderDerivative && depth >= 4) continue
-      await visit(full, depth + 1, nextUnderDerivative)
+      const nextUnderUd = underUd || isUdContainer(entry.name)
+      if (!nextUnderUd && depth >= 4) continue
+      await visit(full, depth + 1, nextUnderUd)
     }
   }
 
@@ -352,6 +358,35 @@ async function resolveIdentity(deviceId: string, root: string): Promise<{ brand:
   return { brand, project }
 }
 
+export function udProjectSearchOrder(brand: string, project: string): Array<{
+  projectRoot: string
+  source: '重庆' | '上海'
+  viaIdh: boolean
+  label: string
+}> {
+  const cqProject = join(CQ_UD_ROOT, brand, project)
+  return [
+    {
+      projectRoot: cqProject,
+      source: '重庆',
+      viaIdh: false,
+      label: '重庆',
+    },
+    {
+      projectRoot: toCiIdhPath(cqProject),
+      source: '重庆',
+      viaIdh: true,
+      label: '重庆 IDH',
+    },
+    {
+      projectRoot: join(SH_UD_ROOT, brand, project),
+      source: '上海',
+      viaIdh: false,
+      label: '上海',
+    },
+  ]
+}
+
 export async function resolveUdPackage(
   deviceId: string,
   onLog?: (line: string) => void,
@@ -371,18 +406,14 @@ export async function resolveUdPackage(
   }
 
   const searchedRoots: string[] = []
-  for (const candidate of [
-    { root: CQ_UD_ROOT, source: '重庆' as const },
-    { root: SH_UD_ROOT, source: '上海' as const },
-  ]) {
-    const projectRoot = join(candidate.root, identity.brand, identity.project)
-    searchedRoots.push(projectRoot)
+  for (const candidate of udProjectSearchOrder(identity.brand, identity.project)) {
+    searchedRoots.push(candidate.projectRoot)
     let lastProgress = Date.now()
-    const packagePath = await findLatestUdZip(projectRoot, (dir) => {
+    const packagePath = await findLatestUdZip(candidate.projectRoot, (dir) => {
       const now = Date.now()
       if (now - lastProgress < 8_000) return
       lastProgress = now
-      onLog?.(`[前置操作] 仍在${candidate.source}版本盘查找 UD 包（${basename(dir)}）`)
+      onLog?.(`[前置操作] 仍在${candidate.label}版本盘查找 UD 包（${basename(dir)}）`)
     })
     if (packagePath) {
       return {
@@ -391,13 +422,15 @@ export async function resolveUdPackage(
         packagePath,
         source: candidate.source,
         searchedRoots,
-        message: candidate.source === '重庆'
-          ? '已从重庆版本盘找到 UD 包'
-          : '重庆未找到 UD 包，已回退到上海版本盘',
+        message: candidate.viaIdh
+          ? '重庆 CI 未找到 UD 包，已从 CI\\IDH 找到'
+          : candidate.source === '重庆'
+            ? '已从重庆版本盘找到 UD 包'
+            : '重庆 CI 与 CI\\IDH 均未找到 UD 包，已回退到上海版本盘',
       }
     }
   }
-  throw new Error(`重庆、上海均未找到 DerivativeVersions 下的 *_ud.zip：${searchedRoots.join('；')}`)
+  throw new Error(`重庆 CI、CI\\IDH 与上海均未找到 DerivativeVersions 或 STS_VERSIONS 下的 *_ud.zip：${searchedRoots.join('；')}`)
 }
 
 function runtimeDir(): string {
@@ -908,6 +941,7 @@ export async function runCombinedPretest(
   packagePath: string | undefined,
   settings: OtaPretestSettings,
   onLog: (line: string) => void,
+  options?: { pretestOnly?: boolean },
 ): Promise<{
   rootOutput: string
   flashedUd: boolean
@@ -915,6 +949,9 @@ export async function runCombinedPretest(
   oemUnlockRan: boolean
   usbdebugWritten: boolean
 }> {
+  if (options?.pretestOnly) {
+    onLog('[前置操作] 仅执行前置操作，不进行连续 OTA 升级')
+  }
   const rootOutput = await readAdbRootState(deviceId, onLog)
   const flashUd = needsUdFlash(rootOutput)
   let flashedUd = false

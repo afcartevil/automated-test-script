@@ -86,6 +86,33 @@ const EXTRACT_ZIP_SCRIPT = join(__dirname, 'self-check', 'python', 'extract_flas
 const ADB_KEY_FILES = ['adbkey', 'adbkey.pub'] as const
 const DAILY_VERSION_ROOT = '\\\\10.150.98.24\\sw_ver_sh'
 const CQ_DAILY_VERSION_ROOT = '\\\\10.205.4.40\\sw_version\\CI'
+
+/** `\\10.205.4.40\sw_version\CI\...` → `\\10.205.4.40\sw_version\CI\IDH\...`，其余段不变。 */
+export function toCiIdhPath(path: string): string {
+  const normalized = path.replace(/\//g, '\\')
+  if (/\\CI\\IDH(\\|$)/i.test(normalized)) return normalized
+  return normalized.replace(/\\CI\\/i, '\\CI\\IDH\\')
+}
+
+export function findLatestTcardPackageOnCqTest(
+  testRoot: string,
+  androidVersion: number,
+): { openPath: string; tcardPackagePath: string; usedIdhFallback: boolean } {
+  try {
+    return { ...findLatestTcardPackageInTestRoot(testRoot, androidVersion), usedIdhFallback: false }
+  } catch (error) {
+    const idhRoot = toCiIdhPath(testRoot)
+    if (idhRoot === testRoot) throw error
+    try {
+      return { ...findLatestTcardPackageInTestRoot(idhRoot, androidVersion), usedIdhFallback: true }
+    } catch (idhError) {
+      const primaryMessage = error instanceof Error ? error.message : String(error)
+      const idhMessage = idhError instanceof Error ? idhError.message : String(idhError)
+      throw new Error(`${primaryMessage}；IDH 兜底也未找到: ${idhMessage}`)
+    }
+  }
+}
+
 const RELEASE_NOTE_FILE = 'ReleaseNote.xlsx'
 const DEFAULT_DEV_PROJECT_KEYWORD = 'Android_16'
 const RELEASE_BRANCH_SUFFIX = '_mtk_sys_release'
@@ -1217,11 +1244,13 @@ export async function resolveHighestDailyAndroidTcardPackage(
     let tcardPackagePath: string | undefined
     let tcardSource: 'TEST' | undefined
     let tcardResolveWarning: string | undefined
+    let usedIdhFallback = false
     try {
-      const fallback = findLatestTcardPackageInTestRoot(testRoot, highest.androidVersion)
+      const fallback = findLatestTcardPackageOnCqTest(testRoot, highest.androidVersion)
       openPath = fallback.openPath
       tcardPackagePath = fallback.tcardPackagePath
       tcardSource = 'TEST'
+      usedIdhFallback = fallback.usedIdhFallback
     } catch (err: any) {
       tcardResolveWarning = err?.message
         || `Android ${highest.androidVersion} 仅有 trunk，且 TEST 下未找到 T卡升级包`
@@ -1238,7 +1267,7 @@ export async function resolveHighestDailyAndroidTcardPackage(
       tcardPackagePath,
       tcardSource,
       tcardResolveWarning,
-      usedIdhFallback: false,
+      usedIdhFallback,
     }
   }
   const systemVersion = pickLatestSystemVersion(availableVersions)
@@ -1255,16 +1284,18 @@ export async function resolveHighestDailyAndroidTcardPackage(
   let tcardPackagePath: string | undefined
   let tcardSource: 'DEV' | 'TEST' | undefined
   let tcardResolveWarning: string | undefined
+  let usedTestIdhFallback = false
   try {
     tcardPackagePath = findLatestTcardPackageInOpenPath(openPath, highest.androidVersion - 1)
     tcardSource = 'DEV'
   } catch {
     const testRoot = join(CQ_DAILY_VERSION_ROOT, identity.brand, identity.project, 'TEST')
     try {
-      const fallback = findLatestTcardPackageInTestRoot(testRoot, highest.androidVersion)
+      const fallback = findLatestTcardPackageOnCqTest(testRoot, highest.androidVersion)
       openPath = fallback.openPath
       tcardPackagePath = fallback.tcardPackagePath
       tcardSource = 'TEST'
+      usedTestIdhFallback = fallback.usedIdhFallback
     } catch (err: any) {
       tcardResolveWarning = err?.message || `未找到 Android ${highest.androidVersion} 的 T卡升级包`
     }
@@ -1282,7 +1313,7 @@ export async function resolveHighestDailyAndroidTcardPackage(
     tcardPackagePath,
     tcardSource,
     tcardResolveWarning,
-    usedIdhFallback: resolved.usedIdhFallback,
+    usedIdhFallback: resolved.usedIdhFallback || usedTestIdhFallback,
   }
 }
 

@@ -14,6 +14,8 @@ import {
   parseAndroidVersionFromDevProjectName,
   findLatestTcardPackageInOpenPath,
   findLatestTcardPackageInTestRoot,
+  findLatestTcardPackageOnCqTest,
+  toCiIdhPath,
   findDailyTrunkBranchName,
   matchProjectFolder,
   resolveUserRootPkgPath,
@@ -21,7 +23,7 @@ import {
   MARKET_VERSIONS,
   type DailySystemVersionOption,
 } from '../../packages/server/src/services/tahp/device-flash'
-import { applyStoredOtaAccount, assertOtaBatteryLevel, findLatestUdZip, isOemUnlocked, needsUdFlash, parseBatteryLevel, parseUsbdebugFlag, readOtaAccountStore, readProjectSwdConfig, swdProjectConfigPath, writeOtaAccountStore } from '../../packages/server/src/services/tahp/ota-pretest'
+import { applyStoredOtaAccount, assertOtaBatteryLevel, CQ_UD_ROOT, findLatestUdZip, isOemUnlocked, needsUdFlash, parseBatteryLevel, parseUsbdebugFlag, readOtaAccountStore, readProjectSwdConfig, SH_UD_ROOT, swdProjectConfigPath, udProjectSearchOrder, writeOtaAccountStore } from '../../packages/server/src/services/tahp/ota-pretest'
 
 describe('device-flash helpers', () => {
   it('normalizes UNC paths', () => {
@@ -151,6 +153,44 @@ describe('device-flash helpers', () => {
     }
   })
 
+  it('inserts IDH after CI and keeps the rest of the Chongqing path', () => {
+    expect(toCiIdhPath('\\\\10.205.4.40\\sw_version\\CI\\RELEASE_VERSIONS\\TECNO\\LI9-H335\\USER\\Open'))
+      .toBe('\\\\10.205.4.40\\sw_version\\CI\\IDH\\RELEASE_VERSIONS\\TECNO\\LI9-H335\\USER\\Open')
+    expect(toCiIdhPath('\\\\10.205.4.40\\sw_version\\CI\\TECNO\\LI9\\TEST'))
+      .toBe('\\\\10.205.4.40\\sw_version\\CI\\IDH\\TECNO\\LI9\\TEST')
+    expect(toCiIdhPath('\\\\10.205.4.40\\sw_version\\CI\\IDH\\RELEASE_VERSIONS\\TECNO'))
+      .toBe('\\\\10.205.4.40\\sw_version\\CI\\IDH\\RELEASE_VERSIONS\\TECNO')
+  })
+
+  it('uses the CI TEST package before falling back to CI\\IDH', () => {
+    const root = join(tmpdir(), `tahp-cq-idh-${Date.now()}`)
+    const base = join(root, 'sw_version')
+    const ciOpen = join(base, 'CI', 'TECNO', 'LI9', 'TEST', 'tOS16.1.0.100[2026.10.01.01.00.00_1_user]', 'Open')
+    const idhOpen = join(base, 'CI', 'IDH', 'TECNO', 'LI9', 'TEST', 'tOS16.1.0.100[2026.10.01.01.00.00_1_user]', 'Open')
+    mkdirSync(ciOpen, { recursive: true })
+    mkdirSync(idhOpen, { recursive: true })
+    const ciZip = join(ciOpen, 'Tcard_LI9-16.1.0.100_a15.zip')
+    const idhZip = join(idhOpen, 'Tcard_LI9-16.1.0.100_a15.zip')
+    writeFileSync(ciZip, 'ci')
+    writeFileSync(idhZip, 'idh')
+    const testRoot = join(base, 'CI', 'TECNO', 'LI9', 'TEST')
+    try {
+      expect(findLatestTcardPackageOnCqTest(testRoot, 16)).toEqual({
+        openPath: ciOpen,
+        tcardPackagePath: ciZip,
+        usedIdhFallback: false,
+      })
+      rmSync(join(base, 'CI', 'TECNO'), { recursive: true, force: true })
+      expect(findLatestTcardPackageOnCqTest(testRoot, 16)).toEqual({
+        openPath: idhOpen,
+        tcardPackagePath: idhZip,
+        usedIdhFallback: true,
+      })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('resolves user_root package from flash package directory', () => {
     const base = join(tmpdir(), `tahp-flash-root-${Date.now()}`)
     mkdirSync(base, { recursive: true })
@@ -213,6 +253,35 @@ describe('device-flash helpers', () => {
     } finally {
       rmSync(base, { recursive: true, force: true })
     }
+  })
+
+  it('finds UD packages under a TEST version STS_VERSIONS directory', async () => {
+    const base = join(tmpdir(), `tahp-ud-sts-${Date.now()}`)
+    const open = join(
+      base,
+      'TEST',
+      'tOS15.1.2.196[2026.09.29.13.41.03_996457_user]',
+      'STS_VERSIONS',
+      '2026.09.29.16.34.13_996470_userdebug_EFUSE[efuse.tr_partition]',
+      'Open',
+    )
+    mkdirSync(open, { recursive: true })
+    try {
+      const zip = join(open, 'LI9-15.1.2.196(OP001PF001AZ)_UD.zip')
+      writeFileSync(zip, 'ud')
+      writeFileSync(join(base, 'TEST', 'tOS15.1.2.196[2026.09.29.13.41.03_996457_user]', 'ignored_ud.zip'), 'no')
+      expect(await findLatestUdZip(base)).toBe(zip)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('searches CI\\IDH after the Chongqing project path and before Shanghai', () => {
+    expect(udProjectSearchOrder('TECNO', 'LI9').map((item) => item.projectRoot)).toEqual([
+      join(CQ_UD_ROOT, 'TECNO', 'LI9'),
+      '\\\\10.205.4.40\\sw_version\\CI\\IDH\\TECNO\\LI9',
+      join(SH_UD_ROOT, 'TECNO', 'LI9'),
+    ])
   })
 
   it('builds SkipOOBE adb commands for a known serial', () => {

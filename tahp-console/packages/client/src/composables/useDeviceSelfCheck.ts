@@ -64,6 +64,8 @@ import {
   AUTO_RETEST_TOOLTIP,
   MODULE_ORDER,
   OTA_UPGRADE_FLASH_CONFIRM,
+  otaConfirmSteps,
+  hasContinuousOtaPackagePath,
   missingTcardZipHint,
   pickPreferredTcardZip,
   resolveReleaseUpgradeEnabledOnTypeChange,
@@ -209,6 +211,7 @@ const otaPretestRunning = ref(false)
 const otaPretestUdPath = ref('')
 const otaPretestUdSource = ref<'重庆' | '上海' | null>(null)
 const otaPretestEnabled = ref(true)
+const otaPretestOnly = ref(false)
 const otaPretestRootOutput = ref('')
 const otaPretestFlashedUd = ref(false)
 
@@ -383,9 +386,10 @@ async function handleResolveOtaPretestUd() {
   }
 }
 
-async function executeOtaPretest(): Promise<boolean> {
+async function executeOtaPretest(options?: { pretestOnly?: boolean }): Promise<boolean> {
   const deviceId = selectedDeviceId.value
   if (!deviceId || otaPretestRunning.value) return false
+  const pretestOnly = Boolean(options?.pretestOnly)
   otaPretestRunning.value = true
   error.value = null
   clearFlashPanel()
@@ -398,6 +402,7 @@ async function executeOtaPretest(): Promise<boolean> {
     const result = await runOtaPretestOperation({
       deviceId,
       udPackagePath: otaPretestUdPath.value.trim() || undefined,
+      pretestOnly,
     })
     otaPretestRootOutput.value = result.rootOutput
     otaPretestFlashedUd.value = result.flashedUd
@@ -409,6 +414,7 @@ async function executeOtaPretest(): Promise<boolean> {
       result.oemUnlockRan ? '已执行 OEM 解锁' : 'OEM 已解锁',
       result.usbdebugWritten ? '已写入 usbdebug' : 'usbdebug 已是 1',
     ]
+    if (pretestOnly) actions.push('未进行连续 OTA 升级')
     message.success(actions.join('，'))
     return true
   } catch (e: any) {
@@ -1921,12 +1927,16 @@ function closeOtaConfirm() {
   otaConfirmOpen.value = false
 }
 
-function confirmOtaUpgradeFlashThenStart(deviceId: string, steps: string[]) {
+function confirmOtaUpgradeFlashThenStart(
+  deviceId: string,
+  steps: string[],
+  mode: 'upgrade' | 'pretest-only' = 'upgrade',
+) {
   if (otaConfirmOpen.value) return
   otaConfirmOpen.value = true
   const lines = steps.length ? steps : ['连续版本升级']
   dialog.warning({
-    title: '本次将执行',
+    title: mode === 'pretest-only' ? '仅执行前置操作' : '本次将执行',
     content: () => h(
       'div',
       { style: 'line-height: 1.7' },
@@ -1938,6 +1948,10 @@ function confirmOtaUpgradeFlashThenStart(deviceId: string, steps: string[]) {
     negativeText: OTA_UPGRADE_FLASH_CONFIRM.negativeText,
     onPositiveClick: () => {
       closeOtaConfirm()
+      if (mode === 'pretest-only') {
+        void executeOtaPretest({ pretestOnly: true })
+        return
+      }
       void runSelectedOtaPretestThenStart(deviceId)
     },
     onNegativeClick: closeOtaConfirm,
@@ -2011,9 +2025,25 @@ async function handleStartTest(deviceId: string) {
       return
     }
     if (selectedTestType.value === 'ota_upgrade' && startTestIntentRole.value !== '辅测机') {
+      if (!otaPretestOnly.value && !hasContinuousOtaPackagePath(releaseUpgradePlan.value)) {
+        error.value = '请先获取外发版本'
+        return
+      }
       if (otaConfirmOpen.value || otaStartPreparing.value || otaPretestRunning.value) return
       otaStartPreparing.value = true
       try {
+        if (otaPretestOnly.value) {
+          confirmOtaUpgradeFlashThenStart(
+            deviceId,
+            otaConfirmSteps({
+              pretestOnly: true,
+              pretestSteps: [],
+              upgradeSteps: [],
+            }),
+            'pretest-only',
+          )
+          return
+        }
         const preview = await previewOtaStart(deviceId)
         if (!preview.allowed) {
           const text = preview.message || '无法进行连续 OTA 升级'
@@ -2025,7 +2055,11 @@ async function handleStartTest(deviceId: string) {
           })
           return
         }
-        confirmOtaUpgradeFlashThenStart(deviceId, [...preview.steps, ...otaReleaseSteps()])
+        confirmOtaUpgradeFlashThenStart(deviceId, otaConfirmSteps({
+          pretestOnly: false,
+          pretestSteps: preview.steps,
+          upgradeSteps: otaReleaseSteps(),
+        }))
       } catch (e: any) {
         const text = e?.message || '无法读取手机电量，无法进行连续 OTA 升级'
         error.value = text
@@ -2898,6 +2932,13 @@ const otaStartBlocked = computed(() => (
   && otaStartPreparing.value
 ))
 
+const otaUpgradePathMissing = computed(() => (
+  selectedTestType.value === 'ota_upgrade'
+  && startTestIntentRole.value !== '辅测机'
+  && !otaPretestOnly.value
+  && !hasContinuousOtaPackagePath(releaseUpgradePlan.value)
+))
+
 onMounted(async () => {
   connectEventStream()
   await loadDevices()
@@ -3105,7 +3146,9 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     otaPretestUdPath,
     otaPretestUdSource,
     otaPretestEnabled,
+    otaPretestOnly,
     otaStartBlocked,
+    otaUpgradePathMissing,
     otaPretestRootOutput,
     otaPretestConfiguredSummary,
     showOtaPretestDialog,

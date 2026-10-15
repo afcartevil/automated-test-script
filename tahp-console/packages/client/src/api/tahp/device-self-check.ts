@@ -321,6 +321,7 @@ export async function previewOtaStart(deviceId: string): Promise<OtaStartPreview
 export async function runOtaPretestOperation(payload: {
   deviceId: string
   udPackagePath?: string
+  pretestOnly?: boolean
 }): Promise<OtaPretestRunResult> {
   return await tahpPost<OtaPretestRunResult>(
     '/api/tahp/device-self-check/ota-pretest/run',

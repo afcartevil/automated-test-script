@@ -854,6 +854,7 @@ const activeOtaPretestDevices = new Set<string>()
 export async function runOtaPretestOperation(
   deviceId: string,
   udPackagePath?: string,
+  options?: { pretestOnly?: boolean },
 ): Promise<{
   success: true
   rootOutput: string
@@ -870,7 +871,7 @@ export async function runOtaPretestOperation(
 
   activeOtaPretestDevices.add(serial)
   try {
-    const result = await runCombinedPretest(serial, udPackagePath, config, log)
+    const result = await runCombinedPretest(serial, udPackagePath, config, log, options)
     emitEvent('ota_pretest_completed', { deviceId: serial, success: true, ...result })
     return { success: true, ...result }
   } catch (error: any) {

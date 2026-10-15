@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   OTA_UPGRADE_FLASH_CONFIRM,
+  hasContinuousOtaPackagePath,
+  otaConfirmSteps,
   missingTcardZipHint,
   pickPreferredTcardZip,
   resolveReleaseUpgradeEnabledOnTypeChange,
@@ -16,6 +18,37 @@ describe('ota upgrade flash confirm copy', () => {
     ])
     expect(OTA_UPGRADE_FLASH_CONFIRM.positiveText).toBe('确认')
     expect(OTA_UPGRADE_FLASH_CONFIRM.negativeText).toBe('取消')
+  })
+
+  it('requires a resolved package path before continuous OTA can start', () => {
+    expect(hasContinuousOtaPackagePath(null)).toBe(false)
+    expect(hasContinuousOtaPackagePath({
+      steps: [{ selected: true, available: false, needsTransfer: true, packagePath: '' }],
+    })).toBe(false)
+    expect(hasContinuousOtaPackagePath({
+      steps: [{ selected: true, available: true, needsTransfer: false, packagePath: '\\\\cq\\a14.zip' }],
+    })).toBe(true)
+  })
+
+  it('keeps pretest steps and drops the upgrade when only pretest is selected', () => {
+    expect(otaConfirmSteps({
+      pretestOnly: true,
+      pretestSteps: [
+        '检查 adb root：user 版本刷 UD，已 root 则跳过',
+        '检查 OEM 解锁，未完成则解锁',
+        '检查 usbdebug，不是 1 则写入',
+      ],
+      upgradeSteps: ['device_update 刷入 Android 14'],
+    })).toEqual([
+      '检查 adb root：user 版本刷 UD，已 root 则跳过',
+      '检查 OEM 解锁，未完成则解锁',
+      '检查 usbdebug，不是 1 则写入',
+    ])
+    expect(otaConfirmSteps({
+      pretestOnly: false,
+      pretestSteps: ['检查 OEM 解锁，未完成则解锁'],
+      upgradeSteps: ['T卡升级到 Android 15'],
+    })).toEqual(['检查 OEM 解锁，未完成则解锁', 'T卡升级到 Android 15'])
   })
 })
 

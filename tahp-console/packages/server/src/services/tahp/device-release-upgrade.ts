@@ -7,6 +7,7 @@ import { basename, join } from 'path'
 import {
   extractProjectCandidates,
   resolveHighestDailyAndroidTcardPackage,
+  toCiIdhPath,
 } from './device-flash'
 import {
   isOfficialTcardZipName,
@@ -434,6 +435,19 @@ function findCiVersion(
   return null
 }
 
+/** 先查 `CI`，没有包再查 `CI\\IDH`，品牌和版本相对路径不变。 */
+export function findCiRelease(
+  brandRoots: string[],
+  models: string[],
+  release: ParsedReleaseVersion,
+): { model: string; version: ParsedReleaseVersion; packages: ReleasePackageSet; brandRoot: string } | null {
+  for (const brandRoot of brandRoots) {
+    const hit = findCiVersion(brandRoot, models, release)
+    if (hit) return { ...hit, brandRoot }
+  }
+  return null
+}
+
 export function buildUpgradeSteps(
   releases: ParsedReleaseVersion[],
   findCi: (release: ParsedReleaseVersion) => { model: string; version: ParsedReleaseVersion; packages: ReleasePackageSet } | null,
@@ -572,11 +586,23 @@ export async function resolveReleaseUpgradePlan(deviceId: string): Promise<Relea
   if (!releases.length) throw new Error(`未找到已外发 USER/MR 版本: ${releaseRoot}`)
 
   const ciBrandRoot = join(CI_RELEASE_VERSION_ROOT, brand)
+  const idhBrandRoot = join(toCiIdhPath(CI_RELEASE_VERSION_ROOT), brand)
   const ciModels = modelFamilyVariants(model)
+  const locatedRoots = new Map<string, string>()
   const steps = buildUpgradeSteps(
     releases,
-    (release) => findCiVersion(ciBrandRoot, ciModels, release),
-    (matchedModel, release) => join(ciBrandRoot, matchedModel || model, release.relativePath, 'Open'),
+    (release) => {
+      const hit = findCiRelease([ciBrandRoot, idhBrandRoot], ciModels, release)
+      if (!hit) return null
+      locatedRoots.set(release.folderName, hit.brandRoot)
+      return hit
+    },
+    (matchedModel, release) => join(
+      locatedRoots.get(release.folderName) || ciBrandRoot,
+      matchedModel || model,
+      release.relativePath,
+      'Open',
+    ),
   )
   let dailyHighestAndroidVersion: number | undefined
   let dailyTcardOverrideApplied = false
@@ -600,7 +626,12 @@ export async function resolveReleaseUpgradePlan(deviceId: string): Promise<Relea
     model,
     ciModels,
     releaseRoot,
-    ciRoot: join(ciBrandRoot, model),
+    ciRoot: join(
+      locatedRoots.size > 0 && [...locatedRoots.values()].every((root) => root === idhBrandRoot)
+        ? idhBrandRoot
+        : ciBrandRoot,
+      model,
+    ),
     steps,
     dailyHighestAndroidVersion,
     dailyTcardOverrideApplied,

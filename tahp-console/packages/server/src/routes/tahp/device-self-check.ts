@@ -540,10 +540,12 @@ tahpDeviceSelfCheckRoutes.post(
       const body = (ctx.request.body || {}) as {
         deviceId?: string
         udPackagePath?: string
+        pretestOnly?: boolean
       }
       const result = await runOtaPretestOperation(
         String(body.deviceId || ''),
         body.udPackagePath,
+        { pretestOnly: Boolean(body.pretestOnly) },
       )
       ctx.body = { success: true, data: result }
     } catch (err: any) {

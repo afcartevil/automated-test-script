@@ -69,6 +69,41 @@ export function missingTcardZipHint(previousAndroid: number): string {
 }
 
 /** 连续OTA升级开始刷机前的人工确认 */
+/** 未勾选仅执行前置操作时，必须已有可选且路径完整的外发版本才能开始升级。 */
+export function hasContinuousOtaPackagePath(plan: {
+  steps: Array<{
+    selected: boolean
+    available: boolean
+    needsTransfer: boolean
+    packagePath: string
+  }>
+} | null | undefined): boolean {
+  if (!plan) return false
+  const selected = plan.steps.filter((step) => step.selected)
+  if (!selected.length) return false
+  return selected.every((step) =>
+    step.available && !step.needsTransfer && step.packagePath.trim().length > 0,
+  )
+}
+
+/** 勾选「仅执行前置操作」时确认框只保留前置步骤，不带连续升级步骤。 */
+export function otaConfirmSteps(input: {
+  pretestOnly: boolean
+  pretestSteps: string[]
+  upgradeSteps: string[]
+}): string[] {
+  if (input.pretestOnly) {
+    return input.pretestSteps.length
+      ? input.pretestSteps
+      : [
+          '检查 adb root：user 版本刷 UD，已 root 则跳过',
+          '检查 OEM 解锁，未完成则解锁',
+          '检查 usbdebug，不是 1 则写入',
+        ]
+  }
+  return [...input.pretestSteps, ...input.upgradeSteps]
+}
+
 export const OTA_UPGRADE_FLASH_CONFIRM = {
   title: '开始连续 OTA',
   lines: [
@@ -412,7 +447,7 @@ export function formatCatalogPrereq(group: CaseCatalogGroup): string {
     return 'ADB 连接测试机（userdebug 已 root）；主机需 java+adb；测试中途设备会多次重启'
   }
   if (group.testType === 'ota_upgrade') {
-    return 'ADB 连接测试机；有外发版本时连续升级，调试阶段可先只跑前置步骤'
+    return 'ADB 连接测试机；先获取外发版本后再连续升级，或勾选仅执行前置操作'
   }
   const parts: string[] = ['ADB 连接测试机']
   const maxDutSim = Math.max(0, ...group.modules.map(m => m.conditions.dutSimCount))
