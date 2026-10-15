@@ -948,7 +948,14 @@ export async function runCombinedPretest(
 
   let oemUnlockRan = false
   if (!oemUnlocked) {
-    await runOemUnlock(deviceId, settings, onLog)
+    await runOemUnlockWithRetry({
+      runUnlock: () => runOemUnlock(deviceId, settings, onLog),
+      isUnlocked: async () => isOemUnlocked(
+        await adbProp(deviceId, 'ro.boot.flash.locked'),
+        await adbProp(deviceId, 'ro.boot.verified_bootstate'),
+      ),
+      onLog,
+    })
     oemUnlockRan = true
     onLog('[前置操作] 等待 OEM 解锁后的设备重新上线')
     const online = await waitForAdbDevice(deviceId)
@@ -989,4 +996,45 @@ export async function runOemUnlock(
     line => onLog(`[OEM解锁] ${line}`),
   )
   onLog('[OEM解锁] 操作完成')
+}
+
+// ─── OEM 解锁自动重试 ────────────────────────────────────────────────────
+// 云端授权（office-anticrack unlock-auth）偶发返回 code:-1 空原因失败，有限次重试吸收抖动。
+
+export const OEM_UNLOCK_MAX_ATTEMPTS = Math.max(1, Number(process.env.TAHP_OEM_UNLOCK_ATTEMPTS) || 3)
+export const OEM_UNLOCK_RETRY_DELAY_MS = Math.max(0, Number(process.env.TAHP_OEM_UNLOCK_RETRY_DELAY_MS) || 30_000)
+
+export interface OemUnlockRetryDeps {
+  runUnlock: () => Promise<void>
+  /** 复查设备当前是否已解锁（服务器可能实际已解锁但响应解析失败，避免重复解锁） */
+  isUnlocked: () => Promise<boolean>
+  onLog: (line: string) => void
+  maxAttempts?: number
+  retryDelayMs?: number
+  sleep?: (ms: number) => Promise<void>
+}
+
+export async function runOemUnlockWithRetry(deps: OemUnlockRetryDeps): Promise<void> {
+  const maxAttempts = Math.max(1, deps.maxAttempts ?? OEM_UNLOCK_MAX_ATTEMPTS)
+  const retryDelayMs = Math.max(0, deps.retryDelayMs ?? OEM_UNLOCK_RETRY_DELAY_MS)
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
+  let lastError: unknown
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (attempt > 1) {
+      deps.onLog(`[OEM解锁] ${Math.round(retryDelayMs / 1000)} 秒后进行第 ${attempt}/${maxAttempts} 次尝试（云端授权偶发失败自动重试）`)
+      await sleep(retryDelayMs)
+      if (await deps.isUnlocked()) {
+        deps.onLog('[OEM解锁] 复查设备已解锁，跳过重试')
+        return
+      }
+    }
+    try {
+      await deps.runUnlock()
+      return
+    } catch (err) {
+      lastError = err
+      deps.onLog(`[OEM解锁] 第 ${attempt}/${maxAttempts} 次尝试失败：${(err as Error)?.message || err}`)
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
