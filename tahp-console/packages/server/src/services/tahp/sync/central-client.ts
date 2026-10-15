@@ -420,6 +420,32 @@ export const centralClient = {
       body: JSON.stringify(body),
     })
   },
+
+  /** 效能看板：上报一条带项目的 session 用量。同 client_id + session_id 由中心覆盖。 */
+  async uploadEfficiencySession(body: EfficiencySessionPayload): Promise<{ ok: boolean }> {
+    return request('/api/tahp/sync/efficiency/sessions', {
+      method: 'POST',
+      headers: headers({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    })
+  },
+}
+
+export interface EfficiencySessionPayload {
+  client_id: string
+  session_id: string
+  actor: string
+  project_code: string
+  model: string
+  provider: string
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  reasoning_tokens: number
+  estimated_cost_usd: number
+  actual_cost_usd: number | null
+  started_at: string
 }
 
 /** 与 easyadapter_bff quality-store IngestRunInput 对齐 */

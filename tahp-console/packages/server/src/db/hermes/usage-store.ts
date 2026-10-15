@@ -48,6 +48,37 @@ export function updateUsage(
       created_at: now,
     })
   }
+  void import('../../services/tahp/efficiency-usage-upload')
+    .then(mod => mod.reportSessionUsage(sessionId))
+    .catch(() => undefined)
+}
+
+export function sumSessionUsage(sessionId: string): UsageRecord | undefined {
+  if (isSqliteAvailable()) {
+    const row = getDb()!.prepare(
+      `SELECT
+         COALESCE(SUM(input_tokens), 0) AS input_tokens,
+         COALESCE(SUM(output_tokens), 0) AS output_tokens,
+         COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+         COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+         COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+         COALESCE(MAX(created_at), 0) AS created_at
+       FROM ${TABLE} WHERE session_id = ?`,
+    ).get(sessionId) as UsageRecord | undefined
+    if (!row || !row.created_at) return undefined
+    const latest = getUsage(sessionId)
+    return {
+      input_tokens: row.input_tokens ?? 0,
+      output_tokens: row.output_tokens ?? 0,
+      cache_read_tokens: row.cache_read_tokens ?? 0,
+      cache_write_tokens: row.cache_write_tokens ?? 0,
+      reasoning_tokens: row.reasoning_tokens ?? 0,
+      model: latest?.model || '',
+      profile: latest?.profile || 'default',
+      created_at: row.created_at ?? 0,
+    }
+  }
+  return getUsage(sessionId)
 }
 
 export function getUsage(sessionId: string): UsageRecord | undefined {

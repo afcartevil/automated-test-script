@@ -572,12 +572,58 @@ function chainOrderSql(ids: string[]): string {
   return ids.map((_, index) => `WHEN ? THEN ${index}`).join(' ')
 }
 
-async function openSessionDb() {
+/** 只读一条 session 的用量，供效能上报。不改变汇总接口的返回形状。profile 缺省为当前激活档案。 */
+export async function readSessionUsageRow(sessionId: string, profile?: string): Promise<{
+  model: string
+  provider: string
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  reasoning_tokens: number
+  estimated_cost_usd: number
+  actual_cost_usd: number | null
+  started_at: number
+} | null> {
+  const id = String(sessionId || '').trim()
+  if (!id || !SQLITE_AVAILABLE) return null
+  let db: { close(): void; prepare(sql: string): { get(...args: unknown[]): unknown } }
+  try {
+    db = await openSessionDb(profile)
+  } catch {
+    return null
+  }
+  try {
+    const row = db.prepare(
+      `SELECT model, billing_provider, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd, started_at
+       FROM sessions WHERE id = ?`,
+    ).get(id) as Record<string, unknown> | undefined
+    if (!row) return null
+    return {
+      model: String(row.model || ''),
+      provider: String(row.billing_provider || ''),
+      input_tokens: normalizeNumber(row.input_tokens),
+      output_tokens: normalizeNumber(row.output_tokens),
+      cache_read_tokens: normalizeNumber(row.cache_read_tokens),
+      cache_write_tokens: normalizeNumber(row.cache_write_tokens),
+      reasoning_tokens: normalizeNumber(row.reasoning_tokens),
+      estimated_cost_usd: normalizeNumber(row.estimated_cost_usd),
+      actual_cost_usd: normalizeNullableNumber(row.actual_cost_usd),
+      started_at: normalizeNumber(row.started_at),
+    }
+  } catch {
+    return null
+  } finally {
+    db.close()
+  }
+}
+
+async function openSessionDb(profile?: string) {
   if (!SQLITE_AVAILABLE) {
     throw new Error(`node:sqlite requires Node >= 22.5, current: ${process.versions.node}`)
   }
   const { DatabaseSync } = await import('node:sqlite')
-  const dbPath = sessionDbPath()
+  const dbPath = profile ? join(getProfileDir(profile), 'state.db') : sessionDbPath()
   try {
     return new DatabaseSync(dbPath, { open: true, readOnly: true })
   } catch (err: any) {

@@ -142,6 +142,7 @@ async function launchDomain(ctx: StageContext, domain: PipelineDomain): Promise<
     workspaceId: domain.workspace_id,
     // 流水线内复用 Agent：不上报 adapt-debug，终态由 adapt-pipeline 整包上传
     skipQualityUpload: true,
+    efficiencyProjectCode: ctx.run.project_code,
   })
 
   if (!result.ok) {

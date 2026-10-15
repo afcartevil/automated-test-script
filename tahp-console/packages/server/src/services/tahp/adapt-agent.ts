@@ -23,6 +23,7 @@ import {
   buildAdaptAgentUserMessage,
 } from './adapt-agent-prompts'
 import { saveAgentPromptLog } from './prompt-log'
+import { reportProjectSessionUsage } from './efficiency-usage-upload'
 import { uploadAdaptDebugFromCtx } from './quality-run-upload'
 import { DEFAULT_ADAPT_WORKSPACE } from './adapt-layout/types'
 import {
@@ -79,6 +80,8 @@ export interface AdaptAgentRunInput {
    * 终态由 adapt-pipeline 整包上报）。独立 AI 适配调试保持默认 false。
    */
   skipQualityUpload?: boolean
+  /** 仅适配流水线传入。有值时本轮 Agent 用量上报到该项目，不依赖聊天任务上下文。 */
+  efficiencyProjectCode?: string
 }
 
 export interface AdaptAgentTaskCtx {
@@ -113,6 +116,8 @@ export interface AdaptAgentTaskCtx {
   error?: string
   /** 见 AdaptAgentRunInput.skipQualityUpload */
   skipQualityUpload?: boolean
+  /** 见 AdaptAgentRunInput.efficiencyProjectCode */
+  efficiencyProjectCode?: string
 }
 
 export interface AdaptAgentTaskSummary {
@@ -676,6 +681,7 @@ export function startAdaptAgentRun(input: AdaptAgentRunInput): { ok: true; taskI
     userNotes: input.userNotes,
     interactionMode: isInteractiveCarrierDomain(input.domainId, input.interactionMode === true),
     skipQualityUpload: input.skipQualityUpload === true,
+    efficiencyProjectCode: String(input.efficiencyProjectCode || '').trim() || undefined,
     startedAt: new Date().toISOString(),
     status: 'running',
     skillsUsed: [],
@@ -979,6 +985,11 @@ async function runAdaptAgentTask(taskId: string, turn: AdaptTurnOptions = { mode
       interrupted = result.interrupted
     } finally {
       reasoning.flush()
+      const projectCode = String(ctx.efficiencyProjectCode || '').trim()
+      const sessionId = String(ctx.sessionId || '').trim()
+      if (projectCode && sessionId) {
+        void reportProjectSessionUsage(sessionId, projectCode, 'default')
+      }
     }
 
     const runtimeAfter = taskRuntime.get(taskId)
