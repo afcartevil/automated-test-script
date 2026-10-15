@@ -1,0 +1,19 @@
+{
+  "testType": "alarm",
+  "module": "shutdown",
+  "moduleLabel": "关机测试",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "关机压测",
+      "canReuse": false,
+      "automationMode": "full"
+    }
+  ]
+}

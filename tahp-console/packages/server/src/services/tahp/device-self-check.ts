@@ -71,7 +71,7 @@ export type DeviceStatus =
   | '刷机中'
   | 'T卡升级中'
 
-export type StandardTestType = 'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip'
+export type StandardTestType = 'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'alarm' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip'
 export type DeviceTestType = StandardTestType | 'custom'
 
 export interface SimCardInfo {
@@ -290,6 +290,30 @@ interface AutoTestSettings {
   bitflipRepeatCount?: number
   /** 连续 OTA 前置操作：SWD 刷机和 OEM 解锁配置 */
   otaPretest?: OtaPretestSettings
+  /** 休眠唤醒-重启测试（alarm 工具）：工具根目录（含 start.exe/config.json） */
+  alarmToolDir?: string
+  /** alarm-sleep 休眠唤醒：循环次数 / 每轮睡眠秒数 */
+  alarmSleep?: AlarmSleepSettings
+  /** alarm-reboot 重启：循环次数 / 开机等待秒数 */
+  alarmReboot?: AlarmRebootSettings
+  /** alarm-shutdown 关机：循环次数 / 开机等待秒数 / 关机时长秒数 */
+  alarmShutdown?: AlarmShutdownSettings
+}
+
+export interface AlarmSleepSettings {
+  loops: number
+  sleepTimes: number
+}
+
+export interface AlarmRebootSettings {
+  loops: number
+  poweronTime: number
+}
+
+export interface AlarmShutdownSettings {
+  loops: number
+  poweronTime: number
+  shutdownTime: number
 }
 
 export const GMS_WINDOWS_UNSUPPORTED_MESSAGE = 'Windows 环境不支持 GMS 测试，请在 Linux 主机上运行 cts/gts/vts-tradefed'
@@ -351,12 +375,63 @@ export function normalizeBitflipRepeatCount(raw?: number): number {
   return Math.min(BITFLIP_REPEAT_COUNT_MAX, Math.max(BITFLIP_REPEAT_COUNT_MIN, Math.round(n)))
 }
 
+// ─── 休眠唤醒-重启测试（alarm 工具） ─────────────────────────────────────
+// 工具为 PyInstaller 成品包（start.exe + config.json），以设置项引用外部目录，不进仓。
+// 三模式互斥，单机同时只能跑一种；参数仅暴露关键子集，其余由用例侧硬编码默认值合并。
+
+export const ALARM_MODES = ['sleep', 'reboot', 'shutdown'] as const
+export type AlarmMode = (typeof ALARM_MODES)[number]
+
+export const DEFAULT_ALARM_TOOL_DIR = 'D:\\rd_tool\\alarm_v2.1.029'
+export const DEFAULT_ALARM_SLEEP: AlarmSleepSettings = { loops: 1000, sleepTimes: 300 }
+export const DEFAULT_ALARM_REBOOT: AlarmRebootSettings = { loops: 1000, poweronTime: 200 }
+export const DEFAULT_ALARM_SHUTDOWN: AlarmShutdownSettings = { loops: 1000, poweronTime: 120, shutdownTime: 300 }
+
+const ALARM_LOOPS_MAX = 100_000
+const ALARM_TIME_MAX = 86_400
+
+function normalizeAlarmPositiveInt(raw: unknown, fallback: number, max = ALARM_TIME_MAX): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.min(max, Math.max(1, Math.round(n)))
+}
+
+export function normalizeAlarmToolDir(raw?: string): string {
+  return String(raw || '').trim() || DEFAULT_ALARM_TOOL_DIR
+}
+
+export function normalizeAlarmSleep(raw?: Partial<AlarmSleepSettings> | null): AlarmSleepSettings {
+  return {
+    loops: normalizeAlarmPositiveInt(raw?.loops, DEFAULT_ALARM_SLEEP.loops, ALARM_LOOPS_MAX),
+    sleepTimes: normalizeAlarmPositiveInt(raw?.sleepTimes, DEFAULT_ALARM_SLEEP.sleepTimes),
+  }
+}
+
+export function normalizeAlarmReboot(raw?: Partial<AlarmRebootSettings> | null): AlarmRebootSettings {
+  return {
+    loops: normalizeAlarmPositiveInt(raw?.loops, DEFAULT_ALARM_REBOOT.loops, ALARM_LOOPS_MAX),
+    poweronTime: normalizeAlarmPositiveInt(raw?.poweronTime, DEFAULT_ALARM_REBOOT.poweronTime),
+  }
+}
+
+export function normalizeAlarmShutdown(raw?: Partial<AlarmShutdownSettings> | null): AlarmShutdownSettings {
+  return {
+    loops: normalizeAlarmPositiveInt(raw?.loops, DEFAULT_ALARM_SHUTDOWN.loops, ALARM_LOOPS_MAX),
+    poweronTime: normalizeAlarmPositiveInt(raw?.poweronTime, DEFAULT_ALARM_SHUTDOWN.poweronTime),
+    shutdownTime: normalizeAlarmPositiveInt(raw?.shutdownTime, DEFAULT_ALARM_SHUTDOWN.shutdownTime),
+  }
+}
+
 let settings: AutoTestSettings = {
   autoTestEnabled: {},
   autoTestPath: {},
   monkeyDuration: DEFAULT_MONKEY_DURATION,
   bitflipRepeatCount: DEFAULT_BITFLIP_REPEAT_COUNT,
   otaPretest: defaultOtaPretestSettings(),
+  alarmToolDir: DEFAULT_ALARM_TOOL_DIR,
+  alarmSleep: { ...DEFAULT_ALARM_SLEEP },
+  alarmReboot: { ...DEFAULT_ALARM_REBOOT },
+  alarmShutdown: { ...DEFAULT_ALARM_SHUTDOWN },
 }
 
 export interface CaseCatalogDetailItem {
@@ -407,7 +482,8 @@ function getAutoRetestConfig(testType: string): { enabled: boolean; count: numbe
     testType === 'kernel_feature' ||
     testType === 'ai_generated' ||
     testType === 'ota_upgrade' ||
-    testType === 'bitflip'
+    testType === 'bitflip' ||
+    testType === 'alarm'
   ) {
     return { enabled: false, count: 0 }
   }
@@ -493,6 +569,12 @@ function snapshotTestConfig(
       cfg.bitflipTimeoutHours = 20 * repeatCount
       break
     }
+    case 'alarm':
+      cfg.alarmToolDir = normalizeAlarmToolDir(settings.alarmToolDir)
+      cfg.alarmSleep = normalizeAlarmSleep(settings.alarmSleep)
+      cfg.alarmReboot = normalizeAlarmReboot(settings.alarmReboot)
+      cfg.alarmShutdown = normalizeAlarmShutdown(settings.alarmShutdown)
+      break
     case 'custom':
     case 'ai_generated':
     case 'power':
@@ -825,6 +907,10 @@ export function getSettings(): AutoTestSettings {
     kernelFeatureCodeDir: String(settings.kernelFeatureCodeDir || '').trim(),
     bitflipRepeatCount: normalizeBitflipRepeatCount(settings.bitflipRepeatCount),
     otaPretest: normalizeOtaPretestSettings(settings.otaPretest),
+    alarmToolDir: normalizeAlarmToolDir(settings.alarmToolDir),
+    alarmSleep: normalizeAlarmSleep(settings.alarmSleep),
+    alarmReboot: normalizeAlarmReboot(settings.alarmReboot),
+    alarmShutdown: normalizeAlarmShutdown(settings.alarmShutdown),
   }
 }
 
@@ -841,6 +927,10 @@ export function updateSettings(newSettings: AutoTestSettings): void {
     kernelFeatureCodeDir: String(persistable.kernelFeatureCodeDir || '').trim(),
     bitflipRepeatCount: normalizeBitflipRepeatCount(persistable.bitflipRepeatCount),
     otaPretest: normalizeOtaPretestSettings(persistable.otaPretest),
+    alarmToolDir: normalizeAlarmToolDir(persistable.alarmToolDir),
+    alarmSleep: normalizeAlarmSleep(persistable.alarmSleep),
+    alarmReboot: normalizeAlarmReboot(persistable.alarmReboot),
+    alarmShutdown: normalizeAlarmShutdown(persistable.alarmShutdown),
   }
   saveSettings()
 }
@@ -915,6 +1005,9 @@ function loadCaseConfigs(): void {
     'pipeline_adapt_fingerprint.json',
     'pipeline_adapt_tdd.json',
     'bitflip_bst.json',
+    'alarm_sleep.json',
+    'alarm_reboot.json',
+    'alarm_shutdown.json',
   ]
   
   for (const file of configFiles) {
@@ -1685,6 +1778,7 @@ function getModulesForTestType(testType: StandardTestType): string[] {
   if (testType === 'kernel_feature') return ['stability', 'memory', 'sched']
   if (testType === 'pipeline_adapt') return ['tp', 'vibrator', 'audio', 'lcm', 'fingerprint', 'tdd']
   if (testType === 'bitflip') return ['bst']
+  if (testType === 'alarm') return [...ALARM_MODES]
   if (testType === 'ai_generated') return [AI_GENERATED_MODULE]
   return ['driver', 'tdd']
 }
@@ -2212,6 +2306,12 @@ function buildDeviceInfo(
       settings.gmsTradefedRoot,
     ),
     bitflipRepeatCount: normalizeBitflipRepeatCount(settings.bitflipRepeatCount),
+    alarm: {
+      tool_dir: normalizeAlarmToolDir(settings.alarmToolDir),
+      sleep: normalizeAlarmSleep(settings.alarmSleep),
+      reboot: normalizeAlarmReboot(settings.alarmReboot),
+      shutdown: normalizeAlarmShutdown(settings.alarmShutdown),
+    },
     ...(testType === 'kernel_feature' && settings.kernelFeatureCodeDir?.trim()
       ? { code_dir: settings.kernelFeatureCodeDir.trim() }
       : {}),
@@ -2350,6 +2450,31 @@ async function stopMonkeyForDevice(deviceId: string): Promise<void> {
         onStderr: (data) => {
           const msg = data.toString().trim()
           if (msg) console.warn(`[device-self-check] monkey-stop stderr: ${msg}`)
+        },
+        onClose: () => resolve(),
+        onError: () => resolve(),
+      })
+    } catch {
+      resolve()
+    }
+  })
+}
+
+const ALARM_TOOL_SCRIPT = join(PYTHON_DIR, 'tools', 'alarm', 'alarm_tool.py')
+
+/** 停止 alarm 休眠唤醒/重启/关机压测：force-stop 相关包并杀掉 alarm.sh/aimonkey.sh/monkey 进程 */
+async function stopAlarmForDevice(deviceId: string): Promise<void> {
+  if (!existsSync(ALARM_TOOL_SCRIPT)) return
+
+  return new Promise((resolve) => {
+    try {
+      spawnPythonProcess([ALARM_TOOL_SCRIPT, '-s', deviceId, 'stop'], {
+        cwd: join(PYTHON_DIR, 'tools', 'alarm'),
+        label: `alarm-stop/${deviceId}`,
+        timeoutMs: 30_000,
+        onStderr: (data) => {
+          const msg = data.toString().trim()
+          if (msg) console.warn(`[device-self-check] alarm-stop stderr: ${msg}`)
         },
         onClose: () => resolve(),
         onError: () => resolve(),
@@ -3554,11 +3679,18 @@ export function resolveStartModules(
   requested?: string[] | null,
 ): string[] {
   const all = getModulesForTestType(testType)
-  if (!requested || requested.length === 0) return all
+  if (!requested || requested.length === 0) {
+    // alarm 三模式互斥：缺省不选模块时默认只跑 sleep（休眠唤醒）
+    if (testType === 'alarm') return ['sleep']
+    return all
+  }
   const wanted = new Set(requested)
   const selected = all.filter(m => wanted.has(m))
   if (selected.length === 0) {
     throw new Error('请至少选择一个有效的测试模块')
+  }
+  if (testType === 'alarm' && selected.length > 1) {
+    throw new Error('休眠唤醒-重启测试三种模式互斥，每次只能选择其中一种')
   }
   return selected
 }
@@ -3730,6 +3862,11 @@ export async function startCustomTest(
       const testType = parts.join('/')
       modulesSet.add(module)
       caseList.push({ testType, module, caseIndex })
+    }
+    // alarm 三模式互斥：自定义勾选最多只允许一个 alarm 用例
+    if (caseList.filter(item => item.testType === 'alarm').length > 1) {
+      console.warn('[device-self-check] Custom test: alarm modes are mutually exclusive, only one alarm case allowed')
+      return null
     }
     const modules = Array.from(modulesSet)
     const prioritizeTddManual = Boolean(options?.prioritizeTddManual)
@@ -3994,9 +4131,10 @@ export async function endTest(deviceId: string): Promise<DeviceDetail | null> {
     }
   }
 
-  // 不阻塞结束路径：monkey/power 停止最多各 30s
+  // 不阻塞结束路径：monkey/power/alarm 停止最多各 30s
   void stopMonkeyForDevice(deviceId)
   void stopPowerForDevice(deviceId)
+  void stopAlarmForDevice(deviceId)
 
   if (session) {
     finalizePowerCaseResults(deviceId, session)
@@ -5263,6 +5401,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     pipeline_adapt: '流水线适配自动化测试',
     ai_generated: 'AI用例',
     bitflip: 'bitflip压测',
+    alarm: '休眠唤醒-重启测试',
   }
   const MODULE_ORDER: Record<string, number> = {
     driver: 0,
@@ -5283,6 +5422,9 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     memory: 18,
     sched: 19,
     bst: 21,
+    sleep: 22,
+    reboot: 23,
+    shutdown: 24,
     tp: 30,
     vibrator: 31,
     audio: 32,
@@ -5322,7 +5464,7 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
     })
   }
 
-  const typeOrder = ['str4', 'week', 'monkey', 'monkey_check', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'bitflip', AI_GENERATED_TEST_TYPE]
+  const typeOrder = ['str4', 'week', 'monkey', 'monkey_check', 'smoke', 'ota_upgrade', 'alarm', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'bitflip', AI_GENERATED_TEST_TYPE]
   const allTypes = [
     ...typeOrder.filter(tt => modulesByType[tt]?.length),
     ...Object.keys(modulesByType).filter(tt => !typeOrder.includes(tt)),

@@ -116,7 +116,7 @@ export const OTA_UPGRADE_FLASH_CONFIRM = {
 } as const
 
 /** 标准测试大类展示顺序（与用例列表 / 后端 catalog 一致） */
-export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'monkey_check', 'smoke', 'ota_upgrade', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'bitflip', 'ai_generated'] as const
+export const STANDARD_TEST_TYPE_ORDER = ['str4', 'week', 'monkey', 'monkey_check', 'smoke', 'ota_upgrade', 'alarm', 'gms', 'power', 'power_feature', 'thermal', 'kernel_feature', 'pipeline_adapt', 'bitflip', 'ai_generated'] as const
 
 export type StandardTestTypeKey = (typeof STANDARD_TEST_TYPE_ORDER)[number]
 
@@ -125,7 +125,7 @@ export const TEST_TYPE_CATEGORIES = [
   {
     key: 'general',
     label: '通用测试',
-    testTypes: ['str4', 'week', 'smoke', 'ota_upgrade', 'gms', 'pipeline_adapt', 'ai_generated'],
+    testTypes: ['str4', 'week', 'smoke', 'ota_upgrade', 'alarm', 'gms', 'pipeline_adapt', 'ai_generated'],
   },
   {
     key: 'domain',
@@ -176,6 +176,9 @@ export const MODULE_ORDER: Record<string, number> = {
   stability: 17,
   generated: 20,
   bst: 21,
+  sleep: 22,
+  reboot: 23,
+  shutdown: 24,
   tp: 30,
   vibrator: 31,
   audio: 32,
@@ -192,6 +195,7 @@ export function getTestTypeLabel(testType?: string): string {
   if (testType === 'monkey_check') return 'monkey结果检查'
   if (testType === 'smoke') return '冒烟测试'
   if (testType === 'ota_upgrade') return '连续OTA升级'
+  if (testType === 'alarm') return '休眠唤醒-重启测试'
   if (testType === 'gms') return 'GMS测试'
   if (testType === 'power') return '功耗自动化测试'
   if (testType === 'power_feature') return '功耗特性自检'
@@ -247,6 +251,9 @@ export function getModuleLabel(module: string): string {
     charger: 'Charger',
     generated: 'AI生成用例',
     bst: 'bitflip压测(BAT)',
+    sleep: '休眠唤醒',
+    reboot: '重启测试',
+    shutdown: '关机测试',
   }
   return labels[module] || module
 }
@@ -408,6 +415,9 @@ export function formatCatalogAutomation(group: CaseCatalogGroup): string {
   if (group.testType === 'ota_upgrade') {
     return '脚本全自动（连续版本升级 + 开机校验）'
   }
+  if (group.testType === 'alarm') {
+    return '脚本全自动（alarm 工具后台启动，设备自治运行）'
+  }
   if (group.testType === 'gms') {
     return '脚本全自动（Tradefed CTS/GTS/VTS）'
   }
@@ -448,6 +458,9 @@ export function formatCatalogPrereq(group: CaseCatalogGroup): string {
   }
   if (group.testType === 'ota_upgrade') {
     return 'ADB 连接测试机；先获取外发版本后再连续升级，或勾选仅执行前置操作'
+  }
+  if (group.testType === 'alarm') {
+    return '仅连接本测试机（userdebug 可 root，工具会对所有已连接设备启动）；三模式互斥单选'
   }
   const parts: string[] = ['ADB 连接测试机']
   const maxDutSim = Math.max(0, ...group.modules.map(m => m.conditions.dutSimCount))
@@ -493,6 +506,7 @@ export function reportShortType(testType: string): string {
   if (testType === 'monkey_check') return 'monkey检查'
   if (testType === 'smoke') return '冒烟'
   if (testType === 'ota_upgrade') return '连续OTA'
+  if (testType === 'alarm') return '休眠重启'
   if (testType === 'power_feature') return '功耗特性'
   if (testType === 'kernel_feature') return '内核特性'
   if (testType === 'thermal' || testType === 'therm') return '温升方案'
@@ -608,6 +622,18 @@ export function formatTestConfigEntries(cfg?: SelfCheckTestConfig): { label: str
   }
   if (cfg.bitflipTimeoutHours) {
     rows.push({ label: 'bitflip 超时上限 (20h×-r)', value: `${cfg.bitflipTimeoutHours} 小时` })
+  }
+  if (cfg.alarmToolDir) {
+    rows.push({ label: 'alarm 工具目录', value: cfg.alarmToolDir })
+  }
+  if (cfg.alarmSleep) {
+    rows.push({ label: '休眠唤醒参数', value: `循环 ${cfg.alarmSleep.loops} 次 × 睡眠 ${cfg.alarmSleep.sleepTimes}s` })
+  }
+  if (cfg.alarmReboot) {
+    rows.push({ label: '重启参数', value: `循环 ${cfg.alarmReboot.loops} 次，开机等待 ${cfg.alarmReboot.poweronTime}s` })
+  }
+  if (cfg.alarmShutdown) {
+    rows.push({ label: '关机参数', value: `循环 ${cfg.alarmShutdown.loops} 次，开机等待 ${cfg.alarmShutdown.poweronTime}s / 关机 ${cfg.alarmShutdown.shutdownTime}s` })
   }
   if (cfg.autoRetestEnabled !== undefined) {
     rows.push({

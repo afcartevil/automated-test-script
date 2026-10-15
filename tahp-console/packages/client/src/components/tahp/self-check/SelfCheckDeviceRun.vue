@@ -1030,6 +1030,119 @@ function handleDutRowAction(deviceId: string) {
                     遍历条件下每项重复测试次数（BAT -r 参数），默认 1，范围 1-100；超时上限 = 20h × 重复次数（当前 {{ (catalogTypeSettings.bitflipRepeatCount || 1) * 20 }}h）；每轮约 12-20 小时，期间设备会多次重启
                   </span>
                 </div>
+                <div
+                  v-else-if="selectedCatalogTestType === 'alarm'"
+                  class="catalog-alarm-settings catalog-overview-retest"
+                >
+                  <div class="catalog-alarm-row">
+                    <label class="catalog-monkey-label" for="alarm-tool-dir-input">工具目录</label>
+                    <input
+                      id="alarm-tool-dir-input"
+                      v-model.trim="catalogTypeSettings.alarmToolDir"
+                      type="text"
+                      class="catalog-setting-input catalog-kernel-code-input"
+                      :disabled="catalogSettingsSaving"
+                      placeholder="D:\rd_tool\alarm_v2.1.029"
+                      @change="saveCatalogTypeSettings"
+                    />
+                  </div>
+                  <div class="catalog-alarm-row">
+                    <span class="catalog-monkey-label">休眠唤醒</span>
+                    <label class="catalog-alarm-field">
+                      循环
+                      <input
+                        v-model.number="catalogTypeSettings.alarmSleep.loops"
+                        type="number"
+                        min="1"
+                        class="catalog-setting-input catalog-alarm-input"
+                        :disabled="catalogSettingsSaving"
+                        @change="saveCatalogTypeSettings"
+                      />
+                      次
+                    </label>
+                    <label class="catalog-alarm-field">
+                      每轮睡眠
+                      <input
+                        v-model.number="catalogTypeSettings.alarmSleep.sleepTimes"
+                        type="number"
+                        min="1"
+                        class="catalog-setting-input catalog-alarm-input"
+                        :disabled="catalogSettingsSaving"
+                        @change="saveCatalogTypeSettings"
+                      />
+                      秒
+                    </label>
+                  </div>
+                  <div class="catalog-alarm-row">
+                    <span class="catalog-monkey-label">重启测试</span>
+                    <label class="catalog-alarm-field">
+                      循环
+                      <input
+                        v-model.number="catalogTypeSettings.alarmReboot.loops"
+                        type="number"
+                        min="1"
+                        class="catalog-setting-input catalog-alarm-input"
+                        :disabled="catalogSettingsSaving"
+                        @change="saveCatalogTypeSettings"
+                      />
+                      次
+                    </label>
+                    <label class="catalog-alarm-field">
+                      开机等待
+                      <input
+                        v-model.number="catalogTypeSettings.alarmReboot.poweronTime"
+                        type="number"
+                        min="1"
+                        class="catalog-setting-input catalog-alarm-input"
+                        :disabled="catalogSettingsSaving"
+                        @change="saveCatalogTypeSettings"
+                      />
+                      秒
+                    </label>
+                  </div>
+                  <div class="catalog-alarm-row">
+                    <span class="catalog-monkey-label">关机测试</span>
+                    <label class="catalog-alarm-field">
+                      循环
+                      <input
+                        v-model.number="catalogTypeSettings.alarmShutdown.loops"
+                        type="number"
+                        min="1"
+                        class="catalog-setting-input catalog-alarm-input"
+                        :disabled="catalogSettingsSaving"
+                        @change="saveCatalogTypeSettings"
+                      />
+                      次
+                    </label>
+                    <label class="catalog-alarm-field">
+                      开机等待
+                      <input
+                        v-model.number="catalogTypeSettings.alarmShutdown.poweronTime"
+                        type="number"
+                        min="1"
+                        class="catalog-setting-input catalog-alarm-input"
+                        :disabled="catalogSettingsSaving"
+                        @change="saveCatalogTypeSettings"
+                      />
+                      秒
+                    </label>
+                    <label class="catalog-alarm-field">
+                      关机时长
+                      <input
+                        v-model.number="catalogTypeSettings.alarmShutdown.shutdownTime"
+                        type="number"
+                        min="1"
+                        class="catalog-setting-input catalog-alarm-input"
+                        :disabled="catalogSettingsSaving"
+                        @change="saveCatalogTypeSettings"
+                      />
+                      秒
+                    </label>
+                  </div>
+                  <span class="ea-muted catalog-monkey-help">
+                    三种模式互斥，启动时按勾选用例取对应参数；启动前请仅连接本测试机（工具会对所有已连接设备启动）；启动成功即通过，设备自治运行，停止请点「结束测试」
+                  </span>
+                </div>
                 <div v-else class="catalog-auto-retest-row catalog-overview-retest">
                   <label
                     class="checkbox-label"
@@ -2867,6 +2980,35 @@ $catalog-pane-height: calc(100vh - 48px);
 
 .catalog-monkey-input {
   width: 90px;
+}
+
+.catalog-alarm-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.catalog-alarm-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.catalog-alarm-row .catalog-monkey-label {
+  min-width: 60px;
+}
+
+.catalog-alarm-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.catalog-alarm-input {
+  width: 76px;
 }
 
 .catalog-kernel-code-dir {

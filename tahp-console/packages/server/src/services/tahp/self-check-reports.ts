@@ -120,6 +120,11 @@ export interface SelfCheckTestConfig {
     swdToolDir?: string
     oemToolDir?: string
   }
+  /** alarm 休眠唤醒-重启测试配置快照 */
+  alarmToolDir?: string
+  alarmSleep?: { loops: number; sleepTimes: number }
+  alarmReboot?: { loops: number; poweronTime: number }
+  alarmShutdown?: { loops: number; poweronTime: number; shutdownTime: number }
 }
 
 export interface SelfCheckReportSummary {

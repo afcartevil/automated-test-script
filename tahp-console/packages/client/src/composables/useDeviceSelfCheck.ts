@@ -52,6 +52,10 @@ import {
   type ReleaseUpgradePlan,
   type AndroidUpgradeStep,
   type OtaPretestSettings,
+  DEFAULT_ALARM_TOOL_DIR,
+  DEFAULT_ALARM_SLEEP,
+  DEFAULT_ALARM_REBOOT,
+  DEFAULT_ALARM_SHUTDOWN,
 } from '@/api/tahp/device-self-check'
 import {
   createFlashProgressState,
@@ -100,8 +104,8 @@ const selectedDevice = ref<DeviceDetail | null>(null)
 const moduleConditions = ref<Record<string, ModuleCondition>>({})
 
 // 测试类型选择
-const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip'>('week')
-/** 空闲设备开始测试前勾选的模块（多模块大类可筛；默认全选） */
+const selectedTestType = ref<'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'alarm' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip'>('week')
+/** 空闲设备开始测试前勾选的模块（多模块大类可筛；默认全选，alarm 互斥默认仅 sleep） */
 const selectedStartModules = ref<Set<string>>(new Set())
 /** 空闲设备开始测试前的角色意向（仅 UI，选中设备时默认测试机；点击开始测试时才落盘） */
 const startTestIntentRole = ref<DeviceRole>('测试机')
@@ -120,10 +124,20 @@ function listModulesForTestType(testType: string): string[] {
 }
 
 function syncSelectedStartModules(testType: string = selectedTestType.value) {
+  // alarm 三模式互斥：默认仅选中 sleep（休眠唤醒）
+  if (testType === 'alarm') {
+    selectedStartModules.value = new Set(['sleep'])
+    return
+  }
   selectedStartModules.value = new Set(listModulesForTestType(testType))
 }
 
 function toggleStartModule(module: string) {
+  // alarm 三模式互斥：单选，切换即替换
+  if (selectedTestType.value === 'alarm') {
+    selectedStartModules.value = new Set([module])
+    return
+  }
   if (selectedStartModules.value.has(module)) {
     selectedStartModules.value.delete(module)
   } else {
@@ -589,6 +603,10 @@ const catalogTypeSettings = ref({
     vts: '',
   },
   bitflipRepeatCount: 1,
+  alarmToolDir: DEFAULT_ALARM_TOOL_DIR,
+  alarmSleep: { ...DEFAULT_ALARM_SLEEP },
+  alarmReboot: { ...DEFAULT_ALARM_REBOOT },
+  alarmShutdown: { ...DEFAULT_ALARM_SHUTDOWN },
 })
 const catalogSettingsSaving = ref(false)
 const gmsHostSupported = ref(true)
@@ -1095,10 +1113,10 @@ async function openCaseCatalog(testType: string) {
       [...new Set(detail.map(item => `${testType}/${item.module}`))]
     )
     catalogTypeSettings.value = {
-      autoRetestEnabled: testType === 'monkey' || testType === 'monkey_check' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated' || testType === 'ota_upgrade' || testType === 'bitflip'
+      autoRetestEnabled: testType === 'monkey' || testType === 'monkey_check' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated' || testType === 'ota_upgrade' || testType === 'bitflip' || testType === 'alarm'
         ? false
         : (settingsData.autoRetestEnabled?.[testType] ?? true),
-      autoRetestCount: testType === 'monkey' || testType === 'monkey_check' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated' || testType === 'ota_upgrade' || testType === 'bitflip'
+      autoRetestCount: testType === 'monkey' || testType === 'monkey_check' || testType === 'smoke' || testType === 'gms' || testType === 'power' || testType === 'power_feature' || testType === 'thermal' || testType === 'kernel_feature' || testType === 'ai_generated' || testType === 'ota_upgrade' || testType === 'bitflip' || testType === 'alarm'
         ? 0
         : (settingsData.autoRetestCount?.[testType] ?? 1),
       monkeyDuration: settingsData.monkeyDuration || '7d',
@@ -1111,6 +1129,10 @@ async function openCaseCatalog(testType: string) {
         vts: settingsData.gmsTradefedPath?.vts || '',
       },
       bitflipRepeatCount: settingsData.bitflipRepeatCount || 1,
+      alarmToolDir: settingsData.alarmToolDir || DEFAULT_ALARM_TOOL_DIR,
+      alarmSleep: { ...DEFAULT_ALARM_SLEEP, ...(settingsData.alarmSleep || {}) },
+      alarmReboot: { ...DEFAULT_ALARM_REBOOT, ...(settingsData.alarmReboot || {}) },
+      alarmShutdown: { ...DEFAULT_ALARM_SHUTDOWN, ...(settingsData.alarmShutdown || {}) },
     }
     gmsHostSupported.value = settingsData.gmsHostSupported !== false
     if (detail.length > 0) {
@@ -1330,6 +1352,27 @@ async function saveCatalogTypeSettings() {
 
     if (testType === 'bitflip') {
       await saveBitflipRepeatCount(false)
+      return
+    }
+
+    if (testType === 'alarm') {
+      await updateSettings({
+        ...current,
+        alarmToolDir: catalogTypeSettings.value.alarmToolDir?.trim() || DEFAULT_ALARM_TOOL_DIR,
+        alarmSleep: {
+          loops: Math.max(1, Math.round(Number(catalogTypeSettings.value.alarmSleep?.loops) || DEFAULT_ALARM_SLEEP.loops)),
+          sleepTimes: Math.max(1, Math.round(Number(catalogTypeSettings.value.alarmSleep?.sleepTimes) || DEFAULT_ALARM_SLEEP.sleepTimes)),
+        },
+        alarmReboot: {
+          loops: Math.max(1, Math.round(Number(catalogTypeSettings.value.alarmReboot?.loops) || DEFAULT_ALARM_REBOOT.loops)),
+          poweronTime: Math.max(1, Math.round(Number(catalogTypeSettings.value.alarmReboot?.poweronTime) || DEFAULT_ALARM_REBOOT.poweronTime)),
+        },
+        alarmShutdown: {
+          loops: Math.max(1, Math.round(Number(catalogTypeSettings.value.alarmShutdown?.loops) || DEFAULT_ALARM_SHUTDOWN.loops)),
+          poweronTime: Math.max(1, Math.round(Number(catalogTypeSettings.value.alarmShutdown?.poweronTime) || DEFAULT_ALARM_SHUTDOWN.poweronTime)),
+          shutdownTime: Math.max(1, Math.round(Number(catalogTypeSettings.value.alarmShutdown?.shutdownTime) || DEFAULT_ALARM_SHUTDOWN.shutdownTime)),
+        },
+      })
       return
     }
 

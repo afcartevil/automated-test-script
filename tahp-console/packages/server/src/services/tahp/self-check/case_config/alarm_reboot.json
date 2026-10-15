@@ -1,0 +1,19 @@
+{
+  "testType": "alarm",
+  "module": "reboot",
+  "moduleLabel": "重启测试",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "重启压测",
+      "canReuse": false,
+      "automationMode": "full"
+    }
+  ]
+}

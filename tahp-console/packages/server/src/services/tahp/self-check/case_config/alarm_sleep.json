@@ -1,0 +1,19 @@
+{
+  "testType": "alarm",
+  "module": "sleep",
+  "moduleLabel": "休眠唤醒",
+  "conditions": {
+    "dutSimCount": 0,
+    "auxRequired": 0,
+    "auxSimCount": 0
+  },
+  "defaultCaseMode": "solo",
+  "cases": [
+    {
+      "caseIndex": 1,
+      "caseName": "休眠唤醒压测",
+      "canReuse": false,
+      "automationMode": "full"
+    }
+  ]
+}

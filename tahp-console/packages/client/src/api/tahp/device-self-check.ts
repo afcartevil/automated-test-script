@@ -27,7 +27,7 @@ export interface DeviceInfo {
   deviceName: string
   role: DeviceRole
   status: DeviceStatus
-  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip'
+  testType?: 'str4' | 'week' | 'custom' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'alarm' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip'
   currentModule?: string
   simCards: SimCardInfo[]
   testStartTime?: string
@@ -108,7 +108,7 @@ export interface ModuleProgress {
 
 export interface TestSession {
   deviceId: string
-  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip'
+  testType: 'str4' | 'week' | 'custom' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'alarm' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip'
   modules: string[]
   currentModuleIndex: number
   moduleProgress: Record<string, ModuleProgress>
@@ -222,7 +222,7 @@ export interface StartTestOtaPretestPayload {
 
 export async function startTest(
   deviceId: string,
-  testType: 'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip',
+  testType: 'str4' | 'week' | 'monkey' | 'monkey_check' | 'smoke' | 'ota_upgrade' | 'alarm' | 'gms' | 'power' | 'power_feature' | 'thermal' | 'kernel_feature' | 'pipeline_adapt' | 'ai_generated' | 'bitflip',
   flash?: StartTestFlashPayload,
   scheduleKey?: string,
   prioritizeTddManual?: boolean,
@@ -615,6 +615,27 @@ export async function retestCase(
   )
 }
 
+export interface AlarmSleepSettings {
+  loops: number
+  sleepTimes: number
+}
+
+export interface AlarmRebootSettings {
+  loops: number
+  poweronTime: number
+}
+
+export interface AlarmShutdownSettings {
+  loops: number
+  poweronTime: number
+  shutdownTime: number
+}
+
+export const DEFAULT_ALARM_TOOL_DIR = 'D:\\rd_tool\\alarm_v2.1.029'
+export const DEFAULT_ALARM_SLEEP: AlarmSleepSettings = { loops: 1000, sleepTimes: 300 }
+export const DEFAULT_ALARM_REBOOT: AlarmRebootSettings = { loops: 1000, poweronTime: 200 }
+export const DEFAULT_ALARM_SHUTDOWN: AlarmShutdownSettings = { loops: 1000, poweronTime: 120, shutdownTime: 300 }
+
 export interface AutoTestSettings {
   autoTestEnabled: Record<string, boolean>
   autoTestPath: Record<string, string>
@@ -630,10 +651,18 @@ export interface AutoTestSettings {
   /** bitflip 压测：遍历条件下每项重复测试次数（BAT -r 参数），默认 5 */
   bitflipRepeatCount?: number
   otaPretest?: OtaPretestSettings
+  /** 休眠唤醒-重启测试（alarm 工具）根目录 */
+  alarmToolDir?: string
+  alarmSleep?: AlarmSleepSettings
+  alarmReboot?: AlarmRebootSettings
+  alarmShutdown?: AlarmShutdownSettings
 }
 
 export async function getSettings(): Promise<AutoTestSettings> {
   const data = await tahpGet<AutoTestSettings>('/api/tahp/device-self-check/settings')
+  const alarmSleep = data?.alarmSleep
+  const alarmReboot = data?.alarmReboot
+  const alarmShutdown = data?.alarmShutdown
   return {
     autoTestEnabled: data?.autoTestEnabled || {},
     autoTestPath: data?.autoTestPath || {},
@@ -647,6 +676,20 @@ export async function getSettings(): Promise<AutoTestSettings> {
     kernelFeatureCodeDir: String(data?.kernelFeatureCodeDir || '').trim(),
     bitflipRepeatCount: Number(data?.bitflipRepeatCount) > 0 ? Number(data.bitflipRepeatCount) : 1,
     otaPretest: data?.otaPretest,
+    alarmToolDir: String(data?.alarmToolDir || '').trim() || DEFAULT_ALARM_TOOL_DIR,
+    alarmSleep: {
+      loops: Number(alarmSleep?.loops) > 0 ? Number(alarmSleep?.loops) : DEFAULT_ALARM_SLEEP.loops,
+      sleepTimes: Number(alarmSleep?.sleepTimes) > 0 ? Number(alarmSleep?.sleepTimes) : DEFAULT_ALARM_SLEEP.sleepTimes,
+    },
+    alarmReboot: {
+      loops: Number(alarmReboot?.loops) > 0 ? Number(alarmReboot?.loops) : DEFAULT_ALARM_REBOOT.loops,
+      poweronTime: Number(alarmReboot?.poweronTime) > 0 ? Number(alarmReboot?.poweronTime) : DEFAULT_ALARM_REBOOT.poweronTime,
+    },
+    alarmShutdown: {
+      loops: Number(alarmShutdown?.loops) > 0 ? Number(alarmShutdown?.loops) : DEFAULT_ALARM_SHUTDOWN.loops,
+      poweronTime: Number(alarmShutdown?.poweronTime) > 0 ? Number(alarmShutdown?.poweronTime) : DEFAULT_ALARM_SHUTDOWN.poweronTime,
+      shutdownTime: Number(alarmShutdown?.shutdownTime) > 0 ? Number(alarmShutdown?.shutdownTime) : DEFAULT_ALARM_SHUTDOWN.shutdownTime,
+    },
   }
 }
 
@@ -715,6 +758,11 @@ export interface SelfCheckTestConfig {
   bitflipTimeoutHours?: number
   autoRetestEnabled?: boolean
   autoRetestCount?: number
+  /** alarm 休眠唤醒-重启测试配置快照 */
+  alarmToolDir?: string
+  alarmSleep?: AlarmSleepSettings
+  alarmReboot?: AlarmRebootSettings
+  alarmShutdown?: AlarmShutdownSettings
   flashBeforeTest?: SelfCheckFlashBeforeTestConfig
   tcardBeforeTest?: SelfCheckTcardBeforeTestConfig
   prioritizeTddManual?: boolean
