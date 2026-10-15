@@ -549,22 +549,30 @@ export function applyStoredOtaAccount(current: OtaPretestSettings): OtaPretestSe
   }
 }
 
-function findFlashXml(dir: string): string | null {
-  const hits: string[] = []
+const ANDROID_SCATTER_TXT_RE = /_Android_scatter\.txt$/i
+
+/** UD 包固件描述：优先 flash.xml，否则 *_Android_scatter.txt（如 MT6833_Android_scatter.txt）。 */
+export function findUdFirmwareFile(dir: string): string | null {
+  const xmlHits: string[] = []
+  const scatterHits: string[] = []
   const visit = (current: string, depth: number) => {
     if (depth > 8) return
     for (const entry of safeEntries(current)) {
       const full = join(current, entry.name)
-      if (entry.isFile() && entry.name.toLowerCase() === 'flash.xml') hits.push(full)
-      else if (entry.isDirectory()) visit(full, depth + 1)
+      if (entry.isFile()) {
+        if (entry.name.toLowerCase() === 'flash.xml') xmlHits.push(full)
+        else if (ANDROID_SCATTER_TXT_RE.test(entry.name)) scatterHits.push(full)
+      } else if (entry.isDirectory()) visit(full, depth + 1)
     }
   }
   visit(dir, 0)
-  return hits.sort((a, b) => {
+  const xml = xmlHits.sort((a, b) => {
     const aPreferred = /[\\/]download_agent[\\/]flash\.xml$/i.test(a) ? 1 : 0
     const bPreferred = /[\\/]download_agent[\\/]flash\.xml$/i.test(b) ? 1 : 0
     return bPreferred - aPreferred || a.length - b.length
-  })[0] || null
+  })[0]
+  if (xml) return xml
+  return scatterHits.sort((a, b) => a.length - b.length || a.localeCompare(b))[0] || null
 }
 
 function udPackageDir(): string {
@@ -582,7 +590,7 @@ async function prepareUdFlashXml(packagePath: string, onLog: (line: string) => v
   const key = `${basename(normalized, '.zip')}-${Math.round(st.mtimeMs)}-${st.size}`
     .replace(/[^a-zA-Z0-9._-]/g, '_')
   const dest = join(udPackageDir(), key)
-  const existing = existsSync(dest) ? findFlashXml(dest) : null
+  const existing = existsSync(dest) ? findUdFirmwareFile(dest) : null
   if (existing) {
     onLog(`[UD刷机] 使用已解压固件: ${existing}`)
     return existing
@@ -608,10 +616,10 @@ async function prepareUdFlashXml(packagePath: string, onLog: (line: string) => v
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(message || 'UD 包解压失败')
   }
-  const flashXml = findFlashXml(dest)
-  if (!flashXml) throw new Error(`UD 包中未找到 flash.xml: ${normalized}`)
-  onLog(`[UD刷机] 已定位 flash.xml: ${flashXml}`)
-  return flashXml
+  const firmware = findUdFirmwareFile(dest)
+  if (!firmware) throw new Error(`UD 包中未找到 flash.xml 或 *_Android_scatter.txt: ${normalized}`)
+  onLog(`[UD刷机] 已定位固件: ${firmware}`)
+  return firmware
 }
 
 function resolveSwdToolDir(configured: string): string {

@@ -759,9 +759,32 @@ def adb_getprop(adb, serial, prop):
 
 
 def project_code_from_path(fw_path):
-    """从 .../<版本目录>/download_agent/flash.xml 提取项目码, 如 X6850。"""
-    ver_dir = os.path.basename(os.path.dirname(os.path.dirname(fw_path)))
+    """从固件路径提取项目码。
+
+    flash.xml: .../<版本目录>/download_agent/flash.xml，如 X6850。
+    *_Android_scatter.txt 在包根目录时，版本目录就是文件所在目录。
+    """
+    if os.path.basename(fw_path).lower() == "flash.xml":
+        ver_dir = os.path.basename(os.path.dirname(os.path.dirname(fw_path)))
+    else:
+        ver_dir = _package_dir_name(fw_path)
     return ver_dir.split("-")[0].strip(), ver_dir
+
+
+def _package_dir_name(fw_path):
+    """向上找到带版本号的包目录，跳过 download_agent 等中间目录。"""
+    skip = {"download_agent", "open", "_downloads"}
+    cur = os.path.dirname(os.path.abspath(fw_path))
+    fallback = os.path.basename(cur)
+    for _ in range(8):
+        name = os.path.basename(cur)
+        if name and name.lower() not in skip and "-" in name:
+            return name
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return fallback
 
 
 def adb_check_device(adb, fw_path):
@@ -1067,7 +1090,7 @@ def full_flow(app, fw_path, adb_path, prepare_only, flash_timeout):
 
 def main():
     ap = argparse.ArgumentParser(description="SWD刷机工具自动化")
-    ap.add_argument("firmware", nargs="?", help="固件flash.xml路径")
+    ap.add_argument("firmware", nargs="?", help="固件 flash.xml 或 *_Android_scatter.txt 路径")
     ap.add_argument("--prepare-only", action="store_true",
                     help="只执行到步骤5(adb匹配),不启动刷机")
     ap.add_argument("--status", action="store_true", help="查询状态")
