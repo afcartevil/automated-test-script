@@ -19,6 +19,7 @@ import {
   runHarnessFlash,
 } from '../harness-flash-capability'
 import { defaultFlashSkillId } from '../harness-skill-registry'
+import { probeOemLockStatus, runOemUnlockProduct } from '../oem-unlock-product'
 
 let flashPromise: Promise<DeviceFlashResult> | null = null
 let harnessBusy = false
@@ -230,10 +231,63 @@ async function runHarnessFullRomFlash(
   }
 }
 
+async function maybeAutoOemUnlock(ctx: StageContext, gen: number, deviceId: string): Promise<boolean> {
+  if (!ctx.run.oem_auto_unlock) return true
+  const status = await probeOemLockStatus(deviceId)
+  if (!isCurrentFlashJob(gen, ctx)) return false
+  logIfActive(ctx, gen, `OEM 状态: flash.locked=${status.flash_locked} build.type=${status.build_type}`)
+  if (status.locked === 'unlocked') {
+    logIfActive(ctx, gen, '设备已 OEM unlock，跳过自动解锁')
+    return true
+  }
+  if (status.gate === 'block_user') {
+    ctx.patchState({
+      progress: {
+        state: 'failed',
+        error: '样机为 user 且 OEM lock，无法自动解锁，也无法刷写',
+      },
+    })
+    return false
+  }
+  logIfActive(ctx, gen, '设备 OEM lock，开始自动解锁（oem-unlock-product.bat）…')
+  ctx.patchState({
+    progress: {
+      state: 'flashing',
+      phase: 'oem_unlock',
+      text: '正在自动 OEM 解锁…',
+    },
+  })
+  const result = await runOemUnlockProduct(deviceId, line => logIfActive(ctx, gen, line))
+  if (!isCurrentFlashJob(gen, ctx)) return false
+  if (!result.ok) {
+    ctx.patchState({
+      progress: {
+        state: 'failed',
+        error: result.error ?? '自动 OEM 解锁失败',
+      },
+    })
+    return false
+  }
+  const after = await probeOemLockStatus(deviceId)
+  if (!isCurrentFlashJob(gen, ctx)) return false
+  if (after.locked !== 'unlocked') {
+    ctx.patchState({
+      progress: {
+        state: 'failed',
+        error: `自动解锁后仍为 OEM lock（ro.boot.flash.locked=${after.flash_locked}）`,
+      },
+    })
+    return false
+  }
+  logIfActive(ctx, gen, '自动 OEM 解锁完成')
+  return true
+}
+
 async function executeFlashJob(ctx: StageContext, gen: number): Promise<void> {
   if (!isCurrentFlashJob(gen, ctx)) return
-  const classified = classifyFromCtx(ctx)
   const deviceId = ctx.run.device_id!
+  if (!(await maybeAutoOemUnlock(ctx, gen, deviceId))) return
+  const classified = classifyFromCtx(ctx)
   if (classified.kind === 'single_img') {
     ctx.patchState({
       progress: {

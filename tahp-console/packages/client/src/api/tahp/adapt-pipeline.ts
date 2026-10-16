@@ -267,6 +267,7 @@ export interface CreateRunInput {
   domains?: PipelineDomainInput[]
   build_context: BuildContext
   device_id?: string
+  oem_auto_unlock?: boolean
   test_plan?: TestPlan
   max_iterations?: number
   adapt_max_retries?: number
@@ -385,6 +386,23 @@ export interface TrsysBranchOption {
 
 export function fetchTrsysBranches(): Promise<{ branches: TrsysBranchOption[] }> {
   return tahpGet('/api/tahp/adapt-pipeline/trsys-branches')
+}
+
+export type OemLocked = 'unlocked' | 'locked' | 'unknown'
+export type OemBuildKind = 'user' | 'userdebug' | 'userroot' | 'unknown'
+export type OemWizardGate = 'unlocked' | 'block_user' | 'offer_auto_unlock' | 'unknown'
+
+export interface OemLockStatus {
+  serial: string
+  flash_locked: string
+  build_type: string
+  locked: OemLocked
+  build_kind: OemBuildKind
+  gate: OemWizardGate
+}
+
+export function fetchDeviceOemStatus(deviceId: string): Promise<OemLockStatus> {
+  return tahpGet(`/api/tahp/adapt-pipeline/devices/${encodeURIComponent(deviceId)}/oem-status`)
 }
 
 export function startPipelineRun(runId: string): Promise<{ ok: boolean }> {

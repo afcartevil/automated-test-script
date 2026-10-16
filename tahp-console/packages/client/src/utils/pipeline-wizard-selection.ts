@@ -48,6 +48,9 @@ export interface WizardStep3Values {
   flashVersionFromBuild: boolean
   deviceId: string | null | undefined
   oemUnlockConfirmed: boolean
+  oemAutoUnlock: boolean
+  oemProbeStatus: 'idle' | 'loading' | 'error' | 'ready'
+  oemGate: 'unlocked' | 'block_user' | 'offer_auto_unlock' | 'unknown' | null
   gerritIssueId: string
 }
 
@@ -69,8 +72,18 @@ export function listWizardStep3Blockers(
   if ((sections.flash || sections.selfcheck) && !String(values.deviceId ?? '').trim()) {
     blockers.push('请选择目标设备')
   }
-  if (sections.flash && !values.oemUnlockConfirmed) {
-    blockers.push('请勾选确认设备已 OEM 解锁')
+  if (sections.flash && String(values.deviceId ?? '').trim()) {
+    if (values.oemProbeStatus === 'idle' || values.oemProbeStatus === 'loading') {
+      blockers.push('正在检测设备 OEM 解锁状态')
+    } else if (values.oemProbeStatus === 'error') {
+      blockers.push('无法读取设备 OEM 状态，请重新检测')
+    } else if (values.oemGate === 'block_user') {
+      blockers.push('样机为 user 且 OEM lock，无法刷写，请先解锁')
+    } else if (values.oemGate === 'offer_auto_unlock' && !values.oemAutoUnlock) {
+      blockers.push('样机 OEM lock，请自行解锁或勾选工具自动解锁')
+    } else if (values.oemGate === 'unknown' && !values.oemUnlockConfirmed) {
+      blockers.push('请勾选确认设备已 OEM 解锁')
+    }
   }
   if (sections.gerrit && !values.gerritIssueId.trim()) {
     blockers.push('请填写 Gerrit 提交 ID')

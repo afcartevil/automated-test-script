@@ -62,6 +62,13 @@ mkdirSync(ezBuildOutDir, { recursive: true })
 if (existsSync(ezBuildSrc)) {
   cpSync(ezBuildSrc, resolve(ezBuildOutDir, 'ez-build.sh'))
 }
+const oemUnlockSrc = resolve(
+  rootDir,
+  'packages/server/src/services/tahp/adapt-pipeline/assets/oem-unlock-product.bat',
+)
+if (existsSync(oemUnlockSrc)) {
+  cpSync(oemUnlockSrc, resolve(ezBuildOutDir, 'oem-unlock-product.bat'))
+}
 
 const selfCheckOutDir = resolve(serverOutDir, 'self-check')
 mkdirSync(selfCheckOutDir, { recursive: true })

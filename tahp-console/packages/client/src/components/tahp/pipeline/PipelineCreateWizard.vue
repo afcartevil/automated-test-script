@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAlert, NButton, NInput, NInputNumber, NSelect, NSpin, NSteps, NStep, NTable, NTooltip, useMessage } from 'naive-ui'
+import { NAlert, NButton, NInput, NInputNumber, NSelect, NSpin, NSteps, NStep, NTable, NTooltip, useDialog, useMessage } from 'naive-ui'
 import EaCard from '@/components/layout/EaCard.vue'
 import {
   createPipelineRun,
@@ -11,6 +11,7 @@ import {
   fetchHarnessSkills,
   fetchPipelinePrereqs,
   fetchTrsysBranches,
+  fetchDeviceOemStatus,
   fetchWorkflow,
   parsePipelinePathParams,
   startPipelineRun,
@@ -21,6 +22,8 @@ import {
   type DomainCatalog,
   type DomainCatalogDomain,
   type DomainCatalogField,
+  type OemLockStatus,
+  type OemWizardGate,
   type PathParamField,
   type PathParams,
   type PipelineDomainInput,
@@ -67,6 +70,7 @@ const emit = defineEmits<{
 const router = useRouter()
 const route = useRoute()
 const message = useMessage()
+const dialog = useDialog()
 
 const step = ref(1)
 const loading = ref(false)
@@ -180,6 +184,11 @@ const selectedBuildTargets = ref<string[]>(['sys', 'krn', 'vext', 'hal', 'odm'])
 const needPack = ref<'yes' | 'no'>('yes')
 const deviceId = ref<string | null>(null)
 const oemUnlockConfirmed = ref(false)
+const oemAutoUnlock = ref(false)
+const oemProbeStatus = ref<'idle' | 'loading' | 'error' | 'ready'>('idle')
+const oemProbe = ref<OemLockStatus | null>(null)
+const oemProbeError = ref('')
+let oemProbeGen = 0
 const keepClonedDeviceId = ref<string | null>(null)
 const skipAutoPrereqFetch = ref(false)
 const testPlanMode = ref<TestPlanMode>('pipeline_adapt')
@@ -378,9 +387,15 @@ watch(flashVersionFromBuild, (fromBuild) => {
   if (fromBuild) flashPkgPath.value = ''
 })
 
-watch(deviceId, () => {
+watch(deviceId, (id) => {
   oemUnlockConfirmed.value = false
+  oemAutoUnlock.value = false
+  void probeDeviceOem(id)
 })
+
+const oemGate = computed<OemWizardGate | null>(() =>
+  oemProbeStatus.value === 'ready' ? (oemProbe.value?.gate ?? 'unknown') : null,
+)
 
 const enabledDomains = computed(() => wizardDomains.value.filter(d => d.enabled))
 
@@ -506,6 +521,9 @@ function step3Values() {
     flashVersionFromBuild: flashVersionFromBuild.value,
     deviceId: deviceId.value,
     oemUnlockConfirmed: oemUnlockConfirmed.value,
+    oemAutoUnlock: oemAutoUnlock.value,
+    oemProbeStatus: oemProbeStatus.value,
+    oemGate: oemGate.value,
     gerritIssueId: String(buildContext.gerrit_issue_id ?? ''),
   }
 }
@@ -805,6 +823,38 @@ async function loadPrereqs() {
   }
 }
 
+async function probeDeviceOem(id: string | null | undefined) {
+  const serial = String(id ?? '').trim()
+  const gen = ++oemProbeGen
+  oemProbe.value = null
+  oemProbeError.value = ''
+  if (!serial) {
+    oemProbeStatus.value = 'idle'
+    return
+  }
+  oemProbeStatus.value = 'loading'
+  try {
+    const data = await fetchDeviceOemStatus(serial)
+    if (gen !== oemProbeGen) return
+    oemProbe.value = data
+    oemProbeStatus.value = 'ready'
+    oemUnlockConfirmed.value = data.gate === 'unlocked'
+    if (data.gate !== 'offer_auto_unlock') oemAutoUnlock.value = false
+    if (data.gate === 'unlocked') {
+      dialog.success({
+        title: 'OEM 解锁',
+        content: '样机已解锁，可执行刷机',
+        positiveText: '知道了',
+      })
+    }
+  } catch (err) {
+    if (gen !== oemProbeGen) return
+    oemProbe.value = null
+    oemProbeStatus.value = 'error'
+    oemProbeError.value = (err as Error).message || '无法读取设备 OEM 状态'
+  }
+}
+
 async function loadDevicesOnce() {
   if (devicePollInFlight) return
   devicePollInFlight = true
@@ -977,6 +1027,7 @@ function buildCreateInput(): CreateRunInput {
       gerrit_issue_id: buildContext.gerrit_issue_id?.trim() || undefined,
     },
     device_id: deviceId.value ?? undefined,
+    oem_auto_unlock: oemGate.value === 'offer_auto_unlock' && oemAutoUnlock.value,
     test_plan: testPlan,
     max_iterations: maxIterations.value ?? 3,
     adapt_max_retries: adaptMaxRetries.value ?? 3,
@@ -1468,8 +1519,39 @@ onUnmounted(() => {
           :placeholder="devicesLoading ? '扫描中…' : (devices.length ? '选择设备' : '未检测到设备')"
         />
       </div>
-      <div v-if="step3Sections.flash" class="oem-unlock-box">
-        <label class="oem-unlock-check">
+      <div
+        v-if="step3Sections.flash && deviceId"
+        class="oem-unlock-box"
+        :class="{ 'is-ok': oemGate === 'unlocked' }"
+      >
+        <div v-if="oemProbeStatus === 'loading'" class="oem-unlock-msg">
+          正在检测设备 OEM 解锁状态…
+        </div>
+        <div v-else-if="oemProbeStatus === 'error'" class="oem-unlock-msg">
+          {{ oemProbeError || '无法读取设备 OEM 状态' }}
+          <button type="button" class="link-btn" @click="probeDeviceOem(deviceId)">重新检测</button>
+        </div>
+        <div v-else-if="oemGate === 'unlocked'" class="oem-unlock-msg">
+          样机已解锁，可执行刷机
+        </div>
+        <div v-else-if="oemGate === 'block_user'" class="oem-unlock-msg">
+          样机 OEM lock（user），无法执行刷写。请先解锁后再选择该设备。
+          <button type="button" class="link-btn" @click="probeDeviceOem(deviceId)">重新检测</button>
+        </div>
+        <template v-else-if="oemGate === 'offer_auto_unlock'">
+          <p class="oem-unlock-msg">
+            样机 OEM lock（{{ oemProbe?.build_type || 'userdebug' }}）。请自行解锁，或勾选由工具自动解锁。
+            <button type="button" class="link-btn" @click="probeDeviceOem(deviceId)">重新检测</button>
+          </p>
+          <label class="oem-unlock-check">
+            <input v-model="oemAutoUnlock" type="checkbox">
+            <span>
+              工具自动解锁
+              <span class="req">*</span>
+            </span>
+          </label>
+        </template>
+        <label v-else-if="oemProbeStatus === 'ready'" class="oem-unlock-check">
           <input v-model="oemUnlockConfirmed" type="checkbox">
           <span>
             已确认设备完成 OEM 解锁
@@ -1678,6 +1760,17 @@ onUnmounted(() => {
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--warn, #d97706) 50%, var(--line));
   background: color-mix(in srgb, var(--warn, #d97706) 12%, transparent);
+  &.is-ok {
+    border-color: color-mix(in srgb, var(--ok, #16a34a) 50%, var(--line));
+    background: color-mix(in srgb, var(--ok, #16a34a) 12%, transparent);
+  }
+}
+.oem-unlock-msg {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+  .link-btn { margin-left: 8px; }
 }
 .oem-unlock-check {
   display: flex;

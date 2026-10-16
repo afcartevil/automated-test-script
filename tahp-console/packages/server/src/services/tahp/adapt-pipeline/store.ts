@@ -176,6 +176,7 @@ function buildRunObject(input: CreateRunInput, runId: string): PipelineRun {
     },
     path_params: input.path_params,
     device_id: input.device_id,
+    oem_auto_unlock: input.oem_auto_unlock === true,
     test_plan: input.test_plan,
     stages,
     iterations: [],

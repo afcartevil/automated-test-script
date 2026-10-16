@@ -45,6 +45,7 @@ import {
   saveWorkflow,
 } from '../../services/tahp/adapt-pipeline/workflow'
 import { logger } from '../../services/logger'
+import { probeOemLockStatus } from '../../services/tahp/adapt-pipeline/oem-unlock-product'
 
 export const tahpAdaptPipelineRoutes = new Router({ prefix: '/api/tahp/adapt-pipeline' })
 
@@ -91,6 +92,23 @@ function parseOffset(raw: string | undefined): number | undefined {
   const n = Number(raw)
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined
 }
+
+tahpAdaptPipelineRoutes.get('/devices/:deviceId/oem-status', async (ctx) => {
+  const deviceId = decodeURIComponent(String(ctx.params.deviceId ?? '')).trim()
+  if (!deviceId) {
+    ctx.status = 400
+    ctx.body = { success: false, error: '缺少 deviceId' }
+    return
+  }
+  try {
+    const data = await probeOemLockStatus(deviceId)
+    ctx.body = { success: true, data }
+  } catch (err) {
+    logger.warn({ err, deviceId }, '[adapt-pipeline] oem-status failed')
+    ctx.status = 500
+    ctx.body = { success: false, error: (err as Error).message }
+  }
+})
 
 tahpAdaptPipelineRoutes.post('/parse-path-params', async (ctx) => {
   try {

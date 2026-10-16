@@ -28,6 +28,9 @@ function values(overrides: Partial<Parameters<typeof canProceedWizardStep3>[1]> 
     flashVersionFromBuild: true,
     deviceId: 'SN1',
     oemUnlockConfirmed: true,
+    oemAutoUnlock: false,
+    oemProbeStatus: 'ready' as const,
+    oemGate: 'unlocked' as const,
     gerritIssueId: 'TOS1501-1',
     ...overrides,
   }
@@ -123,16 +126,44 @@ describe('pipeline wizard step3 required fields', () => {
     const flashOnly = resolveWizardStep3Sections([{ key: 'flash', enabled: true }])
     expect(listWizardStep3Blockers(flashOnly, values({
       oemUnlockConfirmed: false,
+      oemGate: 'unknown',
       gerritIssueId: '',
     }))).toContain('请勾选确认设备已 OEM 解锁')
     expect(canProceedWizardStep3(flashOnly, values({
       oemUnlockConfirmed: false,
+      oemGate: 'unknown',
       gerritIssueId: '',
     }))).toBe(false)
+    expect(canProceedWizardStep3(flashOnly, values({
+      oemUnlockConfirmed: false,
+      oemGate: 'unlocked',
+      gerritIssueId: '',
+    }))).toBe(true)
     expect(canProceedWizardStep3(
       resolveWizardStep3Sections([{ key: 'selfcheck', enabled: true }]),
-      values({ oemUnlockConfirmed: false, gerritIssueId: '' }),
+      values({ oemUnlockConfirmed: false, oemGate: 'unknown', gerritIssueId: '' }),
     )).toBe(true)
+  })
+
+  it('blocks user OEM lock and requires auto-unlock for userdebug', () => {
+    const flashOnly = resolveWizardStep3Sections([{ key: 'flash', enabled: true }])
+    expect(listWizardStep3Blockers(flashOnly, values({
+      oemGate: 'block_user',
+      oemUnlockConfirmed: false,
+      gerritIssueId: '',
+    }))).toContain('样机为 user 且 OEM lock，无法刷写，请先解锁')
+    expect(listWizardStep3Blockers(flashOnly, values({
+      oemGate: 'offer_auto_unlock',
+      oemAutoUnlock: false,
+      oemUnlockConfirmed: false,
+      gerritIssueId: '',
+    }))).toContain('样机 OEM lock，请自行解锁或勾选工具自动解锁')
+    expect(canProceedWizardStep3(flashOnly, values({
+      oemGate: 'offer_auto_unlock',
+      oemAutoUnlock: true,
+      oemUnlockConfirmed: false,
+      gerritIssueId: '',
+    }))).toBe(true)
   })
 
   it('requires flash package path unless version comes from compile pack', () => {
@@ -167,12 +198,12 @@ describe('pipeline wizard step3 required fields', () => {
         systemRoot: '',
         deviceId: '',
         oemUnlockConfirmed: false,
+        oemGate: 'unknown',
         gerritIssueId: '',
       }),
     )).toEqual([
       '请填写系统源码路径',
       '请选择目标设备',
-      '请勾选确认设备已 OEM 解锁',
       '请填写 Gerrit 提交 ID',
     ])
   })

@@ -91,6 +91,8 @@ export interface PipelineRun {
    */
   path_params?: PathParams
   device_id?: string
+  /** 烧录前用 oem-unlock-product.bat 自动解锁（userdebug / userroot 且 OEM lock） */
+  oem_auto_unlock?: boolean
   test_plan?: TestPlan
 
   stages: Record<string, StageState>
@@ -410,6 +412,7 @@ export interface CreateRunInput {
   from_os?: string
   to_os?: string
   path_params?: PathParams
+  oem_auto_unlock?: boolean
 }
 
 export interface RunSummary {
