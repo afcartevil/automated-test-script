@@ -5,6 +5,7 @@ import {
   initDeviceSelfCheck,
   startTest,
 } from '../../packages/server/src/services/tahp/device-self-check'
+import { tcardBaselineVersionError } from '../../packages/server/src/services/tahp/ota-pretest'
 
 describe('device self-check ota_upgrade catalog', () => {
   it('loads continuous OTA upgrade catalog', () => {
@@ -40,5 +41,24 @@ describe('device self-check ota_upgrade catalog', () => {
   it('allows start without a release package when no device is present', async () => {
     initDeviceSelfCheck()
     await expect(startTest('NO_DEVICE', 'ota_upgrade')).resolves.toBeNull()
+  })
+})
+
+describe('ota_upgrade tcard baseline version gate', () => {
+  it('手机当前版本与最低勾选版本的上一档匹配时放行', () => {
+    expect(tcardBaselineVersionError('14', 14)).toBeUndefined()
+    expect(tcardBaselineVersionError('14.0', 14)).toBeUndefined()
+    expect(tcardBaselineVersionError(' 15 ', 15)).toBeUndefined()
+  })
+
+  it('版本不匹配时拦截并提示改用 device_update', () => {
+    const error = tcardBaselineVersionError('14', 15)
+    expect(error).toContain('Android 14')
+    expect(error).toContain('Android 15')
+    expect(error).toContain('device_update')
+  })
+
+  it('读不到版本号时按未知版本拦截', () => {
+    expect(tcardBaselineVersionError('', 15)).toContain('未知 Android 版本')
   })
 })

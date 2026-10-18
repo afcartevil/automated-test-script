@@ -224,6 +224,10 @@ const {
   toggleReleaseUpgradeStep,
   updateReleaseUpgradePath,
   releaseUpgradeMethodLabel,
+  baselineStrategy,
+  setBaselineStrategy,
+  isReleaseUpgradeBaselineChoiceStep,
+  releaseTcardExpectFrom,
   handleClearFlashPackages,
   enableTcardUpdate,
   tcardUpdatePath,
@@ -2024,7 +2028,27 @@ function handleDutRowAction(deviceId: string) {
                               <strong>{{ step.androidLabel }}</strong>
                             </label>
                             <span class="release-upgrade-version">{{ step.releaseVersionName }}</span>
-                            <span class="release-upgrade-method">{{ releaseUpgradeMethodLabel(step) }}</span>
+                            <span v-if="isReleaseUpgradeBaselineChoiceStep(step)" class="release-upgrade-strategy">
+                              <label class="release-upgrade-strategy-option">
+                                <input
+                                  type="radio"
+                                  name="release-baseline-strategy"
+                                  :checked="baselineStrategy === 'tcard'"
+                                  @change="setBaselineStrategy('tcard')"
+                                />
+                                T卡升级
+                              </label>
+                              <label class="release-upgrade-strategy-option">
+                                <input
+                                  type="radio"
+                                  name="release-baseline-strategy"
+                                  :checked="baselineStrategy === 'device_update'"
+                                  @change="setBaselineStrategy('device_update')"
+                                />
+                                device_update
+                              </label>
+                            </span>
+                            <span v-else class="release-upgrade-method">{{ releaseUpgradeMethodLabel(step) }}</span>
                             <div class="release-upgrade-path-cell">
                               <input
                                 type="text"
@@ -2046,6 +2070,12 @@ function handleDutRowAction(deviceId: string) {
                             </p>
                             <p v-else-if="step.unavailableReason" class="release-upgrade-warning">
                               {{ step.unavailableReason }}
+                            </p>
+                            <p
+                              v-if="isReleaseUpgradeBaselineChoiceStep(step) && baselineStrategy === 'tcard' && releaseTcardExpectFrom != null"
+                              class="release-upgrade-hint"
+                            >
+                              跳过 OEM 解锁 / usbdebug 写入，直接 T卡升级，需手机当前为 Android {{ releaseTcardExpectFrom }}
                             </p>
                           </div>
                         </div>
@@ -4337,6 +4367,31 @@ $catalog-pane-height: calc(100vh - 48px);
 .release-upgrade-method {
   font-size: 12px;
   color: var(--muted);
+}
+
+.release-upgrade-strategy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.release-upgrade-strategy-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.release-upgrade-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  word-break: break-all;
 }
 
 .release-upgrade-path-cell {

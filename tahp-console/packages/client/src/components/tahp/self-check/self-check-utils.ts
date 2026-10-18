@@ -1,4 +1,4 @@
-import type { BitflipResultDetail, CaseCatalogGroup, ChipPlatform, DeviceInfo, SelfCheckReportSummary, SelfCheckTestConfig } from '@/api/tahp/device-self-check'
+import type { AndroidUpgradeStep, BitflipResultDetail, CaseCatalogGroup, ChipPlatform, DeviceInfo, SelfCheckReportSummary, SelfCheckTestConfig } from '@/api/tahp/device-self-check'
 
 export const SELF_CHECK_SUBTITLE =
   '验测任务 → 测试执行 → 评审补全 → 人工复核报告'
@@ -66,6 +66,115 @@ export function pickPreferredTcardZip(paths: string[], previousAndroid?: number)
 export function missingTcardZipHint(previousAndroid: number): string {
   if (previousAndroid === 14) return '未找到T卡包（需 Tcard_*-15.*.zip）'
   return `未找到T卡包（需 Tcard_*_a${previousAndroid}.zip）`
+}
+
+/** 最低版本未勾选时，新基线版本的升级方式：T卡升级（默认，跳过前置操作）或 device_update 刷机 */
+export type ReleaseBaselineStrategy = 'device_update' | 'tcard'
+
+export interface ReleaseUpgradeQueueResult {
+  ok: boolean
+  /** device_update 基线的整包路径；T卡基线模式为空串 */
+  flashPath: string
+  /** 按序执行的 T卡包队列；T卡基线模式含基线自身的 T卡包 */
+  tcardPaths: string[]
+  /** T卡基线模式：要求手机当前 Android 大版本（基线在计划中的上一档） */
+  expectFromAndroid?: number
+  /** 各选中步应展示的路径（基线=整包或T卡包，后续=T卡包），按选中顺序 */
+  assignments: Array<{ step: AndroidUpgradeStep; packagePath: string }>
+  /** 链中因缺少T卡包需降级（置为未选中/不可用）的步 */
+  downgrade?: { step: AndroidUpgradeStep; previousAndroid: number }
+  /** 失败原因（ok=false 时） */
+  error?: string
+}
+
+/**
+ * 由勾选集解析连续升级队列。第一个勾选版本即基线：
+ * - device_update：基线刷整包（需 fullZip），后续版本按上一档选 T卡包（原行为）
+ * - tcard（仅当基线不是计划最低版本）：基线也走 T卡（需计划中上一档的 Tcard_ 包），不刷机
+ */
+export function resolveReleaseUpgradeQueue(
+  steps: AndroidUpgradeStep[],
+  baselineStrategy: ReleaseBaselineStrategy,
+): ReleaseUpgradeQueueResult {
+  const sortedAll = steps.slice().sort((a, b) => a.androidVersion - b.androidVersion)
+  const selected = sortedAll.filter((step) => step.selected)
+  const empty = { ok: false as const, flashPath: '', tcardPaths: [] as string[], assignments: [] as ReleaseUpgradeQueueResult['assignments'] }
+  if (!selected.length) {
+    return { ...empty, error: '请至少选择一个可用的 Android 版本' }
+  }
+
+  const baseline = selected[0]!
+  if (baseline.needsTransfer || !baseline.available) {
+    return { ...empty, error: '所选版本包含尚未传回重庆的刷机包，请传输后重新解析' }
+  }
+
+  const planFirst = sortedAll[0]
+  const tcardBaseline = baselineStrategy === 'tcard' && Boolean(planFirst) && baseline !== planFirst
+
+  const assignments: ReleaseUpgradeQueueResult['assignments'] = []
+  const tcardPaths: string[] = []
+  let flashPath = ''
+  let expectFromAndroid: number | undefined
+
+  if (tcardBaseline) {
+    const planPrev = sortedAll[sortedAll.indexOf(baseline) - 1]!.androidVersion
+    const tcard = pickPreferredTcardZip(baseline.tcardZips, planPrev)
+    if (!tcard) {
+      return {
+        ...empty,
+        downgrade: { step: baseline, previousAndroid: planPrev },
+        error: `最低选中版本${missingTcardZipHint(planPrev)}`,
+      }
+    }
+    assignments.push({ step: baseline, packagePath: tcard })
+    tcardPaths.push(tcard)
+    expectFromAndroid = planPrev
+  } else {
+    if (!baseline.fullZip) {
+      return { ...empty, error: '最低选中版本缺少 device_update 整包，或更高版本缺少 T卡升级包' }
+    }
+    assignments.push({ step: baseline, packagePath: baseline.fullZip })
+    flashPath = baseline.fullZip
+  }
+  let previousAndroid = baseline.androidVersion
+
+  for (const step of selected.slice(1)) {
+    const path = pickPreferredTcardZip(step.tcardZips, previousAndroid)
+    if (!path) {
+      return {
+        ok: false,
+        flashPath,
+        tcardPaths,
+        assignments,
+        expectFromAndroid,
+        downgrade: { step, previousAndroid },
+        error: '最低选中版本缺少 device_update 整包，或更高版本缺少 T卡升级包',
+      }
+    }
+    assignments.push({ step, packagePath: path })
+    if (step.needsTransfer || !step.available) {
+      return {
+        ok: false,
+        flashPath,
+        tcardPaths,
+        assignments,
+        expectFromAndroid,
+        error: '所选版本包含尚未传回重庆的刷机包，请传输后重新解析',
+      }
+    }
+    tcardPaths.push(path)
+    previousAndroid = step.androidVersion
+  }
+  return { ok: true, flashPath, tcardPaths, assignments, expectFromAndroid }
+}
+
+/** T卡基线版本校验：手机当前 Android 大版本须等于最低勾选版本的上一档。返回 undefined 表示匹配。 */
+export function tcardBaselineVersionError(androidRelease: string, expectFromAndroid: number): string | undefined {
+  const current = androidRelease.trim()
+  const actual = Number.parseInt(current, 10)
+  if (Number.isInteger(actual) && actual === expectFromAndroid) return undefined
+  const currentLabel = current ? `Android ${current}` : '未知 Android 版本'
+  return `当前手机为 ${currentLabel}，与最低勾选版本要求的基线 Android ${expectFromAndroid} 不匹配，请改用 device_update 刷机或调整勾选版本`
 }
 
 /** 连续OTA升级开始刷机前的人工确认 */

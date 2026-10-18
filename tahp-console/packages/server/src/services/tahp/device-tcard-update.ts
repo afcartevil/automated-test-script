@@ -32,6 +32,8 @@ const FILE_LIST_TIMEOUT_MS = 90_000
 export interface TcardUpdateOptions {
   zipPath: string
   zipPaths?: string[]
+  /** 连续OTA「T卡基线」模式：要求手机当前 Android 大版本（最低勾选版本的上一档），启动前校验 */
+  expectFromAndroid?: number
 }
 
 export function tcardZipQueue(options: TcardUpdateOptions): string[] {

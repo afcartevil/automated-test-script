@@ -212,6 +212,8 @@ export interface StartTestTcardPayload {
   enabled: boolean
   zipPath?: string
   zipPaths?: string[]
+  /** 连续OTA「T卡基线」模式：要求手机当前 Android 大版本（最低勾选版本的上一档） */
+  expectFromAndroid?: number
 }
 
 export interface StartTestOtaPretestPayload {
@@ -309,6 +311,8 @@ export interface OtaStartPreview {
   allowed: boolean
   message: string
   steps: string[]
+  /** 手机当前 Android 大版本（ro.build.version.release），读取失败为空串 */
+  androidRelease?: string
 }
 
 export async function previewOtaStart(deviceId: string): Promise<OtaStartPreview> {

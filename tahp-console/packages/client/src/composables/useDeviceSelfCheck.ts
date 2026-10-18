@@ -71,8 +71,9 @@ import {
   otaConfirmSteps,
   hasContinuousOtaPackagePath,
   missingTcardZipHint,
-  pickPreferredTcardZip,
   resolveReleaseUpgradeEnabledOnTypeChange,
+  resolveReleaseUpgradeQueue,
+  tcardBaselineVersionError,
   getTestTypeLabel,
   getStatusColor,
   getStatusIcon,
@@ -81,6 +82,7 @@ import {
   getCaseResultColor,
   parseManualSteps,
   type PipelineStage,
+  type ReleaseBaselineStrategy,
 } from '@/components/tahp/self-check/self-check-utils'
 
 export type SelfCheckTab = 'overview' | 'devices' | 'review' | 'gerrit'
@@ -202,6 +204,11 @@ const releaseFlashPath = ref('')
 const releaseTcardPaths = ref<string[]>([])
 const releaseUpgradeResolving = ref(false)
 const releaseUpgradePlan = ref<ReleaseUpgradePlan | null>(null)
+/** 最低版本未勾选时新基线的升级方式，默认 T卡升级（跳过 OEM 解锁 / usbdebug 写入） */
+const baselineStrategy = ref<ReleaseBaselineStrategy>('tcard')
+/** T卡基线模式：要求手机当前 Android 大版本（基线在计划中的上一档） */
+const releaseTcardExpectFrom = ref<number | undefined>(undefined)
+const releaseUpgradeSyncError = ref('')
 
 const otaPretestConfig = ref<OtaPretestSettings>({
   username: '',
@@ -1736,53 +1743,51 @@ async function handleResolveLatestDailyFlash() {
   }
 }
 
-function pickTcardPath(step: AndroidUpgradeStep, previousAndroid: number): string {
-  return pickPreferredTcardZip(step.tcardZips, previousAndroid)
-}
-
 function syncReleaseUpgradeSelection(): boolean {
   const plan = releaseUpgradePlan.value
   if (!plan) return true
-  const selected = plan.steps
-    .filter((step) => step.selected)
-    .sort((a, b) => a.androidVersion - b.androidVersion)
-  if (!selected.length) {
-    releaseFlashPath.value = ''
-    releaseTcardPaths.value = []
-    return false
+  const result = resolveReleaseUpgradeQueue(plan.steps, baselineStrategy.value)
+  for (const { step, packagePath } of result.assignments) {
+    step.packagePath = packagePath
   }
+  if (result.downgrade && !result.downgrade.step.needsTransfer) {
+    const { step, previousAndroid } = result.downgrade
+    step.packagePath = ''
+    step.unavailableReason = missingTcardZipHint(previousAndroid)
+    step.available = false
+    step.selected = false
+  }
+  releaseFlashPath.value = result.flashPath
+  releaseTcardPaths.value = result.tcardPaths
+  releaseTcardExpectFrom.value = result.ok ? result.expectFromAndroid : undefined
+  releaseUpgradeSyncError.value = result.ok
+    ? ''
+    : (result.error || '最低选中版本缺少 device_update 整包，或更高版本缺少 T卡升级包')
+  return result.ok
+}
 
-  const baseline = selected[0]!
-  if (baseline.needsTransfer || !baseline.available || !baseline.fullZip) {
-    return false
-  }
-  baseline.packagePath = baseline.fullZip
-  releaseFlashPath.value = baseline.packagePath
+/** 最低版本未勾选时，第一个勾选版本即新基线，可选择 T卡升级 / device_update */
+function releaseBaselineChoiceStep(): AndroidUpgradeStep | undefined {
+  const plan = releaseUpgradePlan.value
+  if (!plan) return undefined
+  const sortedAll = plan.steps.slice().sort((a, b) => a.androidVersion - b.androidVersion)
+  const firstSelected = sortedAll.find((step) => step.selected)
+  if (!firstSelected || sortedAll[0] === firstSelected) return undefined
+  return firstSelected
+}
 
-  const tcardPaths: string[] = []
-  let previousAndroid = baseline.androidVersion
-  for (const step of selected.slice(1)) {
-    const path = pickTcardPath(step, previousAndroid)
-    if (!path) {
-      if (!step.needsTransfer) {
-        step.packagePath = ''
-        step.unavailableReason = missingTcardZipHint(previousAndroid)
-        step.available = false
-        step.selected = false
-      }
-      releaseTcardPaths.value = tcardPaths
-      return false
-    }
-    step.packagePath = path
-    if (step.needsTransfer || !step.available) {
-      releaseTcardPaths.value = tcardPaths
-      return false
-    }
-    tcardPaths.push(path)
-    previousAndroid = step.androidVersion
-  }
-  releaseTcardPaths.value = tcardPaths
-  return true
+function isReleaseUpgradeBaselineChoiceStep(step: AndroidUpgradeStep): boolean {
+  return releaseBaselineChoiceStep() === step
+}
+
+function isTcardBaselineActive(): boolean {
+  return Boolean(releaseBaselineChoiceStep() && baselineStrategy.value === 'tcard')
+}
+
+function setBaselineStrategy(strategy: ReleaseBaselineStrategy) {
+  if (baselineStrategy.value === strategy) return
+  baselineStrategy.value = strategy
+  syncReleaseUpgradeSelection()
 }
 
 function toggleReleaseUpgradeStep(step: AndroidUpgradeStep) {
@@ -1792,12 +1797,16 @@ function toggleReleaseUpgradeStep(step: AndroidUpgradeStep) {
 }
 
 function isReleaseUpgradeFlashStep(step: AndroidUpgradeStep): boolean {
-  const selected = releaseUpgradePlan.value?.steps
-    .filter((item) => item.selected)
-    .sort((a, b) => a.androidVersion - b.androidVersion) || []
-  if (selected[0]) return selected[0] === step
-  const all = [...(releaseUpgradePlan.value?.steps || [])].sort((a, b) => a.androidVersion - b.androidVersion)
-  return all[0] === step
+  const plan = releaseUpgradePlan.value
+  if (!plan) return false
+  const sortedAll = plan.steps.slice().sort((a, b) => a.androidVersion - b.androidVersion)
+  const firstSelected = sortedAll.find((item) => item.selected)
+  if (firstSelected) {
+    if (firstSelected !== step) return false
+    // T卡基线模式下基线是 T卡步，不是刷机步
+    return !(sortedAll[0] !== step && baselineStrategy.value === 'tcard')
+  }
+  return sortedAll[0] === step
 }
 
 function updateReleaseUpgradePath(step: AndroidUpgradeStep, path: string) {
@@ -1848,7 +1857,8 @@ function releaseUpgradeMethodLabel(step: AndroidUpgradeStep): string {
   const selected = releaseUpgradePlan.value?.steps
     .filter((item) => item.selected)
     .sort((a, b) => a.androidVersion - b.androidVersion) || []
-  return selected[0] === step ? 'device_update' : 'T卡升级'
+  if (selected[0] !== step) return 'T卡升级'
+  return isTcardBaselineActive() ? 'T卡升级' : 'device_update'
 }
 
 async function handleResolveReleaseUpgrade() {
@@ -1863,6 +1873,7 @@ async function handleResolveReleaseUpgrade() {
   try {
     releaseUpgradePlan.value = await resolveReleaseUpgradePlan(deviceId)
     enableReleaseUpgrade.value = true
+    baselineStrategy.value = 'tcard'
     syncReleaseUpgradeSelection()
     const transferable = releaseUpgradePlan.value.steps.filter((step) => step.needsTransfer).length
     const missingTcard = releaseUpgradePlan.value.steps.filter((step) =>
@@ -1956,8 +1967,9 @@ function otaReleaseSteps(): string[] {
   const selected = (releaseUpgradePlan.value?.steps || [])
     .filter(step => step.selected)
     .sort((a, b) => a.androidVersion - b.androidVersion)
+  const tcardBaseline = Boolean(selected[0] && isTcardBaselineActive())
   return selected.map((step, index) => (
-    index === 0
+    index === 0 && !tcardBaseline
       ? `device_update 刷入 ${step.androidLabel}`
       : `T卡升级到 ${step.androidLabel}`
   ))
@@ -2003,6 +2015,11 @@ function confirmOtaUpgradeFlashThenStart(
 }
 
 async function runSelectedOtaPretestThenStart(deviceId: string) {
+  // T卡基线模式：跳过 OEM 解锁 / usbdebug 写入等前置操作，直接 T卡升级
+  if (isTcardBaselineActive()) {
+    await commitStartTest(deviceId)
+    return
+  }
   const ok = await executeOtaPretest()
   if (!ok) return
   await commitStartTest(deviceId)
@@ -2033,7 +2050,7 @@ async function handleStartTest(deviceId: string) {
         return
       }
       if (!syncReleaseUpgradeSelection()) {
-        error.value = '最低选中版本缺少 device_update 整包，或更高版本缺少 T卡升级包'
+        error.value = releaseUpgradeSyncError.value || '最低选中版本缺少 device_update 整包，或更高版本缺少 T卡升级包'
         return
       }
     }
@@ -2098,6 +2115,25 @@ async function handleStartTest(deviceId: string) {
           })
           return
         }
+        // T卡基线模式：先校验手机当前版本与最低勾选版本的上一档是否匹配
+        if (isTcardBaselineActive() && releaseTcardExpectFrom.value != null) {
+          const mismatch = tcardBaselineVersionError(preview.androidRelease ?? '', releaseTcardExpectFrom.value)
+          if (mismatch) {
+            error.value = mismatch
+            dialog.warning({
+              title: '无法进行连续 OTA 升级',
+              content: mismatch,
+              positiveText: '知道了',
+            })
+            return
+          }
+          confirmOtaUpgradeFlashThenStart(deviceId, otaConfirmSteps({
+            pretestOnly: false,
+            pretestSteps: [],
+            upgradeSteps: otaReleaseSteps(),
+          }))
+          return
+        }
         confirmOtaUpgradeFlashThenStart(deviceId, otaConfirmSteps({
           pretestOnly: false,
           pretestSteps: preview.steps,
@@ -2128,7 +2164,7 @@ async function handleStartTest(deviceId: string) {
 async function commitStartTest(deviceId: string) {
   try {
     const releaseActive = selectedTestType.value === 'ota_upgrade'
-      ? Boolean(releaseUpgradePlan.value && releaseFlashPath.value.trim())
+      ? Boolean(releaseUpgradePlan.value && (releaseFlashPath.value.trim() || releaseTcardPaths.value.length))
       : enableReleaseUpgrade.value
     const intent = startTestIntentRole.value
     const current = devices.value.find(d => d.deviceId === deviceId)
@@ -2143,12 +2179,15 @@ async function commitStartTest(deviceId: string) {
     const availableModules = listModulesForTestType(selectedTestType.value)
     const modulesToRun = availableModules.filter(m => selectedStartModules.value.has(m))
     clearFlashPanel()
+    const releaseFlash = releaseFlashPath.value.trim()
     const flash = releaseActive
-      ? {
-          enabled: true,
-          pkgPath: releaseFlashPath.value.trim(),
-          stageVersion: 'Open',
-        }
+      ? (releaseFlash
+          ? {
+              enabled: true,
+              pkgPath: releaseFlash,
+              stageVersion: 'Open',
+            }
+          : undefined)
       : enableFlash.value
       ? {
           enabled: true,
@@ -2162,6 +2201,7 @@ async function commitStartTest(deviceId: string) {
           enabled: true,
           zipPath: releaseTcardPaths.value[0],
           zipPaths: [...releaseTcardPaths.value],
+          expectFromAndroid: releaseTcardExpectFrom.value,
         }
       : !releaseActive && enableTcardUpdate.value
       ? {
@@ -2189,11 +2229,13 @@ async function commitStartTest(deviceId: string) {
       tcard,
       availableModules.length > 1 ? modulesToRun : undefined,
       selectedTestType.value === 'ota_upgrade'
-        ? {
-            udFlash: otaPretestEnabled.value && otaPretestFlashedUd.value,
-            oemUnlock: otaPretestEnabled.value,
-            udPackagePath: otaPretestUdPath.value.trim() || undefined,
-          }
+        ? (isTcardBaselineActive()
+            ? { udFlash: false, oemUnlock: false }
+            : {
+                udFlash: otaPretestEnabled.value && otaPretestFlashedUd.value,
+                oemUnlock: otaPretestEnabled.value,
+                udPackagePath: otaPretestUdPath.value.trim() || undefined,
+              })
         : undefined,
     )
     if (result) {
@@ -3171,6 +3213,10 @@ function getCaseItemStyle(config: ModuleCondition, index: number): Record<string
     toggleReleaseUpgradeStep,
     updateReleaseUpgradePath,
     releaseUpgradeMethodLabel,
+    baselineStrategy,
+    setBaselineStrategy,
+    isReleaseUpgradeBaselineChoiceStep,
+    releaseTcardExpectFrom,
     handleClearFlashPackages,
     enableTcardUpdate,
     tcardUpdatePath,

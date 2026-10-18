@@ -48,6 +48,7 @@ import {
 import {
   applyStoredOtaAccount,
   assertOtaUpgradeBattery,
+  assertTcardBaselineVersion,
   resolveUdPackage,
   runCombinedPretest,
   writeOtaAccountStore,
@@ -3523,6 +3524,8 @@ export interface StartTestTcardPayload {
   enabled: boolean
   zipPath?: string
   zipPaths?: string[]
+  /** 连续OTA「T卡基线」模式：要求手机当前 Android 大版本（最低勾选版本的上一档） */
+  expectFromAndroid?: number
 }
 
 function buildFlashOptionsFromPayload(payload?: StartTestFlashPayload): DeviceFlashOptions | undefined {
@@ -3545,7 +3548,12 @@ function buildTcardOptionsFromPayload(payload?: StartTestTcardPayload): TcardUpd
   if (zipPaths.some((path) => !isTcardZipPath(path))) {
     throw new Error('T卡升级仅支持 ZIP 文件')
   }
-  return { zipPath: zipPaths[0]!, zipPaths }
+  const expectFromAndroid = payload.expectFromAndroid
+  return {
+    zipPath: zipPaths[0]!,
+    zipPaths,
+    expectFromAndroid: Number.isInteger(expectFromAndroid) ? expectFromAndroid : undefined,
+  }
 }
 
 function pretestStatus(session: Pick<TestSession, 'flashOptions' | 'tcardOptions'> & { currentModuleIndex?: number }): DeviceStatus {
@@ -3766,6 +3774,9 @@ export async function startTest(
 
     const flashOptions = buildFlashOptionsFromPayload(flash)
     const tcardOptions = buildTcardOptionsFromPayload(options?.tcard)
+    if (tcardOptions?.expectFromAndroid != null) {
+      assertTcardBaselineVersion(deviceId, tcardOptions.expectFromAndroid)
+    }
 
     // 更新设备状态
     device.status = pretestStatus({ flashOptions, tcardOptions })

@@ -134,6 +134,37 @@ export function assertOtaUpgradeBattery(deviceId: string): number {
   return level
 }
 
+const READ_ANDROID_RELEASE_SHELL = 'getprop ro.build.version.release'
+
+export function readAndroidRelease(deviceId: string): string {
+  const serial = deviceId.trim()
+  if (!serial) throw new Error('设备 ID 为空')
+  const result = spawnSync('adb', ['-s', serial, 'shell', READ_ANDROID_RELEASE_SHELL], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 30_000,
+  })
+  if (result.error) throw new Error(`读取 Android 版本失败：${result.error.message}`)
+  if (result.status !== 0) {
+    throw new Error(`读取 Android 版本失败：${String(result.stderr || result.stdout || '').trim() || `退出码 ${result.status}`}`)
+  }
+  return String(result.stdout || '').trim()
+}
+
+/** T卡基线版本校验：手机当前 Android 大版本须等于最低勾选版本的上一档。返回 undefined 表示匹配。 */
+export function tcardBaselineVersionError(androidRelease: string, expectFromAndroid: number): string | undefined {
+  const current = androidRelease.trim()
+  const actual = Number.parseInt(current, 10)
+  if (Number.isInteger(actual) && actual === expectFromAndroid) return undefined
+  const currentLabel = current ? `Android ${current}` : '未知 Android 版本'
+  return `当前手机为 ${currentLabel}，与最低勾选版本要求的基线 Android ${expectFromAndroid} 不匹配，请改用 device_update 刷机或调整勾选版本`
+}
+
+export function assertTcardBaselineVersion(deviceId: string, expectFromAndroid: number): void {
+  const error = tcardBaselineVersionError(readAndroidRelease(deviceId), expectFromAndroid)
+  if (error) throw new Error(error)
+}
+
 const READ_USBDEBUG_SHELL = 'dd if=/dev/block/by-name/proinfo bs=1 skip=951 count=1 2>/dev/null | od -An -tu1'
 const WRITE_USBDEBUG_SHELL = "printf '\\001' | dd of=/dev/block/by-name/proinfo bs=1 seek=951 count=1 conv=notrunc"
 
@@ -860,11 +891,17 @@ export interface OtaStartPreview {
   allowed: boolean
   message: string
   steps: string[]
+  /** 手机当前 Android 大版本（ro.build.version.release），读取失败为空串 */
+  androidRelease?: string
 }
 
 export async function previewOtaStart(deviceId: string): Promise<OtaStartPreview> {
   const serial = deviceId.trim()
   if (!serial) throw new Error('设备 ID 为空')
+  let androidRelease = ''
+  try {
+    androidRelease = readAndroidRelease(serial)
+  } catch { /* 版本号仅作 T卡基线预校验，读取失败不阻塞预览 */ }
   const level = readBatteryLevel(serial)
   if (level < OTA_MIN_BATTERY_LEVEL) {
     return {
@@ -872,6 +909,7 @@ export async function previewOtaStart(deviceId: string): Promise<OtaStartPreview
       allowed: false,
       message: `手机电量 ${level}% 低于 30%，无法进行连续 OTA 升级`,
       steps: [],
+      androidRelease,
     }
   }
   return {
@@ -883,6 +921,7 @@ export async function previewOtaStart(deviceId: string): Promise<OtaStartPreview
       '检查 OEM 解锁，未完成则解锁',
       '检查 usbdebug，不是 1 则写入',
     ],
+    androidRelease,
   }
 }
 
