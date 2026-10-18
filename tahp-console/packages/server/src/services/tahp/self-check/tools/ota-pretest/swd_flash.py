@@ -548,7 +548,8 @@ def browse_and_load(app, dlg, fw_path, timeout=20):
     _excluded_handles.add(fd[0])
     ok = False
     try:
-        fspec.child_window(class_name="Edit").set_edit_text(fw_path)
+        # 文件名输入框可能与对话框内其他 Edit 混淆(实测匹配到2个), 取第一个消除歧义
+        fspec.child_window(class_name="Edit", found_index=0).set_edit_text(fw_path)
         ok = True
     except Exception as e:
         log("写入文件名失败(%s),尝试键盘输入" % e)
@@ -564,11 +565,41 @@ def browse_and_load(app, dlg, fw_path, timeout=20):
         raise RuntimeError("无法在文件对话框中输入路径")
     time.sleep(0.5)
 
+    def settings_path_loaded():
+        """结果导向判定: 设置框路径已写入目标固件即视为加载成功。
+        设置框可能被工具重建, 每次重新枚举而不是沿用旧句柄。"""
+        try:
+            settings = find_settings_dialog(app) or dlg
+            cur = settings.child_window(control_id=EDIT_FW_PATH).window_text()
+            return cur.strip().lower() == fw_path.strip().lower()
+        except Exception:
+            return False
+
+    def file_dialog_alive():
+        """句柄存在且窗口身份仍是原文件对话框(标题一致)才算存活。
+        Windows 会回收复用 HWND, 仅看 exists() 会把已关闭误判成未关闭。"""
+        try:
+            if not fspec.exists(timeout=0.2):
+                return False
+            try:
+                return (fspec.window_text() or "") == (fd[1] or "")
+            except Exception:
+                return False
+        except Exception:
+            return False
+
     # 关键: 文件名ComboBox下拉可能展开,第一次点"打开"仅导航到目录,
-    # 需要循环点击直到对话框真正关闭(最多5次)
+    # 需要循环点击直到对话框真正关闭(最多5次);
+    # 每次点击后以"设置框路径已写入"为成功判据, 句柄失真即停止点击,
+    # 避免向句柄被复用后的其他窗口乱发回车。
     from pywinauto.keyboard import send_keys
-    closed = False
+    loaded = settings_path_loaded()
     for attempt in range(5):
+        if loaded:
+            break
+        if not file_dialog_alive():
+            log("文件对话框已关闭或句柄已被复用,停止点击,按设置框路径判定结果")
+            break
         try:
             fspec.child_window(control_id=1).click()  # 打开(IDOK)
         except Exception:
@@ -576,23 +607,21 @@ def browse_and_load(app, dlg, fw_path, timeout=20):
                 send_keys("{ENTER}")
             except Exception:
                 pass
-        # 等待关闭(每次给3秒)
+        # 等待结果(每次给3秒): 路径写入=成功; 对话框关闭/句柄失真=停止
         t0 = time.time()
         while time.time() - t0 < 3:
-            try:
-                if not fspec.exists(timeout=0.2):
-                    closed = True
-                    break
-            except Exception:
-                closed = True
+            if settings_path_loaded():
+                loaded = True
+                break
+            if not file_dialog_alive():
                 break
             time.sleep(0.5)
-        if closed:
+        if loaded or not file_dialog_alive():
             break
         log("文件对话框未关闭,再次点击'打开'(第%d次)..." % (attempt + 2))
         time.sleep(0.5)
     _excluded_handles.discard(fd[0])
-    if not closed:
+    if not loaded and file_dialog_alive():
         dump_dialog(app, fd[0], "filedlg_stuck")
         raise RuntimeError("文件对话框多次确认后仍未关闭")
     log("文件对话框已关闭,固件选择完成")
@@ -601,9 +630,10 @@ def browse_and_load(app, dlg, fw_path, timeout=20):
     popups = handle_popups(app, known, tag="load_popup", auto_ok=True)
     for h, t in popups:
         log("加载后弹窗已处理: %r" % t)
-    # 校验设置框路径
+    # 校验设置框路径(设置框可能被工具重建, 优先重新枚举)
     try:
-        cur = dlg.child_window(control_id=EDIT_FW_PATH).window_text()
+        settings = find_settings_dialog(app) or dlg
+        cur = settings.child_window(control_id=EDIT_FW_PATH).window_text()
         log("设置框当前路径: %r" % cur)
         if not cur.strip():
             raise RuntimeError("固件路径未写入设置框(加载失败)")
