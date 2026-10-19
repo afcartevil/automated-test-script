@@ -12,12 +12,12 @@ import {
   deleteLocalSkill,
   requestSkillDelete,
   type SkillSyncStatusItem,
-  type SkillHistoryCommit,
+  type SkillUpdateRecord,
   type SkillSyncResult,
 } from '@/api/hermes/skills'
 import { useSkillSyncStore } from '@/stores/hermes/skill-sync'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const message = useMessage()
 const syncStore = useSkillSyncStore()
 const { status, loading, refreshing, selectedGroupId } = storeToRefs(syncStore)
@@ -56,7 +56,16 @@ function busyRemove(set: { value: Set<string> }, id: string) {
 }
 const historySkillId = ref<string | null>(null)
 const historyLoading = ref(false)
-const historyCommits = ref<SkillHistoryCommit[]>([])
+const historyRecords = ref<SkillUpdateRecord[]>([])
+const historyCurrentVersion = ref<number | null>(null)
+const historyFilter = ref<'all' | 'passed' | 'waiting' | 'returned'>('all')
+const historyOpenId = ref<string | null>(null)
+const historyFilters = [
+  ['all', 'historyFilterAll'],
+  ['passed', 'historyFilterPassed'],
+  ['waiting', 'historyFilterWaiting'],
+  ['returned', 'historyFilterReturned'],
+] as const
 /** 勾选待提交的 skill id */
 const selectedIds = ref<Set<string>>(new Set())
 /** 驳回原因弹层 */
@@ -498,14 +507,128 @@ async function onPublishBatch() {
   }
 }
 
+function historyResult(row: SkillUpdateRecord): 'passed' | 'waiting' | 'returned' | 'offline' | 'git' | 'baseline' {
+  if (row.kind === 'baseline') return 'baseline'
+  if (row.kind === 'git') return 'git'
+  if (row.kind === 'delete' && row.status === 'approved') return 'offline'
+  if (row.status === 'approved') return 'passed'
+  if (row.status === 'rejected') return 'returned'
+  return 'waiting'
+}
+
+function historyResultLabel(row: SkillUpdateRecord): string {
+  const result = historyResult(row)
+  if (result === 'passed') return t('skills.sync.historyResultPassed')
+  if (result === 'waiting') return t('skills.sync.historyResultWaiting')
+  if (result === 'returned') return t('skills.sync.historyResultReturned')
+  if (result === 'git') return t('skills.sync.historyResultGit')
+  if (result === 'baseline') return t('skills.sync.historyResultBaseline')
+  return t('skills.sync.historyResultOffline')
+}
+
+const historyBaselineOnly = computed(() => (
+  historyRecords.value.length > 0 && historyRecords.value.every(row => row.kind === 'baseline')
+))
+
+const historyHasReview = computed(() => (
+  historyRecords.value.some(row => row.kind === 'package' || row.kind === 'delete')
+))
+
+const visibleHistory = computed(() => historyRecords.value.filter(row => {
+  const result = historyResult(row)
+  if (historyFilter.value === 'all') return true
+  if (historyFilter.value === 'passed') return result === 'passed' || result === 'git' || result === 'baseline'
+  if (historyFilter.value === 'waiting') return result === 'waiting'
+  return result === 'returned'
+}))
+
+function formatHistoryStamp(iso?: string): string {
+  if (!iso) return '—'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleString(locale.value || undefined, {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function historyVersionLabel(row: SkillUpdateRecord): string {
+  if (row.kind === 'baseline') return t('skills.sync.historyBaselineVersion')
+  if (row.kind === 'git') {
+    if (row.version && row.in_use) return t('skills.sync.historyVersionInUse', { n: row.version })
+    if (row.version) return t('skills.sync.historyVersion', { n: row.version })
+    return row.hash || 'Git'
+  }
+  if (row.kind === 'delete' && row.status === 'approved') {
+    return row.version
+      ? t('skills.sync.historyOfflineVersion', { n: row.version })
+      : t('skills.sync.historyOffline')
+  }
+  if (row.version && row.in_use) return t('skills.sync.historyVersionInUse', { n: row.version })
+  if (row.version && row.version_bumped === false) return t('skills.sync.historyVersionSame', { n: row.version })
+  if (row.version) return t('skills.sync.historyVersion', { n: row.version })
+  return t('skills.sync.historyNotAVersion')
+}
+
+function historyReviewLabel(row: SkillUpdateRecord): string {
+  if (row.kind === 'baseline') return t('skills.sync.historyBaselineReview')
+  if (row.kind === 'git') return t('skills.sync.historyReviewGit', { name: row.submitted_by || '—' })
+  if (row.status === 'pending_review') return t('skills.sync.historyReviewPending')
+  const name = row.reviewed_by || '—'
+  const time = formatHistoryStamp(row.reviewed_at)
+  if (row.kind === 'delete' && row.status === 'approved') {
+    return t('skills.sync.historyReviewOffline', { name, time })
+  }
+  if (row.status === 'rejected') return t('skills.sync.historyReviewReturned', { name, time })
+  return t('skills.sync.historyReviewPassed', { name, time })
+}
+
+function historyNote(row: SkillUpdateRecord): string {
+  if (row.kind === 'baseline') {
+    return row.time_source === 'updated'
+      ? t('skills.sync.historyBaselineUpdated')
+      : t('skills.sync.historyBaselineCreated')
+  }
+  if (row.message) return row.message
+  if (row.status === 'rejected' && row.comment) return row.comment
+  const result = historyResult(row)
+  if (result === 'offline') return t('skills.sync.historyOfflineNote')
+  if (result === 'passed') return t('skills.sync.historyPassedNote')
+  if (result === 'waiting') return t('skills.sync.historyWaitingNote')
+  return '—'
+}
+
+function historyOpinion(row: SkillUpdateRecord): string {
+  return row.comment || row.message || historyNote(row)
+}
+
+function changeActionLabel(action: SkillUpdateRecord['changes'][number]['action']): string {
+  if (action === 'added') return t('skills.sync.historyChangeAdded')
+  if (action === 'modified') return t('skills.sync.historyChangeModified')
+  return t('skills.sync.historyChangeRemoved')
+}
+
+function toggleHistoryRow(submitId: string) {
+  historyOpenId.value = historyOpenId.value === submitId ? null : submitId
+}
+
 async function onShowHistory(skillId: string) {
   if (!status.value?.configured) return
   historySkillId.value = skillId
   historyLoading.value = true
-  historyCommits.value = []
+  historyRecords.value = []
+  historyCurrentVersion.value = null
+  historyFilter.value = 'all'
+  historyOpenId.value = null
   try {
     const data = await fetchSkillPackageHistory(skillId)
-    historyCommits.value = data.commits || []
+    historyRecords.value = data.records || []
+    historyCurrentVersion.value = data.current_version ?? null
+    historyOpenId.value = historyRecords.value.find(row => row.in_use)?.submit_id
+      ?? historyRecords.value[0]?.submit_id
+      ?? null
   } catch (err: any) {
     message.error(err?.message || t('skills.sync.historyFailed'))
     historySkillId.value = null
@@ -516,7 +639,10 @@ async function onShowHistory(skillId: string) {
 
 function closeHistory() {
   historySkillId.value = null
-  historyCommits.value = []
+  historyRecords.value = []
+  historyCurrentVersion.value = null
+  historyOpenId.value = null
+  historyFilter.value = 'all'
 }
 
 onMounted(loadStatus)
@@ -793,19 +919,71 @@ onMounted(loadStatus)
 
     <div v-if="historySkillId" class="history-panel">
       <div class="history-head">
-        <strong>{{ t('skills.sync.historyFor', { id: historySkillId }) }}</strong>
+        <div>
+          <strong>{{ t('skills.sync.historyFor', { id: historySkillId }) }}</strong>
+          <p v-if="!historyLoading && historyHasReview && historyCurrentVersion" class="history-sub">
+            {{ t('skills.sync.historyCurrent', { n: historyCurrentVersion }) }}
+          </p>
+          <p v-else-if="!historyLoading && historyBaselineOnly" class="history-sub">
+            {{ t('skills.sync.historyBaselineSub') }}
+          </p>
+          <p v-else-if="!historyLoading && historyRecords.length && !historyHasReview" class="history-sub">
+            {{ t('skills.sync.historyGitOnly') }}
+          </p>
+          <p v-else-if="!historyLoading && historyRecords.length" class="history-sub">
+            {{ t('skills.sync.historyNoLive') }}
+          </p>
+          <p v-else-if="!historyLoading" class="history-sub">{{ t('skills.sync.historyEmpty') }}</p>
+        </div>
         <button type="button" class="ea-btn-ghost ea-btn-sm" @click="closeHistory">{{ t('skills.sync.historyClose') }}</button>
       </div>
       <p v-if="historyLoading" class="muted">{{ t('skills.sync.historyLoading') }}</p>
-      <p v-else-if="!historyCommits.length" class="muted">{{ t('skills.sync.historyEmpty') }}</p>
-      <ul v-else class="history-list">
-        <li v-for="c in historyCommits" :key="c.sha">
-          <span class="mono">{{ c.short_sha }}</span>
-          <span>{{ c.title }}</span>
-          <span class="muted">{{ c.author_name }} · {{ c.committed_at }}</span>
-          <a v-if="c.web_url" :href="c.web_url" target="_blank" rel="noopener">GitLab</a>
-        </li>
-      </ul>
+      <p v-else-if="!historyRecords.length" class="muted">{{ t('skills.sync.historyEmptyHint') }}</p>
+      <template v-else>
+        <div class="history-filters">
+          <button
+            v-for="item in historyFilters"
+            :key="item[0]"
+            type="button"
+            class="ea-btn-ghost ea-btn-sm"
+            :class="{ 'is-on': historyFilter === item[0] }"
+            @click="historyFilter = item[0]"
+          >
+            {{ t(`skills.sync.${item[1]}`) }}
+          </button>
+        </div>
+        <div class="history-table">
+          <div class="history-cols">
+            <span>{{ t('skills.sync.historyColVersion') }}</span>
+            <span>{{ t('skills.sync.historyColResult') }}</span>
+            <span>{{ t('skills.sync.historyColSubmitter') }}</span>
+            <span>{{ t('skills.sync.historyColTime') }}</span>
+            <span>{{ t('skills.sync.historyColReview') }}</span>
+            <span>{{ t('skills.sync.historyColNote') }}</span>
+          </div>
+          <p v-if="!visibleHistory.length" class="muted">{{ t('skills.sync.historyFilterEmpty') }}</p>
+          <div v-for="row in visibleHistory" :key="row.submit_id" class="history-block">
+            <div class="history-row" :class="{ open: historyOpenId === row.submit_id }">
+              <button type="button" class="history-ver" @click="toggleHistoryRow(row.submit_id)">
+                {{ historyVersionLabel(row) }}
+              </button>
+              <span :class="'hr-' + historyResult(row)">{{ historyResultLabel(row) }}</span>
+              <span>{{ row.submitted_by }}</span>
+              <span>{{ formatHistoryStamp(row.submitted_at) }}</span>
+              <span class="muted">{{ historyReviewLabel(row) }}</span>
+              <span class="history-note">{{ historyNote(row) }}</span>
+            </div>
+            <div v-if="historyOpenId === row.submit_id" class="history-detail">
+              <p>{{ historyOpinion(row) }}</p>
+              <div v-for="change in row.changes" :key="change.action + change.path" class="history-change">
+                <span>{{ changeActionLabel(change.action) }}</span>
+                <span class="mono">{{ change.path }}</span>
+              </div>
+              <p v-if="row.changes_omitted" class="muted">{{ t('skills.sync.historyChangesOmitted', { n: row.changes_omitted }) }}</p>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -1026,26 +1204,90 @@ onMounted(loadStatus)
   border-radius: 10px;
   background: #fff;
   padding: 12px;
+  max-height: 360px;
+  overflow: auto;
 }
 .history-head {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 12px;
   margin-bottom: 8px;
 }
-.history-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  li {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 6px 0;
-    border-bottom: 1px solid #f1f5f9;
-    font-size: 13px;
+.history-sub {
+  margin: 2px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+.history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  button.is-on {
+    background: #eef2ff;
+    color: #3730a3;
+    border-color: #c7d2fe;
   }
 }
+.history-cols,
+.history-row {
+  display: grid;
+  grid-template-columns: 132px 72px 110px 148px 180px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+.history-cols {
+  padding: 0 8px 6px;
+  color: #64748b;
+  font-size: 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.history-row {
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  &.open { background: #eef2ff; }
+}
+.history-ver {
+  justify-self: start;
+  max-width: 100%;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.history-row.open .history-ver {
+  background: #e0e7ff;
+  border-color: #c7d2fe;
+}
+.history-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-detail {
+  margin: 2px 0 8px 8px;
+  padding: 8px 12px;
+  border-left: 2px solid #4f46e5;
+  font-size: 13px;
+  p { margin: 0 0 4px; }
+}
+.history-change {
+  display: flex;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+.hr-passed { color: #166534; }
+.hr-waiting { color: #b45309; }
+.hr-returned { color: #b91c1c; }
+.hr-offline { color: #64748b; }
+.hr-git { color: #3730a3; }
+.hr-baseline { color: #166534; }
 
 .sync-empty {
   padding: 24px;

@@ -172,15 +172,24 @@ export const centralClient = {
 
   async skillHistory(id: string, limit = 50): Promise<{
     id: string
-    commits: Array<{
-      sha: string
-      short_sha: string
-      title: string
-      author_name: string
-      author_email: string
-      committed_at: string
-      message: string
-      web_url?: string
+    current_version: number | null
+    records: Array<{
+      kind: 'package' | 'delete' | 'git' | 'baseline'
+      submit_id: string
+      version: number | null
+      version_bumped: boolean
+      in_use: boolean
+      status: 'pending_review' | 'approved' | 'rejected'
+      submitted_by: string
+      submitted_at: string
+      reviewed_by?: string
+      reviewed_at?: string
+      comment?: string
+      message?: string
+      hash?: string
+      time_source?: 'created' | 'updated'
+      changes: Array<{ action: 'added' | 'modified' | 'removed'; path: string }>
+      changes_omitted: number
     }>
   }> {
     return request(
