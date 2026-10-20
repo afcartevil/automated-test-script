@@ -321,7 +321,8 @@ def dump_dialog(app, handle, tag):
         walk(spec.wrapper_object(), 0)
         fn = LOG_FILE.replace(".txt", "_%s.txt" % tag)
         with open(fn, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines[:150]))
+            # 大对话框(现代文件对话框约600行)截断会丢掉文件名框/按钮区域, 放宽上限
+            f.write("\n".join(lines[:2000]))
         log("弹窗控件树已保存: %s (%d行)" % (fn, len(lines)))
     except Exception as e:
         log("dump弹窗失败: %s" % e)
@@ -342,9 +343,11 @@ def click_popup_button(app, handle, labels=None):
             try:
                 if c.class_name() != "Button":
                     continue
-                if norm(c.window_text()) in targets and c.is_enabled():
+                txt = c.window_text()
+                if norm(txt) in targets and c.is_enabled():
+                    # 点击后按钮随弹窗销毁, 先取文本再点, 否则吞掉成功日志
                     c.click()
-                    return c.window_text()
+                    return txt
             except Exception:
                 continue
     except Exception:
@@ -546,15 +549,57 @@ def browse_and_load(app, dlg, fw_path, timeout=20):
     log("文件对话框已打开: %r, 输入固件路径..." % fd[1])
     fspec = app.window(handle=fd[0])
     _excluded_handles.add(fd[0])
-    ok = False
-    try:
-        # 文件名输入框可能与对话框内其他 Edit 混淆(实测匹配到2个), 取第一个消除歧义
-        fspec.child_window(class_name="Edit", found_index=0).set_edit_text(fw_path)
-        ok = True
-    except Exception as e:
-        log("写入文件名失败(%s),尝试键盘输入" % e)
+    from pywinauto.keyboard import send_keys
+
+    def _filename_edit_candidates():
+        """候选文件名输入框(按可信度排序):
+        1) 对话框直接子级 ComboBoxEx32 内的 Edit(现代对话框文件名框;
+           地址栏/搜索框的 Edit 嵌套在导航容器内, 不是对话框直接子级)
+        2) 对话框直接子级 Edit(老式对话框)
+        3) 全部 Edit(兜底)"""
+        tried = []
+
+        def add(ctrls):
+            for c in ctrls:
+                try:
+                    if any(c.handle == t.handle for t in tried):
+                        continue
+                except Exception:
+                    pass
+                tried.append(c)
+
         try:
-            from pywinauto.keyboard import send_keys
+            for c in fspec.wrapper_object().children():
+                try:
+                    if c.class_name() == "ComboBoxEx32":
+                        add([e for e in c.descendants() if e.class_name() == "Edit"])
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        try:
+            add([c for c in fspec.wrapper_object().children() if c.class_name() == "Edit"])
+        except Exception:
+            pass
+        try:
+            add([c for c in fspec.wrapper_object().descendants() if c.class_name() == "Edit"])
+        except Exception:
+            pass
+        return tried
+
+    ok = False
+    for edit in _filename_edit_candidates():
+        try:
+            # 写入后读回校验, 防止路径落到搜索框等错误控件
+            edit.set_edit_text(fw_path)
+            if (edit.window_text() or "").strip().lower() == fw_path.strip().lower():
+                ok = True
+                break
+        except Exception:
+            continue
+    if not ok:
+        log("候选文件名框写入均失败,尝试键盘输入")
+        try:
             fspec.set_focus()
             send_keys(fw_path, with_spaces=True)
             ok = True
@@ -566,7 +611,7 @@ def browse_and_load(app, dlg, fw_path, timeout=20):
     time.sleep(0.5)
 
     def settings_path_loaded():
-        """结果导向判定: 设置框路径已写入目标固件即视为加载成功。
+        """结果校验: 设置框路径已写入目标固件。
         设置框可能被工具重建, 每次重新枚举而不是沿用旧句柄。"""
         try:
             settings = find_settings_dialog(app) or dlg
@@ -576,55 +621,57 @@ def browse_and_load(app, dlg, fw_path, timeout=20):
             return False
 
     def file_dialog_alive():
-        """句柄存在且窗口身份仍是原文件对话框(标题一致)才算存活。
-        Windows 会回收复用 HWND, 仅看 exists() 会把已关闭误判成未关闭。"""
+        """句柄存在且窗口身份未被复用才算存活。
+        Windows 会回收复用 HWND(实测被复用成设置框), 仅看 exists() 会误判;
+        标题在对话框初始化期间可能为空且随导航变化, 不作为身份依据。"""
         try:
             if not fspec.exists(timeout=0.2):
                 return False
-            try:
-                return (fspec.window_text() or "") == (fd[1] or "")
-            except Exception:
-                return False
         except Exception:
             return False
+        try:
+            # 设置框特有的固件路径Edit出现 => 句柄已被复用成设置框
+            if fspec.child_window(control_id=EDIT_FW_PATH).exists(timeout=0.1):
+                return False
+        except Exception:
+            pass
+        return True
 
     # 关键: 文件名ComboBox下拉可能展开,第一次点"打开"仅导航到目录,
-    # 需要循环点击直到对话框真正关闭(最多5次);
-    # 每次点击后以"设置框路径已写入"为成功判据, 句柄失真即停止点击,
-    # 避免向句柄被复用后的其他窗口乱发回车。
-    from pywinauto.keyboard import send_keys
-    loaded = settings_path_loaded()
+    # 需要循环点击直到对话框真正关闭(最多5次)。
+    # 成功判据 = 对话框真正关闭; 工具会记住上次加载路径(陈旧匹配),
+    # 绝不能仅凭设置框路径提前放行——对话框仍开着时必须点"打开"完成本次选择,
+    # 否则工具内部未真正加载, 设置确认时会报"请选择升级文件夹"。
     for attempt in range(5):
-        if loaded:
-            break
         if not file_dialog_alive():
-            log("文件对话框已关闭或句柄已被复用,停止点击,按设置框路径判定结果")
             break
         try:
             fspec.child_window(control_id=1).click()  # 打开(IDOK)
         except Exception:
             try:
+                fspec.set_focus()
                 send_keys("{ENTER}")
             except Exception:
                 pass
-        # 等待结果(每次给3秒): 路径写入=成功; 对话框关闭/句柄失真=停止
+        # 等对话框关闭(每次给3秒)
         t0 = time.time()
         while time.time() - t0 < 3:
-            if settings_path_loaded():
-                loaded = True
-                break
             if not file_dialog_alive():
                 break
             time.sleep(0.5)
-        if loaded or not file_dialog_alive():
+        if not file_dialog_alive():
             break
         log("文件对话框未关闭,再次点击'打开'(第%d次)..." % (attempt + 2))
         time.sleep(0.5)
     _excluded_handles.discard(fd[0])
-    if not loaded and file_dialog_alive():
+    if file_dialog_alive():
         dump_dialog(app, fd[0], "filedlg_stuck")
         raise RuntimeError("文件对话框多次确认后仍未关闭")
     log("文件对话框已关闭,固件选择完成")
+    # 工具解析固件后才回写设置框路径, 宽限等待
+    t0 = time.time()
+    while time.time() - t0 < 5 and not settings_path_loaded():
+        time.sleep(0.5)
     # 选择版本后若弹出提示框,直接点OK
     time.sleep(1)
     popups = handle_popups(app, known, tag="load_popup", auto_ok=True)
