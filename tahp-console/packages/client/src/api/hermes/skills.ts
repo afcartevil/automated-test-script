@@ -433,24 +433,79 @@ export async function publishSkillPackages(skillIds: string[]): Promise<PublishP
   return tahpPost('/api/tahp/skills/publish-packages', { skill_ids: skillIds })
 }
 
-export interface SkillHistoryCommit {
-  sha: string
-  short_sha: string
-  title: string
-  author_name: string
-  author_email: string
-  committed_at: string
-  message: string
-  web_url?: string
+export interface SkillUpdateChange {
+  action: 'added' | 'modified' | 'removed'
+  path: string
 }
 
-/** Phase 3：中心 Git 发布历史（与库浏览本地 hermes history 区分） */
+export interface SkillUpdateRecord {
+  kind: 'package' | 'delete' | 'git' | 'baseline'
+  submit_id: string
+  version: number | null
+  version_bumped: boolean
+  in_use: boolean
+  status: 'pending_review' | 'approved' | 'rejected'
+  submitted_by: string
+  submitted_at: string
+  reviewed_by?: string
+  reviewed_at?: string
+  comment?: string
+  message?: string
+  hash?: string
+  time_source?: 'created' | 'updated'
+  changes: SkillUpdateChange[]
+  changes_omitted: number
+}
+
+/** 服务中心提交与发布记录；旧中心只返回 Git commits 时也转成同一张表 */
 export async function fetchSkillPackageHistory(skillId: string, limit = 50): Promise<{
   id: string
-  commits: SkillHistoryCommit[]
+  current_version: number | null
+  records: SkillUpdateRecord[]
 }> {
   const { tahpGet } = await import('../tahp/client')
-  return tahpGet(`/api/tahp/skills/${encodeURIComponent(skillId)}/history?limit=${limit}`)
+  const data = await tahpGet<{
+    id?: string
+    current_version?: number | null
+    records?: SkillUpdateRecord[]
+    commits?: Array<{
+      sha: string
+      short_sha?: string
+      title?: string
+      author_name?: string
+      committed_at?: string
+      message?: string
+    }>
+  }>(`/api/tahp/skills/${encodeURIComponent(skillId)}/history?limit=${limit}`)
+  if (data.records?.length) {
+    return {
+      id: data.id || skillId,
+      current_version: data.current_version ?? null,
+      records: data.records,
+    }
+  }
+  const commits = data.commits || []
+  const ascending = commits.slice().reverse()
+  const records: SkillUpdateRecord[] = ascending.map((commit, index): SkillUpdateRecord => ({
+    kind: 'git',
+    submit_id: `git:${commit.sha}`,
+    version: index + 1,
+    version_bumped: true,
+    in_use: index === ascending.length - 1,
+    status: 'approved',
+    submitted_by: commit.author_name || '—',
+    submitted_at: commit.committed_at || '',
+    message: commit.title || '',
+    comment: commit.message || commit.title || '',
+    hash: commit.short_sha || commit.sha.slice(0, 8),
+    changes: [],
+    changes_omitted: 0,
+  })).reverse()
+  return {
+    id: data.id || skillId,
+    current_version: records.length ? records.length : null,
+    records,
+  }
 }
 
 /** 仅本机删除 Skill 目录（local_only） */
