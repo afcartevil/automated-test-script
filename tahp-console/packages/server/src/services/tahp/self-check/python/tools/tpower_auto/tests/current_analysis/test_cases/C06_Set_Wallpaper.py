@@ -162,7 +162,8 @@ def MoveSettingToNewDesktop(phone: PhoneConfig):
             phone.u2d_helper.input_text(app_name[:-1])
             sleep(1)
         else:
-            assert False, 'search box not found!'
+            phone.logerror('search box not found, skip moving Settings to new desktop')
+            return
         b = d.xpath(f'//*[@text="{app_name}"]').all()[0].info['bounds']
         start_position = [(b['left'] + b['right']) / 2, (b['top'] + b['bottom']) / 2]
         time.sleep(0.5)

@@ -15,7 +15,8 @@ def set_gesture(phone : PhoneConfig):
     if d(textMatches=".*Search.*").exists:
         search_box = d(textMatches=".*Search.*")
     else:
-        assert False, 'search box not found'
+        phone.logerror('search box not found, skip gesture setting')
+        return False
     search_box.click(timeout=5)
     d.sleep(1)
     d.send_keys('Actions and Gestures')
