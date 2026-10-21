@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   OTA_UPGRADE_FLASH_CONFIRM,
   hasContinuousOtaPackagePath,
+  isOtaStartBusyForDevice,
   otaConfirmSteps,
   missingTcardZipHint,
   pickPreferredTcardZip,
@@ -21,6 +22,13 @@ describe('ota upgrade flash confirm copy', () => {
     ])
     expect(OTA_UPGRADE_FLASH_CONFIRM.positiveText).toBe('确认')
     expect(OTA_UPGRADE_FLASH_CONFIRM.negativeText).toBe('取消')
+  })
+
+  it('blocks only the device that is already starting continuous OTA', () => {
+    const busy = ['device-a']
+    expect(isOtaStartBusyForDevice('device-a', busy)).toBe(true)
+    expect(isOtaStartBusyForDevice('device-b', busy)).toBe(false)
+    expect(isOtaStartBusyForDevice('device-b', [])).toBe(false)
   })
 
   it('requires a resolved package path before continuous OTA can start', () => {

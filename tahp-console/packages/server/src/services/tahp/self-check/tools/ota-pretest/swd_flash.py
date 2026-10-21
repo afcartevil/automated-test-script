@@ -779,23 +779,71 @@ def confirm_settings(app, dlg, timeout=120):
     raise RuntimeError("设置确认后对话框未关闭(超时)")
 
 
+def _lfs_select_all_spec(win):
+    """分区框刚弹出或沿用上一轮窗口时，Select All 可能还没创建。"""
+    try:
+        spec = win.child_window(control_id=LFS_SELECT_ALL)
+        if spec.exists(timeout=0.4):
+            return spec
+    except Exception:
+        pass
+    for title in ("Select All", "全选"):
+        try:
+            spec = win.child_window(title=title, class_name="Button")
+            if spec.exists(timeout=0.2):
+                return spec
+        except Exception:
+            pass
+    return None
+
+
 def lfs_select_all(app, timeout=90):
-    """等'Load Files Setting'出现并点击Select All(之后不再触碰该框,防止阻塞)。"""
+    """等'Load Files Setting'里的 Select All 出现再点击(之后不再触碰该框)。"""
     log("等待'Load Files Setting'分区选择框...")
     t0 = time.time()
     h = None
+    spec = None
+    announced = False
     while time.time() - t0 < timeout:
         for wh, wt in list_dialogs(app):
-            if wt == LFS_TITLE:
+            if wt != LFS_TITLE:
+                continue
+            if not announced:
+                log("分区框已出现，等待 Select All 按钮...")
+                announced = True
+            try:
+                found = _lfs_select_all_spec(app.window(handle=wh))
+            except Exception:
+                found = None
+            if found is not None:
                 h = wh
+                spec = found
                 break
-        if h:
+        if spec is not None:
             break
         time.sleep(1)
-    if h is None:
-        raise RuntimeError("'Load Files Setting'未出现")
+    if spec is None:
+        for wh, wt in list_dialogs(app):
+            if wt == LFS_TITLE:
+                dump_dialog(app, wh, "lfs_no_select_all")
+        raise RuntimeError("'Load Files Setting'里没有 Select All 按钮")
     log("点击 Select All ...")
-    app.window(handle=h).child_window(control_id=LFS_SELECT_ALL).click()
+    ctrl = spec.wrapper_object()
+    visible = False
+    try:
+        visible = bool(ctrl.is_visible())
+    except Exception:
+        visible = False
+    if visible:
+        ctrl.click()
+    else:
+        # 分区列表还在创建时按钮已在控件树里，但尚未显示。.click() 会因此失败。
+        log("Select All 尚未显示，改发点击消息")
+        press_button(ctrl)
+        try:
+            notify_button_clicked(ctrl)
+        except Exception as e:
+            log("  Select All 点击消息未发出: %s" % e)
     log("已点击 Select All(按流程不点OK,保留该窗口)")
     _excluded_handles.add(h)  # 后续枚举对话框时跳过它, 防止其繁忙时阻塞
     time.sleep(2)
@@ -864,7 +912,7 @@ def _package_dir_name(fw_path):
     return fallback
 
 
-def adb_check_device(adb, fw_path):
+def adb_check_device(adb, fw_path, prefer_serial=None):
     code, ver_dir = project_code_from_path(fw_path)
     log("固件版本目录: %s, 项目码: %s" % (ver_dir, code))
     devs = adb_devices(adb)
@@ -883,6 +931,20 @@ def adb_check_device(adb, fw_path):
             matched.append((s, pname))
     if not matched:
         raise RuntimeError("无可用设备(在线手机项目与固件版本%s不匹配)" % code)
+    wanted = (prefer_serial or "").strip()
+    if wanted:
+        hit = [item for item in matched if item[0] == wanted]
+        if not hit:
+            online = wanted in devs
+            raise RuntimeError(
+                "指定设备 %s %s" % (
+                    wanted,
+                    "在线但项目与固件不匹配" if online else "不在 adb 在线列表",
+                )
+            )
+        s, pname = hit[0]
+        log("使用指定设备: %s (%s) 匹配项目 %s" % (s, pname, code))
+        return s
     if len(matched) > 1:
         log("警告: 多台设备匹配, 使用第一台: %s" % matched[0][0])
     s, pname = matched[0]
@@ -981,15 +1043,28 @@ def _logdir_activity(logdir):
     return latest
 
 
+def _read_log_text(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
 def _is_port_artifact(fail_log_path):
     """'Create COM File failed'类失败 = 端口切换残留的无效线程(手机随后在别的线程刷机)。"""
-    try:
-        with open(fail_log_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-        return ("Create COM File failed" in content) or \
-               ("Get UART 8210 pack data failed" in content and len(content) < 20000)
-    except Exception:
+    content = _read_log_text(fail_log_path)
+    if not content:
         return False
+    return ("Create COM File failed" in content) or \
+           ("Get UART 8210 pack data failed" in content and len(content) < 20000)
+
+
+def _is_foreign_package_fail(fail_log_path):
+    """SWD 启动后会扫所有下载口。另一台手机插着时，会用当前包去刷它并写下
+    'not for this device'。这不是目标机的刷机结果。"""
+    content = _read_log_text(fail_log_path)
+    return "not for this device" in content or "Load-Package is not for this device" in content
 
 
 def adb_online(adb, serial):
@@ -1006,12 +1081,14 @@ def wait_flash_result(app, base_total, base_fail, timeout=1800, poll=3,
       信号2: 计数器 - 总数增量 > 失败增量 判Pass; 失败增量>=总数增量且>0 判Fail
       信号3: adb设备先离线后重新上线(自动开机=刷成功的强信号,仅作Pass佐证)
     注意: 端口切换会产生无效Fail线程(Create COM File failed),不计入真实失败。
+    另一台手机被扫到产生的 "not for this device" 也不计入目标机失败。
     """
     log("等待刷机完成(最长%ds)..." % timeout)
     known = list_dialogs(app)
     if base_logs is None:
         d = _today_log_dir()
         base_logs = _list_thread_logs(d) if d else {}
+    foreign_fails = 0
     phone_offline_seen = False
     if adb and serial and not adb_online(adb, serial):
         phone_offline_seen = True  # 等待开始时手机已离线(关机快)
@@ -1041,6 +1118,11 @@ def wait_flash_result(app, base_total, base_fail, timeout=1800, poll=3,
                         base_logs[fn] = path
                         artifact_time = time.time()
                         continue
+                    if _is_foreign_package_fail(path):
+                        log("忽略其它设备的包不匹配失败(SWD 会扫到所有下载口): %s" % fn)
+                        base_logs[fn] = path
+                        foreign_fails += 1
+                        continue
                     log("刷机报错: 检测到失败日志 %s" % fn)
                     try:
                         with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -1060,13 +1142,22 @@ def wait_flash_result(app, base_total, base_fail, timeout=1800, poll=3,
                 d_total = total_now - base_total
                 d_fail = (fail_now - base_fail) if (base_fail is not None and
                                                     fail_now is not None) else 0
-                if d_total > 0 and d_fail < d_total:
-                    log("刷机成功(计数): 总数增量=%d 失败增量=%d" % (d_total, d_fail))
+                # 其它手机的包不匹配会计入工具总数/失败数，不能当成目标机结果
+                target_total = d_total - foreign_fails
+                target_fail = d_fail - foreign_fails
+                if target_fail < 0:
+                    target_fail = 0
+                if target_total > 0 and target_fail < target_total:
+                    log("刷机成功(计数): 总数增量=%d 失败增量=%d 已忽略其它设备=%d" % (
+                        d_total, d_fail, foreign_fails))
                     return True
-                if d_fail > 0 and d_fail >= d_total and not artifact_time:
+                target_still_offline = bool(
+                    serial and phone_offline_seen and adb and not adb_online(adb, serial)
+                )
+                if target_fail > 0 and target_fail >= max(target_total, 0) and not artifact_time and not target_still_offline:
                     # 没有端口残留的情况下,失败全部计入且无任何成功
                     if time.time() - t0 > 180:  # 给真实刷机线程留出启动时间
-                        log("刷机报错(计数): 失败增量=%d,无成功记录" % d_fail)
+                        log("刷机报错(计数): 失败增量=%d,无成功记录" % target_fail)
                         return False
 
             # ---- 信号3: adb回在线(先离线后上线才算) ----
@@ -1112,6 +1203,22 @@ def ensure_idle(app, timeout=60):
     return False
 
 
+def wait_exit_started(app, timeout=120):
+    """已勾选「退出开始状态」，刷完后工具自己退出，不要再点停止。"""
+    if not is_started(app):
+        log("工具已退出开始状态")
+        return True
+    log("等待工具自动退出开始状态...")
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if not is_started(app):
+            log("工具已退出开始状态")
+            return True
+        time.sleep(1)
+    log("警告: 等待退出开始状态超时")
+    return False
+
+
 def show_status(app):
     log("=" * 50)
     log("SW版本 : %s" % read_text(app, STATIC_SW))
@@ -1129,7 +1236,7 @@ def show_status(app):
     log("=" * 50)
 
 
-def full_flow(app, fw_path, adb_path, prepare_only, flash_timeout):
+def full_flow(app, fw_path, adb_path, prepare_only, flash_timeout, prefer_serial=None):
     # 前置: 若工具处于启动状态(连续刷机场景),先停止回到空闲
     ensure_idle(app)
     # 步骤2: 设置->加载->选择固件->弹窗OK
@@ -1144,7 +1251,7 @@ def full_flow(app, fw_path, adb_path, prepare_only, flash_timeout):
     sw = read_text(app, STATIC_SW)
     log("当前SW版本显示: %r" % sw)
     # 步骤5: adb设备匹配
-    serial = adb_check_device(adb_path, fw_path)
+    serial = adb_check_device(adb_path, fw_path, prefer_serial)
     if prepare_only:
         log("--prepare-only: 已完成至步骤5,不启动刷机")
         return 0
@@ -1158,6 +1265,7 @@ def full_flow(app, fw_path, adb_path, prepare_only, flash_timeout):
     # 步骤7: 等待结果
     ok = wait_flash_result(app, base_total, base_fail, timeout=flash_timeout,
                            adb=adb_path, serial=serial, base_logs=base_logs)
+    wait_exit_started(app)
     if ok:
         log("刷机完成: PASS")
         return 0
@@ -1176,6 +1284,7 @@ def main():
     ap.add_argument("--config", default=CONFIG_FILE, help="账号配置ini路径")
     ap.add_argument("--flash-timeout", type=int, default=1800,
                     help="等待刷机完成秒数(默认1800)")
+    ap.add_argument("--serial", help="指定 adb 序列号；多台同项目设备时只刷这一台")
     args = ap.parse_args()
 
     if not any([args.firmware, args.status, args.stop]):
@@ -1231,7 +1340,7 @@ def main():
         login_if_needed(app, args.config)
         # 步骤2-7
         rc = full_flow(app, args.firmware, find_adb(args.adb),
-                       args.prepare_only, args.flash_timeout)
+                       args.prepare_only, args.flash_timeout, args.serial)
         show_status(app)
         sys.exit(rc)
     except SystemExit:

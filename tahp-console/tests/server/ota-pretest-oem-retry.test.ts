@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  oemUnlockFastbootError,
+  parseFastbootDevices,
+  pickFastbootSerial,
   runOemUnlockWithRetry,
   type OemUnlockRetryDeps,
 } from '../../packages/server/src/services/tahp/ota-pretest'
@@ -19,6 +22,26 @@ function makeDeps(overrides: Partial<OemUnlockRetryDeps> = {}) {
   }
   return { deps, logs, sleeps, runUnlock, isUnlocked }
 }
+
+describe('ota-pretest fastboot device pick', () => {
+  it('treats All done after a fastboot error as failure', () => {
+    const output = [
+      'Using ANDROID_SERIAL: H335LI9012345678',
+      'ERROR: fastboot device not detected',
+      'All done!',
+    ].join('\n')
+    expect(oemUnlockFastbootError(output)).toBe('手机重启后没有进入 fastboot')
+    expect(oemUnlockFastbootError('Fastboot unlock completed!\nAll done!')).toBeUndefined()
+  })
+
+  it('does not pick the other phone when two fastboot devices are present', () => {
+    expect(parseFastbootDevices('AAA\tfastboot\nBBB    fastboot')).toEqual(['AAA', 'BBB'])
+    expect(pickFastbootSerial('BBB', ['AAA', 'BBB'], false)).toBe('BBB')
+    expect(pickFastbootSerial('CCC', ['AAA', 'BBB'], false)).toBeUndefined()
+    expect(pickFastbootSerial('CCC', ['AAA'], true)).toBeUndefined()
+    expect(pickFastbootSerial('CCC', ['AAA'], false)).toBe('AAA')
+  })
+})
 
 describe('ota-pretest runOemUnlockWithRetry', () => {
   it('首次成功：不重试、不复查解锁状态', async () => {

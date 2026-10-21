@@ -2148,7 +2148,7 @@ function handleDutRowAction(deviceId: string) {
                       type="button"
                       class="ea-btn-primary"
                       :disabled="(selectedTestType === 'gms' && !gmsHostSupported) || otaStartBlocked || otaUpgradePathMissing || (canSelectStartModules && !getCaseGroups.some(([, configs]) => configs.some(c => isStartModuleSelected(c.module))))"
-                      :title="otaUpgradePathMissing ? '请先获取外发版本' : undefined"
+                      :title="otaUpgradePathMissing ? '请先获取外发版本' : (otaStartBlocked ? '本机正在准备连续 OTA' : undefined)"
                       @click.stop="handleStartTest(selectedDevice.device.deviceId)"
                     >
                       {{ startTestIntentRole === AUX_ROLE ? '开始待命' : (selectedTestType === 'ota_upgrade' && otaPretestOnly ? '执行前置操作' : '开始测试') }}

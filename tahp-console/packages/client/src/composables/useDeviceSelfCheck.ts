@@ -70,6 +70,7 @@ import {
   OTA_UPGRADE_FLASH_CONFIRM,
   otaConfirmSteps,
   hasContinuousOtaPackagePath,
+  isOtaStartBusyForDevice,
   missingTcardZipHint,
   resolveReleaseUpgradeEnabledOnTypeChange,
   resolveReleaseUpgradeQueue,
@@ -161,13 +162,73 @@ const dailyFlashResolving = ref(false)
 const flashPackagesClearing = ref(false)
 const enableRootPkg = ref(false)
 const flashStageVersion = ref('Open')
-const flashLogs = ref<string[]>([])
 const flashLogRef = ref<HTMLElement | null>(null)
-const flashActive = ref(false)
-const flashDone = ref<'success' | 'error' | null>(null)
-/** 当前刷机 UI 绑定的设备；切换设备或结束测试后清空 */
-const flashDeviceId = ref<string | null>(null)
-const flashProgressState = ref<FlashProgressState>(createFlashProgressState())
+const EMPTY_FLASH_LOGS: string[] = []
+
+interface DeviceFlashPanelState {
+  logs: string[]
+  active: boolean
+  done: 'success' | 'error' | null
+  progress: FlashProgressState
+}
+
+function createDeviceFlashPanel(): DeviceFlashPanelState {
+  return {
+    logs: [],
+    active: false,
+    done: null,
+    progress: createFlashProgressState(),
+  }
+}
+
+/** 每台设备一份刷机/前置进度，避免一台连续 OTA 清掉另一台的面板 */
+const flashPanels = ref<Record<string, DeviceFlashPanelState>>({})
+
+function mutateFlashPanel(deviceId: string, mutate: (panel: DeviceFlashPanelState) => void) {
+  const current = flashPanels.value[deviceId] ?? createDeviceFlashPanel()
+  const next: DeviceFlashPanelState = {
+    logs: current.logs.slice(),
+    active: current.active,
+    done: current.done,
+    progress: { ...current.progress },
+  }
+  mutate(next)
+  flashPanels.value = { ...flashPanels.value, [deviceId]: next }
+}
+
+function clearFlashPanelFor(deviceId: string | null | undefined) {
+  if (!deviceId || !flashPanels.value[deviceId]) return
+  const next = { ...flashPanels.value }
+  delete next[deviceId]
+  flashPanels.value = next
+}
+
+function beginFlashPanel(deviceId: string, firstLine: string) {
+  mutateFlashPanel(deviceId, (panel) => {
+    panel.logs = []
+    panel.active = true
+    panel.done = null
+    panel.progress = createFlashProgressState()
+    panel.logs = mergeFlashLogLine(panel.logs, firstLine)
+    panel.progress = parseFlashLogLine(panel.progress, firstLine)
+  })
+}
+
+function appendFlashLogFor(deviceId: string, line: string) {
+  mutateFlashPanel(deviceId, (panel) => {
+    panel.logs = mergeFlashLogLine(panel.logs, line)
+    panel.active = true
+    panel.progress = parseFlashLogLine(panel.progress, line)
+  })
+}
+
+const selectedFlashPanel = computed(() => (
+  selectedDeviceId.value ? flashPanels.value[selectedDeviceId.value] ?? null : null
+))
+const flashLogs = computed(() => selectedFlashPanel.value?.logs ?? EMPTY_FLASH_LOGS)
+const flashActive = computed(() => selectedFlashPanel.value?.active ?? false)
+const flashDone = computed(() => selectedFlashPanel.value?.done ?? null)
+const anyFlashActive = computed(() => Object.values(flashPanels.value).some(panel => panel.active))
 const flashPathPicking = ref(false)
 const FLASH_MARKET_OPTIONS = [
   { label: 'Base', value: '' },
@@ -228,7 +289,35 @@ const otaPretestDraft = ref<OtaPretestSettings>({
 })
 const otaPretestPathPicking = ref<'script' | 'swdTool' | 'oemTool' | null>(null)
 const otaPretestResolving = ref(false)
-const otaPretestRunning = ref(false)
+const otaConfirmDeviceIds = ref<Set<string>>(new Set())
+const otaPreparingDeviceIds = ref<Set<string>>(new Set())
+const otaPretestDeviceIds = ref<Set<string>>(new Set())
+
+function addOtaBusyDevice(target: { value: Set<string> }, deviceId: string) {
+  if (target.value.has(deviceId)) return
+  const next = new Set(target.value)
+  next.add(deviceId)
+  target.value = next
+}
+
+function removeOtaBusyDevice(target: { value: Set<string> }, deviceId: string) {
+  if (!target.value.has(deviceId)) return
+  const next = new Set(target.value)
+  next.delete(deviceId)
+  target.value = next
+}
+
+function otaBusyDeviceIds(): string[] {
+  return [
+    ...otaConfirmDeviceIds.value,
+    ...otaPreparingDeviceIds.value,
+    ...otaPretestDeviceIds.value,
+  ]
+}
+
+const otaPretestRunning = computed(() => (
+  !!selectedDeviceId.value && otaPretestDeviceIds.value.has(selectedDeviceId.value)
+))
 const otaPretestUdPath = ref('')
 const otaPretestUdSource = ref<'重庆' | '上海' | null>(null)
 const otaPretestEnabled = ref(true)
@@ -407,17 +496,12 @@ async function handleResolveOtaPretestUd() {
   }
 }
 
-async function executeOtaPretest(options?: { pretestOnly?: boolean }): Promise<boolean> {
-  const deviceId = selectedDeviceId.value
-  if (!deviceId || otaPretestRunning.value) return false
+async function executeOtaPretest(deviceId: string, options?: { pretestOnly?: boolean }): Promise<boolean> {
+  if (!deviceId || otaPretestDeviceIds.value.has(deviceId)) return false
   const pretestOnly = Boolean(options?.pretestOnly)
-  otaPretestRunning.value = true
+  addOtaBusyDevice(otaPretestDeviceIds, deviceId)
   error.value = null
-  clearFlashPanel()
-  flashDeviceId.value = deviceId
-  flashActive.value = true
-  flashProgressState.value = createFlashProgressState()
-  appendFlashLog('[前置操作] 正在执行 adb root...')
+  beginFlashPanel(deviceId, '[前置操作] 正在执行 adb root...')
   try {
     await saveOtaPretestSettings(false)
     const result = await runOtaPretestOperation({
@@ -428,8 +512,10 @@ async function executeOtaPretest(options?: { pretestOnly?: boolean }): Promise<b
     otaPretestRootOutput.value = result.rootOutput
     otaPretestFlashedUd.value = result.flashedUd
     if (result.udPackagePath) otaPretestUdPath.value = result.udPackagePath
-    flashActive.value = false
-    flashDone.value = 'success'
+    mutateFlashPanel(deviceId, (panel) => {
+      panel.active = false
+      panel.done = 'success'
+    })
     const actions = [
       result.flashedUd ? '已刷 UD' : '未刷机',
       result.oemUnlockRan ? '已执行 OEM 解锁' : 'OEM 已解锁',
@@ -439,35 +525,31 @@ async function executeOtaPretest(options?: { pretestOnly?: boolean }): Promise<b
     message.success(actions.join('，'))
     return true
   } catch (e: any) {
-    flashActive.value = false
-    flashDone.value = 'error'
+    mutateFlashPanel(deviceId, (panel) => {
+      panel.active = false
+      panel.done = 'error'
+    })
     const text = e?.message || 'OEM 解锁前置操作失败'
     error.value = text
     message.error(text)
     return false
   } finally {
-    otaPretestRunning.value = false
+    removeOtaBusyDevice(otaPretestDeviceIds, deviceId)
   }
 }
 
 async function handleRunOtaPretest() {
-  await executeOtaPretest()
-}
-
-function resetFlashProgress() {
-  flashActive.value = false
-  flashDone.value = null
-  flashProgressState.value = createFlashProgressState()
+  const deviceId = selectedDeviceId.value
+  if (!deviceId) return
+  await executeOtaPretest(deviceId)
 }
 
 function clearFlashPanel() {
-  flashDeviceId.value = null
-  flashLogs.value = []
-  resetFlashProgress()
+  clearFlashPanelFor(selectedDeviceId.value)
 }
 
 async function dismissFlashFailure() {
-  const deviceId = flashDeviceId.value || selectedDeviceId.value
+  const deviceId = selectedDeviceId.value
   clearFlashPanel()
   if (deviceId) {
     try {
@@ -483,11 +565,9 @@ function scrollFlashLogToBottom() {
   })
 }
 
-function appendFlashLog(line: string) {
-  flashLogs.value = mergeFlashLogLine(flashLogs.value, line)
-  flashActive.value = true
-  parseFlashLogLine(flashProgressState.value, line)
-  scrollFlashLogToBottom()
+function appendFlashLog(deviceId: string, line: string) {
+  appendFlashLogFor(deviceId, line)
+  if (deviceId === selectedDeviceId.value) scrollFlashLogToBottom()
 }
 
 watch(flashLogs, scrollFlashLogToBottom)
@@ -874,13 +954,6 @@ async function selectDevice(deviceId: string) {
     applyFlashFormOptions(flashFormByDeviceId.value[deviceId])
     const detail = await getDeviceDetail(deviceId)
     selectedDevice.value = detail
-    // 切回仍在刷机的设备时恢复刷机面板绑定（切换其他设备期间不清理刷机状态）
-    if (detail.device.status === '刷机中' || detail.device.status === 'T卡升级中') {
-      if (!flashDeviceId.value || flashDeviceId.value === deviceId) {
-        flashDeviceId.value = deviceId
-        flashActive.value = true
-      }
-    }
     selectedCase.value = null
     followCurrent.value = true
     if (detail.device.status === '空闲') {
@@ -1529,8 +1602,8 @@ function connectEventStream() {
   eventSource.value.addEventListener('flash_log', (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data)
-      if (data.deviceId === flashDeviceId.value && data.line) {
-        appendFlashLog(data.line)
+      if (data.deviceId && data.line) {
+        appendFlashLog(String(data.deviceId), String(data.line))
       }
     } catch {}
   })
@@ -1538,29 +1611,30 @@ function connectEventStream() {
   eventSource.value.addEventListener('flash_completed', async (e: MessageEvent) => {
     try {
       const data = JSON.parse(e.data)
-      if (!data.deviceId || data.deviceId !== flashDeviceId.value) return
-      flashActive.value = false
+      if (!data.deviceId) return
+      const deviceId = String(data.deviceId)
       if (data.success) {
         if (data.continuePretest) {
-          flashActive.value = true
-          appendFlashLog('[T卡升级] 刷机完成，开始 T卡升级…')
+          appendFlashLog(deviceId, '[T卡升级] 刷机完成，开始 T卡升级…')
         } else {
-          clearFlashPanel()
-          followCurrent.value = true
-          const detail = await getDeviceDetail(data.deviceId)
-          if (selectedDeviceId.value === data.deviceId) {
+          clearFlashPanelFor(deviceId)
+          const detail = await getDeviceDetail(deviceId)
+          if (selectedDeviceId.value === deviceId) {
+            followCurrent.value = true
             selectedDevice.value = detail
+            applyFollowCurrentCase(detail.session)
           }
-          applyFollowCurrentCase(detail.session)
         }
       } else {
-        flashDone.value = 'error'
-        parseFlashLogLine(
-          flashProgressState.value,
-          `[刷机] 刷机失败：${data.error || `返回码 ${data.returnCode ?? '?'}`}`,
-        )
-        if (data.error) appendFlashLog(`[刷机] ${data.error}`)
-        await refreshDeviceState(data.deviceId)
+        const failLine = `[刷机] 刷机失败：${data.error || `返回码 ${data.returnCode ?? '?'}`}`
+        mutateFlashPanel(deviceId, (panel) => {
+          panel.active = false
+          panel.done = 'error'
+          panel.logs = mergeFlashLogLine(panel.logs, failLine)
+          panel.progress = parseFlashLogLine(panel.progress, failLine)
+        })
+        if (deviceId === selectedDeviceId.value) scrollFlashLogToBottom()
+        await refreshDeviceState(deviceId)
       }
     } catch {}
   })
@@ -1920,7 +1994,7 @@ function isPathUnderFlashCache(target: string, cacheDir: string): boolean {
 }
 
 async function handleClearFlashPackages() {
-  if (flashPackagesClearing.value || flashActive.value) return
+  if (flashPackagesClearing.value || anyFlashActive.value) return
 
   dialog.warning({
     title: '清除刷机包',
@@ -1975,11 +2049,8 @@ function otaReleaseSteps(): string[] {
   ))
 }
 
-const otaConfirmOpen = ref(false)
-const otaStartPreparing = ref(false)
-
-function closeOtaConfirm() {
-  otaConfirmOpen.value = false
+function closeOtaConfirm(deviceId: string) {
+  removeOtaBusyDevice(otaConfirmDeviceIds, deviceId)
 }
 
 function confirmOtaUpgradeFlashThenStart(
@@ -1987,8 +2058,8 @@ function confirmOtaUpgradeFlashThenStart(
   steps: string[],
   mode: 'upgrade' | 'pretest-only' = 'upgrade',
 ) {
-  if (otaConfirmOpen.value) return
-  otaConfirmOpen.value = true
+  if (otaConfirmDeviceIds.value.has(deviceId)) return
+  addOtaBusyDevice(otaConfirmDeviceIds, deviceId)
   const lines = steps.length ? steps : ['连续版本升级']
   dialog.warning({
     title: mode === 'pretest-only' ? '仅执行前置操作' : '本次将执行',
@@ -2002,15 +2073,15 @@ function confirmOtaUpgradeFlashThenStart(
     positiveText: OTA_UPGRADE_FLASH_CONFIRM.positiveText,
     negativeText: OTA_UPGRADE_FLASH_CONFIRM.negativeText,
     onPositiveClick: () => {
-      closeOtaConfirm()
+      closeOtaConfirm(deviceId)
       if (mode === 'pretest-only') {
-        void executeOtaPretest({ pretestOnly: true })
+        void executeOtaPretest(deviceId, { pretestOnly: true })
         return
       }
       void runSelectedOtaPretestThenStart(deviceId)
     },
-    onNegativeClick: closeOtaConfirm,
-    onClose: closeOtaConfirm,
+    onNegativeClick: () => closeOtaConfirm(deviceId),
+    onClose: () => closeOtaConfirm(deviceId),
   })
 }
 
@@ -2020,7 +2091,7 @@ async function runSelectedOtaPretestThenStart(deviceId: string) {
     await commitStartTest(deviceId)
     return
   }
-  const ok = await executeOtaPretest()
+  const ok = await executeOtaPretest(deviceId)
   if (!ok) return
   await commitStartTest(deviceId)
 }
@@ -2089,8 +2160,8 @@ async function handleStartTest(deviceId: string) {
         error.value = '请先获取外发版本'
         return
       }
-      if (otaConfirmOpen.value || otaStartPreparing.value || otaPretestRunning.value) return
-      otaStartPreparing.value = true
+      if (isOtaStartBusyForDevice(deviceId, otaBusyDeviceIds())) return
+      addOtaBusyDevice(otaPreparingDeviceIds, deviceId)
       try {
         if (otaPretestOnly.value) {
           confirmOtaUpgradeFlashThenStart(
@@ -2149,14 +2220,14 @@ async function handleStartTest(deviceId: string) {
         })
         return
       } finally {
-        otaStartPreparing.value = false
+        removeOtaBusyDevice(otaPreparingDeviceIds, deviceId)
       }
       return
     }
     await commitStartTest(deviceId)
   } catch (e: any) {
     console.error('[DeviceSelfCheck] Error starting test:', e)
-    clearFlashPanel()
+    clearFlashPanelFor(deviceId)
     error.value = e?.message || '启动测试失败'
   }
 }
@@ -2178,7 +2249,7 @@ async function commitStartTest(deviceId: string) {
     }
     const availableModules = listModulesForTestType(selectedTestType.value)
     const modulesToRun = availableModules.filter(m => selectedStartModules.value.has(m))
-    clearFlashPanel()
+    clearFlashPanelFor(deviceId)
     const releaseFlash = releaseFlashPath.value.trim()
     const flash = releaseActive
       ? (releaseFlash
@@ -2211,10 +2282,8 @@ async function commitStartTest(deviceId: string) {
         }
       : undefined
     if (flash || tcard) {
-      flashDeviceId.value = deviceId
-      flashActive.value = true
-      flashProgressState.value = createFlashProgressState()
-      appendFlashLog(
+      beginFlashPanel(
+        deviceId,
         flash
           ? '[刷机] 已提交刷机任务，等待设备进入刷机流程...'
           : '[T卡升级] 已提交 T卡升级任务，等待推送 ZIP...',
@@ -2246,7 +2315,7 @@ async function commitStartTest(deviceId: string) {
     await loadDevices()
   } catch (e: any) {
     console.error('[DeviceSelfCheck] Error starting test:', e)
-    clearFlashPanel()
+    clearFlashPanelFor(deviceId)
     error.value = e?.message || '启动测试失败'
   }
 }
@@ -2287,7 +2356,7 @@ async function handleResumeTest(deviceId: string) {
 async function handleEndTest(deviceId: string) {
   try {
     stopPollingTimer()
-    clearFlashPanel()
+    clearFlashPanelFor(deviceId)
     clearFlashFormForDevice(deviceId)
     const result = await endTest(deviceId)
     if (!result?.device) {
@@ -2854,20 +2923,19 @@ const isFlashing = computed(() => selectedDevice.value?.device.status === '刷�
 const isTcardUpdating = computed(() => selectedDevice.value?.device.status === 'T卡升级中')
 const isPretesting = computed(() => isFlashing.value || isTcardUpdating.value)
 
-const flashProgress = computed(() => flashProgressState.value.progress)
+const flashProgress = computed(() => selectedFlashPanel.value?.progress.progress ?? 0)
 
-const flashPhase = computed(() => flashPhaseLabel(flashProgressState.value))
+const flashPhase = computed(() => (
+  selectedFlashPanel.value ? flashPhaseLabel(selectedFlashPanel.value.progress) : ''
+))
 
-const isFlashFailed = computed(() => {
-  return flashDone.value === 'error'
-    && flashDeviceId.value === selectedDeviceId.value
-    && flashLogs.value.length > 0
-})
+const isFlashFailed = computed(() => (
+  flashDone.value === 'error' && flashLogs.value.length > 0
+))
 
 const showFlashPanel = computed(() => {
   if (!selectedDeviceId.value) return false
   if (isPretesting.value) return true
-  if (!flashDeviceId.value || flashDeviceId.value !== selectedDeviceId.value) return false
   if (flashActive.value) return true
   return isFlashFailed.value
 })
@@ -3014,7 +3082,7 @@ watch(selectedTestType, (testType, previous) => {
 const otaStartBlocked = computed(() => (
   selectedTestType.value === 'ota_upgrade'
   && startTestIntentRole.value !== '辅测机'
-  && otaStartPreparing.value
+  && isOtaStartBusyForDevice(selectedDeviceId.value || '', otaBusyDeviceIds())
 ))
 
 const otaUpgradePathMissing = computed(() => (
