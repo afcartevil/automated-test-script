@@ -228,6 +228,24 @@ describe('quality-run-mapper', () => {
     expect(run.metrics?.pass_rate).toBeUndefined()
     expect(isGkiTerminal('applied')).toBe(true)
     expect(isGkiTerminal('running')).toBe(false)
+    expect(isGkiTerminal('cancelled')).toBe(false)
+  })
+
+  it('maps completed gki upgrade to pass with tag summary', () => {
+    const run = mapGkiUpgradeJobToQualityRun({
+      id: 'job-1',
+      status: 'completed',
+      from_tag: 'android15-6.6-2025-10_r25',
+      to_tag: 'android15-6.6-2026-01_r35',
+      applied_commits: 3,
+      total_commits: 4,
+      completed_at: '2026-10-23T02:00:00',
+    }, 'hao.wang', 'GKI')
+    expect(run.status).toBe('pass')
+    expect(run.ended_at).toBe('2026-10-23T02:00:00')
+    expect(run.headline).toBe('android15-6.6-2025-10_r25 → android15-6.6-2026-01_r35 · completed · applied=3/4')
+    expect(run.ai_summary).toBe(run.headline)
+    expect(isGkiTerminal('completed')).toBe(true)
   })
 
   it('modem terminal helper', () => {

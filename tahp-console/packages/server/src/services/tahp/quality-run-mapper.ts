@@ -372,21 +372,46 @@ export function mapModemBaselineMetaToQualityRun(
 export interface GkiUpgradeJobRow {
   id: number | string
   status: string
+  from_tag?: string
+  to_tag?: string
+  phase?: string
+  build_exit_code?: number
   applied_commits?: number
   total_commits?: number
-  conflict_files?: string[]
+  conflict_files?: string[] | string
   error_msg?: string
   created_at?: string
   completed_at?: string
   repo?: string
-  options?: string
+  options?: string | Record<string, unknown>
 }
 
+const GKI_PASS_STATUSES = ['completed', 'committed', 'applied', 'success', 'done']
+const GKI_FAIL_STATUSES = ['build_failed', 'commit_failed', 'failed']
+
 export function isGkiTerminal(status: string): boolean {
-  return [
-    'conflicts', 'build_failed', 'commit_failed', 'cancelled',
-    'committed', 'applied', 'success', 'failed', 'done',
-  ].includes(status)
+  return GKI_PASS_STATUSES.includes(status) || status === 'conflicts' || GKI_FAIL_STATUSES.includes(status)
+}
+
+function gkiConflictFiles(job: GkiUpgradeJobRow): string[] {
+  const raw = job.conflict_files
+  if (Array.isArray(raw)) {
+    return raw.filter((file): file is string => typeof file === 'string' && Boolean(file.trim()))
+  }
+  if (typeof raw !== 'string' || !raw.trim()) return []
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((file): file is string => typeof file === 'string' && Boolean(file.trim()))
+  } catch {
+    return []
+  }
+}
+
+function gkiRunSummary(job: GkiUpgradeJobRow, applied: number, total: number): string {
+  const route = [job.from_tag, job.to_tag].map((tag) => tag?.trim()).filter(Boolean).join(' → ')
+  const stats = `applied=${applied}/${total}`
+  return [route, job.status, stats].filter(Boolean).join(' · ').slice(0, 120)
 }
 
 export function mapGkiUpgradeJobToQualityRun(
@@ -394,11 +419,14 @@ export function mapGkiUpgradeJobToQualityRun(
   owner?: string,
   project_code?: string,
 ): QualityRunPayload {
-  const conflicts = job.conflict_files || []
+  const conflicts = gkiConflictFiles(job)
+  const applied = job.applied_commits ?? 0
+  const total = job.total_commits ?? 0
   let status: QualityRunPayload['status'] = 'pending'
-  if (['committed', 'applied', 'success', 'done'].includes(job.status)) status = 'pass'
+  if (GKI_PASS_STATUSES.includes(job.status)) status = 'pass'
   else if (job.status === 'conflicts') status = 'blocked'
-  else if (['build_failed', 'commit_failed', 'failed'].includes(job.status)) status = 'fail'
+  else if (GKI_FAIL_STATUSES.includes(job.status)) status = 'fail'
+  const summary = gkiRunSummary(job, applied, total)
 
   const issues: QualityRunPayload['issues'] = conflicts.map((f, i) => ({
     key: `conflict-${i}`,
@@ -425,8 +453,8 @@ export function mapGkiUpgradeJobToQualityRun(
     started_at: job.created_at,
     ended_at: job.completed_at,
     metrics: {
-      applied_commits: job.applied_commits ?? 0,
-      total_commits: job.total_commits ?? 0,
+      applied_commits: applied,
+      total_commits: total,
       conflict_count: conflicts.length,
     },
     issues,
@@ -435,7 +463,8 @@ export function mapGkiUpgradeJobToQualityRun(
       name: 'upgrade_job',
       ref: `gki://upgrade/jobs/${job.id}`,
     }],
-    ai_summary: `${job.status} · applied=${job.applied_commits ?? 0}/${job.total_commits ?? 0}`,
+    headline: summary,
+    ai_summary: summary,
     source: { tool: 'tahp-console', version: 'gki-patch' },
     schema_version: 1,
   }
