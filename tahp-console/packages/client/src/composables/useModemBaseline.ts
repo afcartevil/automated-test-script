@@ -917,9 +917,15 @@ export function useModemBaseline() {
       if (missingFields.length) {
         throw new Error(`缺少必要配置字段：${missingFields.join('、')}`)
       }
+      const linkedNotice = activeNoticeId.value
+        ? pendingNotices.value.find(item => item.noticeId === activeNoticeId.value)
+        : undefined
+      const platform = activePlatform.value.trim() || noticeParsed.value?.platform?.trim() || undefined
+      const version = linkedNotice?.version?.trim() || noticeParsed.value?.version?.trim() || undefined
       const result = await createModemBaselineRun(config.value, {
         noticeId: activeNoticeId.value || undefined,
-        platform: activePlatform.value || undefined,
+        platform,
+        version,
       })
       await reloadRuns()
       await selectRun(result.runId)

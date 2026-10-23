@@ -312,6 +312,13 @@ export function isModemTerminal(status: string): boolean {
   return status === 'success' || status === 'failed' || status === 'conflict'
 }
 
+function modemRunSummary(meta: ModemBaselineRunMeta, conflictCount: number): string {
+  const identity = [meta.platform?.trim(), meta.version?.trim()].filter(Boolean).join(' · ')
+  const phase = [meta.phase, meta.status].filter(Boolean).join(' ')
+  const stats = `conflict=${conflictCount}`
+  return [identity, phase, stats].filter(Boolean).join(' · ').slice(0, 120)
+}
+
 export function mapModemBaselineMetaToQualityRun(
   meta: ModemBaselineRunMeta,
   owner?: string,
@@ -349,11 +356,16 @@ export function mapModemBaselineMetaToQualityRun(
     ref: `local://modem-baseline/${meta.runId}/meta.json`,
   })
 
+  const platform = meta.platform?.trim() || undefined
+  const version = meta.version?.trim() || undefined
+  const summary = modemRunSummary(meta, conflicts.length)
+
   return {
     run_id: buildModemPatchRunId(meta.runId),
     dimension: 'modem-patch',
     project_code: project_code || UNASSIGNED_PROJECT,
     owner,
+    version,
     status,
     started_at: meta.startedAt,
     ended_at: meta.finishedAt,
@@ -363,7 +375,9 @@ export function mapModemBaselineMetaToQualityRun(
     },
     issues,
     artifacts,
-    ai_summary: `${meta.phase || ''} ${meta.status} · conflict=${conflicts.length}`.trim(),
+    headline: summary,
+    ai_summary: summary,
+    extra: platform ? { platform } : undefined,
     source: { tool: 'tahp-console', version: 'modem-patch' },
     schema_version: 1,
   }

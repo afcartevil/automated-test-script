@@ -466,9 +466,10 @@ tahpModemBaselineRoutes.post('/runs', async (ctx) => {
       config?: unknown
       noticeId?: string
       platform?: string
+      version?: string
     }
     const config = (body.config || {}) as Record<string, unknown>
-    const payload = { ...config, noticeId: body.noticeId, platform: body.platform }
+    const payload = { ...config, noticeId: body.noticeId, platform: body.platform, version: body.version }
     ctx.body = { success: true, data: createModemBaselineRun(payload) }
   } catch (error) {
     const message = (error as Error).message

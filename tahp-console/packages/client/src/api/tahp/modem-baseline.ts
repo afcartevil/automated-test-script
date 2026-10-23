@@ -33,6 +33,8 @@ export type ModemBaselineRunMeta = {
   error?: string
   noticeId?: string
   platform?: string
+  /** 基线版本（通知解析出的版本，如 V2.9；不是 AP 标签） */
+  version?: string
 }
 
 export type UserWorkspaceProfile = {
@@ -318,12 +320,13 @@ export function getModemBaselineLog(runId: string): Promise<{
 
 export function createModemBaselineRun(
   config: ModemBaselineConfig,
-  options?: { noticeId?: string; platform?: string },
+  options?: { noticeId?: string; platform?: string; version?: string },
 ): Promise<{ runId: string; status: ModemBaselineStatus }> {
   return tahpPost<{ runId: string; status: ModemBaselineStatus }>('/api/tahp/modem-baseline/runs', {
     config,
     noticeId: options?.noticeId,
     platform: options?.platform,
+    version: options?.version,
   })
 }
 
