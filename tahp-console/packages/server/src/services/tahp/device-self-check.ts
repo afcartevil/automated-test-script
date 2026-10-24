@@ -9,6 +9,7 @@ import { join, resolve, basename, sep } from 'path'
 import AdmZip from 'adm-zip'
 import {
   type DeviceFlashOptions,
+  resolveFlashPackageDir,
   runDeviceFlash,
   skipOobeForDevice,
 } from './device-flash'
@@ -5493,6 +5494,17 @@ export function getAllCaseCatalogs(): CaseCatalogGroup[] {
   }))
 }
 
+/** 连续OTA升级：整机包/T卡包在本机的保存路径说明（追加到前置条件展示） */
+function buildOtaLocalPackagePathNote(): string {
+  const flashPackageDir = resolveFlashPackageDir()
+  return [
+    '本机包保存路径：',
+    `整机包（device_update 刷机包）：${join(flashPackageDir, '_downloads')}`,
+    `T卡升级包：${join(flashPackageDir, 'tcard', '_downloads')}`,
+    '网络共享盘上的包会先复制到上述本机目录再执行刷机/推送；手动浏览选择的本地包不复制。',
+  ].join('\n')
+}
+
 export function getCaseCatalogDetail(testType: string): CaseCatalogDetailItem[] {
   syncAiGeneratedCaseConfig()
   const group = getAllCaseCatalogs().find(g => g.testType === testType)
@@ -5515,7 +5527,9 @@ export function getCaseCatalogDetail(testType: string): CaseCatalogDetailItem[] 
         canReuse: c.canReuse,
         automationMode: c.automationMode,
         platforms: c.platforms,
-        preconditions: info?.['前置条件'] || '',
+        preconditions: testType === 'ota_upgrade'
+          ? [info?.['前置条件'] || '', buildOtaLocalPackagePathNote()].filter(Boolean).join('\n')
+          : (info?.['前置条件'] || ''),
         manualSteps: info?.['测试步骤'] || '',
         expectedResult: info?.['期望结果'] || '',
       })

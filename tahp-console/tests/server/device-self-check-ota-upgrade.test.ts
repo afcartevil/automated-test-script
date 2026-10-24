@@ -5,6 +5,7 @@ import {
   initDeviceSelfCheck,
   startTest,
 } from '../../packages/server/src/services/tahp/device-self-check'
+import { resolveFlashPackageDir } from '../../packages/server/src/services/tahp/device-flash'
 import { tcardBaselineVersionError } from '../../packages/server/src/services/tahp/ota-pretest'
 
 describe('device self-check ota_upgrade catalog', () => {
@@ -34,6 +35,12 @@ describe('device self-check ota_upgrade catalog', () => {
     })
     expect(detail[0]?.preconditions).toContain('获取外发版本')
     expect(detail[0]?.preconditions).not.toContain('SOP')
+    // 前置条件须展示整机包/T卡包的本机保存路径
+    const flashPackageDir = resolveFlashPackageDir()
+    expect(detail[0]?.preconditions).toContain('本机包保存路径')
+    expect(detail[0]?.preconditions).toContain('整机包')
+    expect(detail[0]?.preconditions).toContain('T卡升级包')
+    expect(detail[0]?.preconditions).toContain(flashPackageDir)
     expect(detail[0]?.manualSteps).toContain('device_update')
     expect(detail[0]?.expectedResult).toContain('ro.build.version.release')
   })
