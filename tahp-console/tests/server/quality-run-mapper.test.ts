@@ -212,6 +212,34 @@ describe('quality-run-mapper', () => {
     expect(run.metrics?.conflict_count).toBe(2)
     expect(run.metrics?.pass_rate).toBeUndefined()
     expect(run.run_id).toBe(buildModemPatchRunId('r1'))
+    expect(run.version).toBeUndefined()
+    expect(run.extra).toBeUndefined()
+    expect(run.headline).toBe('conflict conflict · conflict=2')
+  })
+
+  it('maps modem platform and baseline version into the uploaded run', () => {
+    const run = mapModemBaselineMetaToQualityRun({
+      runId: 'r2',
+      status: 'success',
+      mode: 'stop_after_merge',
+      phase: 'archive',
+      createdAt: '2026-08-18T10:00:00.000Z',
+      config: {
+        NODE_BRANCH: 'n',
+        target_BRANCH: 't',
+        AP_lable: 'V12.34',
+        JIRAID: 'J-1',
+        work_dir: '/w',
+      },
+      platform: 'GEN95W',
+      version: 'V2.9',
+    }, 'sanling.liu', 'V13.30')
+    expect(run.status).toBe('pass')
+    expect(run.project_code).toBe('V13.30')
+    expect(run.version).toBe('V2.9')
+    expect(run.extra).toEqual({ platform: 'GEN95W' })
+    expect(run.headline).toBe('GEN95W · V2.9 · archive success · conflict=0')
+    expect(run.ai_summary).toBe(run.headline)
   })
 
   it('maps gki with applied_commits keys', () => {
@@ -228,6 +256,24 @@ describe('quality-run-mapper', () => {
     expect(run.metrics?.pass_rate).toBeUndefined()
     expect(isGkiTerminal('applied')).toBe(true)
     expect(isGkiTerminal('running')).toBe(false)
+    expect(isGkiTerminal('cancelled')).toBe(false)
+  })
+
+  it('maps completed gki upgrade to pass with tag summary', () => {
+    const run = mapGkiUpgradeJobToQualityRun({
+      id: 'job-1',
+      status: 'completed',
+      from_tag: 'android15-6.6-2025-10_r25',
+      to_tag: 'android15-6.6-2026-01_r35',
+      applied_commits: 3,
+      total_commits: 4,
+      completed_at: '2026-10-23T02:00:00',
+    }, 'hao.wang', 'GKI')
+    expect(run.status).toBe('pass')
+    expect(run.ended_at).toBe('2026-10-23T02:00:00')
+    expect(run.headline).toBe('android15-6.6-2025-10_r25 → android15-6.6-2026-01_r35 · completed · applied=3/4')
+    expect(run.ai_summary).toBe(run.headline)
+    expect(isGkiTerminal('completed')).toBe(true)
   })
 
   it('modem terminal helper', () => {

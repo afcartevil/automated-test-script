@@ -49,6 +49,8 @@ export type ModemBaselineRunMeta = {
   noticeId?: string
   /** 该 run 对应的 modem 平台（与 noticeId 配合） */
   platform?: string
+  /** 基线版本（通知解析出的版本，如 V2.9；不是 AP 标签） */
+  version?: string
 }
 
 export type UserWorkspaceProfile = {
@@ -4041,9 +4043,11 @@ export function createModemBaselineRun(input: unknown) {
   const record = (input && typeof input === 'object' ? input : {}) as {
     noticeId?: string
     platform?: string
+    version?: string
   }
   const noticeId = String(record.noticeId ?? '').trim() || undefined
   const platform = String(record.platform ?? '').trim() || undefined
+  const version = String(record.version ?? '').trim() || undefined
   const meta: ModemBaselineRunMeta = {
     runId,
     status: 'running',
@@ -4056,6 +4060,7 @@ export function createModemBaselineRun(input: unknown) {
     logPath,
     noticeId,
     platform,
+    version,
   }
 
   fs.writeFileSync(runConfigPath(runId), JSON.stringify(validated, null, 2), 'utf-8')

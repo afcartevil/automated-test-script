@@ -195,6 +195,13 @@ export function hasContinuousOtaPackagePath(plan: {
   )
 }
 
+/** 连续 OTA 的确认框、预检和前置操作只挡住正在处理的那台设备。 */
+export function isOtaStartBusyForDevice(deviceId: string, busyDeviceIds: readonly string[]): boolean {
+  const serial = deviceId.trim()
+  if (!serial) return false
+  return busyDeviceIds.includes(serial)
+}
+
 /** 勾选「仅执行前置操作」时确认框只保留前置步骤，不带连续升级步骤。 */
 export function otaConfirmSteps(input: {
   pretestOnly: boolean

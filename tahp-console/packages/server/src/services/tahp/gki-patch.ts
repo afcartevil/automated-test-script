@@ -8,6 +8,7 @@ import { getActiveProfileName } from '../hermes/hermes-profile'
 import { resolveGatewayUpstream } from '../hermes/run-chat/handle-api-run'
 import { readHarnessEnvFile } from './harness-env-sync'
 import { readUnifiedConfig } from './unified-config'
+import type { GkiUpgradeJobRow } from './quality-run-mapper'
 
 const DEFAULT_PORT = Number(process.env.GKI_PATCH_PORT || 8651)
 const STARTUP_TIMEOUT_MS = 60_000
@@ -117,7 +118,8 @@ let childProcess: ChildProcess | null = null
 let activePort = DEFAULT_PORT
 let startingPromise: Promise<void> | null = null
 let gkiQualityPollTimer: ReturnType<typeof setInterval> | null = null
-const uploadedGkiJobIds = new Set<string>()
+let gkiQualityPollBusy = false
+let gkiUploadMarker: Record<string, string> | null = null
 
 const EA_RESOLVE_CACHE_MS = 15_000
 let eaLlmCache: { at: number; value: ReturnType<typeof resolveEaLlmForGki> } | null = null
@@ -139,47 +141,82 @@ function resolveEaSshForGkiCached() {
   return value
 }
 
+function gkiQualityMarkerPath() {
+  return path.resolve(serverConfig.dataDir, 'gki-patch', 'quality-uploaded.json')
+}
+
+function loadGkiUploadMarker(): Record<string, string> {
+  if (gkiUploadMarker) return gkiUploadMarker
+  gkiUploadMarker = {}
+  try {
+    const parsed = JSON.parse(fs.readFileSync(gkiQualityMarkerPath(), 'utf-8')) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return gkiUploadMarker
+    for (const [id, status] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof status === 'string' && status) gkiUploadMarker[id] = status
+    }
+  } catch {
+    /* first run or unreadable marker */
+  }
+  return gkiUploadMarker
+}
+
+function rememberGkiUpload(id: string, status: string) {
+  const marker = loadGkiUploadMarker()
+  marker[id] = status
+  const file = gkiQualityMarkerPath()
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, JSON.stringify(marker, null, 2), 'utf-8')
+}
+
 async function fetchGkiUpgradeJobs(): Promise<GkiUpgradeJobRow[]> {
   const url = `http://127.0.0.1:${activePort}/api/upgrade/jobs?limit=50`
-  return new Promise((resolve, reject) => {
-    const req = http.get(url, { timeout: 10000 }, (res) => {
-      let body = ''
-      res.on('data', chunk => { body += chunk })
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(body) as { jobs?: GkiUpgradeJobRow[] }
-          resolve(parsed.jobs || [])
-        } catch (e) {
-          reject(e)
-        }
-      })
-    })
-    req.on('error', reject)
-    req.on('timeout', () => {
-      req.destroy()
-      reject(new Error('GKI jobs request timeout'))
-    })
-  })
+  const parsed = await gkiHttpGetJson<{ jobs?: GkiUpgradeJobRow[] }>(url)
+  return parsed.jobs || []
+}
+
+async function fetchGkiUpgradeJobDetail(id: string): Promise<GkiUpgradeJobRow | null> {
+  const url = `http://127.0.0.1:${activePort}/api/upgrade/jobs/${encodeURIComponent(id)}`
+  const parsed = await gkiHttpGetJson<{ job?: GkiUpgradeJobRow }>(url)
+  return parsed.job || null
+}
+
+async function pollGkiQualityOnce() {
+  if (gkiQualityPollBusy) return
+  gkiQualityPollBusy = true
+  try {
+    if (!await probeHealth(activePort)) return
+    const { isCentralConfigured } = await import('./runtime-mode')
+    if (!isCentralConfigured()) return
+    const { isGkiTerminal } = await import('./quality-run-mapper')
+    const { uploadGkiPatchJobToCentral } = await import('./quality-run-upload')
+    const marker = loadGkiUploadMarker()
+    const jobs = await fetchGkiUpgradeJobs()
+    for (const job of jobs) {
+      const id = String(job.id)
+      try {
+        if (!isGkiTerminal(String(job.status || ''))) continue
+        if (marker[id] === job.status) continue
+        const detail = await fetchGkiUpgradeJobDetail(id)
+        if (!detail || !isGkiTerminal(String(detail.status || ''))) continue
+        if (marker[id] === detail.status) continue
+        const res = await uploadGkiPatchJobToCentral(detail)
+        if (res.uploaded) rememberGkiUpload(id, String(detail.status))
+      } catch (err) {
+        logger.debug({ id, err: (err as Error).message }, '[gki-patch] quality upload skipped')
+      }
+    }
+  } catch (err) {
+    logger.debug({ err: (err as Error).message }, '[gki-patch] quality poll failed')
+  } finally {
+    gkiQualityPollBusy = false
+  }
 }
 
 function startGkiQualityPoll() {
   if (gkiQualityPollTimer) return
-  gkiQualityPollTimer = setInterval(async () => {
-    if (!await probeHealth(activePort)) return
-    try {
-      const { isGkiTerminal } = await import('./quality-run-mapper')
-      const { uploadGkiPatchJobToCentral } = await import('./quality-run-upload')
-      const jobs = await fetchGkiUpgradeJobs()
-      for (const job of jobs) {
-        const id = String(job.id)
-        if (!isGkiTerminal(job.status)) continue
-        if (uploadedGkiJobIds.has(id)) continue
-        const res = await uploadGkiPatchJobToCentral(job)
-        if (res.uploaded) uploadedGkiJobIds.add(id)
-      }
-    } catch (err) {
-      logger.debug({ err: (err as Error).message }, '[gki-patch] quality poll failed')
-    }
+  void pollGkiQualityOnce()
+  gkiQualityPollTimer = setInterval(() => {
+    void pollGkiQualityOnce()
   }, 30000)
 }
 
@@ -188,23 +225,6 @@ function stopGkiQualityPoll() {
     clearInterval(gkiQualityPollTimer)
     gkiQualityPollTimer = null
   }
-}
-
-interface GkiUpgradeJobRow {
-  id: number | string
-  status: string
-  from_tag?: string
-  to_tag?: string
-  phase?: string
-  build_exit_code?: number
-  applied_commits?: number
-  total_commits?: number
-  conflict_files?: string[]
-  error_msg?: string
-  created_at?: string
-  completed_at?: string
-  repo?: string
-  options?: string
 }
 
 /** List recent GKI upgrade jobs via local GKI Patch Tool HTTP API. */

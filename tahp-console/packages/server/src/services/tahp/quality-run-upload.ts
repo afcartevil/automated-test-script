@@ -253,14 +253,20 @@ export async function uploadModemPatchRunToCentral(meta: ModemBaselineRunMeta): 
   }
 }
 
+function gkiProjectCandidate(job: GkiUpgradeJobRow): string | undefined {
+  const repo = job.repo?.trim()
+  if (repo) return repo
+  if (typeof job.options === 'string' && job.options.trim()) return job.options.trim()
+  return undefined
+}
+
 export async function uploadGkiPatchJobToCentral(
   job: GkiUpgradeJobRow,
 ): Promise<{ uploaded: boolean; run_id?: string }> {
   if (!isCentralConfigured()) return { uploaded: false }
 
   const owner = resolveQualityRunOwner()
-  const candidate = job.repo || job.options
-  const { project_code } = await resolveProjectCode(candidate)
+  const { project_code } = await resolveProjectCode(gkiProjectCandidate(job))
   const run = mapGkiUpgradeJobToQualityRun(job, owner, project_code)
   const result = await uploadSingleRun(run)
   if (result.uploaded) {

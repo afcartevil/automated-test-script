@@ -845,7 +845,32 @@ async function waitForElevatedSwd(
   throw new Error('等待管理员权限下的 SWD 刷机完成超时')
 }
 
+let udFlashDepth = 0
+let udFlashTail: Promise<unknown> = Promise.resolve()
+
+/** SWD 启动后会抓所有下载口，OEM 解锁重启进 fastboot 也会被它抢走。两条都走同一队列。 */
+function enqueueExclusivePretest<T>(onLog: (line: string) => void, job: () => Promise<T>): Promise<T> {
+  if (udFlashDepth > 0) {
+    onLog('[前置操作] 另一台设备正在刷机或 OEM 解锁，排队等待')
+  }
+  udFlashDepth += 1
+  const run = udFlashTail.then(job, job)
+  udFlashTail = run.then(() => undefined, () => undefined)
+  return run.finally(() => {
+    udFlashDepth -= 1
+  })
+}
+
 export async function runUdFlash(
+  deviceId: string,
+  packagePath: string,
+  settings: OtaPretestSettings,
+  onLog: (line: string) => void,
+): Promise<void> {
+  return enqueueExclusivePretest(onLog, () => performUdFlash(deviceId, packagePath, settings, onLog))
+}
+
+async function performUdFlash(
   deviceId: string,
   packagePath: string,
   settings: OtaPretestSettings,
@@ -861,7 +886,7 @@ export async function runUdFlash(
   onLog(`[UD刷机] 开始刷写设备 ${deviceId}`)
   const output = await streamProcess(
     pythonExe,
-    [script, flashXml, '--config', config, '--flash-timeout', '1800'],
+    [script, flashXml, '--config', config, '--flash-timeout', '1800', '--serial', deviceId],
     {
       cwd: dirname(script),
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
@@ -1061,7 +1086,113 @@ export async function runCombinedPretest(
   return { rootOutput, flashedUd, udPackagePath: usedPath || undefined, oemUnlockRan, usbdebugWritten }
 }
 
+/** 解锁脚本在 fastboot 失败时仍打印 All done 并以 0 退出。 */
+export function oemUnlockFastbootError(output: string): string | undefined {
+  if (/ERROR:\s*fastboot device not detected/i.test(output)) {
+    return '手机重启后没有进入 fastboot'
+  }
+  if (/ERROR:\s*fastboot flashing unlock failed/i.test(output)) {
+    return 'fastboot flashing unlock 失败'
+  }
+  return undefined
+}
+
+export function parseFastbootDevices(text: string): string[] {
+  const serials: string[] = []
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.trim().match(/^(\S+)\s+fastboot\b/i)
+    if (!match?.[1] || serials.includes(match[1])) continue
+    serials.push(match[1])
+  }
+  return serials
+}
+
+/** 目标序列号优先。序列号变化时，只在目标机已离开 adb 且 fastboot 只有一台时才采用。 */
+export function pickFastbootSerial(
+  targetSerial: string,
+  fastbootSerials: readonly string[],
+  targetStillOnAdb: boolean,
+): string | undefined {
+  const target = targetSerial.trim()
+  if (target && fastbootSerials.includes(target)) return target
+  if (!targetStillOnAdb && fastbootSerials.length === 1) return fastbootSerials[0]
+  return undefined
+}
+
+function listAdbReadySerials(): string[] {
+  const result = spawnSync('adb', ['devices'], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 15_000,
+  })
+  const serials: string[] = []
+  for (const line of String(result.stdout || '').split(/\r?\n/)) {
+    const parts = line.trim().split(/\s+/)
+    if (parts.length >= 2 && parts[1] === 'device') serials.push(parts[0]!)
+  }
+  return serials
+}
+
+function listFastbootSerials(): string[] {
+  const result = spawnSync('fastboot', ['devices'], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 15_000,
+  })
+  return parseFastbootDevices(`${result.stdout || ''}\n${result.stderr || ''}`)
+}
+
+function runFastboot(serial: string, args: string[], timeoutMs: number): { ok: boolean; text: string } {
+  const result = spawnSync('fastboot', ['-s', serial, ...args], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: timeoutMs,
+  })
+  return {
+    ok: result.status === 0 && !result.error,
+    text: `${result.stdout || ''}\n${result.stderr || ''}${result.error ? `\n${result.error.message}` : ''}`.trim(),
+  }
+}
+
+async function recoverFastbootUnlock(deviceId: string, onLog: (line: string) => void): Promise<void> {
+  const deadline = Date.now() + 90_000
+  let rebooted = false
+  let serial = ''
+  while (Date.now() < deadline) {
+    const onAdb = listAdbReadySerials().includes(deviceId)
+    serial = pickFastbootSerial(deviceId, listFastbootSerials(), onAdb) || ''
+    if (serial) break
+    if (onAdb && !rebooted) {
+      onLog(`[OEM解锁] ${deviceId} 仍在 adb，重新启动到 fastboot`)
+      spawnSync('adb', ['-s', deviceId, 'reboot', 'bootloader'], {
+        windowsHide: true,
+        timeout: 30_000,
+      })
+      rebooted = true
+    }
+    await new Promise(resolve => setTimeout(resolve, 2_000))
+  }
+  if (!serial) {
+    throw new Error(`OEM 解锁未完成：${deviceId} 没有进入 fastboot。另一台正在被 SWD 刷机时，会把这台重启后的下载口抢走`)
+  }
+  onLog(`[OEM解锁] 使用 fastboot 设备 ${serial}`)
+  const skip = runFastboot(serial, ['oem', 'tran_skip_confirm_key'], 20_000)
+  if (!skip.ok) onLog(`[OEM解锁] tran_skip_confirm_key 未成功，继续解锁：${skip.text}`)
+  const unlock = runFastboot(serial, ['flashing', 'unlock'], 60_000)
+  if (!unlock.ok) throw new Error(`fastboot flashing unlock 失败：${unlock.text || serial}`)
+  const reboot = runFastboot(serial, ['reboot'], 30_000)
+  if (!reboot.ok) onLog(`[OEM解锁] fastboot reboot 未返回成功：${reboot.text}`)
+}
+
 export async function runOemUnlock(
+  deviceId: string,
+  settings: OtaPretestSettings,
+  onLog: (line: string) => void,
+): Promise<void> {
+  return enqueueExclusivePretest(onLog, () => performOemUnlock(deviceId, settings, onLog))
+}
+
+async function performOemUnlock(
   deviceId: string,
   settings: OtaPretestSettings,
   onLog: (line: string) => void,
@@ -1069,7 +1200,7 @@ export async function runOemUnlock(
   const { script, root } = prepareOemConfig(settings)
   const python = resolvePythonSpawn()
   onLog(`[OEM解锁] 开始处理设备 ${deviceId}`)
-  await streamProcess(
+  const output = await streamProcess(
     python.command,
     [...python.prefixArgs, script],
     {
@@ -1079,6 +1210,11 @@ export async function runOemUnlock(
     },
     line => onLog(`[OEM解锁] ${line}`),
   )
+  const fastbootError = oemUnlockFastbootError(output)
+  if (fastbootError) {
+    onLog(`[OEM解锁] ${fastbootError}，改为按序列号等待 fastboot`)
+    await recoverFastbootUnlock(deviceId, onLog)
+  }
   onLog('[OEM解锁] 操作完成')
 }
 

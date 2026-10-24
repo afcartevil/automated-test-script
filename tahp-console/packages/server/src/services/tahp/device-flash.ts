@@ -1634,11 +1634,11 @@ export async function runDeviceFlash(
         }
       })
       proc.on('error', (err) => {
-        activeFlashProcess = null
+        if (activeFlashProcess === proc) activeFlashProcess = null
         reject(err)
       })
       proc.on('close', (code) => {
-        activeFlashProcess = null
+        if (activeFlashProcess === proc) activeFlashProcess = null
         resolvePromise(code ?? -1)
       })
     })
