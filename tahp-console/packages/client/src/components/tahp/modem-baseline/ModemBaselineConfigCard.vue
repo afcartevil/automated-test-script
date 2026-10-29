@@ -105,7 +105,7 @@ const unfilled = computed(() => (props.parseFeedback?.failures.length ?? 0) > 0)
     margin: 0;
     font-size: 16px;
     font-weight: 700;
-    color: var(--head);
+    color: red;
   }
 }
 
